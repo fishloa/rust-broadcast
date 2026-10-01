@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- `smooth::SmoothPackager::package_track_fragment` — build **one** Smooth
+  fragment for a single track at an explicit smooth-timeline start (a
+  `SmoothFragment` whose `tfxd` `FragmentAbsoluteTime` is the caller's value
+  and whose duration is the track's own summed `trun` durations), without
+  segmenting the track. Needed by `multimux`'s live Smooth output, whose
+  per-track `c@t` timeline must match the served fragment's `tfxd` and must be
+  stable as the window slides (#1083).
+
 ### Changed (breaking)
 
 - **The eight public audio sample-entry structs gained three fields** (#1081,

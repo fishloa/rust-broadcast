@@ -111,6 +111,19 @@ pub(crate) const DVR_PIN_REARMED_TOTAL: &str = "multimux_dvr_pin_rearmed_total";
 /// #1083, D3).
 pub(crate) const DVR_FAILED_TOTAL: &str = "multimux_dvr_failed_total";
 
+/// Counter: total live-edge segments/fragments a pull source abandoned after
+/// exhausting its bounded tolerated-`404` retries (audit W14a/W14b), so the
+/// downstream end has been notified the source is no longer at the live edge.
+/// Labels: `source`. A non-zero rate is the signal an operator uses to see a
+/// stalled-or-restarted encoder without the route going dark silently.
+pub(crate) const PULL_FRAGMENT_ABANDONED_TOTAL: &str = "multimux_pull_fragment_abandoned_total";
+
+/// Counter: total manifest refreshes in which a live stream had no matching
+/// `StreamIndex` (audit W14e) — a renamed or retemplated stream. Distinct
+/// from `PULL_FRAGMENT_ABANDONED_TOTAL` (a fragment that never arrived) so an
+/// operator can tell the two apart. Labels: none.
+pub(crate) const PULL_STREAM_REFRESH_MISS_TOTAL: &str = "multimux_pull_stream_refresh_miss_total";
+
 static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 
 /// Install the process-wide Prometheus recorder exactly once, returning a

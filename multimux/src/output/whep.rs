@@ -503,8 +503,8 @@ async fn handle_whep_connection(
     if request_line.starts_with("OPTIONS") {
         let resp = "HTTP/1.1 204 No Content\r\n\
              Access-Control-Allow-Origin: *\r\n\
-             Access-Control-Allow-Methods: POST, OPTIONS\r\n\
-             Access-Control-Allow-Headers: Content-Type\r\n\
+             Access-Control-Allow-Methods: POST, PATCH, DELETE, OPTIONS\r\n\
+             Access-Control-Allow-Headers: Authorization, Content-Type, If-Match\r\n\
              Content-Length: 0\r\n\r\n";
         let _ = stream.write_all(resp.as_bytes()).await;
         return Ok(());
@@ -1397,6 +1397,58 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     /// asserting it reached 0 within `2 * silence_timeout` timed out
     /// (the assertion below is what now catches that: the loop kept
     /// running past the deadline with the counter still at 1).
+    /// Audit W18: a WHEP preflight (`OPTIONS`) with
+    /// `Access-Control-Request-Headers: authorization` must be answered with a
+    /// CORS response naming `Authorization` (a Bearer-auth viewer needs it) and
+    /// the WHEP methods.
+    #[tokio::test]
+    async fn whep_preflight_allows_authorization_and_methods() {
+        use tokio::io::AsyncReadExt;
+
+        let trunk = empty_trunk();
+        let (tx, _rx) = mpsc::channel::<AdmittedWhep>(1);
+        let active_sessions = Arc::new(AtomicUsize::new(0));
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+
+        let crlf = String::from_utf8(vec![13, 10]).unwrap();
+        let request = [
+            "OPTIONS /whep HTTP/1.1",
+            "Origin: https://viewer.example",
+            "Access-Control-Request-Method: POST",
+            "Access-Control-Request-Headers: authorization",
+            "Content-Length: 0",
+            "",
+            "",
+        ]
+        .join(&crlf);
+        client.write_all(request.as_bytes()).await.unwrap();
+        handle_whep_connection(server, &trunk, &tx, &active_sessions, 64, &None)
+            .await
+            .expect("preflight");
+
+        let mut buf = [0u8; 1024];
+        let n = tokio::time::timeout(Duration::from_secs(5), client.read(&mut buf))
+            .await
+            .expect("read must not hang")
+            .expect("read");
+        let resp = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
+        assert!(resp.starts_with("http/1.1 204"), "preflight got: {resp}");
+        assert!(
+            resp.contains("access-control-allow-headers: authorization"),
+            "the preflight must name Authorization: {resp}"
+        );
+        for m in ["post", "patch", "delete"] {
+            assert!(
+                resp.contains(m),
+                "Access-Control-Allow-Methods must include {m}: {resp}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn whep_session_ends_after_inbound_silence_timeout() {
         let admitted = test_admitted_whep().await;

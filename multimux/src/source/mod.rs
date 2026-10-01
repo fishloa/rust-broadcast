@@ -74,6 +74,116 @@ pub const MAX_TS_READ: usize = 65_536;
 /// producing more requests, only how many the IO side acts on concurrently.
 pub const MAX_INFLIGHT_FETCHES: usize = 8;
 
+/// Hard cap on the size of one resource/manifest response body a pull source
+/// reads into memory (audit run 7, W16): a misconfigured or hostile origin
+/// answering with a multi-gigabyte body would otherwise OOM the process.
+///
+/// Large enough for any real manifest, play-list or media segment from a
+/// normal encoder (a 20 s 1080p segment is a few MB; a manifest is KB), small
+/// enough that a runaway body is refused rather than buffered. Enforced both
+/// from a declared `Content-Length` and from the streamed byte count, so a
+/// chunked response with no length (or a lying one) is bounded too.
+pub const MAX_HTTP_BODY_BYTES: usize = 64 * 1024 * 1024;
+
+/// Read a whole HTTP response body into memory, refusing a body larger than
+/// `cap` (see [`MAX_HTTP_BODY_BYTES`]).
+///
+/// Checks the declared `Content-Length` first (a cheap early reject), then
+/// streams the body and errors as soon as the accumulated length would exceed
+/// `cap` — never buffering past it. `what` names the resource in the error.
+pub(crate) async fn read_body_capped(
+    response: reqwest::Response,
+    cap: usize,
+    what: &str,
+) -> crate::error::Result<Vec<u8>> {
+    use futures_util::StreamExt;
+
+    if let Some(len) = response.content_length()
+        && len > cap as u64
+    {
+        return Err(crate::error::MultimuxError::Connect {
+            reason: format!("{what}: declared body length {len} exceeds the {cap}-byte cap"),
+        });
+    }
+    // Pre-size to the declared length (bounded by the cap), so a large body
+    // does not grow by repeated doubling whose transient peaks approach
+    // 2× the cap.
+    let initial = response
+        .content_length()
+        .and_then(|l| usize::try_from(l).ok())
+        .unwrap_or(0)
+        .min(cap);
+    let mut stream = response.bytes_stream();
+    let mut buf: Vec<u8> = Vec::with_capacity(initial);
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|e| crate::error::MultimuxError::Connect {
+            reason: format!("{what} read: {e}"),
+        })?;
+        if buf.len().saturating_add(chunk.len()) > cap {
+            return Err(crate::error::MultimuxError::Connect {
+                reason: format!("{what}: body exceeds the {cap}-byte cap"),
+            });
+        }
+        buf.extend_from_slice(&chunk);
+    }
+    Ok(buf)
+}
+
+/// The redirect policy every pull source's HTTP client uses (audit W16): at
+/// most 3 hops, and a refusal of an `https`→`http` scheme downgrade — a
+/// redirect must never silently move an authenticated fetch onto cleartext.
+/// (Same-host-or-allowlist enforcement is left to the operator's proxy; the
+/// downgrade refusal is the load-bearing, cheap half.)
+pub(crate) fn redirect_policy() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let prev_scheme = attempt
+            .previous()
+            .last()
+            .map(reqwest::Url::scheme)
+            .unwrap_or("");
+        match redirect_decision(
+            attempt.previous().len(),
+            prev_scheme,
+            attempt.url().scheme(),
+        ) {
+            RedirectDecision::Follow => attempt.follow(),
+            RedirectDecision::TooMany => attempt.error("too many redirects"),
+            RedirectDecision::Downgrade => {
+                attempt.error("refusing an https -> http redirect downgrade")
+            }
+        }
+    })
+}
+
+/// The pure redirect decision, extracted so it can be tested without a real
+/// `reqwest::redirect::Attempt` (which is not constructible outside reqwest).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RedirectDecision {
+    Follow,
+    TooMany,
+    Downgrade,
+}
+
+/// Decide whether to follow a redirect: refuse past [`MAX_REDIRECT_HOPS`] and
+/// refuse an `https` → non-https scheme downgrade (a redirect must never move
+/// an authenticated fetch onto cleartext).
+fn redirect_decision(
+    previous_len: usize,
+    prev_scheme: &str,
+    next_scheme: &str,
+) -> RedirectDecision {
+    if previous_len >= MAX_REDIRECT_HOPS {
+        return RedirectDecision::TooMany;
+    }
+    if prev_scheme == "https" && next_scheme != "https" {
+        return RedirectDecision::Downgrade;
+    }
+    RedirectDecision::Follow
+}
+
+/// Maximum redirect hops a pull-source HTTP client follows.
+const MAX_REDIRECT_HOPS: usize = 3;
+
 /// `true` while a pull source's drive loop may launch one more concurrent
 /// fetch — i.e. `inflight` is still below [`MAX_INFLIGHT_FETCHES`].
 ///
@@ -108,6 +218,160 @@ mod inflight_tests {
             !may_spawn_fetch(MAX_INFLIGHT_FETCHES + 1),
             "past the cap (a caller that over-spawned) must not spawn more"
         );
+    }
+}
+
+#[cfg(test)]
+mod redirect_tests {
+    use super::redirect_policy;
+
+    /// The pure redirect decision: refuse past the hop cap and refuse an
+    /// https -> http downgrade.
+    #[test]
+    fn redirect_decision_refuses_hops_and_downgrade() {
+        use super::{MAX_REDIRECT_HOPS, RedirectDecision, redirect_decision};
+        assert_eq!(
+            redirect_decision(0, "https", "https"),
+            RedirectDecision::Follow
+        );
+        assert_eq!(
+            redirect_decision(0, "http", "http"),
+            RedirectDecision::Follow
+        );
+        // https -> http (and any non-https target) is refused.
+        assert_eq!(
+            redirect_decision(0, "https", "http"),
+            RedirectDecision::Downgrade
+        );
+        // Too many hops.
+        assert_eq!(
+            redirect_decision(MAX_REDIRECT_HOPS, "https", "https"),
+            RedirectDecision::TooMany
+        );
+    }
+
+    /// W16: the pull-source HTTP client follows at most 3 redirects and
+    /// refuses an https→http downgrade — both exercised against a real
+    /// loopback server.
+    #[tokio::test]
+    async fn redirect_policy_limits_hops_and_refuses_downgrade() {
+        use axum::Router;
+        use axum::response::Redirect;
+        use axum::routing::get;
+
+        // A redirect chain longer than the limit (4 hops) must error.
+        async fn hop() -> Redirect {
+            Redirect::to("/hop")
+        }
+        let app = Router::new().route("/hop", get(hop));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = reqwest::Client::builder()
+            .redirect(redirect_policy())
+            .build()
+            .unwrap();
+        let err = client
+            .get(format!("http://{addr}/hop"))
+            .send()
+            .await
+            .expect_err("an over-long redirect chain must error");
+        assert!(
+            err.to_string().contains("many redirects") || err.is_redirect(),
+            "expected a redirect-limit error: {err}"
+        );
+        server.abort();
+    }
+}
+
+#[cfg(test)]
+mod body_cap_tests {
+    use super::read_body_capped;
+
+    /// Audit run 7, W16: an over-cap body is refused, both when the origin
+    /// declares a huge `Content-Length` and when it streams past the cap
+    /// without one; a normal body passes through unchanged. Real bytes over a
+    /// real loopback HTTP server.
+    #[tokio::test]
+    async fn read_body_capped_bounds_declared_and_streamed_bodies() {
+        use axum::Router;
+        use axum::body::Body;
+        use axum::extract::State;
+        use axum::response::{IntoResponse, Response};
+        use axum::routing::get;
+
+        /// A deliberately tiny cap so the over-cap cases stay cheap.
+        const CAP: usize = 1024;
+
+        #[derive(Clone, Copy)]
+        enum Shape {
+            Ok,
+            DeclaredTooBig,
+            StreamedTooBig,
+        }
+
+        async fn handler(State(shape): State<Shape>) -> Response {
+            match shape {
+                Shape::Ok => Body::from(vec![0xABu8; 512]).into_response(),
+                Shape::DeclaredTooBig => {
+                    // A declared length past the cap: rejected from the header
+                    // alone, without reading the body.
+                    Body::from(vec![0u8; CAP + 1]).into_response()
+                }
+                Shape::StreamedTooBig => {
+                    // A chunked stream (no Content-Length) whose running total
+                    // exceeds the cap: rejected mid-stream.
+                    let chunks: Vec<std::result::Result<Vec<u8>, std::io::Error>> =
+                        std::iter::repeat_with(|| Ok(vec![0u8; 512]))
+                            .take(CAP / 512 + 2)
+                            .collect();
+                    Body::from_stream(futures_util::stream::iter(chunks)).into_response()
+                }
+            }
+        }
+
+        let client = reqwest::Client::new();
+        async fn serve(shape: Shape) -> (String, tokio::task::JoinHandle<()>) {
+            let app = Router::new().route("/", get(handler)).with_state(shape);
+            let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let addr = listener.local_addr().unwrap();
+            let task = tokio::spawn(async move {
+                axum::serve(listener, app).await.unwrap();
+            });
+            (format!("http://{addr}/"), task)
+        }
+
+        // A normal body is returned intact.
+        let (url, server) = serve(Shape::Ok).await;
+        let body = read_body_capped(client.get(&url).send().await.unwrap(), CAP, "test")
+            .await
+            .expect("in-cap body passes");
+        assert_eq!(body.len(), 512);
+        server.abort();
+
+        // A declared-oversize body is refused.
+        let (url, server) = serve(Shape::DeclaredTooBig).await;
+        let err = read_body_capped(client.get(&url).send().await.unwrap(), CAP, "test")
+            .await
+            .expect_err("declared-oversize body must be refused");
+        assert!(
+            err.to_string().contains("exceeds"),
+            "error must name the cap: {err}"
+        );
+        server.abort();
+
+        // A streamed-oversize body is refused even with no Content-Length.
+        let (url, server) = serve(Shape::StreamedTooBig).await;
+        let err = read_body_capped(client.get(&url).send().await.unwrap(), CAP, "test")
+            .await
+            .expect_err("streamed-oversize body must be refused");
+        assert!(
+            err.to_string().contains("exceeds"),
+            "error must name the cap: {err}"
+        );
+        server.abort();
     }
 }
 
@@ -166,9 +430,16 @@ impl Default for IngestTimeouts {
 
 impl From<&crate::config::Config> for IngestTimeouts {
     fn from(cfg: &crate::config::Config) -> Self {
+        // `Duration::from_secs_f64` PANICS on a negative, NaN or overflowing
+        // value (audit run 7, W19). `Config::validate` rejects those, but a
+        // config built in-process (an embedder, an unvalidated admin add)
+        // reaches here without validation, so fall back to the default rather
+        // than panicking at startup — matching `HttpLimits::from`'s own clamp.
         IngestTimeouts {
-            connect: Duration::from_secs_f64(cfg.ingest_connect_timeout_secs),
-            read: Duration::from_secs_f64(cfg.ingest_read_timeout_secs),
+            connect: Duration::try_from_secs_f64(cfg.ingest_connect_timeout_secs)
+                .unwrap_or(DEFAULT_CONNECT_TIMEOUT),
+            read: Duration::try_from_secs_f64(cfg.ingest_read_timeout_secs)
+                .unwrap_or(DEFAULT_READ_TIMEOUT),
         }
     }
 }

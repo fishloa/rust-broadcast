@@ -464,6 +464,12 @@ pub(crate) fn apply_window(
 /// duration rounds to zero.
 const MIN_TARGET_DURATION_SECS: u32 = 1;
 
+/// The `#EXT-X-MEDIA-SEQUENCE` value for an empty playlist — RFC 8216
+/// §4.3.3.2: "If the Media Playlist file does not contain an EXT-X-MEDIA-
+/// SEQUENCE tag, then the Media Sequence Number of the first Media
+/// Segment ... SHALL be considered to be 0."
+const DEFAULT_MEDIA_SEQUENCE: u64 = 0;
+
 /// Render `segments` (already ordered/windowed by the caller) into a Media
 /// Playlist whose segment URIs are `catchup/seg-{seq}.{ext}` (relative to
 /// wherever the playlist itself is served — `crate::output::catchup`
@@ -474,11 +480,20 @@ const MIN_TARGET_DURATION_SECS: u32 = 1;
 /// `map_uri` is the `#EXT-X-MAP` URI to advertise (RFC 8216bis §4.4.4.5,
 /// required for fMP4 — see `hls_runtime::server::Container`'s own doc);
 /// `None` for the `MpegTs` container, which needs no map.
+///
+/// `playlist_type` is `None` for a playlist that may lose leading
+/// segments (audit run 7, W11). RFC 8216 §6.2.2 is explicit that "A Live
+/// Playlist MUST NOT contain the EXT-X-PLAYLIST-TYPE tag, as no value of
+/// that tag allows Media Segments to be removed", and §6.2.1 says an
+/// `EVENT` playlist's server "MUST NOT change or delete any part of the
+/// Playlist file; it MAY append lines to it" — so a windowed or
+/// retention-evicted playlist must omit the tag rather than claim `EVENT`
+/// while removing its head.
 pub(crate) fn render_playlist(
     segments: &[CatchupSegment],
     ext: &str,
     map_uri: Option<&str>,
-    playlist_type: broadcast_hls::PlaylistType,
+    playlist_type: Option<broadcast_hls::PlaylistType>,
     endlist: bool,
 ) -> std::result::Result<String, broadcast_hls::Error> {
     let target_duration = segments
@@ -487,10 +502,14 @@ pub(crate) fn render_playlist(
         .fold(0.0_f64, f64::max)
         .ceil()
         .max(f64::from(MIN_TARGET_DURATION_SECS)) as u32;
+    // RFC 8216 §4.3.3.2: absent an `#EXT-X-MEDIA-SEQUENCE` tag the first
+    // segment's Media Sequence Number is taken to be 0 — so an empty
+    // playlist (no first segment to read a number from) declares 0, not
+    // the unrelated `#EXT-X-TARGETDURATION` floor.
     let media_sequence = segments
         .first()
         .map(|s| u64::from(s.seq))
-        .unwrap_or(u64::from(MIN_TARGET_DURATION_SECS));
+        .unwrap_or(DEFAULT_MEDIA_SEQUENCE);
     let hls_segments: Vec<broadcast_hls::MediaSegment> = segments
         .iter()
         .map(|s| broadcast_hls::MediaSegment {
@@ -514,7 +533,7 @@ pub(crate) fn render_playlist(
         segments: hls_segments,
         endlist,
         extra_tags,
-        playlist_type: Some(playlist_type),
+        playlist_type,
         ..Default::default()
     };
     playlist.to_m3u8()
@@ -866,7 +885,7 @@ mod tests {
             &segments,
             "m4s",
             Some("init-1.mp4"),
-            broadcast_hls::PlaylistType::Event,
+            Some(broadcast_hls::PlaylistType::Event),
             false,
         )
         .expect("generated URIs are valid");
@@ -895,7 +914,7 @@ mod tests {
             &segments,
             "ts",
             None,
-            broadcast_hls::PlaylistType::Vod,
+            Some(broadcast_hls::PlaylistType::Vod),
             true,
         )
         .expect("generated URIs are valid");
@@ -1088,8 +1107,34 @@ mod tests {
 
     #[test]
     fn render_playlist_empty_segments_uses_minimum_target_duration() {
-        let body = render_playlist(&[], "m4s", None, broadcast_hls::PlaylistType::Event, false)
-            .expect("empty playlist renders");
+        let body = render_playlist(
+            &[],
+            "m4s",
+            None,
+            Some(broadcast_hls::PlaylistType::Event),
+            false,
+        )
+        .expect("empty playlist renders");
         assert!(body.contains("#EXT-X-TARGETDURATION:1"), "body: {body}");
+        // RFC 8216 §4.3.3.2: an empty playlist's first Media Sequence
+        // Number is 0, not the (unrelated) target-duration floor.
+        assert!(body.contains("#EXT-X-MEDIA-SEQUENCE:0"), "body: {body}");
+    }
+
+    #[test]
+    fn render_playlist_omits_playlist_type_when_passed_none() {
+        let segments = [CatchupSegment {
+            seq: 5,
+            start_pts_ns: 0,
+            duration_secs: 2.0,
+            discontinuous: false,
+        }];
+        let body =
+            render_playlist(&segments, "m4s", None, None, false).expect("generated URIs are valid");
+        assert!(
+            !body.contains("#EXT-X-PLAYLIST-TYPE"),
+            "a playlist that may remove segments must not claim a \
+             PLAYLIST-TYPE (RFC 8216 §6.2.2): {body}"
+        );
     }
 }

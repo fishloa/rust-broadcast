@@ -63,6 +63,7 @@ use transmux::ir::{Media, TrackSpec};
 
 pub use rtmp::{RtmpTransport, RtmpTransportConfig};
 pub use rtsp::{RtspTransport, RtspTransportConfig};
+pub(crate) use srt::validate_srt_url;
 pub use srt::{SrtTransport, SrtTransportConfig};
 
 /// Error from [`PushTransport::send_media`] — distinguishes a muxing failure

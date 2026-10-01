@@ -39,14 +39,185 @@ impl std::fmt::Debug for SrtTransport {
     }
 }
 
+/// Query-string overrides parsed from an `srt://` URL.
+#[derive(Debug, Default, PartialEq, Eq)]
+struct SrtUrlOverrides {
+    stream_id: Option<String>,
+    latency_ms: Option<u16>,
+}
+
+/// Parse an SRT URL into the `host:port` to dial and its query-string
+/// overrides (audit run 7, W17).
+///
+/// Accepts both `srt://host:port?…` and a **scheme-less** `host:port?…`
+/// (the pre-fix code accepted the latter via `unwrap_or(url)`; routing it
+/// through `url::Url::parse` made `host:9000` parse as scheme `"host"` with
+/// no host, breaking it). IPv6 literals are accepted bracketed (`[::1]:9000`)
+/// or bare (`::1:9000`).
+///
+/// The query is split off **manually** (first `?`), not via `url`'s
+/// `query_pairs()`, because a Haivision `streamid=#!::r=…` value contains a
+/// `#` that a `Url` parser treats as a fragment delimiter, cutting the value
+/// short unless it is percent-encoded. Splitting on the raw string keeps the
+/// whole value.
+///
+/// Recognised keys: `streamid` (opaque, passed to the handshake) and `latency`
+/// (milliseconds, `0..=MAX_SRT_LATENCY_MS`; an out-of-range or unparseable
+/// value is rejected, not silently ignored — a wrong latency is a real
+/// misconfiguration). `mode` is validated to be `caller` (this transport only
+/// dials); `passphrase` is rejected as unsupported (SRT encryption is not
+/// implemented). Unknown keys are ignored.
+fn parse_srt_url(url: &str) -> Result<(String, SrtUrlOverrides), srt_runtime::Error> {
+    let invalid = |what: &'static str| srt_runtime::Error::Io {
+        kind: std::io::ErrorKind::InvalidInput,
+        context: what,
+    };
+    let stripped = url.strip_prefix("srt://").unwrap_or(url);
+    let (authority, query) = match stripped.split_once('?') {
+        Some((a, q)) => (a, Some(q)),
+        None => (stripped, None),
+    };
+    let authority = authority.trim_end_matches('/');
+    let addr = normalize_srt_authority(authority).ok_or_else(|| invalid("srt url: bad host"))?;
+
+    let mut overrides = SrtUrlOverrides::default();
+    if let Some(query) = query {
+        for pair in query.split('&') {
+            if pair.is_empty() {
+                continue;
+            }
+            let (key, value) = match pair.split_once('=') {
+                Some((k, v)) => (k, v),
+                None => (pair, ""),
+            };
+            match key {
+                "streamid" => overrides.stream_id = Some(percent_decode(value)),
+                "latency" => {
+                    let ms = value.parse::<u16>().map_err(|_| {
+                        invalid("srt url: latency must be an integer number of milliseconds")
+                    })?;
+                    if ms > MAX_SRT_LATENCY_MS {
+                        return Err(invalid("srt url: latency exceeds the 8000 ms maximum"));
+                    }
+                    overrides.latency_ms = Some(ms);
+                }
+                "mode" if value != "caller" => {
+                    return Err(invalid(
+                        "srt url: only mode=caller is supported for a push output",
+                    ));
+                }
+                "passphrase" => {
+                    return Err(invalid(
+                        "srt url: passphrase/encryption is not supported for a push output",
+                    ));
+                }
+                _ => {}
+            }
+        }
+    }
+    Ok((addr, overrides))
+}
+
+/// Normalise an SRT authority into a `host:port` string, or `None` if it has
+/// no host. Accepts `host`, `host:port`, `[v6]`, `[v6]:port`, and a bare
+/// `v6` literal (bracketed for `ToSocketAddrs`); defaults the port.
+fn normalize_srt_authority(authority: &str) -> Option<String> {
+    if authority.is_empty() {
+        return None;
+    }
+    // Bracketed IPv6: `[::1]` or `[::1]:9000`.
+    if let Some(rest) = authority.strip_prefix('[') {
+        let (host, after) = rest.split_once(']')?;
+        if host.is_empty() {
+            return None;
+        }
+        let port = match after.strip_prefix(':') {
+            Some(p) => p.parse::<u16>().ok()?,
+            None if after.is_empty() => DEFAULT_SRT_PORT,
+            None => return None,
+        };
+        return Some(format!("[{host}]:{port}"));
+    }
+    // A bare IPv6 literal (2+ colons, unbracketed) is **ambiguous** — the
+    // last group could be a port or part of the address — so it is rejected:
+    // the operator must bracket it () to disambiguate.
+    if authority.matches(':').count() >= 2 {
+        return None;
+    }
+    // `host` or `host:port`.
+    match authority.rsplit_once(':') {
+        Some((host, port)) => {
+            if host.is_empty() {
+                return None;
+            }
+            let port = port.parse::<u16>().ok()?;
+            Some(format!("{host}:{port}"))
+        }
+        None => Some(format!("{authority}:{DEFAULT_SRT_PORT}")),
+    }
+}
+
+/// Percent-decode an SRT query value (`%XX` → byte), leaving every other
+/// byte as-is. A Haivision `streamid=#!::r=…` value is typically left
+/// unencoded and passes through literally; a percent-encoded one (e.g. a `%23`
+/// for `#`, or `%2C` for a comma) is decoded. A stray `%` with no valid hex
+/// pair is kept literal rather than dropped.
+fn percent_decode(value: &str) -> String {
+    let bytes = value.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                // Both nibbles are 0..=15, so the byte is always in range.
+                if let Ok(byte) = u8::try_from(hi * 16 + lo) {
+                    out.push(byte);
+                    i += 3;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    String::from_utf8_lossy(&out).into_owned()
+}
+
+/// Upper bound on an SRT `latency` query value, milliseconds
+/// (draft-sharabayko-srt §3.2.1.1 practical maximum).
+const MAX_SRT_LATENCY_MS: u16 = 8000;
+
+/// Validate an `srt://` push URL at config time (audit W17), so a bad URL
+/// (missing host, bad port, unsupported `mode`/`passphrase`, out-of-range
+/// `latency`) surfaces as a config error — including on an admin add/reload —
+/// rather than when the push task first dials.
+pub(crate) fn validate_srt_url(url: &str) -> Result<(), String> {
+    parse_srt_url(url)
+        .map(|_| ())
+        .map_err(|_| format!("not a valid srt:// URL: {url}"))
+}
+
+/// SRT's IANA-registered default port (RFC-style default for the `srt://`
+/// scheme; draft-sharabayko-srt §Appendix).
+const DEFAULT_SRT_PORT: u16 = 9000;
+
 #[async_trait::async_trait]
 impl PushTransport for SrtTransport {
     type Config = SrtTransportConfig;
     type Error = srt_runtime::Error;
 
     async fn connect(url: &str, config: &Self::Config) -> Result<Self, Self::Error> {
-        let addr = url.strip_prefix("srt://").unwrap_or(url);
-        let socket = SrtSocket::connect(addr, config.srt_config.clone()).await?;
+        let (addr, overrides) = parse_srt_url(url)?;
+        let mut srt_config = config.srt_config.clone();
+        if let Some(stream_id) = overrides.stream_id {
+            srt_config.stream_id = Some(stream_id);
+        }
+        if let Some(latency_ms) = overrides.latency_ms {
+            srt_config.latency_ms = latency_ms;
+        }
+        let socket = SrtSocket::connect(addr, srt_config).await?;
         Ok(Self {
             socket: Some(socket),
         })
@@ -73,6 +244,68 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
+
+    /// Audit run 7, W17: the query string is parsed off the address, not
+    /// passed through as part of it. Before the fix
+    /// `url.strip_prefix("srt://")` left `host:port?streamid=…` as the dial
+    /// address, so the handshake resolved a bogus host.
+    #[test]
+    fn parse_srt_url_separates_address_from_query() {
+        let (addr, o) =
+            parse_srt_url("srt://example.com:9001?streamid=live/cam&latency=120").unwrap();
+        assert_eq!(
+            addr, "example.com:9001",
+            "the dial address is host:port only"
+        );
+        assert_eq!(o.stream_id.as_deref(), Some("live/cam"));
+        assert_eq!(o.latency_ms, Some(120));
+
+        // Scheme-less `host:port` is accepted (regression: `url::Url` parsed
+        // `host:9000` as scheme "host" with no host).
+        let (addr, _) = parse_srt_url("example.com:9000").unwrap();
+        assert_eq!(addr, "example.com:9000");
+        let (addr, _) = parse_srt_url("127.0.0.1:9001").unwrap();
+        assert_eq!(addr, "127.0.0.1:9001");
+        // Bare host → default port.
+        let (addr, o) = parse_srt_url("example.com").unwrap();
+        assert_eq!(addr, "example.com:9000");
+        assert_eq!(o, SrtUrlOverrides::default());
+
+        // IPv6, bracketed and bare.
+        let (addr, _) = parse_srt_url("srt://[::1]:9000").unwrap();
+        assert_eq!(addr, "[::1]:9000");
+        let (addr, _) = parse_srt_url("[::1]:9001").unwrap();
+        assert_eq!(addr, "[::1]:9001");
+        // A bare, unbracketed IPv6 authority is ambiguous → error.
+        assert!(parse_srt_url("::1").is_err());
+        assert!(parse_srt_url("::1:9000").is_err());
+        assert!(parse_srt_url("srt://::1").is_err());
+
+        // Haivision `#!::r=…` streamid keeps the whole value (a `#` is not a
+        // fragment delimiter here); an unencoded value passes through
+        // literally.
+        let (_, o) = parse_srt_url("srt://h:9000?streamid=#!::r=live/cam,m=publish").unwrap();
+        assert_eq!(o.stream_id.as_deref(), Some("#!::r=live/cam,m=publish"));
+        // A percent-encoded streamid is decoded.
+        let (_, o) = parse_srt_url("srt://h:9000?streamid=%23!::r=live%2Fcam%2Cm=publish").unwrap();
+        assert_eq!(o.stream_id.as_deref(), Some("#!::r=live/cam,m=publish"));
+        // A stray `%` is kept literal, not dropped.
+        let (_, o) = parse_srt_url("srt://h:9000?streamid=100%").unwrap();
+        assert_eq!(o.stream_id.as_deref(), Some("100%"));
+
+        // Hostile inputs: empty host, bad port, out-of-range latency, a
+        // non-caller mode, and a passphrase are all rejected, not panicked.
+        assert!(parse_srt_url("").is_err());
+        assert!(parse_srt_url(":9000").is_err());
+        assert!(parse_srt_url("host:notaport").is_err());
+        assert!(parse_srt_url("host:99999").is_err());
+        assert!(parse_srt_url("host:9000?latency=notanumber").is_err());
+        assert!(parse_srt_url("host:9000?latency=99999").is_err());
+        assert!(parse_srt_url("host:9000?mode=listener").is_err());
+        assert!(parse_srt_url("host:9000?passphrase=secret").is_err());
+        // `mode=caller` is accepted.
+        assert!(parse_srt_url("host:9000?mode=caller").is_ok());
+    }
 
     /// SRT loopback (issue #744): spawn a real test-owned `SrtListener` that
     /// accepts one Caller, then connect an `SrtTransport` (Caller mode) to it
@@ -114,15 +347,17 @@ mod tests {
         });
 
         let cfg = SrtTransportConfig::default();
+        // The URL carries a query (`streamid`/`latency`) that must be parsed
+        // off the address, not passed through as part of it (audit W17) —
+        // `parse_srt_url` strips it, the handshake dials `host:port`.
+        let url = format!("srt://{bound}?streamid=live/cam&latency=120&mode=caller");
         // HANG GUARD (workspace precedent, issue #826): bound the dial so a
         // never-connecting caller fails rather than hangs.
-        let transport = tokio::time::timeout(
-            Duration::from_secs(30),
-            SrtTransport::connect(&format!("srt://{bound}"), &cfg),
-        )
-        .await
-        .expect("connect must not hang")
-        .expect("connect");
+        let transport =
+            tokio::time::timeout(Duration::from_secs(30), SrtTransport::connect(&url, &cfg))
+                .await
+                .expect("connect must not hang")
+                .expect("connect with a query-string URL must succeed");
 
         let mut transport = transport;
         transport.send(PAYLOAD).await.expect("send");

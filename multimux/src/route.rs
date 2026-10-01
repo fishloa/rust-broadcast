@@ -276,6 +276,14 @@ pub struct DashWindowSegment {
     pub segment_seq: u32,
     /// Matches [`media_plane::trunk::SegmentEntry::duration`], as seconds.
     pub duration_secs: f64,
+    /// This segment's **absolute** start on this program's own monotonic
+    /// timeline, in nanoseconds — [`media_plane::trunk::SegmentEntry::timeline_position`],
+    /// which starts at `0` for the program's first segment and never resets as
+    /// the window slides. Needed by the Smooth output, whose `c@t`/`tfxd` must
+    /// be stable for a given segment as the window advances (issue #1083, W13
+    /// follow-up): the window-relative cumulative sum changes on every slide,
+    /// this does not.
+    pub timeline_position_ns: u64,
 }
 
 /// The small `Trunk`-drained state DASH/LL-DASH rendering needs beyond any
@@ -324,6 +332,7 @@ impl DashState {
                 window.push_back(DashWindowSegment {
                     segment_seq: entry.sequence_number,
                     duration_secs: entry.duration.as_secs_f64(),
+                    timeline_position_ns: entry.timeline_position.as_nanos(),
                 });
             }
         }

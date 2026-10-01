@@ -402,6 +402,41 @@ impl ReconnectPolicy {
             .saturating_mul(1u64 << attempt.min(20));
         std::time::Duration::from_millis(ms.min(self.max_backoff_ms))
     }
+
+    /// Validate the policy (audit run 7, W19): a zero backoff (either bound)
+    /// means a reconnect with no delay — a storm against the destination.
+    pub fn validate(&self) -> Result<()> {
+        if self.initial_backoff_ms == 0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.outputs[].reconnect.initial_backoff_ms",
+                reason: "must be greater than 0 (a zero initial backoff reconnects \
+                         with no delay)"
+                    .into(),
+            });
+        }
+        if self.max_backoff_ms == 0 {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.outputs[].reconnect.max_backoff_ms",
+                reason: "must be greater than 0 (a zero max backoff reconnects with \
+                         no delay)"
+                    .into(),
+            });
+        }
+        if self.initial_backoff_ms > self.max_backoff_ms {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.outputs[].reconnect.initial_backoff_ms",
+                reason: "must not exceed max_backoff_ms".into(),
+            });
+        }
+        const MAX_BACKOFF_MS: u64 = 86_400_000; // 24 h
+        if self.initial_backoff_ms > MAX_BACKOFF_MS || self.max_backoff_ms > MAX_BACKOFF_MS {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.outputs[].reconnect.max_backoff_ms",
+                reason: "backoff must not exceed 86_400_000 ms (24 h)".into(),
+            });
+        }
+        Ok(())
+    }
 }
 
 /// Server-side output auth (issue #663 "shared output auth"): configures one
@@ -1348,6 +1383,33 @@ impl Route {
                 });
             }
         }
+        // Audit run 7, W19: a zero backoff (either bound) reconnects with no
+        // delay — a reconnect storm against the destination. Reject it here,
+        // at config-validation time, rather than letting a push task spin.
+        for kind in &self.outputs {
+            let reconnect = match kind {
+                OutputKind::SrtPush { reconnect, .. }
+                | OutputKind::RtmpPush { reconnect, .. }
+                | OutputKind::RtspPush { reconnect, .. } => reconnect.as_ref(),
+                _ => None,
+            };
+            if let Some(policy) = reconnect {
+                policy.validate()?;
+            }
+        }
+        // Audit W17: an `srt_push` URL is parsed/validated at config time so a
+        // bad host/port/query surfaces as a config error (also on admin
+        // add/reload), not when the push task first dials.
+        for kind in &self.outputs {
+            if let OutputKind::SrtPush { url, .. } = kind {
+                crate::push::validate_srt_url(url).map_err(|reason| {
+                    MultimuxError::ConfigInvalid {
+                        field: "routes.outputs[].url",
+                        reason,
+                    }
+                })?;
+            }
+        }
         // Issue #743: `OutputKind::Whep`'s `listen` field needs the same
         // `host:port` validation `InputSpec::Whip`'s own `listen` gets below.
         #[cfg(feature = "whep")]
@@ -1542,6 +1604,27 @@ impl Default for Config {
 /// engine's own cap ever gets a chance to resolve it or fall back.
 const MIN_REQUEST_TIMEOUT_SECS: f64 = 5.0;
 
+/// Documented maximum for every timeout/backoff duration in seconds (24 h) —
+/// anything larger is rejected at validation, and `Duration::try_from_secs_f64`
+/// (which fails above the `Duration` range) is the backstop for a value that
+/// slipped through unvalidated.
+pub(crate) const MAX_TIMEOUT_SECS: f64 = 86_400.0;
+
+/// Validate a seconds-valued timeout: finite, `> 0`, and `<= MAX_TIMEOUT_SECS`.
+/// Rejects NaN/infinity/negative and an overflowing-but-finite value such as
+/// `1e20` (which `Duration::from_secs_f64` would panic on) — audit W19.
+fn validate_timeout_secs(field: &'static str, secs: f64) -> Result<()> {
+    if !secs.is_finite() || secs <= 0.0 || secs > MAX_TIMEOUT_SECS {
+        return Err(MultimuxError::ConfigInvalid {
+            field,
+            reason: format!(
+                "must be a finite number of seconds in (0, {MAX_TIMEOUT_SECS}], got {secs}"
+            ),
+        });
+    }
+    Ok(())
+}
+
 impl Config {
     /// Load a JSON config file.
     pub fn from_json_file(path: &Path) -> Result<Config> {
@@ -1607,18 +1690,11 @@ impl Config {
                 reason: "must be positive".into(),
             });
         }
-        if self.ingest_connect_timeout_secs <= 0.0 {
-            return Err(MultimuxError::ConfigInvalid {
-                field: "ingest_connect_timeout_secs",
-                reason: "must be positive".into(),
-            });
-        }
-        if self.ingest_read_timeout_secs <= 0.0 {
-            return Err(MultimuxError::ConfigInvalid {
-                field: "ingest_read_timeout_secs",
-                reason: "must be positive".into(),
-            });
-        }
+        validate_timeout_secs(
+            "ingest_connect_timeout_secs",
+            self.ingest_connect_timeout_secs,
+        )?;
+        validate_timeout_secs("ingest_read_timeout_secs", self.ingest_read_timeout_secs)?;
         if !self.concurrency_queue_timeout_secs.is_finite()
             || self.concurrency_queue_timeout_secs <= 0.0
         {
@@ -2134,6 +2210,163 @@ mod tests {
         assert_eq!(cfg.max_concurrent_requests, 100);
         assert_eq!(cfg.max_request_body_bytes, 2048);
         cfg.validate().unwrap();
+    }
+
+    /// Audit W17: an `srt_push` URL is validated at config time — a bad host
+    /// or unsupported query is a config error, not a silent dial failure.
+    #[test]
+    fn validate_rejects_bad_srt_push_url() {
+        let mk = |url: &str| Config {
+            routes: vec![Route {
+                name: "x".into(),
+                input: InputSpec::Rtsp {
+                    url: "rtsp://a".into(),
+                    auth: None,
+                },
+                outputs: vec![OutputKind::SrtPush {
+                    url: url.to_string(),
+                    format: None,
+                    reconnect: None,
+                }],
+                dvr: DvrConfig::default(),
+            }],
+            ..Config::default()
+        };
+        assert!(mk("srt://").validate().is_err(), "empty host");
+        assert!(mk("srt://h:notaport").validate().is_err(), "bad port");
+        assert!(
+            mk("srt://h:9000?passphrase=x").validate().is_err(),
+            "passphrase"
+        );
+        assert!(mk("srt://h:9000").validate().is_ok(), "a valid URL passes");
+    }
+
+    /// Audit run 7, W19: a zero reconnect backoff is rejected (it would
+    /// reconnect with no delay), and an extreme (non-finite) ingest timeout
+    /// is rejected at validation rather than panicking later in
+    /// `Duration::from_secs_f64`.
+    #[test]
+    fn validate_rejects_zero_backoff_and_non_finite_timeouts() {
+        fn route_with(reconnect: ReconnectPolicy) -> Config {
+            Config {
+                routes: vec![Route {
+                    name: "x".into(),
+                    input: InputSpec::Rtsp {
+                        url: "rtsp://a".into(),
+                        auth: None,
+                    },
+                    outputs: vec![OutputKind::RtmpPush {
+                        url: "rtmp://a/live".into(),
+                        format: None,
+                        reconnect: Some(reconnect),
+                    }],
+                    dvr: DvrConfig::default(),
+                }],
+                ..Config::default()
+            }
+        }
+
+        // Zero initial or max backoff is rejected.
+        assert!(
+            route_with(ReconnectPolicy {
+                initial_backoff_ms: 0,
+                ..ReconnectPolicy::default()
+            })
+            .validate()
+            .is_err()
+        );
+        assert!(
+            route_with(ReconnectPolicy {
+                max_backoff_ms: 0,
+                ..ReconnectPolicy::default()
+            })
+            .validate()
+            .is_err()
+        );
+        // initial > max is rejected.
+        assert!(
+            route_with(ReconnectPolicy {
+                initial_backoff_ms: 5_000,
+                max_backoff_ms: 1_000,
+                ..ReconnectPolicy::default()
+            })
+            .validate()
+            .is_err()
+        );
+        // An absurdly large backoff is rejected.
+        assert!(
+            route_with(ReconnectPolicy {
+                initial_backoff_ms: 1_000,
+                max_backoff_ms: u64::MAX,
+                ..ReconnectPolicy::default()
+            })
+            .validate()
+            .is_err()
+        );
+        // The same policy is validated on SrtPush and RtspPush outputs too.
+        for kind in [
+            OutputKind::SrtPush {
+                url: "srt://h:9000".into(),
+                format: None,
+                reconnect: Some(ReconnectPolicy {
+                    initial_backoff_ms: 0,
+                    ..ReconnectPolicy::default()
+                }),
+            },
+            OutputKind::RtspPush {
+                url: "rtsp://h/live".into(),
+                format: None,
+                reconnect: Some(ReconnectPolicy {
+                    initial_backoff_ms: 0,
+                    ..ReconnectPolicy::default()
+                }),
+            },
+        ] {
+            let cfg = Config {
+                routes: vec![Route {
+                    name: "x".into(),
+                    input: InputSpec::Rtsp {
+                        url: "rtsp://a".into(),
+                        auth: None,
+                    },
+                    outputs: vec![kind],
+                    dvr: DvrConfig::default(),
+                }],
+                ..Config::default()
+            };
+            assert!(
+                cfg.validate().is_err(),
+                "a zero backoff on any push output must be rejected"
+            );
+        }
+        // A sane policy passes.
+        route_with(ReconnectPolicy::default()).validate().unwrap();
+
+        // NaN and an overflowing (but finite) timeout are both rejected.
+        for bad in [f64::NAN, f64::INFINITY, 1e20] {
+            let cfg = Config {
+                ingest_read_timeout_secs: bad,
+                ..route_with(ReconnectPolicy::default())
+            };
+            assert!(
+                cfg.validate().is_err(),
+                "ingest_read_timeout_secs {bad} must be rejected"
+            );
+        }
+    }
+
+    /// An unvalidated config with an extreme timeout must not panic
+    /// `IngestTimeouts::from` — it falls back to the default.
+    #[test]
+    fn ingest_timeouts_from_extreme_config_does_not_panic() {
+        let cfg = Config {
+            ingest_connect_timeout_secs: f64::NAN,
+            ingest_read_timeout_secs: 1e20,
+            ..Config::default()
+        };
+        let timeouts = crate::source::IngestTimeouts::from(&cfg);
+        assert_eq!(timeouts.connect, crate::source::DEFAULT_CONNECT_TIMEOUT);
+        assert_eq!(timeouts.read, crate::source::DEFAULT_READ_TIMEOUT);
     }
 
     // --- issue #663 P4: per-route `outputs` ---

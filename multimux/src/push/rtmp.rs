@@ -24,6 +24,14 @@ const META_VIDEOCODECID_AVC: f64 = 7.0;
 /// FLV `audiocodecid` metadata value for AAC (`SoundFormat` 10, Adobe FLV v10.1 §E.4.2).
 const META_AUDIOCODECID_AAC: f64 = 10.0;
 
+/// Bound on the whole RTMP connect + handshake (`TcpStream::connect` plus the
+/// C0/C1/C2 handshake and `connect`/`createStream`/`publish` command
+/// exchange) — audit run 7, W17. A server that accepts the TCP connection but
+/// never finishes the RTMP handshake would otherwise wedge the push forever,
+/// because `drive_push` only checks its cancel flag between iterations and
+/// the handshake loop here has no other bound.
+const RTMP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
+
 /// Whether `config` is a codec RTMP/FLV can carry (issue #934: FLV's
 /// mainstream is AVC video + AAC audio only — `transmux::flv`'s module doc).
 /// Any other track present in the trunk (e.g. a private/section stream) is
@@ -78,6 +86,10 @@ pub struct RtmpTransportConfig {
     pub app: String,
     /// Publishing name (stream key).
     pub stream_key: String,
+    /// Bound on the connect + handshake (audit run 7, W17); `None` uses
+    /// `RTMP_CONNECT_TIMEOUT` (15 s). Exposed so a test (or an operator with
+    /// an unusually slow peer) can override it.
+    pub connect_timeout: Option<std::time::Duration>,
 }
 
 impl Default for RtmpTransportConfig {
@@ -85,6 +97,7 @@ impl Default for RtmpTransportConfig {
         Self {
             app: "live".to_string(),
             stream_key: String::new(),
+            connect_timeout: None,
         }
     }
 }
@@ -114,52 +127,14 @@ impl PushTransport for RtmpTransport {
     type Error = RtmpPushError;
 
     async fn connect(url: &str, config: &Self::Config) -> Result<Self, Self::Error> {
-        let parsed = url::Url::parse(url).map_err(|e| RtmpPushError::Connect(e.to_string()))?;
-        let host = parsed.host_str().unwrap_or("127.0.0.1");
-        let port = parsed.port().unwrap_or(1935);
-        let addr = format!("{host}:{port}");
-
-        let mut stream = TcpStream::connect(&addr)
+        let timeout = config.connect_timeout.unwrap_or(RTMP_CONNECT_TIMEOUT);
+        tokio::time::timeout(timeout, Self::connect_within(url, config))
             .await
-            .map_err(|e| RtmpPushError::Connect(e.to_string()))?;
-
-        let tc_url = format!("rtmp://{host}:{port}/{}", config.app);
-        let mut client_config = ClientConfig::default();
-        client_config.app = config.app.clone();
-        client_config.stream_key = config.stream_key.clone();
-        client_config.tc_url = Some(tc_url);
-        let mut client = ClientSession::new(client_config);
-        let c0_c1 = client.start();
-        stream.write_all(&c0_c1).await.map_err(RtmpPushError::Io)?;
-
-        let mut buf = vec![0u8; 8192];
-        loop {
-            let n = stream.read(&mut buf).await.map_err(RtmpPushError::Io)?;
-            if n == 0 {
-                return Err(RtmpPushError::Connect(
-                    "connection closed during handshake".into(),
-                ));
-            }
-            let (reply, events) = client
-                .handle_data(&buf[..n])
-                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
-            if !reply.is_empty() {
-                stream.write_all(&reply).await.map_err(RtmpPushError::Io)?;
-            }
-            if client.is_publishing() {
-                return Ok(Self {
-                    stream: Some(stream),
-                    client,
-                    warned_refused_tracks: false,
-                });
-            }
-            if events
-                .iter()
-                .any(|e| matches!(e, rtmp_runtime::client::ClientEvent::Error { .. }))
-            {
-                return Err(RtmpPushError::Protocol("server rejected connection".into()));
-            }
-        }
+            .unwrap_or_else(|_| {
+                Err(RtmpPushError::Connect(format!(
+                    "RTMP connect/handshake exceeded {timeout:?}"
+                )))
+            })
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), Self::Error> {
@@ -363,6 +338,64 @@ impl PushTransport for RtmpTransport {
     }
 }
 
+impl RtmpTransport {
+    /// The connect + handshake body, wrapped by the `PushTransport::connect`
+    /// impl in [`RTMP_CONNECT_TIMEOUT`] (audit run 7, W17) so a server that
+    /// accepts the TCP connection but never finishes the RTMP handshake fails
+    /// instead of wedging the push forever.
+    async fn connect_within(
+        url: &str,
+        config: &RtmpTransportConfig,
+    ) -> Result<Self, RtmpPushError> {
+        let parsed = url::Url::parse(url).map_err(|e| RtmpPushError::Connect(e.to_string()))?;
+        let host = parsed.host_str().unwrap_or("127.0.0.1");
+        let port = parsed.port().unwrap_or(1935);
+        let addr = format!("{host}:{port}");
+
+        let mut stream = TcpStream::connect(&addr)
+            .await
+            .map_err(|e| RtmpPushError::Connect(e.to_string()))?;
+
+        let tc_url = format!("rtmp://{host}:{port}/{}", config.app);
+        let mut client_config = ClientConfig::default();
+        client_config.app = config.app.clone();
+        client_config.stream_key = config.stream_key.clone();
+        client_config.tc_url = Some(tc_url);
+        let mut client = ClientSession::new(client_config);
+        let c0_c1 = client.start();
+        stream.write_all(&c0_c1).await.map_err(RtmpPushError::Io)?;
+
+        let mut buf = vec![0u8; 8192];
+        loop {
+            let n = stream.read(&mut buf).await.map_err(RtmpPushError::Io)?;
+            if n == 0 {
+                return Err(RtmpPushError::Connect(
+                    "connection closed during handshake".into(),
+                ));
+            }
+            let (reply, events) = client
+                .handle_data(&buf[..n])
+                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
+            if !reply.is_empty() {
+                stream.write_all(&reply).await.map_err(RtmpPushError::Io)?;
+            }
+            if client.is_publishing() {
+                return Ok(Self {
+                    stream: Some(stream),
+                    client,
+                    warned_refused_tracks: false,
+                });
+            }
+            if events
+                .iter()
+                .any(|e| matches!(e, rtmp_runtime::client::ClientEvent::Error { .. }))
+            {
+                return Err(RtmpPushError::Protocol("server rejected connection".into()));
+            }
+        }
+    }
+}
+
 /// Errors from the RTMP push transport.
 #[non_exhaustive]
 #[derive(Debug, thiserror::Error)]
@@ -381,6 +414,50 @@ pub enum RtmpPushError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit run 7, W17: a server that accepts the TCP connection but never
+    /// replies to the RTMP handshake must fail the connect within the
+    /// configured bound, not wedge forever. A real loopback listener accepts
+    /// and then reads and discards without ever writing.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn connect_times_out_against_a_black_hole_peer() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind black-hole listener");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            if let Ok((mut sock, _)) = listener.accept().await {
+                // Accept, then never respond — read and discard forever.
+                let mut buf = [0u8; 4096];
+                while matches!(sock.read(&mut buf).await, Ok(n) if n > 0) {}
+            }
+        });
+
+        let cfg = RtmpTransportConfig {
+            app: "live".to_string(),
+            stream_key: "test".to_string(),
+            connect_timeout: Some(std::time::Duration::from_millis(200)),
+        };
+        let url = format!("rtmp://{addr}/live/test");
+        let started = std::time::Instant::now();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            RtmpTransport::connect(&url, &cfg),
+        )
+        .await
+        .expect("connect must return, not hang");
+        server.abort();
+        let err = result.expect_err("black-hole handshake must fail");
+        assert!(
+            err.to_string().contains("exceeded"),
+            "the failure must be the connect timeout: {err}"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "the connect bound must fire promptly, took {:?}",
+            started.elapsed()
+        );
+    }
 
     fn avc_config() -> CodecConfig {
         CodecConfig::Avc {

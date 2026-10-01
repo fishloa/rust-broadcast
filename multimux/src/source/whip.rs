@@ -560,8 +560,8 @@ async fn handle_whip_connection(
     if request_line.starts_with("OPTIONS") {
         let resp = "HTTP/1.1 204 No Content\r\n\
              Access-Control-Allow-Origin: *\r\n\
-             Access-Control-Allow-Methods: POST, OPTIONS\r\n\
-             Access-Control-Allow-Headers: Content-Type\r\n\
+             Access-Control-Allow-Methods: POST, PATCH, DELETE, OPTIONS\r\n\
+             Access-Control-Allow-Headers: Authorization, Content-Type, If-Match\r\n\
              Content-Length: 0\r\n\r\n";
         let _ = stream.write_all(resp.as_bytes()).await;
         return Ok(());
@@ -1515,6 +1515,59 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
             "a route at capacity must never admit a session"
         );
+    }
+
+    /// Audit W18: a WHIP preflight (`OPTIONS`) with
+    /// `Access-Control-Request-Headers: authorization` must be answered with a
+    /// CORS response that names `Authorization` (a Bearer-auth publisher needs
+    /// it) and the WHIP methods.
+    #[tokio::test]
+    async fn whip_preflight_allows_authorization_and_methods() {
+        use tokio::io::AsyncReadExt;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+
+        let crlf = String::from_utf8(vec![13, 10]).unwrap();
+        let request = [
+            "OPTIONS /whip HTTP/1.1",
+            "Origin: https://publisher.example",
+            "Access-Control-Request-Method: POST",
+            "Access-Control-Request-Headers: authorization",
+            "Content-Length: 0",
+            "",
+            "",
+        ]
+        .join(&crlf);
+        client.write_all(request.as_bytes()).await.unwrap();
+
+        let (tx, _rx) = mpsc::channel::<AdmittedWhip>(1);
+        let active_sessions = Arc::new(AtomicUsize::new(0));
+        handle_whip_connection(server, &tx, &active_sessions, 4)
+            .await
+            .expect("preflight");
+
+        // Bounded read: the preflight keeps the connection open after its
+        // `Content-Length: 0` response, so `read_to_end` would block.
+        let mut buf = [0u8; 1024];
+        let n = tokio::time::timeout(Duration::from_secs(5), client.read(&mut buf))
+            .await
+            .expect("read must not hang")
+            .expect("read");
+        let resp = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
+        assert!(resp.starts_with("http/1.1 204"), "preflight got: {resp}");
+        assert!(
+            resp.contains("access-control-allow-headers: authorization"),
+            "the preflight must name Authorization: {resp}"
+        );
+        for m in ["post", "patch", "delete"] {
+            assert!(
+                resp.contains(m),
+                "Access-Control-Allow-Methods must include {m}: {resp}"
+            );
+        }
     }
 
     /// PRE-FIX FAILURE OBSERVED: before the `SessionSlot` RAII guard,

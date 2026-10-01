@@ -975,6 +975,16 @@ impl<S: IngestSession> IngestDriver<S> {
         &self.session
     }
 
+    /// Mutable access to the driver's session — for an out-of-band signal a
+    /// `Stage` has no input variant for. `dash_pull` uses it to abandon a
+    /// live-edge segment whose tolerated-`404` retries ran out (issue #1083,
+    /// W14c): the abandon must clear the Representation's in-flight state so
+    /// the MPD can refresh, and doing it by feeding a sentinel *body* would
+    /// collide with a genuine empty HTTP `200` segment.
+    pub fn session_mut(&mut self) -> &mut S {
+        &mut self.session
+    }
+
     /// Drain every ready [`SessionEvent`], dispatching each into its
     /// program's `Trunk`. A `Sample` for a program never announced via
     /// `NewProgram` is dropped (documented `IngestSession` contract

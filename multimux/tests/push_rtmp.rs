@@ -87,6 +87,7 @@ async fn rtmp_push_ships_flv_framed_media_a_real_rtmp_server_can_decode() {
     let cfg = RtmpTransportConfig {
         app: "live".to_string(),
         stream_key: "test".to_string(),
+        ..Default::default()
     };
     let url = format!("rtmp://{addr}/live/test");
     let mut transport = tokio::time::timeout(GUARD, RtmpTransport::connect(&url, &cfg))

@@ -320,6 +320,18 @@ impl DvrConfig {
         }
         Ok(())
     }
+
+    /// Whether configured retention can evict leading segments from the
+    /// live archive — true when either `retention_periods` or
+    /// `retention_bytes` is set (retention is quantised to whole periods,
+    /// so either bound removes the oldest period and therefore its oldest
+    /// segments). Audit run 7, W11 uses this to decide whether a served
+    /// playlist may claim `EXT-X-PLAYLIST-TYPE:EVENT` (RFC 8216 §6.2.2
+    /// forbids the tag on any playlist that removes segments).
+    #[must_use]
+    pub fn retention_active(&self) -> bool {
+        self.retention_periods > 0 || self.retention_bytes > 0
+    }
 }
 
 // --- EIT programme identity (issue #903) ---

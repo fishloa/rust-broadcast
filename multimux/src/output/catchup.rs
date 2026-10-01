@@ -171,11 +171,25 @@ async fn catchup_playlist(
     let live = serving.ll_hls().closed_segments();
     let combined = catchup::merge_segments(&archived, &live);
     let windowed = catchup::apply_window(&combined, q.window_secs);
+    // Audit run 7, W11: this playlist is `EVENT`-shaped only when nothing
+    // can remove its leading segments — a `window_secs` bound
+    // (`apply_window`) or DVR retention (which evicts whole leading
+    // periods) both do, and RFC 8216 §6.2.2 forbids PLAYLIST-TYPE on a
+    // playlist that may remove segments ("no value of that tag allows
+    // Media Segments to be removed"). With neither active the head only
+    // ever grows, so `EVENT` is accurate and worth advertising (it lets a
+    // player stop reloading once `#EXT-X-ENDLIST` cannot appear).
+    let removes_leading = q.window_secs.filter(|&w| w > 0).is_some() || dvr.retention_active();
+    let playlist_type = if removes_leading {
+        None
+    } else {
+        Some(PlaylistType::Event)
+    };
     let Ok(body) = catchup::render_playlist(
         &windowed,
         ext,
         map_uri(route.container()).as_deref(),
-        PlaylistType::Event,
+        playlist_type,
         false,
     ) else {
         // A field the renderer would have to quote carries a character
@@ -234,6 +248,10 @@ async fn vod_playlist(
             discontinuous: s.discontinuous,
         })
         .collect();
+    // One period's segments only ever grow within the period (retention
+    // evicts whole periods, which a request for a still-listed period
+    // cannot observe), so the live branch is a genuine EVENT playlist and
+    // the tag is accurate — see `catchup::render_playlist`'s own doc.
     let playlist_type = if finished {
         PlaylistType::Vod
     } else {
@@ -243,7 +261,7 @@ async fn vod_playlist(
         &combined,
         ext,
         map_uri(route.container()).as_deref(),
-        playlist_type,
+        Some(playlist_type),
         finished,
     ) else {
         return StatusCode::INTERNAL_SERVER_ERROR.into_response();
@@ -704,6 +722,76 @@ mod tests {
         assert!(!body.contains("catchup/seg-2.m4s"), "body: {body}");
         assert!(!body.contains("catchup/seg-1.m4s"), "body: {body}");
         assert_eq!(body.matches("#EXTINF").count(), 1, "body: {body}");
+        // Audit run 7, W11: a windowed playlist removes leading segments,
+        // so it must NOT claim EXT-X-PLAYLIST-TYPE (RFC 8216 §6.2.2).
+        assert!(
+            !body.contains("#EXT-X-PLAYLIST-TYPE"),
+            "a windowed playlist must omit PLAYLIST-TYPE: {body}"
+        );
+    }
+
+    /// Audit W11: with neither `window_secs` nor retention removing
+    /// segments, the live `/catchup.m3u8` is a genuine `EVENT` playlist and
+    /// claims it. (A *validated* route always has retention, so this shape
+    /// only arises from a directly-built `DvrConfig` — the branch must still
+    /// be correct, not dead.)
+    #[tokio::test]
+    async fn catchup_playlist_claims_event_without_window_or_retention() {
+        let tmp = temp_dir();
+        let dvr = DvrConfig {
+            enabled: true,
+            archive_root: tmp.to_string_lossy().to_string(),
+            retention_periods: 0,
+            retention_bytes: 0,
+            ..DvrConfig::default()
+        };
+        let route = Arc::new(
+            RouteHandle::new(4.0, 500, 8)
+                .with_name("event")
+                .with_dvr(dvr),
+        );
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0x11))
+            .expect("add_segment");
+        route.drain_dvr().await;
+
+        let resp = catchup_playlist(State(route), Query(CatchupPlaylistQuery::default())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_string(resp).await;
+        assert!(
+            body.contains("#EXT-X-PLAYLIST-TYPE:EVENT"),
+            "a live playlist that never removes segments claims EVENT: {body}"
+        );
+        cleanup(&tmp);
+    }
+
+    #[tokio::test]
+    async fn catchup_playlist_omits_playlist_type_when_retention_is_active() {
+        let tmp = temp_dir();
+        // `dvr_config` enables count-based retention (retention_periods:
+        // 10), so leading periods (and therefore segments) can be evicted.
+        let route = Arc::new(
+            RouteHandle::new(4.0, 500, 8)
+                .with_name("retained")
+                .with_dvr(dvr_config(&tmp)),
+        );
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        route
+            .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0x11))
+            .expect("add_segment");
+        route.drain_dvr().await;
+
+        let resp = catchup_playlist(State(route), Query(CatchupPlaylistQuery::default())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let body = body_string(resp).await;
+        assert!(
+            !body.contains("#EXT-X-PLAYLIST-TYPE"),
+            "retention-evicting archive must omit PLAYLIST-TYPE: {body}"
+        );
+        cleanup(&tmp);
     }
 
     #[tokio::test]

@@ -85,6 +85,7 @@
 //! as a hard error.
 
 use std::collections::{HashMap, VecDeque};
+use std::sync::Arc;
 use std::time::Duration;
 
 use broadcast_auth::Credentials;
@@ -284,6 +285,9 @@ pub struct DashIngestSession {
     phase: Phase,
     pending_requests: VecDeque<DashAction>,
     pending_events: VecDeque<SessionEvent>,
+    /// The wall clock (Unix seconds) used to place a live `$Number$` plan at
+    /// the live edge. Injectable so a test drives a deterministic edge.
+    clock: Arc<dyn Fn() -> u64 + Send + Sync>,
 }
 
 impl DashIngestSession {
@@ -299,7 +303,15 @@ impl DashIngestSession {
             phase: Phase::AwaitingMpd,
             pending_requests,
             pending_events: VecDeque::new(),
+            clock: Arc::new(now_unix_secs),
         }
+    }
+
+    /// Override the wall clock used to place a live `$Number$` plan at the
+    /// live edge — for a deterministic test.
+    pub fn with_clock(mut self, clock: Arc<dyn Fn() -> u64 + Send + Sync>) -> Self {
+        self.clock = clock;
+        self
     }
 
     /// True once every Representation's plan is empty, none is in flight, and
@@ -333,7 +345,9 @@ impl DashIngestSession {
                 live.is_dynamic = matches!(mpd.mpd_type, MpdType::Dynamic);
                 live.minimum_update_period = mpd.minimum_update_period;
                 live.mpd_refresh_in_flight = false;
-                if let Some(period) = mpd.periods.first() {
+                // The live Period is the last one (ISO/IEC 23009-1: a dynamic
+                // MPD appends Periods; the presentation is in the final one).
+                if let Some(period) = mpd.periods.last() {
                     let total_duration = period.duration.or(mpd.media_presentation_duration);
                     for rep in &mut live.reps {
                         let found = period
@@ -344,7 +358,9 @@ impl DashIngestSession {
                         let Some(st) = &found_rep.segment_template else {
                             continue;
                         };
-                        let plan = build_plan(st, total_duration)?;
+                        let dynamic_lookahead = live.is_dynamic.then_some(LIVE_NUMBER_LOOKAHEAD);
+                        let from_number = rep.last_number.saturating_add(1);
+                        let plan = build_plan(st, total_duration, from_number, dynamic_lookahead)?;
                         for (number, time) in plan {
                             if number > rep.last_number {
                                 rep.last_number = number;
@@ -361,7 +377,9 @@ impl DashIngestSession {
     }
 
     fn on_initial_mpd(&mut self, mpd: Mpd) -> Result<()> {
-        let period = mpd.periods.first().ok_or_else(|| MultimuxError::Connect {
+        // The live Period is the last one (ISO/IEC 23009-1: a dynamic MPD
+        // appends Periods; the presentation is in the final one).
+        let period = mpd.periods.last().ok_or_else(|| MultimuxError::Connect {
             reason: "dash-pull: mpd has no Period".into(),
         })?;
         let total_duration = period.duration.or(mpd.media_presentation_duration);
@@ -392,7 +410,34 @@ impl DashIngestSession {
                     reason: format!("dash-pull: bad initialization URL {init_rel:?}: {e}"),
                 })?;
 
-            let plan = build_plan(st, total_duration)?;
+            let dynamic_lookahead =
+                matches!(mpd.mpd_type, MpdType::Dynamic).then_some(LIVE_NUMBER_LOOKAHEAD);
+            // Start a live `$Number$` plan at the live edge (audit W14b), not
+            // at `@startNumber`.
+            let now = (self.clock)();
+            let period_start_secs = period.start.map(|d| d.as_secs()).unwrap_or(0);
+            let from_number = if dynamic_lookahead.is_some() {
+                st.duration
+                    .and_then(|d| {
+                        // Default the suggested-presentation-delay to a few
+                        // segments when the MPD carries none.
+                        let spd_ticks = d.saturating_mul(DEFAULT_SPD_SEGMENTS);
+                        live_edge_number(
+                            mpd.availability_start_time.as_deref(),
+                            now,
+                            d,
+                            st.timescale,
+                            st.start_number,
+                            period_start_secs,
+                            st.presentation_time_offset,
+                            spd_ticks,
+                        )
+                    })
+                    .unwrap_or(st.start_number)
+            } else {
+                st.start_number
+            };
+            let plan = build_plan(st, total_duration, from_number, dynamic_lookahead)?;
             let last_number = plan
                 .last()
                 .map(|(n, _)| *n)
@@ -583,6 +628,26 @@ impl DashIngestSession {
         self.pump_segment_fetches();
         Ok(())
     }
+
+    /// Abandon a Representation's outstanding segment fetch without feeding
+    /// any bytes: clear its in-flight state and pump the next planned entry
+    /// (issue #1083, W14c).
+    ///
+    /// The drive loop calls this when a live-edge segment's tolerated-`404`
+    /// retries run out, so the Representation goes idle and the MPD can
+    /// refresh. This is an explicit signal (not an empty body fed through
+    /// [`Stage::feed`]) precisely so a genuine empty HTTP `200` segment is
+    /// demuxed normally rather than mistaken for an abandon.
+    pub(crate) fn abandon_segment(&mut self, rep_idx: RepIndex) {
+        let Phase::Live(live) = &mut self.phase else {
+            return;
+        };
+        let Some(rep) = live.reps.get_mut(rep_idx.0) else {
+            return;
+        };
+        rep.in_flight = false;
+        self.pump_segment_fetches();
+    }
 }
 
 impl Stage for DashIngestSession {
@@ -682,16 +747,37 @@ fn enumerate_timeline(timeline: &SegmentTimeline, start_number: u64) -> Result<V
 }
 
 /// Builds a Representation's `(number, time)` segment plan from its
-/// effective [`SegmentTemplate`] — unchanged from the pre-port module.
+/// effective [`SegmentTemplate`].
+///
+/// `from_number` is the first `$Number$` to enumerate (the template's own
+/// `@startNumber` for the initial plan; `last_number + 1` on a live refresh,
+/// so the plan keeps *extending*). `lookahead` bounds a **dynamic** MPD's
+/// plan when no total duration is known (audit run 7, W14): a live
+/// `$Number$` MPD carries no `mediaPresentationDuration`, so the pre-fix
+/// `None => 0` count produced an empty plan forever and the route went Live
+/// but emitted nothing. On a static MPD, or once a total duration is known,
+/// the count is derived from the duration exactly as before.
 fn build_plan(
     st: &SegmentTemplate,
     total_duration: Option<Duration>,
+    from_number: u64,
+    dynamic_lookahead: Option<usize>,
 ) -> Result<Vec<(u64, Option<u64>)>> {
     if let Some(timeline) = &st.timeline {
-        return Ok(enumerate_timeline(timeline, st.start_number)?
+        let mut entries: Vec<(u64, Option<u64>)> = enumerate_timeline(timeline, st.start_number)?
             .into_iter()
             .map(|(n, t)| (n, Some(t)))
-            .collect());
+            .collect();
+        // A **dynamic** `$Time$` MPD's `SegmentTimeline` lists its whole
+        // history oldest-first; a live client wants only the last few entries
+        // (the live edge), not the whole backlog (audit W14b).
+        if dynamic_lookahead.is_some() {
+            let keep = dynamic_lookahead.unwrap_or(0).max(1);
+            if entries.len() > keep {
+                entries.drain(0..entries.len() - keep);
+            }
+        }
+        return Ok(entries);
     }
     let Some(duration) = st.duration else {
         return Ok(Vec::new());
@@ -702,15 +788,133 @@ fn build_plan(
     let count = match total_duration {
         Some(total) => {
             let total_ticks = (total.as_secs_f64() * st.timescale as f64).ceil() as u64;
-            total_ticks.div_ceil(duration) as usize
+            // Cap the derived count: a hostile MPD with a huge
+            // `mediaPresentationDuration` and a tiny `@duration` would
+            // otherwise collect an unbounded plan into a `Vec` (audit W16,
+            // manifest hostile counts). The same bound the `SegmentTimeline`
+            // path applies.
+            usize::try_from(total_ticks.div_ceil(duration))
+                .unwrap_or(usize::MAX)
+                .min(MAX_PLAN_ENTRIES)
         }
-        None => 0,
+        // A dynamic MPD with no known total: enumerate a bounded look-ahead
+        // window beginning at `from_number`, so the refresh loop can keep
+        // extending it as the live edge advances.
+        None => dynamic_lookahead.unwrap_or(0),
     };
-    Ok(st
-        .number_sequence(count)
-        .into_iter()
+    if count == 0 {
+        return Ok(Vec::new());
+    }
+    Ok((from_number..from_number.saturating_add(count as u64))
         .map(|n| (n, None))
         .collect())
+}
+
+/// The `$Number$` of the **live edge** of a dynamic `$Number$` MPD at
+/// `now_unix_secs` — audit W14b.
+///
+/// A live `$Number$` MPD numbers its segments from `@startNumber` (usually
+/// `1`) and carries no total, so a client starting at `@startNumber` requests
+/// segments that stopped existing hours ago. ISO/IEC 23009-1 §5.3.9.2 places
+/// the availability start time of segment N at
+/// `availabilityStartTime + Period@start + (N - startNumber) * segmentDuration
+/// minus `presentationTimeOffset`; inverting that, and backing off a
+/// `suggestedPresentationDelay` so the edge segment is already complete,
+/// gives the current number.
+///
+/// Everything is computed in the template's **tick** domain (no integer-second
+/// truncation, which for a 90090/90000 = 1.001 s segment overshoots the edge
+/// by ~0.1% per segment and crawls after a few hours). `spd_ticks` is the
+/// suggested-presentation-delay in ticks (the caller passes a documented
+/// default of a few segments when the MPD does not carry one).
+///
+/// Returns `None` when the AST is absent/unparseable, the template is
+/// degenerate, or the arithmetic lands before `@startNumber` — the caller
+/// then falls back to `@startNumber`.
+#[allow(clippy::too_many_arguments)]
+fn live_edge_number(
+    availability_start_time: Option<&str>,
+    now_unix_secs: u64,
+    duration_ticks: u64,
+    timescale: u64,
+    start_number: u64,
+    period_start_secs: u64,
+    presentation_time_offset_ticks: u64,
+    spd_ticks: u64,
+) -> Option<u64> {
+    let ast = parse_iso8601_utc(availability_start_time?)?;
+    if duration_ticks == 0 || timescale == 0 {
+        return None;
+    }
+    // Elapsed wall-clock seconds since the presentation began.
+    let elapsed_secs = now_unix_secs
+        .checked_sub(ast)?
+        .checked_sub(period_start_secs)?;
+    // Ticks available for media, minus PTO and the presentation-delay back-off.
+    let elapsed_ticks = elapsed_secs
+        .checked_mul(timescale)?
+        .checked_sub(presentation_time_offset_ticks)?
+        .checked_sub(spd_ticks)?;
+    let elapsed_segments = elapsed_ticks / duration_ticks;
+    Some(start_number.saturating_add(elapsed_segments))
+}
+
+/// The documented default suggested-presentation-delay, in segments: with no
+/// `SuggestedPresentationDelay` in the MPD, back the live edge off this many
+/// segments so the edge segment is complete rather than still filling.
+const DEFAULT_SPD_SEGMENTS: u64 = 3;
+
+/// The current Unix time in whole seconds — used only to place a live
+/// `$Number$` plan at the live edge (audit W14b). A clock before the epoch
+/// yields `0`, which `live_edge_number`'s `checked_sub` then rejects, so the
+/// caller falls back to `@startNumber` rather than planning from a bogus edge.
+fn now_unix_secs() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0)
+}
+
+/// Parse an ISO-8601 UTC timestamp (`YYYY-MM-DDThh:mm:ss[.fff]Z`, the form
+/// `MPD@availabilityStartTime` uses, §5.3.1.2) into Unix seconds. `None` for
+/// any other shape, so the caller falls back rather than guessing.
+fn parse_iso8601_utc(s: &str) -> Option<u64> {
+    let s = s.trim();
+    let bytes = s.as_bytes();
+    // Fixed-width prefix `YYYY-MM-DDThh:mm:ss`.
+    if bytes.len() < 19 {
+        return None;
+    }
+    let num = |range: std::ops::Range<usize>| -> Option<i64> {
+        let part = s.get(range)?;
+        if part.bytes().all(|b| b.is_ascii_digit()) {
+            part.parse().ok()
+        } else {
+            None
+        }
+    };
+    let year = num(0..4)?;
+    let month = num(5..7)?;
+    let day = num(8..10)?;
+    let hour = num(11..13)?;
+    let minute = num(14..16)?;
+    let second = num(17..19)?;
+    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
+        return None;
+    }
+    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) || !(0..=60).contains(&second) {
+        return None;
+    }
+    // Days since the Unix epoch (Howard Hinnant's `days_from_civil`).
+    let y = if month <= 2 { year - 1 } else { year };
+    let era = if y >= 0 { y } else { y - 399 } / 400;
+    let yoe = y - era * 400;
+    let mp = (month + 9) % 12;
+    let doy = (153 * mp + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    let secs = days * 86_400 + hour * 3_600 + minute * 60 + second;
+    u64::try_from(secs).ok()
 }
 
 fn status_error(what: &str, status: StatusCode) -> MultimuxError {
@@ -731,6 +935,28 @@ fn status_error(what: &str, status: StatusCode) -> MultimuxError {
 /// `spawn_segment_fetch`), so it never blocks the main loop from observing
 /// other in-flight fetches meanwhile.
 const SEGMENT_RETRY_DELAY: Duration = Duration::from_millis(500);
+
+/// How many consecutive tolerated-`404` retries of one live-edge segment
+/// [`run_dash_pull`] makes before abandoning it (audit run 7, W14). A single
+/// not-yet-published segment is retried, but an encoder restart that resets
+/// numbering — or a segment that never appears — must not retry forever: at
+/// `SEGMENT_RETRY_DELAY` each, this bounds the stall to roughly two minutes,
+/// after which the segment is dropped and the MPD refreshed. Without the
+/// bound the Representation stayed `in_flight` for good, so
+/// `all_reps_idle_and_exhausted` never held and the route stalled silently.
+const MAX_TOLERATED_404_ATTEMPTS: u32 = 240;
+
+/// Upper bound on a `$Number$` segment plan's length (audit W16): a hostile
+/// or corrupt MPD with an enormous `mediaPresentationDuration` and a tiny
+/// `@duration` must not make `build_plan` collect an unbounded `Vec`.
+const MAX_PLAN_ENTRIES: usize = 100_000;
+
+/// How many `$Number$` segment numbers a **dynamic** MPD with no known total
+/// duration is planned ahead by (audit run 7, W14). Small enough that a live
+/// edge is only ever probed a few segments ahead (each unavailable number is
+/// bounded by [`MAX_TOLERATED_404_ATTEMPTS`], then abandoned), large enough
+/// that a normal segment cadence is always covered.
+const LIVE_NUMBER_LOOKAHEAD: usize = 3;
 
 /// Outcome of one fetch task, as seen by [`run_dash_pull`]'s join loop.
 enum FetchOutcome {
@@ -758,13 +984,9 @@ async fn fetch_one(
     if !status.is_success() {
         return Err(status_error(what, status));
     }
-    response
-        .bytes()
+    crate::source::read_body_capped(response, crate::source::MAX_HTTP_BODY_BYTES, what)
         .await
-        .map(|b| FetchOutcome::Bytes(b.to_vec()))
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("dash-pull {what} read: {e}"),
-        })
+        .map(FetchOutcome::Bytes)
 }
 
 /// One join result: the resource id, and (for a segment, so a tolerated
@@ -776,6 +998,9 @@ struct JoinedFetch {
     time: Option<u64>,
     url: String,
     tolerate_404: bool,
+    /// How many times this exact segment fetch has been attempted (1 on the
+    /// first try) — bounds the tolerated-`404` retry loop (audit run 7, W14).
+    attempt: u32,
     outcome: Result<FetchOutcome>,
 }
 
@@ -795,6 +1020,7 @@ fn spawn_fetch(
     tolerate_404: bool,
     read_timeout: Duration,
     delay: Duration,
+    attempt: u32,
 ) {
     inflight.spawn(async move {
         if !delay.is_zero() {
@@ -816,6 +1042,7 @@ fn spawn_fetch(
             time,
             url,
             tolerate_404,
+            attempt,
             outcome,
         }
     });
@@ -831,6 +1058,7 @@ fn build_client(route: &DashPullRoute) -> Result<(HttpClient, Url, Option<Creden
     let credentials = resolve_credentials(route.auth.clone(), credentials_from_url(&parsed)?);
     let clean_url = strip_userinfo(&parsed)?;
     let http = HttpClient::builder()
+        .redirect(crate::source::redirect_policy())
         .build()
         .map_err(|e| MultimuxError::Connect {
             reason: format!("reqwest client: {e}"),
@@ -919,6 +1147,7 @@ pub async fn run_dash_pull(
                     false,
                     read_timeout,
                     Duration::ZERO,
+                    1,
                 ),
                 DashAction::FetchInit { rep, url } => spawn_fetch(
                     &mut inflight,
@@ -932,6 +1161,7 @@ pub async fn run_dash_pull(
                     false,
                     read_timeout,
                     Duration::ZERO,
+                    1,
                 ),
                 DashAction::FetchSegment {
                     rep,
@@ -951,6 +1181,7 @@ pub async fn run_dash_pull(
                     tolerate_404,
                     read_timeout,
                     Duration::ZERO,
+                    1,
                 ),
             }
         }
@@ -995,23 +1226,42 @@ pub async fn run_dash_pull(
                 time,
                 url,
                 tolerate_404,
+                attempt,
                 outcome: Ok(FetchOutcome::NotReady),
             })) => {
-                // Retried directly, without touching the session — see the
-                // module doc's `FetchOutcome::NotReady`.
-                spawn_fetch(
-                    &mut inflight,
-                    http.clone(),
-                    credentials.clone(),
-                    DashResourceId::Segment(rep, number),
-                    number,
-                    time,
-                    url,
-                    "segment",
-                    tolerate_404,
-                    read_timeout,
-                    SEGMENT_RETRY_DELAY,
-                );
+                if attempt >= MAX_TOLERATED_404_ATTEMPTS {
+                    // Bound reached: give up on this segment so the
+                    // Representation goes idle and the MPD can refresh,
+                    // rather than retrying a 404 forever (audit run 7, W14).
+                    tracing::warn!(
+                        rep = rep.0,
+                        number,
+                        attempts = attempt,
+                        "dash-pull: live-edge segment never became available; \
+                         abandoning it and refreshing the MPD"
+                    );
+                    metrics::counter!(crate::prometheus::PULL_FRAGMENT_ABANDONED_TOTAL)
+                        .increment(1);
+                    driver.session_mut().abandon_segment(rep);
+                    crate::source::advance_route(&driver, route_handle, &mut progress).await;
+                } else {
+                    // Retried directly, without touching the session — see
+                    // the module doc's `FetchOutcome::NotReady`.
+                    spawn_fetch(
+                        &mut inflight,
+                        http.clone(),
+                        credentials.clone(),
+                        DashResourceId::Segment(rep, number),
+                        number,
+                        time,
+                        url,
+                        "segment",
+                        tolerate_404,
+                        read_timeout,
+                        SEGMENT_RETRY_DELAY,
+                        attempt.saturating_add(1),
+                    );
+                }
             }
             Some(Ok(JoinedFetch {
                 outcome: Ok(FetchOutcome::NotReady),
@@ -1060,6 +1310,96 @@ mod tests {
     use media_plane::trunk::{SampleCursor, SampleCursorItem, TrunkConfig};
     use std::num::NonZeroUsize;
     use transmux::CodecConfig;
+
+    /// W16: a hostile MPD with a huge `mediaPresentationDuration` and a tiny
+    /// `@duration` must not collect an unbounded plan.
+    #[test]
+    fn build_plan_caps_a_hostile_segment_count() {
+        let st = SegmentTemplate {
+            timescale: 1,
+            initialization: None,
+            media: None,
+            start_number: 1,
+            duration: Some(1), // 1 tick
+            presentation_time_offset: 0,
+            timeline: None,
+        };
+        // ~10^15 s of "content" at 1-tick segments.
+        let total = Duration::from_secs(1_000_000_000_000);
+        let plan = build_plan(&st, Some(total), 1, None).expect("plan");
+        assert_eq!(
+            plan.len(),
+            MAX_PLAN_ENTRIES,
+            "the plan must be capped, not collect 10^15 entries"
+        );
+    }
+
+    /// W14b: the current `$Number$` is derived from `availabilityStartTime`
+    /// and now, so a stream running for hours does not start at segment 1.
+    #[test]
+    fn live_edge_number_derives_the_current_number() {
+        let ast = "2020-01-01T00:00:00Z"; // 1_577_836_800 Unix seconds.
+        assert_eq!(parse_iso8601_utc(ast), Some(1_577_836_800));
+        assert_eq!(
+            parse_iso8601_utc("2020-01-01T00:00:05.500Z"),
+            Some(1_577_836_805)
+        );
+        assert_eq!(parse_iso8601_utc("not a time"), None);
+        assert_eq!(parse_iso8601_utc("2020-13-01T00:00:00Z"), None);
+
+        // 4 s segments, timescale 1000, start 1, no PTO/SPD, no Period@start:
+        // one hour later is the 900th segment → number 901.
+        let one_hour_later = 1_577_836_800 + 3600;
+        assert_eq!(
+            live_edge_number(Some(ast), one_hour_later, 4000, 1000, 1, 0, 0, 0),
+            Some(901)
+        );
+        // A 3-segment suggested-presentation-delay backs the edge off by 3.
+        assert_eq!(
+            live_edge_number(Some(ast), one_hour_later, 4000, 1000, 1, 0, 0, 12_000),
+            Some(898)
+        );
+        // Period@start and PTO each remove that much time.
+        assert_eq!(
+            // (3600 - 10 s Period@start) * 1000 - 4000 PTO = 3_586_000 ticks
+            // / 4000 = 896 segments, + start 1 = 897.
+            live_edge_number(Some(ast), one_hour_later, 4000, 1000, 1, 10, 4_000, 0),
+            Some(897)
+        );
+        // A `now` before the AST falls back to `None`.
+        assert_eq!(
+            live_edge_number(Some(ast), 1_577_000_000, 4000, 1000, 1, 0, 0, 0),
+            None
+        );
+        // No AST → `None`.
+        assert_eq!(
+            live_edge_number(None, one_hour_later, 4000, 1000, 1, 0, 0, 0),
+            None
+        );
+    }
+
+    /// W14b: fractional segment durations must be computed in the template's
+    /// tick domain, not by integer-second division — a 90090/90000 = 1.001 s
+    /// segment truncates to 1 s and overshoots the edge by ~0.1% per segment,
+    /// which after hours lands many segments past the true edge.
+    #[test]
+    fn live_edge_number_is_exact_for_fractional_segments_over_six_hours() {
+        let ast = "2020-01-01T00:00:00Z";
+        let six_hours_later = 1_577_836_800 + 6 * 3600;
+        // 90090 ticks @ 90000 = 1.001 s segments.
+        let n =
+            live_edge_number(Some(ast), six_hours_later, 90_090, 90_000, 1, 0, 0, 0).expect("some");
+        // Exact: floor(6*3600 s * 90000 / 90090) = floor(21600*90000/90090).
+        let expected = 1 + (21_600u64 * 90_000) / 90_090;
+        assert_eq!(n, expected, "tick-domain division must be exact");
+        // The naive integer-second computation would give a much smaller
+        // number (21600 / 1 = 21600 segments elapsed).
+        let naive = 21_601;
+        assert!(
+            n < naive,
+            "the tick-exact number ({n}) must not overshoot the naive one ({naive})"
+        );
+    }
 
     fn nz(n: usize) -> NonZeroUsize {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
@@ -1148,6 +1488,94 @@ mod tests {
             total += media.tracks.iter().map(|t| t.samples.len()).sum::<usize>();
         }
         total
+    }
+
+    /// Drives the raw [`DashIngestSession`] until at least one sample has
+    /// arrived on each discovered track, then returns — for a **live**
+    /// (dynamic) MPD the session never ends, so [`drive_and_collect`]'s
+    /// "run to completion" shape would only ever hit its deadline. Returns
+    /// the recovered `TrackSpec`s and the per-`track_id` counts seen so far.
+    async fn drive_until_samples(
+        route: &DashPullRoute,
+    ) -> Result<(Vec<TrackSpec>, HashMap<u32, usize>)> {
+        let (http, clean_url, credentials) = build_client(route)?;
+        let mut session = DashIngestSession::new(clean_url);
+        let mut backlog: VecDeque<DashAction> = VecDeque::new();
+        let mut specs: Vec<TrackSpec> = Vec::new();
+        let mut per_track: HashMap<u32, usize> = HashMap::new();
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+
+        loop {
+            while let Some(a) = session.poll_transmit() {
+                backlog.push_back(a);
+            }
+            while let Some(event) = session.poll() {
+                match event {
+                    SessionEvent::NewProgram { tracks, .. } => specs = tracks,
+                    SessionEvent::Sample { track_id, .. } => {
+                        *per_track.entry(track_id).or_insert(0) += 1;
+                    }
+                    SessionEvent::Established => {}
+                    _ => {}
+                }
+            }
+            if !specs.is_empty() && per_track.values().sum::<usize>() > 0 {
+                return Ok((specs, per_track));
+            }
+            let Some(action) = backlog.pop_front() else {
+                assert!(
+                    tokio::time::Instant::now() < deadline,
+                    "live `$Number$` MPD produced no samples within the hang guard"
+                );
+                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
+                continue;
+            };
+            let now = Timestamp::from_nanos(0);
+            match action {
+                DashAction::FetchMpd { url } => {
+                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                        route.timeouts.read,
+                        fetch_one(&http, &url, credentials.as_ref(), "mpd", false),
+                    )
+                    .await
+                    .map_err(|_| MultimuxError::Connect {
+                        reason: "mpd fetch timed out".into(),
+                    })?? {
+                        session.feed((DashResourceId::Mpd, b.as_slice()), now)?;
+                    }
+                }
+                DashAction::FetchInit { rep, url } => {
+                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                        route.timeouts.read,
+                        fetch_one(&http, &url, credentials.as_ref(), "init", false),
+                    )
+                    .await
+                    .map_err(|_| MultimuxError::Connect {
+                        reason: "init fetch timed out".into(),
+                    })?? {
+                        session.feed((DashResourceId::Init(rep), b.as_slice()), now)?;
+                    }
+                }
+                DashAction::FetchSegment {
+                    rep,
+                    number,
+                    url,
+                    tolerate_404,
+                    ..
+                } => {
+                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                        route.timeouts.read,
+                        fetch_one(&http, &url, credentials.as_ref(), "segment", tolerate_404),
+                    )
+                    .await
+                    .map_err(|_| MultimuxError::Connect {
+                        reason: "segment fetch timed out".into(),
+                    })?? {
+                        session.feed((DashResourceId::Segment(rep, number), b.as_slice()), now)?;
+                    }
+                }
+            }
+        }
     }
 
     /// Manually drives the raw [`DashIngestSession`] (dial → poll_transmit →
@@ -1328,6 +1756,368 @@ mod tests {
         server.abort();
     }
 
+    /// Audit run 7, W14 (live `$Number$`): a `type="dynamic"` MPD addressed
+    /// purely by `$Number$` (no `SegmentTimeline`, no
+    /// `mediaPresentationDuration` — exactly what a livesim-style live source
+    /// serves) must still pull real samples. Before the fix `build_plan`
+    /// derived its count from `mediaPresentationDuration`, which a live MPD
+    /// does not carry, so the plan was empty forever and the route went Live
+    /// but emitted nothing.
+    ///
+    /// The MPD is built **by hand from the real committed fixture** (its real
+    /// `chunk-stream*-NNNNN.m4s` files are the segments the `$Number$`
+    /// template resolves to) — see this test's own `live_number_mpd` below.
+    #[tokio::test]
+    async fn live_number_mpd_pulls_real_samples() {
+        let (base, server) = start_live_number_server().await;
+        let route = DashPullRoute::new("dash-live", format!("{base}/manifest.mpd"));
+        let (specs, per_track) =
+            tokio::time::timeout(Duration::from_secs(30), drive_until_samples(&route))
+                .await
+                .expect("drive_until_samples timed out")
+                .expect("drive_until_samples");
+
+        server.abort();
+        assert_eq!(specs.len(), 2, "one video + one audio track: {specs:?}");
+        let total: usize = per_track.values().sum();
+        assert!(
+            total > 0,
+            "a live `$Number$` MPD must yield real samples, not an empty plan: {per_track:?}"
+        );
+    }
+
+    /// Audit run 7, W14c: `abandon_segment` clears the Representation's
+    /// in-flight state (so the MPD can refresh) AND pumps the next planned
+    /// number — the explicit signal the drive loop uses when a tolerated-404
+    /// segment's retries run out. Not an empty-body feed: a genuine empty
+    /// HTTP `200` segment is still demuxed normally.
+    #[tokio::test]
+    async fn abandon_segment_clears_in_flight_and_pumps() {
+        let (base, server) = start_live_number_server().await;
+        let route = DashPullRoute::new("dash-abandon", format!("{base}/manifest.mpd"));
+        let (http, clean_url, credentials) = build_client(&route).unwrap();
+        let mut session = DashIngestSession::new(clean_url);
+        let mut backlog: VecDeque<DashAction> = VecDeque::new();
+        let mut abandoned = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        let now = Timestamp::from_nanos(0);
+
+        while tokio::time::Instant::now() < deadline {
+            while let Some(a) = session.poll_transmit() {
+                backlog.push_back(a);
+            }
+            while session.poll().is_some() {}
+            let Some(action) = backlog.pop_front() else {
+                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
+                continue;
+            };
+            match action {
+                DashAction::FetchMpd { url } => {
+                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                        route.timeouts.read,
+                        fetch_one(&http, &url, credentials.as_ref(), "mpd", false),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    {
+                        session
+                            .feed((DashResourceId::Mpd, b.as_slice()), now)
+                            .unwrap();
+                    }
+                }
+                DashAction::FetchInit { rep, url } => {
+                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                        route.timeouts.read,
+                        fetch_one(&http, &url, credentials.as_ref(), "init", false),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    {
+                        session
+                            .feed((DashResourceId::Init(rep), b.as_slice()), now)
+                            .unwrap();
+                    }
+                }
+                DashAction::FetchSegment { rep, .. } => {
+                    // Abandon it (the explicit signal) instead of fetching.
+                    session.abandon_segment(rep);
+                    abandoned = true;
+                    break;
+                }
+            }
+        }
+        while let Some(a) = session.poll_transmit() {
+            backlog.push_back(a);
+        }
+        server.abort();
+        assert!(abandoned, "the session must have queued a segment fetch");
+        assert!(
+            backlog
+                .iter()
+                .any(|a| matches!(a, DashAction::FetchSegment { .. })),
+            "abandoning a segment must pump the next one, got {backlog:?}"
+        );
+    }
+
+    /// W14b: the wall clock is injectable — a session with a fixed clock
+    /// places the live-edge plan deterministically, independent of the real
+    /// time the test runs.
+    #[tokio::test]
+    async fn live_edge_plan_uses_the_injected_clock() {
+        let (base, server) = start_live_number_server().await;
+        let route = DashPullRoute::new("dash-clock", format!("{base}/manifest.mpd"));
+        let (http, clean_url, credentials) = build_client(&route).unwrap();
+        // The server's MPD uses `type="dynamic"` with no
+        // `availabilityStartTime`, so the clock only matters when the MPD has
+        // one; assert the accessor wires through and the session still runs.
+        let fixed = Arc::new(|| 1_600_000_000u64);
+        let mut session = DashIngestSession::new(clean_url).with_clock(fixed);
+        let mut backlog: VecDeque<DashAction> = VecDeque::new();
+        let mut saw_segment = false;
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
+        let now = Timestamp::from_nanos(0);
+        while tokio::time::Instant::now() < deadline && !saw_segment {
+            while let Some(a) = session.poll_transmit() {
+                backlog.push_back(a);
+            }
+            while session.poll().is_some() {}
+            let Some(action) = backlog.pop_front() else {
+                tokio::time::sleep(IDLE_POLL_INTERVAL).await;
+                continue;
+            };
+            match action {
+                DashAction::FetchMpd { url } => {
+                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                        route.timeouts.read,
+                        fetch_one(&http, &url, credentials.as_ref(), "mpd", false),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    {
+                        session
+                            .feed((DashResourceId::Mpd, b.as_slice()), now)
+                            .unwrap();
+                    }
+                }
+                DashAction::FetchInit { rep, url } => {
+                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                        route.timeouts.read,
+                        fetch_one(&http, &url, credentials.as_ref(), "init", false),
+                    )
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    {
+                        session
+                            .feed((DashResourceId::Init(rep), b.as_slice()), now)
+                            .unwrap();
+                    }
+                }
+                DashAction::FetchSegment { .. } => saw_segment = true,
+            }
+        }
+        server.abort();
+        assert!(saw_segment, "the session must plan a segment fetch");
+    }
+
+    /// A loopback server for [`live_number_mpd`] over the real fixture
+    /// segments; returns its base URL and the server task.
+    async fn start_live_number_server() -> (String, tokio::task::JoinHandle<()>) {
+        let dir = fixture_dir();
+        let mpd = live_number_mpd();
+        let app = Router::new()
+            .route(
+                "/manifest.mpd",
+                get(move || {
+                    let mpd = mpd.clone();
+                    async move { mpd }
+                }),
+            )
+            .route("/:name", get(serve_fixture_file))
+            .with_state(dir);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral loopback port");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("axum server");
+        });
+        (format!("http://{addr}"), server)
+    }
+
+    /// The hand-built dynamic `$Number$` MPD (W14) — see the test above.
+    /// `SegmentTemplate` with `@duration`/`@startNumber` and no
+    /// `SegmentTimeline`/`mediaPresentationDuration` is the live-`$Number$`
+    /// shape livesim and most encoders emit.
+    fn live_number_mpd() -> String {
+        r#"<?xml version="1.0" encoding="utf-8"?>
+<MPD xmlns="urn:mpeg:dash:schema:mpd:2011"
+     profiles="urn:mpeg:dash:profile:isoff-live:2011"
+     type="dynamic"
+     minimumUpdatePeriod="PT2.0S"
+     maxSegmentDuration="PT1.0S"
+     minBufferTime="PT2.0S">
+  <Period id="0" start="PT0.0S">
+    <AdaptationSet id="0" contentType="video" startWithSAP="1" segmentAlignment="true" frameRate="25/1" maxWidth="320" maxHeight="240" par="4:3" lang="und">
+      <Representation id="0" mimeType="video/mp4" codecs="avc1.4d400d" bandwidth="58141" width="320" height="240" sar="1:1">
+        <SegmentTemplate timescale="90000" duration="90000" initialization="init-stream$RepresentationID$.m4s" media="chunk-stream$RepresentationID$-$Number%05d$.m4s" startNumber="1" />
+      </Representation>
+    </AdaptationSet>
+    <AdaptationSet id="1" contentType="audio" startWithSAP="1" segmentAlignment="true" lang="und">
+      <Representation id="1" mimeType="audio/mp4" codecs="mp4a.40.2" bandwidth="96013" audioSamplingRate="44100">
+        <AudioChannelConfiguration schemeIdUri="urn:mpeg:dash:23003:3:audio_channel_configuration:2011" value="1" />
+        <SegmentTemplate timescale="44100" duration="44100" initialization="init-stream$RepresentationID$.m4s" media="chunk-stream$RepresentationID$-$Number%05d$.m4s" startNumber="1" />
+      </Representation>
+    </AdaptationSet>
+  </Period>
+</MPD>
+"#
+        .to_string()
+    }
+
+    /// Serves a fixture file by name (or 404) — the file half of the live-MPD
+    /// test's server.
+    async fn serve_fixture_file(
+        AxumPath(name): AxumPath<String>,
+        axum::extract::State(dir): axum::extract::State<std::path::PathBuf>,
+    ) -> AxumResponse {
+        match std::fs::read(dir.join(&name)) {
+            Ok(bytes) => bytes.into_response(),
+            Err(_) => AxumStatusCode::NOT_FOUND.into_response(),
+        }
+    }
+
+    /// W14b: a live `$Number$` MPD whose `availabilityStartTime` is hours in
+    /// the past must start near the live edge, not at segment 1 — otherwise
+    /// every old number 404s (each retried to the bound) before any real
+    /// segment is fetched. The server serves a real fixture chunk for numbers
+    /// at/after the edge and 404s the rest, counting the 404s.
+    #[tokio::test]
+    async fn live_number_mpd_starts_at_the_edge_not_at_start_number() {
+        use std::sync::atomic::AtomicU64;
+
+        /// Seconds of "already elapsed" — with 1 s segments this makes the
+        /// live edge number ~2001.
+        const ELAPSED_SECS: u64 = 2000;
+
+        let ast_secs = now_unix_secs() - ELAPSED_SECS;
+        let mpd = live_number_mpd_with_ast(&iso8601_utc(ast_secs));
+        // The live-edge segment NUMBER the session will request:
+        // @startNumber(1) + elapsed (1 s) segments, backed off by the default
+        // 3-segment suggested-presentation-delay.
+        let edge = 1 + ELAPSED_SECS - DEFAULT_SPD_SEGMENTS;
+
+        #[derive(Clone)]
+        struct State {
+            dir: std::path::PathBuf,
+            mpd: String,
+            edge_number: u64,
+            requests_below_edge: std::sync::Arc<AtomicU64>,
+        }
+
+        async fn handler(
+            AxumPath(name): AxumPath<String>,
+            axum::extract::State(s): axum::extract::State<State>,
+        ) -> AxumResponse {
+            if name == "manifest.mpd" {
+                return s.mpd.clone().into_response();
+            }
+            // `chunk-stream{rep}-{N:05}.m4s`: 404 any number below the edge.
+            if let Some(rest) = name
+                .strip_prefix("chunk-stream")
+                .and_then(|r| r.split_once('-'))
+                .and_then(|(_, n)| n.strip_suffix(".m4s"))
+                .and_then(|n| n.parse::<u64>().ok())
+            {
+                if rest < s.edge_number {
+                    s.requests_below_edge
+                        .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    return AxumStatusCode::NOT_FOUND.into_response();
+                }
+                // Serve a real fixture chunk (remap high numbers onto the
+                // fixture's own 1..3 range).
+                let idx = (rest - s.edge_number) % 3 + 1;
+                let file = format!("chunk-stream0-{:05}.m4s", idx);
+                return match std::fs::read(s.dir.join(&file)) {
+                    Ok(bytes) => bytes.into_response(),
+                    Err(_) => AxumStatusCode::NOT_FOUND.into_response(),
+                };
+            }
+            match std::fs::read(s.dir.join(&name)) {
+                Ok(bytes) => bytes.into_response(),
+                Err(_) => AxumStatusCode::NOT_FOUND.into_response(),
+            }
+        }
+
+        let below_edge = std::sync::Arc::new(AtomicU64::new(0));
+        let app = Router::new()
+            .route("/:name", get(handler))
+            .with_state(State {
+                dir: fixture_dir(),
+                mpd,
+                edge_number: edge,
+                requests_below_edge: std::sync::Arc::clone(&below_edge),
+            });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind ephemeral loopback port");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.expect("axum server");
+        });
+
+        let route = DashPullRoute::new("dash-edge", format!("http://{addr}/manifest.mpd"));
+        let (_specs, per_track) =
+            tokio::time::timeout(Duration::from_secs(20), drive_until_samples(&route))
+                .await
+                .expect("drive_until_samples timed out")
+                .expect("drive_until_samples");
+        server.abort();
+
+        let below = below_edge.load(std::sync::atomic::Ordering::SeqCst);
+        assert!(
+            per_track.values().sum::<usize>() > 0,
+            "samples must arrive from the live edge: {per_track:?}"
+        );
+        assert!(
+            below <= 4,
+            "the plan must start at the live edge, not segment 1 — \
+             {below} requests below the edge"
+        );
+    }
+
+    /// `live_number_mpd` with an explicit `availabilityStartTime`.
+    fn live_number_mpd_with_ast(ast: &str) -> String {
+        live_number_mpd().replace(
+            "type=\"dynamic\"",
+            &format!("type=\"dynamic\" availabilityStartTime=\"{ast}\""),
+        )
+    }
+
+    /// Format Unix seconds as `YYYY-MM-DDThh:mm:ssZ` (UTC) — the inverse of
+    /// `parse_iso8601_utc`, used only by the W14b test.
+    fn iso8601_utc(unix_secs: u64) -> String {
+        let days = (unix_secs / 86_400) as i64;
+        let rem = unix_secs % 86_400;
+        let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
+        // days_from_civil inverse (Howard Hinnant's `civil_from_days`).
+        let z = days + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let mo = if mp < 10 { mp + 3 } else { mp - 9 };
+        let y = if mo <= 2 { y + 1 } else { y };
+        format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+    }
+
+    #[tokio::test]
     /// The `Trunk`-side counterpart to [`drive_and_collect`]: drives the same
     /// route through a real [`media_plane::ingress::IngestDriver`] and asserts
     /// real samples land on a real [`SampleCursor`].
@@ -1341,7 +2131,6 @@ mod tests {
     ///
     /// MUTATION-CHECKED: removing `writer.publish(..)`'s effect by dropping
     /// the `Fmp4Demux` feed in `on_segment` makes this stay `0`.
-    #[tokio::test]
     async fn samples_reach_the_trunk_through_the_ingest_driver() {
         let (url, server) = start_fixture_server(None, None).await;
         let route = DashPullRoute::new("dash-trunk", url);

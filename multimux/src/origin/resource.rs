@@ -61,6 +61,28 @@ use crate::route::{ProgramServing, RouteHandle};
 
 pub(crate) const MP4_CONTENT_TYPE: &str = "video/mp4";
 
+/// `Content-Type` for a whole MPEG-2 Transport Stream segment (a `ts_hls`
+/// route's `seg-{track}-{seq}.ts`). RFC 3555 §4.3 registers `video/mp2t`
+/// for MPEG-2 Transport Stream *data*, and a TS segment is exactly that —
+/// serving it as `video/mp4` is a lie a strict player (or Apple's
+/// `mediastreamvalidator`) rejects (audit run 7, W12).
+pub(crate) const TS_CONTENT_TYPE: &str = "video/mp2t";
+
+/// The `Content-Type` a resource body must be served with, chosen from the
+/// route's container — fMP4/CMAF segments (`.m4s`) are `video/mp4`, whole
+/// MPEG-2 TS segments (`.ts`) are `video/mp2t` (audit run 7, W12).
+///
+/// `HlsBody::Resource` covers init segments too (`init-{track}.mp4`), but
+/// a `MpegTs` container serves no init resource at all, so a resource on an
+/// `MpegTs` route is a `.ts` segment in practice. Anything else falls back
+/// to `video/mp4` for forward compatibility with a future container.
+fn resource_content_type(container: hls_runtime::server::Container) -> &'static str {
+    match container {
+        hls_runtime::server::Container::MpegTs => TS_CONTENT_TYPE,
+        _ => MP4_CONTENT_TYPE,
+    }
+}
+
 /// Abuse bound for [`stream_in_progress_segment`]'s whole-segment number,
 /// mirroring `hls_runtime::server::engine`'s own `ABUSE_MSN_FUTURE_BOUND`
 /// (RFC 8216bis §6.2.5.2's abuse-prevention SHOULD, applied here to the
@@ -151,7 +173,7 @@ async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<St
     .await;
     match http::into_response(resp, StatusCode::NOT_FOUND, |body| {
         let body = inject_segment_events(&trunk, &file, body);
-        resource_body_response(body)
+        resource_body_response(body, route.container())
     }) {
         // A resource that resolved NotFound might still be a whole-segment
         // filename the chunked-transfer path (issue #721) can serve while
@@ -168,11 +190,16 @@ async fn dynamic_file(State(route): State<Arc<RouteHandle>>, Path(file): Path<St
     }
 }
 
-fn resource_body_response(body: hls_runtime::server::HlsBody) -> Response {
+fn resource_body_response(
+    body: hls_runtime::server::HlsBody,
+    container: hls_runtime::server::Container,
+) -> Response {
     match body {
-        hls_runtime::server::HlsBody::Resource(bytes) => {
-            ([(header::CONTENT_TYPE, MP4_CONTENT_TYPE)], bytes).into_response()
-        }
+        hls_runtime::server::HlsBody::Resource(bytes) => (
+            [(header::CONTENT_TYPE, resource_content_type(container))],
+            bytes,
+        )
+            .into_response(),
         // A resource request never resolves to a rendered playlist body --
         // defensive, not reachable via `dynamic_file`'s own `HlsRequest::Resource`.
         hls_runtime::server::HlsBody::Playlist(_) => StatusCode::NOT_FOUND.into_response(),
@@ -470,6 +497,7 @@ struct PartCursor {
 mod tests {
     use super::*;
     use crate::route::RouteHandle;
+    use hls_runtime::server::Container;
     use media_plane::trunk::TrunkConfig;
     use timed_metadata::{MediaTime, TimeAnchor};
     use transmux::ll_hls::{PartInfo, SegmentInfo};
@@ -531,10 +559,53 @@ mod tests {
         let route = make_route();
         let ok = dynamic_file(State(route.clone()), Path("seg-1-1.m4s".to_string())).await;
         assert_eq!(ok.status(), StatusCode::OK);
+        assert_eq!(content_type(&ok), "video/mp4");
         assert_eq!(body_bytes(ok).await, vec![0x21; 8]);
 
         let missing = dynamic_file(State(route), Path("seg-1-99.m4s".to_string())).await;
         assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Audit run 7, W12: a `ts_hls` route (`Container::MpegTs`) serves
+    /// whole MPEG-2 TS segments, so the resource route must answer
+    /// `video/mp2t`, not the `video/mp4` it hard-coded before — a strict
+    /// player (and Apple's `mediastreamvalidator`) rejects the mismatch.
+    #[tokio::test]
+    async fn ts_route_segment_is_served_as_video_mp2t() {
+        let route = Arc::new(RouteHandle::new(4.0, 500, 4).with_container(Container::MpegTs));
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, ts_seg(1))
+            .expect("add_segment");
+
+        let resp = dynamic_file(State(route), Path("seg-1-1.ts".to_string())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            content_type(&resp),
+            "video/mp2t",
+            "a TS segment must not be advertised as video/mp4"
+        );
+        assert_eq!(body_bytes(resp).await, vec![0x47; 188]);
+    }
+
+    fn content_type(resp: &Response) -> String {
+        resp.headers()
+            .get(header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string()
+    }
+
+    /// A minimal but real MPEG-2 TS segment: one 188-byte packet whose
+    /// sync byte is `0x47` — the same byte ffprobe/mediastreamvalidator key
+    /// their container detection on.
+    fn ts_seg(seq: u32) -> SegmentInfo {
+        SegmentInfo {
+            bytes: vec![0x47; 188],
+            duration: 4.0,
+            segment_seq: seq,
+            part_count: 0,
+        }
     }
 
     #[tokio::test]
@@ -542,7 +613,29 @@ mod tests {
         let route = make_route();
         let resp = dynamic_file(State(route), Path("part-1-2.0.m4s".to_string())).await;
         assert_eq!(resp.status(), StatusCode::OK);
+        // W12: an fMP4 part is served as `video/mp4` (the fMP4 container),
+        // not the TS type.
+        assert_eq!(content_type(&resp), "video/mp4");
         assert_eq!(body_bytes(resp).await, vec![0x10; 4]);
+    }
+
+    /// W12: the resource content type follows the **container**, not the
+    /// track type — an audio-only fMP4 part is still `video/mp4` (CMAF), not
+    /// anything video-specific. Exercises the part path on a route with no
+    /// video track at all.
+    #[tokio::test]
+    async fn audio_only_fmp4_part_is_video_mp4() {
+        let route = Arc::new(RouteHandle::new(4.0, 500, 4));
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 8]);
+        route.add_part(crate::route::SPTS_PROGRAM_ID, part(1, 0));
+        let resp = dynamic_file(State(route), Path("part-1-1.0.m4s".to_string())).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            content_type(&resp),
+            "video/mp4",
+            "an fMP4 part is video/mp4 regardless of the track's media type"
+        );
     }
 
     #[tokio::test]

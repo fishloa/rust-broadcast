@@ -3,6 +3,106 @@
 ## [Unreleased]
 
 ### Fixed
+- **An unvalidated in-process `Config` no longer panics on an extreme
+  ingest timeout** (#1083). `IngestTimeouts::from` used
+  `Duration::from_secs_f64`, which panics on a non-finite or overflowing
+  value; it now falls back to the default (matching `HttpLimits::from`), so an
+  embedder or the runtime admin API presenting `NaN`/`1e20` fails soft instead
+  of aborting the process. (Config *validation* of these fields is a
+  behaviour change — see "Changed (breaking)".)
+- **CORS preflight now allows `Authorization`** (#1083). The origin sent
+  `Access-Control-Allow-Headers: *`, but the Fetch spec's `*` wildcard never
+  covers `Authorization` — so a browser player sending Basic or Bearer output
+  auth cross-origin failed the preflight. The header is now an explicit list
+  (`Authorization, Range, Content-Type`).
+- **Push transports bound their connect/handshake, and the SRT URL's query
+  string is no longer mistaken for the address** (#1083). The RTMP push's
+  `TcpStream::connect` plus C0/C1/C2 handshake and `connect`/`publish` command
+  exchange had no timeout, so a server that accepted the TCP connection but
+  never finished the handshake wedged the push forever (`drive_push` only
+  checks its cancel flag between iterations) — the whole exchange is now
+  bounded (`RTMP_CONNECT_TIMEOUT`, exposed as
+  `RtmpTransportConfig::connect_timeout`). The SRT push stripped only the
+  `srt://` scheme, passing a URL's `?streamid=…&latency=…` through as part of
+  the dial address; the address is now `host:port` alone, and `streamid`/
+  `latency` are applied to the handshake configuration.
+- **Pull sources cap a response body before buffering it** (#1083). Every
+  DASH/HLS/Smooth fetch read its whole body into memory, so a misconfigured
+  or hostile origin answering with a multi-gigabyte segment within the read
+  timeout could OOM the process. Bodies are now bounded
+  (`source::MAX_HTTP_BODY_BYTES`, 64 MiB) both from a declared
+  `Content-Length` and from the streamed byte count, so a chunked response
+  with no length (or a lying one) is bounded too.
+  A hostile MPD's `$Number$` plan is also capped
+  (`dash_pull::MAX_PLAN_ENTRIES`), and every pull-source HTTP client now uses
+  a redirect policy (`source::redirect_policy`) limited to 3 hops that refuses
+  an `https`→`http` downgrade.
+- **The Smooth-pull "encrypted" check no longer false-positives on clear
+  content** (#1083). It byte-scanned the *entire* fragment — including `mdat`
+  payload — for `senc`/`saiz`/`saio`, so a random four-byte run in clear
+  coded media tore the route down with a false `Encrypted` (roughly once
+  every 45 minutes per stream at 2 s fragments). It now walks the box tree
+  and inspects only the `moof` box's `traf` children, where
+  `senc`/`saiz`/`saio` (and the PIFF sample-encryption `uuid` box) can
+  legitimately appear (ISO/IEC 14496-12:2015 §8.8.7/§8.8.8).
+- **Live pull sources no longer stall silently** (#1083). Four liveness
+  defects in the DASH/HLS/Smooth pull sources, each fixed:
+  - a **live `$Number$` DASH MPD produced nothing**: its plan was sized from
+    `mediaPresentationDuration`, which a live MPD does not carry, so the plan
+    was empty forever and the route went Live but emitted no samples — a
+    dynamic MPD with no known total now enumerates a bounded look-ahead
+    window that the refresh loop extends as the live edge advances;
+  - a **tolerated `404` stalled the route forever** (DASH **and** Smooth):
+    the segment/fragment was retried without a bound, so the Representation
+    stayed in flight and the MPD/manifest was never refreshed (an encoder
+    restart that resets numbering froze the route) — the retry is now bounded
+    in both sources, after which the entry is abandoned (counted in
+    `multimux_pull_fragment_abandoned_total`) and the manifest refreshed;
+  - a **Smooth manifest refresh matched streams by `Type` alone**: with two
+    audio `StreamIndex`es the second adopted the first's URL template and
+    timeline, so it fetched the wrong fragments under a non-matching track id
+    — streams are now matched by their full identity (`Type` + `Name` + `Url`
+    template, MS-SSTR §2.2.3);
+  - **one failed HLS resource fetch ended the session**: a single `404` from
+    an eviction race (or one dropped connection) tore down and reconnected
+    the whole route, disrupting every viewer — a resource fetch is now
+    retried (bounded) before the session is failed; a failed playlist fetch
+    remains terminal.
+- **Smooth Streaming fragments are per-track, and no codec is advertised
+  under a fabricated FourCC** (#1083). MS-SSTR §2.2.4 defines a fragment
+  response as **one track's** samples (`moof`+`tfxd`+`mdat`), and each
+  `StreamIndex` addresses its own track via
+  `Fragments({type}={start time})` — but the fragment handler ignored the
+  requested `TYPE` and returned the same muxed program segment for every
+  StreamIndex, so an audio request was answered with the video (or muxed)
+  fragment. The muxed segment is now demuxed and re-packaged into the
+  requested StreamIndex's own track (via the crate's own `Fmp4Demux` +
+  `SmoothPackager`) before it is served. Separately, a track whose codec
+  Smooth cannot describe was advertised as `FourCC="H264"` with an empty
+  `CodecPrivateData`, telling a client to initialise an H.264 decoder it
+  could never use; such a track is now omitted from the manifest (a request
+  for it 404s) and logged, never silently mislabelled.
+- **A catch-up playlist that can lose leading segments no longer claims
+  `EXT-X-PLAYLIST-TYPE`** (#1083). `GET /catchup.m3u8` rendered
+  `PLAYLIST-TYPE:EVENT` unconditionally, but a `window_secs` bound
+  (`apply_window`) or DVR retention (which evicts whole leading periods)
+  both remove segments — RFC 8216 §6.2.2 is explicit that "A Live Playlist
+  MUST NOT contain the EXT-X-PLAYLIST-TYPE tag, as no value of that tag
+  allows Media Segments to be removed", and §6.2.1 forbids an `EVENT`
+  playlist from changing or deleting any part. The tag is now omitted
+  whenever either is active (retention is required by `DvrConfig::validate`,
+  so in practice the live catch-up playlist never claims `EVENT`), and kept
+  for the still-growing single-period `/vod/p{N}.m3u8`, whose own segment
+  list only ever grows. An empty rendered playlist also declares
+  `#EXT-X-MEDIA-SEQUENCE:0` now (RFC 8216 §4.3.3.2) instead of reusing the
+  unrelated `#EXT-X-TARGETDURATION` floor.
+- **A `ts_hls` route's `.ts` segments are served as `video/mp2t`, not
+  `video/mp4`** (#1083). The shared resource route hard-coded `video/mp4`
+  for every body, so a classic TS-HLS segment (a `seg-{track}-{seq}.ts`
+  URI) was advertised with the wrong content type — Apple's
+  `mediastreamvalidator` flags this and a strict player rejects it. The
+  content type is now chosen from the route's container (`video/mp2t` for
+  `Container::MpegTs`, `video/mp4` for fMP4/CMAF).
 - WHIP ingest keeps an inbound RTP header extension (RFC 3550 §5.3.1, e.g. RFC 8285 `mid`/`rid`/CVO) when it rebuilds the wire packet for the depacketiser, now that `webrtc-runtime` reports it (#1090).
 - The RTSP push transport (#1025) now targets the configured push URL instead of a hard-coded
   `rtsp://localhost/push`, checks every response status, writes the `AuthRetry` bytes rtsp-runtime
@@ -224,6 +324,46 @@
   per datagram).
 
 ### Changed (breaking)
+- **The Smooth client Manifest changed shape** (#1083): HEVC tracks are no
+  longer advertised (Smooth cannot serve them — they 404'd); each
+  `StreamIndex` now carries its **own** `c` timeline in absolute 10 MHz ticks
+  derived from that track's samples (so audio reflects AAC's real frame timing
+  and a chunk's `t`/`d` is stable as the window slides), replacing the shared
+  muxed segment duration; `QualityLevel@Bitrate` is now a real bitrate (was the
+  quality ordinal), and a fragment URL's `QualityLevels(N)` carries that
+  bitrate; `mfhd.sequence_number` is the segment sequence number (was the
+  constant track ordinal). A client that keyed on the old values must be
+  updated.
+- **An SRT push URL is now validated at config time** (#1083): a missing host,
+  an unsupported `mode` (only `caller`), a `passphrase` (SRT encryption is not
+  implemented), an out-of-range `latency`, or an unbracketed IPv6 authority is
+  a config error (surfaced on admin add/reload too).
+- **A live DASH `$Number$` route now starts at the live edge** (#1083),
+  derived from `availabilityStartTime`, `Period@start`, `presentationTimeOffset`
+  and a documented 3-segment suggested-presentation-delay, computed in the
+  template's tick domain — not at `@startNumber`. A dynamic `$Time$` MPD plans
+  only its last few `SegmentTimeline` entries.
+- **Config validation now rejects values it previously accepted** (#1083):
+  a `ReconnectPolicy` with a zero backoff, an `initial_backoff_ms` greater
+  than `max_backoff_ms`, or a backoff above 24 h; and an
+  `ingest_connect_timeout_secs`/`ingest_read_timeout_secs` that is not a
+  finite number in `(0, 86_400]` (so a non-finite or overflowing value such
+  as `1e20` is now a config error, not a startup panic). A config that
+  validated before this change still does unless it used one of those
+  degenerate values.
+- **WHIP/WHEP and the origin's CORS responses changed** (#1083): WHIP/WHEP
+  now answer a preflight with `Access-Control-Allow-Methods: POST, PATCH,
+  DELETE, OPTIONS` and `Access-Control-Allow-Headers: Authorization,
+  Content-Type, If-Match`; the origin adds `Access-Control-Expose-Headers`
+  (`Content-Length, Content-Range, Date, ETag`), `Vary: Origin` (appended),
+  and `GET, HEAD, OPTIONS`.
+- **Pull sources bound their responses** (#1083): a `$Number$` plan is capped
+  at `dash_pull::MAX_PLAN_ENTRIES`, and every pull-source HTTP client uses
+  `source::redirect_policy` (3 hops, no `https`→`http` downgrade). An origin
+  that relied on following more redirects, or on a downgrade, is affected.
+- `push::RtmpTransportConfig` gained a `connect_timeout: Option<Duration>`
+  field (#1083) — `None` uses the new `RTMP_CONNECT_TIMEOUT` (15 s). A
+  struct literal outside this crate must add it (`..Default::default()`).
 - `RouteHandle::add_segment` returns `Result<(), AddSegmentError>` instead of
   logging and dropping a segment it could not publish (#1082).
 - `source::advance_route` is now `async` (#1083): its DVR-drain step writes
@@ -255,11 +395,29 @@
   from a corrupt archive (a `500`).
 
 ### Added
+- `multimux_pull_stream_refresh_miss_total` Prometheus counter: manifest
+  refreshes in which a live stream had no matching `StreamIndex` (#1083).
+- `DashIngestSession::with_clock` — inject the wall clock used to place a live
+  `$Number$` plan at the live edge (#1083), for a deterministic test.
+- `source::redirect_policy`, `push::srt`'s SRT URL query parsing (see below),
+  and `MAX_TIMEOUT_SECS` — see the entries above.
+- `ReconnectPolicy::validate` — rejects a zero initial/max backoff (#1083),
+  called from `Route::validate_standalone`.
+- `source::MAX_HTTP_BODY_BYTES` — the response-body cap every pull-source
+  fetch now applies (#1083).
+- `DvrConfig::retention_active` — whether configured retention can evict
+  leading segments (`retention_periods` or `retention_bytes` set), used by
+  the catch-up playlist to decide whether it may claim
+  `EXT-X-PLAYLIST-TYPE:EVENT` (#1083).
 - `multimux_dvr_pin_rearmed_total` Prometheus counter (labels: `route`) —
   see the `DvrRecorder` re-arm fix above.
 - `multimux_http_shed_total` Prometheus counter (label: `kind` =
   `ordinary` | `blocking_reload`): requests the global concurrency bound
   answered `503` before they reached any route (#1083).
+- `multimux_pull_fragment_abandoned_total` Prometheus counter (label:
+  `source`): a live-edge segment/fragment a DASH/Smooth pull abandoned after
+  exhausting its bounded tolerated-`404` retries (#1083) — see the pull-source
+  fix above.
 - `multimux_dvr_failed_total` Prometheus counter (label: `route`): a DVR
   recorder abandoned because its mutex was poisoned (#1083). The poisoned
   DVR recorder is abandoned (recording stops) at whichever entry observes the

@@ -443,12 +443,33 @@ async fn add_response_headers(req: Request, next: Next) -> Response {
     );
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, OPTIONS"),
+        HeaderValue::from_static("GET, HEAD, OPTIONS"),
     );
+    // An explicit header list, not `*`: the Fetch spec's `*` wildcard never
+    // covers `Authorization`, so a browser player sending Basic or Bearer
+    // output auth cross-origin fails the preflight (audit run 7, W18). `Range`
+    // covers byte-range fetches; `Content-Type` a preflight for a body.
+    //
+    // No `Access-Control-Allow-Credentials`: it is meaningless (and the Fetch
+    // spec forbids it) with the `*` origin wildcard this origin sends, and
+    // these are not credentialed requests — the browser sends the auth header
+    // explicitly, not as an ambient cookie.
     headers.insert(
         header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static("*"),
+        HeaderValue::from_static(CORS_ALLOW_HEADERS),
     );
+    // Let a browser read the response metadata a media client needs
+    // (byte-range and cache validators), which CORS otherwise hides.
+    headers.insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static(CORS_EXPOSE_HEADERS),
+    );
+    // The `Access-Control-Allow-Origin: *` value does not vary by request, but
+    // `Vary` is still set so a shared cache never serves a response whose CORS
+    // headers were computed for a different `Origin`.
+    // Append, not insert:  may already carry  (e.g.
+    // from a compression layer), and  would drop it.
+    headers.append(header::VARY, HeaderValue::from_static("Origin"));
     headers.insert(
         header::CACHE_CONTROL,
         HeaderValue::from_static(if is_manifest {
@@ -464,6 +485,17 @@ async fn add_response_headers(req: Request, next: Next) -> Response {
 /// they must always be re-fetched for liveness, never served stale from a
 /// cache.
 const CACHE_CONTROL_MANIFEST: &str = "no-cache";
+
+/// The explicit `Access-Control-Allow-Headers` list this origin sends (audit
+/// run 7, W18). `Authorization` must be named literally — the Fetch spec's `*`
+/// wildcard does not cover it — alongside `Range` (byte-range fetches) and
+/// `Content-Type` (a preflighted body, e.g. a WHEP/WHIP answer).
+const CORS_ALLOW_HEADERS: &str = "Authorization, Range, Content-Type";
+
+/// The response headers a browser media client must be able to read
+/// (`Access-Control-Expose-Headers`) — byte-range and cache-validator metadata
+/// CORS hides by default.
+const CORS_EXPOSE_HEADERS: &str = "Content-Length, Content-Range, Date, ETag";
 
 /// `Cache-Control` for init/segment/part byte ranges: once produced, a given
 /// URI's bytes never change (each segment/part is generated exactly once
@@ -942,7 +974,11 @@ fn spawn_push_outputs(
                     let trunk = store.await_first_trunk().await;
                     tracing::info!(%url, "RTMP push output starting");
                     let (app, stream_key) = rtmp_app_and_stream_key(&url);
-                    let config = crate::push::RtmpTransportConfig { app, stream_key };
+                    let config = crate::push::RtmpTransportConfig {
+                        app,
+                        stream_key,
+                        ..Default::default()
+                    };
                     crate::push::drive_push::<crate::push::RtmpTransport>(
                         trunk, url, config, _format, reconnect, cancel,
                     )
@@ -2989,6 +3025,59 @@ mod tests {
                 .unwrap(),
             "*"
         );
+    }
+
+    /// Audit run 7, W18: a real cross-origin preflight for a request that
+    /// sends `Authorization` must be answered with an
+    /// `Access-Control-Allow-Headers` that names it — the Fetch spec's `*`
+    /// wildcard never covers `Authorization`, so the pre-fix header failed the
+    /// preflight for every browser player using output auth.
+    #[tokio::test]
+    async fn cors_preflight_allows_authorization_explicitly() {
+        let app = app_with_output_auth(Verifier::new(
+            Credentials::bearer("secrettoken"),
+            OUTPUT_AUTH_REALM,
+        ));
+        let req = Request::builder()
+            .method("OPTIONS")
+            .uri("/cam1/master.m3u8")
+            .header("Origin", "https://player.example")
+            .header("Access-Control-Request-Method", "GET")
+            .header("Access-Control-Request-Headers", "authorization")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.oneshot(req).await.unwrap();
+        let headers = resp.headers();
+        let allow = headers
+            .get(axum::http::header::ACCESS_CONTROL_ALLOW_HEADERS)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default()
+            .to_string();
+        assert!(
+            allow.to_ascii_lowercase().contains("authorization"),
+            "the preflight must name Authorization: {allow:?}"
+        );
+        // `Vary: Origin` so a shared cache never reuses a CORS-wrong response.
+        assert_eq!(
+            headers
+                .get(axum::http::header::VARY)
+                .and_then(|v| v.to_str().ok()),
+            Some("Origin")
+        );
+        // The metadata a media client needs is exposed.
+        let expose = headers
+            .get(axum::http::header::ACCESS_CONTROL_EXPOSE_HEADERS)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        for want in ["Content-Length", "Content-Range", "ETag"] {
+            assert!(expose.contains(want), "must expose {want}: {expose}");
+        }
+        // HEAD is allowed (a client may probe a segment's size).
+        let methods = headers
+            .get(axum::http::header::ACCESS_CONTROL_ALLOW_METHODS)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or_default();
+        assert!(methods.contains("HEAD"), "HEAD must be allowed: {methods}");
     }
 
     // --- issue #663 external scheme plugin registry ---

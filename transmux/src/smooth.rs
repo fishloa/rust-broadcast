@@ -413,6 +413,57 @@ impl SmoothPackager {
         })
     }
 
+    /// Build **one** Smooth fragment for a single track at an explicit
+    /// smooth-timeline start (issue #1083, W13).
+    ///
+    /// Unlike [`Package::package`](broadcast_common::Package::package), this
+    /// does not segment the track or derive the start from the track's own
+    /// decode times: it emits the whole track's samples as a single
+    /// `moof`+`tfxd`+`mdat` whose `FragmentAbsoluteTime` is exactly
+    /// `start_smooth` (in [`SMOOTH_TIMESCALE`] ticks) and whose
+    /// `FragmentDuration` is the sum of the samples' own durations. That lets
+    /// a live packager whose manifest `c@t` advertises a cumulative start
+    /// serve a fragment whose `tfxd` matches it — the requirement MS-SSTR
+    /// §2.2.4 places on a fragment response, and which the per-track
+    /// `TimelineOrigin`-based path cannot express (it always starts at `0`).
+    ///
+    /// `track` must carry at least one sample; `sequence_number` is
+    /// `mfhd.sequence_number` (1-based).
+    pub fn package_track_fragment(
+        &self,
+        track: &Track,
+        sequence_number: u32,
+        start_smooth: u64,
+    ) -> Result<SmoothFragment> {
+        if track.samples.is_empty() {
+            return Err(Error::InvalidInput(
+                "cannot package a Smooth fragment from a track with no samples",
+            ));
+        }
+        let media_timescale = track.spec.timescale.max(1);
+        // Times relative to the track's own first sample: only the *durations*
+        // and composition offsets are used from here (the fragment's absolute
+        // start is the caller's `start_smooth`, not the derived one).
+        let origin = TimelineOrigin::of(core::iter::once(track));
+        let times = smooth_timeline(track, &origin, media_timescale)?;
+        let dur_smooth: u64 = times.iter().map(|t| u64::from(t.duration)).sum();
+        let data = build_smooth_fragment(
+            track.spec.track_id,
+            sequence_number,
+            start_smooth,
+            dur_smooth,
+            &track.samples,
+            &times,
+        )?;
+        Ok(SmoothFragment {
+            track_id: track.spec.track_id,
+            sequence_number,
+            start_time: start_smooth,
+            duration: dur_smooth,
+            data,
+        })
+    }
+
     /// Render the Smooth client Manifest XML for the resolved streams.
     fn render_manifest(&self, streams: &[StreamInfo]) -> String {
         let mut w = XmlWriter::new();

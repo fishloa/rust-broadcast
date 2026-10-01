@@ -133,6 +133,7 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
     let cfg = RtmpTransportConfig {
         app: "live".to_string(),
         stream_key: "test".to_string(),
+        ..Default::default()
     };
     let url = format!("rtmp://{addr}/live/test");
     let cancel = CancellationToken::new();
