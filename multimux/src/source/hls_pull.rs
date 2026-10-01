@@ -478,7 +478,7 @@ pub async fn run_hls_pull(
         if inflight.is_empty() {
             if driver.session().ended() {
                 driver.finish();
-                crate::source::advance_route(&driver, route_handle, &mut progress);
+                crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 return terminal_result(driver, "hls-pull");
             }
             // Nothing in flight and nothing queued: the client has genuinely
@@ -493,7 +493,7 @@ pub async fn run_hls_pull(
         match joined {
             Some(Ok((fetch_id, Ok(bytes)))) => {
                 driver.feed((fetch_id, bytes.as_slice()), now);
-                crate::source::advance_route(&driver, route_handle, &mut progress);
+                crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
             Some(Ok((_fetch_id, Err(e)))) => return Err(e),
             Some(Err(join_err)) => {
@@ -509,13 +509,13 @@ pub async fn run_hls_pull(
             // playlist/manifest/resource) — see `terminal_result`. Health is
             // already terminal here, so this call's internal terminal-health
             // check flushes every program's trailing partial segment.
-            crate::source::advance_route(&driver, route_handle, &mut progress);
+            crate::source::advance_route(&driver, route_handle, &mut progress).await;
             return terminal_result(driver, "hls-pull");
         }
 
         if driver.session().ended() {
             driver.finish();
-            crate::source::advance_route(&driver, route_handle, &mut progress);
+            crate::source::advance_route(&driver, route_handle, &mut progress).await;
             return terminal_result(driver, "hls-pull");
         }
     }

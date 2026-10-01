@@ -118,6 +118,82 @@ struct RouteRuntime {
     push_handles: Vec<tokio::task::JoinHandle<()>>,
 }
 
+impl std::fmt::Debug for RouteRuntime {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RouteRuntime")
+            .field("route", &self.route.name)
+            .finish_non_exhaustive()
+    }
+}
+
+/// A [`RouteRuntime`] that is *not yet installed in the registry*. Dropping
+/// one — because a later step in the same `add_route`/`reload` failed, or a
+/// panic unwound — cancels its push/WHEP tasks and aborts its supervisor, so
+/// a half-built route can never leave a dialer or a bound listen port behind
+/// (audit run 7, W6/A2). [`Self::into_installed`] disarms the guard and takes
+/// the runtime out, so an installed runtime is *not* torn down on drop; the
+/// registry owns it from then on and tears it down via [`drain_route`].
+struct PendingRuntime {
+    runtime: Option<RouteRuntime>,
+    armed: bool,
+}
+
+impl PendingRuntime {
+    fn new(runtime: RouteRuntime) -> Self {
+        PendingRuntime {
+            runtime: Some(runtime),
+            armed: true,
+        }
+    }
+
+    /// The guarded runtime's store — for spawning push/WHEP outputs against
+    /// it *before* the runtime is fully assembled (item 7).
+    fn store(&self) -> Arc<RouteHandle> {
+        Arc::clone(&self.runtime.as_ref().expect("armed").store)
+    }
+
+    /// Attach the push/WHEP handles spawned against this guard's store.
+    fn with_push_handles(mut self, handles: Vec<tokio::task::JoinHandle<()>>) -> Self {
+        self.runtime
+            .as_mut()
+            .expect("armed")
+            .push_handles
+            .extend(handles);
+        self
+    }
+
+    /// Take the assembled runtime out (disarming the rollback) — used by
+    /// [`RouteRegistry::spawn_route`], whose result the caller re-wraps.
+    fn into_runtime(self) -> RouteRuntime {
+        self.into_installed()
+    }
+
+    /// Take the runtime out for installation, disarming the rollback.
+    fn into_installed(mut self) -> RouteRuntime {
+        self.armed = false;
+        self.runtime
+            .take()
+            .expect("PendingRuntime::into_installed called twice")
+    }
+}
+
+impl Drop for PendingRuntime {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        let Some(runtime) = self.runtime.take() else {
+            return;
+        };
+        runtime.push_cancel.cancel();
+        let _ = runtime.shutdown_tx.send(true);
+        runtime.handle.abort();
+        for h in runtime.push_handles {
+            h.abort();
+        }
+    }
+}
+
 /// Everything [`RouteRegistry`] needs to build/rebuild a route or the media
 /// [`Router`] over it, gathered once at startup — process-wide settings that
 /// [`RouteRegistry::reload`] does not change (see that method's own docs:
@@ -139,6 +215,20 @@ struct RegistryContext {
 /// rarely — see this module's own "Concurrency" docs.
 pub(crate) struct RouteRegistry {
     ctx: RegistryContext,
+    /// Serialises every registry **mutation** (`add_route`/`remove_route`/
+    /// `reload`/`shutdown_all`, audit run 7, W6). Without it, two concurrent
+    /// `POST /admin/routes`/`POST /admin/reload` calls each read a snapshot,
+    /// build their runtime, then `insert` — the loser's `RouteRuntime` is
+    /// silently overwritten and dropped with no `drain_route`, so its
+    /// supervisor task detaches (still serving) and any listen port
+    /// (RTMP/SRT/WHIP/TS-UDP/WHEP) stays bound forever. An async mutex, not
+    /// a `std` one: the critical section awaits `drain_route` (which awaits
+    /// the displaced supervisor's shutdown), so it must not block the
+    /// executor thread.
+    ///
+    /// Only mutations take it; reads (`resolve`/`current_router`) stay
+    /// lock-free against it, so admin traffic never blocks media serving.
+    mutation_lock: tokio::sync::Mutex<()>,
     inner: std::sync::RwLock<HashMap<String, RouteRuntime>>,
     /// The currently-active media [`Router`], rebuilt whole on every
     /// mutation (see this module's own docs) and read by
@@ -159,6 +249,7 @@ impl RouteRegistry {
     fn new(ctx: RegistryContext, config_path: Option<PathBuf>) -> Arc<Self> {
         let registry = Arc::new(RouteRegistry {
             ctx,
+            mutation_lock: tokio::sync::Mutex::new(()),
             inner: std::sync::RwLock::new(HashMap::new()),
             router_slot: std::sync::RwLock::new(Router::new()),
             config_path,
@@ -168,12 +259,26 @@ impl RouteRegistry {
     }
 
     fn streams_snapshot(&self) -> HashMap<String, StreamRoute> {
-        self.inner
-            .read()
-            .expect("RouteRegistry::inner lock poisoned")
+        crate::lock::read(&self.inner)
             .iter()
             .map(|(name, rt)| (name.clone(), (Arc::clone(&rt.store), rt.outputs.clone())))
             .collect()
+    }
+
+    /// Builds the media [`Router`] over exactly `streams`. Pure: touches no
+    /// registry state, so [`Self::add_route`] can build the *prospective*
+    /// router (current routes plus a not-yet-inserted one) and only commit it
+    /// once it is known to have succeeded (audit run 7, W5 — a router build
+    /// panics on e.g. a `Custom` output mounting an overlapping path, and
+    /// `add_route` must not have already mutated the registry when it does).
+    fn build_router(&self, streams: HashMap<String, StreamRoute>) -> Router {
+        let mut app_state = AppState::new(streams).with_limits(self.ctx.http_limits);
+        if let Some(verifier) = &self.ctx.output_auth {
+            app_state = app_state.with_output_auth(Arc::clone(verifier));
+        }
+        // The concurrency bound (and the ops/reload budgets) is applied
+        // inside `router()` itself, so it is present here too.
+        router(Arc::new(app_state))
     }
 
     /// Rebuilds the whole media [`Router`] from the current route set and
@@ -182,25 +287,14 @@ impl RouteRegistry {
     /// edit, which axum's router does not support) is the right cost to pay
     /// here.
     fn rebuild_router(&self) {
-        let streams = self.streams_snapshot();
-        let mut app_state = AppState::new(streams).with_limits(self.ctx.http_limits);
-        if let Some(verifier) = &self.ctx.output_auth {
-            app_state = app_state.with_output_auth(Arc::clone(verifier));
-        }
-        let new_router = router(Arc::new(app_state));
-        *self
-            .router_slot
-            .write()
-            .expect("RouteRegistry::router_slot lock poisoned") = new_router;
+        let new_router = self.build_router(self.streams_snapshot());
+        *crate::lock::write(&self.router_slot) = new_router;
     }
 
     /// A cheap clone of the currently-active media [`Router`] — read once
     /// per accepted request by [`DynamicMediaService`].
     pub(crate) fn current_router(&self) -> Router {
-        self.router_slot
-            .read()
-            .expect("RouteRegistry::router_slot lock poisoned")
-            .clone()
+        crate::lock::read(&self.router_slot).clone()
     }
 
     /// Builds `route`'s [`Output`]s and spawns its supervised ingest task —
@@ -244,8 +338,12 @@ impl RouteRegistry {
             .with_dvr(route.dvr.clone()),
         );
         let (shutdown_tx, shutdown_rx) = watch::channel(false);
-        let push_cancel = tokio_util::sync::CancellationToken::new();
-        let push_handles = super::spawn_push_outputs(route, Arc::clone(&store), &push_cancel);
+        // Spawn the FALLIBLE ingest task first (audit run 7, A2): it is the
+        // only step here that can return `Err` (an unknown `Custom` tag, or a
+        // factory that returns `Err`). Doing it after the push/WHEP spawns
+        // meant an `Err` dropped their handles without cancelling them, so a
+        // push dialer kept dialling and a WHEP listener kept its port bound
+        // forever, for a route that was never installed.
         let handle = super::spawn_ingest(
             route,
             Arc::clone(&store),
@@ -253,35 +351,127 @@ impl RouteRegistry {
             &self.ctx.scheme_registry,
             shutdown_rx,
         )?;
-        Ok(RouteRuntime {
+        // Guard the ingest handle BEFORE spawning push/WHEP (item 7): if
+        // either spawn panics (a `Custom` output factory, say), the guard's
+        // Drop aborts the ingest task too, so a half-built route cannot leak
+        // a running supervisor. `push_cancel` is shared, so it is created
+        // and installed before the spawns as well.
+        let push_cancel = tokio_util::sync::CancellationToken::new();
+        let guarded = PendingRuntime::new(RouteRuntime {
             route: route.clone(),
             store,
             outputs,
             shutdown_tx,
             handle,
-            push_cancel,
-            push_handles,
-        })
+            push_cancel: push_cancel.clone(),
+            push_handles: Vec::new(),
+        });
+
+        let mut push_handles = super::spawn_push_outputs(route, guarded.store(), &push_cancel);
+        // Audit run 7, W6: the startup path (`serve_with_registry`) spawns
+        // WHEP egress here too, but this admin path never did — so with the
+        // admin API enabled (every startup route goes through `add_route`)
+        // a route's `whep` output was silently never started. Spawn it, and
+        // fold its handles into the same cancellation/abort group as push.
+        push_handles.extend(super::spawn_whep_outputs(
+            route,
+            guarded.store(),
+            &push_cancel,
+            self.ctx.output_auth.clone(),
+        ));
+        Ok(guarded.with_push_handles(push_handles).into_runtime())
     }
 
     /// `POST /admin/routes`: validates `route`, rejects a duplicate `name`
     /// with [`crate::MultimuxError::RouteExists`] (`409` — the existing
     /// route is left completely untouched), otherwise builds and spawns it
     /// and rebuilds the media router so it starts serving immediately.
-    pub(crate) fn add_route(&self, route: Route) -> crate::Result<RouteStatus> {
-        route.validate_standalone()?;
-        let mut guard = self
-            .inner
-            .write()
-            .expect("RouteRegistry::inner lock poisoned");
-        if guard.contains_key(&route.name) {
-            return Err(crate::MultimuxError::RouteExists { name: route.name });
+    ///
+    /// Serialised by [`Self::mutation_lock`] (audit run 7, W6) and — the
+    /// plugin-factory point (W2) — `spawn_route`, which invokes a `Custom`
+    /// input/output factory, runs with **no registry lock held**, so a
+    /// panicking factory can neither poison `inner` into a permanent admin
+    /// lockout nor block a concurrent reader.
+    pub(crate) async fn add_route(&self, route: Route) -> crate::Result<RouteStatus> {
+        route.validate_standalone(&self.ctx.base_config.playlist_name)?;
+        let _guard = self.mutation_lock.lock().await;
+        // Exact-name collision, plus a case-insensitive one (audit run 7,
+        // A4): two names differing only in case share one DVR archive
+        // directory on a case-insensitive filesystem, and the router nests
+        // them under distinct URL segments, which is confusing and wrong.
+        {
+            let key = route.name.to_lowercase();
+            let inner = crate::lock::read(&self.inner);
+            if inner.contains_key(&route.name) || inner.keys().any(|k| k.to_lowercase() == key) {
+                drop(inner);
+                return Err(crate::MultimuxError::RouteExists { name: route.name });
+            }
         }
         let runtime = self.spawn_route(&route)?;
         let status = RouteStatus::from_runtime(&runtime);
-        guard.insert(route.name.clone(), runtime);
-        drop(guard);
-        self.rebuild_router();
+        // The runtime is NOT installed yet. Wrap it so any early return or
+        // unwind from here on cancels its push/WHEP tasks and aborts its
+        // supervisor (audit run 7, A2) — a route that never reaches the
+        // registry must not leave a dialer or a bound port behind.
+        let pending = PendingRuntime::new(runtime);
+
+        // Build-before-insert (audit run 7, W5/A1): `Router::merge`/`nest`
+        // can PANIC (a `Custom` output mounting an overlapping path, e.g.),
+        // and `rebuild_router` builds from whatever is in `inner`. Building
+        // the prospective router — the current snapshot PLUS this route —
+        // *before* inserting means a panic here happens with `inner`
+        // untouched: nothing is registered, and the `PendingRuntime` guard
+        // tears the half-built route down as it unwinds. Built inside
+        // `catch_unwind` so the panic becomes a clean `500` for this one
+        // request rather than poisoning anything or leaving a route that
+        // every later rebuild also panics on.
+        let prospective = {
+            let mut streams = self.streams_snapshot();
+            streams.insert(
+                route.name.clone(),
+                (
+                    Arc::clone(&pending.runtime.as_ref().expect("armed").store),
+                    pending.runtime.as_ref().expect("armed").outputs.clone(),
+                ),
+            );
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.build_router(streams)))
+        };
+        let new_router = match prospective {
+            Ok(router) => router,
+            Err(_) => {
+                tracing::error!(
+                    route = %route.name,
+                    "building the router for a new route panicked; the route was not added"
+                );
+                return Err(crate::MultimuxError::ConfigInvalid {
+                    field: "routes",
+                    reason: format!(
+                        "route {:?} could not be mounted (its outputs produce a conflicting  \
+                        router path)",
+                        route.name
+                    ),
+                });
+            }
+        };
+
+        // Commit: install the router and the runtime together.
+        let runtime = pending.into_installed();
+        *crate::lock::write(&self.router_slot) = new_router;
+        let displaced = {
+            let mut guard = crate::lock::write(&self.inner);
+            guard.insert(route.name.clone(), runtime)
+        };
+        // A concurrent insert (or a reload) could not have raced us — the
+        // mutation lock is held — so a displaced runtime here is defensive
+        // only. Drain it anyway: dropping a `RouteRuntime` without draining
+        // leaks its supervisor task and listen ports (W6).
+        if let Some(old) = displaced {
+            tracing::warn!(
+                route = %route.name,
+                "add_route displaced an existing runtime; draining it"
+            );
+            drain_route(old).await;
+        }
         Ok(status)
     }
 
@@ -291,11 +481,9 @@ impl RouteRegistry {
     /// — then drains its supervisor task with no lock held (see this
     /// module's own "Concurrency" and "What an in-flight viewer sees" docs).
     pub(crate) async fn remove_route(&self, name: &str) -> crate::Result<()> {
+        let _guard = self.mutation_lock.lock().await;
         let removed = {
-            let mut guard = self
-                .inner
-                .write()
-                .expect("RouteRegistry::inner lock poisoned");
+            let mut guard = crate::lock::write(&self.inner);
             guard.remove(name)
         };
         let Some(runtime) = removed else {
@@ -310,9 +498,7 @@ impl RouteRegistry {
 
     /// `GET /admin/routes`.
     pub(crate) fn list_routes(&self) -> Vec<RouteStatus> {
-        self.inner
-            .read()
-            .expect("RouteRegistry::inner lock poisoned")
+        crate::lock::read(&self.inner)
             .values()
             .map(RouteStatus::from_runtime)
             .collect()
@@ -320,9 +506,7 @@ impl RouteRegistry {
 
     /// `GET /admin/routes/{name}`.
     pub(crate) fn get_route(&self, name: &str) -> Option<RouteStatus> {
-        self.inner
-            .read()
-            .expect("RouteRegistry::inner lock poisoned")
+        crate::lock::read(&self.inner)
             .get(name)
             .map(RouteStatus::from_runtime)
     }
@@ -348,6 +532,14 @@ impl RouteRegistry {
     /// built so far in this batch is torn down immediately (never inserted,
     /// so no request could ever have reached it) rather than left running
     /// detached.
+    ///
+    /// A reload is validated as a WHOLE by `Config::validate` (which rejects
+    /// two route names differing only in case), so the `Cam1`/`cam1` pair a
+    /// live registry could briefly hold mid-reload cannot arise from a
+    /// reloaded file: either the file is rejected outright (leaving the
+    /// existing registry untouched) or it contains no such pair. The live
+    /// registry itself also rejects a case-insensitive duplicate at
+    /// `add_route`.
     pub(crate) async fn reload(&self) -> crate::Result<ReloadSummary> {
         let Some(path) = self.config_path.clone() else {
             return Err(crate::MultimuxError::ConfigInvalid {
@@ -358,11 +550,10 @@ impl RouteRegistry {
             });
         };
         let new_config = Config::from_json_file(&path)?;
+        let _guard = self.mutation_lock.lock().await;
 
         let current: HashMap<String, Route> = {
-            self.inner
-                .read()
-                .expect("RouteRegistry::inner lock poisoned")
+            crate::lock::read(&self.inner)
                 .iter()
                 .map(|(name, rt)| (name.clone(), rt.route.clone()))
                 .collect()
@@ -395,32 +586,60 @@ impl RouteRegistry {
         // them (side-effect-free, so a failure here needs no rollback at
         // all).
         for route in added_routes.iter().chain(changed_routes.iter()) {
-            route.validate_standalone()?;
+            route.validate_standalone(&self.ctx.base_config.playlist_name)?;
         }
 
         // Build (and spawn) every to-add/to-restart route, rolling back
         // (abort, no graceful drain needed -- nothing already spawned in
         // this batch was ever reachable by a request) anything already
         // built in this batch if a later one fails.
-        let mut prepared: Vec<(Route, RouteRuntime)> = Vec::new();
+        // Each built runtime is held in a `PendingRuntime` guard, so an `Err`
+        // from a later route in this batch (or an unwinding panic) drops the
+        // earlier ones and, through their `Drop`, cancels their push/WHEP
+        // tasks and aborts their supervisors — never leaving a dialer dialling
+        // or a port bound for a route that was never installed (W6/A2).
+        let mut prepared: Vec<(Route, PendingRuntime)> = Vec::new();
         for route in added_routes.iter().chain(changed_routes.iter()) {
-            match self.spawn_route(route) {
-                Ok(runtime) => prepared.push((route.clone(), runtime)),
-                Err(e) => {
-                    for (_, runtime) in prepared {
-                        let _ = runtime.shutdown_tx.send(true);
-                        runtime.handle.abort();
-                    }
-                    return Err(e);
-                }
-            }
+            let runtime = self.spawn_route(route)?;
+            prepared.push((route.clone(), PendingRuntime::new(runtime)));
         }
 
+        // Build the prospective router (current set minus removals/restarts,
+        // plus the newly prepared routes) BEFORE mutating `inner`, so a
+        // router-build panic leaves the live registry untouched (W5/A1).
+        let prospective = {
+            let mut streams = self.streams_snapshot();
+            for name in removed_names
+                .iter()
+                .chain(changed_routes.iter().map(|r| &r.name))
+            {
+                streams.remove(name);
+            }
+            for (route, pending) in &prepared {
+                let runtime = pending.runtime.as_ref().expect("armed");
+                streams.insert(
+                    route.name.clone(),
+                    (Arc::clone(&runtime.store), runtime.outputs.clone()),
+                );
+            }
+            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.build_router(streams)))
+        };
+        let new_router = match prospective {
+            Ok(router) => router,
+            Err(_) => {
+                tracing::error!(
+                    "building the router for a reloaded configuration panicked; no changes applied"
+                );
+                return Err(crate::MultimuxError::ConfigInvalid {
+                    field: "routes",
+                    reason: "the reloaded routes could not be mounted (a conflicting router path)"
+                        .into(),
+                });
+            }
+        };
+
         let removed_runtimes: Vec<RouteRuntime> = {
-            let mut guard = self
-                .inner
-                .write()
-                .expect("RouteRegistry::inner lock poisoned");
+            let mut guard = crate::lock::write(&self.inner);
             let mut removed_runtimes = Vec::new();
             for name in removed_names
                 .iter()
@@ -430,12 +649,12 @@ impl RouteRegistry {
                     removed_runtimes.push(rt);
                 }
             }
-            for (route, runtime) in prepared {
-                guard.insert(route.name.clone(), runtime);
+            for (route, pending) in prepared {
+                guard.insert(route.name.clone(), pending.into_installed());
             }
             removed_runtimes
         };
-        self.rebuild_router();
+        *crate::lock::write(&self.router_slot) = new_router;
 
         futures_util::future::join_all(removed_runtimes.into_iter().map(drain_route)).await;
 
@@ -451,11 +670,9 @@ impl RouteRegistry {
     /// orderly fashion (mirrors `serve_with_registry`'s own final loop) —
     /// called once, from [`serve_with_admin`]'s own shutdown path.
     async fn shutdown_all(&self) {
+        let _guard = self.mutation_lock.lock().await;
         let all: Vec<RouteRuntime> = {
-            let mut guard = self
-                .inner
-                .write()
-                .expect("RouteRegistry::inner lock poisoned");
+            let mut guard = crate::lock::write(&self.inner);
             guard.drain().map(|(_, rt)| rt).collect()
         };
         futures_util::future::join_all(all.into_iter().map(drain_route)).await;
@@ -628,7 +845,7 @@ async fn add_route_handler(
         Ok(Json(route)) => route,
         Err(rejection) => return error_response(StatusCode::BAD_REQUEST, rejection.body_text()),
     };
-    match state.registry.add_route(route) {
+    match state.registry.add_route(route).await {
         Ok(status) => (StatusCode::CREATED, Json(status)).into_response(),
         Err(e) => error_response(status_for_error(&e), e.to_string()),
     }
@@ -717,7 +934,9 @@ pub(crate) fn admin_router(registry: Arc<RouteRegistry>, verifier: Arc<Verifier>
 /// Per-connection media service: reads the *current* router snapshot
 /// ([`RouteRegistry::current_router`]) on every request rather than once at
 /// startup, so a route added/removed after this connection was accepted is
-/// still reflected — see this module's own "Concurrency" docs.
+/// still reflected — see this module's own "Concurrency" docs. Holds the
+/// address so `ConnectInfo<SocketAddr>` can still be inserted into every
+/// request.
 #[derive(Clone)]
 struct DynamicMediaService {
     registry: Arc<RouteRegistry>,
@@ -840,7 +1059,7 @@ pub(crate) async fn serve_with_admin(
     // no rollback of earlier-in-this-loop routes is needed: the whole
     // process is about to exit, not keep running with an orphaned task.
     for route in &config.routes {
-        registry.add_route(route.clone())?;
+        registry.add_route(route.clone()).await?;
     }
 
     let media_listener = tokio::net::TcpListener::bind(config.bind.as_str()).await?;
@@ -940,7 +1159,7 @@ mod tests {
         });
 
         // Must not panic. Whether the spawn itself succeeds is not the point.
-        let _ = registry.add_route(route);
+        let _ = registry.add_route(route).await;
 
         // The lock must still be usable — this is what the poisoning broke.
         // The lock must still be usable — poisoning is what bricked this.
@@ -971,10 +1190,12 @@ mod tests {
         let registry = RouteRegistry::new(ctx_for_tests(), None);
         let first = registry
             .add_route(rtsp_route("cam1", "rtsp://host/a"))
+            .await
             .expect("first add succeeds");
 
         let err = registry
             .add_route(rtsp_route("cam1", "rtsp://host/b"))
+            .await
             .expect_err("duplicate name must be rejected");
         assert!(matches!(err, crate::MultimuxError::RouteExists { name } if name == "cam1"));
 
@@ -1004,8 +1225,8 @@ mod tests {
     /// entirely) makes this test fail: `add_route` returns `Ok(..)` for an
     /// empty-outputs route instead of `Err(ConfigInvalid { .. })`.
     /// Recompiled and re-run to confirm, then reverted.
-    #[test]
-    fn add_route_rejects_invalid_route_before_mutating() {
+    #[tokio::test]
+    async fn add_route_rejects_invalid_route_before_mutating() {
         let registry = RouteRegistry::new(ctx_for_tests(), None);
         let bad = Route {
             name: "cam1".to_string(),
@@ -1018,6 +1239,7 @@ mod tests {
         };
         let err = registry
             .add_route(bad)
+            .await
             .expect_err("empty outputs must be rejected");
         assert!(matches!(err, crate::MultimuxError::ConfigInvalid { .. }));
         assert!(

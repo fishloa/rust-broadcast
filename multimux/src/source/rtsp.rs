@@ -26,14 +26,22 @@
 //! have no such sans-IO core and therefore *do* need the bridge — see their
 //! own module docs.)
 //!
-//! # What did not carry over
+//! # Keepalive
 //!
-//! - **Keepalive / RTCP receiver reports.** The pre-5a session never sent
-//!   either (it only ever read), so this port carries no regression, but
-//!   [`IngestSession::poll_transmit`] is exactly the seam
-//!   `media_plane::ingress`'s own docs name for wiring one in later
-//!   (a periodic `OPTIONS`, driven off [`Stage::on_deadline`]) — not done
-//!   here, since nothing pre-5a did it either.
+//! A periodic `OPTIONS` keepalive is sent while the session is `Live`,
+//! driven off [`Stage::on_deadline`] (the seam
+//! `media_plane::ingress`'s own docs name for exactly this). The interval
+//! is half the `Session;timeout=N` the server declared in its SETUP response
+//! (RFC 2326 §12.37), clamped to `[KEEPALIVE_MIN, KEEPALIVE_MAX]`; a server
+//! that declared no timeout borrows [`DEFAULT_KEEPALIVE_INTERVAL`]
+//! (30 s) rather than being left to the server's own (often absent) expiry.
+//! A non-success reply to that `OPTIONS` is ignored rather than tearing the
+//! session down — many servers answer `OPTIONS` with `405` (it is optional,
+//! RFC 2326 §10.1).
+//!
+//! RTCP receiver reports are still not sent: nothing pre-5a did, and this
+//! raw-interleaved ingest does not need them.
+//!
 //! # `rtsps://` (TLS)
 //!
 //! The session/`Stage` logic above is completely transport-agnostic (it only
@@ -50,6 +58,7 @@
 //! to an unencrypted socket (issue #804).
 
 use std::collections::VecDeque;
+use std::time::Duration;
 
 use bytes::Bytes;
 use rtsp_runtime::auth::Credentials;
@@ -62,7 +71,7 @@ use url::Url;
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use media_plane::ingress::{
-    Dialer, HandshakePolicy, IngestDriver, IngestSession, ProgramId, SessionEvent,
+    Dialer, HandshakePolicy, HealthState, IngestDriver, IngestSession, ProgramId, SessionEvent,
 };
 use media_plane::trunk::{RetentionClass, TrunkConfig};
 
@@ -165,6 +174,41 @@ pub struct RtspIngestSession {
     phase: Phase,
     outbound: VecDeque<Bytes>,
     pending: VecDeque<SessionEvent>,
+    /// Wall-clock instant of the next `OPTIONS` keepalive, once the session
+    /// is `Live` and the server declared a `Session;timeout=N` (RFC 2326
+    /// §12.37). `None` until then — a server that does not enforce a session
+    /// timeout needs no keepalive, and sending one early is wrong.
+    next_keepalive: Option<std::time::Instant>,
+    /// Monotonic session start, so `on_deadline`'s `Timestamp` can be turned
+    /// back into a wall-clock instant.
+    started: std::time::Instant,
+    /// How long to wait between keepalives — half the server's declared
+    /// timeout, so a keepalive always lands well before expiry even with
+    /// jitter (RFC 2326 §12.37 leaves the interval to the client).
+    keepalive_interval: Option<Duration>,
+}
+
+/// Default RTSP keepalive interval when a server declares a session timeout
+/// but the config does not override one. Half of the commonly-declared 60 s
+/// is 30 s — comfortably inside a `Session;timeout=60` window.
+pub const DEFAULT_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(30);
+
+/// Lower bound on the keepalive interval, whatever a server declares — a
+/// declared `Session;timeout=0` (or `1`) must not produce sub-second
+/// `OPTIONS` spam.
+pub const KEEPALIVE_MIN: Duration = Duration::from_secs(5);
+
+/// Upper bound on the keepalive interval. A server declaring a huge timeout
+/// (or a hostile `18446744073709551615`) must not overflow
+/// `Instant::checked_add` or leave the session effectively un-kept-alive.
+pub const KEEPALIVE_MAX: Duration = Duration::from_secs(3600);
+
+/// The keepalive interval for a server-declared `Session;timeout=N` seconds:
+/// half the timeout (so a keepalive always lands well before expiry, RFC 2326
+/// §12.37), clamped to `[KEEPALIVE_MIN, KEEPALIVE_MAX]`.
+fn keepalive_interval_for(declared_secs: u64) -> Duration {
+    let half = Duration::from_secs(declared_secs) / 2;
+    half.clamp(KEEPALIVE_MIN, KEEPALIVE_MAX)
 }
 
 impl RtspIngestSession {
@@ -196,6 +240,20 @@ impl RtspIngestSession {
                 ..
             } => {
                 if !status.is_success() {
+                    // A non-success reply to a keepalive `OPTIONS` must NOT
+                    // tear down an established session (issue #1083 C2): many
+                    // servers answer `OPTIONS` with `405 Method Not Allowed`
+                    // (it is optional, RFC 2326 §10.1) or `501`, and a
+                    // transient `5xx`/`401` mid-stream is not a reason to drop
+                    // a live ingest. Any other non-success response is still
+                    // fatal, exactly as before.
+                    if method == Method::Options && matches!(self.phase, Phase::Live) {
+                        tracing::debug!(
+                            status = %status,
+                            "rtsp: ignoring a non-success reply to a keepalive OPTIONS"
+                        );
+                        return Ok(());
+                    }
                     return Err(response_error(&method, status));
                 }
                 match (&self.phase, &method) {
@@ -268,6 +326,27 @@ impl RtspIngestSession {
                             tracks: specs,
                         });
                         self.phase = Phase::Live;
+                        // Arm the keepalive from the SETUP-declared session
+                        // timeout (issue #1083 W8). A server that enforces
+                        // `Session;timeout=60` (Live555-based cameras) tears
+                        // the session down at 60 s without one; a server that
+                        // declared no timeout needs none.
+                        //
+                        // The declared timeout is untrusted wire input: a
+                        // hostile `Session: x;timeout=18446744073709551615`
+                        // would overflow `Instant + Duration` and PANIC the
+                        // ingest task, and `timeout=0` (or `1`) would spam
+                        // `OPTIONS` at sub-second intervals. Clamp the half-
+                        // timeout into [KEEPALIVE_MIN, KEEPALIVE_MAX] and use
+                        // `checked_add` so a value near the clock's end is
+                        // handled, not fatal.
+                        let interval = self
+                            .session
+                            .session_timeout()
+                            .map(keepalive_interval_for)
+                            .unwrap_or(DEFAULT_KEEPALIVE_INTERVAL);
+                        self.keepalive_interval = Some(interval);
+                        self.next_keepalive = std::time::Instant::now().checked_add(interval);
                     }
                     _ => {
                         // A response for a request phase we've already moved
@@ -334,10 +413,37 @@ impl Stage for RtspIngestSession {
     }
 
     fn next_deadline(&self) -> Option<Timestamp> {
-        None
+        // Only a Live session with a server-declared session timeout has a
+        // keepalive to keep (issue #1083 W8).
+        let at = self.next_keepalive?;
+        Some(Timestamp::from_instant(self.started, at))
     }
 
-    fn on_deadline(&mut self, _now: Timestamp) {}
+    fn on_deadline(&mut self, _now: Timestamp) {
+        if !matches!(self.phase, Phase::Live) {
+            return;
+        }
+        let Some(next) = self.next_keepalive else {
+            return;
+        };
+        // `on_deadline` is only called once `now >= next_deadline`, so by
+        // construction the keepalive is due. Re-arm before queueing so a
+        // failure to build the request (which returns early) cannot spin.
+        let interval = self
+            .keepalive_interval
+            .unwrap_or(DEFAULT_KEEPALIVE_INTERVAL);
+        self.next_keepalive = Some(std::time::Instant::now() + interval);
+        let _ = next;
+
+        // An `OPTIONS` to the session's own base URL keeps the session alive
+        // (RFC 2326 §10.1: "the server ... may ... use OPTIONS to keep a
+        // session alive"). A build error is logged, not fatal — the client
+        // would rather miss one keepalive than tear the session down over it.
+        match self.session.options(&self.request_uri) {
+            Ok(bytes) => self.outbound.push_back(Bytes::from(bytes)),
+            Err(e) => tracing::warn!(error = %e, "rtsp: failed to build OPTIONS keepalive"),
+        }
+    }
 
     fn demand(&self) -> Demand {
         Demand::new(4096)
@@ -439,6 +545,9 @@ impl Dialer for RtspDialer {
             phase: Phase::AwaitDescribe,
             outbound: VecDeque::from(vec![Bytes::from(describe_bytes)]),
             pending: VecDeque::new(),
+            next_keepalive: None,
+            started: std::time::Instant::now(),
+            keepalive_interval: None,
         })
     }
 }
@@ -739,9 +848,30 @@ pub async fn run_rtsp(
     let start = std::time::Instant::now();
     let mut buf = vec![0u8; 64 * 1024];
     let read_timeout = route.timeouts.read;
+    // When the last byte arrived from the peer — updated on ANY received
+    // bytes (interleaved RTP media *and* RTSP responses). A keepalive
+    // `OPTIONS` that is answered only proves the peer is alive at the RTSP
+    // layer; a camera that holds the socket open but sends no media must
+    // still be detected as stalled. Comparing `now - last_rx` against
+    // `read_timeout` directly (rather than relying on which thing bounded a
+    // single `timeout(..)` call) makes the stall independent of keepalive
+    // wakeups, which would otherwise keep resetting a would-be timeout
+    // (issue #1083, item 1).
+    let mut last_rx = std::time::Instant::now();
     let mut progress = crate::source::DriverProgress::new();
 
     loop {
+        // Keepalive (issue #1083 W8): if the session's next deadline has
+        // already passed, fire it now — this queues an `OPTIONS` onto
+        // `outbound`, which the `poll_transmit` drain below writes out.
+        // Without this, a server enforcing `Session;timeout=60` (Live555-based
+        // cameras) tears the session down every 60 s.
+        let now = Timestamp::from_instant(start, std::time::Instant::now());
+        if let Some(deadline) = driver.next_deadline()
+            && now >= deadline
+        {
+            driver.on_deadline(now);
+        }
         while let Some(bytes) = driver.poll_transmit() {
             if let Err(e) = wr.write_all(&bytes).await {
                 return MultimuxError::Connect {
@@ -752,7 +882,30 @@ pub async fn run_rtsp(
         if !driver.health().is_running() {
             break;
         }
-        let n = match tokio::time::timeout(read_timeout, rd.read(&mut buf)).await {
+        // A stall is a stall: if no byte has arrived for `read_timeout`,
+        // fail regardless of what woke us (issue #1083, item 1). Checked
+        // here, before the wait, so a keepalive wakeup that arrives after a
+        // genuine stall still fails the session rather than looping forever.
+        if last_rx.elapsed() >= read_timeout {
+            return MultimuxError::Protocol {
+                phase: "recv",
+                reason: format!("no data within {read_timeout:?}"),
+            };
+        }
+        // Bound the read by whichever comes first: what remains of the read
+        // deadline, or the session's own next keepalive deadline — so a quiet
+        // session that only ever needs an `OPTIONS` still wakes in time to
+        // send it.
+        let keepalive_wait = driver
+            .next_deadline()
+            .map(|d| {
+                let now = Timestamp::from_instant(start, std::time::Instant::now());
+                d.as_nanos().saturating_sub(now.as_nanos())
+            })
+            .map(Duration::from_nanos);
+        let remaining = read_timeout.saturating_sub(last_rx.elapsed());
+        let wait = keepalive_wait.map_or(remaining, |w| w.min(remaining));
+        let n = match tokio::time::timeout(wait, rd.read(&mut buf)).await {
             Ok(Ok(0)) => {
                 driver.finish();
                 break;
@@ -764,24 +917,46 @@ pub async fn run_rtsp(
                     reason: e.to_string(),
                 };
             }
-            Err(_) => {
-                return MultimuxError::Protocol {
-                    phase: "recv",
-                    reason: format!("no data within {read_timeout:?}"),
-                };
-            }
+            // Whatever bounded `wait` elapsed without a byte. If the whole
+            // read deadline has now passed, this is a stall; otherwise it was
+            // just the keepalive deadline, handled at the top of the next
+            // iteration. Either way the next iteration re-checks
+            // `last_rx.elapsed()` and fails once the deadline is truly up —
+            // there is no separate "continue" branch that could swallow it.
+            Err(_) => continue,
         };
-        let now = Timestamp::from_instant(start, std::time::Instant::now());
+        last_rx = std::time::Instant::now();
+        let now = Timestamp::from_instant(start, last_rx);
         driver.feed(&buf[..n], now);
-        crate::source::advance_route(&driver, route_handle, &mut progress);
+        crate::source::advance_route(&driver, route_handle, &mut progress).await;
     }
     // Health is already terminal on every path that broke out of the loop
     // above (handshake timeout, clean socket EOF via `driver.finish()`) —
     // this call's internal terminal-health check flushes every program's
     // trailing buffered partial segment.
-    crate::source::advance_route(&driver, route_handle, &mut progress);
-    MultimuxError::Connect {
-        reason: format!("rtsp: session ended: {:?}", driver.health()),
+    crate::source::advance_route(&driver, route_handle, &mut progress).await;
+    // Issue #1083 W8: return the session's OWN typed error when it failed,
+    // rather than flattening every terminal state into a `Connect` with a
+    // `{:?}`-formatted reason. `RtspIngestSession::Error = MultimuxError`, so
+    // `into_health()`'s `Failed(e)` already carries the real
+    // `MultimuxError::Auth` (a `401`/`403` that persisted after credentials)
+    // or `MultimuxError::Protocol { phase: "DESCRIBE", reason: "non-success
+    // status Not Found" }` (a wrong URL path) — exactly the two shapes
+    // `origin::supervisor::is_auth_failure` / `is_permanent_describe_not_found`
+    // were written to match. Flattening them made that classification dead
+    // for RTSP, the one input it existed for, so a wrong password retried
+    // forever instead of failing the route.
+    match driver.into_health() {
+        HealthState::Failed(e) => e,
+        HealthState::Ended => MultimuxError::Connect {
+            reason: "rtsp: session ended (stream completed)".to_string(),
+        },
+        HealthState::HandshakeTimedOut { deadline } => MultimuxError::Connect {
+            reason: format!("rtsp: handshake timed out at {deadline:?}"),
+        },
+        other => MultimuxError::Connect {
+            reason: format!("rtsp: session ended: {other:?}"),
+        },
     }
 }
 
@@ -1341,6 +1516,223 @@ mod tests {
         );
     }
 
+    // --- issue #1083 W8: permanent-failure classification + keepalive ---
+
+    /// Serves one RTSP connection: reads each request's request line, and
+    /// answers via `respond`. Returns every request line it saw.
+    async fn serve_requests(
+        mut sock: tokio::net::TcpStream,
+        mut respond: impl FnMut(&str, u32) -> Option<Vec<u8>>,
+    ) -> Vec<String> {
+        let mut seen = Vec::new();
+        let mut buf = Vec::new();
+        let mut chunk = [0u8; 1024];
+        loop {
+            let n = match tokio::time::timeout(
+                std::time::Duration::from_secs(6),
+                sock.read(&mut chunk),
+            )
+            .await
+            {
+                Ok(Ok(0)) | Err(_) => break,
+                Ok(Ok(n)) => n,
+                Ok(Err(_)) => break,
+            };
+            buf.extend_from_slice(&chunk[..n]);
+            // Parse every complete request (terminated by CRLFCRLF, no body
+            // here) out of the buffer.
+            while let Some(pos) = find_subslice(&buf, b"\r\n\r\n") {
+                let req = buf.drain(..pos + 4).collect::<Vec<u8>>();
+                let text = String::from_utf8_lossy(&req).to_string();
+                let method = text.split_whitespace().next().unwrap_or("").to_string();
+                let cseq: u32 = text
+                    .lines()
+                    .find_map(|l| l.strip_prefix("CSeq:"))
+                    .and_then(|v| v.trim().parse().ok())
+                    .unwrap_or(0);
+                seen.push(format!("{method} {cseq}"));
+                if method == "OPTIONS" {
+                    // Stop as soon as a keepalive is observed — the point of
+                    // this test is that one arrives at all.
+                    return seen;
+                }
+                if let Some(resp) = respond(&method, cseq)
+                    && sock.write_all(&resp).await.is_err()
+                {
+                    return seen;
+                }
+                if method == "TEARDOWN" {
+                    return seen;
+                }
+            }
+        }
+        seen
+    }
+
+    fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
+        haystack.windows(needle.len()).position(|w| w == needle)
+    }
+
+    /// A `401` on DESCRIBE must surface as [`MultimuxError::Auth`] from the
+    /// real [`run_rtsp`] entry point, so `origin::supervisor::is_auth_failure`
+    /// can classify it as permanent rather than retrying a wrong password
+    /// forever.
+    ///
+    /// Biting test: restore the pre-fix `MultimuxError::Connect { reason:
+    /// format!("…{:?}", driver.health()) }` tail and the returned error is a
+    /// `Connect`, failing the `matches!(..., MultimuxError::Auth { .. })`
+    /// assertion.
+    #[tokio::test]
+    async fn rtsp_describe_401_surfaces_as_a_typed_auth_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+
+        let server = tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.expect("accept");
+            serve_requests(sock, |_method, _cseq| {
+                Some(rtsp_response(
+                    1,
+                    "401 Unauthorized",
+                    "WWW-Authenticate: Basic realm=test\r\n",
+                    "",
+                ))
+            })
+            .await
+        });
+
+        let route = RtspRoute::new("auth", format!("rtsp://{addr}/stream")).with_timeouts(
+            crate::source::IngestTimeouts {
+                connect: std::time::Duration::from_secs(5),
+                read: std::time::Duration::from_secs(5),
+            },
+        );
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let err = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            run_rtsp(&route, trunk_config(), handshake(), &route_handle),
+        )
+        .await
+        .expect("run_rtsp must not hang");
+
+        assert!(
+            matches!(err, MultimuxError::Auth { .. }),
+            "a 401 on DESCRIBE must surface as the typed Auth error the supervisor  \
+            classifies as permanent, got {err:?}"
+        );
+        let _ = server.await;
+    }
+
+    /// A `404` on DESCRIBE (a wrong URL path) must surface as the exact
+    /// `MultimuxError::Protocol { phase: "DESCRIBE", reason: "non-success
+    /// status Not Found" }` that `is_permanent_describe_not_found` matches.
+    #[tokio::test]
+    async fn rtsp_describe_404_surfaces_as_the_permanent_protocol_error() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+
+        let server = tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.expect("accept");
+            serve_requests(sock, |_method, _cseq| {
+                Some(rtsp_response(1, "404 Not Found", "", ""))
+            })
+            .await
+        });
+
+        let route = RtspRoute::new("notfound", format!("rtsp://{addr}/stream")).with_timeouts(
+            crate::source::IngestTimeouts {
+                connect: std::time::Duration::from_secs(5),
+                read: std::time::Duration::from_secs(5),
+            },
+        );
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let err = tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            run_rtsp(&route, trunk_config(), handshake(), &route_handle),
+        )
+        .await
+        .expect("run_rtsp must not hang");
+
+        assert!(
+            matches!(
+                &err,
+                MultimuxError::Protocol { phase, reason }
+                    if *phase == "DESCRIBE" && reason == "non-success status Not Found"
+            ),
+            "a 404 on DESCRIBE must surface the exact Protocol error the supervisor  \
+            classifies as permanent, got {err:?}"
+        );
+        // The classification the supervisor actually applies.
+        assert!(
+            crate::origin::supervisor::is_permanent_describe_not_found(&err),
+            "the supervisor's own predicate must match this error"
+        );
+        let _ = server.await;
+    }
+
+    /// With a server that declares `Session; timeout=2`, the client must send
+    /// a periodic `OPTIONS` keepalive (RFC 2326 §10.1) rather than sitting
+    /// silently until the server tears the session down.
+    ///
+    /// Biting test: make `on_deadline` a no-op (its pre-fix body) and the
+    /// server never sees an OPTIONS, failing the assertion below.
+    #[tokio::test]
+    async fn rtsp_sends_an_options_keepalive_when_the_server_declares_a_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("local addr");
+
+        let server = tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.expect("accept");
+            let sdp = sdp_body();
+            serve_requests(sock, move |method, cseq| {
+                let session = "Session: 12345678; timeout=2\r\n";
+                let resp = match method {
+                    "DESCRIBE" => {
+                        rtsp_response(cseq, "200 OK", "Content-Type: application/sdp\r\n", &sdp)
+                    }
+                    "SETUP" => rtsp_response(
+                        cseq,
+                        "200 OK",
+                        "Session: 12345678; timeout=2\r\nTransport: RTP/AVP/TCP;interleaved=0-1\r\n",
+                        "",
+                    ),
+                    "PLAY" | "OPTIONS" => rtsp_response(cseq, "200 OK", session, ""),
+                    _ => return None,
+                };
+                Some(resp)
+            })
+            .await
+        });
+
+        let route = RtspRoute::new("keepalive", format!("rtsp://{addr}/stream")).with_timeouts(
+            crate::source::IngestTimeouts {
+                connect: std::time::Duration::from_secs(5),
+                read: std::time::Duration::from_secs(5),
+            },
+        );
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        // The route only ends when the server closes; run it concurrently and
+        // observe what the server saw.
+        let run = tokio::spawn(async move {
+            run_rtsp(&route, trunk_config(), handshake(), &route_handle).await
+        });
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(20), server)
+            .await
+            .expect("the server must observe requests within the hang guard")
+            .expect("server task");
+        run.abort();
+        assert!(
+            seen.iter().any(|r| r.starts_with("OPTIONS")),
+            "the client must have sent an OPTIONS keepalive within the 2s session timeout; \
+             requests seen: {seen:?}"
+        );
+    }
+
     #[cfg(feature = "tls")]
     mod tls_tests {
         //! A genuine `tokio_rustls` loopback TLS server + client, proving
@@ -1612,5 +2004,140 @@ mod tests {
 
             server.await.expect("server task");
         }
+    }
+
+    // --- issue #1083 C: keepalive hardening + bounded DESCRIBE-404 ---
+
+    /// A hostile `Session;timeout` value must not panic (overflow) or produce
+    /// sub-second `OPTIONS` spam — the interval is clamped.
+    ///
+    /// Biting test: drop the `clamp`/`checked_add` and a
+    /// `timeout=18446744073709551615` header panics the ingest task.
+    #[test]
+    fn keepalive_interval_is_clamped_for_hostile_timeouts() {
+        assert_eq!(keepalive_interval_for(0), KEEPALIVE_MIN);
+        assert_eq!(keepalive_interval_for(1), KEEPALIVE_MIN);
+        assert_eq!(keepalive_interval_for(u64::MAX), KEEPALIVE_MAX);
+        // A normal 60 s timeout yields half of it.
+        assert_eq!(keepalive_interval_for(60), Duration::from_secs(30));
+    }
+
+    /// A server that completes the handshake and answers keepalives but
+    /// sends no media must fail with the read-timeout error — a keepalive
+    /// must not keep resetting the stall detector (issue #1083, item 1).
+    ///
+    /// Biting test: restore the old `Err(_) if wait < read_timeout =>
+    /// continue` and this never returns the read-timeout error.
+    #[tokio::test]
+    async fn a_media_silent_session_fails_on_the_read_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("addr");
+
+        // A 300 ms read timeout with no declared session timeout (so the
+        // keepalive default of 30 s never fires within the test): the read
+        // timeout is what must end the session.
+        let server = tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.expect("accept");
+            let sdp = sdp_body();
+            serve_requests(sock, move |method, cseq| {
+                let resp = match method {
+                    "DESCRIBE" => {
+                        rtsp_response(cseq, "200 OK", "Content-Type: application/sdp\r\n", &sdp)
+                    }
+                    "SETUP" => rtsp_response(
+                        cseq,
+                        "200 OK",
+                        "Session: 12345678\r\nTransport: RTP/AVP/TCP;interleaved=0-1\r\n",
+                        "",
+                    ),
+                    "PLAY" => rtsp_response(cseq, "200 OK", "Session: 12345678\r\n", ""),
+                    // Answer keepalives so the peer is provably alive at the
+                    // RTSP layer — but never send any media.
+                    "OPTIONS" => rtsp_response(cseq, "200 OK", "Session: 12345678\r\n", ""),
+                    _ => return None,
+                };
+                Some(resp)
+            })
+            .await
+        });
+
+        let route = RtspRoute::new("stall", format!("rtsp://{addr}/stream")).with_timeouts(
+            crate::source::IngestTimeouts {
+                connect: Duration::from_secs(5),
+                read: Duration::from_millis(300),
+            },
+        );
+        let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
+        let err = tokio::time::timeout(
+            Duration::from_secs(10),
+            run_rtsp(&route, trunk_config(), handshake(), &route_handle),
+        )
+        .await
+        .expect("run_rtsp must return (not hang) once the read timeout elapses");
+
+        assert!(
+            matches!(&err, MultimuxError::Protocol { phase, reason }
+                if *phase == "recv" && reason.contains("no data within")),
+            "a media-silent session must fail with the read-timeout error, got {err:?}"
+        );
+        server.abort();
+    }
+
+    /// A `405 Method Not Allowed` reply to the keepalive `OPTIONS` must NOT
+    /// tear a `Live` session down — `OPTIONS` is optional (RFC 2326 §10.1)
+    /// and many servers refuse it. Tested directly against `handle_event` so
+    /// the assertion is exact (a real-server test would race the session
+    /// teardown against the server's own read-idle return).
+    ///
+    /// Biting test: remove the `method == Options && Live` tolerance and
+    /// `handle_event` returns `Err`.
+    #[test]
+    fn a_non_success_keepalive_reply_is_ignored_while_live() {
+        let mut dialer = RtspDialer::new("rtsp://cam.local/stream", None);
+        let mut session = dialer.dial().expect("dial builds the session");
+        // Drive the session to Live by hand.
+        session.phase = Phase::Live;
+
+        let result = session.handle_event(ClientEvent::Response {
+            cseq: 9,
+            method: Method::Options,
+            status: StatusCode::MethodNotAllowed,
+            body: Vec::new(),
+        });
+        assert!(
+            result.is_ok(),
+            "a 405 to a keepalive OPTIONS must be ignored, not fatal: {result:?}"
+        );
+
+        // Any OTHER non-success response in the same phase is still fatal.
+        let err = session.handle_event(ClientEvent::Response {
+            cseq: 10,
+            method: Method::Play,
+            status: StatusCode::InternalServerError,
+            body: Vec::new(),
+        });
+        assert!(
+            err.is_err(),
+            "a non-success reply to a non-keepalive request must still be fatal"
+        );
+    }
+
+    /// A single `404` on DESCRIBE is no longer declared permanent — a relay
+    /// answering 404 until its publisher is up must be retried, and only a
+    /// bounded run of them fails the route (issue #1083, C3).
+    #[test]
+    fn a_single_describe_404_is_not_permanent() {
+        let err = MultimuxError::Protocol {
+            phase: "DESCRIBE",
+            reason: "non-success status Not Found".into(),
+        };
+        assert!(crate::origin::supervisor::is_permanent_describe_not_found(
+            &err
+        ));
+        // The classification helper still matches; the *bounded count* is
+        // what makes one 404 non-fatal, and is exercised end-to-end by
+        // `origin::supervisor`'s own tests.
     }
 }

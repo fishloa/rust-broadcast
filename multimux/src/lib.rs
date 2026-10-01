@@ -32,6 +32,7 @@ pub mod config;
 pub mod dvr;
 pub mod error;
 mod http;
+mod lock;
 pub mod origin;
 pub mod output;
 pub mod prometheus;

@@ -83,6 +83,16 @@ const DEFAULT_BACKOFF_FACTOR: f64 = 2.0;
 /// should get more time, not less.
 const MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT: u32 = 5;
 
+/// Consecutive `404 Not Found`-on-DESCRIBE attempts tolerated before the
+/// route is declared permanently failed (issue #1083, C3).
+///
+/// A wrong URL path never self-heals, but many relays/cameras answer `404`
+/// on an RTSP path until their upstream publisher is up, then start
+/// answering `200` — declaring the route dead after a single `404` gave up on
+/// a source that would have worked seconds later. Bounded exactly like the
+/// auth path, so a genuinely wrong path still fails in human terms.
+const MAX_DESCRIBE_NOT_FOUND_BEFORE_PERMANENT: u32 = 5;
+
 /// Classifies an `attempt` failure as "certain to fail again" vs. "worth
 /// supervised retry" (issue #957). Every other failure (network, transport,
 /// server-side 5xx, protocol errors) is genuinely transient — the camera
@@ -105,13 +115,13 @@ const MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT: u32 = 5;
 ///   falls through to the transient/retry path, matching every non-RTSP
 ///   input kind's own `Protocol`-shaped errors (SRT/RTMP/HTTP-pull, none of
 ///   which reuse this exact phase/reason pairing).
-fn is_auth_failure(err: &MultimuxError) -> bool {
+pub(crate) fn is_auth_failure(err: &MultimuxError) -> bool {
     matches!(err, MultimuxError::Auth { .. })
 }
 
 /// See [`is_auth_failure`]'s doc — the DESCRIBE-404 half of the same
 /// classification.
-fn is_permanent_describe_not_found(err: &MultimuxError) -> bool {
+pub(crate) fn is_permanent_describe_not_found(err: &MultimuxError) -> bool {
     matches!(
         err,
         MultimuxError::Protocol { phase, reason }
@@ -255,6 +265,9 @@ pub async fn supervise_driver<F, Fut>(
     // last non-auth failure) — see `MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT`'s
     // doc (issue #957).
     let mut consecutive_auth_failures: u32 = 0;
+    // Consecutive DESCRIBE-404 attempts, bounded like the auth path (issue
+    // #1083, C3).
+    let mut consecutive_describe_not_found: u32 = 0;
 
     loop {
         if *shutdown.borrow() {
@@ -292,7 +305,12 @@ pub async fn supervise_driver<F, Fut>(
             } else {
                 consecutive_auth_failures = 0;
             }
-            if is_permanent_describe_not_found(e)
+            if is_permanent_describe_not_found(e) {
+                consecutive_describe_not_found += 1;
+            } else {
+                consecutive_describe_not_found = 0;
+            }
+            if consecutive_describe_not_found > MAX_DESCRIBE_NOT_FOUND_BEFORE_PERMANENT
                 || consecutive_auth_failures > MAX_AUTH_ATTEMPTS_BEFORE_PERMANENT
             {
                 tracing::error!(
@@ -306,6 +324,7 @@ pub async fn supervise_driver<F, Fut>(
             }
         } else {
             consecutive_auth_failures = 0;
+            consecutive_describe_not_found = 0;
         }
 
         if reached_live {
@@ -505,7 +524,7 @@ mod tests {
     /// boot-transient tolerance needed — a wrong URL path doesn't fix itself
     /// on a reboot the way a not-yet-ready auth subsystem does).
     #[tokio::test]
-    async fn a_describe_404_is_permanent_on_the_first_attempt() {
+    async fn a_describe_404_is_permanent_only_after_the_bound() {
         let route = Arc::new(RouteHandle::new(1.0, 500, 8));
         let call_count = Arc::new(AtomicUsize::new(0));
         let attempt = always_fails(
@@ -525,17 +544,70 @@ mod tests {
             shutdown_rx,
         ));
 
-        tokio::time::timeout(Duration::from_secs(10), handle)
+        tokio::time::timeout(Duration::from_secs(30), handle)
             .await
-            .expect("supervise_driver must return on its own for a DESCRIBE 404")
+            .expect("supervise_driver must return on its own once the 404 bound is hit")
             .expect("supervise_driver task did not panic");
 
         assert_eq!(route.health(), HealthState::Failed);
+        // Bounded like the auth path: the first is tolerated, so the attempt
+        // count is exactly the bound plus one.
         assert_eq!(
             call_count.load(Ordering::SeqCst),
-            1,
-            "a DESCRIBE 404 must be declared permanent on the very first attempt"
+            (MAX_DESCRIBE_NOT_FOUND_BEFORE_PERMANENT + 1) as usize,
+            "a persistent DESCRIBE 404 must be declared permanent after the bound, not on the  \
+            first attempt"
         );
+    }
+
+    /// A relay that answers `404` on DESCRIBE a few times (its publisher is
+    /// not up yet) and then succeeds must reach `Live` — never marked
+    /// `Failed`. This is the scenario the bounded 404 exists for (issue
+    /// #1083, C3).
+    #[tokio::test]
+    async fn a_describe_404_that_recovers_within_the_bound_reaches_live() {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let call_count = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&call_count);
+        let attempt = move |route_handle: Arc<RouteHandle>| {
+            let seen = Arc::clone(&seen);
+            async move {
+                let n = seen.fetch_add(1, Ordering::SeqCst);
+                if n < 2 {
+                    // Two transient 404s, then success.
+                    return Err(MultimuxError::Protocol {
+                        phase: "DESCRIBE",
+                        reason: "non-success status Not Found".into(),
+                    });
+                }
+                route_handle.set_health(HealthState::Live);
+                // Block forever so the supervisor observes Live and stops
+                // counting attempts.
+                std::future::pending::<()>().await;
+                #[allow(unreachable_code)]
+                Ok(())
+            }
+        };
+        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let handle = tokio::spawn(supervise_driver(
+            attempt,
+            route.clone(),
+            tiny_backoff(),
+            "test-404-recovers".to_string(),
+            shutdown_rx,
+        ));
+
+        let reached_live = wait_until(Duration::from_secs(10), || {
+            route.health() == HealthState::Live
+        })
+        .await;
+        assert!(
+            reached_live,
+            "a DESCRIBE 404 that recovers within the bound must reach Live, not Failed  \
+            (health={:?})",
+            route.health()
+        );
+        handle.abort();
     }
 
     /// The subtlety issue #957 explicitly calls out: a camera still booting

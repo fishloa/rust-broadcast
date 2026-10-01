@@ -41,6 +41,7 @@
 //! leaves every output route open, unchanged from pre-#663 behaviour.
 
 pub mod admin;
+pub mod limit;
 pub(crate) mod resource;
 pub mod supervisor;
 
@@ -59,7 +60,6 @@ use axum::routing::get;
 use broadcast_auth::{AuthResult, Verifier};
 use metrics_exporter_prometheus::PrometheusHandle;
 use tokio::sync::watch;
-use tower::limit::ConcurrencyLimitLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 
@@ -111,6 +111,11 @@ pub struct HttpLimits {
     pub max_concurrent_requests: usize,
     /// Maximum accepted request body size, in bytes.
     pub max_request_body_bytes: usize,
+    /// How long a request may wait for a concurrency permit before it is shed
+    /// with `503` (issue #1083, B) — see
+    /// [`limit::GlobalLimit::with_queue_timeout`]. Config-surfaced so an
+    /// operator can tighten or loosen it.
+    pub queue_timeout: Duration,
 }
 
 /// Default per-request timeout: comfortably above the 5 s LL-HLS
@@ -126,23 +131,47 @@ pub const DEFAULT_MAX_CONCURRENT_REQUESTS: usize = 4096;
 /// slow-loris-style oversized POST would need to pressure memory.
 pub const DEFAULT_MAX_REQUEST_BODY_BYTES: usize = 16 * 1024;
 
+/// Default concurrency-queue wait — re-exported from [`limit`] so a config
+/// reader and the limit itself cannot drift.
+pub const DEFAULT_QUEUE_TIMEOUT: Duration = limit::DEFAULT_QUEUE_TIMEOUT;
+
 impl Default for HttpLimits {
     fn default() -> Self {
         HttpLimits {
             request_timeout: DEFAULT_REQUEST_TIMEOUT,
             max_concurrent_requests: DEFAULT_MAX_CONCURRENT_REQUESTS,
             max_request_body_bytes: DEFAULT_MAX_REQUEST_BODY_BYTES,
+            queue_timeout: DEFAULT_QUEUE_TIMEOUT,
         }
     }
 }
 
 impl From<&crate::config::Config> for HttpLimits {
     fn from(cfg: &crate::config::Config) -> Self {
+        // `Duration::from_secs_f64` PANICS on a negative, NaN or overflowing
+        // value. A `Config` reaching here is normally validated, but
+        // `HttpLimits::from` is also reachable from an unvalidated one
+        // (a caller-constructed `Config`), so convert defensively (item 7):
+        // clamp into a sane range instead of panicking.
         HttpLimits {
-            request_timeout: Duration::from_secs_f64(cfg.request_timeout_secs),
+            request_timeout: secs_or_default(cfg.request_timeout_secs, DEFAULT_REQUEST_TIMEOUT),
             max_concurrent_requests: cfg.max_concurrent_requests,
             max_request_body_bytes: cfg.max_request_body_bytes,
+            queue_timeout: secs_or_default(
+                cfg.concurrency_queue_timeout_secs,
+                DEFAULT_QUEUE_TIMEOUT,
+            ),
         }
+    }
+}
+
+/// A finite, positive `Duration` from `secs`, or `fallback` for a negative,
+/// NaN or overflowing value — never a panic (item 7).
+fn secs_or_default(secs: f64, fallback: Duration) -> Duration {
+    if secs.is_finite() && secs > 0.0 {
+        Duration::try_from_secs_f64(secs).unwrap_or(fallback)
+    } else {
+        fallback
     }
 }
 
@@ -238,10 +267,19 @@ impl AppState {
 /// 404 fallback, unlike `.route_layer` which only wraps matched routes),
 /// [`HttpLimits::max_request_body_bytes`] (rejects an oversized body by
 /// `Content-Length` before it is read or a concurrency slot is spent),
-/// [`HttpLimits::max_concurrent_requests`], then
 /// [`HttpLimits::request_timeout`] (so the timeout clock only runs once a
-/// request actually has a concurrency slot) — see [`HttpLimits`] (issue #663
-/// P5, audit-concurrency #3).
+/// request holds a concurrency slot) — see [`HttpLimits`] (issue #663 P5,
+/// audit-concurrency #3).
+///
+/// [`HttpLimits::max_concurrent_requests`] is applied here, via
+/// [`limit::GlobalLimitLayer`], whose semaphores live behind `Arc`s and are
+/// therefore shared by every per-endpoint clone (`Router::layer` clones a
+/// layer once per route) — that is exactly why it can be a `Router::layer`
+/// where [`tower::limit::ConcurrencyLimitLayer`] could not (it owns its
+/// `Semaphore`, so each clone built a fresh one — audit run 7, W4). Applying
+/// it here (rather than only at a serve boundary) means a library caller that
+/// drives `router()` directly — a test, or an embedder's own server — gets
+/// the same bound a `serve*` entry point does.
 pub fn router(state: Arc<AppState>) -> Router {
     let limits = state.limits;
     let mut router = Router::new();
@@ -276,9 +314,17 @@ pub fn router(state: Arc<AppState>) -> Router {
     router
         .merge(root)
         .layer(TimeoutLayer::new(limits.request_timeout))
-        .layer(ConcurrencyLimitLayer::new(limits.max_concurrent_requests))
         .layer(RequestBodyLimitLayer::new(limits.max_request_body_bytes))
-        .layer(middleware::from_fn_with_state(state, track_http))
+        .layer(middleware::from_fn_with_state(state.clone(), track_http))
+        // The concurrency bound is outermost: it must see every request
+        // including its own `503` (which `track_http` never observes, being
+        // layered inside it), and it must be *outside* the timeout layer so
+        // the queue wait is bounded by the limit's own timeout, not the
+        // request timeout.
+        .layer(limit::GlobalLimitLayer::new(
+            limit::GlobalLimit::new(limits.max_concurrent_requests)
+                .with_queue_timeout(limits.queue_timeout),
+        ))
 }
 
 /// Middleware gating every route in the router it wraps (see [`router`], the
@@ -808,6 +854,10 @@ async fn serve_with_registry_impl(
     // `output_auth_gate` reads for `RequestContext::peer_addr` (issue #663
     // extensibility wave part 1) — without it, `peer_addr` would always be
     // `None`, same as it is in tests that `oneshot` the router directly.
+    //
+    // The concurrency bound is applied inside `router()` itself (audit run
+    // 7, W4/B), so it is present whether this entry point or a library
+    // caller's own server drives it.
     let serve_result = axum::serve(
         listener,
         router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
@@ -2241,6 +2291,229 @@ mod tests {
              internal LL-HLS blocking-reload cap: {:?}",
             started.elapsed()
         );
+    }
+
+    /// Audit run 7, B: a flood of LL-HLS blocking reloads (which park for up
+    /// to the LL-HLS cap) must not starve an ordinary request to the SAME
+    /// route. Driven with REAL HTTP clients against a REAL listener.
+    ///
+    /// The blocking-reload pool is separate from the ordinary pool, so with
+    /// the ordinary bound at 1 a request to the same route still succeeds —
+    /// which the pre-change per-route `ConcurrencyLimitLayer` could not do
+    /// (its single per-route permit would be held by a parked reload).
+    ///
+    /// The reloads are confirmed to be PARKED before the ordinary request is
+    /// sent (a handshake on the process-wide `ACTIVE_BLOCKING_REQUESTS`
+    /// gauge), not by sleeping.
+    #[tokio::test]
+    async fn a_blocking_reload_flood_does_not_starve_ordinary_requests() {
+        const BOUND: usize = 1;
+        const FLOOD: usize = 8;
+        let handle = crate::prometheus::install();
+        let mut streams = HashMap::new();
+        let store = Arc::new(RouteHandle::new(4.0, 500, 8));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        store
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                transmux::ll_hls::SegmentInfo {
+                    bytes: vec![0x20; 8],
+                    duration: 4.0,
+                    segment_seq: 1,
+                    part_count: 1,
+                },
+            )
+            .expect("add_segment");
+        streams.insert(
+            "cam1".to_string(),
+            (
+                store,
+                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            ),
+        );
+        let limits = HttpLimits {
+            max_concurrent_requests: BOUND,
+            queue_timeout: std::time::Duration::from_millis(50),
+            ..HttpLimits::default()
+        };
+        let app = router(Arc::new(AppState::new(streams).with_limits(limits)));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let client = reqwest::Client::new();
+        // msn=2 is within the future bound of the current max (1), so these
+        // are genuine WouldBlock reloads that park until the LL-HLS cap.
+        let reload_url = format!("http://{addr}/cam1/media.m3u8?_HLS_msn=2&_HLS_part=0");
+        let floods = (0..FLOOD)
+            .map(|_| {
+                let c = client.clone();
+                let u = reload_url.clone();
+                tokio::spawn(async move { c.get(u).send().await.map(|r| r.status()) })
+            })
+            .collect::<Vec<_>>();
+
+        // HANDSHAKE: wait until at least one reload is genuinely parked
+        // (the gauge is bumped by the blocking-request guard), bounded so a
+        // regression fails rather than hangs.
+        let parked = |handle: &metrics_exporter_prometheus::PrometheusHandle| -> bool {
+            handle.render().lines().any(|l| {
+                l.starts_with(crate::prometheus::ACTIVE_BLOCKING_REQUESTS)
+                    && l.rsplit(' ')
+                        .next()
+                        .and_then(|v| v.parse::<f64>().ok())
+                        .is_some_and(|v| v >= 1.0)
+            })
+        };
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            if parked(&handle) {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "no blocking reload ever parked (the handshake never completed)"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+
+        // The ordinary request to the SAME route must still be served.
+        let ordinary = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            client.get(format!("http://{addr}/cam1/media.m3u8")).send(),
+        )
+        .await
+        .expect("the ordinary request must not hang")
+        .expect("ordinary request");
+        assert_eq!(
+            ordinary.status(),
+            reqwest::StatusCode::OK,
+            "an ordinary request to the same route must not be starved by a blocking-reload flood"
+        );
+
+        for h in floods {
+            h.abort();
+        }
+        server.abort();
+    }
+
+    /// Audit run 7, B: a flood beyond a pool's bound must shed the excess with
+    /// `503` (with `Retry-After`), over REAL HTTP. The blocking-reload pool is
+    /// `bound / DEFAULT_BLOCKING_RELOAD_DIVISOR` (here 1), so a burst of
+    /// concurrent reloads must produce at least one `503` while at least one
+    /// request is still admitted.
+    #[tokio::test]
+    async fn a_reload_flood_sheds_the_excess_with_503() {
+        const BOUND: usize = 4;
+        let mut streams = HashMap::new();
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        store
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                transmux::ll_hls::SegmentInfo {
+                    bytes: vec![0x20; 8],
+                    duration: 4.0,
+                    segment_seq: 1,
+                    part_count: 1,
+                },
+            )
+            .expect("add_segment");
+        streams.insert(
+            "cam1".to_string(),
+            (
+                store,
+                vec![Arc::new(LlHlsOutput::default()) as Arc<dyn Output>],
+            ),
+        );
+        let limits = HttpLimits {
+            max_concurrent_requests: BOUND,
+            queue_timeout: std::time::Duration::from_millis(50),
+            ..HttpLimits::default()
+        };
+        let app = router(Arc::new(AppState::new(streams).with_limits(limits)));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback");
+        let addr = listener.local_addr().expect("addr");
+        let server = tokio::spawn(async move {
+            let _ = axum::serve(listener, app).await;
+        });
+
+        let client = reqwest::Client::new();
+        let url = format!("http://{addr}/cam1/media.m3u8?_HLS_msn=2&_HLS_part=0");
+        let floods = (0..12)
+            .map(|_| {
+                let c = client.clone();
+                let u = url.clone();
+                tokio::spawn(async move { c.get(u).send().await })
+            })
+            .collect::<Vec<_>>();
+
+        let mut shed = 0usize;
+        let mut ok = 0usize;
+        for h in floods {
+            // Bounded so a regression fails rather than hangs (a parked
+            // reload still completes by the LL-HLS cap, so 10 s is generous).
+            let resp = tokio::time::timeout(std::time::Duration::from_secs(10), h)
+                .await
+                .expect("every reload request must complete within the guard")
+                .expect("join")
+                .expect("request completes");
+            match resp.status() {
+                reqwest::StatusCode::SERVICE_UNAVAILABLE => {
+                    assert!(
+                        resp.headers().contains_key(reqwest::header::RETRY_AFTER),
+                        "a shed 503 must carry Retry-After"
+                    );
+                    shed += 1;
+                }
+                // A parked reload that never sees the requested segment
+                // falls back to a normal response (a 404 here, or a 200 if
+                // a segment arrived) — neither is a shed.
+                reqwest::StatusCode::OK | reqwest::StatusCode::NOT_FOUND => ok += 1,
+                other => panic!("unexpected status {other}"),
+            }
+        }
+        assert!(
+            shed >= 1,
+            "a reload flood past the reload budget must shed at least one 503  \
+            (ok={ok}, shed={shed})"
+        );
+
+        server.abort();
+    }
+
+    /// Item 7: `HttpLimits::from` must never panic on an unvalidated
+    /// `Config` — a NaN/negative/overflowing timeout falls back to the
+    /// default rather than `Duration::from_secs_f64`'s panic.
+    ///
+    /// Biting test: use `Duration::from_secs_f64` directly and a NaN
+    /// `request_timeout_secs` panics.
+    #[test]
+    fn http_limits_from_an_unvalidated_config_does_not_panic() {
+        for bad in [f64::NAN, f64::INFINITY, -1.0, 0.0, f64::MAX] {
+            let cfg = crate::config::Config {
+                request_timeout_secs: bad,
+                concurrency_queue_timeout_secs: bad,
+                ..crate::config::Config::default()
+            };
+            let limits = HttpLimits::from(&cfg);
+            assert!(
+                limits.request_timeout > std::time::Duration::ZERO,
+                "a bad request_timeout ({bad}) must fall back to a positive default"
+            );
+            assert!(
+                limits.queue_timeout > std::time::Duration::ZERO,
+                "a bad queue_timeout ({bad}) must fall back to a positive default"
+            );
+        }
     }
 
     /// Helper: a single populated `cam1` stream (mirrors [`make_state`]'s

@@ -586,10 +586,10 @@ mod custom_dispatch_driver_backed {
         // rather than starting from "now" -- so this single feed's samples
         // are not lost.
         driver.feed(&[], Timestamp::from_nanos(0));
-        advance_route(&driver, &route_handle, &mut progress);
+        advance_route(&driver, &route_handle, &mut progress).await;
 
         driver.finish();
-        advance_route(&driver, &route_handle, &mut progress);
+        advance_route(&driver, &route_handle, &mut progress).await;
 
         Ok(())
     }
@@ -806,9 +806,9 @@ mod custom_dispatch_driver_backed {
             );
             let mut progress = DriverProgress::new();
             driver.feed(&[], Timestamp::from_nanos(0));
-            advance_route(&driver, &route_handle, &mut progress);
+            advance_route(&driver, &route_handle, &mut progress).await;
             driver.finish();
-            advance_route(&driver, &route_handle, &mut progress);
+            advance_route(&driver, &route_handle, &mut progress).await;
             Ok(())
         }
 

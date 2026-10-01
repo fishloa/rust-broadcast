@@ -75,6 +75,13 @@ pub(crate) const HTTP_REQUEST_DURATION_SECONDS: &str = "multimux_http_request_du
 /// Counter: total response bytes served. Labels: `route`, `path`.
 pub(crate) const BYTES_SERVED_TOTAL: &str = "multimux_bytes_served_total";
 
+/// Counter: total HTTP requests shed by the global concurrency bound before
+/// they reached any route. Labels: `kind` (`ordinary` | `blocking_reload`).
+/// Recorded inside `crate::origin::limit` because a shed request never
+/// reaches `track_http` (layered inside the bound), so without this the
+/// `503`s from overload are invisible in metrics (issue #1083, B).
+pub(crate) const HTTP_SHED_TOTAL: &str = "multimux_http_shed_total";
+
 /// Counter: total LL-HLS parts published into a route's `Trunk` by
 /// `crate::source::segment::drive_program_segmenters`. Labels: `route`
 /// (issue #809).
@@ -95,6 +102,14 @@ pub(crate) const SEGMENTS_PRODUCED_TOTAL: &str = "multimux_segments_produced_tot
 /// counter itself (would need an unbounded-cardinality label or a second
 /// counter this crate has no other use for).
 pub(crate) const DVR_PIN_REARMED_TOTAL: &str = "multimux_dvr_pin_rearmed_total";
+
+/// Counter: total times a route's DVR recorder was abandoned because its
+/// mutex was found poisoned (a panic left its multi-step state — offset,
+/// index, period records — inconsistent, so continuing to persist could write
+/// an archive whose index does not match its data). Labels: `route`. Recording
+/// stops for that route; this counter is how an operator sees it (issue
+/// #1083, D3).
+pub(crate) const DVR_FAILED_TOTAL: &str = "multimux_dvr_failed_total";
 
 static HANDLE: OnceLock<PrometheusHandle> = OnceLock::new();
 

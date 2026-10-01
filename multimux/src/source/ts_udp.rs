@@ -185,7 +185,7 @@ pub async fn run_ts_udp(
         // EIT p/f tracking (issue #903) — a no-op unless some program on
         // this route has DVR enabled with `dvb_service_id` set.
         route_handle.feed_si_ts(&buf[..n]);
-        crate::source::advance_route(&driver, route_handle, &mut progress);
+        crate::source::advance_route(&driver, route_handle, &mut progress).await;
     }
 }
 

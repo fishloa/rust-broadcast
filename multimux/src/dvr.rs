@@ -297,6 +297,27 @@ impl DvrConfig {
                     .to_string(),
             );
         }
+        // `period_duration_secs: 0` disables the time-based roll, leaving the
+        // current period open indefinitely. `enforce_retention` still bounds
+        // it via `retention_bytes` (it counts the open period's bytes —
+        // issue #1083, W10), so this is accepted rather than rejected: a
+        // byte-capped route is a legitimate configuration. A route with only
+        // count-based retention and no roll trigger can still grow the open
+        // period unbounded — logged once here so it is not silent, but not
+        // rejected, since that shape is what several existing deployments
+        // (and this crate's own tests) run today.
+        if self.period_duration_secs == 0
+            && self.dvb_service_id.is_none()
+            && self.retention_bytes == 0
+        {
+            return Err(
+                "period_duration_secs must be > 0 unless dvb_service_id is set or  \
+                retention_bytes > 0 — with no time-based cap, no EIT boundary to roll on,  \
+                and only count-based retention, the single period file would grow without  \
+                bound (count-based retention can never evict an open period)"
+                    .to_string(),
+            );
+        }
         Ok(())
     }
 }
@@ -501,6 +522,42 @@ pub struct DvrRecorder {
     si_carry: Vec<u8>,
 }
 
+/// Reject a route name that is not a safe single directory component: one
+/// that is empty, `.`/`..`, contains a path separator or a NUL, or is longer
+/// than [`crate::config::MAX_ROUTE_NAME_LEN`] (audit run 7, A4). Applied at
+/// the point the name becomes a path (`DvrRecorder::new`), so no join can
+/// ever escape `archive_root`.
+pub(crate) fn validate_route_dir_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("route name must not be empty".to_string());
+    }
+    if name == "." || name == ".." {
+        return Err(format!("route name {name:?} is a path-traversal component"));
+    }
+    if name.len() > crate::config::MAX_ROUTE_NAME_LEN {
+        return Err(format!(
+            "route name is {} bytes, over the {} limit",
+            name.len(),
+            crate::config::MAX_ROUTE_NAME_LEN
+        ));
+    }
+    // A path separator (either platform's), or a NUL byte (which truncates
+    // an OS path), makes the name unsafe as a directory component.
+    const FORBIDDEN: [char; 3] = ['/', '\\', '\u{0}'];
+    if name
+        .chars()
+        .any(|c| FORBIDDEN.contains(&c) || c == std::path::MAIN_SEPARATOR)
+    {
+        return Err(format!(
+            "route name {name:?} contains a path separator or NUL byte"
+        ));
+    }
+    if name.contains("..") {
+        return Err(format!("route name {name:?} contains a `..` component"));
+    }
+    Ok(())
+}
+
 impl DvrRecorder {
     /// Create a new recorder, pinning a segment cursor on `trunk` with the
     /// configured [`ArchiveOverrun`] policy. The `ext` is the segment file
@@ -512,6 +569,12 @@ impl DvrRecorder {
         trunk: &Arc<Trunk>,
     ) -> Result<Self, String> {
         config.validate()?;
+        // Defence in depth (audit run 7, A4): the route name is a single
+        // on-disk directory component under `archive_root`. Config
+        // validation already restricts it, but a `DvrConfig` can also be
+        // built directly (this constructor is public), so re-check here
+        // rather than ever joining a name that could escape the root.
+        validate_route_dir_name(&route_name)?;
         let archive_dir = PathBuf::from(&config.archive_root).join(&route_name);
         let cursor = trunk.pin_segments(config.overrun.into());
         // EIT p/f is carried on one well-known PID (EN 300 468 §5.2.4);
@@ -677,6 +740,24 @@ impl DvrRecorder {
     /// `HlsOrigin`. If it has changed since the last poll (or this is the
     /// first poll), the recorder opens a new period file with the new init
     /// at its head. For TS archives, `init_bytes` is ignored.
+    /// A cheap "is there anything to do" check (issue #1083, F): `true` when
+    /// a poll could still make progress — the first poll (no period open
+    /// yet), a segment the trunk has closed that this recorder has not
+    /// persisted, or a known init to write. When this is `false`, the caller
+    /// can skip the whole `spawn_blocking` round-trip (the UDP ingest path
+    /// calls `advance_route` once per datagram, so this matters).
+    pub fn needs_poll(&self, latest_closed_segment: Option<u32>) -> bool {
+        // The first poll must always run (it opens period 0 and writes the
+        // init prelude).
+        if self.current_file.is_none() {
+            return true;
+        }
+        match latest_closed_segment {
+            Some(latest) => self.last_appended_seq != Some(latest),
+            None => false,
+        }
+    }
+
     pub fn poll_and_persist(&mut self, init_bytes: Option<&[u8]>) -> Result<(), String> {
         // --- fMP4 init management ---
         if self.ext == ".m4s" {
@@ -822,18 +903,85 @@ impl DvrRecorder {
             self.start_period(None)?;
         }
 
+        // Byte-based rolling (issue #1083, D2): a route with no time-based
+        // roll must still not let one period file grow without bound. When a
+        // byte cap is configured, roll the period once this segment would
+        // carry the file past `per_period_byte_budget()`. Checked *before*
+        // writing, so no single period ever exceeds the budget by more than
+        // one segment.
+        // Guard on `!self.index.is_empty()`, NOT `write_offset > 0`: right
+        // after `start_period` the fMP4 `write_offset` already equals the
+        // init prelude's length, so a `write_offset > 0` guard would roll an
+        // init-only period (no segments, so no `pN.idx`) when a single
+        // segment exceeds the budget — burning a period number and a
+        // retention slot for nothing (issue #1083, item 3).
+        if self.config.retention_bytes > 0
+            && !self.index.is_empty()
+            && self
+                .write_offset
+                .saturating_add(u64::try_from(entry.bytes.len()).unwrap_or(u64::MAX))
+                > self.per_period_byte_budget()
+        {
+            tracing::info!(
+                route = %self.route_name,
+                period = self.period,
+                bytes = self.write_offset,
+                budget = self.per_period_byte_budget(),
+                "DVR period byte budget reached — rolling period"
+            );
+            let last_init = self.last_init.clone();
+            self.start_period(last_init.as_deref())?;
+        }
+
         let file = self.current_file.as_mut().expect("current_file set above");
-        file.write_all(&entry.bytes).map_err(|e| {
-            format!(
+        // The append lands at the file's real end, so derive the new entry's
+        // offset from the file itself rather than trusting the cached
+        // `write_offset`. A partial write (ENOSPC mid-`write_all`) leaves the
+        // append-mode file grown by however many bytes DID land while the
+        // cached offset stayed put; ignoring that would make every later
+        // `IndexEntry.byte_offset` in this period short by that amount, so
+        // catch-up would serve shifted, corrupt segments for the rest of the
+        // period (issue #1083, W10).
+        let byte_offset = file
+            .metadata()
+            .map(|md| md.len())
+            .unwrap_or(self.write_offset);
+        if let Err(e) = file.write_all(&entry.bytes) {
+            // The append-mode file may have grown by however many bytes DID
+            // land; drop any partial tail so the next segment does not sit
+            // behind junk, and re-sync the offset from what is really there
+            // (issue #1083, D1).
+            if file.set_len(byte_offset).is_err()
+                || file.metadata().map(|md| md.len()).unwrap_or(byte_offset) != byte_offset
+            {
+                tracing::error!(
+                    route = %self.route_name,
+                    period = self.period,
+                    "could not truncate a partially-written segment; the archive may be corrupt"
+                );
+            }
+            self.write_offset = byte_offset;
+            return Err(format!(
                 "writing segment {} to period file: {e}",
                 entry.sequence_number,
-            )
-        })?;
-        file.flush().map_err(|e| format!("flushing segment: {e}"))?;
+            ));
+        }
 
-        let byte_offset = self.write_offset;
-        let byte_len = entry.bytes.len() as u64;
-        self.write_offset += byte_len;
+        // Make the segment bytes durable on disk before the index that points
+        // at them (issue #1083, D1): the index is the map, and a crash between
+        // a durable index and a lost segment body would serve a short read
+        // rather than a clean "not yet archived".
+        if let Err(e) = file.sync_data() {
+            tracing::warn!(
+                route = %self.route_name,
+                period = self.period,
+                error = %e,
+                "syncing the period file failed; durability is not guaranteed"
+            );
+        }
+
+        let byte_len = u64::try_from(entry.bytes.len()).unwrap_or(u64::MAX);
+        self.write_offset = byte_offset + byte_len;
 
         self.index.push(IndexEntry {
             seq: entry.sequence_number,
@@ -859,14 +1007,34 @@ impl DvrRecorder {
         Ok(())
     }
 
-    /// Atomically write the index sidecar (write-then-rename).
+    /// Atomically write the index sidecar (write-then-rename), then make
+    /// both the new sidecar and the period's directory entry durable.
+    ///
+    /// `File::flush` is a no-op for `std::fs::File`, so the pre-fix "flushed
+    /// synchronously" claim was not backed by any `sync_all`/`sync_data`
+    /// call: a power loss could lose an index entry (or the rename itself)
+    /// the docs promised was on disk (issue #1083, W10). `sync_all` on the
+    /// temp file before the rename, and a directory `sync_all` after it,
+    /// makes the entry genuinely durable.
     fn flush_index(&self) -> Result<(), String> {
         let json =
             serde_json::to_vec(&self.index).map_err(|e| format!("serializing index: {e}"))?;
-        let tmp = self.period_dir_path().join(".idx.tmp");
+        let dir = self.period_dir_path();
+        let tmp = dir.join(".idx.tmp");
         let dst = self.index_path();
-        fs::write(&tmp, &json).map_err(|e| format!("writing index: {e}"))?;
+        {
+            let mut f = File::create(&tmp).map_err(|e| format!("creating index temp: {e}"))?;
+            f.write_all(&json)
+                .map_err(|e| format!("writing index: {e}"))?;
+            f.sync_all().map_err(|e| format!("syncing index: {e}"))?;
+        }
         fs::rename(&tmp, &dst).map_err(|e| format!("renaming index: {e}"))?;
+        // A rename is only durable once the containing directory is synced.
+        if let Ok(dir_handle) = File::open(&dir) {
+            dir_handle
+                .sync_all()
+                .map_err(|e| format!("syncing index directory: {e}"))?;
+        }
         Ok(())
     }
 
@@ -889,7 +1057,20 @@ impl DvrRecorder {
     pub fn rebuild_index(&self) -> Result<Vec<IndexEntry>, String> {
         let data = fs::read(self.period_path())
             .map_err(|e| format!("reading period file for index rebuild: {e}"))?;
-        let data = &data[self.init_len as usize..];
+        // A truncated period file (a power loss or full disk mid-write —
+        // exactly when `rebuild_index` exists to recover) can be shorter than
+        // the init prelude. Report that rather than panicking on the slice
+        // (issue #1083, W10).
+        let init_len = usize::try_from(self.init_len)
+            .map_err(|_| format!("init_len {} exceeds usize", self.init_len))?;
+        if data.len() < init_len {
+            return Err(format!(
+                "period file is {} bytes, shorter than the {init_len}-byte init prelude —  \
+                cannot rebuild the index",
+                data.len()
+            ));
+        }
+        let data = &data[init_len..];
 
         if self.ext == ".ts" {
             return Err("TS index rebuild not yet implemented".to_string());
@@ -973,14 +1154,53 @@ impl DvrRecorder {
     }
 
     /// Retention: evict the oldest period files until limits are satisfied.
+    /// The most bytes one period file may hold when `retention_bytes` is set:
+    /// the cap divided by the number of periods retention keeps (at least
+    /// one), so `periods × budget` stays within the cap and a single open
+    /// period can never grow past the whole cap on its own (issue #1083, D2).
+    /// The most bytes one period file may hold when `retention_bytes` is set.
+    ///
+    /// `retention_bytes / (retention_periods + 1)`, not `/ periods`: the
+    /// currently-open period is not yet in `self.periods`, so with
+    /// `retention_bytes / periods` a roll would immediately leave
+    /// `closed + open > cap` and `enforce_retention` would evict the entire
+    /// closed history — the window would oscillate between 0 and `cap` and
+    /// never actually hold `retention_periods` finished periods. The `+ 1`
+    /// reserves room for the open period, so `periods` finished periods plus
+    /// the one being written fit inside the cap. With `retention_periods` 0
+    /// (only the open period is kept today) this yields `cap / 2`, leaving
+    /// headroom to roll rather than thrash.
+    fn per_period_byte_budget(&self) -> u64 {
+        let divisor = u64::try_from(self.config.retention_periods)
+            .unwrap_or(u64::MAX)
+            .saturating_add(1);
+        (self.config.retention_bytes / divisor.max(1)).max(1)
+    }
+
     fn enforce_retention(&mut self) -> Result<(), String> {
-        // Byte-based retention: remove oldest periods until under limit.
+        // The currently-open period is not yet in `self.periods`, but its
+        // bytes are already on disk. Counting them is what makes byte-based
+        // retention actually bound the archive between rolls (issue #1083,
+        // W10 — the pre-fix code ignored the open period entirely, so a
+        // route whose period never rolled could grow past every configured
+        // limit while `self.periods` stayed empty).
+        let open_bytes = if self.current_file.is_some() {
+            self.write_offset
+        } else {
+            0
+        };
+
+        // Byte-based retention: remove oldest periods until under limit,
+        // counting the open period's bytes toward the total.
         if self.config.retention_bytes > 0 {
-            while self.total_bytes > self.config.retention_bytes && !self.periods.is_empty() {
+            while self.total_bytes + open_bytes > self.config.retention_bytes
+                && !self.periods.is_empty()
+            {
                 self.evict_oldest_period();
             }
         }
-        // Count-based retention.
+        // Count-based retention: whole closed periods only (the open period
+        // is the one currently being written and is never evicted).
         if self.config.retention_periods > 0 {
             while self.periods.len() > self.config.retention_periods {
                 self.evict_oldest_period();
@@ -999,23 +1219,33 @@ impl DvrRecorder {
         let file_path = self.archive_dir.join(format!("p{}.{}", num, ext_no_dot));
         let idx_path = self.archive_dir.join(format!("p{}.idx", num));
 
-        // Best-effort deletion — log but don't fail.
-        if let Err(e) = fs::remove_file(&file_path) {
-            tracing::warn!(
-                route = %self.route_name,
-                period = num,
-                path = %file_path.display(),
-                error = %e,
-                "failed to remove evicted period file"
-            );
-        }
-        if let Err(e) = fs::remove_file(&idx_path) {
+        // Best-effort deletion — log but don't fail. The INDEX goes first:
+        // `catchup`'s `scan_archive`/`find_archived_segment` enumerate
+        // periods by `pN.idx`, so a period whose data file is gone but whose
+        // index remains would be listed and then fail to read (a 500 for a
+        // racing catch-up request). Removing the index first makes that
+        // window impossible — the period disappears from the archive
+        // atomically (issue #1083, item 3).
+        if let Err(e) = fs::remove_file(&idx_path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
             tracing::warn!(
                 route = %self.route_name,
                 period = num,
                 path = %idx_path.display(),
                 error = %e,
                 "failed to remove evicted period index"
+            );
+        }
+        if let Err(e) = fs::remove_file(&file_path)
+            && e.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                route = %self.route_name,
+                period = num,
+                path = %file_path.display(),
+                error = %e,
+                "failed to remove evicted period file"
             );
         }
 
@@ -1265,6 +1495,412 @@ mod tests {
             entries.len()
         );
 
+        cleanup_temp(&tmp);
+    }
+
+    /// `DvrRecorder::new` is public and joins the route name into a path, so
+    /// it must refuse a name that is not a safe single directory component —
+    /// defence in depth behind `Config::validate` (audit run 7, A4).
+    #[test]
+    fn dvr_recorder_rejects_an_unsafe_route_dir_name() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let cfg = dvr_config(&tmp, 5);
+        const FORBIDDEN_NAMES: [&str; 6] = ["..", ".", "a/b", "a\\b", "a\u{0}b", ""];
+        for bad in FORBIDDEN_NAMES {
+            let err = match DvrRecorder::new(bad.to_string(), cfg.clone(), ".m4s", &trunk) {
+                Ok(_) => panic!("route name {bad:?} must be rejected"),
+                Err(e) => e,
+            };
+            assert!(
+                !err.is_empty(),
+                "the rejection of {bad:?} must carry a reason"
+            );
+        }
+        // A safe name is accepted.
+        DvrRecorder::new("cam-1".to_string(), cfg, ".m4s", &trunk)
+            .expect("a safe route name must be accepted");
+        cleanup_temp(&tmp);
+    }
+
+    /// D1: after any divergence between the cached `write_offset` and the
+    /// file's real length, the next successful append must leave the file and
+    /// the index consistent — no segment sitting behind junk, and the index
+    /// entry's byte range matching where the bytes actually landed.
+    ///
+    /// (A genuine mid-`write_all` `ENOSPC` cannot be forced portably, so this
+    /// reproduces the exact *state* it leaves — the file longer than the
+    /// recorder believes — and asserts the recovery.)
+    ///
+    /// Biting test: revert `append_segment` to `let byte_offset =
+    /// self.write_offset;` and the new entry's `byte_offset` is short by the
+    /// junk length.
+    #[test]
+    fn append_after_a_stale_offset_stays_consistent() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let mut recorder =
+            DvrRecorder::new("test".to_string(), dvr_config(&tmp, 5), ".m4s", &trunk)
+                .expect("recorder");
+        recorder.poll_and_persist(Some(b"INIT")).expect("init");
+        writer.publish_segment(dummy_segment(1, 0x11)).unwrap();
+        recorder.poll_and_persist(None).expect("persist 1");
+
+        // Simulate a partial write's residue: the file grew by 5 bytes the
+        // recorder never accounted for.
+        let period = tmp.join("test").join("p0.m4s");
+        let real_len_before = std::fs::metadata(&period).expect("stat").len();
+        {
+            use std::io::Write;
+            let mut f = std::fs::OpenOptions::new()
+                .append(true)
+                .open(&period)
+                .expect("open append");
+            f.write_all(b"JUNK5").expect("append junk");
+        }
+        recorder.write_offset = real_len_before; // stale
+
+        writer.publish_segment(dummy_segment(2, 0x22)).unwrap();
+        recorder.poll_and_persist(None).expect("persist 2");
+
+        let entry = recorder.index.last().expect("indexed");
+        assert_eq!(entry.seq, 2);
+        assert_eq!(
+            entry.byte_offset,
+            real_len_before + 5,
+            "the entry must record where the bytes really landed, past the junk"
+        );
+        // The entry's range is exactly on disk.
+        let on_disk = std::fs::read(&period).expect("read");
+        let range =
+            &on_disk[entry.byte_offset as usize..(entry.byte_offset + entry.byte_len) as usize];
+        assert!(
+            range.iter().all(|&b| b == 0x22),
+            "the indexed byte range must be the segment's own bytes"
+        );
+        cleanup_temp(&tmp);
+    }
+
+    /// Item 3: a single segment larger than the whole per-period budget must
+    /// NOT roll an init-only period. Guarding on `write_offset > 0` (which
+    /// equals the init length right after `start_period`) would roll before
+    /// the first segment, burning a period number and a retention slot on an
+    /// empty `p0` (no `p0.idx`).
+    ///
+    /// Biting test: change the guard back to `self.write_offset > 0` and
+    /// `p0` is created (an init-only file, no index) before any segment.
+    #[test]
+    fn one_oversized_segment_does_not_roll_an_empty_period() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let cfg = DvrConfig {
+            enabled: true,
+            archive_root: tmp.to_string_lossy().to_string(),
+            retention_periods: 2,
+            retention_bytes: 64, // budget = 64 / 3 = 21 bytes
+            period_duration_secs: 3600,
+            overrun: ArchiveOverrunSerde::Gap,
+            dvb_service_id: None,
+        };
+        let mut recorder =
+            DvrRecorder::new("test".to_string(), cfg, ".m4s", &trunk).expect("recorder");
+        recorder.poll_and_persist(Some(b"INIT")).expect("init");
+
+        // One 200-byte segment, far over the 21-byte budget.
+        writer
+            .publish_segment(SegmentEntry::new(
+                bytes::Bytes::from(vec![0xABu8; 200]),
+                1,
+                Duration::from_secs(1),
+                broadcast_common::Timestamp::from_nanos(0),
+                transmux::SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .unwrap();
+        recorder.poll_and_persist(None).expect("persist");
+
+        let archive = tmp.join("test");
+        // p0 must hold the segment (it rolled AFTER, not before).
+        assert!(
+            archive.join("p0.idx").exists(),
+            "the first period must be created with the segment, not empty before it"
+        );
+        // and there is no init-only p0 with no index.
+        let entries: std::collections::BTreeSet<String> = std::fs::read_dir(&archive)
+            .expect("dir")
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().to_string())
+            .collect();
+        assert!(
+            !entries.contains("p0.m4s") || entries.contains("p0.idx"),
+            "a period file must never exist without its index: {entries:?}"
+        );
+        cleanup_temp(&tmp);
+    }
+
+    /// Item 3: `per_period_byte_budget` reserves room for the open period, so
+    /// `periods` finished periods plus the one being written fit inside the
+    /// cap. With the old `cap / periods`, a roll immediately left
+    /// `closed + open > cap` and retention evicted the whole closed history
+    /// every time — the window oscillated between 0 and `cap` rather than
+    /// holding `retention_periods` periods.
+    ///
+    /// Biting test: restore `cap / periods` and the closed-period count after
+    /// the run is far below `retention_periods`.
+    #[test]
+    fn byte_budget_keeps_the_configured_number_of_finished_periods() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        const PERIODS: usize = 3;
+        let cfg = DvrConfig {
+            enabled: true,
+            archive_root: tmp.to_string_lossy().to_string(),
+            retention_periods: PERIODS,
+            retention_bytes: 3000, // budget = 3000 / 4 = 750 bytes
+            period_duration_secs: 3600,
+            overrun: ArchiveOverrunSerde::Gap,
+            dvb_service_id: None,
+        };
+        let mut recorder =
+            DvrRecorder::new("test".to_string(), cfg, ".m4s", &trunk).expect("recorder");
+        recorder.poll_and_persist(Some(b"INIT")).expect("init");
+
+        // ~30 x 100-byte segments: enough to fill several periods.
+        for seq in 1..=30u32 {
+            writer
+                .publish_segment(SegmentEntry::new(
+                    bytes::Bytes::from(vec![0xCDu8; 100]),
+                    seq,
+                    Duration::from_secs(1),
+                    broadcast_common::Timestamp::from_nanos(u64::from(seq)),
+                    transmux::SegmentMeta {
+                        discontinuous: false,
+                    },
+                ))
+                .unwrap();
+            recorder.poll_and_persist(None).expect("persist");
+        }
+
+        // Up to `PERIODS` finished periods must be retained (not evicted to
+        // zero by the "closed + open > cap" oscillation).
+        assert_eq!(
+            recorder.periods.len(),
+            PERIODS,
+            "byte retention must keep exactly the configured number of finished periods"
+        );
+        cleanup_temp(&tmp);
+    }
+
+    /// Item 3: after eviction the archive exposes no period index whose data
+    /// file is gone — the invariant that keeps a racing catch-up request from
+    /// reading a listed-but-missing period (it removes the index first, so
+    /// the window cannot be observed by a concurrent scan; a sequential test
+    /// can only assert the end state, not the transient order).
+    #[test]
+    fn eviction_removes_the_index_before_the_period_file() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let cfg = DvrConfig {
+            enabled: true,
+            archive_root: tmp.to_string_lossy().to_string(),
+            retention_periods: 1,
+            retention_bytes: 0,
+            period_duration_secs: 3600,
+            overrun: ArchiveOverrunSerde::Gap,
+            dvb_service_id: None,
+        };
+        let mut recorder =
+            DvrRecorder::new("test".to_string(), cfg, ".m4s", &trunk).expect("recorder");
+        recorder.poll_and_persist(Some(b"INIT")).expect("init");
+        writer.publish_segment(dummy_segment(1, 0x11)).unwrap();
+        recorder.poll_and_persist(None).expect("p1");
+        // Roll to a second period so retention evicts the first.
+        recorder.start_period(Some(b"INIT2")).expect("roll");
+        writer.publish_segment(dummy_segment(2, 0x22)).unwrap();
+        recorder.poll_and_persist(None).expect("p2");
+
+        // At no point may the archive expose an idx whose data file is gone.
+        let dir = tmp.join("test");
+        let nums = crate::catchup::list_period_nums(&dir);
+        for n in &nums {
+            let ext = recorder.ext.trim_start_matches('.');
+            assert!(
+                dir.join(format!("p{n}.{ext}")).exists(),
+                "period {n} is listed by its index but its data file is missing"
+            );
+        }
+        cleanup_temp(&tmp);
+    }
+
+    /// A period file shorter than the init prelude (a truncation from a
+    /// power loss or full disk mid-write) must be reported as an error, not
+    /// panic on `&data[init_len..]` (issue #1083, W10).
+    ///
+    /// Biting test: restore the unconditional `&data[self.init_len as usize..]`
+    /// slice and this test panics with a slice-index-out-of-range instead of
+    /// returning the error asserted here.
+    #[test]
+    fn rebuild_index_reports_a_period_shorter_than_the_init_prelude() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let cfg = dvr_config(&tmp, 5);
+        let mut recorder =
+            DvrRecorder::new("test".to_string(), cfg, ".m4s", &trunk).expect("recorder");
+
+        // Open a period with a real init, then truncate the file to fewer
+        // bytes than that init.
+        recorder
+            .poll_and_persist(Some(b"INIT_INIT_INIT_INIT"))
+            .expect("start period with init");
+        let period = tmp.join("test").join("p0.m4s");
+        std::fs::OpenOptions::new()
+            .write(true)
+            .open(&period)
+            .expect("open period")
+            .set_len(4)
+            .expect("truncate");
+
+        let err = recorder
+            .rebuild_index()
+            .expect_err("a period shorter than the init prelude cannot be rebuilt");
+        assert!(
+            err.contains("shorter than"),
+            "the error must explain the truncation, got {err:?}"
+        );
+
+        cleanup_temp(&tmp);
+    }
+
+    /// Byte-based retention must bound the archive even while the current
+    /// period is still open — the pre-fix code only counted *closed* periods,
+    /// so a route whose period never rolled never evicted anything (issue
+    /// #1083, W10).
+    ///
+    /// Biting test: drop the `+ open_bytes` term in `enforce_retention` and
+    /// the open period's own bytes are ignored, so `p0` survives and the
+    /// assertion fails.
+    #[test]
+    fn byte_retention_counts_the_open_period() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        // `retention_periods: 1` so the per-period byte budget is the whole
+        // cap, isolating the "does the open period count" question from the
+        // byte-rolling one (tested separately below).
+        let cfg = DvrConfig {
+            enabled: true,
+            archive_root: tmp.to_string_lossy().to_string(),
+            retention_periods: 1,
+            retention_bytes: 4096,
+            period_duration_secs: 86400,
+            overrun: ArchiveOverrunSerde::Gap,
+            dvb_service_id: None,
+        };
+        let mut recorder =
+            DvrRecorder::new("test".to_string(), cfg, ".m4s", &trunk).expect("recorder");
+        recorder.poll_and_persist(Some(b"INIT")).expect("init");
+        // Close period 0 (tiny) and open period 1.
+        recorder.start_period(Some(b"INIT2")).expect("roll");
+
+        for seq in 1..=4u32 {
+            writer
+                .publish_segment(SegmentEntry::new(
+                    bytes::Bytes::from(vec![0xABu8; 2000]),
+                    seq,
+                    Duration::from_secs(1),
+                    broadcast_common::Timestamp::from_nanos(u64::from(seq)),
+                    transmux::SegmentMeta {
+                        discontinuous: false,
+                    },
+                ))
+                .unwrap();
+        }
+        recorder.poll_and_persist(Some(b"INIT2")).expect("persist");
+
+        // The open period alone (4 x 2000 = 8000 bytes, well over the 4096
+        // cap) forces the oldest CLOSED period out.
+        assert!(
+            !tmp.join("test").join("p0.m4s").exists(),
+            "byte retention must evict the oldest closed period once the open period alone  \
+            exceeds the cap"
+        );
+        cleanup_temp(&tmp);
+    }
+
+    /// Issue #1083, D2: with a byte cap and NO time-based roll
+    /// (`period_duration_secs: 0`, an EIT boundary set so the config is
+    /// valid), the *open* period must still be rolled by bytes, so no single
+    /// period file ever grows past its per-period budget.
+    ///
+    /// Biting test: remove the byte-rolling block from `append_segment` and
+    /// `p0.m4s` alone holds every segment, exceeding the budget.
+    #[test]
+    fn a_byte_capped_route_with_no_time_roll_never_exceeds_the_period_budget() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        // No time-based roll; an EIT boundary stands in as the only other
+        // roll trigger so validation accepts the config. `retention_periods`
+        // 2 with a 4096-byte cap => a 2048-byte per-period budget.
+        let cfg = DvrConfig {
+            enabled: true,
+            archive_root: tmp.to_string_lossy().to_string(),
+            retention_periods: 2,
+            retention_bytes: 4096,
+            period_duration_secs: 0,
+            overrun: ArchiveOverrunSerde::Gap,
+            dvb_service_id: Some(1),
+        };
+        let mut recorder =
+            DvrRecorder::new("test".to_string(), cfg, ".m4s", &trunk).expect("recorder");
+        recorder.poll_and_persist(Some(b"INIT")).expect("init");
+
+        // Six 1000-byte segments: two per budget, so the period must roll
+        // more than once.
+        for seq in 1..=6u32 {
+            writer
+                .publish_segment(SegmentEntry::new(
+                    bytes::Bytes::from(vec![0xCDu8; 1000]),
+                    seq,
+                    Duration::from_secs(1),
+                    broadcast_common::Timestamp::from_nanos(u64::from(seq)),
+                    transmux::SegmentMeta {
+                        discontinuous: false,
+                    },
+                ))
+                .unwrap();
+            recorder.poll_and_persist(None).expect("persist");
+        }
+
+        // No period file may exceed the budget (plus one segment of slack,
+        // since the roll is checked before the write).
+        let budget = recorder.per_period_byte_budget();
+        for entry in std::fs::read_dir(tmp.join("test")).expect("archive dir") {
+            let entry = entry.expect("dir entry");
+            let name = entry.file_name().to_string_lossy().to_string();
+            if name.ends_with(".m4s") {
+                let len = entry.metadata().expect("meta").len();
+                assert!(
+                    len <= budget + 1000,
+                    "{name} is {len} bytes, over the per-period budget {budget} + one segment"
+                );
+            }
+        }
+        // And more than one period exists — the byte roll actually fired.
+        let period_count = std::fs::read_dir(tmp.join("test"))
+            .expect("archive dir")
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".m4s"))
+            .count();
+        assert!(
+            period_count > 1,
+            "a byte-capped route with no time roll must roll by bytes, got {period_count} periods"
+        );
         cleanup_temp(&tmp);
     }
 
@@ -1646,8 +2282,8 @@ mod tests {
     /// same path `advance_route_both_publishes_and_segments` exercises, but
     /// with DVR), then takes ONLY the period file on disk and demuxes it to
     /// prove the archive is independently playable.
-    #[test]
-    fn ingest_pipeline_records_and_demux_from_disk() {
+    #[tokio::test]
+    async fn ingest_pipeline_records_and_demux_from_disk() {
         use crate::source::ts_program::{TsIngestSession, test_support::build_ts_bytes};
         use crate::source::{DriverProgress, advance_route};
         use media_plane::DEFAULT_MAX_PROGRAMS;
@@ -1658,7 +2294,7 @@ mod tests {
         let dvr_cfg = DvrConfig {
             enabled: true,
             archive_root: tmp.to_string_lossy().to_string(),
-            period_duration_secs: 0,
+            period_duration_secs: 3600,
             retention_periods: 8,
             retention_bytes: 0,
             overrun: ArchiveOverrunSerde::Gap,
@@ -1685,11 +2321,11 @@ mod tests {
         let ts1 = build_ts_bytes(1, 0xAB, 90);
         let ts2 = build_ts_bytes(1, 0xCD, 90);
         driver.feed(&ts1, broadcast_common::Timestamp::ZERO);
-        advance_route(&driver, &route, &mut progress);
+        advance_route(&driver, &route, &mut progress).await;
         driver.feed(&ts2, broadcast_common::Timestamp::from_nanos(1));
-        advance_route(&driver, &route, &mut progress);
+        advance_route(&driver, &route, &mut progress).await;
         driver.finish();
-        advance_route(&driver, &route, &mut progress);
+        advance_route(&driver, &route, &mut progress).await;
 
         let archive_dir = tmp.join("ingest-test");
         assert!(
@@ -1779,8 +2415,8 @@ mod tests {
     /// and the archive is independently playable.
     ///
     /// Skips cleanly when `private/` is absent (public clones, CI).
-    #[test]
-    fn real_dvbt_capture_records_and_replays_from_disk_only() {
+    #[tokio::test]
+    async fn real_dvbt_capture_records_and_replays_from_disk_only() {
         let fixture_path = concat!(
             env!("CARGO_MANIFEST_DIR"),
             "/../private/fixtures/ts/france-tnt-dvbt-20s.ts"
@@ -1843,11 +2479,11 @@ mod tests {
             let chunk = &ts_bytes[offset..end];
             let t = broadcast_common::Timestamp::from_nanos((offset / 188) as u64 * 40_000);
             driver.feed(chunk, t);
-            advance_route(&driver, &route, &mut progress);
+            advance_route(&driver, &route, &mut progress).await;
             offset = end;
         }
         driver.finish();
-        advance_route(&driver, &route, &mut progress);
+        advance_route(&driver, &route, &mut progress).await;
 
         // Verify programmes were discovered.
         let program_ids: Vec<_> = driver.programs().collect();

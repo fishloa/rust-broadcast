@@ -1137,7 +1137,7 @@ type ProgressBySession = HashMap<SessionId, DriverProgress>;
 /// rather than `ListenDriver::feed`'s own `&[u8]`-pinned convenience wrapper,
 /// specifically so a terminal session is never removed before this helper's
 /// release-then-reap sequence runs for it).
-fn report_and_maybe_reap(
+async fn report_and_maybe_reap(
     driver: &mut ListenDriver<WhipListener>,
     id: SessionId,
     route_handle: &Arc<RouteHandle>,
@@ -1145,7 +1145,7 @@ fn report_and_maybe_reap(
     active_sessions: &Arc<AtomicUsize>,
 ) -> bool {
     if let Some(d) = driver.driver(id) {
-        crate::source::advance_route(d, route_handle, progress.entry(id).or_default());
+        crate::source::advance_route(d, route_handle, progress.entry(id).or_default()).await;
         if !d.health().is_running() {
             crate::source::release_route(d, route_handle);
         }
@@ -1233,7 +1233,7 @@ pub async fn run_whip(
                             }
                         }
                         let reaped =
-                            report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions);
+                            report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
                         if !reaped
                             && let Some(d) = driver.driver(id)
                         {
@@ -1247,14 +1247,14 @@ pub async fn run_whip(
                         if let Some(d) = driver.driver_mut(id) {
                             d.finish();
                         }
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions);
+                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
                     }
                     ReadOutcome::TransportError(reason) => {
                         tracing::warn!(error = %reason, "whip: session read failed");
                         if let Some(d) = driver.driver_mut(id) {
                             d.finish();
                         }
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions);
+                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
                     }
                 }
             }

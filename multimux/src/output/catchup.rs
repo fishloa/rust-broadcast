@@ -149,7 +149,25 @@ async fn catchup_playlist(
     };
     let ext = container_ext(route.container());
     let dir = catchup::archive_dir(dvr, route.name());
-    let archived = catchup::scan_archive(&dir);
+    // Audit run 7, W3: `scan_archive` reads and JSON-parses every `pN.idx`
+    // on this route's archive — real, synchronous filesystem I/O. Run it on
+    // the blocking pool so a catch-up request can never pin a runtime worker
+    // (which would stall ingest for every route), and answer 500 if the pool
+    // is gone (shutdown) rather than panicking.
+    let scan_dir = dir.clone();
+    // Bound concurrent archive scans (issue #1083, F): the blocking pool is
+    // shared with the DVR persist, so an unauthenticated catch-up flood must
+    // not be able to occupy every blocking thread and delay a route's
+    // recording (whose `StallIngest` pin would then force-expire at 30 s).
+    let _permit = scan_permit().acquire().await;
+    let archived = match tokio::task::spawn_blocking(move || catchup::scan_archive(&scan_dir)).await
+    {
+        Ok(a) => a,
+        Err(e) => {
+            tracing::error!(error = %e, "catch-up: archive scan task failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
     let live = serving.ll_hls().closed_segments();
     let combined = catchup::merge_segments(&archived, &live);
     let windowed = catchup::apply_window(&combined, q.window_secs);
@@ -181,16 +199,32 @@ async fn vod_playlist(
     };
     let ext = container_ext(route.container());
     let dir = catchup::archive_dir(dvr, route.name());
-    let segments = catchup::read_period_segments(&dir, period_num);
+    // Audit run 7, W3: the index read/parse and the directory listing are
+    // synchronous filesystem I/O — off the runtime worker, and bounded by the
+    // same scan semaphore as the archive-wide scan (item 4).
+    let _permit = scan_permit().acquire().await;
+    let read_dir = dir.clone();
+    let (segments, period_nums) = match tokio::task::spawn_blocking(move || {
+        (
+            catchup::read_period_segments(&read_dir, period_num),
+            catchup::list_period_nums(&read_dir),
+        )
+    })
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, "catch-up: period read task failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
     if segments.is_empty() {
         return StatusCode::NOT_FOUND.into_response();
     }
     // Definitively finished iff a later period exists on disk —
     // `crate::dvr::DvrRecorder::start_period` never opens period N+1 until
     // period N is closed, so this is exact, not a guess.
-    let finished = catchup::list_period_nums(&dir)
-        .iter()
-        .any(|&n| n > period_num);
+    let finished = period_nums.iter().any(|&n| n > period_num);
     let combined: Vec<catchup::CatchupSegment> = segments
         .iter()
         .map(|s| catchup::CatchupSegment {
@@ -217,6 +251,19 @@ async fn vod_playlist(
     ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
 }
 
+/// Bounds how many archive *scans* run on the blocking pool at once — held
+/// by all three catch-up paths (`catchup_playlist`'s `scan_archive`,
+/// `vod_playlist`'s period read, and `catchup_resource`'s
+/// `find_archived_segment`), each of which reads every `pN.idx` until it
+/// finds what it wants. Sized well below the blocking pool's own ceiling so
+/// ordinary DVR persists always find a thread.
+fn scan_permit() -> &'static tokio::sync::Semaphore {
+    static SEM: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    /// Conservative ceiling: the DVR persist must always be able to run.
+    const MAX_CONCURRENT_SCANS: usize = 4;
+    SEM.get_or_init(|| tokio::sync::Semaphore::new(MAX_CONCURRENT_SCANS))
+}
+
 fn parse_period_filename(file: &str) -> Option<u32> {
     file.strip_prefix('p')?.strip_suffix(".m3u8")?.parse().ok()
 }
@@ -240,19 +287,50 @@ async fn catchup_resource(
         return StatusCode::NOT_FOUND.into_response();
     };
     let dir: PathBuf = catchup::archive_dir(dvr, route.name());
-    if let Some(seg) = catchup::find_archived_segment(&dir, seq) {
-        return match catchup::read_archived_bytes(
-            &dir,
-            ext,
-            seg.period_num,
-            seg.byte_offset,
-            seg.byte_len,
-        ) {
-            Ok(bytes) => {
+    // Audit run 7, W3: locating the segment reads every period index until a
+    // match, then `read_archived_bytes` reads the whole segment — both
+    // synchronous disk I/O, so both run on the blocking pool, bounded by the
+    // same scan semaphore (item 4).
+    let _permit = scan_permit().acquire().await;
+    let find_dir = dir.clone();
+    let found =
+        match tokio::task::spawn_blocking(move || catchup::find_archived_segment(&find_dir, seq))
+            .await
+        {
+            Ok(v) => v,
+            Err(e) => {
+                tracing::error!(error = %e, seq, "catch-up: archive lookup task failed");
+                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+            }
+        };
+    if let Some(seg) = found {
+        let read_dir = dir.clone();
+        let read = tokio::task::spawn_blocking(move || {
+            catchup::read_archived_bytes(
+                &read_dir,
+                ext,
+                seg.period_num,
+                seg.byte_offset,
+                seg.byte_len,
+            )
+        })
+        .await;
+        return match read {
+            Ok(Ok(bytes)) => {
                 ([(header::CONTENT_TYPE, segment_content_type(ext))], bytes).into_response()
             }
-            Err(e) => {
+            Ok(Err(catchup::ReadArchivedError::Gone)) => {
+                // The period was evicted between the index read and the
+                // open (a race with retention) — not found, not an error
+                // (issue #1083, item 3).
+                StatusCode::NOT_FOUND.into_response()
+            }
+            Ok(Err(e)) => {
                 tracing::error!(error = %e, seq, "catch-up: failed reading archived segment bytes");
+                StatusCode::INTERNAL_SERVER_ERROR.into_response()
+            }
+            Err(e) => {
+                tracing::error!(error = %e, seq, "catch-up: segment read task failed");
                 StatusCode::INTERNAL_SERVER_ERROR.into_response()
             }
         };
@@ -308,6 +386,16 @@ mod tests {
         dir
     }
 
+    /// Take every permit from the shared scan semaphore, returning them so
+    /// the caller can release.
+    async fn scan_permit_wait_all() -> Vec<tokio::sync::SemaphorePermit<'static>> {
+        let mut held = Vec::new();
+        while let Ok(p) = scan_permit().try_acquire() {
+            held.push(p);
+        }
+        held
+    }
+
     fn cleanup(dir: &std::path::Path) {
         let _ = std::fs::remove_dir_all(dir);
     }
@@ -347,6 +435,163 @@ mod tests {
             .to_vec()
     }
 
+    // --- W3 (audit run 7): DVR persist through the async advance_route path ---
+
+    /// `advance_route`'s DVR drain persists a published segment byte-exact to
+    /// the period file, and the period's `pN.idx` describes exactly that byte
+    /// range, through the async path (which dispatches the synchronous
+    /// `write_all`/`fs::rename` to the blocking pool).
+    ///
+    /// This asserts the *bytes*, not the dispatch: whether the persist runs
+    /// inline or on `spawn_blocking` is a structural property of
+    /// `poll_dvr_blocking` (it is called only from within `spawn_blocking`),
+    /// not something a timing assertion here could observe reliably. The
+    /// init-prelude length (652) is asserted literally because it is the
+    /// real, deterministic length of this synthetic track's init segment —
+    /// a genuine expected value, not a magic number.
+    #[test]
+    fn dvr_persist_through_advance_route_writes_bytes_exact() {
+        use crate::source::DriverProgress;
+        use crate::source::ts_program::{TsIngestSession, test_support::build_ts_bytes};
+        use media_plane::DEFAULT_MAX_PROGRAMS;
+        use media_plane::ingress::{HandshakePolicy, IngestDriver};
+        use std::num::NonZeroUsize;
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("current-thread runtime");
+        rt.block_on(async {
+            let tmp = temp_dir();
+            let route = Arc::new(
+                RouteHandle::new(1.0, 250, 64)
+                    .with_name("w3")
+                    .with_dvr(dvr_config(&tmp)),
+            );
+            route.publish_new_program(SPTS_PROGRAM_ID);
+            route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+            const SEG_LEN: usize = 4096;
+            route
+                .add_segment(
+                    SPTS_PROGRAM_ID,
+                    transmux::ll_hls::SegmentInfo {
+                        bytes: vec![0x5A; SEG_LEN],
+                        duration: 3.0,
+                        segment_seq: 1,
+                        part_count: 1,
+                    },
+                )
+                .expect("add_segment");
+
+            let nz = |n: usize| NonZeroUsize::new(n).unwrap();
+            let mut driver = IngestDriver::new(
+                TsIngestSession::new(),
+                media_plane::trunk::TrunkConfig::new(nz(8), nz(8), nz(64), nz(8), nz(8)),
+                HandshakePolicy::establish_by(broadcast_common::Timestamp::from_nanos(u64::MAX)),
+                DEFAULT_MAX_PROGRAMS,
+            );
+            let mut progress = DriverProgress::new();
+            driver.feed(
+                &build_ts_bytes(1, 0xAB, 90),
+                broadcast_common::Timestamp::ZERO,
+            );
+
+            crate::source::advance_route(&driver, &route, &mut progress).await;
+
+            // The drain persisted the segment: the init prelude is 652 bytes
+            // (a real fMP4 init for the synthetic track), then SEG_LEN bytes
+            // of 0x5A.
+            let period = tmp.join("w3").join("p0.m4s");
+            let bytes = std::fs::read(&period).expect("period file must exist");
+            assert_eq!(
+                bytes.len(),
+                652 + SEG_LEN,
+                "period file must hold init + the one segment"
+            );
+            assert!(
+                bytes[652..].iter().all(|&b| b == 0x5A),
+                "the segment's bytes must be persisted byte-exact"
+            );
+
+            // The index describes exactly that range.
+            let idx = std::fs::read_to_string(tmp.join("w3").join("p0.idx")).expect("index");
+            let entries: Vec<serde_json::Value> = serde_json::from_str(&idx).expect("index JSON");
+            assert_eq!(entries.len(), 1, "one segment must be indexed");
+            assert_eq!(entries[0]["seq"], serde_json::json!(1));
+            assert_eq!(entries[0]["byte_offset"], serde_json::json!(652));
+            assert_eq!(entries[0]["byte_len"], serde_json::json!(SEG_LEN as u64));
+
+            cleanup(&tmp);
+        });
+    }
+
+    // --- item 4: every catch-up scan path is bounded by the scan semaphore ---
+
+    /// With every permit held, each of the three catch-up scan paths must
+    /// WAIT (not proceed) until one is released — proving all three acquire
+    /// the same shared semaphore rather than only `catchup_playlist`.
+    ///
+    /// Biting test: remove the `scan_permit().acquire()` from `vod_playlist`
+    /// / `catchup_resource` and those paths ignore the exhausted pool (the
+    /// bounded wait returns a response instead of timing out).
+    #[tokio::test]
+    async fn all_three_catchup_scan_paths_share_the_scan_semaphore() {
+        let tmp = temp_dir();
+        let route = Arc::new(
+            RouteHandle::new(1.0, 250, 8)
+                .with_name("semp")
+                .with_dvr(dvr_config(&tmp)),
+        );
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        for (seq, byte) in [(1u32, 0x11u8), (2, 0x22)] {
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
+                .expect("add_segment");
+        }
+        route.drain_dvr().await;
+
+        // Exhaust the pool.
+        let held = scan_permit_wait_all().await;
+        assert_eq!(held.len(), 4, "the scan pool has 4 permits");
+
+        // Each path must not complete while no permit is free. Each is
+        // driven in its own owned task so the borrow of `route` is explicit.
+        macro_rules! must_wait {
+            ($label:expr, $fut:expr) => {
+                assert!(
+                    tokio::time::timeout(std::time::Duration::from_millis(100), $fut)
+                        .await
+                        .is_err(),
+                    "{} must wait for a free permit",
+                    $label
+                );
+            };
+        }
+        must_wait!(
+            "catchup_playlist",
+            catchup_playlist(State(Arc::clone(&route)), Query(Default::default()))
+        );
+        must_wait!(
+            "vod_playlist",
+            vod_playlist(State(Arc::clone(&route)), Path("p0.m3u8".into()))
+        );
+        must_wait!(
+            "catchup_resource",
+            catchup_resource(State(Arc::clone(&route)), Path("seg-1.m4s".into()))
+        );
+
+        // Release — a path can now proceed and return a response.
+        drop(held);
+        let resp = catchup_playlist(State(Arc::clone(&route)), Query(Default::default())).await;
+        assert!(
+            resp.status().is_success() || resp.status().is_server_error(),
+            "with a permit free the playlist path must complete, got {}",
+            resp.status()
+        );
+        cleanup(&tmp);
+    }
+
     /// The end-to-end straddle bite test (issue #900's whole point): three
     /// segments are archived (drained via `drain_dvr`), a fourth is
     /// published to the live `Trunk` only — never drained to disk. The
@@ -376,7 +621,7 @@ mod tests {
                 .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
                 .expect("add_segment");
         }
-        route.drain_dvr();
+        route.drain_dvr().await;
 
         // Segment 4: published, but NEVER drained -- lives only in the
         // live Trunk/HlsOrigin window.
@@ -441,7 +686,7 @@ mod tests {
                 .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
                 .expect("add_segment");
         }
-        route.drain_dvr();
+        route.drain_dvr().await;
 
         // Segments start at 0s, 3s, 6s (each 3s long); the live edge is
         // segment 3's start (6s). A 2s window reaches back to 4s, which
@@ -475,7 +720,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(1, 0x11))
             .expect("add_segment");
-        route.drain_dvr(); // opens + writes period 0 with init A
+        route.drain_dvr().await; // opens + writes period 0 with init A
 
         // Changing the init rolls the period (crate::dvr::DvrRecorder's
         // mid-stream init-change rollover) — a real, reliable way to force
@@ -484,7 +729,7 @@ mod tests {
         route
             .add_segment(SPTS_PROGRAM_ID, seg_bytes(2, 0x22))
             .expect("add_segment");
-        route.drain_dvr();
+        route.drain_dvr().await;
 
         let resp = vod_playlist(State(route.clone()), Path("p0.m3u8".to_string())).await;
         assert_eq!(resp.status(), StatusCode::OK);

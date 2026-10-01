@@ -985,7 +985,7 @@ pub async fn run_smooth_pull(
         if inflight.is_empty() {
             if driver.session().ended() {
                 driver.finish();
-                crate::source::advance_route(&driver, route_handle, &mut progress);
+                crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 return terminal_result(driver, "smooth-pull");
             }
             match driver.next_deadline() {
@@ -996,7 +996,7 @@ pub async fn run_smooth_pull(
                     }
                     let now = Timestamp::from_instant(start, std::time::Instant::now());
                     driver.on_deadline(now);
-                    crate::source::advance_route(&driver, route_handle, &mut progress);
+                    crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 }
                 // See `dash_pull`'s identical arm.
                 None => tokio::time::sleep(IDLE_POLL_INTERVAL).await,
@@ -1013,7 +1013,7 @@ pub async fn run_smooth_pull(
                 ..
             })) => {
                 driver.feed((id, bytes.as_slice()), now);
-                crate::source::advance_route(&driver, route_handle, &mut progress);
+                crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
             Some(Ok(JoinedFetch {
                 id: SmoothResourceId::Fragment(stream, _),
@@ -1059,13 +1059,13 @@ pub async fn run_smooth_pull(
             // playlist/manifest/resource) — see `terminal_result`. Health is
             // already terminal here, so this call's internal terminal-health
             // check flushes every program's trailing partial segment.
-            crate::source::advance_route(&driver, route_handle, &mut progress);
+            crate::source::advance_route(&driver, route_handle, &mut progress).await;
             return terminal_result(driver, "smooth-pull");
         }
 
         if driver.session().ended() {
             driver.finish();
-            crate::source::advance_route(&driver, route_handle, &mut progress);
+            crate::source::advance_route(&driver, route_handle, &mut progress).await;
             return terminal_result(driver, "smooth-pull");
         }
     }

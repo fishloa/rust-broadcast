@@ -2161,6 +2161,7 @@ dependencies = [
  "rtp-packet",
  "rtsp-runtime",
  "rustls",
+ "scte35-splice",
  "sdp-types",
  "serde",
  "serde_json",

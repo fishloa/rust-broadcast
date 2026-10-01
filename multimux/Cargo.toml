@@ -197,3 +197,8 @@ md-5             = "0.10"
 # into the one `reqwest` dependency only for test builds, never for the
 # library target itself.
 reqwest          = { version = "0.12", default-features = false, features = ["json"] }
+# An INDEPENDENT SCTE-35 parser (no shared code with `timed-metadata`) so
+# `tests/emsg_mp4box.rs` can decode the `message_data` of an emitted DASH
+# `emsg` back to the source section and prove the bytes are the source's own
+# (issue #1083, E).
+scte35-splice    = { path = "../scte35-splice", version = "2.1" }

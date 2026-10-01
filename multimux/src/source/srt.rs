@@ -367,7 +367,7 @@ pub async fn drive_socket(
             // on this route has DVR enabled with `dvb_service_id` set.
             route_handle.feed_si_ts(bytes);
         }
-        crate::source::advance_route(&driver, route_handle, &mut progress);
+        crate::source::advance_route(&driver, route_handle, &mut progress).await;
         if let Some(f) = handoff.take() {
             f(&driver);
         }
@@ -375,7 +375,7 @@ pub async fn drive_socket(
             driver.finish();
             // Flush every program's trailing buffered partial segment now
             // that the driver is terminal -- see `segment`'s own doc.
-            crate::source::advance_route(&driver, route_handle, &mut progress);
+            crate::source::advance_route(&driver, route_handle, &mut progress).await;
             return Ok(());
         }
     }
@@ -527,14 +527,14 @@ mod tests {
                 &route_handle,
                 move |driver| {
                     if let Some(t) = driver.trunk(ProgramId(0)) {
-                        *cursor_for_cb.lock().unwrap() = Some(t.subscribe());
+                        *crate::lock::lock(&cursor_for_cb) = Some(t.subscribe());
                     }
                 },
             ),
         )
         .await;
 
-        let mut guard = cursor.lock().unwrap();
+        let mut guard = crate::lock::lock(&cursor);
         let total = guard.as_mut().map(drain).unwrap_or(0);
         assert!(
             total > 0,
@@ -595,14 +595,14 @@ mod tests {
                 &route_handle,
                 move |driver| {
                     if let Some(t) = driver.trunk(ProgramId(0)) {
-                        *cursor_for_cb.lock().unwrap() = Some(t.subscribe());
+                        *crate::lock::lock(&cursor_for_cb) = Some(t.subscribe());
                     }
                 },
             ),
         )
         .await;
 
-        let mut guard = cursor.lock().unwrap();
+        let mut guard = crate::lock::lock(&cursor);
         let total = guard.as_mut().map(drain).unwrap_or(0);
         assert!(
             total > 0,

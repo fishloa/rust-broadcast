@@ -577,14 +577,14 @@ fn read_one(
 /// [`ListenDriver::driver`]/[`ListenDriver::reap_if_terminal`] because
 /// [`ListenDriver::feed`]'s `&[u8]`-pinned convenience wrapper doesn't fit
 /// [`RtmpIngestSession`]'s `Stage::In` (see the module doc).
-fn report_and_maybe_reap(
+async fn report_and_maybe_reap(
     driver: &mut ListenDriver<RtmpListener>,
     id: SessionId,
     route_handle: &Arc<RouteHandle>,
     progress: &mut ProgressBySession,
 ) -> bool {
     if let Some(d) = driver.driver(id) {
-        crate::source::advance_route(d, route_handle, progress.entry(id).or_default());
+        crate::source::advance_route(d, route_handle, progress.entry(id).or_default()).await;
         if !d.health().is_running() {
             crate::source::release_route(d, route_handle);
         }
@@ -675,7 +675,7 @@ pub async fn run_rtmp(
                             d.feed(&events[..], now);
                         }
                         let reaped =
-                            report_and_maybe_reap(&mut driver, id, route_handle, &mut progress);
+                            report_and_maybe_reap(&mut driver, id, route_handle, &mut progress).await;
                         if !reaped
                             && let Some(d) = driver.driver(id)
                         {
@@ -687,21 +687,21 @@ pub async fn run_rtmp(
                         if let Some(d) = driver.driver_mut(id) {
                             d.finish();
                         }
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress);
+                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress).await;
                     }
                     ReadOutcome::TransportError(reason) => {
                         tracing::warn!(error = %reason, "rtmp: session read failed");
                         if let Some(d) = driver.driver_mut(id) {
                             d.finish();
                         }
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress);
+                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress).await;
                     }
                     ReadOutcome::TimedOut => {
                         tracing::warn!("rtmp: session idle past read timeout");
                         if let Some(d) = driver.driver_mut(id) {
                             d.finish();
                         }
-                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress);
+                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress).await;
                     }
                 }
             }

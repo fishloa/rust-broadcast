@@ -617,3 +617,84 @@ async fn non_ll_full_segment_path_also_decodes() {
          frames fed in"
     );
 }
+
+/// Audit run 7, W10 (DVR durability): the archive a `DvrRecorder` writes —
+/// an fMP4 init prelude followed by the real segment boxes, read back from
+/// disk with no in-memory state — must be independently decodable by
+/// `ffprobe`. This is the replay oracle for the durability fixes (offset
+/// re-sync, index fsync): a desynced `IndexEntry.byte_offset` or a
+/// mis-flushed period shows up here as a container `ffprobe` cannot decode.
+#[test]
+fn dvr_period_file_from_real_samples_replays_decodably() {
+    skip_unless!(ffprobe_available(), "ffprobe not on PATH");
+
+    use media_plane::trunk::{SegmentEntry, Trunk, TrunkConfig};
+    use multimux::dvr::{ArchiveOverrunSerde, DvrConfig, DvrRecorder};
+
+    let src_probe = ffprobe_json(&fixture_path());
+    let (spec, samples) = real_video_track_and_samples();
+    let track_id = spec.track_id;
+
+    let dir = scratch_dir("dvr-replay");
+    let trunk = Trunk::new(TrunkConfig::new(
+        std::num::NonZeroUsize::new(4096).unwrap(),
+        std::num::NonZeroUsize::new(64).unwrap(),
+        std::num::NonZeroUsize::new(64).unwrap(),
+        std::num::NonZeroUsize::new(64).unwrap(),
+        std::num::NonZeroUsize::new(64).unwrap(),
+    ));
+    let seg_writer = trunk.segment_writer().expect("segment writer");
+
+    let cfg = DvrConfig {
+        enabled: true,
+        archive_root: dir.to_string_lossy().to_string(),
+        retention_periods: 8,
+        retention_bytes: 0,
+        period_duration_secs: 3600,
+        overrun: ArchiveOverrunSerde::Gap,
+        dvb_service_id: None,
+    };
+    let mut recorder =
+        DvrRecorder::new("replay".to_string(), cfg, ".m4s", &trunk).expect("recorder");
+
+    // A real fMP4 init, then a single segment holding every sample.
+    let mut seg =
+        LlHlsSegmenter::with_part_target(vec![spec.clone()], spec.timescale, 3600.0, 3_600_000)
+            .expect("segmenter builds");
+    let init = seg.init_segment().expect("init segment builds");
+    recorder
+        .poll_and_persist(Some(&init))
+        .expect("open the period with the real init");
+
+    for sample in samples {
+        seg.push(track_id, sample).expect("push");
+    }
+    seg.flush().expect("flush");
+    for segment in seg.take_ready_segments() {
+        seg_writer
+            .publish_segment(SegmentEntry::new(
+                segment.bytes,
+                segment.segment_seq,
+                Duration::from_secs_f64(segment.duration),
+                broadcast_common::Timestamp::from_nanos(0),
+                transmux::SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .expect("publish segment");
+    }
+    recorder.poll_and_persist(None).expect("persist to disk");
+
+    // The on-disk period file (init prelude + segment) must decode.
+    let period = dir.join("replay").join("p0.m4s");
+    assert!(period.exists(), "the period file must exist");
+    let out_probe = ffprobe_json(&period);
+    assert_video_matches_source(&src_probe, &out_probe, "DVR period replay");
+    let decoded = ffprobe_decoded_frame_count(&period);
+    assert!(
+        decoded > 0,
+        "the replayed DVR period must decode at least one real frame, got {decoded}"
+    );
+
+    std::fs::remove_dir_all(&dir).ok();
+}

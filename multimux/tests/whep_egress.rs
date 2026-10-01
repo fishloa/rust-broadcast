@@ -246,3 +246,273 @@ async fn real_browser_whep_playback_decodes_real_video() {
         result.error
     );
 }
+
+/// Audit run 7, W6: a route added through the runtime admin API
+/// (`POST /admin/routes`, which is also how every startup route is added when
+/// the admin API is enabled) must actually start its WHEP egress listener.
+///
+/// `spawn_route` previously never called `spawn_whep_outputs`, so a WHEP
+/// output configured this way was silently never served — the listen port was
+/// never bound. This asserts the port accepts a real TCP connection after the
+/// admin add, and (as the counter-check) that it does NOT before.
+#[tokio::test]
+async fn admin_added_route_starts_its_whep_listener() {
+    use multimux::config::{AdminSpec, OutputAuthSpec};
+    use multimux::serve_config_file_with_registry;
+
+    let media_addr = reserve_tcp_addr();
+    let admin_addr = reserve_tcp_addr();
+    let whep_addr = reserve_tcp_addr();
+
+    let config = Config {
+        bind: media_addr.to_string(),
+        target_duration_secs: 0.5,
+        part_target_ms: 100,
+        window_segments: 8,
+        // `/admin/routes` requires at least one route in the config's own
+        // validation to reload, but add_route itself is independent — start
+        // empty and add the WHEP route entirely through the API.
+        routes: vec![],
+        admin: Some(AdminSpec {
+            bind: admin_addr.to_string(),
+            auth: OutputAuthSpec::Bearer {
+                token: "admin-test-token".to_string(),
+            },
+        }),
+        ..Config::default()
+    };
+
+    let dir = std::env::temp_dir().join(format!("multimux-admin-whep-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let cfg_path = dir.join("config.json");
+    std::fs::write(
+        &cfg_path,
+        serde_json::to_vec(&serde_json::json!({
+            "bind": config.bind,
+            "admin": { "bind": config.admin.as_ref().unwrap().bind,
+                       "auth": { "scheme": "bearer", "token": "admin-test-token" } },
+            "routes": [ { "name": "seed",
+                          "input": { "type": "rtsp", "url": "rtsp://127.0.0.1:1/seed" },
+                          "outputs": ["llhls"] } ],
+        }))
+        .unwrap(),
+    )
+    .expect("write config");
+
+    let server = tokio::spawn(serve_config_file_with_registry(
+        cfg_path,
+        instant_registry(),
+    ));
+
+    // Wait for the admin listener.
+    {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        while tokio::net::TcpStream::connect(admin_addr).await.is_err() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "admin listener never bound (server task returned: {:?})",
+                server.is_finished()
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    // Before the add, nothing is listening on the WHEP port.
+    assert!(
+        tokio::net::TcpStream::connect(whep_addr).await.is_err(),
+        "nothing may be listening on the WHEP port before the route is added"
+    );
+
+    let client = reqwest::Client::new();
+    let resp = client
+        .post(format!("http://{admin_addr}/admin/routes"))
+        .bearer_auth("admin-test-token")
+        .json(&serde_json::json!({
+            "name": "cam",
+            "input": { "type": "custom", "type_tag": "instant" },
+            "outputs": [ { "whep": { "listen": whep_addr.to_string() } } ],
+        }))
+        .send()
+        .await
+        .expect("admin POST");
+    assert_eq!(
+        resp.status(),
+        reqwest::StatusCode::CREATED,
+        "adding the WHEP route must succeed"
+    );
+
+    // After the add, the WHEP listener must actually be bound — the pre-fix
+    // `spawn_route` never spawned it, so this connect would fail forever.
+    {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+        loop {
+            if tokio::net::TcpStream::connect(whep_addr).await.is_ok() {
+                break;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "the admin-added route's WHEP listener ({whep_addr}) was never bound"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    }
+
+    server.abort();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An `"instant"` `Custom` input scheme: announces one program and queues a
+/// handful of synthetic samples in its first `feed`, so the route publishes a
+/// `Trunk` (which every egress, WHEP included, awaits before binding) with no
+/// real network I/O. Mirrors `tests/admin_api.rs`'s identically-named scheme.
+mod instant {
+    use std::collections::VecDeque;
+    use std::convert::Infallible;
+    use std::sync::Arc;
+
+    use broadcast_common::{Demand, Stage, Timestamp};
+    use media_plane::ingress::{
+        Dialer, HandshakePolicy, IngestDriver, IngestSession, ProgramId, SessionEvent,
+    };
+    use media_plane::trunk::{RetentionClass, TrunkConfig};
+    use multimux::route::RouteHandle;
+    use multimux::source::{DriverProgress, advance_route};
+    use multimux::{Backoff, InputCtx, InputFactory, SchemeRegistry};
+    use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
+
+    pub const SPROP: &str = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
+    const VIDEO_TIMESCALE: u32 = 90_000;
+    const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
+    const FRAME_COUNT: u32 = 24;
+
+    fn track_spec() -> TrackSpec {
+        let config = transmux::avc_config_from_sprop(SPROP).expect("valid sprop");
+        TrackSpec::new(
+            1,
+            VIDEO_TIMESCALE,
+            CodecConfig::Avc {
+                config,
+                width: 64,
+                height: 64,
+            },
+        )
+    }
+
+    struct Session {
+        pending: VecDeque<SessionEvent>,
+        sent: bool,
+    }
+
+    impl Stage for Session {
+        type In<'a> = &'a [u8];
+        type Out = SessionEvent;
+        type Error = Infallible;
+
+        fn demand(&self) -> Demand {
+            Demand::new(1)
+        }
+
+        fn feed(&mut self, _input: &[u8], _now: Timestamp) -> Result<(), Infallible> {
+            if !self.sent {
+                self.sent = true;
+                self.pending.push_back(SessionEvent::NewProgram {
+                    program: ProgramId(0),
+                    tracks: vec![track_spec()],
+                });
+                for i in 0..FRAME_COUNT {
+                    let data = vec![0xAAu8.wrapping_add((i % 251) as u8); 32];
+                    self.pending.push_back(SessionEvent::Sample {
+                        program: ProgramId(0),
+                        track_id: 1,
+                        retention: RetentionClass::Timed,
+                        sample: Sample::new(
+                            data,
+                            Some(i64::from(i) * i64::from(FRAME_DUR)),
+                            Some(i64::from(i) * i64::from(FRAME_DUR)),
+                            Some(FRAME_DUR),
+                            i % 8 == 0,
+                        ),
+                    });
+                }
+            }
+            Ok(())
+        }
+
+        fn poll(&mut self) -> Option<SessionEvent> {
+            self.pending.pop_front()
+        }
+
+        fn next_deadline(&self) -> Option<Timestamp> {
+            None
+        }
+
+        fn on_deadline(&mut self, _now: Timestamp) {}
+
+        fn finish(&mut self) -> Result<(), Infallible> {
+            Ok(())
+        }
+    }
+
+    impl IngestSession for Session {
+        type Request = Infallible;
+    }
+
+    #[derive(Clone, Copy, Default)]
+    struct Dial;
+
+    impl Dialer for Dial {
+        type Session = Session;
+        type Error = Infallible;
+
+        fn dial(&mut self) -> Result<Session, Infallible> {
+            Ok(Session {
+                pending: VecDeque::new(),
+                sent: false,
+            })
+        }
+    }
+
+    async fn run(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
+        let mut dialer = Dial;
+        let session = dialer.dial().unwrap_or_else(|never| match never {});
+        let trunk_config = TrunkConfig::new(
+            std::num::NonZeroUsize::new(64).unwrap(),
+            std::num::NonZeroUsize::new(16).unwrap(),
+            std::num::NonZeroUsize::new(8).unwrap(),
+            std::num::NonZeroUsize::new(64).unwrap(),
+            std::num::NonZeroUsize::new(64).unwrap(),
+        );
+        let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
+        let mut driver: IngestDriver<Session> = IngestDriver::new(
+            session,
+            trunk_config,
+            handshake,
+            media_plane::DEFAULT_MAX_PROGRAMS,
+        );
+        let mut progress = DriverProgress::new();
+        driver.feed(&[], Timestamp::from_nanos(0));
+        advance_route(&driver, &route_handle, &mut progress).await;
+        driver.finish();
+        advance_route(&driver, &route_handle, &mut progress).await;
+        Ok(())
+    }
+
+    pub fn registry() -> SchemeRegistry {
+        let mut registry = SchemeRegistry::new();
+        registry.register_input(
+            "instant",
+            Arc::new(|ctx: InputCtx| {
+                Ok(tokio::spawn(multimux::supervise_driver(
+                    run,
+                    ctx.store,
+                    Backoff::production_default(),
+                    ctx.name,
+                    ctx.shutdown_rx,
+                )))
+            }) as InputFactory,
+        );
+        registry
+    }
+}
+
+use instant::registry as instant_registry;

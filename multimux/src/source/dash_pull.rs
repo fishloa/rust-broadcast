@@ -958,7 +958,7 @@ pub async fn run_dash_pull(
         if inflight.is_empty() {
             if driver.session().ended() {
                 driver.finish();
-                crate::source::advance_route(&driver, route_handle, &mut progress);
+                crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 return terminal_result(driver, "dash-pull");
             }
             match driver.next_deadline() {
@@ -969,7 +969,7 @@ pub async fn run_dash_pull(
                     }
                     let now = Timestamp::from_instant(start, std::time::Instant::now());
                     driver.on_deadline(now);
-                    crate::source::advance_route(&driver, route_handle, &mut progress);
+                    crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 }
                 // No scheduled work and nothing in flight: park briefly
                 // rather than spinning — see `IDLE_POLL_INTERVAL`.
@@ -987,7 +987,7 @@ pub async fn run_dash_pull(
                 ..
             })) => {
                 driver.feed((id, bytes.as_slice()), now);
-                crate::source::advance_route(&driver, route_handle, &mut progress);
+                crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
             Some(Ok(JoinedFetch {
                 id: DashResourceId::Segment(rep, _),
@@ -1036,13 +1036,13 @@ pub async fn run_dash_pull(
             // playlist/manifest/resource) — see `terminal_result`. Health is
             // already terminal here, so this call's internal terminal-health
             // check flushes every program's trailing partial segment.
-            crate::source::advance_route(&driver, route_handle, &mut progress);
+            crate::source::advance_route(&driver, route_handle, &mut progress).await;
             return terminal_result(driver, "dash-pull");
         }
 
         if driver.session().ended() {
             driver.finish();
-            crate::source::advance_route(&driver, route_handle, &mut progress);
+            crate::source::advance_route(&driver, route_handle, &mut progress).await;
             return terminal_result(driver, "dash-pull");
         }
     }

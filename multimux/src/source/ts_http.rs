@@ -271,7 +271,7 @@ pub async fn run_ts_http(
             // on this route has DVR enabled with `dvb_service_id` set.
             route_handle.feed_si_ts(chunk);
         }
-        crate::source::advance_route(&driver, route_handle, &mut progress);
+        crate::source::advance_route(&driver, route_handle, &mut progress).await;
         match status {
             StreamStatus::Fed(_) => {}
             StreamStatus::Ended => {
@@ -280,7 +280,7 @@ pub async fn run_ts_http(
                 // now that the driver is terminal -- `advance_route` above
                 // ran while the driver was still `Live`; this call's own
                 // internal terminal-health check does the flush.
-                crate::source::advance_route(&driver, route_handle, &mut progress);
+                crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 return Ok(());
             }
         }

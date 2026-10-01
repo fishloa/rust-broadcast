@@ -81,13 +81,205 @@
   `multimux_dvr_pin_rearmed_total` counter, labelled `route`, plus a
   corrected log line naming the real policy), and keeps recording.
 
+- **The runtime admin API could still leak runtimes under a concurrent
+  mutation, and never started WHEP outputs** (#1083). `add_route`/`reload`/
+  `remove_route` now serialise on an async mutation lock, so two concurrent
+  adds/reloads of the same name can no longer overwrite one another (the
+  loser's `RouteRuntime` was dropped with no `drain_route`, detaching its
+  supervisor task and leaving every listen port bound). A reload's rollback
+  now cancels each already-prepared route's push/WHEP tasks before aborting
+  the supervisor, not just the supervisor (which left push tasks dialling
+  their destinations forever). And `spawn_route` now calls
+  `spawn_whep_outputs`, so a `whep` output on a route added through the
+  admin API — which is every startup route when the admin API is enabled —
+  is actually served instead of silently never started. Plugin (`Custom`)
+  input/output factories no longer run while the registry lock is held, so a
+  panicking third-party factory can no longer poison the registry into a
+  permanent admin lockout.
+- **A route name of `..` let the DVR/catch-up archive escape
+  `archive_root`** (#1083). A name is both a URL path segment and an on-disk
+  directory component, so it is now restricted to `[A-Za-z0-9._-]`, must not
+  end in `.` or a space, must not be a Windows reserved device name (`CON`,
+  `PRN`, `AUX`, `NUL`, `COM1-9`, `LPT1-9`, with or without an extension), and
+  `.`/`..` are rejected; a name containing `*` (which panicked axum's
+  nest-wildcard handling at router build) and two outputs mounting one
+  manifest path (an axum "overlapping method route" panic at build) are
+  rejected as config errors too. `add_route` builds the route before inserting
+  it, so a build panic can no longer leave a route in the registry that every
+  later rebuild also panics on.
+- **`max_concurrent_requests` was per endpoint, not global** (#1083).
+  `Router::layer` clones a layer once per route, so the documented
+  slow-loris bound was `bound × routes × methods × streams` and sat inside
+  the request timeout, leaving queued requests with no timeout at all. It is
+  now one server-wide semaphore (`origin::limit::GlobalLimit`), applied inside
+  the public `router()` — so a library caller driving `router()` directly
+  gets the bound too, not only a `serve*` entry point. Three budgets now:
+  the ops endpoints (`/healthz`, `/readyz`, `/metrics`) are *exempt* (a `503`
+  there would have an orchestrator restart the process during a load spike);
+  LL-HLS blocking reloads (`_HLS_msn`/`_HLS_part`) draw from their own,
+  smaller pool so a reload flood starves only other reloads; everything else
+  shares the main pool. A request that cannot get a permit within the
+  configurable queue timeout is answered `503 Service Unavailable` with
+  `Retry-After`, and counted in `multimux_http_shed_total`. The permit is
+  held until the inner service — which in this origin collects the whole
+  response body — resolves, so it bounds the entire response, not just
+  header time.
+- **Every lock this crate holds now recovers from poisoning instead of
+  cascading** (#1083) — *except* the DVR recorder's, which **fails closed**:
+  `DvrRecorder` holds multi-step state (write offset, index, period records,
+  byte totals) that a panic mid-append can leave disagreeing, so a poisoned
+  recorder is abandoned (recording stops, `multimux_dvr_failed_total`
+  increments) rather than recovered into writing an archive whose index does
+  not match its data. Every other guard covers state mutated only by
+  single, panic-free assignments, so recovery there is sound and a panic
+  while one is held (a plugin factory, a segmenter, an allocation failure)
+  no longer permanently disables a route, a router rebuild, or the admin
+  API.
+- **SCTE-35 → DASH `emsg` injection was dead in production** (#1083).
+  `Trunk::events_in_segment` resolves against segment boundaries recorded by
+  `SegmentWriter::note_segment_start`, which had no production caller — so
+  every served segment saw an empty event list. `ProgramSegmenter` now
+  reports each segment's start, derived from a real sample's PTS and the
+  segment's exact internal-timeline offset (re-anchored on a PTS
+  discontinuity), on the trunk's 90 kHz event clock. Id-less SCTE-35 events
+  (a `time_signal` has no `splice_event_id`) get unique presentation-time
+  ids instead of all colliding on `0` (which DASH clients de-duplicate by
+  `(scheme, value, id)`, dropping every one after the first); a declared
+  `splice_event_id` is kept verbatim.
+- **RTSP's permanent-failure classification was dead, and there was no
+  keepalive** (#1083). `run_rtsp` flattened every terminal session state into
+  a `Connect` with a `{:?}`-formatted reason, discarding the typed
+  `MultimuxError::Auth`/`Protocol` the session actually produced — so the
+  supervisor's `is_auth_failure` checks (written for RTSP) never matched and
+  a wrong password retried forever. The typed error is now returned as-is. A
+  per-DESCRIBE-`404` classification that declared a route permanently failed
+  on a single attempt is now bounded like the auth path (5 attempts), since
+  relays commonly answer `404` until their publisher is up. A periodic
+  `OPTIONS` keepalive keeps a session alive against servers that enforce
+  `Session;timeout=N` (Live555-based cameras tore it down every 60 s); its
+  interval is clamped to `[KEEPALIVE_MIN, KEEPALIVE_MAX]` so a hostile
+  `timeout` value cannot overflow the clock or spam sub-second `OPTIONS`, and
+  a non-success reply to the keepalive (many servers answer `405`) no longer
+  tears the live session down.
+- **DVR durability** (#1083). A partial write (ENOSPC mid-`write_all`) left
+  the append-mode period file grown while the cached offset stayed put, making
+  every later `IndexEntry.byte_offset` short by that amount and serving
+  shifted, corrupt bytes for the rest of the period — the offset is now
+  derived from the file's real length, and a failed append truncates any
+  partial tail (`set_len`) so the next segment does not sit behind junk. The
+  period data is `sync_data`d before its index entry is written, and the
+  index write (`File::flush` was a no-op) `sync_all`s the sidecar and its
+  directory, so the "flushed synchronously" claim is backed by real
+  durability. Byte-based retention now counts the still-open period, and a
+  byte-capped route rolls its period once it passes a per-period budget
+  (`retention_bytes / retention_periods`) so one file can no longer grow past
+  the whole cap; `period_duration_secs: 0` with only count-based retention is
+  rejected as unbounded. `rebuild_index` reports a period shorter than the
+  init prelude instead of panicking on the slice.
+- **W1 (`StallIngest` deadlock) needed no new fix** (#1083): the ingest
+  segmenter already publishes non-blockingly
+  (`SegmentWriter::try_publish_segment` with a bounded retry queue,
+  `ProgramSegmenter::drain_pending`), so the "DVR pin blocks the ingest task,
+  which is the only DVR drainer" deadlock is not reachable; and the drain it
+  does perform now runs off the runtime worker (the W3 change above). The
+  covering test is the pre-existing
+  `source::segment::tests::publish_without_blocking_never_blocks_the_calling_thread`
+  — this release adds no new W1 test.
+- **An RTSP session that completes its handshake and answers keepalives but
+  sends no media is now detected as stalled** (#1083). The read timeout was
+  measured per `timeout(..)` call, so a keepalive wakeup slightly under the
+  read timeout reset it forever and the stall was never reported; the loop
+  now tracks the instant of the last received byte and fails once
+  `now - last_rx >= read_timeout`, independent of keepalive wakeups.
+- **A mid-segment PTS discontinuity no longer retro-stamps the segment being
+  filled** (#1083). The new source-clock anchor is recorded as *pending* and
+  applied at the next segment boundary, so the in-progress segment keeps the
+  anchor its start was actually on.
+- **DVR byte-rolling and eviction hardened** (#1083). The roll guard checks
+  `!index.is_empty()` (not `write_offset > 0`, which equals the init length
+  right after `start_period`, so a single oversized segment rolled an empty
+  period). The per-period budget is `retention_bytes / (retention_periods +
+  1)`, reserving room for the open period, so a roll no longer immediately
+  evicts the whole closed history. Eviction removes the period's index before
+  its data file, so no racing catch-up request can see a listed period whose
+  file is gone.
+- **All three catch-up scan paths share the blocking-pool bound** (#1083):
+  `vod_playlist` and `catchup_resource` now take the same scan semaphore
+  `catchup_playlist` does, and a cached index hit in
+  `read_period_segments` is an `Arc` bump rather than a `Vec` clone.
+- **The `emsg` oracle test fails rather than silently skips** (#1083) when
+  `mp4dump` is absent, unless `MULTIMUX_ALLOW_ORACLE_SKIP=1` is set.
+- **Serving a catch-up playlist no longer blocks a runtime worker** (#1083).
+  `scan_archive` read and JSON-parsed every `pN.idx` on each
+  `GET catchup.m3u8`, synchronously, on a tokio worker; a handful of
+  concurrent unauthenticated requests pinned every worker and stalled ingest
+  for every route. The archive scan, the per-period index read, the archived
+  byte read, the DVR persist, and the file-input probe/demux all run on the
+  blocking pool now, and a parsed period index is cached keyed by the
+  sidecar's `(mtime_ns, len, inode)` — a bounded LRU — so a finished period
+  is not re-parsed per request. Concurrent archive scans are capped so a
+  catch-up flood cannot occupy the blocking pool the DVR persist shares. The
+  DVR persist itself is skipped entirely when the trunk has closed no new
+  segment since the last poll (the UDP ingest path calls `advance_route` once
+  per datagram).
+
 ### Changed (breaking)
 - `RouteHandle::add_segment` returns `Result<(), AddSegmentError>` instead of
   logging and dropping a segment it could not publish (#1082).
+- `source::advance_route` is now `async` (#1083): its DVR-drain step writes
+  segment bytes to disk, so it is dispatched to the blocking pool rather than
+  run inline on the calling runtime worker.
+- `origin::admin::RouteRegistry::add_route` is now `async` (#1083): it
+  builds the prospective router and drains a displaced route on overwrite.
+- **Newly rejected configuration** (#1083): a route name that is not a single
+  safe path segment (`[A-Za-z0-9._-]`, not `.`/`..`, at most
+  `MAX_ROUTE_NAME_LEN` = 255 bytes), a duplicate name differing only in case
+  (they share one `archive_root/<name>` directory on a case-insensitive
+  filesystem), and two outputs mounting the same manifest path (which panics
+  the axum router build). Multiple push/`custom`/`whep` outputs on one route
+  — which mount no HTTP path — remain valid; the previous
+  `mem::discriminant`-based check wrongly rejected them.
+- `ProgramSegmenter` is now `pub` (#1083) so an embedder or test can drive the
+  exact production segmenting path (`try_new` → push → `pump` → `flush`).
+- **Two public structs gained fields** (#1083), so a struct literal or
+  exhaustive pattern outside this crate must be updated:
+  `origin::HttpLimits` gained `queue_timeout: Duration`, and
+  `config::Config` gained `concurrency_queue_timeout_secs: f64` (its serde
+  default is the 5 s `DEFAULT_QUEUE_TIMEOUT`). `HttpLimits::from(&Config)` now
+  clamps an unvalidated (NaN/negative/overflowing) timeout to the default
+  rather than panicking in `Duration::from_secs_f64`.
+- `catchup::read_archived_bytes` now returns `Result<Bytes,
+  ReadArchivedError>` instead of `Result<Bytes, String>` (crate-private), and
+  `catchup::read_period_segments` returns `Arc<Vec<ArchivedSegment>>` — both
+  to distinguish an evicted period (a `404` to a racing catch-up request)
+  from a corrupt archive (a `500`).
 
 ### Added
 - `multimux_dvr_pin_rearmed_total` Prometheus counter (labels: `route`) —
   see the `DvrRecorder` re-arm fix above.
+- `multimux_http_shed_total` Prometheus counter (label: `kind` =
+  `ordinary` | `blocking_reload`): requests the global concurrency bound
+  answered `503` before they reached any route (#1083).
+- `multimux_dvr_failed_total` Prometheus counter (label: `route`): a DVR
+  recorder abandoned because its mutex was poisoned (#1083). The poisoned
+  DVR recorder is abandoned (recording stops) at whichever entry observes the
+  poison first — `poll_dvr`'s production `try_lock` pre-check, or
+  `poll_dvr_blocking`.
+- `origin::limit`: `GlobalLimit`, `GlobalLimitLayer`, `GlobalLimitService`,
+  `DEFAULT_QUEUE_TIMEOUT`, `DEFAULT_BLOCKING_RELOAD_DIVISOR`,
+  `RETRY_AFTER_SECS`, `HTTP_SHED_TOTAL` — the server-wide concurrency bound,
+  applied inside `origin::router` (#1083).
+- `origin::DEFAULT_QUEUE_TIMEOUT` and the `concurrency_queue_timeout_secs`
+  config key: how long a request waits for a concurrency permit before it is
+  shed with `503 Service Unavailable` + `Retry-After` (RFC 9110 §10.2.3).
+  Default 5 s.
+- `source::rtsp::{KEEPALIVE_MIN, KEEPALIVE_MAX}`: bounds on the RTSP
+  keepalive interval derived from a server's `Session;timeout` (#1083).
+- `config::MAX_ROUTE_NAME_LEN`.
+- `dvr::validate_route_dir_name` — the defence-in-depth check
+  `DvrRecorder::new` applies to a route name before joining it into a path.
+- `scte35-splice` as a dev-dependency, for the independent `emsg`
+  `message_data` oracle in `tests/emsg_mp4box.rs`.
 
 ## [0.11.0] - 2026-09-26
 

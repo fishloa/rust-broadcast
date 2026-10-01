@@ -47,6 +47,15 @@ use hls_runtime::server::{HlsBody, HlsRequest};
 use media_plane::trunk::{EventAnchor, Trunk};
 use transmux::{EmsgBox, PresentationTime};
 
+/// The DASH `emsg` `schemeIdUri` for a binary SCTE-35 section — the value
+/// `crate::output::dash` also declares with `<InbandEventStream>`
+/// (ANSI/SCTE 214-3).
+const EMSG_SCHEME_ID_URI: &str = "urn:scte:scte35:2013:bin";
+
+/// The `emsg` `timescale` field: the trunk event ring's 90 kHz clock, which
+/// is also `presentation_time`'s clock (ANSI/SCTE 214-3).
+const EMSG_TIMESCALE: u32 = timed_metadata::PTS_HZ as u32;
+
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
 use crate::route::{ProgramServing, RouteHandle};
 
@@ -188,6 +197,59 @@ fn parse_segment_filename(file: &str) -> Option<(&str, u32)> {
     Some((track, seq.parse().ok()?))
 }
 
+/// A `(scheme, value, id)`-unique `emsg` id for one inband SCTE-35 event
+/// (issue #1083, W9).
+///
+/// A SCTE-35 `splice_insert` carries a `splice_event_id` (`Some`) — the
+/// operator's own identity, kept **verbatim**. Only a `None` event (a
+/// `time_signal` has no id at all) gets a derived id — the pre-fix
+/// `unwrap_or(0)` gave every such event id 0, and DASH clients de-duplicate
+/// by `(scheme, value, id)`, so all but the first were dropped. The derived
+/// id walks upward past a collision with a value already emitted in this
+/// segment's boxes, so uniqueness holds across every box spliced into one
+/// segment.
+fn unique_emsg_id(
+    declared: Option<u32>,
+    media_time_90k: u64,
+    used: &mut std::collections::HashSet<u32>,
+) -> u32 {
+    // A declared `splice_event_id` is kept verbatim — it is the operator's
+    // own identity, and a client keyed on it must see the same value. If it
+    // collides with an already-emitted id in this segment (two events
+    // genuinely sharing a `splice_event_id`), that is the upstream's data,
+    // not something to silently rewrite.
+    if let Some(id) = declared {
+        used.insert(id);
+        return id;
+    }
+    // No declared id: derive one from the presentation time (90 kHz ticks
+    // already), truncating into the id space, and walk upward past any
+    // collision with a value emitted earlier in this segment.
+    let base = u32::try_from(media_time_90k).unwrap_or_else(|_| {
+        // The 90 kHz clock is 33-bit; anything wider cannot occur, but if it
+        // ever did, fold it rather than panic.
+        u32::try_from(media_time_90k % u64::from(u32::MAX)).unwrap_or(u32::MAX)
+    });
+    let mut id = base;
+    while !used.insert(id) {
+        // Wrapping is fine (the derived id is opaque); the walk terminates
+        // because `used` is finite and smaller than the u32 space.
+        id = id.wrapping_add(1);
+    }
+    id
+}
+
+/// Inject DASH `emsg` boxes for a segment's resolved SCTE-35 events into
+/// served fMP4 segment bytes (issue #969) — the inband counterpart to
+/// `crate::output::dash`'s `<InbandEventStream>` MPD declaration.
+///
+/// Per CMAF, event boxes sit between `styp` and `moof`:
+/// `[styp][emsg*][moof][mdat]`. So this splices the serialized `emsg` boxes
+/// in immediately after `styp`. Only **resolved** events (already on this
+/// trunk's 90 kHz absolute clock, [`EventAnchor::Media`]) and only
+/// SCTE-35-sourced events are injected; non-segment resources (init, parts),
+/// segments with no (relevant) events, and non-SCTE-35 events all pass
+/// through unchanged.
 /// Inject DASH `emsg` boxes for a segment's resolved SCTE-35 events into
 /// served fMP4 segment bytes (issue #969) — the inband counterpart to
 /// `crate::output::dash`'s `<InbandEventStream>` MPD declaration.
@@ -219,6 +281,17 @@ fn inject_segment_events(trunk: &Trunk, file: &str, body: HlsBody) -> HlsBody {
     // the box directly from the raw bytes rather than via
     // `timed_metadata::Timeline::to_emsg` (which needs an `EmsgConfig`).
     let mut emsg_bytes = Vec::new();
+    // DASH clients de-duplicate `emsg` boxes by `(scheme_id_uri, value, id)`
+    // (ISO/IEC 23009-1 §5.10.3.3): two events sharing an id means the client
+    // silently drops the later one. A SCTE-35 `time_signal` has no
+    // `splice_event_id` at all (`TimedEvent::id == None`), so the pre-fix
+    // `id.unwrap_or(0)` made every id-less event collide on id 0 (issue
+    // #1083, W9). Derive a stable, presentation-time-based id for those, and
+    // guarantee uniqueness across everything actually emitted below — a real
+    // `splice_event_id` is kept as-is (it is the operator-visible identity),
+    // but a collision is resolved by nudging the derived id rather than
+    // dropping an event.
+    let mut used_ids: std::collections::HashSet<u32> = std::collections::HashSet::new();
     for entry in &events {
         let timed_metadata::event::SourcePayload::Scte35 { raw } = &entry.event.source else {
             continue;
@@ -226,10 +299,11 @@ fn inject_segment_events(trunk: &Trunk, file: &str, body: HlsBody) -> HlsBody {
         let EventAnchor::Media(media_time) = entry.anchor else {
             continue;
         };
+        let id = unique_emsg_id(entry.event.id, media_time.0, &mut used_ids);
         let emsg = EmsgBox {
-            scheme_id_uri: "urn:scte:scte35:2013:bin",
+            scheme_id_uri: EMSG_SCHEME_ID_URI,
             value: "",
-            timescale: 90_000, // Trunk's 90 kHz clock
+            timescale: EMSG_TIMESCALE, // Trunk's 90 kHz event clock
             presentation_time: PresentationTime::Absolute(media_time.0),
             // `event_duration` is a u32; saturate an over-long duration rather
             // than truncating -- a client reading the box wants to know the
@@ -237,16 +311,9 @@ fn inject_segment_events(trunk: &Trunk, file: &str, body: HlsBody) -> HlsBody {
             event_duration: entry
                 .event
                 .duration
-                .map(|d| {
-                    let ticks = d.0;
-                    if ticks > u64::from(u32::MAX) {
-                        0xFFFF_FFFF
-                    } else {
-                        ticks as u32
-                    }
-                })
+                .map(|d| u32::try_from(d.0).unwrap_or(u32::MAX))
                 .unwrap_or(0),
-            id: entry.event.id.unwrap_or(0),
+            id,
             message_data: raw,
         };
         if let Ok(box_bytes) = emsg.to_vec() {
@@ -764,6 +831,90 @@ mod tests {
             b"emsg",
             "emsg box should be immediately after styp"
         );
+    }
+
+    /// Two SCTE-35 `time_signal` events (no `splice_event_id`, so
+    /// `TimedEvent::id == None`) in one segment must get DISTINCT `emsg` ids
+    /// — DASH clients de-duplicate by `(scheme, value, id)` (ISO/IEC
+    /// 23009-1 §5.10.3.3) and would drop the second pre-fix, when both
+    /// resolved to id 0.
+    ///
+    /// Biting test: restore `id: entry.event.id.unwrap_or(0)` and both boxes
+    /// carry id 0, failing the distinctness assertion.
+    #[test]
+    fn inject_segment_events_gives_id_less_events_distinct_ids() {
+        let nz = |n: usize| std::num::NonZeroUsize::new(n).unwrap();
+        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(8), nz(8), nz(8)));
+        let writer = trunk.writer().expect("writer");
+        let seg_writer = trunk.segment_writer().expect("segment writer");
+        seg_writer.set_time_anchor(TimeAnchor {
+            pts_90k: 0,
+            utc_epoch_ms: 1_000_000_000_000,
+        });
+
+        // Build one id-less event from the real SCTE-35 fixture the crate's
+        // own tests use, then publish it twice at different anchors — the
+        // id-less shape (`TimedEvent::id == None`) that a `time_signal`
+        // produces.
+        let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
+        let sb: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let mut timeline = timed_metadata::Timeline::new();
+        let mut ev = timeline.push_scte35(&sb).unwrap();
+        ev.id = None; // force the id-less shape under test
+        assert_eq!(ev.id, None, "this test needs an id-less event");
+
+        let mut a = ev.clone();
+        a.id = None;
+        let mut b = ev.clone();
+        b.id = None;
+        writer.publish_event(a, EventAnchor::Media(MediaTime(0)));
+        writer.publish_event(b, EventAnchor::Media(MediaTime(1_000_000)));
+        seg_writer.note_segment_start(1, MediaTime(0));
+        seg_writer.note_segment_start(2, MediaTime(4_000_000));
+
+        let styp: [u8; 12] = [0, 0, 0, 12, b's', b't', b'y', b'p', b'm', b's', b'd', b'h'];
+        let mut seg_bytes = Vec::new();
+        seg_bytes.extend_from_slice(&styp);
+        seg_bytes.extend_from_slice(b"moof_placeholder");
+        let result = inject_segment_events(
+            &trunk,
+            "seg-1-1.m4s",
+            HlsBody::Resource(Bytes::from(seg_bytes)),
+        );
+        let HlsBody::Resource(out) = result else {
+            panic!("expected Resource");
+        };
+        // Collect every emsg id in the output.
+        let parsed: Vec<EmsgBox<'_>> = parse_emsg_boxes(&out);
+        assert_eq!(parsed.len(), 2, "two emsg boxes must parse");
+        assert_ne!(
+            parsed[0].id, parsed[1].id,
+            "id-less events must not collide on id 0 — DASH clients drop the later one"
+        );
+    }
+
+    /// Parse every `emsg` box in `bytes` (a small `#[cfg(test)]` helper so the
+    /// ids can be asserted literally without re-decoding by hand).
+    fn parse_emsg_boxes(bytes: &[u8]) -> Vec<EmsgBox<'_>> {
+        let mut out = Vec::new();
+        let mut i = 0usize;
+        while i + 8 <= bytes.len() {
+            let size =
+                u32::from_be_bytes([bytes[i], bytes[i + 1], bytes[i + 2], bytes[i + 3]]) as usize;
+            if size < 8 || i + size > bytes.len() {
+                break;
+            }
+            if &bytes[i + 4..i + 8] == b"emsg"
+                && let Ok(e) = EmsgBox::parse(&bytes[i..i + size])
+            {
+                out.push(e);
+            }
+            i += size;
+        }
+        out
     }
 
     #[test]

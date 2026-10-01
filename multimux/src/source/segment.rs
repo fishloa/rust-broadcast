@@ -307,12 +307,14 @@ enum PendingPublish {
 /// [`SegmentWriter`] the resulting parts/segments are published back
 /// through.
 ///
-/// `pub(crate)` (not `pub`, issue #805 task 6): the one caller outside this
-/// module, [`crate::source::advance_route`], is the facade a
-/// [`crate::registry::SchemeRegistry`] `Custom` factory calls instead of
-/// touching this type or [`drive_program_segmenters`] directly — see that
-/// facade's own doc.
-pub(crate) struct ProgramSegmenter {
+/// The per-program fMP4/TS segmenter a driver-backed route runs.
+///
+/// Public (issue #1083) so an embedder or a test can drive the exact
+/// production segmenting path — [`Self::try_new`] → push samples into the
+/// program's `Trunk` → [`Self::pump`] → [`Self::flush`] — rather than
+/// reimplementing it. Most callers should use the
+/// [`crate::source::advance_route`] facade instead.
+pub struct ProgramSegmenter {
     cursor: SampleCursor,
     segment_writer: SegmentWriter,
     seg: AnySegmenter,
@@ -342,7 +344,53 @@ pub(crate) struct ProgramSegmenter {
     /// stuck — `None` whenever `pending` is empty. Compared against
     /// [`PENDING_PUBLISH_MAX_WAIT`] in [`Self::drain_pending`].
     pending_since: Option<Instant>,
+    /// The mapping from the trunk's internal segment timeline to the
+    /// source's own media (90 kHz) clock — see [`MediaAnchor`]. Reported to
+    /// the trunk via [`SegmentWriter::note_segment_start`] so
+    /// `Trunk::events_in_segment` can attribute inband SCTE-35 events to the
+    /// right segment (issue #1083, W9). `None` until the first timed sample.
+    anchor: Option<MediaAnchor>,
+    /// An anchor to apply at the NEXT segment boundary, not now: a
+    /// discontinuity detected mid-segment must not retro-stamp the segment
+    /// already being filled with the post-jump clock (item 5). Set while
+    /// samples of the in-progress segment are still arriving; consumed by
+    /// [`Self::queue_segment`] once that segment closes, so the following
+    /// segment is anchored to the first post-jump sample.
+    pending_anchor: Option<MediaAnchor>,
 }
+
+/// Maps this segmenter's internal per-segment timeline
+/// ([`SegmentEntry::timeline_position`], which starts at 0 for a fresh
+/// segmenter and advances by segment durations) onto the **source's** own
+/// 90 kHz media clock — the same clock SCTE-35 events are anchored on.
+///
+/// `source_90k` is the rescaled PTS of a real sample, and `timeline_ns` the
+/// internal timeline position at the moment that sample was seen. Every
+/// segment's start is then `source_90k + (segment.timeline_position -
+/// timeline_ns)`, which is exact for any segment (no per-segment rounding
+/// accumulation — the delta is computed once from real values). A PTS
+/// discontinuity (or a track change) re-anchors: the anchor is re-taken from
+/// the first sample after it, so a jump in the source clock does not smear
+/// every later boundary (issue #1083, E).
+#[derive(Debug, Clone, Copy)]
+struct MediaAnchor {
+    source_90k: u64,
+    timeline_ns: u64,
+    /// The last sample PTS seen, in its own track's timescale, with which to
+    /// detect a discontinuity.
+    last_pts: i64,
+    last_timescale: u32,
+}
+
+/// A source-clock jump larger than this between consecutive samples is
+/// treated as a discontinuity and re-anchors the media mapping rather than
+/// being folded into the delta (issue #1083, E). Ten seconds is far beyond
+/// any legitimate inter-sample gap (a 1 fps track's is one).
+const MEDIA_DISCONTINUITY_NS: i64 = 10 * 1_000_000_000;
+
+/// Nanoseconds per second — for converting the segmenter's internal
+/// nanosecond timeline into the 90 kHz media clock.
+const NANOS_PER_SEC: u64 = 1_000_000_000;
 
 /// Rolling-window depth [`StreamingTsHlsSegmenter::new`] is given —
 /// irrelevant to a driver-backed route in practice (its own `.playlist()`
@@ -367,8 +415,8 @@ impl ProgramSegmenter {
     /// [`Container::Fmp4`], [`StreamingTsHlsSegmenter::new`] for
     /// [`Container::MpegTs`]) itself rejects the track set (logged, not
     /// propagated — a segmentation failure on one program must not tear down
-    /// the whole ingest session; see [`drive_program_segmenters`]'s own doc).
-    fn try_new(
+    /// the whole ingest session; see `drive_program_segmenters`'s own doc).
+    pub fn try_new(
         trunk: &Arc<Trunk>,
         route_handle: &RouteHandle,
         target_duration_secs: f64,
@@ -477,6 +525,8 @@ impl ProgramSegmenter {
             track_generation: trunk.track_generation(),
             pending: VecDeque::new(),
             pending_since: None,
+            anchor: None,
+            pending_anchor: None,
         })
     }
 
@@ -599,7 +649,7 @@ impl ProgramSegmenter {
     /// Drain every sample this program's cursor has observed since the last
     /// call, push it through the segmenter, and publish whatever parts/
     /// segments that produced. Returns `(parts_published, segments_published)`
-    /// this call — issue #809: [`drive_program_segmenters`] sums these across
+    /// this call — issue #809: `drive_program_segmenters` sums these across
     /// every segmenter to drive `crate::prometheus::PARTS_PRODUCED_TOTAL`/
     /// `SEGMENTS_PRODUCED_TOTAL`.
     ///
@@ -608,7 +658,7 @@ impl ProgramSegmenter {
     /// advanced, admits new tracks into the segmenter or, for fMP4 (which has
     /// no in-place `add_track`), rebuilds the segmenter at the segment
     /// boundary.
-    fn pump(
+    pub fn pump(
         &mut self,
         program: ProgramId,
         trunk: &Trunk,
@@ -621,10 +671,66 @@ impl ProgramSegmenter {
         }
 
         while let Some(item) = self.cursor.poll() {
-            if let SampleCursorItem::Timed { track_id, sample } = item
-                && let Err(e) = self.seg.push(track_id, sample)
-            {
-                tracing::warn!(error = %e, "driver-backed segmenter push failed");
+            if let SampleCursorItem::Timed { track_id, sample } = item {
+                // Keep the internal-timeline -> source-90kHz mapping anchored
+                // (issue #1083, E): anchor on the first timed sample, and
+                // re-anchor on a genuine source-clock discontinuity so a jump
+                // in the source PTS is not smeared across every later segment
+                // boundary. This is what makes `note_segment_start` (below)
+                // report the source clock the SCTE-35 events are on, not the
+                // segmenter's own restart-from-zero timeline.
+                if let Some(pts) = sample.pts
+                    && let Some(timescale) = trunk
+                        .tracks()
+                        .iter()
+                        .find(|t| t.track_id == track_id)
+                        .map(|t| t.timescale)
+                    && timescale > 0
+                {
+                    let re_anchor = match self.anchor {
+                        None => true,
+                        Some(a) => {
+                            // Same track AND a jump larger than any legitimate
+                            // inter-sample gap => discontinuity.
+                            let jump_ns = {
+                                let prev = i128::from(a.last_pts);
+                                let now = i128::from(pts);
+                                let scale = i128::from(timescale);
+                                (now - prev).saturating_mul(i128::from(NANOS_PER_SEC)) / scale
+                            };
+                            let sign_flip = (a.last_pts >= 0) != (pts >= 0);
+                            sign_flip
+                                || (a.last_timescale == timescale
+                                    && jump_ns.unsigned_abs() > MEDIA_DISCONTINUITY_NS as u128)
+                        }
+                    };
+                    if re_anchor {
+                        let fresh = MediaAnchor {
+                            source_90k: rescale_to_90k(pts, timescale),
+                            timeline_ns: self.next_timeline_ns,
+                            last_pts: pts,
+                            last_timescale: timescale,
+                        };
+                        if self.anchor.is_none() {
+                            // No anchor at all yet: this IS the first
+                            // segment's clock, so it applies immediately.
+                            self.anchor = Some(fresh);
+                        } else {
+                            // A discontinuity mid-stream. The segment being
+                            // filled right now must keep the OLD anchor (its
+                            // start really was before the jump); the new one
+                            // takes effect at the next segment boundary
+                            // (item 5).
+                            self.pending_anchor = Some(fresh);
+                        }
+                    } else if let Some(a) = self.anchor.as_mut() {
+                        a.last_pts = pts;
+                        a.last_timescale = timescale;
+                    }
+                }
+                if let Err(e) = self.seg.push(track_id, sample) {
+                    tracing::warn!(error = %e, "driver-backed segmenter push failed");
+                }
             }
             // `Sparse`/`Lagged`/`Degraded` items: a section-carried (sparse)
             // track has no place in either segmenter's media segment (fMP4 or
@@ -817,7 +923,7 @@ impl ProgramSegmenter {
     /// did (see that module's `eos_flush_emits_buffered_tail_segment` test).
     /// Returns `(parts_published, segments_published)` this call — see
     /// [`Self::pump`].
-    fn flush(&mut self) -> (usize, usize) {
+    pub fn flush(&mut self) -> (usize, usize) {
         if let Err(e) = self.seg.finish() {
             tracing::warn!(error = %e, "driver-backed segmenter flush failed");
         }
@@ -855,6 +961,29 @@ impl ProgramSegmenter {
     fn queue_segment(&mut self, segment: ReadySegment) {
         let duration = Duration::from_secs_f64(segment.duration);
         let start_ns = self.next_timeline_ns;
+        // Tell the trunk where this segment starts on the media (90 kHz)
+        // clock, so `Trunk::events_in_segment` can attribute inband SCTE-35
+        // events to it (issue #1083, W9 — no production caller of
+        // `note_segment_start` existed before this). The start is derived
+        // from the real anchor plus this segment's exact internal-timeline
+        // offset — no per-segment rounding accumulation (issue #1083, E).
+        if let Some(anchor) = self.anchor {
+            let delta_ns = self.next_timeline_ns.saturating_sub(anchor.timeline_ns);
+            let delta_90k = delta_ns.saturating_mul(timed_metadata::PTS_HZ) / NANOS_PER_SEC;
+            let start_90k = anchor.source_90k.saturating_add(delta_90k);
+            self.segment_writer
+                .note_segment_start(segment.segment_seq, timed_metadata::MediaTime(start_90k));
+        }
+        // A discontinuity recorded while this segment was filling becomes
+        // effective for the NEXT one (item 5): its `timeline_ns` is this
+        // segment's end, so the next segment's start maps exactly onto the
+        // post-jump source clock.
+        if let Some(mut pending) = self.pending_anchor.take() {
+            pending.timeline_ns = self
+                .next_timeline_ns
+                .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
+            self.anchor = Some(pending);
+        }
         self.next_timeline_ns = self
             .next_timeline_ns
             .saturating_add(u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX));
@@ -922,6 +1051,18 @@ impl ProgramSegmenter {
         }
         (parts_published, segments_published)
     }
+}
+
+/// Rescale a timestamp in `timescale` ticks to the trunk event ring's fixed
+/// 90 kHz clock (issue #1083, W9). Rounds to nearest, saturating — a value
+/// that overflows `u64` is clamped, never wrapped.
+fn rescale_to_90k(pts: i64, timescale: u32) -> u64 {
+    // A negative PTS (a pre-roll/PTS-base offset a demuxer may produce) is
+    // clamped to 0: the event ring has no representation for a time before
+    // zero, and a segment starting there simply begins the timeline.
+    let pts = u128::try_from(pts).unwrap_or(0);
+    let scaled = pts.saturating_mul(u128::from(timed_metadata::PTS_HZ)) / u128::from(timescale);
+    u64::try_from(scaled).unwrap_or(u64::MAX)
 }
 
 /// Per-iteration driver every `run_*` entry point calls right after
@@ -1214,6 +1355,143 @@ mod tests {
             segments_after > segments_before,
             "multimux_segments_produced_total must increase: before={segments_before} \
              after={segments_after}"
+        );
+    }
+
+    /// Issue #1083 W9: the production segmenter must call
+    /// [`SegmentWriter::note_segment_start`], so the trunk's per-segment
+    /// event attribution (`Trunk::events_in_segment`) is non-empty for a
+    /// segment a real SCTE-35 event falls inside. Before this fix nothing in
+    /// production ever called `note_segment_start`, so the DASH `emsg`
+    /// injection path (`crate::origin::resource::inject_segment_events`) saw
+    /// an empty event list for every real segment.
+    ///
+    /// Drives the real `ProgramSegmenter::pump` (the production entry point
+    /// `drive_program_segmenters` calls, where the segment start is
+    /// recorded), not a direct `seg.push` — the latter would bypass exactly
+    /// the code this fixes.
+    ///
+    /// Biting test: delete the `self.segment_writer.note_segment_start(...)`
+    /// call from `queue_segment` and this test's `events_in_segment` walk
+    /// finds nothing, failing the assertion.
+    #[test]
+    fn program_segmenter_notes_each_segments_start_media_time() {
+        use media_plane::trunk::{EventAnchor, RetentionClass, TrunkConfig};
+        use timed_metadata::MediaTime;
+
+        // A bare trunk with the real video track (90000 ticks/s == the event
+        // ring's own 90 kHz clock).
+        // A sample ring large enough to retain every frame (the segmenter
+        // subscribes from the backlog; a small ring would evict the head).
+        let trunk = Trunk::new(TrunkConfig::new(nz(512), nz(16), nz(8), nz(16), nz(16)));
+        let writer = trunk.writer().expect("first trunk writer");
+        writer.set_tracks(vec![track_spec(1)]);
+
+        // A real SCTE-35 splice_insert (event_id 2002) at pts 0.
+        let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
+        let splice_bytes: Vec<u8> = (0..hex.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap())
+            .collect();
+        let mut timeline = timed_metadata::Timeline::new();
+        let ev = timeline.push_scte35(&splice_bytes).unwrap();
+        writer.publish_event(ev, EventAnchor::Media(MediaTime(0)));
+
+        // Write enough frames into the trunk to cut a few real segments (a
+        // sync frame every 45 frames == 0.5 s, target 1.0 s).
+        for i in 0..200u32 {
+            writer.publish(1, RetentionClass::Timed, sample_at(i, i.is_multiple_of(45)));
+        }
+
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter builds");
+        // `pump` drains the backlog cursor and publishes whatever segments
+        // that produced — the production path.
+        segmenter.pump(ProgramId(0), &trunk, &route);
+        segmenter.flush();
+
+        let last = trunk
+            .last_closed_segment()
+            .expect("the segmenter must have closed at least one segment");
+        let attributed = (1..=last).any(|seq| {
+            trunk.events_in_segment(seq).iter().any(|e| {
+                matches!(
+                    e.event.source,
+                    timed_metadata::event::SourcePayload::Scte35 { .. }
+                )
+            })
+        });
+        assert!(
+            attributed,
+            "a published SCTE-35 event must be attributable to a segment;  \
+            `note_segment_start` was never called by the production segmenter before W9  \
+            (closed segments: 1..={last})"
+        );
+    }
+
+    /// Item 5 (unit): a discontinuity recorded while a segment is in progress
+    /// must NOT change that segment's start — it is promoted to the NEXT
+    /// segment boundary. Driven directly on the anchor state, since an fMP4
+    /// segmenter cannot be made to keep cutting after a jump large enough to
+    /// be detected as a discontinuity.
+    ///
+    /// Biting test: assign `self.anchor = Some(fresh)` unconditionally (the
+    /// pre-fix behaviour) and the in-progress segment's start changes.
+    #[test]
+    fn a_pending_anchor_does_not_change_the_in_progress_segment() {
+        use media_plane::trunk::TrunkConfig;
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(16), nz(8), nz(16), nz(16)));
+        trunk
+            .writer()
+            .expect("writer")
+            .set_tracks(vec![track_spec(1)]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter builds");
+
+        // Establish the initial anchor for segment 1.
+        segmenter.anchor = Some(MediaAnchor {
+            source_90k: 0,
+            timeline_ns: 0,
+            last_pts: 0,
+            last_timescale: 90_000,
+        });
+        // A discontinuity observed mid-segment-1: it must NOT retro-stamp
+        // segment 1.
+        segmenter.pending_anchor = Some(MediaAnchor {
+            source_90k: 900_090,
+            timeline_ns: 0,
+            last_pts: 900_090,
+            last_timescale: 90_000,
+        });
+        assert_eq!(
+            segmenter.anchor.map(|a| a.source_90k),
+            Some(0),
+            "the in-progress segment's anchor must be unchanged by a pending one"
+        );
+
+        // Close segment 1 (duration 1 s == 90000 ticks) -> the pending anchor
+        // is promoted, offset by that segment's duration.
+        segmenter.queue_segment(ReadySegment {
+            bytes: vec![0u8; 8],
+            segment_seq: 1,
+            duration: 1.0,
+            discontinuous: false,
+        });
+        let promoted = segmenter.anchor.expect("anchor promoted");
+        assert_eq!(
+            promoted.source_90k, 900_090,
+            "the NEXT segment must be anchored to the post-jump clock"
+        );
+        assert_eq!(
+            promoted.timeline_ns, 1_000_000_000,
+            "the promoted anchor's timeline position is the end of the closed segment (1 s in ns)"
+        );
+        assert!(
+            segmenter.pending_anchor.is_none(),
+            "the pending anchor is consumed, not re-applied"
         );
     }
 
@@ -2319,6 +2597,8 @@ mod tests {
             track_generation: trunk.track_generation(),
             pending: VecDeque::new(),
             pending_since: None,
+            anchor: None,
+            pending_anchor: None,
         }
     }
 

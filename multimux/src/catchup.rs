@@ -31,6 +31,8 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex, OnceLock};
+use std::time::SystemTime;
 
 use bytes::Bytes;
 use hls_runtime::server::ClosedSegment;
@@ -112,8 +114,52 @@ pub(crate) fn list_period_nums(dir: &Path) -> Vec<u32> {
 /// missing/corrupt sidecar yields an empty vec (logged) rather than an
 /// error — one period's lost data must not make every other period
 /// unreadable.
-pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Vec<ArchivedSegment> {
+///
+/// # Why a cache (audit run 7, W3)
+///
+/// `GET /catchup.m3u8` reads and JSON-parses **every** `pN.idx` on every
+/// request; a 48-hour archive of 30 s segments is tens of thousands of
+/// entries re-parsed per playlist fetch, synchronously on a tokio worker.
+/// A handful of concurrent unauthenticated requests pinned every worker and
+/// stalled ingest for every route. The parsed index of a *finished* period
+/// never changes, so it is cached keyed by the sidecar file's
+/// `(mtime, len)` — any change (a still-open period being appended to, a
+/// rewrite) invalidates just that period's entry. A cache hit is a mutex
+/// lock and a couple of comparisons, not a file read.
+pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<ArchivedSegment>> {
     let path = dir.join(format!("p{period_num}.idx"));
+    let stamp = match std::fs::metadata(&path) {
+        Ok(md) => (md.modified().ok(), md.len(), inode_of(&md)),
+        Err(e) => {
+            tracing::warn!(
+                path = %path.display(),
+                error = %e,
+                "catch-up: could not stat period index"
+            );
+            return Arc::new(Vec::new());
+        }
+    };
+    let stamp = PeriodStamp {
+        mtime_ns: stamp.0,
+        len: stamp.1,
+        inode: stamp.2,
+    };
+
+    let cache = index_cache();
+    if let Ok(mut guard) = cache.lock()
+        && let Some(entry) = guard.entries.get(&path)
+        && entry.stamp == stamp
+    {
+        // A cheap `Arc` bump — no `Vec` clone at all (issue #1083, item 4).
+        let segments = Arc::clone(&entry.segments);
+        // LRU touch.
+        let mut entry = guard.entries.remove(&path).expect("just looked up");
+        entry.last_used = guard.tick;
+        guard.tick = guard.tick.wrapping_add(1);
+        guard.entries.insert(path.clone(), entry);
+        return segments;
+    }
+
     let data = match std::fs::read(&path) {
         Ok(d) => d,
         Err(e) => {
@@ -122,7 +168,7 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Vec<ArchivedS
                 error = %e,
                 "catch-up: could not read period index"
             );
-            return Vec::new();
+            return Arc::new(Vec::new());
         }
     };
     let entries: Vec<IndexEntry> = match serde_json::from_slice(&data) {
@@ -133,10 +179,10 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Vec<ArchivedS
                 error = %e,
                 "catch-up: could not parse period index"
             );
-            return Vec::new();
+            return Arc::new(Vec::new());
         }
     };
-    entries
+    let segments: Vec<ArchivedSegment> = entries
         .into_iter()
         .map(|e| ArchivedSegment {
             seq: e.seq,
@@ -147,7 +193,96 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Vec<ArchivedS
             byte_offset: e.byte_offset,
             byte_len: e.byte_len,
         })
-        .collect()
+        .collect();
+
+    let segments = Arc::new(segments);
+    if let Ok(mut guard) = cache.lock() {
+        let tick = guard.tick;
+        guard.tick = tick.wrapping_add(1);
+        guard.entries.insert(
+            path,
+            CacheEntry {
+                stamp,
+                segments: Arc::clone(&segments),
+                last_used: tick,
+            },
+        );
+        // LRU eviction (issue #1083, F): drop the least-recently-used entry
+        // rather than clearing the whole cache.
+        while guard.entries.len() > INDEX_CACHE_MAX_ENTRIES {
+            let Some(oldest) = guard
+                .entries
+                .iter()
+                .min_by_key(|(_, e)| e.last_used)
+                .map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            guard.entries.remove(&oldest);
+        }
+    }
+    segments
+}
+
+/// A file's inode number on Unix, or `0` elsewhere — part of the cache stamp
+/// so a same-path, same-length, same-mtime rewrite that actually replaced the
+/// file (a new inode) still invalidates (issue #1083, F).
+fn inode_of(md: &std::fs::Metadata) -> u64 {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        md.ino()
+    }
+    #[cfg(not(unix))]
+    {
+        let _ = md;
+        0
+    }
+}
+
+/// A period sidecar's identity for caching: mtime (nanosecond precision),
+/// byte length, and inode. Any rewrite changes at least one — and the inode
+/// catches a replace-in-place that happens to preserve length and mtime on a
+/// coarse clock (issue #1083, F).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct PeriodStamp {
+    mtime_ns: Option<SystemTime>,
+    len: u64,
+    inode: u64,
+}
+
+struct CacheEntry {
+    stamp: PeriodStamp,
+    /// `Arc`, so a cache hit is a refcount bump rather than a `Vec` clone.
+    segments: Arc<Vec<ArchivedSegment>>,
+    /// Monotonic tick of the last use, for LRU eviction.
+    last_used: u64,
+}
+
+/// Bounded so a long-lived process serving many routes cannot grow it
+/// without limit; on overflow the least-recently-used entry is evicted.
+const INDEX_CACHE_MAX_ENTRIES: usize = 4096;
+
+#[derive(Default)]
+struct IndexCache {
+    entries: std::collections::HashMap<PathBuf, CacheEntry>,
+    tick: u64,
+}
+
+fn index_cache() -> &'static Mutex<IndexCache> {
+    static CACHE: OnceLock<Mutex<IndexCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(IndexCache::default()))
+}
+
+/// Drop cached indices whose sidecar no longer exists under `dir` — called
+/// opportunistically so a deleted/rolled archive does not keep stale
+/// entries resident. Correctness never depends on this.
+fn prune_index_cache(dir: &Path) {
+    if let Ok(mut guard) = index_cache().lock() {
+        guard
+            .entries
+            .retain(|path, _| path.parent() != Some(dir) || path.exists());
+    }
 }
 
 /// Every archived segment across every period file in `dir`, ascending by
@@ -157,9 +292,15 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Vec<ArchivedS
 /// ascending period order already yields ascending sequence order — no
 /// separate sort needed.
 pub(crate) fn scan_archive(dir: &Path) -> Vec<ArchivedSegment> {
+    prune_index_cache(dir);
     list_period_nums(dir)
         .into_iter()
-        .flat_map(|n| read_period_segments(dir, n))
+        .flat_map(|n| {
+            read_period_segments(dir, n)
+                .iter()
+                .copied()
+                .collect::<Vec<_>>()
+        })
         .collect()
 }
 
@@ -171,8 +312,9 @@ pub(crate) fn scan_archive(dir: &Path) -> Vec<ArchivedSegment> {
 pub(crate) fn find_archived_segment(dir: &Path, seq: u32) -> Option<ArchivedSegment> {
     list_period_nums(dir).into_iter().find_map(|n| {
         read_period_segments(dir, n)
-            .into_iter()
+            .iter()
             .find(|s| s.seq == seq)
+            .copied()
     })
 }
 
@@ -195,33 +337,64 @@ pub(crate) fn read_archived_bytes(
     period_num: u32,
     byte_offset: u64,
     byte_len: u64,
-) -> Result<Bytes, String> {
+) -> Result<Bytes, ReadArchivedError> {
     let path = dir.join(format!("p{period_num}.{ext}"));
-    let mut file = File::open(&path).map_err(|e| format!("opening {}: {e}", path.display()))?;
+    let mut file = File::open(&path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            // The period was evicted between the index read and this open -
+            // a race with retention. Report it as "gone" so the caller can
+            // answer 404 rather than 500 (issue #1083, item 3).
+            ReadArchivedError::Gone
+        } else {
+            ReadArchivedError::Other(format!("opening {}: {e}", path.display()))
+        }
+    })?;
     let file_len = file
         .metadata()
-        .map_err(|e| format!("stat {}: {e}", path.display()))?
+        .map_err(|e| ReadArchivedError::Other(format!("stat {}: {e}", path.display())))?
         .len();
     let end = byte_offset.checked_add(byte_len).ok_or_else(|| {
-        format!(
+        ReadArchivedError::Other(format!(
             "index entry for {} overflows u64: offset {byte_offset} + len {byte_len}",
             path.display()
-        )
+        ))
     })?;
     if end > file_len {
-        return Err(format!(
+        return Err(ReadArchivedError::Other(format!(
             "index entry for {} claims range [{byte_offset}, {end}) but the file is only \
-             {file_len} bytes — corrupt or truncated sidecar",
+             {file_len} bytes - corrupt or truncated sidecar",
             path.display()
-        ));
+        )));
     }
     file.seek(SeekFrom::Start(byte_offset))
-        .map_err(|e| format!("seeking {}: {e}", path.display()))?;
+        .map_err(|e| ReadArchivedError::Other(format!("seeking {}: {e}", path.display())))?;
     let mut buf = vec![0u8; byte_len as usize];
     file.read_exact(&mut buf)
-        .map_err(|e| format!("reading {}: {e}", path.display()))?;
+        .map_err(|e| ReadArchivedError::Other(format!("reading {}: {e}", path.display())))?;
     Ok(Bytes::from(buf))
 }
+
+/// Why [`read_archived_bytes`] failed. `Gone` is distinct so a caller can
+/// answer `404` (the period was evicted between the index read and the
+/// open) rather than `500` (a corrupt archive) -- issue #1083, item 3.
+#[derive(Debug)]
+pub(crate) enum ReadArchivedError {
+    /// The period file no longer exists (evicted).
+    Gone,
+    /// Any other failure (corrupt index, truncation, I/O error).
+    Other(String),
+}
+
+impl std::fmt::Display for ReadArchivedError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReadArchivedError::Gone => write!(f, "archived period was evicted"),
+            ReadArchivedError::Other(msg) => write!(f, "{msg}"),
+        }
+    }
+}
+
+impl std::error::Error for ReadArchivedError {}
 
 /// Merge `archived` with the live `Trunk`'s still-unarchived closed tail
 /// into ONE ascending, continuous sequence — the straddle fix issue #900
@@ -664,7 +837,7 @@ mod tests {
         )
         .expect_err("a byte_len the file cannot back must be rejected, not allocated");
         assert!(
-            err.contains("corrupt or truncated sidecar"),
+            err.to_string().contains("corrupt or truncated sidecar"),
             "expected the bounds-check error, got: {err}"
         );
 
@@ -732,6 +905,185 @@ mod tests {
             !body.contains("#EXT-X-MAP"),
             "TS container must not advertise a map: {body}"
         );
+    }
+
+    // --- index cache (audit run 7, W3) ---
+
+    /// `read_period_segments` caches a *finished* period's parse and serves
+    /// the cached copy on a repeat call, but a sidecar whose contents change
+    /// (a still-open period being appended to) must be re-read — a stale
+    /// parse would render a playlist with the wrong segment list.
+    ///
+    /// Biting test: drop the `(mtime, len)` stamp comparison (always serve
+    /// the cached entry) and the second assertion sees the stale 1-segment
+    /// list, failing.
+    #[test]
+    fn period_index_cache_is_invalidated_when_the_sidecar_changes() {
+        let dir = temp_dir();
+        let idx = dir.join("p0.idx");
+
+        let one = serde_json::to_vec(&vec![IndexEntry {
+            seq: 7,
+            start_pts_ns: 0,
+            byte_offset: 0,
+            byte_len: 4,
+            duration_ns: 1_000_000_000,
+            discontinuous: false,
+        }])
+        .unwrap();
+        std::fs::write(&idx, &one).unwrap();
+        let first = read_period_segments(&dir, 0);
+        assert_eq!(
+            first.iter().map(|s| s.seq).collect::<Vec<_>>(),
+            vec![7],
+            "the first read must reflect the on-disk sidecar"
+        );
+
+        // Rewrite with two entries. Bump the length so the stamp differs
+        // even if the mtime clock is coarse.
+        let two = serde_json::to_vec(&vec![
+            IndexEntry {
+                seq: 7,
+                start_pts_ns: 0,
+                byte_offset: 0,
+                byte_len: 4,
+                duration_ns: 1_000_000_000,
+                discontinuous: false,
+            },
+            IndexEntry {
+                seq: 8,
+                start_pts_ns: 1_000_000_000,
+                byte_offset: 4,
+                byte_len: 4,
+                duration_ns: 1_000_000_000,
+                discontinuous: false,
+            },
+        ])
+        .unwrap();
+        std::fs::write(&idx, &two).unwrap();
+
+        let second = read_period_segments(&dir, 0);
+        assert_eq!(
+            second.iter().map(|s| s.seq).collect::<Vec<_>>(),
+            vec![7, 8],
+            "a changed sidecar must invalidate the cache, not serve the stale parse"
+        );
+
+        cleanup(&dir);
+    }
+
+    /// A rewrite that keeps the SAME byte length (e.g. one `byte_len` value
+    /// edited in place) must still invalidate the cache — a length-only or
+    /// coarse-mtime key would serve the stale parse (issue #1083, F).
+    ///
+    /// Biting test: revert the stamp to `(mtime, len)` without the inode and
+    /// drop the nanosecond/`len` sensitivity; a same-length in-place rewrite
+    /// within one mtime tick would then serve the old entry. Here the stamp
+    /// also covers `len`, so a same-length rewrite is caught by the inode
+    /// when the file is replaced; this asserts the cache re-reads it
+    /// regardless.
+    #[test]
+    fn period_index_cache_invalidates_a_same_length_rewrite() {
+        let dir = temp_dir();
+        let idx = dir.join("p0.idx");
+        let entry = |seq: u32| {
+            serde_json::to_vec(&vec![IndexEntry {
+                seq,
+                start_pts_ns: 0,
+                byte_offset: 0,
+                byte_len: 4,
+                duration_ns: 1_000_000_000,
+                discontinuous: false,
+            }])
+            .unwrap()
+        };
+        // Write a 1-digit seq, then rewrite with a different 1-digit seq —
+        // identical byte length.
+        let a = entry(7);
+        std::fs::write(&idx, &a).unwrap();
+        assert_eq!(
+            read_period_segments(&dir, 0)
+                .iter()
+                .map(|s| s.seq)
+                .collect::<Vec<_>>(),
+            vec![7]
+        );
+
+        let b = entry(8);
+        assert_eq!(a.len(), b.len(), "the rewrite must be the same length");
+        // The DVR writes indexes write-then-rename (a NEW inode). Simulate
+        // that AND restore the original mtime, so `(mtime_ns, len)` alone
+        // cannot tell the files apart — only the inode can.
+        let mtime_before = std::fs::metadata(&idx).unwrap().modified().unwrap();
+        let tmp2 = dir.join("p0.idx.new");
+        std::fs::write(&tmp2, &b).unwrap();
+        std::fs::rename(&tmp2, &idx).unwrap();
+        let f = std::fs::OpenOptions::new().write(true).open(&idx).unwrap();
+        f.set_modified(mtime_before).unwrap();
+        drop(f);
+
+        assert_eq!(
+            read_period_segments(&dir, 0)
+                .iter()
+                .map(|s| s.seq)
+                .collect::<Vec<_>>(),
+            vec![8],
+            "a same-length rewrite must invalidate the cache"
+        );
+        cleanup(&dir);
+    }
+
+    /// Item 3: a period whose data file was evicted between the index read and
+    /// the open must report `Gone` (mapped to a 404), not a generic error (a
+    /// 500).
+    ///
+    /// Biting test: return `ReadArchivedError::Other` for a missing file and
+    /// this fails.
+    #[test]
+    fn read_archived_bytes_reports_an_evicted_period_as_gone() {
+        let dir = temp_dir();
+        let missing = read_archived_bytes(&dir, "m4s", 0, 0, 4);
+        assert!(
+            matches!(missing, Err(ReadArchivedError::Gone)),
+            "a missing period file must be Gone, got {missing:?}"
+        );
+        let _ = dir;
+    }
+
+    /// A missing sidecar yields an empty list and never poisons the cache —
+    /// a later write of that same path is read fresh.
+    #[test]
+    fn period_index_cache_recovers_after_a_missing_then_written_sidecar() {
+        let dir = temp_dir();
+        let idx = dir.join("p3.idx");
+        assert!(
+            read_period_segments(&dir, 3).is_empty(),
+            "no sidecar: empty"
+        );
+
+        std::fs::write(
+            &idx,
+            serde_json::to_vec(&vec![IndexEntry {
+                seq: 42,
+                start_pts_ns: 0,
+                byte_offset: 0,
+                byte_len: 4,
+                duration_ns: 1_000_000_000,
+                discontinuous: false,
+            }])
+            .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            read_period_segments(&dir, 3)
+                .iter()
+                .map(|s| s.seq)
+                .collect::<Vec<_>>(),
+            vec![42],
+            "a sidecar written after a miss must be read"
+        );
+
+        cleanup(&dir);
     }
 
     #[test]

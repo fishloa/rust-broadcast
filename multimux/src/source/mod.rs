@@ -351,7 +351,12 @@ impl DriverProgress {
 /// for the supported shape this replaces (that example used to call
 /// `report_driver_progress`/`drive_program_segmenters` directly; it now calls
 /// only this).
-pub fn advance_route<S: media_plane::ingress::IngestSession>(
+/// Async (issue #1083, W3): the DVR drain step does synchronous filesystem
+/// I/O (`File::write_all`, `fs::rename`), which must never block a tokio
+/// worker — it is dispatched to the blocking pool here. A caller with no DVR
+/// routes pays nothing extra: the drain is a no-op when no program has a
+/// recorder.
+pub async fn advance_route<S: media_plane::ingress::IngestSession>(
     driver: &media_plane::ingress::IngestDriver<S>,
     route_handle: &crate::route::RouteHandle,
     state: &mut DriverProgress,
@@ -365,7 +370,7 @@ pub fn advance_route<S: media_plane::ingress::IngestSession>(
     segment::drive_program_segmenters(driver, route_handle, &mut state.segmenters);
     // Drain DVR cursors for every published program — recording happens
     // after segmenters have published new segments to the Trunk.
-    route_handle.drain_dvr();
+    route_handle.drain_dvr().await;
 }
 
 /// Release every program `driver` published from `route_handle`'s registry —
@@ -723,8 +728,8 @@ mod advance_route_tests {
     /// observable, playback not" gap this facade exists to make impossible to
     /// half-wire. Recompiled and re-run to confirm the failure, then
     /// reverted.
-    #[test]
-    fn advance_route_both_publishes_and_segments() {
+    #[tokio::test]
+    async fn advance_route_both_publishes_and_segments() {
         let route = RouteHandle::new(1.0, 250, 8);
         let mut driver = IngestDriver::new(
             TsIngestSession::new(),
@@ -736,10 +741,10 @@ mod advance_route_tests {
 
         let ts_bytes = build_ts_bytes(1, 0xAB, 90);
         driver.feed(&ts_bytes, Timestamp::ZERO);
-        advance_route(&driver, &route, &mut progress);
+        advance_route(&driver, &route, &mut progress).await;
         let more = build_ts_bytes(1, 0xCD, 90);
         driver.feed(&more, Timestamp::from_nanos(1));
-        advance_route(&driver, &route, &mut progress);
+        advance_route(&driver, &route, &mut progress).await;
 
         assert!(
             matches!(

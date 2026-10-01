@@ -1167,6 +1167,25 @@ impl std::fmt::Debug for Route {
     }
 }
 
+/// Maximum accepted [`Route`] name length, in bytes. Long enough for any real
+/// camera/route identifier, short enough that a name can never approach a
+/// filesystem's `NAME_MAX` or a URL segment's practical bound.
+pub const MAX_ROUTE_NAME_LEN: usize = 255;
+
+/// Windows reserved device names (case-insensitive), matched with or without
+/// an extension — `CON`, `con.txt`, `COM1`, etc. (item 7).
+const WINDOWS_RESERVED_NAMES: [&str; 22] = [
+    "CON", "PRN", "AUX", "NUL", "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8",
+    "COM9", "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
+/// Whether `name` is (or starts with, before the first `.`) a Windows
+/// reserved device name — case-insensitive.
+fn is_windows_reserved_name(name: &str) -> bool {
+    let stem = name.split('.').next().unwrap_or(name).to_ascii_uppercase();
+    WINDOWS_RESERVED_NAMES.contains(&stem.as_str())
+}
+
 impl Route {
     /// Semantic validation for one route in isolation — no other route's
     /// name is visible here, so the duplicate-name check stays in
@@ -1175,18 +1194,73 @@ impl Route {
     /// (`crate::origin::admin`, issue #749) for a `POST /admin/routes` body
     /// and every route a `POST /admin/reload` would add or restart —
     /// validated before any of them touch the live registry.
-    pub(crate) fn validate_standalone(&self) -> Result<()> {
+    pub(crate) fn validate_standalone(&self, playlist_name: &str) -> Result<()> {
         if self.name.is_empty() {
             return Err(MultimuxError::ConfigInvalid {
                 field: "routes.name",
                 reason: "must not be empty".into(),
             });
         }
-        if self.name.contains('/') {
+        // The name becomes a URL path segment (`/{name}/…`, `origin::router`'s
+        // `nest`) AND a filesystem path component (`archive_root/{name}`, the
+        // DVR/catch-up archive dir) — so it must be a single, safe path
+        // segment, not merely "any string without a slash". Without this, a
+        // name of `".."` (or `"a/../.."`, `.`-routed) walks out of
+        // `archive_root` and the DVR writes `pN.*` wherever the traversal
+        // lands (audit run 7, W5). `*` in a name also panics axum's
+        // nest-wildcard handling at build time. A NUL byte (which a JSON
+        // string can carry as ` `) truncates an OS path, so it is
+        // rejected by the same charset check.
+        if self.name.len() > MAX_ROUTE_NAME_LEN {
             return Err(MultimuxError::ConfigInvalid {
                 field: "routes.name",
                 reason: format!(
-                    "must not contain '/' (it is a URL path segment), got {:?}",
+                    "must be at most {MAX_ROUTE_NAME_LEN} bytes, got {}",
+                    self.name.len()
+                ),
+            });
+        }
+        if !self
+            .name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-'))
+        {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.name",
+                reason: format!(
+                    "must contain only ASCII letters, digits, '.', '_' or '-' (it is both a \
+                     URL path segment and an on-disk directory name), got {:?}",
+                    self.name
+                ),
+            });
+        }
+        if self.name == "." || self.name == ".." {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.name",
+                reason: format!(
+                    "{:?} is a path-traversal component, not a route name (the DVR/catch-up \
+                     archive dir would escape archive_root)",
+                    self.name
+                ),
+            });
+        }
+        // A trailing '.' or ' ' is dropped by Windows and confuses some
+        // shells/tools; reject it portably rather than only on Windows
+        // (item 7).
+        if self.name.ends_with('.') || self.name.ends_with(' ') {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.name",
+                reason: format!("must not end with '.' or a space, got {:?}", self.name),
+            });
+        }
+        // Windows reserved device names (case-insensitive, with or without an
+        // extension) are not usable as a directory component on Windows and
+        // must not become an archive directory (item 7).
+        if is_windows_reserved_name(&self.name) {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.name",
+                reason: format!(
+                    "{:?} is a reserved device name on Windows (CON, PRN, AUX, NUL, COM1-9,                      LPT1-9) and cannot be a route/archive directory name",
                     self.name
                 ),
             });
@@ -1282,7 +1356,65 @@ impl Route {
                 validate_listen_addr(listen)?;
             }
         }
+        // Two outputs that mount the SAME axum path panic `Router::merge`
+        // with "Overlapping method route" at BUILD time (audit run 7, W5),
+        // which for a startup route is a process panic and for
+        // `POST /admin/routes` a poisoned registry (see `admin`). The check
+        // is on the *paths* each output mounts, not on the output kind:
+        // `"outputs": ["llhls","llhls"]` collides on `/media.m3u8`, but two
+        // `srt_push` (or `rtmp_push`/`rtsp_push`/`custom`/`whep`) outputs
+        // mount no path at all and are legitimate multi-destination
+        // configurations — a `mem::discriminant`-based check wrongly
+        // rejected those. `playlist_name` colliding with an output's own
+        // path (`"catchup.m3u8"` on a route with a `catchup` output) is the
+        // same collision and is caught here too (`manifest_paths` includes
+        // it).
+        let mut seen_paths = std::collections::HashSet::new();
+        for path in self.manifest_paths(playlist_name) {
+            if !seen_paths.insert(path.clone()) {
+                return Err(MultimuxError::ConfigInvalid {
+                    field: "routes.outputs",
+                    reason: format!(
+                        "route {:?} mounts {path:?} from more than one output (or from \
+                         playlist_name); each path may be served by exactly one output",
+                        self.name
+                    ),
+                });
+            }
+        }
         self.input.validate()
+    }
+
+    /// Every media path this route's outputs mount under `/{name}/`, plus the
+    /// configurable `playlist_name` itself — the set `Config::validate` /
+    /// `Route::validate_standalone` check for collisions so two outputs (or an
+    /// output and the playlist name) can never mount the same axum path and
+    /// panic the router build (audit run 7, W5).
+    pub(crate) fn manifest_paths(&self, playlist_name: &str) -> Vec<String> {
+        let mut paths = Vec::new();
+        for kind in &self.outputs {
+            match kind {
+                OutputKind::LlHls | OutputKind::TsHls => {
+                    paths.push("/master.m3u8".to_string());
+                    paths.push(format!("/{playlist_name}"));
+                }
+                OutputKind::Dash => paths.push("/manifest.mpd".to_string()),
+                OutputKind::LlDash => {
+                    paths.push(format!(
+                        "/{}",
+                        crate::output::ll_dash::LL_DASH_MANIFEST_NAME
+                    ));
+                }
+                OutputKind::Smooth => paths.push("/Manifest".to_string()),
+                OutputKind::Catchup => paths.push("/catchup.m3u8".to_string()),
+                // Push outputs and `Custom`/`Whep` mount no HTTP manifest
+                // under the stream router (WHEP is its own listener; push is
+                // outbound; a `Custom` output's own routes are its business,
+                // not statically knowable here).
+                _ => {}
+            }
+        }
+        paths
     }
 
     /// Validate any DVR config on this route — separate so the admin API can
@@ -1326,6 +1458,13 @@ pub struct Config {
     /// Maximum accepted request body size, in bytes — see
     /// [`crate::origin::HttpLimits::max_request_body_bytes`].
     pub max_request_body_bytes: usize,
+    /// How long a request may wait for a concurrency permit before the origin
+    /// sheds it with `503 Service Unavailable` (and `Retry-After`) — see
+    /// [`crate::origin::HttpLimits::queue_timeout`] and
+    /// [`crate::origin::limit`]. Defaults to 5 s. Must be positive; a
+    /// non-positive value is rejected by [`Config::validate`].
+    #[serde(default = "default_concurrency_queue_timeout_secs")]
+    pub concurrency_queue_timeout_secs: f64,
     /// Ingest connect-handshake timeout, in seconds, applied to every route's
     /// source (issue #663 P5, audit-ingest #3) — see
     /// [`crate::source::IngestTimeouts::connect`].
@@ -1364,6 +1503,12 @@ pub struct Config {
 /// Default [`Config::playlist_name`] when a config omits the field:
 /// [`crate::output::llhls::DEFAULT_PLAYLIST_NAME`], preserving every
 /// pre-#663 config's `/media.m3u8` behaviour unchanged.
+/// Default [`Config::concurrency_queue_timeout_secs`] — the limit's own
+/// default, so the two cannot drift.
+fn default_concurrency_queue_timeout_secs() -> f64 {
+    crate::origin::DEFAULT_QUEUE_TIMEOUT.as_secs_f64()
+}
+
 fn default_playlist_name() -> String {
     crate::output::llhls::DEFAULT_PLAYLIST_NAME.to_string()
 }
@@ -1379,6 +1524,7 @@ impl Default for Config {
             request_timeout_secs: crate::origin::DEFAULT_REQUEST_TIMEOUT.as_secs_f64(),
             max_concurrent_requests: crate::origin::DEFAULT_MAX_CONCURRENT_REQUESTS,
             max_request_body_bytes: crate::origin::DEFAULT_MAX_REQUEST_BODY_BYTES,
+            concurrency_queue_timeout_secs: crate::origin::DEFAULT_QUEUE_TIMEOUT.as_secs_f64(),
             ingest_connect_timeout_secs: crate::source::DEFAULT_CONNECT_TIMEOUT.as_secs_f64(),
             ingest_read_timeout_secs: crate::source::DEFAULT_READ_TIMEOUT.as_secs_f64(),
             playlist_name: default_playlist_name(),
@@ -1473,19 +1619,38 @@ impl Config {
                 reason: "must be positive".into(),
             });
         }
+        if !self.concurrency_queue_timeout_secs.is_finite()
+            || self.concurrency_queue_timeout_secs <= 0.0
+        {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "concurrency_queue_timeout_secs",
+                reason: "must be a finite, positive number of seconds".into(),
+            });
+        }
         validate_playlist_name(&self.playlist_name)?;
         if let Some(output_auth) = &self.output_auth {
             output_auth.validate()?;
         }
+        // Case-insensitive duplicate detection: `Cam1` and `cam1` share
+        // `archive_root/<name>` on a case-insensitive filesystem (APFS's
+        // default, NTFS), so their DVR archives would silently collide even
+        // though the two names are distinct URL segments. Fold to lowercase
+        // (Unicode-aware) for the collision key.
         let mut seen = std::collections::HashSet::new();
         for r in &self.routes {
-            if !seen.insert(r.name.as_str()) {
+            let key = r.name.to_lowercase();
+            if !seen.insert(key) {
                 return Err(MultimuxError::ConfigInvalid {
                     field: "routes",
-                    reason: format!("duplicate stream name {:?}", r.name),
+                    reason: format!(
+                        "duplicate stream name {:?} (names are compared case-insensitively \
+                         — two names differing only in case would share one DVR archive \
+                         directory)",
+                        r.name
+                    ),
                 });
             }
-            r.validate_standalone()?;
+            r.validate_standalone(&self.playlist_name)?;
             r.validate_dvr()?;
         }
         if let Some(admin) = &self.admin {
@@ -1514,6 +1679,265 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // --- W5 (audit run 7): route-name safety and router-build panics ---
+
+    /// A route named `..` (or `.`) makes `<archive_root>/<name>` escape the
+    /// archive root, so the DVR writes `pN.*` outside it. A name with a
+    /// character outside `[A-Za-z0-9._-]` (notably `*`) panics axum's
+    /// nest-wildcard handling at router build.
+    ///
+    /// Biting test: remove the charset/dot-segment check in
+    /// `validate_standalone` and every case here validates `Ok`.
+    #[test]
+    fn route_name_traversal_and_exotic_chars_are_rejected() {
+        for bad in ["..", ".", "a/b", "a*b", "a b", "a\u{00e9}b", ""] {
+            let json = format!(
+                r#"{{
+                    "routes": [
+                        {{
+                          "name": {bad_json},
+                          "input": {{ "type": "rtsp", "url": "rtsp://host/s1" }},
+                          "outputs": [ "llhls" ]
+                        }}
+                    ]
+                }}"#,
+                bad_json = serde_json::to_string(bad).unwrap()
+            );
+            let cfg: Config = serde_json::from_str(&json).unwrap();
+            let err = cfg
+                .validate()
+                .expect_err(&format!("route name {bad:?} must be rejected"));
+            assert!(
+                matches!(err, MultimuxError::ConfigInvalid { field, .. } if field == "routes.name"),
+                "route name {bad:?} gave the wrong error: {err:?}"
+            );
+        }
+    }
+
+    /// Case-insensitive duplicate names are rejected: `Cam1` and `cam1`
+    /// share one DVR archive directory on a case-insensitive filesystem.
+    ///
+    /// Biting test: switch `Config::validate`'s seen-set back to
+    /// `r.name.as_str()` and this config validates `Ok`.
+    #[test]
+    fn case_insensitive_duplicate_route_names_are_rejected() {
+        let json = r#"{
+            "routes": [
+                { "name": "Cam1",
+                  "input": { "type": "rtsp", "url": "rtsp://host/a" },
+                  "outputs": [ "llhls" ] },
+                { "name": "cam1",
+                  "input": { "type": "rtsp", "url": "rtsp://host/b" },
+                  "outputs": [ "llhls" ] }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        let err = cfg
+            .validate()
+            .expect_err("names differing only in case must collide");
+        assert!(
+            matches!(err, MultimuxError::ConfigInvalid { field, .. } if field == "routes"),
+            "got {err:?}"
+        );
+    }
+
+    /// An over-long name, and names carrying a NUL or an encoded traversal
+    /// component, are rejected as config errors (audit run 7, A4).
+    ///
+    /// Biting test: drop the length cap / charset check and these validate.
+    #[test]
+    fn over_long_and_nul_and_encoded_names_are_rejected() {
+        let long = "a".repeat(MAX_ROUTE_NAME_LEN + 1);
+        let nul = "cam x";
+        for bad in [long.as_str(), nul, "cam%2e%2e", "cam "] {
+            let json = format!(
+                r#"{{
+                    "routes": [
+                        {{ "name": {name},
+                           "input": {{ "type": "rtsp", "url": "rtsp://host/a" }},
+                           "outputs": [ "llhls" ] }}
+                    ]
+                }}"#,
+                name = serde_json::to_string(bad).unwrap()
+            );
+            let cfg: Config = serde_json::from_str(&json).unwrap();
+            assert!(
+                cfg.validate().is_err(),
+                "route name {bad:?} must be rejected"
+            );
+        }
+    }
+
+    /// Item 7: Windows reserved device names (case-insensitive, with or
+    /// without an extension) and a trailing '.'/' ' are rejected as route
+    /// names.
+    ///
+    /// Biting test: remove the reserved-name / trailing checks and every case
+    /// validates.
+    #[test]
+    fn windows_reserved_and_trailing_dot_names_are_rejected() {
+        for bad in [
+            "CON", "con", "Con", "con.txt", "PRN", "AUX", "NUL", "COM1", "com9.log", "LPT1",
+            "lpt9", "cam.", "cam ", "CAM1.",
+        ] {
+            let json = format!(
+                r#"{{
+                    "routes": [
+                        {{ "name": {name},
+                           "input": {{ "type": "rtsp", "url": "rtsp://host/a" }},
+                           "outputs": [ "llhls" ] }}
+                    ]
+                }}"#,
+                name = serde_json::to_string(bad).unwrap()
+            );
+            let cfg: Config = serde_json::from_str(&json).unwrap();
+            assert!(
+                cfg.validate().is_err(),
+                "route name {bad:?} must be rejected"
+            );
+        }
+        // A name that merely CONTAINS a reserved token is fine.
+        for good in ["contact", "console1", "cam.com1", "com"] {
+            let json = format!(
+                r#"{{
+                    "routes": [
+                        {{ "name": "{good}",
+                           "input": {{ "type": "rtsp", "url": "rtsp://host/a" }},
+                           "outputs": [ "llhls" ] }}
+                    ]
+                }}"#
+            );
+            let cfg: Config = serde_json::from_str(&json).unwrap();
+            cfg.validate()
+                .unwrap_or_else(|e| panic!("{good:?} must validate, got {e:?}"));
+        }
+    }
+
+    /// Safe names still validate — the guard must not reject legitimate
+    /// hostnames/IDs.
+    #[test]
+    fn ordinary_route_names_still_validate() {
+        for good in ["cam1", "cam-1", "cam_1", "a.b.c", "CAM1"] {
+            let json = format!(
+                r#"{{
+                    "routes": [
+                        {{
+                          "name": "{good}",
+                          "input": {{ "type": "rtsp", "url": "rtsp://host/s1" }},
+                          "outputs": [ "llhls" ]
+                        }}
+                    ]
+                }}"#
+            );
+            let cfg: Config = serde_json::from_str(&json).unwrap();
+            cfg.validate()
+                .unwrap_or_else(|e| panic!("route name {good:?} must validate, got {e:?}"));
+        }
+    }
+
+    /// `"outputs": ["llhls","llhls"]` mounts the same axum route twice, which
+    /// panics the router build ("Overlapping method route").
+    ///
+    /// Biting test: remove the manifest-path collision check in
+    /// `validate_standalone` and this config validates `Ok` (and would panic
+    /// at router build).
+    #[test]
+    fn duplicate_output_kinds_are_rejected() {
+        for outputs in [r#"["llhls","llhls"]"#, r#"["dash","dash"]"#] {
+            let json = format!(
+                r#"{{
+                    "routes": [
+                        {{
+                          "name": "cam1",
+                          "input": {{ "type": "rtsp", "url": "rtsp://host/s1" }},
+                          "outputs": {outputs}
+                        }}
+                    ]
+                }}"#
+            );
+            let cfg: Config = serde_json::from_str(&json).unwrap();
+            let err = cfg
+                .validate()
+                .expect_err("a duplicated mounting output must be rejected");
+            match err {
+                MultimuxError::ConfigInvalid { field, reason } => {
+                    assert_eq!(field, "routes.outputs");
+                    assert!(
+                        reason.contains("more than one output"),
+                        "reason must explain the collision, got {reason:?}"
+                    );
+                }
+                other => panic!("expected ConfigInvalid, got {other:?}"),
+            }
+        }
+    }
+
+    /// Multiple push (or `custom`/`whep`) outputs on ONE route are a
+    /// legitimate multi-destination configuration — they mount no HTTP path
+    /// at all, so there is nothing to collide. A `mem::discriminant`-based
+    /// duplicate-kind check wrongly rejected them.
+    ///
+    /// Biting test: restore the discriminant check and every case here
+    /// fails to validate.
+    #[test]
+    fn multiple_push_outputs_on_one_route_validate() {
+        let json = r#"{
+            "routes": [
+                {
+                  "name": "cam1",
+                  "input": { "type": "rtsp", "url": "rtsp://host/s1" },
+                  "outputs": [
+                    { "srt_push": { "url": "srt://a:9000" } },
+                    { "srt_push": { "url": "srt://b:9000" } },
+                    { "rtmp_push": { "url": "rtmp://c/app/key" } },
+                    { "rtsp_push": { "url": "rtsp://d/app/key" } }
+                  ]
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        cfg.validate()
+            .expect("multiple push outputs on one route must be accepted");
+        assert_eq!(cfg.routes[0].outputs.len(), 4);
+    }
+
+    /// The configurable `playlist_name` can collide with another output's own
+    /// manifest path (`catchup.m3u8`, `manifest.mpd`, `Manifest`, …) — the
+    /// pre-fix code only guarded against `master.m3u8`.
+    ///
+    /// Biting test: remove the manifest-path collision check in
+    /// `validate_standalone` and this config validates `Ok` (and would panic
+    /// at router build with two routes on `/cam1/catchup.m3u8`).
+    #[test]
+    fn playlist_name_colliding_with_another_output_is_rejected() {
+        let json = r#"{
+            "playlist_name": "catchup.m3u8",
+            "routes": [
+                {
+                  "name": "cam1",
+                  "input": { "type": "rtsp", "url": "rtsp://host/s1" },
+                  "outputs": [ "llhls", "catchup" ],
+                  "dvr": { "enabled": true, "archive_root": "/tmp/arch",
+                           "retention_periods": 2 }
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        let err = cfg
+            .validate()
+            .expect_err("playlist_name colliding with a catchup output must be rejected");
+        match err {
+            MultimuxError::ConfigInvalid { field, reason } => {
+                assert_eq!(field, "routes.outputs");
+                assert!(
+                    reason.contains("catchup.m3u8"),
+                    "reason must name the colliding path, got {reason:?}"
+                );
+            }
+            other => panic!("expected ConfigInvalid, got {other:?}"),
+        }
+    }
 
     #[test]
     fn parses_json_config_with_rtsp_routes() {

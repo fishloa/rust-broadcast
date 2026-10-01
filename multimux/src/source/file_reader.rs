@@ -430,33 +430,45 @@ impl FileReader {
                     source,
                 })?;
 
-        // Identify — whole file, never a prefix.
-        let probe = container_probe::probe_with_budget(&bytes, bytes.len());
-        let demuxed = match probe {
-            Probe::Identified { format, detail, .. } => demux_identified(&bytes, format, detail)?,
-            Probe::Ambiguous { candidates, .. } => {
-                let names = candidates
-                    .iter()
-                    .map(|c| c.format.name().to_string())
-                    .collect();
-                return Err(FileReaderError::AmbiguousProbe { candidates: names });
+        // Identify + demux — whole file, never a prefix. Both are CPU-heavy
+        // (a `container-probe` lattice search over the whole buffer, then a
+        // full container demux) and synchronous, so they run on the blocking
+        // pool (issue #1083, W3) rather than pinning a runtime worker on every
+        // supervisor retry.
+        tokio::task::spawn_blocking(move || {
+            let probe = container_probe::probe_with_budget(&bytes, bytes.len());
+            match probe {
+                Probe::Identified { format, detail, .. } => {
+                    demux_identified(&bytes, format, detail)
+                }
+                Probe::Ambiguous { candidates, .. } => {
+                    let names = candidates
+                        .iter()
+                        .map(|c| c.format.name().to_string())
+                        .collect();
+                    Err(FileReaderError::AmbiguousProbe { candidates: names })
+                }
+                Probe::Insufficient { need_at_least, .. } => {
+                    // The whole file was probed, so "supply more bytes" cannot
+                    // be satisfied — report it as the file being too short
+                    // instead of propagating a streaming-oriented verdict a
+                    // caller cannot act on.
+                    Err(FileReaderError::FileTooShortToIdentify {
+                        need_at_least,
+                        file_bytes: bytes.len(),
+                    })
+                }
+                Probe::Unknown => Err(FileReaderError::UnknownProbe),
+                // Any future probe outcome cannot name a demuxer — fail the
+                // source rather than guess, exactly like `Ambiguous`.
+                _ => Err(FileReaderError::UnknownProbe),
             }
-            Probe::Insufficient { need_at_least, .. } => {
-                // The whole file was probed, so "supply more bytes" cannot be
-                // satisfied — report it as the file being too short instead of
-                // propagating a streaming-oriented verdict a caller cannot act
-                // on.
-                return Err(FileReaderError::FileTooShortToIdentify {
-                    need_at_least,
-                    file_bytes: bytes.len(),
-                });
-            }
-            Probe::Unknown => return Err(FileReaderError::UnknownProbe),
-            // Any future probe outcome cannot name a demuxer — fail the source
-            // rather than guess, exactly like `Ambiguous`.
-            _ => return Err(FileReaderError::UnknownProbe),
-        };
-        Ok(demuxed)
+        })
+        .await
+        .map_err(|e| FileReaderError::Read {
+            path: self.config.path.clone(),
+            source: std::io::Error::other(format!("probe/demux task failed: {e}")),
+        })?
     }
 
     /// Publish the parsed file into the trunk: announce tracks, then
@@ -1384,7 +1396,7 @@ pub(crate) async fn run_file_source(
         // so `advance_route` below creates the segmenter *between* those two
         // phases, before any sample lands.
         driver.feed((), now);
-        crate::source::advance_route(&driver, route_handle, &mut progress);
+        crate::source::advance_route(&driver, route_handle, &mut progress).await;
 
         if driver.session().drained() {
             // Finite, non-looping file has fully run. Signal end-of-input so
@@ -1396,7 +1408,7 @@ pub(crate) async fn run_file_source(
             // `advance_route` drains the final segment before we park (zero
             // CPU) holding the trunk so the served segments stay servable.
             driver.finish();
-            crate::source::advance_route(&driver, route_handle, &mut progress);
+            crate::source::advance_route(&driver, route_handle, &mut progress).await;
             std::future::pending::<()>().await;
         }
 

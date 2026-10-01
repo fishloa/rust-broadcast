@@ -356,7 +356,7 @@ pub async fn run_rtp_udp(
         if let Err(e) = recv_and_feed(&socket, &mut buf, &mut driver, read_timeout, now).await {
             return e;
         }
-        crate::source::advance_route(&driver, route_handle, &mut progress);
+        crate::source::advance_route(&driver, route_handle, &mut progress).await;
     }
 }
 
