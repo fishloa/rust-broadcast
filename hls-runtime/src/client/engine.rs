@@ -6,7 +6,7 @@ use alloc::vec::Vec;
 
 use broadcast_common::Unpackage;
 use broadcast_hls::{ByteRange, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PreloadHintType};
-use transmux::{Fmp4Demux, TrackSpec, TsDemux};
+use transmux::{DemuxEvent, Fmp4Demux, Sample, StreamingTsDemux, TrackSpec};
 
 use super::action::{Action, BlockingReload, ResourceId};
 use super::error::{Error, Result};
@@ -21,6 +21,43 @@ use super::url;
 /// segment (which starts with an ISOBMFF box: `ftyp`/`styp`/`moof`) once the
 /// playlist itself has never advertised a Media Initialization Section.
 const TS_SYNC_BYTE: u8 = 0x47;
+
+/// Movie timescale of the init segment synthesized for classic TS-segment
+/// HLS: the 90 kHz MPEG-2 system clock the PES PTS/DTS are expressed in
+/// (ISO/IEC 13818-1 §2.4.3.7), the same clock `transmux`'s TS demuxer stamps
+/// its samples with.
+const TS_MOVIE_TIMESCALE: u32 = 90_000;
+
+/// How many Target Durations before the end of a live Playlist the first
+/// segment the client plays must start at the latest (RFC 8216 §6.3.3: "the
+/// client SHOULD NOT choose a segment that starts less than three target
+/// durations from the end of the Playlist file").
+const LIVE_EDGE_TARGET_DURATIONS: f64 = 3.0;
+
+/// [`StreamingTsDemux`] with a `Debug` impl (the transmux type has none), so
+/// [`HlsClient`] can keep deriving it.
+struct TsDemuxState(StreamingTsDemux);
+
+impl core::fmt::Debug for TsDemuxState {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("TsDemuxState(StreamingTsDemux)")
+    }
+}
+
+/// `usize` index -> `u64` (lossless on every supported target; saturates
+/// rather than casting if a target ever had a wider `usize`).
+fn index_u64(i: usize) -> u64 {
+    u64::try_from(i).unwrap_or(u64::MAX)
+}
+
+/// The Media Sequence Number a tracked resource belongs to, `None` for the
+/// MSN-less init segment.
+fn resource_msn(id: &ResourceId) -> Option<u64> {
+    match id {
+        ResourceId::Part { msn, .. } | ResourceId::Segment { msn } => Some(*msn),
+        _ => None,
+    }
+}
 
 /// A driveable, sans-IO Low-Latency HLS (RFC 8216bis) playback client.
 ///
@@ -110,6 +147,22 @@ pub struct HlsClient {
     pending_demux: VecDeque<(ResourceId, Vec<u8>)>,
 
     requested: BTreeSet<ResourceId>,
+    /// Ids whose bytes `on_resource` has accepted (delivered *or* buffered in
+    /// [`Self::pending_demux`]) — the exactly-once guard against a second
+    /// delivery of the same id. Pruned with the other MSN-keyed sets.
+    fulfilled: BTreeSet<ResourceId>,
+    /// `true` once the first playlist has been processed (the live-edge join
+    /// of RFC 8216 §6.3.3 applies to that one only).
+    joined: bool,
+    /// Classic-TS-HLS demuxer kept across segments, so the 33-bit PTS/DTS
+    /// unwrap state and the PMT-derived track set survive a segment
+    /// boundary. Replaced by a fresh one at `EXT-X-DISCONTINUITY`.
+    ts_demux: Option<TsDemuxState>,
+    /// The track specs `ts_demux` has reported, by track id.
+    ts_specs: BTreeMap<u32, TrackSpec>,
+    /// The init segment last synthesized from `ts_specs`; a new
+    /// [`Output::Init`] goes out only when a re-synthesis differs from it.
+    last_ts_init: Option<Vec<u8>>,
     delivered_parts: BTreeSet<(u64, u64)>,
     delivered_segments: BTreeSet<u64>,
     discontinuous_msns: BTreeSet<u64>,
@@ -143,6 +196,11 @@ impl HlsClient {
             init_emitted: false,
             pending_demux: VecDeque::new(),
             requested: BTreeSet::new(),
+            fulfilled: BTreeSet::new(),
+            joined: false,
+            ts_demux: None,
+            ts_specs: BTreeMap::new(),
+            last_ts_init: None,
             delivered_parts: BTreeSet::new(),
             delivered_segments: BTreeSet::new(),
             discontinuous_msns: BTreeSet::new(),
@@ -180,12 +238,27 @@ impl HlsClient {
         let playlist = MediaPlaylist::parse(text)?;
         let playlist = self.merge_delta(playlist);
 
+        // `EXT-X-MEDIA-SEQUENCE` is an unbounded remote `u64`: every MSN
+        // derived below is `media_sequence + index` with `index <
+        // segments.len()`, so proving the end fits proves them all.
+        let next_msn = playlist
+            .media_sequence
+            .checked_add(index_u64(playlist.segments.len()))
+            .ok_or(Error::MediaSequenceOverflow {
+                media_sequence: playlist.media_sequence,
+                segments: playlist.segments.len(),
+            })?;
+
+        if !self.joined {
+            self.joined = true;
+            self.join_start(&playlist)?;
+        }
+
         for (i, seg) in playlist.segments.iter().enumerate() {
-            let msn = playlist.media_sequence + i as u64;
+            let msn = playlist.media_sequence.saturating_add(index_u64(i));
             self.process_closed_segment(msn, seg)?;
         }
 
-        let next_msn = playlist.media_sequence + playlist.segments.len() as u64;
         if let Some(open) = &playlist.open_segment {
             self.process_open_segment(next_msn, open)?;
         }
@@ -217,7 +290,7 @@ impl HlsClient {
                     let part_idx = playlist
                         .open_segment
                         .as_ref()
-                        .map(|o| o.parts.len() as u64)
+                        .map(|o| index_u64(o.parts.len()))
                         .unwrap_or(0);
                     let id = ResourceId::Part {
                         msn: next_msn,
@@ -262,7 +335,7 @@ impl HlsClient {
                     let part = playlist
                         .open_segment
                         .as_ref()
-                        .map(|o| o.parts.len() as u64)
+                        .map(|o| index_u64(o.parts.len()))
                         .unwrap_or(0);
                     BlockingReload {
                         msn: next_msn,
@@ -289,11 +362,12 @@ impl HlsClient {
             }
         }
 
+        self.prune(&playlist);
         if playlist.skip.is_none() {
             self.last_full_playlist = Some(playlist);
         }
 
-        self.maybe_emit_end_of_stream();
+        self.maybe_emit_end_of_stream()?;
         Ok(())
     }
 
@@ -317,7 +391,17 @@ impl HlsClient {
         if !was_requested {
             return Err(Error::UnrequestedResource { id });
         }
+        let duplicate = match id {
+            ResourceId::Init => self.init_bytes.is_some(),
+            ResourceId::Part { .. } | ResourceId::Segment { .. } => self.fulfilled.contains(&id),
+        };
+        if duplicate {
+            return Err(Error::DuplicateResource { id });
+        }
         self.outstanding_fetches = self.outstanding_fetches.saturating_sub(1);
+        if id != ResourceId::Init {
+            self.fulfilled.insert(id);
+        }
         match id {
             ResourceId::Init => {
                 self.init_bytes = Some(bytes.to_vec());
@@ -327,24 +411,33 @@ impl HlsClient {
                 }
                 let buffered: Vec<_> = self.pending_demux.drain(..).collect();
                 for (bid, bbytes) in buffered {
-                    self.finish_media_resource(bid, &bbytes)?;
+                    if let Err(e) = self.finish_media_resource(bid, &bbytes) {
+                        self.fulfilled.remove(&bid);
+                        return Err(e);
+                    }
                 }
             }
             ResourceId::Part { .. } | ResourceId::Segment { .. } => {
-                if self.is_ts_segment(bytes) {
+                let processed = if self.is_ts_segment(bytes) {
                     // Classic MPEG-TS-segment HLS (issue #760): no init
                     // resource will ever arrive for this playlist, so demux
                     // this self-contained TS segment straight away rather
                     // than buffering it forever waiting for one.
-                    self.finish_ts_resource(id, bytes)?;
+                    self.finish_ts_resource(id, bytes)
                 } else if self.init_bytes.is_none() {
                     self.pending_demux.push_back((id, bytes.to_vec()));
+                    Ok(())
                 } else {
-                    self.finish_media_resource(id, bytes)?;
+                    self.finish_media_resource(id, bytes)
+                };
+                if let Err(e) = processed {
+                    // Nothing was delivered: leave the id free for a retry.
+                    self.fulfilled.remove(&id);
+                    return Err(e);
                 }
             }
         }
-        self.maybe_emit_end_of_stream();
+        self.maybe_emit_end_of_stream()?;
         Ok(())
     }
 
@@ -375,12 +468,12 @@ impl HlsClient {
     fn finish_ts_resource(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
         match id {
             ResourceId::Part { msn, part } => {
-                self.emit_discontinuity_if_needed(msn);
+                self.begin_ts_resource(id, msn)?;
                 self.demux_and_emit_ts(id, bytes)?;
                 self.delivered_parts.insert((msn, part));
             }
             ResourceId::Segment { msn } => {
-                self.emit_discontinuity_if_needed(msn);
+                self.begin_ts_resource(id, msn)?;
                 self.demux_and_emit_ts(id, bytes)?;
                 self.delivered_segments.insert(msn);
             }
@@ -417,7 +510,10 @@ impl HlsClient {
                 }
             }
         }
-        self.maybe_emit_end_of_stream();
+        // `on_error` has no way to report: a failure here can only mean the
+        // held-back final TS access units could not be flushed, and the
+        // stream still ends.
+        let _ = self.maybe_emit_end_of_stream();
     }
 
     // -- internals ------------------------------------------------------
@@ -440,7 +536,10 @@ impl HlsClient {
         if playlist.media_sequence < prev.media_sequence {
             return playlist;
         }
-        let prefix_start = (playlist.media_sequence - prev.media_sequence) as usize;
+        let Ok(prefix_start) = usize::try_from(playlist.media_sequence - prev.media_sequence)
+        else {
+            return playlist;
+        };
         // `skip.skipped_segments` (`EXT-X-SKIP`'s `SKIPPED-SEGMENTS`,
         // RFC 8216bis §4.4.5.2) is untrusted `u64` straight from the remote
         // origin's playlist text, with no upper bound enforced by
@@ -489,7 +588,7 @@ impl HlsClient {
             // the first two segments of a real, live-paced run.
             let already_have_parts = self
                 .delivered_parts
-                .range((msn, 0)..(msn + 1, 0))
+                .range((msn, 0)..=(msn, u64::MAX))
                 .next()
                 .is_some();
             if already_have_parts {
@@ -507,7 +606,7 @@ impl HlsClient {
 
         let mut fully_accounted = true;
         for (i, part) in seg.parts.iter().enumerate() {
-            let i = i as u64;
+            let i = index_u64(i);
             if part.gap || self.delivered_parts.contains(&(msn, i)) {
                 continue;
             }
@@ -527,7 +626,7 @@ impl HlsClient {
 
     fn process_open_segment(&mut self, msn: u64, open: &OpenSegment) -> Result<()> {
         for (i, part) in open.parts.iter().enumerate() {
-            let i = i as u64;
+            let i = index_u64(i);
             if part.gap || self.delivered_parts.contains(&(msn, i)) {
                 continue;
             }
@@ -641,52 +740,284 @@ impl HlsClient {
         Ok(())
     }
 
-    /// The classic-TS-HLS counterpart to [`Self::demux_and_emit`]: demux a
-    /// self-contained MPEG-TS Part/Segment resource via [`TsDemux`] directly
-    /// (no init bytes to concatenate — each `.ts` segment carries its own
-    /// PAT/PMT/PES). On the very first such resource this client demuxes,
-    /// also synthesizes the one [`Output::Init`] the crate's output contract
-    /// requires ("exactly one `Init` precedes any `Samples`") from the
-    /// recovered [`TrackSpec`]s via [`transmux::build_init_segment`] — a real
-    /// `ftyp`+fragmented-`moov`, byte-for-byte demuxable by
-    /// `transmux::Fmp4Demux` like any other init segment, so callers built
-    /// against the fMP4 path (e.g. `multimux`'s `HlsPull`, which recovers
-    /// track specs from `Output::Init`) need no TS-specific handling.
-    fn demux_and_emit_ts(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
-        let mut demux = TsDemux::new();
-        let media = demux
-            .demux(bytes)
-            .map_err(|source| Error::Demux { id, source })?;
-        if !self.init_emitted {
-            let specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-            let init_bytes = transmux::build_init_segment(&specs, media.movie_timescale)
-                .map_err(|source| Error::Demux { id, source })?;
-            self.pending_outputs.push_back(Output::Init(init_bytes));
-            self.init_emitted = true;
+    /// Emit the pending `EXT-X-DISCONTINUITY` for `msn` and, when one fires,
+    /// start the TS demuxer afresh: the timestamps after a discontinuity are
+    /// a new timeline (RFC 8216 §4.3.4.3), so the previous 33-bit unwrap
+    /// anchor and track set must not carry across it. The old timeline's
+    /// held-back final access units are flushed *before* the marker.
+    fn begin_ts_resource(&mut self, id: ResourceId, msn: u64) -> Result<()> {
+        if self.discontinuous_msns.contains(&msn) && !self.discontinuity_emitted.contains(&msn) {
+            self.flush_ts_demux(id)?;
+            self.emit_discontinuity_if_needed(msn);
+            self.ts_demux = None;
+            self.ts_specs.clear();
         }
-        for track in media.tracks {
-            if !track.samples.is_empty() {
-                self.pending_outputs.push_back(Output::Samples {
-                    track_id: track.spec.track_id,
-                    samples: track.samples,
-                });
+        Ok(())
+    }
+
+    /// The classic-TS-HLS counterpart to [`Self::demux_and_emit`]: demux a
+    /// self-contained MPEG-TS Part/Segment resource through the one
+    /// [`StreamingTsDemux`] this client keeps across segments (no init bytes
+    /// to concatenate — each `.ts` segment carries its own PAT/PMT/PES), so
+    /// the 33-bit PTS/DTS wrap (ISO/IEC 13818-1 §2.4.3.7, every ~26.5 h) is
+    /// unrolled across segment boundaries instead of restarting per segment.
+    ///
+    /// The demuxer is **not** finished per segment: it resolves each video
+    /// sample's duration from the next access unit's timestamp, so a
+    /// segment's final access unit per stream is held back and emitted once
+    /// the next segment supplies its real duration (or, at
+    /// `EXT-X-ENDLIST`/`EXT-X-DISCONTINUITY`, flushed with the stream's last
+    /// known duration). Samples therefore stay in decode order with true
+    /// durations, one access unit per stream later than a per-segment flush.
+    ///
+    /// The [`Output::Init`] the crate's output contract requires is
+    /// synthesized from the demuxer's track set via
+    /// [`transmux::build_init_segment`] — a real `ftyp`+fragmented-`moov`,
+    /// byte-for-byte demuxable by `transmux::Fmp4Demux` like any other init
+    /// segment, so callers built against the fMP4 path (e.g. `multimux`'s
+    /// `HlsPull`) need no TS-specific handling. It is emitted before the
+    /// first samples and again whenever the track set (a new PID, a codec
+    /// change) makes the re-synthesized init differ from the last one.
+    fn demux_and_emit_ts(&mut self, id: ResourceId, bytes: &[u8]) -> Result<()> {
+        let TsDemuxState(demux) = self
+            .ts_demux
+            .get_or_insert_with(|| TsDemuxState(StreamingTsDemux::new()));
+        demux.feed(bytes);
+        self.drain_ts_demux(id)
+    }
+
+    /// Flush the TS demuxer's held-back access units (no more input on this
+    /// timeline) and emit them.
+    fn flush_ts_demux(&mut self, id: ResourceId) -> Result<()> {
+        let Some(TsDemuxState(demux)) = self.ts_demux.as_mut() else {
+            return Ok(());
+        };
+        demux.finish();
+        self.drain_ts_demux(id)
+    }
+
+    /// Turn the TS demuxer's pending events into [`Output`]s: the track set
+    /// (re-synthesizing the init when it changed), then the samples per track.
+    fn drain_ts_demux(&mut self, id: ResourceId) -> Result<()> {
+        let Some(TsDemuxState(demux)) = self.ts_demux.as_mut() else {
+            return Ok(());
+        };
+        let mut per_track: BTreeMap<u32, Vec<Sample>> = BTreeMap::new();
+        while let Some(event) = demux.poll_event() {
+            match event {
+                DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {
+                    self.ts_specs.insert(spec.track_id, spec);
+                }
+                DemuxEvent::TrackRemoved { track_id, .. } => {
+                    self.ts_specs.remove(&track_id);
+                }
+                DemuxEvent::Sample {
+                    track_id, sample, ..
+                } => {
+                    per_track.entry(track_id).or_default().push(sample);
+                }
+                _ => {}
+            }
+        }
+        if !self.ts_specs.is_empty() {
+            let specs: Vec<TrackSpec> = self.ts_specs.values().cloned().collect();
+            let init_bytes = transmux::build_init_segment(&specs, TS_MOVIE_TIMESCALE)
+                .map_err(|source| Error::Demux { id, source })?;
+            if self.last_ts_init.as_deref() != Some(init_bytes.as_slice()) {
+                self.pending_outputs
+                    .push_back(Output::Init(init_bytes.clone()));
+                self.last_ts_init = Some(init_bytes);
+                self.init_emitted = true;
+            }
+        }
+        for (track_id, samples) in per_track {
+            if !samples.is_empty() {
+                self.pending_outputs
+                    .push_back(Output::Samples { track_id, samples });
             }
         }
         Ok(())
     }
 
-    fn emit_discontinuity_if_needed(&mut self, msn: u64) {
+    /// Emit [`Output::Discontinuity`] once for a discontinuous `msn`;
+    /// `true` when it was emitted by this call.
+    fn emit_discontinuity_if_needed(&mut self, msn: u64) -> bool {
         if self.discontinuous_msns.contains(&msn) && !self.discontinuity_emitted.contains(&msn) {
             self.pending_outputs.push_back(Output::Discontinuity);
             self.discontinuity_emitted.insert(msn);
+            return true;
+        }
+        false
+    }
+
+    /// Choose the first segment to play on the first playlist load and mark
+    /// every closed segment before it as already delivered, so the join does
+    /// not replay (or, for a long EVENT/DVR window, download) the history.
+    ///
+    /// - A live playlist (no `EXT-X-ENDLIST`) is not joined closer to its end
+    ///   than the server's hold-back (RFC 8216 §6.3.3, RFC 8216bis §6.3.3):
+    ///   `PART-HOLD-BACK` when the client plays in Low-Latency Mode
+    ///   (`CAN-BLOCK-RELOAD=YES`), else the larger of `HOLD-BACK` and three
+    ///   Target Durations (§4.4.3.8). The parts of the open segment count
+    ///   towards the distance from the end.
+    /// - `EXT-X-START` (§4.4.2.2) is honoured at segment granularity — a
+    ///   positive `TIME-OFFSET` counts from the start, a negative one from the
+    ///   end of the last segment; a live playlist never starts later than the
+    ///   hold-back allows. `PRECISE` does not apply: segments are delivered
+    ///   whole.
+    /// - A VOD playlist without `EXT-X-START` is played from its start.
+    ///
+    /// A segment whose `EXTINF` is zero counts as one Target Duration, so a
+    /// degenerate window still joins near its end. The byte-range cursor is
+    /// advanced over every skipped segment, so a later omitted-offset
+    /// `EXT-X-BYTERANGE` on the same resource continues from the right offset
+    /// (RFC 8216 §4.3.2.2).
+    ///
+    /// # Errors
+    /// [`Error::ByteRangeOverflow`] from the skipped segments' ranges.
+    fn join_start(&mut self, playlist: &MediaPlaylist) -> Result<()> {
+        let segments = &playlist.segments;
+        let target = f64::from(playlist.target_duration.max(1));
+        let duration_of = |seg: &MediaSegment| {
+            let d = seg.duration.get();
+            if d > 0.0 { d } else { target }
+        };
+
+        let from_start_tag = playlist.start.as_ref().map(|start| {
+            let total: f64 = segments.iter().map(duration_of).sum();
+            let offset = start.time_offset.get();
+            let position = if offset >= 0.0 {
+                offset
+            } else {
+                total + offset
+            };
+            let position = position.clamp(0.0, total);
+            let mut elapsed = 0.0_f64;
+            for (i, seg) in segments.iter().enumerate() {
+                elapsed += duration_of(seg);
+                if elapsed > position {
+                    return i;
+                }
+            }
+            // At (or past) the end: the last segment.
+            segments.len().saturating_sub(1)
+        });
+
+        let from_hold_back = (!playlist.endlist).then(|| {
+            let ll = playlist.low_latency.as_ref();
+            let wanted = match ll.filter(|ll| ll.can_block_reload) {
+                Some(ll) if ll.part_hold_back.is_some() => {
+                    ll.part_hold_back.map_or(0.0, |p| p.get())
+                }
+                _ => {
+                    let hold_back = ll.and_then(|ll| ll.hold_back).map_or(0.0, |h| h.get());
+                    (LIVE_EDGE_TARGET_DURATIONS * target).max(hold_back)
+                }
+            };
+            let mut behind: f64 = playlist
+                .open_segment
+                .as_ref()
+                .map_or(0.0, |o| o.parts.iter().map(|p| p.duration.get()).sum());
+            if behind >= wanted {
+                return segments.len();
+            }
+            for (i, seg) in segments.iter().enumerate().rev() {
+                behind += duration_of(seg);
+                if behind >= wanted {
+                    return i;
+                }
+            }
+            0
+        });
+
+        let start = match (from_start_tag, from_hold_back) {
+            (Some(s), Some(h)) => s.min(h),
+            (Some(s), None) => s,
+            (None, Some(h)) => h,
+            (None, None) => 0,
+        };
+        for (i, seg) in segments.iter().enumerate().take(start) {
+            let msn = playlist.media_sequence.saturating_add(index_u64(i));
+            self.skip_segment(msn, seg)?;
+        }
+        Ok(())
+    }
+
+    /// Mark a segment skipped at join time as delivered, advancing the
+    /// byte-range cursor exactly as fetching it would have (a segment with
+    /// parts is addressed by its parts' ranges, a plain one by its own).
+    fn skip_segment(&mut self, msn: u64, seg: &MediaSegment) -> Result<()> {
+        if seg.parts.is_empty() {
+            let url = url::resolve(&self.playlist_url, &seg.uri);
+            self.resolve_byte_range(&url, &seg.byte_range)?;
+        } else {
+            for part in seg.parts.iter().filter(|p| !p.gap) {
+                let url = url::resolve(&self.playlist_url, &part.uri);
+                self.resolve_byte_range(&url, &part.byte_range)?;
+            }
+        }
+        self.delivered_segments.insert(msn);
+        Ok(())
+    }
+
+    /// Drop every MSN-keyed record below the playlist's first segment (it
+    /// can never be referenced again, and a long-lived pull would otherwise
+    /// grow these sets without bound), and — for a full playlist — every
+    /// byte-range cursor whose URL the playlist no longer references.
+    /// Resources still in flight (requested, not yet fulfilled) are kept so
+    /// their delivery is still accepted.
+    fn prune(&mut self, playlist: &MediaPlaylist) {
+        let first = playlist.media_sequence;
+        let below = |id: &ResourceId| resource_msn(id).is_some_and(|m| m < first);
+        let fulfilled = &self.fulfilled;
+        self.requested
+            .retain(|id| !(below(id) && fulfilled.contains(id)));
+        self.fulfilled.retain(|id| !below(id));
+        self.delivered_parts.retain(|&(m, _)| m >= first);
+        self.delivered_segments.retain(|&m| m >= first);
+        self.discontinuous_msns.retain(|&m| m >= first);
+        self.discontinuity_emitted.retain(|&m| m >= first);
+
+        if playlist.skip.is_none() {
+            let base = &self.playlist_url;
+            let mut live: BTreeSet<String> = BTreeSet::new();
+            for seg in &playlist.segments {
+                live.insert(url::resolve(base, &seg.uri));
+                for part in &seg.parts {
+                    live.insert(url::resolve(base, &part.uri));
+                }
+                if let Some(map) = &seg.map {
+                    live.insert(url::resolve(base, &map.uri));
+                }
+            }
+            if let Some(open) = &playlist.open_segment {
+                for part in &open.parts {
+                    live.insert(url::resolve(base, &part.uri));
+                }
+                if let Some(map) = &open.map {
+                    live.insert(url::resolve(base, &map.uri));
+                }
+            }
+            if let Some(hint) = playlist
+                .low_latency
+                .as_ref()
+                .and_then(|ll| ll.preload_hint_part.as_ref())
+            {
+                live.insert(url::resolve(base, hint));
+            }
+            self.byte_range_cursor.retain(|u, _| live.contains(u));
         }
     }
 
-    fn maybe_emit_end_of_stream(&mut self) {
+    fn maybe_emit_end_of_stream(&mut self) -> Result<()> {
         if self.saw_endlist && !self.end_emitted && self.outstanding_fetches == 0 {
+            // The TS demuxer holds back each stream's last access unit until
+            // the next one shows its real duration; nothing follows now.
+            self.flush_ts_demux(ResourceId::Init)?;
             self.pending_outputs.push_back(Output::EndOfStream);
             self.end_emitted = true;
         }
+        Ok(())
     }
 }
 
@@ -911,5 +1242,92 @@ mod tests {
             merged, delta,
             "an unmergeable skip count must fall back to the delta as-is, not panic"
         );
+    }
+
+    fn byte_range_playlist(first_msn: u64, file: &str) -> String {
+        // Two sub-ranges of one resource; the second omits its offset
+        // (RFC 8216 §4.4.4.9 / §4.3.2.2), so the per-URL cursor matters.
+        format!(
+            "#EXTM3U\n#EXT-X-VERSION:4\n#EXT-X-TARGETDURATION:2\n\
+             #EXT-X-MEDIA-SEQUENCE:{first_msn}\n\
+             #EXTINF:2.0,\n#EXT-X-BYTERANGE:100@0\n{file}\n\
+             #EXTINF:2.0,\n#EXT-X-BYTERANGE:50\n{file}\n"
+        )
+    }
+
+    // r09-W12: every set keyed by MSN (and the per-URL byte-range cursor)
+    // must shrink back to what the current window references, not grow for
+    // the life of the pull. Expected contents are literals.
+    #[test]
+    fn state_is_pruned_to_the_current_window() {
+        let mut client = HlsClient::new("http://example.com/p.m3u8");
+        client
+            .on_playlist(byte_range_playlist(0, "a.ts").as_bytes())
+            .unwrap();
+        assert_eq!(
+            client.byte_range_cursor.iter().collect::<Vec<_>>(),
+            vec![(&"http://example.com/a.ts".to_string(), &150u64)]
+        );
+        // Deliver msn 0 (buffered: no init), leave msn 1 in flight.
+        client
+            .on_resource(ResourceId::Segment { msn: 0 }, b"opaque")
+            .unwrap();
+
+        client
+            .on_playlist(byte_range_playlist(1000, "b.ts").as_bytes())
+            .unwrap();
+
+        let requested: Vec<ResourceId> = client.requested.iter().copied().collect();
+        assert_eq!(
+            requested,
+            vec![
+                // in flight when the window moved: kept
+                ResourceId::Segment { msn: 1 },
+                ResourceId::Segment { msn: 1000 },
+                ResourceId::Segment { msn: 1001 },
+            ]
+        );
+        assert!(client.fulfilled.is_empty(), "{:?}", client.fulfilled);
+        assert_eq!(
+            client.byte_range_cursor.iter().collect::<Vec<_>>(),
+            vec![(&"http://example.com/b.ts".to_string(), &150u64)],
+            "the cursor of the unreferenced a.ts must be dropped"
+        );
+    }
+
+    // r09-W12/W13 on a discontinuity-bearing window: MSN-keyed discontinuity
+    // bookkeeping below the window is dropped too.
+    #[test]
+    fn discontinuity_bookkeeping_below_the_window_is_dropped() {
+        let mut client = HlsClient::new("http://example.com/p.m3u8");
+        let pl = |first: u64| {
+            format!(
+                "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
+                 #EXT-X-MEDIA-SEQUENCE:{first}\n#EXT-X-DISCONTINUITY\n#EXTINF:2.0,\ns.ts\n"
+            )
+        };
+        client.on_playlist(pl(5).as_bytes()).unwrap();
+        client
+            .on_resource(ResourceId::Segment { msn: 5 }, b"opaque")
+            .unwrap();
+        assert_eq!(
+            client
+                .discontinuous_msns
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![5]
+        );
+        client.on_playlist(pl(9).as_bytes()).unwrap();
+        assert_eq!(
+            client
+                .discontinuous_msns
+                .iter()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![9]
+        );
+        assert!(client.discontinuity_emitted.is_empty());
+        assert!(client.delivered_segments.is_empty());
     }
 }

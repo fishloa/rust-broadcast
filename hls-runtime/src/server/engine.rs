@@ -70,13 +70,15 @@
 //! `Trunk`'s four rings. [`HlsOrigin::set_init`] is the (small, honest) side
 //! channel for it — not a duplicate of anything `Trunk` holds.
 
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
-use broadcast_common::Timestamp;
+use broadcast_common::{Timestamp, Unpackage};
 use broadcast_hls::{
-    DecimalSeconds, LowLatencyConfig, MediaPlaylist, MediaSegment, OpenSegment, PartSpec,
+    DecimalSeconds, LowLatencyConfig, MasterPlaylist, MediaPlaylist, MediaSegment, OpenSegment,
+    PartSpec, Variant,
 };
 use bytes::Bytes;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
@@ -147,10 +149,38 @@ impl Default for Container {
     }
 }
 
-/// Placeholder `BANDWIDTH` (bits/second) advertised in the master playlist's
-/// `#EXT-X-STREAM-INF` — actual encoded bitrate isn't measured, so a single
-/// fixed estimate is used for the single variant served.
+/// Placeholder `BANDWIDTH` (bits/second) advertised in a master playlist's
+/// `#EXT-X-STREAM-INF` only while no closed segment exists to measure a real
+/// peak from (and by the context-free [`master_playlist_m3u8`]).
 const PLACEHOLDER_BANDWIDTH_BPS: u64 = 5_000_000;
+
+/// Nanoseconds per second, for the integer bitrate arithmetic.
+const NANOS_PER_SEC: u128 = 1_000_000_000;
+
+/// RFC 8216bis §6.2.2: the server MUST NOT remove a Media Segment from a live
+/// Playlist if that would leave a Playlist shorter than three times the
+/// Target Duration. A segment is cut at (about) the target duration, so a
+/// window of fewer than three segments cannot satisfy that; the advertised
+/// window is never shorter than this.
+const MIN_WINDOW_SEGMENTS: usize = 3;
+
+/// RFC 8216bis §6.2.2: `EXT-X-PART` tags SHOULD be removed once they are
+/// greater than three Target Durations from the end of the Playlist (and the
+/// part must stay downloadable for as long again).
+const PART_RETENTION_TARGET_DURATIONS: f64 = 3.0;
+
+/// RFC 8216bis §6.2.6 (SHOULD): "Not Found" for a resource the server cannot
+/// find and that is not specified by an `EXT-X-PRELOAD-HINT`. The live-edge
+/// (open) segment is the one after the last closed segment, and a hinted part
+/// is in it or in the one right after it — so a part more than this many
+/// segments past the last closed one is refused rather than held open.
+const FUTURE_PART_SEGMENT_BOUND: u32 = 2;
+
+/// RFC 8216bis §6.2.5.2: the Advance Part Limit is "three divided by the Part
+/// Target Duration if the Part Target Duration is less than one second, or
+/// three otherwise". Expressed against the part target in milliseconds.
+const ADVANCE_PART_LIMIT_NUMERATOR: u64 = 3;
+const MILLIS_PER_SEC: u64 = 1_000;
 
 /// RFC 8216bis §6.2.5.2 (SHOULD): a `_HLS_msn` greater than "the Media
 /// Sequence Number of the last Media Segment in the current Playlist plus
@@ -298,6 +328,11 @@ struct Window {
     /// segment this origin has ever advertised, not just the ones still in
     /// the window (mirrors the deleted `MediaStore::max_segment_duration`).
     max_segment_duration_secs: f64,
+    /// Highest per-segment bitrate (bits/second, rounded up) ever drained,
+    /// surviving eviction — what a master playlist's `BANDWIDTH` (RFC 8216
+    /// §4.3.4.2: an upper bound of the peak segment bitrate) is built from.
+    /// `0` until a segment with a measurable duration has been drained.
+    peak_bandwidth_bps: u64,
     /// Cumulative count of discontinuities that have rolled off the front of
     /// the window — RFC 8216 §4.3.3.3's `#EXT-X-DISCONTINUITY-SEQUENCE`.
     /// Incremented exactly once per **evicted** entry whose
@@ -306,52 +341,112 @@ struct Window {
     /// tag instead (see [`MediaPlaylist::to_m3u8`]), never double-counted
     /// here.
     discontinuity_sequence: u64,
+    /// The cursor reported lost segments (`Lagged`/`Gap`) since the last
+    /// push: the next segment does not follow the window's last one.
+    gap_pending: bool,
 }
 
 impl Window {
     fn new(capacity: NonZeroUsize) -> Self {
         Window {
             segments: VecDeque::new(),
-            capacity: capacity.get(),
+            capacity: capacity.get().max(MIN_WINDOW_SEGMENTS),
             max_segment_duration_secs: 0.0,
+            peak_bandwidth_bps: 0,
             discontinuity_sequence: 0,
+            gap_pending: false,
         }
+    }
+
+    /// Record that the cursor lost segments: whatever is pushed next does not
+    /// follow the current window contents.
+    fn note_gap(&mut self) {
+        self.gap_pending = true;
+    }
+
+    /// Drop every window entry (they roll off the front, so their
+    /// discontinuities count towards the discontinuity sequence).
+    fn clear_rolling_off(&mut self) {
+        let discontinuities = self.segments.iter().filter(|s| s.discontinuous).count();
+        self.discontinuity_sequence = self
+            .discontinuity_sequence
+            .saturating_add(u64::try_from(discontinuities).unwrap_or(u64::MAX));
+        self.segments.clear();
     }
 
     /// Absorb one drained [`SegmentEntry`], evicting the oldest window entry
     /// first if already at `capacity` — same evict-then-push shape as every
     /// ring in `trunk.rs` itself.
+    ///
+    /// A playlist numbers its segments implicitly (`EXT-X-MEDIA-SEQUENCE` +
+    /// index, RFC 8216 §4.3.3.2), so the window must hold consecutive
+    /// sequence numbers. An entry that does not directly follow the last one
+    /// (numbers skipped, a repeat or a decrease), or that follows reported
+    /// lost segments, starts a new run: the old entries are cleared and the
+    /// entry is marked discontinuous (RFC 8216 §4.3.4.3) rather than being
+    /// appended under a wrong implied number.
     fn push(&mut self, entry: SegmentEntry) {
+        let follows = self
+            .segments
+            .back()
+            .is_none_or(|last| last.sequence_number.checked_add(1) == Some(entry.sequence_number));
+        let mut discontinuous = entry.meta.discontinuous;
+        if !follows || self.gap_pending {
+            self.clear_rolling_off();
+            discontinuous = true;
+        }
+        self.gap_pending = false;
+
         let duration_secs = entry.duration.as_secs_f64();
         self.max_segment_duration_secs = self.max_segment_duration_secs.max(duration_secs);
-        if self.segments.len() == self.capacity
+        if let Some(bps) = segment_bandwidth_bps(entry.bytes.len(), entry.duration) {
+            self.peak_bandwidth_bps = self.peak_bandwidth_bps.max(bps);
+        }
+        if self.segments.len() >= self.capacity
             && let Some(evicted) = self.segments.pop_front()
             && evicted.discontinuous
         {
-            self.discontinuity_sequence += 1;
+            self.discontinuity_sequence = self.discontinuity_sequence.saturating_add(1);
         }
         self.segments.push_back(WindowSegment {
             sequence_number: entry.sequence_number,
             bytes: entry.bytes,
             duration_secs,
-            discontinuous: entry.meta.discontinuous,
+            discontinuous,
             start_ns: entry.timeline_position.as_nanos(),
         });
     }
 
+    /// The bytes of segment `sequence_number`. The window holds consecutive
+    /// sequence numbers (see [`Self::push`]), so the number identifies at
+    /// most one entry; it is addressed by offset from the front and the
+    /// entry's own number is re-checked.
     fn bytes_of(&self, sequence_number: u32) -> Option<Bytes> {
-        self.segments
-            .iter()
-            .find(|s| s.sequence_number == sequence_number)
-            .map(|s| s.bytes.clone())
+        let front = self.segments.front()?.sequence_number;
+        let index = usize::try_from(sequence_number.checked_sub(front)?).ok()?;
+        let segment = self.segments.get(index)?;
+        (segment.sequence_number == sequence_number).then(|| segment.bytes.clone())
     }
+}
+
+/// A segment's bitrate in bits/second, rounded up (so a `BANDWIDTH` built
+/// from it is never below the true value), or `None` for a zero duration or
+/// an overflowing figure.
+fn segment_bandwidth_bps(len: usize, duration: Duration) -> Option<u64> {
+    let nanos = duration.as_nanos();
+    if nanos == 0 {
+        return None;
+    }
+    let bits = u128::try_from(len).ok()?.checked_mul(8)?;
+    let bps = bits.checked_mul(NANOS_PER_SEC)?.div_ceil(nanos);
+    u64::try_from(bps).ok()
 }
 
 /// Parse a `part-{track}-{seq}.{idx}.{ext}` dynamic filename into
 /// `(seq, idx)`, or `None` if it isn't a part filename in `container`'s own
 /// extension (or its numeric fields don't parse). `{track}` is validated but
 /// unused (matches every other dynamic-filename resource in this module).
-fn parse_part(file: &str, container: Container) -> Option<(u32, u32)> {
+fn parse_part(file: &str, container: Container) -> Option<(u64, u32)> {
     let suffix = format!(".{}", container.segment_extension());
     let rest = file.strip_prefix("part-")?.strip_suffix(suffix.as_str())?;
     let (track_seq, idx) = rest.rsplit_once('.')?;
@@ -375,7 +470,7 @@ fn parse_part(file: &str, container: Container) -> Option<(u32, u32)> {
 /// never advertises an init segment to begin with.
 enum ImmediateResource {
     Init,
-    Segment(u32),
+    Segment(u64),
 }
 
 fn parse_immediate(file: &str, container: Container) -> Option<ImmediateResource> {
@@ -407,6 +502,18 @@ pub enum HlsOriginBuildError {
     /// [`HlsOriginBuilder::window_segments`] was never called.
     #[error("HlsOrigin::builder(...).window_segments(...) is required but was never called")]
     MissingWindowSegments,
+    /// [`HlsOriginBuilder::low_latency`] was given a part target of `0` ms:
+    /// `#EXT-X-PART-INF`'s `PART-TARGET` must be a positive duration (RFC
+    /// 8216bis §4.4.3.7), and the Advance Part Limit divides by it.
+    #[error("HlsOrigin::builder(...).low_latency(0): the part target must be positive")]
+    ZeroPartTarget,
+    /// [`HlsOriginBuilder::media_sequence_offset`] is so large that
+    /// `offset + u32::MAX` (the largest origin sequence number) would not fit
+    /// a `u64` Media Sequence Number.
+    #[error(
+        "HlsOrigin::builder(...).media_sequence_offset(...) leaves no room for u32 sequence numbers"
+    )]
+    MediaSequenceOffsetTooLarge,
 }
 
 /// Fluent builder for [`HlsOrigin`] (issue #873) — replaces the old
@@ -437,6 +544,7 @@ pub struct HlsOriginBuilder {
     window_segments: Option<NonZeroUsize>,
     container: Container,
     part_target_ms: Option<u32>,
+    media_sequence_offset: u64,
 }
 
 impl HlsOriginBuilder {
@@ -447,6 +555,7 @@ impl HlsOriginBuilder {
             window_segments: None,
             container: Container::default(),
             part_target_ms: None,
+            media_sequence_offset: 0,
         }
     }
 
@@ -490,12 +599,35 @@ impl HlsOriginBuilder {
         self
     }
 
+    /// Add `offset` to every Media Sequence Number this origin shows: the
+    /// playlist's `EXT-X-MEDIA-SEQUENCE`, the numbers in segment/part URIs and
+    /// the `_HLS_msn` it answers to. Default `0`.
+    ///
+    /// A fresh [`Trunk`] restarts its segment numbers at `1`; the offset is
+    /// the mechanism that keeps the Media Sequence Number a client sees
+    /// increasing across a replacement origin (RFC 8216bis §6.2.2: it MUST NOT
+    /// decrease). Pass `previous.next_media_sequence().saturating_sub(1)`
+    /// (see [`HlsOrigin::next_media_sequence`]).
+    pub fn media_sequence_offset(mut self, offset: u64) -> Self {
+        self.media_sequence_offset = offset;
+        self
+    }
+
     /// Build the [`HlsOrigin`], subscribing its one [`SegmentCursor`]
     /// immediately (so the window starts empty but never misses a segment
     /// published from this point on).
     ///
     /// Errors, never silently defaults, if [`Self::target_duration_secs`] or
-    /// [`Self::window_segments`] was never called.
+    /// [`Self::window_segments`] was never called, for a zero
+    /// [`Self::low_latency`] part target, or for an offset that cannot hold
+    /// the `u32` sequence range.
+    ///
+    /// The advertised window is never shorter than three segments, whatever
+    /// [`Self::window_segments`] says (RFC 8216bis §6.2.2: a live Playlist
+    /// MUST NOT be shortened below three Target Durations). Part retention is
+    /// not checked here: the part ring's capacity belongs to the [`Trunk`]
+    /// and is not observable from it; the playlist only advertises the parts
+    /// of a closed segment while all of them are still resident.
     pub fn build(self) -> Result<HlsOrigin, HlsOriginBuildError> {
         let target_duration_secs = self
             .target_duration_secs
@@ -503,15 +635,27 @@ impl HlsOriginBuilder {
         let window_segments = self
             .window_segments
             .ok_or(HlsOriginBuildError::MissingWindowSegments)?;
+        if self.part_target_ms == Some(0) {
+            return Err(HlsOriginBuildError::ZeroPartTarget);
+        }
+        if self
+            .media_sequence_offset
+            .checked_add(u64::from(u32::MAX))
+            .is_none()
+        {
+            return Err(HlsOriginBuildError::MediaSequenceOffsetTooLarge);
+        }
         let cursor = self.trunk.subscribe_segments();
         Ok(HlsOrigin {
             trunk: self.trunk,
             cursor: Mutex::new(cursor),
             window: Mutex::new(Window::new(window_segments)),
             init: Mutex::new(None),
+            codecs: Mutex::new(None),
             target_duration_secs,
             container: self.container,
             part_target_ms: self.part_target_ms,
+            media_sequence_offset: self.media_sequence_offset,
         })
     }
 }
@@ -530,6 +674,10 @@ pub struct HlsOrigin {
     /// The fMP4 init segment — see this module's doc for why this, alone, is
     /// not answerable by any `Trunk` ring.
     init: Mutex<Option<Bytes>>,
+    /// The `CODECS` value (RFC 6381, comma-joined) for the master playlist,
+    /// known once track specs have been supplied; `None` = unknown, so the
+    /// attribute is omitted rather than invented.
+    codecs: Mutex<Option<String>>,
     target_duration_secs: f64,
     container: Container,
     /// `Some(part_target_ms)` enables LL-HLS; `None` renders classic HLS —
@@ -537,6 +685,10 @@ pub struct HlsOrigin {
     /// `#EXT-X-PRELOAD-HINT` at all, orthogonal to [`Self::container`] (issue
     /// #873).
     part_target_ms: Option<u32>,
+    /// Added to every shown Media Sequence Number (see
+    /// [`HlsOriginBuilder::media_sequence_offset`]); validated at build so
+    /// `offset + u32::MAX` fits a `u64`.
+    media_sequence_offset: u64,
 }
 
 impl HlsOrigin {
@@ -557,8 +709,139 @@ impl HlsOrigin {
     /// regardless of container so a caller sharing one code path across
     /// both (e.g. a segmenter that always calls `set_init` once available)
     /// does not need to branch on which container it configured.
+    ///
+    /// Under [`Container::Fmp4`] the init segment is also parsed for its
+    /// tracks, from which the master playlist's `CODECS` is derived (see
+    /// [`Self::master_playlist`]); bytes that do not parse (or a track whose
+    /// codec string cannot be built) make `CODECS` unknown (omitted, and any
+    /// value from an earlier init is dropped), never guessed at.
     pub fn set_init(&self, bytes: impl Into<Bytes>) {
-        *self.init.lock().unwrap() = Some(bytes.into());
+        let bytes = bytes.into();
+        if self.container == Container::Fmp4 {
+            let derived = transmux::Fmp4Demux::new()
+                .unpackage(bytes.as_ref())
+                .ok()
+                .map(|media| {
+                    media
+                        .tracks
+                        .into_iter()
+                        .map(|t| t.spec)
+                        .collect::<Vec<transmux::TrackSpec>>()
+                })
+                .and_then(|specs| self.set_track_specs(&specs).ok());
+            if derived.is_none() {
+                // A new init that cannot be read must not leave the previous
+                // init's codecs advertised.
+                *self.codecs.lock().unwrap() = None;
+            }
+        }
+        *self.init.lock().unwrap() = Some(bytes);
+    }
+
+    /// Tell the origin which tracks it serves, so the master playlist can
+    /// carry `CODECS` (RFC 8216 §4.3.4.2: every `EXT-X-STREAM-INF` SHOULD) —
+    /// derived from each track's codec config with the RFC 6381 builders
+    /// `transmux` uses for DASH. Opaque data/subtitle tracks have no codec
+    /// string and are left out. [`Self::set_init`] does this itself for
+    /// fMP4; call this for a [`Container::MpegTs`] origin, whose segments
+    /// carry no init segment to read the codecs from.
+    ///
+    /// # Errors
+    /// The `transmux` error for a track whose codec string cannot be built
+    /// (for example a malformed AAC `esds`); `CODECS` is then left as it was.
+    pub fn set_track_specs(&self, specs: &[transmux::TrackSpec]) -> Result<(), transmux::Error> {
+        let mut ordered: Vec<&transmux::TrackSpec> = specs.iter().collect();
+        ordered.sort_by_key(|spec| spec.track_id);
+        let mut codecs: Vec<String> = Vec::new();
+        for spec in ordered {
+            match transmux::rfc6381_codec_string(&spec.config) {
+                Ok(codec) => codecs.push(codec),
+                Err(transmux::Error::UnsupportedCodec { .. }) => {}
+                Err(other) => return Err(other),
+            }
+        }
+        *self.codecs.lock().unwrap() = (!codecs.is_empty()).then(|| codecs.join(","));
+        Ok(())
+    }
+
+    /// The master playlist for this origin, pointing at `media_playlist_name`:
+    /// one `#EXT-X-STREAM-INF` whose `BANDWIDTH` is the highest segment
+    /// bitrate this origin has published (RFC 8216 §4.3.4.2: an upper bound
+    /// of the peak segment bitrate, measured as segment bytes over its
+    /// duration, rounded up) and whose `CODECS` comes from
+    /// [`Self::set_init`]/[`Self::set_track_specs`] (omitted while unknown).
+    /// Until a segment with a measurable duration has closed there is
+    /// nothing to measure and `BANDWIDTH` is the fixed 5 Mb/s estimate
+    /// [`master_playlist_m3u8`] uses.
+    ///
+    /// # Errors
+    /// A message when the measured `BANDWIDTH` does not fit the `u32` of a
+    /// master playlist variant, or when the playlist cannot be rendered.
+    pub fn master_playlist(&self, media_playlist_name: &str) -> Result<String, String> {
+        self.drain();
+        let measured = self.window.lock().unwrap().peak_bandwidth_bps;
+        let bandwidth = if measured == 0 {
+            PLACEHOLDER_BANDWIDTH_BPS
+        } else {
+            measured
+        };
+        let bandwidth = u32::try_from(bandwidth)
+            .map_err(|_| format!("measured BANDWIDTH {bandwidth} exceeds u32"))?;
+        let master = MasterPlaylist {
+            variants: vec![Variant {
+                bandwidth,
+                codecs: self.codecs.lock().unwrap().clone(),
+                uri: media_playlist_name.to_string(),
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        master.to_m3u8().map_err(|error| error.to_string())
+    }
+
+    /// The Media Sequence Number the next closed segment will be shown with
+    /// (last closed segment + 1, plus the configured offset).
+    ///
+    /// A fresh [`Trunk`] numbers its segments from `1` again, so an origin
+    /// replacing this one over a new `Trunk` (a reconnect) must pass
+    /// `next_media_sequence().saturating_sub(1)` to
+    /// [`HlsOriginBuilder::media_sequence_offset`]: the new origin's first
+    /// segment (sequence number one) is then shown as exactly this value and
+    /// the Media Sequence Number clients see keeps increasing (RFC 8216bis
+    /// §6.2.2).
+    pub fn next_media_sequence(&self) -> u64 {
+        self.public_msn(
+            self.trunk
+                .last_closed_segment()
+                .unwrap_or(0)
+                .saturating_add(1),
+        )
+    }
+
+    /// The Media Sequence Number shown for origin sequence number `seq`.
+    fn public_msn(&self, seq: u32) -> u64 {
+        // `media_sequence_offset + u32::MAX` fits a `u64` (checked in `build`).
+        self.media_sequence_offset.saturating_add(u64::from(seq))
+    }
+
+    /// The origin sequence number a shown Media Sequence Number refers to, or
+    /// `None` when it lies outside the `u32` range this origin numbers in.
+    fn internal_seq(&self, public: u64) -> Option<u32> {
+        u32::try_from(public.checked_sub(self.media_sequence_offset)?).ok()
+    }
+
+    /// How many parts past the live edge a request may name (RFC 8216bis
+    /// §6.2.5.2's Advance Part Limit): three over the part target in seconds
+    /// when that is under one second, else three. Zero when this origin is
+    /// not low-latency.
+    fn advance_part_limit(&self) -> u64 {
+        match self.part_target_ms {
+            None | Some(0) => 0,
+            Some(ms) if u64::from(ms) < MILLIS_PER_SEC => {
+                (ADVANCE_PART_LIMIT_NUMERATOR * MILLIS_PER_SEC).div_ceil(u64::from(ms))
+            }
+            Some(_) => ADVANCE_PART_LIMIT_NUMERATOR,
+        }
     }
 
     /// The fMP4 init segment bytes, if set.
@@ -581,8 +864,11 @@ impl HlsOrigin {
         let mut cursor = self.cursor.lock().unwrap();
         let mut window = self.window.lock().unwrap();
         while let Some(item) = cursor.poll() {
-            if let SegmentCursorItem::Segment(entry) = item {
-                window.push(entry);
+            match item {
+                SegmentCursorItem::Segment(entry) => window.push(entry),
+                // `Lagged`/`Gap`/anything newer: segments were lost, so the
+                // next one does not follow the window's contents.
+                _ => window.note_gap(),
             }
         }
     }
@@ -634,13 +920,53 @@ impl HlsOrigin {
     /// also returned right after `add_segment` cleared `live_parts`.
     fn live_edge(&self) -> (u32, Vec<PartEntry>) {
         let last_closed = self.trunk.last_closed_segment().unwrap_or(0);
-        let candidate = last_closed + 1;
+        let candidate = last_closed.saturating_add(1);
         let parts = self.trunk.parts_in_segment(candidate);
         if parts.is_empty() {
             (last_closed, Vec::new())
         } else {
             (candidate, parts)
         }
+    }
+
+    /// The `EXT-X-PART` entries of a closed segment, taken from the parts the
+    /// `Trunk` still holds. Empty unless *all* of them are resident, as a
+    /// run `0..n`: a part ring that already evicted some of this segment's
+    /// parts cannot back the playlist's promise that they stay downloadable
+    /// (RFC 8216bis §6.2.2), and a run with a hole would number the parts
+    /// wrongly.
+    fn resident_part_specs(&self, track_id: u32, seq: u32, ext: &str) -> Vec<PartSpec> {
+        // Keyed by index: a stale entry reusing a number is overwritten by
+        // the newer one (publish order).
+        let by_index: BTreeMap<u32, PartEntry> = self
+            .trunk
+            .parts_in_segment(seq)
+            .into_iter()
+            .map(|p| (p.part_index, p))
+            .collect();
+        let contiguous = by_index
+            .keys()
+            .copied()
+            .zip(0u32..)
+            .all(|(index, expected)| index == expected);
+        if by_index.is_empty() || !contiguous {
+            return Vec::new();
+        }
+        by_index
+            .values()
+            .map(|p| PartSpec {
+                uri: format!(
+                    "part-{track_id}-{}.{}.{ext}",
+                    self.public_msn(p.segment_number),
+                    p.part_index
+                ),
+                // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
+                duration: DecimalSeconds::new(p.duration.as_secs_f64())
+                    .expect("Duration::as_secs_f64 is finite, >= 0"),
+                independent: p.independent,
+                ..Default::default()
+            })
+            .collect()
     }
 
     /// Render the LL-HLS media playlist for `track_id` from this origin's
@@ -682,21 +1008,56 @@ impl HlsOrigin {
         let media_sequence = window
             .segments
             .front()
-            .map(|s| u64::from(s.sequence_number))
-            .or_else(|| has_open_parts.then_some(u64::from(open_seq)))
-            .unwrap_or(1);
+            .map(|s| self.public_msn(s.sequence_number))
+            .or_else(|| has_open_parts.then(|| self.public_msn(open_seq)))
+            .unwrap_or_else(|| self.public_msn(1));
+        // RFC 8216bis §4.4.3.1 (MUST): every Media Segment's EXTINF duration,
+        // rounded to the nearest integer, MUST be <= TARGETDURATION. The
+        // segmenter cuts on the next keyframe *after* the configured target,
+        // so a real segment routinely exceeds it — advertising the
+        // configured target alone can under-declare. Use whichever is
+        // larger, rounded (not the configured value's `ceil()` alone).
+        let target_duration = self
+            .target_duration_secs
+            .max(window.max_segment_duration_secs)
+            .round() as u32;
+        // RFC 8216bis §6.2.2: EXT-X-PART tags stay in the Playlist until they
+        // are more than three Target Durations from its end — so a closed
+        // segment keeps its parts while the media after it (later closed
+        // segments plus the open segment's parts) is within that distance.
+        let retention_secs = PART_RETENTION_TARGET_DURATIONS * f64::from(target_duration);
+        let mut behind_secs: f64 = if has_open_parts {
+            open_parts.iter().map(|p| p.duration.as_secs_f64()).sum()
+        } else {
+            0.0
+        };
+        let mut closed_parts: Vec<Vec<PartSpec>> = Vec::with_capacity(window.segments.len());
+        for s in window.segments.iter().rev() {
+            let keep = low_latency_enabled && behind_secs <= retention_secs;
+            closed_parts.push(if keep {
+                self.resident_part_specs(track_id, s.sequence_number, ext)
+            } else {
+                Vec::new()
+            });
+            behind_secs += s.duration_secs;
+        }
+        closed_parts.reverse();
         let segments: Vec<MediaSegment> = window
             .segments
             .iter()
-            .map(|s| MediaSegment {
-                uri: format!("seg-{track_id}-{}.{ext}", s.sequence_number),
+            .zip(closed_parts)
+            .map(|(s, parts)| MediaSegment {
+                uri: format!(
+                    "seg-{track_id}-{}.{ext}",
+                    self.public_msn(s.sequence_number)
+                ),
                 // `duration_secs` is always `Duration::as_secs_f64()`
                 // (issue #1140): a `std::time::Duration` can never be
                 // negative or non-finite.
                 duration: DecimalSeconds::new(s.duration_secs)
                     .expect("Duration::as_secs_f64 is finite, >= 0"),
                 discontinuous: s.discontinuous,
-                parts: Vec::new(),
+                parts,
                 ..Default::default()
             })
             .collect();
@@ -707,7 +1068,8 @@ impl HlsOrigin {
                     .map(|p| PartSpec {
                         uri: format!(
                             "part-{track_id}-{}.{}.{ext}",
-                            p.segment_number, p.part_index
+                            self.public_msn(p.segment_number),
+                            p.part_index
                         ),
                         // `p.duration` is a `std::time::Duration`: always
                         // finite and non-negative (issue #1140).
@@ -724,20 +1086,13 @@ impl HlsOrigin {
                 .iter()
                 .map(|p| p.part_index)
                 .max()
-                .map(|idx| idx + 1)
+                .map(|idx| idx.saturating_add(1))
                 .unwrap_or(0);
-            format!("part-{track_id}-{open_seq}.{next_idx}.{ext}")
+            format!(
+                "part-{track_id}-{}.{next_idx}.{ext}",
+                self.public_msn(open_seq)
+            )
         });
-        // RFC 8216bis §4.4.3.1 (MUST): every Media Segment's EXTINF duration,
-        // rounded to the nearest integer, MUST be <= TARGETDURATION. The
-        // segmenter cuts on the next keyframe *after* the configured target,
-        // so a real segment routinely exceeds it — advertising the
-        // configured target alone can under-declare. Use whichever is
-        // larger, rounded (not the configured value's `ceil()` alone).
-        let target_duration = self
-            .target_duration_secs
-            .max(window.max_segment_duration_secs)
-            .round() as u32;
         // `#EXT-X-MAP`: unconditional under Fmp4 (RFC 8216bis §3.1.2 MUST);
         // omitted under MpegTs by default (§3.1.1's PAT/PMT-or-MAP
         // disjunction — see `Container`'s own doc for why this is a default,
@@ -822,18 +1177,42 @@ impl HlsOrigin {
         }
         if let Some(msn) = query.hls_msn {
             let (in_progress_seg, live_parts) = self.live_edge();
-            if msn > u64::from(in_progress_seg) + ABUSE_MSN_FUTURE_BOUND {
+            let in_progress = self.public_msn(in_progress_seg);
+            if msn > in_progress.saturating_add(ABUSE_MSN_FUTURE_BOUND) {
                 return EgressResponse::BadRequest {
                     reason: "_HLS_msn unreasonably far beyond the live edge",
                 };
             }
+            // RFC 8216bis §6.2.5.2 (SHOULD): an `_HLS_part` that exceeds the
+            // last Partial Segment in the Playlist by the Advance Part Limit
+            // is a Bad Request at once, not a request to park. Measured
+            // against the live-edge segment's parts (none exist yet for a
+            // later `_HLS_msn`).
+            if let Some(part) = query.hls_part
+                && msn >= in_progress
+            {
+                let existing = if msn == in_progress {
+                    u64::try_from(live_parts.len()).unwrap_or(u64::MAX)
+                } else {
+                    0
+                };
+                let limit = existing
+                    .saturating_sub(1)
+                    .saturating_add(self.advance_part_limit());
+                if u64::from(part) > limit {
+                    return EgressResponse::BadRequest {
+                        reason: "_HLS_part beyond the Advance Part Limit",
+                    };
+                }
+            }
             let satisfied = match query.hls_part {
                 Some(part) => {
-                    u64::from(in_progress_seg) > msn
-                        || (u64::from(in_progress_seg) == msn
-                            && live_parts.len() as u64 > u64::from(part))
+                    in_progress > msn
+                        || (in_progress == msn
+                            && u64::try_from(live_parts.len()).unwrap_or(u64::MAX)
+                                > u64::from(part))
                 }
-                None => self.trunk.last_closed_segment().unwrap_or(0) as u64 >= msn,
+                None => self.public_msn(self.trunk.last_closed_segment().unwrap_or(0)) >= msn,
             };
             if !satisfied {
                 return EgressResponse::pending(await_policy, now, now);
@@ -870,28 +1249,59 @@ impl HlsOrigin {
         now: Timestamp,
         await_policy: AwaitPolicy,
     ) -> EgressResponse<HlsBody> {
-        if let Some((seq, idx)) = parse_part(name, self.container) {
+        if let Some((public_seq, idx)) = parse_part(name, self.container) {
+            let Some(seq) = self.internal_seq(public_seq) else {
+                return EgressResponse::NotFound;
+            };
             if let Some(bytes) = self.trunk.part_bytes(seq, idx) {
                 return EgressResponse::Ready {
                     body: HlsBody::Resource(bytes),
                     cache: CachePolicy::Immutable,
                 };
             }
+            // A classic (non-LL) origin has no parts at all.
+            if self.part_target_ms.is_none() {
+                return EgressResponse::NotFound;
+            }
             // The requested part's segment has already closed (whether or
             // not this origin's own `Window` still retains its bytes) -> it
             // will never be produced. `Trunk::last_closed_segment` answers
             // this exactly, with no dependence on `Window`'s retention.
             let never_will = self.trunk.last_closed_segment().is_some_and(|c| c >= seq);
-            return if never_will {
-                EgressResponse::NotFound
-            } else {
-                EgressResponse::pending(await_policy, now, now)
-            };
+            if never_will {
+                return EgressResponse::NotFound;
+            }
+            // Only a part a client could have been hinted at is worth holding
+            // a request open for (RFC 8216bis §6.2.6): the hinted next part,
+            // in the open segment or the one after it. Anything else is not
+            // found at once rather than parked for the whole blocking
+            // timeout.
+            let last_closed = self.trunk.last_closed_segment().unwrap_or(0);
+            if seq > last_closed.saturating_add(FUTURE_PART_SEGMENT_BOUND) {
+                return EgressResponse::NotFound;
+            }
+            // Exactly one part is ever hinted: the one after the last part
+            // the ring holds for that segment (index 0 when it holds none).
+            // A lower index that is not resident was evicted (or never
+            // existed) and will not come back; a higher one was never hinted.
+            let next_hinted = self
+                .trunk
+                .parts_in_segment(seq)
+                .iter()
+                .map(|p| p.part_index)
+                .max()
+                .map_or(0, |last| last.saturating_add(1));
+            if idx != next_hinted {
+                return EgressResponse::NotFound;
+            }
+            return EgressResponse::pending(await_policy, now, now);
         }
         self.drain();
         let bytes = match parse_immediate(name, self.container) {
             Some(ImmediateResource::Init) => self.init_bytes(),
-            Some(ImmediateResource::Segment(seq)) => self.window.lock().unwrap().bytes_of(seq),
+            Some(ImmediateResource::Segment(public_seq)) => self
+                .internal_seq(public_seq)
+                .and_then(|seq| self.window.lock().unwrap().bytes_of(seq)),
             None => None,
         };
         match bytes {
@@ -1269,7 +1679,7 @@ mod tests {
 
         let still_waiting = origin.resolve(
             HlsRequest::Resource {
-                name: "part-1-9.0.m4s".to_string(),
+                name: "part-1-1.0.m4s".to_string(),
             },
             Timestamp::from_nanos(999_999_999),
             policy,
@@ -1278,7 +1688,7 @@ mod tests {
 
         let expired = origin.resolve(
             HlsRequest::Resource {
-                name: "part-1-9.0.m4s".to_string(),
+                name: "part-1-1.0.m4s".to_string(),
             },
             deadline,
             policy,
@@ -1356,9 +1766,22 @@ mod tests {
             body.contains("seg-1-1.m4s"),
             "closed segment rendered whole: {body}"
         );
-        assert!(
-            !body.contains("part-1-1."),
-            "closed parts not rendered as open: {body}"
+        // RFC 8216bis §6.2.2: the closed segment keeps its EXT-X-PART tags
+        // (inside the segment, before its EXTINF) for three Target
+        // Durations. They are not an *open* segment: no preload hint, and
+        // every part line precedes the segment's own EXTINF/URI.
+        assert_eq!(
+            body.lines().skip(4).collect::<Vec<_>>(),
+            vec![
+                "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5",
+                "#EXT-X-PART-INF:PART-TARGET=0.5",
+                "#EXT-X-MAP:URI=\"init-1.mp4\"",
+                "#EXT-X-PART:DURATION=0.5,URI=\"part-1-1.0.m4s\",INDEPENDENT=YES",
+                "#EXT-X-PART:DURATION=0.5,URI=\"part-1-1.1.m4s\"",
+                "#EXTINF:4,",
+                "seg-1-1.m4s",
+            ],
+            "{body}"
         );
     }
 
@@ -2128,5 +2551,108 @@ mod tests {
             vec![2, 3, 4, 5],
             "oldest segment 1 must have rolled off"
         );
+    }
+
+    fn window_entry(seq: u32, tag: u8, discontinuous: bool) -> SegmentEntry {
+        SegmentEntry::new(
+            Bytes::from(vec![tag; 4]),
+            seq,
+            Duration::from_secs(4),
+            Timestamp::from_nanos(0),
+            SegmentMeta { discontinuous },
+        )
+    }
+
+    fn window_seqs(w: &Window) -> Vec<(u32, bool)> {
+        w.segments
+            .iter()
+            .map(|s| (s.sequence_number, s.discontinuous))
+            .collect()
+    }
+
+    // r09-W11: the Trunk's `publish_segment` refuses a decreasing number, but
+    // the window must not depend on that: a repeat or decrease clears it
+    // instead of holding two entries under one number (the old `bytes_of`
+    // served the stale one).
+    #[test]
+    fn window_restarts_on_a_repeated_or_decreasing_sequence_number() {
+        let mut w = Window::new(nz(6));
+        w.push(window_entry(5, 0xA5, false));
+        w.push(window_entry(6, 0xA6, true));
+        assert_eq!(window_seqs(&w), vec![(5, false), (6, true)]);
+
+        // Decrease: 3 after 6.
+        w.push(window_entry(3, 0xB3, false));
+        assert_eq!(window_seqs(&w), vec![(3, true)]);
+        // The discontinuous 6 rolled off the front.
+        assert_eq!(w.discontinuity_sequence, 1);
+        assert_eq!(w.bytes_of(3), Some(Bytes::from(vec![0xB3; 4])));
+        assert_eq!(w.bytes_of(5), None);
+        assert_eq!(w.bytes_of(6), None);
+
+        // Repeat: 3 again with different bytes replaces, never duplicates.
+        w.push(window_entry(3, 0xC3, false));
+        assert_eq!(window_seqs(&w), vec![(3, true)]);
+        assert_eq!(w.bytes_of(3), Some(Bytes::from(vec![0xC3; 4])));
+    }
+
+    // Hostile edge: the largest sequence number has no successor; a repeat of
+    // it must restart the window, not overflow `last + 1`.
+    #[test]
+    fn window_handles_u32_max_sequence_numbers() {
+        let mut w = Window::new(nz(4));
+        w.push(window_entry(u32::MAX - 1, 1, false));
+        w.push(window_entry(u32::MAX, 2, false));
+        assert_eq!(
+            window_seqs(&w),
+            vec![(u32::MAX - 1, false), (u32::MAX, false)]
+        );
+        w.push(window_entry(u32::MAX, 3, false));
+        assert_eq!(window_seqs(&w), vec![(u32::MAX, true)]);
+        assert_eq!(w.bytes_of(u32::MAX), Some(Bytes::from(vec![3; 4])));
+    }
+
+    #[test]
+    fn window_capacity_is_never_below_three_segments() {
+        let mut w = Window::new(nz(1));
+        for seq in 1..=5 {
+            w.push(window_entry(seq, 0, false));
+        }
+        assert_eq!(window_seqs(&w), vec![(3, false), (4, false), (5, false)]);
+    }
+
+    #[test]
+    fn segment_bandwidth_is_rounded_up_and_rejects_degenerate_input() {
+        // 1001 B * 8 / 3 s = 2669.33 -> 2670.
+        assert_eq!(
+            segment_bandwidth_bps(1001, Duration::from_secs(3)),
+            Some(2670)
+        );
+        // Exact division stays exact.
+        assert_eq!(
+            segment_bandwidth_bps(1_500_000, Duration::from_secs(1)),
+            Some(12_000_000)
+        );
+        // Zero duration: nothing to measure.
+        assert_eq!(segment_bandwidth_bps(10, Duration::ZERO), None);
+        // A one-nanosecond segment of huge size overflows u64 b/s.
+        assert_eq!(
+            segment_bandwidth_bps(usize::MAX, Duration::from_nanos(1)),
+            None
+        );
+    }
+
+    #[test]
+    fn bytes_of_addresses_exactly_the_matching_entry() {
+        let mut w = Window::new(nz(6));
+        for (seq, tag) in [(5u32, 0x15u8), (6, 0x16), (7, 0x17)] {
+            w.push(window_entry(seq, tag, false));
+        }
+        assert_eq!(w.bytes_of(5), Some(Bytes::from(vec![0x15; 4])));
+        assert_eq!(w.bytes_of(6), Some(Bytes::from(vec![0x16; 4])));
+        assert_eq!(w.bytes_of(7), Some(Bytes::from(vec![0x17; 4])));
+        assert_eq!(w.bytes_of(4), None);
+        assert_eq!(w.bytes_of(8), None);
+        assert_eq!(w.bytes_of(u32::MAX), None);
     }
 }

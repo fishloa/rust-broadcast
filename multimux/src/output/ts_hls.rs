@@ -121,11 +121,17 @@ impl Output for TsHlsOutput {
 /// `GET /master.m3u8` — a minimal single-variant master playlist pointing at
 /// this route's configured media-playlist filename.
 pub(crate) async fn master_playlist(State(state): State<TsHlsState>) -> Response {
-    (
-        [(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)],
-        master_playlist_m3u8(&state.playlist_name),
-    )
-        .into_response()
+    // Once the program is published, the origin's own master carries the
+    // measured peak `BANDWIDTH` and the `CODECS` of its init segment
+    // (RFC 8216 §4.3.4.2); before that there is nothing to measure.
+    let body = match http::resolve_route_program(&state.route) {
+        Ok(serving) => match serving.ll_hls().master_playlist(&state.playlist_name) {
+            Ok(master) => master,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        },
+        Err(_) => master_playlist_m3u8(&state.playlist_name),
+    };
+    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
 }
 
 /// `GET /media.m3u8` — the classic media playlist for [`DEFAULT_TRACK_ID`].
@@ -216,6 +222,32 @@ mod tests {
             route,
             playlist_name: DEFAULT_PLAYLIST_NAME.to_string(),
         }
+    }
+
+    /// r09-W17 (#1089): a TS-HLS route has no init segment, so its master's
+    /// `CODECS` can only come from the track specs the TS demux recovered —
+    /// the same sync `report_driver_progress` does. Real TS fixture; oracle:
+    /// `MP4Box -info` on the same capture's fMP4 remux reads
+    /// `avc1.4D400D` / `mp4a.40.2` (`hls-runtime/tests/fixtures/cmaf-fmp4`).
+    #[tokio::test]
+    async fn master_playlist_carries_codecs_from_the_ts_track_specs() {
+        let ts = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/ts/h264_aac.ts"
+        ))
+        .expect("h264_aac.ts fixture");
+        let media = transmux::TsDemux::new().demux(&ts).expect("demux");
+        let specs: Vec<transmux::TrackSpec> = media.tracks.into_iter().map(|t| t.spec).collect();
+
+        let route = make_route();
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, specs);
+        let resp = master_playlist(State(state(route))).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        // Segment 1/2: 8 bytes in 4.2 s -> ceil(64 / 4.2) = 16 b/s.
+        assert_eq!(
+            body_string(resp).await,
+            "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=16,CODECS=\"avc1.4D400D,mp4a.40.2\"\nmedia.m3u8\n"
+        );
     }
 
     #[tokio::test]

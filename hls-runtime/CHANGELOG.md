@@ -7,7 +7,84 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `server::HlsOrigin::master_playlist(name)` — a master playlist whose
+  `BANDWIDTH` is the measured peak segment bitrate (segment bytes over
+  duration, rounded up, never lowered when the peak segment leaves the
+  window) and whose `CODECS` is derived from the init segment; before the
+  first closed segment it falls back to the 5 Mb/s estimate. New
+  `HlsOrigin::set_track_specs` supplies the tracks for a TS origin, which has
+  no init segment to read (#1089).
+- `server::HlsOriginBuilder::media_sequence_offset(u64)` and
+  `server::HlsOrigin::next_media_sequence()` — a fresh `Trunk` restarts its
+  segment numbers at 1, so an origin replacing another (a reconnect) passes
+  `previous.next_media_sequence().saturating_sub(1)` as the offset: the Media
+  Sequence Number in the playlist, URIs and `_HLS_msn` then keeps increasing
+  (RFC 8216bis §6.2.2) (#1089).
+- `client::Error::DuplicateResource` and `client::Error::MediaSequenceOverflow`
+  (`Error` is `#[non_exhaustive]`); `server::HlsOriginBuildError::ZeroPartTarget`
+  and `MediaSequenceOffsetTooLarge` (#1089).
+
+### Changed (breaking)
+- **`HlsClient` joins at the server's hold-back, not at the start.** On the
+  first playlist it no longer fetches the whole window. A live playlist (no
+  `EXT-X-ENDLIST`) is joined no closer to its end than `PART-HOLD-BACK` when
+  the client is in Low-Latency Mode (`CAN-BLOCK-RELOAD=YES`; the open
+  segment's parts count towards the distance), else the larger of `HOLD-BACK`
+  and three Target Durations (RFC 8216 §6.3.3, RFC 8216bis §4.4.3.8/§6.3.3).
+  `EXT-X-START` is honoured at segment granularity (a live start is pulled
+  back to the hold-back); a VOD playlist without it is played from its start.
+  The byte-range cursor advances over skipped segments, so omitted-offset
+  `EXT-X-BYTERANGE` continuations stay correct (#1089).
+- **`HlsClient::on_resource` rejects a second delivery of an id it already
+  accepted** with `Error::DuplicateResource`, instead of emitting the samples
+  twice and decrementing the outstanding-fetch count again (#1089).
+- **`HlsClient` rejects a playlist whose `EXT-X-MEDIA-SEQUENCE` plus segment
+  count overflows `u64`** with `Error::MediaSequenceOverflow` (it used to
+  overflow-panic in debug and wrap in release) (#1089).
+- **Classic MPEG-TS-segment HLS keeps one demuxer across segments**, so the
+  33-bit PTS/DTS wrap is unrolled across a segment boundary and each
+  segment's last access unit gets its real duration. As a consequence the last
+  access unit per stream of a segment is emitted when the next segment
+  arrives (at `EXT-X-ENDLIST` or `EXT-X-DISCONTINUITY` it is flushed). A new
+  `Output::Init` follows when the track set changes, and the demuxer restarts
+  at `EXT-X-DISCONTINUITY` (#1089).
+- **`HlsOrigin` holds a part request open only for the hinted part.** A part
+  request is `NotFound` at once unless it is the one after the last part the
+  ring holds, in the open segment or the one after it (an evicted or
+  never-hinted index, and anything more than two segments past the last
+  closed one, no longer parks for the blocking timeout); a classic (non-LL)
+  origin answers a request for a part the `Trunk` does not hold with
+  `NotFound` (#1089).
+- **`HlsOrigin` answers a playlist `_HLS_part` beyond the Advance Part Limit
+  with `BadRequest`** (RFC 8216bis §6.2.5.2: three divided by the part target
+  when that is under a second, else three, past the last part of the live-edge
+  segment) instead of parking it (#1089).
+- **`HlsOrigin` playlists keep `EXT-X-PART` tags on a closed segment** while it
+  is within three Target Durations of the end (RFC 8216bis §6.2.2), and only
+  when every part of it is still in the `Trunk`'s part ring (#1089).
+- **`HlsOrigin` restarts its window when sequence numbers are not
+  consecutive**, or after the cursor reports lost segments: the old entries
+  roll off, the next segment is marked `EXT-X-DISCONTINUITY`, and
+  `EXT-X-MEDIA-SEQUENCE` can no longer disagree with a segment's real number.
+  `bytes_of` addresses exactly one entry (#1089).
+- **`HlsOriginBuilder::window_segments` below 3 is raised to 3** (RFC 8216bis
+  §6.2.2: a live playlist is never shortened below three Target Durations)
+  (#1089).
+- `HlsOriginBuilder::low_latency(0)` and an offset that cannot hold the `u32`
+  sequence range are now build errors (#1089).
+- `HlsOrigin::set_init` with an init that cannot be read now drops the
+  `CODECS` derived from the previous init instead of keeping them (#1089).
+
 ### Fixed
+- Client state no longer grows for the life of a pull: every record keyed by
+  a Media Sequence Number below the playlist's first segment, and the
+  byte-range cursor of every URL a full playlist no longer references, is
+  dropped after each playlist; a fetch still in flight keeps being accepted
+  (#1089).
+- `HlsClient`'s Media Sequence arithmetic, `EXT-X-SKIP` merge index and part
+  indexes use checked/`try_from` conversions instead of `as` casts and
+  unchecked additions (#1089).
 - `server::engine`'s DATERANGE-per-window render now follows
   `timed-metadata::daterange::DateRange::to_tag_line`'s new fallible
   signature (issue #1140): an event whose DATERANGE can't be rendered as a

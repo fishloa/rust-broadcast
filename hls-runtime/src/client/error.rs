@@ -87,4 +87,27 @@ pub enum Error {
         /// The range's length, as advertised by the playlist.
         length: u64,
     },
+
+    /// [`crate::client::HlsClient::on_resource`] was fed a second delivery
+    /// of a [`crate::client::ResourceId`] it has already accepted (for
+    /// example a driver retry racing a slow success). Rejected so a part's
+    /// samples are never emitted twice and the outstanding-fetch count never
+    /// drifts (the `Output` exactly-once contract).
+    #[error("resource {id:?} was already delivered")]
+    DuplicateResource {
+        /// The id delivered twice.
+        id: super::action::ResourceId,
+    },
+
+    /// `#EXT-X-MEDIA-SEQUENCE` plus the playlist's segment count overflows
+    /// `u64` (RFC 8216 §4.3.3.2 puts no upper bound on the tag's value, so a
+    /// hostile or corrupt origin can advertise one). Rejected outright
+    /// rather than wrapping the derived Media Sequence Numbers.
+    #[error("media sequence {media_sequence} + {segments} segments overflows u64")]
+    MediaSequenceOverflow {
+        /// The playlist's `EXT-X-MEDIA-SEQUENCE`.
+        media_sequence: u64,
+        /// The number of closed segments the playlist lists.
+        segments: usize,
+    },
 }

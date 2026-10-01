@@ -112,11 +112,17 @@ impl Output for LlHlsOutput {
 /// `GET /master.m3u8` — a minimal single-variant master playlist pointing at
 /// this route's configured media-playlist filename.
 pub(crate) async fn master_playlist(State(state): State<LlHlsState>) -> Response {
-    (
-        [(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)],
-        master_playlist_m3u8(&state.playlist_name),
-    )
-        .into_response()
+    // Once the program is published, the origin's own master carries the
+    // measured peak `BANDWIDTH` and the `CODECS` of its init segment
+    // (RFC 8216 §4.3.4.2); before that there is nothing to measure.
+    let body = match http::resolve_route_program(&state.route) {
+        Ok(serving) => match serving.ll_hls().master_playlist(&state.playlist_name) {
+            Ok(master) => master,
+            Err(_) => return StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        },
+        Err(_) => master_playlist_m3u8(&state.playlist_name),
+    };
+    ([(header::CONTENT_TYPE, MEDIA_PLAYLIST_CONTENT_TYPE)], body).into_response()
 }
 
 /// Blocking playlist reload query parameters (RFC 8216bis §6.2.5.2), as
@@ -259,6 +265,20 @@ mod tests {
         assert!(body.contains("#EXTM3U"));
         assert!(body.contains("#EXT-X-STREAM-INF"));
         assert!(body.contains("media.m3u8"));
+    }
+
+    /// r09-W17 (#1089): the master playlist's `BANDWIDTH` is the measured
+    /// peak segment bitrate, not a fixed 5 Mb/s. `make_route`'s one closed
+    /// segment is 8 bytes over 4.0 s = 64 bits / 4 s = 16 b/s.
+    #[tokio::test]
+    async fn master_playlist_advertises_the_measured_peak_bandwidth() {
+        let route = make_route();
+        let resp = master_playlist(State(state(route))).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            body_string(resp).await,
+            "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=16\nmedia.m3u8\n"
+        );
     }
 
     /// Biting test (issue #663 "configurable `playlist_name`"): a

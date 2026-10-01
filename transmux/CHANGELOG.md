@@ -9,6 +9,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `rfc6381_codec_string(&CodecConfig)` — the RFC 6381 codec string `DashPackager`
+  writes into `Representation@codecs`, exposed so an HLS origin can fill
+  `#EXT-X-STREAM-INF` `CODECS` (#1089).
 - `smooth::SmoothPackager::package_track_fragment` — build **one** Smooth
   fragment for a single track at an explicit smooth-timeline start (a
   `SmoothFragment` whose `tfxd` `FragmentAbsoluteTime` is the caller's value

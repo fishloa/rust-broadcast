@@ -220,7 +220,7 @@ pub use cenc_encrypt::{CencEncryptor, ConstantIvSenc, EncryptConfig, IvGen, Subs
 pub use dash::{
     Addressing, ContentProtectionSystem, DashPackager, InbandEventStream,
     MP4_PROTECTION_SCHEME_URI, MPD_NAMESPACE, MediaKind, PROFILE_ISOFF_LIVE, TRICKMODE_SCHEME,
-    TrackSegments, TrickModeAdaptationSet, TrickModeRepr,
+    TrackSegments, TrickModeAdaptationSet, TrickModeRepr, rfc6381_codec_string,
 };
 pub use dash_parse::{
     AdaptationSet, DashParseError, Mpd, MpdType, Period, Representation, S, SegmentTemplate,

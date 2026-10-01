@@ -412,6 +412,7 @@ impl ProgramServing {
     /// construction, plus an optional DVR recorder if `dvr_config` is
     /// provided. The one and only place either is created — see
     /// [`RouteHandle::publish_program`].
+    #[allow(clippy::too_many_arguments)] // one private constructor; a params struct adds nothing
     fn new(
         trunk: Arc<Trunk>,
         target_duration_secs: f64,
@@ -420,19 +421,20 @@ impl ProgramServing {
         container: Container,
         dvr_config: Option<crate::dvr::DvrConfig>,
         route_name: &str,
+        media_sequence_offset: u64,
     ) -> Arc<Self> {
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(target_duration_secs)
             .window_segments(window_segments)
-            .container(container);
+            .container(container)
+            .media_sequence_offset(media_sequence_offset);
         if container == Container::Fmp4 {
             builder = builder.low_latency(part_target_ms);
         }
-        let ll_hls = Arc::new(
-            builder
-                .build()
-                .expect("target_duration_secs and window_segments are always set above"),
-        );
+        let ll_hls = Arc::new(builder.build().expect(
+            "target_duration_secs and window_segments are always set above, \
+                     and an offset derived from a previous origin leaves room for u32",
+        ));
         let dash = Arc::new(DashState::new(&trunk, window_segments));
 
         let ext = match container {
@@ -491,6 +493,11 @@ impl ProgramServing {
     }
 
     fn set_track_specs(&self, specs: Vec<TrackSpec>) {
+        // The HLS master playlist's `CODECS` comes from the same specs (the
+        // only source for a TS-HLS origin, which has no init segment to read).
+        if let Err(error) = self.ll_hls.set_track_specs(&specs) {
+            tracing::warn!(%error, "HLS master CODECS unavailable for these track specs");
+        }
         self.dash.set_track_specs(specs);
     }
 
@@ -951,6 +958,19 @@ impl RouteHandle {
         if already_bound {
             return;
         }
+        // A replacement for an already-served program (a reconnect over a
+        // fresh `Trunk`, which numbers its segments from 1 again) continues
+        // the previous origin's Media Sequence Number, so clients never see
+        // it decrease (RFC 8216bis §6.2.2).
+        let media_sequence_offset = programs.get(&program).map_or(0, |previous| {
+            previous
+                .ll_hls
+                .next_media_sequence()
+                .saturating_sub(1)
+                // Keep room for the `u32` sequence range `HlsOrigin`
+                // validates (unreachable in practice: 2^64 segments).
+                .min(u64::MAX - u64::from(u32::MAX))
+        });
         let serving = ProgramServing::new(
             trunk,
             self.target_duration_secs,
@@ -959,6 +979,7 @@ impl RouteHandle {
             self.container,
             self.dvr_config.clone(),
             &self.name,
+            media_sequence_offset,
         );
         programs.insert(program, serving);
         self.program_notify.notify_waiters();
@@ -1392,6 +1413,52 @@ mod program_registry_tests {
             }
             _ => panic!("expected ProgramResolution::Found (the new publisher's binding)"),
         }
+    }
+
+    /// r09-W11 (#1089): a reconnect binds a fresh `Trunk`, which numbers its
+    /// segments from 1 again; the replacement origin must continue the
+    /// previous origin's Media Sequence Number instead of restarting it
+    /// (RFC 8216bis §6.2.2: it MUST NOT decrease).
+    #[test]
+    fn reconnect_continues_the_media_sequence_number() {
+        use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsRequest};
+        use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
+
+        let info = |seq: u32| transmux::ll_hls::SegmentInfo {
+            bytes: vec![seq as u8; 8],
+            duration: 4.0,
+            segment_seq: seq,
+            part_count: 0,
+        };
+        let route = RouteHandle::new(4.0, 500, 4);
+        let first_trunk = route.publish_new_program(ProgramId(1));
+        route.add_segment(ProgramId(1), info(1)).expect("add");
+        route.add_segment(ProgramId(1), info(2)).expect("add");
+        let before = route.ll_hls(ProgramId(1)).expect("origin");
+        assert_eq!(before.next_media_sequence(), 3);
+
+        route.release_program(ProgramId(1), &first_trunk);
+        route.publish_new_program(ProgramId(1));
+        route.add_segment(ProgramId(1), info(1)).expect("add");
+        let after = route.ll_hls(ProgramId(1)).expect("replacement origin");
+        assert_eq!(after.next_media_sequence(), 4);
+
+        let playlist = match after.resolve(
+            HlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery::default(),
+            },
+            broadcast_common::Timestamp::from_nanos(1),
+            AwaitPolicy::new(broadcast_common::Timestamp::from_nanos(1_000_000_000)),
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Playlist(p),
+                ..
+            } => p,
+            other => panic!("expected a playlist, got {other:?}"),
+        };
+        assert!(playlist.contains("#EXT-X-MEDIA-SEQUENCE:3\n"), "{playlist}");
+        assert!(playlist.contains("seg-1-3.m4s"), "{playlist}");
     }
 
     /// `release_program` must be a no-op for a `Trunk` that lost the

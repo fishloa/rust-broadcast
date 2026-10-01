@@ -463,6 +463,19 @@ struct ReprInfo {
     audio_channels: Option<u16>,
 }
 
+/// The RFC 6381 codec string (`avc1.64001F`, `mp4a.40.2`, ...) for a track's
+/// codec configuration — the same value [`DashPackager`] writes into
+/// `Representation@codecs`, exposed so an HLS origin can fill
+/// `#EXT-X-STREAM-INF`'s `CODECS` (RFC 8216 §4.3.4.2) from the very builders
+/// the DASH path uses.
+///
+/// # Errors
+/// [`Error::UnsupportedCodec`] for an opaque `Data` or `Subtitle` track,
+/// which has no codec string; a malformed AAC `esds` is also an error.
+pub fn rfc6381_codec_string(config: &CodecConfig) -> Result<String> {
+    DashPackager::codec_string(config)
+}
+
 impl DashPackager {
     /// Build a packager with a specific `profiles` attribute.
     pub fn with_profiles(profiles: impl Into<String>) -> Self {

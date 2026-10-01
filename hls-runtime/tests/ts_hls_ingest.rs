@@ -221,3 +221,345 @@ fn client_ingests_classic_ts_segment_hls_end_to_end() {
          (no drops/dupes/misroutes)"
     );
 }
+
+// ---------------------------------------------------------------------------
+// r09-W15 (#1089): one TS demuxer across segments.
+// ---------------------------------------------------------------------------
+
+/// 33-bit PTS/DTS modulus (ISO/IEC 13818-1 §2.4.3.7).
+const PTS_MODULUS: u64 = 1 << 33;
+const TS_PACKET_LEN: usize = 188;
+
+fn decode_pts(b: &[u8]) -> u64 {
+    (u64::from(b[0] >> 1) & 0x7) << 30
+        | u64::from(b[1]) << 22
+        | u64::from(b[2] >> 1) << 15
+        | u64::from(b[3]) << 7
+        | u64::from(b[4] >> 1)
+}
+
+fn encode_pts(prefix: u8, v: u64) -> [u8; 5] {
+    [
+        (prefix << 4) | ((((v >> 30) & 0x7) as u8) << 1) | 1,
+        ((v >> 22) & 0xFF) as u8,
+        ((((v >> 15) & 0x7F) as u8) << 1) | 1,
+        ((v >> 7) & 0xFF) as u8,
+        (((v & 0x7F) as u8) << 1) | 1,
+    ]
+}
+
+/// Add `offset` (mod 2^33) to every PES PTS and DTS in a TS byte stream
+/// (test-only fixture transformer; the demuxer under test never sees this
+/// code's logic).
+fn shift_pes_timestamps(ts: &[u8], offset: u64) -> Vec<u8> {
+    let mut out = ts.to_vec();
+    for pkt in out.chunks_exact_mut(TS_PACKET_LEN) {
+        assert_eq!(pkt[0], TS_SYNC_BYTE);
+        let pusi = pkt[1] & 0x40 != 0;
+        let afc = (pkt[3] >> 4) & 0x3;
+        if !pusi || afc & 1 == 0 {
+            continue;
+        }
+        let mut at = 4;
+        if afc == 3 {
+            at += 1 + usize::from(pkt[4]);
+        }
+        if pkt[at..at + 3] != [0, 0, 1] {
+            continue;
+        }
+        let flags = pkt[at + 7] >> 6;
+        if flags & 0b10 != 0 {
+            let p = at + 9;
+            let prefix = pkt[p] >> 4;
+            let v = (decode_pts(&pkt[p..p + 5]) + offset) % PTS_MODULUS;
+            pkt[p..p + 5].copy_from_slice(&encode_pts(prefix, v));
+        }
+        if flags == 0b11 {
+            let p = at + 14;
+            let prefix = pkt[p] >> 4;
+            let v = (decode_pts(&pkt[p..p + 5]) + offset) % PTS_MODULUS;
+            pkt[p..p + 5].copy_from_slice(&encode_pts(prefix, v));
+        }
+    }
+    out
+}
+
+fn avc_track_dts(media: &transmux::Media) -> (u32, Vec<i64>) {
+    let track = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("fixture has an AVC track");
+    (
+        track.spec.track_id,
+        track
+            .samples
+            .iter()
+            .map(|s| s.dts.expect("TS video sample carries a DTS"))
+            .collect(),
+    )
+}
+
+/// A sample's `(dts, pts, duration)`.
+type Timing = (Option<i64>, Option<i64>, Option<u32>);
+
+/// `(dts, pts, duration)` of every sample of the track whose config matches.
+fn timing_of(media: &transmux::Media, pick: impl Fn(&CodecConfig) -> bool) -> (u32, Vec<Timing>) {
+    let track = media
+        .tracks
+        .iter()
+        .find(|t| pick(&t.spec.config))
+        .expect("fixture has the track");
+    (
+        track.spec.track_id,
+        track
+            .samples
+            .iter()
+            .map(|s| (s.dts, s.pts, s.duration))
+            .collect(),
+    )
+}
+
+/// Drive `client` over `segments` (url basename -> bytes) with `playlist`.
+fn drive_in_memory(playlist: &str, segments: &[(&str, Vec<u8>)]) -> Vec<Output> {
+    let mut client = HlsClient::new(PLAYLIST_URL);
+    let mut outputs = Vec::new();
+    loop {
+        match client.poll() {
+            Some(Action::FetchPlaylist { .. }) => client
+                .on_playlist(playlist.as_bytes())
+                .expect("playlist parses"),
+            Some(Action::FetchResource { id, url, .. }) => {
+                let name = url.rsplit('/').next().expect("path");
+                let bytes = &segments
+                    .iter()
+                    .find(|(n, _)| *n == name)
+                    .unwrap_or_else(|| panic!("no bytes for {name}"))
+                    .1;
+                client.on_resource(id, bytes).expect("segment demuxes");
+            }
+            Some(Action::WaitMs(_)) => {}
+            Some(other) => panic!("unexpected action {other:?}"),
+            None => break,
+        }
+        while let Some(o) = client.next_output() {
+            outputs.push(o);
+        }
+    }
+    outputs
+}
+
+/// A 24/7 TS pull crosses the 2^33 PTS wrap (~26.5 h) between two segments.
+/// A fresh demuxer per segment restarted the unwrap, feeding a DTS that
+/// jumped back by 2^33 ticks; the persistent demuxer must keep counting up,
+/// and every sample (video *and* audio) must carry the duration the batch
+/// demuxer computes over the whole continuous stream — including each
+/// segment's last access unit, whose real duration is only known once the
+/// next segment's first sample arrives.
+///
+/// Oracle: the independent batch `transmux::TsDemux` over the *unshifted*
+/// concatenation of both segments (no wrap involved), plus the literal
+/// `offset` the test applied.
+#[test]
+fn pts_wrap_between_segments_is_unrolled_across_the_boundary() {
+    let seg0 = read_fixture("index0.ts");
+    let seg1 = read_fixture("index1.ts");
+    let (_, dts0) = avc_track_dts(&TsDemux::new().demux(&seg0).unwrap());
+    let (_, dts1) = avc_track_dts(&TsDemux::new().demux(&seg1).unwrap());
+    let first_of_seg1 = u64::try_from(dts1[0]).unwrap();
+    let last_of_seg0 = u64::try_from(*dts0.last().unwrap()).unwrap();
+    assert!(
+        last_of_seg0 < first_of_seg1,
+        "fixture segments are contiguous"
+    );
+
+    // Segment 1 is moved `EXTRA` ticks later than a constant-frame-rate
+    // continuation, so the gap between segment 0's last and segment 1's first
+    // video frame differs from the usual frame duration: only the real delta
+    // (known once segment 1 arrives) gives segment 0's last frame its true
+    // duration, a guess from the previous frame does not.
+    const EXTRA: u64 = 1500;
+    let reference = TsDemux::new()
+        .demux(&[seg0.clone(), shift_pes_timestamps(&seg1, EXTRA)].concat())
+        .unwrap();
+    let is_video = |c: &CodecConfig| matches!(c, CodecConfig::Avc { .. });
+    let is_audio = |c: &CodecConfig| matches!(c, CodecConfig::Aac { .. });
+    let (video_id, want_video) = timing_of(&reference, is_video);
+    let (audio_id, want_audio) = timing_of(&reference, is_audio);
+
+    // Shift so segment 0's video DTS stay below 2^33 and segment 1's first
+    // DTS lands exactly on raw value 1, i.e. just past the wrap.
+    let offset = PTS_MODULUS - first_of_seg1 - EXTRA + 1;
+    let shifted0 = shift_pes_timestamps(&seg0, offset);
+    let shifted1 = shift_pes_timestamps(&seg1, offset + EXTRA);
+
+    // Sanity: the shift really put the wrap between the segments.
+    let (_, shifted_dts0) = avc_track_dts(&TsDemux::new().demux(&shifted0).unwrap());
+    assert!(
+        shifted_dts0
+            .iter()
+            .all(|&d| u64::try_from(d).unwrap() < PTS_MODULUS)
+    );
+
+    let outputs = drive_in_memory(
+        &String::from_utf8(read_fixture("index.m3u8")).unwrap(),
+        &[("index0.ts", shifted0), ("index1.ts", shifted1)],
+    );
+    let timing = |track: u32| -> Vec<Timing> {
+        outputs
+            .iter()
+            .filter_map(|o| match o {
+                Output::Samples { track_id, samples } if *track_id == track => Some(samples),
+                _ => None,
+            })
+            .flatten()
+            .map(|s| (s.dts, s.pts, s.duration))
+            .collect()
+    };
+
+    // Video: exactly the reference, shifted by the literal offset.
+    let offset = i64::try_from(offset).unwrap();
+    let want_video_shifted: Vec<_> = want_video
+        .iter()
+        .map(|(d, p, dur)| (d.map(|v| v + offset), p.map(|v| v + offset), *dur))
+        .collect();
+    let got_video = timing(video_id);
+    assert_eq!(
+        got_video, want_video_shifted,
+        "video dts/pts/duration must match the continuous-stream reference across the wrap"
+    );
+    assert!(
+        got_video.last().unwrap().0.unwrap() >= i64::try_from(PTS_MODULUS).unwrap(),
+        "the last segment's DTS must be unrolled past 2^33"
+    );
+
+    // Audio is in its own timescale, so compare what is timescale-exact:
+    // every duration, every successive dts delta, every pts-dts gap.
+    let got_audio = timing(audio_id);
+    assert_eq!(got_audio.len(), want_audio.len());
+    let durations = |v: &[Timing]| -> Vec<Option<u32>> { v.iter().map(|t| t.2).collect() };
+    let deltas = |v: &[Timing]| -> Vec<i64> {
+        v.windows(2)
+            .map(|w| w[1].0.unwrap() - w[0].0.unwrap())
+            .collect()
+    };
+    let gaps =
+        |v: &[Timing]| -> Vec<i64> { v.iter().map(|t| t.1.unwrap() - t.0.unwrap()).collect() };
+    assert_eq!(durations(&got_audio), durations(&want_audio));
+    assert_eq!(deltas(&got_audio), deltas(&want_audio));
+    assert_eq!(gaps(&got_audio), gaps(&want_audio));
+}
+
+/// `fixtures/ts/h264/main.ts` (video only) after the h264+AAC segments, with
+/// an `EXT-X-DISCONTINUITY` between: the track set changes, so a second,
+/// different `Output::Init` must follow the `Output::Discontinuity`.
+#[test]
+fn track_set_change_across_a_discontinuity_re_emits_init() {
+    let seg0 = read_fixture("index0.ts");
+    let other = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../fixtures/ts/h264/main.ts"
+    ))
+    .expect("workspace h264 fixture");
+    let playlist = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n\
+#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nindex0.ts\n#EXT-X-DISCONTINUITY\n\
+#EXTINF:2.0,\nmain.ts\n#EXT-X-ENDLIST\n";
+    let outputs = drive_in_memory(playlist, &[("index0.ts", seg0), ("main.ts", other.clone())]);
+
+    let kinds: Vec<&str> = outputs
+        .iter()
+        .map(|o| match o {
+            Output::Init(_) => "init",
+            Output::Samples { .. } => "samples",
+            Output::Discontinuity => "disc",
+            Output::EndOfStream => "end",
+            _ => "other",
+        })
+        .collect();
+    let init_at: Vec<usize> = kinds
+        .iter()
+        .enumerate()
+        .filter(|(_, k)| **k == "init")
+        .map(|(i, _)| i)
+        .collect();
+    let disc_at = kinds
+        .iter()
+        .position(|k| *k == "disc")
+        .expect("discontinuity");
+    assert_eq!(init_at.len(), 2, "{kinds:?}");
+    assert!(init_at[0] < disc_at && disc_at < init_at[1], "{kinds:?}");
+    assert_eq!(kinds.last(), Some(&"end"));
+
+    let tracks = |o: &Output| match o {
+        Output::Init(b) => transmux::Fmp4Demux::new()
+            .unpackage(b.as_slice())
+            .unwrap()
+            .tracks
+            .iter()
+            .map(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
+            .collect::<Vec<bool>>(),
+        _ => unreachable!(),
+    };
+    assert!(
+        tracks(&outputs[init_at[0]]).contains(&true),
+        "first init has AAC"
+    );
+    assert_eq!(
+        tracks(&outputs[init_at[1]]),
+        vec![false],
+        "second init is the single video track of main.ts"
+    );
+}
+
+/// A duplicate delivery of a TS segment must not emit its samples twice
+/// (r09-W16), checked against a real demuxable segment.
+#[test]
+fn duplicate_ts_segment_delivery_emits_samples_once() {
+    let mut client = HlsClient::new(PLAYLIST_URL);
+    while client.poll().is_some() {}
+    client
+        .on_playlist(&read_fixture("index.m3u8"))
+        .expect("playlist");
+    let ids: Vec<_> = std::iter::from_fn(|| client.poll())
+        .filter_map(|a| match a {
+            Action::FetchResource { id, .. } => Some(id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(ids.len(), 2);
+    let seg0 = read_fixture("index0.ts");
+    client.on_resource(ids[0], &seg0).unwrap();
+    let err = client.on_resource(ids[0], &seg0).expect_err("duplicate");
+    assert!(matches!(
+        err,
+        hls_runtime::client::Error::DuplicateResource { .. }
+    ));
+
+    // Deliver the second segment, then count everything: each segment's
+    // samples exactly once (the last access units are held back until the
+    // next segment or ENDLIST, so only the total over both is exact).
+    client
+        .on_resource(ids[1], &read_fixture("index1.ts"))
+        .unwrap();
+    let per_segment = |name: &str| -> usize {
+        TsDemux::new()
+            .demux(&read_fixture(name))
+            .unwrap()
+            .tracks
+            .iter()
+            .map(|t| t.samples.len())
+            .sum()
+    };
+    let want = per_segment("index0.ts") + per_segment("index1.ts");
+    let mut got = 0;
+    let mut ended = false;
+    while let Some(o) = client.next_output() {
+        match o {
+            Output::Samples { samples, .. } => got += samples.len(),
+            Output::EndOfStream => ended = true,
+            _ => {}
+        }
+    }
+    assert!(ended, "ENDLIST playlist with nothing outstanding ends");
+    assert_eq!(got, want);
+}

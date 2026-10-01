@@ -3,6 +3,16 @@
 ## [Unreleased]
 
 ### Fixed
+- **`master.m3u8` carries the measured peak `BANDWIDTH` and `CODECS`** instead
+  of a fixed 5 Mb/s with no `CODECS`, via
+  `hls_runtime::server::HlsOrigin::master_playlist`. `CODECS` comes from the
+  init segment for fMP4 routes and from the TS demux's track specs (synced
+  with the DASH specs) for TS-HLS routes (#1089).
+- **A reconnect continues the HLS Media Sequence Number.** `publish_program`
+  binding a fresh `Trunk` (which numbers segments from 1 again) over an
+  already-served program now builds the replacement `HlsOrigin` with
+  `media_sequence_offset` set from the previous origin's
+  `next_media_sequence()`, so `EXT-X-MEDIA-SEQUENCE` never decreases (#1089).
 - **An unvalidated in-process `Config` no longer panics on an extreme
   ingest timeout** (#1083). `IngestTimeouts::from` used
   `Duration::from_secs_f64`, which panics on a non-finite or overflowing
