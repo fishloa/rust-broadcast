@@ -8,6 +8,11 @@ on:
 env:
   CARGO_TERM_COLOR: always
   RUSTFLAGS: "-D warnings"
+  # multimux's external-oracle tests (e.g. tests/emsg_mp4box.rs needs Bento4
+  # `mp4dump`) FAIL when their tool is missing unless this is set, so a dev
+  # machine can't silently skip them. The Ubuntu runners don't ship Bento4:
+  # skip those oracles here explicitly (they print SKIP); run them locally.
+  MULTIMUX_ALLOW_ORACLE_SKIP: "1"
 
 # The toolchain is pinned once in rust-toolchain.toml (channel = the workspace
 # MSRV, 1.95.0, plus the clippy/rustfmt components and the bare-metal target).
