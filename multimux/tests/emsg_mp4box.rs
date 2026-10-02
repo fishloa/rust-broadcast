@@ -56,20 +56,20 @@ fn mp4dump_available() -> bool {
 /// `MULTIMUX_ALLOW_ORACLE_SKIP=1` is set in the environment — a silent skip
 /// would let this oracle test pass without ever running the oracle (issue
 /// #1083, item 5). The escape hatch exists only for environments that cannot
-/// install the tool.
-fn assert_oracle(tool: &str) {
+/// install the tool. Returns whether the oracle is present and must run.
+fn assert_oracle(tool: &str) -> bool {
     let present = match tool {
         "mp4dump" => mp4dump_available(),
         other => panic!("no availability probe for oracle {other}"),
     };
     if present {
-        return;
+        return true;
     }
     if std::env::var("MULTIMUX_ALLOW_ORACLE_SKIP").as_deref() == Ok("1") {
         eprintln!(
             "SKIP: {tool} not on PATH (MULTIMUX_ALLOW_ORACLE_SKIP=1). This oracle did NOT run."
         );
-        return;
+        return false;
     }
     panic!(
         "required oracle tool `{tool}` is not on PATH. Install it, or set MULTIMUX_ALLOW_ORACLE_SKIP=1 to skip this oracle explicitly."
@@ -187,7 +187,7 @@ fn parse_emsg_boxes(bytes: &[u8]) -> Vec<transmux::EmsgBox<'_>> {
 
 #[tokio::test]
 async fn served_segment_carries_a_decodable_emsg_with_a_nonzero_pts_origin() {
-    assert_oracle("mp4dump");
+    let run_mp4dump = assert_oracle("mp4dump");
     // A deliberately NON-ZERO PTS origin: the segment start must be anchored
     // to the real source clock, not to a 0-based internal timeline.
     const PTS_ORIGIN: i64 = 5 * 90_000; // 5 s in
@@ -214,29 +214,32 @@ async fn served_segment_carries_a_decodable_emsg_with_a_nonzero_pts_origin() {
 
     let bytes = fetch_segment(Arc::clone(&route), 1).await;
 
-    // mp4dump (independent) must see the box, between styp and moof.
-    let dir = std::env::temp_dir().join(format!("multimux-emsg-e2e-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("temp dir");
-    let file = dir.join("seg.m4s");
-    std::fs::write(&file, &bytes).expect("write");
-    let dump = std::process::Command::new("mp4dump")
-        .args(["--verbosity", "2"])
-        .arg(file.to_str().expect("path"))
-        .output()
-        .expect("mp4dump");
-    let _ = std::fs::remove_dir_all(&dir);
-    let text = String::from_utf8_lossy(&dump.stdout).into_owned();
-    assert!(
-        text.contains("[emsg]"),
-        "mp4dump must see the emsg box: {text}"
-    );
-    let styp = text.find("[styp]").expect("styp");
-    let emsg = text.find("[emsg]").expect("emsg");
-    let moof = text.find("[moof]").expect("moof");
-    assert!(
-        styp < emsg && emsg < moof,
-        "emsg must sit between styp and moof: {text}"
-    );
+    // mp4dump (independent) must see the box, between styp and moof. The
+    // independent scte35-splice decode below runs regardless.
+    if run_mp4dump {
+        let dir = std::env::temp_dir().join(format!("multimux-emsg-e2e-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp dir");
+        let file = dir.join("seg.m4s");
+        std::fs::write(&file, &bytes).expect("write");
+        let dump = std::process::Command::new("mp4dump")
+            .args(["--verbosity", "2"])
+            .arg(file.to_str().expect("path"))
+            .output()
+            .expect("mp4dump");
+        let _ = std::fs::remove_dir_all(&dir);
+        let text = String::from_utf8_lossy(&dump.stdout).into_owned();
+        assert!(
+            text.contains("[emsg]"),
+            "mp4dump must see the emsg box: {text}"
+        );
+        let styp = text.find("[styp]").expect("styp");
+        let emsg = text.find("[emsg]").expect("emsg");
+        let moof = text.find("[moof]").expect("moof");
+        assert!(
+            styp < emsg && emsg < moof,
+            "emsg must sit between styp and moof: {text}"
+        );
+    }
 
     // `message_data` must decode (with the INDEPENDENT `scte35-splice`
     // parser) back to the exact source section.
