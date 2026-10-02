@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `resource::Resource::on_open`, `on_apdu` and `tick` now return
+  `dvb_ci::Result<ResourceOut>` (were `ResourceOut`), so an APDU that fails to
+  serialize or a malformed CAM APDU is an `Err` instead of being dropped; every
+  `Resource` implementation must be updated.
+- `session::SessionLayer::create_session`, `send_apdu` and `close` now return
+  `dvb_ci::Result<Vec<u8>>` (were `Vec<u8>`), and `SessionLayer::on_spdu`
+  returns `dvb_ci::Result<SessionOut>` (was `SessionOut`) — a malformed SPDU
+  is surfaced rather than dropped silently (#1092).
+
 ### Changed
 - **`managed::REQUERY_DEFAULT` (the entitlement re-query cadence's default)
   is now `Duration::ZERO` (disabled), was 10s.** The periodic re-query is

@@ -16,6 +16,9 @@ pub const FIXED_LEN: usize = 3;
 pub const INTERLACE_LEN_LEN: usize = 4;
 /// Progressive pixel block header: bitmap_width(2) + bitmap_height(2) + compressed_len(2).
 pub const PROGRESSIVE_HEADER_LEN: usize = 6;
+/// 7-bit `run_length` field mask in the 8-bit pixel-data run codes
+/// (EN 300 743 §7.2.5.2.3, Table 22).
+const RUN_LENGTH_7BIT_MASK: u8 = 0x7F;
 
 /// Object coding method as defined in Table 18.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -461,7 +464,7 @@ impl PixelRunIter<'_> {
         }
         let b1 = self.data[pos + 1];
         if (b1 >> 7) & 1 == 0 {
-            let rl = b1 & 0x7F;
+            let rl = b1 & RUN_LENGTH_7BIT_MASK;
             self.bitpos += 16;
             if rl == 0 {
                 self.done = true;
@@ -477,7 +480,7 @@ impl PixelRunIter<'_> {
             self.done = true;
             return None;
         }
-        let rl = b1 & 0x7F;
+        let rl = b1 & RUN_LENGTH_7BIT_MASK;
         let code = self.data[pos + 2];
         self.bitpos += 24;
         Some(PixelRun {
@@ -652,7 +655,7 @@ fn scan_8bit_code_string(data: &[u8]) -> usize {
         let b = data[pos + 1];
         let s1 = (b >> 7) & 1;
         if s1 == 0 {
-            let rl = b & 0x7F;
+            let rl = b & RUN_LENGTH_7BIT_MASK;
             if rl == 0 {
                 // end_of_string_signal
                 pos += 2;

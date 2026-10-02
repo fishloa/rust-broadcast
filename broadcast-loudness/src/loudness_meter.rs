@@ -492,6 +492,23 @@ impl LoudnessMeter {
     /// [`crate::ChannelLayout`] isn't exactly 2 channels (#1108/LOUD-W1):
     /// pre-fix, calling this on e.g. a `Mono` layout indexed `self.
     /// filters[1]`, a 1-element `Vec`, and panicked.
+    ///
+    /// ```
+    /// use broadcast_loudness::{ChannelLayout, LoudnessMeter};
+    ///
+    /// // One second of planar stereo silence at 48 kHz.
+    /// let left_samples = vec![0.0_f32; 48_000];
+    /// let right_samples = vec![0.0_f32; 48_000];
+    ///
+    /// let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
+    /// meter.push_stereo_planar_f32(&left_samples, &right_samples).unwrap();
+    /// meter.finish();
+    ///
+    /// println!("Integrated: {:.1} LUFS", meter.integrated_lufs());
+    /// println!("LRA:       {:.1} LU",   meter.loudness_range());
+    /// println!("Max M:     {:.1} LUFS", meter.max_momentary_lufs());
+    /// println!("Max S:     {:.1} LUFS", meter.max_short_term_lufs());
+    /// ```
     pub fn push_stereo_planar_f32(
         &mut self,
         left: &[f32],

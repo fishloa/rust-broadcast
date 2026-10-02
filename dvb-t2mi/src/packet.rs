@@ -5,6 +5,13 @@ use num_enum::TryFromPrimitive;
 /// T2-MI packet header size (ETSI TS 102 773 §5.1).
 const HEADER_LEN: usize = 6;
 
+/// Largest `superframe_idx` (4-bit field, byte 2 bits `[7:4]`, §5.1).
+const SUPERFRAME_IDX_MAX: u8 = 0x0F;
+/// Byte 2 bit 3 — the RFU bit that must be zero (§5.1).
+pub(crate) const BYTE2_RFU_MASK: u8 = 0x08;
+/// Byte 2 bits `[2:0]` — `t2mi_stream_id` (§5.1).
+const T2MI_STREAM_ID_MASK: u8 = 0x07;
+
 /// Packet types per ETSI TS 102 773 Table 1.
 ///
 /// All other values are reserved for future use.
@@ -52,6 +59,12 @@ impl From<num_enum::TryFromPrimitiveError<PacketType>> for crate::error::Error {
 }
 
 impl PacketType {
+    /// `true` when `byte` is an allocated `packet_type` (Table 1). Derived
+    /// from the enum itself so the allocated set has exactly one definition.
+    pub(crate) fn is_allocated(byte: u8) -> bool {
+        Self::try_from(byte).is_ok()
+    }
+
     /// Human-readable spec label (ETSI TS 102 773 Table 1).
     #[must_use]
     pub fn name(&self) -> &'static str {
@@ -116,10 +129,10 @@ impl<'a> broadcast_common::Parse<'a> for Header {
         let packet_count = hdr[1];
 
         // byte 2 [7:4] = superframe_idx
-        let superframe_idx = (hdr[2] >> 4) & 0x0F;
+        let superframe_idx = (hdr[2] >> 4) & SUPERFRAME_IDX_MAX;
 
         // byte 2 [3] = rfu — spec says must be 0
-        if hdr[2] & 0x08 != 0 {
+        if hdr[2] & BYTE2_RFU_MASK != 0 {
             return Err(Error::ReservedBitsViolation {
                 field: "byte 2 bit 3",
                 reason: "RFU must be zero (ETSI TS 102 773 §5.1)",
@@ -127,7 +140,7 @@ impl<'a> broadcast_common::Parse<'a> for Header {
         }
 
         // byte 2 [2:0] = t2mi_stream_id
-        let t2mi_stream_id = hdr[2] & 0x07;
+        let t2mi_stream_id = hdr[2] & T2MI_STREAM_ID_MASK;
 
         // byte 3 = rfu — spec says must be 0
         if hdr[3] != 0 {
@@ -232,13 +245,13 @@ impl broadcast_common::Serialize for Header {
             });
         }
 
-        if self.t2mi_stream_id > 7 {
+        if self.t2mi_stream_id > T2MI_STREAM_ID_MASK {
             return Err(Error::ReservedBitsViolation {
                 field: "t2mi_stream_id",
                 reason: "Must be in range 0..=7 (3-bit field)",
             });
         }
-        if self.superframe_idx > 0x0F {
+        if self.superframe_idx > SUPERFRAME_IDX_MAX {
             return Err(Error::ReservedBitsViolation {
                 field: "superframe_idx",
                 reason: "Must be in range 0..=15 (4-bit field)",

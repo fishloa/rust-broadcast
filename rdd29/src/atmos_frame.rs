@@ -163,15 +163,15 @@ impl<'a> AtmosFrame<'a> {
     /// this same frame's `FrameRate`) walks the wrong number of pan-sub-block
     /// loop iterations against.
     fn validate_pan_sub_block_counts(&self) -> Result<()> {
-        for (i, e) in self.elements.iter().enumerate() {
+        for e in &self.elements {
             // Only an ObjectDefinition1 needs Table 7: a frame with a reserved
             // FrameRate and no such element parses, so it must serialize.
             if let AnyElement::ObjectDefinition1(obj) = e
                 && obj.pan_sub_blocks.len() != usize::from(self.frame_rate.num_pan_sub_blocks()?)
             {
                 return Err(Error::InvalidValue {
-                    field: "ATMOSFrame.elements[i].pan_sub_blocks",
-                    value: i as u64,
+                    field: "ATMOSFrame.elements[].pan_sub_blocks.len()",
+                    value: obj.pan_sub_blocks.len() as u64,
                     reason: "pan_sub_blocks.len() must equal frame_rate.num_pan_sub_blocks()",
                 });
             }
@@ -434,9 +434,10 @@ mod tests {
         // Fps96 needs 2 pan sub-blocks (Table 7); the object still has 8.
         frame.frame_rate = FrameRate::Fps96;
         let mut buf = alloc::vec![0u8; frame.serialized_len()];
+        // `value` is the offending count (8), not an element index.
         assert!(matches!(
             frame.serialize_into(&mut buf),
-            Err(Error::InvalidValue { .. })
+            Err(Error::InvalidValue { value: 8, .. })
         ));
     }
 

@@ -20,6 +20,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   still walked by `PES_packet_length`.
 
 ### Changed (breaking)
+- `PackHeader::serialize_into` and `ProgramStreamMap::serialize_into` now
+  reject out-of-range fields (`stuffing_length` > 7, `program_mux_rate` over
+  22 bits, `reserved` over 5 bits, PSM `version` over 5 bits) with an `Err`
+  instead of silently masking them, which framed `serialized_len()` and the
+  written bytes inconsistently (#1129, release audit).
 - `SystemHeader` gains `reserved_bits: u8` (the 7 `reserved_bits` after
   `packet_rate_restriction_flag`, Table 2-40), preserved on parse and written
   back instead of a hard-coded `0x7F`, so a header with other reserved bits

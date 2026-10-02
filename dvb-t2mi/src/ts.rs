@@ -5,6 +5,7 @@
 use alloc::collections::VecDeque;
 
 use crate::crc::CRC_LEN;
+use crate::packet::{BYTE2_RFU_MASK, PacketType};
 
 /// Per-PID T2-MI packet reassembler.
 ///
@@ -48,13 +49,9 @@ pub(crate) fn header_plausible(header: &[u8]) -> bool {
     if header.len() < HEADER_LEN {
         return false;
     }
-    // Allocated packet types: 0x00-0x02, 0x10-0x12, 0x20-0x21, 0x30-0x33
-    // (ETSI TS 102 773 Table 1 — same set as `packet::PacketType`).
-    let packet_type_ok = matches!(
-        header[0],
-        0x00..=0x02 | 0x10..=0x12 | 0x20 | 0x21 | 0x30..=0x33
-    );
-    packet_type_ok && (header[2] & 0x08 == 0) && header[3] == 0
+    // Allocated packet types: ETSI TS 102 773 Table 1, i.e. `PacketType`.
+    let packet_type_ok = PacketType::is_allocated(header[0]);
+    packet_type_ok && (header[2] & BYTE2_RFU_MASK == 0) && header[3] == 0
 }
 
 /// Like [`header_plausible`], but legal for a tail holding fewer than
@@ -70,13 +67,9 @@ pub(crate) fn partial_header_plausible(header: &[u8]) -> bool {
     let Some((first, rest)) = header.split_first() else {
         return false;
     };
-    // Allocated packet types: 0x00-0x02, 0x10-0x12, 0x20-0x21, 0x30-0x33
-    // (ETSI TS 102 773 Table 1 — same set as `packet::PacketType`).
-    let packet_type_ok = matches!(
-        first,
-        0x00u8..=0x02 | 0x10..=0x12 | 0x20 | 0x21 | 0x30..=0x33
-    );
-    let rfu_byte2_ok = rest.get(2).is_none_or(|b| b & 0x08 == 0);
+    // Allocated packet types: ETSI TS 102 773 Table 1, i.e. `PacketType`.
+    let packet_type_ok = PacketType::is_allocated(*first);
+    let rfu_byte2_ok = rest.get(2).is_none_or(|b| b & BYTE2_RFU_MASK == 0);
     let rfu_byte3_ok = rest.get(3).is_none_or(|b| *b == 0);
     packet_type_ok && rfu_byte2_ok && rfu_byte3_ok
 }
@@ -195,6 +188,22 @@ impl PacketReassembler {
 
 #[cfg(test)]
 mod tests {
+    /// Drift guard: the plausibility filter's allocated-`packet_type` set is
+    /// the `PacketType` enum — every byte agrees with `PacketType::try_from`
+    /// and the 12 Table 1 values are exactly the allocated set.
+    #[test]
+    fn allocated_packet_types_match_enum_for_every_byte() {
+        let mut allocated = 0;
+        for b in 0..=255u8 {
+            let hdr = [b, 0, 0, 0, 0, 0];
+            let expect = PacketType::try_from(b).is_ok();
+            assert_eq!(header_plausible(&hdr), expect, "byte {b:#04x}");
+            assert_eq!(partial_header_plausible(&hdr[..1]), expect, "byte {b:#04x}");
+            allocated += usize::from(expect);
+        }
+        assert_eq!(allocated, 12);
+    }
+
     use super::*;
 
     fn make_t2mi_packet(packet_type: u8, count: u8, payload: &[u8]) -> Vec<u8> {

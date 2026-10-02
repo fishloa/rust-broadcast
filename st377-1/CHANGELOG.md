@@ -68,6 +68,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   across all thirteen Sets.
 
 ### Fixed
+- `ber::encode_ber_length_as` with a hand-built `BerLength::Fixed(n)`, `n > 9`,
+  underflowed `8 - following` and panicked on the slice; it now returns
+  `Error::BerLengthTooLong` (widths `2..=9` are the only valid long forms).
+  The doc comment also now names the error actually returned for a length
+  that does not fit the fixed width (`Error::FixedBerLengthTooSmall`)
+  (release audit).
 - **#1108 (MX-W1)**: `partition.rs`/`primer.rs`/`random_index_pack.rs`/
   `local_set.rs` narrowed a 64-bit BER/batch length to `usize` with a bare
   `as usize`, which silently truncates on a 32-bit target instead of

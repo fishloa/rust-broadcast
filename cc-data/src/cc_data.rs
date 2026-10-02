@@ -8,6 +8,16 @@ use broadcast_common::{Parse, Serialize};
 const MAX_CC_COUNT: usize = 31;
 /// Fixed `0xFF` reserved byte after cc_count, and the trailing marker byte.
 const FF: u8 = 0xFF;
+/// Byte 0 bits 7 (`reserved`, set to 1) and 5 (`zero_bit`, set to 0) — the
+/// fixed-value bits of the cc_data header (TS 101 154 Table B.9).
+const HEADER_FIXED_MASK: u8 = 0xA0;
+/// Required value of byte 0 under [`HEADER_FIXED_MASK`]: `reserved`=1, `zero_bit`=0.
+const HEADER_FIXED_VALUE: u8 = 0x80;
+/// `cc_count` — byte 0 bits `[4:0]`.
+const CC_COUNT_MASK: u8 = 0x1F;
+/// Triplet byte 0 bits `[7:3]`: `one_bit`(1) + `reserved`(4), all set to 1
+/// (TS 101 154 Table B.9); also the value they must hold.
+const TRIPLET_FIXED_MASK: u8 = 0xF8;
 
 /// `cc_type` — the type of the caption data byte pair (TS 101 154 Table B.9 /
 /// CEA-708-E). 2-bit field.
@@ -124,16 +134,16 @@ impl<'a> Parse<'a> for CcData {
             });
         }
         // byte0 bit7 = reserved(set to "1"), bit5 = zero_bit(set to "0").
-        if b[0] & 0xA0 != 0x80 {
+        if b[0] & HEADER_FIXED_MASK != HEADER_FIXED_VALUE {
             return Err(Error::InvalidFixedBits {
                 what: "reserved/zero_bit",
-                got: b[0] & 0xA0,
-                expected: 0x80,
-                mask: 0xA0,
+                got: b[0] & HEADER_FIXED_MASK,
+                expected: HEADER_FIXED_VALUE,
+                mask: HEADER_FIXED_MASK,
             });
         }
         let process_cc_data_flag = (b[0] >> 6) & 0x01 != 0;
-        let cc_count = usize::from(b[0] & 0x1F);
+        let cc_count = usize::from(b[0] & CC_COUNT_MASK);
         let reserved_byte1 = b[1];
         let total = 2 + cc_count * 3 + 1; // header + triplets + marker
         if b.len() < total {
@@ -148,12 +158,12 @@ impl<'a> Parse<'a> for CcData {
         for _ in 0..cc_count {
             let flags = b[pos];
             // one_bit(1) | reserved(4, set to "1111") | cc_valid(1) | cc_type(2)
-            if flags & 0xF8 != 0xF8 {
+            if flags & TRIPLET_FIXED_MASK != TRIPLET_FIXED_MASK {
                 return Err(Error::InvalidFixedBits {
                     what: "one_bit/reserved",
-                    got: flags & 0xF8,
-                    expected: 0xF8,
-                    mask: 0xF8,
+                    got: flags & TRIPLET_FIXED_MASK,
+                    expected: TRIPLET_FIXED_MASK,
+                    mask: TRIPLET_FIXED_MASK,
                 });
             }
             triplets.push(CcTriplet {
@@ -169,7 +179,7 @@ impl<'a> Parse<'a> for CcData {
                 what: "marker_bits",
                 got: b[pos],
                 expected: FF,
-                mask: 0xFF,
+                mask: FF,
             });
         }
         Ok(CcData {
@@ -197,13 +207,13 @@ impl Serialize for CcData {
             });
         }
         // reserved=1, process_cc_data_flag, zero_bit=0, cc_count
-        let cc_count = self.triplets.len() as u8 & 0x1F;
-        buf[0] = 0x80 | (u8::from(self.process_cc_data_flag) << 6) | cc_count;
+        let cc_count = self.triplets.len() as u8 & CC_COUNT_MASK;
+        buf[0] = HEADER_FIXED_VALUE | (u8::from(self.process_cc_data_flag) << 6) | cc_count;
         buf[1] = self.reserved_byte1;
         let mut pos = 2;
         for t in &self.triplets {
             // one_bit=1, reserved=1111, cc_valid, cc_type
-            buf[pos] = 0xF8 | (u8::from(t.cc_valid) << 2) | t.cc_type.to_bits();
+            buf[pos] = TRIPLET_FIXED_MASK | (u8::from(t.cc_valid) << 2) | t.cc_type.to_bits();
             buf[pos + 1] = t.cc_data_1;
             buf[pos + 2] = t.cc_data_2;
             pos += 3;

@@ -37,6 +37,13 @@
 //! raw values into the matching interface-tagged [`MessageType`] /
 //! [`ParameterType`] enums.
 //!
+//! **Parse-contract exception.** Because the decode needs that interface
+//! hint, [`SimulcryptMessage`] deliberately does *not* implement
+//! `broadcast_common::Parse` (whose `parse(&[u8])` has nowhere to carry it);
+//! use [`SimulcryptMessage::parse_on`] instead. It does implement
+//! `broadcast_common::Serialize` (the symmetric half), so the workspace
+//! round-trip invariant is `parse_on` then `serialize_into`.
+//!
 //! # Signalling only — no crypto
 //!
 //! The control words in `CP_CW_combination`/`CW_encryption`, the ECMs in

@@ -44,13 +44,24 @@ For TS-packet-level operation (extracts the payload, respects the adaptation
 field):
 
 ```rust
-use dvb_csa::{ControlWord, ts};
+use dvb_csa::ts::{self, KeyParity};
+use dvb_csa::ControlWord;
 
 let cw = ControlWord::from_bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
-let mut packet = [0u8; 188];
-// ... fill packet ...
-let _ = ts::scramble_ts_packet(&cw, &mut packet);
+let mut packet = [0xAA_u8; 188];
+packet[..4].copy_from_slice(&[0x47, 0x01, 0x00, 0x10]); // sync, PID 0x100, payload only, clear
+let clear = packet;
+
+ts::scramble_ts_packet(&cw, KeyParity::Even, &mut packet).unwrap();
+assert_ne!(packet[4..], clear[4..]); // payload scrambled
+ts::descramble_ts_packet(&cw, KeyParity::Even, &mut packet).unwrap();
+assert_eq!(packet, clear); // and back
 ```
+
+The parity names which control word (even/odd) scrambles the packet and is
+written into `transport_scrambling_control`; the call returns an error (rather
+than scrambling twice) if the packet is already scrambled. This snippet is
+compiled and run as a doctest on `ts::scramble_ts_packet`.
 
 ## Bitsliced batch fast path
 

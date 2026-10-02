@@ -94,7 +94,7 @@ impl RealTimeParameters {
     }
 
     /// Encode into the 4-byte real_time_parameters block via the shared codec.
-    fn to_bytes(self) -> [u8; RTP_LEN] {
+    fn to_bytes(self) -> Result<[u8; RTP_LEN]> {
         RealTimeParametersBits {
             delta_t: self.delta_t,
             boundary: self.mpe_boundary,
@@ -102,6 +102,7 @@ impl RealTimeParameters {
             tail: self.prev_burst_size,
         }
         .to_bytes()
+        .map_err(Error::from)
     }
 }
 
@@ -223,7 +224,7 @@ impl Serialize for MpeIfecSection<'_> {
 
         // real_time_parameters.
         let rtp_start = HEADER_LEN + EXTENSION_HEADER_LEN;
-        buf[rtp_start..rtp_start + RTP_LEN].copy_from_slice(&self.real_time_parameters.to_bytes());
+        buf[rtp_start..rtp_start + RTP_LEN].copy_from_slice(&self.real_time_parameters.to_bytes()?);
 
         // ifec_data.
         let data_start = rtp_start + RTP_LEN;
@@ -317,7 +318,7 @@ mod tests {
             frame_boundary: true,
             prev_burst_size: 0x0003_FFFF,
         };
-        assert_eq!(RealTimeParameters::from_bytes(rtp.to_bytes()), rtp);
+        assert_eq!(RealTimeParameters::from_bytes(rtp.to_bytes().unwrap()), rtp);
     }
 
     #[test]
@@ -386,6 +387,34 @@ mod tests {
         assert!(matches!(
             s.serialize_into(&mut buf).unwrap_err(),
             Error::OutputBufferTooSmall { .. }
+        ));
+    }
+
+    #[test]
+    fn serialize_rejects_over_wide_real_time_parameters() {
+        let mut rtp = sample_rtp();
+        rtp.delta_t = 0x1000; // 13 bits
+        let mut s = MpeIfecSection {
+            private_indicator: false,
+            burst_number: 0,
+            ifec_burst_size: 0,
+            version: 0,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            real_time_parameters: rtp,
+            ifec_data: &[],
+        };
+        let mut buf = vec![0u8; s.serialized_len()];
+        assert!(matches!(
+            s.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+        s.real_time_parameters = sample_rtp();
+        s.real_time_parameters.prev_burst_size = 0x4_0000; // 19 bits
+        assert!(matches!(
+            s.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
         ));
     }
 

@@ -264,12 +264,20 @@ impl Serialize for SubstreamInfo {
             buf[pos + 2] = ((a.bit_rate_or_scaled as u8 & 0x3F) << 2) | (a.reserved & 0x03);
             pos += ASSET_FIXED_LEN;
             if a.component_type_flag {
-                buf[pos] = a.component_type.unwrap_or(0);
+                // The flag promises a wire byte; inventing `0` would emit a
+                // value the caller never set.
+                buf[pos] = a.component_type.ok_or(Error::ValueOutOfRange {
+                    field: "component_type",
+                    reason: "component_type_flag is set but component_type is None",
+                })?;
                 pos += 1;
             }
             if a.language_code_flag {
-                buf[pos..pos + ISO_639_LEN]
-                    .copy_from_slice(&a.iso_639_language_code.unwrap_or(LangCode(*b"   ")).0);
+                let lang = a.iso_639_language_code.ok_or(Error::ValueOutOfRange {
+                    field: "iso_639_language_code",
+                    reason: "language_code_flag is set but iso_639_language_code is None",
+                })?;
+                buf[pos..pos + ISO_639_LEN].copy_from_slice(&lang.0);
                 pos += ISO_639_LEN;
             }
         }
@@ -678,5 +686,43 @@ mod tests {
         // tag, length, tag_extension, flags, substream_length
         assert_eq!(buf[4], 0x09);
         assert_eq!(buf.as_slice(), bytes.as_slice());
+    }
+
+    #[test]
+    fn serialize_rejects_flag_set_without_value() {
+        let base = AssetInfo {
+            asset_construction: 1,
+            vbr_flag: false,
+            post_encode_br_scaling_flag: false,
+            component_type_flag: true,
+            language_code_flag: false,
+            bit_rate_or_scaled: 0,
+            reserved: 0,
+            component_type: None,
+            iso_639_language_code: None,
+        };
+        let lang_missing = AssetInfo {
+            component_type_flag: false,
+            language_code_flag: true,
+            ..base.clone()
+        };
+        for (asset, field) in [
+            (base, "component_type"),
+            (lang_missing, "iso_639_language_code"),
+        ] {
+            let s = SubstreamInfo {
+                channel_count: 2,
+                lfe_flag: false,
+                sampling_frequency: SamplingFrequency::from_u8(12),
+                sample_resolution: false,
+                reserved: 0,
+                assets: alloc::vec![asset],
+            };
+            let mut buf = vec![0u8; s.serialized_len()];
+            assert!(matches!(
+                s.serialize_into(&mut buf).unwrap_err(),
+                Error::ValueOutOfRange { field: f, .. } if f == field
+            ));
+        }
     }
 }

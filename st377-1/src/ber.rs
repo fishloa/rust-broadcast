@@ -11,6 +11,15 @@
 
 use crate::error::{Error, Result};
 
+/// High bit of the first BER length byte: set means long form (X.690 §8.1.3).
+const BER_LONG_FORM_FLAG: u8 = 0x80;
+/// Low 7 bits of a long-form first byte: the count of following length bytes.
+const BER_LONG_FORM_COUNT_MASK: u8 = 0x7F;
+/// Largest length representable in short form (one byte, high bit clear).
+const BER_SHORT_FORM_MAX: u64 = 0x7F;
+/// Longest BER length token: 1 header byte + 8 length bytes (ST 377-1 §6.3.4).
+const BER_MAX_TOKEN_LEN: usize = 9;
+
 /// The BER length-field width to serialize a value's length with (issue
 /// #1047 / audit MX-C1). `docs/st377-1.md` §6.3.4 permits any valid BER
 /// form for a length token; real MXF encoders routinely write a longer,
@@ -60,12 +69,12 @@ pub fn decode_ber_length(bytes: &[u8]) -> Result<(u64, usize)> {
         what: "BER length first byte",
     })?;
 
-    if first & 0x80 == 0 {
+    if first & BER_LONG_FORM_FLAG == 0 {
         // Short form: value is the byte itself.
         return Ok((u64::from(first), 1));
     }
 
-    let following = usize::from(first & 0x7F);
+    let following = usize::from(first & BER_LONG_FORM_COUNT_MASK);
     if following == 0 {
         // 0x80 alone: reserved "unspecified length" — forbidden in MXF.
         return Err(Error::BerIndefiniteLength);
@@ -93,7 +102,7 @@ pub fn decode_ber_length(bytes: &[u8]) -> Result<(u64, usize)> {
 /// shortest long form that fits).
 #[must_use]
 pub fn ber_length_size(len: u64) -> usize {
-    if len <= 0x7F {
+    if len <= BER_SHORT_FORM_MAX {
         1
     } else {
         let bytes_needed = (64 - len.leading_zeros()).div_ceil(8) as usize;
@@ -112,11 +121,11 @@ pub fn encode_ber_length(len: u64, buf: &mut [u8]) -> Result<usize> {
             what: "BER length output",
         });
     }
-    if len <= 0x7F {
+    if len <= BER_SHORT_FORM_MAX {
         buf[0] = len as u8;
     } else {
         let following = size - 1;
-        buf[0] = 0x80 | (following as u8);
+        buf[0] = BER_LONG_FORM_FLAG | (following as u8);
         let be = len.to_be_bytes();
         buf[1..size].copy_from_slice(&be[8 - following..]);
     }
@@ -140,18 +149,23 @@ pub fn ber_length_size_for(len: u64, width: BerLength) -> usize {
 /// long-form length token across parse -> serialize). Returns the number
 /// of bytes written (always [`ber_length_size_for`]`(len, width)`).
 ///
-/// Errors (in addition to `BufferTooShort`, checked first): `Fixed(1)`
-/// (short form) when `len > 0x7F`, or `Fixed(n)` (long form, `n - 1`
-/// length bytes) when `len` doesn't fit in `n - 1` bytes — both
-/// [`Error::BerLengthTooLong`], since the requested fixed width cannot
-/// represent this length at all (never produced by parsing a
-/// well-formed file; only reachable by building/mutating a value by hand
-/// into an inconsistent state).
+/// Errors (never produced by parsing a well-formed file; only reachable by
+/// building/mutating a value by hand into an inconsistent state):
+/// - `Fixed(n)` with `n > 9` (more than the 8 following length bytes §6.3.4
+///   allows): [`Error::BerLengthTooLong`], checked before anything else.
+/// - `BufferTooShort`, when `buf` is shorter than the fixed width.
+/// - `Fixed(1)` (short form) when `len > 0x7F`, or `Fixed(n)` (long form,
+///   `n - 1` length bytes) when `len` doesn't fit in `n - 1` bytes:
+///   [`Error::FixedBerLengthTooSmall`], since the requested fixed width
+///   cannot represent this length.
 pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Result<usize> {
     match width {
         BerLength::Minimal => encode_ber_length(len, buf),
         BerLength::Fixed(n) => {
             let size = usize::from(n.get());
+            if size > BER_MAX_TOKEN_LEN {
+                return Err(Error::BerLengthTooLong { bytes: size - 1 });
+            }
             if buf.len() < size {
                 return Err(Error::BufferTooShort {
                     need: size,
@@ -160,7 +174,7 @@ pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Resul
                 });
             }
             if size == 1 {
-                if len > 0x7F {
+                if len > BER_SHORT_FORM_MAX {
                     return Err(Error::FixedBerLengthTooSmall {
                         len,
                         width: n.get(),
@@ -175,7 +189,7 @@ pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Resul
                         width: n.get(),
                     });
                 }
-                buf[0] = 0x80 | (following as u8);
+                buf[0] = BER_LONG_FORM_FLAG | (following as u8);
                 let be = len.to_be_bytes();
                 buf[1..size].copy_from_slice(&be[8 - following..]);
             }
@@ -187,6 +201,26 @@ pub fn encode_ber_length_as(len: u64, width: BerLength, buf: &mut [u8]) -> Resul
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fixed_width_over_nine_is_rejected_not_panicking() {
+        use core::num::NonZeroU8;
+        let mut buf = [0u8; 300];
+        for width in [10u8, 11, 64, 255] {
+            let w = BerLength::Fixed(NonZeroU8::new(width).unwrap());
+            assert_eq!(
+                encode_ber_length_as(5, w, &mut buf),
+                Err(Error::BerLengthTooLong {
+                    bytes: usize::from(width) - 1
+                }),
+                "width {width}"
+            );
+        }
+        // The widest legal token (9 bytes) still encodes.
+        let w9 = BerLength::Fixed(NonZeroU8::new(9).unwrap());
+        assert_eq!(encode_ber_length_as(5, w9, &mut buf), Ok(9));
+        assert_eq!(&buf[..9], &[0x88, 0, 0, 0, 0, 0, 0, 0, 5]);
+    }
 
     #[test]
     fn short_form_round_trip() {

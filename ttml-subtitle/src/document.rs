@@ -262,7 +262,9 @@ pub struct TtElement {
     pub head: Option<HeadElement>,
     /// Optional `<body>` child.
     pub body: Option<BodyElement>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
     /// Vendor `xmlns:` declarations written on `<tt>` itself. roxmltree
@@ -385,7 +387,9 @@ pub struct HeadElement {
     pub layout: Option<LayoutElement>,
     /// `<resources>` container (TTML2 §9.1.6).
     pub resources: Option<ResourcesElement>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -429,7 +433,9 @@ pub struct BodyElement {
     pub metadata: Vec<MetadataChild>,
     /// Animation children.
     pub animations: Vec<AnimationChild>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -479,7 +485,9 @@ pub struct DivElement {
     pub metadata: Vec<MetadataChild>,
     /// Animation children.
     pub animations: Vec<AnimationChild>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -524,7 +532,9 @@ pub struct PElement {
     pub metadata: Vec<MetadataChild>,
     /// Animation children.
     pub animations: Vec<AnimationChild>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -569,7 +579,9 @@ pub struct SpanElement {
     pub metadata: Vec<MetadataChild>,
     /// Animation children.
     pub animations: Vec<AnimationChild>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -636,7 +648,9 @@ pub struct SetElement {
     pub foreign_attributes: Vec<ForeignAttribute>,
     /// Child `<metadata>` elements (TTML2 §13.1.3 content model).
     pub metadata: Vec<MetadataChild>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -700,7 +714,9 @@ pub struct ImageElement {
     pub animations: Vec<AnimationChild>,
     /// Child `<source>` elements (TTML2 §9.1.7).
     pub sources: Vec<SourceElement>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -777,7 +793,9 @@ pub struct MetadataElement {
     pub foreign_attributes: Vec<ForeignAttribute>,
     /// Child metadata items.
     pub children: Vec<MetadataChild>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
     /// `xmlns:` declarations scoped to this element; re-emitted on `<tt>`
@@ -804,7 +822,9 @@ pub struct TtmTextElement {
     /// Attributes in namespaces this crate does not model, preserved with
     /// their original `xmlns:` prefix bindings (TTML2 §7.2, #1110/TT-W1).
     pub foreign_attributes: Vec<ForeignAttribute>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
     /// `xmlns:` declarations scoped to this element; re-emitted on `<tt>`
@@ -833,7 +853,9 @@ pub struct TtmAgentElement {
     /// Attributes in namespaces this crate does not model, preserved with
     /// their original `xmlns:` prefix bindings (TTML2 §7.2, #1110/TT-W1).
     pub foreign_attributes: Vec<ForeignAttribute>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
     /// `xmlns:` declarations scoped to this element; re-emitted on `<tt>`
@@ -862,7 +884,9 @@ pub struct TtmNameElement {
     /// Attributes in namespaces this crate does not model, preserved with
     /// their original `xmlns:` prefix bindings (TTML2 §7.2, #1110/TT-W1).
     pub foreign_attributes: Vec<ForeignAttribute>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
     /// `xmlns:` declarations scoped to this element; re-emitted on `<tt>`
@@ -893,7 +917,9 @@ pub struct TtmItemElement {
     /// Attributes in namespaces this crate does not model, preserved with
     /// their original `xmlns:` prefix bindings (TTML2 §7.2, #1110/TT-W1).
     pub foreign_attributes: Vec<ForeignAttribute>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
     /// `xmlns:` declarations scoped to this element; re-emitted on `<tt>`
@@ -910,7 +936,9 @@ pub struct EbuttmElement {
     pub foreign_attributes: Vec<ForeignAttribute>,
     /// Children within the EBU-TT-M element.
     pub children: Vec<MetadataChild>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
     /// `xmlns:` declarations scoped to this element; re-emitted on `<tt>`
@@ -947,7 +975,9 @@ pub struct IttmAltTextElement {
     /// Attributes in namespaces this crate does not model, preserved with
     /// their original `xmlns:` prefix bindings (TTML2 §7.2, #1110/TT-W1).
     pub foreign_attributes: Vec<ForeignAttribute>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
     /// Text content.
@@ -974,7 +1004,9 @@ pub struct LayoutElement {
     /// Attributes in namespaces this crate does not model, preserved with
     /// their original `xmlns:` prefix bindings (TTML2 §7.2, #1110/TT-W1).
     pub foreign_attributes: Vec<ForeignAttribute>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
     /// Child `<region>` elements.
@@ -1022,7 +1054,9 @@ pub struct RegionElement {
     pub animations: Vec<AnimationChild>,
     /// Child `<style>` elements (§11.1.2 content model).
     pub styles: Vec<StyleElement>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -1048,7 +1082,9 @@ pub struct StylingElement {
     /// Attributes in namespaces this crate does not model, preserved with
     /// their original `xmlns:` prefix bindings (TTML2 §7.2, #1110/TT-W1).
     pub foreign_attributes: Vec<ForeignAttribute>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -1072,7 +1108,9 @@ pub struct InitialElement {
     /// Attributes in namespaces this crate does not model, preserved with
     /// their original `xmlns:` prefix bindings (TTML2 §7.2, #1110/TT-W1).
     pub foreign_attributes: Vec<ForeignAttribute>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -1098,7 +1136,9 @@ pub struct StyleElement {
     /// Attributes in namespaces this crate does not model, preserved with
     /// their original `xmlns:` prefix bindings (TTML2 §7.2, #1110/TT-W1).
     pub foreign_attributes: Vec<ForeignAttribute>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -1311,7 +1351,9 @@ pub struct AudioElement {
     /// Character data directly inside `<audio>` (TTML2 §9.3 allows
     /// Character.class content; IMSC audio is usually empty).
     pub text: Option<String>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -1378,7 +1420,9 @@ pub struct DataElement {
     pub chunks: Vec<ChunkElement>,
     /// Child `<source>` elements (when content is `(Metadata.class*, source+)`).
     pub sources: Vec<SourceElement>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -1423,7 +1467,9 @@ pub struct FontElement {
     pub animations: Vec<AnimationChild>,
     /// Child `<source>` elements (§9.1.7).
     pub sources: Vec<SourceElement>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -1453,7 +1499,9 @@ pub struct ResourcesElement {
     pub audio: Vec<AudioElement>,
     /// Child `<font>` elements (§9.1.4).
     pub fonts: Vec<FontElement>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -1490,7 +1538,9 @@ pub struct SourceElement {
     pub metadata: Vec<MetadataChild>,
     /// Optional nested `<data>` (§9.1.7 content model: `Metadata.class*, data?`).
     pub data: Option<Box<DataElement>>,
-    /// Unmodeled child elements preserved in document order (TTML2 §7.2/§7.3,
+    /// Unmodeled child elements, in document order relative to each other (their
+    /// position among the modeled/metadata/animation children is not tracked;
+    /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
 }
@@ -2163,7 +2213,9 @@ fn parse_span_element_impl(
                 }
             }
             Walk::Text(child) => {
-                let frame = open.last_mut().expect("text inside an open span");
+                let Some(frame) = open.last_mut() else {
+                    return Err(span_walk_invariant("text inside an open span"));
+                };
                 let text = child.text().unwrap_or("");
                 if let Some(InlineContent::Text(last)) = frame.content.last_mut() {
                     last.push_str(text);
@@ -2172,7 +2224,9 @@ fn parse_span_element_impl(
                 }
             }
             Walk::Inline(child) => {
-                let frame = open.last_mut().expect("inline child inside an open span");
+                let Some(frame) = open.last_mut() else {
+                    return Err(span_walk_invariant("inline child inside an open span"));
+                };
                 match (child.tag_name().name(), child.tag_name().namespace()) {
                     ("br", Some(NS_TT)) => frame
                         .content
@@ -2187,7 +2241,9 @@ fn parse_span_element_impl(
                 }
             }
             Walk::Meta(child) => {
-                let frame = open.last_mut().expect("meta child inside an open span");
+                let Some(frame) = open.last_mut() else {
+                    return Err(span_walk_invariant("meta child inside an open span"));
+                };
                 let name = child.tag_name().name();
                 let ns = child.tag_name().namespace();
                 match (name, ns) {
@@ -2203,7 +2259,9 @@ fn parse_span_element_impl(
                 }
             }
             Walk::Close(n) => {
-                let frame = open.pop().expect("close matches an open span");
+                let Some(frame) = open.pop() else {
+                    return Err(span_walk_invariant("close without a matching open span"));
+                };
                 let style_attrs = parse_style_attributes(n);
                 let span = SpanElement {
                     xml_id: attribute_value(&n, NS_XML, "id").map(|s| s.to_string()),
@@ -2232,9 +2290,19 @@ fn parse_span_element_impl(
             }
         }
     }
-    Ok(Box::new(
-        root_span.expect("the root span frame always closes"),
-    ))
+    root_span
+        .map(Box::new)
+        .ok_or_else(|| span_walk_invariant("the root span frame never closed"))
+}
+
+/// The iterative span walk's push/pop discipline was violated. Unreachable by
+/// construction (every `Open` pushes its own `Close`), but reported as an
+/// error rather than a panic so hostile input can never abort the parser.
+fn span_walk_invariant(what: &'static str) -> Error {
+    Error::ConstraintViolation {
+        constraint: "Span walk invariant".to_string(),
+        detail: what.to_string(),
+    }
 }
 fn parse_br_element(node: roxmltree::Node<'_, '_>) -> Result<BrElement> {
     let style_attrs = parse_style_attributes(node);

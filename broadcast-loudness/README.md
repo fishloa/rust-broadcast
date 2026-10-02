@@ -16,8 +16,12 @@ Loudness Range (LRA, LU), and true-peak level (dBTP).
 ```rust
 use broadcast_loudness::{ChannelLayout, LoudnessMeter};
 
+// One second of planar stereo silence at 48 kHz.
+let left_samples = vec![0.0_f32; 48_000];
+let right_samples = vec![0.0_f32; 48_000];
+
 let mut meter = LoudnessMeter::new(48_000, ChannelLayout::Stereo).unwrap();
-meter.push_interleaved_f32(&left_samples, &right_samples).unwrap();
+meter.push_stereo_planar_f32(&left_samples, &right_samples).unwrap();
 meter.finish();
 
 println!("Integrated: {:.1} LUFS", meter.integrated_lufs());
@@ -25,6 +29,9 @@ println!("LRA:       {:.1} LU",   meter.loudness_range());
 println!("Max M:     {:.1} LUFS", meter.max_momentary_lufs());
 println!("Max S:     {:.1} LUFS", meter.max_short_term_lufs());
 ```
+
+This snippet is compiled and run as a doctest on `LoudnessMeter::push_stereo_planar_f32`
+(for interleaved or multichannel input use `push_f32` / `push_f64`).
 
 ## Features
 

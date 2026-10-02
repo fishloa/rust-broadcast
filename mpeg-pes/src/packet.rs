@@ -34,6 +34,12 @@ const EXT_PROGRAM_PACKET_SEQUENCE_COUNTER: u8 = 0x20;
 const EXT_P_STD_BUFFER: u8 = 0x10;
 const EXT_FLAG_2: u8 = 0x01;
 
+/// Table 2-21: `marker_bit` / `stream_id_extension_flag` is the MSB of the
+/// byte; the remaining 7 bits carry the length / extension value.
+const MSB_FLAG: u8 = 0x80;
+/// Mask of those low 7 bits (`PES_extension_field_length`, `stream_id_extension`).
+const LOW7_MASK: u8 = 0x7F;
+
 // ── ESCR (ISO/IEC 13818-1 §2.4.3.7 Table 2-21) ──────────────────────────────
 
 /// Elementary Stream Clock Reference: 33-bit base (90 kHz) + 9-bit extension
@@ -383,7 +389,7 @@ impl<'a> PesExtension<'a> {
             // Table 2-21: marker_bit(1) + PES_extension_field_length(7), not a
             // plain 8-bit length (issue #1052) — the high bit is a marker,
             // not part of the count.
-            let ext_len = (len_byte & 0x7F) as usize;
+            let ext_len = (len_byte & LOW7_MASK) as usize;
             cursor += 1;
             let end = cursor + ext_len;
             let field_bytes = data.get(cursor..end).ok_or(Error::BufferTooShort {
@@ -399,8 +405,8 @@ impl<'a> PesExtension<'a> {
                 what: "PES_extension_field.stream_id_extension byte",
             })?;
             Some(PesExtensionField {
-                stream_id_extension_flag: (sie_byte & 0x80) != 0,
-                low_bits: sie_byte & 0x7F,
+                stream_id_extension_flag: (sie_byte & MSB_FLAG) != 0,
+                low_bits: sie_byte & LOW7_MASK,
                 rest,
             })
         } else {
@@ -503,9 +509,9 @@ impl<'a> PesExtension<'a> {
                 7,
                 "PES_extension.PES_extension_field_length",
             )?;
-            buf[cursor] = 0x80 | (checked as u8);
+            buf[cursor] = MSB_FLAG | (checked as u8);
             cursor += 1;
-            buf[cursor] = ((ef.stream_id_extension_flag as u8) << 7) | (ef.low_bits & 0x7F);
+            buf[cursor] = ((ef.stream_id_extension_flag as u8) << 7) | (ef.low_bits & LOW7_MASK);
             cursor += 1;
             buf[cursor..cursor + ef.rest.len()].copy_from_slice(ef.rest);
             cursor += ef.rest.len();

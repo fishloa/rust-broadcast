@@ -184,7 +184,7 @@ fn bench_up_iter_nm(c: &mut Criterion) {
         b.iter(|| {
             let mut count = 0u64;
             for _ in 0..10 {
-                for pkt in NmTsIter::new(black_box(&data_field), NM_UP_SIZE) {
+                for pkt in NmTsIter::new(black_box(&data_field), NM_UP_SIZE).unwrap() {
                     let _ = black_box(pkt);
                     count += 1;
                 }

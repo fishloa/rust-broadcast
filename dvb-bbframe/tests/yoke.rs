@@ -27,7 +27,7 @@ fn yoked_iter_outlives_source_vec() {
     // scope; the yoked iterator view must keep working afterwards.
     let yoked: Yoke<NmTsIter<'static>, Arc<[u8]>> = {
         let cart: Arc<[u8]> = Arc::from(two_up_data_field()); // source moved here
-        Yoke::attach_to_cart(cart, |b| NmTsIter::new(b, NM_UP_SIZE))
+        Yoke::attach_to_cart(cart, |b| NmTsIter::new(b, NM_UP_SIZE).unwrap())
     };
 
     // The view still points at live, owned bytes: `size_hint` reports the two
@@ -48,7 +48,7 @@ fn yoked_iter_outlives_source_vec() {
 fn yoked_iter_crosses_thread_boundary() {
     let yoked: Yoke<NmTsIter<'static>, Arc<[u8]>> =
         Yoke::attach_to_cart(Arc::from(two_up_data_field()), |b| {
-            NmTsIter::new(b, NM_UP_SIZE)
+            NmTsIter::new(b, NM_UP_SIZE).unwrap()
         });
 
     let count = std::thread::spawn(move || (*yoked.get()).count())

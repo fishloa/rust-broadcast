@@ -5,6 +5,9 @@
 //! [`bcd`] / [`time`] / [`hex`] codecs, the [`len`] range-checked wire-field
 //! narrowing those serializers use, the [`mux`] container-mux traits, the
 //! [`cenc`] Common Encryption scheme identity those traits protect with, and
+//! the [`clock33`] 33-bit wrapping-clock arithmetic (`add`, `add_signed`,
+//! `signed_distance`, `unwrap_delta`), the [`pusi`] PUSI-delimited unit
+//! accumulator, and
 //! the [`ts_dup`] ITU-T H.222.0 §2.4.3.3 legal-duplicate-packet check shared
 //! by `dvb-conformance`, `media-doctor` and `ts-fix`.
 //!

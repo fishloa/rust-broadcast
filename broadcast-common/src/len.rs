@@ -53,26 +53,32 @@ pub fn fit_bits(value: u64, bits: u32, field: &'static str) -> Result<u64, Field
 
 /// `value` as a `u8`, or [`FieldOverflow`] with `max` 255.
 pub fn fit_u8(value: usize, field: &'static str) -> Result<u8, FieldOverflow> {
-    let fitted = fit_bits(u64::try_from(value).expect("usize fits in u64"), 8, field)?;
-    Ok(u8::try_from(fitted).expect("a value that fits in 8 bits is a u8"))
+    // `usize` is at most 64 bits on every supported target, so the widening
+    // cast is lossless; the narrowing one is guarded by `fit_bits`.
+    let fitted = fit_bits(value as u64, 8, field)?;
+    Ok(fitted as u8)
 }
 
 /// `value` as a `u16`, or [`FieldOverflow`] with `max` 65 535.
 pub fn fit_u16(value: usize, field: &'static str) -> Result<u16, FieldOverflow> {
-    let fitted = fit_bits(u64::try_from(value).expect("usize fits in u64"), 16, field)?;
-    Ok(u16::try_from(fitted).expect("a value that fits in 16 bits is a u16"))
+    // `usize` is at most 64 bits on every supported target, so the widening
+    // cast is lossless; the narrowing one is guarded by `fit_bits`.
+    let fitted = fit_bits(value as u64, 16, field)?;
+    Ok(fitted as u16)
 }
 
 /// 24-bit field (e.g. FLV/RTMP UI24), returned in a u32.
 pub fn fit_u24(value: usize, field: &'static str) -> Result<u32, FieldOverflow> {
-    let fitted = fit_bits(u64::try_from(value).expect("usize fits in u64"), 24, field)?;
-    Ok(u32::try_from(fitted).expect("a value that fits in 24 bits is a u32"))
+    let fitted = fit_bits(value as u64, 24, field)?;
+    Ok(fitted as u32)
 }
 
 /// `value` as a `u32`, or [`FieldOverflow`] with `max` 4 294 967 295.
 pub fn fit_u32(value: usize, field: &'static str) -> Result<u32, FieldOverflow> {
-    let fitted = fit_bits(u64::try_from(value).expect("usize fits in u64"), 32, field)?;
-    Ok(u32::try_from(fitted).expect("a value that fits in 32 bits is a u32"))
+    // `usize` is at most 64 bits on every supported target, so the widening
+    // cast is lossless; the narrowing one is guarded by `fit_bits`.
+    let fitted = fit_bits(value as u64, 32, field)?;
+    Ok(fitted as u32)
 }
 
 #[cfg(test)]

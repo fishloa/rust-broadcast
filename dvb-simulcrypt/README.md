@@ -51,7 +51,7 @@ use dvb_simulcrypt::{
     EcmgScsMessageType, EcmgScsParameterType, Interface, MessageType, Parameter,
     ParameterType, SimulcryptMessage,
 };
-use broadcast_common::traits::{Parse, Serialize};
+use broadcast_common::traits::Serialize;
 
 let ecm_channel_id = [0x00, 0x2A];
 let super_cas_id = [0x00, 0x01, 0x00, 0x02];
@@ -74,6 +74,9 @@ let mut buf = vec![0u8; msg.serialized_len()];
 msg.serialize_into(&mut buf).unwrap();
 assert_eq!(SimulcryptMessage::parse_on(Interface::EcmgScs, &buf).unwrap(), msg);
 ```
+
+`SimulcryptMessage` has no `Parse` impl (decoding needs the connection's
+`Interface`, which is not on the wire) — use `parse_on`; see the crate docs.
 
 ## Examples
 

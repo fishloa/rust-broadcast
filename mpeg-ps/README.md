@@ -3,11 +3,14 @@
 [![Crates.io](https://img.shields.io/crates/v/mpeg-ps.svg)](https://crates.io/crates/mpeg-ps)
 [![docs.rs](https://img.shields.io/docsrs/mpeg-ps)](https://docs.rs/mpeg-ps)
 
-MPEG-1/2 Program Stream parser — ISO/IEC 13818-1 (Rec. ITU-T H.222.0) §2.5.
+MPEG-2 Program Stream parser — ISO/IEC 13818-1 (Rec. ITU-T H.222.0) §2.5.
 
 Parses the `.mpg`/`.vob` framing that wraps PES packets: the pack header
 (42-bit SCR + `program_mux_rate`), the optional system header (rate/audio/video
 bounds + per-stream P-STD buffer bounds), and the program stream map (PSM).
+
+MPEG-1 (ISO/IEC 11172-1) packs are recognised and rejected with
+`Error::Mpeg1NotSupported`, never mis-parsed.
 
 `#![no_std]` + `alloc`; depends only on `broadcast-common` and `mpeg-pes`.
 
@@ -34,6 +37,12 @@ let data = fs::read("tests/fixtures/ffmpeg-mpeg2-ps.mpg").unwrap();
 let (packs, _) = program_stream::parse_all_packs(&data).unwrap();
 println!("Found {} packs", packs.len());
 ```
+
+For damaged streams, `program_stream::scan_packs` returns a `PackScan`:
+every pack that parsed (`packs`), every span it had to skip with the error
+(`skipped`, resynchronising on the next `pack_start_code`), and the
+`remaining` tail — instead of abandoning the stream at the first bad pack.
+The call is exercised by a doctest on `scan_packs`, so it cannot rot.
 
 ## Examples
 

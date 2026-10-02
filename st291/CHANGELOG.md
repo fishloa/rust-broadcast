@@ -15,11 +15,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed (breaking)
-- `ts::write_pts` (used internally by the ST 2038 PES serializer) now returns
-  an error, instead of silently masking, when a PTS does not fit its 33-bit
-  wire field (#1129).
-
 ### Fixed
 - The ST 2038 PES serializer no longer silently masks a PTS of 2^33 or more
   to a different (wrapped) timestamp; it now rejects it with

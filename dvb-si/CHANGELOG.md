@@ -9,8 +9,103 @@
   (`#[error(transparent)]` over `broadcast_common::len::FieldOverflow`).
 - `broadcast-common` requirement raised to `9.4` (same epoch) for the new
   `broadcast_common::len` helpers.
+- `tables::int::IntLoopEntry` is now a type alias for the new shared
+  `tables::TargetOperationalLoop` (same fields), and
+  `tables::unt::UntPlatform::target_operational_pairs` changed from
+  `Vec<(DescriptorLoop, DescriptorLoop)>` to
+  `Vec<TargetOperationalLoop>` — INT and UNT define the identical
+  target/operational descriptor-loop pair and no longer use two
+  representations (r02-W22).
+- `collect::CompleteNit`/`CompleteBat`: `network_descriptors`/
+  `bouquet_descriptors` only reflected section 0's loop, though EN 300 468
+  §5.2.1/§5.2.2 give every section its own loop. `ParsedDescriptorLoop` now
+  merges every contributing section's loop (`raw()` returns `&[DescriptorLoop]`,
+  one per section — a breaking API change).
+- `carousel::biop::message::ServiceGatewayInfo`: had no `Serialize` impl
+  (broke the crate-wide Parse/Serialize symmetry), and `to_bytes` panicked
+  on over-255 `service_context` entries and silently truncated an
+  over-65,535-byte `user_info`. Implemented `Serialize`; `to_bytes` now
+  returns `Result<Vec<u8>>` (breaking).
+- `tables::pmt`/`tables::dsmcc`: removed the `PID = 0x0000` placeholder
+  constant — it equals the real PAT PID, so a caller filtering on it would
+  silently pick up PAT traffic (breaking).
+- `tables::rct`: the descriptor loop in `LinkInfo`/`RctSection` accepted
+  trailing bytes between the loop and `link_info_length`/the CRC, silently
+  dropping them on re-serialize. Both now rejected. `DvbBinaryLocator` also
+  carried `identifier_type`/`inline_service` as separate fields alongside
+  `identifier`/`service`, a second source of truth a caller could set
+  inconsistently with the enum variant being serialized; both are now
+  derived (`identifier_type()`/`inline_service()` methods), and
+  `windows`/`identifier`/`scheduled_time_reliability` consistency is
+  validated at serialize (breaking: the two fields were removed from the
+  struct).
+- `tables::ait`: `ApplicationType::UserDefined` (documented for
+  `0x8000..=0xFFFF`) could never be produced by `from_u16`, since
+  `application_type` is a 15-bit wire field (bit 15 is the separate
+  `test_application_flag`) — and the serializer silently dropped bit 15 of
+  a directly-constructed out-of-range value instead of rejecting it.
+  Removed the unreachable variant (breaking) and added an explicit 15-bit
+  range check on serialize.
+- `descriptors::private_data_indicator`: corrected the module citation
+  (§2.6.22, which is actually `multiplex_buffer_utilization_descriptor` →
+  §2.6.28) and removed a re-exported DVB PDS-registry name lookup that
+  doesn't apply to this ISO/IEC 13818-1 field (breaking).
+- Serializers no longer fabricate wire values for flag-gated fields:
+  `unwrap_or(0)`/defaulted conditionals in metadata_pointer (transport_stream_id
+  locator flag now derived from the Option), avc_timing_and_HRD (N/K),
+  video_stream (profile_and_level_indication/chroma_format/
+  frame_rate_extension_flag), s2/s2x/s2xv2 satellite delivery (scrambling
+  sequence index, ISI, timeslice, SFFI, beamhopping time plan id), ac4 (config
+  fields) and uri_linkage (min_polling_interval for ungated types) now return
+  `ValueOutOfRange` instead of silently inventing bytes; `ExtensionDescriptor`
+  serialization rejects a `tag_extension` that disagrees with its typed body;
+  `ExtendedEventLinkageEntry` no longer stores `target_id_type`/
+  `original_network_id_flag`/`service_id_flag` — those wire bits are derived
+  from its `TargetId` (breaking) (r03-W5, #1077).
+- `carousel::biop::message::ServiceGatewayInfo::download_taps` was a raw
+  `&[u8]` (count byte + tap bytes) instead of a typed `Vec<Tap<'_>>`; a
+  caller had to hand-parse each `Tap` itself even though the crate already
+  has a `Tap` parser used by every other BIOP consumer (r02-W12, breaking).
+- `carousel::biop::fs::DirectoryObjectData::entries` was an untyped
+  `Vec<(Vec<u8>, u16, Vec<u8>)>`; replaced with a named `DirectoryEntry {
+  name, module_id, object_key }` (r02-W12, breaking).
+- `carousel::biop::message::ModuleInfo::user_info` was a raw `&[u8]`
+  reimplementing its own private tag/length descriptor-loop walker;
+  replaced with `descriptors::DescriptorLoop` (the crate's existing typed
+  wrapper) and `descriptors()` now delegates to
+  `DescriptorLoop::raw_tags()` instead of a duplicate walker (r02-W12,
+  breaking).
+- `carousel::biop::message::CompressedModuleDescriptor` exposed only a raw
+  `body: &[u8]`, so the `compression_method`/`original_size` fixed fields
+  (EN 301 192 §10.2.11 Table 59) were left for a caller to hand-slice off
+  the front of the zlib stream. Split into typed `compression_method`,
+  `original_size` and `zlib_data` fields; `ModuleInfo::compressed_module_descriptor`
+  now returns `Option<Result<CompressedModuleDescriptor<'_>>>` so a body
+  shorter than the fixed fields is a surfaced error, not a panic (r02-W12,
+  breaking).
+
+- The MPE-FEC/MPE-IFEC `real_time_parameters` encode no longer masks
+  silently: `delta_t` over 12 bits or `address`/`prev_burst_size` over 18 bits
+  now fail `serialize_into` with `Error::FieldOverflow` instead of being
+  masked (release audit).
+
+### Added
+- `carousel::biop::message::MAX_DECOMPRESSED_MODULE_SIZE` (64 MiB) and
+  `decompress_zlib_bounded(data, max_len)`, a general form of
+  `decompress_zlib` for callers that have a tighter, descriptor-declared size
+  to enforce.
 
 ### Fixed
+- `descriptors::extension::dts_hd`: a DTS-HD asset with `component_type_flag`
+  or `language_code_flag` set but no value now fails to serialize
+  (`Error::ValueOutOfRange`) instead of emitting an invented `0` /
+  `"   "` (release audit).
+- Remaining unchecked `.len() as u8/u16` length narrowings in the
+  `tables/` and `carousel/` serializers (`downloadable_font_info`,
+  `protection_message`, `carousel::{messages, biop::message, biop::ior}`) now
+  go through `broadcast_common::len::fit_*`; the regression scan in
+  `tests/serializer_length_truncation.rs` covers `src/tables` and
+  `src/carousel` as well as `src/descriptors` (release audit).
 - 17 table serializers (pat, cat, tsdt, pmt, nit, bat, sdt, ait, int, sit,
   dsmcc, st, rst, downloadable_font_info, protection_message, eit, plus the
   narrowed inner loops in cit/rct) wrote a 12-bit `section_length` (or a
@@ -101,18 +196,11 @@
   the two caps no longer silently contradict each other (the collector's
   independent 256-key default used to exhaust long before `max_services`
   (1024) did).
-
-### Fixed (warning sweep, #1077)
 - `EitCollector`: a schedule range reset (a non-conformant "flapping
   `last_table_id`" stream) dropped every other already-completed sub-table
   from the schedule, which could then never complete again since those
   sub-tables don't repeat under a new version. The reset now re-feeds
   retained completed sets for the new range.
-- `collect::CompleteNit`/`CompleteBat`: `network_descriptors`/
-  `bouquet_descriptors` only reflected section 0's loop, though EN 300 468
-  §5.2.1/§5.2.2 give every section its own loop. `ParsedDescriptorLoop` now
-  merges every contributing section's loop (`raw()` returns `&[DescriptorLoop]`,
-  one per section — a breaking API change).
 - `text::decode_dvb_string`: ISO 8859-9 (Turkish) and 8859-11 (Thai) were
   decoded via windows-1254/windows-874, which remap 0x80-0x9F to printable
   characters where the true 8859-9/-11 tables (and DVB Annex A's own
@@ -155,39 +243,14 @@
 - `dsmcc.rs`: `private_indicator` (independent of
   `section_syntax_indicator`) was forced to 0 whenever SSI was true,
   instead of round-tripping the parsed value.
-- `carousel::biop::message::ServiceGatewayInfo`: had no `Serialize` impl
-  (broke the crate-wide Parse/Serialize symmetry), and `to_bytes` panicked
-  on over-255 `service_context` entries and silently truncated an
-  over-65,535-byte `user_info`. Implemented `Serialize`; `to_bytes` now
-  returns `Result<Vec<u8>>` (breaking).
 - `tables::sat`: a beamhopping `plan_length` shorter than the fixed +
   mode-specific fields already read moved the cursor backwards, so the next
   loop iteration re-read part of the current plan's body as a fabricated
   second plan. Now rejected.
-- `tables::pmt`/`tables::dsmcc`: removed the `PID = 0x0000` placeholder
-  constant — it equals the real PAT PID, so a caller filtering on it would
-  silently pick up PAT traffic (breaking).
 - `tables::protection_message`: a `Hash.hash` whose length disagreed with
   `section_hash_length` was written verbatim, misframing every later hash
   entry; `parse_certificate_collection` silently dropped bytes after the
   last certificate. Both now rejected.
-- `tables::rct`: the descriptor loop in `LinkInfo`/`RctSection` accepted
-  trailing bytes between the loop and `link_info_length`/the CRC, silently
-  dropping them on re-serialize. Both now rejected. `DvbBinaryLocator` also
-  carried `identifier_type`/`inline_service` as separate fields alongside
-  `identifier`/`service`, a second source of truth a caller could set
-  inconsistently with the enum variant being serialized; both are now
-  derived (`identifier_type()`/`inline_service()` methods), and
-  `windows`/`identifier`/`scheduled_time_reliability` consistency is
-  validated at serialize (breaking: the two fields were removed from the
-  struct).
-- `tables::ait`: `ApplicationType::UserDefined` (documented for
-  `0x8000..=0xFFFF`) could never be produced by `from_u16`, since
-  `application_type` is a 15-bit wire field (bit 15 is the separate
-  `test_application_flag`) — and the serializer silently dropped bit 15 of
-  a directly-constructed out-of-range value instead of rejecting it.
-  Removed the unreachable variant (breaking) and added an explicit 15-bit
-  range check on serialize.
 - `tables::downloadable_font_info`: `FontInfo::LengthDelimited {
   font_info_type: 0x00..=0x02, .. }` serialized those fixed-layout type
   codes verbatim, so the result re-parsed as StyleWeight/FileUri/FontSize
@@ -206,21 +269,6 @@
   `descriptors::extension::dts_hd::SubstreamInfo::serialize_into` panicked
   (out-of-bounds slice index) on a buffer too small for `pos +
   serialized_len()`; both now return `Error::OutputBufferTooSmall`.
-- `descriptors::private_data_indicator`: corrected the module citation
-  (§2.6.22, which is actually `multiplex_buffer_utilization_descriptor` →
-  §2.6.28) and removed a re-exported DVB PDS-registry name lookup that
-  doesn't apply to this ISO/IEC 13818-1 field (breaking).
-
-### Changed (breaking)
-- `tables::int::IntLoopEntry` is now a type alias for the new shared
-  `tables::TargetOperationalLoop` (same fields), and
-  `tables::unt::UntPlatform::target_operational_pairs` changed from
-  `Vec<(DescriptorLoop, DescriptorLoop)>` to
-  `Vec<TargetOperationalLoop>` — INT and UNT define the identical
-  target/operational descriptor-loop pair and no longer use two
-  representations (r02-W22).
-
-### Fixed (warning sweep, #1077, part 2)
 - Descriptors whose syntax has no length-delimited tail accepted trailing
   bytes and silently dropped them on re-serialize, so a non-conformant
   stream did not round-trip byte-identically: `application_usage`,
@@ -276,18 +324,6 @@
   `temporal_layer_subset_flag`, CPCM USI activation flags must have their
   values, T2 cells must carry a frequency word, and target_region_name now
   sizes each region from the codes actually present (r03-W6, #1077).
-- Serializers no longer fabricate wire values for flag-gated fields:
-  `unwrap_or(0)`/defaulted conditionals in metadata_pointer (transport_stream_id
-  locator flag now derived from the Option), avc_timing_and_HRD (N/K),
-  video_stream (profile_and_level_indication/chroma_format/
-  frame_rate_extension_flag), s2/s2x/s2xv2 satellite delivery (scrambling
-  sequence index, ISI, timeslice, SFFI, beamhopping time plan id), ac4 (config
-  fields) and uri_linkage (min_polling_interval for ungated types) now return
-  `ValueOutOfRange` instead of silently inventing bytes; `ExtensionDescriptor`
-  serialization rejects a `tag_extension` that disagrees with its typed body;
-  `ExtendedEventLinkageEntry` no longer stores `target_id_type`/
-  `original_network_id_flag`/`service_id_flag` — those wire bits are derived
-  from its `TargetId` (breaking) (r03-W5, #1077).
 - Silent numeric truncation in serializers is now an error: over-wide
   `MB_buffer_size`/`TB_leak_rate` (24-bit), `maximum_bitrate` (22-bit),
   `logical_channel_number` (10-bit), `country_region_id` (6-bit),
@@ -309,38 +345,6 @@
 - MPE-FEC and MPE-IFEC each carried their own copy of the identical 32-bit
   `real_time_parameters` bit packing; both `RealTimeParameters` structs now
   delegate to one shared bit codec, so the two can never drift (r02-W22).
-- `carousel::biop::message::ServiceGatewayInfo::download_taps` was a raw
-  `&[u8]` (count byte + tap bytes) instead of a typed `Vec<Tap<'_>>`; a
-  caller had to hand-parse each `Tap` itself even though the crate already
-  has a `Tap` parser used by every other BIOP consumer (r02-W12, breaking).
-- `carousel::biop::fs::DirectoryObjectData::entries` was an untyped
-  `Vec<(Vec<u8>, u16, Vec<u8>)>`; replaced with a named `DirectoryEntry {
-  name, module_id, object_key }` (r02-W12, breaking).
-- `carousel::biop::message::ModuleInfo::user_info` was a raw `&[u8]`
-  reimplementing its own private tag/length descriptor-loop walker;
-  replaced with `descriptors::DescriptorLoop` (the crate's existing typed
-  wrapper) and `descriptors()` now delegates to
-  `DescriptorLoop::raw_tags()` instead of a duplicate walker (r02-W12,
-  breaking).
-- `carousel::biop::message::CompressedModuleDescriptor` exposed only a raw
-  `body: &[u8]`, so the `compression_method`/`original_size` fixed fields
-  (EN 301 192 §10.2.11 Table 59) were left for a caller to hand-slice off
-  the front of the zlib stream. Split into typed `compression_method`,
-  `original_size` and `zlib_data` fields; `ModuleInfo::compressed_module_descriptor`
-  now returns `Option<Result<CompressedModuleDescriptor<'_>>>` so a body
-  shorter than the fixed fields is a surfaced error, not a panic (r02-W12,
-  breaking).
-
-### Security
-Fixes GHSA-hxv4-gqm8-whw6 and GHSA-h6j8-r8j3-36xg.
-
-### Added
-- `carousel::biop::message::MAX_DECOMPRESSED_MODULE_SIZE` (64 MiB) and
-  `decompress_zlib_bounded(data, max_len)`, a general form of
-  `decompress_zlib` for callers that have a tighter, descriptor-declared size
-  to enforce.
-
-### Fixed
 - `carousel::biop::message::decompress_zlib` now caps decompressed output at
   `MAX_DECOMPRESSED_MODULE_SIZE` instead of reading a
   `compressed_module_descriptor` zlib stream to completion unconditionally —
@@ -352,6 +356,9 @@ Fixes GHSA-hxv4-gqm8-whw6 and GHSA-h6j8-r8j3-36xg.
   length (e.g. `messageBody_length = 0xFFFFFFFF`) could wrap `usize` rather
   than exceed it, defeating the bounds check that followed; 64-bit targets
   were not affected. Oversized lengths now return `Error::SectionLengthOverflow`.
+
+### Security
+Fixes GHSA-hxv4-gqm8-whw6 and GHSA-h6j8-r8j3-36xg.
 
 ## [10.0.1] - 2026-08-30
 

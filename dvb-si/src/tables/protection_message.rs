@@ -470,18 +470,25 @@ impl ProtectionMessageBody<'_> {
                         });
                     }
                     buf[pos] = (h.reference_type.to_u8() << 4)
-                        | (h.reference.len() as u8 & LOOP_LEN_HI_MASK);
+                        | broadcast_common::len::fit_bits(
+                            h.reference.len() as u64,
+                            4,
+                            "h.reference",
+                        )? as u8;
                     pos += 1;
                     buf[pos..pos + h.reference.len()].copy_from_slice(h.reference);
                     pos += h.reference.len();
                     buf[pos..pos + h.hash.len()].copy_from_slice(h.hash);
                     pos += h.hash.len();
                 }
-                buf[pos] = extension_bytes.len() as u8;
+                buf[pos] = broadcast_common::len::fit_u8(extension_bytes.len(), "extension_bytes")?;
                 pos += 1;
                 buf[pos..pos + extension_bytes.len()].copy_from_slice(extension_bytes);
                 pos += extension_bytes.len();
-                buf[pos] = signature_key_identifier.len() as u8;
+                buf[pos] = broadcast_common::len::fit_u8(
+                    signature_key_identifier.len(),
+                    "signature_key_identifier",
+                )?;
                 pos += 1;
                 buf[pos..pos + signature_key_identifier.len()]
                     .copy_from_slice(signature_key_identifier);
@@ -498,7 +505,9 @@ impl ProtectionMessageBody<'_> {
                     });
                 }
                 // reserved(4) emitted 1s | certificate_count(4).
-                buf[0] = RESERVED_NIBBLE | (certificates.len() as u8 & LOOP_LEN_HI_MASK);
+                buf[0] = RESERVED_NIBBLE
+                    | broadcast_common::len::fit_bits(certificates.len() as u64, 4, "certificates")?
+                        as u8;
                 let mut pos = 1;
                 for c in certificates {
                     if c.len() > LOOP_LEN_MAX {

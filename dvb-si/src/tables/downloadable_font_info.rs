@@ -339,7 +339,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     buf[pos] = FONT_INFO_TYPE_FILE_URI;
                     // reserved_zero_future_use(4)=0 | font_file_format(4).
                     buf[pos + 1] = format & FORMAT_MASK;
-                    buf[pos + 2] = uri.len() as u8;
+                    buf[pos + 2] = broadcast_common::len::fit_u8(uri.len(), "uri")?;
                     let s = pos + 3;
                     buf[s..s + uri.len()].copy_from_slice(uri);
                     pos = s + uri.len();
@@ -348,7 +348,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     guard_u8(info.len())?;
                     buf[pos] = FONT_INFO_TYPE_FONT_SIZE;
                     buf[pos + 1..pos + 3].copy_from_slice(&size.to_be_bytes());
-                    buf[pos + 3] = info.len() as u8;
+                    buf[pos + 3] = broadcast_common::len::fit_u8(info.len(), "info")?;
                     let s = pos + 4;
                     buf[s..s + info.len()].copy_from_slice(info);
                     pos = s + info.len();
@@ -373,7 +373,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     }
                     guard_u8(info.len())?;
                     buf[pos] = *font_info_type;
-                    buf[pos + 1] = info.len() as u8;
+                    buf[pos + 1] = broadcast_common::len::fit_u8(info.len(), "info")?;
                     let s = pos + 2;
                     buf[s..s + info.len()].copy_from_slice(info);
                     pos = s + info.len();

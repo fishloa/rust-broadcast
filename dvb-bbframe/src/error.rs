@@ -43,6 +43,15 @@ pub enum Error {
         have: usize,
     },
 
+    /// A Normal-Mode per-UP stride shorter than one 188-byte user packet.
+    #[error("invalid NM stride {stride}: must be 0 or at least {min} bytes (EN 302 755 §5.1.8)")]
+    InvalidStride {
+        /// The rejected stride.
+        stride: usize,
+        /// Minimum accepted non-zero stride.
+        min: usize,
+    },
+
     /// ISSY form/prefix bit does not match the decoder called.
     #[error("invalid ISSY form: {reason} (EN 302 755 Annex C)")]
     InvalidIssyForm {

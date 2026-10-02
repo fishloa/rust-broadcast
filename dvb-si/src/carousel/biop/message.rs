@@ -244,7 +244,7 @@ impl<'a> Binding<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[0] = self.name.len() as u8;
+        buf[0] = broadcast_common::len::fit_u8(self.name.len(), "self.name")?;
         let mut pos = BINDING_NAME_COUNT_FIELD;
         for nc in &self.name {
             let written = nc.serialize_8bit(&mut buf[pos..])?;
@@ -260,7 +260,10 @@ impl<'a> Binding<'a> {
                 available: u16::MAX as usize,
             });
         }
-        buf[pos..pos + 2].copy_from_slice(&(self.object_info.len() as u16).to_be_bytes());
+        buf[pos..pos + 2].copy_from_slice(
+            &broadcast_common::len::fit_u16(self.object_info.len(), "self.object_info")?
+                .to_be_bytes(),
+        );
         pos += BINDING_OBJ_INFO_LEN_FIELD;
         buf[pos..pos + self.object_info.len()].copy_from_slice(self.object_info);
         pos += self.object_info.len();
@@ -427,7 +430,7 @@ fn write_service_context_list(buf: &mut [u8], list: &[ServiceContext]) -> Result
             available: u8::MAX as usize,
         });
     }
-    buf[0] = list.len() as u8;
+    buf[0] = broadcast_common::len::fit_u8(list.len(), "list")?;
     let mut pos = SERVICE_CONTEXT_COUNT_FIELD;
     for entry in list {
         if entry.data.len() > u16::MAX as usize {
@@ -437,7 +440,9 @@ fn write_service_context_list(buf: &mut [u8], list: &[ServiceContext]) -> Result
             });
         }
         buf[pos..pos + 4].copy_from_slice(&entry.context_id.to_be_bytes());
-        buf[pos + 4..pos + 6].copy_from_slice(&(entry.data.len() as u16).to_be_bytes());
+        buf[pos + 4..pos + 6].copy_from_slice(
+            &broadcast_common::len::fit_u16(entry.data.len(), "entry.data")?.to_be_bytes(),
+        );
         pos += SERVICE_CONTEXT_FIXED;
         buf[pos..pos + entry.data.len()].copy_from_slice(entry.data);
         pos += entry.data.len();
@@ -602,7 +607,7 @@ impl<'a> DirectoryMessage<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[pos] = self.object_key.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(self.object_key.len(), "self.object_key")?;
         pos += OBJECT_KEY_LEN_FIELD;
         buf[pos..pos + self.object_key.len()].copy_from_slice(self.object_key);
         pos += self.object_key.len();
@@ -620,7 +625,10 @@ impl<'a> DirectoryMessage<'a> {
                 available: u16::MAX as usize,
             });
         }
-        buf[pos..pos + 2].copy_from_slice(&(self.object_info.len() as u16).to_be_bytes());
+        buf[pos..pos + 2].copy_from_slice(
+            &broadcast_common::len::fit_u16(self.object_info.len(), "self.object_info")?
+                .to_be_bytes(),
+        );
         pos += OBJECT_INFO_LEN_FIELD;
         buf[pos..pos + self.object_info.len()].copy_from_slice(self.object_info);
         pos += self.object_info.len();
@@ -646,7 +654,9 @@ impl<'a> DirectoryMessage<'a> {
                 available: u16::MAX as usize,
             });
         }
-        buf[pos..pos + 2].copy_from_slice(&(self.bindings.len() as u16).to_be_bytes());
+        buf[pos..pos + 2].copy_from_slice(
+            &broadcast_common::len::fit_u16(self.bindings.len(), "self.bindings")?.to_be_bytes(),
+        );
         pos += BINDINGS_COUNT_FIELD;
 
         for binding in &self.bindings {
@@ -926,7 +936,7 @@ impl<'a> DsmStreamInfo<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[0] = self.description.len() as u8;
+        buf[0] = broadcast_common::len::fit_u8(self.description.len(), "self.description")?;
         let mut pos = STREAM_ADESC_LEN_FIELD;
         buf[pos..pos + self.description.len()].copy_from_slice(self.description);
         pos += self.description.len();
@@ -1092,7 +1102,7 @@ impl<'a> StreamMessage<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[pos] = self.object_key.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(self.object_key.len(), "self.object_key")?;
         pos += OBJECT_KEY_LEN_FIELD;
         buf[pos..pos + self.object_key.len()].copy_from_slice(self.object_key);
         pos += self.object_key.len();
@@ -1137,7 +1147,7 @@ impl<'a> StreamMessage<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[pos] = self.taps.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(self.taps.len(), "self.taps")?;
         pos += STREAM_TAPS_COUNT_FIELD;
         for tap in &self.taps {
             let written = tap.serialize_into_buf(&mut buf[pos..])?;
@@ -1378,7 +1388,7 @@ impl<'a> StreamEventMessage<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[pos] = self.object_key.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(self.object_key.len(), "self.object_key")?;
         pos += OBJECT_KEY_LEN_FIELD;
         buf[pos..pos + self.object_key.len()].copy_from_slice(self.object_key);
         pos += self.object_key.len();
@@ -1411,7 +1421,10 @@ impl<'a> StreamEventMessage<'a> {
                 available: u16::MAX as usize,
             });
         }
-        buf[pos..pos + 2].copy_from_slice(&(self.event_names.len() as u16).to_be_bytes());
+        buf[pos..pos + 2].copy_from_slice(
+            &broadcast_common::len::fit_u16(self.event_names.len(), "self.event_names")?
+                .to_be_bytes(),
+        );
         pos += STREAM_EVENT_NAMES_COUNT_FIELD;
         for name in &self.event_names {
             if name.len() > u8::MAX as usize {
@@ -1420,7 +1433,7 @@ impl<'a> StreamEventMessage<'a> {
                     available: u8::MAX as usize,
                 });
             }
-            buf[pos] = name.len() as u8;
+            buf[pos] = broadcast_common::len::fit_u8(name.len(), "name")?;
             pos += STREAM_EVENT_NAME_LEN_FIELD;
             buf[pos..pos + name.len()].copy_from_slice(name);
             pos += name.len();
@@ -1445,7 +1458,7 @@ impl<'a> StreamEventMessage<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[pos] = self.taps.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(self.taps.len(), "self.taps")?;
         pos += STREAM_TAPS_COUNT_FIELD;
         for tap in &self.taps {
             let written = tap.serialize_into_buf(&mut buf[pos..])?;
@@ -1459,7 +1472,7 @@ impl<'a> StreamEventMessage<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[pos] = self.event_ids.len() as u8;
+        buf[pos] = broadcast_common::len::fit_u8(self.event_ids.len(), "self.event_ids")?;
         pos += STREAM_EVENT_IDS_COUNT_FIELD;
         for &id in &self.event_ids {
             buf[pos..pos + 2].copy_from_slice(&id.to_be_bytes());
@@ -1702,7 +1715,7 @@ impl Serialize for ModuleInfo<'_> {
                 available: u8::MAX as usize,
             });
         }
-        buf[12] = self.taps.len() as u8;
+        buf[12] = broadcast_common::len::fit_u8(self.taps.len(), "self.taps")?;
         let mut pos = MODULE_INFO_FIXED + MODULE_TAPS_COUNT_FIELD;
         for tap in &self.taps {
             let written = tap.serialize_into_buf(&mut buf[pos..])?;

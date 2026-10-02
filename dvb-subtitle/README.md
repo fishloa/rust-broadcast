@@ -4,8 +4,9 @@ DVB subtitling (bitmap) segment parser and serializer — **ETSI EN 300 743 V1.6
 
 Feed it the reassembled PES data field of a DVB subtitle stream (the payload
 from a PES packet with `stream_id` signalling private-data subtitling); it
-returns typed, decoded segments. It depends only on
-[`broadcast‑common`](https://crates.io/crates/broadcast-common) and works `#![no_std]`
+returns typed, decoded segments. At runtime it depends only on
+[`broadcast‑common`](https://crates.io/crates/broadcast-common) (`mpeg-pes` is a
+dev-dependency used by the tests) and works `#![no_std]`
 (+ `alloc`).
 
 ## Features

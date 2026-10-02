@@ -397,7 +397,10 @@ pub use registry::{TableObject, TableRegistry};
 /// Shared `real_time_parameters(32)` bit codec used by MPE-FEC and MPE-IFEC
 /// (r02-W22); the public field-named structs stay in each table's module.
 mod real_time_parameters;
-pub use real_time_parameters::TargetOperationalLoop;
+
+/// Shared target/operational descriptor-loop pair (INT body, UNT platform loop).
+mod target_operational_loop;
+pub use target_operational_loop::TargetOperationalLoop;
 
 pub mod ait;
 pub mod bat;

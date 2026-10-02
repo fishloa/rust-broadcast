@@ -12,7 +12,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   does not model are no longer dropped. They are kept as
   `ForeignAttribute` triples `(namespace URI, local name, value)` (with the
   `xmlns:` prefix binding each was resolved through) and as `UnknownElement`
-  subtrees, and re-emitted in document order (TTML2 §7.2/§7.3). Every element
+  subtrees, and re-emitted (TTML2 §7.2/§7.3) — each element's
+  `unknown_children` keep their relative document order, but their position
+  *between* modeled children, `metadata` and `animations` is not tracked
+  (each group lives in its own `Vec` and is emitted in a fixed group order). Every element
   type gained `foreign_attributes` and `unknown_children` fields, each
   metadata-like type also a `scoped_namespaces` field, and `MetadataChild`
   gained an `Unknown` variant — struct-literal construction must now use
@@ -29,6 +32,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`date-time`'s `wall-time` grammar allows omitting seconds) so
   `format_time_expression` doesn't reinsert a `:00` that wasn't in the
   source.
+
+- **#1110 (TT-W1)** also changed these public signatures/fields:
+  `Document::to_xml` now takes `&mut self` (was `&self`; it assigns fallback
+  prefixes for outer-scope vendor namespaces), the `other_attributes:
+  BTreeMap<(String, String), String>` field was removed from every element
+  type in favour of `foreign_attributes`, and `TtElement::text: Option<String>`
+  (spec-empty content) was removed. New fields `xml_base`, `ttm_role`
+  / `ttm_role_source` and `xlink_href` / `xlink_role` (and siblings) were
+  added to the element types that carry them; struct-literal construction
+  must use `..Default::default()`.
 
 ### Fixed
 - **#1110 (TT-W1)**: an inner-scope `xmlns:` prefix override no longer

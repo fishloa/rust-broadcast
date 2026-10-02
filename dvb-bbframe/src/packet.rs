@@ -38,10 +38,14 @@
 use alloc::vec::Vec;
 
 use crate::crc::crc8;
+use crate::error::{Error, Result};
 use crate::header::{BBHEADER_LEN, Bbheader, Mode};
 
 /// User packet size in Normal Mode (188 bytes = full MPEG-2 TS packet).
 pub const NM_UP_SIZE: usize = 188;
+
+/// Transport_error_indicator bit in TS header byte 1 (ISO/IEC 13818-1 §2.4.3.2).
+const TS_TEI_BIT: u8 = 0x80;
 
 /// User packet size in High Efficiency Mode (187 bytes = TS minus sync byte).
 pub const HEM_UP_SIZE: usize = 187;
@@ -121,12 +125,24 @@ impl<'a> NmTsIter<'a> {
     /// per-UP byte stride (see [`nm_stride_bytes`]); a `stride` of 0 makes the
     /// iterator yield nothing, so a caller unable to determine a valid stride
     /// can pass 0 instead of guessing.
-    pub fn new(data: &'a [u8], stride: usize) -> Self {
-        Self {
+    ///
+    /// # Errors
+    ///
+    /// [`Error::InvalidStride`] when `0 < stride < NM_UP_SIZE`: every UP is
+    /// copied as 188 bytes (`CRC-8 + 187`), so a shorter stride cannot frame a
+    /// user packet (EN 302 755 §5.1.8).
+    pub fn new(data: &'a [u8], stride: usize) -> Result<Self> {
+        if stride != 0 && stride < NM_UP_SIZE {
+            return Err(Error::InvalidStride {
+                stride,
+                min: NM_UP_SIZE,
+            });
+        }
+        Ok(Self {
             data,
             pos: 0,
             stride,
-        }
+        })
     }
 
     /// Return the unconsumed tail of the data field.
@@ -139,7 +155,11 @@ impl Iterator for NmTsIter<'_> {
     type Item = [u8; NM_UP_SIZE];
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.stride == 0 || self.pos + self.stride > self.data.len() {
+        if self.stride == 0 {
+            return None;
+        }
+        let end = self.pos.checked_add(self.stride)?;
+        if end > self.data.len() {
             return None;
         }
         let mut pkt = [0u8; NM_UP_SIZE];
@@ -253,8 +273,16 @@ impl Iterator for UpIter<'_> {
 pub fn up_iter<'a>(data: &'a [u8], bbheader: &Bbheader) -> UpIter<'a> {
     match bbheader.mode {
         Mode::Normal => {
+            // `nm_stride_bytes` only yields strides >= NM_UP_SIZE (or None -> 0,
+            // the always-valid "yield nothing" stride), so the checked
+            // constructor's invariant holds by construction.
             let stride = nm_stride_bytes(bbheader).unwrap_or(0);
-            UpIter::Normal(NmTsIter::new(data, stride))
+            let it = NmTsIter {
+                data,
+                pos: 0,
+                stride,
+            };
+            UpIter::Normal(it)
         }
         Mode::HighEfficiency => UpIter::HighEfficiency(HemTsIter::new(data, bbheader.matype.npd)),
     }
@@ -326,7 +354,9 @@ pub struct CarryOverStats {
     /// NM UP-level CRC-8 mismatches (EN 302 755 §5.1.6): the CRC-8 carried as
     /// the leading byte of a transmitted UP (the *previous* UP's trailer, per
     /// §5.1.8 figure 5) did not match the recomputed CRC-8 of that previous
-    /// UP's content. Diagnostic only — the packet is still emitted.
+    /// UP's content. The packet is still emitted, but is flagged with the
+    /// Transport Error Indicator (TEI, ISO/IEC 13818-1 §2.4.3.2) so
+    /// downstream receivers see it as corrupt.
     pub crc8_mismatches: u64,
 }
 
@@ -601,7 +631,7 @@ impl CarryOverExtractor {
         // (ISO/IEC 13818-1 §2.4.3.2). This signals to downstream receivers that
         // this packet is corrupted.
         if crc_failed {
-            pkt[1] |= 0x80; // Set bit 7 (TEI)
+            pkt[1] |= TS_TEI_BIT; // Set bit 7 (TEI)
         }
 
         out.push(pkt);
@@ -904,10 +934,30 @@ mod tests {
     }
 
     #[test]
+    fn nm_iter_rejects_short_stride_and_survives_hostile_input() {
+        let data = vec![0xAA; 400];
+        for stride in [1usize, 2, 100, NM_UP_SIZE - 1] {
+            assert_eq!(
+                NmTsIter::new(&data, stride).err(),
+                Some(Error::InvalidStride {
+                    stride,
+                    min: NM_UP_SIZE
+                })
+            );
+        }
+        // stride 0 stays the documented empty iterator.
+        assert_eq!(NmTsIter::new(&data, 0).unwrap().count(), 0);
+        // Huge stride: pos + stride must not overflow.
+        assert_eq!(NmTsIter::new(&data, usize::MAX).unwrap().count(), 0);
+        // Short data with a valid stride yields nothing, never panics.
+        assert_eq!(NmTsIter::new(&data[..100], NM_UP_SIZE).unwrap().count(), 0);
+    }
+
+    #[test]
     fn nm_remaining_returns_unconsumed_tail() {
         let data = vec![0xAA; NM_UP_SIZE * 2 + 50];
         let _hdr = make_nm_header(0);
-        let mut iter = NmTsIter::new(&data, NM_UP_SIZE);
+        let mut iter = NmTsIter::new(&data, NM_UP_SIZE).unwrap();
 
         let _p1 = iter.next().unwrap();
         let _p2 = iter.next().unwrap();
@@ -1079,7 +1129,7 @@ mod tests {
     #[test]
     fn remaining_safe_when_pos_equals_len() {
         let data = vec![0xAA; NM_UP_SIZE];
-        let mut iter = NmTsIter::new(&data, NM_UP_SIZE);
+        let mut iter = NmTsIter::new(&data, NM_UP_SIZE).unwrap();
         let _p = iter.next().unwrap();
         // pos == data.len() — must not panic
         let remaining = iter.remaining();

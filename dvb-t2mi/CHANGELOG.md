@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed (breaking)
+- Serializers now return an error, instead of silently truncating, when a
+  length or count does not fit its wire field (#1129).
+- Serializers now return an error, instead of silently truncating, when a
+  length or count does not fit its wire field (#1129).
+- `payload::l1::pre::L1Pre::to_bytes`, `crc32`, and `serialize_with_crc`
+  now return `Result`: every `L1Pre` field is public and mutable, so a
+  caller-set value outside its wire bit width (e.g. `num_rf > 7`)
+  previously panicked inside the bit writer's `expect` instead of being
+  rejected (#1095, W-T2-3).
+
 ### Fixed
 - `T2miPump` raw-mode resync no longer `debug_assert`s that the seeded reassembler frames nothing (fuzz found a seed that does); anything it frames is CRC-gated like the normal path (CI fuzz finding).
 - `inner_ts::InnerTsRecovery` (used by `dvb-tools t2mi --inner` without
@@ -10,13 +21,6 @@
   with, or replaced by, another PLP's data) whenever a different PLP's frame
   arrived before the split completed. Carry-over state is now keyed per PLP,
   mirroring `dvb_bbframe::pump::BbframePump` (#1034).
-
-
-### Changed (breaking)
-- Serializers now return an error, instead of silently truncating, when a
-  length or count does not fit its wire field (#1129).
-
-### Fixed
 - `packet::Header::serialize_into` no longer silently wraps an out-of-range
   `superframe_idx` (4-bit field) to 0; it now rejects it with
   `ReservedBitsViolation` (#1095, #1129).
@@ -54,15 +58,6 @@
   release a wrap that wrote bits beyond the declared length and misframed
   the L1EXT region. A `data`/`data_bit_len` mismatch is now rejected with
   `ReservedBitsViolation` (#1095, W-T2-5).
-
-### Changed (breaking)
-- Serializers now return an error, instead of silently truncating, when a
-  length or count does not fit its wire field (#1129).
-- `payload::l1::pre::L1Pre::to_bytes`, `crc32`, and `serialize_with_crc`
-  now return `Result`: every `L1Pre` field is public and mutable, so a
-  caller-set value outside its wire bit width (e.g. `num_rf > 7`)
-  previously panicked inside the bit writer's `expect` instead of being
-  rejected (#1095, W-T2-3).
 
 ## [10.1.0] - 2026-09-26
 Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.

@@ -18,6 +18,9 @@ use crate::system_header::{
     PREFIX_LEN as SYSTEM_HEADER_PREFIX_LEN, SYSTEM_HEADER_START_CODE, SystemHeader,
 };
 
+/// `packet_start_code_prefix` — `0x000001` (ISO/IEC 13818-1 §2.4.3.6).
+const START_CODE_PREFIX: [u8; 3] = [0x00, 0x00, 0x01];
+
 /// `MPEG_program_end_code` — `0x000001B9`.
 const PROGRAM_END_CODE: u32 = 0x0000_01B9;
 
@@ -138,11 +141,7 @@ fn parse_pes_loop(
                 break;
             }
         }
-        if !(pos + 6 <= data.len()
-            && data[pos] == 0x00
-            && data[pos + 1] == 0x00
-            && data[pos + 2] == 0x01)
-        {
+        if !(pos + 6 <= data.len() && data[pos..pos + 3] == START_CODE_PREFIX) {
             break;
         }
         // W5 (#1119): a Program Stream Map (`stream_id 0xBC`) is a distinct
@@ -230,6 +229,19 @@ pub struct PackScan<'a> {
 /// `PES_packet_length` (see [`parse_pack`]), so start-code emulation inside a
 /// payload cannot truncate a good pack — only a stream that is *already*
 /// corrupt can resync onto an emulated code (audit r14-MPS-W3, #1119).
+///
+/// ```
+/// // A garbage prefix, then a valid empty pack (pack header only).
+/// let mut data = vec![0x00, 0x00, 0x01, 0xBA, 0xFF, 0xFF, 0xFF, 0xFF];
+/// data.extend_from_slice(&[
+///     0x00, 0x00, 0x01, 0xBA, 0x44, 0x00, 0x04, 0x00, 0x04, 0x01,
+///     0x40, 0x00, 0x03, 0x00,
+/// ]);
+/// let scan = mpeg_ps::program_stream::scan_packs(&data);
+/// assert_eq!(scan.skipped.len(), 1);
+/// assert_eq!(scan.skipped[0].offset, 0);
+/// assert_eq!(scan.packs.len(), 1);
+/// ```
 pub fn scan_packs(b: &[u8]) -> PackScan<'_> {
     let mut packs = Vec::new();
     let mut skipped = Vec::new();

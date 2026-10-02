@@ -25,7 +25,7 @@ dvb-ci     = { path = "../dvb-ci", version = "0.8" }
 dvb-si     = { path = "../dvb-si", version = "10", default-features = false }
 broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 thiserror  = { version = "2" }
-libc       = { version = "0.2", optional = true }
+libc       = { version = "0.2.108", optional = true } # `libc::Ioctl` (used in linux.rs) first appears in 0.2.108
 clap       = { version = "4.5", optional = true, features = ["derive"] }
 
 [features]

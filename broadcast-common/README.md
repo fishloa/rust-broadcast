@@ -100,6 +100,25 @@ Project-wide helper that generates a `Display` impl for spec/field enums that
 delegate to an inherent `fn name(&self) -> &'static str`. Keeps spec token
 labels next to variant docs and greppable; removes identical boilerplate.
 
+### 33-bit wrapping clock (`clock33`)
+
+PTS/DTS (ISO/IEC 13818-1 §2.4.3.7) and SCTE-35 `pts_time` share a 2^33
+modulus: `unwrap_delta` (ever-growing unwrapped timeline), `wrapping_forward_distance`,
+`add` / `add_signed` (modular addition) and `signed_distance` (shortest signed
+distance on the circle).
+
+```rust
+use broadcast_common::clock33::{WRAP_33BIT, add, signed_distance};
+assert_eq!(add(WRAP_33BIT - 1, 2), 1);
+assert_eq!(signed_distance(WRAP_33BIT - 10, 5), 15);
+```
+
+### PUSI accumulation (`pusi`)
+
+`PusiAccumulator` splits one PID's payload into `payload_unit_start_indicator`
+delimited units (ISO/IEC 13818-1 §2.4.3.2) with a memory cap
+(`DEFAULT_MAX_UNIT_SIZE`); `mpeg-pes` and `mpeg-ts` both wrap it.
+
 ### Container-mux traits (`mux`)
 
 The codec-agnostic vocabulary for the any-to-any muxing hub, mirroring the

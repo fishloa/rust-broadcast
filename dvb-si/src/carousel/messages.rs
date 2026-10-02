@@ -255,7 +255,9 @@ impl Serialize for GroupInfoIndication<'_> {
                 available: u16::MAX as usize,
             });
         }
-        buf[0..2].copy_from_slice(&(self.groups.len() as u16).to_be_bytes());
+        buf[0..2].copy_from_slice(
+            &broadcast_common::len::fit_u16(self.groups.len(), "self.groups")?.to_be_bytes(),
+        );
         let mut pos = GII_NUMBER_OF_GROUPS_LEN;
 
         for g in &self.groups {
@@ -272,7 +274,9 @@ impl Serialize for GroupInfoIndication<'_> {
                     available: u16::MAX as usize,
                 });
             }
-            buf[pos..pos + 2].copy_from_slice(&(g.group_info.len() as u16).to_be_bytes());
+            buf[pos..pos + 2].copy_from_slice(
+                &broadcast_common::len::fit_u16(g.group_info.len(), "g.group_info")?.to_be_bytes(),
+            );
             pos += GII_GROUP_INFO_LEN_FIELD;
             buf[pos..pos + g.group_info.len()].copy_from_slice(g.group_info);
             pos += g.group_info.len();
@@ -283,7 +287,10 @@ impl Serialize for GroupInfoIndication<'_> {
                     available: u16::MAX as usize,
                 });
             }
-            buf[pos..pos + 2].copy_from_slice(&(g.private_data.len() as u16).to_be_bytes());
+            buf[pos..pos + 2].copy_from_slice(
+                &broadcast_common::len::fit_u16(g.private_data.len(), "g.private_data")?
+                    .to_be_bytes(),
+            );
             pos += GII_PRIVATE_DATA_LEN_FIELD;
             buf[pos..pos + g.private_data.len()].copy_from_slice(g.private_data);
             pos += g.private_data.len();
@@ -458,7 +465,7 @@ fn serialize_header(
     buf[2..4].copy_from_slice(&message_id.to_be_bytes());
     buf[4..8].copy_from_slice(&id.to_be_bytes());
     buf[8] = 0xFF; // reserved
-    buf[9] = adaptation.len() as u8;
+    buf[9] = broadcast_common::len::fit_u8(adaptation.len(), "adaptation")?;
     buf[10..12].copy_from_slice(&(message_length as u16).to_be_bytes());
     buf[MESSAGE_HEADER_LEN..MESSAGE_HEADER_LEN + adaptation.len()].copy_from_slice(adaptation);
     Ok(MESSAGE_HEADER_LEN + adaptation.len())
@@ -705,7 +712,10 @@ impl Serialize for UnMessage<'_> {
                         available: u16::MAX as usize,
                     });
                 }
-                buf[pos..pos + 2].copy_from_slice(&(dii.modules.len() as u16).to_be_bytes());
+                buf[pos..pos + 2].copy_from_slice(
+                    &broadcast_common::len::fit_u16(dii.modules.len(), "dii.modules")?
+                        .to_be_bytes(),
+                );
                 pos += 2;
                 for m in &dii.modules {
                     if m.module_info.len() > u8::MAX as usize {
@@ -717,7 +727,8 @@ impl Serialize for UnMessage<'_> {
                     buf[pos..pos + 2].copy_from_slice(&m.module_id.to_be_bytes());
                     buf[pos + 2..pos + 6].copy_from_slice(&m.module_size.to_be_bytes());
                     buf[pos + 6] = m.module_version;
-                    buf[pos + 7] = m.module_info.len() as u8;
+                    buf[pos + 7] =
+                        broadcast_common::len::fit_u8(m.module_info.len(), "m.module_info")?;
                     pos += MODULE_HEADER_LEN;
                     buf[pos..pos + m.module_info.len()].copy_from_slice(m.module_info);
                     pos += m.module_info.len();
@@ -737,7 +748,8 @@ fn put_length_prefixed(buf: &mut [u8], pos: usize, data: &[u8]) -> Result<usize>
             available: u16::MAX as usize,
         });
     }
-    buf[pos..pos + 2].copy_from_slice(&(data.len() as u16).to_be_bytes());
+    buf[pos..pos + 2]
+        .copy_from_slice(&broadcast_common::len::fit_u16(data.len(), "data")?.to_be_bytes());
     buf[pos + 2..pos + 2 + data.len()].copy_from_slice(data);
     Ok(pos + 2 + data.len())
 }

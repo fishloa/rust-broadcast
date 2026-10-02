@@ -65,6 +65,21 @@ impl core::fmt::Display for KeyParity {
 /// (not scrambled) — scrambling it again would corrupt whatever the
 /// existing scrambling protects rather than yield a legally descramblable
 /// packet.
+///
+/// ```
+/// use dvb_csa::ts::{self, KeyParity};
+/// use dvb_csa::ControlWord;
+///
+/// let cw = ControlWord::from_bytes([0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08]);
+/// let mut packet = [0xAA_u8; 188];
+/// packet[..4].copy_from_slice(&[0x47, 0x01, 0x00, 0x10]); // sync, PID 0x100, payload only, clear
+/// let clear = packet;
+///
+/// ts::scramble_ts_packet(&cw, KeyParity::Even, &mut packet).unwrap();
+/// assert_ne!(packet[4..], clear[4..]); // payload scrambled
+/// ts::descramble_ts_packet(&cw, KeyParity::Even, &mut packet).unwrap();
+/// assert_eq!(packet, clear); // and back
+/// ```
 pub fn scramble_ts_packet(
     cw: &ControlWord,
     parity: KeyParity,

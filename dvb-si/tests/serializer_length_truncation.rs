@@ -10,8 +10,8 @@
 //! The fix is `broadcast_common::len::fit_u8`/`fit_u16`/`fit_bits`, which
 //! compare before narrowing and return `Err` instead of wrapping. This test
 //! is the cheap, ungameable half of the regression guard: it fails CI if the
-//! literal truncating pattern reappears anywhere under `src/descriptors/`
-//! outside a `#[cfg(test)]` module (test fixtures are allowed to poke raw
+//! literal truncating pattern reappears anywhere under `src/descriptors/`,
+//! `src/tables/` or `src/carousel/` outside a `#[cfg(test)]` module (test fixtures are allowed to poke raw
 //! bytes together by hand). See also the per-descriptor boundary tests
 //! (network_name, telephone, audio_preselection, target_region_name,
 //! vvc_subpictures, protection_message, data_broadcast, multilingual_*, …)
@@ -66,9 +66,13 @@ fn test_module_start(body: &str) -> Option<usize> {
 
 #[test]
 fn no_unchecked_len_narrowing_in_descriptor_serializers() {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/descriptors");
     let mut files = Vec::new();
-    read_rs(&root, &mut files);
+    for dir in ["src/descriptors", "src/tables", "src/carousel"] {
+        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
+        let before = files.len();
+        read_rs(&root, &mut files);
+        assert!(files.len() > before, "scan found no files under {dir}");
+    }
 
     let mut problems: Vec<String> = Vec::new();
     let mut scanned = 0usize;
@@ -96,7 +100,7 @@ fn no_unchecked_len_narrowing_in_descriptor_serializers() {
 
     assert!(
         scanned > 100,
-        "scan found only {scanned} files under src/descriptors — walk broken?"
+        "scan found only {scanned} files under src/descriptors, src/tables, src/carousel — walk broken?"
     );
     assert!(
         problems.is_empty(),

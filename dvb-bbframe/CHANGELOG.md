@@ -26,7 +26,10 @@
 
 ### Changed (breaking)
 - `packet::NmTsIter::new` now takes an explicit `stride: usize` (previously
-  assumed a fixed 188 bytes) — part of the #1033 fix above.
+  assumed a fixed 188 bytes) — part of the #1033 fix above — and is now
+  fallible: a non-zero stride below 188 returns the new
+  `Error::InvalidStride` (it previously panicked in `next()` on short input);
+  the iterator also no longer overflows on `pos + stride`.
 
 
 ## [10.1.0] - 2026-09-26

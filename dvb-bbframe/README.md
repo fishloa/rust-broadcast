@@ -75,7 +75,8 @@ All fields from the `Bbheader` struct:
 
 | Type | Description |
 |------|-------------|
-| `NmTsIter` | Iterator over NM UPs (188-byte stride; CRC-8 byte replaced with sync 0x47) |
+| `NmTsIter` | Iterator over NM UPs (caller-supplied stride, at least 188 bytes; CRC-8 byte replaced with sync 0x47); `NmTsIter::new` is fallible |
+| `nm_stride_bytes` | Derive the NM per-UP stride (bytes) from a parsed BBHEADER (`UPL`/ISSYI/NPD); `None` when invalid |
 | `HemTsIter` | Iterator over HEM UPs (187-byte stride; sync byte prepended; DNP skipped when NPD active) |
 | `UpIter` | Runtime-dispatched enum wrapping either iterator |
 | `up_iter(data, bbheader)` | Constructs the right iterator from the parsed header |

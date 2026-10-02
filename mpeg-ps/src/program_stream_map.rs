@@ -39,6 +39,10 @@ const MARKER_BIT: u8 = 0x80;
 const EXTENSION_MASK: u8 = 0x7F;
 /// `flags` byte reserved bit 5 — conventionally set (Table 2-41).
 const FLAGS_RESERVED_BIT: u8 = 0x20;
+/// `program_stream_map_version` width in bits (Table 2-41).
+const VERSION_BITS: u32 = 5;
+/// Mask of the 5-bit `program_stream_map_version` in the flags byte.
+const VERSION_MASK: u8 = 0x1F;
 
 /// An elementary stream descriptor entry with optional stream_id_extension.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,7 +131,7 @@ impl<'a> Parse<'a> for ProgramStreamMap<'a> {
         let flags = b[6];
         let current_next_indicator = flags & 0x80 != 0;
         let single_extension_stream_flag = flags & 0x40 != 0;
-        let version = flags & 0x1F;
+        let version = flags & VERSION_MASK;
 
         // reserved byte (7 bits reserved + marker_bit)
         if b[7] & 0x01 == 0 {
@@ -324,10 +328,15 @@ impl Serialize for ProgramStreamMap<'_> {
         // flags: current_next(1) + single_extension(1) + reserved(1, convention
         // is set) + version(5). W8 (#1119): the reserved bit (bit 5) was
         // always written 0 instead of the conventional 1.
+        let version = broadcast_common::len::fit_bits(
+            u64::from(self.version),
+            VERSION_BITS,
+            "program_stream_map.program_stream_map_version",
+        )? as u8;
         buf[6] = (u8::from(self.current_next_indicator) << 7)
             | (u8::from(self.single_extension_stream_flag) << 6)
             | FLAGS_RESERVED_BIT
-            | (self.version & 0x1F);
+            | version;
 
         // reserved(7, convention is all set) + marker_bit(1).
         // W8 (#1119): `0x7F | 0x01` is a no-op (`0x7F` already has bit 0
@@ -377,6 +386,23 @@ impl Serialize for ProgramStreamMap<'_> {
 mod tests {
     use super::*;
     use alloc::vec;
+
+    #[test]
+    fn serialize_rejects_version_over_5_bits() {
+        let psm = ProgramStreamMap {
+            current_next_indicator: true,
+            single_extension_stream_flag: false,
+            version: 0x20,
+            program_stream_info: &[],
+            elementary_stream_map: vec![],
+            crc: 0,
+        };
+        let mut buf = vec![0u8; 64];
+        assert!(matches!(
+            psm.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+    }
 
     /// Build a valid PSM programmatically and verify round-trip.
     #[test]

@@ -48,6 +48,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **#1107**: `CcData` gained a new field, `reserved_byte1: u8` (see above).
   `Window` (cc-data's CEA-708 decode types) gained a new field,
   `edge_color: Color` (see above). Both are additive struct-literal breaks.
+- `CcData::parse` now hard-rejects reserved-bit deviations (header byte 0
+  `reserved`/`zero_bit`, each triplet's `one_bit`/`reserved`, the trailing
+  marker byte) with `Error::InvalidFixedBits`; input it previously accepted
+  silently now fails — a behaviour tightening.
 
 ## [0.5.0] - 2026-08-11
 

@@ -15,6 +15,13 @@ pub const PACK_START_CODE: u32 = 0x0000_01BA;
 /// mux_rate+reserved+stuffing(4) = 14 bytes.
 const FIXED_LEN: usize = 14;
 
+/// `program_mux_rate` width in bits (Table 2-39, ISO/IEC 13818-1 §2.5.3.3).
+const PROGRAM_MUX_RATE_BITS: u32 = 22;
+/// `reserved` field width in bits (Table 2-39, byte 13 bits[7:3]).
+const RESERVED_BITS: u32 = 5;
+/// Largest `pack_stuffing_length` (3-bit field, Table 2-39).
+const STUFFING_LENGTH_MAX: u8 = 7;
+
 /// A parsed pack header.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -112,6 +119,22 @@ impl Serialize for PackHeader<'_> {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        // Range-check every narrowed field BEFORE sizing/writing: a silent
+        // mask would make `serialized_len()` (unmasked stuffing_length)
+        // disagree with the bytes actually framed (#1129).
+        if self.stuffing_length > STUFFING_LENGTH_MAX {
+            return Err(Error::StuffingLengthTooLarge(self.stuffing_length));
+        }
+        let mux = broadcast_common::len::fit_bits(
+            u64::from(self.program_mux_rate),
+            PROGRAM_MUX_RATE_BITS,
+            "pack_header.program_mux_rate",
+        )? as u32;
+        let reserved = broadcast_common::len::fit_bits(
+            u64::from(self.reserved),
+            RESERVED_BITS,
+            "pack_header.reserved",
+        )? as u8;
         let len = self.serialized_len();
         if buf.len() < len {
             return Err(Error::BufferTooShort {
@@ -129,7 +152,6 @@ impl Serialize for PackHeader<'_> {
 
         // program_mux_rate: 22 bits across bytes 10..12, no '01' prefix
         // (Table 2-39; see the parse-side comment above).
-        let mux = self.program_mux_rate & 0x3F_FFFF;
         // byte 10: mux[21:14]
         buf[10] = (mux >> 14) as u8;
         // byte 11: mux[13:6]
@@ -137,7 +159,7 @@ impl Serialize for PackHeader<'_> {
         // byte 12: mux[5:0] + marker bits (always '11') at bits[1:0]
         buf[12] = (((mux & 0x3F) as u8) << 2) | 0x03;
         // byte 13: reserved(5) + stuffing(3)
-        buf[13] = (self.reserved & 0x1F) << 3 | (self.stuffing_length & 0x07);
+        buf[13] = reserved << 3 | self.stuffing_length;
 
         // stuffing bytes: `stuffing_byte` is spec-fixed `0xFF` (Table 2-39),
         // but parse does not reject a non-conformant value (it stores
@@ -202,6 +224,49 @@ mod tests {
         let mut out2 = vec![0u8; h_mut.serialized_len()];
         h_mut.serialize_into(&mut out2).unwrap();
         assert_ne!(&out[..], &out2[..]);
+    }
+
+    #[test]
+    fn serialize_rejects_out_of_range_fields() {
+        let ok = PackHeader {
+            scr: Scr {
+                base: 0,
+                extension: 0,
+            },
+            program_mux_rate: 1,
+            stuffing_length: 0,
+            stuffing: &[],
+            reserved: 0x1F,
+        };
+        let mut out = vec![0u8; 64];
+        assert!(ok.serialize_into(&mut out).is_ok());
+
+        let long = [0xFFu8; 9];
+        let bad = PackHeader {
+            stuffing_length: 9,
+            stuffing: &long,
+            ..ok.clone()
+        };
+        assert_eq!(
+            bad.serialize_into(&mut out),
+            Err(Error::StuffingLengthTooLarge(9))
+        );
+        let bad = PackHeader {
+            program_mux_rate: 0x40_0000,
+            ..ok.clone()
+        };
+        assert!(matches!(
+            bad.serialize_into(&mut out),
+            Err(Error::FieldOverflow(_))
+        ));
+        let bad = PackHeader {
+            reserved: 0x20,
+            ..ok.clone()
+        };
+        assert!(matches!(
+            bad.serialize_into(&mut out),
+            Err(Error::FieldOverflow(_))
+        ));
     }
 
     #[test]

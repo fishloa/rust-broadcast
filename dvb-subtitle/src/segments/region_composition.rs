@@ -13,6 +13,9 @@ pub const FIXED_LEN: usize = 10;
 pub const OBJECT_ENTRY_BASE_LEN: usize = 6;
 /// Extra bytes for character/composite objects: foreground(1) + background(1) = 2 bytes.
 pub const OBJECT_EXTRA_LEN: usize = 2;
+/// Top 4 bits of the 12-bit object horizontal/vertical position, held in the
+/// low nibble of the third/fifth entry byte (EN 300 743 Table 11).
+const POS_HIGH_NIBBLE_MASK: u8 = 0x0F;
 
 /// Region level of compatibility as defined in Table 12.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -219,12 +222,12 @@ impl RegionObjectEntry {
         broadcast_common::len::fit_bits(u64::from(vpos), 12, "object_vertical_position")?;
         buf[2] = (self.object_type.to_bits() << 6)
             | (self.object_provider_flag.to_bits() << 4)
-            | ((hpos >> 8) as u8 & 0x0F);
+            | ((hpos >> 8) as u8 & POS_HIGH_NIBBLE_MASK);
         buf[3] = hpos as u8;
         // reserved(4) then the top 4 bits of vpos, i.e. reserved is the HIGH
         // nibble and vpos's top bits are the LOW nibble — the mirror of
         // `parse`'s `(bytes[4] & 0x0F) << 8`.
-        buf[4] = (vpos >> 8) as u8 & 0x0F;
+        buf[4] = (vpos >> 8) as u8 & POS_HIGH_NIBBLE_MASK;
         buf[5] = vpos as u8;
         if let (Some(fg), Some(bg)) = (self.foreground_pixel_code, self.background_pixel_code) {
             buf[6] = fg;
@@ -283,11 +286,13 @@ fn parse_object_entry(bytes: &[u8]) -> Result<(RegionObjectEntry, usize)> {
     let object_id = u16::from_be_bytes([bytes[0], bytes[1]]);
     let obj_type_val = (bytes[2] >> 6) & 0x03;
     let obj_provider_val = (bytes[2] >> 4) & 0x03;
-    let obj_hpos = ((u16::from(bytes[2]) & 0x0F) << 8) | u16::from(bytes[3]);
-    let reserved = (bytes[4] >> 4) & 0x0F;
+    let obj_hpos =
+        ((u16::from(bytes[2]) & u16::from(POS_HIGH_NIBBLE_MASK)) << 8) | u16::from(bytes[3]);
+    let reserved = (bytes[4] >> 4) & POS_HIGH_NIBBLE_MASK;
     // reserved bits tolerated per §7.2.0.2 forward compatibility
     let _ = reserved;
-    let obj_vpos = ((u16::from(bytes[4]) & 0x0F) << 8) | u16::from(bytes[5]);
+    let obj_vpos =
+        ((u16::from(bytes[4]) & u16::from(POS_HIGH_NIBBLE_MASK)) << 8) | u16::from(bytes[5]);
 
     let obj_type = match obj_type_val {
         0x00 => ObjectType::BasicBitmap,

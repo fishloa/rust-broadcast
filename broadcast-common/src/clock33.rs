@@ -108,7 +108,8 @@ pub fn add_signed(a: u64, delta: i64) -> u64 {
     // not wrap before the Euclidean reduction.
     let sum = i128::from(a % WRAP_33BIT) + i128::from(delta);
     let reduced = sum.rem_euclid(i128::from(WRAP_33BIT));
-    u64::try_from(reduced).expect("rem_euclid result is below 2^33")
+    // `rem_euclid` by 2^33 is in `[0, 2^33)`, so the cast is lossless.
+    reduced as u64
 }
 
 /// The shortest signed distance from `from` to `to` on the 2^33 circle, in
@@ -119,11 +120,11 @@ pub fn add_signed(a: u64, delta: i64) -> u64 {
 pub fn signed_distance(from: u64, to: u64) -> i64 {
     let forward = wrapping_forward_distance(from % WRAP_33BIT, to % WRAP_33BIT);
     if forward <= WRAP_33BIT_HALF {
-        i64::try_from(forward).expect("forward distance is at most 2^32")
+        forward as i64 // `forward <= 2^32`: lossless
     } else {
         let back = WRAP_33BIT - forward;
         // `back` is in `[1, 2^32)` here, so the negation cannot overflow.
-        -i64::try_from(back).expect("backward distance is below 2^32")
+        -(back as i64)
     }
 }
 

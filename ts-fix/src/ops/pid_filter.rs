@@ -152,14 +152,17 @@ enum ServiceState {
 /// no payload. Payload extraction defers to [`mpeg_ts::ts::extract_ts_payload`]
 /// (handles the adaptation-field offset); PUSI comes from the parsed header.
 fn ts_payload_and_pusi(packet: &[u8]) -> Option<(&[u8], bool)> {
-    let header = TsHeader::parse(&packet[..4]).ok()?;
+    let header = TsHeader::parse(packet).ok()?;
     let payload = extract_ts_payload(packet)?;
     Some((payload, header.pusi))
 }
 
 /// PID of a TS packet header (13-bit field, ISO/IEC 13818-1 §2.4.3.3).
-fn pid_of(packet: &[u8]) -> u16 {
-    (((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16
+///
+/// Parsed through [`TsHeader::parse`] so a short packet is `None`, not an
+/// out-of-bounds index, and the PID mask lives in one place.
+fn pid_of(packet: &[u8]) -> Option<u16> {
+    TsHeader::parse(packet).ok().map(|h| h.pid)
 }
 
 /// Collect every `ca_pid` from the CA_descriptors (tag 0x09, ISO/IEC 13818-1
@@ -264,7 +267,9 @@ impl PidFilterOp {
             FilterState::KeepSet(_) => return,
             FilterState::Service(s) => s,
         };
-        let pid = pid_of(packet);
+        let Some(pid) = pid_of(packet) else {
+            return;
+        };
 
         match state {
             ServiceState::WaitingPat {
@@ -435,7 +440,10 @@ impl Op for PidFilterOp {
         }
 
         // Extract PID before potential state mutation.
-        let pid = (((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16;
+        let Some(pid) = pid_of(packet) else {
+            out(packet);
+            return;
+        };
 
         // Always skip null packets.
         if pid == NULL_PID {
@@ -452,5 +460,23 @@ impl Op for PidFilterOp {
 
     fn flush(&mut self, _model: &mut StreamModel, _out: &mut dyn FnMut(&[u8])) {
         // Nothing buffered.
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pid_helpers_never_index_past_a_short_packet() {
+        for len in 0..4 {
+            let short = [0x47u8, 0x01, 0x02, 0x10];
+            assert_eq!(pid_of(&short[..len]), None, "len {len}");
+            assert_eq!(ts_payload_and_pusi(&short[..len]), None, "len {len}");
+        }
+        // PID is the 13-bit field: byte1 low 5 bits (the top 3 flag bits are
+        // ignored) and byte 2.
+        assert_eq!(pid_of(&[0x47, 0xFF, 0xFF, 0x10]), Some(0x1FFF));
+        assert_eq!(pid_of(&[0x47, 0x41, 0x23, 0x10]), Some(0x0123));
     }
 }

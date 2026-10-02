@@ -200,7 +200,7 @@ impl<'a> Tap<'a> {
         buf[0..2].copy_from_slice(&self.id.to_be_bytes());
         buf[2..4].copy_from_slice(&self.use_.to_be_bytes());
         buf[4..6].copy_from_slice(&self.association_tag.to_be_bytes());
-        buf[6] = self.selector.len() as u8;
+        buf[6] = broadcast_common::len::fit_u8(self.selector.len(), "self.selector")?;
         buf[7..7 + self.selector.len()].copy_from_slice(self.selector);
         Ok(len)
     }
@@ -281,7 +281,7 @@ impl<'a> ObjectLocation<'a> {
         buf[4..6].copy_from_slice(&self.module_id.to_be_bytes());
         buf[6] = self.version_major;
         buf[7] = self.version_minor;
-        buf[8] = self.object_key.len() as u8;
+        buf[8] = broadcast_common::len::fit_u8(self.object_key.len(), "self.object_key")?;
         buf[9..9 + self.object_key.len()].copy_from_slice(self.object_key);
         Ok(len)
     }
@@ -337,7 +337,7 @@ impl<'a> ConnBinder<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[0] = self.taps.len() as u8;
+        buf[0] = broadcast_common::len::fit_u8(self.taps.len(), "self.taps")?;
         let mut pos = CONN_BINDER_FIXED_LEN;
         for tap in &self.taps {
             let written = tap.serialize_into_buf(&mut buf[pos..])?;
@@ -821,10 +821,10 @@ impl<'a> NameComponent<'a> {
                 available: u8::MAX as usize,
             });
         }
-        buf[0] = self.id.len() as u8;
+        buf[0] = broadcast_common::len::fit_u8(self.id.len(), "self.id")?;
         buf[1..1 + self.id.len()].copy_from_slice(self.id);
         let kind_pos = 1 + self.id.len();
-        buf[kind_pos] = self.kind.len() as u8;
+        buf[kind_pos] = broadcast_common::len::fit_u8(self.kind.len(), "self.kind")?;
         buf[kind_pos + 1..kind_pos + 1 + self.kind.len()].copy_from_slice(self.kind);
         Ok(len)
     }

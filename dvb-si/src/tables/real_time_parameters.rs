@@ -11,11 +11,15 @@
 pub(crate) const RTP_LEN: usize = 4;
 
 /// `delta_t` occupies the top 12 bits of the block.
+const DELTA_T_BITS: u32 = 12;
+#[cfg(test)]
 const DELTA_T_MAX: u16 = 0x0FFF;
 /// The boundary flags occupy bits `[19:18]` of the block.
 const TABLE_BOUNDARY_BIT: u8 = 0x08;
 const FRAME_BOUNDARY_BIT: u8 = 0x04;
 /// The 18-bit tail field (`address` / `prev_burst_size`).
+const TAIL_BITS: u32 = 18;
+#[cfg(test)]
 const TAIL_MASK: u32 = 0x0003_FFFF;
 
 /// The shared 32-bit bit layout behind both tables' `RealTimeParameters`.
@@ -48,13 +52,25 @@ impl RealTimeParametersBits {
         }
     }
 
-    /// Encode into the 4-byte real_time_parameters block. Field values wider
-    /// than their bit positions are masked so they can never bleed into the
-    /// neighbouring fields.
-    pub(crate) fn to_bytes(self) -> [u8; RTP_LEN] {
-        let dt = self.delta_t & DELTA_T_MAX;
-        let tail = self.tail & TAIL_MASK;
-        [
+    /// Encode into the 4-byte real_time_parameters block.
+    ///
+    /// `delta_t` (12 bits) and `tail` (18 bits) are range-checked: a wider
+    /// value is an `Err`, never silently masked into the neighbouring fields
+    /// (#1129).
+    pub(crate) fn to_bytes(
+        self,
+    ) -> core::result::Result<[u8; RTP_LEN], broadcast_common::len::FieldOverflow> {
+        let dt = broadcast_common::len::fit_bits(
+            u64::from(self.delta_t),
+            DELTA_T_BITS,
+            "real_time_parameters.delta_t",
+        )? as u16;
+        let tail = broadcast_common::len::fit_bits(
+            u64::from(self.tail),
+            TAIL_BITS,
+            "real_time_parameters.address_or_prev_burst_size",
+        )? as u32;
+        Ok([
             (dt >> 4) as u8,
             (((dt & u16::from(crate::tables::LOW_NIBBLE_MASK)) as u8) << 4)
                 | (u8::from(self.boundary) << 3)
@@ -62,7 +78,7 @@ impl RealTimeParametersBits {
                 | ((tail >> 16) as u8 & 0x03),
             ((tail >> 8) & 0xFF) as u8,
             (tail & 0xFF) as u8,
-        ]
+        ])
     }
 }
 
@@ -80,57 +96,31 @@ mod tests {
             frame_boundary: false,
             tail: 0x0001_2345,
         };
-        let bytes = bits.to_bytes();
+        let bytes = bits.to_bytes().unwrap();
         assert_eq!(bytes, [0xAB, 0xC8 | 0x01, 0x23, 0x45]);
         assert_eq!(RealTimeParametersBits::from_bytes(bytes), bits);
     }
 
     #[test]
-    fn wide_fields_do_not_bleed() {
-        // delta_t wider than 12 bits must not shift the flags; tail wider
-        // than 18 bits must not set the flags either.
-        let bits = RealTimeParametersBits {
-            delta_t: 0xFFFF,
+    fn wide_fields_are_rejected_not_masked() {
+        let ok = RealTimeParametersBits {
+            delta_t: DELTA_T_MAX,
             boundary: false,
             frame_boundary: false,
-            tail: 0xFFFF_FFFF,
+            tail: TAIL_MASK,
         };
-        let decoded = RealTimeParametersBits::from_bytes(bits.to_bytes());
-        assert_eq!(decoded.delta_t, DELTA_T_MAX);
-        assert!(!decoded.boundary);
-        assert!(!decoded.frame_boundary);
-        assert_eq!(decoded.tail, TAIL_MASK);
-    }
-}
+        let decoded = RealTimeParametersBits::from_bytes(ok.to_bytes().unwrap());
+        assert_eq!(decoded, ok);
 
-/// A target/operational descriptor-loop pair — the loop element shared by the
-/// INT body (ETSI EN 301 192 §8.4.4.1 Tables 17/18) and the UNT platform loop
-/// (ETSI TS 102 006 §9.4 Table 11). Both specs define the identical
-/// `target_descriptor_loop` + `operational_descriptor_loop` pair; the INT
-/// module used to own a duplicate struct and the UNT module an anonymous
-/// tuple (r02-W22).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct TargetOperationalLoop<'a> {
-    /// Target descriptor loop — raw descriptor bytes (after the 12-bit length
-    /// field).  Serializes as the typed descriptor sequence; `.raw()` yields the
-    /// wire bytes.
-    pub target_descriptors: crate::descriptors::DescriptorLoop<'a>,
-    /// Operational descriptor loop — raw descriptor bytes (after the 12-bit
-    /// length field).  Serializes as the typed descriptor sequence; `.raw()`
-    /// yields the wire bytes.
-    pub operational_descriptors: crate::descriptors::DescriptorLoop<'a>,
-}
-
-/// Wire width of the 12-bit descriptor-loop length field.
-pub(crate) const DESC_LOOP_LEN_FIELD: usize = 2;
-
-impl TargetOperationalLoop<'_> {
-    /// Wire length of the pair: two 12-bit length fields plus both loops.
-    pub(crate) fn serialized_len(&self) -> usize {
-        DESC_LOOP_LEN_FIELD
-            + self.target_descriptors.len()
-            + DESC_LOOP_LEN_FIELD
-            + self.operational_descriptors.len()
+        let wide_dt = RealTimeParametersBits {
+            delta_t: DELTA_T_MAX + 1,
+            ..ok
+        };
+        assert_eq!(wide_dt.to_bytes().unwrap_err().max, u64::from(DELTA_T_MAX));
+        let wide_tail = RealTimeParametersBits {
+            tail: TAIL_MASK + 1,
+            ..ok
+        };
+        assert_eq!(wide_tail.to_bytes().unwrap_err().max, u64::from(TAIL_MASK));
     }
 }
