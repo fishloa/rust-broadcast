@@ -22,6 +22,12 @@ const DEFAULT_TEST_MAX_CONNS: usize = 8;
 /// that an abandoned connection is reclaimed quickly, large enough that a
 /// correct server never trips it.
 const TEST_IO_TIMEOUT_MS: u64 = 3_000;
+/// Per-connection deadline for the cap tests. Their held connections must
+/// stay in their slots for as long as filling the cap takes — on a starved
+/// CI box that can exceed [`TEST_IO_TIMEOUT_MS`], which would reclaim a held
+/// slot mid-setup. The refusal being tested does not depend on this value
+/// (the over-cap client's read timeout is far shorter).
+const CAP_TEST_IO_TIMEOUT_MS: u64 = 120_000;
 
 /// A free port.
 ///
@@ -89,6 +95,75 @@ fn spawn_watch(max_conns: usize, io_timeout_ms: u64) -> (ChildGuard, u16) {
         std::thread::sleep(Duration::from_millis(20));
     }
     panic!("media-doctor watch never started listening on {metrics_port}");
+}
+
+/// How long one probe waits for its refusal. Generous on purpose: a probe
+/// the server has not yet got round to accepting looks exactly like one it
+/// accepted into a free slot, so a short wait makes a starved server drown in
+/// a backlog of abandoned probes faster than it can drain them.
+const PROBE_PATIENCE: Duration = Duration::from_secs(2);
+
+/// Hold exactly `cap` idle connections open and **prove** the server has put
+/// every one of them in a slot — no sleep, no guess about scheduling.
+///
+/// The proof leans on the kernel accepting in connect order: the server
+/// handles the `cap` held connections strictly before any later connection.
+/// So once a later *probe* connection is refused, every held connection has
+/// already been through the accept loop, and each either owns a slot or was
+/// itself refused (which closes it, observable below). A probe that is
+/// instead *accepted* means a slot was free (for instance one the readiness
+/// probe in [`spawn_watch`] had not released yet); it is dropped and the
+/// probe retried. If any held connection turns out to have been refused, the
+/// whole attempt is redone.
+fn hold_connections(port: u16, cap: usize) -> Vec<TcpStream> {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    'attempt: while Instant::now() < deadline {
+        let held: Vec<TcpStream> = (0..cap)
+            .map(|_| TcpStream::connect(("127.0.0.1", port)).expect("connect held"))
+            .collect();
+        loop {
+            if Instant::now() >= deadline {
+                break 'attempt;
+            }
+            let mut probe = TcpStream::connect(("127.0.0.1", port)).expect("connect probe");
+            probe
+                .set_read_timeout(Some(PROBE_PATIENCE))
+                .expect("set read timeout");
+            let mut buf = [0u8; 16];
+            let refused = probe.read(&mut buf).is_ok();
+            drop(probe);
+            // A refused held connection can never be put back, so the cap
+            // can never fill with it: start over instead of probing forever.
+            if !all_open(&held) {
+                // Back off so the server can reap the slots of the dropped
+                // connections before the next attempt re-contends for them.
+                drop(held);
+                std::thread::sleep(Duration::from_millis(250));
+                continue 'attempt;
+            }
+            if refused {
+                return held;
+            }
+            // Accepted into a free slot and left idle: not full yet.
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
+    panic!("could not fill the {cap}-connection cap within 60s");
+}
+
+/// Whether every stream is still open with nothing to read — i.e. the server
+/// has neither closed it nor answered it (a refusal does both).
+fn all_open(streams: &[TcpStream]) -> bool {
+    streams.iter().all(|stream| {
+        stream.set_nonblocking(true).expect("set nonblocking");
+        let mut b = [0u8; 1];
+        let open = matches!(
+            (&*stream).read(&mut b),
+            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
+        );
+        stream.set_nonblocking(false).expect("set blocking");
+        open
+    })
 }
 
 /// A complete `/metrics` response, read to EOF.
@@ -169,15 +244,11 @@ fn repeated_scrapes_all_succeed_with_a_stalled_client_outstanding() {
 #[test]
 fn connections_beyond_the_cap_are_refused() {
     const CAP: usize = 3;
-    let (_guard, port) = spawn_watch(CAP, TEST_IO_TIMEOUT_MS);
+    let (_guard, port) = spawn_watch(CAP, CAP_TEST_IO_TIMEOUT_MS);
 
-    // Fill the cap with idle connections and keep them open.
-    let mut held = Vec::new();
-    for _ in 0..CAP {
-        held.push(TcpStream::connect(("127.0.0.1", port)).expect("connect"));
-    }
-    // Give the accept loop time to take each slot before probing.
-    std::thread::sleep(Duration::from_millis(750));
+    // Fill the cap with idle connections and keep them open, with proof that
+    // the server has taken every slot (no fixed sleep).
+    let held = hold_connections(port, CAP);
 
     // The next connection must be refused promptly: either an explicit 503 or
     // an immediate close. The read timeout is far shorter than the server's
@@ -313,11 +384,10 @@ fn dribbling_client_is_dropped_at_the_total_deadline() {
 #[test]
 fn refusal_response_uses_crlf_framing() {
     const CAP: usize = 1;
-    let (_guard, port) = spawn_watch(CAP, TEST_IO_TIMEOUT_MS);
+    let (_guard, port) = spawn_watch(CAP, CAP_TEST_IO_TIMEOUT_MS);
 
-    // Fill the single slot.
-    let held = TcpStream::connect(("127.0.0.1", port)).expect("connect");
-    std::thread::sleep(Duration::from_millis(750));
+    // Fill the single slot, with proof the server has taken it.
+    let held = hold_connections(port, CAP);
 
     let mut over = TcpStream::connect(("127.0.0.1", port)).expect("connect over cap");
     over.set_read_timeout(Some(Duration::from_secs(5)))

@@ -173,6 +173,15 @@
   (issue #1112).
 
 ### Fixed
+- `watch` metrics server: the over-cap `503` is now reliably delivered on Linux.
+  The refusal path discards any bytes the peer already sent before closing (an
+  unread receive buffer makes Linux close with RST, which can destroy the 503
+  in flight). `tests/watch_metrics_server.rs` no longer relies on a fixed
+  `sleep` for the accept loop to take its slots: it proves the cap is full
+  (a probe is refused and every held connection is still open). The old tests
+  failed deterministically on Linux because the startup readiness probe still
+  held a slot, so a held connection was refused and the over-cap one was
+  accepted instead.
 - `Scte35Check` no longer only inspects the conventional PID `0x01F0` for
   SCTE-35 `splice_info_section`s — it now discovers the real cue PID(s) from
   the PMT (`stream_type 0x86`), as `watch.rs` already did, falling back to

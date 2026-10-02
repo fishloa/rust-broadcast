@@ -397,6 +397,15 @@ fn refuse_connection(mut stream: TcpStream, io_timeout: Duration) -> std::io::Re
     // Half-close so the client sees EOF immediately after the response; the
     // read half is dropped with `stream` when this returns.
     let _ = stream.shutdown(std::net::Shutdown::Write);
+    // Discard whatever the peer has already sent. Closing a socket whose
+    // receive buffer still holds unread bytes makes Linux answer with RST
+    // rather than FIN, and an RST can wipe the 503 out of the client's
+    // receive queue before it reads it. Non-blocking, so this never holds the
+    // accept loop on a peer that keeps its end open.
+    if stream.set_nonblocking(true).is_ok() {
+        let mut sink = [0u8; 1024];
+        while matches!(stream.read(&mut sink), Ok(n) if n > 0) {}
+    }
     result
 }
 
