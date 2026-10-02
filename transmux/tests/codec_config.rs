@@ -32,10 +32,10 @@ fn demux_annexb_nals<P: AsRef<std::path::Path>>(path: P, pid: u16) -> Vec<Vec<u8
             Some(p) => p,
             None => continue,
         };
-        if pkt.pid != pid {
+        if pkt.pid() != pid {
             continue;
         }
-        if let Some(completed) = assembler.feed(pkt.pusi, payload) {
+        if let Some(completed) = assembler.feed(pkt.pusi(), payload) {
             // Skip PES header: 6 bytes minimum (start code + stream_id + length)
             let body = if completed.len() > 6 {
                 &completed[6..]

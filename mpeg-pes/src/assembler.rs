@@ -7,6 +7,7 @@
 //! way — flushed when the next unit starts or at end of stream).
 
 use alloc::vec::Vec;
+use broadcast_common::pusi::PusiAccumulator;
 
 /// Reassembles PES packets for a single PID from successive TS payloads.
 ///
@@ -14,17 +15,31 @@ use alloc::vec::Vec;
 /// [`feed`](Self::feed) returns the **previous** completed PES's bytes when a new
 /// unit starts. Call [`flush`](Self::flush) at end of stream for the last one.
 /// The returned `Vec<u8>` is ready for [`crate::PesPacket::parse`].
+///
+/// A thin wrapper over the shared [`broadcast_common::pusi::PusiAccumulator`]
+/// (the same rule `mpeg-ts`'s `PusiReassembler` uses), so a PES that never
+/// sees another PUSI — legal for `PES_packet_length == 0` video — is bounded
+/// by [`DEFAULT_MAX_UNIT_SIZE`](broadcast_common::pusi::DEFAULT_MAX_UNIT_SIZE)
+/// rather than growing without limit (audit r01-W13, #1074). A PES past the
+/// cap is discarded, and reassembly resumes at the next PUSI.
 #[derive(Debug, Default)]
 pub struct PesAssembler {
-    buf: Vec<u8>,
-    started: bool,
+    inner: PusiAccumulator,
 }
 
 impl PesAssembler {
-    /// New, empty assembler.
+    /// New, empty assembler with the default 16 MiB per-PES cap.
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// New assembler that discards any PES growing past `max` bytes.
+    #[must_use]
+    pub fn with_max_unit_size(max: usize) -> Self {
+        Self {
+            inner: PusiAccumulator::with_max_unit_size(max),
+        }
     }
 
     /// Feed one TS packet's payload for this PID.
@@ -33,33 +48,13 @@ impl PesAssembler {
     /// Returns the bytes of the now-complete previous PES packet, if any.
     #[must_use]
     pub fn feed(&mut self, payload_unit_start: bool, payload: &[u8]) -> Option<Vec<u8>> {
-        if payload_unit_start {
-            let completed = if self.started && !self.buf.is_empty() {
-                Some(core::mem::take(&mut self.buf))
-            } else {
-                None
-            };
-            self.started = true;
-            self.buf.extend_from_slice(payload);
-            completed
-        } else {
-            // Continuation: only meaningful once a unit has started.
-            if self.started {
-                self.buf.extend_from_slice(payload);
-            }
-            None
-        }
+        self.inner.feed(payload_unit_start, payload)
     }
 
     /// Take the final buffered PES at end of stream, if any.
     #[must_use]
     pub fn flush(&mut self) -> Option<Vec<u8>> {
-        self.started = false;
-        if self.buf.is_empty() {
-            None
-        } else {
-            Some(core::mem::take(&mut self.buf))
-        }
+        self.inner.flush()
     }
 }
 
@@ -96,6 +91,23 @@ mod tests {
         let p2 = PesPacket::parse(&second).unwrap();
         assert!(p2.stream_id.is_audio());
         assert!(a.flush().is_none());
+    }
+
+    /// A PES with no following PUSI (e.g. `PES_packet_length == 0` video) must
+    /// not grow past the cap (audit r01-W13): the oversized PES is dropped and
+    /// the next PUSI restarts cleanly.
+    #[test]
+    fn oversized_pes_is_discarded_not_buffered_forever() {
+        let mut a = PesAssembler::with_max_unit_size(100);
+        assert_eq!(a.feed(true, &[0xAA; 60]), None);
+        assert_eq!(a.feed(false, &[0xBB; 60]), None); // 120 > 100: discarded
+        assert_eq!(a.feed(false, &[0xCC; 10]), None); // ignored, not re-started
+        assert_eq!(
+            a.feed(true, &[0xDD; 3]),
+            None,
+            "nothing to emit: the PES was dropped"
+        );
+        assert_eq!(a.flush().as_deref(), Some([0xDD; 3].as_slice()));
     }
 
     #[test]

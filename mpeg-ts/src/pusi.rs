@@ -16,13 +16,14 @@
 //! — it works for any PUSI-delimited non-PSI PID payload.
 
 use alloc::vec::Vec;
+use broadcast_common::pusi::PusiAccumulator;
 
-/// Default maximum accumulated unit size. PES packets with `PES_packet_length == 0` are unbounded
-/// per ISO/IEC 13818-1 §2.4.3.7, so this practical default of 16 MiB prevents memory exhaustion
-/// while accommodating large payloads (e.g., I-frames).
-pub const DEFAULT_MAX_UNIT_SIZE: usize = 16 * 1024 * 1024;
+/// Default maximum accumulated unit size (16 MiB), shared with `mpeg-pes`'s
+/// `PesAssembler` through [`broadcast_common::pusi`] (audit r01-W13, #1074).
+pub use broadcast_common::pusi::DEFAULT_MAX_UNIT_SIZE;
 
-/// Generic PUSI-delimited payload reassembler.
+/// Generic PUSI-delimited payload reassembler: a PID filter over the shared
+/// [`PusiAccumulator`].
 ///
 /// Accumulates payload bytes across consecutive TS packets sharing the same
 /// PID, using `payload_unit_start_indicator` to delimit unit boundaries.
@@ -49,12 +50,7 @@ pub const DEFAULT_MAX_UNIT_SIZE: usize = 16 * 1024 * 1024;
 pub struct PusiReassembler {
     /// The PID we are listening to. Packets with a different PID are ignored.
     pid: u16,
-    /// Accumulated payload bytes for the current in-progress unit.
-    buf: Vec<u8>,
-    /// `true` once at least one byte has been appended.
-    started: bool,
-    /// Maximum allowed unit size; units exceeding this are discarded.
-    max_unit_size: usize,
+    inner: PusiAccumulator,
 }
 
 impl PusiReassembler {
@@ -63,9 +59,7 @@ impl PusiReassembler {
     pub fn new(pid: u16) -> Self {
         Self {
             pid,
-            buf: Vec::new(),
-            started: false,
-            max_unit_size: DEFAULT_MAX_UNIT_SIZE,
+            inner: PusiAccumulator::new(),
         }
     }
 
@@ -74,9 +68,7 @@ impl PusiReassembler {
     pub fn with_max_unit_size(pid: u16, max: usize) -> Self {
         Self {
             pid,
-            buf: Vec::new(),
-            started: false,
-            max_unit_size: max,
+            inner: PusiAccumulator::with_max_unit_size(max),
         }
     }
 
@@ -85,52 +77,17 @@ impl PusiReassembler {
     /// Packets whose `pid != self.pid` are silently ignored (returns `None`).
     ///
     /// **PUSI semantics**: When `pusi == true`, the packet marks the start of a
-    /// *new* unit. If a unit was already in progress (i.e. a prior PUSI-start
-    /// was never closed by a following PUSI), the *in-progress* unit is
-    /// **complete** — it is returned as `Some(unit_bytes)`, and a fresh unit
-    /// begins with this packet's payload.
-    ///
-    /// When `pusi == false`, the payload is appended to the in-progress unit.
-    ///
-    /// Returns `Some(Vec<u8>)` when a completed unit is emitted; `None`
-    /// otherwise.
+    /// *new* unit. If a unit was already in progress, it is **complete** — it
+    /// is returned as `Some(unit_bytes)` (an empty unit is not returned), and
+    /// a fresh unit begins with this packet's payload. When `pusi == false`,
+    /// the payload is appended to the in-progress unit; payload before the
+    /// first PUSI is ignored (ISO/IEC 13818-1 §2.4.3.2), and a unit past the
+    /// size cap is discarded until the next PUSI.
     pub fn push(&mut self, pid: u16, pusi: bool, payload: &[u8]) -> Option<Vec<u8>> {
         if pid != self.pid {
             return None;
         }
-
-        if pusi {
-            // A new unit begins. If we already had accumulated data, that old
-            // unit is complete — return it.
-            if self.started {
-                let completed = core::mem::take(&mut self.buf);
-                // Start fresh with this packet's payload.
-                self.buf.extend_from_slice(payload);
-                return Some(completed);
-            }
-
-            // First PUSI — just start accumulating.
-            self.started = true;
-            self.buf.extend_from_slice(payload);
-            return None;
-        }
-
-        // Non-PUSI: append to the in-progress unit only if started.
-        // Ignore all non-PUSI payloads before the first PUSI.
-        if !self.started {
-            return None;
-        }
-
-        // Check if adding this payload would exceed the cap.
-        if self.buf.len().saturating_add(payload.len()) > self.max_unit_size {
-            // Unit exceeds the cap; discard it and reset for the next PUSI.
-            self.buf.clear();
-            self.started = false;
-            return None;
-        }
-
-        self.buf.extend_from_slice(payload);
-        None
+        self.inner.feed(pusi, payload)
     }
 
     /// Return any in-progress (final) unit; the caller drains this at end of
@@ -138,12 +95,7 @@ impl PusiReassembler {
     ///
     /// Returns `None` when no data has been accumulated.
     pub fn flush(&mut self) -> Option<Vec<u8>> {
-        if self.started && !self.buf.is_empty() {
-            self.started = false;
-            Some(core::mem::take(&mut self.buf))
-        } else {
-            None
-        }
+        self.inner.flush()
     }
 }
 
@@ -269,7 +221,7 @@ mod tests {
         assert!(reasm.push(pid, true, &[0u8; 10]).is_none());
 
         // Verify the default cap is DEFAULT_MAX_UNIT_SIZE.
-        assert_eq!(reasm.max_unit_size, DEFAULT_MAX_UNIT_SIZE);
+        assert_eq!(reasm.inner.max_unit_size(), DEFAULT_MAX_UNIT_SIZE);
 
         // Flush and verify.
         let flushed = reasm.flush();

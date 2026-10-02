@@ -83,6 +83,8 @@ impl<'a> Parse<'a> for CloseMmi {
         } else {
             None
         };
+        // Table 33: the length_field covers cmd_id [+ delay] exactly.
+        super::reject_trailing_body(body, 1 + usize::from(delay.is_some()), "close_mmi")?;
         Ok(Self { cmd_id, delay })
     }
 }

@@ -35,7 +35,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -215,6 +214,7 @@ impl<'a> Parse<'a> for CommsInfoReply {
                 what: "comms_info_reply",
             });
         }
+        crate::objects::reject_trailing_body(body, INFO_REPLY_BODY, "comms_info_reply")?;
         let lts_id = body[0];
         let status = body[1] & STATUS_BIT != 0;
         let mut source_ip_address = [0u8; IP_ADDR_LEN];
@@ -722,93 +722,27 @@ fn write_descriptor_header(tag: u8, data_len: usize, buf: &mut [u8]) -> Result<u
 // Tag-dispatch helper (no resource_id — see module doc)
 // ---------------------------------------------------------------------------
 
-/// A parsed LSC v4 extension APDU.
-///
-/// There is intentionally **no** `resource_id`-keyed entry point: TS 103 205 does
-/// not print an LSC v4 resource_id (see the module doc). Dispatch is on the
-/// apdu_tag alone, for callers already in an LSC session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum LscV4Apdu {
-    /// `comms_info_req` (`0x9F8C07`).
-    CommsInfoReq(CommsInfoReq),
-    /// `comms_info_reply` (`0x9F8C08`).
-    CommsInfoReply(CommsInfoReply),
-    /// `comms_IP_config_req` (`0x9F8C09`).
-    CommsIpConfigReq(CommsIpConfigReq),
-}
-
-/// A parsed LSC v4 extension APDU that may carry an allocation
-/// (`comms_IP_config_reply` has a DNS-server `Vec`).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum LscV4ReplyApdu {
-    /// `comms_IP_config_reply` (`0x9F8C0A`).
-    CommsIpConfigReply(CommsIpConfigReply),
-}
-
-impl LscV4Apdu {
-    /// Parse a fixed-size LSC v4 extension APDU by its apdu_tag. Returns
-    /// `Ok(None)` for `comms_IP_config_reply`, which allocates and is returned by
-    /// [`parse_ip_config_reply`].
-    pub fn parse(body: &[u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "lsc_v4 apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::COMMS_INFO_REQ => Ok(Self::CommsInfoReq(CommsInfoReq::parse(body)?)),
-            tag::COMMS_INFO_REPLY => Ok(Self::CommsInfoReply(CommsInfoReply::parse(body)?)),
-            tag::COMMS_IP_CONFIG_REQ => Ok(Self::CommsIpConfigReq(CommsIpConfigReq::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::COMMS_INFO_REQ.as_u24(),
-                what: "lsc_v4",
-            }),
-        }
-    }
-}
-
-/// Parse a `comms_IP_config_reply` (`0x9F8C0A`) APDU.
-pub fn parse_ip_config_reply(body: &[u8]) -> Result<CommsIpConfigReply> {
-    CommsIpConfigReply::parse(body)
-}
-
-impl Serialize for LscV4Apdu {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::CommsInfoReq(o) => o.serialized_len(),
-            Self::CommsInfoReply(o) => o.serialized_len(),
-            Self::CommsIpConfigReq(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::CommsInfoReq(o) => o.serialize_into(buf),
-            Self::CommsInfoReply(o) => o.serialize_into(buf),
-            Self::CommsIpConfigReq(o) => o.serialize_into(buf),
-        }
-    }
-}
-
-impl Serialize for LscV4ReplyApdu {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::CommsIpConfigReply(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::CommsIpConfigReply(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// A parsed LSC v4 extension APDU.
+    ///
+    /// There is intentionally **no** `resource_id`-keyed entry point: TS 103 205 does
+    /// not print an LSC v4 resource_id (see the module doc). Dispatch is on the
+    /// apdu_tag alone, for callers already in an LSC session.
+    ///
+    /// One enum covers all four APDUs (audit r10-O-7): `comms_IP_config_reply`
+    /// carries a DNS-server `Vec`, so the enum is `Clone` but not `Copy`.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum LscV4Apdu ("lsc_v4") {
+        /// `comms_info_req` (`0x9F8C07`).
+        CommsInfoReq(CommsInfoReq) = tag::COMMS_INFO_REQ,
+        /// `comms_info_reply` (`0x9F8C08`).
+        CommsInfoReply(CommsInfoReply) = tag::COMMS_INFO_REPLY,
+        /// `comms_IP_config_req` (`0x9F8C09`).
+        CommsIpConfigReq(CommsIpConfigReq) = tag::COMMS_IP_CONFIG_REQ,
+        /// `comms_IP_config_reply` (`0x9F8C0A`).
+        CommsIpConfigReply(CommsIpConfigReply) = tag::COMMS_IP_CONFIG_REPLY,
     }
 }
 
@@ -1032,17 +966,21 @@ mod tests {
             LscV4Apdu::parse(&CommsIpConfigReq.to_bytes()).unwrap(),
             LscV4Apdu::CommsIpConfigReq(_)
         ));
-        // comms_IP_config_reply routes via the allocating helper, not LscV4Apdu.
+        // comms_IP_config_reply is dispatched by the same enum (r10-O-7).
         let cfg = CommsIpConfigReply {
             connection_state: ConnectionState::Disconnected,
             physical_address: [0; MAC_LEN],
             ip_config: None,
         };
         let cb = cfg.to_bytes();
-        assert_eq!(parse_ip_config_reply(&cb).unwrap(), cfg);
-        // It is NOT a member of the fixed-size dispatch set.
+        assert_eq!(
+            LscV4Apdu::parse(&cb).unwrap(),
+            LscV4Apdu::CommsIpConfigReply(cfg.clone())
+        );
+        assert_eq!(LscV4Apdu::CommsIpConfigReply(cfg).to_bytes(), cb);
+        // An unknown tag is still rejected.
         assert!(matches!(
-            LscV4Apdu::parse(&cb),
+            LscV4Apdu::parse(&[0x9F, 0x8C, 0x0B, 0x00]),
             Err(Error::UnexpectedApduTag { .. })
         ));
     }

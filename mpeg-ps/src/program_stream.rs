@@ -11,6 +11,7 @@ use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 use crate::Result;
+use crate::error::Error;
 use crate::pack_header::{PACK_START_CODE, PackHeader};
 use crate::program_stream_map::{MAP_STREAM_ID, ProgramStreamMap};
 use crate::system_header::{
@@ -49,8 +50,6 @@ pub struct Pack<'a> {
 /// Returns `Ok((Some(pack), consumed_bytes))` on success,
 /// or `Ok((None, 4))` when `MPEG_program_end_code` `0x000001B9` is reached.
 pub fn parse_pack(b: &[u8]) -> Result<(Option<Pack<'_>>, usize)> {
-    use crate::error::Error;
-
     if b.len() < 4 {
         return Err(Error::BufferTooShort {
             need: 4,
@@ -128,8 +127,6 @@ fn parse_pes_loop(
     Option<ProgramStreamMap<'_>>,
     usize,
 )> {
-    use crate::error::Error;
-
     let mut packets = Vec::new();
     let mut psm = None;
     let mut pos = 0;
@@ -194,6 +191,82 @@ pub fn parse_all_packs(b: &[u8]) -> Result<(Vec<Pack<'_>>, &[u8])> {
         }
     }
     Ok((packs, remaining))
+}
+
+/// A span of the input [`scan_packs`] skipped because the pack starting
+/// there did not parse.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SkippedRegion {
+    /// Byte offset (from the start of the scanned buffer) where the failed
+    /// pack began.
+    pub offset: usize,
+    /// Bytes skipped: up to the next `pack_start_code` found after
+    /// `offset`, or to the end of the buffer if none follows.
+    pub len: usize,
+    /// Why the pack at `offset` failed to parse.
+    pub error: Error,
+}
+
+/// The outcome of [`scan_packs`].
+#[derive(Debug, Clone)]
+pub struct PackScan<'a> {
+    /// Every pack that parsed, in stream order.
+    pub packs: Vec<Pack<'a>>,
+    /// Every region skipped after a parse failure, in stream order.
+    pub skipped: Vec<SkippedRegion>,
+    /// Bytes after the last pack / `MPEG_program_end_code` (fewer than a
+    /// start code, or whatever followed the end code).
+    pub remaining: &'a [u8],
+}
+
+/// Walk a Program Stream like [`parse_all_packs`], but **resynchronise** after
+/// a pack that fails to parse instead of abandoning the whole stream.
+///
+/// On a parse failure the failed span is recorded in
+/// [`PackScan::skipped`] (with the error, never swallowed) and scanning
+/// resumes at the next `pack_start_code` (`0x000001BA`) after the failed
+/// pack's first byte. That byte search is deliberately confined to this
+/// recovery path: a well-formed stream is still walked purely by
+/// `PES_packet_length` (see [`parse_pack`]), so start-code emulation inside a
+/// payload cannot truncate a good pack — only a stream that is *already*
+/// corrupt can resync onto an emulated code (audit r14-MPS-W3, #1119).
+pub fn scan_packs(b: &[u8]) -> PackScan<'_> {
+    let mut packs = Vec::new();
+    let mut skipped = Vec::new();
+    let mut pos = 0usize;
+    while b.len() - pos >= 4 {
+        match parse_pack(&b[pos..]) {
+            Ok((Some(pack), consumed)) => {
+                packs.push(pack);
+                pos += consumed;
+            }
+            Ok((None, consumed)) => {
+                pos += consumed;
+                break;
+            }
+            Err(error) => {
+                let next = find_pack_start(&b[pos + 1..]).map(|i| pos + 1 + i);
+                let end = next.unwrap_or(b.len());
+                skipped.push(SkippedRegion {
+                    offset: pos,
+                    len: end - pos,
+                    error,
+                });
+                pos = end;
+            }
+        }
+    }
+    PackScan {
+        packs,
+        skipped,
+        remaining: &b[pos..],
+    }
+}
+
+/// Offset of the first `pack_start_code` in `data`, if any.
+fn find_pack_start(data: &[u8]) -> Option<usize> {
+    let code = PACK_START_CODE.to_be_bytes();
+    data.windows(code.len()).position(|w| w == code)
 }
 
 #[cfg(test)]

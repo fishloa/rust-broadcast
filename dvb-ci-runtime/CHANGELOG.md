@@ -17,6 +17,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   confirmed on real hardware (issue #1032).
 
 ### Fixed
+- A CAM-originated APDU or SPDU that fails to parse (e.g. a padded `tune`, a
+  truncated MMI `enq`, a malformed `open_session_response`) was dropped
+  silently by the resource and session layers' `if let Ok(..) = parse(..)`
+  guards; it now surfaces as `Notification::Error` (#1092).
+- `HostRequest`'s `Debug` redacts the text of `MmiEnquiryAnswer` (what the user
+  typed at an enquiry, often a PIN) instead of printing it (audit #1142).
+- `Driver::pump` handed each received frame to the stack through a fresh
+  `to_vec()`; it now borrows the receive buffer in place (a counting-allocator
+  test pins the largest allocation at 416 bytes for a 4096-byte frame, was
+  4096) (audit r10-O-11, #1092). `CaDescrambler::feed_ts`'s per-feed PID set
+  is left as is: caching it needs invalidation on every `add_service`/
+  `set_cat`/re-query, with no measured cost.
+- `CiStack` looked up the session for a resource by probing all 65 535
+  session numbers; `SessionLayer::session_for` walks only the open sessions
+  (audit r10-O-9, #1092).
+- The MMI card-keyword heuristic (`HotPlug::CardInserted`/`CardRemoved`) is now
+  edge-triggered: a CAM that re-sends the same "insert card" menu no longer
+  repeats the notification (audit r10-O-13, #1092).
+- The `ser`/`ser_apdu` helper was copied into `resource`, `session` and
+  `stack`; they share one (audit r10-O-12, #1092). `trace::decode_frame` now
+  names Delete/D_T_C_Reply/Request/New T_C TPDUs (they printed as `T_?`) and
+  its docs, and `HotPlug::CamPresent`'s ("and ready"; the driver keys the edge
+  off `module_present` alone), match the code (audit r10-W-23, #1092).
+  r10-O-10 (`LinuxCaDevice::reset`'s 3 s settle `sleep` in the pump) is not
+  changed: making it a sans-IO timer alters the reset-to-Create_T_C timing on
+  real hardware, which could not be verified here without a CAM.
 - `CaDescrambler::feed_ts` no longer hangs on the real `ciM` data-plane
   device: `LinuxCiDataDevice::open` now opens `O_NONBLOCK`, so the drain loop
   sees `WouldBlock` (mapped to "no more data") instead of blocking forever on

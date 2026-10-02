@@ -46,12 +46,15 @@ fn to_menu(m: &Menu<'_>) -> MmiMenu {
     }
 }
 
+/// Serialize an APDU/SPDU object to owned bytes — the one helper the resource,
+/// session and stack layers share (audit r10-O-12: it was copied three times).
+///
 /// r10-W-20: `serialize_into` failing here used to be swallowed into a
 /// silently-empty `Vec` (and, in a later pass, turned into a panic) — either
-/// way the failure never reached the caller as a value it could act on. A
-/// `Resource` reacts to APDUs that ultimately originate from the CAM/card, so
-/// a serialize error must propagate as `Err`, not corrupt the wire exchange
-/// or crash the driver.
+/// way the failure never reached the caller as a value it could act on. These
+/// layers react to APDUs that ultimately originate from the CAM/card, so a
+/// serialize error must propagate as `Err`, not corrupt the wire exchange or
+/// crash the driver.
 pub(crate) fn ser<S: Serialize<Error = dvb_ci::Error>>(s: &S) -> dvb_ci::Result<Vec<u8>> {
     s.try_to_bytes()
 }
@@ -150,10 +153,10 @@ impl Resource for ResourceManager {
                 })?);
             }
             // Module's profile → record its resources.
-            Some(t)
-                if t == tag::PROFILE
-                    && let Ok(p) = Profile::parse(apdu) =>
-            {
+            Some(t) if t == tag::PROFILE => {
+                // A CAM-originated APDU that fails to parse is a protocol error to
+                // surface, not to drop silently (audit #1092 interop).
+                let p = Profile::parse(apdu)?;
                 self.module_resources = p.resources;
                 self.module_profiled = true;
             }
@@ -217,9 +220,8 @@ impl Resource for ApplicationInformation {
 
     fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
         let mut out = ResourceOut::default();
-        if peek_tag(apdu) == Some(tag::APPLICATION_INFO)
-            && let Ok(ai) = ApplicationInfo::parse(apdu)
-        {
+        if peek_tag(apdu) == Some(tag::APPLICATION_INFO) {
+            let ai = ApplicationInfo::parse(apdu)?;
             out.notify.push(Notification::ApplicationInfo {
                 application_type: ai.application_type.to_u8(),
                 manufacturer: ai.application_manufacturer,
@@ -254,18 +256,18 @@ impl Resource for ConditionalAccess {
     fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
         let mut out = ResourceOut::default();
         match peek_tag(apdu) {
-            Some(t)
-                if t == tag::CA_INFO
-                    && let Ok(ci) = CaInfo::parse(apdu) =>
-            {
+            Some(t) if t == tag::CA_INFO => {
+                // A CAM-originated APDU that fails to parse is a protocol error to
+                // surface, not to drop silently (audit #1092 interop).
+                let ci = CaInfo::parse(apdu)?;
                 out.notify.push(Notification::CaInfo {
                     ca_system_ids: ci.ca_system_ids,
                 });
             }
-            Some(t)
-                if t == tag::CA_PMT_REPLY
-                    && let Ok(r) = CaPmtReply::parse(apdu) =>
-            {
+            Some(t) if t == tag::CA_PMT_REPLY => {
+                // A CAM-originated APDU that fails to parse is a protocol error to
+                // surface, not to drop silently (audit #1092 interop).
+                let r = CaPmtReply::parse(apdu)?;
                 // EN 50221 §8.4.3.5 Table 26: programme-level `CA_enable`.
                 // Plumb the object's own `Option<CaEnable>` straight
                 // through — `None` means the programme
@@ -375,9 +377,8 @@ impl Resource for DateTime {
 
     fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
         let mut out = ResourceOut::default();
-        if peek_tag(apdu) == Some(tag::DATE_TIME_ENQ)
-            && let Ok(enq) = DateTimeEnq::parse(apdu)
-        {
+        if peek_tag(apdu) == Some(tag::DATE_TIME_ENQ) {
+            let enq = DateTimeEnq::parse(apdu)?;
             self.interval = enq.response_interval;
             self.since = Duration::ZERO;
             out.apdus.push(self.reply()?);
@@ -426,31 +427,32 @@ impl Resource for Mmi {
     fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
         let mut out = ResourceOut::default();
         match peek_tag(apdu) {
-            Some(t)
-                if t == tag::ENQ
-                    && let Ok(e) = Enq::parse(apdu) =>
-            {
+            Some(t) if t == tag::ENQ => {
+                // A CAM-originated APDU that fails to parse is a protocol error to
+                // surface, not to drop silently (audit #1092 interop).
+                let e = Enq::parse(apdu)?;
                 out.notify.push(Notification::Mmi(MmiEvent::Enquiry {
                     prompt: text(e.text_chars),
                     blind: e.blind_answer,
                     answer_len: e.answer_text_length,
                 }));
             }
-            Some(t)
-                if t == tag::MENU_LAST
-                    && let Ok(m) = Menu::parse(apdu) =>
-            {
+            Some(t) if t == tag::MENU_LAST => {
+                // A CAM-originated APDU that fails to parse is a protocol error to
+                // surface, not to drop silently (audit #1092 interop).
+                let m = Menu::parse(apdu)?;
                 out.notify
                     .push(Notification::Mmi(MmiEvent::Menu(to_menu(&m))));
             }
-            Some(t)
-                if t == tag::LIST_LAST
-                    && let Ok(l) = List::parse(apdu) =>
-            {
+            Some(t) if t == tag::LIST_LAST => {
+                // A CAM-originated APDU that fails to parse is a protocol error to
+                // surface, not to drop silently (audit #1092 interop).
+                let l = List::parse(apdu)?;
                 out.notify
                     .push(Notification::Mmi(MmiEvent::List(to_menu(&l.0))));
             }
             Some(t) if t == tag::CLOSE_MMI => {
+                dvb_ci::objects::mmi_close::CloseMmi::parse(apdu)?;
                 out.notify.push(Notification::Mmi(MmiEvent::Close));
             }
             // High-level MMI mode negotiation (§8.6.1): the module opens an MMI
@@ -458,10 +460,10 @@ impl Resource for Mmi {
             // `display_reply` or the module aborts the MMI — verified live: a
             // real AlphaCrypt opens MMI after `ca_pmt` and, with no reply, closes
             // the session and never descrambles (an Enigma2 box answers it).
-            Some(t)
-                if t == tag::DISPLAY_CONTROL
-                    && let Ok(dc) = DisplayControl::parse(apdu) =>
-            {
+            Some(t) if t == tag::DISPLAY_CONTROL => {
+                // A CAM-originated APDU that fails to parse is a protocol error to
+                // surface, not to drop silently (audit #1092 interop).
+                let dc = DisplayControl::parse(apdu)?;
                 let reply = match dc.cmd {
                     // Acknowledge the requested MMI mode (echo it back).
                     DisplayControlCmd::SetMmiMode => DisplayReply {
@@ -502,32 +504,37 @@ impl Resource for HostControl {
 
     fn on_apdu(&mut self, apdu: &[u8]) -> dvb_ci::Result<ResourceOut> {
         let mut out = ResourceOut::default();
+        // A CAM-originated host-control APDU that fails to parse (e.g. a padded
+        // `tune`) is a protocol error: `?` surfaces it as `Notification::Error`
+        // through the stack instead of dropping it silently.
         let event = match peek_tag(apdu) {
-            Some(t) if t == tag::TUNE => Tune::parse(apdu).ok().map(|t| HostControlEvent::Tune {
-                network_id: t.network_id,
-                original_network_id: t.original_network_id,
-                transport_stream_id: t.transport_stream_id,
-                service_id: t.service_id,
-            }),
+            Some(t) if t == tag::TUNE => {
+                let t = Tune::parse(apdu)?;
+                Some(HostControlEvent::Tune {
+                    network_id: t.network_id,
+                    original_network_id: t.original_network_id,
+                    transport_stream_id: t.transport_stream_id,
+                    service_id: t.service_id,
+                })
+            }
             Some(t) if t == tag::REPLACE => {
-                Replace::parse(apdu)
-                    .ok()
-                    .map(|r| HostControlEvent::Replace {
-                        replacement_ref: r.replacement_ref,
-                        replaced_pid: r.replaced_pid,
-                        replacement_pid: r.replacement_pid,
-                    })
+                let r = Replace::parse(apdu)?;
+                Some(HostControlEvent::Replace {
+                    replacement_ref: r.replacement_ref,
+                    replaced_pid: r.replaced_pid,
+                    replacement_pid: r.replacement_pid,
+                })
             }
             Some(t) if t == tag::CLEAR_REPLACE => {
-                ClearReplace::parse(apdu)
-                    .ok()
-                    .map(|c| HostControlEvent::ClearReplace {
-                        replacement_ref: c.replacement_ref,
-                    })
+                let c = ClearReplace::parse(apdu)?;
+                Some(HostControlEvent::ClearReplace {
+                    replacement_ref: c.replacement_ref,
+                })
             }
-            Some(t) if t == tag::ASK_RELEASE => AskRelease::parse(apdu)
-                .ok()
-                .map(|_| HostControlEvent::AskRelease),
+            Some(t) if t == tag::ASK_RELEASE => {
+                AskRelease::parse(apdu)?;
+                Some(HostControlEvent::AskRelease)
+            }
             _ => None,
         };
         if let Some(event) = event {

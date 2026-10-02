@@ -136,8 +136,12 @@ impl<'a> Parse<'a> for UriMessage {
             EMI_COPY_NOT_RESTRICTED => EmiData::CopyingNotRestricted { rct },
             EMI_COPY_ONCE => EmiData::CopyOnce,
             EMI_ONE_GEN_COPY => EmiData::OneGenerationCopy { trick_mode },
-            EMI_NO_MORE_COPIES => EmiData::NoMoreCopies { dot, rl },
-            _ => unreachable!("emi is 2 bits"),
+            // `emi` is a 2-bit field, so the one value left after the three arms
+            // above is `EMI_NO_MORE_COPIES` (0b11): no unreachable arm needed.
+            _ => {
+                debug_assert_eq!(emi, EMI_NO_MORE_COPIES);
+                EmiData::NoMoreCopies { dot, rl }
+            }
         };
         Ok(Self {
             protocol_version,

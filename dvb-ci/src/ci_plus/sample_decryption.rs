@@ -18,7 +18,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -138,7 +137,7 @@ impl Serialize for SdInfoReply {
 
 /// One `drm_metadata` record (Tables 33/38): the `drm_metadata_source`,
 /// `drm_system_id`, `drm_uuid`, and the opaque `drm_metadata_byte` body.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DrmMetadataRecord<'a> {
     /// `drm_metadata_source` (8) — source of the metadata, per Table 34.
@@ -151,6 +150,19 @@ pub struct DrmMetadataRecord<'a> {
     /// `drm_metadata_byte` body (`drm_metadata_length` bytes) — opaque blob.
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub drm_metadata: &'a [u8],
+}
+
+/// `Debug` redacts `drm_metadata`: the opaque DRM blob can carry licence/key
+/// delivery data (audit #1142), so only its length is printed.
+impl core::fmt::Debug for DrmMetadataRecord<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("DrmMetadataRecord")
+            .field("drm_metadata_source", &self.drm_metadata_source)
+            .field("drm_system_id", &self.drm_system_id)
+            .field("drm_uuid", &self.drm_uuid)
+            .field("drm_metadata", &objects::Redacted(self.drm_metadata.len()))
+            .finish()
+    }
 }
 
 // drm_metadata_source(1) + drm_system_id(2) + drm_uuid(16) + drm_metadata_length(2).
@@ -532,6 +544,7 @@ impl<'a> Parse<'a> for SdStartReply {
                 what: "sd_start_reply",
             });
         }
+        crate::objects::reject_trailing_body(body, SD_START_REPLY_BODY, "sd_start_reply")?;
         let mut r = Reader::new(body, "sd_start_reply");
         Ok(Self {
             lts_id: r.u8()?,
@@ -638,6 +651,7 @@ impl<'a> Parse<'a> for SdUpdateReply {
                 what: "sd_update_reply",
             });
         }
+        crate::objects::reject_trailing_body(body, SD_UPDATE_REPLY_BODY, "sd_update_reply")?;
         Ok(Self {
             lts_id: body[0],
             drm_status: DrmStatus::from_u8(body[1]),
@@ -657,73 +671,24 @@ impl Serialize for SdUpdateReply {
     }
 }
 
-/// Resource-scoped dispatch over the Sample decryption resource objects.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum SampleDecryptionApdu<'a> {
-    /// `sd_info_req` (`9F 98 00`).
-    SdInfoReq(SdInfoReq),
-    /// `sd_info_reply` (`9F 98 01`).
-    SdInfoReply(SdInfoReply),
-    /// `sd_start` (`9F 98 02`).
-    SdStart(#[cfg_attr(feature = "serde", serde(borrow))] SdStart<'a>),
-    /// `sd_start_reply` (`9F 98 03`).
-    SdStartReply(SdStartReply),
-    /// `sd_update` (`9F 98 04`).
-    SdUpdate(#[cfg_attr(feature = "serde", serde(borrow))] SdUpdate<'a>),
-    /// `sd_update_reply` (`9F 98 05`).
-    SdUpdateReply(SdUpdateReply),
-}
-
-impl<'a> SampleDecryptionApdu<'a> {
-    /// Parse a Sample decryption APDU, dispatching on the leading `apdu_tag`.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "sample_decryption apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::SD_INFO_REQ => Ok(Self::SdInfoReq(SdInfoReq::parse(body)?)),
-            tag::SD_INFO_REPLY => Ok(Self::SdInfoReply(SdInfoReply::parse(body)?)),
-            tag::SD_START => Ok(Self::SdStart(SdStart::parse(body)?)),
-            tag::SD_START_REPLY => Ok(Self::SdStartReply(SdStartReply::parse(body)?)),
-            tag::SD_UPDATE => Ok(Self::SdUpdate(SdUpdate::parse(body)?)),
-            tag::SD_UPDATE_REPLY => Ok(Self::SdUpdateReply(SdUpdateReply::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::SD_INFO_REQ.as_u24(),
-                what: "sample_decryption",
-            }),
-        }
-    }
-}
-
-impl Serialize for SampleDecryptionApdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::SdInfoReq(o) => o.serialized_len(),
-            Self::SdInfoReply(o) => o.serialized_len(),
-            Self::SdStart(o) => o.serialized_len(),
-            Self::SdStartReply(o) => o.serialized_len(),
-            Self::SdUpdate(o) => o.serialized_len(),
-            Self::SdUpdateReply(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::SdInfoReq(o) => o.serialize_into(buf),
-            Self::SdInfoReply(o) => o.serialize_into(buf),
-            Self::SdStart(o) => o.serialize_into(buf),
-            Self::SdStartReply(o) => o.serialize_into(buf),
-            Self::SdUpdate(o) => o.serialize_into(buf),
-            Self::SdUpdateReply(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the Sample decryption resource objects.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum SampleDecryptionApdu<'a> ("sample_decryption") {
+        /// `sd_info_req` (`9F 98 00`).
+        SdInfoReq(SdInfoReq) = tag::SD_INFO_REQ,
+        /// `sd_info_reply` (`9F 98 01`).
+        SdInfoReply(SdInfoReply) = tag::SD_INFO_REPLY,
+        /// `sd_start` (`9F 98 02`).
+        SdStart(#[cfg_attr(feature = "serde", serde(borrow))] SdStart<'a>) = tag::SD_START,
+        /// `sd_start_reply` (`9F 98 03`).
+        SdStartReply(SdStartReply) = tag::SD_START_REPLY,
+        /// `sd_update` (`9F 98 04`).
+        SdUpdate(#[cfg_attr(feature = "serde", serde(borrow))] SdUpdate<'a>) = tag::SD_UPDATE,
+        /// `sd_update_reply` (`9F 98 05`).
+        SdUpdateReply(SdUpdateReply) = tag::SD_UPDATE_REPLY,
     }
 }
 

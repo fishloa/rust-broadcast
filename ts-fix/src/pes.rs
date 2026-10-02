@@ -78,7 +78,7 @@ pub fn reconstruct_access_units(ts: &[u8], pids: &[u16]) -> Vec<AccessUnit> {
             Err(_) => continue,
         };
 
-        if !pid_set.contains(&pkt.pid) {
+        if !pid_set.contains(&pkt.pid()) {
             continue;
         }
 
@@ -87,10 +87,10 @@ pub fn reconstruct_access_units(ts: &[u8], pids: &[u16]) -> Vec<AccessUnit> {
             None => continue,
         };
 
-        let asm = assemblers.entry(pkt.pid).or_default();
+        let asm = assemblers.entry(pkt.pid()).or_default();
 
-        if let Some(completed) = asm.feed(pkt.pusi, payload) {
-            let au = parse_au(pkt.pid, completed);
+        if let Some(completed) = asm.feed(pkt.pusi(), payload) {
+            let au = parse_au(pkt.pid(), completed);
             result.push(au);
         }
     }

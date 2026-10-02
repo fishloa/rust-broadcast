@@ -408,6 +408,7 @@ impl<'a> Parse<'a> for PlayerVerifyReply {
                 what: "CICAM_player_verify_reply",
             });
         }
+        crate::objects::reject_trailing_body(body, VERIFY_REPLY_BODY, "CICAM_player_verify_reply")?;
         Ok(Self {
             player_verify_status: PlayerVerifyStatus::from_u8(body[0]),
         })
@@ -501,7 +502,10 @@ impl<'a> Parse<'a> for PlayerCapabilitiesReply {
         }
         let n = u16::from_be_bytes([body[0], body[1]]) as usize;
         let mut pos = CAPABILITIES_PREFIX;
-        let mut component_types = Vec::with_capacity(n);
+        // `n` is an untrusted 16-bit wire count: size the allocation from the
+        // bytes actually present, never from `n` (audit r10-O-6).
+        let present = (body.len() - CAPABILITIES_PREFIX) / COMPONENT_TYPE_LEN;
+        let mut component_types = Vec::with_capacity(n.min(present));
         for _ in 0..n {
             if pos + COMPONENT_TYPE_LEN > body.len() {
                 return Err(Error::BufferTooShort {
@@ -517,6 +521,11 @@ impl<'a> Parse<'a> for PlayerCapabilitiesReply {
             });
             pos += COMPONENT_TYPE_LEN;
         }
+        objects::reject_trailing_body(
+            body,
+            CAPABILITIES_PREFIX + n * COMPONENT_TYPE_LEN,
+            "CICAM_player_capabilities_reply",
+        )?;
         Ok(Self { component_types })
     }
 }
@@ -644,6 +653,7 @@ impl<'a> Parse<'a> for PlayerStartReply {
                 what: "CICAM_player_start_reply",
             });
         }
+        crate::objects::reject_trailing_body(body, START_REPLY_BODY, "CICAM_player_start_reply")?;
         Ok(Self {
             lts_id: body[0],
             input_status: InputStatus::from_u8(body[1]),
@@ -730,6 +740,7 @@ impl<'a> Parse<'a> for PlayerStatusError {
                 what: "CICAM_player_status_error",
             });
         }
+        crate::objects::reject_trailing_body(body, STATUS_ERROR_BODY, "CICAM_player_status_error")?;
         Ok(Self {
             valid_lts_id: body[0] & VALID_LTS_ID_BIT != 0,
             lts_id: body[1],
@@ -842,6 +853,11 @@ impl<'a> Parse<'a> for PlayerControlReq {
                         what: "CICAM_player_control_req set_position",
                     });
                 }
+                objects::reject_trailing_body(
+                    body,
+                    CONTROL_PREFIX + SET_POSITION_EXTRA,
+                    "CICAM_player_control_req set_position",
+                )?;
                 ControlCommand::SetPosition {
                     seek_mode: SeekMode::from_u8(body[2]),
                     seek_position: i32::from_be_bytes([body[3], body[4], body[5], body[6]]),
@@ -855,11 +871,26 @@ impl<'a> Parse<'a> for PlayerControlReq {
                         what: "CICAM_player_control_req set_speed",
                     });
                 }
+                objects::reject_trailing_body(
+                    body,
+                    CONTROL_PREFIX + SET_SPEED_EXTRA,
+                    "CICAM_player_control_req set_speed",
+                )?;
                 ControlCommand::SetSpeed {
                     speed: i16::from_be_bytes([body[2], body[3]]),
                 }
             }
-            other => ControlCommand::Reserved(other),
+            // `Reserved` carries no payload, so a reserved command with extra
+            // bytes cannot be represented (they would be dropped, breaking the
+            // round trip): reject rather than lose them.
+            other => {
+                objects::reject_trailing_body(
+                    body,
+                    CONTROL_PREFIX,
+                    "CICAM_player_control_req reserved command",
+                )?;
+                ControlCommand::Reserved(other)
+            }
         };
         Ok(Self { lts_id, command })
     }
@@ -870,6 +901,17 @@ impl Serialize for PlayerControlReq {
         objects::apdu_len(self.body_len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        // `Reserved(0x01 | 0x02)` would emit the SetPosition/SetSpeed command
+        // byte with none of its parameters, which `parse` then rejects
+        // (audit r10-O-8): refuse to serialize it.
+        if let ControlCommand::Reserved(CONTROL_CMD_SET_POSITION | CONTROL_CMD_SET_SPEED) =
+            self.command
+        {
+            return Err(Error::InvalidObject {
+                what: "CICAM_player_control_req",
+                reason: "Reserved command value collides with SetPosition/SetSpeed",
+            });
+        }
         let body_len = self.body_len();
         let pos = objects::write_apdu_header(tag::CONTROL_REQ, body_len, buf)?;
         buf[pos] = self.lts_id;
@@ -973,6 +1015,7 @@ impl<'a> Parse<'a> for PlayerInfoReply {
                 what: "CICAM_player_info_reply",
             });
         }
+        crate::objects::reject_trailing_body(body, INFO_REPLY_BODY, "CICAM_player_info_reply")?;
         Ok(Self {
             lts_id: body[0],
             duration: u32::from_be_bytes([body[1], body[2], body[3], body[4]]),
@@ -1083,6 +1126,7 @@ impl<'a> Parse<'a> for PlayerAssetEnd {
                 what: "CICAM_player_asset_end",
             });
         }
+        crate::objects::reject_trailing_body(body, ASSET_END_BODY, "CICAM_player_asset_end")?;
         Ok(Self {
             lts_id: body[0],
             beginning: body[1] & BEGINNING_BIT != 0,
@@ -1194,6 +1238,7 @@ impl<'a> Parse<'a> for PlayerUpdateReply {
                 what: "CICAM_player_update_reply",
             });
         }
+        crate::objects::reject_trailing_body(body, UPDATE_REPLY_BODY, "CICAM_player_update_reply")?;
         Ok(Self {
             lts_id: body[0],
             update_status: UpdateStatus::from_u8(body[1]),
@@ -1217,125 +1262,44 @@ impl Serialize for PlayerUpdateReply {
 // Resource-scoped dispatch
 // ---------------------------------------------------------------------------
 
-/// Resource-scoped dispatch over the CICAM Player resource objects (Table 71).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum CicamPlayerApdu<'a> {
-    /// `CICAM_player_verify_req` (`9F A0 00`).
-    VerifyReq(#[cfg_attr(feature = "serde", serde(borrow))] PlayerVerifyReq<'a>),
-    /// `CICAM_player_verify_reply` (`9F A0 01`).
-    VerifyReply(PlayerVerifyReply),
-    /// `CICAM_player_capabilities_req` (`9F A0 02`).
-    CapabilitiesReq(PlayerCapabilitiesReq),
-    /// `CICAM_player_capabilities_reply` (`9F A0 03`).
-    CapabilitiesReply(PlayerCapabilitiesReply),
-    /// `CICAM_player_start_req` (`9F A0 04`).
-    StartReq(#[cfg_attr(feature = "serde", serde(borrow))] PlayerStartReq<'a>),
-    /// `CICAM_player_start_reply` (`9F A0 05`).
-    StartReply(PlayerStartReply),
-    /// `CICAM_player_play_req` (`9F A0 06`).
-    PlayReq(#[cfg_attr(feature = "serde", serde(borrow))] PlayerPlayReq<'a>),
-    /// `CICAM_player_status_error` (`9F A0 07`).
-    StatusError(PlayerStatusError),
-    /// `CICAM_player_control_req` (`9F A0 08`).
-    ControlReq(PlayerControlReq),
-    /// `CICAM_player_info_req` (`9F A0 09`).
-    InfoReq(PlayerInfoReq),
-    /// `CICAM_player_info_reply` (`9F A0 0A`).
-    InfoReply(PlayerInfoReply),
-    /// `CICAM_player_stop` (`9F A0 0B`).
-    Stop(PlayerStop),
-    /// `CICAM_player_end` (`9F A0 0C`).
-    End(PlayerEnd),
-    /// `CICAM_player_asset_end` (`9F A0 0D`).
-    AssetEnd(PlayerAssetEnd),
-    /// `CICAM_player_update_req` (`9F A0 0E`).
-    UpdateReq(#[cfg_attr(feature = "serde", serde(borrow))] PlayerUpdateReq<'a>),
-    /// `CICAM_player_update_reply` (`9F A0 0F`).
-    UpdateReply(PlayerUpdateReply),
-}
-
-impl<'a> CicamPlayerApdu<'a> {
-    /// Parse a CICAM Player APDU, dispatching on the leading `apdu_tag`.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "cicam_player apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::VERIFY_REQ => Ok(Self::VerifyReq(PlayerVerifyReq::parse(body)?)),
-            tag::VERIFY_REPLY => Ok(Self::VerifyReply(PlayerVerifyReply::parse(body)?)),
-            tag::CAPABILITIES_REQ => Ok(Self::CapabilitiesReq(PlayerCapabilitiesReq::parse(body)?)),
-            tag::CAPABILITIES_REPLY => Ok(Self::CapabilitiesReply(PlayerCapabilitiesReply::parse(
-                body,
-            )?)),
-            tag::START_REQ => Ok(Self::StartReq(PlayerStartReq::parse(body)?)),
-            tag::START_REPLY => Ok(Self::StartReply(PlayerStartReply::parse(body)?)),
-            tag::PLAY_REQ => Ok(Self::PlayReq(PlayerPlayReq::parse(body)?)),
-            tag::STATUS_ERROR => Ok(Self::StatusError(PlayerStatusError::parse(body)?)),
-            tag::CONTROL_REQ => Ok(Self::ControlReq(PlayerControlReq::parse(body)?)),
-            tag::INFO_REQ => Ok(Self::InfoReq(PlayerInfoReq::parse(body)?)),
-            tag::INFO_REPLY => Ok(Self::InfoReply(PlayerInfoReply::parse(body)?)),
-            tag::STOP => Ok(Self::Stop(PlayerStop::parse(body)?)),
-            tag::END => Ok(Self::End(PlayerEnd::parse(body)?)),
-            tag::ASSET_END => Ok(Self::AssetEnd(PlayerAssetEnd::parse(body)?)),
-            tag::UPDATE_REQ => Ok(Self::UpdateReq(PlayerUpdateReq::parse(body)?)),
-            tag::UPDATE_REPLY => Ok(Self::UpdateReply(PlayerUpdateReply::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::VERIFY_REQ.as_u24(),
-                what: "cicam_player",
-            }),
-        }
-    }
-}
-
-impl Serialize for CicamPlayerApdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::VerifyReq(o) => o.serialized_len(),
-            Self::VerifyReply(o) => o.serialized_len(),
-            Self::CapabilitiesReq(o) => o.serialized_len(),
-            Self::CapabilitiesReply(o) => o.serialized_len(),
-            Self::StartReq(o) => o.serialized_len(),
-            Self::StartReply(o) => o.serialized_len(),
-            Self::PlayReq(o) => o.serialized_len(),
-            Self::StatusError(o) => o.serialized_len(),
-            Self::ControlReq(o) => o.serialized_len(),
-            Self::InfoReq(o) => o.serialized_len(),
-            Self::InfoReply(o) => o.serialized_len(),
-            Self::Stop(o) => o.serialized_len(),
-            Self::End(o) => o.serialized_len(),
-            Self::AssetEnd(o) => o.serialized_len(),
-            Self::UpdateReq(o) => o.serialized_len(),
-            Self::UpdateReply(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::VerifyReq(o) => o.serialize_into(buf),
-            Self::VerifyReply(o) => o.serialize_into(buf),
-            Self::CapabilitiesReq(o) => o.serialize_into(buf),
-            Self::CapabilitiesReply(o) => o.serialize_into(buf),
-            Self::StartReq(o) => o.serialize_into(buf),
-            Self::StartReply(o) => o.serialize_into(buf),
-            Self::PlayReq(o) => o.serialize_into(buf),
-            Self::StatusError(o) => o.serialize_into(buf),
-            Self::ControlReq(o) => o.serialize_into(buf),
-            Self::InfoReq(o) => o.serialize_into(buf),
-            Self::InfoReply(o) => o.serialize_into(buf),
-            Self::Stop(o) => o.serialize_into(buf),
-            Self::End(o) => o.serialize_into(buf),
-            Self::AssetEnd(o) => o.serialize_into(buf),
-            Self::UpdateReq(o) => o.serialize_into(buf),
-            Self::UpdateReply(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the CICAM Player resource objects (Table 71).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum CicamPlayerApdu<'a> ("cicam_player") {
+        /// `CICAM_player_verify_req` (`9F A0 00`).
+        VerifyReq(#[cfg_attr(feature = "serde", serde(borrow))] PlayerVerifyReq<'a>) = tag::VERIFY_REQ,
+        /// `CICAM_player_verify_reply` (`9F A0 01`).
+        VerifyReply(PlayerVerifyReply) = tag::VERIFY_REPLY,
+        /// `CICAM_player_capabilities_req` (`9F A0 02`).
+        CapabilitiesReq(PlayerCapabilitiesReq) = tag::CAPABILITIES_REQ,
+        /// `CICAM_player_capabilities_reply` (`9F A0 03`).
+        CapabilitiesReply(PlayerCapabilitiesReply) = tag::CAPABILITIES_REPLY,
+        /// `CICAM_player_start_req` (`9F A0 04`).
+        StartReq(#[cfg_attr(feature = "serde", serde(borrow))] PlayerStartReq<'a>) = tag::START_REQ,
+        /// `CICAM_player_start_reply` (`9F A0 05`).
+        StartReply(PlayerStartReply) = tag::START_REPLY,
+        /// `CICAM_player_play_req` (`9F A0 06`).
+        PlayReq(#[cfg_attr(feature = "serde", serde(borrow))] PlayerPlayReq<'a>) = tag::PLAY_REQ,
+        /// `CICAM_player_status_error` (`9F A0 07`).
+        StatusError(PlayerStatusError) = tag::STATUS_ERROR,
+        /// `CICAM_player_control_req` (`9F A0 08`).
+        ControlReq(PlayerControlReq) = tag::CONTROL_REQ,
+        /// `CICAM_player_info_req` (`9F A0 09`).
+        InfoReq(PlayerInfoReq) = tag::INFO_REQ,
+        /// `CICAM_player_info_reply` (`9F A0 0A`).
+        InfoReply(PlayerInfoReply) = tag::INFO_REPLY,
+        /// `CICAM_player_stop` (`9F A0 0B`).
+        Stop(PlayerStop) = tag::STOP,
+        /// `CICAM_player_end` (`9F A0 0C`).
+        End(PlayerEnd) = tag::END,
+        /// `CICAM_player_asset_end` (`9F A0 0D`).
+        AssetEnd(PlayerAssetEnd) = tag::ASSET_END,
+        /// `CICAM_player_update_req` (`9F A0 0E`).
+        UpdateReq(#[cfg_attr(feature = "serde", serde(borrow))] PlayerUpdateReq<'a>) = tag::UPDATE_REQ,
+        /// `CICAM_player_update_reply` (`9F A0 0F`).
+        UpdateReply(PlayerUpdateReply) = tag::UPDATE_REPLY,
     }
 }
 
@@ -1506,6 +1470,33 @@ mod tests {
         assert_eq!(bytes[5], 0x02);
         assert_eq!(&bytes[6..8], &(-100i16).to_be_bytes());
         assert_eq!(PlayerControlReq::parse(&bytes).unwrap(), c);
+    }
+
+    #[test]
+    fn control_req_reserved_command_cannot_alias_or_lose_bytes() {
+        let mut buf = [0u8; 32];
+        for v in [0x01u8, 0x02] {
+            let c = PlayerControlReq {
+                lts_id: 1,
+                command: ControlCommand::Reserved(v),
+            };
+            assert!(
+                matches!(c.serialize_into(&mut buf), Err(Error::InvalidObject { .. })),
+                "Reserved({v:#04X}) must not serialize a parameterless SetPosition/SetSpeed"
+            );
+        }
+        // A genuinely reserved value round-trips.
+        let ok = PlayerControlReq {
+            lts_id: 1,
+            command: ControlCommand::Reserved(0x00),
+        };
+        assert_eq!(ok.to_bytes(), [0x9F, 0xA0, 0x08, 0x02, 0x01, 0x00]);
+        // ...but one that arrives with a payload is rejected, not truncated.
+        let with_payload = [0x9F, 0xA0, 0x08, 0x03, 0x01, 0x00, 0xEE];
+        assert!(PlayerControlReq::parse(&with_payload).is_err());
+        // SetSpeed with a trailing byte is rejected too.
+        let speed_pad = [0x9F, 0xA0, 0x08, 0x05, 0x01, 0x02, 0x00, 0x64, 0xEE];
+        assert!(PlayerControlReq::parse(&speed_pad).is_err());
     }
 
     #[test]

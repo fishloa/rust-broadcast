@@ -30,9 +30,9 @@ fn reassemble_emsg_from_ts() {
     };
 
     let pkt = OwnedTsPacket::parse(ts_bytes).expect("failed to parse TS packet");
-    assert_eq!(pkt.pid, 0x0004, "expected PID 0x0004");
-    assert!(pkt.pusi, "expected PUSI=1");
-    assert!(pkt.has_adaptation, "expected adaptation field");
+    assert_eq!(pkt.pid(), 0x0004, "expected PID 0x0004");
+    assert!(pkt.pusi(), "expected PUSI=1");
+    assert!(pkt.has_adaptation(), "expected adaptation field");
 
     let payload = pkt.payload().expect("expected payload bytes in TS packet");
 

@@ -10,21 +10,13 @@
 
 use std::collections::BTreeMap;
 
-use broadcast_common::{Parse, Serialize};
+use crate::resource::ser;
+use broadcast_common::Parse;
 use dvb_ci::resource::ResourceId;
 use dvb_ci::spdu::{
     CloseSessionRequest, CloseSessionResponse, CreateSessionResponse, OpenSessionRequest,
     OpenSessionResponse, SessionNumber, SessionStatus, tags,
 };
-
-/// r10-W-20: previously emitted a silently-empty `Vec` on error (and, in a
-/// later pass, panicked). The session layer's SPDUs are triggered by APDUs
-/// and open/close requests that ultimately originate from the CAM/card, so a
-/// serialize failure must propagate to the caller as `Err`, not corrupt the
-/// wire exchange or crash the driver.
-fn ser<S: Serialize<Error = dvb_ci::Error>>(s: &S) -> dvb_ci::Result<Vec<u8>> {
-    s.try_to_bytes()
-}
 
 /// What the session layer wants done after handling one SPDU.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
@@ -60,6 +52,19 @@ impl SessionLayer {
     #[must_use]
     pub fn resource_of(&self, session_nb: u16) -> Option<ResourceId> {
         self.sessions.get(&session_nb).copied()
+    }
+
+    /// The lowest open `session_nb` bound to `resource`, if any.
+    ///
+    /// Walks only the open sessions (a handful per slot), where the caller
+    /// used to probe every one of the 65 535 representable numbers through
+    /// [`resource_of`](Self::resource_of) (audit r10-O-9).
+    #[must_use]
+    pub fn session_for(&self, resource: ResourceId) -> Option<u16> {
+        self.sessions
+            .iter()
+            .find(|&(_, &r)| r == resource)
+            .map(|(&n, _)| n)
     }
 
     /// All open `(session_nb, resource)` pairs, ascending by `session_nb`.
@@ -163,7 +168,10 @@ impl SessionLayer {
         let mut out = SessionOut::default();
         match spdu.first().copied() {
             // Module wants a host-provided resource.
-            Some(tags::OPEN_SESSION_REQUEST) if let Ok(req) = OpenSessionRequest::parse(spdu) => {
+            Some(tags::OPEN_SESSION_REQUEST) => {
+                // A malformed CAM SPDU is surfaced (`?` -> Notification::Error),
+                // never dropped silently.
+                let req = OpenSessionRequest::parse(spdu)?;
                 if provides(req.resource) {
                     let session_nb = self.alloc();
                     self.sessions.insert(session_nb, req.resource);
@@ -185,27 +193,28 @@ impl SessionLayer {
             // module-provided resource); the module assigns the session_nb.
             // r10-W-18: the assignment is not trusted blindly — see
             // `try_bind_module_chosen`.
-            Some(tags::OPEN_SESSION_RESPONSE)
-                if let Ok(resp) = OpenSessionResponse::parse(spdu)
-                    && resp.status == SessionStatus::Ok =>
-            {
-                out.opened.extend(
-                    self.try_bind_module_chosen(resp.session_nb, resp.resource)
-                        .then_some((resp.session_nb, resp.resource)),
-                );
+            Some(tags::OPEN_SESSION_RESPONSE) => {
+                let resp = OpenSessionResponse::parse(spdu)?;
+                if resp.status == SessionStatus::Ok {
+                    out.opened.extend(
+                        self.try_bind_module_chosen(resp.session_nb, resp.resource)
+                            .then_some((resp.session_nb, resp.resource)),
+                    );
+                }
             }
             // (Legacy) module's reply to a create_session, if any module uses it.
-            Some(tags::CREATE_SESSION_RESPONSE)
-                if let Ok(resp) = CreateSessionResponse::parse(spdu)
-                    && resp.status == SessionStatus::Ok =>
-            {
-                out.opened.extend(
-                    self.try_bind_module_chosen(resp.session_nb, resp.resource)
-                        .then_some((resp.session_nb, resp.resource)),
-                );
+            Some(tags::CREATE_SESSION_RESPONSE) => {
+                let resp = CreateSessionResponse::parse(spdu)?;
+                if resp.status == SessionStatus::Ok {
+                    out.opened.extend(
+                        self.try_bind_module_chosen(resp.session_nb, resp.resource)
+                            .then_some((resp.session_nb, resp.resource)),
+                    );
+                }
             }
             // Peer closes a session.
-            Some(tags::CLOSE_SESSION_REQUEST) if let Ok(req) = CloseSessionRequest::parse(spdu) => {
+            Some(tags::CLOSE_SESSION_REQUEST) => {
+                let req = CloseSessionRequest::parse(spdu)?;
                 self.sessions.remove(&req.session_nb);
                 out.spdus.push(ser(&CloseSessionResponse {
                     status: SessionStatus::Ok,
@@ -214,19 +223,18 @@ impl SessionLayer {
                 out.closed.push(req.session_nb);
             }
             // Ack of a close we initiated.
-            Some(tags::CLOSE_SESSION_RESPONSE)
-                if let Ok(resp) = CloseSessionResponse::parse(spdu) =>
-            {
+            Some(tags::CLOSE_SESSION_RESPONSE) => {
+                let resp = CloseSessionResponse::parse(spdu)?;
                 self.sessions.remove(&resp.session_nb);
                 out.closed.push(resp.session_nb);
             }
             // Data: session_number(nb) + APDU body.
-            Some(tags::SESSION_NUMBER)
-                if let Ok(sn) = SessionNumber::parse(spdu)
-                    && spdu.len() > SessionNumber::HEADER_LEN =>
-            {
-                out.apdus
-                    .push((sn.session_nb, spdu[SessionNumber::HEADER_LEN..].to_vec()));
+            Some(tags::SESSION_NUMBER) => {
+                let sn = SessionNumber::parse(spdu)?;
+                if spdu.len() > SessionNumber::HEADER_LEN {
+                    out.apdus
+                        .push((sn.session_nb, spdu[SessionNumber::HEADER_LEN..].to_vec()));
+                }
             }
             _ => {}
         }
@@ -241,6 +249,29 @@ mod tests {
 
     fn provides_rm(r: ResourceId) -> bool {
         r == RESOURCE_MANAGER
+    }
+
+    #[test]
+    fn session_for_returns_the_lowest_open_session_of_a_resource() {
+        let mut s = SessionLayer::new();
+        assert_eq!(s.session_for(RESOURCE_MANAGER), None);
+        let rm_req = ser(&OpenSessionRequest {
+            resource: RESOURCE_MANAGER,
+        })
+        .unwrap();
+        let ai_req = ser(&OpenSessionRequest {
+            resource: APPLICATION_INFORMATION,
+        })
+        .unwrap();
+        let all = |_: ResourceId| true;
+        let rm = s.on_spdu(&rm_req, all).unwrap().opened[0].0;
+        let ai = s.on_spdu(&ai_req, all).unwrap().opened[0].0;
+        assert_ne!(rm, ai);
+        assert_eq!(s.session_for(RESOURCE_MANAGER), Some(rm));
+        assert_eq!(s.session_for(APPLICATION_INFORMATION), Some(ai));
+        // Closing the session removes it from the lookup.
+        s.close(rm).unwrap();
+        assert_eq!(s.session_for(RESOURCE_MANAGER), None);
     }
 
     #[test]

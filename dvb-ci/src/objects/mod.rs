@@ -22,6 +22,20 @@ pub mod mmi_display;
 pub mod mmi_high;
 pub mod resource_manager;
 
+/// Reject bytes after a fixed-layout APDU body: the `length_field` declared
+/// more than the object's fixed shape holds, so the extra bytes would be
+/// silently dropped and the parse -> serialize round trip would not be
+/// byte-identical (audit r10-O-1).
+pub(crate) fn reject_trailing_body(body: &[u8], expected: usize, what: &'static str) -> Result<()> {
+    if body.len() > expected {
+        return Err(Error::InvalidObject {
+            what,
+            reason: "trailing bytes after the fixed body",
+        });
+    }
+    Ok(())
+}
+
 /// Parse an APDU header: verify the 3-byte `apdu_tag` matches `expected`, decode
 /// the `length_field`, and return the body slice (exactly `length_value` bytes).
 pub(crate) fn parse_apdu_header<'a>(
@@ -123,8 +137,21 @@ const fn overflow_reason(bits: u32) -> &'static str {
         8 => "exceeds 8-bit range (0xFF)",
         12 => "exceeds 12-bit range (0x0FFF)",
         13 => "exceeds 13-bit PID range (0x1FFF)",
+        14 => "exceeds 14-bit range (0x3FFF)",
         16 => "exceeds 16-bit range (0xFFFF)",
+        24 => "exceeds 24-bit range (0xFFFFFF)",
         _ => "exceeds field width",
+    }
+}
+
+/// `Debug` stand-in for secret bytes: prints only the length, never the
+/// content, so an APDU logged with `{:?}` cannot leak a PIN, licence or DRM
+/// blob (audit #1142). The bytes stay available on the field itself.
+pub(crate) struct Redacted(pub(crate) usize);
+
+impl core::fmt::Debug for Redacted {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "<{} bytes redacted>", self.0)
     }
 }
 

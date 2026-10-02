@@ -62,7 +62,13 @@ pub fn cue_block(cue: &Cue) -> String {
         format_timestamp(cue.start),
         format_timestamp(cue.end)
     );
-    for (i, line) in cue.text.lines().enumerate() {
+    // A blank line terminates a cue block (W3C WebVTT §4.1), so an empty
+    // line inside the payload would truncate the cue and turn the rest into
+    // a bogus block: empty lines are dropped.
+    // WebVTT line terminators are CRLF, LF or a lone CR (§4.1), so normalise
+    // all three before splitting: `str::lines` does not split on a lone CR.
+    let normalized = cue.text.replace("\r\n", "\n").replace('\r', "\n");
+    for (i, line) in normalized.split('\n').filter(|l| !l.is_empty()).enumerate() {
         if i > 0 {
             out.push('\n');
         }
@@ -124,6 +130,19 @@ mod tests {
             end: MediaTime(end),
             text: text.to_string(),
         }
+    }
+
+    #[test]
+    fn blank_line_in_payload_does_not_truncate_the_cue() {
+        // W3C WebVTT §4.1: a blank line ends the cue block. A `\n\n` inside
+        // the text must not split the cue in two.
+        let block = cue_block(&cue(0, 90_000, "one\n\ntwo\n\n\nthree"));
+        assert_eq!(block, "00:00:00.000 --> 00:00:01.000\none\ntwo\nthree\n");
+        assert!(!block.contains("\n\n"));
+        // A lone CR and CRLF are line terminators too (`str::lines` kept
+        // "a\r\rb" as one line).
+        let cr = cue_block(&cue(0, 90_000, "a\r\rb\r\n\r\nc"));
+        assert_eq!(cr, "00:00:00.000 --> 00:00:01.000\na\nb\nc\n");
     }
 
     #[test]

@@ -266,6 +266,11 @@ pub struct CommsCmd<'a> {
     pub params: CommsCmdParams<'a>,
 }
 
+/// `retry_count`(1) + `timeout`(1) after the connection descriptor (Table 52).
+const COMMS_CONNECT_TAIL: usize = 2;
+/// `buffer_size`(1) + `timeout`(1) (Table 52).
+const COMMS_SET_PARAMS_BODY: usize = 2;
+
 impl<'a> Parse<'a> for CommsCmd<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -288,6 +293,7 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
                         what: "comms_cmd connect retry/timeout",
                     });
                 }
+                super::reject_trailing_body(tail, COMMS_CONNECT_TAIL, "comms_cmd connect")?;
                 CommsCmdParams::Connect {
                     connection_descriptor: cd,
                     retry_count: tail[0],
@@ -302,6 +308,7 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
                         what: "comms_cmd set_params",
                     });
                 }
+                super::reject_trailing_body(rest, COMMS_SET_PARAMS_BODY, "comms_cmd set_params")?;
                 CommsCmdParams::SetParams {
                     buffer_size: rest[0],
                     timeout: rest[1],
@@ -313,9 +320,13 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
                     have: 0,
                     what: "comms_cmd get_next_buffer",
                 })?;
+                super::reject_trailing_body(rest, 1, "comms_cmd get_next_buffer")?;
                 CommsCmdParams::GetNextBuffer { comms_phase_id }
             }
-            _ => CommsCmdParams::None,
+            _ => {
+                super::reject_trailing_body(rest, 0, "comms_cmd")?;
+                CommsCmdParams::None
+            }
         };
         Ok(Self { command_id, params })
     }
@@ -505,6 +516,7 @@ impl<'a> Parse<'a> for CommsReply {
                 what: "comms_reply",
             });
         }
+        super::reject_trailing_body(body, COMMS_REPLY_BODY, "comms_reply")?;
         Ok(Self {
             reply_id: CommsReplyId::from_u8(body[0]),
             return_value: body[1],

@@ -11,7 +11,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Copy Protection (Tables 69-73).
@@ -120,15 +119,20 @@ pub struct CpResponse<'a> {
 
 /// Width of the `CopyProtectionID` field (24 bits).
 const CP_ID_LEN: usize = 3;
+/// `CopyProtectionID` width in bits.
+const CP_ID_BITS: u32 = 24;
 
 fn read_cp_id(body: &[u8]) -> u32 {
     ((body[0] as u32) << 16) | ((body[1] as u32) << 8) | body[2] as u32
 }
 
-fn write_cp_id(id: u32, buf: &mut [u8]) {
-    buf[0] = (id >> 16) as u8;
-    buf[1] = (id >> 8) as u8;
-    buf[2] = id as u8;
+/// Write the 24-bit `CopyProtectionID`, rejecting a `u32` that does not fit
+/// instead of silently dropping its top byte (audit r10-O-8).
+fn write_cp_id(id: u32, buf: &mut [u8]) -> Result<()> {
+    objects::fit_bits(u64::from(id), CP_ID_BITS, "copy_protection_id")?;
+    let be = id.to_be_bytes();
+    buf[..CP_ID_LEN].copy_from_slice(&be[be.len() - CP_ID_LEN..]);
+    Ok(())
 }
 
 // --- cp_query ---
@@ -156,7 +160,7 @@ impl Serialize for CpQuery {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let pos = objects::write_apdu_header(tag::CP_QUERY, CP_ID_LEN, buf)?;
-        write_cp_id(self.copy_protection_id, &mut buf[pos..]);
+        write_cp_id(self.copy_protection_id, &mut buf[pos..])?;
         Ok(pos + CP_ID_LEN)
     }
 }
@@ -177,6 +181,7 @@ impl<'a> Parse<'a> for CpReply {
                 what: "cp_reply",
             });
         }
+        crate::objects::reject_trailing_body(body, CP_REPLY_BODY, "cp_reply")?;
         Ok(Self {
             copy_protection_id: read_cp_id(body),
             status: CpStatus::from_u8(body[CP_ID_LEN]),
@@ -190,7 +195,7 @@ impl Serialize for CpReply {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let pos = objects::write_apdu_header(tag::CP_REPLY, CP_REPLY_BODY, buf)?;
-        write_cp_id(self.copy_protection_id, &mut buf[pos..]);
+        write_cp_id(self.copy_protection_id, &mut buf[pos..])?;
         buf[pos + CP_ID_LEN] = self.status.to_u8();
         Ok(pos + CP_REPLY_BODY)
     }
@@ -223,7 +228,7 @@ impl Serialize for CpCommand<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = CP_ID_LEN + self.command_bytes.len();
         let mut pos = objects::write_apdu_header(tag::CP_COMMAND, body_len, buf)?;
-        write_cp_id(self.copy_protection_id, &mut buf[pos..]);
+        write_cp_id(self.copy_protection_id, &mut buf[pos..])?;
         pos += CP_ID_LEN;
         buf[pos..pos + self.command_bytes.len()].copy_from_slice(self.command_bytes);
         Ok(pos + self.command_bytes.len())
@@ -257,76 +262,51 @@ impl Serialize for CpResponse<'_> {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = CP_ID_LEN + self.response_bytes.len();
         let mut pos = objects::write_apdu_header(tag::CP_RESPONSE, body_len, buf)?;
-        write_cp_id(self.copy_protection_id, &mut buf[pos..]);
+        write_cp_id(self.copy_protection_id, &mut buf[pos..])?;
         pos += CP_ID_LEN;
         buf[pos..pos + self.response_bytes.len()].copy_from_slice(self.response_bytes);
         Ok(pos + self.response_bytes.len())
     }
 }
 
-/// Resource-scoped dispatch over the Copy Protection objects.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum CopyProtectionApdu<'a> {
-    /// `cp_query` (`9F 80 00`).
-    CpQuery(CpQuery),
-    /// `cp_reply` (`9F 80 01`).
-    CpReply(CpReply),
-    /// `cp_command` (`9F 80 02`).
-    CpCommand(CpCommand<'a>),
-    /// `cp_response` (`9F 80 03`).
-    CpResponse(CpResponse<'a>),
-}
-
-impl<'a> CopyProtectionApdu<'a> {
-    /// Parse a Copy Protection APDU, dispatching on the `apdu_tag`.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "copy_protection apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::CP_QUERY => Ok(Self::CpQuery(CpQuery::parse(body)?)),
-            tag::CP_REPLY => Ok(Self::CpReply(CpReply::parse(body)?)),
-            tag::CP_COMMAND => Ok(Self::CpCommand(CpCommand::parse(body)?)),
-            tag::CP_RESPONSE => Ok(Self::CpResponse(CpResponse::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::CP_QUERY.as_u24(),
-                what: "copy_protection",
-            }),
-        }
-    }
-}
-
-impl Serialize for CopyProtectionApdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::CpQuery(o) => o.serialized_len(),
-            Self::CpReply(o) => o.serialized_len(),
-            Self::CpCommand(o) => o.serialized_len(),
-            Self::CpResponse(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::CpQuery(o) => o.serialize_into(buf),
-            Self::CpReply(o) => o.serialize_into(buf),
-            Self::CpCommand(o) => o.serialize_into(buf),
-            Self::CpResponse(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the Copy Protection objects.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum CopyProtectionApdu<'a> ("copy_protection") {
+        /// `cp_query` (`9F 80 00`).
+        CpQuery(CpQuery) = tag::CP_QUERY,
+        /// `cp_reply` (`9F 80 01`).
+        CpReply(CpReply) = tag::CP_REPLY,
+        /// `cp_command` (`9F 80 02`).
+        CpCommand(CpCommand<'a>) = tag::CP_COMMAND,
+        /// `cp_response` (`9F 80 03`).
+        CpResponse(CpResponse<'a>) = tag::CP_RESPONSE,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn copy_protection_id_over_24_bits_is_rejected_not_truncated() {
+        // 0x01AABBCC used to serialize as AA BB CC (top byte silently lost).
+        let q = CpQuery {
+            copy_protection_id: 0x01AA_BBCC,
+        };
+        let mut buf = [0u8; 16];
+        assert!(matches!(
+            q.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+        // The 24-bit maximum still round-trips.
+        let max = CpQuery {
+            copy_protection_id: 0x00FF_FFFF,
+        };
+        assert_eq!(max.to_bytes(), [0x9F, 0x80, 0x00, 0x03, 0xFF, 0xFF, 0xFF]);
+    }
 
     #[test]
     fn cp_query_round_trips_and_bites() {

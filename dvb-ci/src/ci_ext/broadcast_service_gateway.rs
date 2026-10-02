@@ -147,6 +147,7 @@ impl<'a> Parse<'a> for EitSectionReq {
                 what: "EITSectionReq",
             });
         }
+        crate::objects::reject_trailing_body(body, EIT_SECTION_REQ_BODY, "EITSectionReq")?;
         Ok(Self {
             table_id: u16::from_be_bytes([body[0], body[1]]),
             service_id: u16::from_be_bytes([body[2], body[3]]),

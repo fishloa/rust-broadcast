@@ -18,6 +18,8 @@ const EXT_STREAM_ID: u8 = 0xB7;
 
 /// Fixed bytes before the stream loop: start_code(4) + header_length(2).
 pub(crate) const PREFIX_LEN: usize = 6;
+/// Mask of the 7 `reserved_bits` below `packet_rate_restriction_flag` (Table 2-40).
+const RESERVED_BITS_MASK: u8 = 0x7F;
 
 /// A per-stream P-STD buffer bound entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +56,11 @@ pub struct SystemHeader {
     pub video_bound: u8,
     /// Packet rate restriction flag.
     pub packet_rate_restriction_flag: bool,
+    /// The 7 `reserved_bits` after `packet_rate_restriction_flag`
+    /// (Table 2-40), preserved so a header whose encoder wrote something
+    /// other than the conventional all-ones (`0x7F`) re-serializes
+    /// byte-identically (audit r14-MPS-W8).
+    pub reserved_bits: u8,
     /// Per-stream P-STD buffer bounds (the `while (nextbits() == '1')` loop).
     pub std_buffer_bounds: Vec<StdBufferBound>,
 }
@@ -154,6 +161,7 @@ impl<'a> Parse<'a> for SystemHeader {
 
         // byte 5: packet_rate_restriction_flag(1) | reserved(7)
         let packet_rate_restriction_flag = body[5] & 0x80 != 0;
+        let reserved_bits = body[5] & RESERVED_BITS_MASK;
 
         // Stream loop — each entry starts with MSB=1 (nextbits()=='1')
         let mut pos = 6;
@@ -169,11 +177,11 @@ impl<'a> Parse<'a> for SystemHeader {
                         what: "system_header extended stream entry",
                     });
                 }
-                // byte pos+1: '11' + '000 0000'(5 bits)
+                // byte pos+1: '11' + '000000'(6 bits)
                 if body[pos + 1] & 0xC0 != 0xC0 {
                     return Err(Error::BadStreamIdExtensionPrefix(body[pos + 1]));
                 }
-                // byte pos+2: '000 0000'(1) + stream_id_extension(7)
+                // byte pos+2: '0'(1) + stream_id_extension(7)
                 let stream_id_extension = body[pos + 2] & 0x7F;
                 // byte pos+3: '1011 0110'
                 if body[pos + 3] != 0xB6 {
@@ -184,15 +192,8 @@ impl<'a> Parse<'a> for SystemHeader {
                     return Err(Error::BadMarker("P-STD_buffer_bound_scale prefix (ext)"));
                 }
                 let buffer_bound_scale = body[pos + 4] & 0x20 != 0;
-                // byte pos+5: size[6:0](7) + marker(1)? No — the 13-bit size fits in the remaining bits
-                // byte pos+4 has 5 bits of size; byte pos+5 has 7 bits + marker at bit0?
-                // Actually: P-STD_buffer_bound_scale(1) + P-STD_buffer_size_bound(13) = 14 bits
-                // byte pos+4: '11'(2) | scale(1) | size[12:7](5) = 8 bits
-                // byte pos+5: size[6:0](7) | marker?
-                // From Table 2-40: after the scale+size, the stream loop tests nextbits()=='1' so
-                // the next byte's MSB must be set. But the size is 13 bits — only 12 fit in bytes 4-5.
-                // Wait: scale(1) + size(13) = 14 bits. byte4 has 5 bits of size after 3 used bits.
-                // byte5 has all 8 bits = 5+8=13 bits of size. No marker.
+                // bytes pos+4/pos+5: '11'(2) | scale(1) | size[12:8](5), then size[7:0](8):
+                // the 13-bit size has no trailing marker bit (Table 2-40).
                 let buffer_size_bound =
                     (u16::from(body[pos + 4] & 0x1F) << 8) | u16::from(body[pos + 5]);
                 std_buffer_bounds.push(StdBufferBound {
@@ -216,8 +217,7 @@ impl<'a> Parse<'a> for SystemHeader {
                     return Err(Error::BadMarker("P-STD_buffer_bound_scale prefix"));
                 }
                 let buffer_bound_scale = body[pos + 1] & 0x20 != 0;
-                // byte pos+2: size[6:0](7) — no marker in normal form either
-                // Actually: for the non-ext form too, the 13-bit size spans 5 bits in byte1 + 8 in byte2
+                // bytes pos+1/pos+2: '11'(2) | scale(1) | size[12:8](5), then size[7:0](8).
                 let buffer_size_bound =
                     (u16::from(body[pos + 1] & 0x1F) << 8) | u16::from(body[pos + 2]);
                 std_buffer_bounds.push(StdBufferBound {
@@ -239,6 +239,7 @@ impl<'a> Parse<'a> for SystemHeader {
             system_video_lock_flag,
             video_bound,
             packet_rate_restriction_flag,
+            reserved_bits,
             std_buffer_bounds,
         })
     }
@@ -288,7 +289,8 @@ impl Serialize for SystemHeader {
             | 0x20 // marker_bit (bit5 of byte 10)
             | (self.video_bound & 0x1F);
         // byte 11: packet_rate_restriction_flag(1) | reserved(7)
-        buf[11] = (u8::from(self.packet_rate_restriction_flag) << 7) | 0x7F;
+        buf[11] = (u8::from(self.packet_rate_restriction_flag) << 7)
+            | (self.reserved_bits & RESERVED_BITS_MASK);
 
         // Stream loop
         let mut pos = 12;
@@ -421,6 +423,26 @@ mod tests {
         assert_ne!(&out[..], &out2[..]);
     }
 
+    /// r14-MPS-W8: an encoder that wrote `reserved_bits` other than the
+    /// conventional `0x7F` must re-serialize byte-identically.
+    #[test]
+    fn non_conventional_reserved_bits_round_trip() {
+        let bytes = vec![
+            0x00, 0x00, 0x01, 0xBB, // start_code
+            0x00, 0x06, // header_length
+            0x80, 0x00, 0x01, // rate_bound=0, markers
+            0x04, // audio_bound=1
+            0x20, // marker=1, video_bound=0
+            0x2A, // packet_rate=0, reserved_bits=0b010_1010
+        ];
+        let h = SystemHeader::parse(&bytes).unwrap();
+        assert_eq!(h.reserved_bits, 0x2A);
+        assert!(!h.packet_rate_restriction_flag);
+        let mut out = vec![0u8; h.serialized_len()];
+        h.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
+
     /// MPS-W7 (#1129): `stream_loop_len` accumulated in `u16`, overflowing
     /// (debug panic / release wrap) for more than 10 921 extension-form
     /// bounds (6 bytes each: true total 66 006 bytes > `u16::MAX`). The old
@@ -451,6 +473,7 @@ mod tests {
             system_video_lock_flag: false,
             video_bound: 0,
             packet_rate_restriction_flag: false,
+            reserved_bits: RESERVED_BITS_MASK,
             std_buffer_bounds,
         };
         // Must not panic building the (correctly-sized-in-usize) buffer or
@@ -481,6 +504,7 @@ mod tests {
             system_video_lock_flag: false,
             video_bound: 0,
             packet_rate_restriction_flag: false,
+            reserved_bits: RESERVED_BITS_MASK,
             std_buffer_bounds,
         };
         let mut buf = vec![0u8; h.serialized_len()];
@@ -508,6 +532,7 @@ mod tests {
             system_video_lock_flag: false,
             video_bound: 0,
             packet_rate_restriction_flag: false,
+            reserved_bits: RESERVED_BITS_MASK,
             std_buffer_bounds,
         };
         let mut buf = vec![0u8; h.serialized_len()];

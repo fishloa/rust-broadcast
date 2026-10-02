@@ -26,7 +26,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Download resource (Tables 75-78).
@@ -58,6 +57,9 @@ pub struct BinaryId {
     pub version: u16,
 }
 
+/// Width of `BinaryId::specifier` in bits (Table 77: `specifier` is 24 bits).
+const BINARY_ID_SPECIFIER_BITS: u32 = 24;
+
 impl BinaryId {
     fn read(b: &[u8]) -> Self {
         Self {
@@ -66,12 +68,19 @@ impl BinaryId {
             version: u16::from_be_bytes([b[5], b[6]]),
         }
     }
-    fn write(self, buf: &mut [u8]) {
-        buf[0] = (self.specifier >> 16) as u8;
-        buf[1] = (self.specifier >> 8) as u8;
-        buf[2] = self.specifier as u8;
+    /// Write the 7-byte `binary_id`, rejecting a `specifier` that does not fit
+    /// its 24-bit field instead of dropping the top byte (audit r10-O-8).
+    fn write(self, buf: &mut [u8]) -> Result<()> {
+        objects::fit_bits(
+            u64::from(self.specifier),
+            BINARY_ID_SPECIFIER_BITS,
+            "binary_id specifier",
+        )?;
+        let be = self.specifier.to_be_bytes();
+        buf[0..3].copy_from_slice(&be[1..]);
         buf[3..5].copy_from_slice(&self.model.to_be_bytes());
         buf[5..7].copy_from_slice(&self.version.to_be_bytes());
+        Ok(())
     }
 }
 
@@ -119,34 +128,18 @@ pub struct UserAuthResult<'a> {
     pub result: &'a [u8],
 }
 
-macro_rules! opaque_dsmcc_object {
-    ($ty:ident, $tag:expr, $what:literal) => {
-        impl<'a> Parse<'a> for $ty<'a> {
-            type Error = Error;
-            fn parse(bytes: &'a [u8]) -> Result<Self> {
-                let body = objects::parse_apdu_header(bytes, $tag, $what)?;
-                Ok(Self {
-                    dsmcc_message: body,
-                })
-            }
-        }
-        impl Serialize for $ty<'_> {
-            type Error = Error;
-            fn serialized_len(&self) -> usize {
-                objects::apdu_len(self.dsmcc_message.len())
-            }
-            fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-                let body_len = self.dsmcc_message.len();
-                let pos = objects::write_apdu_header($tag, body_len, buf)?;
-                buf[pos..pos + body_len].copy_from_slice(self.dsmcc_message);
-                Ok(pos + body_len)
-            }
-        }
-    };
-}
-
-opaque_dsmcc_object!(DownloadEnquiry, tag::DOWNLOAD_ENQ, "download_enq");
-opaque_dsmcc_object!(DownloadReply, tag::DOWNLOAD_REPLY, "download_reply");
+crate::dispatch::declare_opaque_apdu!(
+    DownloadEnquiry,
+    dsmcc_message,
+    tag::DOWNLOAD_ENQ,
+    "download_enq"
+);
+crate::dispatch::declare_opaque_apdu!(
+    DownloadReply,
+    dsmcc_message,
+    tag::DOWNLOAD_REPLY,
+    "download_reply"
+);
 
 macro_rules! user_auth_object {
     ($ty:ident, $tag:expr, $what:literal, $field:ident) => {
@@ -175,7 +168,7 @@ macro_rules! user_auth_object {
             fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
                 let body_len = BINARY_ID_LEN + self.$field.len();
                 let mut pos = objects::write_apdu_header($tag, body_len, buf)?;
-                self.binary_id.write(&mut buf[pos..]);
+                self.binary_id.write(&mut buf[pos..])?;
                 pos += BINARY_ID_LEN;
                 buf[pos..pos + self.$field.len()].copy_from_slice(self.$field);
                 Ok(pos + self.$field.len())
@@ -944,63 +937,20 @@ impl Serialize for DownloadDataBlock<'_> {
     }
 }
 
-/// Resource-scoped dispatch over the Download APDU objects (Tables 75-78).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum DownloadApdu<'a> {
-    /// `download_enq` (`9F 80 00`).
-    DownloadEnquiry(DownloadEnquiry<'a>),
-    /// `download_reply` (`9F 80 01`).
-    DownloadReply(DownloadReply<'a>),
-    /// `user_authorization_initiate` (`9F 80 02`).
-    UserAuthInitiate(UserAuthInitiate<'a>),
-    /// `user_authorization_result` (`9F 80 03`).
-    UserAuthResult(UserAuthResult<'a>),
-}
-
-impl<'a> DownloadApdu<'a> {
-    /// Parse a Download APDU, dispatching on the leading `apdu_tag`.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "download apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::DOWNLOAD_ENQ => Ok(Self::DownloadEnquiry(DownloadEnquiry::parse(body)?)),
-            tag::DOWNLOAD_REPLY => Ok(Self::DownloadReply(DownloadReply::parse(body)?)),
-            tag::USER_AUTH_INITIATE => Ok(Self::UserAuthInitiate(UserAuthInitiate::parse(body)?)),
-            tag::USER_AUTH_RESULT => Ok(Self::UserAuthResult(UserAuthResult::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::DOWNLOAD_ENQ.as_u24(),
-                what: "download",
-            }),
-        }
-    }
-}
-
-impl Serialize for DownloadApdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::DownloadEnquiry(o) => o.serialized_len(),
-            Self::DownloadReply(o) => o.serialized_len(),
-            Self::UserAuthInitiate(o) => o.serialized_len(),
-            Self::UserAuthResult(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::DownloadEnquiry(o) => o.serialize_into(buf),
-            Self::DownloadReply(o) => o.serialize_into(buf),
-            Self::UserAuthInitiate(o) => o.serialize_into(buf),
-            Self::UserAuthResult(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the Download APDU objects (Tables 75-78).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum DownloadApdu<'a> ("download") {
+        /// `download_enq` (`9F 80 00`).
+        DownloadEnquiry(DownloadEnquiry<'a>) = tag::DOWNLOAD_ENQ,
+        /// `download_reply` (`9F 80 01`).
+        DownloadReply(DownloadReply<'a>) = tag::DOWNLOAD_REPLY,
+        /// `user_authorization_initiate` (`9F 80 02`).
+        UserAuthInitiate(UserAuthInitiate<'a>) = tag::USER_AUTH_INITIATE,
+        /// `user_authorization_result` (`9F 80 03`).
+        UserAuthResult(UserAuthResult<'a>) = tag::USER_AUTH_RESULT,
     }
 }
 
@@ -1030,6 +980,23 @@ mod tests {
         let bytes = rep.to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x01, 0x01, 0xAA]);
         assert_eq!(DownloadReply::parse(&bytes).unwrap(), rep);
+    }
+
+    #[test]
+    fn binary_id_specifier_over_24_bits_is_rejected_not_truncated() {
+        let uai = UserAuthInitiate {
+            binary_id: BinaryId {
+                specifier: 0x01_00_1B_67, // 25 bits: the top byte used to vanish
+                model: 0,
+                version: 0,
+            },
+            data: &[],
+        };
+        let mut buf = [0u8; 32];
+        assert!(matches!(
+            uai.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
     }
 
     #[test]

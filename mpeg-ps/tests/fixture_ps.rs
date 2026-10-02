@@ -161,3 +161,72 @@ fn psm_unit_round_trip() {
     parsed.serialize_into(&mut out2).unwrap();
     assert_eq!(&out2[..], &buf[..]);
 }
+
+/// Byte offsets of each pack start in the fixture, via the length-driven walk.
+fn pack_offsets(data: &[u8]) -> Vec<usize> {
+    let mut offsets = Vec::new();
+    let mut pos = 0usize;
+    while data.len() - pos >= 4 {
+        let (pack, consumed) = program_stream::parse_pack(&data[pos..]).unwrap();
+        if pack.is_none() {
+            break;
+        }
+        offsets.push(pos);
+        pos += consumed;
+    }
+    offsets
+}
+
+/// r14-MPS-W3 (deferred part): after a corrupt pack the walker resynchronises
+/// on the next `pack_start_code` instead of dropping the rest of the stream,
+/// and reports exactly what it skipped. Corruption 1: a destroyed pack start
+/// code. Corruption 2: a broken PES start code after a good pack header.
+#[test]
+fn scan_packs_resyncs_after_a_corrupt_pack_and_reports_it() {
+    let clean = fixture();
+    let offsets = pack_offsets(&clean);
+    assert!(offsets.len() >= 7);
+    let (clean_packs, _) = program_stream::parse_all_packs(&clean).unwrap();
+
+    // A clean stream scans identically to parse_all_packs, nothing skipped.
+    let scan = program_stream::scan_packs(&clean);
+    assert_eq!(scan.packs.len(), clean_packs.len());
+    assert!(scan.skipped.is_empty());
+
+    // 1. Destroy pack #2's start code (its first byte 0x00 -> 0xFF, so the
+    //    preceding pack's PES loop also stops there).
+    let mut bad = clean.clone();
+    bad[offsets[2]] = 0xFF;
+    assert!(program_stream::parse_all_packs(&bad).is_err());
+    let scan = program_stream::scan_packs(&bad);
+    assert_eq!(scan.packs.len(), clean_packs.len() - 1);
+    assert_eq!(scan.skipped.len(), 1);
+    assert_eq!(scan.skipped[0].offset, offsets[2]);
+    assert_eq!(scan.skipped[0].len, offsets[3] - offsets[2]);
+    assert!(matches!(
+        scan.skipped[0].error,
+        mpeg_ps::Error::BadPackStartCode(0xFF00_01BA)
+    ));
+
+    // 2. Break the first PES start code inside pack #4: the pack's PES loop
+    //    stops at the first non-PES byte, the pack keeps its header, and the
+    //    leftover span up to pack #5 is the skipped region.
+    let hdr_len = clean_packs[4].pack_header.header_len();
+    let pes_at = offsets[4] + hdr_len;
+    assert_eq!(&clean[pes_at..pes_at + 3], &[0x00, 0x00, 0x01]);
+    let mut bad2 = clean.clone();
+    bad2[pes_at] = 0xFF;
+    let scan = program_stream::scan_packs(&bad2);
+    assert_eq!(scan.packs.len(), clean_packs.len());
+    assert!(scan.packs[4].pes_packets.is_empty());
+    assert_eq!(scan.skipped.len(), 1);
+    assert_eq!(scan.skipped[0].offset, pes_at);
+    assert_eq!(scan.skipped[0].len, offsets[5] - pes_at);
+
+    // Pure garbage: no pack start anywhere -> one skipped region, no packs.
+    let scan = program_stream::scan_packs(&[0x55; 64]);
+    assert!(scan.packs.is_empty());
+    assert_eq!(scan.skipped.len(), 1);
+    assert_eq!(scan.skipped[0].len, 64);
+    assert!(scan.remaining.is_empty());
+}

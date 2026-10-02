@@ -454,13 +454,9 @@ pub fn analyze_mp4_impl(bytes: &[u8]) -> Mp4Report {
         }
     }
 
-    let protected_track_id = protected_scheme.map(|_| {
-        media
-            .tracks
-            .last()
-            .expect("just pushed the recovered protected track above")
-            .track_id()
-    });
+    let protected_track_id = protected_scheme
+        .and_then(|_| media.tracks.last())
+        .map(|t| t.track_id());
 
     build_report(media, protected_track_id, protected_scheme)
 }

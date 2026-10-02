@@ -104,14 +104,16 @@ fn main() {
         OwnedTsPacket::serialize_with_payload(0x0100, true, 3, &[0xAA, 0xBB]).unwrap(),
     )
     .unwrap();
-    assert_eq!(owned.pid, 0x0100);
-    assert_eq!(owned.continuity_counter, 3);
+    assert_eq!(owned.pid(), 0x0100);
+    assert_eq!(owned.continuity_counter(), 3);
     assert!(owned.payload().is_some());
     assert_eq!(owned.payload().unwrap().len(), 184); // full payload area (serialize_with_payload fills the rest with 0xFF)
     assert_eq!(owned.payload().unwrap()[..2], [0xAA, 0xBB]);
     println!(
         "OwnedTsPacket serialize_with_payload → parse → fields match: pid=0x{:04X}, pusi={}, cc={}",
-        owned.pid, owned.pusi, owned.continuity_counter
+        owned.pid(),
+        owned.pusi(),
+        owned.continuity_counter()
     );
 
     println!("\nAll write/edit operations completed successfully.");

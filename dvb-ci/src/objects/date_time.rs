@@ -72,8 +72,8 @@ impl<'a> Parse<'a> for DateTime {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let body = super::parse_apdu_header(bytes, tag::DATE_TIME, "date_time")?;
-        let utc_time: [u8; UTC_TIME_LEN] = match body.len() {
-            UTC_TIME_LEN | 7 => body[..UTC_TIME_LEN].try_into().unwrap(),
+        let utc_time: [u8; UTC_TIME_LEN] = match (body.len(), body.first_chunk::<UTC_TIME_LEN>()) {
+            (UTC_TIME_LEN | 7, Some(utc)) => *utc,
             _ => {
                 return Err(Error::InvalidObject {
                     what: "date_time",

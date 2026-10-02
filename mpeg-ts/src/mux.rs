@@ -88,10 +88,17 @@ impl SectionPacketiser {
 
         let count_before = out.len();
         let mut pos = 0usize;
+        // `starts` is ascending and `pos` only advances, so a forward-only
+        // cursor finds the smallest section-start offset >= pos in amortised
+        // O(1) per packet instead of rescanning from the front (audit
+        // r01-O1: O(packets x sections)).
+        let mut next_idx = 0usize;
 
         while pos < data.len() {
-            // Smallest section-start offset ≥ pos.
-            let next_start = starts.iter().copied().find(|&s| s >= pos);
+            while starts.get(next_idx).is_some_and(|&s| s < pos) {
+                next_idx += 1;
+            }
+            let next_start = starts.get(next_idx).copied();
 
             let pusi: bool;
             let pointer_field: u8;
@@ -488,6 +495,22 @@ mod tests {
             );
         }
         assert!(reasm.is_empty(), "reassembler should be empty after drain");
+    }
+
+    /// 400 sections whose sizes sweep 0..=399 body bytes (so section starts
+    /// land on every offset around the 183/184-byte packet boundaries)
+    /// round-trip byte-identically through packetise -> reassemble (audit
+    /// r01-O1: the section-start lookup is now a forward cursor; this is the
+    /// independent oracle that the rewrite chose the same boundaries).
+    #[test]
+    fn many_sections_with_boundary_straddling_sizes_round_trip() {
+        let sections: Vec<Vec<u8>> = (0..400usize)
+            .map(|n| {
+                let body: Vec<u8> = (0..n).map(|i| (i % 251) as u8).collect();
+                build_section((n % 200) as u8, &body)
+            })
+            .collect();
+        assert_round_trip(&sections);
     }
 
     // ── split_sections ──────────────────────────────────────────────────────

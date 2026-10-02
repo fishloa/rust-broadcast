@@ -39,6 +39,7 @@ impl<'a> Parse<'a> for Tune {
                 what: "tune",
             });
         }
+        super::reject_trailing_body(body, TUNE_BODY, "tune")?;
         Ok(Self {
             network_id: u16::from_be_bytes([body[0], body[1]]),
             original_network_id: u16::from_be_bytes([body[2], body[3]]),
@@ -98,6 +99,7 @@ impl<'a> Parse<'a> for Replace {
                 what: "replace",
             });
         }
+        super::reject_trailing_body(body, REPLACE_BODY, "replace")?;
         let replacement_ref = body[0];
         let replaced_pid = (((body[1] & 0x1F) as u16) << 8) | body[2] as u16;
         let replacement_pid = (((body[3] & 0x1F) as u16) << 8) | body[4] as u16;

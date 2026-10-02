@@ -70,6 +70,12 @@ pub struct Driver<D: CaDevice> {
     /// Last `ca_pmt_reply` `descrambling_ok` seen for the current module
     /// (Part B card inference, best-effort). `None` = not seen yet.
     last_descrambling_ok: Option<bool>,
+    /// Card state last inferred from MMI text (`Some(true)` present,
+    /// `Some(false)` absent, `None` = no card keyword seen yet): the keyword
+    /// heuristic only reports a card *transition*, so a CAM that re-sends
+    /// the same "insert card" menu does not repeat the notification (audit
+    /// r10-O-13).
+    last_mmi_card_present: Option<bool>,
     /// The slot's managed CAS-layer state (#763 Layer 1) — active services
     /// built via [`add_service`](Self::add_service).
     managed: ManagedCa,
@@ -99,6 +105,7 @@ impl<D: CaDevice> Driver<D> {
             last_slot: None,
             last_caids: None,
             last_descrambling_ok: None,
+            last_mmi_card_present: None,
             managed: ManagedCa::new(),
             last_pump: None,
             clock: default_clock(),
@@ -433,8 +440,10 @@ impl<D: CaDevice> Driver<D> {
         if self.device.poll(timeout)? {
             let n = self.device.read(&mut self.buf)?;
             if n > 0 {
-                let frame = self.buf[..n].to_vec();
-                let actions = self.stack.handle(Event::Readable(&frame));
+                // `stack` and `buf` are disjoint fields: borrow the received
+                // bytes in place instead of copying each frame (audit
+                // r10-O-11).
+                let actions = self.stack.handle(Event::Readable(&self.buf[..n]));
                 self.run(actions)?;
                 return Ok(true);
             }
@@ -638,6 +647,7 @@ impl<D: CaDevice> Driver<D> {
         self.next_timer = None;
         self.last_caids = None;
         self.last_descrambling_ok = None;
+        self.last_mmi_card_present = None;
         self.managed.clear();
     }
 
@@ -697,19 +707,30 @@ impl<D: CaDevice> Driver<D> {
                 }
                 out
             }
-            Notification::Mmi(ev) => match Self::mmi_text(ev) {
-                Some(text) => {
+            Notification::Mmi(ev) => {
+                let present = Self::mmi_text(ev).and_then(|text| {
                     let lower = text.to_lowercase();
                     if MMI_CARD_ABSENT_KEYWORDS.iter().any(|k| lower.contains(k)) {
-                        vec![Notification::HotPlug(HotPlug::CardRemoved)]
+                        Some(false)
                     } else if MMI_CARD_PRESENT_KEYWORDS.iter().any(|k| lower.contains(k)) {
-                        vec![Notification::HotPlug(HotPlug::CardInserted)]
+                        Some(true)
                     } else {
-                        Vec::new()
+                        None
                     }
+                });
+                match present {
+                    // Edge only: the same state repeated is not news.
+                    Some(p) if self.last_mmi_card_present != Some(p) => {
+                        self.last_mmi_card_present = Some(p);
+                        vec![Notification::HotPlug(if p {
+                            HotPlug::CardInserted
+                        } else {
+                            HotPlug::CardRemoved
+                        })]
+                    }
+                    _ => Vec::new(),
                 }
-                None => Vec::new(),
-            },
+            }
             _ => Vec::new(),
         }
     }
@@ -910,6 +931,49 @@ pub(crate) mod tests {
                 service_id: 0x7788,
             })),
             "expected HostControl(Tune) notification, got {notes:?}"
+        );
+    }
+
+    /// A padded `tune` from the CAM is refused by dvb-ci's strict parser; the
+    /// runtime must surface that as `Notification::Error`, not drop it.
+    #[test]
+    fn padded_tune_from_the_cam_surfaces_an_error_notification() {
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+        // Tune: 9F 84 00, length 9 (one byte over the fixed 8), then 9 bytes.
+        let padded = [
+            0x9F, 0x84, 0x00, 0x09, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0xEE,
+        ];
+        feed(&mut d, r_apdu(HOST_CONTROL_SESSION, &padded));
+        let notes = d.take_notifications();
+        assert!(
+            notes.iter().any(
+                |n| matches!(n, Notification::Error { detail } if detail.contains("trailing bytes"))
+            ),
+            "expected an Error notification naming the trailing bytes, got {notes:?}"
+        );
+        assert!(
+            !notes
+                .iter()
+                .any(|n| matches!(n, Notification::HostControl(_))),
+            "a refused tune must not also surface as a HostControl event: {notes:?}"
+        );
+    }
+
+    /// A malformed APDU on other resources is reported too (MMI `enq` with a
+    /// truncated body here), not silently ignored.
+    #[test]
+    fn malformed_mmi_apdu_from_the_cam_surfaces_an_error_notification() {
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+        // enq (9F 88 07) with a 1-byte body: shorter than its fixed prefix.
+        feed(&mut d, r_apdu(MMI_SESSION, &[0x9F, 0x88, 0x07, 0x01, 0x00]));
+        let notes = d.take_notifications();
+        assert!(
+            notes
+                .iter()
+                .any(|n| matches!(n, Notification::Error { .. })),
+            "expected an Error notification, got {notes:?}"
         );
     }
 
@@ -1404,6 +1468,54 @@ pub(crate) mod tests {
             notes.contains(&Notification::HotPlug(HotPlug::CardRemoved)),
             "expected CardRemoved inferred from MMI 'no card' text, got {notes:?}"
         );
+    }
+
+    /// r10-O-13: the MMI keyword heuristic reports a card *transition*, not
+    /// every menu that repeats the same text.
+    #[test]
+    fn mmi_card_keyword_heuristic_is_edge_triggered() {
+        use dvb_ci::objects::mmi_high::Enq;
+
+        let enq = |text: &'static [u8]| {
+            r_apdu(
+                MMI_SESSION,
+                &ser(&Enq {
+                    blind_answer: false,
+                    answer_text_length: 0,
+                    text_chars: text,
+                }),
+            )
+        };
+        let mut d = driver_with_sessions();
+        d.take_notifications();
+        let count = |notes: &[Notification], hp: HotPlug| {
+            notes
+                .iter()
+                .filter(|n| **n == Notification::HotPlug(hp))
+                .count()
+        };
+
+        // The same "no card" prompt three times: one CardRemoved, not three.
+        for _ in 0..3 {
+            feed(&mut d, enq(b"No card - please insert your smart card"));
+        }
+        let notes = d.take_notifications();
+        assert_eq!(count(&notes, HotPlug::CardRemoved), 1, "{notes:?}");
+        assert_eq!(count(&notes, HotPlug::CardInserted), 0);
+
+        // A present-card prompt is an edge: one CardInserted, then silence.
+        for _ in 0..2 {
+            feed(&mut d, enq(b"Your entitlement is valid"));
+        }
+        let notes = d.take_notifications();
+        assert_eq!(count(&notes, HotPlug::CardInserted), 1, "{notes:?}");
+        assert_eq!(count(&notes, HotPlug::CardRemoved), 0);
+
+        // Back to absent: a fresh edge, reported once.
+        feed(&mut d, enq(b"Card removed"));
+        feed(&mut d, enq(b"Card removed"));
+        let notes = d.take_notifications();
+        assert_eq!(count(&notes, HotPlug::CardRemoved), 1, "{notes:?}");
     }
 
     #[test]

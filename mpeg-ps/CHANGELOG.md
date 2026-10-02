@@ -11,7 +11,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Requires `broadcast-common` 9.4 (`broadcast_common::len`). A new
   `Error::FieldOverflow` variant is added.
 
-### Changed (Breaking)
+### Added
+- `program_stream::scan_packs` + `PackScan`/`SkippedRegion`: walks a Program
+  Stream like `parse_all_packs` but, after a pack that fails to parse,
+  records the failed span and error and resynchronises on the next
+  `pack_start_code` instead of abandoning the stream (audit r14-MPS-W3, #1119).
+  The byte search is confined to this recovery path; well-formed streams are
+  still walked by `PES_packet_length`.
+
+### Changed (breaking)
+- `SystemHeader` gains `reserved_bits: u8` (the 7 `reserved_bits` after
+  `packet_rate_restriction_flag`, Table 2-40), preserved on parse and written
+  back instead of a hard-coded `0x7F`, so a header with other reserved bits
+  round-trips byte-identically (audit r14-MPS-W8, #1119). Trailing reserved
+  bytes after the stream-bound loop (declared by `header_length`) are still
+  skipped by the pack walker but not carried on `SystemHeader`.
 - `Pack` gains a new field, `psm: Option<ProgramStreamMap<'a>>`. A Program
   Stream Map packet (`stream_id 0xBC`) is now parsed via
   `ProgramStreamMap::parse` and surfaced here instead of being handed to
@@ -24,12 +38,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `000001BA`/`000001B9` inside a real PES payload (start-code emulation, not
   free of it in AC-3/LPCM/DVD-subpicture `private_stream_1` streams) no
   longer truncates the pack early (#1119 W3). Resync-on-parse-error after a
-  genuinely corrupt PES packet is not implemented in this pass.
+  genuinely corrupt PES packet is provided separately by the new
+  `program_stream::scan_packs` (see Added).
 - New `Error::Mpeg1NotSupported` and `Error::StuffingLengthMismatch`
   variants (both non-breaking on their own since `Error` is
   `#[non_exhaustive]`, listed here alongside the `Pack` field change).
 
 ### Fixed
+- `ProgramStreamMap::serialize_into` wrote the elementary-stream loop through
+  a per-entry owned copy of every descriptor slice and a second intermediate
+  buffer; it now writes straight into the output, and the dead
+  `PSM_START_CODE`/`HEADER_LEN` `#[allow(dead_code)]` constants and the
+  `OwnedEsMapEntry` type are gone; layout literals are named constants
+  (audit r14-MPS-O1, #1119).
+- Removed stream-of-consciousness scratch comments from
+  `SystemHeader::parse` and corrected two wrong bit-width notes in them.
 - `SystemHeader::parse` masked `video_bound` (byte 4 bits `[4:0]`, Table
   2-40) to 4 bits (`& 0x0F`) instead of 5 (`& 0x1F`); serialize already used
   the correct mask, so `video_bound` in `16..=31` round-tripped to

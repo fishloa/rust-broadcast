@@ -18,7 +18,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -158,34 +157,13 @@ pub struct TuneTSAck {
 
 // --- header-only objects ---
 
-macro_rules! empty_object {
-    ($ty:ty, $tag:expr, $what:literal) => {
-        impl<'a> Parse<'a> for $ty {
-            type Error = Error;
-            fn parse(bytes: &'a [u8]) -> Result<Self> {
-                objects::parse_empty_apdu(bytes, $tag, $what)?;
-                Ok(Self)
-            }
-        }
-        impl Serialize for $ty {
-            type Error = Error;
-            fn serialized_len(&self) -> usize {
-                objects::empty_apdu_len()
-            }
-            fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-                objects::serialize_empty_apdu($tag, buf)
-            }
-        }
-    };
-}
-
-empty_object!(
+crate::dispatch::declare_empty_apdu!(
     DeliverySystemInfoReq,
     tag::DELIVERY_SYSTEM_INFO_REQ,
     "DeliverySystemInfoReq"
 );
-empty_object!(ScanStartReq, tag::SCAN_START_REQ, "ScanStartReq");
-empty_object!(ScanNextReq, tag::SCAN_NEXT_REQ, "ScanNextReq");
+crate::dispatch::declare_empty_apdu!(ScanStartReq, tag::SCAN_START_REQ, "ScanStartReq");
+crate::dispatch::declare_empty_apdu!(ScanNextReq, tag::SCAN_NEXT_REQ, "ScanNextReq");
 
 // --- DeliverySystemInfoAck ---
 
@@ -236,6 +214,7 @@ impl<'a> Parse<'a> for ScanAck<'a> {
                 what: "ScanAck",
             });
         }
+        crate::objects::reject_trailing_body(body, SCAN_ACK_BODY, "ScanAck")?;
         Ok(Self {
             ts_state: body[0],
             tuning_information_message: &body[1..1 + TUNING_INFO_MESSAGE_LEN],
@@ -320,6 +299,7 @@ impl<'a> Parse<'a> for TuneTSAck {
                 what: "TuneTSAck",
             });
         }
+        crate::objects::reject_trailing_body(body, TUNE_TS_ACK_BODY, "TuneTSAck")?;
         Ok(Self { ts_state: body[0] })
     }
 }
@@ -335,82 +315,26 @@ impl Serialize for TuneTSAck {
     }
 }
 
-/// Resource-scoped dispatch over the StreamInput objects (Tables 13-20).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum StreamInputApdu<'a> {
-    /// `DeliverySystemInfoReq` (`9F 80 00`).
-    DeliverySystemInfoReq(DeliverySystemInfoReq),
-    /// `DeliverySystemInfoAck` (`9F 80 01`).
-    DeliverySystemInfoAck(DeliverySystemInfoAck),
-    /// `ScanStartReq` (`9F 80 02`).
-    ScanStartReq(ScanStartReq),
-    /// `ScanNextReq` (`9F 80 03`).
-    ScanNextReq(ScanNextReq),
-    /// `ScanAck` (`9F 80 04`).
-    ScanAck(ScanAck<'a>),
-    /// `TuneTSReq` (`9F 80 05`).
-    TuneTSReq(TuneTSReq<'a>),
-    /// `TuneTSAck` (`9F 80 06`).
-    TuneTSAck(TuneTSAck),
-}
-
-impl<'a> StreamInputApdu<'a> {
-    /// Parse a StreamInput APDU, dispatching on the leading `apdu_tag`.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "stream_input apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::DELIVERY_SYSTEM_INFO_REQ => Ok(Self::DeliverySystemInfoReq(
-                DeliverySystemInfoReq::parse(body)?,
-            )),
-            tag::DELIVERY_SYSTEM_INFO_ACK => Ok(Self::DeliverySystemInfoAck(
-                DeliverySystemInfoAck::parse(body)?,
-            )),
-            tag::SCAN_START_REQ => Ok(Self::ScanStartReq(ScanStartReq::parse(body)?)),
-            tag::SCAN_NEXT_REQ => Ok(Self::ScanNextReq(ScanNextReq::parse(body)?)),
-            tag::SCAN_ACK => Ok(Self::ScanAck(ScanAck::parse(body)?)),
-            tag::TUNE_TS_REQ => Ok(Self::TuneTSReq(TuneTSReq::parse(body)?)),
-            tag::TUNE_TS_ACK => Ok(Self::TuneTSAck(TuneTSAck::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::DELIVERY_SYSTEM_INFO_REQ.as_u24(),
-                what: "stream_input",
-            }),
-        }
-    }
-}
-
-impl Serialize for StreamInputApdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::DeliverySystemInfoReq(o) => o.serialized_len(),
-            Self::DeliverySystemInfoAck(o) => o.serialized_len(),
-            Self::ScanStartReq(o) => o.serialized_len(),
-            Self::ScanNextReq(o) => o.serialized_len(),
-            Self::ScanAck(o) => o.serialized_len(),
-            Self::TuneTSReq(o) => o.serialized_len(),
-            Self::TuneTSAck(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::DeliverySystemInfoReq(o) => o.serialize_into(buf),
-            Self::DeliverySystemInfoAck(o) => o.serialize_into(buf),
-            Self::ScanStartReq(o) => o.serialize_into(buf),
-            Self::ScanNextReq(o) => o.serialize_into(buf),
-            Self::ScanAck(o) => o.serialize_into(buf),
-            Self::TuneTSReq(o) => o.serialize_into(buf),
-            Self::TuneTSAck(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the StreamInput objects (Tables 13-20).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum StreamInputApdu<'a> ("stream_input") {
+        /// `DeliverySystemInfoReq` (`9F 80 00`).
+        DeliverySystemInfoReq(DeliverySystemInfoReq) = tag::DELIVERY_SYSTEM_INFO_REQ,
+        /// `DeliverySystemInfoAck` (`9F 80 01`).
+        DeliverySystemInfoAck(DeliverySystemInfoAck) = tag::DELIVERY_SYSTEM_INFO_ACK,
+        /// `ScanStartReq` (`9F 80 02`).
+        ScanStartReq(ScanStartReq) = tag::SCAN_START_REQ,
+        /// `ScanNextReq` (`9F 80 03`).
+        ScanNextReq(ScanNextReq) = tag::SCAN_NEXT_REQ,
+        /// `ScanAck` (`9F 80 04`).
+        ScanAck(ScanAck<'a>) = tag::SCAN_ACK,
+        /// `TuneTSReq` (`9F 80 05`).
+        TuneTSReq(TuneTSReq<'a>) = tag::TUNE_TS_REQ,
+        /// `TuneTSAck` (`9F 80 06`).
+        TuneTSAck(TuneTSAck) = tag::TUNE_TS_ACK,
     }
 }
 

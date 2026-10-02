@@ -10,7 +10,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Event Manager (Tables 56, 59, 61).
@@ -197,6 +196,7 @@ impl<'a> Parse<'a> for EventRequestAck {
                 what: "event_request_ack",
             });
         }
+        crate::objects::reject_trailing_body(body, EVENT_REQUEST_ACK_BODY, "event_request_ack")?;
         Ok(Self {
             event_type: EventType::from_u8(body[0]),
             reply: EventReply::from_u8(body[1]),
@@ -233,6 +233,7 @@ impl<'a> Parse<'a> for EventNotification {
                 what: "event_notification",
             });
         }
+        crate::objects::reject_trailing_body(body, EVENT_NOTIFICATION_BODY, "event_notification")?;
         Ok(Self {
             event_type: EventType::from_u8(body[0]),
         })
@@ -251,58 +252,18 @@ impl Serialize for EventNotification {
     }
 }
 
-/// Resource-scoped dispatch over the Event Manager objects.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum EventManagerApdu<'a> {
-    /// `event_request` (`9F 80 00`).
-    EventRequest(EventRequest<'a>),
-    /// `event_request_ack` (`9F 80 01`).
-    EventRequestAck(EventRequestAck),
-    /// `event_notification` (`9F 80 02`).
-    EventNotification(EventNotification),
-}
-
-impl<'a> EventManagerApdu<'a> {
-    /// Parse an Event Manager APDU, dispatching on the `apdu_tag`.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "event_manager apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::EVENT_REQUEST => Ok(Self::EventRequest(EventRequest::parse(body)?)),
-            tag::EVENT_REQUEST_ACK => Ok(Self::EventRequestAck(EventRequestAck::parse(body)?)),
-            tag::EVENT_NOTIFICATION => Ok(Self::EventNotification(EventNotification::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::EVENT_REQUEST.as_u24(),
-                what: "event_manager",
-            }),
-        }
-    }
-}
-
-impl Serialize for EventManagerApdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::EventRequest(o) => o.serialized_len(),
-            Self::EventRequestAck(o) => o.serialized_len(),
-            Self::EventNotification(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::EventRequest(o) => o.serialize_into(buf),
-            Self::EventRequestAck(o) => o.serialize_into(buf),
-            Self::EventNotification(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the Event Manager objects.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum EventManagerApdu<'a> ("event_manager") {
+        /// `event_request` (`9F 80 00`).
+        EventRequest(EventRequest<'a>) = tag::EVENT_REQUEST,
+        /// `event_request_ack` (`9F 80 01`).
+        EventRequestAck(EventRequestAck) = tag::EVENT_REQUEST_ACK,
+        /// `event_notification` (`9F 80 02`).
+        EventNotification(EventNotification) = tag::EVENT_NOTIFICATION,
     }
 }
 

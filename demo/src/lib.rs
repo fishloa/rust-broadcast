@@ -34,6 +34,7 @@ use dvb_si::tables::AnyTableSection;
 use dvb_si::tables::pmt::StreamType;
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::pid::well_known as wk;
+use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 use scte35_splice::SpliceInfoSection;
 use serde::Serialize;
@@ -56,6 +57,13 @@ const MAX_PCR_SAMPLES: usize = 20_000;
 const MAX_TIMESTAMP_SAMPLES: usize = 20_000;
 /// Maximum SCTE-35 splice events collected.
 const MAX_SCTE35_EVENTS: usize = 5_000;
+/// Maximum SI/PSI table sections kept in the `tables` array (audit
+/// r14-DEMO-W2: a hostile capture of endlessly changing sections otherwise
+/// grew the JSON payload without bound).
+const MAX_TABLE_ENTRIES: usize = 10_000;
+/// Bytes handed to the TS resynchroniser per call: bounds the transient
+/// packet `Vec` it returns while still amortising its per-call scan.
+const RESYNC_FEED_BYTES: usize = 64 * 1024;
 /// Maximum detail strings kept per TR 101 290 indicator.
 const MAX_CONFORMANCE_SAMPLES_PER_INDICATOR: usize = 8;
 
@@ -306,6 +314,13 @@ struct AnalysisResult {
     parse_errors: u64,
     /// Sections that failed CRC validation (from [`SiDemux`]).
     crc_errors: u64,
+    /// Bytes skipped to find 0x47 packet alignment (leading junk, a lost
+    /// sync, or the 16 parity bytes of a 204-byte stride are *not* counted
+    /// here — only bytes that were discarded unparsed).
+    resync_dropped_bytes: u64,
+    /// `true` when `tables` hit [`MAX_TABLE_ENTRIES`] and later sections were
+    /// not recorded.
+    tables_truncated: bool,
     pid_map: Vec<PidEntry>,
     timing: Timing,
     tables: Vec<TableEntry>,
@@ -569,8 +584,38 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
     let mut clock = Duration::ZERO;
     let mut pcr_anchor: Option<(u64, Duration)> = None;
 
-    for (idx, chunk) in bytes.chunks(TS_PACKET_SIZE).enumerate() {
+    // Packet source. A capture that carries a lockable 0x47 lattice (188 or
+    // 204 stride, leading junk, or mid-stream sync loss) goes through
+    // `TsResync`; anything else (a tiny fragment, pure garbage) falls back to
+    // fixed 188-byte chunking so its malformed chunks are still counted in
+    // `parse_errors` rather than vanishing silently.
+    let mut resync = TsResync::new();
+    let locks = {
+        let mut probe = TsResync::new();
+        bytes
+            .chunks(RESYNC_FEED_BYTES)
+            .any(|c| !probe.feed(c).is_empty())
+    };
+    let mut resync_dropped_bytes: u64 = 0;
+    let mut tables_truncated = false;
+    let mut packets: Box<dyn Iterator<Item = ([u8; TS_PACKET_SIZE], usize)> + '_> = if locks {
+        Box::new(
+            bytes
+                .chunks(RESYNC_FEED_BYTES)
+                .flat_map(|c| resync.feed(c))
+                .map(|p| (p, TS_PACKET_SIZE)),
+        )
+    } else {
+        Box::new(bytes.chunks(TS_PACKET_SIZE).map(|c| {
+            let mut buf = [0u8; TS_PACKET_SIZE];
+            buf[..c.len()].copy_from_slice(c);
+            (buf, c.len())
+        }))
+    };
+
+    for (idx, (packet_buf, packet_len)) in packets.by_ref().enumerate() {
         let idx = idx as u64;
+        let chunk = &packet_buf[..packet_len];
 
         let ts_packet = match TsPacket::parse(chunk) {
             Ok(p) => p,
@@ -690,10 +735,14 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
                 },
                 Err(e) => serde_json::json!({ "parseError": e.to_string() }),
             };
-            tables.push(TableEntry {
-                pid: ev_pid,
-                section: section_json,
-            });
+            if tables.len() < MAX_TABLE_ENTRIES {
+                tables.push(TableEntry {
+                    pid: ev_pid,
+                    section: section_json,
+                });
+            } else {
+                tables_truncated = true;
+            }
         }
 
         // ── SCTE-35 splice timeline ──────────────────────────────────────
@@ -741,6 +790,25 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
         // ── DVB (bitmap) subtitle reassembly, on the first PID found ────
         if let Some(payload) = ts_packet.payload {
             subtitles.feed(pid, ts_packet.header.pusi, payload);
+        }
+    }
+
+    drop(packets);
+    if locks {
+        let stats = resync.stats();
+        resync_dropped_bytes = stats.dropped_bytes;
+        // Bytes the resynchroniser buffered but never emitted as a packet: a
+        // trailing partial packet. Count it like the fixed-chunk path does.
+        let stride = match resync.stride() {
+            Some(mpeg_ts::resync::PacketStride::Rs204) => mpeg_ts::resync::RS_PACKET_SIZE,
+            _ => TS_PACKET_SIZE,
+        };
+        let consumed = stats
+            .packets
+            .saturating_mul(stride as u64)
+            .saturating_add(stats.dropped_bytes);
+        if (bytes.len() as u64) > consumed {
+            parse_errors += 1;
         }
     }
 
@@ -803,6 +871,8 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
         packets_fed,
         parse_errors,
         crc_errors: demux_stats.crc_failures,
+        resync_dropped_bytes,
+        tables_truncated,
         pid_map,
         timing: Timing {
             pcr_samples,
@@ -848,6 +918,15 @@ fn looks_like_mp4(bytes: &[u8]) -> bool {
 
 // ───────────────────────────── wasm export ────────────────────────────────
 
+/// Serialize a report; on a serializer failure return a *valid JSON* error
+/// object (the message is escaped by `serde_json`, never interpolated into a
+/// string literal — audit r14-DEMO-W2: an `e` containing `"` produced
+/// invalid JSON that the UI could not even parse).
+fn serialize_or_internal_error<T: Serialize>(value: &T) -> String {
+    serde_json::to_string(value)
+        .unwrap_or_else(|e| serde_json::json!({ "internalError": e.to_string() }).to_string())
+}
+
 /// Analyze a raw capture and return a single JSON object driving every panel
 /// of the demo UI.
 ///
@@ -870,10 +949,10 @@ fn looks_like_mp4(bytes: &[u8]) -> bool {
 pub fn analyze(bytes: &[u8]) -> String {
     if looks_like_mp4(bytes) {
         let result = analyze_mp4_impl(bytes);
-        serde_json::to_string(&result).unwrap_or_else(|e| format!("{{\"internalError\":\"{e}\"}}"))
+        serialize_or_internal_error(&result)
     } else {
         let result = analyze_impl(bytes);
-        serde_json::to_string(&result).unwrap_or_else(|e| format!("{{\"internalError\":\"{e}\"}}"))
+        serialize_or_internal_error(&result)
     }
 }
 
@@ -1027,6 +1106,155 @@ mod tests {
         assert!(result.parse_errors > 0);
         assert!(result.pid_map.is_empty());
         assert!(result.tables.is_empty());
+    }
+
+    /// A capture with leading junk, a 204-byte (RS-coded) stride, or a lost
+    /// sync mid-stream must still analyse (audit r14-DEMO-W2: the old
+    /// fixed `chunks(188)` loop mis-framed everything after the first
+    /// misalignment and reported thousands of parse errors).
+    #[test]
+    fn misaligned_captures_resync_to_the_same_packets() {
+        let clean = fixture("m6-single.ts");
+        let base = analyze_impl(&clean);
+        assert!(base.packets_fed > 100);
+        assert_eq!(base.resync_dropped_bytes, 0);
+
+        // 1. 101 junk bytes (no 0x47) ahead of the capture.
+        const JUNK: usize = 101;
+        let mut junked = vec![0x00u8; JUNK];
+        junked.extend_from_slice(&clean);
+        let r = analyze_impl(&junked);
+        assert_eq!(r.packets_fed, base.packets_fed);
+        assert_eq!(r.parse_errors, 0);
+        assert_eq!(r.resync_dropped_bytes, JUNK as u64);
+        assert_eq!(r.tables.len(), base.tables.len());
+
+        // 1b. A trailing partial packet is counted, not dropped silently.
+        let mut tail = clean.clone();
+        tail.extend_from_slice(&clean[..100]);
+        let r = analyze_impl(&tail);
+        assert_eq!(r.packets_fed, base.packets_fed);
+        assert_eq!(r.parse_errors, 1);
+
+        // 2. 204-byte stride: 16 parity bytes (not 0x47) after each packet.
+        let mut rs = Vec::new();
+        for pkt in clean.chunks_exact(TS_PACKET_SIZE) {
+            rs.extend_from_slice(pkt);
+            rs.extend_from_slice(&[0x00; 16]);
+        }
+        let r = analyze_impl(&rs);
+        assert_eq!(r.packets_fed, base.packets_fed);
+        assert_eq!(r.parse_errors, 0);
+        assert_eq!(r.tables.len(), base.tables.len());
+    }
+
+    /// The `tables` array is capped (audit r14-DEMO-W2) and says so.
+    #[test]
+    fn table_array_is_capped_and_flagged_truncated() {
+        use broadcast_common::Serialize;
+        use dvb_si::tables::pat::{PatEntry, PatSection};
+        use mpeg_ts::ts::TsHeader;
+
+        const VERSIONS: u8 = 32; // version_number is 5 bits
+        let mut ts = Vec::new();
+        for n in 0..(MAX_TABLE_ENTRIES + 50) {
+            let pat = PatSection {
+                transport_stream_id: 1,
+                version_number: (n % usize::from(VERSIONS)) as u8,
+                current_next_indicator: true,
+                section_number: 0,
+                last_section_number: 0,
+                entries: vec![PatEntry {
+                    program_number: 1,
+                    pid: 0x0100,
+                }],
+            };
+            let mut bytes = vec![0u8; pat.serialized_len()];
+            pat.serialize_into(&mut bytes).unwrap();
+            let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+            TsHeader {
+                tei: false,
+                pusi: true,
+                pid: wk::PAT.value(),
+                scrambling: 0,
+                has_adaptation: false,
+                has_payload: true,
+                continuity_counter: (n % 16) as u8,
+            }
+            .serialize_into(&mut pkt)
+            .unwrap();
+            pkt[4] = 0x00;
+            pkt[5..5 + bytes.len()].copy_from_slice(&bytes);
+            ts.extend_from_slice(&pkt);
+        }
+        let r = analyze_impl(&ts);
+        assert_eq!(r.tables.len(), MAX_TABLE_ENTRIES);
+        assert!(r.tables_truncated);
+    }
+
+    /// A serializer failure yields VALID JSON whatever the message holds.
+    #[test]
+    fn serializer_failure_is_valid_json_even_with_quotes() {
+        struct Failing;
+        impl Serialize for Failing {
+            fn serialize<S: serde::Serializer>(&self, _: S) -> Result<S::Ok, S::Error> {
+                Err(serde::ser::Error::custom("bad \"quote\" and \\ slash\n"))
+            }
+        }
+        let out = serialize_or_internal_error(&Failing);
+        let v: serde_json::Value = serde_json::from_str(&out).expect("must be valid JSON");
+        assert_eq!(v["internalError"], "bad \"quote\" and \\ slash\n");
+    }
+
+    /// Hostile-input sweep through the WHOLE `analyze` path (audit
+    /// r14-DEMO-W1: "never panics" must hold through transmux too). Real
+    /// fixtures are truncated at every 1/64th and mutated at pseudo-random
+    /// offsets with a fixed-seed xorshift (deterministic, no timing); any
+    /// panic fails the test, and every result must be valid JSON carrying a
+    /// `container` field.
+    #[test]
+    fn analyze_survives_truncated_and_mutated_real_captures() {
+        fn next(state: &mut u64) -> u64 {
+            *state ^= *state << 13;
+            *state ^= *state >> 7;
+            *state ^= *state << 17;
+            *state
+        }
+        let mut inputs: Vec<(String, Vec<u8>)> = Vec::new();
+        for name in [
+            "h264_high.mp4",
+            "cenc.mp4",
+            "hevc_main.mp4",
+            "stpp.mp4",
+            "opus.mp4",
+        ] {
+            inputs.push((name.to_string(), mp4_fixture(name)));
+        }
+        let mut ts = fixture("m6-single.ts");
+        ts.truncate(188 * 400);
+        inputs.push(("m6-single.ts".to_string(), ts));
+
+        let mut state = 0x9E37_79B9_7F4A_7C15_u64;
+        for (name, bytes) in &inputs {
+            let step = (bytes.len() / 64).max(1);
+            for cut in (0..bytes.len()).step_by(step) {
+                let json = analyze(&bytes[..cut]);
+                let v: serde_json::Value = serde_json::from_str(&json)
+                    .unwrap_or_else(|e| panic!("{name} cut {cut}: invalid JSON: {e}"));
+                assert!(v.get("container").is_some(), "{name} cut {cut}: {json}");
+            }
+            for round in 0..40 {
+                let mut m = bytes.clone();
+                for _ in 0..8 {
+                    let at = (next(&mut state) % m.len() as u64) as usize;
+                    m[at] = (next(&mut state) & 0xFF) as u8;
+                }
+                let json = analyze(&m);
+                let v: serde_json::Value = serde_json::from_str(&json)
+                    .unwrap_or_else(|e| panic!("{name} round {round}: invalid JSON: {e}"));
+                assert!(v.get("container").is_some(), "{name} round {round}");
+            }
+        }
     }
 
     /// End-to-end SCTE-35 pipeline test: PAT -> PMT (declaring stream_type

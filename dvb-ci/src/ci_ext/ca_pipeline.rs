@@ -11,10 +11,7 @@
 //! - `CAPipelineResponse` (`9F 80 01`, Table 85) — module → app.
 //! - `CAPipelineNotification` (`9F 80 02`, Table 86) — module → app, asynchronous.
 
-use crate::error::{Error, Result};
-use crate::objects;
-use crate::tag::ApduTag;
-use broadcast_common::{Parse, Serialize};
+use broadcast_common::Parse;
 
 /// Resource-scoped `apdu_tag`s for CA Pipeline (Tables 84-86).
 pub mod tag {
@@ -57,98 +54,45 @@ pub struct CaPipelineNotification<'a> {
     pub ca_specific_data: &'a [u8],
 }
 
-macro_rules! opaque_object {
-    ($ty:ident, $tag:expr, $what:literal) => {
-        impl<'a> Parse<'a> for $ty<'a> {
-            type Error = Error;
-            fn parse(bytes: &'a [u8]) -> Result<Self> {
-                let body = objects::parse_apdu_header(bytes, $tag, $what)?;
-                Ok(Self {
-                    ca_specific_data: body,
-                })
-            }
-        }
-        impl Serialize for $ty<'_> {
-            type Error = Error;
-            fn serialized_len(&self) -> usize {
-                objects::apdu_len(self.ca_specific_data.len())
-            }
-            fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-                let body_len = self.ca_specific_data.len();
-                let pos = objects::write_apdu_header($tag, body_len, buf)?;
-                buf[pos..pos + body_len].copy_from_slice(self.ca_specific_data);
-                Ok(pos + body_len)
-            }
-        }
-    };
-}
-
-opaque_object!(CaPipelineRequest, tag::CAP_REQUEST, "CAPipelineRequest");
-opaque_object!(CaPipelineResponse, tag::CAP_RESPONSE, "CAPipelineResponse");
-opaque_object!(
+crate::dispatch::declare_opaque_apdu!(
+    CaPipelineRequest,
+    ca_specific_data,
+    tag::CAP_REQUEST,
+    "CAPipelineRequest"
+);
+crate::dispatch::declare_opaque_apdu!(
+    CaPipelineResponse,
+    ca_specific_data,
+    tag::CAP_RESPONSE,
+    "CAPipelineResponse"
+);
+crate::dispatch::declare_opaque_apdu!(
     CaPipelineNotification,
+    ca_specific_data,
     tag::CAP_NOTIFICATION,
     "CAPipelineNotification"
 );
 
-/// Resource-scoped dispatch over the CA Pipeline objects (Tables 84-86).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum CaPipelineApdu<'a> {
-    /// `CAPipelineRequest` (`9F 80 00`).
-    Request(CaPipelineRequest<'a>),
-    /// `CAPipelineResponse` (`9F 80 01`).
-    Response(CaPipelineResponse<'a>),
-    /// `CAPipelineNotification` (`9F 80 02`).
-    Notification(CaPipelineNotification<'a>),
-}
-
-impl<'a> CaPipelineApdu<'a> {
-    /// Parse a CA Pipeline APDU, dispatching on the leading `apdu_tag`.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "ca_pipeline apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::CAP_REQUEST => Ok(Self::Request(CaPipelineRequest::parse(body)?)),
-            tag::CAP_RESPONSE => Ok(Self::Response(CaPipelineResponse::parse(body)?)),
-            tag::CAP_NOTIFICATION => Ok(Self::Notification(CaPipelineNotification::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::CAP_REQUEST.as_u24(),
-                what: "ca_pipeline",
-            }),
-        }
-    }
-}
-
-impl Serialize for CaPipelineApdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::Request(o) => o.serialized_len(),
-            Self::Response(o) => o.serialized_len(),
-            Self::Notification(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::Request(o) => o.serialize_into(buf),
-            Self::Response(o) => o.serialize_into(buf),
-            Self::Notification(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the CA Pipeline objects (Tables 84-86).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum CaPipelineApdu<'a> ("ca_pipeline") {
+        /// `CAPipelineRequest` (`9F 80 00`).
+        Request(CaPipelineRequest<'a>) = tag::CAP_REQUEST,
+        /// `CAPipelineResponse` (`9F 80 01`).
+        Response(CaPipelineResponse<'a>) = tag::CAP_RESPONSE,
+        /// `CAPipelineNotification` (`9F 80 02`).
+        Notification(CaPipelineNotification<'a>) = tag::CAP_NOTIFICATION,
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::Error;
+    use broadcast_common::Serialize;
 
     #[test]
     fn request_round_trips_and_bites() {

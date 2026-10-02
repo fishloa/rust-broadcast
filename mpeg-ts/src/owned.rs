@@ -20,8 +20,14 @@ const NULL_PID: u16 = 0x1FFF;
 
 /// Owned 188-byte TS packet with pre-parsed header fields.
 ///
-/// The raw bytes are stored in `raw`; the parsed flags (`pid`, `pusi`, etc.) are
-/// pre-extracted at construction time so hot paths avoid repeated byte masking.
+/// The raw bytes are stored privately; the parsed flags (`pid`, `pusi`, etc.)
+/// are pre-extracted at construction time so hot paths avoid repeated byte
+/// masking. The fields are **private** (audit r01-W8, #1074): a public copy
+/// of a header field that a caller could assign would silently drift from
+/// the bytes that [`raw`](Self::raw) serialises. Read them through the
+/// getters; the only mutation entry points are the associated functions that
+/// edit a raw `[u8; 188]` (`set_pcr`, `set_continuity_counter`) followed by a
+/// re-[`parse`](Self::parse).
 ///
 /// # Payload access
 ///
@@ -37,21 +43,21 @@ const NULL_PID: u16 = 0x1FFF;
 pub struct OwnedTsPacket {
     /// The raw 188 bytes (serialized as a byte sequence).
     #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_raw_bytes"))]
-    pub raw: [u8; TS_PACKET_SIZE],
+    raw: [u8; TS_PACKET_SIZE],
     /// 13-bit PID extracted from bytes 1–2.
-    pub pid: u16,
+    pid: u16,
     /// Payload Unit Start Indicator (byte 1 bit 6).
-    pub pusi: bool,
+    pusi: bool,
     /// Adaptation field present flag (byte 3 bit 5).
-    pub has_adaptation: bool,
+    has_adaptation: bool,
     /// Payload present flag (byte 3 bit 4).
-    pub has_payload: bool,
+    has_payload: bool,
     /// Transport Error Indicator (byte 1 bit 7).
-    pub tei: bool,
+    tei: bool,
     /// 2-bit transport_scrambling_control (byte 3 bits 7–6).
-    pub scrambling: u8,
+    scrambling: u8,
     /// 4-bit continuity_counter (byte 3 bits 3–0).
-    pub continuity_counter: u8,
+    continuity_counter: u8,
     /// Discontinuity flag: `true` if the adaptation-field `discontinuity_indicator`
     /// was set in the source packet, or if the caller marks this as a
     /// continuity-counter discontinuity boundary. Defaults to `false` on parse.
@@ -74,6 +80,52 @@ fn serialize_raw_bytes<S: serde::Serializer>(
 }
 
 impl OwnedTsPacket {
+    /// The raw 188 bytes.
+    pub fn raw(&self) -> &[u8; TS_PACKET_SIZE] {
+        &self.raw
+    }
+
+    /// Consume the packet, returning its raw 188 bytes.
+    pub fn into_raw(self) -> [u8; TS_PACKET_SIZE] {
+        self.raw
+    }
+
+    /// 13-bit PID (bytes 1–2).
+    pub fn pid(&self) -> u16 {
+        self.pid
+    }
+
+    /// Payload Unit Start Indicator (byte 1 bit 6).
+    pub fn pusi(&self) -> bool {
+        self.pusi
+    }
+
+    /// Adaptation field present flag (byte 3 bit 5).
+    pub fn has_adaptation(&self) -> bool {
+        self.has_adaptation
+    }
+
+    /// Payload present flag (byte 3 bit 4).
+    pub fn has_payload(&self) -> bool {
+        self.has_payload
+    }
+
+    /// Transport Error Indicator (byte 1 bit 7).
+    pub fn tei(&self) -> bool {
+        self.tei
+    }
+
+    /// Raw 2-bit `transport_scrambling_control` (byte 3 bits 7–6); see
+    /// [`scrambling_control`](Self::scrambling_control) for the typed view.
+    pub fn scrambling(&self) -> u8 {
+        self.scrambling
+    }
+
+    /// 4-bit continuity_counter (byte 3 bits 3–0).
+    pub fn continuity_counter(&self) -> u8 {
+        self.continuity_counter
+    }
+
     /// Parse a 188-byte owned TS packet.
     ///
     /// Returns [`Error::InvalidSyncByte`] if `raw[0] != 0x47`.
@@ -350,6 +402,28 @@ impl OwnedTsPacket {
 mod tests {
     use super::*;
 
+    /// The getters decode the header bytes literally (H.222.0 §2.4.3.2): a
+    /// hand-built header 0x47 | TEI=1 PUSI=1 prio=0 PID=0x1ABC | scr=0b10
+    /// afc=0b01 cc=0xC.
+    #[test]
+    fn getters_report_the_raw_header_fields() {
+        let mut raw = [0xFFu8; TS_PACKET_SIZE];
+        raw[0] = TS_SYNC_BYTE;
+        raw[1] = 0b1101_1010; // TEI=1, PUSI=1, priority=0, PID[12:8]=0b11010
+        raw[2] = 0xBC;
+        raw[3] = 0b1001_1100; // scrambling=0b10, afc=0b01 (payload only), cc=0xC
+        let pkt = OwnedTsPacket::parse(raw).unwrap();
+        assert!(pkt.tei());
+        assert!(pkt.pusi());
+        assert_eq!(pkt.pid(), 0x1ABC);
+        assert_eq!(pkt.scrambling(), 0b10);
+        assert!(!pkt.has_adaptation());
+        assert!(pkt.has_payload());
+        assert_eq!(pkt.continuity_counter(), 0xC);
+        assert_eq!(pkt.raw(), &raw);
+        assert_eq!(pkt.into_raw(), raw);
+    }
+
     #[test]
     fn owned_round_trip_and_payload_mut() {
         let payload = [0xAAu8; 184];
@@ -357,7 +431,7 @@ mod tests {
             OwnedTsPacket::serialize_with_payload(0x0100, true, 7, &payload).unwrap(),
         )
         .unwrap();
-        assert_eq!(pkt.pid, 0x0100);
+        assert_eq!(pkt.pid(), 0x0100);
         assert!(pkt.pusi);
         assert_eq!(pkt.continuity_counter, 7);
         assert_eq!(pkt.payload().unwrap()[..184], payload[..]);

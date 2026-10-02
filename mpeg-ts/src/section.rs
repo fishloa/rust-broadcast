@@ -61,6 +61,8 @@ const BYTE1_RESERVED_BITS: u8 = 0x30;
 const VERSION_NUMBER_MASK: u8 = 0x1F;
 /// Byte 5 bits 7-6: reserved, convention is both set on serialize.
 const BYTE5_RESERVED_BITS: u8 = 0xC0;
+/// `current_next_indicator` — byte 5 bit 0 of the long-form extension header.
+const CURRENT_NEXT_MASK: u8 = 0x01;
 
 /// A parsed PSI/SI section header, borrowing the raw input buffer for payload.
 ///
@@ -219,7 +221,7 @@ impl<'a> Parse<'a> for Section<'a> {
 
         let extension_id = ((bytes[3] as u16) << 8) | (bytes[4] as u16);
         let version_number = (bytes[5] >> 1) & VERSION_NUMBER_MASK;
-        let current_next_indicator = (bytes[5] & 0x01) != 0;
+        let current_next_indicator = (bytes[5] & CURRENT_NEXT_MASK) != 0;
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
@@ -304,12 +306,11 @@ impl Serialize for Section<'_> {
         buf[1] = ssi | pi | BYTE1_RESERVED_BITS | length_hi;
 
         // Byte 2: length low 8 bits
-        buf[2] = (self.section_length & 0xFF) as u8;
+        buf[2] = self.section_length.to_be_bytes()[1];
 
         if self.section_syntax_indicator {
             // Long form: 5 bytes of extension header, then payload, then CRC.
-            buf[3] = (self.extension_id >> 8) as u8;
-            buf[4] = (self.extension_id & 0xFF) as u8;
+            buf[3..5].copy_from_slice(&self.extension_id.to_be_bytes());
             // Byte 5: 2-bit reserved (both high) | 5-bit version | 1-bit current_next
             let version = (self.version_number & VERSION_NUMBER_MASK) << 1;
             let cni = u8::from(self.current_next_indicator);

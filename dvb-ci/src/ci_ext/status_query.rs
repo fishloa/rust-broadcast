@@ -21,7 +21,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -708,18 +707,26 @@ impl ActivationState {
 broadcast_common::impl_spec_display!(ActivationState, Reserved);
 
 /// `Activation status data` (Table 50) — status item 4: a single packed byte.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ActivationStatus {
     /// `event_activated` — host activated by an event (vs user action).
     pub event_activated: bool,
-    /// `activation_state` (3 bits).
-    pub activation_state: Option<ActivationState>,
+    /// `activation_state` (3 bits). Always present on the wire: it was an
+    /// `Option` that `parse` filled with `Some` every time, so a serialized
+    /// `None` could never round-trip (audit r10-O-8).
+    pub activation_state: ActivationState,
+    /// The 4 reserved bits `[7:4]` of the status byte, preserved so every
+    /// byte value round-trips (Table 50).
+    pub reserved: u8,
 }
 
 impl ActivationStatus {
     const EVENT_ACTIVATED_BIT: u8 = 0x08;
     const ACTIVATION_STATE_MASK: u8 = 0x07;
+    /// Reserved bits `[7:4]` sit above the event bit.
+    const RESERVED_SHIFT: u32 = 4;
+    const RESERVED_MASK: u8 = 0x0F;
 }
 
 impl<'a> Parse<'a> for ActivationStatus {
@@ -734,9 +741,8 @@ impl<'a> Parse<'a> for ActivationStatus {
         }
         Ok(Self {
             event_activated: body[0] & Self::EVENT_ACTIVATED_BIT != 0,
-            activation_state: Some(ActivationState::from_u8(
-                body[0] & Self::ACTIVATION_STATE_MASK,
-            )),
+            activation_state: ActivationState::from_u8(body[0] & Self::ACTIVATION_STATE_MASK),
+            reserved: body[0] >> Self::RESERVED_SHIFT,
         })
     }
 }
@@ -753,76 +759,29 @@ impl Serialize for ActivationStatus {
         if self.event_activated {
             b |= Self::EVENT_ACTIVATED_BIT;
         }
-        if let Some(state) = self.activation_state {
-            b |= state.to_u8() & Self::ACTIVATION_STATE_MASK;
-        }
+        b |= self.activation_state.to_u8() & Self::ACTIVATION_STATE_MASK;
+        b |= (self.reserved & Self::RESERVED_MASK) << Self::RESERVED_SHIFT;
         buf[0] = b;
         Ok(1)
     }
 }
 
-/// Resource-scoped dispatch over the Status Query objects (Tables 37-41).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum StatusQueryApdu<'a> {
-    /// `StatusQueryReq` (`9F 80 00`).
-    StatusQueryReq(StatusQueryReq),
-    /// `TrapReq` (`9F 80 01`).
-    TrapReq(TrapReq),
-    /// `GetNextItemReq` (`9F 80 02`).
-    GetNextItemReq(GetNextItemReq),
-    /// `GetNextItemAck` (`9F 80 03`).
-    GetNextItemAck(GetNextItemAck),
-    /// `StatusAck` (`9F 80 04`).
-    StatusAck(StatusAck<'a>),
-}
-
-impl<'a> StatusQueryApdu<'a> {
-    /// Parse a Status Query APDU, dispatching on the leading `apdu_tag`.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "status_query apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::STATUS_QUERY_REQ => Ok(Self::StatusQueryReq(StatusQueryReq::parse(body)?)),
-            tag::TRAP_REQ => Ok(Self::TrapReq(TrapReq::parse(body)?)),
-            tag::GET_NEXT_ITEM_REQ => Ok(Self::GetNextItemReq(GetNextItemReq::parse(body)?)),
-            tag::GET_NEXT_ITEM_ACK => Ok(Self::GetNextItemAck(GetNextItemAck::parse(body)?)),
-            tag::STATUS_ACK => Ok(Self::StatusAck(StatusAck::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::STATUS_QUERY_REQ.as_u24(),
-                what: "status_query",
-            }),
-        }
-    }
-}
-
-impl Serialize for StatusQueryApdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::StatusQueryReq(o) => o.serialized_len(),
-            Self::TrapReq(o) => o.serialized_len(),
-            Self::GetNextItemReq(o) => o.serialized_len(),
-            Self::GetNextItemAck(o) => o.serialized_len(),
-            Self::StatusAck(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::StatusQueryReq(o) => o.serialize_into(buf),
-            Self::TrapReq(o) => o.serialize_into(buf),
-            Self::GetNextItemReq(o) => o.serialize_into(buf),
-            Self::GetNextItemAck(o) => o.serialize_into(buf),
-            Self::StatusAck(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the Status Query objects (Tables 37-41).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum StatusQueryApdu<'a> ("status_query") {
+        /// `StatusQueryReq` (`9F 80 00`).
+        StatusQueryReq(StatusQueryReq) = tag::STATUS_QUERY_REQ,
+        /// `TrapReq` (`9F 80 01`).
+        TrapReq(TrapReq) = tag::TRAP_REQ,
+        /// `GetNextItemReq` (`9F 80 02`).
+        GetNextItemReq(GetNextItemReq) = tag::GET_NEXT_ITEM_REQ,
+        /// `GetNextItemAck` (`9F 80 03`).
+        GetNextItemAck(GetNextItemAck) = tag::GET_NEXT_ITEM_ACK,
+        /// `StatusAck` (`9F 80 04`).
+        StatusAck(StatusAck<'a>) = tag::STATUS_ACK,
     }
 }
 
@@ -999,7 +958,8 @@ mod tests {
     fn activation_status_packs_bits() {
         let a = ActivationStatus {
             event_activated: true,
-            activation_state: Some(ActivationState::On),
+            activation_state: ActivationState::On,
+            reserved: 0,
         };
         let bytes = a.to_bytes();
         // event_activated(1<<3) | activation_state(2) = 0x0A.
@@ -1008,10 +968,17 @@ mod tests {
         // Standby-active, no event.
         let b = ActivationStatus {
             event_activated: false,
-            activation_state: Some(ActivationState::StandbyActive),
+            activation_state: ActivationState::StandbyActive,
+            reserved: 0,
         };
         assert_eq!(b.to_bytes(), [0x01]);
         assert_eq!(ActivationStatus::parse(&[0x01]).unwrap(), b);
+        // Every one of the 256 byte values (reserved states and reserved bits included) now
+        // round-trips: the old `Option` state could not.
+        for byte in 0x00u8..=0xFF {
+            let parsed = ActivationStatus::parse(&[byte]).unwrap();
+            assert_eq!(parsed.to_bytes(), [byte], "byte {byte:#04X}");
+        }
     }
 
     #[test]

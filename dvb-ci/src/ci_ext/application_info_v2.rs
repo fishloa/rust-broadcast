@@ -12,8 +12,6 @@
 //! - `enter_menu` (`9F 80 22`, EN 50221 Table 22) — header-only.
 
 use crate::error::{Error, Result};
-use crate::objects;
-use crate::tag::ApduTag;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Application Information v2 (Table 87).
@@ -128,153 +126,93 @@ pub struct ApplicationInfo<'a> {
     pub menu_string: &'a [u8],
 }
 
-// --- empty-body objects ---
+// The wire layouts are byte-identical to EN 50221 §8.4 (see the module doc),
+// so every impl below delegates to `objects::application_info` instead of
+// re-implementing the framing, length checks and bounds (audit r10-O-5): only
+// the `application_type` value set differs, and it is converted by wire byte.
+
+use crate::objects::application_info as v1;
 
 impl<'a> Parse<'a> for ApplicationInfoEnq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        objects::parse_empty_apdu(bytes, tag::APPLICATION_INFO_ENQ, "application_info_enq")?;
+        v1::ApplicationInfoEnq::parse(bytes)?;
         Ok(Self)
     }
 }
 impl Serialize for ApplicationInfoEnq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::empty_apdu_len()
+        v1::ApplicationInfoEnq.serialized_len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::serialize_empty_apdu(tag::APPLICATION_INFO_ENQ, buf)
+        v1::ApplicationInfoEnq.serialize_into(buf)
     }
 }
 
 impl<'a> Parse<'a> for EnterMenu {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        objects::parse_empty_apdu(bytes, tag::ENTER_MENU, "enter_menu")?;
+        v1::EnterMenu::parse(bytes)?;
         Ok(Self)
     }
 }
 impl Serialize for EnterMenu {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::empty_apdu_len()
+        v1::EnterMenu.serialized_len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::serialize_empty_apdu(tag::ENTER_MENU, buf)
+        v1::EnterMenu.serialize_into(buf)
     }
 }
 
 // --- application_info ---
 
-// application_type(1) + manufacturer(2) + code(2) + menu_string_length(1).
-const APP_INFO_PREFIX: usize = 6;
-
 impl<'a> Parse<'a> for ApplicationInfo<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::APPLICATION_INFO, "application_info")?;
-        if body.len() < APP_INFO_PREFIX {
-            return Err(Error::BufferTooShort {
-                need: APP_INFO_PREFIX,
-                have: body.len(),
-                what: "application_info",
-            });
-        }
-        let menu_len = body[5] as usize;
-        let menu_end = APP_INFO_PREFIX + menu_len;
-        if body.len() < menu_end {
-            return Err(Error::LengthMismatch {
-                what: "application_info menu_string",
-                declared: menu_len,
-                actual: body.len() - APP_INFO_PREFIX,
-            });
-        }
+        let v = v1::ApplicationInfo::parse(bytes)?;
         Ok(Self {
-            application_type: ApplicationTypeV2::from_u8(body[0]),
-            application_manufacturer: u16::from_be_bytes([body[1], body[2]]),
-            manufacturer_code: u16::from_be_bytes([body[3], body[4]]),
-            menu_string: &body[APP_INFO_PREFIX..menu_end],
+            application_type: ApplicationTypeV2::from_u8(v.application_type.to_u8()),
+            application_manufacturer: v.application_manufacturer,
+            manufacturer_code: v.manufacturer_code,
+            menu_string: v.menu_string,
         })
+    }
+}
+impl ApplicationInfo<'_> {
+    fn as_v1(&self) -> v1::ApplicationInfo<'_> {
+        v1::ApplicationInfo {
+            application_type: v1::ApplicationType::from_u8(self.application_type.to_u8()),
+            application_manufacturer: self.application_manufacturer,
+            manufacturer_code: self.manufacturer_code,
+            menu_string: self.menu_string,
+        }
     }
 }
 impl Serialize for ApplicationInfo<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(APP_INFO_PREFIX + self.menu_string.len())
+        self.as_v1().serialized_len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if self.menu_string.len() > u8::MAX as usize {
-            return Err(Error::InvalidObject {
-                what: "application_info",
-                reason: "menu_string longer than 255 bytes",
-            });
-        }
-        let body_len = APP_INFO_PREFIX + self.menu_string.len();
-        let mut pos = objects::write_apdu_header(tag::APPLICATION_INFO, body_len, buf)?;
-        buf[pos] = self.application_type.to_u8();
-        buf[pos + 1..pos + 3].copy_from_slice(&self.application_manufacturer.to_be_bytes());
-        buf[pos + 3..pos + 5].copy_from_slice(&self.manufacturer_code.to_be_bytes());
-        buf[pos + 5] = self.menu_string.len() as u8;
-        pos += APP_INFO_PREFIX;
-        buf[pos..pos + self.menu_string.len()].copy_from_slice(self.menu_string);
-        Ok(pos + self.menu_string.len())
+        self.as_v1().serialize_into(buf)
     }
 }
 
-/// Resource-scoped dispatch over the Application Information v2 objects.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum ApplicationInfoV2Apdu<'a> {
-    /// `application_info_enq` (`9F 80 20`).
-    ApplicationInfoEnq(ApplicationInfoEnq),
-    /// `application_info` (`9F 80 21`).
-    ApplicationInfo(ApplicationInfo<'a>),
-    /// `enter_menu` (`9F 80 22`).
-    EnterMenu(EnterMenu),
-}
-
-impl<'a> ApplicationInfoV2Apdu<'a> {
-    /// Parse an Application Information v2 APDU, dispatching on the `apdu_tag`.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "application_info_v2 apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::APPLICATION_INFO_ENQ => {
-                Ok(Self::ApplicationInfoEnq(ApplicationInfoEnq::parse(body)?))
-            }
-            tag::APPLICATION_INFO => Ok(Self::ApplicationInfo(ApplicationInfo::parse(body)?)),
-            tag::ENTER_MENU => Ok(Self::EnterMenu(EnterMenu::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::APPLICATION_INFO.as_u24(),
-                what: "application_info_v2",
-            }),
-        }
-    }
-}
-
-impl Serialize for ApplicationInfoV2Apdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::ApplicationInfoEnq(o) => o.serialized_len(),
-            Self::ApplicationInfo(o) => o.serialized_len(),
-            Self::EnterMenu(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::ApplicationInfoEnq(o) => o.serialize_into(buf),
-            Self::ApplicationInfo(o) => o.serialize_into(buf),
-            Self::EnterMenu(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the Application Information v2 objects.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum ApplicationInfoV2Apdu<'a> ("application_info_v2") {
+        /// `application_info_enq` (`9F 80 20`).
+        ApplicationInfoEnq(ApplicationInfoEnq) = tag::APPLICATION_INFO_ENQ,
+        /// `application_info` (`9F 80 21`).
+        ApplicationInfo(ApplicationInfo<'a>) = tag::APPLICATION_INFO,
+        /// `enter_menu` (`9F 80 22`).
+        EnterMenu(EnterMenu) = tag::ENTER_MENU,
     }
 }
 

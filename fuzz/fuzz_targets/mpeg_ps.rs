@@ -6,4 +6,8 @@ use libfuzzer_sys::fuzz_target;
 fuzz_target!(|data: &[u8]| {
     let _ = mpeg_ps::PackHeader::parse(data);
     let _ = mpeg_ps::program_stream::parse_pack(data);
+    // The resyncing walker must terminate and account for every byte.
+    let scan = mpeg_ps::program_stream::scan_packs(data);
+    let skipped: usize = scan.skipped.iter().map(|s| s.len).sum();
+    assert!(skipped + scan.remaining.len() <= data.len());
 });

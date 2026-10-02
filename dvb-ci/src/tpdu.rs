@@ -111,6 +111,25 @@ pub struct TcObject {
     pub t_c_id: u8,
 }
 
+impl TcObject {
+    /// `true` when `tag` is one of the five single-`t_c_id` connection
+    /// objects this type models (Table A.16): `Tcreate_t_c`, `Tc_t_c_reply`,
+    /// `Tdelete_t_c`, `Td_t_c_reply`, `Trequest_t_c`. Any other tag belongs to
+    /// a different object (`SB`, `RCV`, `New_T_C`, `T_C_Error`, data) with a
+    /// different body layout (audit r10-O-3).
+    #[must_use]
+    pub const fn is_tc_tag(tag: u8) -> bool {
+        matches!(
+            tag,
+            tags::CREATE_T_C
+                | tags::C_T_C_REPLY
+                | tags::DELETE_T_C
+                | tags::D_T_C_REPLY
+                | tags::REQUEST_T_C
+        )
+    }
+}
+
 impl<'a> Parse<'a> for TcObject {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -122,6 +141,12 @@ impl<'a> Parse<'a> for TcObject {
             });
         }
         let tag = bytes[0];
+        if !Self::is_tc_tag(tag) {
+            return Err(Error::InvalidObject {
+                what: "TcObject",
+                reason: "tpdu_tag is not a single-t_c_id connection object",
+            });
+        }
         let (len, hdr) = length::decode(&bytes[1..])?;
         if len != 1 {
             return Err(Error::InvalidObject {
@@ -147,6 +172,12 @@ impl Serialize for TcObject {
             return Err(Error::OutputBufferTooSmall {
                 need: 3,
                 have: buf.len(),
+            });
+        }
+        if !Self::is_tc_tag(self.tag) {
+            return Err(Error::InvalidObject {
+                what: "TcObject",
+                reason: "tpdu_tag is not a single-t_c_id connection object",
             });
         }
         buf[0] = self.tag;
@@ -463,14 +494,52 @@ pub fn create_t_c(t_c_id: u8) -> TcObject {
 }
 
 /// Collect a `Vec` of the wire bytes for a [`TcObject`] (convenience).
-#[must_use]
-pub fn tc_object_bytes(o: &TcObject) -> Vec<u8> {
-    o.to_bytes()
+///
+/// Fails with [`Error::InvalidObject`] when `o.tag` is not a connection
+/// object tag (audit r10-O-3 / T15: this used to panic through `to_bytes`).
+pub fn tc_object_bytes(o: &TcObject) -> Result<Vec<u8>> {
+    o.try_to_bytes()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tc_object_rejects_foreign_tags_both_ways() {
+        // 0x80 is TSB (status byte), 0x87 New_T_C: valid TPDU tags, wrong
+        // object. Previously any tag byte was accepted and re-emitted.
+        for tag in [
+            tags::SB,
+            tags::RCV,
+            tags::NEW_T_C,
+            tags::T_C_ERROR,
+            0x00,
+            0xFF,
+        ] {
+            let wire = [tag, 0x01, 0x05];
+            assert!(
+                matches!(TcObject::parse(&wire), Err(Error::InvalidObject { .. })),
+                "tag {tag:#04X} must be rejected on parse"
+            );
+            let o = TcObject { tag, t_c_id: 5 };
+            assert!(matches!(
+                tc_object_bytes(&o),
+                Err(Error::InvalidObject { .. })
+            ));
+        }
+        for tag in [
+            tags::CREATE_T_C,
+            tags::C_T_C_REPLY,
+            tags::DELETE_T_C,
+            tags::D_T_C_REPLY,
+            tags::REQUEST_T_C,
+        ] {
+            let o = TcObject::parse(&[tag, 0x01, 0x05]).unwrap();
+            assert_eq!(o, TcObject { tag, t_c_id: 5 });
+            assert_eq!(tc_object_bytes(&o).unwrap(), [tag, 0x01, 0x05]);
+        }
+    }
 
     #[test]
     fn tc_object_round_trip() {

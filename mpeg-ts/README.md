@@ -123,7 +123,7 @@ assert_eq!(pkt.header.pid, 0x1FFF);
 assert_eq!(pkt.header.continuity_counter, 3);
 
 // Overwrite a continuity counter in-place.
-let mut raw = OwnedTsPacket::serialize_with_payload(0x0100, false, 0, &[]);
+let mut raw = OwnedTsPacket::serialize_with_payload(0x0100, false, 0, &[])?;
 OwnedTsPacket::set_continuity_counter(&mut raw, 7);
 let pkt = TsPacket::parse(&raw)?;
 assert_eq!(pkt.header.continuity_counter, 7);

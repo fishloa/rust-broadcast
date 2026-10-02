@@ -31,7 +31,7 @@ use crate::objects::ca_pmt::{
     CaPmtCmdId, CaPmtListManagement, info_block_len, parse_cmd_and_descriptors, write_info_block,
 };
 use crate::objects::ca_pmt_reply::{CaEnable, encode_enable_byte};
-use crate::tag::{ApduTag, CA_PMT, CA_PMT_REPLY};
+use crate::tag::{CA_PMT, CA_PMT_REPLY};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -359,58 +359,21 @@ impl Serialize for MsCaPmtReply {
 // apdu-tag dispatch helper (no resource_id — see module doc)
 // ---------------------------------------------------------------------------
 
-/// A parsed CI Plus multi-stream CA-support object.
-///
-/// There is intentionally **no** `resource_id`-keyed entry point for these
-/// objects: TS 103 205 does not print the resource_id (see the module doc), so
-/// dispatch is on the apdu_tag alone, for callers already in a multi-stream CA
-/// Support session.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum CaSupportApdu<'a> {
-    /// `ca_pmt` (`9F 80 32`), CI Plus multi-stream variant.
-    CaPmt(MsCaPmt<'a>),
-    /// `ca_pmt_reply` (`9F 80 33`), CI Plus multi-stream variant.
-    CaPmtReply(MsCaPmtReply),
-}
-
-impl<'a> CaSupportApdu<'a> {
-    /// Parse a CI Plus multi-stream CA-support APDU by its apdu_tag.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "ca_support apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            CA_PMT => Ok(Self::CaPmt(MsCaPmt::parse(body)?)),
-            CA_PMT_REPLY => Ok(Self::CaPmtReply(MsCaPmtReply::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: CA_PMT.as_u24(),
-                what: "ca_support",
-            }),
-        }
-    }
-}
-
-impl Serialize for CaSupportApdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::CaPmt(o) => o.serialized_len(),
-            Self::CaPmtReply(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::CaPmt(o) => o.serialize_into(buf),
-            Self::CaPmtReply(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// A parsed CI Plus multi-stream CA-support object.
+    ///
+    /// There is intentionally **no** `resource_id`-keyed entry point for these
+    /// objects: TS 103 205 does not print the resource_id (see the module doc), so
+    /// dispatch is on the apdu_tag alone, for callers already in a multi-stream CA
+    /// Support session.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum CaSupportApdu<'a> ("ca_support") {
+        /// `ca_pmt` (`9F 80 32`), CI Plus multi-stream variant.
+        CaPmt(MsCaPmt<'a>) = CA_PMT,
+        /// `ca_pmt_reply` (`9F 80 33`), CI Plus multi-stream variant.
+        CaPmtReply(MsCaPmtReply) = CA_PMT_REPLY,
     }
 }
 

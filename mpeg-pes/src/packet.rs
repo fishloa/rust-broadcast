@@ -10,6 +10,30 @@ const HEADER_FIXED: usize = 3; // 2 flag bytes + PES_header_data_length
 /// PES header stuffing byte (ISO/IEC 13818-1:2007 §2.4.3.7 — `0xFF`).
 const PES_HEADER_STUFFING_BYTE: u8 = 0xFF;
 
+// ── PES header flag bits (ISO/IEC 13818-1 §2.4.3.7, Table 2-21) ──────────────
+// First flag byte (`'10' | PES_scrambling_control(2) | PES_priority |
+// data_alignment_indicator | copyright | original_or_copy`).
+const F1_PRIORITY: u8 = 0x08;
+const F1_DATA_ALIGNMENT: u8 = 0x04;
+const F1_COPYRIGHT: u8 = 0x02;
+const F1_ORIGINAL_OR_COPY: u8 = 0x01;
+// Second flag byte (`PTS_DTS_flags(2) | ESCR | ES_rate | DSM_trick_mode |
+// additional_copy_info | PES_CRC | PES_extension`).
+const F2_ESCR: u8 = 0x20;
+const F2_ES_RATE: u8 = 0x10;
+const F2_DSM_TRICK_MODE: u8 = 0x08;
+const F2_ADDITIONAL_COPY_INFO: u8 = 0x04;
+const F2_PES_CRC: u8 = 0x02;
+const F2_PES_EXTENSION: u8 = 0x01;
+// PES_extension flag byte (`PES_private_data | pack_header_field |
+// program_packet_sequence_counter | P-STD_buffer | reserved(3) |
+// PES_extension_flag_2`).
+const EXT_PES_PRIVATE_DATA: u8 = 0x80;
+const EXT_PACK_HEADER: u8 = 0x40;
+const EXT_PROGRAM_PACKET_SEQUENCE_COUNTER: u8 = 0x20;
+const EXT_P_STD_BUFFER: u8 = 0x10;
+const EXT_FLAG_2: u8 = 0x01;
+
 // ── ESCR (ISO/IEC 13818-1 §2.4.3.7 Table 2-21) ──────────────────────────────
 
 /// Elementary Stream Clock Reference: 33-bit base (90 kHz) + 9-bit extension
@@ -276,7 +300,7 @@ impl<'a> PesExtension<'a> {
         let flags = data[0];
         let mut cursor = 1usize;
 
-        let pes_private_data = if flags & 0x80 != 0 {
+        let pes_private_data = if flags & EXT_PES_PRIVATE_DATA != 0 {
             let end = cursor + 16;
             let arr: [u8; 16] = data
                 .get(cursor..end)
@@ -292,7 +316,7 @@ impl<'a> PesExtension<'a> {
             None
         };
 
-        let pack_header = if flags & 0x40 != 0 {
+        let pack_header = if flags & EXT_PACK_HEADER != 0 {
             let pack_len = *data.get(cursor).ok_or(Error::BufferTooShort {
                 need: cursor + 1,
                 have: data.len(),
@@ -311,7 +335,7 @@ impl<'a> PesExtension<'a> {
             None
         };
 
-        let program_packet_sequence_counter = if flags & 0x20 != 0 {
+        let program_packet_sequence_counter = if flags & EXT_PROGRAM_PACKET_SEQUENCE_COUNTER != 0 {
             if data.len() < cursor + 2 {
                 return Err(Error::BufferTooShort {
                     need: cursor + 2,
@@ -331,7 +355,7 @@ impl<'a> PesExtension<'a> {
             None
         };
 
-        let p_std_buffer = if flags & 0x10 != 0 {
+        let p_std_buffer = if flags & EXT_P_STD_BUFFER != 0 {
             if data.len() < cursor + 2 {
                 return Err(Error::BufferTooShort {
                     need: cursor + 2,
@@ -350,7 +374,7 @@ impl<'a> PesExtension<'a> {
             None
         };
 
-        let pes_extension_field = if flags & 0x01 != 0 {
+        let pes_extension_field = if flags & EXT_FLAG_2 != 0 {
             let len_byte = *data.get(cursor).ok_or(Error::BufferTooShort {
                 need: cursor + 1,
                 have: data.len(),
@@ -427,19 +451,19 @@ impl<'a> PesExtension<'a> {
 
         let mut flags = 0u8;
         if self.pes_private_data.is_some() {
-            flags |= 0x80;
+            flags |= EXT_PES_PRIVATE_DATA;
         }
         if self.pack_header.is_some() {
-            flags |= 0x40;
+            flags |= EXT_PACK_HEADER;
         }
         if self.program_packet_sequence_counter.is_some() {
-            flags |= 0x20;
+            flags |= EXT_PROGRAM_PACKET_SEQUENCE_COUNTER;
         }
         if self.p_std_buffer.is_some() {
-            flags |= 0x10;
+            flags |= EXT_P_STD_BUFFER;
         }
         if self.pes_extension_field.is_some() {
-            flags |= 0x01;
+            flags |= EXT_FLAG_2;
         }
         buf[0] = flags;
         let mut cursor = 1usize;
@@ -681,7 +705,7 @@ impl<'a> PesPacket<'a> {
         };
 
         // ESCR (6 bytes, ISO/IEC 13818-1 §2.4.3.7).
-        let escr = if f2 & 0x20 != 0 {
+        let escr = if f2 & F2_ESCR != 0 {
             if opt.len() < cursor + 6 {
                 return Err(Error::BufferTooShort {
                     need: cursor + 6,
@@ -698,7 +722,7 @@ impl<'a> PesPacket<'a> {
         };
 
         // ES_rate (3 bytes: 1 marker + 22-bit rate + 1 marker).
-        let es_rate = if f2 & 0x10 != 0 {
+        let es_rate = if f2 & F2_ES_RATE != 0 {
             if opt.len() < cursor + 3 {
                 return Err(Error::BufferTooShort {
                     need: cursor + 3,
@@ -716,7 +740,7 @@ impl<'a> PesPacket<'a> {
         };
 
         // DSM trick mode (1 byte).
-        let dsm_trick_mode = if f2 & 0x08 != 0 {
+        let dsm_trick_mode = if f2 & F2_DSM_TRICK_MODE != 0 {
             if opt.len() < cursor + 1 {
                 return Err(Error::BufferTooShort {
                     need: cursor + 1,
@@ -732,7 +756,7 @@ impl<'a> PesPacket<'a> {
         };
 
         // additional_copy_info (1 byte: marker + 7-bit info).
-        let additional_copy_info = if f2 & 0x04 != 0 {
+        let additional_copy_info = if f2 & F2_ADDITIONAL_COPY_INFO != 0 {
             if opt.len() < cursor + 1 {
                 return Err(Error::BufferTooShort {
                     need: cursor + 1,
@@ -748,7 +772,7 @@ impl<'a> PesPacket<'a> {
         };
 
         // PES_CRC (2 bytes).
-        let pes_crc = if f2 & 0x02 != 0 {
+        let pes_crc = if f2 & F2_PES_CRC != 0 {
             if opt.len() < cursor + 2 {
                 return Err(Error::BufferTooShort {
                     need: cursor + 2,
@@ -764,7 +788,7 @@ impl<'a> PesPacket<'a> {
         };
 
         // PES_extension.
-        let pes_extension = if f2 & 0x01 != 0 {
+        let pes_extension = if f2 & F2_PES_EXTENSION != 0 {
             let ext = PesExtension::parse(&opt[cursor..])?;
             cursor += ext.serialized_len();
             Some(ext)
@@ -779,10 +803,10 @@ impl<'a> PesPacket<'a> {
 
         let header = PesHeader {
             scrambling_control: (f1 >> 4) & 0x03,
-            pes_priority: f1 & 0x08 != 0,
-            data_alignment_indicator: f1 & 0x04 != 0,
-            copyright: f1 & 0x02 != 0,
-            original_or_copy: f1 & 0x01 != 0,
+            pes_priority: f1 & F1_PRIORITY != 0,
+            data_alignment_indicator: f1 & F1_DATA_ALIGNMENT != 0,
+            copyright: f1 & F1_COPYRIGHT != 0,
+            original_or_copy: f1 & F1_ORIGINAL_OR_COPY != 0,
             pts,
             dts,
             escr,

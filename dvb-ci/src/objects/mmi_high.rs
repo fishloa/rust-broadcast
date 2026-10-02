@@ -230,7 +230,10 @@ impl AnswId {
 broadcast_common::impl_spec_display!(AnswId, Reserved);
 
 /// `answ()` object (Table 48): the user input reply.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug` redacts `text_chars` — for a blind enquiry it is the user's PIN
+/// (audit #1142), so only its length is printed.
+#[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Answ<'a> {
     /// `answ_id`.
@@ -238,6 +241,15 @@ pub struct Answ<'a> {
     /// The answer `text_char` bytes — present only when `answ_id == answer`.
     #[cfg_attr(feature = "serde", serde(borrow, with = "super::bytes_serde"))]
     pub text_chars: &'a [u8],
+}
+
+impl core::fmt::Debug for Answ<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("Answ")
+            .field("answ_id", &self.answ_id)
+            .field("text_chars", &super::Redacted(self.text_chars.len()))
+            .finish()
+    }
 }
 
 impl<'a> Parse<'a> for Answ<'a> {
@@ -253,6 +265,9 @@ impl<'a> Parse<'a> for Answ<'a> {
         let text_chars = if answ_id == AnswId::Answer {
             &body[1..]
         } else {
+            // Table 48: only `answer` carries text; a cancel with trailing
+            // bytes would silently drop them.
+            super::reject_trailing_body(body, 1, "answ cancel")?;
             &body[..0]
         };
         Ok(Self {
@@ -542,6 +557,17 @@ mod tests {
             more,
             text_chars: s,
         }
+    }
+
+    #[test]
+    fn answ_debug_does_not_print_the_typed_text() {
+        let a = Answ {
+            answ_id: AnswId::Answer,
+            text_chars: b"1234",
+        };
+        let dbg = alloc::format!("{a:?}");
+        assert!(dbg.contains("<4 bytes redacted>"), "{dbg}");
+        assert!(!dbg.contains("49"), "typed text leaked: {dbg}");
     }
 
     #[test]

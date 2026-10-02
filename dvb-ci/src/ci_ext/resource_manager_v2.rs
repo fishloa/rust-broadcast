@@ -15,7 +15,6 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use crate::resource::ResourceId;
-use crate::tag::ApduTag;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -115,59 +114,54 @@ pub struct ModuleIdCommand {
     pub module_id: u8,
 }
 
-// --- profile_enq / profile_changed (empty body) ---
+// --- profile_enq / profile_changed / profile_reply ---
+//
+// Layout-identical to EN 50221 §8.4.1 (module doc): delegate to
+// `objects::resource_manager` rather than re-implementing the framing and the
+// resource-id list walk (audit r10-O-5).
+
+use crate::objects::resource_manager as v1;
 
 impl<'a> Parse<'a> for ProfileEnq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        objects::parse_empty_apdu(bytes, tag::PROFILE_ENQ, "profile_enq")?;
+        v1::ProfileEnq::parse(bytes)?;
         Ok(Self)
     }
 }
 impl Serialize for ProfileEnq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::empty_apdu_len()
+        v1::ProfileEnq.serialized_len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::serialize_empty_apdu(tag::PROFILE_ENQ, buf)
+        v1::ProfileEnq.serialize_into(buf)
     }
 }
 
 impl<'a> Parse<'a> for ProfileChanged {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        objects::parse_empty_apdu(bytes, tag::PROFILE_CHANGED, "profile_changed")?;
+        v1::ProfileChange::parse(bytes)?;
         Ok(Self)
     }
 }
 impl Serialize for ProfileChanged {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::empty_apdu_len()
+        v1::ProfileChange.serialized_len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::serialize_empty_apdu(tag::PROFILE_CHANGED, buf)
+        v1::ProfileChange.serialize_into(buf)
     }
 }
-
-// --- profile_reply (resource-id list) ---
 
 impl<'a> Parse<'a> for ProfileReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::PROFILE_REPLY, "profile_reply")?;
-        if body.len() % ResourceId::LEN != 0 {
-            return Err(Error::InvalidObject {
-                what: "profile_reply",
-                reason: "body length is not a multiple of 4",
-            });
-        }
-        let mut resources = Vec::with_capacity(body.len() / ResourceId::LEN);
-        for chunk in body.chunks_exact(ResourceId::LEN) {
-            resources.push(ResourceId::parse(chunk)?);
-        }
-        Ok(Self { resources })
+        Ok(Self {
+            resources: v1::Profile::parse(bytes)?.resources,
+        })
     }
 }
 impl Serialize for ProfileReply {
@@ -176,12 +170,11 @@ impl Serialize for ProfileReply {
         objects::apdu_len(self.resources.len() * ResourceId::LEN)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let body_len = self.resources.len() * ResourceId::LEN;
-        let mut pos = objects::write_apdu_header(tag::PROFILE_REPLY, body_len, buf)?;
-        for r in &self.resources {
-            pos += r.serialize_into(&mut buf[pos..])?;
+        // `Profile` owns its list, so this clones the (4-byte) ids once.
+        v1::Profile {
+            resources: self.resources.clone(),
         }
-        Ok(pos)
+        .serialize_into(buf)
     }
 }
 
@@ -201,6 +194,7 @@ impl<'a> Parse<'a> for ModuleIdSend {
                 what: "module_id_send",
             });
         }
+        crate::objects::reject_trailing_body(body, MODULE_ID_SEND_BODY, "module_id_send")?;
         Ok(Self {
             module_id: body[0] & 0x3F,
         })
@@ -236,6 +230,7 @@ impl<'a> Parse<'a> for ModuleIdCommand {
                 what: "module_id_command",
             });
         }
+        crate::objects::reject_trailing_body(body, MODULE_ID_COMMAND_BODY, "module_id_command")?;
         Ok(Self {
             command: ModuleIdCommandKind::from_u8(body[0]),
             module_id: body[1] & 0x3F,
@@ -257,68 +252,22 @@ impl Serialize for ModuleIdCommand {
     }
 }
 
-/// Resource-scoped dispatch over the Resource Manager v2 objects (Tables 3-7).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum ResourceManagerV2Apdu {
-    /// `profile_enq` (`9F 80 10`).
-    ProfileEnq(ProfileEnq),
-    /// `profile_reply` (`9F 80 11`).
-    ProfileReply(ProfileReply),
-    /// `profile_changed` (`9F 80 12`).
-    ProfileChanged(ProfileChanged),
-    /// `module_id_send` (`9F 80 13`).
-    ModuleIdSend(ModuleIdSend),
-    /// `module_id_command` (`9F 80 14`).
-    ModuleIdCommand(ModuleIdCommand),
-}
-
-impl ResourceManagerV2Apdu {
-    /// Parse a Resource Manager v2 APDU, dispatching on the leading `apdu_tag`.
-    pub fn parse(body: &[u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "resource_manager_v2 apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::PROFILE_ENQ => Ok(Self::ProfileEnq(ProfileEnq::parse(body)?)),
-            tag::PROFILE_REPLY => Ok(Self::ProfileReply(ProfileReply::parse(body)?)),
-            tag::PROFILE_CHANGED => Ok(Self::ProfileChanged(ProfileChanged::parse(body)?)),
-            tag::MODULE_ID_SEND => Ok(Self::ModuleIdSend(ModuleIdSend::parse(body)?)),
-            tag::MODULE_ID_COMMAND => Ok(Self::ModuleIdCommand(ModuleIdCommand::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::PROFILE_ENQ.as_u24(),
-                what: "resource_manager_v2",
-            }),
-        }
-    }
-}
-
-impl Serialize for ResourceManagerV2Apdu {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::ProfileEnq(o) => o.serialized_len(),
-            Self::ProfileReply(o) => o.serialized_len(),
-            Self::ProfileChanged(o) => o.serialized_len(),
-            Self::ModuleIdSend(o) => o.serialized_len(),
-            Self::ModuleIdCommand(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::ProfileEnq(o) => o.serialize_into(buf),
-            Self::ProfileReply(o) => o.serialize_into(buf),
-            Self::ProfileChanged(o) => o.serialize_into(buf),
-            Self::ModuleIdSend(o) => o.serialize_into(buf),
-            Self::ModuleIdCommand(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the Resource Manager v2 objects (Tables 3-7).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum ResourceManagerV2Apdu ("resource_manager_v2") {
+        /// `profile_enq` (`9F 80 10`).
+        ProfileEnq(ProfileEnq) = tag::PROFILE_ENQ,
+        /// `profile_reply` (`9F 80 11`).
+        ProfileReply(ProfileReply) = tag::PROFILE_REPLY,
+        /// `profile_changed` (`9F 80 12`).
+        ProfileChanged(ProfileChanged) = tag::PROFILE_CHANGED,
+        /// `module_id_send` (`9F 80 13`).
+        ModuleIdSend(ModuleIdSend) = tag::MODULE_ID_SEND,
+        /// `module_id_command` (`9F 80 14`).
+        ModuleIdCommand(ModuleIdCommand) = tag::MODULE_ID_COMMAND,
     }
 }
 

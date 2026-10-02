@@ -13,7 +13,7 @@ use crate::resource::{
 use crate::session::{SessionLayer, SessionOut};
 use crate::transport::{Out as TransportOut, Transport};
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_common::Parse;
 use dvb_ci::builder::{build_ca_pmt, build_ca_pmt_for_caids};
 use dvb_ci::objects::ca_pmt::{CaPmtCmdId, CaPmtListManagement};
 use dvb_ci::objects::mmi_high::{Answ, AnswId, MenuAnsw};
@@ -22,18 +22,6 @@ use dvb_ci::resource::{
     RESOURCE_MANAGER, ResourceId,
 };
 use dvb_si::tables::pmt::PmtSection;
-
-/// Serialize an APDU object to owned bytes.
-///
-/// r10-W-20: previously emitted a silently-empty `Vec` on a serialize error
-/// (and, in a later pass, panicked) — either way the failure never reached a
-/// caller reacting to CAM/card-originated input as a value it could act on.
-/// Propagate `Err` instead; every call site converts it to a
-/// [`Notification::Error`] the same way [`CiStack::build_ca_pmt_bytes`]'s
-/// own fallible callers already do.
-fn ser_apdu<S: Serialize<Error = dvb_ci::Error>>(s: &S) -> dvb_ci::Result<Vec<u8>> {
-    s.try_to_bytes()
-}
 
 /// Convert a serialize failure into the host-facing error notification the
 /// stack already uses for every other internal error (transport errors,
@@ -170,19 +158,19 @@ impl CiStack {
             Event::Host(HostRequest::AddProgram(pmt)) => self.add_program(pmt),
             Event::Host(HostRequest::RemoveProgram(pmt)) => self.remove_program(pmt),
             Event::Host(HostRequest::EnterMenu) => {
-                match ser_apdu(&dvb_ci::objects::application_info::EnterMenu) {
+                match crate::resource::ser(&dvb_ci::objects::application_info::EnterMenu) {
                     Ok(apdu) => self.send_to_resource(APPLICATION_INFORMATION, &apdu),
                     Err(e) => vec![err_action(e)],
                 }
             }
             Event::Host(HostRequest::MmiMenuAnswer(choice_ref)) => {
-                match ser_apdu(&MenuAnsw { choice_ref }) {
+                match crate::resource::ser(&MenuAnsw { choice_ref }) {
                     Ok(apdu) => self.send_to_resource(MMI, &apdu),
                     Err(e) => vec![err_action(e)],
                 }
             }
             Event::Host(HostRequest::MmiEnquiryAnswer(text)) => {
-                match ser_apdu(&Answ {
+                match crate::resource::ser(&Answ {
                     answ_id: AnswId::Answer,
                     text_chars: text,
                 }) {
@@ -190,7 +178,7 @@ impl CiStack {
                     Err(e) => vec![err_action(e)],
                 }
             }
-            Event::Host(HostRequest::MmiCancel) => match ser_apdu(&Answ {
+            Event::Host(HostRequest::MmiCancel) => match crate::resource::ser(&Answ {
                 answ_id: AnswId::Cancel,
                 text_chars: &[],
             }) {
@@ -316,8 +304,7 @@ impl CiStack {
 
     /// Send an APDU to the open session bound to `resource` (if any).
     fn send_to_resource(&mut self, resource: ResourceId, apdu: &[u8]) -> Vec<Action> {
-        // Find the session_nb for the resource (linear scan over the small set).
-        let nb = (1u16..=u16::MAX).find(|&n| self.session.resource_of(n) == Some(resource));
+        let nb = self.session.session_for(resource);
         match nb {
             Some(nb) => match self.session.send_apdu(nb, apdu) {
                 Ok(spdu) => {

@@ -14,7 +14,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for Application MMI (Tables 62-68).
@@ -231,6 +230,7 @@ impl<'a> Parse<'a> for RequestStartAck {
                 what: "RequestStartAck",
             });
         }
+        crate::objects::reject_trailing_body(body, REQUEST_START_ACK_BODY, "RequestStartAck")?;
         Ok(Self {
             ack_code: AckCode::from_u8(body[0]),
         })
@@ -354,73 +354,24 @@ impl Serialize for AppAbortAck<'_> {
     }
 }
 
-/// Resource-scoped dispatch over the Application MMI objects (Tables 62-68).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum ApplicationMmiApdu<'a> {
-    /// `RequestStart` (`9F 80 00`).
-    RequestStart(RequestStart<'a>),
-    /// `RequestStartAck` (`9F 80 01`).
-    RequestStartAck(RequestStartAck),
-    /// `FileReq` (`9F 80 02`).
-    FileReq(FileReq<'a>),
-    /// `FileAck` (`9F 80 03`).
-    FileAck(FileAck<'a>),
-    /// `AppAbortReq` (`9F 80 04`).
-    AppAbortReq(AppAbortReq<'a>),
-    /// `AppAbortAck` (`9F 80 05`).
-    AppAbortAck(AppAbortAck<'a>),
-}
-
-impl<'a> ApplicationMmiApdu<'a> {
-    /// Parse an Application MMI APDU, dispatching on the leading `apdu_tag`.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "application_mmi apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::REQUEST_START => Ok(Self::RequestStart(RequestStart::parse(body)?)),
-            tag::REQUEST_START_ACK => Ok(Self::RequestStartAck(RequestStartAck::parse(body)?)),
-            tag::FILE_REQ => Ok(Self::FileReq(FileReq::parse(body)?)),
-            tag::FILE_ACK => Ok(Self::FileAck(FileAck::parse(body)?)),
-            tag::APP_ABORT_REQ => Ok(Self::AppAbortReq(AppAbortReq::parse(body)?)),
-            tag::APP_ABORT_ACK => Ok(Self::AppAbortAck(AppAbortAck::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::REQUEST_START.as_u24(),
-                what: "application_mmi",
-            }),
-        }
-    }
-}
-
-impl Serialize for ApplicationMmiApdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::RequestStart(o) => o.serialized_len(),
-            Self::RequestStartAck(o) => o.serialized_len(),
-            Self::FileReq(o) => o.serialized_len(),
-            Self::FileAck(o) => o.serialized_len(),
-            Self::AppAbortReq(o) => o.serialized_len(),
-            Self::AppAbortAck(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::RequestStart(o) => o.serialize_into(buf),
-            Self::RequestStartAck(o) => o.serialize_into(buf),
-            Self::FileReq(o) => o.serialize_into(buf),
-            Self::FileAck(o) => o.serialize_into(buf),
-            Self::AppAbortReq(o) => o.serialize_into(buf),
-            Self::AppAbortAck(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the Application MMI objects (Tables 62-68).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum ApplicationMmiApdu<'a> ("application_mmi") {
+        /// `RequestStart` (`9F 80 00`).
+        RequestStart(RequestStart<'a>) = tag::REQUEST_START,
+        /// `RequestStartAck` (`9F 80 01`).
+        RequestStartAck(RequestStartAck) = tag::REQUEST_START_ACK,
+        /// `FileReq` (`9F 80 02`).
+        FileReq(FileReq<'a>) = tag::FILE_REQ,
+        /// `FileAck` (`9F 80 03`).
+        FileAck(FileAck<'a>) = tag::FILE_ACK,
+        /// `AppAbortReq` (`9F 80 04`).
+        AppAbortReq(AppAbortReq<'a>) = tag::APP_ABORT_REQ,
+        /// `AppAbortAck` (`9F 80 05`).
+        AppAbortAck(AppAbortAck<'a>) = tag::APP_ABORT_ACK,
     }
 }
 

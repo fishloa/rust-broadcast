@@ -142,6 +142,7 @@ impl<'a> Parse<'a> for TuneTripletReq {
                 what: "tune_triplet_req",
             });
         }
+        crate::objects::reject_trailing_body(body, TRIPLET_BODY, "tune_triplet_req")?;
         let flags = body[0];
         let dsd_tag = body[7];
         let descriptor_tag_extension = if dsd_tag == DSD_TAG_EXTENSION {
@@ -216,6 +217,9 @@ const LCN_QUIETLY_BIT: u8 = 0x80;
 const LCN_KEEP_BIT: u8 = 0x40;
 // logical_channel_number occupies the low 14 bits of the last two bytes.
 const LCN_MASK: u16 = 0x3FFF;
+/// Width of `logical_channel_number` in bits (TS 103 205 Table 20,
+/// `docs/ts_103_205/multi-stream-host-control.md`).
+const LCN_BITS: u32 = 14;
 
 impl<'a> Parse<'a> for TuneLcnReq {
     type Error = Error;
@@ -228,6 +232,7 @@ impl<'a> Parse<'a> for TuneLcnReq {
                 what: "tune_lcn_req",
             });
         }
+        crate::objects::reject_trailing_body(body, LCN_BODY, "tune_lcn_req")?;
         let background_tune = body[0] & LCN_BACKGROUND_BIT != 0;
         let tune_quietly = body[1] & LCN_QUIETLY_BIT != 0;
         let keep_app_running = body[1] & LCN_KEEP_BIT != 0;
@@ -247,6 +252,13 @@ impl Serialize for TuneLcnReq {
         objects::apdu_len(LCN_BODY)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        // 14-bit logical_channel_number (Table 20): reject, don't mask (audit
+        // r10-O-8).
+        objects::fit_bits(
+            u64::from(self.logical_channel_number),
+            LCN_BITS,
+            "tune_lcn_req logical_channel_number",
+        )?;
         let pos = objects::write_apdu_header(tag::TUNE_LCN_REQ, LCN_BODY, buf)?;
         buf[pos] = if self.background_tune {
             LCN_BACKGROUND_BIT
@@ -368,6 +380,14 @@ impl Serialize for TuneIpReq<'_> {
                 }
             }
             HostControlMode::BaseV3 => {
+                // Table 100 has no `background_tune_flag`; silently dropping a
+                // `true` would emit bytes that parse back as `false`.
+                if self.background_tune {
+                    return Err(Error::InvalidObject {
+                        what: "tune_ip_req",
+                        reason: "background_tune is not on the wire in BaseV3 mode",
+                    });
+                }
                 if self.tune_quietly {
                     byte0 |= IP_V3_QUIETLY_BIT;
                 }
@@ -659,6 +679,41 @@ mod tests {
                 .logical_channel_number,
             0x3FFE
         );
+    }
+
+    #[test]
+    fn lcn_over_14_bits_and_basev3_background_are_rejected_not_dropped() {
+        let mut buf = [0u8; 16];
+        // 0x4000 used to be masked to LCN 0.
+        let lcn = TuneLcnReq {
+            background_tune: false,
+            tune_quietly: false,
+            keep_app_running: false,
+            logical_channel_number: 0x4000,
+        };
+        assert!(matches!(
+            lcn.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
+        // 14-bit maximum still serializes: LCN 0x3FFF -> hi 0x3F, lo 0xFF.
+        let max = TuneLcnReq {
+            logical_channel_number: 0x3FFF,
+            ..lcn
+        };
+        let bytes = max.to_bytes();
+        assert_eq!(bytes[bytes.len() - 2..], [0x3F, 0xFF]);
+        // BaseV3 has no background_tune bit: `true` used to be dropped silently.
+        let v3 = TuneIpReq {
+            mode: HostControlMode::BaseV3,
+            background_tune: true,
+            tune_quietly: false,
+            keep_app_running: false,
+            service_location_data: &[],
+        };
+        assert!(matches!(
+            v3.serialize_into(&mut buf),
+            Err(Error::InvalidObject { .. })
+        ));
     }
 
     #[test]

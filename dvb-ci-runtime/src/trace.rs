@@ -14,13 +14,17 @@ use dvb_ci::spdu::tags as spdu_tags;
 use dvb_ci::tag::ApduTag;
 use dvb_ci::tpdu::{SbValue, tags as tpdu_tags};
 
-/// Name of a TPDU tag (§A.4), or `"tpdu(0xXX)"` for an unknown one.
+/// Name of a TPDU tag (Table A.16), or `"T_?"` for an unknown one.
 fn tpdu_name(tag: u8) -> &'static str {
     match tag {
         tpdu_tags::SB => "T_SB",
         tpdu_tags::RCV => "T_RCV",
         tpdu_tags::CREATE_T_C => "Create_T_C",
         tpdu_tags::C_T_C_REPLY => "C_T_C_Reply",
+        tpdu_tags::DELETE_T_C => "Delete_T_C",
+        tpdu_tags::D_T_C_REPLY => "D_T_C_Reply",
+        tpdu_tags::REQUEST_T_C => "Request_T_C",
+        tpdu_tags::NEW_T_C => "New_T_C",
         tpdu_tags::T_C_ERROR => "T_C_Error",
         tpdu_tags::DATA_LAST => "T_Data_Last",
         tpdu_tags::DATA_MORE => "T_Data_More",
@@ -28,7 +32,7 @@ fn tpdu_name(tag: u8) -> &'static str {
     }
 }
 
-/// Name of a session SPDU tag (§7), or `"spdu(0xXX)"` for an unknown one.
+/// Name of a session SPDU tag (§7), or `"spdu(?)"` for an unknown one.
 fn spdu_name(tag: u8) -> &'static str {
     match tag {
         spdu_tags::SESSION_NUMBER => "session_number",
@@ -108,7 +112,14 @@ pub fn decode_frame(frame: &[u8]) -> String {
             ),
             None => "T_SB (short)".to_string(),
         },
-        tpdu_tags::CREATE_T_C | tpdu_tags::C_T_C_REPLY | tpdu_tags::RCV | tpdu_tags::T_C_ERROR => {
+        tpdu_tags::CREATE_T_C
+        | tpdu_tags::C_T_C_REPLY
+        | tpdu_tags::DELETE_T_C
+        | tpdu_tags::D_T_C_REPLY
+        | tpdu_tags::REQUEST_T_C
+        | tpdu_tags::NEW_T_C
+        | tpdu_tags::RCV
+        | tpdu_tags::T_C_ERROR => {
             format!(
                 "{} tcid={}",
                 tpdu_name(tag),
@@ -160,6 +171,14 @@ pub fn decode_log(log: &[LinkEvent]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn names_every_connection_management_tpdu() {
+        // Table A.16: Delete/Request/New T_C used to fall through to "T_?".
+        assert_eq!(decode_frame(&[0x84, 0x01, 0x01]), "Delete_T_C tcid=1");
+        assert_eq!(decode_frame(&[0x85, 0x01, 0x01]), "D_T_C_Reply tcid=1");
+        assert_eq!(decode_frame(&[0x86, 0x01, 0x01]), "Request_T_C tcid=1");
+    }
 
     #[test]
     fn decodes_the_337_handshake_frames() {

@@ -10,13 +10,13 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
-use broadcast_common::{Parse, Serialize};
+use broadcast_common::Parse;
 
 use crate::error::{Error, Result};
 use crate::local_set::{LocalSet, StructuralSetKind};
 use crate::sets::{
-    InterchangeObjectFields, LocalSetOwnedItem, collect_dark, finish_owned_set, get_optional_fixed,
-    get_required_fixed, owned_set_serialized_len, serialize_owned_set,
+    InterchangeObjectFields, LocalSetOwnedItem, collect_dark, get_optional_fixed,
+    get_required_fixed,
 };
 use crate::types::UlBytes;
 
@@ -148,31 +148,12 @@ impl TimecodeComponent {
     }
 }
 
-impl Serialize for TimecodeComponent {
-    type Error = Error;
-
-    fn serialized_len(&self) -> usize {
-        let (key, items) = finish_owned_set(
-            StructuralSetKind::TimecodeComponent,
-            self.owned_items(),
-            &self.dark,
-        );
-        owned_set_serialized_len(key, &items)
-    }
-
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let (key, items) = finish_owned_set(
-            StructuralSetKind::TimecodeComponent,
-            self.owned_items(),
-            &self.dark,
-        );
-        serialize_owned_set(key, &items, buf)
-    }
-}
+crate::sets::declare_set_serialize!(TimecodeComponent, TimecodeComponent);
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::Serialize;
 
     /// SMPTE-RP 224 Timecode data definition UL (test placeholder).
     const TIMECODE_DD: UlBytes = [

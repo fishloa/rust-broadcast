@@ -25,7 +25,7 @@
 //!   `ApplicationMmiApdu`, `BroadcastServiceGatewayApdu`, `CaPipelineApdu`,
 //!   `CaSupportApdu`, `CiExtApdu`, `CiPlusApdu`, `CicamPlayerApdu`,
 //!   `ContentControlApdu`, `CopyProtectionApdu`, `DownloadApdu`,
-//!   `EventManagerApdu`, `FileRetrievalApdu`, `LscV4Apdu`, `LscV4ReplyApdu`,
+//!   `EventManagerApdu`, `FileRetrievalApdu`, `LscV4Apdu`,
 //!   `MultistreamApdu`, `MultistreamHostControlApdu`, `PowerManagerApdu`,
 //!   `ResourceManagerV2Apdu`, `SampleDecryptionApdu`, `ServiceGatewayApdu`,
 //!   `StatusQueryApdu`, `StreamInputApdu`) — a per-resource dispatch/wrapper
@@ -57,7 +57,6 @@ const SKIP: &[&str] = &[
     "EventManagerApdu",
     "FileRetrievalApdu",
     "LscV4Apdu",
-    "LscV4ReplyApdu",
     "MultistreamApdu",
     "MultistreamHostControlApdu",
     "PowerManagerApdu",

@@ -14,42 +14,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   re-emitted the property even when the source document never had it,
   breaking the round-trip on real files that omit this encoder-required-
   but-decoder-tolerant ("E/req", Annex A.2) property.
-
-### Fixed
-- **#1108 (MX-W1)**: `partition.rs`/`primer.rs`/`random_index_pack.rs`/
-  `local_set.rs` narrowed a 64-bit BER/batch length to `usize` with a bare
-  `as usize`, which silently truncates on a 32-bit target instead of
-  rejecting an over-range value (`klv.rs`/`local_set.rs` already did this
-  correctly with `usize::try_from`; these four call sites now match).
-  Separately, `primer.rs` and `types.rs::parse_uid_batch` computed
-  `count as usize * <entry size>` to validate a Batch/Primer header — which
-  also wraps on a 32-bit target for a large enough `count`, and could then
-  abort the process at `Vec::with_capacity(count as usize)` on a spuriously
-  "matching" but bogus count; both now use `checked_mul` and size the
-  allocation from the already-bounded body length, never the untrusted count.
-- **#1108 (MX-W2)**: `LocalSet::parse_prefix` now rejects a Set with a
-  duplicate local tag (§9.3 forbids this) instead of silently accepting it
-  — every typed Set's accessors took the first match, and the duplicate's
-  tag being "known" excluded it from the `dark` catch-all too, so its value
-  vanished on every round-trip.
-- **#1108 (MX-W4)**: `PrimerPack::parse` now rejects a duplicate local tag,
-  or two different local tags mapping to the same UL/UUID — `resolve_ul`/
-  `resolve_tag`'s linear scan silently returned the first match on either.
-- **#1108 (MX-W6)**: `LocalSet::serialize_into` now rejects a key whose byte
-  6 (registry designator) isn't a valid `ItemLengthMode` value, instead of
-  falling back to `TwoByte` mode and producing bytes that `parse` (via
-  `is_local_set_key`) would then reject — serialize used to accept what
-  parse couldn't read back.
-- `op1a::Op1aQualifier`'s byte-15 bit mapping was off by one against SMPTE
-  ST 378M §6.4: bit 0 is an always-set marker (every real encoder sets it),
-  not a semantic flag, so `external_essence`/`non_streamable`/`multi_track`
-  are bits 1/2/3 (`0x02`/`0x04`/`0x08`), not 0/1/2. Verified against the
-  crate's own real `ffmpeg`-muxed fixture: its qualifier byte `0x09` (marker
-  + multi-track, matching its actual one-Essence-Container two-track
-  layout) was previously decoded as external-essence + single-track — both
-  wrong (issue #1048).
-
-### Changed (breaking)
 - **`KlvItem`, `PartitionPack`, `PrimerPack`, `RandomIndexPack`, `LocalSet`
   and `LocalSetItem` now round-trip byte-identically, including a
   non-minimal (fixed-width long-form) BER length token** (issue #1047 /
@@ -87,6 +51,55 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     re-canonicalization, so it never actually exercised this bug. A new
     `real_fixture_non_minimal_ber_lengths_round_trip_byte_identically` test
     quantifies and verifies the fix directly.
+
+### Changed
+- The `Serialize` skeleton (`finish_owned_set` + `serialize_owned_set` /
+  `owned_set_serialized_len` with the Set's `StructuralSetKind`) that was
+  copy-pasted into thirteen typed Sets (`ContentStorage`,
+  `EssenceContainerData`, `FillerComponent`, `Identification`, `Preface`,
+  `Sequence`, `SourceClip`, `TimecodeComponent`, `MaterialPackage`,
+  `SourcePackage`, `TimelineTrack`, `EventTrack`, `StaticTrack`) is now one
+  internal `declare_set_serialize!(Type, Kind)` line each (audit
+  r13-MX-W5, #1113). No behaviour or API change; every round-trip and
+  real-fixture test is unchanged and green. r13-MX-O1/O2 (the owned item
+  list built by both `serialized_len` and `serialize_into`; one heap copy per
+  fixed-size property) are not done: file-header metadata parsed once, no
+  measured hot path, and fixing either needs a different item value type
+  across all thirteen Sets.
+
+### Fixed
+- **#1108 (MX-W1)**: `partition.rs`/`primer.rs`/`random_index_pack.rs`/
+  `local_set.rs` narrowed a 64-bit BER/batch length to `usize` with a bare
+  `as usize`, which silently truncates on a 32-bit target instead of
+  rejecting an over-range value (`klv.rs`/`local_set.rs` already did this
+  correctly with `usize::try_from`; these four call sites now match).
+  Separately, `primer.rs` and `types.rs::parse_uid_batch` computed
+  `count as usize * <entry size>` to validate a Batch/Primer header — which
+  also wraps on a 32-bit target for a large enough `count`, and could then
+  abort the process at `Vec::with_capacity(count as usize)` on a spuriously
+  "matching" but bogus count; both now use `checked_mul` and size the
+  allocation from the already-bounded body length, never the untrusted count.
+- **#1108 (MX-W2)**: `LocalSet::parse_prefix` now rejects a Set with a
+  duplicate local tag (§9.3 forbids this) instead of silently accepting it
+  — every typed Set's accessors took the first match, and the duplicate's
+  tag being "known" excluded it from the `dark` catch-all too, so its value
+  vanished on every round-trip.
+- **#1108 (MX-W4)**: `PrimerPack::parse` now rejects a duplicate local tag,
+  or two different local tags mapping to the same UL/UUID — `resolve_ul`/
+  `resolve_tag`'s linear scan silently returned the first match on either.
+- **#1108 (MX-W6)**: `LocalSet::serialize_into` now rejects a key whose byte
+  6 (registry designator) isn't a valid `ItemLengthMode` value, instead of
+  falling back to `TwoByte` mode and producing bytes that `parse` (via
+  `is_local_set_key`) would then reject — serialize used to accept what
+  parse couldn't read back.
+- `op1a::Op1aQualifier`'s byte-15 bit mapping was off by one against SMPTE
+  ST 378M §6.4: bit 0 is an always-set marker (every real encoder sets it),
+  not a semantic flag, so `external_essence`/`non_streamable`/`multi_track`
+  are bits 1/2/3 (`0x02`/`0x04`/`0x08`), not 0/1/2. Verified against the
+  crate's own real `ffmpeg`-muxed fixture: its qualifier byte `0x09` (marker
+  + multi-track, matching its actual one-Essence-Container two-track
+  layout) was previously decoded as external-essence + single-track — both
+  wrong (issue #1048).
 
 ## [0.3.0] - 2026-08-11
 

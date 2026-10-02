@@ -2,7 +2,8 @@
 
 ## [Unreleased]
 
-### Changed (Breaking)
+### Changed (breaking)
+- `OwnedTsPacket`'s fields (`raw`, `pid`, `pusi`, `has_adaptation`, `has_payload`, `tei`, `scrambling`, `continuity_counter`) are now **private**, with getters of the same names (`raw()` returning `&[u8; 188]`, `into_raw()`, `pid()`, `pusi()`, `has_adaptation()`, `has_payload()`, `tei()`, `scrambling()`, `continuity_counter()`). A public copy of a header field a caller could assign drifted silently from `raw`, which is what serialises (audit r01-W8, #1074). `discontinuity` stays public: it is caller metadata, not a copy of wire bytes. `ts-fix` and `transmux` call sites updated.
 - Requires `broadcast-common` 9.4 (`broadcast_common::len`).
 - `OwnedTsPacket::serialize_with_payload` now returns
   `Result<[u8; TS_PACKET_SIZE], Error>` instead of `[u8; TS_PACKET_SIZE]`,
@@ -52,6 +53,9 @@
   `adaptation_field_length >= 7` (#1074).
 
 ### Changed
+- `SectionPacketiser::packetise_into` finds each packet's next section start with a forward-only cursor instead of rescanning the start list from the front (audit r01-O1, #1074); output is unchanged (differential round-trip test over 400 boundary-straddling sections). r01-O2 (per-poll section split) and r01-O4 (`TsResync::feed_into`) are deliberately not done: no measured hot path, and O4 would add public API speculatively.
+- Named the remaining flag-bit literals in `section.rs`/`ts.rs` (`CURRENT_NEXT_MASK`, `PCR_RESERVED_BITS`) and replaced hand-masked low-byte splits with `to_be_bytes` (audit r01-W15, #1074). The PES header flag bits in `mpeg-pes` are named the same way.
+- `PusiReassembler` is now a PID filter over `broadcast_common::pusi::PusiAccumulator`, the same accumulator `mpeg-pes::PesAssembler` uses, replacing two diverged copies of the PUSI-gating rule. One observable difference: a PUSI that closes an *empty* in-progress unit no longer returns `Some(vec![])` (audit r01-W13, #1074).
 - `mux::split_sections`, `SectionReassembler`'s two internal section-length
   reads, and `Section::parse` shared one duplicated 12-bit `section_length`
   decode; extracted to a single `ts::section_total_len` helper (#1074).

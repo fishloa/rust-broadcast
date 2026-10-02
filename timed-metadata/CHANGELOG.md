@@ -10,6 +10,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
   behaviour change, same bytes.
 
 ### Changed (breaking)
+- New `Error` variants `EmsgPresentationTimeOverflow` and `UnsupportedPresentationTime` (`Error` is `#[non_exhaustive]`; #1105).
 - **`daterange::DateRange::to_tag_line` now returns `Result<String>`**
   (was `String`) — issue #1140 / audit r12-TM-W4 (T12): `ID`, `CLASS` and
   the `SCTE35-*` hex token are now built through
@@ -38,6 +39,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
   silently.
 
 ### Fixed
+- `convert::emsg_to_v1`/`emsg_to_v0`: a v0 emsg whose `earliest_presentation_time + presentation_time_delta` overflows `u64` is now `Error::EmsgPresentationTimeOverflow` (was an unchecked add: debug panic / release wrap), and an unknown `#[non_exhaustive]` `PresentationTime` variant is `Error::UnsupportedPresentationTime` instead of `unreachable!` (audit r12-TM-W2/W3, #1105).
+- `webvtt::writer::cue_block`: an empty line inside a cue's text (`"a\n\nb"`, and with lone-CR/CRLF terminators) no longer emits a blank line, which ended the cue block early and corrupted the rest of the document (WebVTT §4.1; audit r12-TM-W5, #1105).
+- `daterange` hex rendering uses a lookup table instead of a `format!` per byte (audit r12-TM-O1, #1105).
 - **#1039**: `TimedEvent::from_scte35` ignored `splice_info_section`'s
   `pts_adjustment`, so every derived `MediaTime`/DATERANGE `START-DATE` was
   off by that adjustment (SCTE 35 §9.6.1). Every `pts_time` is now shifted

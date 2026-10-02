@@ -30,7 +30,10 @@ pub enum Event<'a> {
 }
 
 /// A request the host application makes of the stack.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// `Debug` redacts the `MmiEnquiryAnswer` text — it is whatever the user typed
+/// at a (possibly blind) enquiry, i.e. often a PIN (audit #1142).
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HostRequest<'a> {
     /// Bring the interface up: reset the slot and open the transport connection.
@@ -66,6 +69,27 @@ pub enum HostRequest<'a> {
     RemoveProgram(&'a [u8]),
     /// Tear the interface down (close sessions + transport connection).
     Shutdown,
+}
+
+impl core::fmt::Debug for HostRequest<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            Self::Init => f.write_str("Init"),
+            Self::SendCaPmt(b) => f.debug_tuple("SendCaPmt").field(b).finish(),
+            Self::MmiMenuAnswer(n) => f.debug_tuple("MmiMenuAnswer").field(n).finish(),
+            Self::MmiEnquiryAnswer(b) => f
+                .debug_tuple("MmiEnquiryAnswer")
+                .field(&format_args!("<{} bytes redacted>", b.len()))
+                .finish(),
+            Self::MmiCancel => f.write_str("MmiCancel"),
+            Self::EnterMenu => f.write_str("EnterMenu"),
+            Self::Descramble(b) => f.debug_tuple("Descramble").field(b).finish(),
+            Self::DescramblePrograms(p) => f.debug_tuple("DescramblePrograms").field(p).finish(),
+            Self::AddProgram(b) => f.debug_tuple("AddProgram").field(b).finish(),
+            Self::RemoveProgram(b) => f.debug_tuple("RemoveProgram").field(b).finish(),
+            Self::Shutdown => f.write_str("Shutdown"),
+        }
+    }
 }
 
 /// An output the driver loop must perform.
@@ -187,11 +211,12 @@ impl Notification {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum HotPlug {
-    /// The module transitioned absent → present *and* ready (DVB-CA slot
-    /// status: `CA_CI_MODULE_PRESENT` and `CA_CI_MODULE_READY` both set —
-    /// Linux uapi `linux/dvb/ca.h` `ca_slot_info.flags`). A real hardware
-    /// signal from [`SlotInfo`](crate::device::SlotInfo), surfaced once on the
-    /// edge (not on every poll); the driver re-drives the handshake (a fresh
+    /// The module transitioned absent → present (DVB-CA slot status:
+    /// `CA_CI_MODULE_PRESENT` went from clear to set — Linux uapi
+    /// `linux/dvb/ca.h` `ca_slot_info.flags`; `CA_CI_MODULE_READY` is **not**
+    /// required, the driver keys the edge off `module_present` alone). A real
+    /// hardware signal from [`SlotInfo`](crate::device::SlotInfo), surfaced
+    /// once on the edge (not on every poll); the driver re-drives the handshake (a fresh
     /// [`Init`](crate::event::HostRequest::Init)) so the newly-inserted module
     /// gets a clean resource-manager session.
     CamPresent,
@@ -332,6 +357,12 @@ pub enum HostControlEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn host_request_debug_does_not_print_an_enquiry_answer() {
+        let dbg = format!("{:?}", HostRequest::MmiEnquiryAnswer(b"9876"));
+        assert_eq!(dbg, "MmiEnquiryAnswer(<4 bytes redacted>)");
+    }
 
     #[test]
     fn notification_entitlement_construction() {

@@ -10,7 +10,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Power Manager (Tables 52, 54).
@@ -141,6 +140,11 @@ impl<'a> Parse<'a> for ActivationStateChangeRequest {
                 what: "activation_state_change_request",
             });
         }
+        crate::objects::reject_trailing_body(
+            body,
+            REQUEST_BODY,
+            "activation_state_change_request",
+        )?;
         Ok(Self {
             activation_state: ActivationState::from_u8(body[0] & 0x0F),
         })
@@ -175,6 +179,7 @@ impl<'a> Parse<'a> for ActivationStateChangeAck {
                 what: "activation_state_change_ack",
             });
         }
+        crate::objects::reject_trailing_body(body, ACK_BODY, "activation_state_change_ack")?;
         Ok(Self {
             reply_code: ReplyCode::from_u8(body[0]),
         })
@@ -192,57 +197,16 @@ impl Serialize for ActivationStateChangeAck {
     }
 }
 
-/// Resource-scoped dispatch over the Power Manager objects.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum PowerManagerApdu {
-    /// `activation_state_change_request` (`9F 80 00`).
-    Request(ActivationStateChangeRequest),
-    /// `activation_state_change_ack` (`9F 80 01`).
-    Ack(ActivationStateChangeAck),
-}
-
-impl PowerManagerApdu {
-    /// Parse a Power Manager APDU, dispatching on the `apdu_tag`.
-    pub fn parse(body: &[u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "power_manager apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::ACTIVATION_STATE_CHANGE_REQUEST => {
-                Ok(Self::Request(ActivationStateChangeRequest::parse(body)?))
-            }
-            tag::ACTIVATION_STATE_CHANGE_ACK => {
-                Ok(Self::Ack(ActivationStateChangeAck::parse(body)?))
-            }
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::ACTIVATION_STATE_CHANGE_REQUEST.as_u24(),
-                what: "power_manager",
-            }),
-        }
-    }
-}
-
-impl Serialize for PowerManagerApdu {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::Request(o) => o.serialized_len(),
-            Self::Ack(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::Request(o) => o.serialize_into(buf),
-            Self::Ack(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the Power Manager objects.
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum PowerManagerApdu ("power_manager") {
+        /// `activation_state_change_request` (`9F 80 00`).
+        Request(ActivationStateChangeRequest) = tag::ACTIVATION_STATE_CHANGE_REQUEST,
+        /// `activation_state_change_ack` (`9F 80 01`).
+        Ack(ActivationStateChangeAck) = tag::ACTIVATION_STATE_CHANGE_ACK,
     }
 }
 
@@ -279,6 +243,36 @@ mod tests {
             reply_code: ReplyCode::Ok,
         };
         assert_ne!(bytes, other.to_bytes());
+    }
+
+    /// `declare_resource_apdus!` surface: the declared tag list, and the
+    /// error a foreign tag produces (names the first declared tag).
+    #[test]
+    fn declared_dispatch_lists_tags_and_rejects_foreign_ones() {
+        let tags: alloc::vec::Vec<u32> =
+            PowerManagerApdu::TAGS.iter().map(|t| t.as_u24()).collect();
+        assert_eq!(tags, [0x9F_8000, 0x9F_8001]);
+        // 9F8002 is not a Power Manager object.
+        match PowerManagerApdu::parse(&[0x9F, 0x80, 0x02, 0x00]) {
+            Err(Error::UnexpectedApduTag {
+                got,
+                expected,
+                what,
+            }) => {
+                assert_eq!(got, 0x9F_8002);
+                assert_eq!(expected, 0x9F_8000);
+                assert_eq!(what, "power_manager");
+            }
+            other => panic!("expected UnexpectedApduTag, got {other:?}"),
+        }
+        assert!(matches!(
+            PowerManagerApdu::parse(&[0x9F, 0x80]),
+            Err(Error::BufferTooShort {
+                need: 3,
+                have: 2,
+                ..
+            })
+        ));
     }
 
     #[test]

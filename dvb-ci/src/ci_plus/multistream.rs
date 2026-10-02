@@ -14,7 +14,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -65,6 +64,11 @@ impl<'a> Parse<'a> for CicamMultistreamCapability {
                 what: "CICAM_multistream_capability",
             });
         }
+        crate::objects::reject_trailing_body(
+            body,
+            CAPABILITY_BODY,
+            "CICAM_multistream_capability",
+        )?;
         Ok(Self {
             max_local_ts: body[0],
             max_descramblers: u16::from_be_bytes([body[1], body[2]]),
@@ -282,60 +286,18 @@ impl Serialize for PidSelectReply {
     }
 }
 
-/// Resource-scoped dispatch over the Multi-stream resource objects.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum MultistreamApdu {
-    /// `CICAM_multistream_capability` (`9F 92 00`).
-    CicamMultistreamCapability(CicamMultistreamCapability),
-    /// `PID_select_req` (`9F 92 01`).
-    PidSelectReq(PidSelectReq),
-    /// `PID_select_reply` (`9F 92 02`).
-    PidSelectReply(PidSelectReply),
-}
-
-impl MultistreamApdu {
-    /// Parse a Multi-stream APDU, dispatching on the leading `apdu_tag`.
-    pub fn parse(body: &[u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "multistream apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::CICAM_MULTISTREAM_CAPABILITY => Ok(Self::CicamMultistreamCapability(
-                CicamMultistreamCapability::parse(body)?,
-            )),
-            tag::PID_SELECT_REQ => Ok(Self::PidSelectReq(PidSelectReq::parse(body)?)),
-            tag::PID_SELECT_REPLY => Ok(Self::PidSelectReply(PidSelectReply::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::CICAM_MULTISTREAM_CAPABILITY.as_u24(),
-                what: "multistream",
-            }),
-        }
-    }
-}
-
-impl Serialize for MultistreamApdu {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::CicamMultistreamCapability(o) => o.serialized_len(),
-            Self::PidSelectReq(o) => o.serialized_len(),
-            Self::PidSelectReply(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::CicamMultistreamCapability(o) => o.serialize_into(buf),
-            Self::PidSelectReq(o) => o.serialize_into(buf),
-            Self::PidSelectReply(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the Multi-stream resource objects.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum MultistreamApdu ("multistream") {
+        /// `CICAM_multistream_capability` (`9F 92 00`).
+        CicamMultistreamCapability(CicamMultistreamCapability) = tag::CICAM_MULTISTREAM_CAPABILITY,
+        /// `PID_select_req` (`9F 92 01`).
+        PidSelectReq(PidSelectReq) = tag::PID_SELECT_REQ,
+        /// `PID_select_reply` (`9F 92 02`).
+        PidSelectReply(PidSelectReply) = tag::PID_SELECT_REPLY,
     }
 }
 

@@ -270,9 +270,11 @@ fn parse_checked_f64(what: &'static str, v: &str) -> Result<f64> {
 }
 
 fn to_hex_upper(b: &[u8]) -> String {
+    const HEX_UPPER: &[u8; 16] = b"0123456789ABCDEF";
     let mut s = String::with_capacity(b.len() * 2);
-    for byte in b {
-        s.push_str(&format!("{byte:02X}"));
+    for &byte in b {
+        s.push(char::from(HEX_UPPER[usize::from(byte >> 4)]));
+        s.push(char::from(HEX_UPPER[usize::from(byte & 0x0F)]));
     }
     s
 }
@@ -296,6 +298,12 @@ fn parse_hex(v: &str) -> Result<Vec<u8>> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn hex_upper_is_zero_padded_uppercase() {
+        assert_eq!(to_hex_upper(&[0x00, 0x0F, 0xA5, 0xFF]), "000FA5FF");
+        assert_eq!(to_hex_upper(&[]), "");
+    }
+
     use super::*;
     use alloc::{string::ToString, vec};
 

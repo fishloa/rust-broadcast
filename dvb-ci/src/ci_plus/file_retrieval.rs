@@ -22,7 +22,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Auxiliary File System resource (Table 75).
@@ -170,6 +169,7 @@ impl<'a> Parse<'a> for FileSystemAck {
                 what: "FileSystemAck",
             });
         }
+        crate::objects::reject_trailing_body(body, ACK_BODY, "FileSystemAck")?;
         Ok(Self {
             ack_code: AckCode::from_u8(body[0]),
         })
@@ -257,63 +257,20 @@ impl Serialize for FileAcknowledge<'_> {
 // Resource-scoped dispatch
 // ---------------------------------------------------------------------------
 
-/// Resource-scoped dispatch over the Auxiliary File System resource objects.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum FileRetrievalApdu<'a> {
-    /// `FileSystemOffer` (`9F 94 00`).
-    FileSystemOffer(#[cfg_attr(feature = "serde", serde(borrow))] FileSystemOffer<'a>),
-    /// `FileSystemAck` (`9F 94 01`).
-    FileSystemAck(FileSystemAck),
-    /// `FileRequest` (`9F 94 02`) — opaque deferred body.
-    FileRequest(#[cfg_attr(feature = "serde", serde(borrow))] FileRequest<'a>),
-    /// `FileAcknowledge` (`9F 94 03`) — opaque deferred body.
-    FileAcknowledge(#[cfg_attr(feature = "serde", serde(borrow))] FileAcknowledge<'a>),
-}
-
-impl<'a> FileRetrievalApdu<'a> {
-    /// Parse an Auxiliary File System APDU, dispatching on the leading `apdu_tag`.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "file_retrieval apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::FILE_SYSTEM_OFFER => Ok(Self::FileSystemOffer(FileSystemOffer::parse(body)?)),
-            tag::FILE_SYSTEM_ACK => Ok(Self::FileSystemAck(FileSystemAck::parse(body)?)),
-            tag::FILE_REQUEST => Ok(Self::FileRequest(FileRequest::parse(body)?)),
-            tag::FILE_ACKNOWLEDGE => Ok(Self::FileAcknowledge(FileAcknowledge::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::FILE_SYSTEM_OFFER.as_u24(),
-                what: "file_retrieval",
-            }),
-        }
-    }
-}
-
-impl Serialize for FileRetrievalApdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::FileSystemOffer(o) => o.serialized_len(),
-            Self::FileSystemAck(o) => o.serialized_len(),
-            Self::FileRequest(o) => o.serialized_len(),
-            Self::FileAcknowledge(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::FileSystemOffer(o) => o.serialize_into(buf),
-            Self::FileSystemAck(o) => o.serialize_into(buf),
-            Self::FileRequest(o) => o.serialize_into(buf),
-            Self::FileAcknowledge(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the Auxiliary File System resource objects.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum FileRetrievalApdu<'a> ("file_retrieval") {
+        /// `FileSystemOffer` (`9F 94 00`).
+        FileSystemOffer(#[cfg_attr(feature = "serde", serde(borrow))] FileSystemOffer<'a>) = tag::FILE_SYSTEM_OFFER,
+        /// `FileSystemAck` (`9F 94 01`).
+        FileSystemAck(FileSystemAck) = tag::FILE_SYSTEM_ACK,
+        /// `FileRequest` (`9F 94 02`) — opaque deferred body.
+        FileRequest(#[cfg_attr(feature = "serde", serde(borrow))] FileRequest<'a>) = tag::FILE_REQUEST,
+        /// `FileAcknowledge` (`9F 94 03`) — opaque deferred body.
+        FileAcknowledge(#[cfg_attr(feature = "serde", serde(borrow))] FileAcknowledge<'a>) = tag::FILE_ACKNOWLEDGE,
     }
 }
 

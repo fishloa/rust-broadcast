@@ -21,7 +21,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -154,29 +153,8 @@ pub struct GetServiceAck {
 
 // --- header-only objects ---
 
-macro_rules! empty_object {
-    ($ty:ty, $tag:expr, $what:literal) => {
-        impl<'a> Parse<'a> for $ty {
-            type Error = Error;
-            fn parse(bytes: &'a [u8]) -> Result<Self> {
-                objects::parse_empty_apdu(bytes, $tag, $what)?;
-                Ok(Self)
-            }
-        }
-        impl Serialize for $ty {
-            type Error = Error;
-            fn serialized_len(&self) -> usize {
-                objects::empty_apdu_len()
-            }
-            fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-                objects::serialize_empty_apdu($tag, buf)
-            }
-        }
-    };
-}
-
-empty_object!(ServiceListReq, tag::SERVICE_LIST_REQ, "ServiceListReq");
-empty_object!(
+crate::dispatch::declare_empty_apdu!(ServiceListReq, tag::SERVICE_LIST_REQ, "ServiceListReq");
+crate::dispatch::declare_empty_apdu!(
     ServiceListVersionReq,
     tag::SERVICE_LIST_VERSION_REQ,
     "ServiceListVersionReq"
@@ -474,6 +452,7 @@ impl<'a> Parse<'a> for GetServiceAck {
                 what: "GetServiceAck",
             });
         }
+        crate::objects::reject_trailing_body(body, GET_SERVICE_ACK_BODY, "GetServiceAck")?;
         // byte 4: Reserved(5) + ServiceTerminated(1) + ServiceNotAvailable(1) + CAServiceFlag(1)
         let flags = body[4];
         Ok(Self {
@@ -506,94 +485,30 @@ impl Serialize for GetServiceAck {
     }
 }
 
-/// Resource-scoped dispatch over the Generic Service Gateway objects (Tables 22-30).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum ServiceGatewayApdu<'a> {
-    /// `ServiceListReq` (`9F 80 00`).
-    ServiceListReq(ServiceListReq),
-    /// `ServiceListAck` (`9F 80 01`).
-    ServiceListAck(ServiceListAck),
-    /// `ServiceListVersionReq` (`9F 80 02`).
-    ServiceListVersionReq(ServiceListVersionReq),
-    /// `ServiceListVersionAck` (`9F 80 03`).
-    ServiceListVersionAck(ServiceListVersionAck),
-    /// `ServiceListChanged` (`9F 80 04`).
-    ServiceListChanged(ServiceListChanged),
-    /// `ServiceDescReq` (`9F 80 05`).
-    ServiceDescReq(ServiceDescReq),
-    /// `ServiceDescAck` (`9F 80 06`).
-    ServiceDescAck(ServiceDescAck<'a>),
-    /// `GetServiceReq` (`9F 80 07`).
-    GetServiceReq(GetServiceReq),
-    /// `GetServiceAck` (`9F 80 08`).
-    GetServiceAck(GetServiceAck),
-}
-
-impl<'a> ServiceGatewayApdu<'a> {
-    /// Parse a Generic Service Gateway APDU, dispatching on the leading `apdu_tag`.
-    pub fn parse(body: &'a [u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "service_gateway apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::SERVICE_LIST_REQ => Ok(Self::ServiceListReq(ServiceListReq::parse(body)?)),
-            tag::SERVICE_LIST_ACK => Ok(Self::ServiceListAck(ServiceListAck::parse(body)?)),
-            tag::SERVICE_LIST_VERSION_REQ => Ok(Self::ServiceListVersionReq(
-                ServiceListVersionReq::parse(body)?,
-            )),
-            tag::SERVICE_LIST_VERSION_ACK => Ok(Self::ServiceListVersionAck(
-                ServiceListVersionAck::parse(body)?,
-            )),
-            tag::SERVICE_LIST_CHANGED => {
-                Ok(Self::ServiceListChanged(ServiceListChanged::parse(body)?))
-            }
-            tag::SERVICE_DESC_REQ => Ok(Self::ServiceDescReq(ServiceDescReq::parse(body)?)),
-            tag::SERVICE_DESC_ACK => Ok(Self::ServiceDescAck(ServiceDescAck::parse(body)?)),
-            tag::GET_SERVICE_REQ => Ok(Self::GetServiceReq(GetServiceReq::parse(body)?)),
-            tag::GET_SERVICE_ACK => Ok(Self::GetServiceAck(GetServiceAck::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::SERVICE_LIST_REQ.as_u24(),
-                what: "service_gateway",
-            }),
-        }
-    }
-}
-
-impl Serialize for ServiceGatewayApdu<'_> {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::ServiceListReq(o) => o.serialized_len(),
-            Self::ServiceListAck(o) => o.serialized_len(),
-            Self::ServiceListVersionReq(o) => o.serialized_len(),
-            Self::ServiceListVersionAck(o) => o.serialized_len(),
-            Self::ServiceListChanged(o) => o.serialized_len(),
-            Self::ServiceDescReq(o) => o.serialized_len(),
-            Self::ServiceDescAck(o) => o.serialized_len(),
-            Self::GetServiceReq(o) => o.serialized_len(),
-            Self::GetServiceAck(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::ServiceListReq(o) => o.serialize_into(buf),
-            Self::ServiceListAck(o) => o.serialize_into(buf),
-            Self::ServiceListVersionReq(o) => o.serialize_into(buf),
-            Self::ServiceListVersionAck(o) => o.serialize_into(buf),
-            Self::ServiceListChanged(o) => o.serialize_into(buf),
-            Self::ServiceDescReq(o) => o.serialize_into(buf),
-            Self::ServiceDescAck(o) => o.serialize_into(buf),
-            Self::GetServiceReq(o) => o.serialize_into(buf),
-            Self::GetServiceAck(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the Generic Service Gateway objects (Tables 22-30).
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum ServiceGatewayApdu<'a> ("service_gateway") {
+        /// `ServiceListReq` (`9F 80 00`).
+        ServiceListReq(ServiceListReq) = tag::SERVICE_LIST_REQ,
+        /// `ServiceListAck` (`9F 80 01`).
+        ServiceListAck(ServiceListAck) = tag::SERVICE_LIST_ACK,
+        /// `ServiceListVersionReq` (`9F 80 02`).
+        ServiceListVersionReq(ServiceListVersionReq) = tag::SERVICE_LIST_VERSION_REQ,
+        /// `ServiceListVersionAck` (`9F 80 03`).
+        ServiceListVersionAck(ServiceListVersionAck) = tag::SERVICE_LIST_VERSION_ACK,
+        /// `ServiceListChanged` (`9F 80 04`).
+        ServiceListChanged(ServiceListChanged) = tag::SERVICE_LIST_CHANGED,
+        /// `ServiceDescReq` (`9F 80 05`).
+        ServiceDescReq(ServiceDescReq) = tag::SERVICE_DESC_REQ,
+        /// `ServiceDescAck` (`9F 80 06`).
+        ServiceDescAck(ServiceDescAck<'a>) = tag::SERVICE_DESC_ACK,
+        /// `GetServiceReq` (`9F 80 07`).
+        GetServiceReq(GetServiceReq) = tag::GET_SERVICE_REQ,
+        /// `GetServiceAck` (`9F 80 08`).
+        GetServiceAck(GetServiceAck) = tag::GET_SERVICE_ACK,
     }
 }
 

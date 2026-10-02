@@ -22,7 +22,6 @@
 
 use crate::error::{Error, Result};
 use crate::objects;
-use crate::tag::ApduTag;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -67,6 +66,7 @@ impl<'a> Parse<'a> for CcPinReply {
                 what: "cc_PIN_reply",
             });
         }
+        crate::objects::reject_trailing_body(body, CC_PIN_REPLY_BODY, "cc_PIN_reply")?;
         let lts_bound = body[0] & LTS_BOUND_FLAG_BIT != 0;
         let lts_id = if lts_bound { Some(body[1]) } else { None };
         Ok(Self {
@@ -106,7 +106,7 @@ pub const PIN_EVENT_PRIVATE_DATA_LEN: usize = 15;
 /// `cc_PIN_event()` (Table 8): CICAM → Host. Extended for the record-start
 /// protocol to include `LTS_id`. The field meanings (other than `LTS_id`) are in
 /// CI Plus V1.3 \[3\] §11.3.2.4 (proprietary) and carried verbatim.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CcPinEvent {
     /// `LTS_id` (8) — Local TS identifier.
@@ -125,6 +125,25 @@ pub struct CcPinEvent {
     pub private_data: [u8; PIN_EVENT_PRIVATE_DATA_LEN],
 }
 
+/// `Debug` redacts `private_data` (proprietary CICAM PIN-event payload, audit
+/// #1142): only its length is printed.
+impl core::fmt::Debug for CcPinEvent {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("CcPinEvent")
+            .field("lts_id", &self.lts_id)
+            .field("program_number", &self.program_number)
+            .field("pincode_status", &self.pincode_status)
+            .field("rating", &self.rating)
+            .field("pin_event_time_utc", &self.pin_event_time_utc)
+            .field(
+                "pin_event_time_centiseconds",
+                &self.pin_event_time_centiseconds,
+            )
+            .field("private_data", &objects::Redacted(self.private_data.len()))
+            .finish()
+    }
+}
+
 // LTS_id(1)+program_number(2)+PINcode_status(1)+rating(1)+utc(5)+centi(1)+private(15).
 const CC_PIN_EVENT_BODY: usize = 1 + 2 + 1 + 1 + 5 + 1 + PIN_EVENT_PRIVATE_DATA_LEN;
 
@@ -139,6 +158,7 @@ impl<'a> Parse<'a> for CcPinEvent {
                 what: "cc_PIN_event",
             });
         }
+        crate::objects::reject_trailing_body(body, CC_PIN_EVENT_BODY, "cc_PIN_event")?;
         // Layout (Table 8): LTS_id(1) program_number(2) PINcode_status(1)
         // rating(1) pin_event_time_utc(5) pin_event_time_centiseconds(1)
         // private_data(15).
@@ -325,7 +345,7 @@ broadcast_common::impl_spec_display!(OperatingMode, Other);
 /// A single SAC protocol datatype: `datatype_id` (8) + `datatype_length` (16,
 /// number of value bytes) + value. Value bytes are carried opaque so crypto /
 /// license / PIN payloads round-trip verbatim.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SacDatatype<'a> {
     /// `datatype_id` (8).
@@ -333,6 +353,42 @@ pub struct SacDatatype<'a> {
     /// `datatype` value bytes (length given by the 16-bit `datatype_length`).
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub value: &'a [u8],
+}
+
+impl SacDatatype<'_> {
+    /// Whether `value` may carry secret or private material: the PIN code, the
+    /// CICAM licence blob, and every datatype this crate does not name (the
+    /// CI Plus authentication/key-exchange datatypes live there).
+    fn value_is_sensitive(&self) -> bool {
+        !matches!(
+            self.datatype_id,
+            DatatypeId::UriMessage
+                | DatatypeId::ProgramNumber
+                | DatatypeId::UriConfirm
+                | DatatypeId::LicenseStatus
+                | DatatypeId::LicenseRcvdStatus
+                | DatatypeId::OperatingMode
+                | DatatypeId::RecordStartStatus
+                | DatatypeId::ModeChangeStatus
+                | DatatypeId::RecordStopStatus
+                | DatatypeId::LtsId
+        )
+    }
+}
+
+/// `Debug` redacts the value of a sensitive datatype (PIN, licence, unnamed
+/// key-exchange datatypes — audit #1142); status/URI/LTS values are shown.
+impl core::fmt::Debug for SacDatatype<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let mut d = f.debug_struct("SacDatatype");
+        d.field("datatype_id", &self.datatype_id);
+        if self.value_is_sensitive() {
+            d.field("value", &objects::Redacted(self.value.len()));
+        } else {
+            d.field("value", &self.value);
+        }
+        d.finish()
+    }
 }
 
 // datatype_id(1) + datatype_length(2).
@@ -407,11 +463,10 @@ impl<'a> SacMessage<'a> {
         }
         let mut pos = 0;
         for dt in &self.datatypes {
-            if dt.value.len() > u16::MAX as usize {
-                return Err(Error::LengthTooLarge(dt.value.len()));
-            }
+            let value_len =
+                u16::try_from(dt.value.len()).map_err(|_| Error::LengthTooLarge(dt.value.len()))?;
             buf[pos] = dt.datatype_id.to_u8();
-            buf[pos + 1..pos + 3].copy_from_slice(&(dt.value.len() as u16).to_be_bytes());
+            buf[pos + 1..pos + 3].copy_from_slice(&value_len.to_be_bytes());
             pos += SAC_DATATYPE_HEADER;
             buf[pos..pos + dt.value.len()].copy_from_slice(dt.value);
             pos += dt.value.len();
@@ -421,25 +476,10 @@ impl<'a> SacMessage<'a> {
 
     /// Serialize the datatype loop to a `Vec`.
     ///
-    /// # Panics
-    /// Panics if `serialize_into` errors on a buffer of exactly
-    /// `serialized_len()` bytes — which happens only for a hand-built
-    /// `SacMessage` carrying a datatype `value` longer than `u16::MAX`
-    /// (`Error::LengthTooLarge`; a value parsed from the wire can never be
-    /// that long, since its own length prefix is 16 bits). Prefer
-    /// [`try_to_bytes`](Self::try_to_bytes) whenever that's possible.
-    #[must_use]
-    pub fn to_bytes(&self) -> Vec<u8> {
-        let mut buf = alloc::vec![0u8; self.serialized_len()];
-        let n = self.serialize_into(&mut buf).expect("buffer sized exactly");
-        debug_assert_eq!(n, buf.len());
-        buf
-    }
-
-    /// Serialize the datatype loop to a `Vec`, returning the serializer's
-    /// error instead of panicking (r10-W-14) — prefer this over
-    /// [`to_bytes`](Self::to_bytes) for a hand-built value that might
-    /// violate a wire constraint (e.g. `value.len() > u16::MAX`).
+    /// Fails with `Error::LengthTooLarge` for a hand-built value whose
+    /// datatype `value` is longer than `u16::MAX` (a parsed value can never
+    /// be: its own length prefix is 16 bits). There is deliberately no
+    /// panicking `to_bytes` (audit r10-W-14 / T15).
     pub fn try_to_bytes(&self) -> Result<Vec<u8>> {
         let mut buf = alloc::vec![0u8; self.serialized_len()];
         let n = self.serialize_into(&mut buf)?;
@@ -448,57 +488,16 @@ impl<'a> SacMessage<'a> {
     }
 }
 
-/// Resource-scoped dispatch over the printed-syntax Content Control objects.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-#[non_exhaustive]
-pub enum ContentControlApdu {
-    /// `cc_PIN_reply` (`9F 90 14`).
-    CcPinReply(CcPinReply),
-    /// `cc_PIN_event` (`9F 90 15`).
-    CcPinEvent(CcPinEvent),
-}
-
-impl ContentControlApdu {
-    /// Parse a Content Control APDU, dispatching on the leading `apdu_tag`.
-    ///
-    /// Only the two extended APDUs whose syntax TS 103 205 prints
-    /// (`cc_PIN_reply` / `cc_PIN_event`) are recognized; all other Table 6 tags
-    /// defer to CI Plus V1.3 and yield [`Error::UnexpectedApduTag`].
-    pub fn parse(body: &[u8]) -> Result<Self> {
-        if body.len() < 3 {
-            return Err(Error::BufferTooShort {
-                need: 3,
-                have: body.len(),
-                what: "content_control apdu_tag",
-            });
-        }
-        let t = ApduTag::from_bytes(body[0], body[1], body[2]);
-        match t {
-            tag::CC_PIN_REPLY => Ok(Self::CcPinReply(CcPinReply::parse(body)?)),
-            tag::CC_PIN_EVENT => Ok(Self::CcPinEvent(CcPinEvent::parse(body)?)),
-            _ => Err(Error::UnexpectedApduTag {
-                got: t.as_u24(),
-                expected: tag::CC_PIN_REPLY.as_u24(),
-                what: "content_control",
-            }),
-        }
-    }
-}
-
-impl Serialize for ContentControlApdu {
-    type Error = Error;
-    fn serialized_len(&self) -> usize {
-        match self {
-            Self::CcPinReply(o) => o.serialized_len(),
-            Self::CcPinEvent(o) => o.serialized_len(),
-        }
-    }
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        match self {
-            Self::CcPinReply(o) => o.serialize_into(buf),
-            Self::CcPinEvent(o) => o.serialize_into(buf),
-        }
+crate::dispatch::declare_resource_apdus! {
+    /// Resource-scoped dispatch over the printed-syntax Content Control objects.
+    #[derive(Debug, Clone, PartialEq, Eq)]
+    #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+    #[non_exhaustive]
+    pub enum ContentControlApdu ("content_control") {
+        /// `cc_PIN_reply` (`9F 90 14`).
+        CcPinReply(CcPinReply) = tag::CC_PIN_REPLY,
+        /// `cc_PIN_event` (`9F 90 15`).
+        CcPinEvent(CcPinEvent) = tag::CC_PIN_EVENT,
     }
 }
 
@@ -510,6 +509,60 @@ mod tests {
     /// `u16::MAX` (the 16-bit `datatype_length` cannot represent it) must
     /// report `Error::LengthTooLarge` through `try_to_bytes`, not panic
     /// through `to_bytes`'s `.expect(...)` on the serializer's error.
+    /// #1142: `{:?}` of a SAC message must not print a PIN, licence or
+    /// unnamed key-exchange datatype value, but still shows a status value.
+    #[test]
+    fn sac_debug_redacts_secret_values_only() {
+        let msg = SacMessage {
+            datatypes: alloc::vec![
+                SacDatatype {
+                    datatype_id: DatatypeId::PinCode,
+                    value: &[0xDE, 0xAD, 0xBE, 0xEF],
+                },
+                SacDatatype {
+                    datatype_id: DatatypeId::CicamLicense,
+                    value: &[0xCA, 0xFE],
+                },
+                SacDatatype {
+                    datatype_id: DatatypeId::Other(9),
+                    value: &[0x11, 0x22, 0x33],
+                },
+                SacDatatype {
+                    datatype_id: DatatypeId::LicenseStatus,
+                    value: &[0x07],
+                },
+            ],
+        };
+        let dbg = alloc::format!("{msg:?}");
+        assert!(dbg.contains("<4 bytes redacted>"), "{dbg}");
+        assert!(dbg.contains("<2 bytes redacted>"), "{dbg}");
+        assert!(dbg.contains("<3 bytes redacted>"), "{dbg}");
+        for secret in ["222", "173", "190", "239", "202", "254", "17", "34", "51"] {
+            // The unredacted `[222, 173, ...]` byte list must not appear.
+            assert!(
+                !dbg.contains(&alloc::format!("[{secret},")),
+                "secret byte list leaked: {dbg}"
+            );
+        }
+        assert!(
+            dbg.contains("[7]"),
+            "non-secret status value is shown: {dbg}"
+        );
+
+        let ev = CcPinEvent {
+            lts_id: 1,
+            program_number: 2,
+            pincode_status: 3,
+            rating: 4,
+            pin_event_time_utc: 5,
+            pin_event_time_centiseconds: 6,
+            private_data: [0xAB; PIN_EVENT_PRIVATE_DATA_LEN],
+        };
+        let dbg = alloc::format!("{ev:?}");
+        assert!(dbg.contains("<15 bytes redacted>"), "{dbg}");
+        assert!(!dbg.contains("171"), "private_data leaked: {dbg}");
+    }
+
     #[test]
     fn try_to_bytes_reports_oversized_value_instead_of_panicking() {
         let oversized = alloc::vec![0u8; u16::MAX as usize + 1];
@@ -595,7 +648,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = msg.to_bytes();
+        let bytes = msg.try_to_bytes().unwrap();
         // 26=0x1A len 0x0002 12 34 ; 50=0x32 len 0x0001 07
         assert_eq!(
             bytes,
@@ -605,8 +658,8 @@ mod tests {
         // Field-mutation: change a datatype_id.
         let mut other = msg.clone();
         other.datatypes[1].datatype_id = DatatypeId::Other(99);
-        assert_ne!(bytes, other.to_bytes());
-        assert_eq!(other.to_bytes()[5], 99);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
+        assert_eq!(other.try_to_bytes().unwrap()[5], 99);
     }
 
     #[test]
@@ -618,7 +671,7 @@ mod tests {
                 value: &[0xDE, 0xAD, 0xBE, 0xEF],
             }],
         };
-        let bytes = msg.to_bytes();
+        let bytes = msg.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x21, 0x00, 0x04, 0xDE, 0xAD, 0xBE, 0xEF]);
         let parsed = SacMessage::parse(&bytes).unwrap();
         assert_eq!(parsed, msg);

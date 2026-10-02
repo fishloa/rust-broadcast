@@ -177,6 +177,9 @@ pub fn collect_dark(items: &[LocalSetItem<'_>], known_tags: &[u16]) -> Vec<(u16,
         .collect()
 }
 
+/// Largest value a two-byte local length can carry (§9.3): 65535.
+const TWO_BYTE_LOCAL_LENGTH_MAX: usize = 0xFFFF;
+
 /// Build the final [`LocalSet`]-shaped byte layout for a typed Set: choose
 /// [`ItemLengthMode::TwoByte`] unless any item's value exceeds 65535 bytes
 /// (§9.3 — BER local length encoding is required in that case), build the
@@ -193,13 +196,53 @@ pub fn finish_owned_set(
             value: value.clone(),
         });
     }
-    let mode = if owned_items.iter().any(|i| i.value.len() > 0xFFFF) {
+    let mode = if owned_items
+        .iter()
+        .any(|i| i.value.len() > TWO_BYTE_LOCAL_LENGTH_MAX)
+    {
         ItemLengthMode::Ber
     } else {
         ItemLengthMode::TwoByte
     };
     (LocalSet::build_key(kind, mode), owned_items)
 }
+
+/// Declare the `Serialize` impl every typed Set shares (audit r13-MX-W5).
+///
+/// One line per Set — `declare_set_serialize!(Ty, StructuralSetKind variant)` —
+/// replaces the identical two-method `serialized_len`/`serialize_into` skeleton
+/// that was copied into thirteen files (`finish_owned_set` +
+/// `serialize_owned_set` with the Set's `StructuralSetKind`), following the
+/// workspace `declare_*!` pattern (one list line per type, one place to
+/// change the behaviour). The type must provide
+/// `fn owned_items(&self) -> Vec<LocalSetOwnedItem>` and a `dark` field of
+/// `Vec<(u16, Vec<u8>)>`.
+macro_rules! declare_set_serialize {
+    ($ty:ty, $kind:ident) => {
+        impl ::broadcast_common::Serialize for $ty {
+            type Error = $crate::error::Error;
+
+            fn serialized_len(&self) -> usize {
+                let (key, items) = $crate::sets::finish_owned_set(
+                    $crate::local_set::StructuralSetKind::$kind,
+                    self.owned_items(),
+                    &self.dark,
+                );
+                $crate::sets::owned_set_serialized_len(key, &items)
+            }
+
+            fn serialize_into(&self, buf: &mut [u8]) -> $crate::error::Result<usize> {
+                let (key, items) = $crate::sets::finish_owned_set(
+                    $crate::local_set::StructuralSetKind::$kind,
+                    self.owned_items(),
+                    &self.dark,
+                );
+                $crate::sets::serialize_owned_set(key, &items, buf)
+            }
+        }
+    };
+}
+pub(crate) use declare_set_serialize;
 
 /// Serialize `owned_items` under `key` by borrowing each owned item's bytes
 /// into a transient [`LocalSet`], then delegating to its `Serialize` impl.

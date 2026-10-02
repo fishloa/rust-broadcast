@@ -162,6 +162,8 @@ impl<'a> Parse<'a> for DisplayControl {
         } else {
             None
         };
+        // Table 32: cmd [+ mmi_mode] exactly.
+        super::reject_trailing_body(body, 1 + usize::from(mmi_mode.is_some()), "display_control")?;
         Ok(Self { cmd, mmi_mode })
     }
 }
@@ -304,6 +306,10 @@ pub struct GraphicsCharacteristics {
 
 // Fixed part of the graphics body: h(2)+v(2)+packed(1)+display/comp/obj/n(4).
 const GFX_FIXED: usize = 9;
+/// The 2 `reserved` bits closing each `pixel_depth` entry (EN 50221 Table 35,
+/// `docs/en_50221/mmi-low-level.md`): written as `1`s, the workspace reserved-bit
+/// convention (audit r10-O-2).
+const PIXEL_DEPTH_RESERVED: u8 = 0x03;
 
 /// The branch-dependent body of a [`DisplayReply`] (Table 35).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -426,7 +432,7 @@ impl DisplayReply {
         buf[8] = ((g.object_cache_bytes & 0x0F) << 4) | n;
         let mut pos = GFX_FIXED;
         for d in &g.depths {
-            buf[pos] = (d.display_depth << 5) | (d.pixels_per_byte << 2);
+            buf[pos] = (d.display_depth << 5) | (d.pixels_per_byte << 2) | PIXEL_DEPTH_RESERVED;
             buf[pos + 1] = d.region_overhead;
             pos += 2;
         }
@@ -1195,6 +1201,7 @@ impl<'a> Parse<'a> for DownloadReply {
                 what: "download_reply",
             });
         }
+        super::reject_trailing_body(body, DOWNLOAD_REPLY_BODY, "download_reply")?;
         Ok(Self {
             object_id: u16::from_be_bytes([body[0], body[1]]),
             reply_id: DownloadReplyId::from_u8(body[2]),
@@ -1287,6 +1294,13 @@ mod tests {
         } else {
             panic!("expected graphics");
         }
+
+        // r10-O-2: the 2 reserved bits of each pixel_depth byte are written
+        // as 1s (header 9F 88 02 + 1-byte length + reply_id + 9 fixed bytes,
+        // then 2 bytes per depth): (2<<5)|(4<<2)|0b11 and (7<<5)|(1<<2)|0b11.
+        let first_depth = 3 + 1 + 1 + GFX_FIXED;
+        assert_eq!(bytes[first_depth], 0x53);
+        assert_eq!(bytes[first_depth + 2], 0xE7);
 
         // bite: change one depth entry.
         let mut other = dr.clone();

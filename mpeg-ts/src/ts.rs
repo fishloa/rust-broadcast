@@ -280,7 +280,7 @@ impl TsHeader {
             buf[1] |= PUSI_MASK;
         }
         buf[1] |= ((self.pid >> 8) as u8) & PID_MASK_HI;
-        buf[2] = (self.pid & 0xFF) as u8;
+        buf[2] = self.pid.to_be_bytes()[1];
         buf[3] = (self.scrambling << 6) & SCRAMBLING_MASK;
         if self.has_adaptation {
             buf[3] |= ADAPTATION_FLAG;
@@ -439,6 +439,9 @@ pub(crate) const AF_TRANSPORT_PRIVATE_DATA_FLAG: u8 = 0x02;
 pub(crate) const AF_EXTENSION_FLAG: u8 = 0x01;
 /// Adaptation-field stuffing byte (ISO/IEC 13818-1:2007 §2.4.3.4 — `0xFF`).
 pub(crate) const AF_STUFFING_BYTE: u8 = 0xFF;
+/// PCR field byte 4 bits 6-1: six reserved bits, all set to `1`
+/// (ISO/IEC 13818-1 §2.4.3.5).
+const PCR_RESERVED_BITS: u8 = 0x7E;
 /// Encoded PCR / OPCR field width: 33-bit base + 6 reserved + 9-bit extension.
 pub(crate) const PCR_FIELD_LEN: usize = 6;
 
@@ -500,7 +503,7 @@ impl Pcr {
             ((b >> 9) & 0xFF) as u8,
             ((b >> 1) & 0xFF) as u8,
             // byte 4: base[0] in bit 7, bits 6-1 = reserved (set to 1), ext[8] in bit 0.
-            (((b & 0x01) as u8) << 7) | 0x7E | ((e >> 8) as u8 & 0x01),
+            (((b & 0x01) as u8) << 7) | PCR_RESERVED_BITS | ((e >> 8) as u8 & 0x01),
             (e & 0xFF) as u8,
         ]
     }

@@ -45,7 +45,7 @@ pub struct SegmentTiming {
 pub fn emsg_to_v1<'a>(emsg: &EmsgBox<'a>, timing: &SegmentTiming) -> Result<EmsgBox<'a>> {
     validate_timescale(emsg.timescale, timing.timescale)?;
 
-    let t = movie_timeline_t(emsg, timing);
+    let t = movie_timeline_t(emsg, timing)?;
 
     Ok(EmsgBox {
         scheme_id_uri: emsg.scheme_id_uri,
@@ -65,7 +65,7 @@ pub fn emsg_to_v1<'a>(emsg: &EmsgBox<'a>, timing: &SegmentTiming) -> Result<Emsg
 pub fn emsg_to_v0<'a>(emsg: &EmsgBox<'a>, timing: &SegmentTiming) -> Result<EmsgBox<'a>> {
     validate_timescale(emsg.timescale, timing.timescale)?;
 
-    let t = movie_timeline_t(emsg, timing);
+    let t = movie_timeline_t(emsg, timing)?;
 
     let delta = t
         .checked_sub(timing.earliest_presentation_time)
@@ -87,12 +87,16 @@ pub fn emsg_to_v0<'a>(emsg: &EmsgBox<'a>, timing: &SegmentTiming) -> Result<Emsg
 }
 
 /// Compute the Movie-timeline instant `T` from either emsg version.
-fn movie_timeline_t(emsg: &EmsgBox<'_>, timing: &SegmentTiming) -> u64 {
+fn movie_timeline_t(emsg: &EmsgBox<'_>, timing: &SegmentTiming) -> Result<u64> {
     match emsg.presentation_time {
-        PresentationTime::Absolute(pt) => pt,
-        PresentationTime::Delta(d) => timing.earliest_presentation_time + u64::from(d),
-        #[allow(unreachable_patterns)]
-        _ => unreachable!("non_exhaustive PresentationTime"),
+        PresentationTime::Absolute(pt) => Ok(pt),
+        PresentationTime::Delta(d) => timing
+            .earliest_presentation_time
+            .checked_add(u64::from(d))
+            .ok_or(Error::EmsgPresentationTimeOverflow),
+        // `PresentationTime` is `#[non_exhaustive]` in `mp4-emsg`: a future
+        // variant is an error here, never a panic.
+        _ => Err(Error::UnsupportedPresentationTime),
     }
 }
 
@@ -107,6 +111,32 @@ fn validate_timescale(emsg: u32, timing: u32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn v0_to_v1_ept_plus_delta_overflow_is_error_not_wrap() {
+        let emsg = EmsgBox {
+            scheme_id_uri: "urn:scte:scte35:2013:bin",
+            value: "1",
+            timescale: 90_000,
+            presentation_time: PresentationTime::Delta(1),
+            event_duration: 0,
+            id: 1,
+            message_data: &[],
+        };
+        let timing = SegmentTiming {
+            earliest_presentation_time: u64::MAX,
+            presentation_time_offset: 0,
+            timescale: 90_000,
+        };
+        assert!(matches!(
+            emsg_to_v1(&emsg, &timing),
+            Err(Error::EmsgPresentationTimeOverflow)
+        ));
+        assert!(matches!(
+            emsg_to_v0(&emsg, &timing),
+            Err(Error::EmsgPresentationTimeOverflow)
+        ));
+    }
 
     #[test]
     fn v0_to_v1_to_v0_round_trips() {

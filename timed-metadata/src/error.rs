@@ -36,6 +36,15 @@ pub enum Error {
     /// v0 `presentation_time_delta` overflowed u32.
     #[error("presentation_time_delta value {0} exceeds u32 max")]
     EmsgDeltaOverflow(u64),
+    /// A v0 emsg's `earliest_presentation_time + presentation_time_delta`
+    /// overflowed `u64` (ISO/IEC 23009-1 §5.10.3.3); a wrapped value would
+    /// silently place the event near time zero.
+    #[error("earliest presentation time + presentation_time_delta overflows u64")]
+    EmsgPresentationTimeOverflow,
+    /// The emsg carries a `PresentationTime` variant this crate does not
+    /// know how to convert (the enum is `#[non_exhaustive]` upstream).
+    #[error("unsupported emsg PresentationTime variant")]
+    UnsupportedPresentationTime,
     /// A `DATERANGE` attribute value (`ID`, `CLASS`, or a `SCTE35-*` hex
     /// token) could not be represented as an RFC 8216 §4.2 quoted-string —
     /// contains `"`, CR or LF (issue #1140 / audit r12-TM-W4): these values

@@ -120,6 +120,9 @@ pub struct SubtitleReport {
     pub preview: Option<SubtitlePreview>,
 }
 
+/// Maximum `page_composition_segment`s retained for preview building.
+const MAX_PAGES: usize = 1_000;
+
 /// Accumulates every subtitle PID discovered from the PMT and reassembles
 /// each one's PES stream (a capture's PMT can advertise more subtitle
 /// components than actually carry data — e.g. a second, unused program's
@@ -207,7 +210,16 @@ impl SubtitleState {
 
     fn record_segment(&mut self, pid: u16, seg: &AnySegment<'_>) {
         match seg {
-            AnySegment::PageComposition(pcs) => self.pages.push((pid, pcs.clone())),
+            AnySegment::PageComposition(pcs) => {
+                // Memory bound only: a hostile capture of endless page
+                // compositions grew this Vec without limit (audit
+                // r14-DEMO-W2). Pages past the cap are NOT considered for the
+                // preview, even if a later page would have resolved against
+                // the final region/CLUT/object maps.
+                if self.pages.len() < MAX_PAGES {
+                    self.pages.push((pid, pcs.clone()));
+                }
+            }
             AnySegment::RegionComposition(rcs) => {
                 self.regions.insert((pid, rcs.region_id), rcs.clone());
             }
