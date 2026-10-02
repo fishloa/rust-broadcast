@@ -23,3 +23,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 [[bin]]
 name = "multimux"
 path = "src/main.rs"
+# Same name as the `multimux` library: documenting both makes rustdoc write
+# both into target/doc/multimux and race (cargo #6313). The binary's CLI is
+# documented by `--help`; the library docs are the API reference.
+doc  = false
