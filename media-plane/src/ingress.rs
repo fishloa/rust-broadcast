@@ -353,7 +353,7 @@
 //! per call, however many times it is polled.
 
 use std::collections::HashMap;
-use std::num::NonZeroUsize;
+use std::num::{NonZeroU32, NonZeroUsize};
 use std::sync::Arc;
 
 use broadcast_common::{Stage, Timestamp};
@@ -1102,16 +1102,17 @@ pub fn run_dial<D: Dialer>(
 pub struct ReconnectPolicy {
     /// Maximum number of consecutive [`Dialer::dial`] attempts before
     /// [`DialSupervisor::try_dial`] gives up.
-    pub max_attempts: u32,
+    pub max_attempts: NonZeroU32,
 }
 
 impl ReconnectPolicy {
     /// Build a policy bounded to `max_attempts` consecutive dial failures.
     ///
-    /// Panics if `max_attempts == 0` — a policy that never even tries once
-    /// is a construction mistake, not a real bound.
-    pub fn new(max_attempts: u32) -> Self {
-        assert!(max_attempts > 0, "ReconnectPolicy max_attempts must be > 0");
+    /// `NonZeroU32` rather than `u32` + a panic: a policy that never even
+    /// tries once is not a real bound, and a value that arrives from a
+    /// config file must not be able to crash the process (the same reasoning
+    /// as [`TrunkConfig`]'s `NonZeroUsize` capacities).
+    pub fn new(max_attempts: NonZeroU32) -> Self {
         ReconnectPolicy { max_attempts }
     }
 }
@@ -1205,7 +1206,7 @@ impl<D: Dialer> DialSupervisor<D> {
                 ))
             }
             Err(e) => {
-                if self.attempts >= self.policy.max_attempts {
+                if self.attempts >= self.policy.max_attempts.get() {
                     self.exhausted = true;
                     DialAttempt::GaveUp(e)
                 } else {
@@ -2490,13 +2491,33 @@ mod tests {
 
     // --- Reconnect: bounded, caller-configurable, never spins --------------
 
+    /// The smallest representable policy (`NonZeroU32::MIN`, 1 attempt) gives
+    /// up on the first failed dial — and the zero policy that used to panic
+    /// in `new` is now unrepresentable (`NonZeroU32::new(0)` is `None`).
+    #[test]
+    fn minimum_policy_gives_up_on_first_failure_and_zero_is_unrepresentable() {
+        assert_eq!(NonZeroU32::new(0), None);
+        let dialer = ScriptedDialer {
+            sessions: VecDeque::new(),
+            fail_with: FakeError("connection refused"),
+        };
+        let mut supervisor = DialSupervisor::new(dialer, ReconnectPolicy::new(NonZeroU32::MIN));
+        assert!(matches!(
+            supervisor.try_dial(trunk_config(), handshake(), max_programs()),
+            DialAttempt::GaveUp(_)
+        ));
+        assert_eq!(supervisor.attempts(), 1);
+        assert!(supervisor.is_exhausted());
+    }
+
     #[test]
     fn permanently_failing_dial_is_bounded_and_does_not_spin_or_grow() {
         let dialer = ScriptedDialer {
             sessions: VecDeque::new(),
             fail_with: FakeError("connection refused"),
         };
-        let mut supervisor = DialSupervisor::new(dialer, ReconnectPolicy::new(3));
+        let mut supervisor =
+            DialSupervisor::new(dialer, ReconnectPolicy::new(NonZeroU32::new(3).unwrap()));
 
         assert!(matches!(
             supervisor.try_dial(trunk_config(), handshake(), max_programs()),
@@ -2538,7 +2559,8 @@ mod tests {
             sessions: VecDeque::from(vec![good_session]),
             fail_with: FakeError("refused"),
         };
-        let mut supervisor = DialSupervisor::new(dialer, ReconnectPolicy::new(2));
+        let mut supervisor =
+            DialSupervisor::new(dialer, ReconnectPolicy::new(NonZeroU32::new(2).unwrap()));
 
         // First attempt succeeds immediately (the scripted dialer's one
         // queued session comes out on the very first `dial()` call).

@@ -125,6 +125,26 @@
 //! an acceptable, load-bearing property, not a defect) — only the *causal*
 //! one, which is what the shared `Mutex` structurally guarantees.
 //!
+//! **Why the one lock is kept (issue #1082, r06-O2), and what was done
+//! instead.** Splitting `TrunkState` into a sample-group lock and a
+//! segment/part/event-group lock would have to give up exactly the
+//! guarantee above (the shared lock *is* the proof that a segment never
+//! overtakes its samples; per-group locks would replace it with an argument
+//! about the segmenter's program order plus lock-ordering rules for every
+//! method that touches both groups — `Trunk::writer`'s handover log spans
+//! the two sample classes, and the `StallIngest` `Condvar` is paired with the
+//! segment ring and its pins). No deterministic measurement of contention
+//! benefit exists in this crate, so the split was not made speculatively.
+//! The measurable cost the finding names — the O(capacity) request scans
+//! under that lock — was removed instead: `part_bytes`/`parts_in_segment`
+//! are served from a per-segment index and touch only that segment's parts.
+//! The event queries (`events_between`/`events_in_segment`) remain linear in
+//! [`TrunkConfig::event_capacity`] on purpose: an `Event`'s media time is
+//! resolved *in place* after publication (`Segment`/`Utc` anchors), so the
+//! ring is not sorted by media time and an ordered index would need
+//! re-keying on every resolution; the ring holds SCTE-35-rate events (tens),
+//! not per-part entries, and the scan filters before cloning.
+//!
 //! # Why this module needs `std`, unlike its byte-layer siblings
 //!
 //! [`crate::byte_stage`], [`crate::byte_tap`], and [`crate::byte_merge`] are
@@ -1088,7 +1108,8 @@ impl EventLog {
             EventAnchor::Utc { utc_epoch_ms } => self
                 .time_anchor
                 .as_ref()
-                .map(|a| EventAnchor::Media(epoch_ms_to_media(a, utc_epoch_ms)))
+                .and_then(|a| epoch_ms_to_media(a, utc_epoch_ms))
+                .map(EventAnchor::Media)
                 .unwrap_or(anchor),
             EventAnchor::Media(_) => anchor,
         }
@@ -1139,7 +1160,11 @@ impl EventLog {
         self.time_anchor = Some(anchor);
         for entry in &mut self.entries {
             if let EventAnchor::Utc { utc_epoch_ms } = entry.anchor {
-                entry.anchor = EventAnchor::Media(epoch_ms_to_media(&anchor, utc_epoch_ms));
+                // `None` (instant before the timeline origin, or beyond
+                // `u64`): stay honestly `Utc`, never a fabricated position.
+                if let Some(media) = epoch_ms_to_media(&anchor, utc_epoch_ms) {
+                    entry.anchor = EventAnchor::Media(media);
+                }
             }
         }
     }
@@ -1153,13 +1178,16 @@ impl EventLog {
 /// [`timed_metadata::Timeline`]'s 33-bit wrap-unroll, a different, modular
 /// arithmetic problem this module does not re-solve; see
 /// [The event log](self#the-event-log-90-khz-absolute-and-the-b1-crux).
-/// Clamps rather than panics on an out-of-range result — a malformed or
-/// adversarial `splice_schedule` entry must not crash the writer.
-fn epoch_ms_to_media(anchor: &TimeAnchor, utc_epoch_ms: i64) -> MediaTime {
+/// Returns `None` — never a clamped, fabricated position — when the instant
+/// maps to a negative media time (earlier than the anchor's timeline origin)
+/// or beyond `u64`: a stale/replayed or adversarial `splice_schedule` entry
+/// must neither crash the writer nor be handed a made-up media time (B1);
+/// the caller leaves such an entry [`EventAnchor::Utc`].
+fn epoch_ms_to_media(anchor: &TimeAnchor, utc_epoch_ms: i64) -> Option<MediaTime> {
     let delta_ms = i128::from(utc_epoch_ms) - i128::from(anchor.utc_epoch_ms);
     let delta_ticks = delta_ms * i128::from(PTS_HZ) / 1000;
     let media = i128::from(anchor.pts_90k) + delta_ticks;
-    MediaTime(media.clamp(0, i128::from(u64::MAX)) as u64)
+    u64::try_from(media).ok().map(MediaTime)
 }
 
 /// One LL-HLS **partial segment** ("part") of the segment currently being
@@ -1225,20 +1253,74 @@ impl PartEntry {
 /// [The live-part log](self#the-live-part-log-parts-before-their-segment-closes)
 /// for why a part's addressability deliberately does not change the instant
 /// its parent segment closes.
+/// The part ring's storage. Every *read* of a resident entry goes through
+/// [`PartRing::get`]/[`PartRing::iter`], which (under `cfg(test)`) count each
+/// entry examined — so a lookup that scans the ring cannot avoid the
+/// complexity counter the O1 test asserts on.
+struct PartRing {
+    q: VecDeque<PartEntry>,
+    /// Test-only work counter: ring entries examined by reads.
+    #[cfg(test)]
+    visits: core::sync::atomic::AtomicUsize,
+}
+
+impl PartRing {
+    fn with_capacity(capacity: usize) -> Self {
+        PartRing {
+            q: VecDeque::with_capacity(capacity),
+            #[cfg(test)]
+            visits: core::sync::atomic::AtomicUsize::new(0),
+        }
+    }
+    fn len(&self) -> usize {
+        self.q.len()
+    }
+    fn pop_front(&mut self) -> Option<PartEntry> {
+        self.q.pop_front()
+    }
+    fn push_back(&mut self, e: PartEntry) {
+        self.q.push_back(e);
+    }
+    fn get(&self, idx: usize) -> Option<&PartEntry> {
+        #[cfg(test)]
+        self.visits
+            .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        self.q.get(idx)
+    }
+    /// Counting full-ring iteration (test builds only: production lookups
+    /// go through the per-segment index and `get`).
+    #[cfg(test)]
+    fn iter(&self) -> impl DoubleEndedIterator<Item = &PartEntry> {
+        self.q.iter().inspect(|_| {
+            self.visits
+                .fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        })
+    }
+}
+
 struct PartLog {
-    entries: VecDeque<PartEntry>,
+    entries: PartRing,
     base: u64,
     published: u64,
     capacity: usize,
+    /// Index: `segment_number` -> the **absolute** ring positions
+    /// (`base`-relative addressing, like a cursor's) of every resident part
+    /// carrying that number, in publish order. Lets `part_bytes` /
+    /// `parts_in_segment` touch only that segment's own parts instead of
+    /// scanning the whole ring under the trunk's mutex on every HTTP request
+    /// (issue #1082, r06-O1). Bounded by `capacity` in total: every position
+    /// is dropped when its entry is evicted, and an emptied key is removed.
+    by_segment: HashMap<u32, VecDeque<u64>>,
 }
 
 impl PartLog {
     fn new(capacity: usize) -> Self {
         PartLog {
-            entries: VecDeque::with_capacity(capacity),
+            entries: PartRing::with_capacity(capacity),
             base: 0,
             published: 0,
             capacity,
+            by_segment: HashMap::new(),
         }
     }
 
@@ -1246,13 +1328,59 @@ impl PartLog {
     /// `capacity`. Never rejects, never blocks — exactly [`ClassLog::push`]/
     /// [`SegmentLog::push`]/[`EventLog::push`]'s contract.
     fn push(&mut self, entry: PartEntry) {
-        if self.entries.len() == self.capacity {
-            self.entries.pop_front();
+        if self.entries.len() == self.capacity
+            && let Some(evicted) = self.entries.pop_front()
+        {
+            // The oldest ring entry is, necessarily, the oldest position in
+            // its own segment's list.
+            if let Some(positions) = self.by_segment.get_mut(&evicted.segment_number) {
+                positions.pop_front();
+                if positions.is_empty() {
+                    self.by_segment.remove(&evicted.segment_number);
+                }
+            }
             self.base += 1;
         }
+        self.by_segment
+            .entry(entry.segment_number)
+            .or_default()
+            .push_back(self.published);
         self.entries.push_back(entry);
         self.published += 1;
     }
+
+    /// The resident entry at absolute position `abs`, if still resident.
+    fn at(&self, abs: u64) -> Option<&PartEntry> {
+        let idx = usize::try_from(abs.checked_sub(self.base)?).ok()?;
+        self.entries.get(idx)
+    }
+
+    /// Every resident part of `segment_number`, publish order.
+    fn in_segment(&self, segment_number: u32) -> Vec<PartEntry> {
+        self.by_segment
+            .get(&segment_number)
+            .into_iter()
+            .flatten()
+            .filter_map(|&abs| self.at(abs).cloned())
+            .collect()
+    }
+
+    /// The most recently published resident part for the pair.
+    fn part_bytes(&self, segment_number: u32, part_index: u32) -> Option<Bytes> {
+        self.by_segment
+            .get(&segment_number)?
+            .iter()
+            .rev()
+            .filter_map(|&abs| self.at(abs))
+            .find(|p| p.part_index == part_index)
+            .map(|p| p.bytes.clone())
+    }
+}
+
+/// `consumed - base` as a ring index: `None` when `consumed` is behind
+/// `base` or the offset does not fit `usize` (never a wrapping cast).
+fn ring_offset(consumed: u64, base: u64) -> Option<usize> {
+    usize::try_from(consumed.checked_sub(base)?).ok()
 }
 
 /// The shared state behind one [`Trunk`]: the two sample [`ClassLog`]s, the
@@ -1732,7 +1860,9 @@ impl Trunk {
         else {
             return Vec::new();
         };
-        let start = log.segment_starts[chosen_idx].1;
+        let Some(&(_, start)) = log.segment_starts.get(chosen_idx) else {
+            return Vec::new();
+        };
         // The end boundary is the first start recorded AFTER the CHOSEN
         // occurrence above — positionally, not by looking up
         // `segment_number + 1`. `segment_starts` is append-ordered
@@ -1770,21 +1900,13 @@ impl Trunk {
     /// evicted by [`TrunkConfig::part_capacity`]'s ordinary bound —
     /// including after its parent segment has closed.
     pub fn part_bytes(&self, segment_number: u32, part_index: u32) -> Option<Bytes> {
-        let state = self.lock_state();
-        // `.rev()`: a `SegmentWriter` re-issue can reuse a `segment_number`
-        // (see `NonMonotonicSequenceNumber`'s own doc for why
-        // `publish_segment` now rejects this, but `publish_part` itself
-        // places no such restriction on an in-progress segment's parts) —
-        // the most recently published entry for this `(segment_number,
-        // part_index)` pair is the current one; a front-to-back `.find`
-        // would return a stale part from an earlier round instead.
-        state
+        // The most recently published entry for the pair wins: a
+        // `SegmentWriter` re-issue can reuse a `segment_number` (see
+        // `NonMonotonicSequenceNumber`), so the newest is the current one.
+        // Indexed by segment: touches only that segment's own parts.
+        self.lock_state()
             .parts
-            .entries
-            .iter()
-            .rev()
-            .find(|p| p.segment_number == segment_number && p.part_index == part_index)
-            .map(|p| p.bytes.clone())
+            .part_bytes(segment_number, part_index)
     }
 
     /// Every currently-resident part of segment `segment_number`, in publish
@@ -1793,42 +1915,26 @@ impl Trunk {
     /// far" (RFC 8216bis's `_HLS_part` blocking-reload condition) without a
     /// cursor.
     ///
-    /// A plain filter, not a from-the-back `take_while` run isolation
-    /// (this method's predecessor): the part ring is **not** guaranteed to
-    /// hold every `segment_number`'s parts as one contiguous run at the
-    /// tail. A live producer (`multimux::source::segment::ProgramSegmenter`)
-    /// can — and, once its own parts/segments are queued in true stream
-    /// order, still legitimately does the moment it starts buffering the
-    /// *next* segment's opening part before this segment's own close has
-    /// been queued — publish part `(N+1, 0)` while segment `N` is still
-    /// open. A `take_while` stopping at the first entry whose
-    /// `segment_number != N` would then see `(N+1, 0)` at the tail and
-    /// report *zero* parts for the still-open segment `N`, even though every
-    /// one of its parts is sitting right there in the ring — silently
-    /// dropping `#EXT-X-PART` tags from a served LL-HLS playlist. A plain
-    /// filter has no such assumption: every resident part with a matching
-    /// `segment_number` is returned regardless of what else shares the ring.
+    /// Every resident part carrying `segment_number` is returned, in publish
+    /// order, regardless of what else shares the ring (served from a
+    /// per-segment index, so only this segment's own parts are touched).
     ///
-    /// The one case this trades away: after a `SegmentWriter` re-issue reuses
-    /// a `segment_number` (see [`SegmentWriter::next_sequence_number`]'s own
-    /// doc), a stale, older run under the same number — if still resident —
-    /// would now be merged in alongside the current run. In practice this
-    /// needs an actual number reuse (`publish_segment`/`try_publish_segment`
-    /// otherwise reject a non-monotonic `sequence_number` outright) *and*
-    /// the stale run to have survived long enough in the ring to still be
-    /// resident, which the numbering-reuse guard exists specifically to
-    /// avoid; the interleaving this method now handles is the common case a
-    /// live LL-HLS producer hits on every stream, not the rare
-    /// after-a-restart one.
+    /// This is deliberately **not** a from-the-back run isolation that stops
+    /// at the first non-matching entry: the ring does not hold a segment's
+    /// parts as one contiguous tail run. A live producer
+    /// (`multimux::source::segment::ProgramSegmenter`) can publish part
+    /// `(N+1, 0)` while segment `N` is still open, and a run isolation would
+    /// then report *zero* parts for `N`, dropping its `#EXT-X-PART` tags from
+    /// a served LL-HLS playlist.
+    ///
+    /// Trade-off: after a `SegmentWriter` re-issue reuses a `segment_number`
+    /// (see [`SegmentWriter::next_sequence_number`]), a stale older run under
+    /// the same number, if still resident, is returned alongside the current
+    /// one. That needs a real number reuse (`publish_segment` otherwise
+    /// rejects a non-monotonic `sequence_number`) and the stale run to have
+    /// survived in the ring.
     pub fn parts_in_segment(&self, segment_number: u32) -> Vec<PartEntry> {
-        let state = self.lock_state();
-        state
-            .parts
-            .entries
-            .iter()
-            .filter(|p| p.segment_number == segment_number)
-            .cloned()
-            .collect()
+        self.lock_state().parts.in_segment(segment_number)
     }
 
     /// Diagnostic: entries currently resident in the live-part log. Never
@@ -2643,7 +2749,8 @@ impl SampleCursor {
         // gate new-writer data on EITHER class from overtaking it (see
         // this method's own doc).
         let mut pending_handover = if self.handovers_consumed < state.handovers.published {
-            let idx = (self.handovers_consumed - state.handovers.base) as usize;
+            let idx =
+                ring_offset(self.handovers_consumed, state.handovers.base).unwrap_or(usize::MAX);
             state.handovers.entries.get(idx).copied()
         } else {
             None
@@ -2666,7 +2773,8 @@ impl SampleCursor {
             // back-to-back reconnect with no data published in between can
             // stack more than one such suppressed marker.
             pending_handover = if self.handovers_consumed < state.handovers.published {
-                let idx = (self.handovers_consumed - state.handovers.base) as usize;
+                let idx = ring_offset(self.handovers_consumed, state.handovers.base)
+                    .unwrap_or(usize::MAX);
                 state.handovers.entries.get(idx).copied()
             } else {
                 None
@@ -2675,7 +2783,8 @@ impl SampleCursor {
 
         let sparse_blocked = pending_handover.is_some_and(|h| self.sparse_consumed >= h.sparse_at);
         if !sparse_blocked {
-            let sparse_idx = (self.sparse_consumed - state.sparse.base) as usize;
+            let sparse_idx =
+                ring_offset(self.sparse_consumed, state.sparse.base).unwrap_or(usize::MAX);
             if let Some((track_id, sample)) = state.sparse.entries.get(sparse_idx) {
                 self.sparse_consumed += 1;
                 return Some(SampleCursorItem::Sparse {
@@ -2687,7 +2796,8 @@ impl SampleCursor {
 
         let timed_blocked = pending_handover.is_some_and(|h| self.timed_consumed >= h.timed_at);
         if !timed_blocked {
-            let timed_idx = (self.timed_consumed - state.timed.base) as usize;
+            let timed_idx =
+                ring_offset(self.timed_consumed, state.timed.base).unwrap_or(usize::MAX);
             if let Some((track_id, sample)) = state.timed.entries.get(timed_idx) {
                 self.timed_consumed += 1;
                 return Some(SampleCursorItem::Timed {
@@ -2785,7 +2895,7 @@ impl SegmentCursor {
                 self.consumed = state.segments.base;
                 return Some(SegmentCursorItem::Lagged { skipped });
             }
-            let idx = (self.consumed - state.segments.base) as usize;
+            let idx = ring_offset(self.consumed, state.segments.base).unwrap_or(usize::MAX);
             return if let Some(entry) = state.segments.entries.get(idx) {
                 self.consumed += 1;
                 Some(SegmentCursorItem::Segment(entry.clone()))
@@ -2813,27 +2923,26 @@ impl SegmentCursor {
         let consumed = pin.consumed;
         if consumed < state.segments.base {
             let skipped = state.segments.base - consumed;
-            state
-                .segments
-                .pins
-                .get_mut(&pin_id)
-                .expect("pin_id was resolved from this same locked state, so its entry exists")
-                .consumed = state.segments.base;
+            let base = state.segments.base;
+            let Some(pin) = state.segments.pins.get_mut(&pin_id) else {
+                debug_assert!(false, "pin_id was resolved from this same locked state");
+                return None;
+            };
+            pin.consumed = base;
             drop(state);
             // A pin advancing can free a `StallIngest` writer waiting on
             // exactly this pin.
             self.trunk.segment_pin_released.notify_all();
             return Some(SegmentCursorItem::Gap { skipped });
         }
-        let idx = (consumed - state.segments.base) as usize;
+        let idx = ring_offset(consumed, state.segments.base).unwrap_or(usize::MAX);
         if let Some(entry) = state.segments.entries.get(idx) {
             let item = entry.clone();
-            state
-                .segments
-                .pins
-                .get_mut(&pin_id)
-                .expect("pin_id was resolved from this same locked state, so its entry exists")
-                .consumed += 1;
+            let Some(pin) = state.segments.pins.get_mut(&pin_id) else {
+                debug_assert!(false, "pin_id was resolved from this same locked state");
+                return None;
+            };
+            pin.consumed = pin.consumed.saturating_add(1);
             drop(state);
             self.trunk.segment_pin_released.notify_all();
             return Some(SegmentCursorItem::Segment(item));
@@ -2903,7 +3012,7 @@ impl EventCursor {
             self.consumed = log.base;
             return Some(EventCursorItem::Lagged { skipped });
         }
-        let idx = (self.consumed - log.base) as usize;
+        let idx = ring_offset(self.consumed, log.base).unwrap_or(usize::MAX);
         if let Some(entry) = log.entries.get(idx) {
             self.consumed += 1;
             return Some(EventCursorItem::Event(entry.clone()));
@@ -3037,6 +3146,68 @@ mod tests {
             assert_eq!(bytes, vec![0, 1, 2, 3, 4], "must be in publish order");
             assert!(cursor.poll().is_none(), "no extra/duplicated items");
         }
+    }
+
+    // --- poison recovery (issue #1134): every lock site survives a panic ---
+
+    /// One consumer panicking while it holds the trunk's state lock must not
+    /// turn every later writer/reader call — including a cursor's `Drop` —
+    /// into a panic. Poisons the mutex for real (a thread panics holding the
+    /// guard), then drives every public entry point and asserts literal
+    /// results. Bite-check: reverting `lock_state` to
+    /// `.lock().expect("poisoned")` makes the first call after the poisoning
+    /// panic.
+    #[test]
+    fn every_entry_point_survives_a_poisoned_state_lock() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(8), nz(8), nz(8), nz(8), nz(8)));
+        let mut samples = trunk.subscribe();
+        let mut segments = trunk.subscribe_segments();
+        let mut events = trunk.subscribe_events();
+        let writer = trunk.writer().unwrap();
+        let segment_writer = trunk.segment_writer().unwrap();
+
+        let t2 = Arc::clone(&trunk);
+        let poisoner = thread::spawn(move || {
+            let _guard = t2.lock_state();
+            panic!("deliberately poisoning the trunk state lock");
+        });
+        assert!(
+            poisoner.join().is_err(),
+            "poisoner thread must have panicked"
+        );
+        assert!(trunk.state.is_poisoned(), "precondition: mutex is poisoned");
+
+        writer.publish(7, RetentionClass::Timed, sample(5, 4));
+        match samples.poll() {
+            Some(SampleCursorItem::Timed {
+                track_id: 7,
+                sample,
+            }) => {
+                assert_eq!(sample.data.as_ref(), &[5u8; 4]);
+            }
+            other => panic!("expected the published sample, got {other:?}"),
+        }
+        segment_writer.publish_segment(segment_entry(9, 1)).unwrap();
+        assert_eq!(trunk.last_closed_segment(), Some(1));
+        match segments.poll() {
+            Some(SegmentCursorItem::Segment(e)) => assert_eq!(e.sequence_number, 1),
+            other => panic!("expected segment 1, got {other:?}"),
+        }
+        segment_writer.publish_part(part_entry(3, 2, 0));
+        assert_eq!(trunk.part_bytes(2, 0).unwrap().as_ref(), &[3u8; 8]);
+        writer.publish_event(basic_event(4), EventAnchor::Media(MediaTime(10)));
+        assert!(matches!(events.poll(), Some(EventCursorItem::Event(_))));
+        assert_eq!(trunk.events_between(MediaTime(0), MediaTime(20)).len(), 1);
+        // Drop paths take the lock too and must not panic.
+        drop(samples);
+        drop(segments);
+        drop(events);
+        drop(writer);
+        drop(segment_writer);
+        assert!(
+            trunk.writer().is_some(),
+            "slot released by Drop under poison"
+        );
     }
 
     // --- 2. slow reader lags, writer completes regardless -----------------
@@ -4385,7 +4556,7 @@ mod tests {
             200_000_000_000_000,
         ] {
             let epoch_ms = anchor.utc_epoch_ms + offset_ms;
-            let media = epoch_ms_to_media(&anchor, epoch_ms);
+            let media = epoch_ms_to_media(&anchor, epoch_ms).unwrap();
             let back = anchor.media_to_epoch_ms(media);
             assert_eq!(
                 back, epoch_ms,
@@ -4436,7 +4607,7 @@ mod tests {
         ] {
             let media = MediaTime((anchor.pts_90k as i64 + offset_ticks) as u64);
             let epoch_ms = anchor.media_to_epoch_ms(media);
-            let back = epoch_ms_to_media(&anchor, epoch_ms);
+            let back = epoch_ms_to_media(&anchor, epoch_ms).unwrap();
             let diff = media.0.abs_diff(back.0);
             assert!(
                 diff <= MEDIA_ROUND_TRIP_MAX_TICKS,
@@ -4458,65 +4629,84 @@ mod tests {
         );
     }
 
-    /// `epoch_ms_to_media`'s `clamp(0, u64::MAX)` for an epoch instant far
-    /// enough *before* the anchor that the implied media time would be
-    /// negative.
-    ///
-    /// **This documents clamping as SAFE, not CORRECT** — they are different
-    /// claims and this test asserts the weaker, true one. A negative media
-    /// time is simply not representable in `MediaTime(u64)`, so no return
-    /// value here can be right: clamping to `0` reports "at the very start
-    /// of this trunk's timeline", which is *not* the instant asked for, and
-    /// the round trip provably does not recover the input (asserted below).
-    /// What the clamp does buy is that the failure is bounded and obvious
-    /// rather than catastrophic: an unchecked `as u64` cast of a negative
-    /// value would wrap to something near `u64::MAX` — an event appearing
-    /// scheduled ~6.5 million years in the future, which is exactly the
-    /// silent wrong-instant class B1 is about. Clamping keeps a
-    /// pre-origin event in the past (where a scheduler treats it as already
-    /// elapsed) instead of the unreachable future.
-    ///
-    /// If pre-origin scheduled events turn out to be real rather than
-    /// pathological, the *honest* fix is not a different clamp value — it is
-    /// to leave the entry `EventAnchor::Utc` (unresolved), exactly as an
-    /// event with no anchor at all stays unresolved. That would be an
-    /// additive change to `try_resolve`/`set_time_anchor`, not a change to
-    /// this helper's contract.
+    /// r06-W6: an epoch instant before the anchor's timeline origin implies
+    /// a negative media time, which is unrepresentable; `epoch_ms_to_media`
+    /// must say so (`None`) instead of clamping to a fabricated `0`.
+    /// Mutation check: restoring `media.clamp(0, u64::MAX)` makes the first
+    /// assertion fail (`Some(MediaTime(0))`).
     #[test]
-    fn epoch_before_the_timeline_origin_clamps_to_zero_which_is_safe_not_correct() {
+    fn epoch_before_the_timeline_origin_is_unresolvable_not_clamped() {
         let anchor = round_trip_anchor();
-
-        // 20 s before the anchor's epoch, but only 10 s of media has
-        // elapsed at the anchor — so the implied media time is -10 s.
-        let epoch_ms = anchor.utc_epoch_ms - 20_000;
-        let media = epoch_ms_to_media(&anchor, epoch_ms);
-
+        // 20 s before the anchor's epoch, but only 10 s of media elapsed
+        // at the anchor: the implied media time is -10 s.
         assert_eq!(
-            media,
-            MediaTime(0),
-            "a pre-origin epoch must clamp to the start of the timeline"
+            epoch_ms_to_media(&anchor, anchor.utc_epoch_ms - 20_000),
+            None
         );
+        // Exactly the origin (10 s before the anchor) is representable: 0.
+        assert_eq!(
+            epoch_ms_to_media(&anchor, anchor.utc_epoch_ms - 10_000),
+            Some(MediaTime(0))
+        );
+        // One millisecond earlier is not.
+        assert_eq!(
+            epoch_ms_to_media(&anchor, anchor.utc_epoch_ms - 10_001),
+            None
+        );
+        // Beyond u64 ticks is also unresolvable rather than saturated.
+        let far = TimeAnchor {
+            pts_90k: u64::MAX,
+            utc_epoch_ms: 0,
+        };
+        assert_eq!(epoch_ms_to_media(&far, 1_000), None);
+        assert_eq!(epoch_ms_to_media(&far, i64::MIN), None);
+    }
 
-        // Bounded-and-obvious, not catastrophic: emphatically NOT a wrapped
-        // near-`u64::MAX` value masquerading as the far future.
+    /// r06-W6, end to end: a stale `splice_schedule` UTC instant (before the
+    /// timeline origin) stays `Utc` — whether the anchor arrives before or
+    /// after the event — and never appears at media time 0.
+    #[test]
+    fn pre_origin_utc_event_stays_unresolved_through_the_trunk() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+        let segment_writer = trunk.segment_writer().unwrap();
+        // Event published BEFORE the anchor (resolved in `set_time_anchor`).
+        writer.publish_event(
+            basic_event(1),
+            EventAnchor::Utc {
+                utc_epoch_ms: 5_000,
+            },
+        );
+        // Anchor: media 900_000 ticks (10 s) == epoch 100_000 ms, so the
+        // timeline origin is epoch 90_000 ms; 5_000 ms is before it.
+        segment_writer.set_time_anchor(TimeAnchor {
+            pts_90k: 900_000,
+            utc_epoch_ms: 100_000,
+        });
+        // Event published AFTER the anchor (resolved in `try_resolve`); one
+        // in-range instant (epoch 100_000 ms == media 900_000) as control.
+        writer.publish_event(
+            basic_event(2),
+            EventAnchor::Utc {
+                utc_epoch_ms: 5_000,
+            },
+        );
+        writer.publish_event(
+            basic_event(3),
+            EventAnchor::Utc {
+                utc_epoch_ms: 100_000,
+            },
+        );
+        let got = trunk.events_between(MediaTime(0), MediaTime(u64::MAX));
+        assert_eq!(got.len(), 1, "only the in-range event is media-resolvable");
+        assert_eq!(got[0].event.id, Some(3));
+        assert!(matches!(
+            got[0].anchor,
+            EventAnchor::Media(MediaTime(900_000))
+        ));
         assert!(
-            media.0 < u64::from(u32::MAX),
-            "must not have wrapped into the far future: {media:?}"
-        );
-
-        // And it is genuinely NOT correct: the round trip does not recover
-        // the input, because the requested instant is unrepresentable.
-        let back = anchor.media_to_epoch_ms(media);
-        assert_ne!(
-            back, epoch_ms,
-            "clamping is lossy by construction — this asserts the honest \
-             claim (safe) rather than the false one (correct)"
-        );
-        assert_eq!(
-            back,
-            anchor.utc_epoch_ms - 10_000,
-            "clamped media time 0 maps back to the timeline origin (10 s \
-             before the anchor), not to the requested instant"
+            trunk.events_between(MediaTime(0), MediaTime(1)).is_empty(),
+            "a pre-origin event must not be reported at the start of the stream"
         );
     }
 
@@ -4530,6 +4720,118 @@ mod tests {
             Duration::from_millis(200),
             part_index == 0,
         )
+    }
+
+    /// r06-O1: part lookups touch only the requested segment's own parts,
+    /// never the whole ring. 4_000 resident parts (1_000 segments x 4); the
+    /// newest segment's lookups must examine at most its own 4 parts. The
+    /// work counter is `PartLog::visits`, incremented at the single point
+    /// every lookup dereferences a ring entry. Bite-check: replacing the
+    /// two `PartLog` lookups with the old full-ring `iter().filter`/`find`
+    /// scan (counting each examined entry) makes this fail at ~4_000.
+    #[test]
+    fn part_lookups_scan_only_their_own_segment_not_the_ring() {
+        use core::sync::atomic::Ordering;
+        const SEGMENTS: u32 = 1_000;
+        const PARTS_PER_SEGMENT: u32 = 4;
+        let ring = usize::try_from(SEGMENTS * PARTS_PER_SEGMENT).unwrap();
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(ring)));
+        let writer = trunk.segment_writer().unwrap();
+        for seg in 0..SEGMENTS {
+            for part in 0..PARTS_PER_SEGMENT {
+                writer.publish_part(part_entry(
+                    u8::try_from((seg + part) % 251).unwrap(),
+                    seg,
+                    part,
+                ));
+            }
+        }
+        assert_eq!(trunk.part_len(), ring);
+
+        let visits = || {
+            trunk
+                .lock_state()
+                .parts
+                .entries
+                .visits
+                .load(Ordering::Relaxed)
+        };
+        let before = visits();
+        let newest = SEGMENTS - 1;
+        let parts = trunk.parts_in_segment(newest);
+        assert_eq!(
+            parts.iter().map(|p| p.part_index).collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
+        assert_eq!(visits() - before, 4, "parts_in_segment work units");
+
+        let before = visits();
+        let bytes = trunk.part_bytes(newest, 3).expect("newest part resident");
+        assert_eq!(
+            bytes.as_ref(),
+            &[u8::try_from((newest + 3) % 251).unwrap(); 8]
+        );
+        assert!(
+            visits() - before <= 4,
+            "part_bytes must touch at most its own segment's parts, touched {}",
+            visits() - before
+        );
+        // A segment that was never published touches nothing.
+        let before = visits();
+        assert!(trunk.part_bytes(SEGMENTS + 5, 0).is_none());
+        assert!(trunk.parts_in_segment(SEGMENTS + 5).is_empty());
+        assert_eq!(visits() - before, 0);
+        // Index keys are bounded by the resident segments: a 4_000-part
+        // ring of 4-part segments holds exactly 1_000 distinct keys.
+        assert_eq!(trunk.lock_state().parts.by_segment.len(), 1_000);
+        // Publish one more segment: the oldest segment's key is evicted
+        // part by part, never left dangling.
+        for part in 0..PARTS_PER_SEGMENT {
+            writer.publish_part(part_entry(1, SEGMENTS, part));
+        }
+        let state = trunk.lock_state();
+        assert_eq!(state.parts.by_segment.len(), 1_000);
+        assert!(!state.parts.by_segment.contains_key(&0));
+    }
+
+    /// The index must follow eviction exactly: after the ring wraps, evicted
+    /// parts are gone, a partly-evicted segment reports only its survivors
+    /// (publish order), a reused `segment_number` returns both runs with the
+    /// newest winning `part_bytes`, and the index never outgrows the ring.
+    #[test]
+    fn part_index_tracks_eviction_and_reused_segment_numbers() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(5)));
+        let writer = trunk.segment_writer().unwrap();
+        // Ring of 5: (7,0) (7,1) (7,2) (8,0) (8,1) ...
+        for (seg, part, byte) in [(7, 0, 10), (7, 1, 11), (7, 2, 12), (8, 0, 20), (8, 1, 21)] {
+            writer.publish_part(part_entry(byte, seg, part));
+        }
+        // ... two more evict (7,0) and (7,1); then segment 7 is REUSED.
+        writer.publish_part(part_entry(22, 8, 2));
+        writer.publish_part(part_entry(99, 7, 2));
+        assert_eq!(trunk.part_bytes(7, 0), None, "evicted");
+        assert_eq!(trunk.part_bytes(7, 1), None, "evicted");
+        let seven: Vec<(u32, u8)> = trunk
+            .parts_in_segment(7)
+            .iter()
+            .map(|p| (p.part_index, p.bytes[0]))
+            .collect();
+        assert_eq!(
+            seven,
+            vec![(2, 12), (2, 99)],
+            "survivor then the reused run"
+        );
+        assert_eq!(
+            trunk.part_bytes(7, 2).unwrap().as_ref(),
+            &[99u8; 8],
+            "newest publish of the pair wins"
+        );
+        assert_eq!(trunk.part_len(), 5);
+        let state = trunk.lock_state();
+        let indexed: usize = state.parts.by_segment.values().map(|v| v.len()).sum();
+        assert_eq!(indexed, 5, "index holds exactly the resident entries");
+        assert_eq!(state.parts.entries.iter().count(), 5);
+        assert_eq!(state.parts.by_segment.len(), 2, "emptied keys are removed");
     }
 
     /// The LL-HLS property this whole step exists for: a part must be

@@ -49,62 +49,35 @@
 //! unreachable-branch problem into whichever one trait was chosen as the
 //! "real" shape.
 //!
-//! # `ServedEgress::resolve` does not take `&Trunk` — a correction found
-//! before Step 4, the same way ingress's `dial()` was
+//! # `ServedEgress::resolve` does not take `&Trunk`
 //!
-//! The architecture spec's own pseudocode (§3) sketches
-//! `fn resolve(req, &Trunk) -> EgressResponse`. Reading
-//! `hls-runtime/src/server/` (the engine this trait exists to receive,
-//! per the implementation plan's Step 4) before writing this trait surfaced
-//! the same class of problem that reading `rtsp-runtime` before writing
-//! [`crate::ingress::Dialer::dial`] surfaced: the pseudocode names a
-//! parameter that the actual data structure cannot make good on.
+//! The architecture spec's pseudocode (§3) sketches
+//! `fn resolve(req, &Trunk) -> EgressResponse`. This trait deliberately takes
+//! no `Trunk` parameter: a `ServedEgress` implementation is constructed with
+//! (or otherwise obtains) the `Arc<Trunk>` it serves, so the trait stays the
+//! same shape for implementations that resolve from a `Trunk` and for ones
+//! that resolve from something else.
 //!
-//! **What `&Trunk` can answer today, `&self`-shaped, no cursor required:**
-//! [`crate::Trunk::events_between`]/[`crate::Trunk::events_in_segment`] (the
-//! event log's snapshot queries) and the four `*_len()` diagnostics. That is
-//! genuinely a "resolve a request against shared state" shape, and a
-//! `ServedEgress` implementation is free to call them.
+//! **What a `&Trunk` answers directly, `&self`-shaped, no cursor required:**
+//! - [`crate::Trunk::part_bytes`] — "what bytes are part 3.2";
+//! - [`crate::Trunk::parts_in_segment`] — the live parts of a segment;
+//! - [`crate::Trunk::last_closed_segment`] — "does segment 9 exist yet";
+//! - [`crate::Trunk::events_between`]/[`crate::Trunk::events_in_segment`] —
+//!   the event log's snapshot queries;
+//! - [`crate::Trunk::time_anchor`] and the `*_len()` diagnostics.
 //!
-//! **What it cannot answer:** "does segment 9 exist", "what bytes are
-//! part 3.2", or anything else a `ServedEgress` implementing LL-HLS/DASH/
-//! catch-up actually needs to resolve most requests. The segment log has
-//! exactly one reader shape — [`crate::trunk::SegmentCursor`], a **moving**,
-//! **stateful**, single-consumer position — with no companion snapshot query
-//! the way the event log has `events_between`. So a `resolve()` that took
-//! `&Trunk` would, for every real implementation, immediately have to ignore
-//! it and consult a second, self-maintained cache instead — which is exactly
-//! what `hls_runtime::server::MediaStore` already does in production: it
-//! is fed by `add_segment`/`add_part`/`set_init` (called by whatever drains
-//! the segmenter) and *separately* answers `resolve_playlist`/
-//! `resolve_resource` from that already-synced state. `MediaStore` is
-//! two-sided — a write side and a read side — and no version of `&Trunk`
-//! passed into `resolve()` changes that; it would just be a parameter every
-//! real implementation quietly declines to use for the one thing it is
-//! there for.
+//! The segment log's own cursor, [`crate::trunk::SegmentCursor`], is the
+//! moving, stateful, single-consumer reader; the snapshot queries above are
+//! the random-access side, so a `resolve()` needs no second, self-maintained
+//! cache of the `Trunk`'s data — the `Trunk` is the single copy (it replaced
+//! the rolling-window `MediaStore` that `hls-runtime` used to keep).
 //!
-//! So this trait states the honest shape: **`resolve` takes no `Trunk` at
-//! all.** A `ServedEgress` implementation is constructed with (or otherwise
-//! obtains) whatever [`crate::trunk::SegmentCursor`]/[`crate::trunk::SampleCursor`]
-//! it needs, keeps its own resolvable window in sync by draining them
-//! (Step 4/5's job, not this trait's), and `resolve` only ever reads that
-//! already-synced state. This is not a smaller trait than the spec sketched —
-//! it is the same trait with a parameter removed that no implementation
-//! could have honestly used.
-//!
-//! **A second gap in the same area, recorded rather than solved:**
-//! `MediaStore::listen()` gives its adapter a wakeup future
-//! (`event_listener`) so a blocked LL-HLS request does not have to
-//! busy-poll — [`Trunk`](crate::Trunk) has no reader-side notify primitive at
-//! all today (every cursor is a synchronous, non-blocking `poll()`; the only
-//! `Condvar` in `trunk.rs` wakes a **writer** parked on
-//! [`crate::trunk::ArchiveOverrun::StallIngest`], not a reader waiting on new
-//! data). An adapter built on this trait must therefore poll-with-backoff,
-//! bounded by [`AwaitPolicy`], rather than truly sleeping on a wake channel —
-//! acceptable (bounded, correct, just less efficient than `event_listener`),
-//! but Step 4 should decide deliberately whether to add a `Trunk`-level
-//! notify primitive or accept the poll loop, rather than discovering the gap
-//! mid-port.
+//! **Blocking reload (reader-side notify):** [`crate::Trunk::listen`] returns
+//! a [`crate::trunk::ProgressListener`], registered *before* the caller
+//! re-checks its condition so a publish racing the check is never missed. An
+//! adapter turns a returned [`EgressResponse::Await`] into a real wait on
+//! that listener (bounded by [`AwaitPolicy`] and the trunk's waiter cap)
+//! rather than a poll-with-backoff loop.
 //!
 //! # `EgressResponse::Await` is bounded, by construction, not by convention
 //!

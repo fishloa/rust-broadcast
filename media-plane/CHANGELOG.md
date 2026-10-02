@@ -51,6 +51,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `RetentionDriver::locate`) resolve ambiguously. Use
   `SegmentWriter::next_sequence_number` to pick a valid number after a
   re-issue (issue #1082).
+- `ReconnectPolicy::max_attempts` and `ReconnectPolicy::new` now take
+  `NonZeroU32` instead of `u32`: the zero policy used to `assert!`-panic in
+  the constructor, a hazard for a value that arrives from a config file; it
+  is now unrepresentable (#1082).
+- **Behaviour change:** `ByteMerge` `MergePolicy::Failover` now fails over
+  from a primary that never spoke: the silence clock runs from the first
+  message of either named source (`primary` or `secondary`; a third source
+  does not count) until `primary` has spoken, so `next_deadline` is armed
+  and, once `silence_timeout` elapses, `on_deadline` switches to `secondary`
+  and its traffic is forwarded. Previously secondary was dropped forever
+  and `next_deadline` stayed `None` (#1082).
 
 ### Fixed
 - `RetentionDriver::locate` no longer reports a produced-but-not-yet-drained
@@ -98,6 +109,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `N`, silently dropping its `#EXT-X-PART` tags from a served playlist.
   Now a plain filter over the whole ring, matched by `segment_number`
   alone.
+- `ByteMerge::feed` no longer mutates failover state for a message it
+  rejects with `QueueFull`: a rejected primary message used to reset the
+  silence clock and reclaim the active source, so back-pressure on a
+  discarded primary stream prevented failover (#1082).
+- A `splice_schedule`-style `EventAnchor::Utc` instant earlier than the
+  `TimeAnchor`'s timeline origin (or beyond `u64` ticks) is no longer
+  clamped to a fabricated media time `0`/`u64::MAX`: the entry stays
+  `EventAnchor::Utc` (unresolved), so a stale or replayed schedule can no
+  longer appear "at the start of the stream" in `events_between` /
+  `events_in_segment` (#1082).
+- `egress` module docs no longer claim `Trunk` has no reader-side notify
+  primitive or snapshot queries for parts/segments; they now point at
+  `Trunk::listen`, `part_bytes`, `parts_in_segment` and `last_closed_segment`
+  (#1082).
+- `Trunk::part_bytes`/`Trunk::parts_in_segment` no longer scan the whole
+  part ring under the trunk's state mutex on every call: a per-segment
+  position index makes each touch only the requested segment's own parts,
+  so a viewer's request rate no longer scales the ingest writer's lock hold
+  time with `part_capacity` (#1082).
+- Cursor ring indexing no longer uses wrapping `as usize` casts on
+  `consumed - base` (checked `ring_offset`), and two `expect`s on pin lookups
+  in `SegmentCursor::poll` became non-panicking `if let`s (#1134, #1082).
 
 ## [0.4.1] - 2026-08-16
 

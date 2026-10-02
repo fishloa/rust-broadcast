@@ -107,10 +107,14 @@ pub enum MergePolicy {
     /// one that arrives close to the timeout — resets the silence clock, so
     /// a merge does not switch away from a primary that is merely running
     /// late rather than actually down. Before `primary` has produced its
-    /// first message at all, the merge treats it as active by default and
-    /// reports no deadline: a fresh merge has no evidence primary is
-    /// unhealthy, only that it has not started yet, and those are not the
-    /// same thing.
+    /// first message at all, the silence clock runs from the arrival time of
+    /// the first message either named source (`primary` or `secondary`) fed the merge (a sans-IO merge has no
+    /// construction instant of its own), so a primary that is down from the
+    /// start is failed over from exactly like one that went quiet later:
+    /// the merge reports no deadline only until the very first message
+    /// arrives, because until then there is nothing to forward either way.
+    /// Secondary traffic arriving inside that initial window is dropped,
+    /// exactly as it is while a live primary is within its timeout.
     ///
     /// # Switch-back rule
     ///
@@ -166,6 +170,10 @@ pub struct ByteMerge {
     /// Last arrival time seen from each source, indexed by `SourceId.0`.
     /// Fixed-size at construction — bounded per-source state (module docs).
     last_seen: Vec<Option<Timestamp>>,
+    /// Arrival time of the first message from a source *named by the
+    /// `Failover` policy* (`primary` or `secondary`; accepted or not). The `Failover` silence clock's origin
+    /// while `primary` has not yet been heard from.
+    first_seen: Option<Timestamp>,
     /// Which source `Failover` currently forwards; meaningless (unused)
     /// under `FirstArrival`.
     active: usize,
@@ -178,11 +186,14 @@ impl ByteMerge {
     /// applying `policy`, with its output queue bounded to `max_queued`
     /// messages.
     ///
+    /// # Panics
+    ///
     /// Panics if `num_sources == 0`, `max_queued == 0`, or (for
     /// [`MergePolicy::Failover`]) `primary`/`secondary` are not both within
     /// `0..num_sources` — all three are construction-time configuration
     /// mistakes, not remote input, so they panic rather than returning a
-    /// `Result` a caller could ignore.
+    /// `Result` a caller could ignore. Validate values that originate in a
+    /// config file before calling.
     pub fn new(policy: MergePolicy, num_sources: usize, max_queued: usize) -> Self {
         assert!(num_sources > 0, "ByteMerge num_sources must be > 0");
         assert!(max_queued > 0, "ByteMerge max_queued must be > 0");
@@ -202,6 +213,7 @@ impl ByteMerge {
             policy,
             num_sources,
             last_seen: vec![None; num_sources],
+            first_seen: None,
             active,
             queue: VecDeque::new(),
             max_queued,
@@ -234,7 +246,11 @@ impl ByteMerge {
     ///
     /// Returns [`MergeError::UnknownSource`] if `source` is out of range, or
     /// [`MergeError::QueueFull`] if the output queue is already at its bound
-    /// — in both cases nothing from this call is buffered.
+    /// — in both cases nothing from this call is buffered **and no state
+    /// changes**: a rejected message does not reset the `Failover` silence
+    /// clock or reclaim the active source (otherwise a primary whose traffic
+    /// is being discarded under back-pressure would keep the merge from ever
+    /// failing over).
     pub fn feed(&mut self, source: SourceId, msg: Bytes, at: Timestamp) -> Result<(), MergeError> {
         if source.0 >= self.num_sources {
             return Err(MergeError::UnknownSource {
@@ -242,35 +258,47 @@ impl ByteMerge {
                 num_sources: self.num_sources,
             });
         }
-        self.last_seen[source.0] = Some(at);
 
-        let forward = match &self.policy {
-            MergePolicy::FirstArrival => true,
+        // Decide first, mutate after: a message rejected for `QueueFull`
+        // must leave `last_seen`/`first_seen`/`active` untouched.
+        let (forward, new_active) = match &self.policy {
+            MergePolicy::FirstArrival => (true, self.active),
             MergePolicy::Failover {
                 primary, secondary, ..
             } => {
                 if source.0 == primary.0 {
                     // Switch-back rule: primary reclaims active status the
                     // instant it produces a message.
-                    self.active = primary.0;
-                    true
+                    (true, primary.0)
                 } else if source.0 == secondary.0 {
-                    self.active == secondary.0
+                    (self.active == secondary.0, self.active)
                 } else {
                     // Neither named source: Failover only defines behaviour
                     // for its two named sources, so a third source's traffic
                     // is silently uninvolved rather than an error.
-                    false
+                    (false, self.active)
                 }
             }
         };
 
+        if forward && self.queue.len() >= self.max_queued {
+            return Err(MergeError::QueueFull {
+                max_queued: self.max_queued,
+            });
+        }
+        self.last_seen[source.0] = Some(at);
+        // Only the two named sources arm the clock: a third source's
+        // traffic is "uninvolved" under `Failover`, so it must not start
+        // `primary`'s silence clock either.
+        if let MergePolicy::Failover {
+            primary, secondary, ..
+        } = &self.policy
+            && (source.0 == primary.0 || source.0 == secondary.0)
+        {
+            self.first_seen.get_or_insert(at);
+        }
+        self.active = new_active;
         if forward {
-            if self.queue.len() >= self.max_queued {
-                return Err(MergeError::QueueFull {
-                    max_queued: self.max_queued,
-                });
-            }
             self.queue.push_back((msg, at));
         }
         Ok(())
@@ -286,7 +314,7 @@ impl ByteMerge {
     /// [`MergePolicy::Failover`] silence timeout.
     ///
     /// `None` under [`MergePolicy::FirstArrival`] (arrival-driven, no clock
-    /// needed) and under `Failover` before `primary` has produced its first
+    /// needed) and under `Failover` before any source has produced a first
     /// message (see that variant's docs).
     pub fn next_deadline(&self) -> Option<Timestamp> {
         match &self.policy {
@@ -295,8 +323,16 @@ impl ByteMerge {
                 primary,
                 silence_timeout,
                 ..
-            } => self.last_seen[primary.0].map(|t| t.saturating_add(*silence_timeout)),
+            } => self
+                .primary_clock_origin(primary.0)
+                .map(|t| t.saturating_add(*silence_timeout)),
         }
+    }
+
+    /// Where `primary`'s silence clock starts: its last message, or, if it
+    /// has never spoken, the first message any source delivered.
+    fn primary_clock_origin(&self, primary: usize) -> Option<Timestamp> {
+        self.last_seen[primary].or(self.first_seen)
     }
 
     /// Drive time-based transitions: under [`MergePolicy::Failover`], switch
@@ -308,7 +344,7 @@ impl ByteMerge {
             secondary,
             silence_timeout,
         } = &self.policy
-            && let Some(last) = self.last_seen[primary.0]
+            && let Some(last) = self.primary_clock_origin(primary.0)
             && now.saturating_sub(last) >= *silence_timeout
         {
             self.active = secondary.0;
@@ -520,6 +556,234 @@ mod tests {
             drained += 1;
         }
         assert_eq!(drained, max_queued);
+    }
+
+    /// W4: a primary that is down from the start must still be failed over
+    /// from. Reverting `primary_clock_origin`'s `first_seen` fallback makes
+    /// `next_deadline` `None` and secondary traffic dropped forever.
+    #[test]
+    fn failover_covers_a_primary_that_never_spoke() {
+        let primary = SourceId(0);
+        let secondary = SourceId(1);
+        let mut merge = ByteMerge::new(
+            MergePolicy::Failover {
+                primary,
+                secondary,
+                silence_timeout: Duration::from_millis(100),
+            },
+            2,
+            8,
+        );
+        assert_eq!(merge.next_deadline(), None, "nothing seen yet");
+        merge
+            .feed(
+                secondary,
+                Bytes::from_static(b"s0"),
+                Timestamp::from_nanos(1_000_000),
+            )
+            .unwrap();
+        assert_eq!(merge.poll(), None, "inside the initial window: dropped");
+        assert_eq!(
+            merge.next_deadline(),
+            Some(Timestamp::from_nanos(101_000_000))
+        );
+        merge.on_deadline(Timestamp::from_nanos(101_000_000));
+        merge
+            .feed(
+                secondary,
+                Bytes::from_static(b"s1"),
+                Timestamp::from_nanos(102_000_000),
+            )
+            .unwrap();
+        assert_eq!(
+            merge.poll(),
+            Some((
+                Bytes::from_static(b"s1"),
+                Timestamp::from_nanos(102_000_000)
+            ))
+        );
+    }
+
+    /// W5: a primary message rejected with `QueueFull` must not reset the
+    /// silence clock, and a rejected secondary-side flip must not occur.
+    #[test]
+    fn rejected_message_does_not_mutate_failover_state() {
+        let primary = SourceId(0);
+        let secondary = SourceId(1);
+        let mut merge = ByteMerge::new(
+            MergePolicy::Failover {
+                primary,
+                secondary,
+                silence_timeout: Duration::from_millis(100),
+            },
+            2,
+            1,
+        );
+        merge
+            .feed(primary, Bytes::from_static(b"p0"), Timestamp::from_nanos(0))
+            .unwrap();
+        // Queue (cap 1) is now full; every further primary message is rejected.
+        let err = merge
+            .feed(
+                primary,
+                Bytes::from_static(b"p1"),
+                Timestamp::from_nanos(90_000_000),
+            )
+            .unwrap_err();
+        assert_eq!(err, MergeError::QueueFull { max_queued: 1 });
+        assert_eq!(
+            merge.next_deadline(),
+            Some(Timestamp::from_nanos(100_000_000)),
+            "rejected message must not have moved the silence clock"
+        );
+        // Drain; at t=100ms primary (last accepted at 0) is silent -> secondary.
+        assert_eq!(
+            merge.poll().map(|(b, _)| b),
+            Some(Bytes::from_static(b"p0"))
+        );
+        merge.on_deadline(Timestamp::from_nanos(100_000_000));
+        merge
+            .feed(
+                secondary,
+                Bytes::from_static(b"s0"),
+                Timestamp::from_nanos(100_000_001),
+            )
+            .unwrap();
+        assert_eq!(
+            merge.poll(),
+            Some((
+                Bytes::from_static(b"s0"),
+                Timestamp::from_nanos(100_000_001)
+            ))
+        );
+        // Rejected primary return must not reclaim active either.
+        merge
+            .feed(
+                secondary,
+                Bytes::from_static(b"s1"),
+                Timestamp::from_nanos(100_000_002),
+            )
+            .unwrap();
+        let err = merge
+            .feed(
+                primary,
+                Bytes::from_static(b"p-back"),
+                Timestamp::from_nanos(100_000_003),
+            )
+            .unwrap_err();
+        assert_eq!(err, MergeError::QueueFull { max_queued: 1 });
+        assert_eq!(
+            merge.poll().map(|(b, _)| b),
+            Some(Bytes::from_static(b"s1"))
+        );
+        merge
+            .feed(
+                secondary,
+                Bytes::from_static(b"s2"),
+                Timestamp::from_nanos(100_000_004),
+            )
+            .unwrap();
+        assert_eq!(
+            merge.poll(),
+            Some((
+                Bytes::from_static(b"s2"),
+                Timestamp::from_nanos(100_000_004)
+            )),
+            "rejected primary message must not have reclaimed active"
+        );
+    }
+
+    fn failover_merge() -> ByteMerge {
+        ByteMerge::new(
+            MergePolicy::Failover {
+                primary: SourceId(0),
+                secondary: SourceId(1),
+                silence_timeout: Duration::from_millis(100),
+            },
+            3,
+            8,
+        )
+    }
+
+    fn feed_at(m: &mut ByteMerge, src: usize, tag: &'static [u8], ns: u64) {
+        m.feed(
+            SourceId(src),
+            Bytes::from_static(tag),
+            Timestamp::from_nanos(ns),
+        )
+        .unwrap();
+    }
+
+    fn polled(m: &mut ByteMerge) -> Option<&'static [u8]> {
+        m.poll().map(|(b, _)| match &b[..] {
+            b"p0" => &b"p0"[..],
+            b"p1" => b"p1",
+            b"s0" => b"s0",
+            b"s1" => b"s1",
+            b"x" => b"x",
+            _ => b"?",
+        })
+    }
+
+    /// (a) primary speaks first: its own `last_seen` governs, not the
+    /// (earlier) secondary arrival.
+    #[test]
+    fn primary_last_seen_wins_over_first_seen() {
+        let mut m = failover_merge();
+        feed_at(&mut m, 1, b"s0", 0); // dropped, arms first_seen = 0
+        feed_at(&mut m, 0, b"p0", 90_000_000);
+        assert_eq!(polled(&mut m), Some(&b"p0"[..]));
+        assert_eq!(m.next_deadline(), Some(Timestamp::from_nanos(190_000_000)));
+        m.on_deadline(Timestamp::from_nanos(150_000_000));
+        feed_at(&mut m, 1, b"s1", 150_000_000);
+        assert_eq!(
+            polled(&mut m),
+            None,
+            "primary spoke at 90ms: not silent yet"
+        );
+    }
+
+    /// (b) primary starts late, inside the initial window, and reclaims.
+    #[test]
+    fn primary_starting_inside_the_initial_window_stays_active() {
+        let mut m = failover_merge();
+        feed_at(&mut m, 1, b"s0", 0);
+        assert_eq!(polled(&mut m), None);
+        feed_at(&mut m, 0, b"p0", 50_000_000);
+        assert_eq!(polled(&mut m), Some(&b"p0"[..]));
+        m.on_deadline(Timestamp::from_nanos(120_000_000));
+        feed_at(&mut m, 1, b"s1", 120_000_000);
+        assert_eq!(polled(&mut m), None, "clock restarted at primary's 50ms");
+    }
+
+    /// (c) switch-back after failing over from a never-spoken primary.
+    #[test]
+    fn primary_reclaims_after_failover_from_never_spoken() {
+        let mut m = failover_merge();
+        feed_at(&mut m, 1, b"s0", 0);
+        m.on_deadline(Timestamp::from_nanos(100_000_000));
+        feed_at(&mut m, 1, b"s1", 100_000_000);
+        assert_eq!(polled(&mut m), Some(&b"s1"[..]));
+        feed_at(&mut m, 0, b"p0", 110_000_000);
+        assert_eq!(polled(&mut m), Some(&b"p0"[..]));
+        feed_at(&mut m, 1, b"s0", 120_000_000);
+        assert_eq!(polled(&mut m), None, "primary reclaimed active");
+    }
+
+    /// (d) a third source's traffic must not arm the primary's clock.
+    #[test]
+    fn third_source_does_not_arm_the_failover_clock() {
+        let mut m = failover_merge();
+        feed_at(&mut m, 2, b"x", 0);
+        assert_eq!(m.next_deadline(), None);
+        m.on_deadline(Timestamp::from_nanos(1_000_000_000));
+        feed_at(&mut m, 1, b"s0", 1_000_000_000);
+        assert_eq!(polled(&mut m), None, "never failed over: nothing armed");
+        assert_eq!(
+            m.next_deadline(),
+            Some(Timestamp::from_nanos(1_100_000_000)),
+            "clock armed by the secondary's first message, not the third's"
+        );
     }
 
     #[test]
