@@ -151,6 +151,9 @@ impl CallerHandshake {
     /// Feeds an inbound control packet. Only meaningful while awaiting the
     /// Listener's INDUCTION or CONCLUSION response.
     ///
+    /// A duplicate INDUCTION response while awaiting the CONCLUSION response
+    /// is ignored (no output, no state change).
+    ///
     /// # Errors
     /// [`Error::UnexpectedControlPacket`] if `packet` is not a Handshake
     /// packet; [`Error::HandshakeOutOfSequence`] if fed outside those two
@@ -166,6 +169,16 @@ impl CallerHandshake {
         };
         match self.state {
             CallerHandshakeState::AwaitingInductionResponse => self.on_induction_response(hp),
+            // A duplicate INDUCTION response (the Listener answers every
+            // retransmitted INDUCTION, and a delayed first answer can arrive
+            // after the second) is not a protocol violation once the
+            // CONCLUSION is out: ignore it, keep waiting for the CONCLUSION
+            // response. It used to be judged Rogue and abort the handshake.
+            CallerHandshakeState::AwaitingConclusionResponse
+                if hp.handshake_type == HandshakeType::Induction =>
+            {
+                Ok(Vec::new())
+            }
             CallerHandshakeState::AwaitingConclusionResponse => self.on_conclusion_response(hp),
             _ => Err(Error::HandshakeOutOfSequence {
                 state: self.state.name(),
@@ -299,6 +312,13 @@ impl CallerHandshake {
             return Ok(vec![HandshakeOutput::Rejected(RejectionReason::Version)]);
         }
 
+        if hp.initial_seq_number > crate::packet::SEQ_NUMBER_MASK {
+            // Not a 31-bit sequence number (§3.1): it would seed the receive
+            // side out of range and stall the connection.
+            self.state = CallerHandshakeState::Rejected;
+            return Ok(vec![HandshakeOutput::Rejected(RejectionReason::Rogue)]);
+        }
+
         // Re-capture the Listener's Socket ID from the CONCLUSION itself, not the stale INDUCTION one — draft §4.3.1; libsrt interop.
         self.peer_socket_id = hp.srt_socket_id;
 
@@ -329,9 +349,10 @@ impl CallerHandshake {
         #[cfg(feature = "crypto")]
         let crypto_result: Option<handshake_sm::RecoveredSek> = match &crypto_cfg {
             Some(crypto) => match &parsed.km {
-                Some(echoed) if handshake_sm::verify_km_echo(crypto, echoed) => {
-                    Some((crypto.sek.clone(), crypto.salt))
-                }
+                Some(echoed) if handshake_sm::verify_km_echo(crypto, echoed) => Some((
+                    handshake_sm::SecretBytes::new(crypto.sek.clone()),
+                    crypto.salt,
+                )),
                 _ => {
                     self.state = CallerHandshakeState::Rejected;
                     return Ok(vec![HandshakeOutput::Rejected(RejectionReason::BadSecret)]);
@@ -348,6 +369,11 @@ impl CallerHandshake {
             latency_ms: handshake_sm::negotiate_latency_ms(self.config.latency_ms, &peer_msg),
             own_socket_id: self.own_socket_id,
             peer_socket_id: self.peer_socket_id,
+            mtu: self.config.mtu.min(hp.mtu),
+            max_flow_window_size: self
+                .config
+                .max_flow_window_size
+                .min(hp.max_flow_window_size),
             stream_id: self.config.stream_id.clone(),
             group: self.config.group,
             #[cfg(feature = "crypto")]
@@ -583,5 +609,121 @@ mod tests {
         let out = c.tick(); // retransmit #2 exceeds max_retries=1
         assert_eq!(out, vec![HandshakeOutput::TimedOut]);
         assert_eq!(c.state(), CallerHandshakeState::TimedOut);
+    }
+
+    /// r08-SRT-W10: a duplicate INDUCTION response after the CONCLUSION has
+    /// been sent is ignored; the handshake still completes on the real
+    /// CONCLUSION response (it used to be judged Rogue and abort).
+    #[test]
+    fn duplicate_induction_response_while_awaiting_conclusion_is_ignored() {
+        use crate::packet::handshake::build_extension_block;
+        let mut c = CallerHandshake::new(0xAAAA_BBBB, HandshakeConfig::default());
+        c.start().unwrap();
+        c.feed(&induction_response(0xC0FF_EE00, 0x1111_2222))
+            .unwrap();
+        assert_eq!(c.state(), CallerHandshakeState::AwaitingConclusionResponse);
+
+        let out = c
+            .feed(&induction_response(0xC0FF_EE00, 0x1111_2222))
+            .unwrap();
+        assert_eq!(out, Vec::new());
+        assert_eq!(c.state(), CallerHandshakeState::AwaitingConclusionResponse);
+
+        let hs_msg = HsExtMessage {
+            srt_version: 0x0105_0000,
+            srt_flags: HandshakeConfig::default().flags,
+            receiver_tsbpd_delay_ms: 120,
+            sender_tsbpd_delay_ms: 120,
+        };
+        let ext = build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap();
+        let response = ControlPacket::Handshake(HandshakePacket {
+            timestamp: 0,
+            dest_socket_id: 0xAAAA_BBBB,
+            version: HANDSHAKE_VERSION_5,
+            encryption_field: EncryptionField::NoEncryption,
+            extension_field: HandshakeExtensionFlags(0x0001),
+            initial_seq_number: 0,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type: HandshakeType::Conclusion,
+            srt_socket_id: 0x1111_2222,
+            syn_cookie: 0xC0FF_EE00,
+            peer_ip: [0; 4],
+            extensions: HandshakeExtensions(&ext),
+        });
+        let out = c.feed(&response).unwrap();
+        assert!(
+            out.iter()
+                .any(|o| matches!(o, HandshakeOutput::Connected(_)))
+        );
+        assert_eq!(c.state(), CallerHandshakeState::Connected);
+    }
+
+    fn conclusion_response_with(mtu: u32, mfw: u32, isn: u32) -> Vec<u8> {
+        use crate::packet::handshake::build_extension_block;
+        let hs_msg = HsExtMessage {
+            srt_version: 0x0105_0000,
+            srt_flags: HandshakeConfig::default().flags,
+            receiver_tsbpd_delay_ms: 120,
+            sender_tsbpd_delay_ms: 120,
+        };
+        let ext = build_extension_block(ExtensionType::HsRsp, &hs_msg.to_bytes()).unwrap();
+        let pkt = ControlPacket::Handshake(HandshakePacket {
+            timestamp: 0,
+            dest_socket_id: 0xAAAA_BBBB,
+            version: HANDSHAKE_VERSION_5,
+            encryption_field: EncryptionField::NoEncryption,
+            extension_field: HandshakeExtensionFlags(0x0001),
+            initial_seq_number: isn,
+            mtu,
+            max_flow_window_size: mfw,
+            handshake_type: HandshakeType::Conclusion,
+            srt_socket_id: 0x3333_4444,
+            syn_cookie: 0xC0FF_EE00,
+            peer_ip: [0; 4],
+            extensions: HandshakeExtensions(&ext),
+        });
+        let mut buf = alloc::vec![0u8; pkt.serialized_len()];
+        pkt.serialize_into(&mut buf).unwrap();
+        buf
+    }
+
+    fn caller_awaiting_conclusion() -> CallerHandshake {
+        let mut c = CallerHandshake::new(0xAAAA_BBBB, HandshakeConfig::default());
+        c.start().unwrap();
+        c.feed(&induction_response(0xC0FF_EE00, 0x1111_2222))
+            .unwrap();
+        c
+    }
+
+    /// §3.2.1: the smaller of both sides' MTU and Maximum Flow Window Size.
+    #[test]
+    fn negotiated_mtu_and_flow_window_are_the_smaller_of_both() {
+        for (peer_mtu, peer_mfw, want_mtu, want_mfw) in [
+            (576, 64, 576, 64),
+            (9000, 65_536, 1500, 8192),
+            (1500, 64, 1500, 64),
+        ] {
+            let mut c = caller_awaiting_conclusion();
+            c.feed_bytes(&conclusion_response_with(peer_mtu, peer_mfw, 5))
+                .unwrap();
+            let n = c.negotiated().expect("connected");
+            assert_eq!((n.mtu, n.max_flow_window_size), (want_mtu, want_mfw));
+        }
+    }
+
+    /// A listener ISN that is not a 31-bit sequence number is refused.
+    #[test]
+    fn a_peer_isn_wider_than_31_bits_is_rejected() {
+        let mut c = caller_awaiting_conclusion();
+        let out = c
+            .feed_bytes(&conclusion_response_with(1500, 8192, 0x8000_0000))
+            .unwrap();
+        assert_eq!(out, vec![HandshakeOutput::Rejected(RejectionReason::Rogue)]);
+        assert_eq!(c.state(), CallerHandshakeState::Rejected);
+        let mut c = caller_awaiting_conclusion();
+        c.feed_bytes(&conclusion_response_with(1500, 8192, 0x7FFF_FFFF))
+            .unwrap();
+        assert_eq!(c.state(), CallerHandshakeState::Connected);
     }
 }

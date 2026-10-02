@@ -54,6 +54,7 @@ use media_plane::trunk::{SampleCursorItem, Trunk};
 use tokio::time::sleep;
 use tokio_util::sync::CancellationToken;
 
+use egress::FlushOutcome;
 pub use egress::PushTransportEgress;
 
 use crate::config::PushFormat;
@@ -399,6 +400,12 @@ pub async fn drive_push<T: PushTransport>(
     /// runtime worker in that case (issue r07-C2).
     const NO_SLOT_BACKOFF: Duration = Duration::from_millis(50);
 
+    /// The longest one flush of queued messages may take before the push is
+    /// treated as failed and reconnected. A transport write can block on a
+    /// live peer that stopped consuming (SRT's `send` waits for flow-window
+    /// room), which must neither wedge the task nor outlive a cancel.
+    const PUSH_FLUSH_TIMEOUT: Duration = Duration::from_secs(10);
+
     let metrics = PushMetrics::default();
     let mut egress: Option<PushTransportEgress<T>> = None;
     let mut engine = ReconnectEngine::new(reconnect);
@@ -579,12 +586,26 @@ pub async fn drive_push<T: PushTransport>(
         // see `PushTransportEgress::flush_transmit`'s own doc); otherwise
         // sleep out the backoff (cancellation-aware).
         if let Some(e) = egress.as_mut() {
-            if let Err(SendMediaError::Transport(err)) = e.flush_transmit().await {
-                tracing::warn!(url = %log_url, error = %scrub(&err), "push send failed while flushing; reconnecting");
-                e.transport_mut().close();
-                egress = None;
-                negotiated_generation = None;
-                engine.on_disconnect();
+            match e.flush_transmit_bounded(&cancel, PUSH_FLUSH_TIMEOUT).await {
+                FlushOutcome::Flushed => {}
+                FlushOutcome::Cancelled => {
+                    e.transport_mut().close();
+                    return metrics;
+                }
+                outcome @ (FlushOutcome::TimedOut | FlushOutcome::Failed(_)) => {
+                    match &outcome {
+                        FlushOutcome::Failed(err) => {
+                            tracing::warn!(url = %log_url, error = %scrub(err), "push send failed while flushing; reconnecting");
+                        }
+                        _ => {
+                            tracing::warn!(url = %log_url, timeout = ?PUSH_FLUSH_TIMEOUT, "push send stalled; reconnecting");
+                        }
+                    }
+                    e.transport_mut().close();
+                    egress = None;
+                    negotiated_generation = None;
+                    engine.on_disconnect();
+                }
             }
         } else {
             let wait = engine.time_until_retry();

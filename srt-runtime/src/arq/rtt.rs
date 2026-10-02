@@ -57,28 +57,34 @@ impl RttEstimator {
 
     /// RTT, in microseconds — the ACK CIF's wire unit (§3.2.4, rule 31).
     pub fn rtt_us(&self) -> u32 {
-        self.rtt.as_micros().min(u128::from(u32::MAX)) as u32
+        u32::try_from(self.rtt.as_micros()).unwrap_or(u32::MAX)
     }
 
     /// RTTVar, in microseconds — the ACK CIF's wire unit (§3.2.4, rule 31).
     pub fn rtt_var_us(&self) -> u32 {
-        self.rtt_var.as_micros().min(u128::from(u32::MAX)) as u32
+        u32::try_from(self.rtt_var.as_micros()).unwrap_or(u32::MAX)
     }
 
     /// Feed one round-trip `sample` (rules 29-30's `rtt`), updating RTT and
     /// RTTVar from the *current* (pre-update) values.
     pub fn update(&mut self, sample: Duration) {
-        let rtt_us = self.rtt.as_micros() as i64;
-        let rtt_var_us = self.rtt_var.as_micros() as i64;
-        let sample_us = sample.as_micros() as i64;
+        // Saturating throughout: a sample is a measured (or peer-reported)
+        // duration, never trusted to be small.
+        let micros = |d: Duration| i64::try_from(d.as_micros()).unwrap_or(i64::MAX);
+        let rtt_us = micros(self.rtt);
+        let rtt_var_us = micros(self.rtt_var);
+        let sample_us = micros(sample);
 
         // rule 29: RTT = 7/8 * RTT + 1/8 * rtt
-        let new_rtt_us = (7 * rtt_us + sample_us) / 8;
+        let new_rtt_us = rtt_us.saturating_mul(7).saturating_add(sample_us) / 8;
         // rule 30: RTTVar = 3/4 * RTTVar + 1/4 * abs(RTT - rtt)
-        let new_rtt_var_us = (3 * rtt_var_us + (rtt_us - sample_us).abs()) / 4;
+        let new_rtt_var_us = rtt_var_us
+            .saturating_mul(3)
+            .saturating_add(rtt_us.saturating_sub(sample_us).saturating_abs())
+            / 4;
 
-        self.rtt = Duration::from_micros(new_rtt_us.max(0) as u64);
-        self.rtt_var = Duration::from_micros(new_rtt_var_us.max(0) as u64);
+        self.rtt = Duration::from_micros(u64::try_from(new_rtt_us.max(0)).unwrap_or(0));
+        self.rtt_var = Duration::from_micros(u64::try_from(new_rtt_var_us.max(0)).unwrap_or(0));
     }
 }
 

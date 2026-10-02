@@ -104,14 +104,16 @@ async fn two_concurrent_callers_do_not_cross_talk() {
         let send_a = tokio::spawn(async move {
             for p in &pa {
                 caller_a.send(p).await.expect("send a");
-                tokio::time::sleep(Duration::from_millis(2)).await;
+                // Interleave the two senders without any wall-clock wait.
+                tokio::task::yield_now().await;
             }
             caller_a
         });
         let send_b = tokio::spawn(async move {
             for p in &pb {
                 caller_b.send(p).await.expect("send b");
-                tokio::time::sleep(Duration::from_millis(2)).await;
+                // Interleave the two senders without any wall-clock wait.
+                tokio::task::yield_now().await;
             }
             caller_b
         });

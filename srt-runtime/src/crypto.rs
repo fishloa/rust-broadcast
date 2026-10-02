@@ -51,6 +51,7 @@ use ctr::Ctr128BE;
 use hmac::Hmac;
 use pbkdf2::pbkdf2;
 use sha1::Sha1;
+use zeroize::Zeroizing;
 
 use crate::error::{Error, Result};
 use crate::packet::EncryptionKeyField;
@@ -104,17 +105,23 @@ fn invalid_key_length(what: &'static str) -> Error {
 /// Encryption Field / the Key Material message's `KLen/4` — "the KEK has to
 /// be at least as long as the SEK", §6.1.4).
 ///
+/// The KEK is returned in a [`Zeroizing`] buffer, wiped when dropped.
+///
 /// # Errors
 /// [`Error::InvalidField`] if `klen` is not 16, 24, or 32.
-pub fn derive_kek(passphrase: &[u8], salt: &[u8; SALT_LEN], klen: usize) -> Result<Vec<u8>> {
+pub fn derive_kek(
+    passphrase: &[u8],
+    salt: &[u8; SALT_LEN],
+    klen: usize,
+) -> Result<Zeroizing<Vec<u8>>> {
     if !matches!(klen, 16 | 24 | 32) {
         return Err(invalid_key_length("KLen"));
     }
     // LSB(64, Salt): the low/least-significant 8 bytes of the 128-bit,
     // big-endian-wire Salt.
     let pbkdf2_salt = &salt[SALT_LEN - PBKDF2_SALT_LEN..];
-    let mut kek = vec![0u8; klen];
-    pbkdf2::<Hmac<Sha1>>(passphrase, pbkdf2_salt, PBKDF2_ITERATIONS, &mut kek)
+    let mut kek = Zeroizing::new(vec![0u8; klen]);
+    pbkdf2::<Hmac<Sha1>>(passphrase, pbkdf2_salt, PBKDF2_ITERATIONS, &mut kek[..])
         .expect("HMAC-SHA1 accepts any key length, so PBKDF2 cannot fail here");
     Ok(kek)
 }
@@ -176,11 +183,14 @@ pub fn wrap_sek(kek: &[u8], plaintext_keys: &[u8]) -> Result<([u8; 8], Vec<u8>)>
 /// [`Error::InvalidField`] if `kek.len()` is not 16, 24, or 32, if
 /// `wrapped.len()` is not a multiple of 8 bytes, or if the RFC 3394
 /// integrity check fails.
-pub fn unwrap_sek(kek: &[u8], icv: &[u8; 8], wrapped: &[u8]) -> Result<Vec<u8>> {
+///
+/// The plaintext SEK(s) come back in a [`Zeroizing`] buffer, wiped when
+/// dropped.
+pub fn unwrap_sek(kek: &[u8], icv: &[u8; 8], wrapped: &[u8]) -> Result<Zeroizing<Vec<u8>>> {
     let mut input = Vec::with_capacity(8 + wrapped.len());
     input.extend_from_slice(icv);
     input.extend_from_slice(wrapped);
-    let mut out = vec![0u8; wrapped.len()];
+    let mut out = Zeroizing::new(vec![0u8; wrapped.len()]);
     let bad_wrap = || Error::InvalidField {
         what: "AES key wrap",
         reason: "integrity check failed (wrong KEK / passphrase, or corrupt wire data)",
@@ -188,13 +198,13 @@ pub fn unwrap_sek(kek: &[u8], icv: &[u8; 8], wrapped: &[u8]) -> Result<Vec<u8>> 
     match kek.len() {
         16 => KekAes128::try_from(kek)
             .map_err(|_| invalid_key_length("KEK"))?
-            .unwrap(&input, &mut out),
+            .unwrap(&input, &mut out[..]),
         24 => KekAes192::try_from(kek)
             .map_err(|_| invalid_key_length("KEK"))?
-            .unwrap(&input, &mut out),
+            .unwrap(&input, &mut out[..]),
         32 => KekAes256::try_from(kek)
             .map_err(|_| invalid_key_length("KEK"))?
-            .unwrap(&input, &mut out),
+            .unwrap(&input, &mut out[..]),
         _ => return Err(invalid_key_length("KEK")),
     }
     .map_err(|_| bad_wrap())?;
@@ -563,7 +573,7 @@ mod tests {
         let (icv, wrapped) = wrap_sek(&kek, &plaintext).unwrap();
         assert_eq!(wrapped.len(), 32);
         let recovered = unwrap_sek(&kek, &icv, &wrapped).unwrap();
-        assert_eq!(recovered, plaintext);
+        assert_eq!(&recovered[..], &plaintext[..]);
         assert_eq!(&recovered[..16], &even_sek[..]);
         assert_eq!(&recovered[16..], &odd_sek[..]);
     }

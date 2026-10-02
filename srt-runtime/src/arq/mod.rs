@@ -25,7 +25,9 @@
 //!   ACKACK-driven RTT measurement (rules 4, 8, 11-14, 21-22, 26-30, 32).
 //!
 //! # Non-goals (explicit follow-ups, not curated as ARQ rules here)
-//! - TLPKTDROP fake-ACK skip handling (rule 13) — `srt-tsbpd.md` scope.
+//! - Deciding *when* to apply the TLPKTDROP fake-ACK skip (rule 13) is
+//!   `srt-tsbpd.md` scope: the receiver can skip a range, the integration layer
+//!   (the tokio adapter) decides when, and only if TLPKTDROP was negotiated.
 //! - RTO-based periodic retransmission without a NAK / congestion control
 //!   (§5, FileCC) — srt-arq.md is explicit that the RTO formula is
 //!   congestion-control scope, not curated there.
@@ -78,7 +80,8 @@ pub const NAK_INTERVAL_FLOOR: Duration = Duration::from_millis(20);
 /// does not need to remember any wrap-count itself, so plain truncation of
 /// the microsecond count into 32 bits is exactly "mod 2^32").
 pub(crate) fn duration_to_wire_us(d: Duration) -> u32 {
-    d.as_micros() as u32
+    // Keep exactly the low 32 bits: the wire field is "microseconds mod 2^32".
+    u32::try_from(d.as_micros() & u128::from(u32::MAX)).unwrap_or(0)
 }
 
 /// `NAKInterval = max((RTT + 4 * RTTVar) / 2, 20 ms)` (`specs/rules/srt-arq.md`

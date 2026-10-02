@@ -50,7 +50,9 @@ pub const KM_KK_BOTH: u8 = 0b11;
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
 pub enum KmKeyFlag {
-    /// `00b`: no SEK provided (spec: "invalid extension format").
+    /// `00b`: no SEK provided (spec: "invalid extension format") — decodable
+    /// from the 2-bit field, but [`KeyMaterial::parse`] and
+    /// [`KeyMaterial::serialize_into`] both refuse a message carrying it.
     NoSek,
     /// `01b`: even key provided.
     Even,
@@ -253,7 +255,12 @@ impl StreamEncapsulation {
 broadcast_common::impl_spec_display!(StreamEncapsulation, Reserved);
 
 /// Key Material message (`draft-sharabayko-srt-01` §3.2.2, Figures 10-11).
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+///
+/// [`core::fmt::Debug`] prints only the lengths of the wrapped keys and the
+/// ICV: with the Salt they are exactly what an offline attack on the
+/// passphrase needs, so they must not reach a log by way of `{:?}`
+/// (issue #1142).
+#[derive(Clone, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct KeyMaterial<'a> {
     /// Which SEK(s) [`Self::x_sek`] / [`Self::o_sek`] carry.
@@ -267,16 +274,49 @@ pub struct KeyMaterial<'a> {
     /// Stream encapsulation.
     pub se: StreamEncapsulation,
     /// Salt / IV (`SLen` bytes; `0` if absent, else 16 bytes / 128 bits per
-    /// the only length the spec defines).
+    /// the only length the spec defines). Not serialized by the `serde`
+    /// feature (with the wrapped keys it permits an offline passphrase
+    /// attack), nor shown by `Debug`.
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub salt: &'a [u8],
-    /// 64-bit AES key-wrap Integrity Check Vector.
+    /// 64-bit AES key-wrap Integrity Check Vector. Not serialized by `serde`.
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub icv: [u8; 8],
     /// The (even or odd, per [`Self::kk`]) SEK, wrapped. `KLen` bytes
-    /// (16/24/32, matching the handshake's `Encryption Field`).
+    /// (16/24/32, matching the handshake's `Encryption Field`). Not serialized
+    /// by `serde`.
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub x_sek: &'a [u8],
     /// The odd SEK, wrapped, present only when [`Self::kk`] is
-    /// [`KmKeyFlag::Both`] (same length as [`Self::x_sek`]).
+    /// [`KmKeyFlag::Both`] (same length as [`Self::x_sek`]). Not serialized by
+    /// `serde`.
+    #[cfg_attr(feature = "serde", serde(skip))]
     pub o_sek: Option<&'a [u8]>,
+}
+
+impl core::fmt::Debug for KeyMaterial<'_> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("KeyMaterial")
+            .field("kk", &self.kk)
+            .field("keki", &self.keki)
+            .field("cipher", &self.cipher)
+            .field("auth", &self.auth)
+            .field("se", &self.se)
+            .field(
+                "salt",
+                &format_args!("<redacted, {} bytes>", self.salt.len()),
+            )
+            .field("icv", &format_args!("<redacted, {} bytes>", self.icv.len()))
+            .field(
+                "x_sek",
+                &format_args!("<redacted, {} bytes>", self.x_sek.len()),
+            )
+            .field(
+                "o_sek",
+                &format_args!("<redacted, {} bytes>", self.o_sek.map_or(0, <[u8]>::len)),
+            )
+            .finish()
+    }
 }
 
 impl<'a> KeyMaterial<'a> {
@@ -330,6 +370,17 @@ impl<'a> KeyMaterial<'a> {
             });
         }
         let kk = KmKeyFlag::from_bits(kk_bits);
+        if kk == KmKeyFlag::NoSek {
+            // §3.2.2: `KK` = `00b` "No SEK is provided", which the draft
+            // itself calls an invalid extension format. Accepting it would
+            // admit a value `serialize_into` (which needs a `KLen`-sized
+            // xSEK) cannot reproduce — a parse the round-trip invariant
+            // cannot honour — so it is refused here and in serialize.
+            return Err(Error::InvalidKeyMaterial {
+                field: "KK",
+                reason: "00b (no SEK provided) is an invalid Key Material message (§3.2.2)",
+            });
+        }
 
         let keki = be32(bytes, 4);
 
@@ -395,16 +446,12 @@ impl<'a> KeyMaterial<'a> {
 
         let mut icv = [0u8; 8];
         icv.copy_from_slice(&wrap[0..8]);
-        let (x_sek, o_sek) = if n >= 1 {
-            let x = &wrap[8..8 + klen];
-            let o = if n == 2 {
-                Some(&wrap[8 + klen..8 + 2 * klen])
-            } else {
-                None
-            };
-            (x, o)
+        // `KK` is not `NoSek` (refused above), so there is always an xSEK.
+        let x_sek = &wrap[8..8 + klen];
+        let o_sek = if n == 2 {
+            Some(&wrap[8 + klen..8 + 2 * klen])
         } else {
-            (&wrap[8..8], None)
+            None
         };
 
         Ok(KeyMaterial {
@@ -454,6 +501,12 @@ impl<'a> KeyMaterial<'a> {
             return Err(Error::InvalidKeyMaterial {
                 field: "xSEK",
                 reason: "length must be 16, 24, or 32 bytes",
+            });
+        }
+        if self.kk == KmKeyFlag::NoSek {
+            return Err(Error::InvalidKeyMaterial {
+                field: "KK",
+                reason: "00b (no SEK provided) is an invalid Key Material message (§3.2.2)",
             });
         }
         let expects_both = self.kk == KmKeyFlag::Both;
@@ -644,5 +697,186 @@ mod tests {
         km.serialize_into(&mut buf).unwrap();
         let parsed = KeyMaterial::parse(&buf).unwrap();
         assert_eq!(parsed.salt, salt.as_slice());
+    }
+
+    /// r08-SRT-W13: `KK = 00b` ("no SEK provided", which §3.2.2 calls an
+    /// invalid format) used to parse to an empty xSEK that `serialize_into`
+    /// then refused — a parsed value that could not be re-serialized. It is
+    /// now refused at both ends, so no such value exists.
+    #[test]
+    fn kk_no_sek_is_refused_by_parse_and_serialize() {
+        let mut buf = alloc::vec![0u8; sample_even_only().serialized_len()];
+        sample_even_only().serialize_into(&mut buf).unwrap();
+        // Rewrite `KK` (low 2 bits of word 0) to 00b; keep the 16-byte xSEK so
+        // only the flag is wrong.
+        buf[3] &= !0b11;
+        assert!(matches!(
+            KeyMaterial::parse(&buf),
+            Err(Error::InvalidKeyMaterial { field: "KK", .. })
+        ));
+        // The same, with no xSEK bytes at all (the shape the old parser
+        // accepted): truncate to header + salt + ICV.
+        let short = &buf[..16 + 16 + 8];
+        assert!(matches!(
+            KeyMaterial::parse(short),
+            Err(Error::InvalidKeyMaterial { field: "KK", .. })
+        ));
+
+        let mut km = sample_even_only();
+        km.kk = KmKeyFlag::NoSek;
+        let mut out = alloc::vec![0u8; km.serialized_len()];
+        assert!(matches!(
+            km.serialize_into(&mut out),
+            Err(Error::InvalidKeyMaterial { field: "KK", .. })
+        ));
+    }
+
+    /// Every message `parse` accepts re-serializes byte-identically (the
+    /// symmetry the NoSek case broke), over all `KK` values and key lengths.
+    #[test]
+    fn every_accepted_message_reserializes_byte_identically() {
+        for kk in [KmKeyFlag::Even, KmKeyFlag::Odd, KmKeyFlag::Both] {
+            for klen in [16usize, 24, 32] {
+                let x = alloc::vec![0x5Au8; klen];
+                let o = alloc::vec![0xA5u8; klen];
+                let km = KeyMaterial {
+                    kk,
+                    keki: 3,
+                    cipher: Cipher::AesCtr,
+                    auth: KmAuth::None,
+                    se: StreamEncapsulation::MpegTsSrt,
+                    salt: &[7u8; 16],
+                    icv: [9; 8],
+                    x_sek: &x,
+                    o_sek: (kk == KmKeyFlag::Both).then_some(o.as_slice()),
+                };
+                let mut wire = alloc::vec![0u8; km.serialized_len()];
+                km.serialize_into(&mut wire).unwrap();
+                let parsed = KeyMaterial::parse(&wire).unwrap();
+                let mut again = alloc::vec![0u8; parsed.serialized_len()];
+                parsed.serialize_into(&mut again).unwrap();
+                assert_eq!(again, wire, "kk={kk:?} klen={klen}");
+            }
+        }
+    }
+
+    /// #1142: `{:?}` of a Key Material message shows the lengths of the wrapped
+    /// keys and ICV, never their bytes (with the salt they permit an offline
+    /// passphrase attack).
+    #[test]
+    fn debug_output_redacts_wrapped_keys() {
+        let km = KeyMaterial {
+            kk: KmKeyFlag::Both,
+            keki: 0,
+            cipher: Cipher::AesCtr,
+            auth: KmAuth::None,
+            se: StreamEncapsulation::MpegTsSrt,
+            salt: &[0xAA; 16],
+            icv: [0xBB; 8],
+            x_sek: &[0xEE; 16],
+            o_sek: Some(&[0xDD; 16]),
+        };
+        for dump in [alloc::format!("{km:?}"), alloc::format!("{km:#?}")] {
+            for needle in ["238", "187", "221", "170", "0xee", "ee,"] {
+                assert!(!dump.contains(needle), "{needle:?} leaked: {dump}");
+            }
+            assert!(
+                dump.contains("x_sek: <redacted, 16 bytes>")
+                    || dump.contains("x_sek: <redacted, 16 bytes>,"),
+                "{dump}"
+            );
+            assert!(dump.contains("o_sek: <redacted, 16 bytes>"), "{dump}");
+        }
+    }
+
+    /// Strings a leak of `bytes` would contain, in every form a `Debug` dump,
+    /// `{:x?}` dump or JSON array would print them (the first six bytes are a
+    /// long enough run to be unambiguous).
+    fn needles(bytes: &[u8]) -> alloc::vec::Vec<alloc::string::String> {
+        let head = &bytes[..6];
+        let join = |sep: &str| {
+            head.iter()
+                .map(|b| alloc::format!("{b}"))
+                .collect::<alloc::vec::Vec<_>>()
+                .join(sep)
+        };
+        alloc::vec![
+            join(", "),
+            join(","),
+            head.iter()
+                .map(|b| alloc::format!("{b:x}"))
+                .collect::<alloc::vec::Vec<_>>()
+                .join(", "),
+            head.iter().map(|b| alloc::format!("{b:02x}")).collect(),
+        ]
+    }
+
+    /// Distinctive, non-repeating key material (a fixed pseudo-random run, so
+    /// the needle cannot occur by chance in unrelated numbers).
+    fn distinctive(seed: u8, len: usize) -> alloc::vec::Vec<u8> {
+        let mut x = u32::from(seed)
+            .wrapping_mul(2_654_435_761)
+            .wrapping_add(12_345);
+        (0..len)
+            .map(|_| {
+                x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                u8::try_from(x >> 24).unwrap()
+            })
+            .collect()
+    }
+
+    /// #1142: neither `Debug` nor serde output carries the salt, the ICV or
+    /// either wrapped key.
+    #[test]
+    fn debug_and_serde_output_carry_no_key_bytes() {
+        let salt = distinctive(1, 16);
+        let x = distinctive(2, 32);
+        let o = distinctive(3, 32);
+        let icv: [u8; 8] = distinctive(4, 8).try_into().unwrap();
+        let km = KeyMaterial {
+            kk: KmKeyFlag::Both,
+            keki: 0,
+            cipher: Cipher::AesCtr,
+            auth: KmAuth::None,
+            se: StreamEncapsulation::MpegTsSrt,
+            salt: &salt,
+            icv,
+            x_sek: &x,
+            o_sek: Some(&o),
+        };
+        #[cfg(feature = "serde")]
+        let json: Option<alloc::string::String> = {
+            let json = serde_json::to_string(&km).expect("serialize");
+            assert!(
+                json.contains("kk"),
+                "the non-secret fields are still serialized"
+            );
+            Some(json)
+        };
+        #[cfg(not(feature = "serde"))]
+        let json: Option<alloc::string::String> = None;
+        let dumps: alloc::vec::Vec<alloc::string::String> = [
+            alloc::format!("{km:?}"),
+            alloc::format!("{km:#?}"),
+            alloc::format!("{km:x?}"),
+        ]
+        .into_iter()
+        .chain(json)
+        .collect();
+        for (name, secret) in [
+            ("salt", &salt[..]),
+            ("icv", &icv[..]),
+            ("x_sek", &x[..]),
+            ("o_sek", &o[..]),
+        ] {
+            for needle in needles(secret) {
+                for dump in &dumps {
+                    assert!(
+                        !dump.contains(&needle),
+                        "{name} leaked as {needle:?} in {dump}"
+                    );
+                }
+            }
+        }
     }
 }

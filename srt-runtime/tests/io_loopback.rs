@@ -69,8 +69,6 @@ async fn loopback_call_to_recv() {
 
         for payload in &payloads {
             caller.send(payload).await.expect("caller send");
-            // Small delay to let the receiver process.
-            tokio::time::sleep(Duration::from_millis(5)).await;
         }
 
         // --- Receive all N payloads from the receiver ---

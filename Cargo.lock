@@ -3569,8 +3569,10 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "subtle",
  "thiserror 2.0.19",
  "tokio",
+ "zeroize",
 ]
 
 [[package]]

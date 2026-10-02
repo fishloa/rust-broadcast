@@ -92,6 +92,19 @@ pub struct PushTransportEgress<T: PushTransport> {
     outbound: VecDeque<Bytes>,
 }
 
+/// How a [`PushTransportEgress::flush_transmit_bounded`] ended.
+#[derive(Debug)]
+pub(crate) enum FlushOutcome {
+    /// Everything queued was written.
+    Flushed,
+    /// The cancellation token fired first.
+    Cancelled,
+    /// The write did not finish within the limit (a stalled peer).
+    TimedOut,
+    /// The transport reported a write failure.
+    Failed(Box<dyn std::error::Error + Send + Sync>),
+}
+
 impl<T: PushTransport> PushTransportEgress<T> {
     /// Wrap an already-connected `transport`. `unsatisfiable_reason` is the
     /// message [`NegotiationOutcome::Error`] carries when a proposed track
@@ -141,6 +154,29 @@ impl<T: PushTransport> PushTransportEgress<T> {
                 .map_err(|e| SendMediaError::Transport(Box::new(e)))?;
         }
         Ok(())
+    }
+
+    /// [`Self::flush_transmit`], but bounded: ends early when `cancel` fires
+    /// and gives up after `limit`. A transport write can block indefinitely
+    /// on a live peer that keeps the connection up but stops consuming
+    /// (SRT's `send` waits for flow-window room), and a driving loop that
+    /// only polled its cancellation token between passes would then never
+    /// notice a shutdown.
+    pub(crate) async fn flush_transmit_bounded(
+        &mut self,
+        cancel: &tokio_util::sync::CancellationToken,
+        limit: std::time::Duration,
+    ) -> FlushOutcome {
+        tokio::select! {
+            () = cancel.cancelled() => FlushOutcome::Cancelled,
+            r = tokio::time::timeout(limit, self.flush_transmit()) => match r {
+                Err(_) => FlushOutcome::TimedOut,
+                Ok(Ok(())) => FlushOutcome::Flushed,
+                Ok(Err(SendMediaError::Transport(err))) => FlushOutcome::Failed(err),
+                // Only transport failures end a connection (as before).
+                Ok(Err(_)) => FlushOutcome::Flushed,
+            },
+        }
     }
 
     /// `tracks` filtered to what `self.transport` can carry — the one
@@ -472,6 +508,177 @@ mod tests {
         assert!(
             !egress.transport.sent.is_empty(),
             "the real transport must have received the flushed bytes"
+        );
+    }
+
+    /// A transport whose writes never complete (a live peer that stopped
+    /// consuming).
+    #[derive(Default)]
+    struct HangingTransport;
+
+    #[async_trait]
+    impl PushTransport for HangingTransport {
+        /// Counts connects, so each test sees only its own.
+        type Config = std::sync::Arc<std::sync::atomic::AtomicUsize>;
+        type Error = FakeError;
+
+        async fn connect(_url: &str, config: &Self::Config) -> Result<Self, Self::Error> {
+            config.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(Self)
+        }
+
+        async fn send(&mut self, _data: &[u8]) -> Result<(), Self::Error> {
+            std::future::pending().await
+        }
+
+        fn close(&mut self) {}
+    }
+
+    fn egress_with_queued_message() -> PushTransportEgress<HangingTransport> {
+        let mut egress = PushTransportEgress::new(HangingTransport, "unreachable");
+        egress.negotiate(&[avc_spec(1)]);
+        egress
+            .send(&SampleCursorItem::Timed {
+                track_id: 1,
+                sample: sample(),
+            })
+            .expect("send");
+        assert!(!egress.outbound.is_empty());
+        egress
+    }
+
+    /// A stalled write ends promptly on cancellation instead of wedging the
+    /// push task (paused clock: no real waiting).
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_flush_is_cancellable() {
+        let mut egress = egress_with_queued_message();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let canceller = cancel.clone();
+        tokio::spawn(async move { canceller.cancel() });
+        let outcome = egress
+            .flush_transmit_bounded(&cancel, std::time::Duration::from_secs(3600))
+            .await;
+        assert!(matches!(outcome, FlushOutcome::Cancelled), "{outcome:?}");
+    }
+
+    /// A stalled write that nobody cancels times out, which `drive_push`
+    /// treats as a push failure (reconnect).
+    #[tokio::test(start_paused = true)]
+    async fn a_stalled_flush_times_out() {
+        let mut egress = egress_with_queued_message();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let outcome = egress
+            .flush_transmit_bounded(&cancel, std::time::Duration::from_secs(5))
+            .await;
+        assert!(matches!(outcome, FlushOutcome::TimedOut), "{outcome:?}");
+    }
+
+    /// A healthy flush is unaffected.
+    #[tokio::test]
+    async fn a_healthy_flush_completes_within_the_bound() {
+        let mut egress = PushTransportEgress::new(FakeTransport::default(), "unreachable");
+        egress.negotiate(&[avc_spec(1)]);
+        egress
+            .send(&SampleCursorItem::Timed {
+                track_id: 1,
+                sample: sample(),
+            })
+            .expect("send");
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let outcome = egress
+            .flush_transmit_bounded(&cancel, std::time::Duration::from_secs(5))
+            .await;
+        assert!(matches!(outcome, FlushOutcome::Flushed), "{outcome:?}");
+        assert!(egress.outbound.is_empty());
+    }
+
+    /// A `drive_push` whose transport write never completes (a live peer that
+    /// stopped consuming) is wired through the bounded flush: cancellation
+    /// ends the task promptly, and without cancellation the stall times out
+    /// and the task reconnects. Both used to wedge the task (cancellation was
+    /// only checked between passes, and the write had no timeout).
+    async fn stalled_push_trunk() -> (
+        std::sync::Arc<media_plane::trunk::Trunk>,
+        media_plane::trunk::TrunkWriter,
+    ) {
+        use std::num::NonZeroUsize;
+        let nz = |n| NonZeroUsize::new(n).unwrap();
+        let trunk = media_plane::trunk::Trunk::new(media_plane::trunk::TrunkConfig::new(
+            nz(64),
+            nz(64),
+            nz(64),
+            nz(64),
+            nz(64),
+        ));
+        let writer = trunk.writer().expect("the writer is free");
+        writer.set_tracks(vec![avc_spec(1)]);
+        (trunk, writer)
+    }
+
+    fn zero_backoff() -> crate::config::ReconnectPolicy {
+        crate::config::ReconnectPolicy {
+            initial_backoff_ms: 0,
+            max_backoff_ms: 0,
+            max_attempts: None,
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_push_stalled_on_a_live_peer_ends_promptly_on_cancel() {
+        let (trunk, writer) = stalled_push_trunk().await;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let task = tokio::spawn(crate::push::drive_push::<HangingTransport>(
+            trunk,
+            "push://stalled".to_string(),
+            std::sync::Arc::default(),
+            crate::config::PushFormat::Ts,
+            zero_backoff(),
+            cancel.clone(),
+        ));
+        // Let it connect (its cursor starts at the live edge), then publish a
+        // sample: it is queued and the write blocks.
+        for _ in 0..20 {
+            tokio::time::advance(std::time::Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
+        }
+        writer.publish(1, media_plane::trunk::RetentionClass::Timed, sample());
+        for _ in 0..20 {
+            tokio::time::advance(std::time::Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
+        }
+        assert!(!task.is_finished(), "still stuck in the stalled write");
+        cancel.cancel();
+        tokio::time::timeout(std::time::Duration::from_secs(1), task)
+            .await
+            .expect("cancel must end a push stalled in a write")
+            .expect("join");
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn a_push_stalled_on_a_live_peer_times_out_and_reconnects() {
+        let (trunk, writer) = stalled_push_trunk().await;
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let connects = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let task = tokio::spawn(crate::push::drive_push::<HangingTransport>(
+            trunk,
+            "push://stalled".to_string(),
+            std::sync::Arc::clone(&connects),
+            crate::config::PushFormat::Ts,
+            zero_backoff(),
+            cancel.clone(),
+        ));
+        // Well past the flush timeout, feeding one sample per step so every
+        // fresh connection has something to block on.
+        for _ in 0..300 {
+            writer.publish(1, media_plane::trunk::RetentionClass::Timed, sample());
+            tokio::time::advance(std::time::Duration::from_millis(100)).await;
+            tokio::task::yield_now().await;
+        }
+        cancel.cancel();
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(1), task).await;
+        assert!(
+            connects.load(std::sync::atomic::Ordering::SeqCst) >= 2,
+            "a stalled write must be treated as a push failure and reconnected"
         );
     }
 }

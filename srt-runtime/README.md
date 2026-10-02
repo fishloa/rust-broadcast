@@ -84,6 +84,22 @@ srt-runtime = "0.4"
 # optional: srt-runtime = { version = "0.4", features = ["tokio", "crypto"] }
 ```
 
+## Testing against libsrt
+
+The `tests/libsrt_*.rs` files use a real `srt-live-transmit` (libsrt) as an
+independent oracle — handshake, key exchange, loss recovery, shutdown, and real
+MPEG-TS media checked with `ffprobe` (which also needs `ffmpeg`). When a tool
+is missing a test **skips loudly** (run with `--nocapture` to see why): that is
+a no-op pass, not coverage. Set `SRT_REQUIRE_LIBSRT=1` to turn every such skip
+into a failure — do that wherever the tools are meant to be installed, such as
+CI:
+
+```sh
+SRT_REQUIRE_LIBSRT=1 cargo test -p srt-runtime --all-features --locked
+```
+
+The skip logic lives in one place, `tests/support/skip.rs`.
+
 ## License
 
 MIT OR Apache-2.0.

@@ -185,6 +185,9 @@ name = "serve_rtsp"
 name = "custom_scheme"
 
 [dev-dependencies]
+# `test-util`: the paused, manually advanced clock the push-flush tests use
+# instead of sleeping (feature-only; no new version in the lock).
+tokio            = { version = "1", features = ["test-util"] }
 base64           = "0.22"
 # Independent RFC 7616 Digest response verification in the mock auth server
 # (`testutil`, issue #663 "Finish client-side multi-scheme auth") — the

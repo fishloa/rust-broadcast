@@ -118,11 +118,15 @@ impl ListenerHandshake {
 
     /// Feeds an inbound control packet.
     ///
+    /// A repeated INDUCTION while awaiting the CONCLUSION re-sends the
+    /// INDUCTION response; a repeated CONCLUSION from the connected peer
+    /// (matching Socket ID and cookie) re-sends the CONCLUSION response.
+    ///
     /// # Errors
     /// [`Error::UnexpectedControlPacket`] if `packet` is not a Handshake
-    /// packet; [`Error::HandshakeOutOfSequence`] if fed outside
-    /// [`ListenerHandshakeState::Idle`] / [`ListenerHandshakeState::AwaitingConclusion`]
-    /// (a driver bug, not a peer failure).
+    /// packet; [`Error::HandshakeOutOfSequence`] if fed in a state that
+    /// expects nothing more (a driver bug, or a stranger's packet after the
+    /// handshake finished — not a peer failure).
     pub fn feed(&mut self, packet: &ControlPacket<'_>) -> Result<Vec<HandshakeOutput>> {
         let hp = match packet {
             ControlPacket::Handshake(hp) => hp,
@@ -134,7 +138,36 @@ impl ListenerHandshake {
         };
         match self.state {
             ListenerHandshakeState::Idle => self.on_induction(hp),
+            // The Caller retransmits its INDUCTION until it hears an answer,
+            // so a repeat here means the answer was lost: answer again (the
+            // INDUCTION response is deterministic — same cookie) instead of
+            // rejecting the Caller's second INDUCTION as Rogue.
+            ListenerHandshakeState::AwaitingConclusion
+                if hp.handshake_type == HandshakeType::Induction =>
+            {
+                self.on_induction(hp)
+            }
             ListenerHandshakeState::AwaitingConclusion => self.on_conclusion(hp),
+            // The Caller retransmits its CONCLUSION until it hears our
+            // response; if that response was lost the Caller repeats the
+            // very same CONCLUSION (same Socket ID, same cookie). libsrt
+            // re-sends its response to a repeated CONCLUSION, and so do we —
+            // otherwise one lost datagram leaves the Caller timing out
+            // against a Listener that already considers it connected. Only
+            // the exact connected peer is answered; anything else is
+            // out-of-sequence as before.
+            ListenerHandshakeState::Connected
+                if hp.handshake_type == HandshakeType::Conclusion
+                    && hp.srt_socket_id == self.peer_socket_id
+                    && hp.syn_cookie == self.syn_cookie =>
+            {
+                Ok(self
+                    .last_sent
+                    .clone()
+                    .map(HandshakeOutput::Send)
+                    .into_iter()
+                    .collect())
+            }
             _ => Err(Error::HandshakeOutOfSequence {
                 state: self.state.name(),
                 reason: "not awaiting an induction or conclusion",
@@ -178,6 +211,12 @@ impl ListenerHandshake {
                 reason: "expected an INDUCTION handshake",
             });
         }
+        // The ISN seeds the receiver's sequence tracking; it is a 31-bit
+        // number (§3.1), and one that is not would stall the connection (the
+        // ack point could never be reached).
+        if hp.initial_seq_number > crate::packet::SEQ_NUMBER_MASK {
+            return self.reject(RejectionReason::Rogue, hp);
+        }
         // §4.3.1.1: the Listener does not yet know if the Caller is SRT or
         // UDT, and always responds the same way.
         self.peer_socket_id = hp.srt_socket_id;
@@ -210,6 +249,9 @@ impl ListenerHandshake {
         }
         if hp.version != HANDSHAKE_VERSION_5 {
             return self.reject(RejectionReason::Version, hp);
+        }
+        if hp.initial_seq_number > crate::packet::SEQ_NUMBER_MASK {
+            return self.reject(RejectionReason::Rogue, hp);
         }
         if hp.syn_cookie != self.syn_cookie {
             // §4.3.1.1: the cookie exists precisely so the Listener can
@@ -270,6 +312,11 @@ impl ListenerHandshake {
             latency_ms: handshake_sm::negotiate_latency_ms(self.config.latency_ms, &peer_msg),
             own_socket_id: self.own_socket_id,
             peer_socket_id: self.peer_socket_id,
+            mtu: self.config.mtu.min(hp.mtu),
+            max_flow_window_size: self
+                .config
+                .max_flow_window_size
+                .min(hp.max_flow_window_size),
             stream_id: parsed.stream_id,
             group: parsed.group,
             #[cfg(feature = "crypto")]
@@ -542,5 +589,147 @@ mod tests {
     #[test]
     fn cif_fixed_len_is_the_documented_48_bytes() {
         assert_eq!(HANDSHAKE_CIF_FIXED_LEN, 48);
+    }
+
+    fn conclusion_response_bytes(outputs: &[HandshakeOutput]) -> Vec<u8> {
+        match &outputs[0] {
+            HandshakeOutput::Send(b) => b.clone(),
+            other => panic!("expected Send, got {other:?}"),
+        }
+    }
+
+    /// r08-SRT-W5: a duplicate CONCLUSION from the connected Caller (its
+    /// response was lost) is answered with the identical response bytes.
+    #[test]
+    fn duplicate_conclusion_after_connected_is_reanswered() {
+        let mut l = ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
+        l.feed(&caller_induction(2)).unwrap();
+        let first = l.feed(&caller_conclusion(2, 1, 0xC0FF_EE00, 120)).unwrap();
+        let original = conclusion_response_bytes(&first);
+        assert_eq!(l.state(), ListenerHandshakeState::Connected);
+
+        let again = l.feed(&caller_conclusion(2, 1, 0xC0FF_EE00, 120)).unwrap();
+        assert_eq!(again, vec![HandshakeOutput::Send(original.clone())]);
+        // And again: it is stateless on the Listener side.
+        let third = l.feed(&caller_conclusion(2, 1, 0xC0FF_EE00, 120)).unwrap();
+        assert_eq!(third, vec![HandshakeOutput::Send(original)]);
+        assert_eq!(l.state(), ListenerHandshakeState::Connected);
+    }
+
+    /// Only the connected peer (its Socket ID and the cookie) is re-answered:
+    /// another Caller's CONCLUSION, or one with a wrong cookie, is still
+    /// out-of-sequence — never an oracle for the response bytes.
+    #[test]
+    fn conclusion_from_a_stranger_after_connected_is_not_answered() {
+        let mut l = ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
+        l.feed(&caller_induction(2)).unwrap();
+        l.feed(&caller_conclusion(2, 1, 0xC0FF_EE00, 120)).unwrap();
+        // A different Caller Socket ID.
+        assert!(matches!(
+            l.feed(&caller_conclusion(3, 1, 0xC0FF_EE00, 120)),
+            Err(Error::HandshakeOutOfSequence { .. })
+        ));
+        // The right Socket ID but a wrong cookie.
+        assert!(matches!(
+            l.feed(&caller_conclusion(2, 1, 0xBAD0_BAD0, 120)),
+            Err(Error::HandshakeOutOfSequence { .. })
+        ));
+        // An INDUCTION after Connected is not answered either.
+        assert!(matches!(
+            l.feed(&caller_induction(2)),
+            Err(Error::HandshakeOutOfSequence { .. })
+        ));
+        assert_eq!(l.state(), ListenerHandshakeState::Connected);
+    }
+
+    /// r08-SRT-W10 (Listener side): a repeated INDUCTION while awaiting the
+    /// CONCLUSION re-sends the same INDUCTION response rather than rejecting
+    /// the Caller as Rogue and abandoning the handshake.
+    #[test]
+    fn repeated_induction_while_awaiting_conclusion_is_reanswered() {
+        let mut l = ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
+        let first = l.feed(&caller_induction(2)).unwrap();
+        let again = l.feed(&caller_induction(2)).unwrap();
+        assert_eq!(again, first);
+        assert_eq!(l.state(), ListenerHandshakeState::AwaitingConclusion);
+        // The handshake still completes afterwards.
+        let done = l.feed(&caller_conclusion(2, 1, 0xC0FF_EE00, 120)).unwrap();
+        assert!(
+            done.iter()
+                .any(|o| matches!(o, HandshakeOutput::Connected(_)))
+        );
+    }
+
+    fn with_limits(
+        mut pkt: ControlPacket<'static>,
+        mtu: u32,
+        mfw: u32,
+        isn: u32,
+    ) -> ControlPacket<'static> {
+        if let ControlPacket::Handshake(hp) = &mut pkt {
+            hp.mtu = mtu;
+            hp.max_flow_window_size = mfw;
+            hp.initial_seq_number = isn;
+        }
+        pkt
+    }
+
+    /// §3.2.1: the connection runs with the smaller of the two sides' MTU and
+    /// Maximum Flow Window Size, whichever side is smaller.
+    #[test]
+    fn negotiated_mtu_and_flow_window_are_the_smaller_of_both() {
+        for (peer_mtu, peer_mfw, want_mtu, want_mfw) in [
+            (576, 64, 576, 64),
+            (9000, 65_536, 1500, 8192),
+            (1500, 64, 1500, 64),
+        ] {
+            let mut l = ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
+            l.feed(&caller_induction(2)).unwrap();
+            l.feed(&with_limits(
+                caller_conclusion(2, 1, 0xC0FF_EE00, 120),
+                peer_mtu,
+                peer_mfw,
+                0,
+            ))
+            .unwrap();
+            let n = l.negotiated().expect("connected");
+            assert_eq!((n.mtu, n.max_flow_window_size), (want_mtu, want_mfw));
+        }
+    }
+
+    /// A peer ISN that is not a 31-bit sequence number is refused outright
+    /// (it would seed `next_expected` out of range and stall forever).
+    #[test]
+    fn an_isn_wider_than_31_bits_is_rejected() {
+        let mut l = ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
+        let out = l
+            .feed(&with_limits(caller_induction(2), 1500, 8192, 0x8000_0000))
+            .unwrap();
+        assert!(matches!(
+            out.last(),
+            Some(HandshakeOutput::Rejected(RejectionReason::Rogue))
+        ));
+        assert_eq!(l.state(), ListenerHandshakeState::Rejected);
+
+        let mut l = ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
+        l.feed(&caller_induction(2)).unwrap();
+        let out = l
+            .feed(&with_limits(
+                caller_conclusion(2, 1, 0xC0FF_EE00, 120),
+                1500,
+                8192,
+                u32::MAX,
+            ))
+            .unwrap();
+        assert!(matches!(
+            out.last(),
+            Some(HandshakeOutput::Rejected(RejectionReason::Rogue))
+        ));
+        // The largest legal ISN is fine.
+        let mut l = ListenerHandshake::new(1, 0xC0FF_EE00, HandshakeConfig::default());
+        let out = l
+            .feed(&with_limits(caller_induction(2), 1500, 8192, 0x7FFF_FFFF))
+            .unwrap();
+        assert!(matches!(out[0], HandshakeOutput::Send(_)));
     }
 }

@@ -11,8 +11,6 @@
 
 #![cfg(feature = "tokio")]
 
-use core::time::Duration;
-
 use srt_runtime::handshake_sm::HandshakeConfig;
 use srt_runtime::io::{SrtListener, SrtSocket};
 
@@ -44,11 +42,13 @@ async fn caller_drop_releases_its_local_port_for_reuse() {
     drop(caller);
     drop(accepted);
 
-    // Task abort is scheduled, not synchronous with `drop` — poll for the
-    // port actually freeing up rather than sleeping a fixed guess.
+    // Task abort is scheduled, not synchronous with `drop`: yield to the
+    // (current-thread) runtime until the aborted forwarder has been dropped
+    // and the port is free — no wall-clock sleep, bounded by an iteration
+    // count.
     let mut freed = false;
-    for _ in 0..50 {
-        tokio::time::sleep(Duration::from_millis(20)).await;
+    for _ in 0..1_000 {
+        tokio::task::yield_now().await;
         if tokio::net::UdpSocket::bind(local).await.is_ok() {
             freed = true;
             break;

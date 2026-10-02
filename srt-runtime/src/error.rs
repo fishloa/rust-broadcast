@@ -131,6 +131,33 @@ pub enum Error {
         /// Why the call is not valid there.
         reason: &'static str,
     },
+    /// The peer refused the handshake, with the reason it gave
+    /// (`draft-sharabayko-srt-01` §4.3, Table 7) — a wrong passphrase
+    /// ([`crate::handshake_sm::RejectionReason::BadSecret`]) is distinguishable from a refused
+    /// stream or a version mismatch.
+    #[error("handshake rejected: {0}")]
+    Rejected(crate::handshake_sm::RejectionReason),
+    /// The handshake got no (complete) answer within its time or
+    /// retransmission budget.
+    #[error("handshake timed out ({stage})")]
+    HandshakeTimedOut {
+        /// Which budget ran out.
+        stage: &'static str,
+    },
+    /// Payload encryption was requested of an adapter whose data path does not
+    /// encrypt (refused up front rather than silently sending plaintext).
+    #[error("payload encryption is not supported by this adapter")]
+    EncryptionUnsupported,
+    /// A handshake step failed; `source` is the underlying parse / engine
+    /// error and `stage` names where it happened.
+    #[error("handshake failed during {stage}: {source}")]
+    Handshake {
+        /// Where in the handshake the failure happened.
+        stage: &'static str,
+        /// The underlying error.
+        #[source]
+        source: alloc::boxed::Box<Error>,
+    },
     /// A real-socket I/O failure surfaced by [`crate::io`]'s tokio adapter
     /// (feature `tokio`, which implies `std`). Carries the OS
     /// [`std::io::ErrorKind`] — so e.g. a bind failure (`AddrInUse`) is

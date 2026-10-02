@@ -245,6 +245,7 @@ impl KmRefreshDriver {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     const SCALED: KmRefreshThresholds = KmRefreshThresholds {
         refresh_period: 100,

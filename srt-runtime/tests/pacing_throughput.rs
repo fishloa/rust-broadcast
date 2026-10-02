@@ -17,10 +17,13 @@
 //! would allow (documented pre-fix failure below), and comfortably within
 //! what a fixed, non-blocking pacing schedule should sustain on loopback
 //! well under the default 1 Gbps MAX_BW. (The volume is fixed rather than
-//! "spin-send for 2 wall-clock seconds" because `SrtSocket::send`'s
-//! `to_driver` channel is unbounded — an unthrottled spin loop would queue
-//! an unbounded backlog for the driver to drain and turn the test into an
-//! open-ended stress test instead of a rate measurement.)
+//! "spin-send for 2 wall-clock seconds": an unthrottled spin loop would turn
+//! the test into an open-ended stress test instead of a rate measurement.)
+//!
+//! This is the one deliberately real-time test in the crate: the bug it guards
+//! was tokio's real timer granularity, which a paused clock cannot reproduce.
+//! The pacing *schedule* itself is pinned deterministically by
+//! `data_leaves_one_packet_per_pacing_period` in `src/io.rs`.
 //!
 //! HANG GUARD: wrapped in [`tokio::time::timeout`] (see `io_loopback.rs`).
 
@@ -31,7 +34,7 @@ use core::time::Duration;
 use srt_runtime::handshake_sm::HandshakeConfig;
 use srt_runtime::io::{SrtListener, SrtSocket};
 
-const TEST_TIMEOUT: Duration = Duration::from_secs(30);
+const TEST_TIMEOUT: Duration = Duration::from_secs(60);
 const PAYLOAD_LEN: usize = 1316;
 const NOMINAL_DURATION: Duration = Duration::from_secs(2);
 const TARGET_BITS_PER_SEC: u64 = 50_000_000; // 50 Mbit/s
@@ -45,6 +48,14 @@ const MIN_ACCEPTABLE_FRACTION: f64 = 0.90;
 /// single-threaded runtime run the driver and the drain task.
 const SENDS_PER_PAUSE: usize = 8;
 const PAUSE: Duration = Duration::from_millis(1);
+/// TSBPD latency both sides run with. Generous on purpose: under CPU
+/// starvation a stalled driver would otherwise miss the (default 120 ms) play
+/// window, Too-Late Packet Drop would discard what it had not yet delivered,
+/// and the "everything delivered" assertion would fail for reasons unrelated
+/// to pacing. The last packet is delivered one latency after it is sent, and
+/// that is deliberately *charged* to the achieved rate (it can only make the
+/// bound stricter): the pre-fix ceiling of ~10 Mbit/s is still far below it.
+const LATENCY: Duration = Duration::from_millis(1_000);
 
 /// Pre-fix run of this exact test (unfixed `flush_outbound`, real
 /// `tokio::time::sleep` per DATA packet at the default 1 Gbps MAX_BW's ~11 us
@@ -58,13 +69,17 @@ const PAUSE: Duration = Duration::from_millis(1);
 async fn sustained_volume_clears_90_percent_of_50mbit_target() {
     tokio::time::timeout(TEST_TIMEOUT, async {
         let listener_addr = "127.0.0.1:0".parse::<std::net::SocketAddr>().unwrap();
-        let mut listener = SrtListener::bind(listener_addr, HandshakeConfig::default())
+        let config = HandshakeConfig {
+            latency_ms: u16::try_from(LATENCY.as_millis()).unwrap(),
+            ..HandshakeConfig::default()
+        };
+        let mut listener = SrtListener::bind(listener_addr, config.clone())
             .await
             .expect("listener bind");
         let bound_addr = listener.local_addr().expect("listener local addr");
 
         let accept_jh = tokio::spawn(async move { listener.accept().await.expect("accept") });
-        let mut caller = SrtSocket::connect(bound_addr, HandshakeConfig::default())
+        let mut caller = SrtSocket::connect(bound_addr, config)
             .await
             .expect("caller connect");
         let mut receiver = accept_jh.await.expect("join accept");

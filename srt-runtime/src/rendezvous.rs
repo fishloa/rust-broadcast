@@ -236,8 +236,10 @@ const SIGN_BIT_32: i64 = 0x8000_0000;
 /// `own_cookie == peer_cookie` before this is called) and is not
 /// reproduced — this function always returns a role.
 fn cookie_contest(own_cookie: u32, peer_cookie: u32) -> RendezvousRole {
-    let req = own_cookie as i32;
-    let res = peer_cookie as i32;
+    // libsrt reads each cookie as a signed 32-bit integer: the same bits,
+    // reinterpreted (not converted).
+    let req = i32::from_ne_bytes(own_cookie.to_ne_bytes());
+    let res = i32::from_ne_bytes(peer_cookie.to_ne_bytes());
     let xreq = i64::from(req);
     let xres = i64::from(res);
     let contest = xreq - xres;
@@ -310,6 +312,9 @@ pub struct RendezvousHandshake {
     peer_socket_id: u32,
     peer_cookie: u32,
     peer_hs_msg: Option<HsExtMessage>,
+    /// The peer's `MTU` and `Maximum Flow Window Size` (§3.2.1), from the
+    /// packet that carried its Handshake Extension Message.
+    peer_limits: Option<(u32, u32)>,
     last_sent: Option<Vec<u8>>,
     ticks_since_send: u32,
     retries: u32,
@@ -333,6 +338,7 @@ impl RendezvousHandshake {
             peer_socket_id: 0,
             peer_cookie: 0,
             peer_hs_msg: None,
+            peer_limits: None,
             last_sent: None,
             ticks_since_send: 0,
             retries: 0,
@@ -537,9 +543,10 @@ impl RendezvousHandshake {
     /// WAVEAHAND (not covered by either table — treated as a benign resend,
     /// module docs) is expected here.
     fn on_attention(&mut self, hp: &HandshakePacket<'_>) -> Result<Vec<HandshakeOutput>> {
-        let role = self
-            .role
-            .expect("role is always resolved before Attention is reached");
+        let role = self.role.ok_or(Error::HandshakeOutOfSequence {
+            state: self.state.name(),
+            reason: "no role was resolved before the Attention state",
+        })?;
         if hp.handshake_type == HandshakeType::Conclusion {
             return self.on_attention_conclusion(hp, role);
         }
@@ -573,6 +580,7 @@ impl RendezvousHandshake {
             (RendezvousRole::Initiator, PeerHsExt::HsRsp(msg)) => {
                 // L2318-2320: contains HSRSP -> Connected, send AGREEMENT.
                 self.peer_hs_msg = Some(msg);
+                self.peer_limits = Some((hp.mtu, hp.max_flow_window_size));
                 self.enter_connected()
             }
             (RendezvousRole::Responder, PeerHsExt::None) => {
@@ -585,6 +593,7 @@ impl RendezvousHandshake {
                 // L2360-2364: HSREQ present -> Initiated, send
                 // CONCLUSION+HSRSP.
                 self.peer_hs_msg = Some(msg);
+                self.peer_limits = Some((hp.mtu, hp.max_flow_window_size));
                 self.state = RendezvousHandshakeState::Initiated;
                 self.send_conclusion(Some(ExtensionType::HsRsp))
             }
@@ -599,9 +608,10 @@ impl RendezvousHandshake {
     /// / L2365-2382 Responder), including the idempotent-resend recovery
     /// rules (L2383-2422).
     fn on_initiated(&mut self, hp: &HandshakePacket<'_>) -> Result<Vec<HandshakeOutput>> {
-        let role = self
-            .role
-            .expect("role is always resolved before Initiated is reached");
+        let role = self.role.ok_or(Error::HandshakeOutOfSequence {
+            state: self.state.name(),
+            reason: "no role was resolved before the Initiated state",
+        })?;
         match role {
             RendezvousRole::Initiator => {
                 if hp.handshake_type != HandshakeType::Conclusion {
@@ -618,6 +628,7 @@ impl RendezvousHandshake {
                     // L2325-2334ish: contains HSRSP -> Connected, AGREEMENT.
                     PeerHsExt::HsRsp(msg) => {
                         self.peer_hs_msg = Some(msg);
+                        self.peer_limits = Some((hp.mtu, hp.max_flow_window_size));
                         self.enter_connected()
                     }
                     PeerHsExt::HsReq(_) => Ok(self.reject(RejectionReason::Rogue)),
@@ -641,6 +652,7 @@ impl RendezvousHandshake {
                     // even if this HSREQ was already seen and processed once.
                     PeerHsExt::HsReq(msg) => {
                         self.peer_hs_msg = Some(msg);
+                        self.peer_limits = Some((hp.mtu, hp.max_flow_window_size));
                         self.send_conclusion(Some(ExtensionType::HsRsp))
                     }
                     _ => Ok(self.reject(RejectionReason::Rogue)),
@@ -766,7 +778,7 @@ impl RendezvousHandshake {
     /// caller of this method before it is called) and sends the AGREEMENT
     /// every documented transition into Connected requires.
     fn enter_connected(&mut self) -> Result<Vec<HandshakeOutput>> {
-        let negotiated = self.build_negotiated();
+        let negotiated = self.build_negotiated()?;
         self.negotiated = Some(negotiated.clone());
         self.state = RendezvousHandshakeState::Connected;
         let mut out = self.send_agreement()?;
@@ -774,16 +786,22 @@ impl RendezvousHandshake {
         Ok(out)
     }
 
-    fn build_negotiated(&self) -> NegotiatedParams {
-        let peer_msg = self
-            .peer_hs_msg
-            .expect("peer_hs_msg is always captured before any transition reaches Connected");
-        NegotiatedParams {
+    fn build_negotiated(&self) -> Result<NegotiatedParams> {
+        let (Some(peer_msg), Some((peer_mtu, peer_mfw))) = (self.peer_hs_msg, self.peer_limits)
+        else {
+            return Err(Error::HandshakeOutOfSequence {
+                state: self.state.name(),
+                reason: "reached Connected without the peer's Handshake Extension Message",
+            });
+        };
+        Ok(NegotiatedParams {
             version: HANDSHAKE_VERSION_5,
             flags: HandshakeExtensionMessageFlags(self.config.flags.0 & peer_msg.srt_flags.0),
             latency_ms: handshake_sm::negotiate_latency_ms(self.config.latency_ms, &peer_msg),
             own_socket_id: self.own_socket_id,
             peer_socket_id: self.peer_socket_id,
+            mtu: self.config.mtu.min(peer_mtu),
+            max_flow_window_size: self.config.max_flow_window_size.min(peer_mfw),
             // §4.3.2 never mentions a Stream ID / Group Membership exchange —
             // module docs "Resolved ambiguities". The same applies to §6.1.5
             // Key Material Exchange: this engine does not implement it (see
@@ -795,7 +813,7 @@ impl RendezvousHandshake {
             sek: None,
             #[cfg(feature = "crypto")]
             salt: None,
-        }
+        })
     }
 }
 
@@ -1061,6 +1079,42 @@ mod tests {
         assert!(matches!(
             r.feed(&ka),
             Err(Error::UnexpectedControlPacket { .. })
+        ));
+    }
+
+    /// The state machine's internal invariants (a role is resolved before
+    /// Attention/Initiated, the peer's HSREQ/HSRSP is known before Connected)
+    /// are errors, not panics, if ever violated.
+    #[test]
+    fn broken_internal_invariants_are_errors_not_panics() {
+        use crate::packet::{EncryptionField, HandshakeExtensionFlags, HandshakeExtensions};
+        let hp = HandshakePacket {
+            timestamp: 0,
+            dest_socket_id: 1,
+            version: 5,
+            encryption_field: EncryptionField::NoEncryption,
+            extension_field: HandshakeExtensionFlags(0),
+            initial_seq_number: 0,
+            mtu: 1500,
+            max_flow_window_size: 8192,
+            handshake_type: HandshakeType::Conclusion,
+            srt_socket_id: 2,
+            syn_cookie: 0,
+            peer_ip: [0; 4],
+            extensions: HandshakeExtensions(&[]),
+        };
+        let mut r = RendezvousHandshake::new(1, 5, HandshakeConfig::default());
+        assert!(matches!(
+            r.on_attention(&hp),
+            Err(Error::HandshakeOutOfSequence { .. })
+        ));
+        assert!(matches!(
+            r.on_initiated(&hp),
+            Err(Error::HandshakeOutOfSequence { .. })
+        ));
+        assert!(matches!(
+            r.enter_connected(),
+            Err(Error::HandshakeOutOfSequence { .. })
         ));
     }
 }

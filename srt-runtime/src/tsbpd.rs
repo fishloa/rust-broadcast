@@ -29,21 +29,34 @@
 //! Packets are always released in monotonically increasing sequence order.
 //! A packet whose `PktTsbpdTime` has not yet arrived is withheld.
 //!
+//! # Time base, wrap and drift
+//!
+//! - `TsbpdTimeBase` (rule 12) is a *signed* microsecond offset: it is seeded
+//!   as `T_NOW - HSREQ_TIMESTAMP`, which is negative whenever the peer's
+//!   handshake timestamp exceeds the local time since the caller's epoch.
+//! - The 32-bit wire timestamp wraps every ~71.58 minutes (rule 15). The
+//!   scheduler unwraps it into an always-increasing value with a maintained
+//!   reference point and a signed circular delta
+//!   (`TsbpdScheduler::unwrap_timestamp`, mirroring `arq::seq::seq_diff` one
+//!   bit wider), which is equivalent to adding `MAX_TIMESTAMP + 1` to the
+//!   base at each wrap (rule 16) without a separate wrap-window state machine.
+//!   (An earlier version used plain modular arithmetic, dropping `PktTsbpdTime`
+//!   back near zero on every wrap — issue #1063.)
+//! - Drift (§4.7, rules 26-27) is estimated internally from fresh in-sequence
+//!   packets, in a packet-count-based window ([`DRIFT_SAMPLE_COUNT`]); the
+//!   window average is applied as `Drift`, with any part beyond
+//!   [`DRIFT_MAX_US`] moved into the time base, mirroring libsrt's tracer.
+//!
+//! # Fake ACK on skip
+//! When this scheduler skips or drops packets under TLPKTDROP it reports them
+//! in [`TickOutcome::dropped`]; moving the ARQ receiver's ack point past them
+//! (the "fake ACK" of rule 22 / `srt-arq.md` rule 13) is the integration
+//! layer's job, and [`crate::io`] does it (only when TLPKTDROP was
+//! negotiated — with it off the scheduler never drops, and the ack point waits
+//! for the retransmission).
+//!
 //! # Non-goals (explicit follow-ups)
-//! - Drift correction (§4.7 packet-count-based drift sampling, rule 26-27):
-//!   `Drift` is exposed as a constructor parameter; this module does not
-//!   estimate it internally.
-//! - Fake ACK generation on receiver skip (rule 22 / `srt-arq.md` rule 13):
-//!   left to the ARQ layer integration.
 //! - Sender-side TLPKTDROP (rule 18-20): out of scope for the receiver.
-//! - Wrapping-period adjustment (rule 15-16): the scheduler handles 32-bit
-//!   timestamp wrapping (rule 15) with a maintained reference point plus a
-//!   signed circular delta (`TsbpdScheduler::unwrap_timestamp`, mirroring
-//!   `arq::seq::seq_diff` one bit wider) — not the plain modular arithmetic
-//!   an earlier version of this scheduler used, which dropped `PktTsbpdTime`
-//!   back near zero on every wrap (issue #1063). The wrapping-period
-//!   TsbpdTimeBase adjustment (rule 16) is still not implemented — it is a
-//!   separate concern driven by the handshake/connection layer.
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -51,13 +64,18 @@ use core::time::Duration;
 
 use crate::arq::seq;
 
-/// Maximum value of the 32-bit SRT packet timestamp field, in microseconds
-/// (`specs/rules/srt-tsbpd.md` rule 15, citing
-/// `draft-sharabayko-srt-01` §3 and L2637-2644).
-///
-/// `MAX_TIMESTAMP = 0xFFFFFFFF` µs (≈ 1 hour, 11 minutes, 35 seconds).
-#[allow(dead_code)]
-const MAX_TIMESTAMP: u64 = 0xFFFF_FFFF;
+/// How many fresh in-sequence packets make up one drift-sampling window
+/// (`specs/rules/srt-tsbpd.md` rules 26-27: "based on packet count, not time
+/// duration"). The draft gives no number (the srt-tsbpd.md "Ambiguous" list
+/// says so); this matches the 1000-sample window of libsrt's drift tracer
+/// (`srtcore/tsbpd_time.h`), so both ends of a link correct at the same pace.
+pub const DRIFT_SAMPLE_COUNT: u32 = 1000;
+
+/// The most a drift correction may move `Drift` itself, in microseconds; any
+/// excess of the window average is folded into `TsbpdTimeBase` instead
+/// (libsrt's tracer bound, 5 ms — implementation-defined, see
+/// [`DRIFT_SAMPLE_COUNT`]).
+pub const DRIFT_MAX_US: i64 = 5_000;
 
 /// Minimum negotiated `TsbpdDelay` — 120 milliseconds
 /// (`specs/rules/srt-tsbpd.md` rule 10, verbatim L2601-2603:
@@ -68,7 +86,7 @@ const TSBPD_DELAY_MIN_MS: u64 = 120;
 /// A bound on how many sequence numbers one too-late skip may walk past a
 /// gap. Not a spec rule — a safety cap against an adversarial or corrupt
 /// sequence-number layout causing unbounded work in `release_ready`
-/// (mirrors `arq::receiver`'s `MAX_GAP_EXPANSION`).
+/// (the receiver bounds its own gap tracking by the flow window instead).
 const MAX_TLPKT_SKIP_SPAN: u32 = 1 << 16;
 
 /// A bound on how many not-yet-reached DROPREQ ranges are remembered.
@@ -76,6 +94,11 @@ const MAX_TLPKT_SKIP_SPAN: u32 = 1 << 16;
 /// once reached, further gaps are cleared by the too-late skip instead.
 #[cfg(feature = "tokio")]
 const MAX_SKIPS: usize = 1024;
+
+/// `now` as whole microseconds, saturating (a `Duration` past ~584 000 years).
+fn duration_us(now: Duration) -> u64 {
+    u64::try_from(now.as_micros()).unwrap_or(u64::MAX)
+}
 
 /// Outcome of one [`TsbpdScheduler::tick`] call.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -100,12 +123,12 @@ pub struct TickOutcome {
 ///
 /// # State variables (per `specs/rules/srt-tsbpd.md`)
 ///
-/// - `TsbpdTimeBase` (µs, rule 12) — seeded at construction, reflects the
-///   clock difference between receiver-local time and the sender's timestamp
-///   clock.
+/// - `TsbpdTimeBase` (µs, rule 12) — seeded at construction (signed), reflects
+///   the clock difference between receiver-local time and the sender's
+///   timestamp clock; moved by the drift tracer past [`DRIFT_MAX_US`].
 /// - `TsbpdDelay` (ms, rule 10) — receiver latency buffer, floor 120 ms.
-/// - `Drift` (µs, rules 24-27) — current drift correction; not estimated
-///   internally, supplied at construction.
+/// - `Drift` (µs, rules 24-27) — current drift correction; seeded at
+///   construction and re-estimated every [`DRIFT_SAMPLE_COUNT`] fresh packets.
 /// - `TLPKTDROP_THRESHOLD` (rule 19) — threshold beyond which a packet whose
 ///   play time has passed is dropped; enabled by default.
 /// - `next_release` — the next sequence number to release (cumulative delivery
@@ -115,13 +138,17 @@ pub struct TsbpdScheduler {
     /// `TsbpdTimeBase` — time base reflecting the clock difference between
     /// receiver-local time and the sender's packet-timestamping clock
     /// (µs, `specs/rules/srt-tsbpd.md` rule 12, §4.5.1.1 L2612-2618).
-    tsbpd_time_base: u64,
+    tsbpd_time_base: i64,
     /// `TsbpdDelay` — receiver's buffer delay, in milliseconds
     /// (rule 9-10, §4.5.1 L2588-2592).
     tsbpd_delay_ms: u64,
     /// `Drift` — time drift correction between sender/receiver clocks, in
-    /// microseconds (rule 9, §4.7 L2757-2765).
-    drift_us: u64,
+    /// microseconds, signed (rule 9, §4.7 L2757-2765).
+    drift_us: i64,
+    /// Running sum of the current drift window's samples (µs).
+    drift_sample_sum: i64,
+    /// Samples in the current drift window.
+    drift_sample_count: u32,
     /// `TLPKTDROP_THRESHOLD` — threshold for too-late packet drop, in
     /// microseconds (rule 19, §4.6 L2664-2670). Computed as
     /// `1.25 * TsbpdDelay_ms * 1000` when constructed; exposed as a field
@@ -156,23 +183,22 @@ impl TsbpdScheduler {
     /// # Parameters
     ///
     /// * `initial_seq` — the first expected sequence number (the peer's ISN).
-    /// * `tsbpd_time_base` — `TsbpdTimeBase` in microseconds, seeded per
-    ///   rule 12 (`T_NOW - HSREQ_TIMESTAMP`).
+    /// * `tsbpd_time_base` — `TsbpdTimeBase` in microseconds (signed), seeded
+    ///   per rule 12 (`T_NOW - HSREQ_TIMESTAMP`).
     /// * `tsbpd_delay_ms` — `TsbpdDelay` in milliseconds (rule 10). A value
     ///   below the minimum 120 ms is silently raised to 120 ms.
-    /// * `drift_us` — current `Drift` correction in microseconds (rule 9);
-    ///   supply `0` when no drift estimate is available.
+    /// * `drift_us` — initial `Drift` correction in microseconds, signed
+    ///   (rule 9); supply `0` when no drift estimate is available.
     /// * `tlpktdrop_enabled` — whether too-late packet drop is enabled
     ///   (rule 23).
     /// * `tlpktdrop_threshold_us` — custom too-late threshold in microseconds.
     ///   If `None`, the recommended default `1.25 × TsbpdDelay` is used
     ///   (rule 19).
-    #[allow(clippy::too_many_arguments)]
     pub fn new(
         initial_seq: u32,
-        tsbpd_time_base: u64,
+        tsbpd_time_base: i64,
         tsbpd_delay_ms: u64,
-        drift_us: u64,
+        drift_us: i64,
         tlpktdrop_enabled: bool,
         tlpktdrop_threshold_us: Option<u64>,
     ) -> Self {
@@ -182,12 +208,17 @@ impl TsbpdScheduler {
             // TsbpdDelay is in ms, convert to µs. Use integer arithmetic:
             // tsbpd_delay_ms * 1250 / 1000 = tsbpd_delay_ms * 5 / 4 * 1000
             // Rounded up via (a * 5 + 3) / 4 to match ceil(1.25 * delay).
-            (tsbpd_delay_ms * 5).div_ceil(4) * 1000
+            tsbpd_delay_ms
+                .saturating_mul(5)
+                .div_ceil(4)
+                .saturating_mul(1000)
         });
         TsbpdScheduler {
             tsbpd_time_base,
             tsbpd_delay_ms,
             drift_us,
+            drift_sample_sum: 0,
+            drift_sample_count: 0,
             tlpktdrop_threshold_us,
             tlpktdrop_enabled,
             next_release: initial_seq,
@@ -210,11 +241,62 @@ impl TsbpdScheduler {
     /// - `PKT_TIMESTAMP` is in µs (§3.1).
     /// - `TsbpdDelay` is in ms (rule 10), converted to µs by ×1000.
     /// - `Drift` is in µs (rule 9).
+    ///
+    /// Computed in signed saturating arithmetic (the time base and drift are
+    /// signed); a play time before the epoch is clamped to `0` ("already due").
     fn pkt_tsbpd_time(&self, unwrapped_pkt_timestamp_us: u64) -> u64 {
+        let sum = self
+            .tsbpd_time_base
+            .saturating_add(i64::try_from(unwrapped_pkt_timestamp_us).unwrap_or(i64::MAX))
+            .saturating_add(
+                i64::try_from(self.tsbpd_delay_ms.saturating_mul(1000)).unwrap_or(i64::MAX),
+            )
+            .saturating_add(self.drift_us);
+        u64::try_from(sum).unwrap_or(0)
+    }
+
+    /// The current `TsbpdTimeBase` in microseconds (rule 12; moved by the
+    /// drift tracer past [`DRIFT_MAX_US`]).
+    pub fn time_base_us(&self) -> i64 {
         self.tsbpd_time_base
-            + unwrapped_pkt_timestamp_us
-            + self.tsbpd_delay_ms * 1000
-            + self.drift_us
+    }
+
+    /// The current `Drift` correction in microseconds (rule 9, §4.7).
+    pub fn drift_us(&self) -> i64 {
+        self.drift_us
+    }
+
+    /// Add one drift sample for a fresh packet that arrived at `now_us` with
+    /// (unwrapped) timestamp `unwrapped_ts`: how far its arrival is past the
+    /// `TsbpdTimeBase + PKT_TIMESTAMP` the receiver expected (§4.7). After
+    /// [`DRIFT_SAMPLE_COUNT`] samples the window average becomes the new
+    /// `Drift`; the part beyond [`DRIFT_MAX_US`] is folded into the time base
+    /// so `Drift` stays small (the same split libsrt's tracer makes). The
+    /// window is packet-count based, not time based (rule 27).
+    fn add_drift_sample(&mut self, now_us: u64, unwrapped_ts: u64) {
+        let arrival = i64::try_from(now_us).unwrap_or(i64::MAX);
+        let expected = self
+            .tsbpd_time_base
+            .saturating_add(i64::try_from(unwrapped_ts).unwrap_or(i64::MAX));
+        self.drift_sample_sum = self
+            .drift_sample_sum
+            .saturating_add(arrival.saturating_sub(expected));
+        self.drift_sample_count += 1;
+        if self.drift_sample_count < DRIFT_SAMPLE_COUNT {
+            return;
+        }
+        let average = self.drift_sample_sum / i64::from(DRIFT_SAMPLE_COUNT);
+        self.drift_sample_sum = 0;
+        self.drift_sample_count = 0;
+        let overdrift = if average > DRIFT_MAX_US {
+            average - DRIFT_MAX_US
+        } else if average < -DRIFT_MAX_US {
+            average + DRIFT_MAX_US
+        } else {
+            0
+        };
+        self.tsbpd_time_base = self.tsbpd_time_base.saturating_add(overdrift);
+        self.drift_us = average - overdrift;
     }
 
     /// Extend a packet's raw 32-bit wire timestamp into an always-increasing
@@ -245,7 +327,12 @@ impl TsbpdScheduler {
         } else if delta >= (1i64 << 31) {
             delta -= 1i64 << 32;
         }
-        let abs = (i64::try_from(ref_abs).unwrap_or(i64::MAX) + delta).max(0) as u64;
+        let abs = u64::try_from(
+            i64::try_from(ref_abs)
+                .unwrap_or(i64::MAX)
+                .saturating_add(delta),
+        )
+        .unwrap_or(0);
         if abs > ref_abs {
             self.ts_unwrap_reference = Some((raw, abs));
         }
@@ -266,17 +353,28 @@ impl TsbpdScheduler {
     /// * `now` — current receiver time since the fixed epoch (the `T_NOW`
     ///   used to decide whether `PktTsbpdTime ≤ now`).
     pub fn feed_data(&mut self, seq_number: u32, pkt_timestamp: u32, now: Duration) -> TickOutcome {
-        let now_us = now.as_micros() as u64;
+        let now_us = duration_us(now);
         let unwrapped_ts = self.unwrap_timestamp(pkt_timestamp);
-        let pkt_tsbpd_time = self.pkt_tsbpd_time(unwrapped_ts);
 
         // Track highest fed (monotonic, for detecting when delivery advances
-        // with no gap).
+        // with no gap). A *fresh* packet — the very next sequence number, not
+        // a retransmission or a gap-jumper — is a clean drift sample: its
+        // arrival is not delayed by a NAK round trip.
         match self.highest_fed {
-            None => self.highest_fed = Some(seq_number),
-            Some(h) if seq::seq_gt(seq_number, h) => self.highest_fed = Some(seq_number),
+            None => {
+                self.highest_fed = Some(seq_number);
+                self.add_drift_sample(now_us, unwrapped_ts);
+            }
+            Some(h) if seq::seq_gt(seq_number, h) => {
+                if seq_number == seq::seq_next(h) {
+                    self.add_drift_sample(now_us, unwrapped_ts);
+                }
+                self.highest_fed = Some(seq_number);
+            }
             _ => {}
         }
+        // After the drift sample: it may have just moved the time base.
+        let pkt_tsbpd_time = self.pkt_tsbpd_time(unwrapped_ts);
 
         // Check if this packet is already too late on arrival.
         // Rule 17-18/21: drop a packet whose PktTsbpdTime is before
@@ -323,7 +421,7 @@ impl TsbpdScheduler {
     /// If too-late drop is enabled, packets whose play time has already
     /// passed the threshold are dropped instead.
     pub fn tick(&mut self, now: Duration) -> TickOutcome {
-        let now_us = now.as_micros() as u64;
+        let now_us = duration_us(now);
         let (delivered, dropped) = self.release_ready(now_us);
         TickOutcome { delivered, dropped }
     }
@@ -435,10 +533,12 @@ impl TsbpdScheduler {
                 break; // T_NOW < PktTsbpdTime(i) — keep waiting
             }
             // Defensive bound against an adversarial sequence-number layout
-            // (mirrors `arq::receiver`'s `MAX_GAP_EXPANSION`): a skip span
+            // (the ARQ receiver bounds its tracking by the flow window): a skip span
             // this large means the buffered timestamps cannot be trusted to
             // describe one contiguous live stream — wait rather than walk.
-            if seq::seq_diff(skip_to, self.next_release) as u64 > u64::from(MAX_TLPKT_SKIP_SPAN) {
+            if !u32::try_from(seq::seq_diff(skip_to, self.next_release))
+                .is_ok_and(|span| span <= MAX_TLPKT_SKIP_SPAN)
+            {
                 break;
             }
             // Drop everything before the skip point (rule 21: "Drop packets
@@ -454,6 +554,12 @@ impl TsbpdScheduler {
         }
 
         (delivered, dropped)
+    }
+
+    /// Whether Too-Late Packet Drop is enabled (§4.6): `false` makes the
+    /// scheduler wait for a missing packet indefinitely.
+    pub fn tlpktdrop_enabled(&self) -> bool {
+        self.tlpktdrop_enabled
     }
 
     /// The next sequence number expected for release.
@@ -517,12 +623,13 @@ mod tests {
     use core::time::Duration;
 
     const TIME_BASE: u64 = 1_000_000; // arbitrary TsbpdTimeBase
+    const TIME_BASE_I64: i64 = 1_000_000; // the same, as the scheduler's signed seed
     const DELAY_MS: u64 = 120; // minimum
     const ISN: u32 = 0;
 
     /// Helper: default scheduler for tests.
     fn sched() -> TsbpdScheduler {
-        TsbpdScheduler::new(ISN, TIME_BASE, DELAY_MS, 0, true, None)
+        TsbpdScheduler::new(ISN, TIME_BASE_I64, DELAY_MS, 0, true, None)
     }
 
     #[test]
@@ -610,7 +717,7 @@ mod tests {
         // 21); a buffered packet that itself goes past its too-late threshold
         // — here packet 2, starved of ticks between the two clock jumps — is
         // dropped instead.
-        let mut s = TsbpdScheduler::new(0, TIME_BASE, DELAY_MS, 0, true, None);
+        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, true, None);
 
         // Feed packets 1 and 2 well before their play times — they buffer.
         s.feed_data(1, 10_000, Duration::ZERO);
@@ -668,7 +775,7 @@ mod tests {
         // *past* relative to `near_wrap`'s (the pre-fix bug: every packet
         // after a real wrap computed a play time the receiver's clock had
         // already passed, so Too-Late-Packet-Drop discarded it forever).
-        let mut s = TsbpdScheduler::new(0, TIME_BASE, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
         // A timestamp near the 32-bit max value.
         let near_wrap: u32 = 0xFFFF_FF00u32;
         // The same clock, 756 us later, having wrapped past 0
@@ -682,17 +789,21 @@ mod tests {
         assert!(outcome.delivered.is_empty());
         assert_eq!(s.buffered_count(), 2);
 
-        // Correctly unwrapped: pkt1 (the later, post-wrap packet) must have
-        // a LARGER PktTsbpdTime than pkt0 — the opposite of naively
-        // widening the raw u32 to u64, which pre-fix made pkt0
-        // (4_294_967_040 + ...) look larger than pkt1 (500 + ...).
+        // Correctly unwrapped, pkt1 (the later, post-wrap packet) plays
+        // 756 µs AFTER pkt0. Naively widening the raw u32 would give pkt1 a
+        // play time ~71 minutes BEFORE pkt0's, so it would be released the
+        // instant pkt0 is — that is what the checkpoints below pin down.
         let pkt0_tsbpd = TIME_BASE + u64::from(near_wrap) + DELAY_MS * 1000;
-        let pkt1_tsbpd = pkt0_tsbpd + 756;
-        assert!(pkt1_tsbpd > pkt0_tsbpd);
-
-        // Tick past both play times — both should be delivered in order.
-        let outcome = s.tick(Duration::from_micros(pkt1_tsbpd));
-        assert_eq!(outcome.delivered, vec![0, 1]);
+        let outcome = s.tick(Duration::from_micros(pkt0_tsbpd));
+        assert_eq!(
+            outcome.delivered,
+            vec![0],
+            "at pkt0's play time only pkt0 is due"
+        );
+        let outcome = s.tick(Duration::from_micros(pkt0_tsbpd + 755));
+        assert!(outcome.delivered.is_empty(), "pkt1 is 756 µs later");
+        let outcome = s.tick(Duration::from_micros(pkt0_tsbpd + 756));
+        assert_eq!(outcome.delivered, vec![1]);
     }
 
     #[test]
@@ -704,7 +815,7 @@ mod tests {
         // does) through more than two full wraps, and confirm the unwrapped
         // absolute value strictly increases by exactly one step every time
         // — never resetting or going backward at either wrap boundary.
-        let mut s = TsbpdScheduler::new(0, TIME_BASE, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
         const STEP: u32 = 1_000_000; // 1 second in microseconds
         let iterations = (u64::from(u32::MAX) / u64::from(STEP)) * 2 + 10; // > 2 wraps
 
@@ -728,7 +839,7 @@ mod tests {
         // An out-of-order/retransmitted packet earlier than the current
         // reference must still unwrap correctly against it, and must not
         // itself move the reference backward.
-        let mut s = TsbpdScheduler::new(0, TIME_BASE, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
         let a = s.unwrap_timestamp(10_000);
         let b = s.unwrap_timestamp(20_000); // reference advances to here
         let reordered = s.unwrap_timestamp(15_000); // arrives late, between a and b
@@ -744,7 +855,7 @@ mod tests {
     #[test]
     fn minimum_delay_floor_applied() {
         // A delay below 120 ms should be silently raised.
-        let s = TsbpdScheduler::new(0, TIME_BASE, 10, 0, false, None);
+        let s = TsbpdScheduler::new(0, TIME_BASE_I64, 10, 0, false, None);
         let ts = 0u32;
         // The computed PktTsbpdTime should use 120 ms, not 10 ms.
         let expected = TIME_BASE + u64::from(ts) + TSBPD_DELAY_MIN_MS * 1000;
@@ -753,7 +864,7 @@ mod tests {
 
     #[test]
     fn tlpktdrop_disabled_never_drops() {
-        let mut s = TsbpdScheduler::new(0, TIME_BASE, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
         // Feed a packet very late but with tlpktdrop disabled.
         let ts = 0u32;
         let very_late_now =
@@ -771,7 +882,7 @@ mod tests {
         // With too-late drop enabled the gap is instead skipped at the
         // successor's play time (§4.6 / rule 21); see
         // `gap_skip_delivers_successor_at_its_play_time`.
-        let mut s = TsbpdScheduler::new(0, TIME_BASE, DELAY_MS, 0, false, None);
+        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
         // Feed packets 1 and 2 but not 0.
         s.feed_data(
             1,
@@ -833,5 +944,141 @@ mod tests {
         s.feed_data(0, ts, now);
         assert_eq!(s.buffered_count(), 0, "duplicate must not re-buffer");
         assert_eq!(s.next_release(), 1);
+    }
+
+    /// Feed `n` fresh in-sequence packets starting at `first_seq`: packet `i`
+    /// (timestamp `i * 1000` µs) arrives `i * skew_us` after the instant its
+    /// `TsbpdTimeBase + PKT_TIMESTAMP` predicts — a clock that runs
+    /// `skew_us` per millisecond fast (positive) or slow (negative).
+    fn feed_skewed_window(s: &mut TsbpdScheduler, first_seq: u32, n: u32, skew_us: i64) {
+        for i in 0..n {
+            let predicted = s.time_base_us() + i64::from(i) * 1000;
+            let arrival = predicted + i64::from(i) * skew_us;
+            s.feed_data(
+                first_seq + i,
+                i * 1000,
+                Duration::from_micros(u64::try_from(arrival).unwrap()),
+            );
+        }
+    }
+
+    /// r08-SRT-W9, §4.7 rules 26-27: after one packet-count window of samples
+    /// the average arrival error becomes `Drift`; the part beyond
+    /// `DRIFT_MAX_US` moves the time base so `Drift` stays small. Window
+    /// average here: `20 µs * (0 + 1 + ... + 999) / 1000` = 9990 µs.
+    #[test]
+    fn a_fast_sender_clock_is_corrected_after_one_window() {
+        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        feed_skewed_window(&mut s, 0, DRIFT_SAMPLE_COUNT, 20);
+        assert_eq!(s.drift_us(), 5_000, "drift saturates at DRIFT_MAX_US");
+        assert_eq!(
+            s.time_base_us(),
+            TIME_BASE_I64 + 4_990,
+            "the 4 990 µs beyond the bound move the time base"
+        );
+        // The correction is applied to later packets' play time (rule 9).
+        assert_eq!(
+            s.pkt_tsbpd_time(0),
+            u64::try_from(TIME_BASE_I64 + 4_990 + 5_000).unwrap() + DELAY_MS * 1000
+        );
+    }
+
+    /// The same, for a slow clock: negative drift, negative base correction.
+    #[test]
+    fn a_slow_sender_clock_is_corrected_after_one_window() {
+        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        feed_skewed_window(&mut s, 0, DRIFT_SAMPLE_COUNT, -20);
+        assert_eq!(s.drift_us(), -5_000);
+        assert_eq!(s.time_base_us(), TIME_BASE_I64 - 4_990);
+    }
+
+    /// A small error (average 999 µs, within `DRIFT_MAX_US`) is all `Drift`,
+    /// and nothing happens before the window is full.
+    #[test]
+    fn a_small_drift_is_applied_as_drift_only_and_only_at_the_window_boundary() {
+        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        feed_skewed_window(&mut s, 0, DRIFT_SAMPLE_COUNT - 1, 2);
+        assert_eq!(s.drift_us(), 0, "999 samples is not a window yet");
+        assert_eq!(s.time_base_us(), TIME_BASE_I64);
+        // The 1000th sample (error 999 * 2 = 1998 µs) closes the window:
+        // sum = 2 * (0 + ... + 999) = 999 000 → average 999.
+        let predicted = s.time_base_us() + 999 * 1000;
+        s.feed_data(
+            DRIFT_SAMPLE_COUNT - 1,
+            999 * 1000,
+            Duration::from_micros(u64::try_from(predicted + 999 * 2).unwrap()),
+        );
+        assert_eq!(s.drift_us(), 999);
+        assert_eq!(
+            s.time_base_us(),
+            TIME_BASE_I64,
+            "within the bound: base untouched"
+        );
+    }
+
+    /// Only a *fresh* packet (the very next sequence number) is a drift
+    /// sample: a retransmission or a packet that jumped a gap arrives late for
+    /// reasons that say nothing about the clocks.
+    #[test]
+    fn only_fresh_in_sequence_packets_are_drift_samples() {
+        let mut s = TsbpdScheduler::new(0, TIME_BASE_I64, DELAY_MS, 0, false, None);
+        let t = Duration::from_micros(u64::try_from(TIME_BASE_I64).unwrap());
+        s.feed_data(0, 0, t);
+        assert_eq!(s.drift_sample_count, 1, "the first packet is a sample");
+        s.feed_data(5, 5_000, t); // jumps a gap
+        assert_eq!(s.drift_sample_count, 1, "a gap-jumper is not a sample");
+        s.feed_data(1, 1_000, t); // a late recovery of the gap
+        assert_eq!(
+            s.drift_sample_count, 1,
+            "a recovered packet is not a sample"
+        );
+        s.feed_data(6, 6_000, t); // the next after the highest
+        assert_eq!(s.drift_sample_count, 2);
+    }
+
+    /// The time base is signed (rule 12: `T_NOW - HSREQ_TIMESTAMP` is negative
+    /// when the peer's clock is ahead): a negative base places the first
+    /// packet's play time correctly, and saturates at "already due" rather
+    /// than wrapping.
+    #[test]
+    fn a_negative_time_base_is_supported() {
+        let s = TsbpdScheduler::new(0, -3_000_000, DELAY_MS, 0, false, None);
+        assert_eq!(s.pkt_tsbpd_time(3_000_000), DELAY_MS * 1000);
+        assert_eq!(
+            s.pkt_tsbpd_time(0),
+            0,
+            "a play time before the epoch is `now`"
+        );
+    }
+
+    /// r08-SRT-W8: the receiver's TLPKTDROP-enabled path across the 32-bit
+    /// timestamp wrap. A packet stream whose raw timestamp wraps from near
+    /// `u32::MAX` to near 0 arrives at a steady 10 ms network delay; every
+    /// packet must be delivered. Without unwrapping, each post-wrap packet's
+    /// play time lands ~71 minutes in the past and Too-Late Packet Drop
+    /// discards it — the stream dies at the first wrap.
+    #[test]
+    fn a_stream_crossing_the_timestamp_wrap_is_delivered_not_dropped() {
+        const PACKETS: u32 = 100;
+        const START: u64 = 0xFFFF_F000; // 4096 µs before the wrap
+        let mut s = TsbpdScheduler::new(0, 0, DELAY_MS, 0, true, None);
+        let mut dropped = Vec::new();
+        let mut last_now = 0;
+        for i in 0..PACKETS {
+            let true_ts = START + u64::from(i) * 1000;
+            // The wire field is the true value modulo 2^32.
+            let raw = u32::try_from(true_ts & 0xFFFF_FFFF).unwrap();
+            last_now = true_ts + 10_000;
+            let out = s.feed_data(i, raw, Duration::from_micros(last_now));
+            dropped.extend(out.dropped);
+        }
+        let out = s.tick(Duration::from_micros(last_now + DELAY_MS * 1000));
+        dropped.extend(out.dropped);
+        assert!(dropped.is_empty(), "dropped across the wrap: {dropped:?}");
+        assert_eq!(s.next_release(), PACKETS, "every packet was released");
+        assert_eq!(s.buffered_count(), 0);
+        // (Packets already due on arrival are delivered by `feed_data`; the
+        // rest by the final tick. `next_release` and an empty buffer prove
+        // all 100 went out in order.)
     }
 }

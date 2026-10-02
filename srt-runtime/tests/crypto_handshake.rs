@@ -165,7 +165,8 @@ fn same_passphrase_negotiates_identical_sek_verified_by_matching_ciphertext() {
         "negotiated SEKs must be identical"
     );
     assert_eq!(
-        caller_sek, sek,
+        &*caller_sek,
+        sek.as_slice(),
         "the negotiated SEK is the one the Caller generated"
     );
     assert_eq!(

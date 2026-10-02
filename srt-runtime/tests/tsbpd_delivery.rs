@@ -13,6 +13,8 @@ use srt_runtime::tsbpd::{TickOutcome, TsbpdScheduler};
 
 /// Arbitrary TsbpdTimeBase in microseconds (rule 12).
 const TIME_BASE_US: u64 = 42_000_000;
+/// The same, as the scheduler's signed seed.
+const TIME_BASE_SEED: i64 = 42_000_000;
 /// TsbpdDelay in milliseconds (rule 10, minimum 120).
 const DELAY_MS: u64 = 120;
 /// TsbpdDelay in microseconds.
@@ -46,7 +48,7 @@ fn feed(sched: &mut TsbpdScheduler, seq: u32, ts: u32, now_us: u64) -> TickOutco
 // ---------------------------------------------------------------------------
 #[test]
 fn ordered_arrivals_withhold_then_release() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_US, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
 
     let pkts = [
         PacketInput {
@@ -97,7 +99,7 @@ fn ordered_arrivals_withhold_then_release() {
 // ---------------------------------------------------------------------------
 #[test]
 fn out_of_order_arrivals_released_in_sequence() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_US, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
 
     // Packet 1 arrives first.
     feed(&mut sched, 1, 10_000, 0);
@@ -131,7 +133,7 @@ fn out_of_order_arrivals_released_in_sequence() {
 // ---------------------------------------------------------------------------
 #[test]
 fn packet_withheld_until_play_time() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_US, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
     feed(&mut sched, 0, 0, 0);
 
     // Tick at 1 µs before PktTsbpdTime.
@@ -158,7 +160,7 @@ fn packet_withheld_until_play_time() {
 // ---------------------------------------------------------------------------
 #[test]
 fn too_late_packet_dropped_on_arrival() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_US, DELAY_MS, 0, true, None);
+    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, true, None);
 
     // Arrive at now much later than PktTsbpdTime for seq 0.
     let pkt_tsbpd = TIME_BASE_US + DELAY_US;
@@ -189,7 +191,7 @@ fn too_late_packet_dropped_on_arrival() {
 // ---------------------------------------------------------------------------
 #[test]
 fn drop_chain_after_gap_fill() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_US, DELAY_MS, 0, true, None);
+    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, true, None);
 
     // Packet 1 arrives on time but buffers because 0 is missing.
     feed(&mut sched, 1, 10_000, 0);
@@ -223,7 +225,7 @@ fn drop_chain_after_gap_fill() {
 // ---------------------------------------------------------------------------
 #[test]
 fn timestamp_wrap_handling() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_US, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
 
     // Packet just before the 32-bit wrap.
     let near_wrap: u32 = 0xFFFF_FF00u32;
@@ -237,17 +239,19 @@ fn timestamp_wrap_handling() {
     // Both are buffered.
     assert_eq!(sched.buffered_count(), 2);
 
-    // Correctly unwrapped: pkt1 (the later, post-wrap packet) has the LATER
-    // play time, not the earlier one a naive u32->u64 widening would give it.
+    // Correctly unwrapped, pkt1 (the later, post-wrap packet) plays 756 us
+    // AFTER pkt0. A naive u32->u64 widening would give it a play time ~71
+    // minutes BEFORE pkt0's, so it would be released together with pkt0 — the
+    // checkpoints below tell the two apart.
     let tsbpd0 = TIME_BASE_US + near_wrap as u64 + DELAY_US;
-    let tsbpd1 = tsbpd0 + 756;
-    assert!(tsbpd1 > tsbpd0, "post-wrap packet has the later play time");
-
-    // Release both by ticking at pkt1's (the later) play time.
-    let out = tick_to(&mut sched, tsbpd1);
+    let out = tick_to(&mut sched, tsbpd0);
+    assert_eq!(out.delivered, vec![0], "only pkt0 is due at its play time");
+    let out = tick_to(&mut sched, tsbpd0 + 755);
+    assert!(out.delivered.is_empty(), "pkt1 plays 756 us later");
+    let out = tick_to(&mut sched, tsbpd0 + 756);
     assert_eq!(
         out.delivered,
-        vec![0, 1],
+        vec![1],
         "wrapped timestamps must deliver in sequence order"
     );
 }
@@ -296,7 +300,7 @@ fn timestamp_wrap_with_drop_enabled_does_not_drop_on_time_packets() {
 // ---------------------------------------------------------------------------
 #[test]
 fn disabled_drop_delivers_late_packets() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_US, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
 
     let very_late = TIME_BASE_US + DELAY_US + drop_threshold_us() * 10;
     let out = feed(&mut sched, 0, 0, very_late);
@@ -313,7 +317,7 @@ fn disabled_drop_delivers_late_packets() {
 // ---------------------------------------------------------------------------
 #[test]
 fn gap_blocks_delivery_until_filled() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_US, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
 
     feed(&mut sched, 2, 20_000, 0);
     feed(&mut sched, 1, 10_000, 0);
@@ -341,8 +345,14 @@ fn gap_blocks_delivery_until_filled() {
 #[test]
 fn custom_drop_threshold() {
     let custom_threshold = 50_000u64; // 50 ms
-    let mut sched =
-        TsbpdScheduler::new(ISN, TIME_BASE_US, DELAY_MS, 0, true, Some(custom_threshold));
+    let mut sched = TsbpdScheduler::new(
+        ISN,
+        TIME_BASE_SEED,
+        DELAY_MS,
+        0,
+        true,
+        Some(custom_threshold),
+    );
 
     // PktTsbpdTime at TIME_BASE_US + 0 + DELAY_US.
     // Arrive at now = PktTsbpdTime + custom_threshold + 1 → past threshold.
@@ -361,11 +371,11 @@ fn custom_drop_threshold() {
 // ---------------------------------------------------------------------------
 #[test]
 fn drift_affects_play_time() {
-    let drift_us = 5000u64;
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_US, DELAY_MS, drift_us, false, None);
+    const DRIFT_US: u64 = 5000;
+    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 5000, false, None);
 
     // PktTsbpdTime includes drift: TIME_BASE_US + 0 + DELAY_US + drift_us.
-    let pkt_tsbpd = TIME_BASE_US + DELAY_US + drift_us;
+    let pkt_tsbpd = TIME_BASE_US + DELAY_US + DRIFT_US;
 
     // Tick before drift-adjusted play time — should not release.
     let out = tick_to(&mut sched, pkt_tsbpd - 1);
@@ -387,7 +397,7 @@ fn drift_affects_play_time() {
 // ---------------------------------------------------------------------------
 #[test]
 fn gradual_tick_releases_incrementally() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_US, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
 
     // Feed 10 packets with 5 ms spacing.
     for i in 0..10u32 {
@@ -410,7 +420,7 @@ fn gradual_tick_releases_incrementally() {
 // ---------------------------------------------------------------------------
 #[test]
 fn duplicate_arrival_is_noop() {
-    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_US, DELAY_MS, 0, false, None);
+    let mut sched = TsbpdScheduler::new(ISN, TIME_BASE_SEED, DELAY_MS, 0, false, None);
 
     let play = TIME_BASE_US + DELAY_US;
     feed(&mut sched, 0, 0, play);

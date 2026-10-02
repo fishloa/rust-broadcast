@@ -176,9 +176,10 @@ async fn loss_recovery_through_io_layer() {
 
         for payload in &payloads {
             caller.send(payload).await.expect("caller send");
-            // Localhost RTT is sub-millisecond; a small gap keeps the loss /
-            // NAK / retransmit round trip flowing while sending.
-            tokio::time::sleep(Duration::from_millis(8)).await;
+            // Let the relay, the receiver and the caller's driver run between
+            // sends so the loss / NAK / retransmit round trip interleaves
+            // with them — a scheduler yield, not a wall-clock wait.
+            tokio::task::yield_now().await;
         }
 
         // Wait for the receiver to collect everything (recovery of the last

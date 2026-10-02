@@ -14,9 +14,12 @@
 //! not a TSBPD-timed playout (that delay is `srt-tsbpd.md` scope, a
 //! separate follow-up).
 //!
-//! # Non-goals
-//! TLPKTDROP fake-ACK skip handling (rule 13) is not modeled — see the
-//! `arq` module doc.
+//! # TLPKTDROP fake ACK
+//! The receiver advances its ack point past packets the delivery side gave up
+//! on only when told to (the crate-internal skip the tokio adapter calls when
+//! the TSBPD scheduler reports a drop, rule 13); it never skips a gap on its
+//! own, so without that call it keeps NAKing and never acknowledges what it
+//! has not received.
 
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::vec::Vec;
@@ -28,12 +31,44 @@ use crate::packet::{AckAckPacket, AckCif, AckPacket, ControlPacket, LossListEntr
 use super::rtt::RttEstimator;
 use super::{FULL_ACK_PERIOD, LIGHT_ACK_THRESHOLD, duration_to_wire_us, nak_interval, seq};
 
-/// A bound on how many individual sequence numbers one [`Receiver::feed_data`]
-/// call will enumerate into the loss list for a single newly-detected gap.
-/// Not a `specs/rules/srt-arq.md` rule — a safety cap against a corrupt or
-/// adversarial sequence-number jump causing unbounded work (mirrors the
-/// NAK-side cap in `arq::sender::expand_loss_entry`).
-const MAX_GAP_EXPANSION: u32 = 1 << 16;
+/// The most sequence numbers ahead of the cumulative ack point this receiver
+/// will ever track (a bound on `loss_list` + `out_of_order`, which together
+/// can never name more sequence numbers than the window spans). The
+/// effective bound is the negotiated Maximum Flow Window Size
+/// (`draft-sharabayko-srt-01` §3.2.1 — a packet further ahead than the window
+/// cannot be buffered by the peer's own flow control either), clamped to this
+/// value so a hostile or misconfigured window cannot turn one packet into
+/// unbounded work. Not a `specs/rules/srt-arq.md` rule — an implementation
+/// bound (about ten times libsrt's default 25 600-packet flow window).
+const MAX_TRACKED_WINDOW: u32 = 1 << 18;
+
+/// IPv4 (20 B) + UDP (8 B) header bytes inside one MTU-sized datagram — what
+/// the handshake's `MTU` field (§3.2.1, "Maximum Transmission Unit Size")
+/// counts but a NAK's Control Information Field cannot use.
+const IP_UDP_HEADER_LEN: usize = 28;
+
+/// Encoded size of one loss-list entry: a single sequence number is one
+/// 32-bit word, a range is two (Appendix A, Figures 21/22).
+const LOSS_ENTRY_SINGLE_LEN: usize = 4;
+const LOSS_ENTRY_RANGE_LEN: usize = 8;
+
+/// Default MTU assumed for NAK sizing until [`Receiver::with_mtu`] sets the
+/// negotiated value (the handshake's default `MTU`, 1500 B).
+const DEFAULT_MTU: u32 = 1500;
+
+/// How many multiples of the round-trip time a Full ACK waits for its ACKACK
+/// before the entry is forgotten (the ACKACK was lost, or the peer never
+/// sends one). Implementation-defined — `srt-arq.md` rules 26-28 do not say
+/// when to give up.
+const ACK_RETENTION_RTTS: u32 = 4;
+
+/// Floor on the time an outstanding Full ACK is retained, so a very low RTT
+/// estimate cannot expire an ACKACK that is merely queued.
+const ACK_RETENTION_FLOOR: Duration = Duration::from_secs(1);
+
+/// Hard cap on outstanding Full ACKs awaiting an ACKACK, however long the
+/// retention (at one Full ACK per 10 ms this is ten seconds' worth).
+const MAX_OUTSTANDING_ACKS: usize = 1024;
 
 /// Outcome of one [`Receiver::feed_data`] call.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -47,6 +82,12 @@ pub struct FeedOutcome {
     /// An immediate NAK to send, if this packet's arrival revealed a new
     /// gap (`specs/rules/srt-arq.md` rules 4, 14).
     pub nak: Option<Vec<u8>>,
+    /// The packet was not a 31-bit sequence number (§3.1), or was further
+    /// ahead of the cumulative ack point than the flow window allows, and was
+    /// ignored entirely (not recorded, not
+    /// NAKed): accepting it would let one crafted datagram inflate the loss
+    /// list. The caller must not stage or deliver it.
+    pub out_of_window: bool,
 }
 
 /// ARQ receiver-side state (`draft-sharabayko-srt-01` §4.8.1/§4.8.2/§4.10).
@@ -90,6 +131,9 @@ pub struct Receiver {
     /// written to catch (libsrt interop; no tracked issue number for this
     /// one).
     avail_buf_size: u32,
+    /// The MTU the periodic NAK is sized against (`IP_UDP_HEADER_LEN` and the
+    /// SRT header come off it, see [`Self::with_mtu`]).
+    mtu: u32,
 }
 
 impl Receiver {
@@ -110,7 +154,32 @@ impl Receiver {
             outstanding_acks: BTreeMap::new(),
             rtt: RttEstimator::new(),
             avail_buf_size: max_flow_window,
+            mtu: DEFAULT_MTU,
         }
+    }
+
+    /// Size periodic NAK datagrams against `mtu` (the handshake's negotiated
+    /// Maximum Transmission Unit Size, §3.2.1) instead of the 1500-byte
+    /// default: a loss list too long for one datagram is split across several
+    /// NAK packets rather than emitted as one the socket cannot send.
+    pub fn with_mtu(mut self, mtu: u32) -> Self {
+        self.mtu = mtu;
+        self
+    }
+
+    /// How far ahead of the ack point a packet may be and still be tracked.
+    fn window(&self) -> u32 {
+        self.avail_buf_size.min(MAX_TRACKED_WINDOW)
+    }
+
+    /// Most NAK Control Information Field bytes one datagram may carry:
+    /// the MTU less the IP/UDP and SRT headers, never less than one range
+    /// entry (so a pathological MTU still makes progress).
+    fn max_nak_cif_len(&self) -> usize {
+        usize::try_from(self.mtu)
+            .unwrap_or(usize::MAX)
+            .saturating_sub(IP_UDP_HEADER_LEN + crate::packet::SRT_HEADER_LEN)
+            .max(LOSS_ENTRY_RANGE_LEN)
     }
 
     /// The cumulative ack point — every seq strictly before this has been
@@ -135,24 +204,63 @@ impl Receiver {
     }
 
     /// Process one arriving data packet's sequence number.
+    ///
+    /// A packet more than the flow window ahead of the ack point is ignored
+    /// ([`FeedOutcome::out_of_window`]): a crafted sequence jump therefore
+    /// never grows the loss list or the out-of-order set past the window.
     pub fn feed_data(&mut self, seq_number: u32, now: Duration) -> FeedOutcome {
+        // Not a 31-bit sequence number at all (§3.1): never a real packet.
+        if seq_number > crate::packet::SEQ_NUMBER_MASK {
+            return FeedOutcome {
+                out_of_window: true,
+                ..FeedOutcome::default()
+            };
+        }
+        if seq::seq_gt(seq_number, self.next_expected)
+            && !u32::try_from(seq::seq_diff(seq_number, self.next_expected))
+                .is_ok_and(|ahead| ahead <= self.window())
+        {
+            return FeedOutcome {
+                out_of_window: true,
+                ..FeedOutcome::default()
+            };
+        }
+
         self.packets_since_ack = self.packets_since_ack.saturating_add(1);
 
-        let mut newly_lost = Vec::new();
-        match self.highest_received {
-            None => self.highest_received = Some(seq_number),
-            Some(highest) if seq::seq_gt(seq_number, highest) => {
-                let mut s = seq::seq_next(highest);
-                let mut n = 0u32;
-                while s != seq_number && n < MAX_GAP_EXPANSION {
-                    newly_lost.push(s);
-                    self.loss_list.insert(s);
-                    s = seq::seq_next(s);
-                    n += 1;
-                }
-                self.highest_received = Some(seq_number);
+        let mut nak_entries = Vec::new();
+        // Before any packet has arrived the "highest received" is the one
+        // just below the peer's ISN (the ack point), so a first packet
+        // ahead of the ISN reveals a gap like any other.
+        let highest = self
+            .highest_received
+            .unwrap_or_else(|| seq::seq_add(self.next_expected, crate::packet::SEQ_NUMBER_MASK));
+        if seq::seq_gt(seq_number, highest) {
+            // The newly opened gap, `highest + 1 ..= seq_number - 1` —
+            // clipped to the ack point (a DROPREQ may have moved it past
+            // a `highest` that never saw those packets).
+            let mut first_lost = seq::seq_next(highest);
+            if seq::seq_lt(first_lost, self.next_expected) {
+                first_lost = self.next_expected;
             }
-            _ => {}
+            if first_lost != seq_number && seq::seq_lt(first_lost, seq_number) {
+                // `+ (2^31 - 1)` is `- 1` in the 31-bit sequence space.
+                let last_lost = seq::seq_add(seq_number, crate::packet::SEQ_NUMBER_MASK);
+                let mut s = first_lost;
+                loop {
+                    self.loss_list.insert(s);
+                    if s == last_lost {
+                        break;
+                    }
+                    s = seq::seq_next(s);
+                }
+                nak_entries.push(if first_lost == last_lost {
+                    LossListEntry::Single(first_lost)
+                } else {
+                    LossListEntry::Range(first_lost, last_lost)
+                });
+            }
+            self.highest_received = Some(seq_number);
         }
 
         self.loss_list.remove(&seq_number);
@@ -172,27 +280,60 @@ impl Receiver {
         // already-delivered packet (e.g. a redundant retransmission) —
         // nothing to do.
 
-        let nak = if newly_lost.is_empty() {
+        let nak = if nak_entries.is_empty() {
             None
         } else {
-            Some(self.build_nak(&newly_lost, now))
+            self.build_naks(&nak_entries, now).into_iter().next()
         };
 
-        FeedOutcome { delivered, nak }
+        FeedOutcome {
+            delivered,
+            nak,
+            out_of_window: false,
+        }
     }
 
-    fn build_nak(&self, seqs: &[u32], now: Duration) -> Vec<u8> {
-        let entries = coalesce(seqs);
-        let raw = build_loss_list(&entries).expect("seq numbers are 31-bit by construction");
+    /// Serialize `entries` into one or more NAK datagrams, none larger than
+    /// the MTU allows (a periodic NAK of a bursty-loss list otherwise grows
+    /// past one datagram, which the socket refuses with `EMSGSIZE`).
+    fn build_naks(&self, entries: &[LossListEntry], now: Duration) -> Vec<Vec<u8>> {
+        let budget = self.max_nak_cif_len();
+        let mut out = Vec::new();
+        let mut chunk: Vec<LossListEntry> = Vec::new();
+        let mut used = 0usize;
+        for &entry in entries {
+            let len = match entry {
+                LossListEntry::Range(..) => LOSS_ENTRY_RANGE_LEN,
+                _ => LOSS_ENTRY_SINGLE_LEN,
+            };
+            if used + len > budget && !chunk.is_empty() {
+                out.extend(self.nak_datagram(&chunk, now));
+                chunk.clear();
+                used = 0;
+            }
+            chunk.push(entry);
+            used += len;
+        }
+        if !chunk.is_empty() {
+            out.extend(self.nak_datagram(&chunk, now));
+        }
+        out
+    }
+
+    /// One NAK datagram for `entries`, or `None` if the entries cannot be
+    /// encoded (a sequence number wider than 31 bits — unreachable, every
+    /// entry derives from a masked sequence number — is dropped rather than
+    /// panicking the connection).
+    fn nak_datagram(&self, entries: &[LossListEntry], now: Duration) -> Option<Vec<u8>> {
+        let raw = build_loss_list(entries).ok()?;
         let pkt = ControlPacket::Nak(NakPacket {
             timestamp: duration_to_wire_us(now),
             dest_socket_id: self.dest_socket_id,
             raw_loss_list: &raw,
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
-        pkt.serialize_into(&mut buf)
-            .expect("buffer sized from serialized_len");
-        buf
+        pkt.serialize_into(&mut buf).ok()?;
+        Some(buf)
     }
 
     /// Advance to absolute time `now` and emit any periodic control packets
@@ -205,27 +346,46 @@ impl Receiver {
         let mut out = Vec::new();
 
         if elapsed(now, self.last_full_ack_at) >= FULL_ACK_PERIOD {
-            out.push(self.build_full_ack(now));
+            out.extend(self.build_full_ack(now));
             self.last_full_ack_at = now;
             self.packets_since_ack = 0;
         } else if self.packets_since_ack >= LIGHT_ACK_THRESHOLD {
-            out.push(self.build_light_ack());
+            out.extend(self.build_light_ack());
             self.packets_since_ack = 0;
         }
 
         let interval = nak_interval(self.rtt.rtt(), self.rtt.rtt_var());
         if !self.loss_list.is_empty() && elapsed(now, self.last_nak_at) >= interval {
-            let seqs: Vec<u32> = self.loss_list.iter().copied().collect();
-            out.push(self.build_nak(&seqs, now));
+            // Circular order from the ack point, so a run that straddles the
+            // 31-bit wrap coalesces into one range.
+            let base = self.next_expected;
+            let mut seqs: Vec<u32> = self.loss_list.iter().copied().collect();
+            seqs.sort_unstable_by_key(|&s| seq::seq_diff(s, base));
+            out.extend(self.build_naks(&coalesce(&seqs), now));
             self.last_nak_at = now;
         }
+
+        self.expire_outstanding_acks(now);
 
         out
     }
 
-    fn build_full_ack(&mut self, now: Duration) -> Vec<u8> {
+    /// Forget Full ACKs whose ACKACK never came (W3): a lost ACKACK, or a
+    /// peer that never sends one, would otherwise leave one entry per Full
+    /// ACK (100/s) forever.
+    fn expire_outstanding_acks(&mut self, now: Duration) {
+        let retention = (self.rtt.rtt() * ACK_RETENTION_RTTS).max(ACK_RETENTION_FLOOR);
+        self.outstanding_acks
+            .retain(|_, sent_at| elapsed(now, *sent_at) <= retention);
+    }
+
+    fn build_full_ack(&mut self, now: Duration) -> Option<Vec<u8>> {
         let ack_number = self.next_ack_number;
         self.next_ack_number = self.next_ack_number.wrapping_add(1);
+        if self.outstanding_acks.len() >= MAX_OUTSTANDING_ACKS {
+            // Oldest first: Acknowledgement Numbers only ever increase.
+            self.outstanding_acks.pop_first();
+        }
         self.outstanding_acks.insert(ack_number, now);
         let pkt = ControlPacket::Ack(AckPacket {
             ack_number,
@@ -244,12 +404,11 @@ impl Receiver {
             },
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
-        pkt.serialize_into(&mut buf)
-            .expect("buffer sized from serialized_len");
-        buf
+        pkt.serialize_into(&mut buf).ok()?;
+        Some(buf)
     }
 
-    fn build_light_ack(&self) -> Vec<u8> {
+    fn build_light_ack(&self) -> Option<Vec<u8>> {
         // §3.2.4: a Light ACK's Acknowledgement Number "should be set to
         // 0"; it carries no RTT/CIF payload beyond the sequence number
         // (rule 24).
@@ -262,9 +421,8 @@ impl Receiver {
             },
         });
         let mut buf = alloc::vec![0u8; pkt.serialized_len()];
-        pkt.serialize_into(&mut buf)
-            .expect("buffer sized from serialized_len");
-        buf
+        pkt.serialize_into(&mut buf).ok()?;
+        Some(buf)
     }
 
     /// Process an incoming ACKACK: match it against the outstanding Full ACK
@@ -454,5 +612,240 @@ mod tests {
         // moved from the 100ms initial value toward the 20ms sample.
         assert!(r.rtt() < Duration::from_millis(100));
         assert!(r.rtt() > sample);
+    }
+
+    fn nak_entries(bytes: &[u8]) -> Vec<LossListEntry> {
+        let ControlPacket::Nak(n) = ControlPacket::parse(bytes).unwrap() else {
+            panic!("expected NAK");
+        };
+        n.entries().map(|e| e.unwrap()).collect()
+    }
+
+    /// r08-SRT-W2: a sequence number past the flow window is ignored, so one
+    /// crafted datagram cannot inflate the loss list. 2^30 - 1 is the farthest
+    /// "ahead" the 31-bit circular order allows (the old code enumerated
+    /// 65 536 losses for it and then jumped `highest_received`, so the next
+    /// spoofed packet added another 65 536).
+    #[test]
+    fn a_sequence_number_wider_than_31_bits_is_refused() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        for seq in [0x8000_0000u32, 0x8000_0001, u32::MAX] {
+            let out = r.feed_data(seq, Duration::ZERO);
+            assert!(out.out_of_window, "{seq:#x}");
+            assert!(out.delivered.is_empty() && out.nak.is_none());
+        }
+        assert_eq!(r.loss_list_len(), 0);
+        assert_eq!(r.highest_received, None);
+        assert_eq!(r.ack_point(), 0);
+    }
+
+    #[test]
+    fn a_hostile_sequence_jump_is_ignored_not_enumerated() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        r.feed_data(0, Duration::ZERO);
+        for jump in [(1u32 << 30) - 1, 1 << 20, 1 << 18, 5 << 16] {
+            let out = r.feed_data(jump, Duration::ZERO);
+            assert!(out.out_of_window, "jump to {jump} must be refused");
+            assert!(out.nak.is_none());
+            assert!(out.delivered.is_empty());
+        }
+        assert_eq!(r.loss_list_len(), 0);
+        assert_eq!(r.out_of_order.len(), 0);
+        assert_eq!(r.ack_point(), 1);
+        // The ack point is where the window is measured from: repeating the
+        // attack does not move `highest_received` either.
+        assert_eq!(r.highest_received, Some(0));
+    }
+
+    /// The window boundary is exact: `next_expected + window` is accepted
+    /// (and its whole gap NAKed as one range), one more is refused.
+    #[test]
+    fn the_flow_window_boundary_is_exact() {
+        const WINDOW: u32 = 1000;
+        let mut r = Receiver::new(PEER, 0, WINDOW);
+        let beyond = r.feed_data(WINDOW + 1, Duration::ZERO);
+        assert!(beyond.out_of_window);
+        assert_eq!(r.loss_list_len(), 0);
+
+        let edge = r.feed_data(WINDOW, Duration::ZERO);
+        assert!(!edge.out_of_window);
+        assert_eq!(r.loss_list_len(), (WINDOW - 1) as usize + 1); // 0..WINDOW-1
+        let nak = edge.nak.expect("the gap is NAKed immediately");
+        // One Range entry, not 1000 singles.
+        assert_eq!(
+            nak_entries(&nak),
+            alloc::vec![LossListEntry::Range(0, WINDOW - 1)]
+        );
+        assert!(r.out_of_order.len() <= WINDOW as usize);
+    }
+
+    /// A window larger than the receiver is willing to track is clamped, so
+    /// a hostile `max_flow_window_size` cannot re-open the flood.
+    #[test]
+    fn an_oversized_negotiated_window_is_clamped() {
+        let mut r = Receiver::new(PEER, 0, u32::MAX);
+        let out = r.feed_data((1 << 30) - 1, Duration::ZERO);
+        assert!(out.out_of_window);
+        assert_eq!(r.loss_list_len(), 0);
+    }
+
+    /// r08-SRT-W3: Full ACKs whose ACKACK never arrives are forgotten. 5 000
+    /// ticks (50 s) with no ACKACK at all used to leave 5 000 entries.
+    #[test]
+    fn unanswered_full_acks_age_out() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        for tick in 1..=5_000u64 {
+            r.tick(Duration::from_millis(10 * tick));
+        }
+        // Retention is max(4 x RTT, 1 s) = 1 s of 10 ms ACKs.
+        let retention_acks =
+            (ACK_RETENTION_FLOOR.as_millis() / FULL_ACK_PERIOD.as_millis()) as usize;
+        assert!(
+            r.outstanding_acks.len() <= retention_acks + 1,
+            "{} outstanding ACKs retained",
+            r.outstanding_acks.len()
+        );
+        assert!(!r.outstanding_acks.is_empty(), "recent ACKs are kept");
+    }
+
+    /// An ACKACK arriving inside the retention window still measures RTT; one
+    /// that arrives after its entry aged out is ignored.
+    #[test]
+    fn ackack_after_expiry_is_ignored() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        let out = r.tick(FULL_ACK_PERIOD);
+        let ControlPacket::Ack(ack) = ControlPacket::parse(&out[0]).unwrap() else {
+            panic!("expected ACK");
+        };
+        let ackack = AckAckPacket {
+            ack_number: ack.ack_number,
+            timestamp: 0,
+            dest_socket_id: PEER,
+            libsrt_pad: false,
+        };
+        let rtt_before = r.rtt();
+        // Age the entry out (no ACKACK for 10 s), then deliver the ACKACK.
+        for tick in 2..=1_000u64 {
+            r.tick(Duration::from_millis(10 * tick));
+        }
+        r.on_ackack(&ackack, Duration::from_secs(10));
+        assert_eq!(r.rtt(), rtt_before, "an expired ACK must not move the RTT");
+    }
+
+    /// The hard cap: more Full ACKs than `MAX_OUTSTANDING_ACKS` inside one
+    /// retention window evict the oldest rather than growing.
+    #[test]
+    fn outstanding_acks_are_capped() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        for _ in 0..(MAX_OUTSTANDING_ACKS * 5) {
+            r.build_full_ack(Duration::ZERO);
+        }
+        assert_eq!(r.outstanding_acks.len(), MAX_OUTSTANDING_ACKS);
+        // The survivors are the newest.
+        let oldest = *r.outstanding_acks.keys().next().unwrap();
+        assert_eq!(oldest as usize, MAX_OUTSTANDING_ACKS * 4 + 1);
+    }
+
+    /// r08-SRT-W4: a bursty (non-contiguous) loss list no longer becomes one
+    /// datagram larger than the MTU — it is split, every datagram fits, and
+    /// together they name every lost packet exactly once.
+    #[test]
+    fn periodic_nak_is_split_to_fit_the_mtu() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        r.feed_data(0, Duration::ZERO);
+        // Receive every other packet: 2, 4, ..., 2000 → 1000 isolated losses.
+        let mut lost = Vec::new();
+        for q in (2..=2000u32).step_by(2) {
+            r.feed_data(q, Duration::ZERO);
+            lost.push(q - 1);
+        }
+        assert_eq!(r.loss_list_len(), 1000);
+
+        let naks: Vec<Vec<u8>> = r
+            .tick(Duration::from_secs(1))
+            .into_iter()
+            .filter(|b| matches!(ControlPacket::parse(b), Ok(ControlPacket::Nak(_))))
+            .collect();
+        assert!(naks.len() > 1, "1000 singles cannot fit one datagram");
+        let mut named = Vec::new();
+        for nak in &naks {
+            assert!(
+                nak.len() + IP_UDP_HEADER_LEN <= DEFAULT_MTU as usize,
+                "NAK of {} B exceeds the {} B MTU",
+                nak.len() + IP_UDP_HEADER_LEN,
+                DEFAULT_MTU
+            );
+            for e in nak_entries(nak) {
+                match e {
+                    LossListEntry::Single(s) => named.push(s),
+                    other => panic!("unexpected entry {other:?}"),
+                }
+            }
+        }
+        named.sort_unstable();
+        assert_eq!(named, lost);
+    }
+
+    /// The MTU is configurable: 576 gives smaller datagrams.
+    #[test]
+    fn nak_chunking_follows_the_configured_mtu() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW).with_mtu(576);
+        r.feed_data(0, Duration::ZERO);
+        for q in (2..=400u32).step_by(2) {
+            r.feed_data(q, Duration::ZERO);
+        }
+        let naks: Vec<Vec<u8>> = r
+            .tick(Duration::from_secs(1))
+            .into_iter()
+            .filter(|b| matches!(ControlPacket::parse(b), Ok(ControlPacket::Nak(_))))
+            .collect();
+        assert!(naks.len() >= 2);
+        for nak in &naks {
+            assert!(nak.len() + IP_UDP_HEADER_LEN <= 576);
+        }
+    }
+
+    /// A loss run that straddles the 31-bit wrap is one range in the periodic
+    /// NAK (the loss list is ordered by raw value, which would split it at
+    /// the wrap).
+    #[test]
+    fn periodic_nak_coalesces_a_loss_run_across_the_wrap() {
+        const MAX: u32 = crate::packet::SEQ_NUMBER_MASK;
+        let mut r = Receiver::new(PEER, MAX - 2, MAX_FLOW_WINDOW);
+        r.feed_data(MAX - 2, Duration::ZERO);
+        let imm = r.feed_data(2, Duration::ZERO); // MAX-1, MAX, 0, 1 lost
+        assert_eq!(
+            nak_entries(&imm.nak.expect("gap NAK")),
+            alloc::vec![LossListEntry::Range(MAX - 1, 1)]
+        );
+        let naks: Vec<Vec<u8>> = r
+            .tick(Duration::from_secs(1))
+            .into_iter()
+            .filter(|b| matches!(ControlPacket::parse(b), Ok(ControlPacket::Nak(_))))
+            .collect();
+        assert_eq!(naks.len(), 1);
+        assert_eq!(
+            nak_entries(&naks[0]),
+            alloc::vec![LossListEntry::Range(MAX - 1, 1)]
+        );
+    }
+
+    /// After a DROPREQ moves the ack point past packets this receiver never
+    /// saw, the next gap is measured from the ack point, not from a stale
+    /// `highest_received` (which would NAK sequence numbers the sender gave
+    /// up on).
+    #[cfg(feature = "tokio")]
+    #[test]
+    fn gap_after_a_dropreq_starts_at_the_ack_point() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        r.feed_data(0, Duration::ZERO);
+        r.skip_range(1, 99); // sender gave up on 1..=99
+        assert_eq!(r.ack_point(), 100);
+        let out = r.feed_data(105, Duration::ZERO);
+        assert_eq!(
+            nak_entries(&out.nak.expect("gap NAK")),
+            alloc::vec![LossListEntry::Range(100, 104)]
+        );
+        assert_eq!(r.loss_list_len(), 5);
     }
 }

@@ -20,13 +20,16 @@ use crate::packet::SEQ_NUMBER_MASK;
 
 /// Size of the SRT sequence-number space: `2^31` (31-bit field, §3.1).
 const SEQ_MOD: i64 = (SEQ_NUMBER_MASK as i64) + 1;
+/// [`SEQ_MOD`] as an unsigned value (for [`seq_add`]).
+const SEQ_MOD_U64: u64 = (SEQ_NUMBER_MASK as u64) + 1;
 /// Half the sequence space — the wrap-around threshold used to decide which
 /// of two directions between two sequence numbers is the shorter one.
 const SEQ_HALF: i64 = SEQ_MOD / 2;
 
 /// Add `n` to a sequence number, wrapping at the 31-bit boundary.
 pub fn seq_add(seq: u32, n: u32) -> u32 {
-    (((seq as u64) + (n as u64)) % (SEQ_MOD as u64)) as u32
+    // The sum of two `u32`s fits a `u64`; reduced modulo 2^31 it fits a `u32`.
+    u32::try_from((u64::from(seq) + u64::from(n)) % SEQ_MOD_U64).unwrap_or(0)
 }
 
 /// The next sequence number after `seq` (wraps `0x7FFF_FFFF` -> `0`).
@@ -40,11 +43,10 @@ pub fn seq_diff(a: u32, b: u32) -> i32 {
     let a = i64::from(a & SEQ_NUMBER_MASK);
     let b = i64::from(b & SEQ_NUMBER_MASK);
     let raw = (a - b).rem_euclid(SEQ_MOD);
-    if raw > SEQ_HALF {
-        (raw - SEQ_MOD) as i32
-    } else {
-        raw as i32
-    }
+    // `raw` is in `0..2^31`; either branch lands in `(-2^30, 2^30]`, which
+    // fits an `i32`.
+    let diff = if raw > SEQ_HALF { raw - SEQ_MOD } else { raw };
+    i32::try_from(diff).unwrap_or(0)
 }
 
 /// `a` precedes `b` in circular sequence order.

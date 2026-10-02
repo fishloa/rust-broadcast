@@ -123,7 +123,8 @@ use core::time::Duration;
 /// implementation must be prepared to throttle/reject this rather than
 /// attempt it literally." This is that throttle — **implementation
 /// policy** for the concrete cap value (`2^16`, matching
-/// `srt_runtime::arq::sender::MAX_RANGE_EXPANSION`'s equivalent safety cap),
+/// `srt-runtime`'s per-NAK sequence-number cap, which examines a range against
+/// its send buffer rather than expanding it),
 /// since §5.3.4 states the *need* for a limit but not a number.
 pub(crate) const MAX_RANGE_EXPANSION: usize = 1 << 16;
 

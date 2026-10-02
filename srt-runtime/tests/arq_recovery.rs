@@ -86,7 +86,9 @@ fn nak_retransmit_recovers_all_packets_in_order_and_rtt_converges() {
     let mut in_flight: Vec<Vec<u8>> = Vec::new();
     for seq in 0..TOTAL {
         let payload = alloc_payload(seq);
-        let bytes = sender.on_data(seq, seq, &payload, now);
+        let bytes = sender
+            .on_data(seq, seq, &payload, now)
+            .expect("in-range numbers");
         if !DROPPED.contains(&seq) {
             in_flight.push(bytes);
         }
@@ -187,7 +189,9 @@ fn zero_loss_run_emits_no_spurious_naks() {
 
     for seq in 0..50u32 {
         let payload = alloc_payload(seq);
-        let bytes = sender.on_data(seq, seq, &payload, now);
+        let bytes = sender
+            .on_data(seq, seq, &payload, now)
+            .expect("in-range numbers");
         let dp = DataPacket::parse(&bytes).unwrap();
         let outcome = receiver.feed_data(dp.seq_number, now);
         assert!(
