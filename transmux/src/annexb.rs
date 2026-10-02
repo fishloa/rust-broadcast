@@ -45,7 +45,14 @@ pub fn iter_annexb_nals(annexb: &[u8]) -> AnnexBNalIter<'_> {
 }
 
 /// Positions of every start code's first `00` (of the trailing `00 00 01`).
-fn start_code_positions(data: &[u8]) -> Vec<usize> {
+///
+/// Shared by [`iter_annexb_nals`] and the PS demuxer (which carried a verbatim
+/// copy; audit r04-O1). Other scans in the crate answer different questions and
+/// stay separate: `au` finds the first NAL start (shared with the PS demuxer
+/// through `au::first_nal_start`) and scans incrementally from a resume offset
+/// in the streaming splitter, and `mpeg_legacy::find_start_code` looks for one
+/// specific `00 00 01 <code>` MPEG-2 start code.
+pub(crate) fn start_code_positions(data: &[u8]) -> Vec<usize> {
     let mut positions = Vec::new();
     let n = data.len();
     let mut p = 0usize;

@@ -406,31 +406,48 @@ impl AudioSpecificConfig {
     /// backward-compatible sync extensions (`0x2B7` → SBR, `0x548` → PS).
     /// Read-only over the parsed fields — never mutates the round-trip bytes.
     pub fn heaac_signaling(&self) -> HeAacSignaling {
-        let bytes = self.to_bytes();
-        detect_heaac_signaling(&bytes).unwrap_or(HeAacSignaling {
-            sbr_present: false,
-            ps_present: false,
-            effective_aot: self.audio_object_type.raw(),
-        })
+        self.with_serialized(detect_heaac_signaling)
+            .unwrap_or(HeAacSignaling {
+                sbr_present: false,
+                ps_present: false,
+                effective_aot: self.audio_object_type.raw(),
+            })
+    }
+
+    /// The effective sampling rate in Hz: the explicit 24-bit rate when present,
+    /// else the rate of the `samplingFrequencyIndex` (ISO/IEC 14496-3 Table
+    /// 1.10). `None` for the reserved indices. The crate's one place that
+    /// combines the two (audit r04-O5/r05-O6).
+    pub fn effective_sampling_frequency(&self) -> Option<u32> {
+        self.sampling_frequency
+            .or_else(|| self.sampling_frequency_index.table_hz())
+    }
+
+    /// Run `f` over this ASC's serialized bytes without a heap allocation when
+    /// they fit [`STACK_ASC_MAX`] (every real ASC does; the HE-AAC decode below
+    /// reads well under 16 bytes), else over a `to_bytes` copy. Byte-identical
+    /// input to `f` either way (audit r04-O2).
+    fn with_serialized<R>(&self, f: impl FnOnce(&[u8]) -> R) -> R {
+        let need = self.serialized_len();
+        let mut stack = [0u8; STACK_ASC_MAX];
+        if need <= STACK_ASC_MAX && self.serialize_into(&mut stack[..need]).is_ok() {
+            return f(&stack[..need]);
+        }
+        f(&self.to_bytes())
     }
 }
+
+/// Largest serialized ASC (bytes) handled on the stack by
+/// [`AudioSpecificConfig::with_serialized`].
+const STACK_ASC_MAX: usize = 64;
 
 /// Read `n` MSB-first bits from `bytes` at `*bit`, advancing it. Returns `None`
 /// if the buffer is exhausted.
 ///
-/// Bounds are checked here exactly as before (`n` is always <= 24 for every
-/// ASC field this module reads); the extraction itself delegates to
-/// `broadcast_common::bits::BitReader` (shared with `dvb-t2mi`/`rdd29`/
-/// `st291`) so a bit-order/overrun fix there reaches this reader too.
+/// Delegates to the shared [`crate::bitreader::read_bits_at`] cursor (`n` is
+/// always <= 24 for every ASC field this module reads).
 fn asc_read_bits(bytes: &[u8], bit: &mut usize, n: usize) -> Option<u32> {
-    if *bit + n > bytes.len() * 8 {
-        return None;
-    }
-    let mut br = broadcast_common::bits::BitReader::new(bytes);
-    br.skip_bits(*bit).ok()?;
-    let v = br.read_bits(n as u32).ok()? as u32;
-    *bit += n;
-    Some(v)
+    u32::try_from(crate::bitreader::read_bits_at(bytes, bit, n)?).ok()
 }
 
 /// `GetAudioObjectType()` — 5 bits, or `31 + 6` bits (ISO/IEC 14496-3 §1.5.1.1).
@@ -741,8 +758,8 @@ impl AudioSpecificConfig {
         // does. ADTS `profile` (2 bits, `= AOT - 1`) can only represent core
         // AOT 1..=4 (Main/LC/SSR/LTP); anything else is rejected rather than
         // silently wrapped into an unrelated profile.
-        let bytes = self.to_bytes();
-        let core_aot = detect_heaac_core(&bytes)
+        let core_aot = self
+            .with_serialized(detect_heaac_core)
             .map(|(aot, _, _)| aot)
             .unwrap_or(self.audio_object_type.raw());
         if !(1..=4).contains(&core_aot) {

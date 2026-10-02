@@ -91,10 +91,10 @@ pub struct Track {
     /// Demuxers that recover an absolute timeline populate it
     /// ([`crate::media::Fmp4Demux`] from the first movie fragment's `tfdt`;
     /// [`TsDemux`](crate::ts_demux::TsDemux) from the first sample's
-    /// unwrapped DTS). Demuxers whose source carries no absolute anchor
-    /// (WebM, MPEG Program Stream) leave it `0`; FLV, RTMP, and RTP recover
-    /// one from their own source clock (media plane step 2c) and set it
-    /// accordingly. It is the input to the timeline transforms in
+    /// unwrapped DTS; WebM, MPEG Program Stream, FLV, RTMP and RTP likewise
+    /// anchor on their first sample's absolute timestamp or their own source
+    /// clock, media plane step 2c). A source that carries no absolute anchor
+    /// leaves it `0`. It is the input to the timeline transforms in
     /// [`crate::rebase`] (rebase-to-zero, offset), which shift every sample's
     /// `dts`/`pts` in lockstep.
     pub start_decode_time: u64,

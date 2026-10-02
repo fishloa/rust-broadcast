@@ -49,7 +49,7 @@ use crate::init_segment::{
     sampling_rate_override,
 };
 use crate::ir::{CodecConfig, FragmentTrackData, Sample, SubtitleFormat, TrackSpec};
-use crate::movie_fragment::MovieFragmentBox;
+use crate::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
 use crate::mp4esds::EsdsBox;
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
 use crate::mpegh::{MHAC_FOURCC, MHADecoderConfigurationRecord};
@@ -60,11 +60,6 @@ use crate::pipeline::{build_init_segment, build_media_segment};
 /// [`crate::ir`] (media plane step 2a) — re-exported here so every existing
 /// `crate::media::`/`transmux::media::` path keeps resolving unchanged.
 pub use crate::ir::{Media, PcrSample, SkippedTrack, Track, TrackEncryption};
-
-/// `sample_is_non_sync_sample` bit within a 32-bit `sample_flags` word
-/// (ISO/IEC 14496-12:2015 §8.8.3.1, bit `[16]`). Set = the sample is **not** a
-/// sync sample (random-access point).
-const SAMPLE_FLAG_IS_NON_SYNC: u32 = 0x0001_0000;
 
 /// Default movie timescale used when a source does not specify one.
 const DEFAULT_MOVIE_TIMESCALE: u32 = 1000;

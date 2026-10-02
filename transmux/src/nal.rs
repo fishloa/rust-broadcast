@@ -222,12 +222,14 @@ impl Iterator for EbspBytes<'_> {
 /// Read one SEI `payloadType`/`payloadSize` varint (ITU-T H.264 §7.3.2.3.1
 /// `sei_payload()`): a run of `0xFF` bytes (each worth 255) terminated by a
 /// final byte `< 0xFF` that is added to the running total. Returns `None` if
-/// the byte stream runs out before the terminating byte.
+/// the byte stream runs out before the terminating byte, or if the running
+/// total would overflow `u32` (a hostile ~16.8 M-byte `0xFF` run; no real
+/// payload type/size comes near it).
 fn read_sei_varint(bytes: &mut impl Iterator<Item = u8>) -> Option<u32> {
     let mut value: u32 = 0;
     loop {
         let b = bytes.next()?;
-        value += u32::from(b);
+        value = value.checked_add(u32::from(b))?;
         if b != 0xFF {
             return Some(value);
         }
@@ -539,6 +541,16 @@ pub fn caption_cc_data(codec: NalCodec, au: &[u8], length_prefixed: bool) -> Vec
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sei_varint_overflow_is_none_not_a_panic() {
+        // 0xFF * (u32::MAX / 255 + 1) exceeds u32::MAX before any terminator.
+        let run = (u32::MAX / 255) as usize + 2;
+        let mut it = core::iter::repeat_n(0xFFu8, run).chain(core::iter::once(0));
+        assert_eq!(super::read_sei_varint(&mut it), None);
+        let mut ok = [0xFFu8, 0xFF, 0x03].into_iter();
+        assert_eq!(super::read_sei_varint(&mut ok), Some(513));
+    }
 
     #[test]
     fn avc_nal_type_extraction() {

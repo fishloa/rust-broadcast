@@ -47,13 +47,11 @@ use crate::box_types::{BoxHeader, BoxType, UUID_TYPE_SIZE};
 use crate::error::{Error, Result};
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::movie_fragment::{
-    MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF, TRUN_DATA_OFFSET_PRESENT,
-    TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT, TRUN_SAMPLE_DURATION_PRESENT,
-    TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT, TrackFragmentBox, TrackFragmentHeaderBox,
-    TrackFragmentRunBox, TrunSample,
+    MediaRunSample, MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBox, media_fragment_run,
 };
 use crate::pipeline::{CodecConfig, Sample};
 use crate::segments::{MediaDataBox, SegmentTypeBox};
+use crate::xml_writer::XmlWriter;
 
 /// The Smooth Streaming default manifest time scale — 10 MHz (100 ns ticks),
 /// [MS-SSTR] §2.2.2 (`SmoothStreamingMedia@TimeScale`).
@@ -91,12 +89,6 @@ const START_CODE: [u8; 4] = [0x00, 0x00, 0x00, 0x01];
 /// The `styp` brand emitted ahead of a self-contained Smooth fragment (kept
 /// consistent with the crate's CMAF media segments).
 const STYP_MAJOR_BRAND: [u8; 4] = *b"msdh";
-
-// --- sample_flags (ISO/IEC 14496-12:2015 §8.8.3.1) --------------------------
-/// Sample flags for a sync sample (I-frame).
-const SAMPLE_FLAGS_SYNC: u32 = 0x0200_0000;
-/// Sample flags for a non-sync sample.
-const SAMPLE_FLAGS_NON_SYNC: u32 = 0x0101_0000;
 
 /// The media kind of a Smooth `StreamIndex`.
 ///
@@ -621,7 +613,7 @@ fn resolve_codec(config: &CodecConfig) -> Result<ResolvedCodec> {
             // Prefer the ASC-decoded sampling rate; fall back to the entry.
             let rate = AudioSpecificConfig::parse(&cpd)
                 .ok()
-                .and_then(asc_sampling_rate)
+                .and_then(|asc| asc.effective_sampling_frequency())
                 .unwrap_or(*sample_rate);
             Ok((
                 SmoothStreamType::Audio,
@@ -637,15 +629,6 @@ fn resolve_codec(config: &CodecConfig) -> Result<ResolvedCodec> {
             "Smooth Streaming supports only H.264 video and AAC-LC audio",
         )),
     }
-}
-
-/// The effective sampling rate from a decoded ASC (explicit rate if present,
-/// else the rate for the `samplingFrequencyIndex`, ISO/IEC 14496-3 Table 1.10),
-/// via the crate's single copy of that table
-/// ([`SamplingFrequencyIndex::table_hz`]).
-fn asc_sampling_rate(asc: AudioSpecificConfig) -> Option<u32> {
-    asc.sampling_frequency
-        .or_else(|| asc.sampling_frequency_index.table_hz())
 }
 
 // ---------------------------------------------------------------------------
@@ -770,53 +753,15 @@ fn build_smooth_fragment(
         compatible_brands: alloc::vec![STYP_MAJOR_BRAND, *b"msix"],
     };
 
-    let any_cts = times.iter().any(|t| t.composition_offset != 0);
-    let trun_samples: Vec<TrunSample> = samples
-        .iter()
-        .zip(times)
-        .map(|(s, t)| TrunSample {
-            sample_duration: Some(t.duration),
-            sample_size: Some(s.data.len() as u32),
-            sample_flags: Some(if s.flags.is_sync {
-                SAMPLE_FLAGS_SYNC
-            } else {
-                SAMPLE_FLAGS_NON_SYNC
-            }),
-            sample_composition_time_offset: if any_cts {
-                Some(i64::from(t.composition_offset))
-            } else {
-                None
-            },
-        })
-        .collect();
-
-    let mut tr_flags = TRUN_DATA_OFFSET_PRESENT
-        | TRUN_SAMPLE_DURATION_PRESENT
-        | TRUN_SAMPLE_SIZE_PRESENT
-        | TRUN_SAMPLE_FLAGS_PRESENT;
-    let version = if any_cts {
-        tr_flags |= TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT;
-        1u8
-    } else {
-        0u8
-    };
-
-    let trun = TrackFragmentRunBox {
-        version,
-        tr_flags,
-        data_offset: Some(0),
-        first_sample_flags: None,
-        samples: trun_samples,
-    };
-    let tfhd = TrackFragmentHeaderBox {
-        flags: TFHD_DEFAULT_BASE_IS_MOOF,
+    let (tfhd, trun) = media_fragment_run(
         track_id,
-        base_data_offset: None,
-        sample_description_index: None,
-        default_sample_duration: None,
-        default_sample_size: None,
-        default_sample_flags: None,
-    };
+        samples.iter().zip(times).map(|(s, t)| MediaRunSample {
+            duration: t.duration,
+            size: s.data.len(),
+            is_sync: s.flags.is_sync,
+            composition_offset: t.composition_offset,
+        }),
+    )?;
     let tfxd = TfxdBox::new(start_smooth, dur_smooth);
 
     let mut moof = MovieFragmentBox::new(
@@ -917,89 +862,6 @@ fn hex_upper(bytes: &[u8]) -> String {
         s.push(HEX[(b & 0x0F) as usize] as char);
     }
     s
-}
-
-// ---------------------------------------------------------------------------
-// Tiny XML writer — no external dependency (dep-free like DashPackager).
-// ---------------------------------------------------------------------------
-
-/// A minimal, indentation-aware XML element writer (see the DASH sibling).
-struct XmlWriter {
-    buf: String,
-    depth: usize,
-}
-
-impl XmlWriter {
-    fn new() -> Self {
-        Self {
-            buf: String::new(),
-            depth: 0,
-        }
-    }
-
-    fn declaration(&mut self) {
-        self.buf
-            .push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
-    }
-
-    fn indent(&mut self) {
-        for _ in 0..self.depth {
-            self.buf.push_str("  ");
-        }
-    }
-
-    fn attrs(&mut self, attrs: &[(&str, String)]) {
-        for (k, v) in attrs {
-            self.buf.push(' ');
-            self.buf.push_str(k);
-            self.buf.push_str("=\"");
-            escape_into(&mut self.buf, v);
-            self.buf.push('"');
-        }
-    }
-
-    fn open(&mut self, name: &str, attrs: &[(&str, String)]) {
-        self.indent();
-        self.buf.push('<');
-        self.buf.push_str(name);
-        self.attrs(attrs);
-        self.buf.push_str(">\n");
-        self.depth += 1;
-    }
-
-    fn empty(&mut self, name: &str, attrs: &[(&str, String)]) {
-        self.indent();
-        self.buf.push('<');
-        self.buf.push_str(name);
-        self.attrs(attrs);
-        self.buf.push_str("/>\n");
-    }
-
-    fn close(&mut self, name: &str) {
-        self.depth = self.depth.saturating_sub(1);
-        self.indent();
-        self.buf.push_str("</");
-        self.buf.push_str(name);
-        self.buf.push_str(">\n");
-    }
-
-    fn finish(self) -> String {
-        self.buf
-    }
-}
-
-/// Escape a string for use in an XML attribute value (XML 1.0 §2.4).
-fn escape_into(out: &mut String, s: &str) {
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            _ => out.push(c),
-        }
-    }
 }
 
 #[cfg(test)]

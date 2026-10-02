@@ -157,6 +157,9 @@ const TRACK_TYPE_VIDEO: u64 = 1;
 const TRACK_TYPE_AUDIO: u64 = 2;
 /// `SimpleBlock` keyframe flag (bit `[7]` of the flags byte, RFC 9559 §12).
 const BLOCK_FLAG_KEYFRAME: u8 = 0x80;
+/// Fixed bytes in a `SimpleBlock` body besides the track-number VINT and the
+/// frame: the `i16` relative timestamp and the flags byte (RFC 9559 §12.4).
+const SIMPLE_BLOCK_FIXED_LEN: usize = 2 + 1;
 
 /// `TimestampScale` this writer always emits: 1 ms per tick (RFC 9559 §27
 /// default, and the value that makes a [`crate::webm_demux::WebmDemux`]-sourced
@@ -242,6 +245,13 @@ fn encode_vint_size(value: u64) -> Vec<u8> {
     encoded.to_be_bytes()[8 - width..].to_vec()
 }
 
+/// The VINT size field for a body of `len` bytes (a `usize` length can only
+/// fail to fit `u64` on a platform wider than any this crate targets; saturate
+/// rather than wrap).
+fn len_vint(len: usize) -> Vec<u8> {
+    encode_vint_size(u64::try_from(len).unwrap_or(u64::MAX))
+}
+
 /// Write one EBML element: `id` bytes, then the VINT size of `body`, then
 /// `body` verbatim.
 fn element(id: &[u8], body: &[u8]) -> Vec<u8> {
@@ -256,11 +266,15 @@ fn element(id: &[u8], body: &[u8]) -> Vec<u8> {
 /// Write a master element: the concatenation of `children`'s already-encoded
 /// bytes, wrapped in `id`/size.
 fn master(id: &[u8], children: &[Vec<u8>]) -> Vec<u8> {
-    let mut body = Vec::new();
+    let body_len: usize = children.iter().map(Vec::len).sum();
+    let size = len_vint(body_len);
+    let mut out = Vec::with_capacity(id.len() + size.len() + body_len);
+    out.extend_from_slice(id);
+    out.extend_from_slice(&size);
     for child in children {
-        body.extend_from_slice(child);
+        out.extend_from_slice(child);
     }
-    element(id, &body)
+    out
 }
 
 /// The minimal big-endian byte encoding of a uint element body (RFC 8794 §4:
@@ -590,15 +604,35 @@ fn to_matroska_ticks(ticks: i64, track_timescale: u32, timestamp_scale_ns: u64) 
     (ns / timestamp_scale_ns as i128) as i64
 }
 
-/// Write one `SimpleBlock` (RFC 9559 §12): track-number VINT, signed int16
-/// relative timestamp, flags byte (keyframe bit only — no lacing), frame data.
-fn simple_block(track_number: u64, rel_ts: i16, is_keyframe: bool, data: &[u8]) -> Vec<u8> {
-    let mut body = Vec::with_capacity(4 + data.len());
-    body.extend_from_slice(&encode_vint_size(track_number));
-    body.extend_from_slice(&rel_ts.to_be_bytes());
-    body.push(if is_keyframe { BLOCK_FLAG_KEYFRAME } else { 0 });
-    body.extend_from_slice(data);
-    element(&ID_SIMPLE_BLOCK, &body)
+/// Bytes of the body of a `SimpleBlock` (track-number VINT + `i16` + flags + frame).
+fn simple_block_body_len(track_number: u64, data_len: usize) -> usize {
+    encode_vint_size(track_number).len() + SIMPLE_BLOCK_FIXED_LEN + data_len
+}
+
+/// Total encoded length of a `SimpleBlock` element (id + size VINT + body).
+fn simple_block_len(track_number: u64, data_len: usize) -> usize {
+    let body = simple_block_body_len(track_number, data_len);
+    ID_SIMPLE_BLOCK.len() + len_vint(body).len() + body
+}
+
+/// Append one `SimpleBlock` (RFC 9559 §12): track-number VINT, signed int16
+/// relative timestamp, flags byte (keyframe bit only — no lacing), then the
+/// frame. The frame is copied once, straight into the destination, never
+/// through a body buffer and an element buffer (audit r05-O4).
+fn write_simple_block(
+    out: &mut Vec<u8>,
+    track_number: u64,
+    rel_ts: i16,
+    is_keyframe: bool,
+    data: &[u8],
+) {
+    let body = simple_block_body_len(track_number, data.len());
+    out.extend_from_slice(&ID_SIMPLE_BLOCK);
+    out.extend_from_slice(&len_vint(body));
+    out.extend_from_slice(&encode_vint_size(track_number));
+    out.extend_from_slice(&rel_ts.to_be_bytes());
+    out.push(if is_keyframe { BLOCK_FLAG_KEYFRAME } else { 0 });
+    out.extend_from_slice(data);
 }
 
 /// Group a time-interleaved (decode-order-preserving per track — see
@@ -662,7 +696,11 @@ fn build_cluster(events: &[BlockEvent], tracks: &[Track]) -> Result<Vec<u8>> {
     // negative absolute first timestamp simply starts at `Timestamp = 0`, the
     // earliest instant an unsigned field can name.
     let base = first_ticks.max(0);
-    let mut children = vec![uint_elem(&ID_TIMESTAMP, base as u64)];
+    let timestamp = uint_elem(&ID_TIMESTAMP, base as u64);
+    // First pass: validate every relative timestamp and size the cluster, so the
+    // second pass writes each frame exactly once into a pre-sized buffer.
+    let mut rels: Vec<i16> = Vec::with_capacity(events.len());
+    let mut body_len = timestamp.len();
     for ev in events {
         let rel_i64 = ev.pts_ticks - base;
         // A silent `clamp` would write a *wrong* block time in release builds
@@ -675,10 +713,20 @@ fn build_cluster(events: &[BlockEvent], tracks: &[Track]) -> Result<Vec<u8>> {
                 "mkv_mux: cluster relative timestamp exceeds the SimpleBlock i16 range",
             )
         })?;
-        let data = &tracks[ev.track_index].samples[ev.sample_index].data;
-        children.push(simple_block(ev.track_number, rel, ev.is_keyframe, data));
+        rels.push(rel);
+        let data_len = tracks[ev.track_index].samples[ev.sample_index].data.len();
+        body_len += simple_block_len(ev.track_number, data_len);
     }
-    Ok(master(&ID_CLUSTER, &children))
+    let size = len_vint(body_len);
+    let mut out = Vec::with_capacity(ID_CLUSTER.len() + size.len() + body_len);
+    out.extend_from_slice(&ID_CLUSTER);
+    out.extend_from_slice(&size);
+    out.extend_from_slice(&timestamp);
+    for (ev, &rel) in events.iter().zip(&rels) {
+        let data = &tracks[ev.track_index].samples[ev.sample_index].data;
+        write_simple_block(&mut out, ev.track_number, rel, ev.is_keyframe, data);
+    }
+    Ok(out)
 }
 
 /// Build `Cues`: one `CuePoint` per **video** keyframe (never audio — every
@@ -869,17 +917,26 @@ impl Package for MkvMux {
 
         let cues_bytes = build_cues(&clusters, &cluster_offsets);
 
-        let mut segment_payload = Vec::new();
-        segment_payload.extend_from_slice(&seekhead_bytes);
-        segment_payload.extend_from_slice(&info_bytes);
-        segment_payload.extend_from_slice(&tracks_bytes);
-        for c in &cluster_bytes {
-            segment_payload.extend_from_slice(c);
-        }
-        segment_payload.extend_from_slice(&cues_bytes);
-
+        // Header, then the Segment's parts written straight into the one output
+        // buffer (not first concatenated into a payload `Vec` and copied again).
+        let parts: Vec<&[u8]> = [
+            seekhead_bytes.as_slice(),
+            info_bytes.as_slice(),
+            tracks_bytes.as_slice(),
+        ]
+        .into_iter()
+        .chain(cluster_bytes.iter().map(Vec::as_slice))
+        .chain(core::iter::once(cues_bytes.as_slice()))
+        .collect();
+        let payload_len: usize = parts.iter().map(|p| p.len()).sum();
+        let size = len_vint(payload_len);
         let mut out = build_ebml_header();
-        out.extend_from_slice(&element(&ID_SEGMENT, &segment_payload));
+        out.reserve_exact(ID_SEGMENT.len() + size.len() + payload_len);
+        out.extend_from_slice(&ID_SEGMENT);
+        out.extend_from_slice(&size);
+        for part in parts {
+            out.extend_from_slice(part);
+        }
         Ok(out)
     }
 }

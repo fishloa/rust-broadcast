@@ -33,6 +33,7 @@ pub const TFHD_DEFAULT_SAMPLE_DURATION_PRESENT: u32 = 0x000008;
 pub const TFHD_DEFAULT_SAMPLE_SIZE_PRESENT: u32 = 0x000010;
 /// `tfhd` flag: `default_sample_flags` field present.
 pub const TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT: u32 = 0x000020;
+
 /// `tfhd` flag: duration-is-empty (no samples in this fragment for the track).
 pub const TFHD_DURATION_IS_EMPTY: u32 = 0x010000;
 /// `tfhd` flag: base offset is the containing `moof` (CMAF default).
@@ -51,6 +52,86 @@ pub const TRUN_SAMPLE_SIZE_PRESENT: u32 = 0x000200;
 pub const TRUN_SAMPLE_FLAGS_PRESENT: u32 = 0x000400;
 /// `trun` flag: per-sample `sample_composition_time_offset` present.
 pub const TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT: u32 = 0x000800;
+
+// `sample_flags` words (ISO/IEC 14496-12:2015 §8.8.3.1) shared by the fragment writers.
+/// `sample_flags` for a sync sample (I-frame): `sample_depends_on = 2` (does not
+/// depend on others), `sample_is_non_sync_sample = 0` — ISO/IEC 14496-12:2015
+/// §8.8.3.1. The one copy every fragment builder writes (audit r05-O6).
+pub(crate) const SAMPLE_FLAGS_SYNC: u32 = 0x0200_0000;
+/// `sample_flags` for a non-sync sample: `sample_depends_on = 1`,
+/// `sample_is_non_sync_sample = 1` (§8.8.3.1).
+pub(crate) const SAMPLE_FLAGS_NON_SYNC: u32 = 0x0101_0000;
+/// `sample_is_non_sync_sample` bit within a 32-bit `sample_flags` word
+/// (§8.8.3.1, bit `[16]`). Set = the sample is **not** a sync sample.
+pub(crate) const SAMPLE_FLAG_IS_NON_SYNC: u32 = 0x0001_0000;
+
+/// One sample of a media fragment's `trun`, as the segment writers describe it.
+pub(crate) struct MediaRunSample {
+    /// `sample_duration`, in the track timescale.
+    pub duration: u32,
+    /// Coded size in bytes.
+    pub size: usize,
+    /// Sync sample (random-access point).
+    pub is_sync: bool,
+    /// `pts - dts` composition offset.
+    pub composition_offset: i32,
+}
+
+/// The `tfhd` + `trun` every media-fragment writer (`build_media_segment`,
+/// the LL-DASH chunk, the Smooth fragment) emits for one track: per-sample
+/// duration/size/flags, with a v1 signed composition offset only when some
+/// sample has a non-zero one (B-frames), `default-base-is-moof` addressing and a
+/// placeholder `data_offset` of 0 for the caller to patch once the `moof` size
+/// is known. One copy of what had been three (audit r05-O6).
+pub(crate) fn media_fragment_run(
+    track_id: u32,
+    samples: impl Iterator<Item = MediaRunSample> + Clone,
+) -> Result<(TrackFragmentHeaderBox, TrackFragmentRunBox)> {
+    let any_cts = samples.clone().any(|s| s.composition_offset != 0);
+    let mut run_samples = Vec::new();
+    for s in samples {
+        run_samples.push(TrunSample {
+            sample_duration: Some(s.duration),
+            sample_size: Some(u32::try_from(s.size).map_err(|_| {
+                Error::InvalidInput("sample larger than the 32-bit trun sample_size field")
+            })?),
+            sample_flags: Some(if s.is_sync {
+                SAMPLE_FLAGS_SYNC
+            } else {
+                SAMPLE_FLAGS_NON_SYNC
+            }),
+            sample_composition_time_offset: any_cts.then_some(i64::from(s.composition_offset)),
+        });
+    }
+    let mut tr_flags = TRUN_DATA_OFFSET_PRESENT
+        | TRUN_SAMPLE_DURATION_PRESENT
+        | TRUN_SAMPLE_SIZE_PRESENT
+        | TRUN_SAMPLE_FLAGS_PRESENT;
+    // Version 1 carries a signed composition offset (needed for B-frames).
+    let version = if any_cts {
+        tr_flags |= TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT;
+        1u8
+    } else {
+        0u8
+    };
+    let trun = TrackFragmentRunBox {
+        version,
+        tr_flags,
+        data_offset: Some(0),
+        first_sample_flags: None,
+        samples: run_samples,
+    };
+    let tfhd = TrackFragmentHeaderBox {
+        flags: TFHD_DEFAULT_BASE_IS_MOOF,
+        track_id,
+        base_data_offset: None,
+        sample_description_index: None,
+        default_sample_duration: None,
+        default_sample_size: None,
+        default_sample_flags: None,
+    };
+    Ok((tfhd, trun))
+}
 
 /// Read version(8) and flags(24) from the body bytes (first 4 bytes of a FullBox payload).
 fn read_ver_flags(body: &[u8]) -> Result<(u8, u32)> {

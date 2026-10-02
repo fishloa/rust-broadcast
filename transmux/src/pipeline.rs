@@ -32,10 +32,8 @@ use crate::init_segment::{
     TrackExtendsBox, TrackHeaderBox, VideoMediaHeaderBox,
 };
 use crate::movie_fragment::{
-    MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF, TRUN_DATA_OFFSET_PRESENT,
-    TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT, TRUN_SAMPLE_DURATION_PRESENT,
-    TRUN_SAMPLE_FLAGS_PRESENT, TRUN_SAMPLE_SIZE_PRESENT, TrackFragmentBaseMediaDecodeTimeBox,
-    TrackFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox, TrunSample,
+    MediaRunSample, MovieFragmentBox, MovieFragmentHeaderBox, TrackFragmentBaseMediaDecodeTimeBox,
+    TrackFragmentBox, media_fragment_run,
 };
 use crate::mpegh::MHAC_FOURCC;
 use crate::opus::DOPS_FOURCC;
@@ -47,14 +45,6 @@ use crate::segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
 use crate::timing::TimeToSampleBox;
 use crate::vp9::Vp9SampleEntry;
 pub use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
-
-// --- sample_flags (ISO/IEC 14496-12:2015 §8.8.3.1) --------------------------
-/// Sample flags for a sync sample (I-frame): `sample_depends_on = 2` (does not
-/// depend on others), `sample_is_non_sync_sample = 0`.
-const SAMPLE_FLAGS_SYNC: u32 = 0x0200_0000;
-/// Sample flags for a non-sync sample: `sample_depends_on = 1`,
-/// `sample_is_non_sync_sample = 1`.
-const SAMPLE_FLAGS_NON_SYNC: u32 = 0x0101_0000;
 
 /// ISO-639-2 packed language code `und` (undetermined).
 const LANG_UND: u16 = 0x55C4;
@@ -934,54 +924,15 @@ pub fn build_media_segment_with_events(
     // independent, so the moof size is stable once structured).
     let mut traf_boxes = Vec::with_capacity(tracks.len());
     for ft in tracks {
-        let any_cts = ft.samples.iter().any(|s| s.composition_offset() != 0);
-        let samples: Vec<TrunSample> = ft
-            .samples
-            .iter()
-            .map(|s| TrunSample {
-                sample_duration: Some(s.duration.unwrap_or(0)),
-                sample_size: Some(s.data.len() as u32),
-                sample_flags: Some(if s.flags.is_sync {
-                    SAMPLE_FLAGS_SYNC
-                } else {
-                    SAMPLE_FLAGS_NON_SYNC
-                }),
-                sample_composition_time_offset: if any_cts {
-                    Some(i64::from(s.composition_offset()))
-                } else {
-                    None
-                },
-            })
-            .collect();
-
-        let mut tr_flags = TRUN_DATA_OFFSET_PRESENT
-            | TRUN_SAMPLE_DURATION_PRESENT
-            | TRUN_SAMPLE_SIZE_PRESENT
-            | TRUN_SAMPLE_FLAGS_PRESENT;
-        // Version 1 carries a signed composition offset (needed for B-frames).
-        let version = if any_cts {
-            tr_flags |= TRUN_SAMPLE_COMPOSITION_TIME_OFFSET_PRESENT;
-            1u8
-        } else {
-            0u8
-        };
-
-        let trun = TrackFragmentRunBox {
-            version,
-            tr_flags,
-            data_offset: Some(0),
-            first_sample_flags: None,
-            samples,
-        };
-        let tfhd = TrackFragmentHeaderBox {
-            flags: TFHD_DEFAULT_BASE_IS_MOOF,
-            track_id: ft.track_id,
-            base_data_offset: None,
-            sample_description_index: None,
-            default_sample_duration: None,
-            default_sample_size: None,
-            default_sample_flags: None,
-        };
+        let (tfhd, trun) = media_fragment_run(
+            ft.track_id,
+            ft.samples.iter().map(|s| MediaRunSample {
+                duration: s.duration.unwrap_or(0),
+                size: s.data.len(),
+                is_sync: s.flags.is_sync,
+                composition_offset: s.composition_offset(),
+            }),
+        )?;
         let tfdt = TrackFragmentBaseMediaDecodeTimeBox::new_v1(ft.base_media_decode_time);
         traf_boxes.push(TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]));
     }

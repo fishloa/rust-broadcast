@@ -29,6 +29,30 @@ fn unescape(nal: &[u8]) -> Vec<u8> {
     out
 }
 
+/// Read `n` (<= 64) bits MSB-first from `data` at `*bit_pos`, advancing it.
+///
+/// The one cursor-style reader shared by the per-module header decoders
+/// (`aac_asc`, `ac3`, `dts`), which previously each carried a copy that built a
+/// fresh `broadcast_common::bits::BitReader` and re-skipped to `*bit_pos` after
+/// duplicating the bounds check (audit r04-O1). Extraction delegates to
+/// `broadcast_common::bits::BitReader` (shared with `dvb-t2mi`/`rdd29`/`st291`)
+/// so a bit-order/overrun fix there reaches every reader. `None` when `n > 64`
+/// or fewer than `n` bits remain; `*bit_pos` is then left unchanged.
+pub(crate) fn read_bits_at(data: &[u8], bit_pos: &mut usize, n: usize) -> Option<u64> {
+    let n_u32 = u32::try_from(n).ok().filter(|&n| n <= u64::BITS)?;
+    let mut br = broadcast_common::bits::BitReader::new(data);
+    br.skip_bits(*bit_pos).ok()?;
+    let val = br.read_bits(n_u32).ok()?;
+    *bit_pos += n;
+    Some(val)
+}
+
+/// Bytes needed to hold `n` more bits starting at `bit_pos` (saturating, for
+/// the `need` field of a `BufferTooShort`).
+pub(crate) fn bytes_needed(bit_pos: usize, n: usize) -> usize {
+    bit_pos.saturating_add(n).div_ceil(8)
+}
+
 /// Bit-level reader over an RBSP buffer (after emulation-prevention byte removal).
 ///
 /// Reads bits from left to right within each byte (MSB-first, big-endian
@@ -80,14 +104,10 @@ impl BitReader {
 
     /// Read `n` bits as an unsigned integer (`u(n)` / `f(n)`).
     ///
-    /// Bounds are checked here exactly as before; the extraction itself
-    /// delegates to `broadcast_common::bits::BitReader` (shared with
-    /// `dvb-t2mi`/`rdd29`/`st291`) so a bit-order/overrun fix there reaches
-    /// this reader too. This type stays its own owning wrapper around that
-    /// shared cursor (rather than holding one directly) because it owns the
-    /// unescaped RBSP `Vec<u8>` the shared, borrowing `BitReader<'a>` cannot
-    /// — an owned buffer and a reader borrowing from it can't live in the
-    /// same struct without self-referential lifetimes.
+    /// Extraction delegates to the shared `read_bits_at` cursor. This type
+    /// stays an owning wrapper (it owns the unescaped RBSP `Vec<u8>`; a
+    /// borrowing reader cannot live in the same struct without a
+    /// self-referential lifetime).
     pub fn read_bits(&mut self, n: usize, what: &'static str) -> Result<u64> {
         if n > 64 || !self.has_bits(n) {
             return Err(Error::BufferTooShort {
@@ -99,13 +119,13 @@ impl BitReader {
         if n == 0 {
             return Ok(0);
         }
-        let mut br = broadcast_common::bits::BitReader::new(&self.data);
-        br.skip_bits(self.bit_pos)
-            .expect("bounds already validated above");
-        let val = br
-            .read_bits(n as u32)
-            .expect("bounds already validated above");
-        self.bit_pos += n;
+        let mut pos = self.bit_pos;
+        let val = read_bits_at(&self.data, &mut pos, n).ok_or(Error::BufferTooShort {
+            need: self.bit_pos.saturating_add(n),
+            have: self.data.len() * 8,
+            what,
+        })?;
+        self.bit_pos = pos;
         Ok(val)
     }
 

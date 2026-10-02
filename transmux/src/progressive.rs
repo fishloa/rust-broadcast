@@ -44,7 +44,7 @@ use crate::init_segment::{
 };
 use crate::media::{Media, TimelineOrigin, Track, relative_decode_times};
 use crate::pipeline::{Sample, build_init_segment};
-use crate::segments::{FileTypeBox, MediaDataBox};
+use crate::segments::FileTypeBox;
 use crate::timing::{
     CompositionOffsetBox, CttsEntry, EditListBox, EditListEntry, SttsEntry, TimeToSampleBox,
 };
@@ -499,33 +499,14 @@ impl Package for ProgressiveMux {
         // reaches the start of every track after a small prefix rather than
         // after the whole video track (audit r05-W25).
         let layout = plan_mdat_layout(media, movie_timescale)?;
-        let mut mdat_payload: Vec<u8> = vec![0u8; layout.payload_len as usize];
-        for (i, track) in media.tracks.iter().enumerate() {
-            for chunk in &layout.track_chunks[i] {
-                let first = chunk.first_sample;
-                let end = first + chunk.sample_count as usize;
-                let mut at = chunk.rel_offset as usize;
-                for s in &track.samples[first..end] {
-                    let next = at + s.data.len();
-                    if next > mdat_payload.len() {
-                        return Err(Error::InvalidInput(
-                            "progressive: chunk plan overflows the mdat payload",
-                        ));
-                    }
-                    mdat_payload[at..next].copy_from_slice(&s.data);
-                    at = next;
-                }
-            }
-        }
-
         let ftyp = FileTypeBox {
             major_brand: FTYP_MAJOR_BRAND,
             minor_version: FTYP_MINOR_VERSION,
             compatible_brands: vec![*b"isom", *b"iso2", *b"mp41", *b"avc1"],
         };
         let ftyp_len = ftyp.serialized_len();
-        let mdat_len = mdat_payload.len() as u64;
-        let mdat = MediaDataBox { data: mdat_payload };
+        let mdat_len = layout.payload_len;
+        let mdat_header = BoxHeader::for_payload(BoxType::from_bytes(MDAT_TYPE), None, mdat_len);
 
         // Compute the absolute file offset of the mdat *payload* under each box
         // ordering, then set the final chunk offsets and build the full tables.
@@ -589,22 +570,49 @@ impl Package for ProgressiveMux {
             } else {
                 0
             }
-            + (mdat.serialized_len() - mdat.data.len()) as u64;
+            + mdat_header.header_size() as u64;
         debug_assert_eq!(actual_payload_offset, mdat_payload_offset);
 
-        // Emit ftyp, then moov/mdat in the requested order.
-        let mut out = Vec::with_capacity(ftyp_len + moov_out.len() + mdat.serialized_len());
-        let mut ftyp_buf = vec![0u8; ftyp_len];
-        let n = ftyp.serialize_into(&mut ftyp_buf)?;
-        out.extend_from_slice(&ftyp_buf[..n]);
-
-        let mut mdat_buf = vec![0u8; mdat.serialized_len()];
-        let m = mdat.serialize_into(&mut mdat_buf)?;
+        // Emit ftyp, then moov/mdat in the requested order — straight into the
+        // one output buffer: the sample bytes are copied once, from the IR into
+        // their final position (r05-O4; they used to pass through an `mdat`
+        // payload `Vec`, a serialised `mdat` copy, and then the output).
+        let payload_len = usize::try_from(mdat_len)
+            .map_err(|_| Error::InvalidInput("progressive: mdat payload exceeds usize"))?;
+        let mdat_header_len = mdat_header.header_size();
+        let total = ftyp_len + moov_out.len() + mdat_header_len + payload_len;
+        let mut out = vec![0u8; ftyp_len];
+        ftyp.serialize_into(&mut out)?;
+        out.reserve_exact(total - ftyp_len);
         if self.faststart {
             out.extend_from_slice(&moov_out);
-            out.extend_from_slice(&mdat_buf[..m]);
-        } else {
-            out.extend_from_slice(&mdat_buf[..m]);
+        }
+        let header_at = out.len();
+        out.resize(header_at + mdat_header_len, 0);
+        mdat_header.serialize_into(&mut out[header_at..])?;
+        let payload_at = out.len();
+        out.resize(payload_at + payload_len, 0);
+        for (i, track) in media.tracks.iter().enumerate() {
+            for chunk in &layout.track_chunks[i] {
+                let first = chunk.first_sample;
+                let end = first + chunk.sample_count as usize;
+                let mut at = payload_at
+                    + usize::try_from(chunk.rel_offset).map_err(|_| {
+                        Error::InvalidInput("progressive: chunk offset exceeds usize")
+                    })?;
+                for s in &track.samples[first..end] {
+                    let next = at + s.data.len();
+                    if next > payload_at + payload_len {
+                        return Err(Error::InvalidInput(
+                            "progressive: chunk plan overflows the mdat payload",
+                        ));
+                    }
+                    out[at..next].copy_from_slice(&s.data);
+                    at = next;
+                }
+            }
+        }
+        if !self.faststart {
             out.extend_from_slice(&moov_out);
         }
         Ok(out)

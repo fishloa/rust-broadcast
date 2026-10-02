@@ -2906,6 +2906,52 @@ impl SampleEntryVariant {
     }
 }
 
+impl Serialize for SampleEntryVariant {
+    type Error = Error;
+    fn serialized_len(&self) -> usize {
+        match self {
+            SampleEntryVariant::Avc1(a) => a.serialized_len(),
+            SampleEntryVariant::Hevc1(h) => h.serialized_len(),
+            SampleEntryVariant::Vvc(v) => v.serialized_len(),
+            SampleEntryVariant::Mp4v(m) => m.serialized_len(),
+            SampleEntryVariant::Av01(a) => a.serialized_len(),
+            SampleEntryVariant::Vp09(v) => v.serialized_len(),
+            SampleEntryVariant::Mp4a(m) => m.serialized_len(),
+            SampleEntryVariant::Ac3(a) => a.serialized_len(),
+            SampleEntryVariant::Ec3(e) => e.serialized_len(),
+            SampleEntryVariant::Stpp(s) => s.serialized_len(),
+            SampleEntryVariant::Wvtt(w) => w.serialized_len(),
+            SampleEntryVariant::Ac4(a) => a.serialized_len(),
+            SampleEntryVariant::Opus(o) => o.serialized_len(),
+            SampleEntryVariant::Flac(f) => f.serialized_len(),
+            SampleEntryVariant::Mha(m) => m.serialized_len(),
+            SampleEntryVariant::Dts(d) => d.serialized_len(),
+            SampleEntryVariant::Unknown(u) => u.serialized_len(),
+        }
+    }
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        match self {
+            SampleEntryVariant::Avc1(a) => a.serialize_into(buf),
+            SampleEntryVariant::Hevc1(h) => h.serialize_into(buf),
+            SampleEntryVariant::Vvc(v) => v.serialize_into(buf),
+            SampleEntryVariant::Mp4v(m) => m.serialize_into(buf),
+            SampleEntryVariant::Av01(a) => a.serialize_into(buf),
+            SampleEntryVariant::Vp09(v) => v.serialize_into(buf),
+            SampleEntryVariant::Mp4a(m) => m.serialize_into(buf),
+            SampleEntryVariant::Ac3(a) => a.serialize_into(buf),
+            SampleEntryVariant::Ec3(e) => e.serialize_into(buf),
+            SampleEntryVariant::Stpp(s) => s.serialize_into(buf),
+            SampleEntryVariant::Wvtt(w) => w.serialize_into(buf),
+            SampleEntryVariant::Ac4(a) => a.serialize_into(buf),
+            SampleEntryVariant::Opus(o) => o.serialize_into(buf),
+            SampleEntryVariant::Flac(f) => f.serialize_into(buf),
+            SampleEntryVariant::Mha(m) => m.serialize_into(buf),
+            SampleEntryVariant::Dts(d) => d.serialize_into(buf),
+            SampleEntryVariant::Unknown(u) => u.serialize_into(buf),
+        }
+    }
+}
+
 /// Sample Description Box (`stsd`) — §8.5.2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -3014,25 +3060,7 @@ impl Serialize for SampleDescriptionBox {
     fn serialized_len(&self) -> usize {
         let mut n = BOX_HDR + FULL_HDR + 4;
         for e in &self.entries {
-            n += match e {
-                SampleEntryVariant::Avc1(a) => a.serialized_len(),
-                SampleEntryVariant::Hevc1(h) => h.serialized_len(),
-                SampleEntryVariant::Vvc(v) => v.serialized_len(),
-                SampleEntryVariant::Mp4v(m) => m.serialized_len(),
-                SampleEntryVariant::Av01(a) => a.serialized_len(),
-                SampleEntryVariant::Vp09(v) => v.serialized_len(),
-                SampleEntryVariant::Mp4a(m) => m.serialized_len(),
-                SampleEntryVariant::Ac3(a) => a.serialized_len(),
-                SampleEntryVariant::Ec3(e) => e.serialized_len(),
-                SampleEntryVariant::Stpp(s) => s.serialized_len(),
-                SampleEntryVariant::Wvtt(w) => w.serialized_len(),
-                SampleEntryVariant::Ac4(a) => a.serialized_len(),
-                SampleEntryVariant::Opus(o) => o.serialized_len(),
-                SampleEntryVariant::Flac(f) => f.serialized_len(),
-                SampleEntryVariant::Mha(m) => m.serialized_len(),
-                SampleEntryVariant::Dts(d) => d.serialized_len(),
-                SampleEntryVariant::Unknown(u) => u.serialized_len(),
-            };
+            n += e.serialized_len();
         }
         n
     }
@@ -3058,25 +3086,7 @@ impl Serialize for SampleDescriptionBox {
         buf[c..c + 4].copy_from_slice(&entry_count.to_be_bytes());
         c += 4;
         for e in &self.entries {
-            c += match e {
-                SampleEntryVariant::Avc1(a) => a.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Hevc1(h) => h.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Vvc(v) => v.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Mp4v(m) => m.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Av01(a) => a.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Vp09(v) => v.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Mp4a(m) => m.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Ac3(a) => a.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Ec3(e) => e.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Stpp(s) => s.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Wvtt(w) => w.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Ac4(a) => a.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Opus(o) => o.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Flac(f) => f.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Mha(m) => m.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Dts(d) => d.serialize_into(&mut buf[c..])?,
-                SampleEntryVariant::Unknown(u) => u.serialize_into(&mut buf[c..])?,
-            };
+            c += e.serialize_into(&mut buf[c..])?;
         }
         Ok(c)
     }
@@ -4349,45 +4359,8 @@ fn sample_entry_media_kind(entry: &SampleEntryVariant) -> SampleEntryMediaKind {
 /// exposed standalone so [`protect_sample_entry`] can recover the original
 /// entry's bytes to wrap (rather than hand-rolling a duplicate encoder).
 fn sample_entry_bytes(entry: &SampleEntryVariant) -> Result<Vec<u8>> {
-    let len = match entry {
-        SampleEntryVariant::Avc1(a) => a.serialized_len(),
-        SampleEntryVariant::Hevc1(h) => h.serialized_len(),
-        SampleEntryVariant::Vvc(v) => v.serialized_len(),
-        SampleEntryVariant::Mp4v(m) => m.serialized_len(),
-        SampleEntryVariant::Av01(a) => a.serialized_len(),
-        SampleEntryVariant::Vp09(v) => v.serialized_len(),
-        SampleEntryVariant::Mp4a(m) => m.serialized_len(),
-        SampleEntryVariant::Ac3(a) => a.serialized_len(),
-        SampleEntryVariant::Ec3(e) => e.serialized_len(),
-        SampleEntryVariant::Stpp(s) => s.serialized_len(),
-        SampleEntryVariant::Wvtt(w) => w.serialized_len(),
-        SampleEntryVariant::Ac4(a) => a.serialized_len(),
-        SampleEntryVariant::Opus(o) => o.serialized_len(),
-        SampleEntryVariant::Flac(f) => f.serialized_len(),
-        SampleEntryVariant::Mha(m) => m.serialized_len(),
-        SampleEntryVariant::Dts(d) => d.serialized_len(),
-        SampleEntryVariant::Unknown(u) => u.serialized_len(),
-    };
-    let mut buf = alloc::vec![0u8; len];
-    let n = match entry {
-        SampleEntryVariant::Avc1(a) => a.serialize_into(&mut buf)?,
-        SampleEntryVariant::Hevc1(h) => h.serialize_into(&mut buf)?,
-        SampleEntryVariant::Vvc(v) => v.serialize_into(&mut buf)?,
-        SampleEntryVariant::Mp4v(m) => m.serialize_into(&mut buf)?,
-        SampleEntryVariant::Av01(a) => a.serialize_into(&mut buf)?,
-        SampleEntryVariant::Vp09(v) => v.serialize_into(&mut buf)?,
-        SampleEntryVariant::Mp4a(m) => m.serialize_into(&mut buf)?,
-        SampleEntryVariant::Ac3(a) => a.serialize_into(&mut buf)?,
-        SampleEntryVariant::Ec3(e) => e.serialize_into(&mut buf)?,
-        SampleEntryVariant::Stpp(s) => s.serialize_into(&mut buf)?,
-        SampleEntryVariant::Wvtt(w) => w.serialize_into(&mut buf)?,
-        SampleEntryVariant::Ac4(a) => a.serialize_into(&mut buf)?,
-        SampleEntryVariant::Opus(o) => o.serialize_into(&mut buf)?,
-        SampleEntryVariant::Flac(f) => f.serialize_into(&mut buf)?,
-        SampleEntryVariant::Mha(m) => m.serialize_into(&mut buf)?,
-        SampleEntryVariant::Dts(d) => d.serialize_into(&mut buf)?,
-        SampleEntryVariant::Unknown(u) => u.serialize_into(&mut buf)?,
-    };
+    let mut buf = alloc::vec![0u8; entry.serialized_len()];
+    let n = entry.serialize_into(&mut buf)?;
     buf.truncate(n);
     Ok(buf)
 }

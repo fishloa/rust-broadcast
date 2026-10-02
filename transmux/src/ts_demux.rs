@@ -122,7 +122,7 @@ use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
-use crate::aac_asc::{AdtsHeader, AudioSpecificConfig, parse_adts_header};
+use crate::aac_asc::{AdtsHeader, AudioSpecificConfig, SamplingFrequencyIndex, parse_adts_header};
 use crate::ac3::{
     AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo, Ec3SpecificBox, Ec3SyncframeInfo,
     split_ac3_syncframes, split_eac3_syncframes,
@@ -754,26 +754,6 @@ fn adts_header_len(hdr: &AdtsHeader) -> usize {
     } else {
         ADTS_HEADER_SIZE + ADTS_CRC_SIZE
     }
-}
-
-/// Convert an ADTS `sampling_frequency_index` to Hz (ISO/IEC 14496-3 Table 1.16).
-fn sfi_to_hz(sfi: u8) -> Option<u32> {
-    Some(match sfi {
-        0 => 96000,
-        1 => 88200,
-        2 => 64000,
-        3 => 48000,
-        4 => 44100,
-        5 => 32000,
-        6 => 24000,
-        7 => 22050,
-        8 => 16000,
-        9 => 12000,
-        10 => 11025,
-        11 => 8000,
-        12 => 7350,
-        _ => return None,
-    })
 }
 
 /// Parse a PAT section, returning every `(program_number, program_map_PID)`
@@ -2334,7 +2314,8 @@ fn finalize_probe(
             // sync.
             let (_, first_hdr) = find_adts_sync(latest)?;
             let asc = AudioSpecificConfig::from_adts_header(&first_hdr);
-            let sample_rate = sfi_to_hz(first_hdr.sampling_frequency_index)?;
+            let sample_rate =
+                SamplingFrequencyIndex::from(first_hdr.sampling_frequency_index).table_hz()?;
             // ISO/IEC 14496-3 Table 1.19: `channel_configuration` is a
             // configuration *index*, not a count — 7 means eight channels
             // (7.1), and 0 means the mapping is carried in-band by a
@@ -2516,7 +2497,7 @@ fn abandon_backlog(
 fn advance_track(
     stream: &mut StreamState,
     pid: u16,
-    data: Vec<u8>,
+    data: &[u8],
     pts_uw: i128,
     dts_uw: i128,
     events: &mut VecDeque<DemuxEvent>,
@@ -2538,7 +2519,7 @@ fn advance_track(
             // `avcC`/`hvcC`/`esds` and the init segment describing a stream
             // that was no longer being sent. An *unchanged* repeat emits
             // nothing — encoders re-send their headers routinely.
-            if let Some((config, timescale)) = reprobe_if_config_changed(stream, &mut live, &data) {
+            if let Some((config, timescale)) = reprobe_if_config_changed(stream, &mut live, data) {
                 live.config = config;
                 live.timescale = timescale;
                 events.push_back(DemuxEvent::TrackUpdated(
@@ -2546,7 +2527,7 @@ fn advance_track(
                         .with_source(pid, stream.descriptors.clone()),
                 ));
             }
-            push_live_au(&mut live, &data, pts_uw, dts_uw, events);
+            push_live_au(&mut live, data, pts_uw, dts_uw, events);
             TrackState::Live(live)
         }
         TrackState::Abandoned => TrackState::Abandoned,
@@ -2558,7 +2539,7 @@ fn advance_track(
         } => {
             stream.backlog_bytes = stream.backlog_bytes.saturating_add(data.len());
             backlog.push(BufferedAu {
-                data,
+                data: data.to_vec(),
                 pts_uw,
                 dts_uw,
             });
@@ -2579,7 +2560,7 @@ fn advance_track(
         } => {
             stream.backlog_bytes = stream.backlog_bytes.saturating_add(data.len());
             backlog.push(BufferedAu {
-                data,
+                data: data.to_vec(),
                 pts_uw,
                 dts_uw,
             });
@@ -2807,7 +2788,7 @@ fn on_completed_pes(
             == DiscontinuityVerdict::Forward;
     }
     let (pts_uw, dts_uw) = stream.wrap.push(pts, dts);
-    advance_track(stream, pid, pes.payload.to_vec(), pts_uw, dts_uw, events);
+    advance_track(stream, pid, pes.payload, pts_uw, dts_uw, events);
 }
 
 /// Drive one reassembled PSI/private section through [`advance_track`]
@@ -2822,7 +2803,7 @@ fn on_completed_section(
     if section.is_empty() {
         return;
     }
-    advance_track(stream, pid, section.to_vec(), 0, 0, events);
+    advance_track(stream, pid, section, 0, 0, events);
 }
 
 /// [`DemuxEvent`] moved to `crate::ir::event` (media plane step 2e: it is

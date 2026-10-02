@@ -1099,6 +1099,16 @@ pub struct EsdsBox {
 }
 
 impl EsdsBox {
+    /// The `DecoderSpecificInfo` payload (for AAC, the `AudioSpecificConfig`
+    /// bytes), if the `DecoderConfigDescriptor` carries one.
+    pub(crate) fn decoder_specific_info_data(&self) -> Option<&[u8]> {
+        self.es_descriptor
+            .decoder_config
+            .as_ref()
+            .and_then(|dc| dc.decoder_specific_info.as_ref())
+            .map(|dsi| dsi.data.as_slice())
+    }
+
     /// Parse from the full box bytes (header + body).
     pub fn parse_box(data: &[u8]) -> Result<Self> {
         let header = BoxHeader::parse(data)?;

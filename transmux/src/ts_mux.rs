@@ -479,6 +479,13 @@ pub(crate) struct EsPlan {
     descriptors: Vec<u8>,
 }
 
+/// TS packet payload capacity: the 188-byte packet less its 4-byte header
+/// (ISO/IEC 13818-1 §2.4.3.2).
+const TS_PAYLOAD_CAPACITY: usize = TS_PACKET_SIZE - 4;
+/// Extra packets budgeted per sample in the packet-count pre-size hint: the PES
+/// header spill plus the stuffed final packet.
+const PACKETS_PER_SAMPLE_SLACK: usize = 2;
+
 /// A single TS packet queued for output, tagged with a monotonic (never
 /// 33-bit-wrapped — see [`rescale_for_ordering`]) decode-order key so the
 /// muxer can interleave elementary streams by decode time.
@@ -932,7 +939,20 @@ fn mux_tracks_timed_with_cc(
 
     // ── 3. Elementary-stream PES → TS packets, tagged by DTS ──
     // Base DTS = PCR_LEAD_TICKS so the first PCR (DTS − lead) is non-negative.
-    let mut tagged: Vec<TaggedPacket> = Vec::new();
+    // Sized from the sample bytes (a PES packet adds a header, and adaptation
+    // stuffing fills the last packet, hence the per-sample slack) so the vector
+    // does not repeatedly double-and-copy its way up to the whole output
+    // (audit r05-O4). A hint only: an under-estimate just grows as before.
+    let packet_hint: usize = planned_idx
+        .iter()
+        .map(|&i| {
+            samples[i]
+                .iter()
+                .map(|s| s.data.len() / TS_PAYLOAD_CAPACITY + PACKETS_PER_SAMPLE_SLACK)
+                .sum::<usize>()
+        })
+        .sum();
+    let mut tagged: Vec<TaggedPacket> = Vec::with_capacity(packet_hint);
     // Sort keys of the packets that already carry a PCR, ascending.
     let mut pcr_stamps: Vec<u64> = Vec::new();
     for (plan, &track_idx) in plans.iter().zip(&planned_idx) {
@@ -1015,6 +1035,7 @@ fn mux_tracks_timed_with_cc(
 
     // ── 5. Interleave ES packets by decode order (stable) and append ──
     tagged.sort_by_key(|t| t.sort_key);
+    out.reserve_exact(tagged.len() * TS_PACKET_SIZE);
     for t in &tagged {
         out.extend_from_slice(&t.packet);
     }
@@ -1160,14 +1181,11 @@ fn rescale_for_ordering(ticks: u64, timescale: u64) -> u64 {
 /// DecoderSpecificInfo (the inverse of the [`TsDemux`](crate::TsDemux) build).
 fn asc_from_esds(esds: &crate::mp4esds::EsdsBox) -> Result<AudioSpecificConfig> {
     let dsi = esds
-        .es_descriptor
-        .decoder_config
-        .as_ref()
-        .and_then(|dc| dc.decoder_specific_info.as_ref())
+        .decoder_specific_info_data()
         .ok_or(Error::InvalidInput(
             "AAC esds carries no DecoderSpecificInfo (AudioSpecificConfig)",
         ))?;
-    AudioSpecificConfig::parse(&dsi.data)
+    AudioSpecificConfig::parse(dsi)
 }
 
 /// Build the elementary-stream PES payload for one sample:

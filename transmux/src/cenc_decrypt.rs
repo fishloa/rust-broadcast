@@ -90,7 +90,9 @@ use crate::cenc::{SampleEncryptionEntry, TrackEncryptionBox};
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
 use crate::media::Media;
-use crate::movie_fragment::{MovieFragmentBox, TrackFragmentHeaderBox, TrackFragmentRunBox};
+use crate::movie_fragment::{
+    MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TrackFragmentHeaderBox, TrackFragmentRunBox,
+};
 use crate::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox};
 
 /// Size of a KID / content key / AES-128 key **or block**, in bytes (AES-128's
@@ -179,7 +181,7 @@ struct TrackCrypto {
 pub struct CencDecryptor {
     /// The whole protected fMP4 file (borrowing is avoided so the decryptor is
     /// `'static`-friendly for the trait impl; a `Vec` copy is acceptable here).
-    file: Vec<u8>,
+    file: bytes::Bytes,
     /// Per-track crypto metadata, in `moov` track order.
     tracks: Vec<TrackCrypto>,
 }
@@ -206,18 +208,26 @@ impl CencDecryptor {
     /// progressive file, or every `moof`'s `traf`-level box, concatenated, for
     /// a fragmented one). Fails with [`Error::UnexpectedBox`] if no protected
     /// track is found.
+    ///
+    /// Copies `file` once to own it; a caller that already holds a
+    /// [`bytes::Bytes`] should use [`Self::from_fmp4_bytes`], which shares the
+    /// buffer instead (and lets [`Self::demux`] hand out samples as zero-copy
+    /// slices of it).
     pub fn from_fmp4(file: &[u8]) -> Result<Self> {
+        Self::from_fmp4_bytes(bytes::Bytes::copy_from_slice(file))
+    }
+
+    /// [`Self::from_fmp4`] over an already-shared buffer: no copy of the file,
+    /// and every sample [`Self::demux`] returns is a slice of it (audit r05-O2).
+    pub fn from_fmp4_bytes(file: bytes::Bytes) -> Result<Self> {
         let mut tracks = Vec::new();
-        harvest_tracks(file, &mut tracks)?;
+        harvest_tracks(&file, &mut tracks)?;
         if tracks.is_empty() {
             return Err(Error::UnexpectedBox {
                 expected: "a protected track (sinf/tenc + senc)",
             });
         }
-        Ok(Self {
-            file: file.to_vec(),
-            tracks,
-        })
+        Ok(Self { file, tracks })
     }
 
     /// The original (unprotected) codec four-CC of the first protected track,
@@ -425,13 +435,6 @@ const STSD_ENTRY_COUNT: usize = 4;
 /// predefined/reserved, 2 width, 2 height, 4 hres, 4 vres, 4 reserved, 2
 /// frame_count, 32 compressorname, 2 depth, 2 predefined.
 const VISUAL_SAMPLE_ENTRY_HDR: usize = 78;
-/// `sample_is_non_sync_sample` bit within a 32-bit `sample_flags` word
-/// (ISO/IEC 14496-12:2015 §8.8.3.1, bit `[16]`). Set = the sample is **not** a
-/// sync sample (random-access point). Mirrors the identical constant in
-/// [`crate::media`] (private there); duplicated here rather than exposed
-/// cross-module, since both modules independently resolve `trun`/`tfhd`
-/// sample flags.
-const SAMPLE_FLAG_IS_NON_SYNC: u32 = 0x0001_0000;
 
 /// Recover crypto metadata for every protected track in `file`.
 ///
@@ -725,7 +728,7 @@ fn stsd_entry_fourcc(stsd: &[u8]) -> &'static str {
 /// from `stsz`/`stsc`/`stco`, e.g. ffmpeg's `-cenc_aes_ctr`) and fragmented
 /// CMAF (`moov` + one or more `moof`/`mdat` pairs, sample layout from each
 /// fragment's `trun`) — see [`collect_fragment_samples`].
-fn demux_protected(file: &[u8]) -> Result<Media> {
+fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
     use crate::AVCConfigurationBox;
     use crate::media::{Media, Track};
     use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -806,7 +809,7 @@ fn demux_protected(file: &[u8]) -> Result<Media> {
                     });
                 }
                 samples.push(Sample {
-                    data: file[offset..end].to_vec().into(),
+                    data: file.slice(offset..end),
                     // Progressive (non-fragmented) protected-sample recovery
                     // never parsed `stts`/`ctts` timing here (pre-existing
                     // behaviour); `None` is the honest representation now
@@ -855,7 +858,7 @@ fn demux_protected(file: &[u8]) -> Result<Media> {
 /// `target_track_id` and without decrypting or resolving codec config (the
 /// caller, [`demux_protected`], already has that from `moov`).
 fn collect_fragment_samples(
-    file: &[u8],
+    file: &bytes::Bytes,
     target_track_id: u32,
 ) -> Result<Vec<crate::pipeline::Sample>> {
     let mut out = Vec::new();
@@ -939,7 +942,7 @@ fn collect_fragment_samples(
 /// Shaka Packager); the `base-data-offset-present` and `trun.data_offset`
 /// wording is stable across the 2012 → 2022 editions.
 fn absorb_protected_fragment(
-    file: &[u8],
+    file: &bytes::Bytes,
     moof_off: usize,
     moof: &MovieFragmentBox,
     target_track_id: u32,
@@ -955,7 +958,7 @@ fn absorb_protected_fragment(
         let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;
         let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
         out.push(Sample {
-            data: file[r.start..r.end].to_vec().into(),
+            data: file.slice(r.start..r.end),
             dts: Some(dts),
             pts: Some(pts),
             duration: Some(r.duration),
@@ -1174,6 +1177,13 @@ fn stsz_sizes(stbl: &[u8], file_len: usize) -> Result<Vec<usize>> {
     Ok(sizes)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Work counter at the `stsc` expansion loop in [`sample_file_offsets`]
+    /// (r05-O1): how many `stsc` entries were examined in total.
+    static STSC_ENTRIES_EXAMINED: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
 /// Compute each sample's absolute file offset from `stsc` + `stco`.
 ///
 /// Maps samples to chunks (`stsc` run-length table) and each chunk to a file
@@ -1250,20 +1260,27 @@ fn sample_file_offsets(stbl: &[u8], sizes: &[usize]) -> Result<Vec<usize>> {
         });
     }
     // Expand: samples_per_chunk for each chunk index (1-based).
+    //
+    // One forward walk over the run table: chunk numbers only increase, so the
+    // prefix of entries with `first_chunk <= chunk_no` only grows and the last
+    // entry of that prefix is the applicable run. (Re-scanning the table from
+    // the start for every chunk made this O(chunks x entries), audit r05-O1;
+    // for any table, sorted or not, the entry chosen is the same.)
     let mut samples_per_chunk = Vec::with_capacity(chunk_count);
+    let mut next_entry = 0usize;
+    let mut spc = 0u32;
     for c in 0..chunk_count {
         let chunk_no = (c + 1) as u32;
-        // Find the applicable stsc run (last entry whose first_chunk <= chunk_no).
-        let mut spc = 0u32;
-        for e in 0..entry_count {
-            let o = sc_table + e * 12;
+        while next_entry < entry_count {
+            #[cfg(test)]
+            STSC_ENTRIES_EXAMINED.with(|n| n.set(n.get() + 1));
+            let o = sc_table + next_entry * 12;
             let first_chunk = u32::from_be_bytes([stsc[o], stsc[o + 1], stsc[o + 2], stsc[o + 3]]);
-            let per = u32::from_be_bytes([stsc[o + 4], stsc[o + 5], stsc[o + 6], stsc[o + 7]]);
-            if first_chunk <= chunk_no {
-                spc = per;
-            } else {
+            if first_chunk > chunk_no {
                 break;
             }
+            spc = u32::from_be_bytes([stsc[o + 4], stsc[o + 5], stsc[o + 6], stsc[o + 7]]);
+            next_entry += 1;
         }
         samples_per_chunk.push(spc);
     }
@@ -1303,6 +1320,45 @@ mod tests {
 
     use super::*;
     use crate::cenc_crypto;
+
+    fn full_box(fourcc: &[u8; 4], entries: &[u8], count: u32) -> Vec<u8> {
+        let mut b = Vec::new();
+        let len = (BOX_HEADER_MIN_SIZE + FULL_HDR + 4 + entries.len()) as u32;
+        b.extend_from_slice(&len.to_be_bytes());
+        b.extend_from_slice(fourcc);
+        b.extend_from_slice(&[0; FULL_HDR]);
+        b.extend_from_slice(&count.to_be_bytes());
+        b.extend_from_slice(entries);
+        b
+    }
+
+    /// r05-O1: the per-chunk `stsc` lookup rescanned the run table from the start
+    /// for every chunk (O(chunks x entries)). One entry per chunk here, so the old
+    /// loop examined ~chunks^2/2 entries; the forward walk examines each once.
+    #[test]
+    fn stsc_expansion_examines_each_entry_once_not_once_per_chunk() {
+        const CHUNKS: u32 = 400;
+        let mut stsc = Vec::new();
+        let mut stco = Vec::new();
+        for c in 1..=CHUNKS {
+            stsc.extend_from_slice(&c.to_be_bytes()); // first_chunk
+            stsc.extend_from_slice(&1u32.to_be_bytes()); // samples_per_chunk
+            stsc.extend_from_slice(&1u32.to_be_bytes()); // sample_description_index
+            stco.extend_from_slice(&(c * 100).to_be_bytes());
+        }
+        let mut stbl = vec![0u8; BOX_HEADER_MIN_SIZE];
+        stbl.extend(full_box(b"stsc", &stsc, CHUNKS));
+        stbl.extend(full_box(b"stco", &stco, CHUNKS));
+        let sizes = vec![10usize; CHUNKS as usize];
+        STSC_ENTRIES_EXAMINED.with(|c| c.set(0));
+        let offsets = sample_file_offsets(&stbl, &sizes).unwrap();
+        let examined = STSC_ENTRIES_EXAMINED.with(core::cell::Cell::get);
+        assert_eq!(offsets[0], 100);
+        assert_eq!(offsets[CHUNKS as usize - 1], CHUNKS as usize * 100);
+        // Linear: each entry is accepted once, plus one rejecting peek per chunk
+        // (799 here; the per-chunk rescan examined 80 599).
+        assert!(examined <= 2 * CHUNKS as usize, "examined {examined}");
+    }
     use crate::media::Track;
     use crate::pipeline::{CodecConfig, Sample, TrackSpec};
     use broadcast_common::Unpackage;
@@ -1354,7 +1410,7 @@ mod tests {
     /// audio (`track_id` 2), in `moov` order.
     fn decryptor() -> CencDecryptor {
         CencDecryptor {
-            file: Vec::new(),
+            file: bytes::Bytes::new(),
             tracks: alloc::vec![
                 crypto(VIDEO_TRACK_ID, &VIDEO_IV),
                 crypto(AUDIO_TRACK_ID, &AUDIO_IV),
@@ -1468,7 +1524,7 @@ mod tests {
         let mut second = crypto(AUDIO_TRACK_ID, &AUDIO_IV);
         second.samples.pop();
         CencDecryptor {
-            file: Vec::new(),
+            file: bytes::Bytes::new(),
             tracks: alloc::vec![crypto(VIDEO_TRACK_ID, &VIDEO_IV), second],
         }
     }
@@ -1518,7 +1574,7 @@ mod tests {
             bytes_of_protected_data: 100,
         }];
         let dec = CencDecryptor {
-            file: Vec::new(),
+            file: bytes::Bytes::new(),
             tracks: alloc::vec![crypto(VIDEO_TRACK_ID, &VIDEO_IV), second],
         };
         let mut media = two_track_media_second_bad();
@@ -1567,7 +1623,7 @@ mod tests {
                 .collect(),
         };
         let dec = CencDecryptor {
-            file: Vec::new(),
+            file: bytes::Bytes::new(),
             tracks: alloc::vec![
                 mk(VIDEO_TRACK_ID, 0x11, SAMPLES_PER_TRACK),
                 mk(AUDIO_TRACK_ID, 0x22, SAMPLES_PER_TRACK - 1),
@@ -1604,7 +1660,7 @@ mod tests {
         let mut second = crypto(AUDIO_TRACK_ID, &AUDIO_IV);
         second.tenc.default_kid = [0xBB; KEY_LEN];
         let dec = CencDecryptor {
-            file: Vec::new(),
+            file: bytes::Bytes::new(),
             tracks: alloc::vec![crypto(VIDEO_TRACK_ID, &VIDEO_IV), second],
         };
         let mut media = two_track_media_second_bad();
@@ -1663,9 +1719,9 @@ mod tests {
     #[test]
     fn decryptor_debug_does_not_dump_raw_file_bytes() {
         let mut small = decryptor();
-        small.file = alloc::vec![0x42u8; 10];
+        small.file = bytes::Bytes::from_static(&[0x42u8; 10]);
         let mut large = decryptor();
-        large.file = alloc::vec![0x42u8; 10_000];
+        large.file = bytes::Bytes::from(alloc::vec![0x42u8; 10_000]);
 
         let small_out = alloc::format!("{small:?}");
         let large_out = alloc::format!("{large:?}");
@@ -1748,7 +1804,7 @@ mod tests {
             // Ciphertext samples for track 2, resolved by the shared
             // §8.8.7/§8.8.8 walker (the same code the decryptor and Fmp4Demux
             // use).
-            let cipher = collect_fragment_samples(&bytes, 2)
+            let cipher = collect_fragment_samples(&bytes::Bytes::from(bytes.clone()), 2)
                 .unwrap_or_else(|e| panic!("{f}: collect audio: {e}"));
             assert_eq!(
                 cipher.len(),

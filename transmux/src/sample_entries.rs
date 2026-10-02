@@ -26,6 +26,10 @@ use broadcast_common::Serialize;
 /// 32(compressorname)+2(depth)+2(predefined) = 78
 const VISUAL_SAMPLE_ENTRY_SIZE: usize = 78;
 
+/// Fewest bytes a bare `avc1`/`hvc1` entry can have: the 8-byte box header, the
+/// fixed VisualSampleEntry fields, and the 8-byte header of its config box.
+const BARE_ENTRY_MIN_LEN: usize = 8 + VISUAL_SAMPLE_ENTRY_SIZE + 8;
+
 // ---------------------------------------------------------------------------
 // VisualSampleEntry fields (common to all visual sample entries)
 // ---------------------------------------------------------------------------
@@ -332,43 +336,18 @@ impl AVCSampleEntry {
     /// Parse an AVC sample entry from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         use crate::avc_config::AVCConfigurationBox;
-        if bytes.len() < 8 + 78 + 8 {
+        if bytes.len() < BARE_ENTRY_MIN_LEN {
             return Err(Error::BufferTooShort {
-                need: 8 + 78 + 8,
+                need: BARE_ENTRY_MIN_LEN,
                 have: bytes.len(),
                 what: "avc1 bare",
             });
         }
         let codec_type = [bytes[4], bytes[5], bytes[6], bytes[7]];
         let body = &bytes[8..];
-        // SampleEntry: reserved(6) + data_reference_index(2) = body[0..7]
-        let data_reference_index = u16::from_be_bytes([body[6], body[7]]);
-        // VisualSampleEntry (§12.1.3): 16 reserved bytes (pre_defined(16) +
-        // reserved(16) + pre_defined[3]) precede width → width at body[24].
-        let width = u16::from_be_bytes([body[24], body[25]]);
-        let height = u16::from_be_bytes([body[26], body[27]]);
-        let horizontal_resolution = u32::from_be_bytes([body[28], body[29], body[30], body[31]]);
-        let vertical_resolution = u32::from_be_bytes([body[32], body[33], body[34], body[35]]);
-        let data_size = u32::from_be_bytes([body[36], body[37], body[38], body[39]]);
-        let frame_count = u16::from_be_bytes([body[40], body[41]]);
-        let mut compressorname = [0u8; 32];
-        compressorname.copy_from_slice(&body[42..74]);
-        let depth = u16::from_be_bytes([body[74], body[75]]);
-        let predefined = u16::from_be_bytes([body[76], body[77]]);
-        let visual = VisualSampleEntryFields {
-            data_reference_index,
-            width,
-            height,
-            horizontal_resolution,
-            vertical_resolution,
-            data_size,
-            frame_count,
-            compressorname,
-            depth,
-            predefined,
-        };
-        // Find avcC in the config region (starting at body[78] since visual fixed = 78 bytes)
-        let config_region = &body[78..];
+        let visual = VisualSampleEntryFields::parse_body(bytes, "avc1 bare")?;
+        // Find avcC in the config region (after the fixed VisualSampleEntry fields)
+        let config_region = &body[VISUAL_SAMPLE_ENTRY_SIZE..];
         if let Some(avcc) = find_config_box(config_region, b"avcC") {
             // avcc is the full box (header+body); parse_body expects only the body
             let config = if avcc.len() > 8 {
@@ -632,43 +611,17 @@ impl HEVCSampleEntry {
     /// Parse an HEVC sample entry from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
         use crate::hevc_config::HEVCConfigurationBox;
-        if bytes.len() < 8 + 78 + 8 {
+        if bytes.len() < BARE_ENTRY_MIN_LEN {
             return Err(Error::BufferTooShort {
-                need: 8 + 80 + 8,
+                need: BARE_ENTRY_MIN_LEN,
                 have: bytes.len(),
                 what: "hvc1 bare",
             });
         }
         let codec_type = [bytes[4], bytes[5], bytes[6], bytes[7]];
         let body = &bytes[8..];
-        // SampleEntry: reserved(6) + data_reference_index(2) = body[0..7].
-        let data_reference_index = u16::from_be_bytes([body[6], body[7]]);
-        // VisualSampleEntry (§12.1.3): 16 reserved bytes (pre_defined(16) +
-        // reserved(16) + pre_defined[3]) precede width → width at body[24]
-        // (matching `VisualSampleEntryFields::parse_body` and the AVC entry).
-        let width = u16::from_be_bytes([body[24], body[25]]);
-        let height = u16::from_be_bytes([body[26], body[27]]);
-        let horizontal_resolution = u32::from_be_bytes([body[28], body[29], body[30], body[31]]);
-        let vertical_resolution = u32::from_be_bytes([body[32], body[33], body[34], body[35]]);
-        let data_size = u32::from_be_bytes([body[36], body[37], body[38], body[39]]);
-        let frame_count = u16::from_be_bytes([body[40], body[41]]);
-        let mut compressorname = [0u8; 32];
-        compressorname.copy_from_slice(&body[42..74]);
-        let depth = u16::from_be_bytes([body[74], body[75]]);
-        let predefined = u16::from_be_bytes([body[76], body[77]]);
-        let visual = VisualSampleEntryFields {
-            data_reference_index,
-            width,
-            height,
-            horizontal_resolution,
-            vertical_resolution,
-            data_size,
-            frame_count,
-            compressorname,
-            depth,
-            predefined,
-        };
-        let config_region = &body[78..];
+        let visual = VisualSampleEntryFields::parse_body(bytes, "hvc1 bare")?;
+        let config_region = &body[VISUAL_SAMPLE_ENTRY_SIZE..];
         if let Some(hvcc) = find_config_box(config_region, b"hvcC") {
             let config = if hvcc.len() > 8 {
                 HEVCConfigurationBox::parse_body(&hvcc[8..])?

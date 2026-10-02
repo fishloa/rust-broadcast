@@ -112,7 +112,13 @@
 //! | `sample-aes` | no | HLS Sample-AES + full-segment AES-128 (AES-128-CBC) content protection ([`sample_aes`]); implies `cenc`, adds the RustCrypto `cbc` crate |
 //! | `cli`   | no      | the `transmux` command-line packager binary (`clap`; implies `std`) — see [`cli`] and `docs/CLI-STANDARD.md` |
 
-#![cfg_attr(not(feature = "std"), no_std)]
+// The crate is `no_std` without the `std` feature, but its in-crate test modules
+// use the std prelude (`Vec`, `String`, `vec!`, `eprintln!`, `thread_local!`)
+// bare, so a *test* build always links std. This keeps
+// `cargo test --no-default-features` buildable; the non-test
+// `--no-default-features` build (CI) still proves the library itself is `no_std`:
+// `cargo build --no-default-features` is the guard against `std` in non-test code.
+#![cfg_attr(not(any(feature = "std", test)), no_std)]
 #![forbid(unsafe_code)]
 extern crate alloc;
 
@@ -191,7 +197,9 @@ pub mod visual_ext;
 pub mod vp9;
 pub mod vvc_config;
 pub mod webm_demux;
+mod wire_cursor;
 pub(crate) mod xml_parse;
+mod xml_writer;
 
 pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacSignaling,

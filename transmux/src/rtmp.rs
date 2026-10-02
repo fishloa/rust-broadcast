@@ -1073,7 +1073,18 @@ pub fn read_chunks(mut input: &[u8]) -> Result<Vec<Message>, RtmpError> {
 
         // Resolve the inherited context for this csid.
         let idx = ctx.iter().position(|(c, _)| *c == bh.csid);
-        let prev = idx.map(|i| ctx[i].1.clone());
+        // The context is *moved* out for this chunk (its `partial` buffer taken,
+        // the rest — a handful of integers — copied), not cloned: cloning the
+        // in-progress message buffer for every chunk made reassembling one large
+        // message O(n^2) in copied bytes (audit r04-O7). It is stored back below.
+        let prev = idx.map(|i| {
+            let slot = &mut ctx[i].1;
+            let partial = core::mem::take(&mut slot.partial);
+            ChunkContext {
+                partial,
+                ..slot.clone()
+            }
+        });
 
         // Extended timestamp: present when the (fmt-relevant) timestamp reads the
         // sentinel, or (fmt 3) when the prior chunk on this csid indicated one.

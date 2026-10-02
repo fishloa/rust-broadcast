@@ -36,7 +36,9 @@
 //! ```
 
 use crate::error::{Error, Result};
+use crate::init_segment::bounded_entry_count;
 use crate::nalu_types::{HevcNalArray, HevcNalUnit};
+use crate::wire_cursor::{read_u8, read_u16, read_u32, read_u48};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
@@ -123,6 +125,12 @@ impl HEVCDecoderConfigurationRecord {
     }
 }
 
+/// Smallest encoded NAL array: `array_completeness`/`NAL_unit_type` byte plus
+/// the 16-bit `numNalus` (ISO/IEC 14496-15 §8.3.3.1.2).
+const ARRAY_MIN_LEN: usize = 3;
+/// Smallest encoded NAL unit entry: its 16-bit `nalUnitLength`.
+const NALU_MIN_LEN: usize = 2;
+
 impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
     type Error = Error;
 
@@ -195,7 +203,13 @@ impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
         let num_arrays = read_u8(bytes, &mut cursor, "numOfArrays")? as usize;
 
         // NAL arrays
-        let mut arrays = Vec::with_capacity(num_arrays);
+        // The counts are untrusted wire data: pre-allocate no more than the
+        // remaining body could hold (audit r04-O4).
+        let mut arrays = Vec::with_capacity(bounded_entry_count(
+            bytes.len().saturating_sub(cursor),
+            ARRAY_MIN_LEN,
+            num_arrays,
+        ));
         for _ in 0..num_arrays {
             // byte: array_completeness(1) + reserved(1)=0 + NAL_unit_type(6)
             let b_arr = read_u8(bytes, &mut cursor, "NAL array header")?;
@@ -206,7 +220,11 @@ impl<'a> Parse<'a> for HEVCDecoderConfigurationRecord {
             // numNalus (16)
             let num_nalus = read_u16(bytes, &mut cursor, "numNalus")? as usize;
 
-            let mut nalus = Vec::with_capacity(num_nalus);
+            let mut nalus = Vec::with_capacity(bounded_entry_count(
+                bytes.len().saturating_sub(cursor),
+                NALU_MIN_LEN,
+                num_nalus,
+            ));
             for _ in 0..num_nalus {
                 // nalUnitLength (16)
                 let nal_unit_len = read_u16(bytes, &mut cursor, "nalUnitLength")? as usize;
@@ -453,68 +471,6 @@ impl Serialize for HEVCConfigurationBox {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn read_u8(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u8> {
-    if *cursor >= bytes.len() {
-        return Err(Error::BufferTooShort {
-            need: *cursor + 1,
-            have: bytes.len(),
-            what,
-        });
-    }
-    let v = bytes[*cursor];
-    *cursor += 1;
-    Ok(v)
-}
-
-fn read_u16(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u16> {
-    if *cursor + 2 > bytes.len() {
-        return Err(Error::BufferTooShort {
-            need: *cursor + 2,
-            have: bytes.len(),
-            what,
-        });
-    }
-    let v = u16::from_be_bytes([bytes[*cursor], bytes[*cursor + 1]]);
-    *cursor += 2;
-    Ok(v)
-}
-
-fn read_u32(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u32> {
-    if *cursor + 4 > bytes.len() {
-        return Err(Error::BufferTooShort {
-            need: *cursor + 4,
-            have: bytes.len(),
-            what,
-        });
-    }
-    let v = u32::from_be_bytes([
-        bytes[*cursor],
-        bytes[*cursor + 1],
-        bytes[*cursor + 2],
-        bytes[*cursor + 3],
-    ]);
-    *cursor += 4;
-    Ok(v)
-}
-
-fn read_u48(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u64> {
-    if *cursor + 6 > bytes.len() {
-        return Err(Error::BufferTooShort {
-            need: *cursor + 6,
-            have: bytes.len(),
-            what,
-        });
-    }
-    let v = (bytes[*cursor] as u64) << 40
-        | (bytes[*cursor + 1] as u64) << 32
-        | (bytes[*cursor + 2] as u64) << 24
-        | (bytes[*cursor + 3] as u64) << 16
-        | (bytes[*cursor + 4] as u64) << 8
-        | bytes[*cursor + 5] as u64;
-    *cursor += 6;
-    Ok(v)
-}
 
 // ---------------------------------------------------------------------------
 // Tests

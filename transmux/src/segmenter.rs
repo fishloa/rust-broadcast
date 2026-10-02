@@ -49,17 +49,15 @@
 //!
 //! # Discontinuity detection
 //!
-//! A media-timeline discontinuity (RFC 8216 §4.3.4.3) is signalled in two ways:
+//! A media-timeline discontinuity (RFC 8216 §4.3.4.3) is signalled explicitly:
+//! call [`Segmenter::mark_discontinuity`] before the next [`Segmenter::push`]
+//! call that triggers a segment cut. The *next* segment that is cut will be
+//! marked discontinuous. (A `Segmenter` cannot change its tracks' codec
+//! configuration after construction, so there is no init-change to detect; a
+//! caller that starts a new `Segmenter` for a new configuration marks the
+//! discontinuity itself.)
 //!
-//! 1. **Explicit**: call [`Segmenter::mark_discontinuity`] before the next
-//!    [`Segmenter::push`] call that triggers a segment cut. The *next* segment
-//!    that is cut will be marked discontinuous.
-//!
-//! 2. **Auto-detect**: when the init segment bytes change between two consecutive
-//!    cuts (e.g. because the codec config, `EXT-X-MAP`, or track layout changed),
-//!    the segmenter automatically marks the later segment as discontinuous.
-//!
-//! Both mechanisms set the [`SegmentMeta::discontinuous`] flag returned by
+//! The mechanism sets the [`SegmentMeta::discontinuous`] flag returned by
 //! [`Segmenter::take_ready_with_meta`], which callers can forward directly to
 //! [`broadcast_hls::MediaSegment::discontinuous`].
 
@@ -269,9 +267,7 @@ pub struct SegmentMeta {
     /// caller should emit `#EXT-X-DISCONTINUITY` (RFC 8216 §4.3.4.3)
     /// immediately before this segment's `#EXTINF` line in the HLS playlist.
     ///
-    /// Set either by [`Segmenter::mark_discontinuity`] (explicit) or
-    /// automatically when the init segment bytes differ from those of the
-    /// preceding cut (init-change auto-detect).
+    /// Set by [`Segmenter::mark_discontinuity`].
     pub discontinuous: bool,
 }
 
@@ -360,9 +356,6 @@ pub struct Segmenter {
     /// Explicit discontinuity: when `true` the *next* cut is marked discontinuous.
     /// Reset to `false` after each cut.
     pending_discontinuity: bool,
-    /// The init-segment bytes from the last cut (or the initial build), used to
-    /// auto-detect init changes.  `None` before the first segment is cut.
-    last_init: Option<Vec<u8>>,
 }
 
 impl Segmenter {
@@ -438,7 +431,6 @@ impl Segmenter {
             next_seq: 1,
             ready: VecDeque::new(),
             pending_discontinuity: false,
-            last_init: None,
         })
     }
 
@@ -574,24 +566,12 @@ impl Segmenter {
             build_media_segment(self.next_seq, &frags)?
         }; // immutable borrow of `self.tracks` ends here, before the mutation below
 
-        // Determine the discontinuity flag for this segment:
-        // - explicit (`mark_discontinuity` was called), OR
-        // - auto-detect: init bytes differ from those of the previous cut.
-        let current_init = build_init_segment(
-            &self
-                .tracks
-                .iter()
-                .map(|t| t.spec.clone())
-                .collect::<Vec<_>>(),
-            self.movie_timescale,
-        )?;
-        let init_changed = self
-            .last_init
-            .as_ref()
-            .map(|prev| prev != &current_init)
-            .unwrap_or(false); // first segment: no previous init to compare
-        let discontinuous = self.pending_discontinuity || init_changed;
-        self.last_init = Some(current_init);
+        // The discontinuity flag is the explicit `mark_discontinuity` request
+        // only: `Segmenter` has no API that changes a track's `TrackSpec` after
+        // construction, so the init segment can never change between cuts (the
+        // old byte-compare rebuilt the whole `moov` on every cut to detect
+        // a change that cannot happen, audit r05-O5).
+        let discontinuous = self.pending_discontinuity;
         self.pending_discontinuity = false;
 
         self.next_seq += 1;

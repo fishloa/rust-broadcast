@@ -47,6 +47,7 @@
 //! next block's presentation time (the final block reuses the previous delta, or
 //! the track's `DefaultDuration` when only one block is present).
 
+use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
 
@@ -753,6 +754,14 @@ fn read_signed_vint(buf: &[u8]) -> Option<(i64, usize)> {
     Some((signed, used))
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Work counter for [`build_media`] (r04-O9): every block examination, in the
+    /// one-pass partition and in the per-track gather, so a reintroduced
+    /// per-track rescan of all blocks (O(tracks x blocks)) raises it.
+    static BLOCKS_VISITED: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
 /// Assemble the collected tracks + blocks into a [`Media`].
 ///
 /// One [`Track`] per elementary stream whose CodecID we support, samples in
@@ -766,6 +775,15 @@ fn build_media(
     mut blocks: Vec<RawBlock>,
 ) -> Result<Media> {
     let _ = timestamp_scale_ns;
+    // Partition the blocks by track once (file order preserved within a track)
+    // instead of rescanning every block for every track (r04-O9). The frames
+    // are moved out of each block, never cloned.
+    let mut by_track: BTreeMap<u64, Vec<RawBlock>> = BTreeMap::new();
+    for b in blocks.drain(..) {
+        #[cfg(test)]
+        BLOCKS_VISITED.with(|c| c.set(c.get() + 1));
+        by_track.entry(b.track_number).or_default().push(b);
+    }
     let mut out_tracks: Vec<Track> = Vec::new();
     let mut track_id: u32 = 1;
 
@@ -790,16 +808,16 @@ fn build_media(
         // would double the peak allocation for no reason. `blocks` is owned by
         // this function, and each block belongs to exactly one track, so taking
         // its frames is safe.
-        for b in blocks.iter_mut() {
-            if b.track_number == info.track_number {
-                timeline.push(BlockSpan {
-                    pts_ticks: b.pts_ticks,
-                    first_frame: payloads.len(),
-                    frame_count: b.frames.len(),
-                });
-                sync.extend(core::iter::repeat_n(b.is_sync, b.frames.len()));
-                payloads.append(&mut b.frames);
-            }
+        for mut b in by_track.remove(&info.track_number).unwrap_or_default() {
+            #[cfg(test)]
+            BLOCKS_VISITED.with(|c| c.set(c.get() + 1));
+            timeline.push(BlockSpan {
+                pts_ticks: b.pts_ticks,
+                first_frame: payloads.len(),
+                frame_count: b.frames.len(),
+            });
+            sync.extend(core::iter::repeat_n(b.is_sync, b.frames.len()));
+            payloads.append(&mut b.frames);
         }
         if payloads.is_empty() {
             continue;
@@ -1474,6 +1492,41 @@ fn read_float(body: &[u8]) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// r04-O9: `build_media` rescanned every block once per track (O(T x B)).
+    /// 8 tracks x 1000 blocks: 8000 block examinations before; now one partition
+    /// pass plus one gather pass over each block (2000), independent of the track
+    /// count. The counter sits in both loops, so a reintroduced per-track rescan
+    /// (counted in its loop) fails the bound.
+    #[test]
+    fn build_media_examines_each_block_once_not_once_per_track() {
+        const TRACKS: u64 = 8;
+        const BLOCKS: usize = 1000;
+        let tracks: Vec<TrackInfo> = (1..=TRACKS)
+            .map(|n| TrackInfo {
+                track_number: n,
+                codec_id: b"X_UNSUPPORTED".to_vec(),
+                ..TrackInfo::default()
+            })
+            .collect();
+        let blocks: Vec<RawBlock> = (0..BLOCKS)
+            .map(|i| RawBlock {
+                track_number: (i as u64 % TRACKS) + 1,
+                pts_ticks: i as i64,
+                is_sync: true,
+                frames: vec![vec![0u8; 4]],
+                declared_frames: 1,
+            })
+            .collect();
+        BLOCKS_VISITED.with(|c| c.set(0));
+        build_media(1_000_000, tracks, blocks).unwrap();
+        let visited = BLOCKS_VISITED.with(core::cell::Cell::get);
+        assert_eq!(
+            visited,
+            2 * BLOCKS,
+            "partition + gather, not per-track rescans"
+        );
+    }
 
     #[test]
     fn vint_one_byte() {

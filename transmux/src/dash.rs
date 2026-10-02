@@ -80,6 +80,7 @@ use crate::error::{Error, Result};
 use crate::media::{Media, Track};
 use crate::pipeline::CodecConfig;
 use crate::sps::rfc6381_avc1;
+use crate::xml_writer::XmlWriter;
 use broadcast_common::Parse;
 
 /// DASH MPD namespace (ISO/IEC 23009-1 §5.3.1.2 — `urn:mpeg:dash:schema:mpd:2011`).
@@ -635,7 +636,7 @@ impl DashPackager {
                 let asc = asc_from_esds(esds).ok();
                 info.audio_sampling_rate = Some(
                     asc.as_ref()
-                        .and_then(asc_sampling_rate)
+                        .and_then(AudioSpecificConfig::effective_sampling_frequency)
                         .unwrap_or(*sample_rate),
                 );
                 info.audio_channels = Some(*channel_count);
@@ -1061,14 +1062,11 @@ impl broadcast_common::Package for DashPackager {
 /// Extract and parse the `AudioSpecificConfig` from an `esds` box.
 fn asc_from_esds(esds: &crate::mp4esds::EsdsBox) -> Result<AudioSpecificConfig> {
     let dsi = esds
-        .es_descriptor
-        .decoder_config
-        .as_ref()
-        .and_then(|dc| dc.decoder_specific_info.as_ref())
+        .decoder_specific_info_data()
         .ok_or(Error::UnexpectedBox {
             expected: "DecoderSpecificInfo (AudioSpecificConfig) in esds",
         })?;
-    AudioSpecificConfig::parse(&dsi.data)
+    AudioSpecificConfig::parse(dsi)
 }
 
 /// The `objectTypeIndication` carried in an `esds` (0 if the DecoderConfig is
@@ -1078,15 +1076,6 @@ fn oti_of(esds: &crate::mp4esds::EsdsBox) -> u8 {
         .decoder_config
         .as_ref()
         .map_or(0, |dc| dc.object_type_indication.0)
-}
-
-/// The effective sampling rate from a decoded ASC (explicit rate if present,
-/// else the rate for the `samplingFrequencyIndex`, ISO/IEC 14496-3 Table 1.10),
-/// via the crate's single copy of that table
-/// ([`SamplingFrequencyIndex::table_hz`]).
-fn asc_sampling_rate(asc: &AudioSpecificConfig) -> Option<u32> {
-    asc.sampling_frequency
-        .or_else(|| asc.sampling_frequency_index.table_hz())
 }
 
 /// Derive a DASH `@frameRate` (`num/den`) from the video samples' durations.
@@ -1301,104 +1290,4 @@ fn write_segment_timeline(w: &mut XmlWriter, durations: &[u64]) {
         idx += run;
     }
     w.close("SegmentTimeline");
-}
-
-// ---------------------------------------------------------------------------
-// Tiny XML writer — no external dependency (dep-free like HlsPackager).
-// ---------------------------------------------------------------------------
-
-/// A minimal, indentation-aware XML element writer.
-///
-/// Escapes attribute values per XML 1.0 §2.4; emits `<?xml ...?>` then nested
-/// open/close/empty elements. Not a general-purpose serializer — just enough to
-/// render the MPD structure this module produces.
-struct XmlWriter {
-    buf: String,
-    depth: usize,
-}
-
-impl XmlWriter {
-    fn new() -> Self {
-        Self {
-            buf: String::new(),
-            depth: 0,
-        }
-    }
-
-    fn declaration(&mut self) {
-        self.buf
-            .push_str("<?xml version=\"1.0\" encoding=\"utf-8\"?>\n");
-    }
-
-    fn indent(&mut self) {
-        for _ in 0..self.depth {
-            self.buf.push_str("  ");
-        }
-    }
-
-    fn attrs(&mut self, attrs: &[(&str, String)]) {
-        for (k, v) in attrs {
-            self.buf.push(' ');
-            self.buf.push_str(k);
-            self.buf.push_str("=\"");
-            escape_into(&mut self.buf, v);
-            self.buf.push('"');
-        }
-    }
-
-    fn open(&mut self, name: &str, attrs: &[(&str, String)]) {
-        self.indent();
-        self.buf.push('<');
-        self.buf.push_str(name);
-        self.attrs(attrs);
-        self.buf.push_str(">\n");
-        self.depth += 1;
-    }
-
-    fn empty(&mut self, name: &str, attrs: &[(&str, String)]) {
-        self.indent();
-        self.buf.push('<');
-        self.buf.push_str(name);
-        self.attrs(attrs);
-        self.buf.push_str("/>\n");
-    }
-
-    fn close(&mut self, name: &str) {
-        self.depth = self.depth.saturating_sub(1);
-        self.indent();
-        self.buf.push_str("</");
-        self.buf.push_str(name);
-        self.buf.push_str(">\n");
-    }
-
-    /// Write a leaf element with escaped text content, on one line
-    /// (`<name>text</name>`).
-    fn text(&mut self, name: &str, text: &str) {
-        self.indent();
-        self.buf.push('<');
-        self.buf.push_str(name);
-        self.buf.push('>');
-        escape_into(&mut self.buf, text);
-        self.buf.push_str("</");
-        self.buf.push_str(name);
-        self.buf.push_str(">\n");
-    }
-
-    fn finish(self) -> String {
-        self.buf
-    }
-}
-
-/// Escape a string for use in an XML attribute value (XML 1.0 §2.4).
-fn escape_into(out: &mut String, s: &str) {
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\'' => out.push_str("&apos;"),
-            _ => out.push(c),
-        }
-    }
 }

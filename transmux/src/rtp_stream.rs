@@ -1019,7 +1019,7 @@ impl RtpStreamDepacketiser {
             st.last_unwrapped = None;
             st.first_unwrapped = None;
             st.pending = None;
-            for pkt in &adm.released {
+            for pkt in adm.released {
                 Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
             }
             return Ok(out);
@@ -1038,7 +1038,7 @@ impl RtpStreamDepacketiser {
                 got,
             });
         }
-        for pkt in &adm.released {
+        for pkt in adm.released {
             Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
         }
         Ok(out)
@@ -1055,11 +1055,13 @@ impl RtpStreamDepacketiser {
         st: &mut TrackState,
         loss_events: &mut VecDeque<RtpLossEvent>,
         track_id: u32,
-        rtp_packet: &[u8],
+        rtp_packet: Vec<u8>,
         out: &mut Vec<Sample>,
     ) -> Result<()> {
-        let hdr = parse_rtp_header(rtp_packet)?;
+        let hdr = parse_rtp_header(&rtp_packet)?;
         let ts = hdr.timestamp;
+        // `hdr` borrows the packet, which is moved into the AU buffer below.
+        let marker = hdr.marker;
 
         // A timestamp change while packets are buffered means the previous
         // timestamp's packets already form a complete AU (defensive: covers
@@ -1072,7 +1074,7 @@ impl RtpStreamDepacketiser {
         }
         st.cur_ts = Some(ts);
         st.cur_bytes += rtp_packet.len();
-        st.cur_pkts.push(rtp_packet.to_vec());
+        st.cur_pkts.push(rtp_packet);
 
         // Runaway AU — a dropped final FU-A fragment or a marker bit that
         // never arrives would otherwise grow `cur_pkts` forever (see
@@ -1090,7 +1092,7 @@ impl RtpStreamDepacketiser {
         }
 
         // The video marker bit ends an AU immediately (RFC 6184 §5.1).
-        if matches!(st.kind, RtpMediaKind::H264) && hdr.marker {
+        if matches!(st.kind, RtpMediaKind::H264) && marker {
             Self::drain_complete_or_discard(st, loss_events, track_id, out);
             st.cur_ts = None;
         }
@@ -1151,7 +1153,7 @@ impl RtpStreamDepacketiser {
                 expected,
                 got,
             });
-            for pkt in &released {
+            for pkt in released {
                 Self::push_one(st, loss_events, track_id, pkt, &mut out)?;
             }
         }

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- `CencDecryptor::from_fmp4_bytes` — `from_fmp4` over an already-shared `bytes::Bytes`, so the file is
+  not copied and `demux` hands out samples as slices of it (#1081, r05-O2).
+- `AudioSpecificConfig::effective_sampling_frequency` — the explicit rate when present, else the
+  `samplingFrequencyIndex` rate (#1081, r04-O5).
+- `impl Serialize for SampleEntryVariant` (#1081, r05-O3).
 - `rfc6381_codec_string(&CodecConfig)` — the RFC 6381 codec string `DashPackager`
   writes into `Representation@codecs`, exposed so an HLS origin can fill
   `#EXT-X-STREAM-INF` `CODECS` (#1089).
@@ -20,8 +25,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   per-track `c@t` timeline must match the served fragment's `tfxd` and must be
   stable as the window slides (#1083).
 
+- **`init_segment::sampling_rate_override`** (#1081, audit r05-W31) — reads the
+  `srat` value out of an audio sample entry's config children, returning `None`
+  when the box is absent, malformed, or declares `sampling_rate == 0` (a zero
+  rate is not a rate; honouring it would replace a good 16.16 field with "0
+  Hz"). `SamplingRateBox::parse` now also validates the four-CC.
+- **`init_segment::SamplingRateBox` and `init_segment::AudioSampleEntryV1`**
+  (#1081, audit r05-W31). `SamplingRateBox` is the `srat` FullBox
+  (ISO/IEC 14496-12:2015 §12.2.3.1) with `new`/`FOURCC`/`SIZE` and the
+  `Parse`/`Serialize` pair; `AudioSampleEntryV1` names the v1 sound-entry form
+  (§12.2.3.2 as amended by Amd 1:2017) via `ENTRY_VERSION`,
+  `STSD_VERSION`, `SAMPLERATE_PLACEHOLDER` and `rate_fits_v0`. Also new:
+  `SampleEntryVariant::required_stsd_version()`, which reports the `stsd`
+  version an entry demands (1 for an `AudioSampleEntryV1`, else 0).
+- `sample_aes::eac3_encrypt_frame` / `eac3_decrypt_frame` — Sample-AES for a
+  **multi-syncframe** E-AC-3 audio frame, and `ac3::split_eac3_syncframe_ranges`
+  (#1080, audit r05-W2). The protected block is a single syncframe, so each gets
+  its own 16-byte clear leader, whole 16-byte blocks are encrypted and a partial
+  tail is clear (`ac3_encrypt_frame` applies one leader over whatever slice it is
+  handed, which skips the later leaders in a multi-syncframe frame). The IV is
+  **reset at every syncframe**, per the independent oracle
+  (`transmux/tests/fixtures/sample_aes_eac3/`; ffmpeg decodes the reset form 9/9
+  audio frames and a carried chain 1/9, and Bento4's encryptor is byte-identical
+  to the reset reference). Both return `Result`: a payload that is not a clean
+  run of syncframes (no sync word, or a truncated / trailing-junk syncframe) is
+  `Error::InvalidInput` rather than being emitted unchanged or half-encrypted.
+  Carrying the IV across an *independent + dependent* syncframe pair has no
+  independent oracle (`ORACLES.md` B3) — that case resets too and is labelled
+  unverified.
+- **`uri` — RFC 3986 URI-reference parsing and resolution.** `UriReference::parse`
+  (§3) and `to_uri_string` (§5.3), `resolve` (§5.2.2), `merge` (§5.2.3),
+  `remove_dot_segments` (§5.2.4) and `resolve_segment` for a `BaseURL` chain.
+  `try_resolve`/`try_resolve_segment` are the same with a base or reference
+  containing a control character or whitespace **rejected** (`None`), since a
+  raw CR/LF in a URL has no meaning in RFC 3986 and lets a manifest smuggle a
+  second request line into anything that later writes an HTTP request from it;
+  `first_forbidden_char` is the predicate. Also exports the standard's own
+  §5.4.1 and §5.4.2 example tables (`RFC3986_NORMAL_EXAMPLES`,
+  `RFC3986_ABNORMAL_EXAMPLES`) as data, which the crate's tests assert against.
+  This is what `dash_parse::Mpd::resolve_segment_url` /
+  `try_resolve_segment_url` resolve through (#1079, audit r04-W11). The crate
+  root re-exports `resolve_uri_reference`, `resolve_uri_segment` and
+  `try_resolve_uri_reference`.
+- `ac3::split_ac3_syncframes_resyncing` and `ac3::split_ac3_syncframe_ranges` —
+  frame splitting that resynchronises after an unparseable frame, returning byte
+  ranges rather than slices (#1079, audit r04-W20).
+- `ts_hls::StreamingTsHlsSegmenter::with_start_sequence` — seeds a streaming classic-TS
+  segmenter's segment numbering from a caller-given value instead of `Self::new`'s implicit `0`,
+  the classic-TS analogue of `ll_hls::LlHlsSegmenter::with_part_target_at`. Lets a consumer
+  (`multimux::source::segment::ProgramSegmenter`) resume numbering across a rebuild rather than
+  renumbering from `0` against a `Trunk` that already holds segments, which its monotonic
+  `sequence_number` guard rejects forever after.
+
+### Changed
+
+Optimization sweep (#1079, #1080, #1081). Apart from the three behaviour changes listed under
+`### Changed (breaking)` and `### Fixed`, every change below leaves the output byte-identical on the
+committed fixtures (pinned by `tests/sweep_output_golden.rs`, whose hashes were captured on the
+pre-sweep code) and is backed by a deterministic allocation or work counter
+(`tests/alloc_counts_sweep.rs` and in-module counters), never a timing.
+
+- `Segmenter` no longer rebuilds the whole `moov` on every cut to detect an init change that its API
+  cannot produce; the dead detection is deleted (109 -> 18 allocations per cut) (#1081, r05-O5).
+- `hvcC` parsing bounds its array/NAL pre-allocation by the body length (1 581 000 -> 32 bytes for a
+  hostile header) (#1079, r04-O4).
+- `AudioSpecificConfig::heaac_signaling`/`rfc6381` no longer allocate per call (#1079, r04-O2).
+- Duplicates removed (#1079, r04-O1/O5, #1081, r05-O6): `ps_demux`'s copy of the Annex B start-code
+  scanner (now `annexb::start_code_positions`) and its copy of the first-NAL-start finder (now
+  `au::first_nal_start`); the three per-module bit readers (now one `read_bits_at`); the avcC/hvcC
+  byte cursors; the sfi -> Hz table; the esds ASC accessor; the XML writer; the sample-flag constants;
+  the `tfhd`/`trun` builder. The streaming splitter's resumable scan in `au` and
+  `mpeg_legacy::find_start_code` answer different questions and stay separate.
+- `PsDemux` keeps access-unit ranges instead of per-unit copies (MPEG-2 video 3.70x -> 3.05x of input
+  bytes allocated); `TsDemux` hands a live track the PES payload by reference (10.08x -> 9.44x);
+  `read_chunks` moves the per-csid context instead of cloning its partial message (468 750 464 -> 524 544
+  bytes for a 200 kB message); the RTP depacketiser moves each packet into the AU buffer (7.47x ->
+  6.47x); `WebmDemux` partitions blocks by track once (8000 -> 1000 block visits for 8 tracks x 1000
+  blocks) (#1079, #1080, r04-O6/O7/O9/O10).
+- `CencDecryptor` shares the file buffer and slices samples out of it (2.14x -> 1.21x of the file size;
+  0.21x through the new `from_fmp4_bytes`), and its `stsc` expansion is one forward walk (80 599 -> 799
+  entry examinations for 400 chunks) (#1081, r05-O1/O2).
+- `ProgressiveMux` (4.12x -> 2.20x), `MkvMux` (11.45x -> 2.93x) and `TsMux` (7.70x -> 5.40x of the
+  output size allocated) write into pre-sized output buffers (#1081, r05-O4).
+- `Serialize` is implemented once on `SampleEntryVariant`, replacing four 17-arm matches (#1081, r05-O3).
+- `cargo test -p transmux --no-default-features` builds again (the in-crate tests link `std`) (#1079).
+
+Intentionally not done: `BitReader::from_rbsp` borrowing (a public lifetime change for one allocation
+per SPS), the three merge-by-decode-time loops (their tie-break rules differ), and a typed-parser
+rewrite of `cenc_decrypt`'s remaining box walker (#1081).
+
 ### Changed (breaking)
 
+- The shared fragment `trun` builder (CMAF, LL-DASH and Smooth fragment writers) returns
+  `Error::InvalidInput` for a sample larger than the 32-bit `sample_size` field (4 GiB); the old code
+  wrapped the size with `as u32` and wrote a misframed `trun` (#1081, r05-O6).
 - **The eight public audio sample-entry structs gained three fields** (#1081,
   audit r05-W31). `Mp4aSampleEntry`, `Ac3SampleEntry`, `Ec3SampleEntry`,
   `OpusSampleEntry`, `FlacSampleEntry`, `Ac4SampleEntry`, `MhaSampleEntry` and
@@ -510,9 +607,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   or an 8-second splice cannot become "the frame period" for the frames that
   follow.
 
-
 ### Fixed
 
+- `read_sei_varint` returns `None` when the running `payloadType`/`payloadSize` total would overflow
+  `u32` (a ~16.8 MB run of `0xFF`), instead of panicking in debug builds and wrapping in release
+  (#1079, r04-O6).
+- `AVCSampleEntry::bare_parse` / `HEVCSampleEntry::bare_parse` report the minimum length they actually
+  check (94 bytes) in `BufferTooShort::need`; the HEVC path said 96 (#1079, r04-O8).
 - **The batch TS-HLS packager runs in O(samples), not O(segments × samples)**
   (#1081, audit r05-W33). `TsHlsPackager::package` recomputed each segment's
   per-track base DTS — and re-walked the anchor track's prefix — once per
@@ -1469,59 +1570,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ProgressiveMux` (and the Smooth fragment builder) derive the `mdat` header length from the
   payload size, so chunk offsets are no longer 8 bytes early once the `mdat` needs a 64-bit
   `largesize` header (#1019).
-
-### Added
-- **`init_segment::sampling_rate_override`** (#1081, audit r05-W31) — reads the
-  `srat` value out of an audio sample entry's config children, returning `None`
-  when the box is absent, malformed, or declares `sampling_rate == 0` (a zero
-  rate is not a rate; honouring it would replace a good 16.16 field with "0
-  Hz"). `SamplingRateBox::parse` now also validates the four-CC.
-- **`init_segment::SamplingRateBox` and `init_segment::AudioSampleEntryV1`**
-  (#1081, audit r05-W31). `SamplingRateBox` is the `srat` FullBox
-  (ISO/IEC 14496-12:2015 §12.2.3.1) with `new`/`FOURCC`/`SIZE` and the
-  `Parse`/`Serialize` pair; `AudioSampleEntryV1` names the v1 sound-entry form
-  (§12.2.3.2 as amended by Amd 1:2017) via `ENTRY_VERSION`,
-  `STSD_VERSION`, `SAMPLERATE_PLACEHOLDER` and `rate_fits_v0`. Also new:
-  `SampleEntryVariant::required_stsd_version()`, which reports the `stsd`
-  version an entry demands (1 for an `AudioSampleEntryV1`, else 0).
-- `sample_aes::eac3_encrypt_frame` / `eac3_decrypt_frame` — Sample-AES for a
-  **multi-syncframe** E-AC-3 audio frame, and `ac3::split_eac3_syncframe_ranges`
-  (#1080, audit r05-W2). The protected block is a single syncframe, so each gets
-  its own 16-byte clear leader, whole 16-byte blocks are encrypted and a partial
-  tail is clear (`ac3_encrypt_frame` applies one leader over whatever slice it is
-  handed, which skips the later leaders in a multi-syncframe frame). The IV is
-  **reset at every syncframe**, per the independent oracle
-  (`transmux/tests/fixtures/sample_aes_eac3/`; ffmpeg decodes the reset form 9/9
-  audio frames and a carried chain 1/9, and Bento4's encryptor is byte-identical
-  to the reset reference). Both return `Result`: a payload that is not a clean
-  run of syncframes (no sync word, or a truncated / trailing-junk syncframe) is
-  `Error::InvalidInput` rather than being emitted unchanged or half-encrypted.
-  Carrying the IV across an *independent + dependent* syncframe pair has no
-  independent oracle (`ORACLES.md` B3) — that case resets too and is labelled
-  unverified.
-- **`uri` — RFC 3986 URI-reference parsing and resolution.** `UriReference::parse`
-  (§3) and `to_uri_string` (§5.3), `resolve` (§5.2.2), `merge` (§5.2.3),
-  `remove_dot_segments` (§5.2.4) and `resolve_segment` for a `BaseURL` chain.
-  `try_resolve`/`try_resolve_segment` are the same with a base or reference
-  containing a control character or whitespace **rejected** (`None`), since a
-  raw CR/LF in a URL has no meaning in RFC 3986 and lets a manifest smuggle a
-  second request line into anything that later writes an HTTP request from it;
-  `first_forbidden_char` is the predicate. Also exports the standard's own
-  §5.4.1 and §5.4.2 example tables (`RFC3986_NORMAL_EXAMPLES`,
-  `RFC3986_ABNORMAL_EXAMPLES`) as data, which the crate's tests assert against.
-  This is what `dash_parse::Mpd::resolve_segment_url` /
-  `try_resolve_segment_url` resolve through (#1079, audit r04-W11). The crate
-  root re-exports `resolve_uri_reference`, `resolve_uri_segment` and
-  `try_resolve_uri_reference`.
-- `ac3::split_ac3_syncframes_resyncing` and `ac3::split_ac3_syncframe_ranges` —
-  frame splitting that resynchronises after an unparseable frame, returning byte
-  ranges rather than slices (#1079, audit r04-W20).
-- `ts_hls::StreamingTsHlsSegmenter::with_start_sequence` — seeds a streaming classic-TS
-  segmenter's segment numbering from a caller-given value instead of `Self::new`'s implicit `0`,
-  the classic-TS analogue of `ll_hls::LlHlsSegmenter::with_part_target_at`. Lets a consumer
-  (`multimux::source::segment::ProgramSegmenter`) resume numbering across a rebuild rather than
-  renumbering from `0` against a `Trunk` that already holds segments, which its monotonic
-  `sequence_number` guard rejects forever after.
 
 
 ## [0.24.2] - 2026-09-25

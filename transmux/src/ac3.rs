@@ -1208,35 +1208,20 @@ fn find_syncword(data: &[u8]) -> Result<usize> {
 
 /// Read `n` bits MSB-first from `data` at the current `bit_pos`, advancing it.
 ///
-/// Bounds are checked here exactly as before; the extraction itself
-/// delegates to `broadcast_common::bits::BitReader` (shared with
-/// `dvb-t2mi`/`rdd29`/`st291`) so a bit-order/overrun fix there reaches this
-/// reader too.
-fn read_bits(data: &[u8], bit_pos: &mut usize, n: usize, _what: &'static str) -> Result<u64> {
+/// Delegates to the shared [`crate::bitreader::read_bits_at`] cursor.
+fn read_bits(data: &[u8], bit_pos: &mut usize, n: usize, what: &'static str) -> Result<u64> {
     if n > 64 {
         return Err(Error::InvalidValue {
-            field: _what,
+            field: what,
             value: n as u64,
             reason: "bit count > 64",
         });
     }
-    let end = *bit_pos + n;
-    let need_bytes = end.div_ceil(8);
-    if data.len() < need_bytes {
-        return Err(Error::BufferTooShort {
-            need: need_bytes,
-            have: data.len(),
-            what: _what,
-        });
-    }
-    let mut br = broadcast_common::bits::BitReader::new(data);
-    br.skip_bits(*bit_pos)
-        .expect("bounds already validated above");
-    let val = br
-        .read_bits(n as u32)
-        .expect("bounds already validated above");
-    *bit_pos += n;
-    Ok(val)
+    crate::bitreader::read_bits_at(data, bit_pos, n).ok_or(Error::BufferTooShort {
+        need: crate::bitreader::bytes_needed(*bit_pos, n),
+        have: data.len(),
+        what,
+    })
 }
 
 /// Write `n` bits from `val` MSB-first into `buf` at `bit_pos`, advancing it.

@@ -773,10 +773,7 @@ pub(crate) fn build_aac_esds(asc_bytes: Vec<u8>) -> EsdsBox {
 ///
 /// `pub(crate)`: reused by [`crate::flv_stream::StreamingFlvDemux`] (#738).
 pub(crate) fn asc_rate_hz(asc: &AudioSpecificConfig) -> u32 {
-    if let Some(f) = asc.sampling_frequency {
-        return f;
-    }
-    asc.sampling_frequency_index.table_hz().unwrap_or(0)
+    asc.effective_sampling_frequency().unwrap_or(0)
 }
 
 /// Coded dimensions from an AVC sequence header's `avcC` (the SPS it carries),

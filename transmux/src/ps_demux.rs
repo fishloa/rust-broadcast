@@ -376,10 +376,11 @@ struct Stamp {
     dts: Option<u64>,
 }
 
-/// A single recovered access unit with its (optional) presentation/decode
-/// timestamps. Video AUs are Annex B; audio "AUs" are raw AC-3 frames.
+/// A recovered access unit's (optional) presentation/decode timestamps. The
+/// unit's bytes are not held here: they stay in the elementary stream and are
+/// addressed by the `(start, end)` range the unit was split at (r04-O6 — a
+/// per-unit `Vec` copy of the whole stream was kept alive through the build).
 struct AccessUnit {
-    data: Vec<u8>,
     pts: Option<u64>,
     dts: Option<u64>,
 }
@@ -578,28 +579,11 @@ impl<'a> Unpackage for PsDemux<'a> {
     }
 }
 
-/// Positions of every start code's first `00` (of the trailing `00 00 01`) in an
-/// Annex B byte stream. Used to split the reassembled video ES into access units.
-fn start_code_positions(data: &[u8]) -> Vec<usize> {
-    let mut positions = Vec::new();
-    let n = data.len();
-    let mut p = 0usize;
-    while p + 3 <= n {
-        if data[p] == 0 && data[p + 1] == 0 && data[p + 2] == 1 {
-            positions.push(p);
-            p += 3;
-        } else {
-            p += 1;
-        }
-    }
-    positions
-}
-
-/// The access units recovered from a reassembled Annex B byte stream, together
-/// with each unit's `(start, end)` byte range in the input — the ranges
+/// The access units recovered from a reassembled Annex B byte stream, as each
+/// unit's `(start, end)` byte range in the input — the ranges
 /// [`assign_stamps`] needs to place a PES-level stamp on the unit that begins
 /// inside its fragment.
-type SplitUnits = (Vec<Vec<u8>>, Vec<(usize, usize)>);
+type SplitUnits = Vec<(usize, usize)>;
 
 /// A `Result<Option<_>>` whose `Ok(None)` means "this stream has nothing this
 /// demuxer can carry" (skip, never fatal) and whose `Err` means the stream was
@@ -629,7 +613,7 @@ fn split_h264_access_units(data: &[u8]) -> Result<Option<SplitUnits>> {
     // silently discarding the whole video track for any stream that does not
     // open exactly on a start code (r04-W21 review). Anchor the walk at the
     // first start code instead.
-    let Some(mut cursor) = first_nal_offset(data) else {
+    let Some(mut cursor) = crate::au::first_nal_start(data) else {
         return Ok(None);
     };
     // A push past the splitter's buffered-NAL cap is a resource-limit
@@ -638,7 +622,6 @@ fn split_h264_access_units(data: &[u8]) -> Result<Option<SplitUnits>> {
     splitter.push(data)?;
     splitter.finish();
 
-    let mut units = Vec::new();
     let mut ranges = Vec::new();
     while let Some(unit) = splitter.pop() {
         // The splitter hands back verbatim, in-order slices of what was pushed,
@@ -656,32 +639,13 @@ fn split_h264_access_units(data: &[u8]) -> Result<Option<SplitUnits>> {
             ));
         }
         ranges.push((cursor, end));
-        units.push(unit);
         cursor = end;
     }
-    Ok(if units.is_empty() {
+    Ok(if ranges.is_empty() {
         None
     } else {
-        Some((units, ranges))
+        Some(ranges)
     })
-}
-
-/// Offset of the first Annex B start code (`00 00 01`) in `data`, pulled back
-/// over **every** leading zero byte so the returned offset is where the NAL's
-/// start code really begins.
-///
-/// A start code may be preceded by any number of zero bytes — `00 00 00 01` is
-/// the common 4-byte form, but longer runs are legal padding and are what a PES
-/// stuffing tail leaves. Folding back only one of them (as this did) puts the
-/// offset inside the run, so every access-unit range the caller derives from it
-/// is short by the remaining zeros. Mirrors `au::first_nal_start`.
-fn first_nal_offset(data: &[u8]) -> Option<usize> {
-    let pos = data.windows(3).position(|w| w == [0, 0, 1])?;
-    let mut start = pos;
-    while start > 0 && data[start - 1] == 0 {
-        start -= 1;
-    }
-    Some(start)
 }
 
 /// Split a reassembled MPEG-2 video byte stream into access units at every
@@ -691,7 +655,7 @@ fn first_nal_offset(data: &[u8]) -> Option<usize> {
 /// `extension`/`user_data`) are attached to the first AU, same convention as
 /// [`split_access_units`].
 fn split_mpeg2_pictures(data: &[u8]) -> Vec<(usize, usize)> {
-    let codes = start_code_positions(data);
+    let codes = crate::annexb::start_code_positions(data);
     let mut starts: Vec<usize> = Vec::new();
     for &pos in &codes {
         if pos + 3 < data.len() && data[pos + 3] == MPEG2_PICTURE_START_CODE {
@@ -792,7 +756,7 @@ fn assign_stamps(ranges: &[(usize, usize)], stamps: &[Stamp]) -> Vec<(Option<u64
 /// with the PES-level PTS/DTS at its fragment start and emitted in decode
 /// order. Returns `None` if in-band SPS/PPS cannot be found (skip, never fatal).
 fn build_h264_track(es: &ElementaryStream, track_id: u32) -> MaybeTrack {
-    let Some((units, ranges)) = split_h264_access_units(&es.es_bytes)? else {
+    let Some(ranges) = split_h264_access_units(&es.es_bytes)? else {
         return Ok(None);
     };
     let stamped = assign_stamps(&ranges, &es.stamps);
@@ -800,11 +764,11 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> MaybeTrack {
     // Recover SPS/PPS (first of each) and attach each AU's PES-level stamps.
     let mut sps: Option<Vec<u8>> = None;
     let mut pps: Option<Vec<u8>> = None;
-    let units: Vec<AccessUnit> = units
-        .into_iter()
+    let units: Vec<AccessUnit> = ranges
+        .iter()
         .enumerate()
-        .map(|(i, data)| {
-            for nal in iter_annexb_nals(&data) {
+        .map(|(i, &(start, end))| {
+            for nal in iter_annexb_nals(&es.es_bytes[start..end]) {
                 match nal[0] & H264_NAL_TYPE_MASK {
                     H264_NAL_SPS if sps.is_none() => sps = Some(nal.to_vec()),
                     H264_NAL_PPS if pps.is_none() => pps = Some(nal.to_vec()),
@@ -812,7 +776,6 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> MaybeTrack {
                 }
             }
             AccessUnit {
-                data,
                 pts: stamped[i].0,
                 dts: stamped[i].1,
             }
@@ -862,9 +825,11 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> MaybeTrack {
         .enumerate()
         .map(|(pos, &i)| {
             let dur = frame_duration(&order, &dts, pos);
-            let is_idr = au_is_idr(&units[i].data);
+            let (start, end) = ranges[i];
+            let au = &es.es_bytes[start..end];
+            let is_idr = au_is_idr(au);
             Sample::from_annexb(
-                &units[i].data,
+                au,
                 Some(to_ticks(dts[i])),
                 Some(to_ticks(pts[i])),
                 Some(dur),
@@ -903,14 +868,10 @@ fn build_mpeg2_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
     }
     let stamped = assign_stamps(&ranges, &es.stamps);
 
-    let mut units: Vec<AccessUnit> = Vec::with_capacity(ranges.len());
-    for (i, &(start, end)) in ranges.iter().enumerate() {
-        units.push(AccessUnit {
-            data: es.es_bytes[start..end].to_vec(),
-            pts: stamped[i].0,
-            dts: stamped[i].1,
-        });
-    }
+    let units: Vec<AccessUnit> = stamped
+        .iter()
+        .map(|&(pts, dts)| AccessUnit { pts, dts })
+        .collect();
 
     // `esds` carrying the MPEG-2 Main Visual object type (ISO/IEC 14496-1
     // Table 5, `OTI_MPEG2_VIDEO_MAIN` = 0x61) — the same construction
@@ -940,9 +901,11 @@ fn build_mpeg2_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
         .enumerate()
         .map(|(pos, &i)| {
             let dur = frame_duration(&order, &dts, pos);
-            let is_sync = mpeg2_is_sync(&units[i].data);
+            let (start, end) = ranges[i];
+            let au = &es.es_bytes[start..end];
+            let is_sync = mpeg2_is_sync(au);
             Sample::new(
-                units[i].data.clone(),
+                au.to_vec(),
                 Some(to_ticks(dts[i])),
                 Some(to_ticks(pts[i])),
                 Some(dur),

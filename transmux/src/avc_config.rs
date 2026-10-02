@@ -41,6 +41,7 @@
 
 use crate::error::{Error, Result};
 use crate::nalu_types::{AvcPps, AvcSps, AvcSpsExt};
+use crate::wire_cursor::{read_nalu_16, read_u8};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 use core::fmt;
@@ -420,42 +421,6 @@ impl Serialize for AVCConfigurationBox {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-fn read_u8(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<u8> {
-    if *cursor >= bytes.len() {
-        return Err(Error::BufferTooShort {
-            need: *cursor + 1,
-            have: bytes.len(),
-            what,
-        });
-    }
-    let v = bytes[*cursor];
-    *cursor += 1;
-    Ok(v)
-}
-
-fn read_nalu_16(bytes: &[u8], cursor: &mut usize, what: &'static str) -> Result<Vec<u8>> {
-    if *cursor + 2 > bytes.len() {
-        return Err(Error::BufferTooShort {
-            need: *cursor + 2,
-            have: bytes.len(),
-            what,
-        });
-    }
-    let len = u16::from_be_bytes([bytes[*cursor], bytes[*cursor + 1]]) as usize;
-    *cursor += 2;
-
-    if *cursor + len > bytes.len() {
-        return Err(Error::BufferTooShort {
-            need: *cursor + len,
-            have: bytes.len(),
-            what,
-        });
-    }
-    let data = bytes[*cursor..*cursor + len].to_vec();
-    *cursor += len;
-    Ok(data)
-}
 
 // ---------------------------------------------------------------------------
 // Tests

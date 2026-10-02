@@ -186,7 +186,7 @@ fn first_slice_of_picture(codec: NalCodec, nal_body: &[u8]) -> bool {
 /// First-byte offset of the first NAL in `data`: the position of a `00 00 01`
 /// code pulled back over any immediately-preceding `zero_byte`s (which belong to
 /// that NAL). `None` when `data` holds no start code.
-fn first_nal_start(data: &[u8]) -> Option<usize> {
+pub(crate) fn first_nal_start(data: &[u8]) -> Option<usize> {
     let n = data.len();
     let mut p = 0usize;
     while p + 3 <= n {
