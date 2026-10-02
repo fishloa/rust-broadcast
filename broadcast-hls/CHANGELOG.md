@@ -6,6 +6,17 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Added
+
+- New public API (all part of the 0.3.0 surface; most are described in the
+  entries below): `DecimalSeconds` / `SignedDecimalSeconds` (checked duration
+  newtypes), `AttrValue` (a validated quoted/bare attribute value),
+  `parse_attribute_list` / `render_attribute_list`, `MediaSegment::title`,
+  `MediaSegment::pre_tags` / `OpenSegment::pre_tags`, and the new `Error`
+  variants `InvalidDecimalSeconds`, `InvalidSignedDecimalSeconds`,
+  `InvalidQuotedString` and `InvalidUri`.
+
 ### Fixed
 - **`cenc_ext_x_key` now emits `METHOD=SAMPLE-AES-CTR` for the `cenc`
   scheme instead of returning `None`** (audit BH-W1, #1111): the function
@@ -52,7 +63,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   All integer attributes now share one strict `decimal-integer` lexer
   (no `+`, no exponent, no `nan`/`inf`, no decimal point), and the float
   and integer lexers are the only numeric entry points in the crate.
-### Fixed
 - **A Multivariant Playlist whose `#EXT-X-STREAM-INF` has no following URI
   line is now an error** (audit BH-W9, #1111): RFC 8216bis §4.4.6.2 requires
   the tag to be followed by the URI line of the Variant it describes. A
@@ -69,7 +79,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   variant list (audit BH-W10, #1111). A caller relying on the old wording to
   place a `#EXT-X-DEFINE` (carried in `extra_tags`) after the variants that
   use it got the actual, opposite behaviour.
-### Changed
 - **`#EXTINF` titles now survive the round trip** (audit BH-W11,
   #1111): the title after the duration's comma (RFC 8216bis §4.4.4.1)
   was split off and discarded, so any playlist carrying one lost it on

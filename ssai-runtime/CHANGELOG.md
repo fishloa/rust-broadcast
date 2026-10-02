@@ -45,6 +45,12 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
     shared `broadcast_hls::parse_attribute_list` (the same tokenizer
     `timed-metadata` now also uses — audit r14-SSAI-O1 found the same
     algorithm duplicated three times across the workspace).
+  - New public error variants (`Error` is `#[non_exhaustive]`):
+    `Error::HlsAttrValue(broadcast_hls::Error)`, `Error::InvalidDuration`,
+    `Error::TagParse` and `Error::MissingProgramDateTime`. **`HlsAttrValue`
+    puts `broadcast_hls::Error` in this crate's public API**, so a
+    `broadcast-hls` caret-epoch move is a major-class change here too (this
+    release builds against `broadcast-hls` 0.3).
 
 ## [0.1.0] - 2026-08-11
 

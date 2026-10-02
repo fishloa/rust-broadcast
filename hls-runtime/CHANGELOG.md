@@ -14,7 +14,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   window) and whose `CODECS` is derived from the init segment; before the
   first closed segment it falls back to the 5 Mb/s estimate. New
   `HlsOrigin::set_track_specs` supplies the tracks for a TS origin, which has
-  no init segment to read (#1089).
+  no init segment to read (#1089). Its error is the typed, `#[non_exhaustive]`
+  `server::HlsMasterError` (`BandwidthOverflow`, `Render`).
 - `server::HlsOriginBuilder::media_sequence_offset(u64)`,
   `server::HlsOrigin::media_sequence_offset()` and
   `server::HlsOrigin::next_media_sequence()` — a fresh `Trunk` restarts its

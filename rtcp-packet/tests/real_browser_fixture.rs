@@ -48,6 +48,7 @@ fn real_chrome_compound_parses_all_three_packets() {
             packet_type,
             count,
             payload,
+            ..
         } => {
             assert_eq!(*packet_type, 206);
             assert_eq!(*count, 1);
@@ -64,6 +65,7 @@ fn real_chrome_compound_parses_all_three_packets() {
             packet_type,
             count,
             payload,
+            ..
         } => {
             assert_eq!(*packet_type, 206);
             assert_eq!(*count, 15);

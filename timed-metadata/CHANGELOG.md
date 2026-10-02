@@ -57,7 +57,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
   `Provider`/`DistributorPlacementOpportunity` — **not** the `Overlay`
   variants, which composite over the network feed rather than break away
   from it — and `Provider`/`DistributorAdBlock`) map to
-  `BreakStart`/`BreakEnd`; credits, promos, unscheduled/alternate content,
+  `BreakStart`/`BreakEnd`; the program and chapter boundary types
+  (`ProgramStart`/`ProgramEnd`/`ChapterStart`/`ChapterEnd`) map to
+  `EventKind::Chapter`; credits, promos, unscheduled/alternate content,
   overlay placement opportunities, and `NetworkStart`/`NetworkEnd` map to
   `Unspecified` (id/time/duration are still populated) so a consumer that
   splices ads on `BreakStart` cannot mistake one of those for an ad avail.

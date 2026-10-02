@@ -553,8 +553,7 @@ impl LlHlsSegmenter {
         let take_ends: Vec<usize> = self
             .tracks
             .iter()
-            .enumerate()
-            .map(|(i, t)| {
+            .map(|t| {
                 if final_part {
                     return t.pending.len();
                 }
@@ -564,7 +563,7 @@ impl LlHlsSegmenter {
                 } else {
                     part_span.saturating_mul(track_scale) / anchor_scale
                 };
-                take_span(t, track_span, i == anchor)
+                take_span(t, track_span)
             })
             .collect();
 
@@ -751,7 +750,7 @@ impl Stage for LlHlsSegmenter {
 /// whole sample; the overhang lands in the next part). Always takes at least one
 /// sample when one is available, so an unusually long sample cannot stall the
 /// drain forever.
-fn take_span(t: &TrackState, target_ticks: u64, force_one: bool) -> usize {
+fn take_span(t: &TrackState, target_ticks: u64) -> usize {
     if t.part_start >= t.pending.len() {
         return t.part_start;
     }
@@ -770,13 +769,8 @@ fn take_span(t: &TrackState, target_ticks: u64, force_one: bool) -> usize {
         span += next;
         end += 1;
     }
-    // The anchor must always take at least one sample so `anchor_part_dur`
-    // (reset to 0 below) can advance again; without this a single sample longer
-    // than the part target would stall every future part (the spec exempts a
-    // part that begins with an oversize sample only via INDEPENDENT, so a single
-    // over-target sample is carried as its own part).
-    if force_one && end == t.part_start {
-        end += 1;
-    }
+    // No forced-take branch is needed: the `end > t.part_start` guard in the
+    // loop never breaks before the first sample, so a single sample longer than
+    // the part target is still carried as its own part and the drain advances.
     end
 }

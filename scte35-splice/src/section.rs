@@ -33,6 +33,12 @@ const CRC_LEN: usize = 4;
 /// `tier` value (0xFFF) that downstream equipment shall ignore (§9.6.1).
 pub const TIER_IGNORE: u16 = 0x0FFF;
 
+/// `splice_command_length` value (0xFFF) that §9.6.1 reserves as a
+/// backwards-compatibility sentinel meaning "length not stated"; the parser
+/// rejects it for a clear section, and an encrypted section whose real length
+/// is unknown serializes it.
+const SPLICE_COMMAND_LENGTH_IGNORE: u16 = 0x0FFF;
+
 /// The clear (decrypted) splice command and its splice descriptor loop, present
 /// only when `encrypted_packet == 0`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -256,7 +262,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
         // command body length from the structure by parsing greedily up to the
         // descriptor_loop_length. We require the actual value here; reject the
         // backwards-compat sentinel as unparseable rather than guess.
-        if splice_command_length == 0x0FFF {
+        if splice_command_length == SPLICE_COMMAND_LENGTH_IGNORE {
             return Err(Error::InvalidValue {
                 field: "splice_info_section.splice_command_length",
                 reason: "0xFFF backwards-compat sentinel is not supported; provide the actual length",
@@ -328,7 +334,8 @@ impl Serialize for SpliceInfoSection<'_> {
                 reason: "exceeds 33-bit range",
             });
         }
-        if self.tier > 0x0FFF {
+        // `tier` is 12 bits; its maximum is the `TIER_IGNORE` value itself.
+        if self.tier > TIER_IGNORE {
             return Err(Error::InvalidValue {
                 field: "splice_info_section.tier",
                 reason: "exceeds 12-bit range",
@@ -405,7 +412,10 @@ impl Serialize for SpliceInfoSection<'_> {
                 // misframe). Fall back to the sentinel only when a
                 // hand-built section genuinely doesn't know it.
                 let scl = broadcast_common::len::fit_bits(
-                    u64::from(self.encrypted_splice_command_length.unwrap_or(0x0FFF)),
+                    u64::from(
+                        self.encrypted_splice_command_length
+                            .unwrap_or(SPLICE_COMMAND_LENGTH_IGNORE),
+                    ),
                     12,
                     "splice_info_section.splice_command_length",
                 )? as u16;

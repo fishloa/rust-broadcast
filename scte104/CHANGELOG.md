@@ -8,6 +8,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (breaking)
+- New `Error::FieldOverflow` variant (wrapping `broadcast_common::len::FieldOverflow`),
+  returned when a length or count does not fit its wire field instead of the
+  value silently wrapping (#1129); `Error` is `#[non_exhaustive]`.
 - `InsertDescriptor::descriptor_count`, `InsertAvailDescriptor::num_provider_avails`,
   and `StartScheduleDownload::num_provider_avails` are removed as stored fields;
   each is now derived from its vec's length at serialize time (via
@@ -20,6 +23,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - Requires `broadcast-common` 9.4 (`broadcast_common::len`).
+- `MultipleOperationMessage::new` now saturates the stored `message_size` at
+  `u16::MAX` for operation bodies too large for the 16-bit wire field (it
+  previously overflowed `u16` arithmetic); `serialize_into` still recomputes
+  the true size and rejects one that does not fit.
 
 ### Fixed
 - `MultipleOperationMessage::serialized_len` now recomputes the true size

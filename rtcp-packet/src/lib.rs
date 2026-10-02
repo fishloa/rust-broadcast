@@ -16,7 +16,11 @@
 //! - [`App`] — APP (§6.7, PT 204).
 //! - [`RtcpPacket`] / [`RtcpPacketType`] — the packet-type dispatch enum.
 //! - [`CompoundPacket`] — §6.1's compound packet (a sequence of RTCP packets
-//!   that must begin with SR or RR), with byte-exact round-trip.
+//!   that must begin with SR, RR or — per RFC 5506 Reduced-Size RTCP — an
+//!   unrecognized-PT [`RtcpPacket::Unknown`]), with byte-exact round-trip.
+//! - [`RtcpPacket::Unknown`] — any other PT (RTPFB/PSFB/XR…): opaque body, `P` bit
+//!   and padding preserved verbatim. For the typed packets, `P` padding is
+//!   validated and stripped on parse and re-emitted as `P=0`.
 //!
 //! Two decode-completeness gaps are documented (not silently glossed over)
 //! in `docs/rtcp.md`: SR/RR profile-specific extensions and the SDES PRIV

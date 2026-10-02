@@ -14,7 +14,13 @@ Simple Profile specification, built on top of the generic
 - **RttEcho** — RTCP APP (PT 204, name `"RIST"`, subtype 2/3). Round-trip
   time measurement (TR-06-1 §5.2.6).
 - **RistSenderCompound** / **RistReceiverCompound** — compound RTCP packet
-  builders enforcing the RIST §5.2.1 structure.
+  builders enforcing the RIST §5.2.1 structure. Each carries its leading
+**ReportPart** (SR or RR) and any sub-packet it does not model as an
+**UnknownPacket** (kept at its wire position), so a compound round-trips
+byte-identical.
+- **RTCP padding (`P` bit)** — RFC 3550 §6.4.1 padding on the report and on
+each sub-packet is validated on parse (a zero or over-running count is an
+error) and preserved verbatim on serialize.
 
 All wire types implement the workspace-standard `Parse`/`Serialize` trait
 pair with byte-exact round-trip fidelity.

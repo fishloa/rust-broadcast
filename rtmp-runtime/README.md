@@ -53,7 +53,8 @@ per connection.
 - **Protocol control** (§4): SetChunkSize / Abort / Acknowledgement /
   WindowAckSize / SetPeerBandwidth; **User Control** events (§5, StreamBegin …).
 - **AMF0** (§8): the value types + `Command` encode/decode for the ingest command
-  set. (AMF3 is out of scope.)
+  set. AMF3-encoded commands (message type 17) are decoded like AMF0 ones; other
+  AMF3 messages (Data-AMF3 15, Shared-Object 16/19) are out of scope.
 - **Publish session** (§7): `connect` → `createStream` → `publish` (+ tolerated
   OBS extras `releaseStream`/`FCPublish`), with WindowAckSize / SetPeerBandwidth /
   SetChunkSize / `_result` / StreamBegin / `onStatus` replies, `Acknowledgement`

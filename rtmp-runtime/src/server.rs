@@ -671,7 +671,7 @@ impl ServerSession {
                 ]),
             ],
         };
-        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &result))?);
+        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &result)?)?);
 
         events.push(ServerEvent::Connected { app });
         Ok(())
@@ -705,7 +705,7 @@ impl ServerSession {
             transaction_id: command.transaction_id,
             arguments: vec![Amf0Value::Null, Amf0Value::Number(f64::from(stream_id))],
         };
-        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &result))?);
+        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &result)?)?);
         Ok(())
     }
 
@@ -777,7 +777,7 @@ impl ServerSession {
                     ]),
                 ],
             };
-            out.extend_from_slice(&self.writer.write(&self.command_message(msg, &on_status))?);
+            out.extend_from_slice(&self.writer.write(&self.command_message(msg, &on_status)?)?);
             // No Publish/Media events; state unchanged (not Publishing).
             return Ok(());
         }
@@ -803,7 +803,7 @@ impl ServerSession {
                 ]),
             ],
         };
-        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &on_status))?);
+        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &on_status)?)?);
 
         self.state = State::Publishing;
         events.push(ServerEvent::Publish {
@@ -829,21 +829,21 @@ impl ServerSession {
             transaction_id: command.transaction_id,
             arguments,
         };
-        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &result))?);
+        out.extend_from_slice(&self.writer.write(&self.command_message(msg, &result)?)?);
         Ok(())
     }
 
     /// Wrap `command` in a [`Message`] on [`COMMAND_CHUNK_STREAM_ID`],
     /// echoing `request`'s message stream id (replies travel back on the
     /// same `NetConnection`/`NetStream` channel the request arrived on).
-    fn command_message(&self, request: &Message, command: &Command) -> Message {
-        Message {
+    fn command_message(&self, request: &Message, command: &Command) -> Result<Message> {
+        Ok(Message {
             chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
             timestamp: 0,
             message_type_id: msg_type::COMMAND_AMF0,
             message_stream_id: request.message_stream_id,
-            payload: command.to_body(),
-        }
+            payload: command.to_body()?,
+        })
     }
 
     /// Convert an Audio(8)/Video(9)/Data-AMF0(18) message to an FLV tag and
@@ -1038,7 +1038,8 @@ mod tests {
             transaction_id: txn,
             arguments: args,
         }
-        .to_body();
+        .to_body()
+        .unwrap();
         Message {
             chunk_stream_id: csid,
             timestamp: 0,
@@ -1264,7 +1265,8 @@ mod tests {
             transaction_id: 1.0,
             arguments: args,
         }
-        .to_body();
+        .to_body()
+        .unwrap();
         let mut amf3_body = vec![0x00]; // AMF3 encoding marker byte
         amf3_body.extend(amf0_body);
         let msg = Message {
@@ -1579,6 +1581,29 @@ mod tests {
     }
 
     // ── publish ───────────────────────────────────────────────────────────
+
+    /// Release audit (CRITICAL): a peer-chosen publishing name of 65 518..=65 535
+    /// bytes fits the request's AMF0 u16 string prefix but, echoed into the
+    /// `"<key> is now published."` onStatus description, overflows it. That
+    /// used to hit `to_bytes().expect(..)` and panic the server remotely.
+    #[test]
+    fn oversized_publish_name_errors_instead_of_panicking() {
+        for len in [65_518usize, 65_530, 65_535] {
+            let mut session = ServerSession::new(ServerConfig::default());
+            session.handle_data(&build_c0_c1()).unwrap();
+            session.handle_data(&build_c2()).unwrap();
+            session.handle_data(&connect_bytes("live")).unwrap();
+            session.handle_data(&create_stream_bytes()).unwrap();
+            let key = "k".repeat(len);
+            let err = session
+                .handle_data(&publish_bytes(1, &key))
+                .expect_err("overflowing onStatus description must be an Err");
+            assert!(
+                matches!(err, RtmpError::Unsupported { .. }),
+                "len {len}: {err:?}"
+            );
+        }
+    }
 
     #[test]
     fn publish_reaches_publishing_emits_event_and_stream_begin_plus_onstatus() {

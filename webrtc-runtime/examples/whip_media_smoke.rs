@@ -294,7 +294,11 @@ fn main() {
                 if e.kind() == std::io::ErrorKind::WouldBlock
                     || e.kind() == std::io::ErrorKind::TimedOut =>
             {
-                media.handle_timeout(Instant::now());
+                for event in media.handle_timeout(Instant::now()) {
+                    if let MediaEvent::TimerError(msg) = event {
+                        println!("[smoke] timer error: {msg}");
+                    }
+                }
             }
             Err(e) => println!("[smoke] udp recv error: {e}"),
         }

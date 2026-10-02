@@ -29,6 +29,7 @@ const SERVER_MACRO_ELEMENT: &str = "MulticastServerConfigurationMacro";
 /// The fields common to both document roots (clause 10.2.1).
 struct CommonRoot {
     schema_version: u32,
+    namespace: BaselineNamespace,
     validity_period: Option<String>,
     valid_until: Option<String>,
     gateway_config_transport_sessions: Vec<MulticastGatewayConfigurationTransportSession>,
@@ -36,20 +37,52 @@ struct CommonRoot {
     reporting: Option<MulticastGatewaySessionReporting>,
 }
 
-/// The baseline namespace a document with the given `@schemaVersion` must
-/// declare (Annex A Table A.0-1): version `1` is the 2019 namespace; every
-/// other (i.e. `2`, "current", and any future) version is the 2024
-/// namespace. Previously `to_xml` always emitted the 2024 namespace
-/// regardless of `schema_version`, so re-emitting a parsed `schemaVersion="1"`
-/// document produced a contradictory `xmlns="...:2024"` with
-/// `schemaVersion="1"` (MABR-W2, #1121).
-fn namespace_for_schema_version(schema_version: u32) -> &'static str {
-    if schema_version == 1 {
-        crate::parse::NS_MULTICAST_SESSION_CONFIGURATION_2019
-    } else {
-        crate::parse::NS_MULTICAST_SESSION_CONFIGURATION_2024
+/// The baseline `MulticastSessionConfiguration` namespace a document declares
+/// on its root (Annex A Table A.0-1): the 2019 namespace goes with
+/// `schemaVersion="1"`, the 2024 namespace with the current version.
+///
+/// It is recorded at parse time and re-emitted verbatim by `to_xml`, instead
+/// of being derived from `schema_version`: a `schemaVersion="2"` document that
+/// still declares the 2019 namespace would otherwise be silently re-serialized
+/// under 2024, so the round trip would not be byte-stable.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[non_exhaustive]
+pub enum BaselineNamespace {
+    /// `urn:dvb:metadata:MulticastSessionConfiguration:2019`.
+    V2019,
+    /// `urn:dvb:metadata:MulticastSessionConfiguration:2024` (current).
+    #[default]
+    V2024,
+}
+
+impl BaselineNamespace {
+    /// The namespace URI.
+    pub fn uri(&self) -> &'static str {
+        match self {
+            BaselineNamespace::V2019 => crate::parse::NS_MULTICAST_SESSION_CONFIGURATION_2019,
+            BaselineNamespace::V2024 => crate::parse::NS_MULTICAST_SESSION_CONFIGURATION_2024,
+        }
+    }
+
+    /// A short label (`"2019"` / `"2024"`).
+    pub fn name(&self) -> &'static str {
+        match self {
+            BaselineNamespace::V2019 => "2019",
+            BaselineNamespace::V2024 => "2024",
+        }
+    }
+
+    /// Classify a root element's namespace URI; `None` for a non-baseline one.
+    fn from_uri(uri: Option<&str>) -> Option<Self> {
+        match uri {
+            Some(crate::parse::NS_MULTICAST_SESSION_CONFIGURATION_2019) => Some(Self::V2019),
+            Some(crate::parse::NS_MULTICAST_SESSION_CONFIGURATION_2024) => Some(Self::V2024),
+            _ => None,
+        }
     }
 }
+
+broadcast_common::impl_spec_display!(BaselineNamespace);
 
 /// Reject a root element that isn't `expected` in a recognized MABR baseline
 /// namespace (2019 or 2024). Previously only the local name was checked, so
@@ -78,6 +111,13 @@ fn parse_common_root(node: roxmltree::Node<'_, '_>, element: &'static str) -> Re
     }
     Ok(CommonRoot {
         schema_version: crate::parse::req_attr_u32(node, element, "schemaVersion")?,
+        namespace: BaselineNamespace::from_uri(node.tag_name().namespace()).ok_or_else(|| {
+            Error::UnexpectedRoot(alloc::format!(
+                "{} (namespace {:?})",
+                node.tag_name().name(),
+                node.tag_name().namespace()
+            ))
+        })?,
         validity_period: require_attr(node, element, "validityPeriod").ok(),
         valid_until: require_attr(node, element, "validUntil").ok(),
         gateway_config_transport_sessions,
@@ -125,6 +165,8 @@ fn write_common_body(
 pub struct MulticastServerConfiguration {
     /// Schema version (Annex A.0); current baseline value `2`.
     pub schema_version: u32,
+    /// The baseline namespace the root declared, re-emitted as-is by `to_xml`.
+    pub namespace: BaselineNamespace,
     /// Relative expiry (ISO 8601 duration).
     pub validity_period: Option<String>,
     /// Absolute expiry (MPEG-7 `TimePoint`). If both `validity_period` and
@@ -154,6 +196,7 @@ impl MulticastServerConfiguration {
         }
         Ok(MulticastServerConfiguration {
             schema_version: common.schema_version,
+            namespace: common.namespace,
             validity_period: common.validity_period,
             valid_until: common.valid_until,
             gateway_config_transport_sessions: common.gateway_config_transport_sessions,
@@ -170,11 +213,7 @@ impl MulticastServerConfiguration {
         out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         out.push('<');
         out.push_str(ROOT_SERVER);
-        write_attr(
-            &mut out,
-            "xmlns",
-            namespace_for_schema_version(self.schema_version),
-        );
+        write_attr(&mut out, "xmlns", self.namespace.uri());
         write_attr(&mut out, "xmlns:xsi", crate::parse::NS_XSI);
         write_common_root(
             &mut out,
@@ -207,6 +246,8 @@ impl MulticastServerConfiguration {
 pub struct MulticastGatewayConfiguration {
     /// Schema version (Annex A.0); current baseline value `2`.
     pub schema_version: u32,
+    /// The baseline namespace the root declared, re-emitted as-is by `to_xml`.
+    pub namespace: BaselineNamespace,
     /// Relative expiry (ISO 8601 duration). A document delivered via the
     /// in-band carousel method must not carry this.
     pub validity_period: Option<String>,
@@ -231,6 +272,7 @@ impl MulticastGatewayConfiguration {
         let common = parse_common_root(root, ROOT_GATEWAY)?;
         Ok(MulticastGatewayConfiguration {
             schema_version: common.schema_version,
+            namespace: common.namespace,
             validity_period: common.validity_period,
             valid_until: common.valid_until,
             gateway_config_transport_sessions: common.gateway_config_transport_sessions,
@@ -246,11 +288,7 @@ impl MulticastGatewayConfiguration {
         out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
         out.push('<');
         out.push_str(ROOT_GATEWAY);
-        write_attr(
-            &mut out,
-            "xmlns",
-            namespace_for_schema_version(self.schema_version),
-        );
+        write_attr(&mut out, "xmlns", self.namespace.uri());
         write_attr(&mut out, "xmlns:xsi", crate::parse::NS_XSI);
         write_common_root(
             &mut out,

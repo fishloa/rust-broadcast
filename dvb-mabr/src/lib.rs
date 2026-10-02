@@ -89,7 +89,7 @@ pub mod transport;
 
 pub use carousel::{InitSegments, ObjectCarousel, PresentationManifests, ResourceLocator};
 pub use component::ServiceComponentIdentifier;
-pub use config::{MulticastGatewayConfiguration, MulticastServerConfiguration};
+pub use config::{BaselineNamespace, MulticastGatewayConfiguration, MulticastServerConfiguration};
 pub use error::{Error, Result};
 pub use fec::ForwardErrorCorrectionParameters;
 pub use gateway::{ConfigurationMacro, MulticastGatewayConfigurationTransportSession};

@@ -18,7 +18,7 @@ pub enum Error {
         /// `planned_start` of the entry that was rejected.
         next: u64,
     },
-    /// Splice-point conditioning ([`ssai_runtime::splice::condition_splice_point`],
+    /// Splice-point conditioning ([`ssai_runtime::splice::condition_splice_point_wrapping`],
     /// via [`crate::scte35::build_splice_insert`]) found no candidate
     /// boundary within the caller's tolerance, or was given no candidates at
     /// all.

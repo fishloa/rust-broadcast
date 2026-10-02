@@ -8,6 +8,9 @@
 //! own parser. Without ffprobe those checks skip loudly and the test-local
 //! walkers (no crate box/PES parsers) still assert the same values.
 
+#[cfg(feature = "cli")]
+mod common;
+
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -578,10 +581,12 @@ fn cmaf_hls_playlist_covers_input_once() {
         );
     }
 
-    let validator = Command::new("mediastreamvalidator")
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success());
+    let validator = {
+        let mut c = Command::new("mediastreamvalidator");
+        c.arg("--version");
+        common::run_bounded(c, common::PROBE_DEADLINE, "mediastreamvalidator --version")
+            .is_ok_and(|o| o.status.success())
+    };
     if !validator {
         eprintln!("SKIP mediastreamvalidator cross-check: not on PATH");
         return;
@@ -592,13 +597,24 @@ fn cmaf_hls_playlist_covers_input_once() {
         std::fs::write(dir.join(n), b).unwrap();
     }
     let json = dir.join("validator.json");
-    let _ = Command::new("mediastreamvalidator")
-        .current_dir(&dir)
-        .args(["--quiet", "-t", "30", "-O"])
+    let mut cmd = Command::new("mediastreamvalidator");
+    cmd.current_dir(&dir)
+        .args([
+            "--quiet",
+            "-t",
+            &common::MSV_TOOL_TIMEOUT_SECS.to_string(),
+            "-O",
+        ])
         .arg(&json)
-        .arg("out.m3u8")
-        .output()
+        .arg("out.m3u8");
+    let run = common::run_bounded(cmd, common::MSV_DEADLINE, "mediastreamvalidator")
         .expect("run mediastreamvalidator");
+    eprintln!(
+        "mediastreamvalidator exit {:?}\n{}{}",
+        run.status.code(),
+        run.stdout,
+        run.stderr
+    );
     let v: serde_json::Value =
         serde_json::from_str(&std::fs::read_to_string(&json).expect("validator json")).unwrap();
     let mut errors = Vec::new();

@@ -9,6 +9,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `ExtensionHeader::validate()`: public check that an `Optional` header's `h_len` is `1..=5` and
+  its `body.len()` equals `2*h_len-2` (what `PayloadChain::serialize_into` now enforces before
+  writing; see Fixed) (#1120).
+
 ### Fixed
 - `ExtensionHeader::validate` (called by `PayloadChain::serialize_into`
   before any bytes are written) now rejects an `Optional` header whose

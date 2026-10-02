@@ -4,6 +4,33 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- The `0.9.0` entry below says "No CLI changes", which understates it: the
+  `multimux` 0.11 breaking changes alter what the CLI's `--config` / flag-built
+  routes accept and serve. A config that worked on `0.8.x` may now be
+  rejected, or serve differently:
+  - **Route names** must be a single safe path segment (`[A-Za-z0-9._-]`, not
+    `.`/`..`, at most 255 bytes), and names differing only in case collide.
+  - **SRT push URLs** are validated at startup: a missing host, a `mode`
+    other than `caller`, a `passphrase`, an out-of-range `latency` or an
+    unbracketed IPv6 authority is an error; `streamid`/`latency` query
+    parameters are now applied rather than treated as part of the address.
+  - **Reconnect/timeout validation is stricter**: a zero backoff, an
+    `initial_backoff_ms` above `max_backoff_ms`, a backoff over 24 h, or an
+    `ingest_connect_timeout_secs`/`ingest_read_timeout_secs` outside
+    `(0, 86400]` (or non-finite) is a config error; a non-finite or
+    non-positive `target_duration_secs` is rejected too.
+  - **Two outputs mounting the same manifest path** are rejected (multiple
+    push/`custom`/`whep` outputs on one route remain valid).
+  - **Smooth Streaming manifest shape changed** (per-`StreamIndex` timelines,
+    real `QualityLevel@Bitrate`, no HEVC); clients keyed on the old values
+    must be updated.
+  - **Resources are instance-named**: init/segment/part URIs now carry a
+    per-origin instance token and only those are cached `immutable`; a route
+    restart renames them.
+  - New output-visible behaviour: CORS preflight allows `Authorization`, and
+    the global concurrency bound answers `503` + `Retry-After`.
+
 ## [0.9.0] - 2026-09-26
 
 ### Changed

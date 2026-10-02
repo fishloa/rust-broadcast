@@ -21,6 +21,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `tsbpd::DRIFT_SAMPLE_COUNT` / `tsbpd::DRIFT_MAX_US` (r08-SRT-W9).
 - `handshake_sm::SecretBytes` (`crypto` feature): the type of a negotiated SEK, and the constants
   `handshake_sm::REJECTION_CODE_LIMIT` and `handshake_sm::DEFAULT_MAX_RETRIES`.
+- `arq::seq::seq_in_closed_range(seq, first, last)`: circular inclusive-range membership (a
+  `last` preceding `first` is an empty range and never matches).
 - `io::SocketStats::late_dropped` and `tsbpd::TsbpdScheduler::tlpktdrop_enabled()`.
 - `CryptoConfig` and `SecretBytes` implement `zeroize::Zeroize` / `ZeroizeOnDrop`. The `crypto`
   feature now depends on `zeroize` and `subtle`, both already in the workspace lock (#1142).
@@ -59,6 +61,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   (checked by a `debug_assert!`). `on_nak` resolves ranges against the send buffer instead of
   expanding them, ignores a range whose end precedes its start, and examines at most 65 536
   sequence numbers per NAK datagram.
+- `arq::Receiver::new` takes a third argument, `max_flow_window: u32` (the Available Buffer Size
+  its Full ACK advertises, §3.2.1): `Receiver::new(dest_socket_id, initial_seq, max_flow_window)`.
 - `arq::Receiver::feed_data` ignores (`FeedOutcome::out_of_window`) a sequence number wider than
   31 bits or further ahead of the ack point than the flow window (clamped to 262 144), and a
   first packet beyond the peer's ISN now reveals the gap before it.

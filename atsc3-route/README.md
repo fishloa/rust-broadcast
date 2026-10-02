@@ -32,11 +32,11 @@ this crate's split and documents both halves of A/331 Annex A).
   (§A.3.4/§A.3.6: `V`=1, `C`=00, `S`=1, `O`=01, `H`=0, and the PSI/SPI rule),
   the SPI-bit-dispatched `RouteFecPayloadId`, and the opaque delivery-object
   payload.
-- **`EXT_ROUTE_PRESENTATION_TIME`** (HET 66, §A.3.7.1) — `ExtRoutePresentationTime`:
-  the full 64-bit NTP presentation time of an MDE Random Access Point.
-- **`EXT_TOL`** (HET 194 fixed-length / 67 variable-length, §A.3.8.1) —
-  `ExtTol::Bits24`/`Bits48`: the delivery object's post-content-encoding
-  transfer length.
+- **Header-extension type (HET) constants** — `HET_EXT_ROUTE_PRESENTATION_TIME` (66, §A.3.7.1)
+  and `HET_EXT_TOL_24` / `HET_EXT_TOL_48` (194 / 67, §A.3.8.1) for walking an LCT extension
+  chain. The typed `EXT_ROUTE_PRESENTATION_TIME` / `EXT_TOL` decoders were removed: no public
+  ATSC 3.0 capture carries either extension, so they could not meet this crate's
+  real-fixture round-trip bar.
 - **FEC Payload ID layouts** (§A.3.5.1/§A.3.5.2) — `SourceFecPayloadId`
   (Compact No-Code `start_offset`, source flows) and `RepairFecPayloadId`
   (RaptorQ `SBN`/`ESI` per RFC 6330 §3.2, repair flows), dispatched by the

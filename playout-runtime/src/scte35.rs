@@ -6,7 +6,7 @@
 //!
 //! This module decides *what* cue to emit and *where* (after conditioning);
 //! it does not decide *how the splice lands* against real segment/keyframe
-//! boundaries — that is [`ssai_runtime::splice::condition_splice_point`],
+//! boundaries — that is [`ssai_runtime::splice::condition_splice_point_wrapping`],
 //! reused here rather than re-implemented, per the crate-root docs. Two
 //! implementations of boundary conditioning could disagree about the same
 //! boundary, which is exactly the bug class this workspace keeps finding.
@@ -49,7 +49,7 @@ broadcast_common::impl_spec_display!(BreakEdge);
 /// Build a `splice_insert()` command for a transition, snapping its target
 /// instant onto the nearest of `candidates` (real segment or keyframe
 /// boundaries) within `max_delta_ticks` of `requested_pts` — see
-/// [`ssai_runtime::splice::condition_splice_point`], which this delegates to
+/// [`ssai_runtime::splice::condition_splice_point_wrapping`], which this delegates to
 /// rather than duplicating. Errors (via [`crate::Error::SpliceConditioning`])
 /// if no candidate is close enough, or none are supplied: this crate never
 /// emits a cue for a splice point nothing is actually close to.

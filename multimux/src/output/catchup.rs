@@ -462,6 +462,11 @@ fn parse_seg_filename(file: &str, ext: &str) -> Option<u32> {
         .ok()
 }
 
+/// Deadline-bounded external-tool runner shared with `tests/` (see its docs).
+#[cfg(test)]
+#[path = "../../tests/support/bounded.rs"]
+mod bounded_cmd;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1129,27 +1134,43 @@ mod tests {
     // --- independent oracle: Apple's `mediastreamvalidator` over the served
     //     catch-up playlist and the files it names ---
 
+    use super::bounded_cmd as bounded;
+
+    /// Hard deadline for the `--version` availability probe.
+    const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+    /// The validator's own `-t` timeout, seconds.
+    const VALIDATOR_TIMEOUT_SECS: u64 = 3;
+    /// Margin added to `-t` to form the hard kill deadline.
+    const VALIDATOR_MARGIN: std::time::Duration = std::time::Duration::from_secs(30);
+
     fn validator_unavailable() -> Option<&'static str> {
         if !cfg!(target_os = "macos") {
             return Some("`mediastreamvalidator` is macOS-only and this is not macOS");
         }
-        let present = std::process::Command::new("mediastreamvalidator")
-            .arg("--version")
-            .output()
-            .is_ok_and(|o| o.status.success());
+        let present = match bounded::output_bounded(
+            std::process::Command::new("mediastreamvalidator").arg("--version"),
+            PROBE_DEADLINE,
+        ) {
+            Ok(o) => o.status.success(),
+            Err(e) if e.kind() == std::io::ErrorKind::TimedOut => panic!("{e}"),
+            Err(_) => false,
+        };
         (!present).then_some("`mediastreamvalidator` is not on PATH (Additional Tools for Xcode)")
     }
 
     /// MUST-level (requirement level 1) findings in the validator's JSON.
     fn validator_errors(dir: &std::path::Path, entry: &str) -> Vec<String> {
         let out = dir.join("out.json");
-        let status = std::process::Command::new("mediastreamvalidator")
-            .current_dir(dir)
-            .args(["--quiet", "-t", "3", "-O"])
-            .arg(&out)
-            .arg(entry)
-            .status()
-            .expect("run mediastreamvalidator");
+        let status = bounded::output_bounded(
+            std::process::Command::new("mediastreamvalidator")
+                .current_dir(dir)
+                .args(["--quiet", "-t", &VALIDATOR_TIMEOUT_SECS.to_string(), "-O"])
+                .arg(&out)
+                .arg(entry),
+            std::time::Duration::from_secs(VALIDATOR_TIMEOUT_SECS) + VALIDATOR_MARGIN,
+        )
+        .expect("run mediastreamvalidator")
+        .status;
         assert!(status.success(), "validator exit {status}");
         let compact: String = std::fs::read_to_string(&out)
             .expect("validator json")

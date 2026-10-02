@@ -98,6 +98,7 @@ use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
+use hmac::digest::Key;
 use hmac::{Hmac, Mac};
 use md5::{Digest as _, Md5};
 use sha2::Sha256;
@@ -179,6 +180,8 @@ pub const NC_WINDOW: u32 = u64::BITS;
 
 /// Bytes of per-verifier HMAC key drawn from the OS RNG.
 const NONCE_SECRET_LEN: usize = 32;
+// `DigestNonces::mac` zero-pads the secret into one SHA-256 block (64 bytes).
+const _: () = assert!(NONCE_SECRET_LEN <= 64);
 /// Bytes of the big-endian issue time (seconds since the Unix epoch).
 const NONCE_TIME_LEN: usize = 8;
 /// Bytes of the big-endian per-verifier issue sequence number, so every
@@ -307,8 +310,13 @@ impl DigestNonces {
     }
 
     fn mac(&self, signed: &[u8]) -> Hmac<Sha256> {
-        let mut mac = <Hmac<Sha256> as Mac>::new_from_slice(&self.secret)
-            .expect("HMAC accepts a key of any length");
+        // Infallible keying: HMAC (RFC 2104 §2) zero-pads a key shorter than
+        // the hash block to the block size, so a fixed-size block key built
+        // here is exactly equivalent to `new_from_slice(&self.secret)`
+        // without its (never-taken) error arm.
+        let mut block = Key::<Hmac<Sha256>>::default();
+        block[..NONCE_SECRET_LEN].copy_from_slice(&self.secret);
+        let mut mac = <Hmac<Sha256> as Mac>::new(&block);
         mac.update(signed);
         mac
     }
@@ -901,6 +909,22 @@ mod tests {
     use crate::{Credentials, RequestContext, respond};
 
     const REALM: &str = "cameras";
+
+    /// The infallible block-key construction in `DigestNonces::mac` must be
+    /// byte-identical to the variable-length `new_from_slice` keying it
+    /// replaced (RFC 2104 zero-pads a short key to the block size), so
+    /// nonces issued before and after the change verify against each other.
+    #[test]
+    fn nonce_mac_matches_variable_length_keying() {
+        let nonces = DigestNonces::new();
+        let signed = b"issue-time||issue-seq";
+        let reference = {
+            let mut m = <Hmac<Sha256> as Mac>::new_from_slice(&nonces.secret).unwrap();
+            m.update(signed);
+            m.finalize().into_bytes()
+        };
+        assert_eq!(nonces.mac(signed).finalize().into_bytes(), reference);
+    }
 
     /// Test helper: builds a [`RequestContext`] carrying `authorization` (if
     /// any) as the `Authorization` header, then verifies it — stands in for

@@ -24,7 +24,9 @@ extracted unchanged from `transmux::rtcp`.
   application-dependent data.
 - **[`RtcpPacket`]** / **[`RtcpPacketType`]** — the PT-byte dispatch enum.
 - **[`CompoundPacket`]** (§6.1) — a sequence of RTCP packets that must begin
-  with SR or RR, with byte-exact round-trip across the whole compound.
+  with SR, RR or (RFC 5506 Reduced-Size RTCP) an unrecognized-PT `RtcpPacket::Unknown`, with
+  byte-exact round-trip across the whole compound. `Unknown` (RTPFB/PSFB/XR…) keeps its opaque
+  body, `P` bit and padding verbatim; typed packets strip padding on parse and emit `P=0`.
 
 See `docs/rtcp.md` for the curated RFC 3550 §6 transcription this crate
 implements field-for-field, including two documented decode-completeness

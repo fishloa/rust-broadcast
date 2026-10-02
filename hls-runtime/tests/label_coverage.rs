@@ -26,6 +26,8 @@
 //!   (plan step 4).
 //! - `HlsOriginBuildError` (`server::engine`) — structured `thiserror` error
 //!   (issue #873's `HlsOriginBuilder::build`), not a spec/field label.
+//! - `HlsMasterError` (`server::engine`) — structured `thiserror` error
+//!   (`HlsOrigin::master_playlist`), not a spec/field label.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -40,6 +42,7 @@ const SKIP: &[&str] = &[
     "HlsRequest",
     "HlsBody",
     "HlsOriginBuildError",
+    "HlsMasterError",
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

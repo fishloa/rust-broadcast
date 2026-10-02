@@ -31,6 +31,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   writer hand-offs behind than the (small, fixed) backlog retains now
   reports it distinctly instead of silently catching up and losing the
   report entirely (issue #1082).
+- `IngestDriver::session_mut` — mutable access to the driver's session, for
+  an out-of-band signal a `Stage` has no input variant for (`dash_pull`
+  uses it to abandon a live-edge segment whose tolerated-`404` retries ran
+  out) (issue #1083).
 
 ### Changed (breaking)
 - `Trunk::writer`/`Trunk::segment_writer` are now **re-issuable**: the

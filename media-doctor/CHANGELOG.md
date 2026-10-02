@@ -21,6 +21,14 @@
   is satisfied, but **`media-doctor` cannot be published until `transmux` is
   released with that API** — release prep must order the `transmux` tag first.
   No version is changed here; releases are the orchestrator's job.
+- `cli::WatchArgs` gains the public fields `metrics_max_conns: usize`
+  (`--metrics-max-conns`) and `metrics_io_timeout_ms: u64`
+  (`--metrics-io-timeout-ms`), and the module gains the public constants
+  `cli::DEFAULT_METRICS_MAX_CONNS` (32) and
+  `cli::DEFAULT_METRICS_IO_TIMEOUT_MS` (5 000). `WatchArgs` is not
+  `#[non_exhaustive]`, so a struct literal that names every field no longer
+  compiles; construct it via clap (`WatchArgs::parse_from`) instead
+  (issue #1112).
 - `Location::pid` is now `u32`, not `u16`. The field carries a TS PID for
   transport-stream checks but a media **track id** for container checks, and
   ISO/IEC 14496-12 `track_ID` is a 32-bit field — `check_container_codec`
@@ -53,8 +61,11 @@
   blocked `/metrics` for every later scraper until it gave up — reachable in
   the documented `--metrics-addr 0.0.0.0:9090` deployment, not just locally.
   Each connection is now handled on its own thread, with a
-  `set_read_timeout`/`set_write_timeout` bound (5 s) so a hung peer cannot pin
-  a thread for the process's lifetime (issue #1112).
+  *total* accept-to-response deadline (`--metrics-io-timeout-ms`, default
+  5 000 ms) so a hung or dribbling peer cannot pin a thread for the process's
+  lifetime, and at most `--metrics-max-conns` (default 32) connections are
+  served at once — a connection beyond the cap is answered `503` and closed
+  (issue #1112).
 - `media-doctor watch` now rebuilds a program's tracked PIDs when its PMT's
   `version_number` changes, instead of only ever adding to them
   (`entry().or_insert…`). A PMT version bump is how a multiplex signals that

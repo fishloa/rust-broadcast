@@ -1656,10 +1656,10 @@ impl Config {
                 reason: "no routes configured".into(),
             });
         }
-        if self.target_duration_secs <= 0.0 {
+        if !self.target_duration_secs.is_finite() || self.target_duration_secs <= 0.0 {
             return Err(MultimuxError::ConfigInvalid {
                 field: "target_duration_secs",
-                reason: "must be positive".into(),
+                reason: "must be a finite positive number".into(),
             });
         }
         if self.part_target_ms == 0 {
@@ -2043,6 +2043,28 @@ mod tests {
             other => panic!("expected InputSpec::Rtsp, got {other:?}"),
         }
         cfg.validate().unwrap();
+    }
+
+    /// A NaN / infinite / non-positive `target_duration_secs` must be rejected
+    /// by `validate()`: `<= 0.0` alone lets NaN and +inf through, and the
+    /// HLS origin builder then refused it at publish time (release audit).
+    #[test]
+    fn validate_rejects_non_finite_or_non_positive_target_duration() {
+        let json = r#"{ "routes": [
+            { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+        ] }"#;
+        let base: Config = serde_json::from_str(json).unwrap();
+        base.validate().unwrap();
+        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+            let mut cfg = base.clone();
+            cfg.target_duration_secs = bad;
+            match cfg.validate() {
+                Err(MultimuxError::ConfigInvalid { field, .. }) => {
+                    assert_eq!(field, "target_duration_secs", "{bad}");
+                }
+                other => panic!("{bad}: expected ConfigInvalid, got {other:?}"),
+            }
+        }
     }
 
     // --- push-output format validation (issue #744) ---

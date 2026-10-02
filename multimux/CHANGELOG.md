@@ -3,6 +3,13 @@
 ## [Unreleased]
 
 ### Fixed
+- **A non-finite `target_duration_secs` no longer panics the route.**
+  `Config::validate` accepted `NaN` and `+inf` (it only checked `<= 0.0`), and
+  `ProgramServing::new` then `expect`ed `HlsOriginBuilder::build` — which
+  rejects a non-finite target — so publishing the first program aborted the
+  ingest task. `validate` now requires a finite positive value, and
+  `RouteHandle::publish_program` logs and declines (releasing the publish slot)
+  instead of panicking if the origin cannot be built.
 - **`master.m3u8` carries the measured peak `BANDWIDTH` and `CODECS`** instead
   of a fixed 5 Mb/s with no `CODECS`, via
   `hls_runtime::server::HlsOrigin::master_playlist`. `CODECS` comes from the
@@ -547,12 +554,31 @@
   derived) (#1083).
 
 ### Added
+- `RouteHandle::release_program` — gives a program's publish slot back once
+  the driver-backed session that owned its `Trunk` is reaped, so a later
+  publisher can bind (the counterpart to `publish_program`'s
+  second-concurrent-publisher rejection) (#1083).
+- `source::release_route` — the session-level wrapper a `Listener`-backed
+  `run_*` (or a `Custom` factory driving its own sessions) calls right before
+  reaping a driver, releasing every program that session held (#1083).
+- `output::whep::run_whep` — binds a WHEP route's listen socket and drives up
+  to `WhepRoute::with_max_sessions` viewers concurrently until cancelled;
+  spawned once per `OutputKind::Whep` output (#1083).
+- `DvrRecorder::needs_poll` — a cheap "could a poll make progress" check so
+  the per-datagram `advance_route` path can skip the blocking-pool round trip
+  (#1083).
+- `source::rtp_udp::RtpUdpIngestSession::depay_dropped` — packets dropped so
+  far for failing depayload (#1083).
+- `source::rtsp::DEFAULT_KEEPALIVE_INTERVAL` (30 s) — the RTSP `OPTIONS`
+  keepalive interval used when a server declares a session timeout and the
+  config does not override it (#1083).
 - `multimux_pull_stream_refresh_miss_total` Prometheus counter: manifest
   refreshes in which a live stream had no matching `StreamIndex` (#1083).
 - `DashIngestSession::with_clock` — inject the wall clock used to place a live
   `$Number$` plan at the live edge (#1083), for a deterministic test.
-- `source::redirect_policy`, `push::srt`'s SRT URL query parsing (see below),
-  and `MAX_TIMEOUT_SECS` — see the entries above.
+- `source::redirect_policy`, the SRT push URL's `streamid`/`latency` query
+  parsing (internal to the push transport, see the entries above), and
+  `MAX_TIMEOUT_SECS` — see the entries above.
 - `ReconnectPolicy::validate` — rejects a zero initial/max backoff (#1083),
   called from `Route::validate_standalone`.
 - `source::MAX_HTTP_BODY_BYTES` — the response-body cap every pull-source

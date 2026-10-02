@@ -23,11 +23,10 @@
 //!   wrapper over the event-driven [`StreamingTsDemux`] — issue #555),
 //!   fMP4/CMAF ([`Fmp4Demux`]), progressive (non-fragmented) MP4
 //!   ([`ProgressiveDemux`] — issue #561), MPEG Program Stream ([`PsDemux`]),
-//!   WebM/Matroska ([`WebmDemux`] — laced blocks are a hard error, not
-//!   silently skipped; real ffmpeg/mkvmerge captures without lacing demux
-//!   fine, see the module docs), FLV ([`FlvDemux`] — non-AVC video and
-//!   non-AAC audio tracks are silently skipped, no event/error, see the
-//!   module docs), RTMP ([`RtmpDemux`]).
+//!   WebM/Matroska ([`WebmDemux`] — Xiph/EBML/fixed-size laced blocks are
+//!   unlaced into one sample per frame, see the module docs), FLV
+//!   ([`FlvDemux`] — non-AVC video and non-AAC audio tracks are silently
+//!   skipped, no event/error, see the module docs), RTMP ([`RtmpDemux`]).
 //! - **Mux (`Package`) outputs:** CMAF/fMP4 ([`CmafMux`]), progressive single-file
 //!   MP4 ([`ProgressiveMux`]), MPEG-2 TS ([`TsMux`]), Matroska ([`MkvMux`]),
 //!   CMAF-HLS ([`HlsPackager`]), TS-segment HLS ([`TsHlsPackager`]), DASH MPD
@@ -65,7 +64,11 @@
 //! - **Conformance:** structural fMP4/CMAF validator ([`validate_init_segment`]
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
 //! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
-//!   [`nal_unit_type`]); I-frame trick-play track derivation ([`derive_iframe_track`]).
+//!   [`nal_unit_type`]); I-frame trick-play track derivation ([`derive_iframe_track`]);
+//!   RFC 3986 URI-reference resolution for DASH `BaseURL`/`SegmentTemplate`
+//!   ([`uri`]); the single ISO/IEC 14496-12 §8.8.7/§8.8.8 fragment
+//!   sample-offset resolver shared by the demuxer, decryptor and validator
+//!   ([`frag_offsets`]).
 //!
 //! **Codec config coverage** (header parse → container box; no en/decode):
 //! H.264/AVC, H.265/HEVC, H.266/VVC, AV1, VP9, VP8*, MPEG-2 video (H.262); AAC,

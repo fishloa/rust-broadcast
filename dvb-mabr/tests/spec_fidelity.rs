@@ -165,3 +165,23 @@ fn out_of_range_proportion_is_rejected() {
             .unwrap_or_else(|e| panic!("proportion={good} must be accepted, got {e}"));
     }
 }
+
+/// Release audit: a `schemaVersion="2"` document that declares the 2019
+/// namespace must re-serialize under the 2019 namespace (the namespace is
+/// preserved, not re-derived from `schemaVersion`).
+#[test]
+fn schema_version_2_with_the_2019_namespace_is_byte_stable() {
+    let xml = format!(r#"<MulticastGatewayConfiguration xmlns="{NS_2019}" schemaVersion="2"/>"#);
+    let cfg = MulticastGatewayConfiguration::parse_str(&xml).unwrap();
+    assert_eq!(cfg.namespace, dvb_mabr::BaselineNamespace::V2019);
+    let xml2 = cfg.to_xml();
+    assert!(
+        xml2.contains(&format!("xmlns=\"{NS_2019}\"")),
+        "2019 namespace must survive re-serialization, got: {xml2}"
+    );
+    assert!(!xml2.contains(NS_2024), "must not rewrite to 2024: {xml2}");
+    assert_eq!(
+        MulticastGatewayConfiguration::parse_str(&xml2).unwrap(),
+        cfg
+    );
+}

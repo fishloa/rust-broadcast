@@ -7,12 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (breaking)
+- **Behaviour change (#1123)**: SR/RR/SDES/BYE/APP parsing now validates and strips the `P`
+  (padding) octets per RFC 3550 §6.4.1 instead of leaving them in the body, and **rejects** a
+  padded packet whose padding count is zero or exceeds the body. Input that previously parsed
+  (with padding bytes leaked into a BYE reason / APP `data`) now parses correctly or returns
+  `Error::InvalidValue`. Re-serialization of these typed packets still emits `P=0`.
+
 ### Added
-- `RtcpPacket` gained a new variant, `Unknown { packet_type, count, payload }`,
+- `RtcpPacket` gained a new variant, `Unknown { packet_type, count, padding, payload }`,
   for any `PT` outside the RFC 3550 §6 core set (200-204) — e.g. RTPFB=205/
   PSFB=206 [RFC 4585] or XR=207 [RFC 3611]. Common-header framing only; the
-  body is opaque and round-trips byte-identical. `RtcpPacket` is already
-  `#[non_exhaustive]`, so this is additive, not breaking (#1071).
+  body is opaque and round-trips byte-identical, including the `P` bit and trailing padding
+  octets (kept inside `payload`, flagged by `padding`). Serializing an `Unknown` whose
+  `packet_type` is 200-204 is rejected (it could not parse back as `Unknown`). `RtcpPacket` is
+  already `#[non_exhaustive]`, so this is additive, not breaking (#1071).
 
 ### Fixed
 - `CompoundPacket`'s leading-packet rule now also accepts a leading
@@ -26,12 +35,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   real peer's own SR/RR stats on nearly every datagram. Fixed by the new
   `RtcpPacket::Unknown` variant above; see `tests/real_browser_fixture.rs`
   for a real Chromium capture exercising exactly this shape (#1071).
-- SR/RR/SDES/BYE/APP parsing now validates and strips the `P` (padding)
-  octets per RFC 3550 §6.4.1 instead of leaving them in the body: a padded
-  BYE with no reason had its first padding byte misread as the
-  reason-length octet, and a padded APP's padding bytes leaked into `data`.
-  The `P` bit was already parsed and preserved on the header; it just was
-  not acted on (#1123).
 
 ## [0.3.1] - 2026-08-30
 

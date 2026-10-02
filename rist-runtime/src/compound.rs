@@ -628,7 +628,9 @@ impl TrailingSlot {
             TrailingValue::GenericNack(nack) => nack.serialize_into(buf)?,
             TrailingValue::RangeNack(rn) => rn.serialize_into(buf)?,
             TrailingValue::RttEcho(echo) => echo.serialize_into(buf)?,
-            TrailingValue::Unknown(_) => unreachable!(),
+            TrailingValue::Unknown(unk) => {
+                return Err(Error::UnexpectedPacketType(unk.packet_type));
+            }
         };
         write_header(buf, total, byte0_low, packet_type, count)?;
         if count > 0 {
@@ -782,7 +784,7 @@ fn walk(bytes: &[u8], receiver: bool) -> Result<CompoundParts> {
         if let TrailingValue::Sdes(_) = slot.value {
             if sdes_seen {
                 // A second SDES is not modelled; preserve it verbatim.
-                slot.value = TrailingValue::Unknown(unknown_from_slot(&slot));
+                slot.value = TrailingValue::Unknown(unknown_from_slot(&slot)?);
                 slot.padding = Vec::new();
             }
             sdes_seen = true;
@@ -806,22 +808,21 @@ fn report_wire_len(report: &ReportPart, report_padding: &[u8]) -> usize {
 /// position: for already-unknown values this is a clone; for modelled values
 /// (duplicates, or values carrying padding the typed serializer cannot
 /// reproduce) the slot is re-serialized into its exact wire bytes first.
-fn unknown_from_slot(slot: &TrailingSlot) -> UnknownPacket {
+fn unknown_from_slot(slot: &TrailingSlot) -> Result<UnknownPacket> {
     if let TrailingValue::Unknown(unk) = &slot.value {
-        return unk.clone();
+        return Ok(unk.clone());
     }
     let mut buffer = alloc::vec![0u8; slot.wire_len()];
-    slot.serialize_into(&mut buffer)
-        .expect("a parsed slot always serializes into its own wire_len");
-    let head = Head::parse(&buffer).expect("a serialized slot always has a parseable header");
+    slot.serialize_into(&mut buffer)?;
+    let head = Head::parse(&buffer)?;
     let payload_end = head.unpadded_end();
-    UnknownPacket {
+    Ok(UnknownPacket {
         packet_type: head.packet_type,
         count: head.count,
         payload: buffer[RTCP_HEADER_LEN..payload_end].to_vec(),
         padding: buffer[payload_end..head.total - 1].to_vec(),
         position: slot.position,
-    }
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -930,17 +931,17 @@ impl<'a> Parse<'a> for RistSenderCompound {
                     if cname.is_none() && slot.padding.is_empty() {
                         cname = Some(extract_cname(sdes)?);
                     } else {
-                        unknown.push(unknown_from_slot(slot));
+                        unknown.push(unknown_from_slot(slot)?);
                     }
                 }
                 TrailingValue::RttEcho(echo) => {
                     if rtt_echo.is_none() {
                         rtt_echo = Some(echo.clone());
                     } else {
-                        unknown.push(unknown_from_slot(slot));
+                        unknown.push(unknown_from_slot(slot)?);
                     }
                 }
-                _ => unknown.push(unknown_from_slot(slot)),
+                _ => unknown.push(unknown_from_slot(slot)?),
             }
         }
 
@@ -1085,31 +1086,31 @@ impl<'a> Parse<'a> for RistReceiverCompound {
                     if cname.is_none() && slot.padding.is_empty() {
                         cname = Some(extract_cname(sdes)?);
                     } else {
-                        unknown.push(unknown_from_slot(slot));
+                        unknown.push(unknown_from_slot(slot)?);
                     }
                 }
                 TrailingValue::GenericNack(nack) => {
                     if slot.padding.is_empty() {
                         nacks.push(nack.clone());
                     } else {
-                        unknown.push(unknown_from_slot(slot));
+                        unknown.push(unknown_from_slot(slot)?);
                     }
                 }
                 TrailingValue::RangeNack(rn) => {
                     if slot.padding.is_empty() {
                         range_nacks.push(rn.clone());
                     } else {
-                        unknown.push(unknown_from_slot(slot));
+                        unknown.push(unknown_from_slot(slot)?);
                     }
                 }
                 TrailingValue::RttEcho(echo) => {
                     if rtt_echo.is_some() {
-                        unknown.push(unknown_from_slot(slot));
+                        unknown.push(unknown_from_slot(slot)?);
                     } else {
                         rtt_echo = Some(echo.clone());
                     }
                 }
-                TrailingValue::Unknown(_) => unknown.push(unknown_from_slot(slot)),
+                TrailingValue::Unknown(_) => unknown.push(unknown_from_slot(slot)?),
             }
         }
 

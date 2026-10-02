@@ -27,6 +27,18 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
+#[path = "support/bounded.rs"]
+mod bounded;
+
+/// Hard deadline for a `--version`/`-version` availability probe.
+const PROBE_DEADLINE: Duration = Duration::from_secs(10);
+/// Hard deadline for one `ffprobe` read of a short local file or capped live
+/// read (`-read_intervals %+3`); it is killed and the test fails on overrun.
+const FFPROBE_DEADLINE: Duration = Duration::from_secs(60);
+/// Margin added to the validator's own `-t` timeout to form the hard kill
+/// deadline.
+const VALIDATOR_MARGIN: Duration = Duration::from_secs(30);
+
 use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
@@ -49,12 +61,12 @@ fn which(bin: &str) -> Option<PathBuf> {
 }
 
 fn have_oracle(bin: &str) -> bool {
-    Command::new(bin)
-        .arg("-version")
-        .output()
-        .or_else(|_| Command::new(bin).arg("-h").output())
-        .map(|_| true)
-        .unwrap_or(false)
+    let probe = |arg: &str| {
+        bounded::output_bounded(Command::new(bin).arg(arg), PROBE_DEADLINE).inspect_err(|e| {
+            assert!(e.kind() != std::io::ErrorKind::TimedOut, "{e}");
+        })
+    };
+    probe("-version").or_else(|_| probe("-h")).is_ok()
 }
 
 fn reserve_tcp_addr() -> std::net::SocketAddr {
@@ -266,17 +278,19 @@ async fn ffprobe_recognises_served_segment_as_mpegts() {
         .expect("segment body");
     std::fs::write(dir.join(&seg_uri), &seg_bytes).expect("write segment");
 
-    let out = Command::new("ffprobe")
-        .args([
-            "-hide_banner",
-            "-v",
-            "error",
-            "-show_entries",
-            "stream=codec_name",
-        ])
-        .arg(dir.join(&seg_uri))
-        .output()
-        .expect("spawn ffprobe");
+    let out = bounded::output_bounded(
+        Command::new("ffprobe")
+            .args([
+                "-hide_banner",
+                "-v",
+                "error",
+                "-show_entries",
+                "stream=codec_name",
+            ])
+            .arg(dir.join(&seg_uri)),
+        FFPROBE_DEADLINE,
+    )
+    .expect("run ffprobe");
     let stdout = String::from_utf8_lossy(&out.stdout);
 
     let _ = std::fs::remove_dir_all(&dir);
@@ -329,19 +343,21 @@ async fn mediastreamvalidator_accepts_served_ts_hls_playlist() {
     }
 
     let json_path = dir.join("report.json");
-    let out = Command::new(&validator)
-        .args([
-            "--parse-playlist-only",
-            "--quiet",
-            "-t",
-            &MIN_RELOAD_TIMEOUT_SECS.to_string(),
-            "-O",
-        ])
-        .arg(&json_path)
-        .arg("media.m3u8")
-        .current_dir(&dir)
-        .output()
-        .expect("spawn mediastreamvalidator");
+    let out = bounded::output_bounded(
+        Command::new(&validator)
+            .args([
+                "--parse-playlist-only",
+                "--quiet",
+                "-t",
+                &MIN_RELOAD_TIMEOUT_SECS.to_string(),
+                "-O",
+            ])
+            .arg(&json_path)
+            .arg("media.m3u8")
+            .current_dir(&dir),
+        Duration::from_secs(u64::from(MIN_RELOAD_TIMEOUT_SECS)) + VALIDATOR_MARGIN,
+    )
+    .expect("run mediastreamvalidator");
 
     let report = std::fs::read_to_string(&json_path).unwrap_or_default();
     let _ = std::fs::remove_dir_all(&dir);

@@ -522,14 +522,19 @@ impl Command {
 
     /// Serialize this command back to an AMF0 command payload: `name` +
     /// `transaction_id` + `arguments`, in that order.
-    #[must_use]
-    pub fn to_body(&self) -> Vec<u8> {
-        let mut out = Amf0Value::String(self.name.clone()).to_bytes();
-        out.extend(Amf0Value::Number(self.transaction_id).to_bytes());
+    ///
+    /// # Errors
+    ///
+    /// [`RtmpError::FieldOverflow`] when any string, key or array exceeds the
+    /// AMF0 16/32-bit length prefix (a peer-chosen publish name echoed into an
+    /// `onStatus` description can reach this).
+    pub fn to_body(&self) -> Result<Vec<u8>> {
+        let mut out = Amf0Value::String(self.name.clone()).try_to_bytes()?;
+        out.extend(Amf0Value::Number(self.transaction_id).try_to_bytes()?);
         for arg in &self.arguments {
-            out.extend(arg.to_bytes());
+            out.extend(arg.try_to_bytes()?);
         }
-        out
+        Ok(out)
     }
 }
 
@@ -802,19 +807,19 @@ mod tests {
     #[test]
     fn connect_command_round_trips_byte_identically() {
         let cmd = connect_command();
-        let bytes = cmd.to_body();
+        let bytes = cmd.to_body().unwrap();
         let parsed = Command::parse(&bytes).expect("parse connect");
         assert_eq!(parsed, cmd);
-        assert_eq!(parsed.to_body(), bytes);
+        assert_eq!(parsed.to_body().unwrap(), bytes);
     }
 
     #[test]
     fn publish_command_round_trips_byte_identically() {
         let cmd = publish_command();
-        let bytes = cmd.to_body();
+        let bytes = cmd.to_body().unwrap();
         let parsed = Command::parse(&bytes).expect("parse publish");
         assert_eq!(parsed, cmd);
-        assert_eq!(parsed.to_body(), bytes);
+        assert_eq!(parsed.to_body().unwrap(), bytes);
     }
 
     #[test]

@@ -378,7 +378,8 @@ impl fmt::Display for CliError {
             ),
             CliError::UnsupportedContainer(name) => write!(
                 f,
-                "unsupported input container {name}: this CLI demuxes MPEG-TS,                  MP4/CMAF, MPEG-PS, WebM/Matroska and FLV"
+                "unsupported input container {name}: this CLI demuxes MPEG-TS, \
+                 MP4/CMAF, MPEG-PS, WebM/Matroska and FLV"
             ),
             CliError::UtcTimingNeedsLl => write!(
                 f,
@@ -1401,5 +1402,15 @@ mod key_redaction_tests {
     fn well_formed_key_parses_without_going_through_bad_key() {
         let spec = format!("{KID_HEX}:{KEY_HEX}");
         assert!(parse_key(&spec).is_ok());
+    }
+
+    #[test]
+    fn unsupported_container_message_has_no_whitespace_run() {
+        let msg = format!("{}", CliError::UnsupportedContainer("ogg"));
+        assert_eq!(
+            msg,
+            "unsupported input container ogg: this CLI demuxes MPEG-TS, \
+             MP4/CMAF, MPEG-PS, WebM/Matroska and FLV"
+        );
     }
 }

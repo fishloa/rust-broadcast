@@ -27,6 +27,17 @@ use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
 
+#[path = "support/bounded.rs"]
+mod bounded;
+
+/// The validator's own `-t` timeout, seconds.
+const VALIDATOR_TIMEOUT_SECS: u64 = 3;
+/// Hard deadline for a `--version` availability probe.
+const PROBE_DEADLINE: Duration = Duration::from_secs(10);
+/// Margin added to the validator's own `-t` timeout to form the hard kill
+/// deadline (a tool that overruns it is killed and the test fails loudly).
+const VALIDATOR_MARGIN: Duration = Duration::from_secs(30);
+
 fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero")
 }
@@ -714,10 +725,14 @@ fn validator_unavailable() -> Option<&'static str> {
     if !cfg!(target_os = "macos") {
         return Some("`mediastreamvalidator` is macOS-only and this is not macOS");
     }
-    let present = Command::new("mediastreamvalidator")
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success());
+    let present = match bounded::output_bounded(
+        Command::new("mediastreamvalidator").arg("--version"),
+        PROBE_DEADLINE,
+    ) {
+        Ok(o) => o.status.success(),
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => panic!("{e}"),
+        Err(_) => false,
+    };
     (!present).then_some("`mediastreamvalidator` is not on PATH (Additional Tools for Xcode)")
 }
 
@@ -734,14 +749,17 @@ fn scratch(name: &str) -> PathBuf {
 /// level 1) messages it reports, anywhere in its JSON.
 fn validator_errors(dir: &Path, entry: &str, extra: &[&str]) -> Vec<String> {
     let out = dir.join("out.json");
-    let status = Command::new("mediastreamvalidator")
-        .current_dir(dir)
-        .args(extra)
-        .args(["--quiet", "-t", "3", "-O"])
-        .arg(&out)
-        .arg(entry)
-        .status()
-        .expect("run mediastreamvalidator");
+    let status = bounded::output_bounded(
+        Command::new("mediastreamvalidator")
+            .current_dir(dir)
+            .args(extra)
+            .args(["--quiet", "-t", &VALIDATOR_TIMEOUT_SECS.to_string(), "-O"])
+            .arg(&out)
+            .arg(entry),
+        Duration::from_secs(VALIDATOR_TIMEOUT_SECS) + VALIDATOR_MARGIN,
+    )
+    .expect("run mediastreamvalidator")
+    .status;
     assert!(status.success(), "validator exit {status}");
     // The JSON is machine-written with one `"key" : value` per line; compare
     // whitespace-free so the exact spacing does not matter.

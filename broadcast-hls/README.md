@@ -162,25 +162,37 @@ text:
 Durations are **not** in this list: `#EXTINF` and every seconds-valued
 attribute round-trip bit-exactly, including sub-millisecond values such as
 Apple's `9.9766` and RFC 8216bis §9.11's `2.00004`. (They were lossy until
-issue #872 — see `fixtures/hls/MANIFEST.md`, Tier 2 "Finding".) Because
-that rendering is faithful to the exact `f64` you supply, a duration that
-came from an unrounded division (e.g. `11.0 / 30.0`) renders with all the
-digits needed to reproduce it — `0.36666666666666664`. That is correct and
-round-trips, but if you want compact playlists, **round your own durations
-before building the playlist**; this crate will not round them for you,
-because it cannot tell a deliberate `2.00004` from an artefact.
+issue #872 — see `fixtures/hls/MANIFEST.md`, Tier 2 "Finding".) Seconds-valued
+fields are typed: `DecimalSeconds` (finite, non-negative —
+`DecimalSeconds::new(9.009)?`) and `SignedDecimalSeconds` (finite, may be
+negative, e.g. a `#EXT-X-START` `TIME-OFFSET`), each rejecting NaN/infinity
+with `Error::InvalidDecimalSeconds` / `Error::InvalidSignedDecimalSeconds`.
+Rendering is faithful to the exact `f64` inside, so a duration that came from
+an unrounded division (e.g. `11.0 / 30.0`) renders with all the digits needed
+to reproduce it — `0.36666666666666664`. That is correct and round-trips, but
+if you want compact playlists, **round your own durations before building the
+playlist**; this crate will not round them for you, because it cannot tell a
+deliberate `2.00004` from an artefact.
+
+Other public API worth knowing: `MediaSegment::title` (the `#EXTINF` title),
+`MediaSegment::pre_tags` (verbatim segment-defining tags — `#EXT-X-KEY`,
+`#EXT-X-PROGRAM-DATE-TIME`, `#EXT-X-DATERANGE`, `#EXT-X-CUE-*` — that re-render
+in place before the segment), `AttrValue` (a quoted/bare attribute value
+validated at construction, used for unmodeled attributes), and
+`parse_attribute_list` / `render_attribute_list` for the RFC 8216 §4.2
+attribute-list grammar.
 
 ## Quick start
 
 ```rust
-use broadcast_hls::{MediaPlaylist, MediaSegment};
+use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 
 let playlist = MediaPlaylist {
     version: 3,
     target_duration: 10,
     segments: vec![MediaSegment {
         uri: "seg0.m4s".into(),
-        duration: 9.009,
+        duration: DecimalSeconds::new(9.009).unwrap(),
         ..Default::default()
     }],
     endlist: true,

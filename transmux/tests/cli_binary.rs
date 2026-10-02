@@ -13,6 +13,8 @@
 
 #![cfg(feature = "cli")]
 
+mod common;
+
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -213,12 +215,12 @@ fn have_msv() -> Option<&'static str> {
     ]
     .into_iter()
     .find(|p| {
-        std::path::Path::new(p).exists()
-            || Command::new(p)
-                .arg("--help")
-                .output()
-                .map(|o| o.status.success() || o.status.code().is_some())
-                .unwrap_or(false)
+        std::path::Path::new(p).exists() || {
+            let mut c = Command::new(p);
+            c.arg("--help");
+            common::run_bounded(c, common::PROBE_DEADLINE, "mediastreamvalidator --help")
+                .is_ok_and(|o| o.status.code().is_some())
+        }
     })
 }
 
@@ -315,15 +317,13 @@ fn hls_passes_mediastreamvalidator() {
     let m3u8 = dir.join("pl.m3u8");
     run_cli(&input, &m3u8, "hls", &["--segment-duration", "2"]);
 
-    let out = Command::new(msv)
-        .arg(&m3u8)
-        .output()
+    let mut cmd = Command::new(msv);
+    cmd.arg("-t")
+        .arg(common::MSV_TOOL_TIMEOUT_SECS.to_string())
+        .arg(&m3u8);
+    let out = common::run_bounded(cmd, common::MSV_DEADLINE, "mediastreamvalidator")
         .expect("spawn validator");
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
+    let text = format!("{}{}", out.stdout, out.stderr);
     assert!(
         text.contains("Processed 2 out of 2 segments"),
         "validator did not process both segments (a segment missing its init, or \
@@ -741,4 +741,16 @@ fn dash_mpd_ids_are_unique_and_xml_is_well_formed() {
 fn attr_str<'a>(line: &'a str, key: &str) -> Option<&'a str> {
     let needle = format!("{key}=\"");
     line.split(&needle).nth(1)?.split('"').next()
+}
+
+/// The bounded runner must kill a child that outlives its deadline and fail
+/// loudly (a `Command::output()` here would block for the child's lifetime).
+#[cfg(unix)]
+#[test]
+#[should_panic(expected = "hard deadline")]
+fn bounded_runner_kills_a_hung_tool() {
+    const HUNG_SLEEP_SECS: &str = "600";
+    let mut c = Command::new("sleep");
+    c.arg(HUNG_SLEEP_SECS);
+    let _ = common::run_bounded(c, std::time::Duration::from_millis(300), "sleep");
 }

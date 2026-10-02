@@ -74,6 +74,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 
 use broadcast_hls::{
     AttrValue, CencScheme, DecimalSeconds, IFrameVariant, LowLatencyConfig, MasterPlaylist,
@@ -81,6 +82,15 @@ use broadcast_hls::{
 };
 use serde_json::Value;
 use transmux::cli::{Opts, Output, OutputFormat, run_bytes};
+
+#[path = "support/bounded.rs"]
+mod bounded;
+
+/// Hard deadline for a `--version` availability probe.
+const PROBE_DEADLINE: Duration = Duration::from_secs(10);
+/// Margin added to the validator's own `-t` timeout to form the hard kill
+/// deadline (a tool that overruns it is killed and the test fails loudly).
+const VALIDATOR_MARGIN: Duration = Duration::from_secs(30);
 
 // ── Fixture + scratch-dir plumbing (mirrors transmux/tests/golden_gate.rs) ──
 
@@ -106,10 +116,14 @@ fn scratch_dir(name: &str) -> PathBuf {
 // ── External-tool availability gate ─────────────────────────────────────────
 
 fn validator_available() -> bool {
-    Command::new("mediastreamvalidator")
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success())
+    match bounded::output_bounded(
+        Command::new("mediastreamvalidator").arg("--version"),
+        PROBE_DEADLINE,
+    ) {
+        Ok(o) => o.status.success(),
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => panic!("{e}"),
+        Err(_) => false,
+    }
 }
 
 /// Skip this test cleanly, but LOUDLY: a silently-skipped oracle reads as a
@@ -203,7 +217,11 @@ fn run_validator(dir: &Path, entry: &str, parse_only: bool, timeout_secs: u32) -
         .arg("-O")
         .arg(&out_json)
         .arg(entry);
-    let out = cmd.output().expect("spawn mediastreamvalidator");
+    let out = bounded::output_bounded(
+        &mut cmd,
+        Duration::from_secs(u64::from(timeout_secs)) + VALIDATOR_MARGIN,
+    )
+    .expect("run mediastreamvalidator");
 
     let text = fs::read_to_string(&out_json).unwrap_or_else(|e| {
         panic!(

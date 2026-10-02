@@ -678,7 +678,9 @@ fn unlace(payload: &[u8], flags: u8) -> Result<Vec<Vec<u8>>> {
             let each = total / frame_count;
             sizes.extend(core::iter::repeat_n(each, frame_count - 1));
         }
-        _ => unreachable!("BLOCK_FLAG_LACING_MASK has exactly three non-zero values"),
+        // `mode` is `flags & BLOCK_FLAG_LACING_MASK` and 0 returned above, so the
+        // three arms cover every value; kept an error, not a panic, regardless.
+        _ => return Err(Error::InvalidInput("webm block: unrecognised lacing mode")),
     }
 
     // A zero-length lace would contribute an empty sample: harmless once, but

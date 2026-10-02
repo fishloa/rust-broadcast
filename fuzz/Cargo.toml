@@ -52,6 +52,8 @@ st2022         = { path = "../st2022" }
 rist-runtime   = { path = "../rist-runtime" }
 webrtc-runtime = { path = "../webrtc-runtime" }
 atsc3-route    = { path = "../atsc3-route" }
+rmt-flute      = { path = "../rmt-flute" }
+ule            = { path = "../ule" }
 caption-convert = { path = "../caption-convert" }
 container-probe = { path = "../container-probe" }
 bytes         = "1"
@@ -335,6 +337,18 @@ doc  = false
 [[bin]]
 name = "dvb_csa"
 path = "fuzz_targets/dvb_csa.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "rmt_flute"
+path = "fuzz_targets/rmt_flute.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "ule"
+path = "fuzz_targets/ule.rs"
 test = false
 doc  = false
 

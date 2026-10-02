@@ -343,7 +343,7 @@ impl ClientSession {
                     self.handshake_buf.drain(..consumed);
                     if done {
                         self.state = ClientState::HandshakeDone;
-                        out.extend_from_slice(&self.build_connect());
+                        out.extend_from_slice(&self.build_connect()?);
                     }
                 }
                 Err(RtmpError::BufferTooShort { .. }) => {
@@ -365,7 +365,7 @@ impl ClientSession {
         Ok(None)
     }
 
-    fn build_connect(&mut self) -> Vec<u8> {
+    fn build_connect(&mut self) -> Result<Vec<u8>> {
         let txn_id = self.next_txn_id;
         self.next_txn_id += 1.0;
         self.state = ClientState::ConnectSent { txn_id };
@@ -399,34 +399,28 @@ impl ClientSession {
         let mut out = Vec::new();
 
         let set_chunk_size = ProtocolControl::SetChunkSize(self.config.chunk_size);
-        out.extend_from_slice(&self.writer.write(&set_chunk_size.to_message()).expect(
-            "a small internal AMF0 command message never exceeds the 24-bit message_length field",
-        ));
+        out.extend_from_slice(&self.writer.write(&set_chunk_size.to_message())?);
         self.writer.set_chunk_size(self.config.chunk_size);
 
         let window_ack = ProtocolControl::WindowAckSize(self.config.window_ack_size);
-        out.extend_from_slice(&self.writer.write(&window_ack.to_message()).expect(
-            "a small internal AMF0 command message never exceeds the 24-bit message_length field",
-        ));
+        out.extend_from_slice(&self.writer.write(&window_ack.to_message())?);
 
         let msg = Message {
             chunk_stream_id: COMMAND_CHUNK_STREAM_ID,
             timestamp: 0,
             message_type_id: msg_type::COMMAND_AMF0,
             message_stream_id: 0,
-            payload: cmd.to_body(),
+            payload: cmd.to_body()?,
         };
-        out.extend_from_slice(&self.writer.write(&msg).expect(
-            "a small internal AMF0 command message never exceeds the 24-bit message_length field",
-        ));
-        out
+        out.extend_from_slice(&self.writer.write(&msg)?);
+        Ok(out)
     }
 
     /// `releaseStream` + `FCPublish` (each `(null, stream_key)`, fire-and-
     /// forget: their `_result`s carry transaction ids the state machine
     /// never waits on) then `createStream` — the ffmpeg/OBS/FMLE sequence
     /// some CDN ingest front ends require (#1108/RTMP-W9).
-    fn build_publish_preamble_and_create_stream(&mut self) -> Vec<u8> {
+    fn build_publish_preamble_and_create_stream(&mut self) -> Result<Vec<u8>> {
         let mut out = Vec::new();
         for name in [CMD_RELEASE_STREAM, CMD_FC_PUBLISH] {
             let txn_id = self.next_txn_id;
@@ -444,17 +438,15 @@ impl ClientSession {
                 timestamp: 0,
                 message_type_id: msg_type::COMMAND_AMF0,
                 message_stream_id: 0,
-                payload: cmd.to_body(),
+                payload: cmd.to_body()?,
             };
-            out.extend_from_slice(&self.writer.write(&msg).expect(
-                "a small internal AMF0 command message never exceeds the 24-bit message_length field",
-            ));
+            out.extend_from_slice(&self.writer.write(&msg)?);
         }
-        out.extend_from_slice(&self.build_create_stream());
-        out
+        out.extend_from_slice(&self.build_create_stream()?);
+        Ok(out)
     }
 
-    fn build_create_stream(&mut self) -> Vec<u8> {
+    fn build_create_stream(&mut self) -> Result<Vec<u8>> {
         let txn_id = self.next_txn_id;
         self.next_txn_id += 1.0;
         self.state = ClientState::CreateStreamSent { txn_id };
@@ -469,14 +461,12 @@ impl ClientSession {
             timestamp: 0,
             message_type_id: msg_type::COMMAND_AMF0,
             message_stream_id: 0,
-            payload: cmd.to_body(),
+            payload: cmd.to_body()?,
         };
-        self.writer.write(&msg).expect(
-            "a small internal AMF0 command message never exceeds the 24-bit message_length field",
-        )
+        self.writer.write(&msg)
     }
 
-    fn build_publish(&mut self) -> Vec<u8> {
+    fn build_publish(&mut self) -> Result<Vec<u8>> {
         self.state = ClientState::PublishSent;
 
         let cmd = Command {
@@ -493,11 +483,9 @@ impl ClientSession {
             timestamp: 0,
             message_type_id: msg_type::COMMAND_AMF0,
             message_stream_id: self.stream_id.unwrap_or(1),
-            payload: cmd.to_body(),
+            payload: cmd.to_body()?,
         };
-        self.writer.write(&msg).expect(
-            "a small internal AMF0 command message never exceeds the 24-bit message_length field",
-        )
+        self.writer.write(&msg)
     }
 
     fn dispatch_message(
@@ -598,7 +586,7 @@ impl ClientSession {
                 };
                 events.push(ClientEvent::Connected { properties: props });
                 self.state = ClientState::Connected;
-                out.extend_from_slice(&self.build_publish_preamble_and_create_stream());
+                out.extend_from_slice(&self.build_publish_preamble_and_create_stream()?);
             }
             ClientState::CreateStreamSent { txn_id }
                 if (cmd.transaction_id - txn_id).abs() < 0.5 =>
@@ -610,7 +598,7 @@ impl ClientSession {
                 self.stream_id = Some(sid);
                 events.push(ClientEvent::StreamCreated { stream_id: sid });
                 self.state = ClientState::StreamCreated;
-                out.extend_from_slice(&self.build_publish());
+                out.extend_from_slice(&self.build_publish()?);
             }
             _ => {}
         }
@@ -1069,7 +1057,7 @@ mod tests {
             timestamp: 0,
             message_type_id: msg_type::COMMAND_AMF0,
             message_stream_id: 0,
-            payload: error_cmd.to_body(),
+            payload: error_cmd.to_body().unwrap(),
         };
         let bytes = ChunkWriter::new().write(&msg).unwrap();
 

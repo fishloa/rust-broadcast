@@ -159,6 +159,9 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         //    the enclosing `moof` (default-base-is-moof), so we track the moof's
         //    absolute file offset.
         let mut offset = 0usize;
+        // Every `mdat` payload range, scanned once for the whole file (not once
+        // per `traf`).
+        let mdats = crate::frag_offsets::mdat_ranges(input);
         // Fragments waiting for their `mdat`. A queue, not a single slot:
         // `moof`, `moof`, `mdat` is legal (ISO/IEC 14496-12:2015 §8.8.4 allows
         // any number of `moof`s, and CMAF writes one per track for
@@ -201,7 +204,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                 // segment carrying several `moof`s before one `mdat` resolves
                 // them in order.
                 for (moof_off, moof) in pending_moofs.drain(..) {
-                    absorb_fragment(input, moof_off, &moof, &mut builders)?;
+                    absorb_fragment(input, &mdats, moof_off, &moof, &mut builders)?;
                 }
             }
             if consumed == 0 {
@@ -241,6 +244,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
 /// [`crate::cenc_decrypt::CencDecryptor`] so the two cannot drift.
 fn absorb_fragment(
     file: &[u8],
+    mdats: &[crate::frag_offsets::MdatRange],
     moof_off: usize,
     moof: &MovieFragmentBox,
     builders: &mut [TrackBuilder],
@@ -279,7 +283,8 @@ fn absorb_fragment(
             }
             builder.next_dts = crate::frag_offsets::tfdt_as_i64(base)?;
         }
-        for r in crate::frag_offsets::sample_ranges(file, moof_off, moof, tfhd.track_id)? {
+        for r in crate::frag_offsets::sample_ranges_in(file, mdats, moof_off, moof, tfhd.track_id)?
+        {
             let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
             let dts = builder.next_dts;
             let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;

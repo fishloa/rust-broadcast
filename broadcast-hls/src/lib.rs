@@ -149,17 +149,17 @@
 //!   carry-forward sequence (e.g. reverting to `None` after a `Some`) cannot
 //!   round-trip, since the wire format has no way to say "stop applying the
 //!   map" short of `#EXT-X-DISCONTINUITY` + a new `#EXT-X-MAP`.
-//! - A per-segment tag outside the recognized set above (e.g.
-//!   `#EXT-X-DATERANGE`) is captured into the flat, playlist-level
-//!   [`MediaPlaylist::extra_tags`] — the data is preserved, not dropped,
-//!   but re-rendering loses its original interleaved position (extra tags
-//!   always render as one block before all segments, matching `to_m3u8()`'s
+//! - An unrecognized `#EXT` tag that is not segment-defining (e.g. a vendor
+//!   `#EXT-` tag, wherever it appears) is captured into the flat,
+//!   playlist-level [`MediaPlaylist::extra_tags`] — the data is preserved, not
+//!   dropped, but re-rendering loses its original interleaved position (extra
+//!   tags render as one block before all segments, matching `to_m3u8()`'s
 //!   existing placement). The tags that *define a Media Segment* —
-//!   `#EXT-X-KEY`, `#EXT-X-PROGRAM-DATE-TIME`, `#EXT-X-DATERANGE`,
-//!   `#EXT-X-CUE-*` and any other unrecognized line appearing between two
-//!   Media Segment URIs — are instead attached to the following segment's
-//!   [`MediaSegment::pre_tags`] and re-render in place, so key rotation and
-//!   the PDT timeline survive re-render (audit BH-W5, issue #1111).
+//!   `#EXT-X-KEY`, `#EXT-X-PROGRAM-DATE-TIME`, `#EXT-X-DATERANGE` and
+//!   `#EXT-X-CUE-*` appearing between two Media Segment URIs — are instead
+//!   attached to the following segment's [`MediaSegment::pre_tags`] and
+//!   re-render in place, so key rotation and the PDT timeline survive
+//!   re-render (audit BH-W5, issue #1111).
 //! - [`MediaSegment::bitrate`] (`#EXT-X-BITRATE`, RFC 8216bis §4.4.4.8) uses
 //!   the same carry-forward + dedup-render rule as `map` above; the spec's
 //!   producer-side constraint that the tag "does not apply" to a segment
@@ -204,6 +204,11 @@
 #![doc = "```"]
 
 extern crate alloc;
+
+// Compile-check every Rust snippet in the README so it cannot rot.
+#[cfg(doctest)]
+#[doc = include_str!("../README.md")]
+struct ReadmeDoctests;
 
 mod error;
 

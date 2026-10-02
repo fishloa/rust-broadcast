@@ -82,8 +82,10 @@
 //! additive, not a breaking re-split of what is here today.
 //!
 //! **Still exactly one writer per group, enforced the same way**: both
-//! [`Trunk::writer`] and [`Trunk::segment_writer`] return `None` on every
-//! call after their first, via their own `AtomicBool` — two concurrent
+//! [`Trunk::writer`] and [`Trunk::segment_writer`] return `None` while a
+//! previously-issued handle is still alive, via their own `AtomicBool`
+//! (released when the handle is dropped, so a source reconnect can re-take
+//! it) — two concurrent
 //! *sample* writers remain exactly as impossible as before this split; what
 //! changed is that a *segment* writer and a *sample* writer are no longer
 //! forced to be the same handle.
@@ -1579,11 +1581,14 @@ impl Trunk {
     /// for why the split is safe and what it does and does not guarantee
     /// across rings.
     ///
-    /// Returns `None` on every call after the first — this ring group has
-    /// exactly one writer too, guarded by its own `AtomicBool` rather than
-    /// [`Trunk::writer`]'s, for exactly the same reason: a second concurrent
-    /// segment/part writer would silently interleave two unrelated publish
-    /// sequences into the segment or part ring.
+    /// Returns `None` while a previously-issued [`SegmentWriter`] is still
+    /// alive — this ring group has exactly one live writer too, guarded by
+    /// its own `AtomicBool` rather than [`Trunk::writer`]'s, for exactly the
+    /// same reason: a second concurrent segment/part writer would silently
+    /// interleave two unrelated publish sequences into the segment or part
+    /// ring. Like [`Trunk::writer`] it is **re-issuable**: dropping the
+    /// handle releases the slot, so a later call succeeds again (resume
+    /// numbering from [`SegmentWriter::next_sequence_number`]).
     pub fn segment_writer(self: &Arc<Self>) -> Option<SegmentWriter> {
         self.segment_writer_taken
             .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)

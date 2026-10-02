@@ -37,7 +37,9 @@
 
 use alloc::vec::Vec;
 
-use crate::box_types::parse_box;
+use broadcast_common::Parse;
+
+use crate::box_types::{BOX_HEADER_MIN_SIZE, BoxHeader, SIZE_TO_EOF};
 use crate::error::{Error, Result};
 use crate::movie_fragment::{MovieFragmentBox, TFHD_DEFAULT_BASE_IS_MOOF};
 
@@ -62,35 +64,60 @@ pub struct FragmentSampleRange {
 
 /// An `mdat` payload range (the box's first payload byte through its last).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct MdatRange {
+pub struct MdatRange {
     start: usize,
     end: usize,
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Number of whole-file `mdat` scans on this thread (work-counter for the
+    /// "scan once per file, not once per `traf`" guarantee).
+    pub(crate) static MDAT_SCANS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
 /// Collect every top-level `mdat`'s payload range from `file`.
+///
+/// Scan once per file and hand the result to [`sample_ranges_in`]; rescanning
+/// per `traf` made demuxing O(fragments x boxes).
 ///
 /// A box whose declared size runs past the file (a truncated capture) is
 /// clamped to the file end rather than rejected: the caller may legitimately
-/// hold a cut-short recording whose early fragments are intact.
-fn mdat_ranges(file: &[u8]) -> Vec<MdatRange> {
+/// hold a cut-short recording whose early fragments are intact. (`parse_box`
+/// itself reports such a box as `BufferTooShort`, so the header is read with
+/// [`BoxHeader::parse`] and the extent computed here.)
+pub fn mdat_ranges(file: &[u8]) -> Vec<MdatRange> {
+    #[cfg(test)]
+    MDAT_SCANS.with(|c| c.set(c.get() + 1));
     let mut out = Vec::new();
     let mut offset = 0usize;
-    while offset + 8 <= file.len() {
-        let Ok((bx, consumed)) = parse_box(&file[offset..]) else {
+    while offset + BOX_HEADER_MIN_SIZE <= file.len() {
+        let rest = &file[offset..];
+        let Ok(header) = BoxHeader::parse(rest) else {
             break;
         };
-        if bx.header.box_type.is(b"mdat") {
-            let body_start = offset + consumed - bx.body.len();
-            let end = (body_start + bx.body.len()).min(file.len());
-            out.push(MdatRange {
-                start: body_start,
-                end,
-            });
-        }
-        if consumed == 0 {
+        let hdr_sz = header.header_size();
+        let total = if header.size == SIZE_TO_EOF as u64 {
+            rest.len()
+        } else {
+            match usize::try_from(header.size) {
+                Ok(t) if t >= hdr_sz => t,
+                // A size below the header (framing is wrong) or one that does
+                // not fit `usize`: nothing after it can be trusted.
+                Ok(_) => break,
+                Err(_) => rest.len(),
+            }
+        };
+        if hdr_sz > rest.len() {
             break;
         }
-        offset += consumed;
+        if header.box_type.is(b"mdat") {
+            out.push(MdatRange {
+                start: offset + hdr_sz,
+                end: offset + total.min(rest.len()),
+            });
+        }
+        offset += total.min(rest.len());
     }
     out
 }
@@ -115,7 +142,19 @@ pub fn sample_ranges(
     moof: &MovieFragmentBox,
     track_id: u32,
 ) -> Result<Vec<FragmentSampleRange>> {
-    let mdats = mdat_ranges(file);
+    sample_ranges_in(file, &mdat_ranges(file), moof_off, moof, track_id)
+}
+
+/// [`sample_ranges`] with the file's `mdat` ranges supplied by the caller
+/// (from one [`mdat_ranges`] call per file), so resolving many fragments does
+/// not rescan the file for each.
+pub fn sample_ranges_in(
+    file: &[u8],
+    mdats: &[MdatRange],
+    moof_off: usize,
+    moof: &MovieFragmentBox,
+    track_id: u32,
+) -> Result<Vec<FragmentSampleRange>> {
     let mut out = Vec::new();
     // Running end of the data consumed so far in this moof, used for a trun
     // without a `data_offset` and for the next traf with no explicit base.
@@ -189,7 +228,7 @@ pub fn sample_ranges(
                             what: "fragment sample data",
                         });
                     }
-                    if !inside_mdat(&mdats, start, end) {
+                    if !inside_mdat(mdats, start, end) {
                         return Err(Error::InvalidInput(
                             "fragment sample range is outside every mdat payload",
                         ));
@@ -437,5 +476,80 @@ mod tests {
         assert!(add_offset(i64::MIN, -1).is_err());
         assert_eq!(add_duration(10, 3).unwrap(), 13);
         assert_eq!(add_offset(10, -3).unwrap(), 7);
+    }
+
+    /// Number of whole-file `mdat` scans so far on this thread.
+    fn scans() -> usize {
+        MDAT_SCANS.with(|c| c.get())
+    }
+
+    /// A final `mdat` cut short mid-payload is clamped to the file end (the
+    /// documented behaviour), so samples that lie inside the surviving bytes
+    /// still resolve. `parse_box` reports such a box as `BufferTooShort`, which
+    /// the old `mdat_ranges` treated as end-of-walk, dropping the range.
+    #[test]
+    fn truncated_final_mdat_is_clamped_not_dropped() {
+        let mdat_body: Vec<u8> = (0u8..8).collect();
+        let probe = container(
+            b"traf",
+            &[
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, 1, None),
+                trun(&[2, 2], Some(0)),
+            ],
+        );
+        let (pf, moof_off) = file_with(&[probe], &mdat_body);
+        let off = mdat_rel(&pf, moof_off, mdat_body.len());
+        let traf = container(
+            b"traf",
+            &[
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, 1, None),
+                trun(&[2, 2], Some(off)),
+            ],
+        );
+        let (full, moof_off) = file_with(&[traf], &mdat_body);
+        let moof = parse_moof(&full, moof_off);
+        let payload = full.len() - mdat_body.len();
+        // Keep 5 of the 8 payload bytes: both 2-byte samples survive.
+        let cut = &full[..payload + 5];
+        let ranges = mdat_ranges(cut);
+        assert_eq!(
+            ranges,
+            alloc::vec![MdatRange {
+                start: payload,
+                end: cut.len()
+            }]
+        );
+        let r = sample_ranges(cut, moof_off, &moof, 1).expect("early samples resolve");
+        assert_eq!((r[0].start, r[0].end), (payload, payload + 2));
+        assert_eq!((r[1].start, r[1].end), (payload + 2, payload + 4));
+        // A sample past the cut is still rejected.
+        let traf = container(
+            b"traf",
+            &[
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, 1, None),
+                trun(&[2, 2, 2], Some(off)),
+            ],
+        );
+        let (full3, moof_off3) = file_with(&[traf], &mdat_body);
+        let moof3 = parse_moof(&full3, moof_off3);
+        assert!(sample_ranges(&full3[..payload + 5], moof_off3, &moof3, 1).is_err());
+    }
+
+    /// `Fmp4Demux` scans the file's `mdat`s exactly once however many
+    /// fragments/trafs it holds (was once per traf: O(fragments x boxes)).
+    #[test]
+    fn demux_scans_mdats_once_per_file() {
+        use broadcast_common::Unpackage;
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/tests/fixtures/cenc_frag_layouts/clear_multitrun_omit_implicit.mp4"
+        );
+        let bytes = std::fs::read(path).expect("fixture");
+        let before = scans();
+        let media = crate::media::Fmp4Demux::new()
+            .unpackage(bytes.as_slice())
+            .expect("demux");
+        assert!(media.tracks.iter().map(|t| t.samples.len()).sum::<usize>() > 1);
+        assert_eq!(scans() - before, 1, "one mdat scan per file");
     }
 }

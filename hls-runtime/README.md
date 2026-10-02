@@ -119,9 +119,20 @@ framework can adapt it:
   turns an `Await` outcome into an actual bounded wait via
   `media_plane::Trunk::listen()` plus its own `tokio::time::timeout` (or
   equivalent).
-- **`server::master_playlist_m3u8`** — the master-playlist renderer;
-  takes the media playlist's served filename as an explicit argument, so an
-  adapter can serve it under any configured name.
+- **`HlsOrigin::master_playlist`** — the origin's own master playlist with
+  a measured peak `BANDWIDTH` (segment bytes over duration, rounded up) and
+  the `CODECS` of its init segment (or `set_track_specs` for a TS origin);
+  errors are the typed `server::HlsMasterError`.
+- **`server::master_playlist_m3u8`** — the context-free master-playlist
+  renderer (fixed 5 Mb/s estimate, no `CODECS`); takes the media playlist's
+  served filename as an explicit argument, so an adapter can serve it under
+  any configured name.
+- **Instance-named resources** — every resource served `immutable` carries
+  the origin's instance token (`init-{track}-{instance}-{generation}.mp4`,
+  `seg-{track}-{instance}-{msn}.{ext}`,
+  `part-{track}-{instance}-{msn}.{idx}.{ext}`; the bare `init-{track}.mp4`
+  is the current init, served `no-cache`), so a name maps to one origin's
+  bytes for ever across reconnects and restarts.
 - **`media_plane::egress::CachePolicy`** (`Immutable`/`NoCache`) — the
   cache-control policy a resolved `EgressResponse::Ready` carries, for an
   adapter to apply as HTTP `Cache-Control`.

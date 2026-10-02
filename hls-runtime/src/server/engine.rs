@@ -200,7 +200,7 @@ impl Default for Container {
 const PLACEHOLDER_BANDWIDTH_BPS: u64 = 5_000_000;
 
 /// How many superseded init segments stay resolvable by their versioned name
-/// (`init-{track}-{generation}.mp4`): segments and playlists that name an
+/// (`init-{track}-{instance}-{generation}.mp4`): segments and playlists that name an
 /// older generation are still cached by players and CDNs for a while after a
 /// mid-stream codec change.
 const INIT_HISTORY: usize = 8;
@@ -518,7 +518,8 @@ struct WindowView {
 ///
 /// A resource name must always map to the same bytes for `Immutable` to be
 /// true (audit r09-C2, issue #1030), so a changed init segment gets a new
-/// generation and a new versioned name, `init-{track}-{generation}.mp4`; the
+/// generation and a new versioned name,
+/// `init-{track}-{instance}-{generation}.mp4`; the
 /// bare `init-{track}.mp4` always means "the current one" and is served
 /// [`CachePolicy::NoCache`].
 #[derive(Default)]
@@ -586,9 +587,9 @@ fn segment_bandwidth_bps(len: usize, duration: Duration) -> Option<u64> {
     u64::try_from(bps).ok()
 }
 
-/// Parse `part-{track}-{epoch}-{seq}.{idx}.{ext}` (instance-named, the form
+/// Parse `part-{track}-{instance}-{seq}.{idx}.{ext}` (instance-named, the form
 /// the playlist uses) or the legacy `part-{track}-{seq}.{idx}.{ext}` into
-/// `(epoch, seq, idx)`; `epoch` is `None` for the legacy form. `None` if it
+/// `(instance, seq, idx)`; `instance` is `None` for the legacy form. `None` if it
 /// isn't a part filename in `container`'s extension or a field does not parse.
 fn parse_part(file: &str, container: Container) -> Option<(Option<u64>, u64, u32)> {
     let suffix = format!(".{}", container.segment_extension());
@@ -598,7 +599,7 @@ fn parse_part(file: &str, container: Container) -> Option<(Option<u64>, u64, u32
     Some((epoch, seq, idx.parse().ok()?))
 }
 
-/// `{track}-{seq}` or `{track}-{epoch}-{seq}` -> `(epoch, seq)`; `{track}` is
+/// `{track}-{seq}` or `{track}-{instance}-{seq}` -> `(instance, seq)`; `{track}` is
 /// validated but unused (an [`HlsOrigin`] holds a single track).
 fn parse_epoch_seq(names: &str) -> Option<(Option<u64>, u64)> {
     let mut fields = names.split('-');
@@ -619,10 +620,11 @@ fn parse_epoch_seq(names: &str) -> Option<(Option<u64>, u64)> {
 enum ImmediateResource {
     /// `init-{track}.mp4`: the current init (changes, never `immutable`).
     CurrentInit,
-    /// `init-{track}-{epoch}-{generation}.mp4`.
+    /// `init-{track}-{instance}-{generation}.mp4` (`epoch` is the instance
+    /// token).
     VersionedInit { epoch: u64, generation: u32 },
     /// `seg-{track}-{seq}.{ext}` (`epoch: None`, legacy) or
-    /// `seg-{track}-{epoch}-{seq}.{ext}`.
+    /// `seg-{track}-{instance}-{seq}.{ext}` (`epoch` is the instance token).
     Segment { epoch: Option<u64>, seq: u64 },
 }
 
@@ -686,6 +688,23 @@ pub enum HlsOriginBuildError {
         "HlsOrigin::builder(...).media_sequence_offset(...) leaves no room for u32 sequence numbers"
     )]
     MediaSequenceOffsetTooLarge,
+}
+
+/// Error returned by [`HlsOrigin::master_playlist`].
+#[derive(Debug, PartialEq, thiserror::Error)]
+#[non_exhaustive]
+pub enum HlsMasterError {
+    /// The measured peak segment bitrate does not fit the `u32` `BANDWIDTH`
+    /// of a master playlist variant.
+    #[error("measured BANDWIDTH {bandwidth} exceeds u32")]
+    BandwidthOverflow {
+        /// The measured peak segment bitrate, bits per second.
+        bandwidth: u64,
+    },
+    /// The master playlist could not be rendered (a field carries a
+    /// character forbidden in an HLS quoted string).
+    #[error("master playlist render failed: {0}")]
+    Render(broadcast_hls::Error),
 }
 
 /// Fluent builder for [`HlsOrigin`] (issue #873) — replaces the old
@@ -780,8 +799,9 @@ impl HlsOriginBuilder {
     /// A fresh [`Trunk`] restarts its segment numbers at `1`; the offset is
     /// the mechanism that keeps the Media Sequence Number a client sees
     /// increasing across a replacement origin (RFC 8216bis §6.2.2: it MUST NOT
-    /// decrease). Pass `previous.next_media_sequence().saturating_sub(1)`
-    /// (see [`HlsOrigin::next_media_sequence`]).
+    /// decrease). Pass `previous.next_media_sequence()` — not `- 1`: the number
+    /// the previous origin's *open* segment was shown with is skipped too, as
+    /// its parts were already served (see [`HlsOrigin::next_media_sequence`]).
     pub fn media_sequence_offset(mut self, offset: u64) -> Self {
         self.media_sequence_offset = offset;
         self
@@ -979,9 +999,10 @@ impl HlsOrigin {
     /// [`master_playlist_m3u8`] uses.
     ///
     /// # Errors
-    /// A message when the measured `BANDWIDTH` does not fit the `u32` of a
-    /// master playlist variant, or when the playlist cannot be rendered.
-    pub fn master_playlist(&self, media_playlist_name: &str) -> Result<String, String> {
+    /// [`HlsMasterError::BandwidthOverflow`] when the measured `BANDWIDTH`
+    /// does not fit the `u32` of a master playlist variant;
+    /// [`HlsMasterError::Render`] when the playlist cannot be rendered.
+    pub fn master_playlist(&self, media_playlist_name: &str) -> Result<String, HlsMasterError> {
         self.drain();
         let measured = locked(&self.window).peak_bandwidth_bps;
         let bandwidth = if measured == 0 {
@@ -990,7 +1011,7 @@ impl HlsOrigin {
             measured
         };
         let bandwidth = u32::try_from(bandwidth)
-            .map_err(|_| format!("measured BANDWIDTH {bandwidth} exceeds u32"))?;
+            .map_err(|_| HlsMasterError::BandwidthOverflow { bandwidth })?;
         let master = MasterPlaylist {
             variants: vec![Variant {
                 bandwidth,
@@ -1000,7 +1021,7 @@ impl HlsOrigin {
             }],
             ..Default::default()
         };
-        master.to_m3u8().map_err(|error| error.to_string())
+        master.to_m3u8().map_err(HlsMasterError::Render)
     }
 
     /// This origin's instance token: a number that differs for every origin
@@ -1523,10 +1544,9 @@ impl HlsOrigin {
             // A field the renderer would have to quote carries a character
             // forbidden there (audit BH-W7, issue #1111) — unreachable for
             // this origin's own generated URIs, but never emitted mangled.
-            Err(reason) => {
-                debug_assert!(false, "playlist render failed: {reason}");
-                EgressResponse::NotFound
-            }
+            // Answered as a plain miss, never a debug panic: a hostile or
+            // malformed data-driven field must not take the origin down.
+            Err(_) => EgressResponse::NotFound,
         }
     }
 
@@ -2953,6 +2973,31 @@ mod tests {
             w.push(window_entry(seq, 0, false), 1);
         }
         assert_eq!(window_seqs(&w), vec![(3, false), (4, false), (5, false)]);
+    }
+
+    /// A measured peak bitrate above `u32::MAX` must surface as the typed
+    /// [`HlsMasterError::BandwidthOverflow`] (was an untyped `String`).
+    #[test]
+    fn master_playlist_reports_typed_bandwidth_overflow() {
+        let (_trunk, origin, writer) = make_origin();
+        // 8 bytes (64 bits) in 10 ns = 6.4e9 b/s > u32::MAX.
+        writer
+            .publish_segment(SegmentEntry::new(
+                Bytes::from(vec![1u8; 8]),
+                1,
+                Duration::from_nanos(10),
+                Timestamp::from_nanos(0),
+                SegmentMeta {
+                    discontinuous: false,
+                },
+            ))
+            .unwrap();
+        assert_eq!(
+            origin.master_playlist("media.m3u8"),
+            Err(HlsMasterError::BandwidthOverflow {
+                bandwidth: 6_400_000_000
+            })
+        );
     }
 
     #[test]

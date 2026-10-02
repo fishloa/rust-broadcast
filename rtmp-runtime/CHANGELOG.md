@@ -16,12 +16,23 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   and `io::RtmpConnection` gains a new private `pending_write` field (both additive).
 - **#1108 (RTMP-W6)**: `server::ServerEvent` gains a new `Unsupported { message_type_id: u8 }`
   variant (additive; the enum is `#[non_exhaustive]`).
+- `amf0::Command::to_body` now returns `Result<Vec<u8>, RtmpError>` instead of `Vec<u8>` (it
+  panicked on an over-long AMF0 string; see Fixed).
+
+### Added
+- `DEFAULT_MAX_IN_PROGRESS_BYTES` (16 MiB) and `ServerConfig::max_in_progress_bytes` /
+  `ClientConfig::max_in_progress_bytes`: the per-connection budget for bytes held across
+  in-progress chunk streams (see Fixed, RTMP-W1).
 
 ### Fixed
+- **Remote panic (release audit)**: a peer-chosen publishing name of 65 518..=65 535 bytes fit the
+  request's AMF0 u16 string prefix but, echoed into the `"<key> is now published."` `onStatus`
+  description, overflowed it; `Command::to_body` then hit `.expect` and panicked the server. The
+  session now returns an `Err` instead. The client's internal command builders no longer
+  `.expect` either (a large `app`/`tc_url`/`stream_key` is an `Err`, not a panic).
 - **RTMP-W1 aggregate memory budget**: nothing bounded the total bytes held across in-progress chunk
   streams (up to 512 MiB per connection). `ChunkAssembler` now reserves each new message's full
-  declared length against a per-connection budget (`DEFAULT_MAX_IN_PROGRESS_BYTES`, 16 MiB;
-  `ServerConfig::max_in_progress_bytes` / `ClientConfig::max_in_progress_bytes`) and releases it on
+  declared length against a per-connection budget (see Added) and releases it on
   completion or abort; exceeding it is a fatal `Malformed` error for the connection (#1085).
 - **RTMP-W6 aggregate messages**: Aggregate (type 22) messages are now unpacked into their FLV-tag
   sub-messages and delivered as ordinary media events, timestamps renormalised against the
@@ -39,7 +50,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `Malformed`.
 - **#1108 (RTMP-W6)**: an AMF3-encoded command (message type 17 — a leading format-marker byte,
   then an otherwise-ordinary AMF0 command body) got no reply at all; the server now decodes it
-  exactly like an AMF0 command. Aggregate(22)/Data-AMF3(15)/Shared-Object(16/19) messages (still
+  exactly like an AMF0 command. Data-AMF3(15)/Shared-Object(16/19) messages (still
   out of scope to decode — see the crate's non-goals) now surface a
   `ServerEvent::Unsupported { message_type_id }` event instead of being silently dropped with no
   signal at all.

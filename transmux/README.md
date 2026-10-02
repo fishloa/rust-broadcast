@@ -16,7 +16,7 @@ The spokes are the `broadcast_common` inverse-pair traits **`Unpackage`** (conta
 | MPEG-2 TS (`TsDemux`, or streaming `StreamingTsDemux`) | CMAF/fMP4 (`CmafMux`) · progressive MP4 (`ProgressiveMux`) |
 | fMP4/CMAF (`Fmp4Demux`) · progressive MP4 (`ProgressiveDemux`) | MPEG-2 TS (`TsMux`) |
 | MPEG Program Stream (`PsDemux`) | CMAF-HLS (`HlsPackager`) · TS-HLS (`TsHlsPackager`, batch or streaming `StreamingTsHlsSegmenter`) |
-| WebM/Matroska (`WebmDemux`; laced blocks are a hard error, not silently skipped — real ffmpeg/mkvmerge output has no lacing) | DASH MPD (`DashPackager`) · LL-DASH (`LlDashPackager`) · Smooth (`SmoothPackager`; H.264 + AAC-LC only, every other codec rejected) · Matroska (`MkvMux`) |
+| WebM/Matroska (`WebmDemux`; Xiph/EBML/fixed-size laced blocks are unlaced into one sample per frame) | DASH MPD (`DashPackager`) · LL-DASH (`LlDashPackager`) · Smooth (`SmoothPackager`; H.264 + AAC-LC only, every other codec rejected) · Matroska (`MkvMux`) |
 | RTMP chunk stream (`RtmpDemux`) | RTMP chunk stream (`RtmpMux`) |
 
 Plus transforms — resegment/trim/track-select (`Repackage`), streaming CMAF
@@ -67,6 +67,7 @@ round-trips through the IR.
 | Multi-DRM `pssh` init data | Widevine (proto) · PlayReady (PRO/WRMHEADER) · FairPlay (`skd://`) — `drm` module | ✅ |
 | Sample-entry ext | `colr` (HDR), `pasp`, `clap` | ✅ |
 | Live / grouping | `prft`, `sbgp`/`sgpd`, `subs` | ✅ |
+| High-rate audio | `srat` (`SamplingRateBox`) inside an `AudioSampleEntryV1` (`entry_version` 1, `stsd` version 1) for sample rates above 65535 Hz (ISO/IEC 14496-12 §12.2.3) | ✅ |
 
 ### Codecs — sample entries + config (header parse only)
 
@@ -108,6 +109,9 @@ round-trips through the IR.
 | NAL conversion | Annex B ↔ length-prefixed (`annexb_to_length_prefixed` / `length_prefixed_to_annexb`) | ✅ |
 | NAL keyframe classification | `nal_unit_type` / `is_keyframe_nal` / `access_unit_is_keyframe` (`NalCodec` AVC/HEVC/VVC) | ✅ |
 | RTCP control packets | `RtcpPacket` — SR/RR/SDES/BYE/APP + `CompoundPacket` (RFC 3550 §6) | ✅ |
+| RFC 6381 `CODECS` strings | `rfc6381_codec_string` (the DASH builders' codec string, shared with the HLS `#EXT-X-STREAM-INF` `CODECS` attribute) | ✅ |
+| Fragment sample addressing | `frag_offsets` — the single ISO/IEC 14496-12 §8.8.7/§8.8.8 `trun`/`tfhd` offset resolver (`mdat_ranges` once per file, `sample_ranges_in` per `moof`) shared by `Fmp4Demux`, `CencDecryptor` and the validator; a truncated final `mdat` is clamped | ✅ |
+| URI references | `uri` — RFC 3986 §5.2 reference resolution for DASH `SegmentTemplate`/`BaseURL` | ✅ |
 | HLS playlists | `MediaPlaylist` / `MasterPlaylist` (RFC 8216); `#EXT-X-DISCONTINUITY` / `#EXT-X-DISCONTINUITY-SEQUENCE` (RFC 8216 §4.3.4.3/§4.3.3.3) | ✅ |
 | LL-HLS playlist directives | `MediaPlaylist::low_latency` (`LowLatencyConfig`) → `#EXT-X-SERVER-CONTROL` · `#EXT-X-PART-INF` · `#EXT-X-PART` · `#EXT-X-PRELOAD-HINT` (RFC 8216bis §4.4.3.7/§4.4.3.8/§4.4.4.9/§4.4.5.3); `MediaPlaylist::open_segment` (`hls::OpenSegment`) renders an in-progress live-edge segment as trailing `#EXT-X-PART` lines with no `#EXTINF` (RFC 8216bis §4.4.4.9) | ✅ |
 
@@ -120,16 +124,16 @@ round-trips through the IR.
 | fMP4 demux | `Unpackage` | `Fmp4Demux` (moov/moof → IR, all codecs) | ✅ |
 | Progressive MP4 demux | `Unpackage` | `ProgressiveDemux` (non-fragmented `moov` sample tables: `stts`/`ctts`/`stss`/`stsz`/`stsc`+`stco`/`co64` → IR; `sidx` v0/v1) | ✅ |
 | MPEG-PS demux | `Unpackage` | `PsDemux` | ✅ |
-| WebM demux | `Unpackage` | `WebmDemux` (EBML). Lacing is not supported — a laced block is a hard error, not silently skipped (real ffmpeg/mkvmerge output has no lacing) | ✅ |
+| WebM demux | `Unpackage` | `WebmDemux` (EBML). Laced blocks (Xiph, EBML and fixed-size, RFC 9559 §12) are unlaced into one sample per frame; a zero-length lace is rejected | ✅ |
 | CMAF / progressive / TS / MKV mux | `Package` | `CmafMux` · `ProgressiveMux` · `TsMux` · `MkvMux` (the exact inverse of `WebmDemux`, same CodecID mapping) | ✅ |
-| DASH / LL-DASH / Smooth | `Package` | `DashPackager` (static + dynamic/live MPD; `$Number$` or `$Time$`/SegmentTimeline addressing; Role/`@lang`/InbandEventStream; auto `ContentProtection` from `Track::encryption` + caller-supplied per-DRM-system `cenc:pssh`) · `LlDashPackager` · `SmoothPackager` (H.264 video + AAC-LC audio only — every other codec is rejected) | ✅ |
-| TS-HLS | `Package` | `TsHlsPackager` (batch); `StreamingTsHlsSegmenter` (live: `push`→`TsSegment`, rolling media playlist with sliding window + advancing `#EXT-X-MEDIA-SEQUENCE`) | ✅ |
+| DASH / LL-DASH / Smooth | `Package` | `DashPackager` (static + dynamic/live MPD; `$Number$` or `$Time$`/SegmentTimeline addressing; Role/`@lang`/InbandEventStream; auto `ContentProtection` from `Track::encryption` + caller-supplied per-DRM-system `cenc:pssh`) · `LlDashPackager` (`with_utc_timing` → `MPD/UTCTiming`) · `SmoothPackager` (`package_track_fragment` serves one fragment at a cumulative `tfxd` start) (H.264 video + AAC-LC audio only — every other codec is rejected) | ✅ |
+| TS-HLS | `Package` | `TsHlsPackager` (batch); `StreamingTsHlsSegmenter` (live: `push`→`TsSegment`, rolling media playlist with sliding window + advancing `#EXT-X-MEDIA-SEQUENCE`; `with_start_sequence` resumes numbering after a rebuild; `TsContinuity` carries TS continuity counters across segmenter rebuilds) | ✅ |
 | Repackage (resegment/trim/select) | — | `Repackage` | ✅ |
 | IR timeline conditioning (rebase / offset / gap) | — | `rebase_to_zero` · `apply_offset` · `insert_discontinuity_gap` (over `Track::start_decode_time`; 33-bit MPEG-2/32-bit RTP wrap unroll happens once at the demux edge, not as a caller transform) | ✅ |
 | IR timeline splice / concat → SSAI | — | `concat` · `splice_insert` (keyframe-snapped via `snap_to_preceding_sync`, → `SpliceResult` with `discontinuity_points`) | ✅ |
-| CENC/CBCS decrypt + encrypt | `Decrypt`/`Encrypt` | `CencDecryptor` · `CencEncryptor` (`cenc` AES-CTR, `cbcs` AES-CBC pattern; populates `Track::encryption` for `protect_init_segment`/`protect_media_segment`'s `sinf`/`senc`/`saio`/`saiz` emission) | ✅ |
-| CENC/CBCS DRM signalling | — | DASH: `DashPackager::content_protection` auto-derives the generic-CENC `ContentProtection` from `Track::encryption`. HLS: `cenc_ext_x_key` renders `#EXT-X-KEY` for `cbcs` (`cenc`/CTR has no HLS `METHOD` — DASH-only) | ✅ |
-| HLS Sample-AES / AES-128 encrypt+decrypt | — | `sample_aes` (`h264_encrypt_nal` · `aac_encrypt_frame` · `ac3_encrypt_frame` · `aes128_encrypt_segment` · `ExtXKey`; feature `sample-aes`) | ✅ |
+| CENC/CBCS decrypt + encrypt | `Decrypt`/`Encrypt` | `CencDecryptor` (`from_fmp4` / zero-copy `from_fmp4_bytes`) · `CencEncryptor` (`cenc` AES-CTR, `cbcs` AES-CBC pattern; populates `Track::encryption` for `protect_init_segment`/`protect_media_segment`'s `sinf`/`senc`/`saio`/`saiz` emission) | ✅ |
+| CENC/CBCS DRM signalling | — | DASH: `DashPackager::content_protection` auto-derives the generic-CENC `ContentProtection` from `Track::encryption`. HLS: `cenc_ext_x_key` renders `#EXT-X-KEY` for `cbcs` (`METHOD=SAMPLE-AES`) and `cenc` (`METHOD=SAMPLE-AES-CTR`, RFC 8216bis §4.4.4.4) | ✅ |
+| HLS Sample-AES / AES-128 encrypt+decrypt | — | `sample_aes` (`h264_encrypt_nal` · `aac_encrypt_frame` · `ac3_encrypt_frame` · `eac3_encrypt_frame` / `eac3_decrypt_frame` · `aes128_encrypt_segment` · `ExtXKey`; feature `sample-aes`) | ✅ |
 | fMP4/CMAF conformance validator | — | `validate_init_segment` / `validate_media_segment` / `validate_cmaf_track` (ISO 14496-12 + CMAF structural checks → `ConformanceIssue`) | ✅ |
 | RTP de/packetise + SDP | `Package`/`Unpackage` | `RtpPacketiser` / `RtpDepacketiser` | ✅ |
 | RTP streaming depayload (live) | — | `RtpStreamDepacketiser` (`push`/`flush` → timed `Sample`s: per-AU duration from RTP-timestamp deltas, `is_sync` from IDR; v1 low-delay H.264 / 1 AU-per-packet AAC / in-order feed) | ✅ |
@@ -224,12 +228,17 @@ $ transmux in.ps -o out.mpd -f dash --ll
 | `-f, --format <FMT>` | `cmaf` \| `hls` \| `ts-hls` \| `dash` \| `ts` \| `progressive` (else inferred from the output extension) |
 | `--segment-duration <SECS>` | target segment duration (default 6) |
 | `--ll` | low-latency variant where supported (LL-DASH) |
+| `--utc-timing-url <URL>` | DASH only: advertise `MPD/UTCTiming` (ISO/IEC 23009-1 §5.8.4.11) with this URL (HTTP `Date:` header); omitted by default |
 | `--tracks <IDS>` | restrict to these track IDs (comma-separated) |
 | `--decrypt` / `--key <KID:KEY>` | decrypt CENC input (requires the `cenc` feature) |
 
-Input autodetect signatures: MPEG-TS (`0x47` sync at 0 and +188), MP4/CMAF
-(`ftyp`/`styp`/`moov`/`moof` box at offset 4), MPEG-PS (`00 00 01 BA`),
-WebM/Matroska (EBML `1A 45 DF A3`), FLV (`"FLV"`).
+Input autodetect uses the `container-probe` crate, which scores every
+container's structural evidence over the leading bytes rather than checking
+fixed offsets: MPEG-TS (including 192-byte M2TS and captures that begin
+mid-packet), MP4/CMAF (ISOBMFF), MPEG-PS, WebM and Matroska (both demuxed by
+`WebmDemux`), and FLV. A container the prober recognises but this CLI has no
+demuxer for (MXF, WAV, Ogg, ADTS, MP3, Annex B) is reported as unsupported; an
+inconclusive or tied probe asks for the format to be given explicitly.
 
 ## Spec grounding
 

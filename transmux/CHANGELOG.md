@@ -14,6 +14,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `AudioSpecificConfig::effective_sampling_frequency` — the explicit rate when present, else the
   `samplingFrequencyIndex` rate (#1081, r04-O5).
 - `impl Serialize for SampleEntryVariant` (#1081, r05-O3).
+- `ll_dash::UTCTIMING_HTTP_HEAD_2014` / `_HTTP_XSDATE_2014` / `_HTTP_ISO_2014` /
+  `_NTP_2014` / `_HTTP_NTP_2014` / `_DIRECT_2014` — the registered
+  `urn:mpeg:dash:utc:*:2014` `UTCTiming` scheme identifiers (ISO/IEC 23009-1
+  §5.8.4.11) accepted by `LlDashPackager::with_utc_timing`.
+- `webm_demux::ns_to_ir_ticks` — nanoseconds to IR ticks, rounding to nearest
+  (used for per-frame timing of laced WebM blocks).
+- `ac3::Ec3SpecificBox::from_es_all` — parse every E-AC-3 syncframe of an
+  elementary stream (independent plus dependent), stopping at the first bad
+  sync word or truncated tail.
+- `annexb::NAL_LENGTH_SIZE_MINUS_ONE` — the `lengthSizeMinusOne` (3) an
+  `avcC`/`hvcC` must declare for the IR's 4-byte NAL length prefix
+  (ISO/IEC 14496-15 §5.3.3).
+- `frag_offsets::mdat_ranges` / `MdatRange` / `sample_ranges_in` — scan the
+  file's `mdat` payload ranges once and resolve each `moof` against them.
 - `rfc6381_codec_string(&CodecConfig)` — the RFC 6381 codec string `DashPackager`
   writes into `Representation@codecs`, exposed so an HLS origin can fill
   `#EXT-X-STREAM-INF` `CODECS` (#1089).
@@ -80,7 +94,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 Optimization sweep (#1079, #1080, #1081). Apart from the three behaviour changes listed under
-`### Changed (breaking)` and `### Fixed`, every change below leaves the output byte-identical on the
+`### Changed (breaking)` and `### Fixed
+
+- `frag_offsets`: a final `mdat` cut short by a truncated capture is now clamped
+  to the file end as documented (it was dropped because `parse_box` reports a
+  truncated box as `BufferTooShort`), so early samples in it resolve instead of
+  failing with "outside every mdat". The `mdat` scan also runs once per file
+  rather than once per `traf` (`Fmp4Demux`, `CencDecryptor` and the validator
+  were O(fragments x boxes)). `cli`: the unsupported-container message no longer
+  carries a run of spaces; `webm_demux` no longer has an `unreachable!` in
+  library code.
+, every change below leaves the output byte-identical on the
 committed fixtures (pinned by `tests/sweep_output_golden.rs`, whose hashes were captured on the
 pre-sweep code) and is backed by a deterministic allocation or work counter
 (`tests/alloc_counts_sweep.rs` and in-module counters), never a timing.

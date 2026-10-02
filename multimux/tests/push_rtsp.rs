@@ -33,6 +33,15 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
+#[path = "support/bounded.rs"]
+mod bounded;
+
+/// Hard deadline for a `--version`/`-version` availability probe.
+const PROBE_DEADLINE: Duration = Duration::from_secs(10);
+/// Hard deadline for one `ffprobe` read of a short local file or capped live
+/// read (`-read_intervals %+3`); it is killed and the test fails on overrun.
+const FFPROBE_DEADLINE: Duration = Duration::from_secs(60);
+
 use multimux::push::{PushTransport, RtspTransport, RtspTransportConfig};
 use transmux::{CodecConfig, TsDemux};
 
@@ -61,18 +70,22 @@ fn scratch_dir(name: &str) -> PathBuf {
 
 // ── External-tool availability gates ────────────────────────────────────────
 
+/// Run an availability probe; a probe that hangs panics loudly rather than
+/// reading as "tool absent" (a silent skip is worse than no oracle).
+fn probe_ok(bin: &str, arg: &str) -> bool {
+    match bounded::output_bounded(Command::new(bin).arg(arg), PROBE_DEADLINE) {
+        Ok(o) => o.status.success(),
+        Err(e) if e.kind() == std::io::ErrorKind::TimedOut => panic!("{e}"),
+        Err(_) => false,
+    }
+}
+
 fn mediamtx_available() -> bool {
-    Command::new("mediamtx")
-        .arg("--version")
-        .output()
-        .is_ok_and(|o| o.status.success())
+    probe_ok("mediamtx", "--version")
 }
 
 fn ffprobe_available() -> bool {
-    Command::new("ffprobe")
-        .arg("-version")
-        .output()
-        .is_ok_and(|o| o.status.success())
+    probe_ok("ffprobe", "-version")
 }
 
 /// Skip this test cleanly, but LOUDLY: a silently-skipped oracle reads as a
@@ -228,22 +241,24 @@ impl Drop for MediaMtx {
 /// connected) so a regression that makes the stream unreadable fails fast
 /// rather than hanging. Returns `(success, stdout, stderr)`.
 fn ffprobe_read(url: &str) -> (bool, String, String) {
-    let out = Command::new("ffprobe")
-        .args([
-            "-v",
-            "error",
-            "-rtsp_transport",
-            "tcp",
-            "-read_intervals",
-            "%+3",
-            "-show_entries",
-            "stream=codec_name,codec_type",
-            "-of",
-            "json",
-        ])
-        .arg(url)
-        .output()
-        .expect("spawn ffprobe");
+    let out = bounded::output_bounded(
+        Command::new("ffprobe")
+            .args([
+                "-v",
+                "error",
+                "-rtsp_transport",
+                "tcp",
+                "-read_intervals",
+                "%+3",
+                "-show_entries",
+                "stream=codec_name,codec_type",
+                "-of",
+                "json",
+            ])
+            .arg(url),
+        FFPROBE_DEADLINE,
+    )
+    .expect("run ffprobe");
     (
         out.status.success(),
         String::from_utf8_lossy(&out.stdout).into_owned(),

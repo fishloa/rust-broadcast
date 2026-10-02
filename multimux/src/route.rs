@@ -391,9 +391,9 @@ pub(crate) struct ProgramServing {
     /// `crate::source::report_driver_progress` publishes it
     /// (`crate::source::segment::drive_program_segmenters`, the very next
     /// call in the same iteration); grabbing it here first would starve that
-    /// real segmenter of the one segment/part writer a `Trunk` ever hands
-    /// out (`media_plane::Trunk::segment_writer` returns `None` on every call
-    /// after the first). A program driven by a real segmenter never calls
+    /// real segmenter of the one live segment/part writer a `Trunk` hands
+    /// out (`media_plane::Trunk::segment_writer` returns `None` while a
+    /// previously-issued writer is still alive). A program driven by a real segmenter never calls
     /// [`RouteHandle::add_segment`]/[`add_part`](RouteHandle::add_part), so
     /// the two writers never actually contend in practice.
     segment_writer: Mutex<Option<SegmentWriter>>,
@@ -422,7 +422,7 @@ impl ProgramServing {
         dvr_config: Option<crate::dvr::DvrConfig>,
         route_name: &str,
         media_sequence_offset: u64,
-    ) -> Arc<Self> {
+    ) -> Result<Arc<Self>, hls_runtime::server::HlsOriginBuildError> {
         let mut builder = HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(target_duration_secs)
             .window_segments(window_segments)
@@ -431,10 +431,10 @@ impl ProgramServing {
         if container == Container::Fmp4 {
             builder = builder.low_latency(part_target_ms);
         }
-        let ll_hls = Arc::new(builder.build().expect(
-            "target_duration_secs and window_segments are always set above, \
-                     and an offset derived from a previous origin leaves room for u32",
-        ));
+        // `build` rejects a non-finite/non-positive target duration, a zero
+        // part target and an offset with no room for u32 — all reachable
+        // from caller-supplied numbers, so surfaced, never `expect`ed.
+        let ll_hls = Arc::new(builder.build()?);
         let dash = Arc::new(DashState::new(&trunk, window_segments));
 
         let ext = match container {
@@ -464,7 +464,7 @@ impl ProgramServing {
             }
         });
 
-        Arc::new(ProgramServing {
+        Ok(Arc::new(ProgramServing {
             route_name: route_name.to_string(),
             trunk,
             ll_hls,
@@ -472,7 +472,7 @@ impl ProgramServing {
             dvr: Mutex::new(dvr),
             segment_writer: Mutex::new(None),
             next_timeline_ns: AtomicU64::new(0),
-        })
+        }))
     }
 
     /// This program's `Trunk` — the same `Arc` `crate::http::resolve_route_program`
@@ -999,8 +999,8 @@ impl RouteHandle {
             // ...and never at or below what the DVR archive already holds
             // (a previous process's numbers).
             .max(u64::from(self.archive_floor));
-        let serving = ProgramServing::new(
-            trunk,
+        let serving = match ProgramServing::new(
+            Arc::clone(&trunk),
             self.target_duration_secs,
             self.part_target_ms,
             self.window_segments_cap,
@@ -1008,7 +1008,25 @@ impl RouteHandle {
             self.dvr_config.clone(),
             &self.name,
             media_sequence_offset,
-        );
+        ) {
+            Ok(serving) => serving,
+            Err(e) => {
+                // An unservable configuration (e.g. a NaN target duration
+                // that bypassed `Config::validate`): refuse to publish, and
+                // give the publish slot back so a corrected retry can bind.
+                tracing::error!(
+                    route = %self.name,
+                    ?program,
+                    error = %e,
+                    "cannot build this program's serving state; program not published"
+                );
+                let mut active = crate::lock::write(&self.active_publisher);
+                if active.get(&program).is_some_and(|o| Arc::ptr_eq(o, &trunk)) {
+                    active.remove(&program);
+                }
+                return;
+            }
+        };
         programs.insert(program, serving);
         self.program_notify.notify_waiters();
     }
@@ -1452,6 +1470,27 @@ mod program_registry_tests {
             }
             _ => panic!("expected ProgramResolution::Found (the first publisher's binding)"),
         }
+    }
+
+    /// A route built over a non-finite target duration (one that bypassed
+    /// `Config::validate`) must refuse to publish — logging, not panicking
+    /// in `ProgramServing::new` — and must give the publish slot back.
+    #[test]
+    fn publish_program_with_nan_target_duration_does_not_panic() {
+        let route = RouteHandle::new(f64::NAN, 500, 4);
+        let trunk = test_trunk();
+        route.publish_program(ProgramId(1), Arc::clone(&trunk));
+        assert!(
+            matches!(
+                route.resolve_program(ProgramId(1)),
+                ProgramResolution::NotYetAnnounced | ProgramResolution::NotFound
+            ),
+            "an unservable route must not publish the program"
+        );
+        assert!(
+            crate::lock::read(&route.active_publisher).is_empty(),
+            "the publish slot must be released so a retry can bind"
+        );
     }
 
     /// `release_program` is the counterpart a reaped session's own

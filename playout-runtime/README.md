@@ -31,7 +31,7 @@ implies. `no_std` + `alloc`. No HTTP, no tokio.
   `splice_insert()` (ANSI/SCTE 35 2023r1 §9.7.3) a transition implies, using
   `scte35-splice`'s own `Serialize` (not hand-assembled bytes), with its
   target instant conditioned against real candidate boundaries via
-  [`ssai_runtime::splice::condition_splice_point`] — reused, not
+  [`ssai_runtime::splice::condition_splice_point_wrapping`] — reused, not
   re-implemented.
 
 ## What this crate is **not**
@@ -48,7 +48,7 @@ implies. `no_std` + `alloc`. No HTTP, no tokio.
   [`transition::TransitionPlan::discontinuity`] at the playlist/init-segment
   level — neither dependency is pulled in here.
 - **No boundary conditioning of its own.** [`scte35::build_splice_insert`]
-  calls `ssai-runtime`'s `condition_splice_point` rather than duplicating
+  calls `ssai-runtime`'s `condition_splice_point_wrapping` rather than duplicating
   nearest-boundary snapping — two implementations of the same boundary math
   could disagree about the same boundary.
 - **No HTTP, no tokio.** A `multimux` adapter driving a real channel clock

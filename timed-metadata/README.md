@@ -50,7 +50,7 @@ let raw: Vec<u8> = (0..splice_hex.len()).step_by(2)
 
 let event = timeline.push_scte35(&raw).unwrap();
 let daterange = timeline.to_daterange(&event).unwrap();
-println!("{}", daterange.to_tag_line());
+println!("{}", daterange.to_tag_line().unwrap());
 // #EXT-X-DATERANGE:ID="2002",START-DATE="2024-01-15T12:00:00.000Z",
 //   PLANNED-DURATION=24,SCTE35-OUT=0xFC302100...
 ```

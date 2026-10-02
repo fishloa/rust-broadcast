@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `ClientSession::peek_next_cseq()`: the `CSeq` the next request-builder call will assign, so an
+  IO adapter can capture which response it must wait for before building the request (#1088).
+- `ServerEvent::MediaData`: an interleaved `$`-framed block (RFC 2326 §10.12) received by a
+  server, surfaced instead of an error (see Fixed; the enum is `#[non_exhaustive]`, so this is
+  additive).
+
 ### Fixed
 - `AsyncRtspServer::next_request` no longer re-parses an unterminated header on every 8 KiB read (quadratic; the oversize-buffer test timed out on CI); it parses only once a blank line has arrived.
 - `ClientSession`'s 401 auth retry (#1065) now replays the original request's body and every
@@ -29,7 +36,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   for the current one (#1088). Its `pending_media` buffer is also now capped, dropping the oldest
   frame once full, instead of growing without bound while waiting on a slow-to-answer request.
 - `io::AsyncRtspServer::next_request` now demultiplexes an interleaved `$`-framed block (RFC 2326
-  §10.12) into a new `ServerEvent::MediaData`, instead of erroring; a TCP-interleaved PLAY client
+  §10.12) into `ServerEvent::MediaData` (see Added), instead of erroring; a TCP-interleaved PLAY client
   sending RTCP receiver reports (ffmpeg, VLC, GStreamer all do) previously had its connection
   dropped at the first one (#1088).
 

@@ -44,9 +44,11 @@
 //!
 //! # Reserved-bit / version policy
 //!
-//! The version field is validated (must be 2). The padding (`P`) bit is parsed
-//! and preserved but this codec emits unpadded packets (`P=0`); padding bytes on
-//! the wire are consumed per the length field. `no_std` + `alloc`.
+//! The version field is validated (must be 2). For the typed packets (SR/RR/
+//! SDES/BYE/APP) the padding (`P`) bit is parsed, the padding is validated and
+//! stripped (RFC 3550 §6.4.1), and this codec re-emits them unpadded (`P=0`).
+//! `RtcpPacket::Unknown` is opaque: its `P` bit and trailing padding octets are
+//! preserved verbatim, so it round-trips byte-identical. `no_std` + `alloc`.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -1164,7 +1166,13 @@ pub enum RtcpPacket {
         packet_type: u8,
         /// The header's 5-bit `RC`/`SC`/subtype field, meaning unknown here.
         count: u8,
-        /// The body after the common header, opaque (unknown layout).
+        /// The header's `P` (padding) bit, preserved verbatim: when set,
+        /// the trailing padding octets are *kept inside* `payload` (this
+        /// variant never interprets the body), so re-serializing is
+        /// byte-identical to the input.
+        padding: bool,
+        /// The body after the common header, opaque (unknown layout),
+        /// including any trailing padding octets (see `padding`).
         payload: Vec<u8>,
     },
 }
@@ -1227,6 +1235,7 @@ impl<'a> Parse<'a> for RtcpPacket {
                 RtcpPacket::Unknown {
                     packet_type,
                     count: hdr.count,
+                    padding: hdr.padding,
                     payload: bytes[RTCP_HEADER_LEN..total].to_vec(),
                 }
             }
@@ -1258,8 +1267,23 @@ impl Serialize for RtcpPacket {
             RtcpPacket::Unknown {
                 packet_type,
                 count,
+                padding,
                 payload,
             } => {
+                if matches!(
+                    RtcpPacketType::from_pt(*packet_type),
+                    RtcpPacketType::SenderReport
+                        | RtcpPacketType::ReceiverReport
+                        | RtcpPacketType::SourceDescription
+                        | RtcpPacketType::Bye
+                        | RtcpPacketType::App
+                ) {
+                    return Err(Error::InvalidValue {
+                        field: "unknown_packet_type",
+                        value: *packet_type as u64,
+                        reason: "PT 200-204 are recognized types and cannot be carried as Unknown",
+                    });
+                }
                 let len = RTCP_HEADER_LEN + payload.len();
                 if buf.len() < len {
                     return Err(Error::OutputBufferTooSmall {
@@ -1281,7 +1305,8 @@ impl Serialize for RtcpPacket {
                         reason: "exceeds 5-bit RC/SC field",
                     });
                 }
-                let hdr = CommonHeader::new(*count, *packet_type, length_words_minus_one(len)?);
+                let mut hdr = CommonHeader::new(*count, *packet_type, length_words_minus_one(len)?);
+                hdr.padding = *padding;
                 hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
                 buf[RTCP_HEADER_LEN..len].copy_from_slice(payload);
                 Ok(len)
@@ -1733,5 +1758,55 @@ mod tests {
         let mut bytes = sample_sr().to_bytes();
         bytes[0] = 0x40; // V=1
         assert!(SenderReport::parse(&bytes).is_err());
+    }
+
+    /// Release audit: an `Unknown` packet with `P=1` and trailing padding octets
+    /// must round-trip byte-identical (the parse used to drop the P bit, so the
+    /// re-serialization wrote `P=0` and differed).
+    #[test]
+    fn unknown_padded_packet_round_trips_byte_identical() {
+        // V=2, P=1, FMT=1, PT=206 (PSFB), length=2 words: 4 hdr + 8 body.
+        let bytes = [
+            0xA1, 0xCE, 0x00, 0x02, // header, P=1
+            0x00, 0x00, 0x00, 0x01, // body
+            0x00, 0x00, 0x00, 0x04, // 3 pad zeros + count=4
+        ];
+        let p = RtcpPacket::parse(&bytes).unwrap();
+        match &p {
+            RtcpPacket::Unknown {
+                padding, payload, ..
+            } => {
+                assert!(*padding);
+                assert_eq!(payload.len(), 8);
+            }
+            other => panic!("expected Unknown, got {other:?}"),
+        }
+        assert_eq!(p.to_bytes(), bytes);
+        assert_eq!(RtcpPacket::parse(&p.to_bytes()).unwrap(), p);
+    }
+
+    /// Release audit: PT 200-204 cannot be carried as `Unknown` (they would
+    /// parse back as typed packets), so serialize must reject them.
+    #[test]
+    fn unknown_with_recognized_pt_is_rejected_on_serialize() {
+        for pt in 200u8..=204 {
+            let p = RtcpPacket::Unknown {
+                packet_type: pt,
+                count: 0,
+                padding: false,
+                payload: vec![0; 4],
+            };
+            let mut buf = [0u8; 16];
+            assert!(
+                matches!(
+                    p.serialize_into(&mut buf),
+                    Err(Error::InvalidValue {
+                        field: "unknown_packet_type",
+                        ..
+                    })
+                ),
+                "pt {pt}"
+            );
+        }
     }
 }

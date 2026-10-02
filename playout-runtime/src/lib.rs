@@ -16,7 +16,7 @@
 //!   model with no `Parse`/`Serialize` pair — there is no wire format to be
 //!   symmetric about.
 //! - **This crate builds on `ssai-runtime` rather than duplicating it.**
-//!   `ssai_runtime::splice::condition_splice_point` already owns
+//!   `ssai_runtime::splice::condition_splice_point_wrapping` already owns
 //!   nearest-boundary splice-point conditioning (with an explicit tolerance,
 //!   refusing rather than silently snapping when nothing is close enough);
 //!   [`scte35::build_splice_insert`] calls it rather than re-implementing

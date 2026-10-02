@@ -20,8 +20,8 @@ Each [`Diagnostic`] checks one rule against a TS byte buffer and pushes
 | `FpsCadenceCheck` | VUI frame rate vs track timescale cadence |
 | `ParamSetsCheck` | missing SPS/PPS/VPS before the first IDR/IRAP |
 | `InterlaceCheck` | interlaced coding (`frame_mbs_only_flag == 0`) reported as content fact |
-| `check_playlist` | HLS playlist validation (RFC 8216): missing `#EXTM3U`, missing `#EXT-X-TARGETDURATION`, `#EXTINF` exceeding target, malformed `#EXT-X-DATERANGE` |
-| `check_hls_playlist` | HLS playlist validator (RFC 8216bis): structured parse via `transmux::MediaPlaylist`, plus 8 rules — `hls-missing-extm3u`, `hls-missing-targetduration`, `hls-extinf-exceeds-target`, `hls-malformed-daterange` (§4.4.5.1), `hls-preload-hint-with-endlist` (§4.4.5.3), `hls-skip-without-can-skip-until` (§4.4.3.8), `hls-part-duration-range` (§4.4.4.9), `hls-parse-error` (§4) |
+| `check_playlist` | alias of `check_hls_playlist` (kept for callers that predate it) — identical findings |
+| `check_hls_playlist` | HLS playlist validator (RFC 8216bis): structured parse via `broadcast_hls::MediaPlaylist`, plus 8 rules — `hls-missing-extm3u`, `hls-missing-targetduration`, `hls-extinf-exceeds-target`, `hls-malformed-daterange` (§4.4.5.1), `hls-preload-hint-with-endlist` (§4.4.5.3), `hls-skip-without-can-skip-until` (§4.4.3.8), `hls-part-duration-range` (§4.4.4.9), `hls-parse-error` (§4) |
 | `check_dash_mpd` | DASH MPD validator (ISO/IEC 23009-1): structured parse via `transmux::Mpd`, plus 6 rules — `dash-static-mpd-missing-duration` (ISO/IEC 23009-1:2012 §5.3.1.2), `dash-dynamic-mpd-no-availability-start`, `dash-representation-id-duplicate` (§5.3.5.2 Table 7), `dash-segment-timeline-monotonic` (§5.3.9.6.2), `dash-period-no-adaptation-sets` (§5.3.2), `dash-parse-error` |
 
 Diagnostics are validated against **real captures** (e.g. a clean H.264+AAC
@@ -101,8 +101,8 @@ for f in report.findings() {
 }
 ```
 
-HLS playlists are validated with `check_playlist` (legacy line-based) or
-`check_hls_playlist` (structured, using `broadcast_hls::MediaPlaylist::parse`).
+HLS playlists are validated with `check_hls_playlist` (structured, using
+`broadcast_hls::MediaPlaylist::parse`); `check_playlist` is an alias of it.
 DASH MPDs are validated with `check_dash_mpd` (structured, using `transmux::Mpd::parse`).
 
 ## Deferred Manifest Rules

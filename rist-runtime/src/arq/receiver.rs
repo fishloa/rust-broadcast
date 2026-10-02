@@ -294,21 +294,19 @@ impl Receiver {
     /// a genuinely bogus outlier, so a single spoofed packet cannot
     /// blackhole the stream.
     fn feed_resync_candidate(&mut self, seq_number: u16) -> DeliveryOutcome {
-        match &mut self.pending_resync {
-            Some(p) if p.next_needed == seq_number => {
+        let candidate = match self.pending_resync {
+            Some(mut p) if p.next_needed == seq_number => {
                 p.count += 1;
                 p.next_needed = seq::seq_next(seq_number);
+                p
             }
-            _ => {
-                self.pending_resync = Some(PendingResync {
-                    base: seq_number,
-                    next_needed: seq::seq_next(seq_number),
-                    count: 1,
-                });
-            }
-        }
-
-        let candidate = *self.pending_resync.as_ref().expect("just set above");
+            _ => PendingResync {
+                base: seq_number,
+                next_needed: seq::seq_next(seq_number),
+                count: 1,
+            },
+        };
+        self.pending_resync = Some(candidate);
         if candidate.count < RESYNC_CONFIRM_COUNT {
             return DeliveryOutcome::default();
         }

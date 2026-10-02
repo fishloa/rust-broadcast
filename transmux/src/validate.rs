@@ -461,6 +461,8 @@ fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Opt
         tracks: Vec::new(),
     };
 
+    // One whole-file `mdat` scan shared by every moof's resolver call.
+    let mdat_extents = crate::frag_offsets::mdat_ranges(bytes);
     // Validate each moof and its following mdat.
     for &mp in &moof_positions {
         let (_, moof_bx) = &top[mp];
@@ -512,8 +514,12 @@ fn validate_media_inner(bytes: &[u8], issues: &mut Vec<ConformanceIssue>) -> Opt
             else {
                 continue;
             };
-            let ranges = match crate::frag_offsets::sample_ranges(
-                bytes, moof_off, moof_box, track_id,
+            let ranges = match crate::frag_offsets::sample_ranges_in(
+                bytes,
+                &mdat_extents,
+                moof_off,
+                moof_box,
+                track_id,
             ) {
                 Ok(r) => r,
                 Err(_) => {

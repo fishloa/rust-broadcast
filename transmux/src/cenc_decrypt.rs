@@ -863,6 +863,8 @@ fn collect_fragment_samples(
 ) -> Result<Vec<crate::pipeline::Sample>> {
     let mut out = Vec::new();
     let mut offset = 0usize;
+    // One `mdat` scan for the whole file, shared by every fragment.
+    let mdats = crate::frag_offsets::mdat_ranges(file);
     let mut pending_moof: Option<(usize, MovieFragmentBox)> = None;
     // Running absolute decode-time cursor (media plane step 2c), seeded from
     // the first fragment's `tfdt` for this track (mirrors
@@ -895,6 +897,7 @@ fn collect_fragment_samples(
             }
             absorb_protected_fragment(
                 file,
+                &mdats,
                 moof_off,
                 &moof,
                 target_track_id,
@@ -943,6 +946,7 @@ fn collect_fragment_samples(
 /// wording is stable across the 2012 → 2022 editions.
 fn absorb_protected_fragment(
     file: &bytes::Bytes,
+    mdats: &[crate::frag_offsets::MdatRange],
     moof_off: usize,
     moof: &MovieFragmentBox,
     target_track_id: u32,
@@ -953,7 +957,7 @@ fn absorb_protected_fragment(
 
     // All §8.8.7/§8.8.8 addressing and bounds live in `frag_offsets`, shared
     // with `Fmp4Demux` so the two cannot drift (audit r05-W7).
-    for r in crate::frag_offsets::sample_ranges(file, moof_off, moof, target_track_id)? {
+    for r in crate::frag_offsets::sample_ranges_in(file, mdats, moof_off, moof, target_track_id)? {
         let dts = *next_dts;
         let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;
         let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
