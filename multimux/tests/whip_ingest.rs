@@ -241,3 +241,65 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
         "media playlist must carry a real closed-segment #EXTINF line: {playlist}"
     );
 }
+
+/// Audit r07-C6 (#1083): the handshake budget is per session, measured from
+/// admission. With a 3 s `ingest_connect_timeout_secs`, a real browser that
+/// only starts publishing 5 s after the route came up (past the budget since
+/// route start) must still be admitted and produce segments -- previously
+/// every session was fed a route-start clock and reaped on its first feed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segments() {
+    skip_unless!(node_available(), "node not on PATH");
+    skip_unless!(
+        harness_ready(),
+        "tests/assets/node_modules/playwright missing -- run `bun install` (or `npm install`) \
+         in multimux/tests/assets/ first"
+    );
+
+    let bind_addr = reserve_tcp_addr();
+    let whip_addr = reserve_tcp_addr();
+    let config = Config {
+        bind: bind_addr.to_string(),
+        target_duration_secs: 0.5,
+        part_target_ms: 100,
+        window_segments: 8,
+        ingest_connect_timeout_secs: 3.0,
+        routes: vec![Route {
+            name: "cam".to_string(),
+            input: InputSpec::Whip {
+                listen: whip_addr.to_string(),
+            },
+            outputs: vec![OutputKind::LlHls],
+            dvr: DvrConfig::default(),
+        }],
+        ..Config::default()
+    };
+
+    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+
+    // Real elapsed time since the route started is the thing under test, and
+    // `serve_with_registry` offers no clock to inject, so this real-browser
+    // test waits it out; the deterministic coverage of the same logic is
+    // `source::SessionClocks` (shared by the RTMP and WHIP loops) and the
+    // hand-clocked RTMP test `a_publisher_connecting_after_the_route_handshake_budget_still_lands`.
+    tokio::time::sleep(Duration::from_secs(5)).await;
+
+    let whip_url = format!("http://{whip_addr}/whip");
+    let publish = tokio::task::spawn_blocking(move || run_whip_publish_check(&whip_url));
+    let result = publish.await.expect("whip_publish.mjs task must not panic");
+    eprintln!(
+        "whip_ingest late result: ok={} connectionState={:?} bytesSent={:?} error={:?}",
+        result.ok, result.connection_state, result.bytes_sent, result.error
+    );
+
+    let client = reqwest::Client::new();
+    let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
+    let playlist = poll_until_extinf(&client, &playlist_url).await;
+    server.abort();
+
+    assert!(result.ok, "{:?}", result.error);
+    assert!(
+        playlist.contains("#EXTINF:"),
+        "a late publisher must still produce a closed segment: {playlist}"
+    );
+}

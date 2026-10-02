@@ -57,7 +57,7 @@ use crate::route::RouteHandle;
 /// (which embeds `Vec<OutputKind>`) for equality to decide whether a route's
 /// config actually changed.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq, serde::Deserialize, serde::Serialize)]
+#[derive(Clone, PartialEq, serde::Deserialize, serde::Serialize)]
 pub enum OutputKind {
     /// Low-Latency HLS (`master.m3u8` + `media.m3u8`).
     #[serde(rename = "llhls")]
@@ -152,6 +152,61 @@ pub enum OutputKind {
         /// single-route listener, not a multi-tenant path router.
         listen: String,
     },
+}
+
+/// Manual `Debug` (not derived): a push `url` can carry credentials in its
+/// userinfo and a stream key in its path or query, and a `Custom` output's
+/// `params` may carry anything — none of it may reach a log or panic message
+/// verbatim (audit T14, #1142). Push URLs render as `scheme://host[:port]/<redacted>`
+/// (see `crate::redact::redact_destination`); `params` render as `***`.
+impl std::fmt::Debug for OutputKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            OutputKind::LlHls => f.write_str("LlHls"),
+            OutputKind::Dash => f.write_str("Dash"),
+            OutputKind::LlDash => f.write_str("LlDash"),
+            OutputKind::Smooth => f.write_str("Smooth"),
+            OutputKind::TsHls => f.write_str("TsHls"),
+            OutputKind::Catchup => f.write_str("Catchup"),
+            OutputKind::SrtPush {
+                url,
+                format,
+                reconnect,
+            } => f
+                .debug_struct("SrtPush")
+                .field("url", &crate::redact::redact_destination(url))
+                .field("format", format)
+                .field("reconnect", reconnect)
+                .finish(),
+            OutputKind::RtmpPush {
+                url,
+                format,
+                reconnect,
+            } => f
+                .debug_struct("RtmpPush")
+                .field("url", &crate::redact::redact_destination(url))
+                .field("format", format)
+                .field("reconnect", reconnect)
+                .finish(),
+            OutputKind::RtspPush {
+                url,
+                format,
+                reconnect,
+            } => f
+                .debug_struct("RtspPush")
+                .field("url", &crate::redact::redact_destination(url))
+                .field("format", format)
+                .field("reconnect", reconnect)
+                .finish(),
+            OutputKind::Custom { type_tag, .. } => f
+                .debug_struct("Custom")
+                .field("type_tag", type_tag)
+                .field("params", &"***")
+                .finish(),
+            #[cfg(feature = "whep")]
+            OutputKind::Whep { listen } => f.debug_struct("Whep").field("listen", listen).finish(),
+        }
+    }
 }
 
 impl OutputKind {
@@ -301,6 +356,47 @@ pub trait Output: Send + Sync + 'static {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit T14 (#1142): `Debug` of a push output must not print its
+    /// credentials or stream key, nor a custom output's opaque params.
+    #[test]
+    fn output_kind_debug_redacts_push_urls_and_custom_params() {
+        let rtmp = OutputKind::RtmpPush {
+            url: "rtmp://admin:hunter2@live.example:1935/app/STREAMKEY123".to_string(),
+            format: None,
+            reconnect: None,
+        };
+        let srt = OutputKind::SrtPush {
+            url: "srt://host:9000?streamid=secret-stream".to_string(),
+            format: None,
+            reconnect: None,
+        };
+        let rtsp = OutputKind::RtspPush {
+            url: "rtsp://u:p4ss@cam.example/ingest/KEY".to_string(),
+            format: None,
+            reconnect: None,
+        };
+        let custom = OutputKind::Custom {
+            type_tag: "plugin".to_string(),
+            params: serde_json::json!({"api_key": "k-123456"}),
+        };
+        let all = format!("{rtmp:?} {srt:?} {rtsp:?} {custom:?}");
+        for secret in [
+            "hunter2",
+            "admin",
+            "STREAMKEY123",
+            "secret-stream",
+            "p4ss",
+            "KEY",
+            "k-123456",
+            "api_key",
+        ] {
+            assert!(!all.contains(secret), "{secret} leaked into Debug: {all}");
+        }
+        assert!(all.contains("rtmp://live.example:1935/<redacted>"), "{all}");
+        assert!(all.contains("srt://host:9000/<redacted>"), "{all}");
+        assert!(all.contains("plugin"), "{all}");
+    }
 
     #[test]
     fn output_kind_name_and_display_agree() {

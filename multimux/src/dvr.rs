@@ -121,7 +121,6 @@
 //! ]
 //! ```
 //!
-//! - `seq`: segment sequence number (matches `_HLS_msn`).
 //! - `start_pts_ns`: segment's `timeline_position` in nanoseconds (absolute,
 //!   from the `Trunk`'s timeline — what #900 uses for time-based seek).
 //! - `byte_offset`: byte offset of this segment within the period file
@@ -129,6 +128,16 @@
 //!   this is the start of the `moof` box, not the init, because the init is
 //!   the period file's head, before byte_offset 0).
 //! - `byte_len`: exact byte length of this segment within the period file.
+//!
+//! - `seq`: *the number the route's playlist shows* for the segment — the
+//!   `Trunk`'s sequence number plus the route's media-sequence offset
+//!   ([`DvrRecorder::with_seq_offset`]), so it stays unique across source
+//!   reconnects and process restarts.
+//!
+//! The recorder extends the array **in place**, one entry per segment
+//! (overwriting the closing `]`), and rewrites it whole and atomically only
+//! for a period's first entry or after a failed append. A crash can tear an
+//! in-place append; the catch-up reader recovers every complete entry.
 //!
 //! Byte offsets are measured from the start of the period file (byte 0).
 //! For fMP4, the init comes first, so the first segment's `byte_offset` is
@@ -172,7 +181,7 @@
 //! and it never mutates `Trunk` state.
 
 use std::fs::{self, File, OpenOptions};
-use std::io::Write;
+use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
@@ -532,6 +541,51 @@ pub struct DvrRecorder {
     /// packet boundary. Bytes left over from the previous call are
     /// prepended to the next.
     si_carry: Vec<u8>,
+    /// Scratch buffer for the section events one TS packet yields, reused
+    /// across [`Self::feed_si`] calls instead of collecting a fresh `Vec` per
+    /// packet.
+    si_events: Vec<SectionEvent>,
+    /// Added to a segment's `Trunk` sequence number to get the number the
+    /// archive indexes it under: the Media Sequence Number the route's
+    /// `HlsOrigin` shows for it (see [`Self::with_seq_offset`]).
+    seq_offset: u64,
+    /// Whether the archive directory has been scanned for periods already on
+    /// disk (done once, lazily, on the first poll — which runs on the
+    /// blocking pool — see [`Self::seed_from_disk`]).
+    seeded: bool,
+    /// Set by [`Self::seed_from_disk`] when earlier periods exist: the first
+    /// segment this recorder appends starts a new run (a reconnect or process
+    /// restart), whose timeline does not continue the archive's, so it is
+    /// indexed `discontinuous`.
+    next_segment_starts_run: bool,
+    /// The open `pN.idx` sidecar, kept for in-place appends (see
+    /// [`Self::append_index_entry`]); `None` until the period's first entry
+    /// has been written, and after a failed append.
+    index_file: Option<File>,
+    /// Length of the committed sidecar content (it ends with the array's
+    /// closing `]`).
+    index_len: u64,
+}
+
+/// The highest sequence number any period of `route_name`'s archive holds
+/// (`0` for an empty or missing archive) — what
+/// [`crate::route::RouteHandle::with_archive_floor`] takes so a restarted
+/// process numbers its segments above everything already archived. Reads
+/// every period index via the catch-up reader (cached per sidecar), on the
+/// blocking pool.
+///
+/// Returns `0` if the blocking task could not run (runtime shutting down).
+pub(crate) async fn archive_seq_floor(config: &DvrConfig, route_name: &str) -> u32 {
+    let dir = crate::catchup::archive_dir(config, route_name);
+    tokio::task::spawn_blocking(move || {
+        crate::catchup::scan_archive(&dir)
+            .iter()
+            .map(|s| s.seq)
+            .max()
+            .unwrap_or(0)
+    })
+    .await
+    .unwrap_or(0)
 }
 
 /// Reject a route name that is not a safe single directory component: one
@@ -623,7 +677,94 @@ impl DvrRecorder {
             last_present_event_id: None,
             current_programme: None,
             si_carry: Vec::new(),
+            si_events: Vec::new(),
+            seq_offset: 0,
+            seeded: false,
+            next_segment_starts_run: false,
+            index_file: None,
+            index_len: 0,
         })
+    }
+
+    /// Index segments under `Trunk` sequence number + `offset` instead of the
+    /// bare `Trunk` number (default `0`). A `Trunk` numbers its segments from
+    /// `1` again after a source reconnect, and the route's `HlsOrigin` hides
+    /// that by adding an offset to every Media Sequence Number it shows
+    /// (`HlsOriginBuilder::media_sequence_offset`); passing the *same* offset
+    /// here keeps the archive's sequence numbers equal to the live playlist's,
+    /// unique across reconnects, so catch-up's merge of archive and live tail
+    /// and its by-number lookup never confuse two runs (audit r07-C5, issue
+    /// #1083).
+    #[must_use]
+    pub fn with_seq_offset(mut self, offset: u64) -> Self {
+        self.seq_offset = offset;
+        self
+    }
+
+    /// Learn what an earlier run (a reconnect, or a previous process) left in
+    /// the archive directory: every `pN.<ext>`/`pN.idx` already on disk is
+    /// adopted into `periods`/`total_bytes` (so retention covers it) and the
+    /// next period number is one past the highest. A period file is
+    /// **never appended to or re-indexed** by a later run — before this, a
+    /// new recorder started at period 0 and appended to the old `p0`
+    /// while rewriting `p0.idx` from its own entries, orphaning every
+    /// earlier segment (audit r07-C5, issue #1083). Blocking disk I/O: runs
+    /// from [`Self::poll_and_persist`], which callers dispatch to the
+    /// blocking pool.
+    fn seed_from_disk(&mut self) -> Result<(), String> {
+        self.seeded = true;
+        let entries = match fs::read_dir(&self.archive_dir) {
+            Ok(entries) => entries,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+            Err(e) => return Err(format!("reading archive dir: {e}")),
+        };
+        let data_suffix = format!(".{}", &self.ext[1..]);
+        let mut found: std::collections::BTreeMap<u32, u64> = std::collections::BTreeMap::new();
+        let mut highest: Option<u32> = None;
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let Some(name) = name.to_str() else { continue };
+            let Some(rest) = name.strip_prefix('p') else {
+                continue;
+            };
+            let (digits, is_data) = if let Some(d) = rest.strip_suffix(data_suffix.as_str()) {
+                (d, true)
+            } else if let Some(d) = rest.strip_suffix(".idx") {
+                (d, false)
+            } else {
+                continue;
+            };
+            let Ok(num) = digits.parse::<u32>() else {
+                continue;
+            };
+            highest = Some(highest.map_or(num, |h| h.max(num)));
+            if is_data {
+                let len = entry.metadata().map(|m| m.len()).unwrap_or(0);
+                found.insert(num, len);
+            }
+        }
+        let Some(highest) = highest else {
+            return Ok(());
+        };
+        self.period = highest
+            .checked_add(1)
+            .ok_or_else(|| "archive period numbers are exhausted".to_string())?;
+        self.periods = found
+            .into_iter()
+            .map(|(num, file_bytes)| PeriodRecord { num, file_bytes })
+            .collect();
+        self.total_bytes = self
+            .periods
+            .iter()
+            .fold(0u64, |acc, p| acc.saturating_add(p.file_bytes));
+        self.next_segment_starts_run = true;
+        tracing::info!(
+            route = %self.route_name,
+            existing_periods = self.periods.len(),
+            next_period = self.period,
+            "DVR archive already holds periods; recording continues in a new period"
+        );
+        Ok(())
     }
 
     /// The [`ArchiveOverrun`] policy this recorder's pinning cursor uses.
@@ -652,21 +793,38 @@ impl DvrRecorder {
         }
         let mut buf = std::mem::take(&mut self.si_carry);
         buf.extend_from_slice(ts_bytes);
+        let mut events = std::mem::take(&mut self.si_events);
         let mut offset = 0;
+        let mut first_error: Option<String> = None;
         while offset + TS_PACKET_LEN <= buf.len() {
-            let events: Vec<SectionEvent> = self
-                .si_demux
-                .as_mut()
-                .expect("checked Some above")
-                .feed(&buf[offset..offset + TS_PACKET_LEN])
-                .collect();
-            for event in events {
-                self.handle_si_event(event)?;
+            events.clear();
+            if let Some(demux) = self.si_demux.as_mut() {
+                events.extend(demux.feed(&buf[offset..offset + TS_PACKET_LEN]));
+            }
+            for event in events.drain(..) {
+                // A section the recorder cannot act on (a failed roll, an
+                // unwritable sidecar) is dropped and counted; the rest of the
+                // packet, and every later packet, is still processed, and the
+                // consumed bytes never come back from the carry buffer (they
+                // used to be re-fed on every call, failing again each time).
+                if let Err(e) = self.handle_si_event(event) {
+                    metrics::counter!(
+                        crate::prometheus::DVR_SI_ERRORS_TOTAL,
+                        "route" => self.route_name.clone(),
+                    )
+                    .increment(1);
+                    tracing::warn!(route = %self.route_name, error = %e, "dropping an EIT section the DVR recorder could not act on");
+                    first_error.get_or_insert(e);
+                }
             }
             offset += TS_PACKET_LEN;
         }
-        self.si_carry = buf[offset..].to_vec();
-        Ok(())
+        // Keep the unconsumed tail (a partial packet) in the same allocation
+        // (one `drain`, no new `Vec`), and reuse the event buffer.
+        buf.drain(..offset);
+        self.si_carry = buf;
+        self.si_events = events;
+        first_error.map_or(Ok(()), Err)
     }
 
     /// Inspect one completed SI section; roll the period on a genuine EIT
@@ -771,6 +929,9 @@ impl DvrRecorder {
     }
 
     pub fn poll_and_persist(&mut self, init_bytes: Option<&[u8]>) -> Result<(), String> {
+        if !self.seeded {
+            self.seed_from_disk()?;
+        }
         // --- fMP4 init management ---
         if self.ext == ".m4s" {
             match (init_bytes, &self.last_init) {
@@ -865,7 +1026,7 @@ impl DvrRecorder {
             file.write_all(init)
                 .map_err(|e| format!("writing init: {e}"))?;
             file.flush().map_err(|e| format!("flushing init: {e}"))?;
-            self.init_len = init.len() as u64;
+            self.init_len = u64::try_from(init.len()).unwrap_or(u64::MAX);
             self.write_offset = self.init_len;
             self.last_init = Some(init.to_vec());
             tracing::debug!(
@@ -879,6 +1040,8 @@ impl DvrRecorder {
         self.current_file = Some(file);
         self.period_opened_at = Some(SystemTime::now());
         self.index.clear();
+        self.index_file = None;
+        self.index_len = 0;
 
         // Tag the newly-opened period with whatever programme is currently
         // known (issue #903) — a no-op if EIT has never been observed for
@@ -908,6 +1071,20 @@ impl DvrRecorder {
             );
             return Ok(());
         }
+
+        // The number the archive indexes this segment under (see
+        // `Self::with_seq_offset`); refused before anything is written if it
+        // does not fit the index's `u32`.
+        let seq = self
+            .seq_offset
+            .checked_add(u64::from(entry.sequence_number))
+            .and_then(|public| u32::try_from(public).ok())
+            .ok_or_else(|| {
+                format!(
+                    "segment {} + offset {} overflows the archive's u32 sequence range",
+                    entry.sequence_number, self.seq_offset
+                )
+            })?;
 
         // Start the first period lazily if not yet opened (TS routes: no
         // init to trigger start_period).
@@ -995,17 +1172,19 @@ impl DvrRecorder {
         let byte_len = u64::try_from(entry.bytes.len()).unwrap_or(u64::MAX);
         self.write_offset = byte_offset + byte_len;
 
+        let discontinuous = entry.meta.discontinuous || self.next_segment_starts_run;
+        self.next_segment_starts_run = false;
         self.index.push(IndexEntry {
-            seq: entry.sequence_number,
+            seq,
             start_pts_ns: entry.timeline_position.as_nanos(),
             byte_offset,
             byte_len,
-            duration_ns: entry.duration.as_nanos() as u64,
-            discontinuous: entry.meta.discontinuous,
+            duration_ns: u64::try_from(entry.duration.as_nanos()).unwrap_or(u64::MAX),
+            discontinuous,
         });
         self.last_appended_seq = Some(entry.sequence_number);
 
-        self.flush_index()?;
+        self.append_index_entry()?;
         self.enforce_retention()?;
 
         tracing::debug!(
@@ -1016,6 +1195,69 @@ impl DvrRecorder {
             offset = byte_offset,
             "appended segment"
         );
+        Ok(())
+    }
+
+    /// Record the entry just pushed onto `self.index` in the `pN.idx` sidecar.
+    ///
+    /// **Fast path** (every entry after a period's first): the sidecar is a
+    /// JSON array, so the new entry overwrites the closing `]` with
+    /// `,<entry>]` and the file is `sync_data`d — a few hundred bytes per
+    /// segment. The previous behaviour rewrote and fsynced the whole index
+    /// through a temp file on every segment: O(entries-in-period) bytes per
+    /// segment, about 25 ms and 680 KB for a 3-hour period of 2 s segments,
+    /// or 3.6 GB of writes per period (audit r07-O3, issue #1083).
+    ///
+    /// **Slow path** (first entry, or recovery after a failed append): the
+    /// atomic [`Self::flush_index`] rewrite of the whole index, after which the
+    /// sidecar is reopened for appends. A crash can tear an in-place append;
+    /// the catch-up reader recovers every complete entry from a torn tail
+    /// (`crate::catchup::parse_index`).
+    fn append_index_entry(&mut self) -> Result<(), String> {
+        let Some(entry) = self.index.last() else {
+            return Ok(());
+        };
+        if self.index.len() > 1
+            && let Some(file) = self.index_file.as_mut()
+        {
+            let json =
+                serde_json::to_vec(entry).map_err(|e| format!("serializing index entry: {e}"))?;
+            let mut tail = Vec::with_capacity(json.len() + 2);
+            tail.push(b',');
+            tail.extend_from_slice(&json);
+            tail.push(b']');
+            // Overwrite the closing `]`.
+            let at = self.index_len.saturating_sub(1);
+            let result = file
+                .seek(SeekFrom::Start(at))
+                .and_then(|_| file.write_all(&tail))
+                .and_then(|()| file.sync_data());
+            match result {
+                Ok(()) => {
+                    self.index_len = at.saturating_add(u64::try_from(tail.len()).unwrap_or(0));
+                    return Ok(());
+                }
+                Err(e) => {
+                    tracing::warn!(
+                        route = %self.route_name,
+                        period = self.period,
+                        error = %e,
+                        "appending to the period index failed; rewriting it whole"
+                    );
+                    self.index_file = None;
+                }
+            }
+        }
+        self.flush_index()?;
+        let file = OpenOptions::new()
+            .write(true)
+            .open(self.index_path())
+            .map_err(|e| format!("reopening index for append: {e}"))?;
+        self.index_len = file
+            .metadata()
+            .map_err(|e| format!("reading index length: {e}"))?
+            .len();
+        self.index_file = Some(file);
         Ok(())
     }
 
@@ -1091,7 +1333,8 @@ impl DvrRecorder {
         // fMP4: walk top-level boxes. Each segment is moof+mdat.
         let mut entries = Vec::new();
         let mut offset: usize = 0;
-        let init_len = self.init_len as usize;
+        let init_len = usize::try_from(self.init_len)
+            .map_err(|_| "init prelude length does not fit usize".to_string())?;
         while offset + 8 <= data.len() {
             let size = u32::from_be_bytes([
                 data[offset],
@@ -1456,6 +1699,209 @@ mod tests {
 
     fn cleanup_temp(dir: &std::path::Path) {
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// Record `segments` (sequence number, fill byte) into a fresh recorder
+    /// for route `name`, as one source run would, then drop it.
+    fn record_run(name: &str, cfg: &DvrConfig, offset: u64, segments: &[(u32, u8)]) {
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let mut recorder = DvrRecorder::new(name.to_string(), cfg.clone(), ".m4s", &trunk)
+            .expect("recorder")
+            .with_seq_offset(offset);
+        recorder.poll_and_persist(Some(b"INIT")).expect("init");
+        for &(seq, byte) in segments {
+            writer
+                .publish_segment(dummy_segment(seq, byte))
+                .expect("publish");
+        }
+        recorder.poll_and_persist(Some(b"INIT")).expect("persist");
+    }
+
+    /// Audit r07-C5 (#1083): a recorder built after a reconnect (or a process
+    /// restart) must neither append into nor re-index a period an earlier run
+    /// wrote. The old code restarted at period 0, appended to `p0.m4s` and
+    /// rewrote `p0.idx` from its own entries alone, orphaning every earlier
+    /// segment.
+    #[test]
+    fn a_later_recorder_leaves_earlier_periods_untouched() {
+        let tmp = temp_dir();
+        let cfg = dvr_config(&tmp, 10);
+        record_run("run", &cfg, 0, &[(1, 0xA1), (2, 0xA2), (3, 0xA3)]);
+        let dir = tmp.join("run");
+        let p0_bytes = std::fs::read(dir.join("p0.m4s")).unwrap();
+        let p0_idx = std::fs::read(dir.join("p0.idx")).unwrap();
+
+        // The source reconnects: a fresh Trunk numbers its segments from 1
+        // again; the route's origin shows them above the previous run.
+        record_run("run", &cfg, 3, &[(1, 0xB1), (2, 0xB2)]);
+
+        assert_eq!(std::fs::read(dir.join("p0.m4s")).unwrap(), p0_bytes);
+        assert_eq!(std::fs::read(dir.join("p0.idx")).unwrap(), p0_idx);
+        let p1 = std::fs::read(dir.join("p1.m4s")).expect("the new run gets its own period");
+        assert_eq!(&p1[..4], b"INIT", "the new period starts with the init");
+        let entries: Vec<IndexEntry> =
+            serde_json::from_slice(&std::fs::read(dir.join("p1.idx")).unwrap()).unwrap();
+        assert_eq!(
+            entries.iter().map(|e| e.seq).collect::<Vec<_>>(),
+            vec![4, 5],
+            "indexed under the offset numbers"
+        );
+        assert!(
+            entries[0].discontinuous,
+            "a new run does not continue the previous timeline"
+        );
+        assert!(!entries[1].discontinuous);
+
+        // The archive reads back as one ascending, duplicate-free sequence
+        // whose by-number lookup finds the right run's bytes.
+        let archived = crate::catchup::scan_archive(&dir);
+        assert_eq!(
+            archived.iter().map(|s| s.seq).collect::<Vec<_>>(),
+            vec![1, 2, 3, 4, 5]
+        );
+        let found = crate::catchup::find_archived_segment(&dir, 4).expect("seq 4");
+        assert_eq!(found.period_num, 1);
+        let bytes = crate::catchup::read_archived_bytes(
+            &dir,
+            "m4s",
+            found.period_num,
+            found.byte_offset,
+            found.byte_len,
+        )
+        .expect("read");
+        assert!(bytes.iter().all(|&b| b == 0xB1), "seq 4 is the new run's");
+        cleanup_temp(&tmp);
+    }
+
+    /// Periods an earlier run left count towards retention, so they are
+    /// evicted when the limit is reached instead of leaking disk forever.
+    #[test]
+    fn retention_covers_periods_left_by_earlier_runs() {
+        let tmp = temp_dir();
+        let cfg = dvr_config(&tmp, 2);
+        record_run("ret", &cfg, 0, &[(1, 0x01)]);
+        record_run("ret", &cfg, 1, &[(1, 0x02)]);
+        let dir = tmp.join("ret");
+        assert!(dir.join("p0.m4s").exists() && dir.join("p1.m4s").exists());
+        // The third run's period makes three, over `retention_periods` = 2
+        // closed periods plus the open one.
+        record_run("ret", &cfg, 2, &[(1, 0x03)]);
+        record_run("ret", &cfg, 3, &[(1, 0x04)]);
+        assert!(!dir.join("p0.m4s").exists(), "p0 is evicted");
+        assert!(!dir.join("p0.idx").exists(), "p0's index is evicted too");
+        assert!(dir.join("p3.m4s").exists());
+        cleanup_temp(&tmp);
+    }
+
+    /// The restart floor is the highest number the archive holds.
+    #[tokio::test]
+    async fn archive_floor_is_the_highest_archived_sequence() {
+        let tmp = temp_dir();
+        let cfg = dvr_config(&tmp, 10);
+        assert_eq!(archive_seq_floor(&cfg, "floor").await, 0, "no archive yet");
+        record_run("floor", &cfg, 0, &[(1, 1), (2, 2), (3, 3)]);
+        record_run("floor", &cfg, 3, &[(1, 4), (2, 5)]);
+        assert_eq!(archive_seq_floor(&cfg, "floor").await, 5);
+        cleanup_temp(&tmp);
+    }
+
+    /// An offset that pushes a segment past `u32` is refused before anything
+    /// is written, not wrapped.
+    #[test]
+    fn a_sequence_beyond_u32_is_refused_without_writing() {
+        let tmp = temp_dir();
+        let cfg = dvr_config(&tmp, 10);
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let mut recorder = DvrRecorder::new("ovf".to_string(), cfg, ".m4s", &trunk)
+            .expect("recorder")
+            .with_seq_offset(u64::from(u32::MAX));
+        recorder.poll_and_persist(Some(b"INIT")).expect("init");
+        writer.publish_segment(dummy_segment(1, 0xEE)).unwrap();
+        let err = recorder.poll_and_persist(Some(b"INIT")).unwrap_err();
+        assert!(err.contains("overflows"), "{err}");
+        let p0 = std::fs::read(tmp.join("ovf").join("p0.m4s")).unwrap();
+        assert_eq!(p0, b"INIT", "nothing but the init was written");
+        cleanup_temp(&tmp);
+    }
+
+    /// Audit r07-O3 (#1083): the index sidecar is extended in place, not
+    /// rewritten whole per segment. The bite is the file's identity: the old
+    /// write-temp-then-rename gave `p0.idx` a new inode on every segment; the
+    /// in-place append keeps one. The bytes must still be exactly the JSON
+    /// array a whole rewrite would produce.
+    #[cfg(unix)]
+    #[test]
+    fn index_entries_are_appended_in_place_and_stay_valid_json() {
+        use std::os::unix::fs::MetadataExt;
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let mut recorder =
+            DvrRecorder::new("app".to_string(), dvr_config(&tmp, 10), ".m4s", &trunk)
+                .expect("recorder");
+        recorder.poll_and_persist(Some(b"INIT")).expect("init");
+        let idx = tmp.join("app").join("p0.idx");
+
+        let mut inode = None;
+        for seq in 1..=40u32 {
+            writer.publish_segment(dummy_segment(seq, 0x5A)).unwrap();
+            recorder.poll_and_persist(Some(b"INIT")).expect("persist");
+            let ino = std::fs::metadata(&idx).unwrap().ino();
+            // Entries 2.. are appended to the file entry 1 created.
+            if seq >= 2 {
+                assert_eq!(Some(ino), inode, "segment {seq} rewrote the whole index");
+            } else {
+                inode = Some(ino);
+            }
+            let on_disk = std::fs::read(&idx).unwrap();
+            assert_eq!(
+                on_disk,
+                serde_json::to_vec(&recorder.index).unwrap(),
+                "after segment {seq} the sidecar must be exactly the index as JSON"
+            );
+        }
+        let parsed: Vec<IndexEntry> =
+            serde_json::from_slice(&std::fs::read(&idx).unwrap()).unwrap();
+        assert_eq!(parsed.len(), 40);
+        assert_eq!(parsed[39].seq, 40);
+        cleanup_temp(&tmp);
+    }
+
+    /// A failed in-place append falls back to the atomic whole-file rewrite,
+    /// which restores the sidecar and re-arms the fast path.
+    #[test]
+    fn a_failed_index_append_falls_back_to_a_whole_rewrite() {
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let mut recorder = DvrRecorder::new("fb".to_string(), dvr_config(&tmp, 10), ".m4s", &trunk)
+            .expect("recorder");
+        recorder.poll_and_persist(Some(b"INIT")).expect("init");
+        let idx = tmp.join("fb").join("p0.idx");
+        for seq in 1..=2u32 {
+            writer.publish_segment(dummy_segment(seq, 0x11)).unwrap();
+        }
+        recorder.poll_and_persist(Some(b"INIT")).expect("persist");
+
+        // Swap the open handle for a read-only one: the next append fails.
+        recorder.index_file = Some(File::open(&idx).unwrap());
+        writer.publish_segment(dummy_segment(3, 0x22)).unwrap();
+        recorder.poll_and_persist(Some(b"INIT")).expect("persist");
+
+        let on_disk = std::fs::read(&idx).unwrap();
+        assert_eq!(on_disk, serde_json::to_vec(&recorder.index).unwrap());
+        assert_eq!(recorder.index.len(), 3);
+        assert!(recorder.index_file.is_some(), "the fast path is re-armed");
+
+        // And the next append is in place again.
+        writer.publish_segment(dummy_segment(4, 0x33)).unwrap();
+        recorder.poll_and_persist(Some(b"INIT")).expect("persist");
+        let parsed: Vec<IndexEntry> =
+            serde_json::from_slice(&std::fs::read(&idx).unwrap()).unwrap();
+        assert_eq!(parsed.len(), 4);
+        cleanup_temp(&tmp);
     }
 
     /// A period file truncated between a `moof` and the `mdat` four-CC must
@@ -2787,6 +3233,154 @@ mod tests {
         assert_eq!(p1_programme.duration_secs, expected_duration_secs);
 
         cleanup_temp(&tmp);
+    }
+
+    /// Audit r07-O2 (#1083): `feed_si` keeps the unconsumed tail of a read in
+    /// its own buffer and reuses its event scratch buffer. Reads that end
+    /// mid-packet, at every awkward size, must still recover exactly what one
+    /// whole read does — the real DVB-T fixture's present event.
+    #[test]
+    fn feed_si_reads_split_at_any_size_recover_the_same_programme() {
+        const TF1_SERVICE_ID: u16 = 0x0601;
+        let ts_bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"
+        ))
+        .expect("read real DVB-T fixture");
+        let programme_after = |chunk: usize| {
+            let tmp = temp_dir();
+            let trunk = Trunk::new(trunk_config());
+            let cfg = DvrConfig {
+                dvb_service_id: Some(TF1_SERVICE_ID),
+                ..dvr_config(&tmp, 8)
+            };
+            let mut recorder =
+                DvrRecorder::new("split".to_string(), cfg, ".ts", &trunk).expect("recorder");
+            for piece in ts_bytes.chunks(chunk) {
+                recorder.feed_si(piece).expect("feed");
+            }
+            let found = recorder.current_programme().map(|p| p.event_id);
+            // Nothing is left unconsumed beyond a partial packet.
+            assert!(recorder.si_carry.len() < TS_PACKET_LEN);
+            cleanup_temp(&tmp);
+            found
+        };
+        let whole = programme_after(ts_bytes.len());
+        assert_eq!(whole, Some(0x7857), "the whole-read baseline");
+        for chunk in [1, 7, 187, 188, 189, 1000, 4097] {
+            assert_eq!(programme_after(chunk), whole, "chunk size {chunk}");
+        }
+    }
+
+    /// Audit r07-O2 follow-up (#1083): an EIT section the recorder cannot act
+    /// on (here: the period roll fails because the archive directory became
+    /// unusable) is dropped and counted — the poisoned packet is not kept in
+    /// the carry buffer to fail again on every later call.
+    #[test]
+    fn a_failing_eit_section_is_dropped_not_refed_forever() {
+        use broadcast_common::{Parse as WireParse, Serialize as WireSerialize};
+        const TF1_SERVICE_ID: u16 = 0x0601;
+        let ts_bytes = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/dvb-si/tnt-5w-12732v-isi6-10s.ts"
+        ))
+        .expect("read real DVB-T fixture");
+        // The genuine following event, promoted to running, as in
+        // `eit_transition_rolls_the_period...`.
+        let mut discover = SiDemux::builder()
+            .dvb_si_pids(false)
+            .pid(Pid::new(EIT_PID))
+            .build();
+        let mut sections = Vec::new();
+        for chunk in ts_bytes.chunks_exact(TS_PACKET_LEN) {
+            for event in discover.feed(chunk) {
+                if let Ok(AnyTableSection::EitSection(s)) = event.table_section()
+                    && s.kind == EitKind::PresentFollowingActual
+                    && s.service_id == TF1_SERVICE_ID
+                {
+                    sections.push(event.bytes().clone());
+                }
+            }
+        }
+        let parsed: Vec<_> = sections
+            .iter()
+            .map(|b| dvb_si::tables::eit::EitSection::parse(b).expect("parse"))
+            .collect();
+        let genuine = &parsed[0];
+        let mut following = parsed
+            .iter()
+            .flat_map(|s| s.events.iter())
+            .find(|e| e.running_status != RunningStatus::Running)
+            .cloned()
+            .expect("a following event");
+        following.running_status = RunningStatus::Running;
+        let transitioned = dvb_si::tables::eit::EitSection {
+            kind: genuine.kind,
+            table_id: genuine.table_id,
+            service_id: genuine.service_id,
+            version_number: (genuine.version_number + 1) % 32,
+            current_next_indicator: true,
+            section_number: 0,
+            last_section_number: 0,
+            transport_stream_id: genuine.transport_stream_id,
+            original_network_id: genuine.original_network_id,
+            segment_last_section_number: 0,
+            last_table_id: genuine.table_id,
+            events: vec![following],
+        };
+        let mut section_buf = vec![0u8; WireSerialize::serialized_len(&transitioned)];
+        WireSerialize::serialize_into(&transitioned, &mut section_buf).expect("serialize");
+        let mut packet_bytes = Vec::new();
+        for p in &mpeg_ts::mux::SectionPacketiser::new(EIT_PID).packetise(&[&section_buf]) {
+            packet_bytes.extend_from_slice(p);
+        }
+
+        let tmp = temp_dir();
+        let trunk = Trunk::new(trunk_config());
+        let writer = trunk.segment_writer().expect("segment writer");
+        let cfg = DvrConfig {
+            dvb_service_id: Some(TF1_SERVICE_ID),
+            ..dvr_config(&tmp, 8)
+        };
+        let mut recorder =
+            DvrRecorder::new("sierr".to_string(), cfg, ".ts", &trunk).expect("recorder");
+        recorder.feed_si(&ts_bytes).expect("baseline");
+        writer.publish_segment(dummy_segment(1, 0xAA)).unwrap();
+        recorder.poll_and_persist(None).expect("period 0");
+
+        // Make every later period roll fail: the archive "directory" is a file.
+        let blocked = tmp.join("blocked");
+        std::fs::write(&blocked, b"not a directory").unwrap();
+        recorder.archive_dir = blocked;
+        let counter_before = si_errors_total();
+
+        // The transition's packets, then a partial packet.
+        let mut input = packet_bytes.clone();
+        input.extend_from_slice(&[0x47; 100]);
+        let err = recorder.feed_si(&input).unwrap_err();
+        assert!(!err.is_empty());
+        assert_eq!(
+            recorder.si_carry.len(),
+            100,
+            "only the partial packet is carried"
+        );
+        assert!(si_errors_total() > counter_before, "the drop is counted");
+
+        // The poisoned packets are gone: nothing is re-fed, so an empty feed
+        // succeeds (the old behaviour failed again here, forever).
+        recorder.feed_si(&[]).expect("nothing left to fail");
+        assert_eq!(recorder.si_carry.len(), 100);
+        cleanup_temp(&tmp);
+    }
+
+    fn si_errors_total() -> f64 {
+        crate::prometheus::install()
+            .render()
+            .lines()
+            .filter(|l| l.starts_with("multimux_dvr_si_errors_total{"))
+            .filter(|l| l.contains("route=\"sierr\""))
+            .filter_map(|l| l.rsplit(' ').next()?.parse::<f64>().ok())
+            .sum()
     }
 
     /// **Review item 2.** A `Stall`-policy `DvrRecorder` whose pin is

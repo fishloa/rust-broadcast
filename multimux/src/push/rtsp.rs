@@ -78,7 +78,8 @@ impl std::fmt::Debug for RtspTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RtspTransport")
             .field("connected", &self.stream.is_some())
-            .field("url", &self.url)
+            // Path/query can carry a stream key: destination only.
+            .field("url", &crate::redact::redact_destination(&self.url))
             .finish()
     }
 }
@@ -363,6 +364,31 @@ pub enum RtspPushError {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit T14 (#1142): `Debug` of a transport prints the destination only
+    /// (the path and query can carry a stream key).
+    #[test]
+    fn rtsp_transport_debug_does_not_print_the_stream_key() {
+        let transport = RtspTransport {
+            stream: None,
+            client: ClientSession::new(),
+            channel: 0,
+            url: "rtsp://cam.example:554/live/STREAMKEY123?token=abc".to_string(),
+            control_url: "rtsp://cam.example:554/live/STREAMKEY123/trackID=0".to_string(),
+            seq: 0,
+            ssrc: 1,
+            started: Instant::now(),
+        };
+        let shown = format!("{transport:?}");
+        assert!(
+            !shown.contains("STREAMKEY123") && !shown.contains("token"),
+            "{shown}"
+        );
+        assert!(
+            shown.contains("rtsp://cam.example:554/<redacted>"),
+            "{shown}"
+        );
+    }
 
     #[test]
     fn sdp_has_a_session_level_c_line_and_matches_the_single_control_url() {

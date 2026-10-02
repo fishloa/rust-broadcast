@@ -4,6 +4,15 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Fixed
+- `scte35::build_splice_insert` conditions on the 33-bit SCTE-35 circle
+  (`ssai_runtime::splice::condition_splice_point_wrapping`): `requested_pts`
+  and the candidates are measured modulo 2^33, so a cue just before the PTS wrap
+  whose nearest real boundary is just after it snaps (a 150-tick `After` snap)
+  instead of failing with `NoAlignedBoundary` once per ~26.5 h; the returned
+  `ConditionedSplicePoint`'s delta/direction are circular, and its
+  `requested_pts`/`snapped_pts` stay in the caller's units (#1126).
+
 ### Documentation
 - `ScheduleEntry::planned_start`/`source_start_pts` and
   `scte35::build_splice_insert` now document, as a mandatory precondition,

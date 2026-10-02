@@ -196,9 +196,39 @@ impl ProgramTracker {
                     self.changed.insert(program);
                 }
             }
-            DemuxEvent::TrackUpdated(_) | DemuxEvent::TrackAbandoned { .. } => {
-                // Metadata-only / pre-resolution events; nothing routes on
-                // them yet (mirrors the pre-5a tracing-only handling).
+            // A track's codec config changed mid-stream (the demux emits this
+            // only for a config that really differs: a new in-band
+            // SPS/PPS/AAC config, or a changed PMT descriptor). Adopt the new
+            // spec and announce the program's track set, so the route
+            // rebuilds its init segment instead of describing a stream that
+            // is no longer being sent. Before the first `TracksResolved` the
+            // buffered spec is just replaced; an update for a track that was
+            // never announced is ignored (nothing routes on it).
+            DemuxEvent::TrackUpdated(spec) => {
+                let track_id = spec.track_id;
+                if self.resolved_once {
+                    if let Some(&program) = self.track_program.get(&track_id)
+                        && let Some(prog) = self.program_for_program_id_mut(program)
+                    {
+                        prog.track_specs.insert(track_id, spec);
+                        let mut tracks: Vec<TrackSpec> =
+                            prog.track_specs.values().cloned().collect();
+                        tracks.sort_by_key(|t| t.track_id);
+                        self.pending
+                            .push_back(SessionEvent::TracksChanged { program, tracks });
+                    }
+                } else if let Some(buffered) = self
+                    .resolving
+                    .values_mut()
+                    .flat_map(|specs| specs.iter_mut())
+                    .find(|s| s.track_id == track_id)
+                {
+                    *buffered = spec;
+                }
+            }
+            DemuxEvent::TrackAbandoned { .. } => {
+                // Pre-resolution event; nothing routes on it (mirrors the
+                // pre-5a tracing-only handling).
             }
             _ => {}
         }
@@ -658,6 +688,85 @@ mod tests {
                 trunk.part_len() > 0,
                 "published parts must be visible in the Trunk's live-part log"
             );
+        }
+    }
+
+    /// A copy of [`track_spec`] with a different coded size, so a config
+    /// change is observable in the announced spec.
+    fn track_spec_sized(track_id: u32, width: u16, height: u16) -> TrackSpec {
+        let avc = transmux::avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==")
+            .expect("valid sprop");
+        TrackSpec::new(
+            track_id,
+            90_000,
+            transmux::pipeline::CodecConfig::Avc {
+                config: avc,
+                width,
+                height,
+            },
+        )
+    }
+
+    fn video_size(spec: &TrackSpec) -> (u16, u16) {
+        match &spec.config {
+            transmux::pipeline::CodecConfig::Avc { width, height, .. } => (*width, *height),
+            other => panic!("expected an AVC track, got {other:?}"),
+        }
+    }
+
+    /// Deferred item (#1083): a mid-stream config change on a live track
+    /// (`DemuxEvent::TrackUpdated`) was ignored, so the route's init segment
+    /// kept describing a stream that was no longer being sent. It now
+    /// announces the program's complete, updated track set.
+    #[test]
+    fn track_updated_announces_the_new_config() {
+        let mut tracker = ProgramTracker::new();
+        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(1, 640, 360)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(2, 0, 0)));
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let _established = tracker.poll();
+        let _new_program = tracker.poll();
+
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(1, 1920, 1080)));
+        match tracker.poll() {
+            Some(SessionEvent::TracksChanged { program, tracks }) => {
+                assert_eq!(program, ProgramId(0));
+                assert_eq!(
+                    tracks.iter().map(|t| t.track_id).collect::<Vec<_>>(),
+                    vec![1, 2],
+                    "the complete track set, in track-id order"
+                );
+                assert_eq!(video_size(&tracks[0]), (1920, 1080));
+                assert_eq!(
+                    video_size(&tracks[1]),
+                    (0, 0),
+                    "the other track is untouched"
+                );
+            }
+            other => panic!("expected TracksChanged, got {other:?}"),
+        }
+        assert!(tracker.poll().is_none());
+
+        // An update for a track nothing announced is ignored.
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(9, 1, 1)));
+        assert!(tracker.poll().is_none());
+    }
+
+    /// Before the first `TracksResolved` the buffered spec is replaced, so
+    /// the `NewProgram` carries the latest config.
+    #[test]
+    fn track_updated_before_resolution_replaces_the_buffered_spec() {
+        let mut tracker = ProgramTracker::new();
+        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(1, 640, 360)));
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(1, 1280, 720)));
+        tracker.handle(DemuxEvent::tracks_resolved(0));
+        let _established = tracker.poll();
+        match tracker.poll() {
+            Some(SessionEvent::NewProgram { tracks, .. }) => {
+                assert_eq!(tracks.len(), 1);
+                assert_eq!(video_size(&tracks[0]), (1280, 720));
+            }
+            other => panic!("expected NewProgram, got {other:?}"),
         }
     }
 

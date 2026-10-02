@@ -39,6 +39,10 @@ fn fetched_ids(client: &mut HlsClient) -> Vec<ResourceId> {
     ids
 }
 
+fn has(outs: &[Output], f: impl Fn(&Output) -> bool) -> bool {
+    outs.iter().any(f)
+}
+
 fn segment_ids(msns: impl IntoIterator<Item = u64>) -> Vec<ResourceId> {
     msns.into_iter()
         .map(|msn| ResourceId::Segment { msn })
@@ -148,6 +152,315 @@ fn regressing_media_sequence_fetches_the_new_numbers() {
         .on_playlist(playlist(0, 2, "2.0", true).as_bytes())
         .unwrap();
     assert_eq!(fetched_ids(&mut client), segment_ids([0, 1]));
+}
+
+/// Audit r09-C3 / #1031: a regression that lands *inside* the previous
+/// window re-uses numbers the client already delivered; those segments are
+/// new media and must be fetched, behind a `Discontinuity`.
+#[test]
+fn an_overlapping_media_sequence_regression_refetches_and_signals_a_discontinuity() {
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(playlist(100, 3, "2.0", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids([100, 101, 102]));
+    for msn in [100, 101, 102] {
+        client
+            .on_resource(ResourceId::Segment { msn }, OPAQUE)
+            .unwrap();
+    }
+    assert!(!has(&drain_outputs(&mut client), |o| matches!(
+        o,
+        Output::Discontinuity
+    )));
+
+    // The origin restarts at 99: 100 and 101 are re-used numbers naming
+    // different segments.
+    client
+        .on_playlist(
+            playlist(99, 3, "2.0", true)
+                .replace("seg", "restarted")
+                .as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids([99, 100, 101]));
+    let outs = drain_outputs(&mut client);
+    assert_eq!(outs.len(), 1);
+    assert!(matches!(outs[0], Output::Discontinuity));
+}
+
+/// A CDN edge a poll behind another serves an older window of the *same*
+/// stream: the overlapping segments are identical, so nothing is re-fetched
+/// and no discontinuity is signalled.
+#[test]
+fn a_lagging_copy_of_the_same_window_is_not_a_restart() {
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(playlist(100, 4, "2.0", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client).len(), 4);
+    client
+        .on_playlist(playlist(98, 4, "2.0", true).as_bytes())
+        .unwrap();
+    // 98 and 99 are new to this client; 100 and 101 are already requested.
+    assert_eq!(fetched_ids(&mut client), segment_ids([98, 99]));
+    assert!(!has(&drain_outputs(&mut client), |o| matches!(
+        o,
+        Output::Discontinuity
+    )));
+}
+
+/// A playlist like [`playlist`] but with an `EXT-X-DISCONTINUITY-SEQUENCE`
+/// and an `EXT-X-PROGRAM-DATE-TIME` (`start_ms` + 2 s per segment) before every
+/// segment; segment URIs are `{prefix}{msn}.ts`.
+fn pdt_playlist(
+    first_msn: u64,
+    count: u64,
+    start_ms: u64,
+    dsn: u64,
+    prefix: &str,
+    endlist: bool,
+) -> String {
+    let mut text = format!(
+        "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:{first_msn}\n\
+         #EXT-X-DISCONTINUITY-SEQUENCE:{dsn}\n"
+    );
+    for i in 0..count {
+        let ms = start_ms + i * 2_000;
+        let (secs, milli) = (ms / 1000, ms % 1000);
+        text.push_str(&format!(
+            "#EXT-X-PROGRAM-DATE-TIME:2026-10-02T{:02}:{:02}:{:02}.{milli:03}Z\n#EXTINF:2.0,\n{prefix}{}.ts\n",
+            secs / 3600 % 24,
+            secs / 60 % 60,
+            secs % 60,
+            first_msn + i
+        ));
+    }
+    if endlist {
+        text.push_str("#EXT-X-ENDLIST\n");
+    }
+    text
+}
+
+fn discontinuities(client: &mut HlsClient) -> usize {
+    drain_outputs(client)
+        .iter()
+        .filter(|o| matches!(o, Output::Discontinuity))
+        .count()
+}
+
+/// Audit r09-C3 (#1031): an edge lagging by a WHOLE window (nothing in
+/// common, lower numbers) of a stream that carries `PROGRAM-DATE-TIME` is an
+/// older view of the same stream, not a restart: no `Discontinuity`, none of
+/// its segments delivered behind what was already delivered, and the client
+/// carries on when the edge catches up.
+#[test]
+fn a_cdn_edge_a_whole_window_behind_is_not_a_restart() {
+    let t0 = 10 * 3600 * 1000; // 10:00:00
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(pdt_playlist(100, 4, t0, 0, "seg", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids(100..104));
+    assert_eq!(discontinuities(&mut client), 0);
+
+    // The lagging edge: 90..=93, a whole window (and 20 s) older.
+    client
+        .on_playlist(pdt_playlist(90, 4, t0 - 20_000, 0, "seg", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), Vec::<ResourceId>::new());
+    assert_eq!(discontinuities(&mut client), 0);
+
+    // Caught up and one segment on: only the new one is fetched.
+    client
+        .on_playlist(pdt_playlist(101, 4, t0 + 2_000, 0, "seg", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids([104]));
+    assert_eq!(discontinuities(&mut client), 0);
+}
+
+/// Without `PROGRAM-DATE-TIME` or any shared name, a wholly lower window is
+/// indistinguishable from a restart and is treated as one (documented
+/// residual case).
+#[test]
+fn a_whole_window_behind_without_pdt_reads_as_a_restart() {
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(playlist(100, 4, "2.0", true).as_bytes())
+        .unwrap();
+    let _ = fetched_ids(&mut client);
+    let _ = drain_outputs(&mut client);
+    client
+        .on_playlist(
+            playlist(90, 4, "2.0", true)
+                .replace("seg", "old")
+                .as_bytes(),
+        )
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids(90..94));
+    assert_eq!(discontinuities(&mut client), 1);
+}
+
+/// An origin that restarts to the SAME media sequence number with an
+/// identical-looking window is caught by the discontinuity sequence, which may
+/// not decrease while the number does not.
+#[test]
+fn an_equal_msn_restart_with_a_reset_discontinuity_sequence_is_detected() {
+    let t0 = 10 * 3600 * 1000;
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(pdt_playlist(10, 3, t0, 5, "seg", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids(10..13));
+    let _ = drain_outputs(&mut client);
+
+    client
+        .on_playlist(pdt_playlist(10, 3, t0, 0, "seg", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids(10..13));
+    assert_eq!(discontinuities(&mut client), 1);
+}
+
+/// The same numbers and names, but the wall-clock time of a shared segment
+/// jumped: a restart (the media behind the name changed).
+#[test]
+fn a_pdt_jump_at_a_shared_number_is_a_restart() {
+    let t0 = 10 * 3600 * 1000;
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(pdt_playlist(10, 3, t0, 0, "seg", true).as_bytes())
+        .unwrap();
+    let _ = fetched_ids(&mut client);
+    let _ = drain_outputs(&mut client);
+    client
+        .on_playlist(pdt_playlist(10, 3, t0 + 3_600_000, 0, "seg", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids(10..13));
+    assert_eq!(discontinuities(&mut client), 1);
+}
+
+/// An origin restarting to a HIGHER number whose window overlaps the old one
+/// but names different segments there is a restart too.
+#[test]
+fn a_restart_to_a_higher_msn_with_different_segments_is_detected() {
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(playlist(10, 3, "2.0", true).as_bytes())
+        .unwrap();
+    let _ = fetched_ids(&mut client);
+    let _ = drain_outputs(&mut client);
+    // 11..=13, but 11 and 12 are different files now.
+    let text = playlist(11, 3, "2.0", true).replace("seg", "new");
+    client.on_playlist(text.as_bytes()).unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids(11..14));
+    assert_eq!(discontinuities(&mut client), 1);
+}
+
+/// A name the previous window listed under another number, from a window with
+/// lower numbers: names reused under new numbering are a restart.
+#[test]
+fn a_reused_name_under_a_lower_number_is_a_restart() {
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(playlist(100, 3, "2.0", true).as_bytes())
+        .unwrap();
+    let _ = fetched_ids(&mut client);
+    let _ = drain_outputs(&mut client);
+    // MSN restarts at 0 but the file names keep counting (seg101.ts ...).
+    let text = "#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n\
+                #EXTINF:2.0,\nseg101.ts\n#EXTINF:2.0,\nseg102.ts\n#EXT-X-ENDLIST\n";
+    client.on_playlist(text.as_bytes()).unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids([0, 1]));
+    assert_eq!(discontinuities(&mut client), 1);
+}
+
+/// A reload at the *same* sequence number is the normal live case and is not
+/// a restart.
+#[test]
+fn an_unchanged_or_advancing_media_sequence_is_not_a_restart() {
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(playlist(10, 3, "2.0", false).as_bytes())
+        .unwrap();
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(playlist(10, 4, "2.0", false).as_bytes())
+        .unwrap();
+    client
+        .on_playlist(playlist(11, 4, "2.0", false).as_bytes())
+        .unwrap();
+    assert!(!has(&drain_outputs(&mut client), |o| matches!(
+        o,
+        Output::Discontinuity
+    )));
+}
+
+/// A response still in flight for the old numbering must not be delivered as
+/// if it were the restarted origin's media, and fetches the caller never
+/// polled are withdrawn rather than issued for the dead numbering.
+#[test]
+fn a_restart_withdraws_old_fetches_and_rejects_stale_responses() {
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client
+        .on_playlist(playlist(5000, 3, "2.0", true).as_bytes())
+        .unwrap();
+    // Not polled: the three fetches for 5000.. are still queued.
+    client
+        .on_playlist(playlist(1, 2, "2.0", true).as_bytes())
+        .unwrap();
+    assert_eq!(fetched_ids(&mut client), segment_ids([1, 2]));
+    let err = client
+        .on_resource(ResourceId::Segment { msn: 5000 }, OPAQUE)
+        .unwrap_err();
+    assert!(matches!(
+        err,
+        Error::UnrequestedResource {
+            id: ResourceId::Segment { msn: 5000 }
+        }
+    ));
+    // The restarted numbering still delivers and the stream still ends.
+    client
+        .on_resource(ResourceId::Segment { msn: 1 }, OPAQUE)
+        .unwrap();
+    client
+        .on_resource(ResourceId::Segment { msn: 2 }, OPAQUE)
+        .unwrap();
+    assert!(has(&drain_outputs(&mut client), |o| matches!(
+        o,
+        Output::EndOfStream
+    )));
+}
+
+/// A restart may change the codec configuration: the init is fetched again
+/// (and, once delivered, announced again) even from the same URI.
+#[test]
+fn a_restart_refetches_the_init_segment() {
+    let fmp4 = |first: u64| {
+        format!(
+            "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:{first}\n\
+             #EXT-X-MAP:URI=\"init.mp4\"\n#EXTINF:2.0,\nseg{first}.m4s\n#EXT-X-ENDLIST\n"
+        )
+    };
+    let mut client = HlsClient::new(URL);
+    let _ = fetched_ids(&mut client);
+    client.on_playlist(fmp4(7).as_bytes()).unwrap();
+    let mut ids = fetched_ids(&mut client);
+    ids.sort();
+    assert_eq!(ids, vec![ResourceId::Init, ResourceId::Segment { msn: 7 }]);
+    client.on_playlist(fmp4(3).as_bytes()).unwrap();
+    let mut ids = fetched_ids(&mut client);
+    ids.sort();
+    assert_eq!(ids, vec![ResourceId::Init, ResourceId::Segment { msn: 3 }]);
 }
 
 #[test]

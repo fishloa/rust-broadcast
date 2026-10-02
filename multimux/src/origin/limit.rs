@@ -266,16 +266,17 @@ where
                 }
             };
             let result = inner.call(req).await;
-            // The permit is held until `inner` resolves. In this origin
-            // `inner` is `track_http`, which itself collects the whole
-            // response body (`axum::body::to_bytes`) before returning — so
-            // the permit genuinely covers the *entire* response, body
-            // included, not merely the headers. A future reordering that
-            // moved body production outside this layer would need to carry
-            // the permit into the body stream instead (see `origin::mod`'s
-            // `router` doc).
-            drop(permit);
-            result
+            // The permit is carried into the response body and released when
+            // the body ends or is abandoned, so it bounds the *entire*
+            // response — a streamed body (an in-progress LL-DASH segment)
+            // included, not merely the headers. (`track_http` no longer
+            // collects the body, so releasing at the headers would let a
+            // slow-loris stream hold unbounded work.)
+            result.map(|resp| {
+                super::restream_body(resp, move |_| {
+                    let _held = &permit;
+                })
+            })
         })
     }
 }
@@ -498,5 +499,135 @@ mod tests {
         let resp = svc.call(req()).await.expect("infallible");
         assert_eq!(resp.status(), StatusCode::OK);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    /// Audit r07-C10 (#1083): the permit covers the whole response, body
+    /// included, now that nothing collects the body inside this layer. While
+    /// a streamed response is still open its permit stays taken (a second
+    /// request is shed); once the body ends it is released.
+    #[tokio::test]
+    async fn the_permit_is_held_until_the_response_body_ends() {
+        use axum::Router;
+        use axum::body::Body;
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<axum::body::Bytes>(4);
+        let rx = Arc::new(std::sync::Mutex::new(Some(rx)));
+        let app = Router::new()
+            .route(
+                "/stream",
+                get(move || {
+                    let rx = rx.lock().unwrap().take().expect("one streaming request");
+                    async move {
+                        Body::from_stream(futures_util::stream::unfold(rx, |mut rx| async move {
+                            rx.recv()
+                                .await
+                                .map(|c| (Ok::<_, std::convert::Infallible>(c), rx))
+                        }))
+                    }
+                }),
+            )
+            .route("/fast", get(|| async { "ok" }))
+            .layer(GlobalLimitLayer::new(
+                GlobalLimit::new(1).with_queue_timeout(Duration::from_millis(50)),
+            ));
+        let req = |path: &str| {
+            axum::http::Request::builder()
+                .uri(path)
+                .body(Body::empty())
+                .unwrap()
+        };
+
+        tx.send(axum::body::Bytes::from_static(b"chunk"))
+            .await
+            .unwrap();
+        let streaming = app.clone().oneshot(req("/stream")).await.unwrap();
+        assert_eq!(streaming.status(), StatusCode::OK);
+
+        let shed = app.clone().oneshot(req("/fast")).await.unwrap();
+        assert_eq!(
+            shed.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "the streaming response still holds the only permit"
+        );
+
+        drop(tx);
+        let body = tokio::time::timeout(
+            Duration::from_secs(10),
+            axum::body::to_bytes(streaming.into_body(), usize::MAX),
+        )
+        .await
+        .expect("body ends once the producer is done")
+        .unwrap();
+        assert_eq!(&body[..], b"chunk");
+
+        let after = app.oneshot(req("/fast")).await.unwrap();
+        assert_eq!(
+            after.status(),
+            StatusCode::OK,
+            "permit released at body end"
+        );
+    }
+
+    /// A client that disconnects mid-stream drops the response body: the
+    /// permit it held must come back (the producer is still open, so the body
+    /// never ends by itself).
+    #[tokio::test]
+    async fn dropping_the_response_body_mid_stream_releases_the_permit() {
+        use axum::Router;
+        use axum::body::Body;
+        use axum::routing::get;
+        use tower::ServiceExt;
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<axum::body::Bytes>(4);
+        let rx = Arc::new(std::sync::Mutex::new(Some(rx)));
+        let app = Router::new()
+            .route(
+                "/stream",
+                get(move || {
+                    let rx = rx.lock().unwrap().take().expect("one streaming request");
+                    async move {
+                        Body::from_stream(futures_util::stream::unfold(rx, |mut rx| async move {
+                            rx.recv()
+                                .await
+                                .map(|c| (Ok::<_, std::convert::Infallible>(c), rx))
+                        }))
+                    }
+                }),
+            )
+            .route("/fast", get(|| async { "ok" }))
+            .layer(GlobalLimitLayer::new(
+                GlobalLimit::new(1).with_queue_timeout(Duration::from_millis(50)),
+            ));
+        let req = |path: &str| {
+            axum::http::Request::builder()
+                .uri(path)
+                .body(Body::empty())
+                .unwrap()
+        };
+        tx.send(axum::body::Bytes::from_static(b"chunk"))
+            .await
+            .unwrap();
+        let streaming = app.clone().oneshot(req("/stream")).await.unwrap();
+        let shed = app.clone().oneshot(req("/fast")).await.unwrap();
+        assert_eq!(
+            shed.status(),
+            StatusCode::SERVICE_UNAVAILABLE,
+            "permit held"
+        );
+
+        // The client goes away with the stream still open (`tx` alive).
+        let mut stream = streaming.into_body().into_data_stream();
+        let first = futures_util::StreamExt::next(&mut stream)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&first[..], b"chunk");
+        drop(stream);
+
+        let after = app.oneshot(req("/fast")).await.unwrap();
+        assert_eq!(after.status(), StatusCode::OK, "permit returned on drop");
+        drop(tx);
     }
 }

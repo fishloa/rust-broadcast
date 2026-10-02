@@ -485,11 +485,23 @@ impl TokioClient {
     /// Retry a playlist fetch indefinitely (capped exponential backoff) —
     /// see the module docs' "Error recovery" section for why a playlist
     /// reload, unlike a resource fetch, has no bounded-retry fallback.
+    ///
+    /// A blocking or delta reload (`url` carries `_HLS_msn`/`_HLS_part`/
+    /// `_HLS_skip`) answered with a `4xx` that repeating cannot change — an
+    /// origin that restarted below the requested Media Sequence Number
+    /// answers `400` (RFC 8216bis §6.2.5.2) — is retried **once** at once as
+    /// a plain GET of the playlist URL instead of being repeated forever
+    /// (audit r09-C3, issue #1031); the plain URL then keeps the usual
+    /// backoff.
     async fn fetch_playlist_resilient(&mut self, url: &str, timeout: Duration) -> Vec<u8> {
         let mut backoff = self.config.retry_backoff;
+        let mut current = url.to_string();
         loop {
-            match self.fetch_bytes(url, None, timeout).await {
+            match self.fetch_bytes(&current, None, timeout).await {
                 Ok(bytes) => return bytes,
+                Err(source) if current != self.playlist_url && !is_retryable(&source) => {
+                    current.clone_from(&self.playlist_url);
+                }
                 Err(_source) => {
                     tokio::time::sleep(backoff).await;
                     backoff = (backoff * 2).min(self.config.max_retry_backoff);

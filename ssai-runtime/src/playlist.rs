@@ -228,6 +228,21 @@ impl InterstitialDateRange {
     }
 }
 
+/// `#EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.4.3) — the tag an
+/// `EXT-X-DATERANGE` playlist must contain at least one of (§4.4.5.1).
+const PDT_TAG: &str = "#EXT-X-PROGRAM-DATE-TIME:";
+
+/// Whether `base` carries an `EXT-X-PROGRAM-DATE-TIME` (a segment's
+/// `pre_tags`, where [`MediaPlaylist::parse`] files it, or the
+/// playlist-level `extra_tags`).
+fn has_program_date_time(base: &MediaPlaylist) -> bool {
+    base.extra_tags.iter().any(|t| t.starts_with(PDT_TAG))
+        || base
+            .segments
+            .iter()
+            .any(|s| s.pre_tags.iter().any(|t| t.starts_with(PDT_TAG)))
+}
+
 /// Clone `base` and append `active`'s rendered tag line (if any) to
 /// [`MediaPlaylist::extra_tags`] — the per-session playlist for one viewer.
 /// `base` is otherwise untouched: SSAI needs no per-viewer copy of the media
@@ -236,15 +251,97 @@ impl InterstitialDateRange {
 /// Fallible (issue #1140 / audit r14-SSAI-W1): an ad-decision-supplied value
 /// that fails [`InterstitialDateRange::to_tag_line`]'s validation is an
 /// error from this entry point, not a line silently dropped or injected.
+/// Also [`Error::MissingProgramDateTime`] when `active` is `Some` but `base`
+/// has no `EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.5.1; audit
+/// r14-SSAI-W3, issue #1125).
+///
+/// This deep-clones every segment per call; a per-viewer hot path should
+/// build one [`SessionPlaylistBase`] per base-playlist reload instead.
 pub fn render_session_playlist(
     base: &MediaPlaylist,
     active: Option<&InterstitialDateRange>,
 ) -> Result<MediaPlaylist> {
     let mut out = base.clone();
     if let Some(dr) = active {
+        if !has_program_date_time(base) {
+            return Err(Error::MissingProgramDateTime);
+        }
         out.extra_tags.push(dr.to_tag_line()?);
     }
     Ok(out)
+}
+
+/// A base playlist rendered **once**, so each viewer's per-session playlist
+/// costs one tag line plus a copy of the text — not a deep clone of every
+/// segment and a full re-serialisation per viewer per reload (audit
+/// r14-SSAI-O1, issue #1125).
+///
+/// The tag line is spliced in immediately before the first `#EXT-X-PART:` or
+/// `#EXTINF:` line, whichever comes first — i.e. before the first segment's
+/// part/`EXTINF` group, never between a segment's parts and its `EXTINF` (an
+/// `EXT-X-DATERANGE` is not positional within the playlist, RFC 8216bis
+/// §4.4.5.1) — or before `#EXT-X-ENDLIST` / at the end when the base has
+/// neither.
+#[derive(Debug, Clone)]
+pub struct SessionPlaylistBase {
+    head: String,
+    tail: String,
+    has_pdt: bool,
+}
+
+impl SessionPlaylistBase {
+    /// Render `base` once. Errors as [`MediaPlaylist::to_m3u8`].
+    pub fn new(base: &MediaPlaylist) -> Result<Self> {
+        let text = base.to_m3u8()?;
+        // `#EXT-X-PART:` (not `#EXT-X-PART-INF:`) or `#EXTINF:`, first of either.
+        let first_group = ["\n#EXT-X-PART:", "\n#EXTINF:"]
+            .iter()
+            .filter_map(|tag| text.find(tag))
+            .min();
+        let at = first_group
+            .or_else(|| text.rfind("\n#EXT-X-ENDLIST"))
+            .map_or(text.len(), |i| i + 1);
+        let (head, tail) = text.split_at(at);
+        Ok(SessionPlaylistBase {
+            head: head.to_string(),
+            tail: tail.to_string(),
+            has_pdt: has_program_date_time(base),
+        })
+    }
+
+    /// The viewer-independent playlist text (no break).
+    pub fn render_plain(&self) -> String {
+        let mut out = String::with_capacity(self.head.len() + self.tail.len());
+        out.push_str(&self.head);
+        out.push_str(&self.tail);
+        out
+    }
+
+    /// Append one viewer's playlist to `out`: the base text, with
+    /// `active`'s tag line spliced in. Errors as [`render_session_playlist`];
+    /// on error nothing is appended.
+    pub fn render_into(
+        &self,
+        out: &mut String,
+        active: Option<&InterstitialDateRange>,
+    ) -> Result<()> {
+        let line = match active {
+            Some(dr) => {
+                if !self.has_pdt {
+                    return Err(Error::MissingProgramDateTime);
+                }
+                Some(dr.to_tag_line()?)
+            }
+            None => None,
+        };
+        out.push_str(&self.head);
+        if let Some(line) = line {
+            out.push_str(&line);
+            out.push('\n');
+        }
+        out.push_str(&self.tail);
+        Ok(())
+    }
 }
 
 /// Format a non-negative, finite seconds value without a trailing `.0`,
@@ -487,6 +584,8 @@ mod tests {
             ..Default::default()
         });
 
+        base.segments[0].pre_tags = vec![PDT_LINE.to_string()];
+
         let dr = sample();
         let with_break = render_session_playlist(&base, Some(&dr)).unwrap();
         let without_break = render_session_playlist(&base, None).unwrap();
@@ -498,5 +597,155 @@ mod tests {
         assert!(base.extra_tags.is_empty());
         // Only the tag line differs; the segment list is byte-identical.
         assert_eq!(with_break.segments, without_break.segments);
+    }
+
+    const PDT_LINE: &str = "#EXT-X-PROGRAM-DATE-TIME:2020-01-02T21:55:40.000Z";
+
+    fn base_with_segments(n: usize, pdt: bool) -> MediaPlaylist {
+        let mut base = MediaPlaylist {
+            target_duration: 6,
+            ..Default::default()
+        };
+        for i in 0..n {
+            base.segments.push(MediaSegment {
+                duration: DecimalSeconds::new(6.0).unwrap(),
+                uri: format!("main{i}.ts"),
+                pre_tags: if pdt && i == 0 {
+                    vec![PDT_LINE.to_string()]
+                } else {
+                    Vec::new()
+                },
+                ..Default::default()
+            });
+        }
+        base
+    }
+
+    /// Audit r14-SSAI-W3: a DATERANGE needs a PDT in the playlist
+    /// (RFC 8216bis §4.4.5.1); both render paths refuse without one, and
+    /// accept the PDT wherever the base carries it.
+    #[test]
+    fn daterange_without_pdt_is_an_error_on_both_paths() {
+        let dr = sample();
+        let no_pdt = base_with_segments(2, false);
+        assert!(matches!(
+            render_session_playlist(&no_pdt, Some(&dr)).unwrap_err(),
+            Error::MissingProgramDateTime
+        ));
+        let b = SessionPlaylistBase::new(&no_pdt).unwrap();
+        let mut out = String::new();
+        assert!(matches!(
+            b.render_into(&mut out, Some(&dr)).unwrap_err(),
+            Error::MissingProgramDateTime
+        ));
+        assert!(out.is_empty(), "nothing appended on error");
+        // No break requested: no DATERANGE emitted, so no PDT needed.
+        assert!(render_session_playlist(&no_pdt, None).is_ok());
+        b.render_into(&mut out, None).unwrap();
+        assert_eq!(out, no_pdt.to_m3u8().unwrap());
+
+        // PDT as a playlist-level extra tag also satisfies the rule.
+        let mut extra = base_with_segments(1, false);
+        extra.extra_tags.push(PDT_LINE.to_string());
+        assert!(render_session_playlist(&extra, Some(&dr)).is_ok());
+        assert!(
+            SessionPlaylistBase::new(&extra)
+                .unwrap()
+                .render_into(&mut String::new(), Some(&dr))
+                .is_ok()
+        );
+    }
+
+    /// The spliced render must contain exactly the base text plus one tag
+    /// line, placed before the first EXTINF, and the result must reparse.
+    #[test]
+    fn session_playlist_base_splices_one_line_before_the_first_extinf() {
+        let base = base_with_segments(3, true);
+        let dr = sample();
+        let plain = base.to_m3u8().unwrap();
+        let b = SessionPlaylistBase::new(&base).unwrap();
+        assert_eq!(b.render_plain(), plain);
+
+        let mut out = String::new();
+        b.render_into(&mut out, Some(&dr)).unwrap();
+        let line = dr.to_tag_line().unwrap();
+        let expected = plain.replacen("#EXTINF:", &format!("{line}\n#EXTINF:"), 1);
+        assert_eq!(out, expected);
+        assert_eq!(out.lines().filter(|l| l.starts_with(TAG)).count(), 1);
+        let reparsed = MediaPlaylist::parse(&out).unwrap();
+        assert_eq!(reparsed.segments.len(), 3);
+
+        // An injection attempt errors and appends nothing.
+        let mut bad = sample();
+        bad.asset = AssetSource::Uri("x\"\n#EXT-X-ENDLIST".to_string());
+        let mut out2 = String::from("keep");
+        assert!(b.render_into(&mut out2, Some(&bad)).is_err());
+        assert_eq!(out2, "keep");
+    }
+
+    /// A segment-less base with `#EXT-X-ENDLIST` must get the tag before it.
+    #[test]
+    fn session_playlist_base_without_segments_inserts_before_endlist() {
+        let mut base = MediaPlaylist {
+            target_duration: 6,
+            endlist: true,
+            ..Default::default()
+        };
+        base.extra_tags.push(PDT_LINE.to_string());
+        let b = SessionPlaylistBase::new(&base).unwrap();
+        let mut out = String::new();
+        b.render_into(&mut out, Some(&sample())).unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        let n = lines.len();
+        assert_eq!(lines[n - 1], "#EXT-X-ENDLIST");
+        assert!(lines[n - 2].starts_with(TAG));
+    }
+
+    /// An LL-HLS base: the first segment's `EXT-X-PART` lines precede its
+    /// `EXTINF`, so the DATERANGE must land before the first PART, not between
+    /// a segment's parts and its `EXTINF`.
+    #[test]
+    fn low_latency_base_gets_the_tag_before_the_first_part() {
+        use broadcast_hls::{LowLatencyConfig, PartSpec};
+        let mut base = base_with_segments(2, true);
+        for seg in &mut base.segments {
+            seg.parts = vec![
+                PartSpec {
+                    uri: format!("{}.0.m4s", seg.uri),
+                    duration: DecimalSeconds::new(3.0).unwrap(),
+                    ..Default::default()
+                },
+                PartSpec {
+                    uri: format!("{}.1.m4s", seg.uri),
+                    duration: DecimalSeconds::new(3.0).unwrap(),
+                    ..Default::default()
+                },
+            ];
+        }
+        base.low_latency = Some(LowLatencyConfig {
+            part_target: Some(DecimalSeconds::new(3.0).unwrap()),
+            ..Default::default()
+        });
+        let plain = base.to_m3u8().unwrap();
+        let first_part = plain.find("#EXT-X-PART:").expect("the base has parts");
+        let first_extinf = plain.find("#EXTINF:").unwrap();
+        assert!(
+            first_part < first_extinf,
+            "premise: parts precede EXTINF\n{plain}"
+        );
+
+        let mut out = String::new();
+        SessionPlaylistBase::new(&base)
+            .unwrap()
+            .render_into(&mut out, Some(&sample()))
+            .unwrap();
+        let tag = out.find(TAG).expect("tag present");
+        let part = out.find("#EXT-X-PART:").unwrap();
+        let extinf = out.find("#EXTINF:").unwrap();
+        assert!(tag < part && part < extinf, "{out}");
+        assert_eq!(out.matches(TAG).count(), 1);
+        // The PART-INF header line is not mistaken for a part.
+        assert!(out.find("#EXT-X-PART-INF").is_none_or(|i| i < tag), "{out}");
+        MediaPlaylist::parse(&out).expect("the spliced LL playlist parses");
     }
 }

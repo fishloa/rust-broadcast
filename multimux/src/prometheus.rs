@@ -32,6 +32,8 @@
 //!   port; see that issue and this crate's CHANGELOG for the history: they
 //!   silently read zero for a while, which is worse than being entirely
 //!   absent, before being deleted outright pending this fix).
+//! - `multimux_dvr_si_errors_total` (`DVR_SI_ERRORS_TOTAL`) — counter, labels
+//!   `route`: an EIT section the DVR recorder could not act on and dropped.
 //! - `multimux_dvr_pin_rearmed_total` (`DVR_PIN_REARMED_TOTAL`) — counter,
 //!   labels `route`: bumped by `crate::dvr::DvrRecorder::handle_terminated`
 //!   each time an `ArchiveOverrun::StallIngest` pin is force-expired by the
@@ -102,6 +104,11 @@ pub(crate) const SEGMENTS_PRODUCED_TOTAL: &str = "multimux_segments_produced_tot
 /// counter itself (would need an unbounded-cardinality label or a second
 /// counter this crate has no other use for).
 pub(crate) const DVR_PIN_REARMED_TOTAL: &str = "multimux_dvr_pin_rearmed_total";
+
+/// Counter: SI sections the DVR recorder's EIT reader failed to act on (a
+/// period roll or sidecar write that errored); the section is dropped and the
+/// reader moves on. Labels: `route`.
+pub(crate) const DVR_SI_ERRORS_TOTAL: &str = "multimux_dvr_si_errors_total";
 
 /// Counter: total times a route's DVR recorder was abandoned because its
 /// mutex was found poisoned (a panic left its multi-step state — offset,

@@ -116,14 +116,28 @@ fn segment_content_type(ext: &str) -> &'static str {
     }
 }
 
-/// `#EXT-X-MAP` URI for `container`'s live init resource (served by the
-/// shared resource route, `crate::origin::resource`), or `None` for
-/// [`Container::MpegTs`] (no init resource exists — see
-/// `hls_runtime::server::Container`'s own doc). Relative to this output's
-/// own playlist paths, both of which are top-level under `/{stream}/`,
-/// same as `init-{track}.mp4` itself.
-fn map_uri(container: Container) -> Option<String> {
-    matches!(container, Container::Fmp4).then(|| format!("init-{DEFAULT_TRACK_ID}.mp4"))
+/// The `#EXT-X-MAP` URI of an [`catchup::InitRef`], relative to the catch-up
+/// playlists (which sit at `/{stream}/`): an archived period's init is served
+/// by this module's own resource route (`catchup/init-p{N}.mp4`, the bytes at
+/// the head of that period's file — the init of the run that wrote it), a
+/// segment still in the live origin names the origin's versioned init
+/// resource (`HlsOrigin::init_name`).
+fn init_uri_of(ll_hls: Option<&hls_runtime::server::HlsOrigin>, init: catchup::InitRef) -> String {
+    match init {
+        catchup::InitRef::Archived(period) => format!("catchup/init-p{period}.mp4"),
+        catchup::InitRef::Live(generation) => ll_hls.map_or_else(
+            || format!("init-{DEFAULT_TRACK_ID}.mp4"),
+            |o| o.init_name(DEFAULT_TRACK_ID, generation),
+        ),
+    }
+}
+
+/// `catchup/init-p{N}.mp4` -> `N`.
+fn parse_init_filename(file: &str) -> Option<u32> {
+    file.strip_prefix("init-p")?
+        .strip_suffix(".mp4")?
+        .parse()
+        .ok()
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -168,7 +182,26 @@ async fn catchup_playlist(
             return StatusCode::INTERNAL_SERVER_ERROR.into_response();
         }
     };
-    let live = serving.ll_hls().closed_segments();
+    // The live tail in the numbers the origin's playlist and resource names
+    // use (its Media Sequence Number = offset + the `Trunk`'s number), the
+    // same numbers the archive indexes under (audit r07-C5, #1083): without
+    // the offset a reconnect's restarted `Trunk` numbers collide with the
+    // archive's, and the live tail is filtered out of the merge.
+    let ll_hls = serving.ll_hls();
+    let offset = ll_hls.media_sequence_offset();
+    let live: Vec<_> = ll_hls
+        .closed_segments()
+        .into_iter()
+        .filter_map(|s| {
+            let public = u32::try_from(offset.checked_add(u64::from(s.sequence_number))?).ok()?;
+            Some(hls_runtime::server::ClosedSegment::new(
+                public,
+                s.start_ns,
+                s.duration_secs,
+                s.discontinuous,
+            ))
+        })
+        .collect();
     let combined = catchup::merge_segments(&archived, &live);
     let windowed = catchup::apply_window(&combined, q.window_secs);
     // Audit run 7, W11: this playlist is `EVENT`-shaped only when nothing
@@ -185,10 +218,11 @@ async fn catchup_playlist(
     } else {
         Some(PlaylistType::Event)
     };
+    let init_of = |init| init_uri_of(Some(&ll_hls), init);
     let Ok(body) = catchup::render_playlist(
         &windowed,
         ext,
-        map_uri(route.container()).as_deref(),
+        matches!(route.container(), Container::Fmp4).then_some(&init_of as &dyn Fn(_) -> _),
         playlist_type,
         false,
     ) else {
@@ -246,6 +280,7 @@ async fn vod_playlist(
             start_pts_ns: s.start_pts_ns,
             duration_secs: s.duration_secs,
             discontinuous: s.discontinuous,
+            init: Some(catchup::InitRef::Archived(s.period_num)),
         })
         .collect();
     // One period's segments only ever grow within the period (retention
@@ -257,10 +292,11 @@ async fn vod_playlist(
     } else {
         PlaylistType::Event
     };
+    let init_of = |init| init_uri_of(None, init);
     let Ok(body) = catchup::render_playlist(
         &combined,
         ext,
-        map_uri(route.container()).as_deref(),
+        matches!(route.container(), Container::Fmp4).then_some(&init_of as &dyn Fn(_) -> _),
         Some(playlist_type),
         finished,
     ) else {
@@ -298,6 +334,9 @@ async fn catchup_resource(
     Path(file): Path<String>,
 ) -> Response {
     let ext = container_ext(route.container());
+    if let Some(period) = parse_init_filename(&file) {
+        return catchup_init(&route, ext, period).await;
+    }
     let Some(seq) = parse_seg_filename(&file, ext) else {
         return StatusCode::NOT_FOUND.into_response();
     };
@@ -374,6 +413,44 @@ async fn catchup_resource(
             ..
         } => ([(header::CONTENT_TYPE, segment_content_type(ext))], bytes).into_response(),
         _ => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+/// `GET /catchup/init-p{N}.mp4`: the init segment of the run that wrote
+/// archive period `N` — the bytes at the head of `pN.m4s`, up to the first
+/// indexed segment. `404` for a TS route, an unknown/evicted period or one
+/// with no segment yet.
+async fn catchup_init(route: &RouteHandle, ext: &'static str, period: u32) -> Response {
+    let Some(dvr) = route.dvr_config() else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if ext != "m4s" {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+    let dir: PathBuf = catchup::archive_dir(dvr, route.name());
+    let _permit = scan_permit().acquire().await;
+    let read = tokio::task::spawn_blocking(move || {
+        let init_len = catchup::read_period_segments(&dir, period)
+            .first()
+            .map(|s| s.byte_offset)?;
+        Some(catchup::read_archived_bytes(&dir, ext, period, 0, init_len))
+    })
+    .await;
+    match read {
+        Ok(Some(Ok(bytes))) if !bytes.is_empty() => {
+            ([(header::CONTENT_TYPE, segment_content_type(ext))], bytes).into_response()
+        }
+        Ok(None | Some(Ok(_)) | Some(Err(catchup::ReadArchivedError::Gone))) => {
+            StatusCode::NOT_FOUND.into_response()
+        }
+        Ok(Some(Err(e))) => {
+            tracing::error!(error = %e, period, "catch-up: failed reading an archived init");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
+        Err(e) => {
+            tracing::error!(error = %e, period, "catch-up: init read task failed");
+            StatusCode::INTERNAL_SERVER_ERROR.into_response()
+        }
     }
 }
 
@@ -850,5 +927,342 @@ mod tests {
         let route = Arc::new(RouteHandle::new(4.0, 500, 8).with_name("bad-name"));
         let resp = catchup_resource(State(route), Path("not-a-segment.txt".to_string())).await;
         assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    }
+
+    /// Audit r07-C5 (#1083), end to end: after a source reconnect the archive
+    /// and the live tail share one numbering. The reconnected `Trunk` numbers
+    /// its segments from 1 again; the playlist, the archive index and the
+    /// by-number fetch must all use the origin's continued numbers, so the
+    /// catch-up playlist lists every segment exactly once and each number
+    /// serves its own run's bytes (the old code filtered the new run out of
+    /// the merge and served the old run's bytes for a reused number).
+    #[tokio::test]
+    async fn reconnect_keeps_archive_and_live_tail_in_one_numbering() {
+        let tmp = temp_dir();
+        let route = Arc::new(
+            RouteHandle::new(1.0, 250, 8)
+                .with_name("c5")
+                .with_dvr(dvr_config(&tmp)),
+        );
+        let first = route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        for (seq, byte) in [(1u32, 0x11u8), (2, 0x12)] {
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
+                .expect("add_segment");
+        }
+        route.drain_dvr().await;
+
+        // The source reconnects: a fresh Trunk, numbering from 1 again.
+        route.release_program(SPTS_PROGRAM_ID, &first);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
+        for (seq, byte) in [(1u32, 0x21u8), (2, 0x22)] {
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
+                .expect("add_segment");
+        }
+        route.drain_dvr().await;
+
+        // Both runs are really in the archive (not just served from the live
+        // window): two periods, four indexed segments.
+        let archived = catchup::scan_archive(&tmp.join("c5"));
+        assert_eq!(
+            archived
+                .iter()
+                .map(|s| (s.period_num, s.seq))
+                .collect::<Vec<_>>(),
+            vec![(0, 1), (0, 2), (1, 4), (1, 5)]
+        );
+
+        let playlist = body_string(
+            catchup_playlist(State(route.clone()), Query(CatchupPlaylistQuery::default())).await,
+        )
+        .await;
+        let listed: Vec<&str> = playlist
+            .lines()
+            .filter(|l| l.starts_with("catchup/seg-"))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                "catchup/seg-1.m4s",
+                "catchup/seg-2.m4s",
+                "catchup/seg-4.m4s",
+                "catchup/seg-5.m4s"
+            ],
+            "{playlist}"
+        );
+
+        // Each run decodes with ITS OWN init: the playlist carries one
+        // `EXT-X-MAP` per run, after the `EXT-X-DISCONTINUITY` that opens the
+        // second one, and each map serves that run's init bytes (the head of
+        // the period file the run wrote).
+        let lines: Vec<&str> = playlist.lines().collect();
+        let at = |needle: &str| {
+            lines
+                .iter()
+                .position(|l| *l == needle)
+                .unwrap_or_else(|| panic!("{needle} missing from {playlist}"))
+        };
+        let (map0, map1) = (
+            at("#EXT-X-MAP:URI=\"catchup/init-p0.mp4\""),
+            at("#EXT-X-MAP:URI=\"catchup/init-p1.mp4\""),
+        );
+        assert!(map0 < at("catchup/seg-1.m4s"), "{playlist}");
+        assert!(
+            at("catchup/seg-2.m4s") < at("#EXT-X-DISCONTINUITY")
+                && at("#EXT-X-DISCONTINUITY") < map1
+                && map1 < at("catchup/seg-4.m4s"),
+            "{playlist}"
+        );
+        for (period, init) in [(0u32, 0xAAu8), (1, 0xBB)] {
+            let resp =
+                catchup_resource(State(route.clone()), Path(format!("init-p{period}.mp4"))).await;
+            assert_eq!(resp.status(), StatusCode::OK, "init-p{period}");
+            assert_eq!(body_bytes(resp).await, vec![init; 4], "init-p{period}");
+        }
+        let missing = catchup_resource(State(route.clone()), Path("init-p9.mp4".into())).await;
+        assert_eq!(missing.status(), StatusCode::NOT_FOUND);
+
+        // Number 3 is the old run's open segment: skipped, never reissued.
+        for (n, expected) in [(1u32, 0x11u8), (2, 0x12), (4, 0x21), (5, 0x22)] {
+            let resp = catchup_resource(State(route.clone()), Path(format!("seg-{n}.m4s"))).await;
+            assert_eq!(resp.status(), StatusCode::OK, "seg-{n}");
+            let bytes = body_bytes(resp).await;
+            assert!(
+                bytes.iter().all(|&b| b == expected),
+                "seg-{n} must serve its own run's bytes ({expected:#x}), got {:#x?}",
+                &bytes[..4.min(bytes.len())]
+            );
+        }
+        cleanup(&tmp);
+    }
+
+    /// Audit r07-C5 (#1083): the live tail — segments the reconnected run has
+    /// produced but the recorder has NOT archived yet — must be offset-mapped
+    /// onto the playlist's numbers too. Without the mapping the tail keeps the
+    /// restarted `Trunk` numbers (1, 2), which the merge filters out as "not
+    /// above the archive" (it holds 1..=2), so the tail vanishes.
+    #[tokio::test]
+    async fn the_unarchived_live_tail_is_offset_mapped_after_a_reconnect() {
+        let tmp = temp_dir();
+        let route = Arc::new(
+            RouteHandle::new(1.0, 250, 8)
+                .with_name("c5-live")
+                .with_dvr(dvr_config(&tmp)),
+        );
+        let first = route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        for (seq, byte) in [(1u32, 0x11u8), (2, 0x12)] {
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
+                .expect("add_segment");
+        }
+        route.drain_dvr().await;
+
+        // Reconnect; the new run's segments are NOT drained into the archive.
+        route.release_program(SPTS_PROGRAM_ID, &first);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, vec![0xBB; 4]);
+        for (seq, byte) in [(1u32, 0x21u8), (2, 0x22)] {
+            route
+                .add_segment(SPTS_PROGRAM_ID, seg_bytes(seq, byte))
+                .expect("add_segment");
+        }
+        assert_eq!(
+            catchup::scan_archive(&tmp.join("c5-live"))
+                .iter()
+                .map(|s| s.seq)
+                .collect::<Vec<_>>(),
+            vec![1, 2],
+            "premise: only run 1 is archived"
+        );
+
+        let playlist = body_string(
+            catchup_playlist(State(route.clone()), Query(CatchupPlaylistQuery::default())).await,
+        )
+        .await;
+        let listed: Vec<&str> = playlist
+            .lines()
+            .filter(|l| l.starts_with("catchup/seg-"))
+            .collect();
+        assert_eq!(
+            listed,
+            vec![
+                "catchup/seg-1.m4s",
+                "catchup/seg-2.m4s",
+                "catchup/seg-4.m4s",
+                "catchup/seg-5.m4s"
+            ],
+            "{playlist}"
+        );
+        // The live tail's init is the live origin's versioned one.
+        let live_init = playlist
+            .lines()
+            .filter_map(|l| l.strip_prefix("#EXT-X-MAP:URI=\""))
+            .map(|l| l.trim_end_matches('"'))
+            .next_back()
+            .expect("a map");
+        assert!(
+            live_init.starts_with("init-1-") && live_init.ends_with("-1.mp4"),
+            "{live_init}"
+        );
+        let init = route
+            .ll_hls(SPTS_PROGRAM_ID)
+            .expect("origin")
+            .init_name(1, 1);
+        assert_eq!(live_init, init);
+
+        // And the tail bytes are the live ones, under the playlist's numbers.
+        for (n, expected) in [(4u32, 0x21u8), (5, 0x22)] {
+            let resp = catchup_resource(State(route.clone()), Path(format!("seg-{n}.m4s"))).await;
+            assert_eq!(resp.status(), StatusCode::OK, "seg-{n}");
+            assert!(
+                body_bytes(resp).await.iter().all(|&b| b == expected),
+                "seg-{n}"
+            );
+        }
+        cleanup(&tmp);
+    }
+
+    // --- independent oracle: Apple's `mediastreamvalidator` over the served
+    //     catch-up playlist and the files it names ---
+
+    fn validator_unavailable() -> Option<&'static str> {
+        if !cfg!(target_os = "macos") {
+            return Some("`mediastreamvalidator` is macOS-only and this is not macOS");
+        }
+        let present = std::process::Command::new("mediastreamvalidator")
+            .arg("--version")
+            .output()
+            .is_ok_and(|o| o.status.success());
+        (!present).then_some("`mediastreamvalidator` is not on PATH (Additional Tools for Xcode)")
+    }
+
+    /// MUST-level (requirement level 1) findings in the validator's JSON.
+    fn validator_errors(dir: &std::path::Path, entry: &str) -> Vec<String> {
+        let out = dir.join("out.json");
+        let status = std::process::Command::new("mediastreamvalidator")
+            .current_dir(dir)
+            .args(["--quiet", "-t", "3", "-O"])
+            .arg(&out)
+            .arg(entry)
+            .status()
+            .expect("run mediastreamvalidator");
+        assert!(status.success(), "validator exit {status}");
+        let compact: String = std::fs::read_to_string(&out)
+            .expect("validator json")
+            .chars()
+            .filter(|c| !c.is_whitespace())
+            .collect();
+        let mut errors = Vec::new();
+        let key = "\"errorRequirementLevel\":1";
+        let mut from = 0;
+        while let Some(at) = compact[from..].find(key) {
+            let at = from + at;
+            let open = compact[..at].rfind('{').expect("message object start");
+            let close = at + compact[at..].find('}').expect("message object end") + 1;
+            errors.push(compact[open..close].to_string());
+            from = close;
+        }
+        if compact.contains("\"parseFailed\":true") {
+            errors.push("parseFailed".to_string());
+        }
+        errors
+    }
+
+    /// The served catch-up playlist of two runs with DIFFERENT inits, over real
+    /// CMAF media, carries a per-run `EXT-X-MAP` and is accepted by Apple's
+    /// validator (which also fetches every file the playlist names through the
+    /// paths this handler serves them under).
+    #[tokio::test]
+    async fn two_runs_with_different_inits_validate_with_mediastreamvalidator() {
+        if let Some(why) = validator_unavailable() {
+            eprintln!("SKIP catch-up validator oracle: {why}; no-op result, not coverage.");
+            return;
+        }
+        let fixtures = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../hls-runtime/tests/fixtures/cmaf-fmp4");
+        let read = |name: &str| std::fs::read(fixtures.join(name)).expect("fixture");
+        let init_a = read("init.mp4");
+        // A different init for the second run: the same, plus a trailing `free`
+        // box (valid ISOBMFF, byte-wise different).
+        let mut init_b = init_a.clone();
+        init_b.extend_from_slice(&[0, 0, 0, 8, b'f', b'r', b'e', b'e']);
+
+        let tmp = temp_dir();
+        let route = Arc::new(
+            RouteHandle::new(1.0, 250, 8)
+                .with_name("valid")
+                .with_dvr(dvr_config(&tmp)),
+        );
+        let info = |seq: u32, name: &str| transmux::ll_hls::SegmentInfo {
+            bytes: read(name),
+            duration: 1.0,
+            segment_seq: seq,
+            part_count: 1,
+        };
+        let first = route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, init_a.clone());
+        route
+            .add_segment(SPTS_PROGRAM_ID, info(1, "index0.m4s"))
+            .unwrap();
+        route.drain_dvr().await;
+        route.release_program(SPTS_PROGRAM_ID, &first);
+        route.publish_new_program(SPTS_PROGRAM_ID);
+        route.set_init(SPTS_PROGRAM_ID, init_b.clone());
+        route
+            .add_segment(SPTS_PROGRAM_ID, info(1, "index1.m4s"))
+            .unwrap();
+        route
+            .add_segment(SPTS_PROGRAM_ID, info(2, "index2.m4s"))
+            .unwrap();
+        route.drain_dvr().await;
+
+        let playlist = body_string(
+            catchup_playlist(State(route.clone()), Query(CatchupPlaylistQuery::default())).await,
+        )
+        .await;
+        let maps: Vec<&str> = playlist
+            .lines()
+            .filter(|l| l.starts_with("#EXT-X-MAP"))
+            .collect();
+        assert_eq!(
+            maps,
+            vec![
+                "#EXT-X-MAP:URI=\"catchup/init-p0.mp4\"",
+                "#EXT-X-MAP:URI=\"catchup/init-p1.mp4\""
+            ],
+            "{playlist}"
+        );
+
+        let dir = tmp.join("served");
+        std::fs::create_dir_all(dir.join("catchup")).unwrap();
+        std::fs::write(dir.join("catchup.m3u8"), &playlist).unwrap();
+        let mut served_inits = Vec::new();
+        for name in [
+            "init-p0.mp4",
+            "init-p1.mp4",
+            "seg-1.m4s",
+            "seg-3.m4s",
+            "seg-4.m4s",
+        ] {
+            let resp = catchup_resource(State(route.clone()), Path(name.to_string())).await;
+            assert_eq!(resp.status(), StatusCode::OK, "{name}");
+            let bytes = body_bytes(resp).await;
+            if name.starts_with("init-") {
+                served_inits.push(bytes.clone());
+            }
+            std::fs::write(dir.join("catchup").join(name), bytes).unwrap();
+        }
+        assert_eq!(served_inits, vec![init_a, init_b], "each run's own init");
+
+        let errors = validator_errors(&dir, "catchup.m3u8");
+        assert!(
+            errors.is_empty(),
+            "validator MUST-level findings: {errors:#?}"
+        );
+        cleanup(&tmp);
     }
 }

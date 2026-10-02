@@ -21,6 +21,11 @@
 
 use crate::error::{Error, Result};
 
+/// The 33-bit modulus of an MPEG-2 PTS/DTS and of a SCTE-35 `pts_time`
+/// (ISO/IEC 13818-1 §2.4.3.7 `PTS[32..0]`; ANSI/SCTE 35 2023r1 §9.8.1
+/// `pts_time` is a 33-bit field), in 90 kHz ticks: 2^33 ≈ 26.5 hours.
+pub const PTS_MODULUS_33: u64 = 1 << 33;
+
 /// Where the chosen boundary landed relative to the requested instant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[non_exhaustive]
@@ -91,7 +96,12 @@ pub fn condition_splice_point(
     let mut nearest: Option<(u64, u64)> = None; // (candidate, delta)
     for &c in candidates {
         let delta = c.abs_diff(requested_pts);
-        if nearest.is_none_or(|(_, best)| delta < best) {
+        // Equidistant candidates: prefer the one after the request (a splice
+        // is cut at or after the cue, never before it, when there is a
+        // choice) — so the result does not depend on slice order.
+        if nearest.is_none_or(|(best_c, best)| {
+            delta < best || (delta == best && c > requested_pts && best_c < requested_pts)
+        }) {
             nearest = Some((c, delta));
         }
     }
@@ -109,6 +119,82 @@ pub fn condition_splice_point(
         SnapDirection::Before
     } else {
         SnapDirection::After
+    };
+    Ok(ConditionedSplicePoint {
+        requested_pts,
+        snapped_pts,
+        delta_ticks,
+        direction,
+    })
+}
+
+/// [`condition_splice_point`] for a **wrapping** clock — the 33-bit PTS of a
+/// transport stream or of a SCTE-35 `pts_time` (pass [`PTS_MODULUS_33`]) —
+/// issue #1125 / audit r14-SSAI-W2.
+///
+/// Distances and the snap direction are measured on the circle of
+/// `modulus` ticks: a cue at `2^33 - 100` whose nearest real boundary is at
+/// `50` (just after the wrap, about every 26.5 h on a 24/7 channel) is
+/// 150 ticks [`SnapDirection::After`], where the linear version measures
+/// ~8.6 × 10⁹ ticks and drops the break. The shorter way round wins; on an
+/// exact half-circle tie the forward ([`SnapDirection::After`]) way is
+/// taken. [`ConditionedSplicePoint::delta_ticks`] is that circular distance.
+///
+/// Returns [`Error::PtsOutOfRange`] if `modulus` is zero or `requested_pts`
+/// or any candidate is not `< modulus` (a value already wrapped is the
+/// contract; silently reducing it would hide an unrolled timeline).
+pub fn condition_splice_point_wrapping(
+    requested_pts: u64,
+    candidates: &[u64],
+    max_delta_ticks: u64,
+    modulus: u64,
+) -> Result<ConditionedSplicePoint> {
+    if modulus == 0 || requested_pts >= modulus {
+        return Err(Error::PtsOutOfRange {
+            pts: requested_pts,
+            modulus,
+        });
+    }
+    let m = u128::from(modulus);
+    let r = u128::from(requested_pts);
+    // (candidate, circular delta, forward?)
+    let mut nearest: Option<(u64, u64, bool)> = None;
+    for &c in candidates {
+        if c >= modulus {
+            return Err(Error::PtsOutOfRange { pts: c, modulus });
+        }
+        let cw = u128::from(c);
+        let forward = (cw + m - r) % m;
+        let backward = (r + m - cw) % m;
+        let (delta, is_forward) = if forward <= backward {
+            (forward, true)
+        } else {
+            (backward, false)
+        };
+        // `delta <= modulus / 2` always fits a u64; saturate rather than cast.
+        let delta = u64::try_from(delta).unwrap_or(u64::MAX);
+        // Equidistant candidates: prefer `After` (see
+        // `condition_splice_point`), independent of slice order.
+        if nearest.is_none_or(|(_, best, best_forward)| {
+            delta < best || (delta == best && is_forward && !best_forward)
+        }) {
+            nearest = Some((c, delta, is_forward));
+        }
+    }
+    let (snapped_pts, delta_ticks, is_forward) = nearest.ok_or(Error::NoCandidates)?;
+    if delta_ticks > max_delta_ticks {
+        return Err(Error::NoAlignedBoundary {
+            requested_pts,
+            tolerance_ticks: max_delta_ticks,
+            nearest_delta_ticks: delta_ticks,
+        });
+    }
+    let direction = if delta_ticks == 0 {
+        SnapDirection::Exact
+    } else if is_forward {
+        SnapDirection::After
+    } else {
+        SnapDirection::Before
     };
     Ok(ConditionedSplicePoint {
         requested_pts,
@@ -167,6 +253,116 @@ mod tests {
     fn rejects_empty_candidates() {
         let err = condition_splice_point(1_000, &[], 500).unwrap_err();
         assert!(matches!(err, Error::NoCandidates));
+    }
+
+    /// Audit r14-SSAI-W2: cue just before the 33-bit wrap, boundary just
+    /// after it. The linear function drops the break; the wrapping one
+    /// reports the true 150-tick forward distance.
+    #[test]
+    fn wrapping_snaps_across_the_33_bit_boundary() {
+        let cue = PTS_MODULUS_33 - 100;
+        assert!(matches!(
+            condition_splice_point(cue, &[50], 1_000),
+            Err(Error::NoAlignedBoundary { .. })
+        ));
+        let r = condition_splice_point_wrapping(cue, &[50], 1_000, PTS_MODULUS_33).unwrap();
+        assert_eq!(r.snapped_pts, 50);
+        assert_eq!(r.delta_ticks, 150);
+        assert_eq!(r.direction, SnapDirection::After);
+    }
+
+    #[test]
+    fn wrapping_direction_before_across_the_wrap() {
+        let r = condition_splice_point_wrapping(50, &[PTS_MODULUS_33 - 100], 1_000, PTS_MODULUS_33)
+            .unwrap();
+        assert_eq!(r.delta_ticks, 150);
+        assert_eq!(r.direction, SnapDirection::Before);
+    }
+
+    #[test]
+    fn wrapping_picks_nearest_among_both_sides_of_the_wrap() {
+        let cue = PTS_MODULUS_33 - 100;
+        let r = condition_splice_point_wrapping(
+            cue,
+            &[PTS_MODULUS_33 - 500, 90, 4_000],
+            10_000,
+            PTS_MODULUS_33,
+        )
+        .unwrap();
+        assert_eq!(r.snapped_pts, 90);
+        assert_eq!(r.delta_ticks, 190);
+        let r = condition_splice_point_wrapping(
+            cue,
+            &[PTS_MODULUS_33 - 150, 90],
+            10_000,
+            PTS_MODULUS_33,
+        )
+        .unwrap();
+        assert_eq!(r.snapped_pts, PTS_MODULUS_33 - 150);
+        assert_eq!(r.delta_ticks, 50);
+        assert_eq!(r.direction, SnapDirection::Before);
+    }
+
+    #[test]
+    fn wrapping_exact_and_tolerance_and_tie() {
+        let r = condition_splice_point_wrapping(7, &[7], 0, PTS_MODULUS_33).unwrap();
+        assert_eq!(r.direction, SnapDirection::Exact);
+        assert!(r.is_exact());
+        let err = condition_splice_point_wrapping(PTS_MODULUS_33 - 100, &[50], 149, PTS_MODULUS_33)
+            .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::NoAlignedBoundary {
+                nearest_delta_ticks: 150,
+                tolerance_ticks: 149,
+                ..
+            }
+        ));
+        let r = condition_splice_point_wrapping(0, &[5], 5, 10).unwrap();
+        assert_eq!((r.delta_ticks, r.direction), (5, SnapDirection::After));
+    }
+
+    #[test]
+    fn wrapping_rejects_out_of_range_inputs_and_empty_sets() {
+        assert!(matches!(
+            condition_splice_point_wrapping(PTS_MODULUS_33, &[1], 10, PTS_MODULUS_33),
+            Err(Error::PtsOutOfRange { .. })
+        ));
+        assert!(matches!(
+            condition_splice_point_wrapping(1, &[PTS_MODULUS_33], 10, PTS_MODULUS_33),
+            Err(Error::PtsOutOfRange { .. })
+        ));
+        assert!(matches!(
+            condition_splice_point_wrapping(0, &[0], 10, 0),
+            Err(Error::PtsOutOfRange { .. })
+        ));
+        assert!(matches!(
+            condition_splice_point_wrapping(1, &[], 10, PTS_MODULUS_33),
+            Err(Error::NoCandidates)
+        ));
+        // Hostile: a modulus near u64::MAX must not overflow.
+        let r = condition_splice_point_wrapping(u64::MAX - 2, &[1], u64::MAX, u64::MAX).unwrap();
+        assert_eq!(r.delta_ticks, 3);
+    }
+
+    /// Two candidates equally far either side of the cue: `After` wins, in
+    /// either slice order, for both the linear and the wrapping form.
+    #[test]
+    fn an_equidistant_tie_prefers_after_regardless_of_order() {
+        for candidates in [[900u64, 1_100], [1_100, 900]] {
+            let r = condition_splice_point(1_000, &candidates, 200).unwrap();
+            assert_eq!((r.snapped_pts, r.direction), (1_100, SnapDirection::After));
+        }
+        for candidates in [[900u64, 1_100], [1_100, 900]] {
+            let r =
+                condition_splice_point_wrapping(1_000, &candidates, 200, PTS_MODULUS_33).unwrap();
+            assert_eq!((r.snapped_pts, r.direction), (1_100, SnapDirection::After));
+        }
+        // Across the wrap: 100 ticks either side of 0.
+        for candidates in [[PTS_MODULUS_33 - 100, 100], [100, PTS_MODULUS_33 - 100]] {
+            let r = condition_splice_point_wrapping(0, &candidates, 200, PTS_MODULUS_33).unwrap();
+            assert_eq!((r.snapped_pts, r.direction), (100, SnapDirection::After));
+        }
     }
 
     #[test]

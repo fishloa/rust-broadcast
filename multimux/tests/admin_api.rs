@@ -204,6 +204,26 @@ async fn run_instant(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
     Ok(())
 }
 
+/// Like [`run_instant`] but the session never ends: the route reaches `Live`
+/// and stays there until the supervisor is told to stop.
+async fn run_hold(route_handle: Arc<RouteHandle>) -> multimux::Result<()> {
+    let mut dialer = InstantDialer;
+    let session = dialer.dial().unwrap_or_else(|never| match never {});
+    let trunk_config = TrunkConfig::new(nz(64), nz(16), nz(8), nz(64), nz(64));
+    let handshake = HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX));
+    let mut driver: IngestDriver<InstantSession> = IngestDriver::new(
+        session,
+        trunk_config,
+        handshake,
+        media_plane::DEFAULT_MAX_PROGRAMS,
+    );
+    let mut progress = DriverProgress::new();
+    driver.feed(&[], Timestamp::from_nanos(0));
+    advance_route(&driver, &route_handle, &mut progress).await;
+    std::future::pending::<()>().await;
+    Ok(())
+}
+
 /// A [`SchemeRegistry`] with the `"instant"` tag registered — every test
 /// below shares this factory (the tag is arbitrary and route-count-agnostic:
 /// several routes can each independently name `"instant"`, exactly like
@@ -222,7 +242,30 @@ fn instant_registry() -> SchemeRegistry {
             )))
         }) as InputFactory,
     );
+    registry.register_input(
+        "hold",
+        Arc::new(|ctx: InputCtx| {
+            Ok(tokio::spawn(multimux::supervise_driver(
+                run_hold,
+                ctx.store,
+                Backoff::production_default(),
+                ctx.name,
+                ctx.shutdown_rx,
+            )))
+        }) as InputFactory,
+    );
     registry
+}
+
+/// A route that reaches `Live` and stays there (see [`run_hold`]).
+fn hold_route(name: &str) -> Route {
+    Route {
+        input: InputSpec::Custom {
+            type_tag: "hold".to_string(),
+            params: serde_json::Value::Null,
+        },
+        ..instant_route(name)
+    }
 }
 
 fn instant_route(name: &str) -> Route {
@@ -465,6 +508,68 @@ async fn delete_drains_route_without_disturbing_others() {
         created_at_nanos(&cam2_before),
         created_at_nanos(&cam2_after),
         "cam2's RouteHandle must be the exact same instance -- deleting cam1 must not touch it"
+    );
+
+    server.abort();
+}
+
+/// The `multimux_route_up` value for `route` from `/metrics`.
+async fn route_up(client: &reqwest::Client, media_addr: SocketAddr, route: &str) -> Option<f64> {
+    let body = client
+        .get(format!("http://{media_addr}/metrics"))
+        .send()
+        .await
+        .expect("GET /metrics")
+        .text()
+        .await
+        .expect("metrics body");
+    body.lines()
+        .filter(|l| l.starts_with("multimux_route_up{"))
+        .find(|l| l.contains(&format!("route=\"{route}\"")))
+        .and_then(|l| l.rsplit(' ').next()?.parse().ok())
+}
+
+/// Audit r07-O5 (#1083): a deleted route must not stay `multimux_route_up 1`
+/// (its supervisor was stopped without ever reporting a final state, so the
+/// gauge kept its last value forever). Unique route names: the gauge is
+/// process-wide and other tests in this binary use `cam1`/`cam2`.
+#[tokio::test]
+async fn deleted_route_is_no_longer_reported_up() {
+    let media_addr = reserve_tcp_addr();
+    let admin_addr = reserve_tcp_addr();
+    let config = admin_config(
+        media_addr,
+        admin_addr,
+        vec![hold_route("o5-gone"), hold_route("o5-stays")],
+    );
+    let server = tokio::spawn(serve_with_registry(config, instant_registry()));
+    wait_for_port(admin_addr).await;
+
+    let client = reqwest::Client::new();
+    wait_until_live(&client, media_addr, "o5-gone").await;
+    wait_until_live(&client, media_addr, "o5-stays").await;
+    assert_eq!(route_up(&client, media_addr, "o5-gone").await, Some(1.0));
+
+    let del = admin_json(
+        &client,
+        admin_addr,
+        reqwest::Method::DELETE,
+        "/admin/routes/o5-gone",
+        Some(ADMIN_TOKEN),
+        None,
+    )
+    .await;
+    assert_eq!(del.status(), reqwest::StatusCode::NO_CONTENT);
+
+    assert_eq!(
+        route_up(&client, media_addr, "o5-gone").await,
+        Some(0.0),
+        "a deleted route must not be reported up"
+    );
+    assert_eq!(
+        route_up(&client, media_addr, "o5-stays").await,
+        Some(1.0),
+        "other routes are untouched"
     );
 
     server.abort();

@@ -508,6 +508,51 @@ pub(crate) fn handshake_policy(timeout: Duration) -> media_plane::ingress::Hands
     ))
 }
 
+/// Each admitted session's own clock origin for a [`media_plane::ingress::ListenDriver`]
+/// loop (RTMP, WHIP).
+///
+/// The handshake deadline (`HandshakePolicy::establish_by`) is an absolute
+/// instant on the clock a session is fed, so one route-start clock would reap
+/// every publisher that connects later than the budget after the route began
+/// (audit r07-C6, issue #1083). A session's `now` is measured from its own
+/// admission; a session never admitted (should not happen) falls back to the
+/// route's start.
+pub(crate) struct SessionClocks {
+    route_start: std::time::Instant,
+    admitted: std::collections::HashMap<media_plane::ingress::SessionId, std::time::Instant>,
+}
+
+impl SessionClocks {
+    pub(crate) fn new(route_start: std::time::Instant) -> Self {
+        SessionClocks {
+            route_start,
+            admitted: std::collections::HashMap::new(),
+        }
+    }
+
+    /// Record session `id`'s admission at `at`.
+    pub(crate) fn admit(&mut self, id: media_plane::ingress::SessionId, at: std::time::Instant) {
+        self.admitted.insert(id, at);
+    }
+
+    /// The timestamp to feed session `id` at wall-clock instant `at`.
+    pub(crate) fn now(
+        &self,
+        id: media_plane::ingress::SessionId,
+        at: std::time::Instant,
+    ) -> broadcast_common::Timestamp {
+        broadcast_common::Timestamp::from_instant(
+            self.admitted.get(&id).copied().unwrap_or(self.route_start),
+            at,
+        )
+    }
+
+    /// Forget every session `live` no longer reports.
+    pub(crate) fn retain(&mut self, live: impl Fn(&media_plane::ingress::SessionId) -> bool) {
+        self.admitted.retain(|id, _| live(id));
+    }
+}
+
 /// After draining a driver-backed session (`IngestDriver::feed`/
 /// `on_deadline`), every `run_*` entry point calls this once per iteration to
 /// keep `route_handle` in sync with what the driver has actually observed

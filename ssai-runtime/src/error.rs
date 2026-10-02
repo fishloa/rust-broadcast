@@ -25,6 +25,21 @@ pub enum Error {
     /// candidate slice.
     #[error("no candidate splice boundaries supplied")]
     NoCandidates,
+    /// A PTS value (or the modulus itself) passed to
+    /// [`crate::splice::condition_splice_point_wrapping`] was not below a
+    /// non-zero modulus (issue #1125 / audit r14-SSAI-W2).
+    #[error("pts {pts} is not below the clock modulus {modulus} (or the modulus is zero)")]
+    PtsOutOfRange {
+        /// The offending value.
+        pts: u64,
+        /// The wrap modulus supplied.
+        modulus: u64,
+    },
+    /// The base playlist carries no `#EXT-X-PROGRAM-DATE-TIME` tag, which
+    /// RFC 8216bis §4.4.5.1 requires of any playlist containing an
+    /// `EXT-X-DATERANGE` (issue #1125 / audit r14-SSAI-W3).
+    #[error("base playlist has no EXT-X-PROGRAM-DATE-TIME; an EXT-X-DATERANGE requires one")]
+    MissingProgramDateTime,
     /// An interstitial asset source was neither `X-ASSET-URI` nor
     /// `X-ASSET-LIST` — Appendix D §D.2 requires exactly one.
     #[error("interstitial asset source must be exactly one of X-ASSET-URI or X-ASSET-LIST")]

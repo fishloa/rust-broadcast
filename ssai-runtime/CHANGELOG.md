@@ -4,7 +4,26 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Added
+- `splice::condition_splice_point_wrapping` + `PTS_MODULUS_33`: circular
+  distance/direction on a wrapping clock, so a cue at `2^33 - 100` snaps to a
+  boundary at `50` (150 ticks `After`) instead of being dropped as
+  `NoAlignedBoundary` once per ~26.5 h; new `Error::PtsOutOfRange`. Two
+  equidistant candidates resolve to the one `After` the cue (also in
+  `condition_splice_point`), whatever the slice order (#1125).
+- `playlist::SessionPlaylistBase`: renders the base playlist once and splices
+  each viewer's tag line into the text (no per-viewer deep clone of every
+  segment; pinned by a counting-allocator test). The line goes before the
+  first `#EXT-X-PART:` or `#EXTINF:`, so for an LL-HLS base it lands before the
+  first segment's parts, never between a segment's parts and its `EXTINF`
+  (#1125).
+
 ### Changed (breaking)
+- `render_session_playlist` (and `SessionPlaylistBase::render_into`) now
+  return the new `Error::MissingProgramDateTime` when a break is requested but
+  the base playlist has no `#EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.5.1
+  requires one alongside any `EXT-X-DATERANGE`); previously the tag was
+  emitted unconditionally (#1125).
 - **`InterstitialDateRange::to_tag_line` now returns `Result<String>`**
   (was `String`), and `render_session_playlist` now returns
   `Result<MediaPlaylist>` (was `MediaPlaylist`) — issue #1140 / audit

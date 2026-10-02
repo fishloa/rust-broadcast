@@ -303,7 +303,11 @@ impl RouteRegistry {
     /// share exactly one implementation. Does not touch [`Self::inner`] or
     /// rebuild the router — callers do that once they decide to keep the
     /// result.
-    fn spawn_route(&self, route: &Route) -> crate::Result<RouteRuntime> {
+    ///
+    /// `archive_floor` is the highest sequence number the route's DVR archive
+    /// already holds (`crate::dvr::archive_seq_floor`, computed by the async
+    /// caller since it reads the archive from disk).
+    fn spawn_route(&self, route: &Route, archive_floor: u32) -> crate::Result<RouteRuntime> {
         let outputs: Vec<Arc<dyn Output>> = route
             .outputs
             .iter()
@@ -330,6 +334,7 @@ impl RouteRegistry {
                 self.ctx.base_config.part_target_ms,
                 self.ctx.base_config.window_segments,
             )
+            .with_archive_floor(archive_floor)
             .with_name(route.name.clone())
             .with_container(super::route_container(route))
             // Issue #900 — see the identical fix (and its own doc) in
@@ -407,7 +412,8 @@ impl RouteRegistry {
                 return Err(crate::MultimuxError::RouteExists { name: route.name });
             }
         }
-        let runtime = self.spawn_route(&route)?;
+        let archive_floor = archive_floor_of(&route).await;
+        let runtime = self.spawn_route(&route, archive_floor)?;
         let status = RouteStatus::from_runtime(&runtime);
         // The runtime is NOT installed yet. Wrap it so any early return or
         // unwind from here on cancels its push/WHEP tasks and aborts its
@@ -493,6 +499,9 @@ impl RouteRegistry {
         };
         self.rebuild_router();
         drain_route(runtime).await;
+        // After the drain: the supervisor's own last gauge update cannot race
+        // this one back to `1` (audit r07-O5).
+        super::supervisor::record_route_removed(name);
         Ok(())
     }
 
@@ -600,7 +609,8 @@ impl RouteRegistry {
         // or a port bound for a route that was never installed (W6/A2).
         let mut prepared: Vec<(Route, PendingRuntime)> = Vec::new();
         for route in added_routes.iter().chain(changed_routes.iter()) {
-            let runtime = self.spawn_route(route)?;
+            let archive_floor = archive_floor_of(route).await;
+            let runtime = self.spawn_route(route, archive_floor)?;
             prepared.push((route.clone(), PendingRuntime::new(runtime)));
         }
 
@@ -657,6 +667,11 @@ impl RouteRegistry {
         *crate::lock::write(&self.router_slot) = new_router;
 
         futures_util::future::join_all(removed_runtimes.into_iter().map(drain_route)).await;
+        // Routes that are gone for good (a *changed* route was replaced by a
+        // new runtime that reports its own state) must not stay `up`.
+        for name in &removed_names {
+            super::supervisor::record_route_removed(name);
+        }
 
         Ok(ReloadSummary {
             added: added_routes.into_iter().map(|r| r.name).collect(),
@@ -1123,6 +1138,16 @@ pub(crate) async fn serve_with_admin(
 
     media_result?;
     Ok(())
+}
+
+/// The highest sequence number `route`'s DVR archive already holds, or `0`
+/// when DVR is off (see `crate::dvr::archive_seq_floor`).
+pub(super) async fn archive_floor_of(route: &Route) -> u32 {
+    if route.dvr.enabled {
+        crate::dvr::archive_seq_floor(&route.dvr, &route.name).await
+    } else {
+        0
+    }
 }
 
 #[cfg(test)]

@@ -801,26 +801,32 @@ impl ProgramSegmenter {
             // updated track set.
             match route_handle.container() {
                 Container::Fmp4 => {
-                    // Take out the old segmenter, flush it, drain its
-                    // output, and read its next sequence numbers — the
-                    // replacement resumes from there so segment numbering
-                    // is strictly monotonic (issue #781 BLOCKER).
-                    let mut old_seg = match std::mem::replace(
-                        &mut self.seg,
-                        AnySegmenter::Ts(
-                            // Temporary placeholder; replaced below.
-                            StreamingTsHlsSegmenter::new(
-                                new_tracks.to_vec(),
-                                route_handle.target_duration_secs().round().max(1.0) as u32,
-                                ts_segmenter_window(route_handle),
-                            )
-                            .expect("valid TS segmenter for placeholder"),
-                        ),
-                    ) {
-                        AnySegmenter::Fmp4(seg) => seg,
-                        _ => unreachable!("seg is Fmp4 in this branch"),
+                    // Only the tracks an fMP4 segmenter can carry, exactly as
+                    // `try_new` filters them: a Data/Subtitle PID joining a
+                    // DVB source mid-stream (a routine PMT version bump) must
+                    // not make the rebuild fail (audit r07-C7, #1083).
+                    let muxable: Vec<TrackSpec> = new_tracks
+                        .iter()
+                        .filter(|t| t.config.is_muxable_in_bmff())
+                        .cloned()
+                        .collect();
+                    if muxable.is_empty() {
+                        tracing::warn!(
+                            "mid-stream track-set change left no fMP4-muxable track — \
+                             keeping the current segmenter"
+                        );
+                        return;
+                    }
+                    // Flush the old segmenter in place, drain its output and
+                    // read its next sequence numbers — the replacement
+                    // resumes from there so segment numbering is strictly
+                    // monotonic (issue #781 BLOCKER). The old segmenter stays
+                    // installed until the replacement is built, so a failed
+                    // rebuild leaves a working fMP4 segmenter, never a
+                    // placeholder of another container.
+                    let AnySegmenter::Fmp4(old_seg) = &mut self.seg else {
+                        return;
                     };
-
                     if let Err(e) = old_seg.flush() {
                         tracing::warn!(error = %e, "old segmenter flush on rebuild failed");
                     }
@@ -834,12 +840,11 @@ impl ProgramSegmenter {
                         .into_iter()
                         .map(Into::into)
                         .collect();
+                    let (next_seq, current_seg) = old_seg.next_sequence_numbers();
                     self.publish_in_stream_order(parts, segments);
 
-                    let (next_seq, current_seg) = old_seg.next_sequence_numbers();
-
                     match LlHlsSegmenter::with_part_target_at(
-                        new_tracks.to_vec(),
+                        muxable,
                         transmux::VIDEO_CLOCK_RATE,
                         route_handle.target_duration_secs(),
                         route_handle.part_target_ms(),
@@ -859,7 +864,8 @@ impl ProgramSegmenter {
                         Err(e) => {
                             tracing::warn!(
                                 error = %e,
-                                "fMP4 segmenter rebuild failed — track addition dropped"
+                                "fMP4 segmenter rebuild failed — keeping the current \
+                                 segmenter, track change dropped"
                             );
                         }
                     }
@@ -2106,10 +2112,13 @@ mod tests {
     fn segment_sequences_from_playlist(playlist: &str) -> Vec<u32> {
         let mut seqs = Vec::new();
         for line in playlist.lines() {
+            // `seg-{track}-{instance}-{msn}.m4s` (the instance token is part of
+            // every name the playlist advertises).
             if let Some(start) = line.find("seg-1-") {
                 let rest = &line[start + 6..];
                 if let Some(end) = rest.find(".m4s")
-                    && let Ok(n) = rest[..end].parse::<u32>()
+                    && let Some((_instance, msn)) = rest[..end].split_once('-')
+                    && let Ok(n) = msn.parse::<u32>()
                 {
                     seqs.push(n);
                 }
@@ -2486,7 +2495,10 @@ mod tests {
     // --- Test 4: removal and update still degrade ---
 
     /// **Issue #781 test 4.** Regression guard: removal stops routing
-    /// samples, and `TrackUpdated` does not panic.
+    /// samples, and `TrackUpdated` does not panic. (A `TrackUpdated` for a
+    /// live track announces the track set again since #1083 — the demux emits
+    /// it only for a config that really changed — covered by
+    /// `track_updated_announces_the_new_config` in `ts_program`.)
     #[test]
     fn removal_and_update_degrade_without_panicking() {
         use crate::source::ts_program::ProgramTracker;
@@ -2515,8 +2527,13 @@ mod tests {
         tracker.handle(DemuxEvent::sample(2, sample_at(0, true)));
         assert!(tracker.poll().is_none(), "sample for removed track dropped");
 
-        tracker.handle(DemuxEvent::TrackUpdated(track_spec(1)));
-        assert!(tracker.poll().is_none(), "TrackUpdated emits no event");
+        // An update for the removed track 2 is for a track nothing routes
+        // on: ignored.
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec(2)));
+        assert!(
+            tracker.poll().is_none(),
+            "TrackUpdated for a removed track emits no event"
+        );
     }
 
     // --- Test 5: DASH-output route logs and continues ---
@@ -2722,6 +2739,114 @@ mod tests {
             "the rebuilt TS segmenter's first cut segment must resume from \
              next_sequence_number(), not renumber from 1"
         );
+    }
+
+    /// A Data track (a DVB SCTE-35/teletext PID) that cannot ride in fMP4.
+    fn data_track_spec(track_id: u32) -> TrackSpec {
+        TrackSpec::new(
+            track_id,
+            90_000,
+            transmux::pipeline::CodecConfig::Data {
+                stream_type: 0x86,
+                descriptors: Vec::new(),
+                carriage: transmux::pipeline::DataCarriage::Sections,
+            },
+        )
+    }
+
+    /// Push ~3 s of 25 fps video (a keyframe every 25 frames) and publish what
+    /// closes; return the number of segments the trunk now holds.
+    fn push_gop_run(segmenter: &mut ProgramSegmenter, first_frame: u32) {
+        for i in first_frame..first_frame + 75 {
+            segmenter
+                .seg
+                .push(1, sample_at(i, i.is_multiple_of(25)))
+                .expect("push");
+        }
+        segmenter.publish_ready();
+    }
+
+    /// Audit r07-C7 (#1083): a Data/Subtitle track joining mid-stream must
+    /// neither panic the rebuild nor leave an MPEG-TS placeholder installed
+    /// on an fMP4 route (which would publish TS bytes as `seg-*.m4s`). The
+    /// fMP4 segmenter is rebuilt over the muxable tracks only and numbering
+    /// continues.
+    #[test]
+    fn fmp4_rebuild_with_a_data_track_keeps_fmp4_and_numbering() {
+        use media_plane::trunk::TrunkConfig;
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(64)));
+        let writer = trunk.writer().expect("first take succeeds");
+        writer.set_tracks(vec![track_spec(1)]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("fMP4 segmenter builds");
+        let mut cursor = trunk.subscribe_segments();
+        push_gop_run(&mut segmenter, 0);
+        let before = trunk.last_closed_segment().expect("a segment closed");
+
+        // A routine PMT version bump adds a Data PID.
+        writer.set_tracks(vec![track_spec(1), data_track_spec(2)]);
+        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+        let AnySegmenter::Fmp4(rebuilt) = &segmenter.seg else {
+            panic!("an fMP4 route must keep producing fMP4 after a track change");
+        };
+        // The rebuilt segmenter carries only the muxable tracks, so its init
+        // segment is buildable (a Data track makes it `UnmuxableDataTrack`).
+        rebuilt
+            .init_segment()
+            .expect("rebuilt segmenter must be able to build its init segment");
+
+        push_gop_run(&mut segmenter, 75);
+        let after = trunk.last_closed_segment().expect("segments closed");
+        assert!(
+            after > before,
+            "numbering must continue: {before} -> {after}"
+        );
+        let mut checked = 0;
+        while let Some(item) = cursor.poll() {
+            if let media_plane::trunk::SegmentCursorItem::Segment(entry) = item {
+                assert_ne!(
+                    entry.bytes[0], 0x47,
+                    "segment {} is MPEG-TS bytes on an fMP4 route",
+                    entry.sequence_number
+                );
+                assert!(
+                    matches!(&entry.bytes[4..8], b"styp" | b"moof"),
+                    "segment {} does not start with an fMP4 box: {:02x?}",
+                    entry.sequence_number,
+                    &entry.bytes[..8]
+                );
+                checked += 1;
+            }
+        }
+        assert!(
+            checked >= 2,
+            "expected segments from both runs, saw {checked}"
+        );
+    }
+
+    /// A track set with nothing fMP4-muxable (the video PID went away, only a
+    /// Data PID remains) must not panic; the current segmenter is kept.
+    #[test]
+    fn fmp4_rebuild_with_no_muxable_track_keeps_the_current_segmenter() {
+        use media_plane::trunk::TrunkConfig;
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(64)));
+        let writer = trunk.writer().expect("first take succeeds");
+        writer.set_tracks(vec![track_spec(1)]);
+        let route = RouteHandle::new(1.0, 250, 8);
+        let mut segmenter =
+            ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("fMP4 segmenter builds");
+
+        writer.set_tracks(vec![data_track_spec(2)]);
+        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+        assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
+
+        // And an empty set (every track removed).
+        writer.set_tracks(Vec::new());
+        segmenter.apply_track_change(ProgramId(0), &trunk, &route);
+        assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
     }
 
     fn pending_sequence_numbers(segmenter: &ProgramSegmenter) -> Vec<u32> {

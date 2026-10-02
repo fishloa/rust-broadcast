@@ -72,6 +72,23 @@ pub(crate) struct CatchupSegment {
     pub start_pts_ns: u64,
     pub duration_secs: f64,
     pub discontinuous: bool,
+    /// Which init segment this segment must be decoded with (`None`: the
+    /// container has none, or it is unknown).
+    pub init: Option<InitRef>,
+}
+
+/// A reference to the init segment a catch-up segment decodes with.
+///
+/// Each archived period file begins with the init of the run that wrote it, and
+/// a run with a different init is always a different period — so the period
+/// number names the right init. A segment still resident in the live origin
+/// names its init by generation instead (`HlsOrigin::init_name`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum InitRef {
+    /// The init at the head of archive period `N` (`catchup/init-p{N}.mp4`).
+    Archived(u32),
+    /// The live origin's init generation `G`.
+    Live(u32),
 }
 
 /// The archive directory for one route: `<archive_root>/<route_name>/` —
@@ -146,8 +163,10 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
     };
 
     let cache = index_cache();
-    if let Ok(mut guard) = cache.lock()
-        && let Some(entry) = guard.entries.get(&path)
+    // Poison-recovering (the cache is only ever a memo: a lost or stale entry
+    // is recomputed from the sidecar).
+    let mut guard = crate::lock::lock(cache);
+    if let Some(entry) = guard.entries.get(&path)
         && entry.stamp == stamp
     {
         // A cheap `Arc` bump — no `Vec` clone at all (issue #1083, item 4).
@@ -159,6 +178,7 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
         guard.entries.insert(path.clone(), entry);
         return segments;
     }
+    drop(guard);
 
     let data = match std::fs::read(&path) {
         Ok(d) => d,
@@ -171,7 +191,7 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
             return Arc::new(Vec::new());
         }
     };
-    let entries: Vec<IndexEntry> = match serde_json::from_slice(&data) {
+    let entries = match parse_index(&data) {
         Ok(e) => e,
         Err(e) => {
             tracing::warn!(
@@ -196,7 +216,8 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
         .collect();
 
     let segments = Arc::new(segments);
-    if let Ok(mut guard) = cache.lock() {
+    {
+        let mut guard = crate::lock::lock(cache);
         let tick = guard.tick;
         guard.tick = tick.wrapping_add(1);
         guard.entries.insert(
@@ -269,6 +290,26 @@ struct IndexCache {
     tick: u64,
 }
 
+/// Parse a `pN.idx` sidecar: a JSON array of [`IndexEntry`], which the
+/// recorder extends in place (one entry per segment). A crash mid-append can
+/// leave the array unterminated after its last complete entry
+/// (`[{..},{..},{"seq":3,"sta`); every entry is a flat object, so the complete
+/// prefix is recovered by cutting after the last `}` and closing the array.
+/// A sidecar with no complete entry is the original parse error.
+pub(crate) fn parse_index(data: &[u8]) -> Result<Vec<IndexEntry>, serde_json::Error> {
+    match serde_json::from_slice(data) {
+        Ok(entries) => Ok(entries),
+        Err(original) => {
+            let Some(last_close) = data.iter().rposition(|&b| b == b'}') else {
+                return Err(original);
+            };
+            let mut repaired = data[..=last_close].to_vec();
+            repaired.push(b']');
+            serde_json::from_slice(&repaired).map_err(|_| original)
+        }
+    }
+}
+
 fn index_cache() -> &'static Mutex<IndexCache> {
     static CACHE: OnceLock<Mutex<IndexCache>> = OnceLock::new();
     CACHE.get_or_init(|| Mutex::new(IndexCache::default()))
@@ -278,11 +319,9 @@ fn index_cache() -> &'static Mutex<IndexCache> {
 /// opportunistically so a deleted/rolled archive does not keep stale
 /// entries resident. Correctness never depends on this.
 fn prune_index_cache(dir: &Path) {
-    if let Ok(mut guard) = index_cache().lock() {
-        guard
-            .entries
-            .retain(|path, _| path.parent() != Some(dir) || path.exists());
-    }
+    crate::lock::lock(index_cache())
+        .entries
+        .retain(|path, _| path.parent() != Some(dir) || path.exists());
 }
 
 /// Every archived segment across every period file in `dir`, ascending by
@@ -368,7 +407,11 @@ pub(crate) fn read_archived_bytes(
     }
     file.seek(SeekFrom::Start(byte_offset))
         .map_err(|e| ReadArchivedError::Other(format!("seeking {}: {e}", path.display())))?;
-    let mut buf = vec![0u8; byte_len as usize];
+    // `byte_len` was bounded by the file's real length above, so it fits
+    // memory; the conversion is checked rather than truncating anyway.
+    let len = usize::try_from(byte_len)
+        .map_err(|_| ReadArchivedError::Other(format!("segment length {byte_len} too large")))?;
+    let mut buf = vec![0u8; len];
     file.read_exact(&mut buf)
         .map_err(|e| ReadArchivedError::Other(format!("reading {}: {e}", path.display())))?;
     Ok(Bytes::from(buf))
@@ -416,6 +459,7 @@ pub(crate) fn merge_segments(
             start_pts_ns: s.start_pts_ns,
             duration_secs: s.duration_secs,
             discontinuous: s.discontinuous,
+            init: Some(InitRef::Archived(s.period_num)),
         })
         .collect();
     combined.extend(live.iter().filter_map(|s| {
@@ -428,18 +472,26 @@ pub(crate) fn merge_segments(
             start_pts_ns: s.start_ns,
             duration_secs: s.duration_secs,
             discontinuous: s.discontinuous,
+            init: Some(InitRef::Live(s.init_generation)),
         })
     }));
     combined
 }
 
-/// Restrict `combined` (ascending) to the trailing window covering
-/// `window_secs` seconds before the last segment's start — the operator-
-/// facing "catch-up window" (issue #900), using exactly the
-/// `start_pts_ns`/`IndexEntry::start_pts_ns` clock that field's own doc
-/// says is "what #900 uses for time-based seek". `None`, or `Some(0)`,
-/// returns every segment unfiltered (the whole archive plus live tail —
-/// the VOD-from-live shape).
+/// Restrict `combined` (ascending) to the trailing window of `window_secs`
+/// seconds before the start of the last segment — the operator-facing
+/// "catch-up window" (issue #900). `None`, or `Some(0)`, returns every
+/// segment unfiltered (the whole archive plus live tail — the VOD-from-live
+/// shape).
+///
+/// The window is measured by **walking back from the live edge summing
+/// segment durations**, not by `start_pts_ns` arithmetic (audit r07-C5,
+/// #1083): `start_pts_ns` is per-`Trunk` and restarts near 0 after every
+/// reconnect or process restart, so a pts floor taken from the edge's tiny
+/// value used to select the *whole* previous run's archive. A segment is kept
+/// while the media between its start and the last segment's start (the sum of
+/// the durations of the segments from it up to, excluding, the last) does
+/// not exceed the window; the walk stops at the start of the archive.
 pub(crate) fn apply_window(
     combined: &[CatchupSegment],
     window_secs: Option<u64>,
@@ -447,16 +499,21 @@ pub(crate) fn apply_window(
     let Some(window_secs) = window_secs.filter(|&w| w > 0) else {
         return combined.to_vec();
     };
-    let Some(edge_ns) = combined.last().map(|s| s.start_pts_ns) else {
+    let Some((_edge, earlier)) = combined.split_last() else {
         return Vec::new();
     };
-    let window_ns = window_secs.saturating_mul(NANOS_PER_SEC_U64);
-    let floor_ns = edge_ns.saturating_sub(window_ns);
-    combined
-        .iter()
-        .copied()
-        .filter(|s| s.start_pts_ns >= floor_ns)
-        .collect()
+    // A window beyond `u32::MAX` seconds (136 years) is "everything" anyway.
+    let window = f64::from(u32::try_from(window_secs).unwrap_or(u32::MAX));
+    let mut keep_from = combined.len() - 1;
+    let mut distance = 0.0_f64;
+    for (i, segment) in earlier.iter().enumerate().rev() {
+        distance += segment.duration_secs;
+        if distance > window {
+            break;
+        }
+        keep_from = i;
+    }
+    combined[keep_from..].to_vec()
 }
 
 /// Minimum `#EXT-X-TARGETDURATION` (RFC 8216 §4.3.3.1: a positive integer
@@ -477,9 +534,13 @@ const DEFAULT_MEDIA_SEQUENCE: u64 = 0;
 /// this is correct regardless of which of that module's two playlist
 /// endpoints call this).
 ///
-/// `map_uri` is the `#EXT-X-MAP` URI to advertise (RFC 8216bis §4.4.4.5,
-/// required for fMP4 — see `hls_runtime::server::Container`'s own doc);
-/// `None` for the `MpegTs` container, which needs no map.
+/// `init_uri` maps a segment's [`InitRef`] to the `#EXT-X-MAP` URI to advertise
+/// (RFC 8216bis §4.4.4.5, required for fMP4 — see
+/// `hls_runtime::server::Container`'s own doc); `None` for the `MpegTs`
+/// container, which needs no map. Every segment carries its **own** run's map:
+/// `broadcast-hls` renders it where it changes, right after the
+/// `EXT-X-DISCONTINUITY` the run boundary already carries, so an archived run
+/// is never decoded with a later run's init.
 ///
 /// `playlist_type` is `None` for a playlist that may lose leading
 /// segments (audit run 7, W11). RFC 8216 §6.2.2 is explicit that "A Live
@@ -492,7 +553,7 @@ const DEFAULT_MEDIA_SEQUENCE: u64 = 0;
 pub(crate) fn render_playlist(
     segments: &[CatchupSegment],
     ext: &str,
-    map_uri: Option<&str>,
+    init_uri: Option<&dyn Fn(InitRef) -> String>,
     playlist_type: Option<broadcast_hls::PlaylistType>,
     endlist: bool,
 ) -> std::result::Result<String, broadcast_hls::Error> {
@@ -501,7 +562,8 @@ pub(crate) fn render_playlist(
         .map(|s| s.duration_secs)
         .fold(0.0_f64, f64::max)
         .ceil()
-        .max(f64::from(MIN_TARGET_DURATION_SECS)) as u32;
+        .clamp(f64::from(MIN_TARGET_DURATION_SECS), f64::from(u32::MAX))
+        as u32;
     // RFC 8216 §4.3.3.2: absent an `#EXT-X-MEDIA-SEQUENCE` tag the first
     // segment's Media Sequence Number is taken to be 0 — so an empty
     // playlist (no first segment to read a number from) declares 0, not
@@ -510,7 +572,7 @@ pub(crate) fn render_playlist(
         .first()
         .map(|s| u64::from(s.seq))
         .unwrap_or(DEFAULT_MEDIA_SEQUENCE);
-    let hls_segments: Vec<broadcast_hls::MediaSegment> = segments
+    let mut hls_segments: Vec<broadcast_hls::MediaSegment> = segments
         .iter()
         .map(|s| broadcast_hls::MediaSegment {
             uri: format!("catchup/seg-{}.{ext}", s.seq),
@@ -523,16 +585,24 @@ pub(crate) fn render_playlist(
             ..Default::default()
         })
         .collect();
-    let extra_tags = match map_uri {
-        Some(uri) => vec![format!("#EXT-X-MAP:URI=\"{uri}\"")],
-        None => Vec::new(),
-    };
+    // Each segment's own init as a typed `EXT-X-MAP` (rendered by
+    // `broadcast-hls` where it changes, not formatted here by hand).
+    if let Some(init_uri) = init_uri {
+        for (hls, seg) in hls_segments.iter_mut().zip(segments) {
+            if let Some(init) = seg.init {
+                hls.map = Some(broadcast_hls::MapTag {
+                    uri: init_uri(init),
+                    byte_range: None,
+                    extra_attrs: Vec::new(),
+                });
+            }
+        }
+    }
     let playlist = broadcast_hls::MediaPlaylist {
         target_duration,
         media_sequence,
         segments: hls_segments,
         endlist,
-        extra_tags,
         playlist_type,
         ..Default::default()
     };
@@ -657,24 +727,28 @@ mod tests {
             CatchupSegment {
                 seq: 1,
                 start_pts_ns: 0,
-                duration_secs: 2.0,
+                duration_secs: 10.0,
                 discontinuous: false,
+                init: None,
             },
             CatchupSegment {
                 seq: 2,
                 start_pts_ns: 10_000_000_000,
-                duration_secs: 2.0,
+                duration_secs: 10.0,
                 discontinuous: false,
+                init: None,
             },
             CatchupSegment {
                 seq: 3,
                 start_pts_ns: 20_000_000_000,
-                duration_secs: 2.0,
+                duration_secs: 10.0,
                 discontinuous: false,
+                init: None,
             },
         ];
-        // Window of 5s before the last segment's start (20s) => floor 15s
-        // => only segment 3 (20s) survives.
+        // Window of 5s before the last segment's start: segment 2 starts 10 s
+        // before it, so only segment 3 survives (the durations, not the pts
+        // clock, measure the distance).
         let windowed = apply_window(&combined, Some(5));
         let seqs: Vec<u32> = windowed.iter().map(|s| s.seq).collect();
         assert_eq!(
@@ -684,6 +758,49 @@ mod tests {
         );
     }
 
+    /// Audit r07-C5 (#1083): two runs, the second's `start_pts_ns` restarting
+    /// near 0 (a new `Trunk`). The old pts arithmetic took the edge's tiny
+    /// start as the floor's anchor, floored at 0 and returned the whole first
+    /// run; walking back by durations returns exactly the trailing window.
+    #[test]
+    fn apply_window_is_correct_across_a_reconnect_whose_pts_restarted() {
+        let seg = |seq: u32, start_s: u64, discontinuous: bool| CatchupSegment {
+            seq,
+            start_pts_ns: start_s * NANOS_PER_SEC_U64,
+            duration_secs: 4.0,
+            discontinuous,
+            init: None,
+        };
+        // Run 1: pts 1000..=1016 s (seq 1..=5); run 2 restarts at pts 0
+        // (seq 7..=9; seq 6 was run 1's open segment, skipped).
+        let combined = vec![
+            seg(1, 1000, false),
+            seg(2, 1004, false),
+            seg(3, 1008, false),
+            seg(4, 1012, false),
+            seg(5, 1016, false),
+            seg(7, 0, true),
+            seg(8, 4, false),
+            seg(9, 8, false),
+        ];
+        let seqs = |w| -> Vec<u32> {
+            apply_window(&combined, Some(w))
+                .iter()
+                .map(|s| s.seq)
+                .collect()
+        };
+        // Edge = seg 9. 8 s back covers segs 7 and 8 (4 s and 8 s before it).
+        assert_eq!(seqs(8), vec![7, 8, 9]);
+        // 12 s reaches seg 5 (12 s before the edge) across the reconnect.
+        assert_eq!(seqs(12), vec![5, 7, 8, 9]);
+        assert_eq!(seqs(4), vec![8, 9]);
+        assert_eq!(seqs(1), vec![9]);
+        // A window longer than the archive returns all of it.
+        assert_eq!(seqs(10_000), vec![1, 2, 3, 4, 5, 7, 8, 9]);
+        // Empty input.
+        assert!(apply_window(&[], Some(5)).is_empty());
+    }
+
     #[test]
     fn apply_window_none_or_zero_returns_everything() {
         let combined = vec![CatchupSegment {
@@ -691,6 +808,7 @@ mod tests {
             start_pts_ns: 0,
             duration_secs: 2.0,
             discontinuous: false,
+            init: None,
         }];
         assert_eq!(apply_window(&combined, None).len(), 1);
         assert_eq!(apply_window(&combined, Some(0)).len(), 1);
@@ -873,18 +991,20 @@ mod tests {
                 start_pts_ns: 0,
                 duration_secs: 3.4,
                 discontinuous: false,
+                init: Some(InitRef::Live(1)),
             },
             CatchupSegment {
                 seq: 6,
                 start_pts_ns: 3_400_000_000,
                 duration_secs: 3.4,
                 discontinuous: true,
+                init: Some(InitRef::Live(1)),
             },
         ];
         let body = render_playlist(
             &segments,
             "m4s",
-            Some("init-1.mp4"),
+            Some(&|_| "init-1.mp4".to_string()),
             Some(broadcast_hls::PlaylistType::Event),
             false,
         )
@@ -909,6 +1029,7 @@ mod tests {
             start_pts_ns: 0,
             duration_secs: 2.0,
             discontinuous: false,
+            init: None,
         }];
         let body = render_playlist(
             &segments,
@@ -1128,6 +1249,7 @@ mod tests {
             start_pts_ns: 0,
             duration_secs: 2.0,
             discontinuous: false,
+            init: None,
         }];
         let body =
             render_playlist(&segments, "m4s", None, None, false).expect("generated URIs are valid");
@@ -1136,5 +1258,49 @@ mod tests {
             "a playlist that may remove segments must not claim a \
              PLAYLIST-TYPE (RFC 8216 §6.2.2): {body}"
         );
+    }
+
+    /// Audit r07-O3 (#1083): the recorder extends `pN.idx` in place, so a
+    /// crash can leave the array unterminated after its last complete entry.
+    /// Every complete entry must still be readable; a sidecar with none is an
+    /// error, as is garbage.
+    #[test]
+    fn parse_index_recovers_the_complete_entries_of_a_torn_sidecar() {
+        let entry = |seq: u32| {
+            format!(
+                "{{\"seq\":{seq},\"start_pts_ns\":{},\"byte_offset\":10,\"byte_len\":20,\
+                 \"duration_ns\":2000000000,\"discontinuous\":false}}",
+                u64::from(seq) * 2_000_000_000
+            )
+        };
+        let whole = format!("[{},{},{}]", entry(1), entry(2), entry(3));
+        assert_eq!(parse_index(whole.as_bytes()).unwrap().len(), 3);
+
+        // Cut at every byte inside the last entry and the closing bracket:
+        // never an error, always the two complete entries (or all three once
+        // the third entry's closing brace is present).
+        let two = format!("[{},{}", entry(1), entry(2));
+        let cut_from = two.len();
+        for end in cut_from..whole.len() {
+            let torn = &whole.as_bytes()[..end];
+            let got = parse_index(torn).unwrap_or_else(|e| panic!("cut at {end}: {e}"));
+            let seqs: Vec<u32> = got.iter().map(|e| e.seq).collect();
+            let expected: &[u32] = if end >= whole.len() - 1 {
+                &[1, 2, 3]
+            } else {
+                &[1, 2]
+            };
+            assert_eq!(
+                seqs,
+                expected,
+                "cut at {end}: {:?}",
+                String::from_utf8_lossy(torn)
+            );
+        }
+
+        // Nothing complete, or not an index at all.
+        assert!(parse_index(b"[{\"seq\":1,\"sta").is_err());
+        assert!(parse_index(b"").is_err());
+        assert!(parse_index(b"not json }").is_err());
     }
 }

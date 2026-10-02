@@ -282,8 +282,13 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let body = body_string(resp).await;
         assert!(body.contains("#EXTINF:"), "body: {body}");
-        assert!(body.contains("seg-1-1.ts"), "body: {body}");
-        assert!(body.contains("seg-1-2.ts"), "body: {body}");
+        for n in [1, 2] {
+            assert!(
+                body.lines()
+                    .any(|l| l.starts_with("seg-1-") && l.ends_with(&format!("-{n}.ts"))),
+                "body: {body}"
+            );
+        }
         assert!(
             !body.contains("#EXT-X-MAP"),
             "a classic TS media playlist must never advertise an init segment: {body}"

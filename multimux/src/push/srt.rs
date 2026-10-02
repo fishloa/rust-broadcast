@@ -31,6 +31,7 @@ pub struct SrtTransport {
     socket: Option<SrtSocket>,
 }
 
+// (No URL is stored, so nothing here can leak one.)
 impl std::fmt::Debug for SrtTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("SrtTransport")
@@ -194,9 +195,15 @@ const MAX_SRT_LATENCY_MS: u16 = 8000;
 /// `latency`) surfaces as a config error — including on an admin add/reload —
 /// rather than when the push task first dials.
 pub(crate) fn validate_srt_url(url: &str) -> Result<(), String> {
-    parse_srt_url(url)
-        .map(|_| ())
-        .map_err(|_| format!("not a valid srt:// URL: {url}"))
+    // The URL itself is never echoed: its `streamid`/`passphrase` are
+    // credentials (audit T14, #1142). The destination (host:port) and the
+    // fixed reason say what is wrong.
+    parse_srt_url(url).map(|_| ()).map_err(|e| {
+        format!(
+            "not a valid srt:// URL ({}): {e}",
+            crate::redact::redact_destination(url)
+        )
+    })
 }
 
 /// SRT's IANA-registered default port (RFC-style default for the `srt://`
@@ -240,6 +247,28 @@ impl PushTransport for SrtTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit T14 (#1142): the config-time validation error says what is wrong
+    /// and where, never the credentials in the URL.
+    #[test]
+    fn srt_validation_errors_do_not_echo_the_url() {
+        for url in [
+            "srt://host:9000?streamid=SECRETSTREAM&passphrase=SECRETPASS",
+            "srt://host:9000?streamid=SECRETSTREAM&latency=99999",
+            "srt://?streamid=SECRETSTREAM&passphrase=SECRETPASS",
+        ] {
+            let err = validate_srt_url(url).unwrap_err();
+            for secret in ["SECRETSTREAM", "SECRETPASS", "99999"] {
+                assert!(!err.contains(secret), "{secret} in {err:?} (from {url})");
+            }
+            assert!(err.contains("not a valid srt:// URL"), "{err}");
+        }
+        assert_eq!(
+            validate_srt_url("srt://host:9000?passphrase=SECRETPASS").unwrap_err(),
+            "not a valid srt:// URL (srt://host:9000/<redacted>): io error during srt url: \
+             passphrase/encryption is not supported for a push output: InvalidInput"
+        );
+    }
     use srt_runtime::io::SrtListener;
     use std::sync::Arc;
     use std::sync::atomic::{AtomicBool, Ordering};

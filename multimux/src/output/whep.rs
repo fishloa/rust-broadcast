@@ -711,11 +711,29 @@ const RTP_TIMESTAMP_LEN: usize = 4;
 /// timestamp instead of this session's running ones, which is the exact bug
 /// this function exists to prevent. The caller ([`send_sample`]) drops such
 /// a packet loudly instead of sending a wrong one.
+#[cfg(test)]
 fn patch_seq_and_timestamp(contiguous: &[u8], seq: u16, timestamp: u32) -> Option<Vec<u8>> {
-    if contiguous.len() < rtp_packet::FIXED_HEADER_LEN {
+    patch_seq_and_timestamp_parts(contiguous, &[], seq, timestamp)
+}
+
+/// [`patch_seq_and_timestamp`] over a packet held as `header` + `payload`
+/// (what `transmux::rtp::RtpPacket` carries): the two are copied once, into
+/// the buffer that is then patched and sent — not first concatenated into a
+/// temporary `Bytes` (`RtpPacket::as_contiguous`) and copied again. This is
+/// the per-packet, per-viewer hot path (audit r07-O2, issue #1083).
+fn patch_seq_and_timestamp_parts(
+    header: &[u8],
+    payload: &[u8],
+    seq: u16,
+    timestamp: u32,
+) -> Option<Vec<u8>> {
+    let len = header.len().checked_add(payload.len())?;
+    if len < rtp_packet::FIXED_HEADER_LEN {
         return None;
     }
-    let mut v = contiguous.to_vec();
+    let mut v = Vec::with_capacity(len);
+    v.extend_from_slice(header);
+    v.extend_from_slice(payload);
     v[RTP_SEQ_OFFSET..RTP_SEQ_OFFSET + RTP_SEQ_LEN].copy_from_slice(&seq.to_be_bytes());
     v[RTP_TIMESTAMP_OFFSET..RTP_TIMESTAMP_OFFSET + RTP_TIMESTAMP_LEN]
         .copy_from_slice(&timestamp.to_be_bytes());
@@ -776,7 +794,6 @@ async fn send_sample(
 
     let mut guard = media.lock().await;
     for pkt in &packets {
-        let contiguous = pkt.as_contiguous();
         // This packet's sequence number, burnt from the session counter
         // *before* any of the drop paths below — RFC 3550 §5.1 sequence
         // numbers count packets emitted for the stream, so a number burnt
@@ -785,9 +802,11 @@ async fn send_sample(
         // by the next packet and hiding the gap.
         let seq = *next_seq;
         *next_seq = next_seq.wrapping_add(1);
-        let Some(patched) = patch_seq_and_timestamp(&contiguous, seq, timestamp) else {
+        let Some(patched) =
+            patch_seq_and_timestamp_parts(&pkt.header, &pkt.payload, seq, timestamp)
+        else {
             tracing::error!(
-                len = contiguous.len(),
+                len = pkt.header.len() + pkt.payload.len(),
                 min = rtp_packet::FIXED_HEADER_LEN,
                 "whep: packetiser emitted a packet shorter than the RFC 3550 §5.1 fixed \
                  header; dropping it rather than sending one still carrying the \
@@ -1179,6 +1198,27 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     fn rescale_to_90k_scales_a_different_timescale() {
         // 1 second at a 1000 Hz timescale -> 1 second at 90 kHz.
         assert_eq!(rescale_to_90k(1000, 1000), VIDEO_CLOCK_RATE);
+    }
+
+    #[test]
+    fn a_split_packet_patches_to_the_same_bytes_as_a_contiguous_one() {
+        let mut original = vec![0u8; 40];
+        for (i, b) in original.iter_mut().enumerate() {
+            *b = u8::try_from(i).unwrap();
+        }
+        let whole = patch_seq_and_timestamp(&original, 4242, 90_000).expect("full header");
+        // Every split point, including inside the fixed header, gives the
+        // identical result (the header/payload boundary is arbitrary).
+        for split in 0..=original.len() {
+            let (header, payload) = original.split_at(split);
+            assert_eq!(
+                patch_seq_and_timestamp_parts(header, payload, 4242, 90_000),
+                Some(whole.clone()),
+                "split at {split}"
+            );
+        }
+        // Too short in total, however it is split.
+        assert_eq!(patch_seq_and_timestamp_parts(&[0; 5], &[0; 6], 1, 1), None);
     }
 
     /// MUTATION-CHECKED: replacing the seq/timestamp patch ranges with a

@@ -23,7 +23,7 @@ use bytes::Bytes;
 use hls_runtime::server::{
     BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsOriginBuildError, HlsRequest,
 };
-use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
+use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
 
@@ -50,7 +50,7 @@ fn origin(trunk: &Arc<Trunk>, window: usize, low_latency: bool) -> HlsOrigin {
     if low_latency {
         b = b.low_latency(500);
     }
-    b.build().expect("origin builds")
+    b.instance(7).build().expect("origin builds")
 }
 
 fn publish_seg(w: &SegmentWriter, seq: u32, secs: u64, discontinuous: bool) {
@@ -146,13 +146,19 @@ fn a_part_far_beyond_the_live_edge_is_not_found_immediately() {
 
     // Hinted next part of the live-edge segment and first part of the one
     // after it: held open.
-    assert!(is_await(&get(&o, "part-1-2.1.m4s")));
-    assert!(is_await(&get(&o, "part-1-3.0.m4s")));
+    assert!(is_await(&get(&o, "part-1-7-2.1.m4s")));
+    assert!(is_await(&get(&o, "part-1-7-3.0.m4s")));
     // A hostile far-future request: refused at once, not parked for the
     // blocking timeout.
-    assert_eq!(get(&o, "part-1-4294967295.0.m4s"), EgressResponse::NotFound);
-    assert_eq!(get(&o, "part-1-4.0.m4s"), EgressResponse::NotFound);
-    assert_eq!(get(&o, "part-1-3.4294967295.m4s"), EgressResponse::NotFound);
+    assert_eq!(
+        get(&o, "part-1-7-4294967295.0.m4s"),
+        EgressResponse::NotFound
+    );
+    assert_eq!(get(&o, "part-1-7-4.0.m4s"), EgressResponse::NotFound);
+    assert_eq!(
+        get(&o, "part-1-7-3.4294967295.m4s"),
+        EgressResponse::NotFound
+    );
 }
 
 #[test]
@@ -163,15 +169,15 @@ fn only_the_hinted_next_part_is_held_open() {
     let o = origin(&trunk, 4, true);
     publish_part(&w, 1, 0);
     assert!(matches!(
-        get(&o, "part-1-1.0.m4s"),
+        get(&o, "part-1-7-1.0.m4s"),
         EgressResponse::Ready { .. }
     ));
-    assert!(is_await(&get(&o, "part-1-1.1.m4s")));
-    assert_eq!(get(&o, "part-1-1.2.m4s"), EgressResponse::NotFound);
-    assert_eq!(get(&o, "part-1-1.7.m4s"), EgressResponse::NotFound);
+    assert!(is_await(&get(&o, "part-1-7-1.1.m4s")));
+    assert_eq!(get(&o, "part-1-7-1.2.m4s"), EgressResponse::NotFound);
+    assert_eq!(get(&o, "part-1-7-1.7.m4s"), EgressResponse::NotFound);
     // The segment after the open one: only its first part.
-    assert!(is_await(&get(&o, "part-1-2.0.m4s")));
-    assert_eq!(get(&o, "part-1-2.1.m4s"), EgressResponse::NotFound);
+    assert!(is_await(&get(&o, "part-1-7-2.0.m4s")));
+    assert_eq!(get(&o, "part-1-7-2.1.m4s"), EgressResponse::NotFound);
 }
 
 #[test]
@@ -183,12 +189,12 @@ fn an_evicted_part_of_the_open_segment_is_not_found_not_parked() {
     publish_part(&w, 1, 0);
     publish_part(&w, 1, 1);
     publish_part(&w, 1, 2);
-    assert_eq!(get(&o, "part-1-1.0.m4s"), EgressResponse::NotFound);
+    assert_eq!(get(&o, "part-1-7-1.0.m4s"), EgressResponse::NotFound);
     assert!(matches!(
-        get(&o, "part-1-1.2.m4s"),
+        get(&o, "part-1-7-1.2.m4s"),
         EgressResponse::Ready { .. }
     ));
-    assert!(is_await(&get(&o, "part-1-1.3.m4s")));
+    assert!(is_await(&get(&o, "part-1-7-1.3.m4s")));
 }
 
 fn playlist_request(o: &HlsOrigin, msn: u64, part: Option<u32>) -> EgressResponse<HlsBody> {
@@ -243,7 +249,7 @@ fn a_classic_origin_has_no_parts_to_wait_for() {
     let (trunk, w) = trunk_with(8, 64);
     let o = origin(&trunk, 4, false);
     publish_seg(&w, 1, 4, false);
-    assert_eq!(get(&o, "part-1-2.0.m4s"), EgressResponse::NotFound);
+    assert_eq!(get(&o, "part-1-7-2.0.m4s"), EgressResponse::NotFound);
 }
 
 // ---------------------------------------------------------------------------
@@ -283,25 +289,25 @@ fn closed_segments_keep_their_parts_for_three_target_durations() {
     assert_eq!(
         part_lines(&body),
         vec![
-            "part-1-3.0.m4s",
-            "part-1-3.1.m4s",
-            "part-1-4.0.m4s",
-            "part-1-4.1.m4s",
-            "part-1-5.0.m4s",
-            "part-1-5.1.m4s",
-            "part-1-6.0.m4s",
-            "part-1-6.1.m4s",
+            "part-1-7-3.0.m4s",
+            "part-1-7-3.1.m4s",
+            "part-1-7-4.0.m4s",
+            "part-1-7-4.1.m4s",
+            "part-1-7-5.0.m4s",
+            "part-1-7-5.1.m4s",
+            "part-1-7-6.0.m4s",
+            "part-1-7-6.1.m4s",
         ],
         "{body}"
     );
     // The parts of segment 3 sit directly before segment 3's EXTINF/URI.
     let lines = body_lines(&body);
-    let at = lines.iter().position(|l| *l == "seg-1-3.m4s").unwrap();
+    let at = lines.iter().position(|l| *l == "seg-1-7-3.m4s").unwrap();
     assert!(lines[at - 1].starts_with("#EXTINF:"), "{body}");
-    assert!(lines[at - 2].contains("part-1-3.1.m4s"), "{body}");
-    assert!(lines[at - 3].contains("part-1-3.0.m4s"), "{body}");
+    assert!(lines[at - 2].contains("part-1-7-3.1.m4s"), "{body}");
+    assert!(lines[at - 3].contains("part-1-7-3.0.m4s"), "{body}");
     // ... and the older segments carry none.
-    let at1 = lines.iter().position(|l| *l == "seg-1-1.m4s").unwrap();
+    let at1 = lines.iter().position(|l| *l == "seg-1-7-1.m4s").unwrap();
     assert!(lines[at1 - 1].starts_with("#EXTINF:"));
     assert!(!lines[at1 - 2].starts_with("#EXT-X-PART"), "{body}");
 }
@@ -318,10 +324,10 @@ fn parts_the_ring_no_longer_holds_are_not_advertised() {
     assert_eq!(
         part_lines(&body),
         vec![
-            "part-1-5.0.m4s",
-            "part-1-5.1.m4s",
-            "part-1-6.0.m4s",
-            "part-1-6.1.m4s",
+            "part-1-7-5.0.m4s",
+            "part-1-7-5.1.m4s",
+            "part-1-7-6.0.m4s",
+            "part-1-7-6.1.m4s",
         ],
         "{body}"
     );
@@ -345,7 +351,7 @@ fn a_skipped_sequence_number_restarts_the_window_with_a_discontinuity() {
     publish_seg(&w, 1, 4, false);
     publish_seg(&w, 2, 4, true);
     publish_seg(&w, 3, 4, false);
-    assert!(playlist(&o).contains("seg-1-1.m4s"));
+    assert!(playlist(&o).contains("seg-1-7-1.m4s"));
 
     // The segmenter skips 4..=8. Appending 9 to [1,2,3] would give it the
     // implied number 4 (EXT-X-MEDIA-SEQUENCE + index).
@@ -358,16 +364,16 @@ fn a_skipped_sequence_number_restarts_the_window_with_a_discontinuity() {
             "#EXT-X-TARGETDURATION:4",
             "#EXT-X-MEDIA-SEQUENCE:9",
             "#EXT-X-DISCONTINUITY-SEQUENCE:1",
-            "#EXT-X-MAP:URI=\"init-1.mp4\"",
             "#EXT-X-DISCONTINUITY",
+            "#EXT-X-MAP:URI=\"init-1-7-1.mp4\"",
             "#EXTINF:4,",
-            "seg-1-9.m4s",
+            "seg-1-7-9.m4s",
         ],
         "{body}"
     );
     // The dropped numbers are gone, the new one serves its own bytes.
-    assert_eq!(get(&o, "seg-1-1.m4s"), EgressResponse::NotFound);
-    match get(&o, "seg-1-9.m4s") {
+    assert_eq!(get(&o, "seg-1-7-1.m4s"), EgressResponse::NotFound);
+    match get(&o, "seg-1-7-9.m4s") {
         EgressResponse::Ready {
             body: HlsBody::Resource(b),
             ..
@@ -392,12 +398,12 @@ fn lost_segments_reported_by_the_cursor_mark_a_discontinuity() {
             "#EXTM3U",
             "#EXT-X-TARGETDURATION:4",
             "#EXT-X-MEDIA-SEQUENCE:4",
-            "#EXT-X-MAP:URI=\"init-1.mp4\"",
             "#EXT-X-DISCONTINUITY",
+            "#EXT-X-MAP:URI=\"init-1-7-1.mp4\"",
             "#EXTINF:4,",
-            "seg-1-4.m4s",
+            "seg-1-7-4.m4s",
             "#EXTINF:4,",
-            "seg-1-5.m4s",
+            "seg-1-7-5.m4s",
         ],
         "{body}"
     );
@@ -409,7 +415,7 @@ fn lag_after_a_populated_window_does_not_leave_a_numbering_hole() {
     let o = origin(&trunk, 4, false);
     publish_seg(&w, 1, 4, false);
     publish_seg(&w, 2, 4, false);
-    assert!(playlist(&o).contains("seg-1-2.m4s"));
+    assert!(playlist(&o).contains("seg-1-7-2.m4s"));
     // 3..=8 published unseen: only 7 and 8 survive in the trunk.
     for seq in 3..=8 {
         publish_seg(&w, seq, 4, false);
@@ -421,16 +427,16 @@ fn lag_after_a_populated_window_does_not_leave_a_numbering_hole() {
             "#EXTM3U",
             "#EXT-X-TARGETDURATION:4",
             "#EXT-X-MEDIA-SEQUENCE:7",
-            "#EXT-X-MAP:URI=\"init-1.mp4\"",
             "#EXT-X-DISCONTINUITY",
+            "#EXT-X-MAP:URI=\"init-1-7-1.mp4\"",
             "#EXTINF:4,",
-            "seg-1-7.m4s",
+            "seg-1-7-7.m4s",
             "#EXTINF:4,",
-            "seg-1-8.m4s",
+            "seg-1-7-8.m4s",
         ],
         "{body}"
     );
-    assert_eq!(get(&o, "seg-1-2.m4s"), EgressResponse::NotFound);
+    assert_eq!(get(&o, "seg-1-7-2.m4s"), EgressResponse::NotFound);
 }
 
 // ---------------------------------------------------------------------------
@@ -445,6 +451,7 @@ fn media_sequence_offset_continues_the_numbering_everywhere() {
         .window_segments(nz(4))
         .low_latency(500)
         .media_sequence_offset(1000)
+        .instance(7)
         .build()
         .unwrap();
     publish_seg(&w, 1, 4, false);
@@ -458,26 +465,26 @@ fn media_sequence_offset_continues_the_numbering_everywhere() {
             "#EXT-X-MEDIA-SEQUENCE:1001",
             "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5",
             "#EXT-X-PART-INF:PART-TARGET=0.5",
-            "#EXT-X-MAP:URI=\"init-1.mp4\"",
+            "#EXT-X-MAP:URI=\"init-1-7-1.mp4\"",
             "#EXTINF:4,",
-            "seg-1-1001.m4s",
-            "#EXT-X-PART:DURATION=0.5,URI=\"part-1-1002.0.m4s\",INDEPENDENT=YES",
-            "#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"part-1-1002.1.m4s\"",
+            "seg-1-7-1001.m4s",
+            "#EXT-X-PART:DURATION=0.5,URI=\"part-1-7-1002.0.m4s\",INDEPENDENT=YES",
+            "#EXT-X-PRELOAD-HINT:TYPE=PART,URI=\"part-1-7-1002.1.m4s\"",
         ],
         "{body}"
     );
     assert!(matches!(
-        get(&o, "seg-1-1001.m4s"),
+        get(&o, "seg-1-7-1001.m4s"),
         EgressResponse::Ready { .. }
     ));
     assert!(matches!(
-        get(&o, "part-1-1002.0.m4s"),
+        get(&o, "part-1-7-1002.0.m4s"),
         EgressResponse::Ready { .. }
     ));
     // The unshifted numbers do not exist; a number below the offset cannot
     // underflow into one.
-    assert_eq!(get(&o, "seg-1-1.m4s"), EgressResponse::NotFound);
-    assert_eq!(get(&o, "seg-1-999.m4s"), EgressResponse::NotFound);
+    assert_eq!(get(&o, "seg-1-7-1.m4s"), EgressResponse::NotFound);
+    assert_eq!(get(&o, "seg-1-7-999.m4s"), EgressResponse::NotFound);
     // `_HLS_msn` is in the shown numbering: segment 1001 is closed, 1002 is
     // the open one.
     let (now, policy) = patient();
@@ -530,6 +537,7 @@ fn builder_rejects_hostile_configuration() {
     assert_eq!(
         base()
             .media_sequence_offset(u64::MAX - u64::from(u32::MAX) + 1)
+            .instance(7)
             .build()
             .err(),
         Some(HlsOriginBuildError::MediaSequenceOffsetTooLarge)
@@ -537,6 +545,7 @@ fn builder_rejects_hostile_configuration() {
     assert!(
         base()
             .media_sequence_offset(u64::MAX - u64::from(u32::MAX))
+            .instance(7)
             .build()
             .is_ok()
     );
@@ -554,9 +563,9 @@ fn a_window_of_one_still_advertises_three_segments() {
     let body = playlist(&o);
     assert!(body.contains("#EXT-X-MEDIA-SEQUENCE:3\n"), "{body}");
     for seq in 3..=5 {
-        assert!(body.contains(&format!("seg-1-{seq}.m4s")), "{body}");
+        assert!(body.contains(&format!("seg-1-7-{seq}.m4s")), "{body}");
     }
-    assert!(!body.contains("seg-1-2.m4s"), "{body}");
+    assert!(!body.contains("seg-1-7-2.m4s"), "{body}");
 }
 
 // ---------------------------------------------------------------------------
@@ -616,7 +625,7 @@ fn master_bandwidth_survives_the_peak_segment_leaving_the_window() {
     for seq in 2..=6 {
         publish_seg_bytes(&w, seq, 1, false, vec![0; 100]);
     }
-    assert!(!playlist(&o).contains("seg-1-1.m4s"));
+    assert!(!playlist(&o).contains("seg-1-7-1.m4s"));
     assert_eq!(
         master(&o),
         "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000\nmedia.m3u8\n"
@@ -657,6 +666,7 @@ fn next_media_sequence_continues_into_a_replacement_origin() {
         .target_duration_secs(4.0)
         .window_segments(nz(4))
         .media_sequence_offset(1000)
+        .instance(7)
         .build()
         .unwrap();
     assert_eq!(first.next_media_sequence(), 1001);
@@ -670,6 +680,7 @@ fn next_media_sequence_continues_into_a_replacement_origin() {
         .target_duration_secs(4.0)
         .window_segments(nz(4))
         .media_sequence_offset(first.next_media_sequence().saturating_sub(1))
+        .instance(7)
         .build()
         .unwrap();
     publish_seg(&w2, 1, 4, false);
@@ -766,7 +777,7 @@ fn validator_errors(dir: &Path, entry: &str, extra: &[&str]) -> Vec<String> {
 fn dump_origin(o: &HlsOrigin, dir: &Path, segment_names: &[String]) {
     std::fs::write(dir.join("master.m3u8"), master(o)).unwrap();
     std::fs::write(dir.join("media.m3u8"), playlist(o)).unwrap();
-    for name in std::iter::once("init-1.mp4".to_string()).chain(segment_names.iter().cloned()) {
+    for name in std::iter::once("init-1-7-1.mp4".to_string()).chain(segment_names.iter().cloned()) {
         match get(o, &name) {
             EgressResponse::Ready {
                 body: HlsBody::Resource(b),
@@ -796,7 +807,7 @@ fn mediastreamvalidator_accepts_the_master_and_media_playlists_of_real_cmaf() {
         publish_seg_bytes(&w, u32::try_from(i + 1).unwrap(), 1, false, fixture(name));
     }
     let dir = scratch("cmaf-master");
-    let names: Vec<String> = (1..=3).map(|n| format!("seg-1-{n}.m4s")).collect();
+    let names: Vec<String> = (1..=3).map(|n| format!("seg-1-7-{n}.m4s")).collect();
     dump_origin(&o, &dir, &names);
     // The origin's master advertises exactly what MP4Box reads from the init.
     assert!(
@@ -854,4 +865,328 @@ fn mediastreamvalidator_accepts_the_low_latency_playlist_syntax() {
         errors.is_empty(),
         "validator MUST-level findings: {errors:#?}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// r09-C2 (#1030): a name served `Immutable` never maps to other bytes
+// ---------------------------------------------------------------------------
+
+fn ready(r: EgressResponse<HlsBody>) -> (Bytes, CachePolicy) {
+    match r {
+        EgressResponse::Ready {
+            body: HlsBody::Resource(b),
+            cache,
+        } => (b, cache),
+        other => panic!("expected a ready resource, got {other:?}"),
+    }
+}
+
+/// Every `EXT-X-MAP` URI in `body`, in order.
+fn map_uris(body: &str) -> Vec<&str> {
+    body.lines()
+        .filter_map(|l| l.strip_prefix("#EXT-X-MAP:URI=\""))
+        .map(|l| l.trim_end_matches('"'))
+        .collect()
+}
+
+#[test]
+fn a_changed_init_gets_a_new_name_and_a_discontinuity_and_old_names_keep_their_bytes() {
+    let (trunk, w) = trunk_with(8, 64);
+    let o = origin(&trunk, 6, false);
+    o.set_init(vec![0xA1; 8]);
+    publish_seg(&w, 1, 4, false);
+    let first = playlist(&o);
+    assert_eq!(map_uris(&first), vec!["init-1-7-1.mp4"], "{first}");
+    let (a, cache) = ready(get(&o, "init-1-7-1.mp4"));
+    assert_eq!((&a[..], cache), (&[0xA1u8; 8][..], CachePolicy::Immutable));
+
+    // A mid-stream codec change: new init, then the first segment cut with it.
+    o.set_init(vec![0xB2; 8]);
+    publish_seg(&w, 2, 4, false);
+    let second = playlist(&o);
+    assert_eq!(
+        body_lines(&second),
+        vec![
+            "#EXTM3U",
+            "#EXT-X-TARGETDURATION:4",
+            "#EXT-X-MEDIA-SEQUENCE:1",
+            "#EXT-X-MAP:URI=\"init-1-7-1.mp4\"",
+            "#EXTINF:4,",
+            "seg-1-7-1.m4s",
+            "#EXT-X-DISCONTINUITY",
+            "#EXT-X-MAP:URI=\"init-1-7-2.mp4\"",
+            "#EXTINF:4,",
+            "seg-1-7-2.m4s",
+        ],
+        "{second}"
+    );
+
+    // The name served immutable before the change still means the same bytes;
+    // the new generation has its own; the bare name is the current one and
+    // may change, so it is not immutable.
+    let (a2, cache) = ready(get(&o, "init-1-7-1.mp4"));
+    assert_eq!((&a2[..], cache), (&[0xA1u8; 8][..], CachePolicy::Immutable));
+    let (b, cache) = ready(get(&o, "init-1-7-2.mp4"));
+    assert_eq!((&b[..], cache), (&[0xB2u8; 8][..], CachePolicy::Immutable));
+    let (bare, cache) = ready(get(&o, "init-1.mp4"));
+    assert_eq!((&bare[..], cache), (&[0xB2u8; 8][..], CachePolicy::NoCache));
+}
+
+#[test]
+fn setting_the_same_init_again_keeps_the_generation() {
+    let (trunk, w) = trunk_with(8, 64);
+    let o = origin(&trunk, 6, false);
+    o.set_init(vec![0xA1; 8]);
+    o.set_init(vec![0xA1; 8]);
+    publish_seg(&w, 1, 4, false);
+    publish_seg(&w, 2, 4, false);
+    let body = playlist(&o);
+    assert_eq!(map_uris(&body), vec!["init-1-7-1.mp4"], "{body}");
+    assert!(!body.contains("EXT-X-DISCONTINUITY\n"), "{body}");
+}
+
+#[test]
+fn only_a_bounded_history_of_inits_stays_addressable_and_hostile_names_are_not_found() {
+    let (trunk, _w) = trunk_with(8, 64);
+    let o = origin(&trunk, 6, false);
+    for i in 1..=12u8 {
+        o.set_init(vec![i; 8]);
+    }
+    // Generation 12 is current; the oldest generations rolled off.
+    assert_eq!(get(&o, "init-1-7-1.mp4"), EgressResponse::NotFound);
+    assert_eq!(get(&o, "init-1-7-4.mp4"), EgressResponse::NotFound);
+    let (b, cache) = ready(get(&o, "init-1-7-12.mp4"));
+    assert_eq!((&b[..], cache), (&[12u8; 8][..], CachePolicy::Immutable));
+    let (b, _) = ready(get(&o, "init-1-7-5.mp4"));
+    assert_eq!(&b[..], &[5u8; 8]);
+    for hostile in [
+        "init-1-.mp4",
+        "init--1.mp4",
+        "init-1-7-.mp4",
+        "init-1-7-99999999999999999999.mp4",
+        "init-1-99999999999999999999-1.mp4",
+        "init-1-7-0.mp4",
+        "init-1-7-12-3.mp4",
+        "init-1-7.mp4",
+        "init-x-7-1.mp4",
+        // Another instance's token never resolves here.
+        "init-1-8-12.mp4",
+        "seg-1-8-1.m4s",
+        "part-1-8-1.0.m4s",
+    ] {
+        assert_eq!(get(&o, hostile), EgressResponse::NotFound, "{hostile}");
+    }
+}
+
+#[test]
+fn the_current_init_generation_is_announced_before_any_init_is_set() {
+    // Nothing set yet: the playlist names generation 1 (what the first
+    // `set_init` will serve), never a name that later means other bytes.
+    let (trunk, w) = trunk_with(8, 64);
+    let o = origin(&trunk, 6, false);
+    publish_seg(&w, 1, 4, false);
+    assert_eq!(map_uris(&playlist(&o)), vec!["init-1-7-1.mp4"]);
+    assert_eq!(get(&o, "init-1-7-1.mp4"), EgressResponse::NotFound);
+    o.set_init(vec![0xC3; 8]);
+    let (b, _) = ready(get(&o, "init-1-7-1.mp4"));
+    assert_eq!(&b[..], &[0xC3u8; 8]);
+}
+
+/// A replacement origin over a fresh `Trunk` restarts its numbers at 1: with
+/// the documented offset no name the previous origin served names different
+/// bytes; without it the names collide (which is why the offset exists).
+#[test]
+fn a_replacement_origin_with_the_offset_reuses_no_segment_name() {
+    let (trunk1, w1) = trunk_with(8, 64);
+    let o1 = origin(&trunk1, 6, false);
+    for seq in 1..=3 {
+        publish_seg(&w1, seq, 4, false);
+    }
+    let names: Vec<String> = (1..=3).map(|n| format!("seg-1-7-{n}.m4s")).collect();
+    let before: Vec<Bytes> = names.iter().map(|n| ready(get(&o1, n)).0).collect();
+
+    let (trunk2, w2) = trunk_with(8, 64);
+    let collide = origin(&trunk2, 6, false);
+    let o2 = HlsOrigin::builder(Arc::clone(&trunk2))
+        .target_duration_secs(4.0)
+        .window_segments(nz(6))
+        .media_sequence_offset(o1.next_media_sequence().saturating_sub(1))
+        .instance(7)
+        .build()
+        .unwrap();
+    publish_seg_bytes(&w2, 1, 4, false, vec![0xEE; 8]);
+    // No offset: the old name now serves different bytes.
+    assert_ne!(ready(get(&collide, &names[0])).0, before[0]);
+    // With the offset: every old name is either gone or the same bytes, and
+    // the new segment lives under a number the old origin never used.
+    for (name, old) in names.iter().zip(&before) {
+        match get(&o2, name) {
+            EgressResponse::NotFound => {}
+            other => assert_eq!(&ready(other).0, old, "{name}"),
+        }
+    }
+    let (new, cache) = ready(get(&o2, "seg-1-7-4.m4s"));
+    assert_eq!(
+        (&new[..], cache),
+        (&[0xEEu8; 8][..], CachePolicy::Immutable)
+    );
+}
+
+#[test]
+fn a_hostile_target_duration_is_a_build_error() {
+    let (trunk, _w) = trunk_with(8, 64);
+    for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -4.0] {
+        let result = HlsOrigin::builder(Arc::clone(&trunk))
+            .target_duration_secs(bad)
+            .window_segments(nz(4))
+            .instance(7)
+            .build();
+        assert!(
+            matches!(result, Err(HlsOriginBuildError::InvalidTargetDuration)),
+            "{bad} must be rejected"
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// r09-C2 (#1030), the instance token: no name served `immutable` ever maps to
+// other bytes, across origins, reconnects and restarts
+// ---------------------------------------------------------------------------
+
+/// Every resource URI `body` names (init, segments, parts, preload hint).
+fn named_uris(body: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    for line in body.lines() {
+        if let Some(rest) = line.strip_prefix("#EXT-X-MAP:URI=\"") {
+            out.push(rest.trim_end_matches('"').to_string());
+        } else if let Some(at) = line.find("URI=\"") {
+            let rest = &line[at + 5..];
+            if let Some(end) = rest.find('"') {
+                out.push(rest[..end].to_string());
+            }
+        } else if !line.starts_with('#') && !line.is_empty() {
+            out.push(line.to_string());
+        }
+    }
+    out
+}
+
+/// An LL origin with default (wall-clock) instance token over a fresh trunk.
+fn fresh_origin(offset: u64) -> (Arc<Trunk>, SegmentWriter, HlsOrigin) {
+    let (trunk, w) = trunk_with(8, 64);
+    let o = HlsOrigin::builder(Arc::clone(&trunk))
+        .target_duration_secs(4.0)
+        .window_segments(nz(6))
+        .low_latency(500)
+        .media_sequence_offset(offset)
+        .build()
+        .expect("origin builds");
+    (trunk, w, o)
+}
+
+/// What an origin serves `immutable` right now: (name, bytes) for every URI
+/// its playlist names that resolves with `CachePolicy::Immutable`.
+fn immutable_served(o: &HlsOrigin) -> Vec<(String, Bytes)> {
+    let body = playlist(o);
+    named_uris(&body)
+        .into_iter()
+        .filter_map(|name| match get(o, &name) {
+            EgressResponse::Ready {
+                body: HlsBody::Resource(b),
+                cache: CachePolicy::Immutable,
+            } => Some((name, b)),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn a_replacement_origin_after_an_init_change_never_reuses_an_immutable_name() {
+    // Run 1: init A, segments 1..=2 and the open segment 3 with two parts.
+    let (_t1, w1, o1) = fresh_origin(0);
+    o1.set_init(vec![0xA1; 8]);
+    publish_seg(&w1, 1, 4, false);
+    publish_seg(&w1, 2, 4, false);
+    publish_part(&w1, 3, 0);
+    publish_part(&w1, 3, 1);
+    let served1 = immutable_served(&o1);
+    assert!(
+        served1.iter().any(|(n, _)| n.starts_with("init-"))
+            && served1.iter().any(|(n, _)| n.starts_with("seg-"))
+            && served1.iter().any(|(n, _)| n.starts_with("part-")),
+        "run 1 must have served an init, segments and parts immutably: {served1:?}"
+    );
+
+    // Run 2: the source reconnected with a DIFFERENT init, the numbers restart
+    // at 1 over a new Trunk; the offset continues the MSN (skipping run 1's
+    // open segment).
+    let (_t2, w2, o2) = fresh_origin(o1.next_media_sequence());
+    o2.set_init(vec![0xB2; 8]);
+    publish_seg(&w2, 1, 4, false);
+    publish_part(&w2, 2, 0);
+    let served2 = immutable_served(&o2);
+
+    assert_ne!(o1.instance(), o2.instance());
+    let names1: Vec<&String> = served1.iter().map(|(n, _)| n).collect();
+    for (name, _) in &served2 {
+        assert!(
+            !names1.contains(&name),
+            "{name} was served immutably by run 1"
+        );
+    }
+    // And run 2 does not answer for run 1's names at all (a stale cache entry
+    // is the only thing that could still hold them).
+    for (name, _) in &served1 {
+        assert_eq!(get(&o2, name), EgressResponse::NotFound, "{name}");
+    }
+    // Run 1's open segment's number (its parts were served immutably) is not
+    // produced again by run 2 under any form.
+    let open_msn = o1.next_media_sequence();
+    let body2 = playlist(&o2);
+    assert!(
+        !body2.contains(&format!("-{open_msn}.")) && !body2.contains(&format!("-{open_msn}\n")),
+        "run 2 reused run 1's open segment number {open_msn}: {body2}"
+    );
+    assert!(
+        body2.contains(&format!("#EXT-X-MEDIA-SEQUENCE:{}\n", open_msn + 1)),
+        "{body2}"
+    );
+}
+
+#[test]
+fn the_instance_token_follows_the_wall_clock_so_a_restart_changes_every_name() {
+    let before_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+    let (_t1, w1, a) = fresh_origin(0);
+    let (_t2, _w2, b) = fresh_origin(0);
+    // Built back to back (possibly in the same millisecond): still distinct.
+    assert!(b.instance() > a.instance());
+    // Seeded from the clock: a process started later gets a larger token than
+    // anything an earlier process handed out, with no persistence involved.
+    assert!(u128::from(a.instance()) >= before_ms);
+    publish_seg(&w1, 1, 4, false);
+    let first = named_uris(&playlist(&a));
+    assert!(
+        first
+            .iter()
+            .any(|n| n == &format!("seg-1-{}-1.m4s", a.instance())),
+        "{first:?}"
+    );
+}
+
+#[test]
+fn token_less_names_resolve_but_are_never_immutable() {
+    let (_t, w, o) = fresh_origin(0);
+    publish_seg(&w, 1, 4, false);
+    publish_part(&w, 2, 0);
+    for legacy in ["seg-1-1.m4s", "part-1-2.0.m4s"] {
+        match get(&o, legacy) {
+            EgressResponse::Ready { cache, .. } => {
+                assert_eq!(cache, CachePolicy::NoCache, "{legacy}")
+            }
+            other => panic!("{legacy}: {other:?}"),
+        }
+    }
 }

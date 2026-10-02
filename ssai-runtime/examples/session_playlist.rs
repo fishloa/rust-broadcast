@@ -93,6 +93,8 @@ fn main() {
     base.segments.push(MediaSegment {
         duration: DecimalSeconds::new(6.0).unwrap(),
         uri: "main0.ts".to_string(),
+        // RFC 8216bis §4.4.5.1: a playlist with an EXT-X-DATERANGE needs a PDT.
+        pre_tags: vec!["#EXT-X-PROGRAM-DATE-TIME:2026-08-09T19:25:04.000Z".to_string()],
         ..Default::default()
     });
 

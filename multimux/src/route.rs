@@ -445,6 +445,8 @@ impl ProgramServing {
         let dvr = dvr_config.filter(|c| c.enabled).and_then(|cfg| {
             match DvrRecorder::new(route_name.to_string(), cfg, ext, &trunk) {
                 Ok(recorder) => {
+                    // Index under the same numbers the origin shows.
+                    let recorder = recorder.with_seq_offset(media_sequence_offset);
                     tracing::info!(
                         route = %route_name,
                         "DVR recording started"
@@ -683,7 +685,7 @@ impl ProgramServing {
         }
         tracing::error!(
             route = %self.route_name,
-            "DVR recorder mutex was poisoned; stopping DVR persistence for this program              rather than risk a corrupt archive"
+            "DVR recorder mutex was poisoned; stopping DVR persistence for this program rather than risk a corrupt archive"
         );
         metrics::counter!(
             crate::prometheus::DVR_FAILED_TOTAL,
@@ -794,6 +796,11 @@ pub struct RouteHandle {
     /// Per-route DVR config — `None` when not configured, passed to every
     /// [`ProgramServing::new`] built by [`Self::publish_program`].
     dvr_config: Option<crate::dvr::DvrConfig>,
+    /// The highest sequence number the DVR archive already holds (see
+    /// [`Self::with_archive_floor`]); a new program's Media Sequence Numbers
+    /// start above it, so a process restart does not reuse numbers the
+    /// archive and any CDN already know for other media.
+    archive_floor: u32,
     /// Notifies waiters when a new program is published via
     /// [`Self::publish_program`] — used by push output tasks that need to
     /// discover a `Trunk` to subscribe to (issue #744).
@@ -827,6 +834,7 @@ impl RouteHandle {
             programs: RwLock::new(HashMap::new()),
             name: DEFAULT_ROUTE_NAME.to_string(),
             dvr_config: None,
+            archive_floor: 0,
             program_notify: tokio::sync::Notify::new(),
             active_publisher: RwLock::new(HashMap::new()),
         }
@@ -865,6 +873,18 @@ impl RouteHandle {
     /// gets a DVR recorder created alongside its `ProgramServing`.
     pub fn with_dvr(mut self, dvr_config: crate::dvr::DvrConfig) -> Self {
         self.dvr_config = Some(dvr_config);
+        self
+    }
+
+    /// Start every program's Media Sequence Numbers above `floor`, the highest
+    /// sequence number the route's DVR archive already holds (see
+    /// `crate::dvr::archive_seq_floor`). Without it a process restart
+    /// renumbers from `1` while the archive and any HTTP cache still hold the
+    /// previous process's `1..=N` for different media (audit r07-C5/C2, issue
+    /// #1083). A consuming builder like [`Self::with_dvr`].
+    #[must_use]
+    pub fn with_archive_floor(mut self, floor: u32) -> Self {
+        self.archive_floor = floor;
         self
     }
 
@@ -962,15 +982,23 @@ impl RouteHandle {
         // fresh `Trunk`, which numbers its segments from 1 again) continues
         // the previous origin's Media Sequence Number, so clients never see
         // it decrease (RFC 8216bis §6.2.2).
-        let media_sequence_offset = programs.get(&program).map_or(0, |previous| {
-            previous
-                .ll_hls
-                .next_media_sequence()
-                .saturating_sub(1)
-                // Keep room for the `u32` sequence range `HlsOrigin`
-                // validates (unreachable in practice: 2^64 segments).
-                .min(u64::MAX - u64::from(u32::MAX))
-        });
+        let media_sequence_offset = programs
+            .get(&program)
+            .map_or(0, |previous| {
+                previous
+                    .ll_hls
+                    // `next_media_sequence()`, not `- 1`: the number the old
+                    // origin's *open* segment was shown with is skipped too —
+                    // its parts were already served and must not be reissued
+                    // for different media.
+                    .next_media_sequence()
+                    // Keep room for the `u32` sequence range `HlsOrigin`
+                    // validates (unreachable in practice: 2^64 segments).
+                    .min(u64::MAX - u64::from(u32::MAX))
+            })
+            // ...and never at or below what the DVR archive already holds
+            // (a previous process's numbers).
+            .max(u64::from(self.archive_floor));
         let serving = ProgramServing::new(
             trunk,
             self.target_duration_secs,
@@ -1010,17 +1038,44 @@ impl RouteHandle {
         }
     }
 
+    /// The `Trunk` of this route's lowest-numbered published program — the
+    /// one push and WHEP egress follow — or `None` while nothing is published.
+    fn first_trunk(&self) -> Option<Arc<Trunk>> {
+        crate::lock::read(&self.programs)
+            .iter()
+            .min_by_key(|(id, _)| **id)
+            .map(|(_, serving)| serving.trunk())
+    }
+
     /// Wait until at least one program is published on this route, then return
     /// the first program's `Trunk`. Used by push output tasks (issue #744).
     pub async fn await_first_trunk(&self) -> Arc<Trunk> {
+        self.await_trunk_other_than(None).await
+    }
+
+    /// Wait until the route's first program is bound to a `Trunk` other than
+    /// `current` (a source reconnect publishes a fresh `Trunk`, audit r07-C4,
+    /// issue #1083), and return it. Push and WHEP egress use this to notice
+    /// that the `Trunk` they were draining is dead and re-subscribe to the new
+    /// one instead of going silent.
+    pub async fn await_trunk_change(&self, current: &Arc<Trunk>) -> Arc<Trunk> {
+        self.await_trunk_other_than(Some(current)).await
+    }
+
+    async fn await_trunk_other_than(&self, current: Option<&Arc<Trunk>>) -> Arc<Trunk> {
         loop {
+            // Register interest *before* looking, so a publish landing
+            // between the check and the wait is not lost
+            // (`Notify::notify_waiters` stores no permit).
+            let notified = self.program_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if let Some(trunk) = self.first_trunk()
+                && current.is_none_or(|c| !Arc::ptr_eq(c, &trunk))
             {
-                let programs = crate::lock::read(&self.programs);
-                if let Some(serving) = programs.values().next() {
-                    return serving.trunk();
-                }
+                return trunk;
             }
-            self.program_notify.notified().await;
+            notified.await;
         }
     }
 
@@ -1188,8 +1243,20 @@ impl RouteHandle {
     }
 
     /// Transition this route's [`HealthState`].
+    ///
+    /// Also mirrors the state into the `crate::prometheus::ROUTE_UP` gauge
+    /// for this route's name: `Live` is reached from the ingest facade
+    /// (`crate::source::report_driver_progress`), which has no route name of
+    /// its own, so the supervisor — the only other writer — never saw the
+    /// transition and the gauge never read `1` (issue #1083).
     pub fn set_health(&self, state: HealthState) {
         *crate::lock::lock(&self.health) = state;
+        let up = if matches!(state, HealthState::Live) {
+            1.0
+        } else {
+            0.0
+        };
+        metrics::gauge!(crate::prometheus::ROUTE_UP, "route" => self.name.clone()).set(up);
     }
 
     /// Drain every published program's DVR pinning cursor (if DVR is
@@ -1441,7 +1508,9 @@ mod program_registry_tests {
         route.publish_new_program(ProgramId(1));
         route.add_segment(ProgramId(1), info(1)).expect("add");
         let after = route.ll_hls(ProgramId(1)).expect("replacement origin");
-        assert_eq!(after.next_media_sequence(), 4);
+        // Run 1's open segment (number 3) is skipped: the first segment of the
+        // replacement is shown as 4.
+        assert_eq!(after.next_media_sequence(), 5);
 
         let playlist = match after.resolve(
             HlsRequest::Playlist {
@@ -1457,8 +1526,146 @@ mod program_registry_tests {
             } => p,
             other => panic!("expected a playlist, got {other:?}"),
         };
-        assert!(playlist.contains("#EXT-X-MEDIA-SEQUENCE:3\n"), "{playlist}");
-        assert!(playlist.contains("seg-1-3.m4s"), "{playlist}");
+        assert!(playlist.contains("#EXT-X-MEDIA-SEQUENCE:4\n"), "{playlist}");
+        assert!(
+            playlist
+                .lines()
+                .any(|l| l.starts_with("seg-1-") && l.ends_with("-4.m4s")),
+            "{playlist}"
+        );
+    }
+
+    /// Audit r07-C5/C2 (#1083): a process restart must not reuse numbers the
+    /// DVR archive already holds. With an archive floor the first program's
+    /// segments start above it, and a later reconnect continues from whichever
+    /// is higher.
+    #[test]
+    fn archive_floor_lifts_the_first_media_sequence_number() {
+        let route = RouteHandle::new(4.0, 500, 4).with_archive_floor(41);
+        let first = test_trunk();
+        route.publish_program(ProgramId(1), Arc::clone(&first));
+        let origin = route.ll_hls(ProgramId(1)).expect("origin");
+        // No segment yet: the next one is shown as floor + 1.
+        assert_eq!(origin.next_media_sequence(), 42);
+        assert_eq!(origin.media_sequence_offset(), 41);
+
+        // A reconnect over a fresh Trunk keeps climbing, skipping the old
+        // origin's open segment number (42).
+        route.release_program(ProgramId(1), &first);
+        route.publish_program(ProgramId(1), test_trunk());
+        let replacement = route.ll_hls(ProgramId(1)).expect("origin");
+        assert_eq!(replacement.next_media_sequence(), 43);
+    }
+
+    /// The names a route's origin advertises (init, segments, parts).
+    fn advertised_names(route: &RouteHandle, program: ProgramId) -> Vec<String> {
+        use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsRequest};
+        use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
+        let origin = route.ll_hls(program).expect("origin");
+        let body = match origin.resolve(
+            HlsRequest::Playlist {
+                track_id: DEFAULT_TRACK_ID,
+                query: BlockingQuery::default(),
+            },
+            broadcast_common::Timestamp::from_nanos(1),
+            AwaitPolicy::new(broadcast_common::Timestamp::from_nanos(1_000_000_000)),
+        ) {
+            EgressResponse::Ready {
+                body: HlsBody::Playlist(p),
+                ..
+            } => p,
+            other => panic!("expected a playlist, got {other:?}"),
+        };
+        let mut names = Vec::new();
+        for line in body.lines() {
+            if let Some(at) = line.find("URI=\"") {
+                let rest = &line[at + 5..];
+                names.push(rest[..rest.find('"').unwrap_or(rest.len())].to_string());
+            } else if !line.starts_with('#') && !line.is_empty() {
+                names.push(line.to_string());
+            }
+        }
+        names
+    }
+
+    /// Audit r09-C2 (#1030), restart with no DVR: a second "process" (a fresh
+    /// `RouteHandle` renumbering from 1, with no archive to raise the floor)
+    /// advertises none of the names the first one served, so nothing a cache
+    /// holds `immutable` is ever reissued for other bytes — even though the
+    /// media sequence numbers coincide. Also: the reconnect inside one process
+    /// does not reuse the old origin's open segment's parts.
+    #[test]
+    fn a_restart_without_dvr_and_a_reconnect_never_reuse_an_immutable_name() {
+        let info = |seq: u32, byte: u8| transmux::ll_hls::SegmentInfo {
+            bytes: vec![byte; 8],
+            duration: 4.0,
+            segment_seq: seq,
+            part_count: 1,
+        };
+        // "Process" 1: segments 1..=2 served, part 0 of the open segment 3.
+        let p1 = RouteHandle::new(4.0, 500, 4);
+        let t1 = p1.publish_new_program(ProgramId(1));
+        p1.set_init(ProgramId(1), vec![0xA1; 4]);
+        p1.add_segment(ProgramId(1), info(1, 0x11)).expect("add");
+        p1.add_segment(ProgramId(1), info(2, 0x12)).expect("add");
+        p1.add_part(
+            ProgramId(1),
+            transmux::ll_hls::PartInfo {
+                bytes: vec![0x13; 4],
+                segment_seq: 3,
+                part_index: 0,
+                duration: 0.5,
+                independent: true,
+            },
+        );
+        let names1 = advertised_names(&p1, ProgramId(1));
+        assert!(names1.iter().any(|n| n.starts_with("part-")), "{names1:?}");
+
+        // "Process" 2: same numbers from scratch, different init.
+        let p2 = RouteHandle::new(4.0, 500, 4);
+        p2.publish_new_program(ProgramId(1));
+        p2.set_init(ProgramId(1), vec![0xB2; 4]);
+        p2.add_segment(ProgramId(1), info(1, 0x21)).expect("add");
+        p2.add_segment(ProgramId(1), info(2, 0x22)).expect("add");
+        p2.add_part(
+            ProgramId(1),
+            transmux::ll_hls::PartInfo {
+                bytes: vec![0x23; 4],
+                segment_seq: 3,
+                part_index: 0,
+                duration: 0.5,
+                independent: true,
+            },
+        );
+        let names2 = advertised_names(&p2, ProgramId(1));
+        for n in &names2 {
+            assert!(!names1.contains(n), "{n} advertised by both processes");
+        }
+
+        // A reconnect inside process 1: the old open segment (3) and its part
+        // are not advertised again, under any name.
+        p1.release_program(ProgramId(1), &t1);
+        p1.publish_new_program(ProgramId(1));
+        p1.set_init(ProgramId(1), vec![0xC3; 4]);
+        p1.add_segment(ProgramId(1), info(1, 0x31)).expect("add");
+        p1.add_part(
+            ProgramId(1),
+            transmux::ll_hls::PartInfo {
+                bytes: vec![0x32; 4],
+                segment_seq: 2,
+                part_index: 0,
+                duration: 0.5,
+                independent: true,
+            },
+        );
+        let names3 = advertised_names(&p1, ProgramId(1));
+        for n in &names3 {
+            assert!(!names1.contains(n), "{n} reissued after the reconnect");
+        }
+        assert!(
+            names3.iter().all(|n| !n.contains("-3.")),
+            "the old open segment's number 3 was reused: {names3:?}"
+        );
     }
 
     /// `release_program` must be a no-op for a `Trunk` that lost the
@@ -1715,5 +1922,42 @@ mod program_registry_tests {
             "an already-abandoned recorder must not be counted twice"
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Audit r07-C4 (#1083): `await_trunk_change` returns only once the first
+    /// program is bound to a *different* `Trunk`, and the first program is the
+    /// lowest-numbered one, not whichever the map happens to yield.
+    #[tokio::test]
+    async fn await_trunk_change_waits_for_a_different_trunk() {
+        let route = Arc::new(RouteHandle::new(1.0, 250, 4));
+        let high = test_trunk();
+        route.publish_program(ProgramId(5), Arc::clone(&high));
+        let low = test_trunk();
+        route.publish_program(ProgramId(2), Arc::clone(&low));
+        let first = route.await_first_trunk().await;
+        assert!(Arc::ptr_eq(&first, &low), "program 2 is the first program");
+
+        // Still the same Trunk: the wait does not complete.
+        let pending = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            route.await_trunk_change(&low),
+        )
+        .await;
+        assert!(pending.is_err(), "no change yet");
+
+        let waiter = {
+            let route = Arc::clone(&route);
+            let low = Arc::clone(&low);
+            tokio::spawn(async move { route.await_trunk_change(&low).await })
+        };
+        // The source reconnects: slot released, a fresh Trunk takes over.
+        route.release_program(ProgramId(2), &low);
+        let replacement = test_trunk();
+        route.publish_program(ProgramId(2), Arc::clone(&replacement));
+        let seen = tokio::time::timeout(std::time::Duration::from_secs(10), waiter)
+            .await
+            .expect("the wait completes after the replacement")
+            .unwrap();
+        assert!(Arc::ptr_eq(&seen, &replacement));
     }
 }

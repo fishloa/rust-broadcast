@@ -105,6 +105,7 @@ use webrtc_runtime::media::{
 
 use crate::error::{MultimuxError, Result};
 use crate::route::RouteHandle;
+use crate::source::SessionClocks;
 use crate::source::{DriverProgress, IngestTimeouts, Source};
 
 /// Unknown coded dimensions — the SDP/RTP path gives no frame geometry at
@@ -1173,6 +1174,20 @@ pub async fn run_whip(
     handshake: HandshakePolicy,
     route_handle: &Arc<RouteHandle>,
 ) -> MultimuxError {
+    run_whip_with_clock(route, trunk_config, handshake, route_handle, &Instant::now).await
+}
+
+/// [`run_whip`] with an injectable wall clock: every instant the loop reads —
+/// the route's start and each session's admission and feed — comes from
+/// `clock`, so a test can move time deterministically instead of sleeping
+/// (see the `SessionClocks` tests).
+pub(crate) async fn run_whip_with_clock(
+    route: &WhipRoute,
+    trunk_config: TrunkConfig,
+    handshake: HandshakePolicy,
+    route_handle: &Arc<RouteHandle>,
+    clock: &(dyn Fn() -> Instant + Sync),
+) -> MultimuxError {
     let (accept_rx, active_sessions) = match route.ensure_infra().await {
         Ok(v) => v,
         Err(e) => return e,
@@ -1187,15 +1202,18 @@ pub async fn run_whip(
         handshake,
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
-    let start = Instant::now();
+    let start = clock();
     let read_timeout = route.timeouts.read;
 
     let mut progress: ProgressBySession = HashMap::new();
+    // Each session's own clock origin (see `SessionClocks`).
+    let mut clocks = SessionClocks::new(start);
     let mut reads: FuturesUnordered<BoxedRead> = FuturesUnordered::new();
 
     loop {
         tokio::select! {
             () = tokio::time::sleep(ACCEPT_POLL_INTERVAL) => {
+                clocks.retain(|id| progress.contains_key(id));
                 loop {
                     match driver.poll_accept() {
                         AcceptOutcome::Idle => break,
@@ -1211,6 +1229,7 @@ pub async fn run_whip(
                             let socket = session.socket_handle();
                             let media = session.media_handle();
                             progress.insert(id, DriverProgress::new());
+                            clocks.admit(id, clock());
                             reads.push(read_one(id, socket, media, read_timeout));
                         }
                         _ => break,
@@ -1218,7 +1237,7 @@ pub async fn run_whip(
                 }
             }
             Some((id, outcome)) = reads.next(), if !reads.is_empty() => {
-                let now = Timestamp::from_instant(start, Instant::now());
+                let now = clocks.now(id, clock());
                 match outcome {
                     ReadOutcome::Events(events) => {
                         // Fed via `driver_mut`/`IngestDriver::feed`, not

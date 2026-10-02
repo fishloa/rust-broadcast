@@ -388,6 +388,10 @@ impl Default for ReconnectPolicy {
     }
 }
 
+/// A push output's reconnect backoff doubles on every attempt (1 s, 2 s, 4 s,
+/// … up to [`ReconnectPolicy::max_backoff_ms`]).
+const RECONNECT_BACKOFF_FACTOR: f64 = 2.0;
+
 impl ReconnectPolicy {
     fn default_initial_backoff_ms() -> u64 {
         1_000
@@ -397,10 +401,12 @@ impl ReconnectPolicy {
     }
 
     pub fn backoff_for(&self, attempt: u32) -> std::time::Duration {
-        let ms = self
-            .initial_backoff_ms
-            .saturating_mul(1u64 << attempt.min(20));
-        std::time::Duration::from_millis(ms.min(self.max_backoff_ms))
+        crate::origin::supervisor::Backoff::new(
+            std::time::Duration::from_millis(self.initial_backoff_ms),
+            std::time::Duration::from_millis(self.max_backoff_ms),
+            RECONNECT_BACKOFF_FACTOR,
+        )
+        .delay_for_attempt(attempt)
     }
 
     /// Validate the policy (audit run 7, W19): a zero backoff (either bound)
@@ -1295,7 +1301,7 @@ impl Route {
             return Err(MultimuxError::ConfigInvalid {
                 field: "routes.name",
                 reason: format!(
-                    "{:?} is a reserved device name on Windows (CON, PRN, AUX, NUL, COM1-9,                      LPT1-9) and cannot be a route/archive directory name",
+                    "{:?} is a reserved device name on Windows (CON, PRN, AUX, NUL, COM1-9, LPT1-9) and cannot be a route/archive directory name",
                     self.name
                 ),
             });

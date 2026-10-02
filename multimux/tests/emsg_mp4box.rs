@@ -72,7 +72,7 @@ fn assert_oracle(tool: &str) {
         return;
     }
     panic!(
-        "required oracle tool `{tool}` is not on PATH. Install it, or set          MULTIMUX_ALLOW_ORACLE_SKIP=1 to skip this oracle explicitly."
+        "required oracle tool `{tool}` is not on PATH. Install it, or set MULTIMUX_ALLOW_ORACLE_SKIP=1 to skip this oracle explicitly."
     );
 }
 

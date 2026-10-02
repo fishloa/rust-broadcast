@@ -1136,6 +1136,9 @@ struct FileIngestSession {
     established: bool,
     announced: bool,
     started: bool,
+    /// Samples handed out since the last [`Stage::feed`] — bounded by
+    /// [`MAX_SAMPLES_PER_DRAIN`].
+    drained_this_feed: usize,
 }
 
 impl FileIngestSession {
@@ -1172,6 +1175,7 @@ impl FileIngestSession {
             established: false,
             announced: false,
             started: false,
+            drained_this_feed: 0,
         };
         // First pass: offsets are all zero (the file's own timeline), so this
         // cannot overflow; the checked path is still taken for uniformity.
@@ -1254,6 +1258,7 @@ impl Stage for FileIngestSession {
     type Error = FileReaderError;
 
     fn feed(&mut self, _input: (), _now: Timestamp) -> Result<(), Self::Error> {
+        self.drained_this_feed = 0;
         // With `loop_file`, refill when the previous pass's queue has drained.
         if self.loop_file && self.queue.is_empty() {
             self.refill()?;
@@ -1283,6 +1288,11 @@ impl Stage for FileIngestSession {
             return None;
         }
         if self.pace {
+            // A burst (everything due at once after a stall) is handed out
+            // in bounded drains; the controller loop comes back for the rest.
+            if self.drained_this_feed >= MAX_SAMPLES_PER_DRAIN {
+                return None;
+            }
             // Handle out only the samples whose within-pass media time has
             // elapsed on the wall clock — pacing, so the trunk advances at
             // roughly realtime. A sample not yet due stops this drain (the
@@ -1297,6 +1307,7 @@ impl Stage for FileIngestSession {
                 Ok(_) | Err(_) => {}
             }
         }
+        self.drained_this_feed = self.drained_this_feed.saturating_add(1);
         self.queue
             .pop_front()
             .map(|(track_id, sample, _)| SessionEvent::Sample {
@@ -1326,6 +1337,36 @@ impl IngestSession for FileIngestSession {
     type Request = bytes::Bytes;
 }
 
+/// The most samples one drain of a paced [`FileIngestSession`] hands out
+/// before the controller loop gets control back (then the next iteration
+/// continues). A stall (a slow disk, a busy blocking pool) makes a whole
+/// stretch of the file due at once; without a bound a single drain could
+/// publish all of it, and any ring sized to absorb that would have to be sized
+/// to the file.
+const MAX_SAMPLES_PER_DRAIN: usize = 256;
+
+/// The sample-ring depth of a file route's `Trunk`: a few drains' worth,
+/// **independent of the file's length** (audit r07-O4, issue #1083). The old
+/// sizing — one entry per sample in the file, plus 64 — assumed the file was
+/// published all at once, which the paced session stopped doing; it made a
+/// route's memory grow with the file for no reader's benefit, since the
+/// segmenter's cursor drains the ring every iteration.
+const FILE_TIMED_RING: usize = MAX_SAMPLES_PER_DRAIN * 4;
+
+/// The `Trunk` configuration of a file route.
+fn file_trunk_config(window_segments: usize) -> media_plane::trunk::TrunkConfig {
+    let nz =
+        |n: usize| std::num::NonZeroUsize::new(n.max(1)).unwrap_or(std::num::NonZeroUsize::MIN);
+    let live = crate::source::driver_trunk_config(window_segments);
+    media_plane::trunk::TrunkConfig::new(
+        nz(FILE_TIMED_RING),
+        live.sparse_capacity,
+        live.segment_capacity,
+        live.event_capacity,
+        live.part_capacity,
+    )
+}
+
 /// Run a `InputSpec::File` route to completion on the current task: demux the
 /// file, replay it through a single-program [`IngestDriver`] over a
 /// [`FileIngestSession`], and pump `crate::source::advance_route` once per
@@ -1348,8 +1389,12 @@ pub(crate) async fn run_file_source(
 ) -> crate::MultimuxError {
     // Demux the file eagerly (the same probe->demux path the standalone
     // FileReader uses); a failure surfaces through the supervisor's retry.
-    let scratch_cfg = crate::source::driver_trunk_config(window_segments);
-    let scratch = media_plane::trunk::Trunk::new(scratch_cfg);
+    // `FileReaderConfig` wants a `Trunk` to publish into; `read_probe_demux`
+    // never publishes, so the smallest possible one is all this needs.
+    let one = std::num::NonZeroUsize::MIN;
+    let scratch = media_plane::trunk::Trunk::new(media_plane::trunk::TrunkConfig::new(
+        one, one, one, one, one,
+    ));
     let reader = FileReader::new(
         FileReaderConfig::new(std::path::PathBuf::from(path), loop_file, scratch)
             .with_pace(false)
@@ -1361,20 +1406,7 @@ pub(crate) async fn run_file_source(
         Err(e) => return e.into(),
     };
 
-    // Size the sample ring to hold the whole file: unlike a live source,
-    // whose samples arrive incrementally and are segmented as they come, an
-    // instant file publishes everything at once, so a live-sized (64-entry)
-    // ring would evict most of the file before the segmenter read it.
-    let total_samples: usize = parsed.tracks.iter().map(|t| t.samples.len()).sum();
-    let nz =
-        |n: usize| std::num::NonZeroUsize::new(n.max(1)).unwrap_or(std::num::NonZeroUsize::MIN);
-    let trunk_config = media_plane::trunk::TrunkConfig::new(
-        nz(total_samples + 64),
-        nz(16),
-        nz(window_segments),
-        nz(64),
-        nz(64),
-    );
+    let trunk_config = file_trunk_config(window_segments);
 
     let session =
         match FileIngestSession::new(parsed, crate::route::SPTS_PROGRAM_ID, loop_file, true) {
@@ -1418,6 +1450,10 @@ pub(crate) async fn run_file_source(
                 let now = std::time::Instant::now();
                 if due > now {
                     tokio::time::sleep(due - now).await;
+                } else {
+                    // Already due (a burst is being worked off in bounded
+                    // drains): let other tasks run between drains.
+                    tokio::task::yield_now().await;
                 }
             }
             // Loop refill happens on the next feed; a short yield avoids a
@@ -1433,7 +1469,7 @@ mod loop_tests {
     use media_plane::ingress::{ProgramId, SessionEvent};
 
     /// Demux a real TS fixture into a `ParsedFile`.
-    async fn demux_fixture() -> ParsedFile {
+    pub(super) async fn demux_fixture() -> ParsedFile {
         let path = format!("{}/../fixtures/ts/h264_aac.ts", env!("CARGO_MANIFEST_DIR"));
         let trunk_cfg = crate::source::driver_trunk_config(8);
         let scratch = media_plane::trunk::Trunk::new(trunk_cfg);
@@ -1705,5 +1741,86 @@ mod playout_tests {
             matches!(err, Err(FileReaderError::NoPlayableSamples)),
             "publish_looping must fail with NoPlayableSamples"
         );
+    }
+
+    /// Audit r07-O4 (#1083): when a stall makes a long stretch of the file due
+    /// at once, the paced session must hand it out in bounded drains, and the
+    /// file route's length-independent sample ring must then carry every
+    /// sample to the segmenter's cursor with no `Lagged` loss. The queue holds
+    /// two ring-depths of due samples: handed out in one drain (the old
+    /// behaviour) it would overflow the ring before the cursor was polled.
+    #[tokio::test]
+    async fn a_due_burst_is_drained_in_bounded_steps_without_overflowing_the_ring() {
+        let parsed = loop_tests::demux_fixture().await;
+        let session =
+            FileIngestSession::new(parsed, crate::route::SPTS_PROGRAM_ID, true, true).unwrap();
+        let mut driver = media_plane::ingress::IngestDriver::new(
+            session,
+            file_trunk_config(8),
+            media_plane::ingress::HandshakePolicy::establish_by(
+                broadcast_common::Timestamp::from_nanos(u64::MAX),
+            ),
+            std::num::NonZeroUsize::MIN,
+        );
+        driver.feed((), broadcast_common::Timestamp::ZERO);
+        let trunk = driver
+            .trunk(crate::route::SPTS_PROGRAM_ID)
+            .cloned()
+            .expect("the program was announced");
+        let mut cursor = trunk.subscribe();
+
+        // A stall: the whole of a two-ring-deep stretch is due right now.
+        let burst = FILE_TIMED_RING * 2;
+        let template = driver
+            .session()
+            .queue
+            .front()
+            .map(|(track, sample, _)| (*track, sample.clone()))
+            .expect("the first pass is queued");
+        {
+            let session = driver.session_mut();
+            session.queue.clear();
+            for i in 0..burst {
+                let mut sample = template.1.clone();
+                sample.dts = Some(i64::try_from(i).unwrap());
+                sample.pts = sample.dts;
+                session.queue.push_back((template.0, sample, 0.0));
+            }
+            session.pass_wall_start =
+                std::time::Instant::now().checked_sub(std::time::Duration::from_secs(3600));
+        }
+
+        let mut delivered = 0usize;
+        let mut feeds = 0usize;
+        while delivered < burst {
+            feeds += 1;
+            assert!(feeds <= burst, "no progress draining the burst");
+            driver.feed((), broadcast_common::Timestamp::ZERO);
+            let mut this_feed = 0usize;
+            while let Some(item) = cursor.poll() {
+                match item {
+                    media_plane::trunk::SampleCursorItem::Timed { .. } => this_feed += 1,
+                    other => panic!("the ring overflowed: {other:?}"),
+                }
+            }
+            assert!(
+                this_feed <= MAX_SAMPLES_PER_DRAIN,
+                "one drain handed out {this_feed} samples (bound {MAX_SAMPLES_PER_DRAIN})"
+            );
+            delivered += this_feed;
+        }
+        assert_eq!(delivered, burst);
+        assert!(
+            feeds >= burst / MAX_SAMPLES_PER_DRAIN,
+            "the burst must have taken several bounded drains, took {feeds}"
+        );
+    }
+
+    /// The ring depth does not depend on the file or the window.
+    #[test]
+    fn the_file_ring_is_independent_of_the_file_length() {
+        assert_eq!(file_trunk_config(8).timed_capacity.get(), FILE_TIMED_RING);
+        assert_eq!(file_trunk_config(500).timed_capacity.get(), FILE_TIMED_RING);
+        assert_eq!(file_trunk_config(500).segment_capacity.get(), 500);
     }
 }

@@ -333,6 +333,129 @@
   segment since the last poll (the UDP ingest path calls `advance_route` once
   per datagram).
 
+- **A source reconnect no longer orphans push and WHEP egress** (audit
+  r07-C4, #1083). Push (SRT/RTMP/RTSP) and WHEP outputs subscribed to the
+  route's first `Trunk` once and kept draining it after a redial replaced it
+  with a fresh one, so they went silent with no error. Each is now bound by
+  `follow_trunk`: cancelled when the route's first program is bound to a
+  different `Trunk`, given 5 s to wind down, and started again on the new one.
+  The wait for a `Trunk` (`RouteHandle::await_first_trunk`) no longer loses a
+  publish that lands between its check and its wait, and "the first program"
+  is the lowest-numbered one rather than whichever the map yields (#1083).
+- **The DVR archive survives a reconnect or restart** (audit r07-C5, #1083).
+  A new recorder started at period 0, appended to the old `p0.<ext>` and
+  rewrote `p0.idx` from its own entries alone — orphaning every earlier
+  segment, skipping every segment of an fMP4 route (the file was non-empty so
+  no init was written), and leaking the old periods past retention. It now
+  adopts the periods already on disk (retention covers them), always opens a
+  new one, and indexes its first segment `discontinuous`. Segments are indexed
+  under the number the route's playlist shows (Trunk number + the origin's
+  media-sequence offset), so archive, live tail and by-number fetch agree and a
+  reconnect's restarted `Trunk` numbers no longer collide; the live tail the
+  catch-up playlist merges is mapped to the same numbers. A process restart
+  starts numbering above the highest archived number
+  (`RouteHandle::with_archive_floor`) (#1083).
+- **RTMP and WHIP ingest accept a publisher that connects after the route has
+  been up for the connect timeout** (audit r07-C6, #1083). Every session was
+  fed a clock measured from the route's start, so the handshake deadline
+  (`now + connect timeout` from that origin) had passed for any later session,
+  which was reaped on its first feed. Each session's clock now starts at its
+  own admission (#1083).
+- **A Data/Subtitle track appearing mid-stream no longer breaks an fMP4
+  route** (audit r07-C7, #1083). The track-change rebuild installed a TS
+  segmenter as a placeholder (its `expect` panicked the ingest task for an
+  empty track set) and left it installed when the fMP4 rebuild failed — the
+  route then published MPEG-TS bytes as `seg-*.m4s`. The rebuild now filters
+  the fMP4-muxable tracks exactly as the initial build does, builds the
+  replacement before touching anything, and on any failure keeps the working
+  segmenter (#1083).
+- **The metrics middleware no longer buffers response bodies** (audit
+  r07-C10, #1083), so an in-progress LL-DASH segment streams while it is
+  produced (#721). The byte count is taken from the frames as they pass and
+  recorded when the body ends or is dropped; a sized body keeps its
+  `Content-Length`. The global concurrency permit is carried into the body, so
+  it still bounds the whole response (a stalled streaming response keeps its
+  permit) (#1083).
+- **`Cache-Control: immutable` only where the name carries the origin's
+  instance token** (audit r09-C2, #1030/#1083). `hls-runtime`'s origin puts a
+  per-instance token (distinct for every origin built, across reconnects *and*
+  process restarts, with or without DVR) in every resource name it serves
+  immutably, so a name never maps to other bytes. What multimux sends:
+
+  | resource | success | otherwise |
+  |---|---|---|
+  | playlists / manifests | `no-cache` | `no-cache` |
+  | `init-{t}-{instance}-{gen}.mp4`, `seg-{t}-{instance}-{msn}.*`, `part-{t}-{instance}-{msn}.{i}.*` | `max-age=31536000, immutable` | `no-cache` |
+  | token-less `seg-{t}-{msn}.*` / `part-…` (DASH/Smooth templates), `catchup/seg-*` | `max-age=10` | `no-cache` |
+  | bare `init-{t}.mp4` (the current init), anything else | `no-cache` | `no-cache` |
+
+  A reconnect to a source with a different SPS/ASC, a restart of a route with
+  no DVR (numbering starts again at 1), and the old origin's open segment's
+  number no longer put new bytes under a cached `immutable` name; every
+  non-success response was `immutable` before and is now `no-cache` (#1083).
+- **A mid-stream codec-config change reaches the init segment** (deferred
+  item, #1083). The FLV and TS demuxers report a changed `avcC`/ASC/SPS as
+  `TrackUpdated`; the TS `ProgramTracker` and the RTMP session ignored it, so
+  the init segment kept describing a stream that was no longer being sent. Both
+  now announce the updated track set (`TracksChanged`) (#1083).
+- **`multimux_route_up` was never `1`, and a deleted route stayed up**
+  (audit r07-O5, #1083). `Live` is reached from the ingest facade, which has
+  no route name, so only the supervisor wrote the gauge and never wrote `1`;
+  `RouteHandle::set_health` now mirrors every state into it. A route removed
+  through the admin API (delete, or dropped by a reload) is reported `0`
+  after its supervisor has stopped — the metrics facade and exporter have no
+  per-series removal, so the series stays at `0` rather than at its last value (#1083).
+- **Push destinations never reach a log line, error text or `Debug` output**
+  (audit T14, #1142/#1083): a push URL's userinfo and stream key (path/query)
+  are replaced by `scheme://host[:port]/<redacted>` in every log line;
+  transport errors are scrubbed of every secret derived from the URL before
+  logging; `validate_srt_url`'s config error no longer echoes the URL
+  (`streamid`/`passphrase`); `RtspTransport`'s and `OutputKind`'s `Debug` print
+  the destination only (and `<redacted>` for a `Custom` output's params)
+  (#1083).
+- The DVR index sidecar is extended in place instead of rewritten and
+  fsynced whole per segment (audit r07-O3, #1083): about 25 ms and 680 KB per
+  segment, 3.6 GB per 3-hour period at 2 s segments, down to a few hundred
+  bytes. A torn tail after a crash is recovered by the catch-up reader
+  (every complete entry); the whole-file atomic rewrite remains for a period's
+  first entry and after a failed append (#1083).
+- A file route's sample ring no longer scales with the file (audit r07-O4,
+  #1083): it is a fixed few drains deep, and the paced session hands out at
+  most `MAX_SAMPLES_PER_DRAIN` samples per drain, so a stall that makes a long
+  stretch due at once cannot overflow the ring (#1083).
+- **`catchup.m3u8?window_secs=N` is correct across a reconnect** (audit
+  r07-C5, #1083): the window is measured by walking back from the live edge
+  summing segment durations, not by `start_pts_ns` arithmetic — that clock
+  restarts near 0 with every new `Trunk`, so the old floor selected the whole
+  previous run's archive.
+- **The catch-up playlist carries a per-run `EXT-X-MAP`** (#1083): each archived
+  period file starts with the init of the run that wrote it, served at
+  `catchup/init-p{N}.mp4`; the playlist emits that run's map after the
+  `EXT-X-DISCONTINUITY` that opens the run (a segment still in the live origin
+  names the origin's versioned init). Previously only the bare, current
+  `init-1.mp4` was named on the first segment, so older runs decoded with the
+  wrong init. Validated with Apple's `mediastreamvalidator` over two real-CMAF
+  runs with different inits.
+- The DVR's EIT reader drops (and counts, `multimux_dvr_si_errors_total`) a
+  section it cannot act on instead of keeping its packet in the carry buffer
+  to fail again on every call (#1083).
+- Hot-path copies (audit r07-O2, #1083): WHEP builds each RTP packet once
+  (header + payload straight into the buffer it patches, not via a temporary
+  contiguous `Bytes` and a second copy) and the DVR's EIT reader reuses its
+  event and carry buffers across calls. The per-segment/once-at-start sites the
+  audit also named (`dash_pull`, `smooth_pull`) copy a URL string or a first
+  fragment and are not on a per-packet path; left as they are (#1083).
+- The origin's ten near-identical `supervise_driver` wrappers are one
+  `spawn_supervised`, and push/WHEP egress share `spawn_following`; the shift
+  based `ReconnectPolicy::backoff_for` and the supervisor's `Backoff` are one
+  capped-exponential implementation (`Backoff::delay_for_attempt`) (audit
+  r07-O1, #1083).
+- Catch-up's `EXT-X-MAP` is rendered by `broadcast-hls` instead of formatted
+  by hand; a few `as` conversions on disk-derived lengths are checked; the
+  catch-up index cache recovers from a poisoned lock; seven string literals
+  that had lost their line-continuation (runs of spaces inside the message)
+  are repaired (#1083).
+
 ### Changed (breaking)
 - **The Smooth client Manifest changed shape** (#1083): HEVC tracks are no
   longer advertised (Smooth cannot serve them — they 404'd); each
@@ -403,6 +526,25 @@
   `catchup::read_period_segments` returns `Arc<Vec<ArchivedSegment>>` — both
   to distinguish an evicted period (a `404` to a racing catch-up request)
   from a corrupt archive (a `500`).
+- **`IndexEntry::seq` in the DVR archive, and the numbers `catchup/seg-{n}`
+  uses, are now the route's playlist numbers** (Trunk number + media-sequence
+  offset) instead of the bare `Trunk` number (#1083). They are equal until the
+  route's source reconnects or the process restarts. A pre-existing archive
+  written by an older version keeps its own numbers; a restarted process
+  numbers above the highest it finds.
+- `DvrRecorder` never appends into a period file an earlier recorder wrote: a
+  recorder built over an existing archive starts a new period after the
+  highest on disk (#1083).
+- **Restarts rename.** The origin's playlist names every init, segment and
+  part with the origin's instance token (`seg-{t}-{instance}-{msn}.*`, see the
+  Cache-Control entry and `hls-runtime`); the bare `init-{t}.mp4` and the
+  token-less `seg-{t}-{msn}`/`part-…` still resolve, but are no longer served
+  `immutable`. A route restart renames everything and, without DVR, renumbers
+  from 1 (media sequence continuity across a *process* restart needs the DVR
+  archive's floor); within a process a reconnect continues the numbers and
+  skips the old origin's open segment's (#1030/#1083).
+- `OutputKind`'s `Debug` output redacts push URLs and `Custom` params (it was
+  derived) (#1083).
 
 ### Added
 - `multimux_pull_stream_refresh_miss_total` Prometheus counter: manifest
@@ -448,6 +590,12 @@
   `DvrRecorder::new` applies to a route name before joining it into a path.
 - `scte35-splice` as a dev-dependency, for the independent `emsg`
   `message_data` oracle in `tests/emsg_mp4box.rs`.
+- `RouteHandle::with_archive_floor`, `RouteHandle::await_trunk_change` and
+  `DvrRecorder::with_seq_offset` (see the DVR / egress fixes above) (#1083).
+- `multimux_dvr_si_errors_total` counter (label: `route`); `catchup/init-p{N}.mp4`
+  route; `source::SessionClocks` (crate-private) (#1083).
+- `Backoff::delay_for_attempt` — the stateless form of repeated `next()`
+  (#1083).
 
 ## [0.11.0] - 2026-09-26
 

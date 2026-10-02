@@ -331,9 +331,12 @@ async fn blocking_reload_resolves_when_part_arrives() {
     // next-expected part, which is present even before `add_part(1, 1)` runs
     // (see `multimux::output::llhls::media_playlist_m3u8`). Only a genuine PART line
     // proves the new part was actually rendered.
-    let real_part_line = "#EXT-X-PART:DURATION=0.5,URI=\"part-1-1.1.m4s\"";
+    // (The playlist's part names carry the origin's instance token:
+    // `part-1-{instance}-1.1.m4s`.)
     assert!(
-        playlist.contains(real_part_line),
+        playlist.lines().any(|l| l
+            .strip_prefix("#EXT-X-PART:DURATION=0.5,URI=\"part-1-")
+            .is_some_and(|rest| rest.ends_with("-1.1.m4s\""))),
         "resolved playlist must include the real #EXT-X-PART line for the \
          newly-arrived part (not just the preload-hint URI): {playlist}"
     );

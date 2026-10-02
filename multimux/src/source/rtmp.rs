@@ -148,6 +148,7 @@ use media_plane::trunk::{RetentionClass, TrunkConfig};
 
 use crate::error::{MultimuxError, Result};
 use crate::route::RouteHandle;
+use crate::source::SessionClocks;
 use crate::source::{DriverProgress, IngestTimeouts, Source};
 
 /// Per-session [`DriverProgress`] bookkeeping — one entry per admitted
@@ -374,6 +375,15 @@ pub struct RtmpIngestSession {
     conn: Arc<TokioMutex<RtmpConnection>>,
     app: Option<String>,
     demux: StreamingFlvDemux,
+    /// The [`DemuxEvent`] -> [`SessionEvent`] translation state.
+    events: FlvEvents,
+}
+
+/// Translates the FLV demux's [`DemuxEvent`]s into [`SessionEvent`]s — the
+/// state half of [`RtmpIngestSession`], split out so it needs no socket and is
+/// unit-testable by feeding it events directly.
+#[derive(Default)]
+struct FlvEvents {
     /// Track specs resolved so far — frozen into `known_track_ids` once
     /// established (see the module doc's "`Established` gates on the first
     /// `Sample`" note).
@@ -389,10 +399,7 @@ impl RtmpIngestSession {
             conn: Arc::new(TokioMutex::new(conn)),
             app,
             demux: StreamingFlvDemux::new(),
-            specs: Vec::new(),
-            known_track_ids: BTreeSet::new(),
-            established: false,
-            pending: VecDeque::new(),
+            events: FlvEvents::default(),
         }
     }
 
@@ -411,8 +418,20 @@ impl RtmpIngestSession {
     /// first `Sample`" / "first sample is never dropped" notes for exactly
     /// what this does before vs. after establishment.
     fn drain_demux(&mut self) {
-        let mut newly_seen_samples: Vec<(u32, Sample)> = Vec::new();
+        let mut batch = Vec::new();
         while let Some(ev) = self.demux.poll_event() {
+            batch.push(ev);
+        }
+        self.events.ingest(batch);
+    }
+}
+
+impl FlvEvents {
+    /// Translate one batch of demux events (see the struct's owner for the
+    /// "`Established` gates on the first `Sample`" rules).
+    fn ingest(&mut self, batch: Vec<DemuxEvent>) {
+        let mut newly_seen_samples: Vec<(u32, Sample)> = Vec::new();
+        for ev in batch {
             match ev {
                 DemuxEvent::TrackAdded(spec) if !self.established => {
                     self.specs.push(spec);
@@ -442,6 +461,28 @@ impl RtmpIngestSession {
                     // possible for the non-conformant late-track case noted
                     // above) is dropped, exactly like `ts_program`'s
                     // unrouted-track policy.
+                }
+                // A mid-stream codec-config change (a new `avcC`/ASC sequence
+                // header — a re-encode, an SD/HD switch; audit deferred item
+                // "ProgramTracker ignores TrackUpdated"): the demux only emits
+                // this for a config that really changed. Adopt the new spec;
+                // once established, announce the new track set so the route
+                // rebuilds its init segment instead of describing a stream
+                // that is no longer being sent. Before establishment the
+                // buffered spec is simply replaced. An update for a track
+                // never announced is ignored (the late-track policy above).
+                DemuxEvent::TrackUpdated(spec) => {
+                    if let Some(existing) =
+                        self.specs.iter_mut().find(|s| s.track_id == spec.track_id)
+                    {
+                        *existing = spec;
+                        if self.established {
+                            self.pending.push_back(SessionEvent::TracksChanged {
+                                program: ProgramId(0),
+                                tracks: self.specs.clone(),
+                            });
+                        }
+                    }
                 }
                 _ => {}
             }
@@ -504,7 +545,7 @@ impl Stage for RtmpIngestSession {
     }
 
     fn poll(&mut self) -> Option<SessionEvent> {
-        self.pending.pop_front()
+        self.events.pending.pop_front()
     }
 
     fn finish(&mut self) -> Result<()> {
@@ -618,6 +659,20 @@ pub async fn run_rtmp(
     handshake: HandshakePolicy,
     route_handle: &Arc<RouteHandle>,
 ) -> MultimuxError {
+    run_rtmp_with_clock(route, trunk_config, handshake, route_handle, &Instant::now).await
+}
+
+/// [`run_rtmp`] with an injectable wall clock: every instant the loop reads —
+/// the route's start and each session's admission and feed — comes from
+/// `clock`, so a test can move time deterministically instead of sleeping
+/// (see the `SessionClocks` tests).
+pub(crate) async fn run_rtmp_with_clock(
+    route: &RtmpRoute,
+    trunk_config: TrunkConfig,
+    handshake: HandshakePolicy,
+    route_handle: &Arc<RouteHandle>,
+    clock: &(dyn Fn() -> Instant + Sync),
+) -> MultimuxError {
     let accept_rx = match route.ensure_infra().await {
         Ok(rx) => rx,
         Err(e) => return e,
@@ -633,15 +688,18 @@ pub async fn run_rtmp(
         handshake,
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
-    let start = Instant::now();
+    let start = clock();
     let read_timeout = route.timeouts.read;
 
     let mut progress: ProgressBySession = HashMap::new();
+    // Each session's own clock origin (see `SessionClocks`).
+    let mut clocks = SessionClocks::new(start);
     let mut reads: FuturesUnordered<BoxedRead> = FuturesUnordered::new();
 
     loop {
         tokio::select! {
             () = tokio::time::sleep(ACCEPT_POLL_INTERVAL) => {
+                clocks.retain(|id| progress.contains_key(id));
                 loop {
                     match driver.poll_accept() {
                         AcceptOutcome::Idle => break,
@@ -656,6 +714,7 @@ pub async fn run_rtmp(
                                 .session()
                                 .conn_handle();
                             progress.insert(id, DriverProgress::new());
+                            clocks.admit(id, clock());
                             reads.push(read_one(id, conn, read_timeout));
                         }
                         // `AcceptOutcome` is `#[non_exhaustive]`: a future
@@ -668,7 +727,7 @@ pub async fn run_rtmp(
                 }
             }
             Some((id, outcome)) = reads.next(), if !reads.is_empty() => {
-                let now = Timestamp::from_instant(start, Instant::now());
+                let now = clocks.now(id, clock());
                 match outcome {
                     ReadOutcome::Events(events) => {
                         if let Some(d) = driver.driver_mut(id) {
@@ -890,6 +949,241 @@ mod tests {
 
         client.abort();
         run_task.abort();
+    }
+
+    fn flv_spec(track_id: u32, width: u16, height: u16) -> TrackSpec {
+        let avc = transmux::avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==")
+            .expect("valid sprop");
+        TrackSpec::new(
+            track_id,
+            1_000,
+            CodecConfig::Avc {
+                config: avc,
+                width,
+                height,
+            },
+        )
+    }
+
+    fn flv_size(spec: &TrackSpec) -> (u16, u16) {
+        match &spec.config {
+            CodecConfig::Avc { width, height, .. } => (*width, *height),
+            other => panic!("expected AVC, got {other:?}"),
+        }
+    }
+
+    fn flv_sample(dts: i64) -> Sample {
+        Sample::new(vec![0, 0, 0, 1, 0x65], Some(dts), Some(dts), Some(40), true)
+    }
+
+    /// Deferred item (#1083): an FLV publisher that re-sends a *changed*
+    /// sequence header mid-stream makes the demux emit `TrackUpdated`; the
+    /// session ignored it, so the init segment never followed the new
+    /// config. Once established it now announces the updated track set,
+    /// in stream order with the samples around it.
+    #[test]
+    fn a_changed_sequence_header_announces_the_new_track_set() {
+        let mut flv = FlvEvents::default();
+        flv.ingest(vec![
+            DemuxEvent::TrackAdded(flv_spec(1, 640, 360)),
+            DemuxEvent::sample(1, flv_sample(0)),
+        ]);
+        let mut seen = Vec::new();
+        while let Some(ev) = flv.pending.pop_front() {
+            seen.push(ev);
+        }
+        assert!(matches!(seen[0], SessionEvent::NewProgram { .. }));
+        assert!(matches!(seen[1], SessionEvent::Established));
+        assert!(matches!(seen[2], SessionEvent::Sample { .. }));
+
+        flv.ingest(vec![
+            DemuxEvent::sample(1, flv_sample(40)),
+            DemuxEvent::TrackUpdated(flv_spec(1, 1920, 1080)),
+            DemuxEvent::sample(1, flv_sample(80)),
+        ]);
+        assert!(matches!(
+            flv.pending.pop_front(),
+            Some(SessionEvent::Sample { .. })
+        ));
+        match flv.pending.pop_front() {
+            Some(SessionEvent::TracksChanged { program, tracks }) => {
+                assert_eq!(program, ProgramId(0));
+                assert_eq!(tracks.len(), 1);
+                assert_eq!(flv_size(&tracks[0]), (1920, 1080));
+            }
+            other => panic!("expected TracksChanged, got {other:?}"),
+        }
+        assert!(matches!(
+            flv.pending.pop_front(),
+            Some(SessionEvent::Sample { .. })
+        ));
+
+        // Not yet established: the buffered spec is replaced instead.
+        let mut early = FlvEvents::default();
+        early.ingest(vec![
+            DemuxEvent::TrackAdded(flv_spec(1, 640, 360)),
+            DemuxEvent::TrackUpdated(flv_spec(1, 1280, 720)),
+            DemuxEvent::sample(1, flv_sample(0)),
+        ]);
+        match early.pending.pop_front() {
+            Some(SessionEvent::NewProgram { tracks, .. }) => {
+                assert_eq!(flv_size(&tracks[0]), (1280, 720));
+            }
+            other => panic!("expected NewProgram, got {other:?}"),
+        }
+        // An update for a track never announced is ignored.
+        early.pending.clear();
+        early.ingest(vec![DemuxEvent::TrackUpdated(flv_spec(7, 1, 1))]);
+        assert!(early.pending.is_empty());
+    }
+
+    /// A wall clock the test moves by hand; the first read signals that the
+    /// run loop has taken its route-start instant.
+    struct ManualClock {
+        base: Instant,
+        offset_ns: std::sync::atomic::AtomicU64,
+        started: tokio::sync::Notify,
+    }
+
+    impl ManualClock {
+        fn new() -> Arc<Self> {
+            Arc::new(ManualClock {
+                base: Instant::now(),
+                offset_ns: std::sync::atomic::AtomicU64::new(0),
+                started: tokio::sync::Notify::new(),
+            })
+        }
+        fn now(&self) -> Instant {
+            self.started.notify_one();
+            self.base
+                + Duration::from_nanos(self.offset_ns.load(std::sync::atomic::Ordering::SeqCst))
+        }
+        fn advance(&self, by: Duration) {
+            let ns = u64::try_from(by.as_nanos()).expect("small advance");
+            self.offset_ns
+                .fetch_add(ns, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+
+    /// Audit r07-C6 (#1083): the handshake budget is per session, measured
+    /// from admission, not from the route's start. Time is moved by hand (no
+    /// sleeping): the route's loop starts at clock `t0`, the clock then
+    /// advances far past the 300 ms budget, and only then does a publisher
+    /// connect. It must still be admitted and land its media — previously
+    /// every session was fed the route-start clock, found itself past the
+    /// absolute deadline on its first feed and was reaped as
+    /// `HandshakeTimedOut`.
+    ///
+    /// The first feed carries only the handshake/connect/publish dance (no
+    /// media yet, as a real encoder's first packets): the client sends the
+    /// prefix, waits for the server's own `NetStream.Publish.Start` reply — the
+    /// protocol-level proof that the server has processed the prefix — and only
+    /// then sends the media, so the split between the two feeds is exact, not
+    /// timing luck.
+    #[tokio::test]
+    async fn a_publisher_connecting_after_the_route_handshake_budget_still_lands() {
+        let budget = Duration::from_millis(300);
+        let addr = reserve_addr().await;
+        let route = RtmpRoute::new("cam-rtmp-late", addr.to_string());
+        let fixture = load_fixture();
+        let clock = ManualClock::new();
+
+        let route_handle = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let route_handle_for_task = Arc::clone(&route_handle);
+        let clock_for_task = Arc::clone(&clock);
+        let run_task = tokio::spawn(async move {
+            let _ = run_rtmp_with_clock(
+                &route,
+                trunk_config(),
+                crate::source::handshake_policy(budget),
+                &route_handle_for_task,
+                &|| clock_for_task.now(),
+            )
+            .await;
+        });
+
+        // The loop has read its start instant; now the route has "been up" far
+        // longer than the budget.
+        tokio::time::timeout(Duration::from_secs(10), clock.started.notified())
+            .await
+            .expect("the run loop starts");
+        clock.advance(budget * 100);
+
+        let split = fixture_offset_after_publish_before_any_media(&fixture);
+        let client = tokio::spawn(async move {
+            let mut stream = connect_and_write(addr, fixture[..split].to_vec()).await;
+            // Wait for the server's reply to `publish`.
+            let mut seen = Vec::new();
+            let mut buf = [0u8; 4096];
+            tokio::time::timeout(Duration::from_secs(30), async {
+                while !seen
+                    .windows(b"NetStream.Publish.Start".len())
+                    .any(|w| w == b"NetStream.Publish.Start")
+                {
+                    match stream.read(&mut buf).await {
+                        Ok(0) | Err(_) => panic!("connection closed before the publish reply"),
+                        Ok(n) => seen.extend_from_slice(&buf[..n]),
+                    }
+                }
+            })
+            .await
+            .expect("the server acknowledges the publish");
+            stream
+                .write_all(&fixture[split..])
+                .await
+                .expect("write the media tail");
+            drain_for(stream, Duration::from_secs(30)).await;
+        });
+
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        let landed = loop {
+            if let Ok(resolved) = crate::http::resolve_route_program(&route_handle)
+                && resolved.trunk().tracks().len() == 2
+            {
+                break true;
+            }
+            if tokio::time::Instant::now() >= deadline {
+                break false;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        client.abort();
+        run_task.abort();
+        assert!(
+            landed,
+            "a publisher connecting after the route's own handshake budget was reaped"
+        );
+    }
+
+    /// The shared clock logic both ingest loops use, with hand-made instants:
+    /// a session's clock starts at its own admission; an unknown session falls
+    /// back to the route's start; a retired session is forgotten.
+    #[test]
+    fn session_clocks_measure_from_each_sessions_admission() {
+        use media_plane::ingress::SessionId;
+        let base = Instant::now();
+        let at = |s: u64| base + Duration::from_secs(s);
+        let mut clocks = crate::source::SessionClocks::new(base);
+        let (a, b) = (SessionId(1), SessionId(2));
+        clocks.admit(a, at(0));
+        clocks.admit(b, at(100));
+        // A fed 150 s into the route's life, B 5 s after its own admission.
+        assert_eq!(
+            clocks.now(a, at(150)),
+            Timestamp::from_nanos(150_000_000_000)
+        );
+        assert_eq!(clocks.now(b, at(105)), Timestamp::from_nanos(5_000_000_000));
+        // Never admitted: the route's start.
+        assert_eq!(
+            clocks.now(SessionId(9), at(7)),
+            Timestamp::from_nanos(7_000_000_000)
+        );
+        clocks.retain(|id| *id == b);
+        assert_eq!(
+            clocks.now(a, at(150)),
+            Timestamp::from_nanos(150_000_000_000)
+        );
+        assert_eq!(clocks.now(b, at(105)), Timestamp::from_nanos(5_000_000_000));
     }
 
     /// Biting test (issue #805 task 4, the concurrency fix): a first

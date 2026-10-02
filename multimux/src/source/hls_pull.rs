@@ -596,7 +596,7 @@ pub async fn run_hls_pull(
                             tracing::error!(
                                 resource = ?id,
                                 error = %e,
-                                "hls-pull: resource fetch failed permanently (auth);                                  failing the session"
+                                "hls-pull: resource fetch failed permanently (auth); failing the session"
                             );
                             resource_retries.remove(&fetch_id);
                             return Err(e);

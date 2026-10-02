@@ -18,6 +18,7 @@ use scte35_splice::commands::AnyCommand;
 use scte35_splice::commands::SpliceInsert;
 use scte35_splice::time::{BreakDuration, SpliceTime};
 pub use ssai_runtime::splice::ConditionedSplicePoint;
+use ssai_runtime::splice::PTS_MODULUS_33;
 
 /// Which edge of an ad break a transition represents.
 ///
@@ -53,6 +54,12 @@ broadcast_common::impl_spec_display!(BreakEdge);
 /// if no candidate is close enough, or none are supplied: this crate never
 /// emits a cue for a splice point nothing is actually close to.
 ///
+/// Distances are measured modulo 2^33 (the width of the SCTE-35 `pts_time`):
+/// `delta_ticks`/`direction` are circular (a cue at `2^33 - 100` snapping to a
+/// boundary at `50` is 150 ticks `After`). The returned
+/// [`ConditionedSplicePoint`] reports `requested_pts` and `snapped_pts` in the
+/// caller's own units (an unwrapped channel clock stays unwrapped).
+///
 /// `break_duration_ticks`, if given, sets `break_duration().duration` with
 /// `auto_return = true` (the splicer returns to the network feed on its own
 /// once the duration elapses — §9.7.3).
@@ -77,8 +84,31 @@ pub fn build_splice_insert(
     max_delta_ticks: u64,
     break_duration_ticks: Option<u64>,
 ) -> Result<(ConditionedSplicePoint, SpliceInsert)> {
-    let conditioned =
-        ssai_runtime::splice::condition_splice_point(requested_pts, candidates, max_delta_ticks)?;
+    // `splice_time().pts_time` is a 33-bit field (ANSI/SCTE 35 §9.8.1;
+    // `SpliceTime::with_pts` masks to it), so the instant a cue names — and the
+    // boundary it snaps to — live on the circle of 2^33 ticks, wrapping about
+    // every 26.5 h on a 24/7 channel: a cue just before the wrap whose nearest
+    // real boundary is just after it is 150 ticks away, not ~8.6e9. Reduce
+    // every input onto that circle and measure the circular distance
+    // (ssai-runtime audit r14-SSAI-W2).
+    let reduced: Vec<u64> = candidates.iter().map(|c| c % PTS_MODULUS_33).collect();
+    let mut conditioned = ssai_runtime::splice::condition_splice_point_wrapping(
+        requested_pts % PTS_MODULUS_33,
+        &reduced,
+        max_delta_ticks,
+        PTS_MODULUS_33,
+    )?;
+    // Report in the caller's units: the instant they asked for and the
+    // candidate they supplied (an unwrapped channel clock stays unwrapped),
+    // with the circular delta/direction measured above.
+    if let Some(original) = candidates
+        .iter()
+        .zip(&reduced)
+        .find_map(|(orig, red)| (*red == conditioned.snapped_pts).then_some(*orig))
+    {
+        conditioned.snapped_pts = original;
+    }
+    conditioned.requested_pts = requested_pts;
     let insert = SpliceInsert {
         splice_event_id,
         splice_event_cancel_indicator: false,
@@ -185,5 +215,51 @@ mod tests {
     fn label_convention() {
         assert_eq!(BreakEdge::Enter.name(), "enter");
         assert_eq!(alloc::format!("{}", BreakEdge::Return), "return");
+    }
+
+    /// PLAY-W1 follow-up: the cue's `pts_time` is 33-bit, so a requested
+    /// instant just before the wrap whose nearest real boundary is just after
+    /// it is a 150-tick `After` snap, not an out-of-tolerance miss.
+    #[test]
+    fn a_cue_before_the_33_bit_wrap_snaps_to_a_boundary_after_it() {
+        let requested = PTS_MODULUS_33 - 100;
+        let (conditioned, insert) =
+            build_splice_insert(BreakEdge::Enter, 9, requested, &[50], 1_000, None).unwrap();
+        assert_eq!(conditioned.snapped_pts, 50);
+        assert_eq!(conditioned.delta_ticks, 150);
+        assert_eq!(conditioned.direction, ssai_runtime::SnapDirection::After);
+        assert_eq!(insert.splice_time.unwrap().pts_time, Some(50));
+        // Too tight a tolerance is still refused (circularly measured).
+        assert!(matches!(
+            build_splice_insert(BreakEdge::Enter, 9, requested, &[50], 149, None),
+            Err(crate::Error::SpliceConditioning(
+                SsaiError::NoAlignedBoundary {
+                    nearest_delta_ticks: 150,
+                    ..
+                }
+            ))
+        ));
+    }
+
+    /// A channel clock already unrolled past 2^33 is reduced onto the
+    /// SCTE-35 circle before conditioning: boundary just before the wrap,
+    /// request just after it, in unwrapped terms.
+    #[test]
+    fn an_unwrapped_channel_clock_is_reduced_to_the_33_bit_circle() {
+        let requested = PTS_MODULUS_33 + 10;
+        let (conditioned, _) = build_splice_insert(
+            BreakEdge::Return,
+            1,
+            requested,
+            &[PTS_MODULUS_33 - 5],
+            1_000,
+            None,
+        )
+        .unwrap();
+        // Reported in the caller's (unwrapped) units.
+        assert_eq!(conditioned.requested_pts, requested);
+        assert_eq!(conditioned.snapped_pts, PTS_MODULUS_33 - 5);
+        assert_eq!(conditioned.delta_ticks, 15);
+        assert_eq!(conditioned.direction, ssai_runtime::SnapDirection::Before);
     }
 }

@@ -36,7 +36,12 @@ with no HTTP, no ad-decision client, and no per-viewer media cursor.
   and [`playlist::render_session_playlist`] clones a base
   `broadcast_hls::MediaPlaylist` and appends that tag to
   `MediaPlaylist::extra_tags` — the one difference between a viewer's
-  playlist inside a break and everyone else's.
+  playlist inside a break and everyone else's. For a per-viewer hot path,
+  [`playlist::SessionPlaylistBase`] renders the base once and splices the
+  tag line into the text per viewer (no per-viewer segment clone). Both
+  refuse a base without `EXT-X-PROGRAM-DATE-TIME` (RFC 8216bis §4.4.5.1).
+  A 33-bit-wrapping clock (TS PTS, SCTE-35 `pts_time`) uses
+  [`splice::condition_splice_point_wrapping`].
 
 ## What this crate is **not**
 

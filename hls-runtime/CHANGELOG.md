@@ -15,17 +15,78 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   first closed segment it falls back to the 5 Mb/s estimate. New
   `HlsOrigin::set_track_specs` supplies the tracks for a TS origin, which has
   no init segment to read (#1089).
-- `server::HlsOriginBuilder::media_sequence_offset(u64)` and
+- `server::HlsOriginBuilder::media_sequence_offset(u64)`,
+  `server::HlsOrigin::media_sequence_offset()` and
   `server::HlsOrigin::next_media_sequence()` — a fresh `Trunk` restarts its
   segment numbers at 1, so an origin replacing another (a reconnect) passes
-  `previous.next_media_sequence().saturating_sub(1)` as the offset: the Media
-  Sequence Number in the playlist, URIs and `_HLS_msn` then keeps increasing
-  (RFC 8216bis §6.2.2) (#1089).
+  `previous.next_media_sequence()` as the offset: the Media Sequence Number
+  in the playlist and `_HLS_msn` then keeps increasing (RFC 8216bis §6.2.2),
+  skipping the number the previous origin's *open* segment was shown with
+  (its parts were already served) (#1089).
+- `server::HlsOriginBuilder::instance(u64)`, `server::HlsOrigin::instance()`
+  and `server::HlsOrigin::init_name(track, generation)` — the per-origin
+  instance token (see the naming entry under "Changed (breaking)");
+  `server::ClosedSegment::init_generation` (and `with_init_generation`) names
+  the init generation a segment was cut against (#1030).
 - `client::Error::DuplicateResource` and `client::Error::MediaSequenceOverflow`
-  (`Error` is `#[non_exhaustive]`); `server::HlsOriginBuildError::ZeroPartTarget`
-  and `MediaSequenceOffsetTooLarge` (#1089).
+  (`Error` is `#[non_exhaustive]`); `server::HlsOriginBuildError::ZeroPartTarget`,
+  `MediaSequenceOffsetTooLarge` and `InvalidTargetDuration` (a NaN, infinite,
+  zero or negative `target_duration_secs` is a build error instead of reaching
+  `EXT-X-TARGETDURATION`) (#1089).
 
 ### Changed (breaking)
+- **Every resource name served `immutable` carries a per-origin instance
+  token** (audit r09-C2, #1030). `HlsOrigin::instance()` is a number that
+  differs for every origin built — in this process (strictly increasing) and
+  across process restarts (seeded from the wall clock in milliseconds, no
+  persistence needed) — and is part of every cached-`immutable` name:
+  `init-{track}-{instance}-{generation}.mp4`,
+  `seg-{track}-{instance}-{msn}.{ext}`,
+  `part-{track}-{instance}-{msn}.{idx}.{ext}`. A name therefore maps to one
+  origin's bytes for ever: a reconnect (a new `Trunk`, numbers restarting,
+  possibly a different SPS/ASC), a restart with no DVR, a replacement origin
+  reusing the open segment's number — none can put new bytes under a name a
+  cache holds. Playlists name these URIs, so players are unaffected; a
+  request carrying another instance's token is `NotFound`. The token-less
+  `seg-{track}-{msn}`/`part-{track}-{msn}.{idx}` (DASH/Smooth templates cannot
+  carry the token) still resolve but are `CachePolicy::NoCache`, as is the
+  bare `init-{track}.mp4`, which now means "the current init". The pre-release
+  two-field `init-{track}-{generation}.mp4` form is gone.
+  A changed init (`set_init` with different bytes) is a new generation; the
+  last 8 stay resolvable. The playlist's `EXT-X-MAP` now sits on the segments
+  (each names the init it was cut against) instead of one unconditional line,
+  with `EXT-X-DISCONTINUITY` before the first segment using a new generation —
+  and, as rendered by `broadcast-hls`, **before** that segment's
+  `EXT-X-MAP` (previously the one `EXT-X-MAP` line came first, before every
+  segment-level tag) (#1030).
+- The offset passed to `HlsOriginBuilder::media_sequence_offset` for a
+  replacement origin is now `previous.next_media_sequence()` (was
+  `.saturating_sub(1)`): the previous origin's open segment number is skipped
+  (#1030).
+- **`HlsClient` treats a Media Sequence Number below the previous playlist's
+  as an origin restart** (audit r09-C3, #1031) unless it is an older copy of the
+  same stream — the numbers a window shares with the previous one name the same
+  segments (URI, duration, byte range, `PROGRAM-DATE-TIME`), or, for a wholly
+  older window, `PROGRAM-DATE-TIME` shows it ends before the previous one began
+  (its segments are then skipped, never delivered behind what was delivered).
+  A restart to an equal or higher number is detected the same way (a shared
+  number naming a different segment or time, or a decreasing
+  `EXT-X-DISCONTINUITY-SEQUENCE`), as is a name reused under a lower number.
+  On a restart: all
+  sequence-keyed state, queued-but-unpolled fetches and the init are dropped,
+  the live-edge join is redone, and `Output::Discontinuity` is emitted, so
+  new segments reusing delivered numbers are no longer skipped as "already
+  delivered". A response still in flight for the old numbering is rejected as
+  `Error::UnrequestedResource`. Undetectable from the playlist alone (documented
+  on `HlsClient`): an edge lagging by a whole window behind an origin with no
+  `PROGRAM-DATE-TIME` and all-new names reads as a restart (one spurious
+  `Discontinuity`), and a restart to a higher, non-overlapping number with a
+  consistent discontinuity sequence and no `PROGRAM-DATE-TIME` reads as the
+  client having fallen behind (#1031).
+- **`TokioClient` retries a blocking or delta playlist reload that the origin
+  rejects with a non-transient `4xx` once, at once, as a plain GET** of the
+  playlist URL, instead of repeating the rejected URL forever (an origin
+  restarted below the requested `_HLS_msn` answers `400`) (#1031).
 - **`HlsClient` joins at the server's hold-back, not at the start.** On the
   first playlist it no longer fetches the whole window. A live playlist (no
   `EXT-X-ENDLIST`) is joined no closer to its end than `PART-HOLD-BACK` when
@@ -77,6 +138,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CODECS` derived from the previous init instead of keeping them (#1089).
 
 ### Fixed
+- `HlsOrigin`'s locks are poison-tolerant (a panic in one request no longer
+  panics every later one), `render_playlist` copies the window and releases
+  its lock before querying the `Trunk`, and a request with no segment
+  published since the last drain skips the cursor and window locks (audit
+  r09-O4, #1089, #1134).
 - Client state no longer grows for the life of a pull: every record keyed by
   a Media Sequence Number below the playlist's first segment, and the
   byte-range cursor of every URL a full playlist no longer references, is

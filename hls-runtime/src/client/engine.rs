@@ -59,6 +59,119 @@ fn resource_msn(id: &ResourceId) -> Option<u64> {
     }
 }
 
+/// How a new playlist relates to the previous one (see
+/// [`HlsClient::continuity`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Continuity {
+    /// The same stream, moved on (or the same window again).
+    Continues,
+    /// The same stream, but an older view of it that still overlaps the
+    /// previous window.
+    Lagging,
+    /// The same stream, but a view wholly *older* than the previous window
+    /// (nothing in common): its segments are skipped, never delivered behind
+    /// what was already delivered.
+    OlderWindow,
+    /// A different stream: an origin restart.
+    Restart,
+}
+
+/// The `EXT-X-PROGRAM-DATE-TIME` value attached to `seg`, if any.
+fn program_date_time(seg: &MediaSegment) -> Option<&str> {
+    seg.pre_tags
+        .iter()
+        .find_map(|t| t.strip_prefix("#EXT-X-PROGRAM-DATE-TIME:"))
+}
+
+/// [`program_date_time`] as milliseconds since the Unix epoch.
+fn program_date_time_ms(seg: &MediaSegment) -> Option<i64> {
+    parse_rfc3339_ms(program_date_time(seg)?)
+}
+
+/// Days from 1970-01-01 to the given proleptic-Gregorian civil date
+/// (Howard Hinnant's `days_from_civil`).
+fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y.rem_euclid(400);
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    era * 146_097 + doe - 719_468
+}
+
+/// Parse an RFC 3339 / ISO 8601 date-time (`2024-05-01T12:00:00.250Z`,
+/// `...+02:00`, `...-0500`) into Unix milliseconds. `None` for anything that
+/// does not match exactly — never a guess.
+fn parse_rfc3339_ms(text: &str) -> Option<i64> {
+    let b = text.as_bytes();
+    let num = |from: usize, len: usize| -> Option<i64> {
+        let digits = b.get(from..from.checked_add(len)?)?;
+        if !digits.iter().all(u8::is_ascii_digit) {
+            return None;
+        }
+        core::str::from_utf8(digits).ok()?.parse().ok()
+    };
+    if b.get(4) != Some(&b'-')
+        || b.get(7) != Some(&b'-')
+        || !matches!(b.get(10), Some(b'T' | b't' | b' '))
+        || b.get(13) != Some(&b':')
+        || b.get(16) != Some(&b':')
+    {
+        return None;
+    }
+    let (y, mo, d) = (num(0, 4)?, num(5, 2)?, num(8, 2)?);
+    let (h, mi, s) = (num(11, 2)?, num(14, 2)?, num(17, 2)?);
+    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || s > 60 {
+        return None;
+    }
+    let mut i = 19;
+    let mut millis = 0i64;
+    if b.get(i) == Some(&b'.') {
+        i += 1;
+        let start = i;
+        while b.get(i).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
+        if i == start {
+            return None;
+        }
+        // Keep millisecond precision; extra digits are truncated.
+        let frac: String = text[start..i]
+            .chars()
+            .chain("000".chars())
+            .take(3)
+            .collect();
+        millis = frac.parse().ok()?;
+    }
+    let offset_secs = match b.get(i) {
+        Some(b'Z' | b'z') if i + 1 == b.len() => 0,
+        Some(sign @ (b'+' | b'-')) => {
+            let (oh, om) = if b.get(i + 3) == Some(&b':') {
+                (num(i + 1, 2)?, num(i + 4, 2)?)
+            } else {
+                (num(i + 1, 2)?, num(i + 3, 2)?)
+            };
+            let end = if b.get(i + 3) == Some(&b':') {
+                i + 6
+            } else {
+                i + 5
+            };
+            if end != b.len() || oh > 23 || om > 59 {
+                return None;
+            }
+            let secs = oh * 3600 + om * 60;
+            if *sign == b'-' { -secs } else { secs }
+        }
+        _ => return None,
+    };
+    let days = days_from_civil(y, mo, d);
+    let secs = days
+        .checked_mul(86_400)?
+        .checked_add(h * 3600 + mi * 60 + s)?
+        .checked_sub(offset_secs)?;
+    secs.checked_mul(1000)?.checked_add(millis)
+}
+
 /// A driveable, sans-IO Low-Latency HLS (RFC 8216bis) playback client.
 ///
 /// `HlsClient` never touches a socket or a clock. The caller drives it:
@@ -173,6 +286,10 @@ pub struct HlsClient {
     saw_endlist: bool,
     end_emitted: bool,
     last_full_playlist: Option<MediaPlaylist>,
+    /// `EXT-X-MEDIA-SEQUENCE` of the previous playlist: RFC 8216 §6.2.2
+    /// forbids it ever decreasing, so a smaller one is an origin restart
+    /// (see [`Self::restart_after_regression`]).
+    last_media_sequence: Option<u64>,
 }
 
 impl HlsClient {
@@ -210,6 +327,7 @@ impl HlsClient {
             saw_endlist: false,
             end_emitted: false,
             last_full_playlist: None,
+            last_media_sequence: None,
         }
     }
 
@@ -237,6 +355,23 @@ impl HlsClient {
         let text = core::str::from_utf8(bytes)?;
         let playlist = MediaPlaylist::parse(text)?;
         let playlist = self.merge_delta(playlist);
+        // An older view of the same stream must never make the client deliver
+        // backwards: its segments below the previous window are skipped.
+        let mut lag_floor: Option<u64> = None;
+        if self.last_media_sequence.is_some() {
+            match self.continuity(&playlist) {
+                Continuity::Restart => self.restart_after_regression()?,
+                Continuity::OlderWindow => {
+                    lag_floor = self.last_full_playlist.as_ref().map(|p| p.media_sequence);
+                }
+                Continuity::Lagging | Continuity::Continues => {}
+            }
+        }
+        // A lagging copy never lowers the high-water mark.
+        self.last_media_sequence = Some(
+            self.last_media_sequence
+                .map_or(playlist.media_sequence, |p| p.max(playlist.media_sequence)),
+        );
 
         // `EXT-X-MEDIA-SEQUENCE` is an unbounded remote `u64`: every MSN
         // derived below is `media_sequence + index` with `index <
@@ -256,6 +391,10 @@ impl HlsClient {
 
         for (i, seg) in playlist.segments.iter().enumerate() {
             let msn = playlist.media_sequence.saturating_add(index_u64(i));
+            if lag_floor.is_some_and(|floor| msn < floor) {
+                self.skip_segment(msn, seg)?;
+                continue;
+            }
             self.process_closed_segment(msn, seg)?;
         }
 
@@ -1009,6 +1148,147 @@ impl HlsClient {
         }
     }
 
+    /// Decide whether `new` continues the stream the previous full playlist
+    /// described, is merely an *older* copy of it (a CDN edge a poll — or a
+    /// whole window — behind another), or is a different stream (an origin
+    /// restart; audit r09-C3, issue #1031).
+    ///
+    /// Signals, strongest first:
+    ///
+    /// 1. **Segment identity at a shared number** — a media sequence number
+    ///    listed by both windows must name the same segment (URI, duration,
+    ///    byte range) and, when both carry `EXT-X-PROGRAM-DATE-TIME` for it,
+    ///    the same wall-clock time. A mismatch is a restart *whatever the
+    ///    direction of the numbers* — an origin that restarts to an equal or
+    ///    higher number is caught here.
+    /// 2. **`EXT-X-DISCONTINUITY-SEQUENCE`** may never decrease while the
+    ///    media sequence number does not (RFC 8216 §6.2.2): a decrease at an
+    ///    equal or higher number is a restart.
+    /// 3. When the media sequence number *went backwards* with **no** shared
+    ///    number (the new window is wholly older, or a restart):
+    ///    - a URI that the previous window listed under a *different* number
+    ///      is a restart (names reused under new numbering);
+    ///    - else, with `PROGRAM-DATE-TIME` on both sides, a new window that
+    ///      ends before the previous one began is a wholly older copy
+    ///      ([`Continuity::OlderWindow`], skipped), anything else a restart;
+    ///    - else nothing distinguishes them and it is treated as a restart.
+    ///
+    /// **Residual, undetectable cases** (documented, not guessed at): a CDN
+    /// edge lagging by a whole window behind an origin that carries *no*
+    /// `PROGRAM-DATE-TIME` and whose segment names are all new reads as a
+    /// restart (one spurious `Discontinuity` and a re-join); and an origin
+    /// restarting to a *higher*, non-overlapping number with consistent
+    /// discontinuity sequence and no `PROGRAM-DATE-TIME` reads as the client
+    /// having fallen behind.
+    fn continuity(&self, new: &MediaPlaylist) -> Continuity {
+        let Some(prev) = &self.last_full_playlist else {
+            return if self
+                .last_media_sequence
+                .is_some_and(|p| new.media_sequence < p)
+            {
+                Continuity::Restart
+            } else {
+                Continuity::Continues
+            };
+        };
+        let (p0, n0) = (prev.media_sequence, new.media_sequence);
+        let regressed = n0 < self.last_media_sequence.unwrap_or(p0).max(p0);
+
+        // 1. Identity at every shared number.
+        let mut overlap = false;
+        for (i, seg) in new.segments.iter().enumerate() {
+            let Some(msn) = n0.checked_add(index_u64(i)) else {
+                return Continuity::Restart;
+            };
+            let Some(old) = msn
+                .checked_sub(p0)
+                .and_then(|d| usize::try_from(d).ok())
+                .and_then(|d| prev.segments.get(d))
+            else {
+                continue;
+            };
+            if old.uri != seg.uri
+                || old.duration != seg.duration
+                || old.byte_range != seg.byte_range
+            {
+                return Continuity::Restart;
+            }
+            if let (Some(a), Some(b)) = (program_date_time(old), program_date_time(seg))
+                && a != b
+            {
+                return Continuity::Restart;
+            }
+            overlap = true;
+        }
+
+        // 2. The discontinuity sequence never decreases while the number does
+        //    not.
+        if !regressed && new.discontinuity_sequence < prev.discontinuity_sequence {
+            return Continuity::Restart;
+        }
+        if !regressed {
+            return Continuity::Continues;
+        }
+
+        // 3. Regressed.
+        if overlap {
+            return Continuity::Lagging;
+        }
+        let old_uris: BTreeSet<&str> = prev.segments.iter().map(|s| s.uri.as_str()).collect();
+        if new
+            .segments
+            .iter()
+            .any(|s| old_uris.contains(s.uri.as_str()))
+        {
+            // A URI the previous window lists under another number.
+            return Continuity::Restart;
+        }
+        let new_last = new.segments.iter().rev().find_map(program_date_time_ms);
+        let prev_first = prev.segments.iter().find_map(program_date_time_ms);
+        match (new_last, prev_first) {
+            (Some(end), Some(start)) if end < start => Continuity::OlderWindow,
+            _ => Continuity::Restart,
+        }
+    }
+
+    /// The Media Sequence Number went backwards (RFC 8216 §6.2.2 forbids it;
+    /// restarting origins do it anyway — ffmpeg without `-start_number`,
+    /// nginx-rtmp, a replaced origin; audit r09-C3, issue #1031). Every
+    /// number the new playlist uses may name different media from the same
+    /// number already delivered, so all MSN-keyed state is dropped (a new
+    /// segment must not be skipped as "already delivered"), not-yet-polled
+    /// fetches of the old numbering are withdrawn, the live-edge join is
+    /// redone, the init segment is re-fetched (the restart may carry a new
+    /// codec configuration), and [`Output::Discontinuity`] is emitted. A
+    /// response still in flight for an old id is rejected as
+    /// [`Error::UnrequestedResource`].
+    fn restart_after_regression(&mut self) -> Result<()> {
+        // Held-back TS access units belong to the old timeline: emit them
+        // before the discontinuity, then start a fresh demuxer.
+        self.flush_ts_demux(ResourceId::Init)?;
+        self.ts_demux = None;
+        self.ts_specs.clear();
+        self.last_ts_init = None;
+        self.pending_actions
+            .retain(|a| !matches!(a, Action::FetchResource { .. }));
+        self.pending_demux.clear();
+        self.requested.clear();
+        self.fulfilled.clear();
+        self.delivered_parts.clear();
+        self.delivered_segments.clear();
+        self.discontinuous_msns.clear();
+        self.discontinuity_emitted.clear();
+        self.byte_range_cursor.clear();
+        self.outstanding_fetches = 0;
+        self.last_full_playlist = None;
+        self.init_uri = None;
+        self.init_bytes = None;
+        self.init_emitted = false;
+        self.joined = false;
+        self.pending_outputs.push_back(Output::Discontinuity);
+        Ok(())
+    }
+
     fn maybe_emit_end_of_stream(&mut self) -> Result<()> {
         if self.saw_endlist && !self.end_emitted && self.outstanding_fetches == 0 {
             // The TS demuxer holds back each stream's last access unit until
@@ -1329,5 +1609,50 @@ mod tests {
         );
         assert!(client.discontinuity_emitted.is_empty());
         assert!(client.delivered_segments.is_empty());
+    }
+
+    #[test]
+    fn rfc3339_parses_to_literal_epoch_milliseconds() {
+        // 2026-10-02T10:00:00Z = 1_790_935_200 s (independently: `date -u -d`).
+        assert_eq!(
+            parse_rfc3339_ms("2026-10-02T10:00:00Z"),
+            Some(1_790_935_200_000)
+        );
+        assert_eq!(
+            parse_rfc3339_ms("2026-10-02T10:00:00.250Z"),
+            Some(1_790_935_200_250)
+        );
+        assert_eq!(
+            parse_rfc3339_ms("2026-10-02T10:00:00.5Z"),
+            Some(1_790_935_200_500)
+        );
+        assert_eq!(parse_rfc3339_ms("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(
+            parse_rfc3339_ms("2000-02-29T23:59:59Z"),
+            Some(951_868_799_000)
+        );
+        // The same instant with an offset, both spellings.
+        assert_eq!(
+            parse_rfc3339_ms("2026-10-02T12:00:00+02:00"),
+            Some(1_790_935_200_000)
+        );
+        assert_eq!(
+            parse_rfc3339_ms("2026-10-02T05:00:00-0500"),
+            Some(1_790_935_200_000)
+        );
+        // Anything not exactly RFC 3339 is `None`, never a guess.
+        for bad in [
+            "",
+            "2026-10-02",
+            "2026-13-02T10:00:00Z",
+            "2026-10-02T25:00:00Z",
+            "2026-10-02T10:00:00",
+            "2026-10-02T10:00:00Zjunk",
+            "2026-10-02T10:00:00.Z",
+            "2026-10-02T10:00:00+2:00",
+            "xxxx-10-02T10:00:00Z",
+        ] {
+            assert_eq!(parse_rfc3339_ms(bad), None, "{bad:?}");
+        }
     }
 }

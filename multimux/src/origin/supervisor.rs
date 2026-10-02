@@ -129,6 +129,10 @@ pub(crate) fn is_permanent_describe_not_found(err: &MultimuxError) -> bool {
     )
 }
 
+/// Attempt numbers beyond this stop growing the delay (`factor^30` is already
+/// far past any cap; it only keeps the power finite).
+const MAX_BACKOFF_EXPONENT: u32 = 30;
+
 /// Capped exponential backoff: [`Backoff::next`] returns the current delay
 /// then grows it by `factor` (capped at `max`); [`Backoff::reset`] restores
 /// it to `min` after a successful (re)connect so a long outage doesn't
@@ -178,6 +182,24 @@ impl Backoff {
         delay
     }
 
+    /// The delay for attempt number `attempt` (0-based) without touching the
+    /// running state: `min * factor^attempt`, capped at `max`. The stateless
+    /// form of repeated [`Self::next`] calls — [`ReconnectPolicy::backoff_for`]
+    /// (push outputs) uses this so the workspace has one capped-exponential
+    /// implementation, not a shift-based copy beside it (audit r07-O1).
+    ///
+    /// [`ReconnectPolicy::backoff_for`]: crate::config::ReconnectPolicy::backoff_for
+    pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
+        // The exponent saturates well before `f64` does (2^30 already dwarfs
+        // any sane cap); a non-finite or negative product falls back to `max`.
+        let exponent = i32::try_from(attempt.min(MAX_BACKOFF_EXPONENT)).unwrap_or(i32::MAX);
+        let secs = self.min.as_secs_f64() * self.factor.powi(exponent);
+        if !secs.is_finite() || secs < 0.0 {
+            return self.max;
+        }
+        Duration::try_from_secs_f64(secs).map_or(self.max, |d| d.min(self.max))
+    }
+
     /// Resets the delay back to `min` — call after a successful connect so
     /// the *next* outage starts backing off from the bottom again.
     pub fn reset(&mut self) {
@@ -198,6 +220,16 @@ fn record_route_up(name: &str, state: HealthState) {
         0.0
     };
     metrics::gauge!(crate::prometheus::ROUTE_UP, "route" => name.to_string()).set(up);
+}
+
+/// A route that no longer exists must not stay `multimux_route_up == 1`: its
+/// supervisor was stopped (or aborted) without ever reporting a final state,
+/// so the gauge would otherwise keep the last value it was set to (audit
+/// r07-O5, issue #1083). The metrics facade and the Prometheus exporter offer
+/// no per-series removal, so the series stays — but at `0`, never reporting a
+/// deleted route as healthy.
+pub(crate) fn record_route_removed(name: &str) {
+    record_route_up(name, HealthState::Failed);
 }
 
 /// Bumps [`crate::prometheus::SOURCE_RECONNECTS_TOTAL`] for `name`: called
@@ -357,6 +389,39 @@ pub async fn supervise_driver<F, Fut>(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Audit r07-O1 (#1083): the stateless `delay_for_attempt` is the same
+    /// series repeated `next()` calls produce, and stays total on hostile
+    /// parameters instead of panicking in `Duration` arithmetic.
+    #[test]
+    fn delay_for_attempt_matches_repeated_next_and_is_total() {
+        let backoff = Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0);
+        let mut stepped = backoff.clone();
+        for attempt in 0..40u32 {
+            assert_eq!(
+                backoff.delay_for_attempt(attempt),
+                stepped.next(),
+                "attempt {attempt}"
+            );
+        }
+        // Literal series: 0.5 s, 1 s, 2 s, ... capped at 30 s.
+        assert_eq!(backoff.delay_for_attempt(0), Duration::from_millis(500));
+        assert_eq!(backoff.delay_for_attempt(1), Duration::from_secs(1));
+        assert_eq!(backoff.delay_for_attempt(5), Duration::from_secs(16));
+        assert_eq!(backoff.delay_for_attempt(6), Duration::from_secs(30));
+        assert_eq!(backoff.delay_for_attempt(u32::MAX), Duration::from_secs(30));
+
+        // Hostile factors never panic and never exceed the cap.
+        for factor in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -2.0, 1e300] {
+            let hostile = Backoff::new(Duration::from_secs(1), Duration::from_secs(60), factor);
+            for attempt in [0u32, 1, 30, u32::MAX] {
+                assert!(hostile.delay_for_attempt(attempt) <= Duration::from_secs(60));
+            }
+        }
+        // A minimum above the cap is clamped to it.
+        let inverted = Backoff::new(Duration::from_secs(90), Duration::from_secs(60), 2.0);
+        assert_eq!(inverted.delay_for_attempt(0), Duration::from_secs(60));
+    }
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Tiny backoff for tests: keeps the whole suite fast regardless of how

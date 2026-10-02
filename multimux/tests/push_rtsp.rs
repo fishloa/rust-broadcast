@@ -105,6 +105,9 @@ fn free_port() -> u16 {
 struct MediaMtx {
     child: std::process::Child,
     rtsp_port: u16,
+    /// The control API (`/v3/paths/get/{path}`), used to learn when a reader
+    /// is attached instead of sleeping and hoping.
+    api_port: u16,
 }
 
 impl MediaMtx {
@@ -113,6 +116,7 @@ impl MediaMtx {
     /// files never collide.
     fn start(auth_method: &str, user: &str, pass: &str) -> Self {
         let rtsp_port = free_port();
+        let api_port = free_port();
         let config_dir = scratch_dir(auth_method);
         let config_path = config_dir.join("mediamtx.yml");
         let config = format!(
@@ -127,6 +131,8 @@ impl MediaMtx {
              hls: no\n\
              webrtc: no\n\
              srt: no\n\
+             api: yes\n\
+             apiAddress: 127.0.0.1:{api_port}\n\
              moq: no\n\
              authMethod: internal\n\
              authInternalUsers:\n\
@@ -138,6 +144,11 @@ impl MediaMtx {
              \x20\x20\x20\x20\x20\x20\x20\x20path:\n\
              \x20\x20\x20\x20\x20\x20- action: read\n\
              \x20\x20\x20\x20\x20\x20\x20\x20path:\n\
+             \x20\x20- user: any\n\
+             \x20\x20\x20\x20pass:\n\
+             \x20\x20\x20\x20ips: [127.0.0.1, \"::1\"]\n\
+             \x20\x20\x20\x20permissions:\n\
+             \x20\x20\x20\x20\x20\x20- action: api\n\
              paths:\n\
              \x20\x20all_others:\n"
         );
@@ -166,7 +177,34 @@ impl MediaMtx {
             std::thread::sleep(Duration::from_millis(50));
         }
 
-        Self { child, rtsp_port }
+        Self {
+            child,
+            rtsp_port,
+            api_port,
+        }
+    }
+
+    /// Waits (bounded) until `mediamtx` reports at least one reader attached
+    /// to `path` — i.e. the reader's RTSP `PLAY` completed — so the publisher
+    /// sends only once there is somebody to receive from the first frame.
+    async fn wait_for_reader(&self, path: &str, guard: Duration) {
+        let url = format!("http://127.0.0.1:{}/v3/paths/get/{path}", self.api_port);
+        let client = reqwest::Client::new();
+        let deadline = tokio::time::Instant::now() + guard;
+        loop {
+            if let Ok(resp) = client.get(&url).send().await
+                && resp.status().is_success()
+                && let Ok(body) = resp.json::<serde_json::Value>().await
+                && body["readers"].as_array().is_some_and(|r| !r.is_empty())
+            {
+                return;
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "mediamtx never reported a reader on {path}"
+            );
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
     }
 
     fn url(&self, path: &str) -> String {
@@ -220,7 +258,13 @@ fn ffprobe_read(url: &str) -> (bool, String, String) {
 /// source, not a file) only from the moment a reader joins — so `ffprobe`
 /// must already be connected and reading before `send_media` ships the
 /// (effectively instantaneous, no real-time pacing) fixture bytes.
-async fn push_and_read_back(cfg: RtspTransportConfig, push_url: String, read_url: String) {
+async fn push_and_read_back(
+    server: &MediaMtx,
+    path: &str,
+    cfg: RtspTransportConfig,
+    push_url: String,
+    read_url: String,
+) {
     let ts = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
     let media = TsDemux::new().demux(&ts).expect("demux h264_aac.ts");
     assert!(
@@ -254,7 +298,7 @@ async fn push_and_read_back(cfg: RtspTransportConfig, push_url: String, read_url
     // `send_media` ships the fixture.
     let reader_url = read_url.clone();
     let reader = tokio::task::spawn_blocking(move || ffprobe_read(&reader_url));
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    server.wait_for_reader(path, GUARD).await;
 
     tokio::time::timeout(GUARD, transport.send_media(&media))
         .await
@@ -284,12 +328,13 @@ async fn push_and_read_back(cfg: RtspTransportConfig, push_url: String, read_url
 async fn rtsp_push_survives_digest_auth_against_mediamtx() {
     skip_unless_tools_available!();
     let server = MediaMtx::start("digest", "pushuser", "pushpass123");
-    let push_url = server.url("digest-test");
-    let read_url = server.url_with_creds("pushuser", "pushpass123", "digest-test");
+    const PATH: &str = "digest-test";
+    let push_url = server.url(PATH);
+    let read_url = server.url_with_creds("pushuser", "pushpass123", PATH);
     let cfg = RtspTransportConfig {
         credentials: Some(("pushuser".to_string(), "pushpass123".to_string())),
     };
-    push_and_read_back(cfg, push_url, read_url).await;
+    push_and_read_back(&server, PATH, cfg, push_url, read_url).await;
 }
 
 /// Same oracle, Basic auth (RFC 2326 §14 / RFC 7617) — the other scheme
@@ -298,10 +343,11 @@ async fn rtsp_push_survives_digest_auth_against_mediamtx() {
 async fn rtsp_push_survives_basic_auth_against_mediamtx() {
     skip_unless_tools_available!();
     let server = MediaMtx::start("basic", "pushuser", "pushpass123");
-    let push_url = server.url("basic-test");
-    let read_url = server.url_with_creds("pushuser", "pushpass123", "basic-test");
+    const PATH: &str = "basic-test";
+    let push_url = server.url(PATH);
+    let read_url = server.url_with_creds("pushuser", "pushpass123", PATH);
     let cfg = RtspTransportConfig {
         credentials: Some(("pushuser".to_string(), "pushpass123".to_string())),
     };
-    push_and_read_back(cfg, push_url, read_url).await;
+    push_and_read_back(&server, PATH, cfg, push_url, read_url).await;
 }

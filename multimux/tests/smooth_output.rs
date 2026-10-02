@@ -790,7 +790,7 @@ async fn w13_manifest_and_fragment_are_stable_across_a_window_slide() {
     // The surviving (first) chunk keeps its exact `t`/`d`.
     assert_eq!(
         after_chunks[0], before_chunks[0],
-        "the surviving chunk's c@t/c@d must be identical after the slide          (before {:?}, after {:?})",
+        "the surviving chunk's c@t/c@d must be identical after the slide (before {:?}, after {:?})",
         before_chunks[0], after_chunks[0]
     );
 

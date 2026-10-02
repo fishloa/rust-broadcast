@@ -301,7 +301,7 @@ async fn mediastreamvalidator_accepts_served_ts_hls_playlist() {
     // `/usr/local/bin/mediastreamvalidator`, but it may be elsewhere on PATH).
     let Some(validator) = which("mediastreamvalidator") else {
         eprintln!(
-            "SKIP mediastreamvalidator_accepts_served_ts_hls_playlist: mediastreamvalidator              not on PATH (Apple Additional Tools for Xcode; macOS only)"
+            "SKIP mediastreamvalidator_accepts_served_ts_hls_playlist: mediastreamvalidator not on PATH (Apple Additional Tools for Xcode; macOS only)"
         );
         return;
     };

@@ -425,7 +425,7 @@ fn build_window_layout(route: &RouteHandle, serving: &ProgramServing) -> Option<
         let Some(params) = smooth_codec_params(&spec.config) else {
             tracing::warn!(
                 track_id = spec.track_id,
-                "Smooth output: track's codec has no MS-SSTR representation;                  omitting its StreamIndex rather than advertising a wrong FourCC"
+                "Smooth output: track's codec has no MS-SSTR representation; omitting its StreamIndex rather than advertising a wrong FourCC"
             );
             continue;
         };

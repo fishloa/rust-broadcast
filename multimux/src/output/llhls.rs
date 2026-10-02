@@ -371,7 +371,8 @@ mod tests {
         );
         let body = body_string(resp).await;
         assert!(
-            body.contains("seg-1-2.m4s"),
+            body.lines()
+                .any(|l| l.starts_with("seg-1-") && l.ends_with("-2.m4s")),
             "resolved playlist must show segment 2 as a closed, fetchable segment: {body}"
         );
     }

@@ -72,17 +72,62 @@
 
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
 use broadcast_common::{Timestamp, Unpackage};
 use broadcast_hls::{
-    DecimalSeconds, LowLatencyConfig, MasterPlaylist, MediaPlaylist, MediaSegment, OpenSegment,
-    PartSpec, Variant,
+    DecimalSeconds, LowLatencyConfig, MapTag, MasterPlaylist, MediaPlaylist, MediaSegment,
+    OpenSegment, PartSpec, Variant,
 };
 use bytes::Bytes;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
 use media_plane::trunk::{PartEntry, SegmentCursor, SegmentCursorItem, SegmentEntry, Trunk};
+
+/// [`HlsOrigin`]'s `drained_through` before any drain has run: no real head
+/// (`u32::MAX + 1` at most) equals it, so the first drain always happens.
+const UNDRAINED: u64 = u64::MAX;
+
+/// Process-wide high-water mark of [`next_instance_token`].
+static LAST_INSTANCE: AtomicU64 = AtomicU64::new(0);
+
+/// A token that differs for every [`HlsOrigin`] ever built, in this process
+/// **and across process restarts**: the wall clock in milliseconds, forced
+/// strictly above the previous token handed out (two origins built in the
+/// same millisecond, or after the clock stepped back, still differ). It is
+/// part of every resource name served `immutable` (see
+/// [`HlsOrigin::instance`]).
+fn next_instance_token() -> u64 {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|d| u64::try_from(d.as_millis()).ok())
+        .unwrap_or(0);
+    let mut previous = LAST_INSTANCE.load(Ordering::Relaxed);
+    loop {
+        let token = now_ms.max(previous.saturating_add(1));
+        match LAST_INSTANCE.compare_exchange_weak(
+            previous,
+            token,
+            Ordering::AcqRel,
+            Ordering::Relaxed,
+        ) {
+            Ok(_) => return token,
+            Err(actual) => previous = actual,
+        }
+    }
+}
+
+/// Lock `m`, recovering the guard from a poisoned mutex.
+///
+/// Every critical section in this module leaves its data structurally
+/// consistent at each step (plain pushes/pops/assignments), so a panic in
+/// some other thread that held the lock must not turn into a panic in every
+/// later request (audit r09-O4 / T6, issues #1089/#1134).
+fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
+    m.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 /// Track id for the single rendition served per stream (no multi-track/
 /// multi-rendition support yet).
@@ -153,6 +198,12 @@ impl Default for Container {
 /// `#EXT-X-STREAM-INF` only while no closed segment exists to measure a real
 /// peak from (and by the context-free [`master_playlist_m3u8`]).
 const PLACEHOLDER_BANDWIDTH_BPS: u64 = 5_000_000;
+
+/// How many superseded init segments stay resolvable by their versioned name
+/// (`init-{track}-{generation}.mp4`): segments and playlists that name an
+/// older generation are still cached by players and CDNs for a while after a
+/// mid-stream codec change.
+const INIT_HISTORY: usize = 8;
 
 /// Nanoseconds per second, for the integer bitrate arithmetic.
 const NANOS_PER_SEC: u128 = 1_000_000_000;
@@ -258,8 +309,12 @@ pub enum HlsBody {
 /// `MediaStore`'s `SegmentInfo`-derived window entries: this crate only ever
 /// needs bytes + duration + the discontinuity bit to render a Media
 /// Playlist, so that is all this holds.
+#[derive(Clone)]
 struct WindowSegment {
     sequence_number: u32,
+    /// The init-segment generation this segment was cut against (see
+    /// [`InitStore`]).
+    init_gen: u32,
     bytes: Bytes,
     duration_secs: f64,
     discontinuous: bool,
@@ -292,9 +347,19 @@ pub struct ClosedSegment {
     /// Whether `#EXT-X-DISCONTINUITY` precedes this segment (RFC 8216
     /// §4.3.4.3).
     pub discontinuous: bool,
+    /// The init-segment generation this segment was cut against (see
+    /// [`HlsOrigin::init_name`]).
+    pub init_generation: u32,
 }
 
 impl ClosedSegment {
+    /// The same segment, cut against init generation `generation`.
+    #[must_use]
+    pub fn with_init_generation(mut self, generation: u32) -> Self {
+        self.init_generation = generation;
+        self
+    }
+
     /// Construct a [`ClosedSegment`] — needed because the type is
     /// `#[non_exhaustive]` (a struct-literal outside this crate does not
     /// typecheck), for a caller building test fixtures over the shape
@@ -312,6 +377,7 @@ impl ClosedSegment {
             start_ns,
             duration_secs,
             discontinuous,
+            init_generation: 1,
         }
     }
 }
@@ -385,7 +451,7 @@ impl Window {
     /// lost segments, starts a new run: the old entries are cleared and the
     /// entry is marked discontinuous (RFC 8216 §4.3.4.3) rather than being
     /// appended under a wrong implied number.
-    fn push(&mut self, entry: SegmentEntry) {
+    fn push(&mut self, entry: SegmentEntry, init_gen: u32) {
         let follows = self
             .segments
             .back()
@@ -396,6 +462,16 @@ impl Window {
             discontinuous = true;
         }
         self.gap_pending = false;
+        // RFC 8216bis §4.4.4.5: a different Media Initialization Section
+        // starts a new timeline segment — `EXT-X-DISCONTINUITY` precedes the
+        // first segment that uses it (audit r09-C2, issue #1030).
+        if self
+            .segments
+            .back()
+            .is_some_and(|last| last.init_gen != init_gen)
+        {
+            discontinuous = true;
+        }
 
         let duration_secs = entry.duration.as_secs_f64();
         self.max_segment_duration_secs = self.max_segment_duration_secs.max(duration_secs);
@@ -410,6 +486,7 @@ impl Window {
         }
         self.segments.push_back(WindowSegment {
             sequence_number: entry.sequence_number,
+            init_gen,
             bytes: entry.bytes,
             duration_secs,
             discontinuous,
@@ -429,6 +506,73 @@ impl Window {
     }
 }
 
+/// A copy of the window state `render_playlist` reads (see
+/// [`HlsOrigin::window_view`]).
+struct WindowView {
+    segments: VecDeque<WindowSegment>,
+    max_segment_duration_secs: f64,
+    discontinuity_sequence: u64,
+}
+
+/// The init segments this origin has served, by generation.
+///
+/// A resource name must always map to the same bytes for `Immutable` to be
+/// true (audit r09-C2, issue #1030), so a changed init segment gets a new
+/// generation and a new versioned name, `init-{track}-{generation}.mp4`; the
+/// bare `init-{track}.mp4` always means "the current one" and is served
+/// [`CachePolicy::NoCache`].
+#[derive(Default)]
+struct InitStore {
+    /// Generation of `current` (`0` = no init set yet); starts at `1`.
+    generation: u32,
+    current: Option<Bytes>,
+    /// The last [`INIT_HISTORY`] generations' bytes, oldest first.
+    history: VecDeque<(u32, Bytes)>,
+    /// `(first origin sequence number cut against it, generation)`, oldest
+    /// first: segment `seq` belongs to the last entry whose first number is
+    /// `<= seq`.
+    starts: VecDeque<(u32, u32)>,
+}
+
+impl InitStore {
+    /// Record `bytes`; a new generation only if they differ from the current
+    /// init. `next_seq` is the first segment not yet closed.
+    fn set(&mut self, bytes: Bytes, next_seq: u32) {
+        if self.current.as_ref() == Some(&bytes) {
+            return;
+        }
+        self.generation = self.generation.saturating_add(1);
+        // The very first init covers every segment ever seen.
+        let first_seq = if self.current.is_none() { 0 } else { next_seq };
+        self.current = Some(bytes.clone());
+        self.history.push_back((self.generation, bytes));
+        self.starts.push_back((first_seq, self.generation));
+        while self.history.len() > INIT_HISTORY {
+            self.history.pop_front();
+        }
+        while self.starts.len() > INIT_HISTORY {
+            self.starts.pop_front();
+        }
+    }
+
+    /// The generation segment `seq` was cut against (`1` before any init).
+    fn generation_for(&self, seq: u32) -> u32 {
+        self.starts
+            .iter()
+            .rev()
+            .find(|(first, _)| *first <= seq)
+            .or_else(|| self.starts.front())
+            .map_or(1, |&(_, generation)| generation)
+    }
+
+    fn bytes_of(&self, generation: u32) -> Option<Bytes> {
+        self.history
+            .iter()
+            .find(|(g, _)| *g == generation)
+            .map(|(_, b)| b.clone())
+    }
+}
+
 /// A segment's bitrate in bits/second, rounded up (so a `BANDWIDTH` built
 /// from it is never below the true value), or `None` for a zero duration or
 /// an overflowing figure.
@@ -442,51 +586,74 @@ fn segment_bandwidth_bps(len: usize, duration: Duration) -> Option<u64> {
     u64::try_from(bps).ok()
 }
 
-/// Parse a `part-{track}-{seq}.{idx}.{ext}` dynamic filename into
-/// `(seq, idx)`, or `None` if it isn't a part filename in `container`'s own
-/// extension (or its numeric fields don't parse). `{track}` is validated but
-/// unused (matches every other dynamic-filename resource in this module).
-fn parse_part(file: &str, container: Container) -> Option<(u64, u32)> {
+/// Parse `part-{track}-{epoch}-{seq}.{idx}.{ext}` (instance-named, the form
+/// the playlist uses) or the legacy `part-{track}-{seq}.{idx}.{ext}` into
+/// `(epoch, seq, idx)`; `epoch` is `None` for the legacy form. `None` if it
+/// isn't a part filename in `container`'s extension or a field does not parse.
+fn parse_part(file: &str, container: Container) -> Option<(Option<u64>, u64, u32)> {
     let suffix = format!(".{}", container.segment_extension());
     let rest = file.strip_prefix("part-")?.strip_suffix(suffix.as_str())?;
-    let (track_seq, idx) = rest.rsplit_once('.')?;
-    let (track, seq) = track_seq.split_once('-')?;
-    track.parse::<u32>().ok()?;
-    Some((seq.parse().ok()?, idx.parse().ok()?))
+    let (names, idx) = rest.rsplit_once('.')?;
+    let (epoch, seq) = parse_epoch_seq(names)?;
+    Some((epoch, seq, idx.parse().ok()?))
 }
 
-/// Parse a `init-{track}.mp4`/`seg-{track}-{seq}.{ext}` dynamic filename;
-/// `part-…` filenames are handled separately by [`parse_part`] (they can
-/// block until available). `{track}` is validated as a number but otherwise
-/// unused: an [`HlsOrigin`] holds a single track's data (see
-/// [`DEFAULT_TRACK_ID`]).
-///
-/// The `Init` variant is only ever recognised under [`Container::Fmp4`] — a
-/// `MpegTs` origin's grammar has no init resource at all (its segments are
-/// self-initialising; see [`Container`]'s own doc), so `init-*.mp4` under
-/// `MpegTs` falls through to `None` regardless of whether
-/// [`HlsOrigin::set_init`] was ever called. This is issue #873's
-/// cross-container refusal: advertised == servable, and an `MpegTs` origin
-/// never advertises an init segment to begin with.
+/// `{track}-{seq}` or `{track}-{epoch}-{seq}` -> `(epoch, seq)`; `{track}` is
+/// validated but unused (an [`HlsOrigin`] holds a single track).
+fn parse_epoch_seq(names: &str) -> Option<(Option<u64>, u64)> {
+    let mut fields = names.split('-');
+    fields.next()?.parse::<u32>().ok()?;
+    let first = fields.next()?;
+    match fields.next() {
+        None => Some((None, first.parse().ok()?)),
+        Some(seq) => {
+            if fields.next().is_some() {
+                return None;
+            }
+            Some((Some(first.parse().ok()?), seq.parse().ok()?))
+        }
+    }
+}
+
+/// What [`parse_immediate`] recognised.
 enum ImmediateResource {
-    Init,
-    Segment(u64),
+    /// `init-{track}.mp4`: the current init (changes, never `immutable`).
+    CurrentInit,
+    /// `init-{track}-{epoch}-{generation}.mp4`.
+    VersionedInit { epoch: u64, generation: u32 },
+    /// `seg-{track}-{seq}.{ext}` (`epoch: None`, legacy) or
+    /// `seg-{track}-{epoch}-{seq}.{ext}`.
+    Segment { epoch: Option<u64>, seq: u64 },
 }
 
+/// Parse an `init-…`/`seg-…` dynamic filename; `part-…` filenames are handled
+/// separately by [`parse_part`] (they can block until available).
+///
+/// The init forms are only recognised under [`Container::Fmp4`] — a `MpegTs`
+/// origin's segments are self-initialising (see [`Container`]'s own doc), so
+/// `init-*.mp4` under `MpegTs` is `None` whether or not
+/// [`HlsOrigin::set_init`] was ever called (issue #873's cross-container
+/// refusal: advertised == servable).
 fn parse_immediate(file: &str, container: Container) -> Option<ImmediateResource> {
     if container == Container::Fmp4
         && let Some(rest) = file.strip_prefix("init-")
     {
-        let track = rest.strip_suffix(".mp4")?;
-        track.parse::<u32>().ok()?;
-        return Some(ImmediateResource::Init);
+        let rest = rest.strip_suffix(".mp4")?;
+        let mut fields = rest.split('-');
+        fields.next()?.parse::<u32>().ok()?;
+        return match (fields.next(), fields.next(), fields.next()) {
+            (None, ..) => Some(ImmediateResource::CurrentInit),
+            (Some(epoch), Some(generation), None) => Some(ImmediateResource::VersionedInit {
+                epoch: epoch.parse().ok()?,
+                generation: generation.parse().ok()?,
+            }),
+            _ => None,
+        };
     }
     if let Some(rest) = file.strip_prefix("seg-") {
         let suffix = format!(".{}", container.segment_extension());
-        let rest = rest.strip_suffix(suffix.as_str())?;
-        let (track, seq) = rest.split_once('-')?;
-        track.parse::<u32>().ok()?;
-        return Some(ImmediateResource::Segment(seq.parse().ok()?));
+        let (epoch, seq) = parse_epoch_seq(rest.strip_suffix(suffix.as_str())?)?;
+        return Some(ImmediateResource::Segment { epoch, seq });
     }
     None
 }
@@ -502,6 +669,11 @@ pub enum HlsOriginBuildError {
     /// [`HlsOriginBuilder::window_segments`] was never called.
     #[error("HlsOrigin::builder(...).window_segments(...) is required but was never called")]
     MissingWindowSegments,
+    /// [`HlsOriginBuilder::target_duration_secs`] was NaN, infinite, zero or
+    /// negative: `EXT-X-TARGETDURATION` must be a positive integer (RFC
+    /// 8216bis §4.4.3.1).
+    #[error("HlsOrigin::builder(...).target_duration_secs(...) must be finite and positive")]
+    InvalidTargetDuration,
     /// [`HlsOriginBuilder::low_latency`] was given a part target of `0` ms:
     /// `#EXT-X-PART-INF`'s `PART-TARGET` must be a positive duration (RFC
     /// 8216bis §4.4.3.7), and the Advance Part Limit divides by it.
@@ -545,6 +717,7 @@ pub struct HlsOriginBuilder {
     container: Container,
     part_target_ms: Option<u32>,
     media_sequence_offset: u64,
+    instance: Option<u64>,
 }
 
 impl HlsOriginBuilder {
@@ -556,6 +729,7 @@ impl HlsOriginBuilder {
             container: Container::default(),
             part_target_ms: None,
             media_sequence_offset: 0,
+            instance: None,
         }
     }
 
@@ -613,6 +787,15 @@ impl HlsOriginBuilder {
         self
     }
 
+    /// Override the per-origin [`HlsOrigin::instance`] token (default: a fresh
+    /// wall-clock-seeded one per build). For deterministic tests and for an
+    /// embedder that wants names stable across a rebuild it knows is the
+    /// *same* media.
+    pub fn instance(mut self, token: u64) -> Self {
+        self.instance = Some(token);
+        self
+    }
+
     /// Build the [`HlsOrigin`], subscribing its one [`SegmentCursor`]
     /// immediately (so the window starts empty but never misses a segment
     /// published from this point on).
@@ -632,6 +815,9 @@ impl HlsOriginBuilder {
         let target_duration_secs = self
             .target_duration_secs
             .ok_or(HlsOriginBuildError::MissingTargetDurationSecs)?;
+        if !target_duration_secs.is_finite() || target_duration_secs <= 0.0 {
+            return Err(HlsOriginBuildError::InvalidTargetDuration);
+        }
         let window_segments = self
             .window_segments
             .ok_or(HlsOriginBuildError::MissingWindowSegments)?;
@@ -649,13 +835,15 @@ impl HlsOriginBuilder {
         Ok(HlsOrigin {
             trunk: self.trunk,
             cursor: Mutex::new(cursor),
+            drained_through: AtomicU64::new(UNDRAINED),
             window: Mutex::new(Window::new(window_segments)),
-            init: Mutex::new(None),
+            init: Mutex::new(InitStore::default()),
             codecs: Mutex::new(None),
             target_duration_secs,
             container: self.container,
             part_target_ms: self.part_target_ms,
             media_sequence_offset: self.media_sequence_offset,
+            instance: self.instance.unwrap_or_else(next_instance_token),
         })
     }
 }
@@ -670,10 +858,17 @@ pub struct HlsOrigin {
     /// own docs (and this crate's `media_plane::egress` module doc) for why a
     /// `ServedEgress` must never take one per request/peer.
     cursor: Mutex<SegmentCursor>,
+    /// `last closed segment + 1` (`0` = none) at the end of the last full
+    /// drain; [`Self::drain`] returns at once while the `Trunk` still shows
+    /// the same head. [`UNDRAINED`] before the first drain.
+    drained_through: AtomicU64,
+    // Lock order (never the reverse): `cursor` -> `window` -> `init`;
+    // `codecs` is taken alone. No `Trunk` call is made while `window` is held
+    // except inside `drain` (the cursor poll).
     window: Mutex<Window>,
     /// The fMP4 init segment — see this module's doc for why this, alone, is
     /// not answerable by any `Trunk` ring.
-    init: Mutex<Option<Bytes>>,
+    init: Mutex<InitStore>,
     /// The `CODECS` value (RFC 6381, comma-joined) for the master playlist,
     /// known once track specs have been supplied; `None` = unknown, so the
     /// attribute is omitted rather than invented.
@@ -689,6 +884,8 @@ pub struct HlsOrigin {
     /// [`HlsOriginBuilder::media_sequence_offset`]); validated at build so
     /// `offset + u32::MAX` fits a `u64`.
     media_sequence_offset: u64,
+    /// See [`Self::instance`].
+    instance: u64,
 }
 
 impl HlsOrigin {
@@ -732,10 +929,17 @@ impl HlsOrigin {
             if derived.is_none() {
                 // A new init that cannot be read must not leave the previous
                 // init's codecs advertised.
-                *self.codecs.lock().unwrap() = None;
+                *locked(&self.codecs) = None;
             }
         }
-        *self.init.lock().unwrap() = Some(bytes);
+        // The first segment not yet closed is the first one cut against
+        // these bytes: call this before publishing it.
+        let next_seq = self
+            .trunk
+            .last_closed_segment()
+            .unwrap_or(0)
+            .saturating_add(1);
+        locked(&self.init).set(bytes, next_seq);
     }
 
     /// Tell the origin which tracks it serves, so the master playlist can
@@ -760,7 +964,7 @@ impl HlsOrigin {
                 Err(other) => return Err(other),
             }
         }
-        *self.codecs.lock().unwrap() = (!codecs.is_empty()).then(|| codecs.join(","));
+        *locked(&self.codecs) = (!codecs.is_empty()).then(|| codecs.join(","));
         Ok(())
     }
 
@@ -779,7 +983,7 @@ impl HlsOrigin {
     /// master playlist variant, or when the playlist cannot be rendered.
     pub fn master_playlist(&self, media_playlist_name: &str) -> Result<String, String> {
         self.drain();
-        let measured = self.window.lock().unwrap().peak_bandwidth_bps;
+        let measured = locked(&self.window).peak_bandwidth_bps;
         let bandwidth = if measured == 0 {
             PLACEHOLDER_BANDWIDTH_BPS
         } else {
@@ -790,7 +994,7 @@ impl HlsOrigin {
         let master = MasterPlaylist {
             variants: vec![Variant {
                 bandwidth,
-                codecs: self.codecs.lock().unwrap().clone(),
+                codecs: locked(&self.codecs).clone(),
                 uri: media_playlist_name.to_string(),
                 ..Default::default()
             }],
@@ -799,16 +1003,66 @@ impl HlsOrigin {
         master.to_m3u8().map_err(|error| error.to_string())
     }
 
+    /// This origin's instance token: a number that differs for every origin
+    /// built, in this process and across restarts (see
+    /// [`HlsOriginBuilder::instance`]), and is part of **every resource name
+    /// served `immutable`** — `init-{track}-{instance}-{generation}.mp4`,
+    /// `seg-{track}-{instance}-{msn}.{ext}`,
+    /// `part-{track}-{instance}-{msn}.{idx}.{ext}`. A name therefore maps to
+    /// one origin's bytes for ever: a reconnect (new `Trunk`, numbers
+    /// restarting, possibly a different SPS/ASC), a process restart with no
+    /// DVR, a replacement origin reusing the open segment's number — none can
+    /// put new bytes under a name a cache may already hold. Playlists name
+    /// these URIs, so players are unaffected. A request carrying another
+    /// instance's token is `NotFound`. The unnamed legacy forms
+    /// (`seg-{track}-{msn}`, `part-{track}-{msn}.{idx}`, used by DASH/Smooth
+    /// templates that cannot carry the token) still resolve but are
+    /// [`CachePolicy::NoCache`]; the bare `init-{track}.mp4` is the current
+    /// init, also [`CachePolicy::NoCache`].
+    pub fn instance(&self) -> u64 {
+        self.instance
+    }
+
+    /// The wire name of init generation `generation` for `track_id`.
+    pub fn init_name(&self, track_id: u32, generation: u32) -> String {
+        format!("init-{track_id}-{}-{generation}.mp4", self.instance)
+    }
+
+    fn segment_name(&self, track_id: u32, seq: u32, ext: &str) -> String {
+        format!(
+            "seg-{track_id}-{}-{}.{ext}",
+            self.instance,
+            self.public_msn(seq)
+        )
+    }
+
+    fn part_name(&self, track_id: u32, seq: u32, idx: u32, ext: &str) -> String {
+        format!(
+            "part-{track_id}-{}-{}.{idx}.{ext}",
+            self.instance,
+            self.public_msn(seq)
+        )
+    }
+
+    /// The offset added to every Media Sequence Number this origin shows (see
+    /// [`HlsOriginBuilder::media_sequence_offset`]): the number in a segment's
+    /// URI/playlist is this plus its origin sequence number
+    /// ([`ClosedSegment::sequence_number`]).
+    pub fn media_sequence_offset(&self) -> u64 {
+        self.media_sequence_offset
+    }
+
     /// The Media Sequence Number the next closed segment will be shown with
     /// (last closed segment + 1, plus the configured offset).
     ///
     /// A fresh [`Trunk`] numbers its segments from `1` again, so an origin
     /// replacing this one over a new `Trunk` (a reconnect) must pass
-    /// `next_media_sequence().saturating_sub(1)` to
+    /// `next_media_sequence()` to
     /// [`HlsOriginBuilder::media_sequence_offset`]: the new origin's first
-    /// segment (sequence number one) is then shown as exactly this value and
-    /// the Media Sequence Number clients see keeps increasing (RFC 8216bis
-    /// §6.2.2).
+    /// segment (sequence number one) is then shown one above this value — the
+    /// number this origin's *open* segment was shown with is skipped, since
+    /// its parts were already served — and the Media Sequence Number clients
+    /// see keeps increasing (RFC 8216bis §6.2.2).
     pub fn next_media_sequence(&self) -> u64 {
         self.public_msn(
             self.trunk
@@ -846,7 +1100,7 @@ impl HlsOrigin {
 
     /// The fMP4 init segment bytes, if set.
     pub fn init_bytes(&self) -> Option<Bytes> {
-        self.init.lock().unwrap().clone()
+        locked(&self.init).current.clone()
     }
 
     /// Drain this origin's [`SegmentCursor`] into `Window` — called at the
@@ -861,15 +1115,41 @@ impl HlsOrigin {
     /// response is to resume from the next segment, not to fabricate the
     /// lost entries' duration/discontinuity data.
     fn drain(&self) {
-        let mut cursor = self.cursor.lock().unwrap();
-        let mut window = self.window.lock().unwrap();
+        // Nothing published since the last drain: skip both locks. The head
+        // is read *before* draining and stored after, so a segment published
+        // in between just makes the next call drain once more (audit r09-O4).
+        let head = self
+            .trunk
+            .last_closed_segment()
+            .map_or(0, |n| u64::from(n).saturating_add(1));
+        if self.drained_through.load(Ordering::Acquire) == head {
+            return;
+        }
+        let mut cursor = locked(&self.cursor);
+        let mut window = locked(&self.window);
         while let Some(item) = cursor.poll() {
             match item {
-                SegmentCursorItem::Segment(entry) => window.push(entry),
+                SegmentCursorItem::Segment(entry) => {
+                    let init_gen = locked(&self.init).generation_for(entry.sequence_number);
+                    window.push(entry, init_gen);
+                }
                 // `Lagged`/`Gap`/anything newer: segments were lost, so the
                 // next one does not follow the window's contents.
                 _ => window.note_gap(),
             }
+        }
+        self.drained_through.store(head, Ordering::Release);
+    }
+
+    /// What `render_playlist` needs from the window, copied out so the window
+    /// lock is not held while the `Trunk` is queried. Segment bytes are
+    /// `Bytes` (reference-counted), so the copy shares them.
+    fn window_view(&self) -> WindowView {
+        let w = locked(&self.window);
+        WindowView {
+            segments: w.segments.clone(),
+            max_segment_duration_secs: w.max_segment_duration_secs,
+            discontinuity_sequence: w.discontinuity_sequence,
         }
     }
 
@@ -890,9 +1170,7 @@ impl HlsOrigin {
     /// cursor already tracks.
     pub fn closed_segments(&self) -> Vec<ClosedSegment> {
         self.drain();
-        self.window
-            .lock()
-            .unwrap()
+        locked(&self.window)
             .segments
             .iter()
             .map(|s| ClosedSegment {
@@ -900,6 +1178,7 @@ impl HlsOrigin {
                 start_ns: s.start_ns,
                 duration_secs: s.duration_secs,
                 discontinuous: s.discontinuous,
+                init_generation: s.init_gen,
             })
             .collect()
     }
@@ -955,11 +1234,7 @@ impl HlsOrigin {
         by_index
             .values()
             .map(|p| PartSpec {
-                uri: format!(
-                    "part-{track_id}-{}.{}.{ext}",
-                    self.public_msn(p.segment_number),
-                    p.part_index
-                ),
+                uri: self.part_name(track_id, p.segment_number, p.part_index, ext),
                 // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
                 duration: DecimalSeconds::new(p.duration.as_secs_f64())
                     .expect("Duration::as_secs_f64 is finite, >= 0"),
@@ -989,7 +1264,11 @@ impl HlsOrigin {
     /// its own generated URIs).
     fn render_playlist(&self, track_id: u32) -> core::result::Result<String, String> {
         self.drain();
-        let window = self.window.lock().unwrap();
+        // Snapshot the window and release its lock before any `Trunk` call:
+        // `live_edge`, the part lookups and the event lookups below take the
+        // `Trunk`'s own lock, which must not nest inside this origin's
+        // (audit r09-O4).
+        let window = self.window_view();
         let (open_seq, open_parts) = self.live_edge();
         // Only render an open segment/preload-hint once the live edge is
         // genuinely a not-yet-closed segment with at least one live part —
@@ -1019,8 +1298,11 @@ impl HlsOrigin {
         // larger, rounded (not the configured value's `ceil()` alone).
         let target_duration = self
             .target_duration_secs
-            .max(window.max_segment_duration_secs)
-            .round() as u32;
+            .max(window.max_segment_duration_secs);
+        // `target_duration_secs` is validated finite and positive at build
+        // and segment durations come from `Duration`, so this is finite;
+        // the clamp makes the float->int conversion exact-or-saturating.
+        let target_duration = target_duration.round().clamp(0.0, f64::from(u32::MAX)) as u32;
         // RFC 8216bis §6.2.2: EXT-X-PART tags stay in the Playlist until they
         // are more than three Target Durations from its end — so a closed
         // segment keeps its parts while the media after it (later closed
@@ -1042,15 +1324,21 @@ impl HlsOrigin {
             behind_secs += s.duration_secs;
         }
         closed_parts.reverse();
+        let fmp4 = self.container == Container::Fmp4;
+        let map_for = |generation: u32| {
+            fmp4.then(|| MapTag {
+                uri: self.init_name(track_id, generation),
+                byte_range: None,
+                extra_attrs: Vec::new(),
+            })
+        };
         let segments: Vec<MediaSegment> = window
             .segments
             .iter()
             .zip(closed_parts)
             .map(|(s, parts)| MediaSegment {
-                uri: format!(
-                    "seg-{track_id}-{}.{ext}",
-                    self.public_msn(s.sequence_number)
-                ),
+                map: map_for(s.init_gen),
+                uri: self.segment_name(track_id, s.sequence_number, ext),
                 // `duration_secs` is always `Duration::as_secs_f64()`
                 // (issue #1140): a `std::time::Duration` can never be
                 // negative or non-finite.
@@ -1061,16 +1349,16 @@ impl HlsOrigin {
                 ..Default::default()
             })
             .collect();
+        // The open segment is cut against the init generation that covers its
+        // sequence number (`#EXT-X-MAP` carries forward, so this repeats the
+        // last closed segment's unless the init changed in between).
+        let open_gen = locked(&self.init).generation_for(open_seq);
         let open_segment = has_open_parts.then(|| {
-            OpenSegment::new(
+            let open = OpenSegment::new(
                 open_parts
                     .iter()
                     .map(|p| PartSpec {
-                        uri: format!(
-                            "part-{track_id}-{}.{}.{ext}",
-                            self.public_msn(p.segment_number),
-                            p.part_index
-                        ),
+                        uri: self.part_name(track_id, p.segment_number, p.part_index, ext),
                         // `p.duration` is a `std::time::Duration`: always
                         // finite and non-negative (issue #1140).
                         duration: DecimalSeconds::new(p.duration.as_secs_f64())
@@ -1079,7 +1367,11 @@ impl HlsOrigin {
                         ..Default::default()
                     })
                     .collect(),
-            )
+            );
+            match map_for(open_gen) {
+                Some(map) => open.with_map(map),
+                None => open,
+            }
         });
         let next_part_hint = has_open_parts.then(|| {
             let next_idx = open_parts
@@ -1088,10 +1380,7 @@ impl HlsOrigin {
                 .max()
                 .map(|idx| idx.saturating_add(1))
                 .unwrap_or(0);
-            format!(
-                "part-{track_id}-{}.{next_idx}.{ext}",
-                self.public_msn(open_seq)
-            )
+            self.part_name(track_id, open_seq, next_idx, ext)
         });
         // `#EXT-X-MAP`: unconditional under Fmp4 (RFC 8216bis §3.1.2 MUST);
         // omitted under MpegTs by default (§3.1.1's PAT/PMT-or-MAP
@@ -1102,10 +1391,18 @@ impl HlsOrigin {
         // once the trunk's `time_anchor` has been set, so events are
         // silently skipped while the anchor is absent (their `to_daterange`
         // fails the same way it does for a non-SCTE-35 source).
-        let mut extra_tags = match self.container {
-            Container::Fmp4 => vec![format!("#EXT-X-MAP:URI=\"init-{track_id}.mp4\"")],
-            Container::MpegTs => Vec::new(),
-        };
+        // The map rides on the segments (each one names the init generation
+        // it was cut against, so a changed init is announced together with its
+        // `EXT-X-DISCONTINUITY`); only a playlist with no segment at all
+        // carries it as a bare tag.
+        let mut extra_tags = Vec::new();
+        if fmp4 && segments.is_empty() && open_segment.is_none() {
+            let generation = locked(&self.init).generation.max(1);
+            extra_tags.push(format!(
+                "#EXT-X-MAP:URI=\"{}\"",
+                self.init_name(track_id, generation)
+            ));
+        }
         if let Some(anchor) = self.trunk.time_anchor() {
             let timeline = timed_metadata::Timeline::with_anchor(anchor);
             for seg in &window.segments {
@@ -1249,14 +1546,23 @@ impl HlsOrigin {
         now: Timestamp,
         await_policy: AwaitPolicy,
     ) -> EgressResponse<HlsBody> {
-        if let Some((public_seq, idx)) = parse_part(name, self.container) {
+        if let Some((epoch, public_seq, idx)) = parse_part(name, self.container) {
+            // Another instance's token never resolves here; the legacy
+            // (token-less) form resolves but is not `immutable`.
+            if epoch.is_some_and(|e| e != self.instance) {
+                return EgressResponse::NotFound;
+            }
             let Some(seq) = self.internal_seq(public_seq) else {
                 return EgressResponse::NotFound;
             };
             if let Some(bytes) = self.trunk.part_bytes(seq, idx) {
                 return EgressResponse::Ready {
                     body: HlsBody::Resource(bytes),
-                    cache: CachePolicy::Immutable,
+                    cache: if epoch.is_some() {
+                        CachePolicy::Immutable
+                    } else {
+                        CachePolicy::NoCache
+                    },
                 };
             }
             // A classic (non-LL) origin has no parts at all.
@@ -1297,17 +1603,38 @@ impl HlsOrigin {
             return EgressResponse::pending(await_policy, now, now);
         }
         self.drain();
-        let bytes = match parse_immediate(name, self.container) {
-            Some(ImmediateResource::Init) => self.init_bytes(),
-            Some(ImmediateResource::Segment(public_seq)) => self
-                .internal_seq(public_seq)
-                .and_then(|seq| self.window.lock().unwrap().bytes_of(seq)),
-            None => None,
+        // `Immutable` only where the name can never map to other bytes: the
+        // instance-named init/segment forms (see `Self::instance`). The
+        // token-less forms and the bare `init-{track}.mp4` can.
+        let (bytes, cache) = match parse_immediate(name, self.container) {
+            Some(ImmediateResource::CurrentInit) => (self.init_bytes(), CachePolicy::NoCache),
+            Some(ImmediateResource::VersionedInit { epoch, generation })
+                if epoch == self.instance =>
+            {
+                (
+                    locked(&self.init).bytes_of(generation),
+                    CachePolicy::Immutable,
+                )
+            }
+            Some(ImmediateResource::Segment { epoch, seq })
+                if epoch.is_none_or(|e| e == self.instance) =>
+            {
+                (
+                    self.internal_seq(seq)
+                        .and_then(|s| locked(&self.window).bytes_of(s)),
+                    if epoch.is_some() {
+                        CachePolicy::Immutable
+                    } else {
+                        CachePolicy::NoCache
+                    },
+                )
+            }
+            _ => (None, CachePolicy::NoCache),
         };
         match bytes {
             Some(bytes) => EgressResponse::Ready {
                 body: HlsBody::Resource(bytes),
-                cache: CachePolicy::Immutable,
+                cache,
             },
             None => EgressResponse::NotFound,
         }
@@ -1355,6 +1682,7 @@ mod tests {
             .target_duration_secs(4.0)
             .window_segments(nz(4))
             .low_latency(500)
+            .instance(7)
             .build()
             .expect("both required fields set");
         origin.set_init(vec![0xAAu8; 8]);
@@ -1569,17 +1897,17 @@ mod tests {
             "body: {body}"
         );
         assert!(
-            body.contains("#EXT-X-MAP:URI=\"init-1.mp4\""),
+            body.contains("#EXT-X-MAP:URI=\"init-1-7-1.mp4\""),
             "body: {body}"
         );
-        assert!(body.contains("seg-1-1.m4s"), "body: {body}");
+        assert!(body.contains("seg-1-7-1.m4s"), "body: {body}");
         assert!(
             body.contains("#EXT-X-PART:DURATION=0.5") && body.contains("INDEPENDENT=YES"),
             "body: {body}"
         );
         assert!(body.contains("#EXT-X-PRELOAD-HINT"), "body: {body}");
         assert!(
-            body.contains("part-1-2.2.m4s"),
+            body.contains("part-1-7-2.2.m4s"),
             "preload hint for the next part: {body}"
         );
     }
@@ -1606,7 +1934,7 @@ mod tests {
         let policy = AwaitPolicy::new(deadline);
         let first = origin.resolve(
             HlsRequest::Resource {
-                name: "part-1-1.0.m4s".to_string(),
+                name: "part-1-7-1.0.m4s".to_string(),
             },
             Timestamp::from_nanos(0),
             policy,
@@ -1645,7 +1973,7 @@ mod tests {
         // Re-resolving now must serve it -- not 404.
         match origin.resolve(
             HlsRequest::Resource {
-                name: "part-1-1.0.m4s".to_string(),
+                name: "part-1-7-1.0.m4s".to_string(),
             },
             Timestamp::from_nanos(1),
             policy,
@@ -1679,7 +2007,7 @@ mod tests {
 
         let still_waiting = origin.resolve(
             HlsRequest::Resource {
-                name: "part-1-1.0.m4s".to_string(),
+                name: "part-1-7-1.0.m4s".to_string(),
             },
             Timestamp::from_nanos(999_999_999),
             policy,
@@ -1688,7 +2016,7 @@ mod tests {
 
         let expired = origin.resolve(
             HlsRequest::Resource {
-                name: "part-1-1.0.m4s".to_string(),
+                name: "part-1-7-1.0.m4s".to_string(),
             },
             deadline,
             policy,
@@ -1726,7 +2054,7 @@ mod tests {
         match resolve_now(
             &origin,
             HlsRequest::Resource {
-                name: "part-1-1.1.m4s".to_string(),
+                name: "part-1-7-1.1.m4s".to_string(),
             },
         ) {
             EgressResponse::Ready {
@@ -1741,7 +2069,7 @@ mod tests {
             resolve_now(
                 &origin,
                 HlsRequest::Resource {
-                    name: "part-1-1.9.m4s".to_string(),
+                    name: "part-1-7-1.9.m4s".to_string(),
                 }
             ),
             EgressResponse::NotFound
@@ -1763,7 +2091,7 @@ mod tests {
             other => panic!("expected Ready(Playlist), got {other:?}"),
         };
         assert!(
-            body.contains("seg-1-1.m4s"),
+            body.contains("seg-1-7-1.m4s"),
             "closed segment rendered whole: {body}"
         );
         // RFC 8216bis §6.2.2: the closed segment keeps its EXT-X-PART tags
@@ -1775,11 +2103,11 @@ mod tests {
             vec![
                 "#EXT-X-SERVER-CONTROL:CAN-BLOCK-RELOAD=YES,PART-HOLD-BACK=1.5",
                 "#EXT-X-PART-INF:PART-TARGET=0.5",
-                "#EXT-X-MAP:URI=\"init-1.mp4\"",
-                "#EXT-X-PART:DURATION=0.5,URI=\"part-1-1.0.m4s\",INDEPENDENT=YES",
-                "#EXT-X-PART:DURATION=0.5,URI=\"part-1-1.1.m4s\"",
+                "#EXT-X-MAP:URI=\"init-1-7-1.mp4\"",
+                "#EXT-X-PART:DURATION=0.5,URI=\"part-1-7-1.0.m4s\",INDEPENDENT=YES",
+                "#EXT-X-PART:DURATION=0.5,URI=\"part-1-7-1.1.m4s\"",
                 "#EXTINF:4,",
-                "seg-1-1.m4s",
+                "seg-1-7-1.m4s",
             ],
             "{body}"
         );
@@ -1994,7 +2322,8 @@ mod tests {
                 cache,
             } => {
                 assert_eq!(bytes, Bytes::from(vec![0xAAu8; 8]));
-                assert_eq!(cache, CachePolicy::Immutable);
+                // The bare name means "the current init" and can change.
+                assert_eq!(cache, CachePolicy::NoCache);
             }
             other => panic!("expected Ready, got {other:?}"),
         }
@@ -2037,7 +2366,10 @@ mod tests {
         if let Some(ms) = low_latency_ms {
             builder = builder.low_latency(ms);
         }
-        let origin = builder.build().expect("both required fields set");
+        let origin = builder
+            .instance(7)
+            .build()
+            .expect("both required fields set");
         (trunk, origin, writer)
     }
 
@@ -2134,8 +2466,8 @@ mod tests {
     /// `Container` passed to it) makes this test's
     /// `assert!(!body.contains("#EXT-X-MAP"))` fail -- the mutated build
     /// unconditionally emits `#EXT-X-MAP:URI="init-1.mp4"`, and the `.ts`
-    /// URI assertions fail too (segments render as `seg-1-1.m4s` instead of
-    /// `seg-1-1.ts`). Recompiled and re-run to confirm the failure (see the
+    /// URI assertions fail too (segments render as `seg-1-7-1.m4s` instead of
+    /// `seg-1-7-1.ts`). Recompiled and re-run to confirm the failure (see the
     /// PR description for the pasted `cargo test` output), then reverted.
     /// The mutation bites four tests in total -- this one, the low-latency
     /// `MpegTs` cell, the integral-`EXTINF` version case, and the
@@ -2155,16 +2487,16 @@ mod tests {
         assert!(!body.contains("#EXT-X-SERVER-CONTROL"), "body: {body}");
         assert!(!body.contains("#EXT-X-PRELOAD-HINT"), "body: {body}");
         assert!(!body.contains(".m4s"), "body: {body}");
-        assert!(body.contains("seg-1-1.ts"), "body: {body}");
+        assert!(body.contains("seg-1-7-1.ts"), "body: {body}");
         assert_version_present_and_matches_derivation(&body);
 
         // advertised == servable: fetch every URI the rendered text itself
         // named, and check its bytes against what was actually published
         // (via this crate's own `parse_immediate`, not a hard-coded filename).
         let uris = segment_uris(&body);
-        assert_eq!(uris, vec!["seg-1-1.ts".to_string()]);
+        assert_eq!(uris, vec!["seg-1-7-1.ts".to_string()]);
         for uri in uris {
-            let ImmediateResource::Segment(seq) = parse_immediate(&uri, Container::MpegTs)
+            let ImmediateResource::Segment { seq, .. } = parse_immediate(&uri, Container::MpegTs)
                 .expect("advertised segment URI must parse under MpegTs")
             else {
                 panic!("expected a Segment resource for {uri}");
@@ -2182,8 +2514,8 @@ mod tests {
     /// MUTATION VERIFIED (issue #873): making `HlsOriginBuilder::container`
     /// a no-op makes this test's `assert!(!body.contains("#EXT-X-MAP"))`
     /// fail identically to the classic-`MpegTs` test above, and the part
-    /// URIs render as `part-1-2.0.m4s` instead of `part-1-2.0.ts`, so
-    /// `assert!(body.contains("part-1-2.0.ts"))` also fails. Recompiled and
+    /// URIs render as `part-1-7-2.0.m4s` instead of `part-1-7-2.0.ts`, so
+    /// `assert!(body.contains("part-1-7-2.0.ts"))` also fails. Recompiled and
     /// re-run to confirm, then reverted.
     #[test]
     fn mpegts_low_latency_part_ts_uris_blocking_part_requests_resolve() {
@@ -2200,8 +2532,8 @@ mod tests {
         assert!(!body.contains("#EXT-X-MAP"), "body: {body}");
         assert!(body.contains("#EXT-X-PART-INF"), "body: {body}");
         assert!(body.contains("#EXT-X-PART:"), "body: {body}");
-        assert!(body.contains("seg-1-1.ts"), "body: {body}");
-        assert!(body.contains("part-1-2.0.ts"), "body: {body}");
+        assert!(body.contains("seg-1-7-1.ts"), "body: {body}");
+        assert!(body.contains("part-1-7-2.0.ts"), "body: {body}");
         assert!(!body.contains(".m4s"), "body: {body}");
         // LL-HLS directives add no §8 version requirement of their own --
         // the finding that killed the old hardcoded `EXT-X-VERSION:9` --
@@ -2213,7 +2545,7 @@ mod tests {
         let parts = part_uris(&body);
         assert!(!parts.is_empty(), "body: {body}");
         for uri in &parts {
-            let (seq, idx) = parse_part(uri, Container::MpegTs)
+            let (_epoch, seq, idx) = parse_part(uri, Container::MpegTs)
                 .unwrap_or_else(|| panic!("advertised part URI {uri} must parse under MpegTs"));
             match resolve_now(&origin, HlsRequest::Resource { name: uri.clone() }) {
                 EgressResponse::Ready {
@@ -2234,7 +2566,7 @@ mod tests {
         let policy = AwaitPolicy::new(deadline);
         let pending = origin.resolve(
             HlsRequest::Resource {
-                name: "part-1-2.2.ts".to_string(),
+                name: "part-1-7-2.2.ts".to_string(),
             },
             Timestamp::from_nanos(0),
             policy,
@@ -2260,7 +2592,7 @@ mod tests {
 
         match origin.resolve(
             HlsRequest::Resource {
-                name: "part-1-2.2.ts".to_string(),
+                name: "part-1-7-2.2.ts".to_string(),
             },
             Timestamp::from_nanos(1),
             policy,
@@ -2337,13 +2669,13 @@ mod tests {
 
         let body = render_body(&origin);
         assert!(
-            body.contains("#EXT-X-MAP:URI=\"init-1.mp4\""),
+            body.contains("#EXT-X-MAP:URI=\"init-1-7-1.mp4\""),
             "body: {body}"
         );
         assert!(!body.contains("#EXT-X-PART"), "body: {body}");
         assert!(!body.contains("#EXT-X-SERVER-CONTROL"), "body: {body}");
         assert!(!body.contains("#EXT-X-PRELOAD-HINT"), "body: {body}");
-        assert!(body.contains("seg-1-1.m4s"), "body: {body}");
+        assert!(body.contains("seg-1-7-1.m4s"), "body: {body}");
         assert_version_present_and_matches_derivation(&body);
 
         // advertised == servable, including the init segment the MAP names.
@@ -2360,7 +2692,7 @@ mod tests {
             other => panic!("expected Ready(init), got {other:?}"),
         }
         for uri in segment_uris(&body) {
-            let ImmediateResource::Segment(seq) = parse_immediate(&uri, Container::Fmp4)
+            let ImmediateResource::Segment { seq, .. } = parse_immediate(&uri, Container::Fmp4)
                 .expect("advertised segment URI must parse under Fmp4")
             else {
                 panic!("expected a Segment resource for {uri}");
@@ -2388,14 +2720,14 @@ mod tests {
 
         let body = render_body(&origin);
         assert!(
-            body.contains("#EXT-X-MAP:URI=\"init-1.mp4\""),
+            body.contains("#EXT-X-MAP:URI=\"init-1-7-1.mp4\""),
             "body: {body}"
         );
         assert!(body.contains("#EXT-X-PART-INF"), "body: {body}");
         assert!(body.contains("#EXT-X-SERVER-CONTROL"), "body: {body}");
         assert!(body.contains("#EXT-X-PRELOAD-HINT"), "body: {body}");
-        assert!(body.contains("seg-1-1.m4s"), "body: {body}");
-        assert!(body.contains("part-1-2.0.m4s"), "body: {body}");
+        assert!(body.contains("seg-1-7-1.m4s"), "body: {body}");
+        assert!(body.contains("part-1-7-2.0.m4s"), "body: {body}");
         assert!(!body.contains(".ts\""), "body: {body}");
         assert_version_present_and_matches_derivation(&body);
 
@@ -2412,7 +2744,7 @@ mod tests {
             other => panic!("expected Ready(init), got {other:?}"),
         }
         for uri in segment_uris(&body) {
-            let ImmediateResource::Segment(seq) = parse_immediate(&uri, Container::Fmp4)
+            let ImmediateResource::Segment { seq, .. } = parse_immediate(&uri, Container::Fmp4)
                 .expect("advertised segment URI must parse under Fmp4")
             else {
                 panic!("expected a Segment resource for {uri}");
@@ -2426,7 +2758,7 @@ mod tests {
             }
         }
         for uri in part_uris(&body) {
-            let (_seq, idx) = parse_part(&uri, Container::Fmp4)
+            let (_epoch, _seq, idx) = parse_part(&uri, Container::Fmp4)
                 .unwrap_or_else(|| panic!("advertised part URI {uri} must parse under Fmp4"));
             match resolve_now(&origin, HlsRequest::Resource { name: uri.clone() }) {
                 EgressResponse::Ready {
@@ -2465,6 +2797,7 @@ mod tests {
         let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
         match HlsOrigin::builder(Arc::clone(&trunk))
             .window_segments(nz(4))
+            .instance(7)
             .build()
         {
             Err(e) => assert_eq!(e, HlsOriginBuildError::MissingTargetDurationSecs),
@@ -2472,6 +2805,7 @@ mod tests {
         }
         match HlsOrigin::builder(Arc::clone(&trunk))
             .target_duration_secs(4.0)
+            .instance(7)
             .build()
         {
             Err(e) => assert_eq!(e, HlsOriginBuildError::MissingWindowSegments),
@@ -2577,12 +2911,12 @@ mod tests {
     #[test]
     fn window_restarts_on_a_repeated_or_decreasing_sequence_number() {
         let mut w = Window::new(nz(6));
-        w.push(window_entry(5, 0xA5, false));
-        w.push(window_entry(6, 0xA6, true));
+        w.push(window_entry(5, 0xA5, false), 1);
+        w.push(window_entry(6, 0xA6, true), 1);
         assert_eq!(window_seqs(&w), vec![(5, false), (6, true)]);
 
         // Decrease: 3 after 6.
-        w.push(window_entry(3, 0xB3, false));
+        w.push(window_entry(3, 0xB3, false), 1);
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         // The discontinuous 6 rolled off the front.
         assert_eq!(w.discontinuity_sequence, 1);
@@ -2591,7 +2925,7 @@ mod tests {
         assert_eq!(w.bytes_of(6), None);
 
         // Repeat: 3 again with different bytes replaces, never duplicates.
-        w.push(window_entry(3, 0xC3, false));
+        w.push(window_entry(3, 0xC3, false), 1);
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         assert_eq!(w.bytes_of(3), Some(Bytes::from(vec![0xC3; 4])));
     }
@@ -2601,13 +2935,13 @@ mod tests {
     #[test]
     fn window_handles_u32_max_sequence_numbers() {
         let mut w = Window::new(nz(4));
-        w.push(window_entry(u32::MAX - 1, 1, false));
-        w.push(window_entry(u32::MAX, 2, false));
+        w.push(window_entry(u32::MAX - 1, 1, false), 1);
+        w.push(window_entry(u32::MAX, 2, false), 1);
         assert_eq!(
             window_seqs(&w),
             vec![(u32::MAX - 1, false), (u32::MAX, false)]
         );
-        w.push(window_entry(u32::MAX, 3, false));
+        w.push(window_entry(u32::MAX, 3, false), 1);
         assert_eq!(window_seqs(&w), vec![(u32::MAX, true)]);
         assert_eq!(w.bytes_of(u32::MAX), Some(Bytes::from(vec![3; 4])));
     }
@@ -2616,7 +2950,7 @@ mod tests {
     fn window_capacity_is_never_below_three_segments() {
         let mut w = Window::new(nz(1));
         for seq in 1..=5 {
-            w.push(window_entry(seq, 0, false));
+            w.push(window_entry(seq, 0, false), 1);
         }
         assert_eq!(window_seqs(&w), vec![(3, false), (4, false), (5, false)]);
     }
@@ -2646,7 +2980,7 @@ mod tests {
     fn bytes_of_addresses_exactly_the_matching_entry() {
         let mut w = Window::new(nz(6));
         for (seq, tag) in [(5u32, 0x15u8), (6, 0x16), (7, 0x17)] {
-            w.push(window_entry(seq, tag, false));
+            w.push(window_entry(seq, tag, false), 1);
         }
         assert_eq!(w.bytes_of(5), Some(Bytes::from(vec![0x15; 4])));
         assert_eq!(w.bytes_of(6), Some(Bytes::from(vec![0x16; 4])));
@@ -2654,5 +2988,99 @@ mod tests {
         assert_eq!(w.bytes_of(4), None);
         assert_eq!(w.bytes_of(8), None);
         assert_eq!(w.bytes_of(u32::MAX), None);
+    }
+
+    // --- r09-O4 / T6 (#1089, #1134): lock discipline ---------------------
+
+    fn segment_request(name: &str) -> HlsRequest {
+        HlsRequest::Resource {
+            name: name.to_string(),
+        }
+    }
+
+    /// With nothing published since the last drain, a request must not need
+    /// the cursor lock. Holding that lock from the test thread makes the old
+    /// always-drain code block (the request thread then misses the timeout).
+    #[test]
+    fn a_request_with_nothing_new_does_not_take_the_cursor_lock() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, 4.0, false);
+        assert!(matches!(
+            resolve_now(&origin, segment_request("seg-1-7-1.m4s")),
+            EgressResponse::Ready { .. }
+        ));
+
+        let guard = locked(&origin.cursor);
+        let (tx, rx) = std::sync::mpsc::channel();
+        std::thread::scope(|s| {
+            s.spawn(|| {
+                let _ = tx.send(resolve_now(&origin, segment_request("seg-1-7-1.m4s")));
+            });
+            let got = rx.recv_timeout(Duration::from_secs(10));
+            drop(guard); // always release, so the scope can join
+            assert!(
+                matches!(got, Ok(EgressResponse::Ready { .. })),
+                "request blocked on the cursor lock: {got:?}"
+            );
+        });
+    }
+
+    /// The skip never hides a real publish: a segment closed after the last
+    /// drain is served by the very next request.
+    #[test]
+    fn a_segment_published_after_a_drain_is_served_by_the_next_request() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, 4.0, false);
+        assert!(matches!(
+            resolve_now(&origin, segment_request("seg-1-7-1.m4s")),
+            EgressResponse::Ready { .. }
+        ));
+        assert_eq!(
+            resolve_now(&origin, segment_request("seg-1-7-2.m4s")),
+            EgressResponse::NotFound
+        );
+        seg(&writer, 2, 4.0, false);
+        assert!(matches!(
+            resolve_now(&origin, segment_request("seg-1-7-2.m4s")),
+            EgressResponse::Ready { .. }
+        ));
+    }
+
+    /// A panic while some thread held an origin lock must not become a panic
+    /// in every later request.
+    #[test]
+    fn a_poisoned_lock_does_not_cascade_into_later_requests() {
+        let (_trunk, origin, writer) = make_origin();
+        seg(&writer, 1, 4.0, false);
+        std::thread::scope(|s| {
+            let origin = &origin;
+            for which in 0..4 {
+                let handle = s.spawn(move || {
+                    // Hold one of the origin's mutexes across a panic.
+                    match which {
+                        0 => drop(origin.window.lock().map(|_g| panic!("poison window"))),
+                        1 => drop(origin.cursor.lock().map(|_g| panic!("poison cursor"))),
+                        2 => drop(origin.init.lock().map(|_g| panic!("poison init"))),
+                        _ => drop(origin.codecs.lock().map(|_g| panic!("poison codecs"))),
+                    }
+                });
+                assert!(handle.join().is_err(), "setup thread {which} must panic");
+            }
+        });
+        assert!(origin.window.is_poisoned());
+        assert!(origin.cursor.is_poisoned());
+        assert!(origin.init.is_poisoned());
+        assert!(origin.codecs.is_poisoned());
+        // Every public entry point still answers.
+        seg(&writer, 2, 4.0, false);
+        assert_eq!(origin.closed_segments().len(), 2);
+        assert!(origin.init_bytes().is_some());
+        assert!(origin.master_playlist("media.m3u8").is_ok());
+        origin.set_init(vec![0xCC; 8]);
+        assert!(render_body(&origin).contains("seg-1-7-2.m4s"));
+        assert!(matches!(
+            resolve_now(&origin, segment_request("seg-1-7-1.m4s")),
+            EgressResponse::Ready { .. }
+        ));
     }
 }

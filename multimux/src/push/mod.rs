@@ -347,7 +347,7 @@ impl PushMetrics {
 fn log_partial_selection(url: &str, proposed: usize, selection: &TrackSelection) {
     if selection.track_ids.len() < proposed {
         tracing::warn!(
-            url,
+            url = %url,
             carried = selection.track_ids.len(),
             proposed,
             "push output cannot carry every track in this program; excluded tracks are \
@@ -378,6 +378,15 @@ pub async fn drive_push<T: PushTransport>(
     reconnect: crate::config::ReconnectPolicy,
     cancel: CancellationToken,
 ) -> PushMetrics {
+    // The destination as it may appear in a log line: a push URL carries
+    // credentials in its userinfo and a stream key in its path/query, none of
+    // which may reach the logs (audit T14, #1142).
+    let log_url = crate::redact::redact_destination(&url);
+    // Transport errors may echo what they were asked to dial; scrub every
+    // secret derived from the URL out of their text before logging.
+    let scrub = |err: &dyn std::fmt::Display| {
+        crate::redact::scrub_destination_secrets(&err.to_string(), &url)
+    };
     /// The generic [`NegotiationOutcome::Error`] reason when a proposed
     /// track set has no track this push output's wire format can carry at
     /// all — deliberately transport-agnostic (this function is generic over
@@ -432,7 +441,7 @@ pub async fn drive_push<T: PushTransport>(
                 let tracks_now = trunk.tracks();
                 match e.renegotiate(&tracks_now) {
                     NegotiationOutcome::Accepted(sel) => {
-                        log_partial_selection(&url, tracks_now.len(), &sel);
+                        log_partial_selection(&log_url, tracks_now.len(), &sel);
                         negotiated_generation = Some(generation);
                     }
                     NegotiationOutcome::Refused { reason } => {
@@ -443,7 +452,7 @@ pub async fn drive_push<T: PushTransport>(
                         // adopting the change or tearing the connection
                         // down over it.
                         tracing::warn!(
-                            url,
+                            url = %log_url,
                             reason,
                             "push renegotiate refused; continuing on the previous track \
                              selection"
@@ -451,7 +460,7 @@ pub async fn drive_push<T: PushTransport>(
                         negotiated_generation = Some(generation);
                     }
                     NegotiationOutcome::Error(err) => {
-                        tracing::warn!(url, error = %err, "push renegotiate failed; closing");
+                        tracing::warn!(url = %log_url, error = %scrub(&err), "push renegotiate failed; closing");
                         e.transport_mut().close();
                         egress = None;
                         negotiated_generation = None;
@@ -504,7 +513,7 @@ pub async fn drive_push<T: PushTransport>(
                     metrics.samples_dropped.fetch_add(1, Ordering::Relaxed);
                 }
                 Err(SendMediaError::Transport(err)) => {
-                    tracing::warn!(url, error = %err, "push send failed; reconnecting");
+                    tracing::warn!(url = %log_url, error = %scrub(&err), "push send failed; reconnecting");
                     e.transport_mut().close();
                     egress = None;
                     negotiated_generation = None;
@@ -532,10 +541,10 @@ pub async fn drive_push<T: PushTransport>(
                     let generation = trunk.track_generation();
                     match e.negotiate(&tracks_now) {
                         NegotiationOutcome::Accepted(sel) => {
-                            log_partial_selection(&url, tracks_now.len(), &sel);
+                            log_partial_selection(&log_url, tracks_now.len(), &sel);
                             let selected = e.selected_tracks().to_vec();
                             if let Err(err) = e.transport_mut().setup(&selected).await {
-                                tracing::warn!(url, error = %err, "push setup failed; closing");
+                                tracing::warn!(url = %log_url, error = %scrub(&err), "push setup failed; closing");
                                 e.transport_mut().close();
                                 engine.on_disconnect();
                             } else {
@@ -546,7 +555,7 @@ pub async fn drive_push<T: PushTransport>(
                             }
                         }
                         NegotiationOutcome::Error(err) => {
-                            tracing::warn!(url, error = %err, "push negotiate failed; backing off");
+                            tracing::warn!(url = %log_url, error = %scrub(&err), "push negotiate failed; backing off");
                             engine.on_disconnect();
                         }
                         // `NegotiationOutcome` is `#[non_exhaustive]`; a
@@ -560,7 +569,7 @@ pub async fn drive_push<T: PushTransport>(
                     }
                 }
                 Err(e) => {
-                    tracing::warn!(url, error = %e, "push connect failed; backing off");
+                    tracing::warn!(url = %log_url, error = %scrub(&e), "push connect failed; backing off");
                     engine.on_disconnect();
                 }
             }
@@ -571,7 +580,7 @@ pub async fn drive_push<T: PushTransport>(
         // sleep out the backoff (cancellation-aware).
         if let Some(e) = egress.as_mut() {
             if let Err(SendMediaError::Transport(err)) = e.flush_transmit().await {
-                tracing::warn!(url, error = %err, "push send failed while flushing; reconnecting");
+                tracing::warn!(url = %log_url, error = %scrub(&err), "push send failed while flushing; reconnecting");
                 e.transport_mut().close();
                 egress = None;
                 negotiated_generation = None;
