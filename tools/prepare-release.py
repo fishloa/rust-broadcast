@@ -70,12 +70,14 @@ def bump_version(crate: str, new: str, apply: bool) -> str:
 
 
 def caret(version: str) -> str:
-    """The caret-range string a sibling should depend on: major.minor for 0.x,
-    major for >=1.0 — matching how this workspace already writes them."""
+    """The caret-range string a sibling should depend on: always major.minor.
+
+    For 0.x that is the epoch itself. For >=1.0, writing only the major (e.g.
+    "9") would let a dependent that uses an API added in 9.4 publish with a
+    requirement 9.3 satisfies — a broken minimal version. major.minor keeps the
+    same caret epoch while pinning the floor to the release that has the API."""
     parts = version.split(".")
-    if parts[0] == "0":
-        return f"{parts[0]}.{parts[1]}"
-    return parts[0]
+    return f"{parts[0]}.{parts[1]}"
 
 
 def update_sibling_refs(crate: str, new: str, apply: bool) -> list[str]:
@@ -156,19 +158,38 @@ Published from tag `{crate}-v{new}`.
     return f"  {crate}: release note scaffolded ({path.name}) — REVIEW AND EDIT IT"
 
 
+def _publish_deps(manifest: Path) -> set[str]:
+    """Names in [dependencies] / [build-dependencies] (incl. target-specific
+    tables). Dev-dependencies are excluded: they do not gate publishing, and
+    counting them creates cycles (e.g. a crate's tests depending on a dependent
+    crate) that used to collapse the order to alphabetical."""
+    import tomllib
+
+    data = tomllib.loads(manifest.read_text())
+    names: set[str] = set()
+
+    def take(table: dict) -> None:
+        for k in ("dependencies", "build-dependencies"):
+            for name, spec in (table.get(k) or {}).items():
+                names.add(spec.get("package", name) if isinstance(spec, dict) else name)
+
+    take(data)
+    for tgt in (data.get("target") or {}).values():
+        take(tgt)
+    return names
+
+
 def dependency_order(crates: list[str]) -> list[str]:
     """Order crates so a dependency is tagged before its dependents."""
     deps: dict[str, set[str]] = {}
     for c in crates:
-        text = crate_manifest(c).read_text()
-        deps[c] = {o for o in crates if o != c and re.search(rf"^{re.escape(o)}\s*=", text, re.M)}
+        deps[c] = (_publish_deps(crate_manifest(c)) & set(crates)) - {c}
     ordered: list[str] = []
     remaining = dict(deps)
     while remaining:
         ready = sorted(c for c, d in remaining.items() if not (d - set(ordered)))
-        if not ready:  # cycle — fall back to input order rather than hang
-            ordered.extend(sorted(remaining))
-            break
+        if not ready:
+            raise SystemExit(f"dependency cycle among: {sorted(remaining)}")
         ordered.extend(ready)
         for c in ready:
             remaining.pop(c)
