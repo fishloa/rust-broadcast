@@ -299,10 +299,12 @@ cargo test --locked -p webrtc-runtime -p hls-runtime --all-features --test golde
 wc -c webrtc-runtime/tests/golden/*.golden hls-runtime/tests/golden/*.golden
 ```
 
+Also (SP7, early; other W1 branches run tests on this machine in parallel): in `webrtc-runtime/examples/whip_media_smoke.rs` replace `const SIGNALLING_PORT: u16 = 8787;` use by an OS-assigned port: `TcpListener::bind(("127.0.0.1", 0))`, print `listener.local_addr()` in the two `println!`s, and accept an optional first CLI argument as an explicit port. Run `cargo build --locked -p webrtc-runtime --all-features --examples` (Task 10 later rewrites the example on axum and keeps port 0 as the default).
+
 Expected: ok everywhere; `whip_whep_http.golden` over 2 KB; `client_urls.golden` over 1.5 KB. Write both `README.md` files (generated at `<BASE>` with the exact command above; compared byte-for-byte by the same test), then:
 
 ```bash
-git add webrtc-runtime/tests/golden_http.rs webrtc-runtime/tests/golden hls-runtime/tests/golden_client.rs hls-runtime/tests/golden
+git add webrtc-runtime/tests/golden_http.rs webrtc-runtime/tests/golden webrtc-runtime/examples/whip_media_smoke.rs hls-runtime/tests/golden_client.rs hls-runtime/tests/golden
 git commit -m "test(webrtc,hls): byte-for-byte goldens from main for the W1 http and url rewrites"
 ```
 
@@ -624,7 +626,7 @@ cargo build --locked -p multimux --all-features 2>&1 | tail -2
 cargo build --locked -p srt-runtime --no-default-features --target thumbv7em-none-eabi 2>&1 | tail -1
 ```
 
-Expected: all ok (including the libsrt interop suites, which prove the wire is untouched), multimux builds, the thumb build still passes (`bytes` is only under `tokio`).
+Expected: all ok (including the libsrt interop suites, which prove the wire is untouched and MUST actually run here: run `which srt-live-transmit` first and stop if it is absent, a skipped interop suite is not evidence), multimux builds, the thumb build still passes (`bytes` is only under `tokio`).
 
 - [ ] **Step 5: Revert-check (review-focus 2)**
 
@@ -841,6 +843,8 @@ with `const MIN_WAKE: Duration = Duration::from_millis(1);`. In `run`, delete th
 ```bash
 cargo test --locked -p srt-runtime --all-features 2>&1 | grep -E '^test result|FAILED|panicked|^error' | sort | uniq -c
 ```
+
+Also run `cargo test --locked -p srt-runtime --all-features --test pacing_throughput --test livecc_pacing` explicitly and confirm throughput at 20+ Mbps (packet period under the 1 ms `MIN_WAKE` floor) has not regressed against the Task 0 baseline numbers; if it has, make the floor apply only when no pacing slot is due.
 
 Expected: all ok, including the pre-existing paused-time keep-alive/idle/pacing tests (`an_idle_connection_sends_a_keepalive_after_one_second`, `the_peer_idle_timeout_is_five_silent_seconds`, `data_leaves_one_packet_per_pacing_period`, `ackack_is_not_queued_behind_a_not_yet_due_paced_data_packet`) and every libsrt interop and `pacing_throughput`/`livecc_pacing` test.
 
@@ -1087,7 +1091,7 @@ Tests that referenced `listener.pending`/`cookie_keys` (3476-3560: `the_cookie_k
 cargo test --locked -p srt-runtime --all-features 2>&1 | grep -E '^test result|FAILED|panicked|^error' | sort | uniq -c
 ```
 
-Expected: all ok, including `io_concurrent_listener`, `io_handshake` (duplicate-conclusion/retransmit tests: the background task answers repeats without `accept` being polled) and the libsrt interop suites.
+Expected (libsrt interop must run, not skip): all ok, including `io_concurrent_listener`, `io_handshake` (duplicate-conclusion/retransmit tests: the background task answers repeats without `accept` being polled) and the libsrt interop suites.
 
 - [ ] **Step 5: Revert-check (defect 3)**
 
@@ -1498,6 +1502,8 @@ git commit -m "refactor(webrtc-runtime): SDP fingerprint via sdp-types typed att
 ---
 
 ### Task 9: webrtc core goes `std`; WHIP/WHEP state machines on `http` / `headers` types (SP2.2)
+
+**Two reviewable commits (review finding: one commit mixed a `no_std` drop, an HTTP-types migration and a CI edit).** Commit 9a: core `std` (lib.rs, Cargo.toml), `Error::InvalidHeader`, `pub use http::Method`/`StatusCode` in `HttpRequest`/`HttpResponse` with `HeaderMap`, the `ci.yml` one-token edit; the tree must build and the suites pass (typed helpers can be minimal here). Commit 9b: `http_util.rs` typed `ETag`/`IfMatch`/`ContentType`/`Location`/`RetryAfter`/`Authorization` helpers, the strictness tests and the golden re-target. Commit and gate each separately.
 
 **Files:**
 - Modify: `webrtc-runtime/src/lib.rs` (drop `#![cfg_attr(not(feature = "std"), no_std)]`, update docs 1-12), `Cargo.toml` (`std` feature becomes `[]`-compatible no-op list: keep the name so `--no-default-features`/`default-features = false` consumers still resolve), `src/error.rs` (new variant)
@@ -1937,8 +1943,8 @@ async fn preflight() -> impl IntoResponse {
 
 #[tokio::main]
 async fn main() {
-    // Signalling port: first argument, default 8787; `0` picks a free port and prints it.
-    let port: u16 = std::env::args().nth(1).and_then(|p| p.parse().ok()).unwrap_or(8787);
+    // Signalling port: first argument, default 0 (OS-assigned, printed); never a fixed port.
+    let port: u16 = std::env::args().nth(1).and_then(|p| p.parse().ok()).unwrap_or(0);
     let listener = TcpListener::bind(("127.0.0.1", port)).await.expect("bind whip-lite http port");
     println!("[smoke] WHIP-lite signalling on http://{}/whip", listener.local_addr().unwrap());
     let (tx, mut offers) = mpsc::channel::<Offer>(1);
@@ -2921,14 +2927,34 @@ New lock packages: jiff, backon, headers, headers-core, mime, httpdate, base64 0
 Goldens: webrtc whip_whep_http.golden (differences: <paste Task 9>), hls client_urls.golden (differences: <paste Task 11>).
 ```
 
+- [ ] **Step 3b: Rebase onto main and regenerate the lock (merge order is T, RA, P, RB; this plan rebases LAST)**
+
+```bash
+git fetch -q origin && git rebase origin/main
+git checkout origin/main -- Cargo.lock
+CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo update -p headers -p jiff -p backon -p sdp-types -p wait-timeout -p axum -p tokio-util
+git diff origin/main -- Cargo.lock | grep -E '^[-+]name|^[-+]version' | paste - - | sort | uniq
+```
+
+Never hand-merge `Cargo.lock`. Packages already added by T/RA/P (`jiff`, `headers`, `sdp-types 0.2.0`, `wait-timeout`, `url`) will already be in `origin/main`'s lock; the diff must show only what is still new. Then re-apply this plan's multimux compile fixes on top of whatever has landed: re-run `cargo build -p multimux --all-features --locked` and fix any remaining call site of `SrtSocket::recv` (`Bytes`) and `MediaTransport::new(cfg, now)` (`multimux/src/source/{srt,whip}.rs`, `push/srt.rs`, `output/whep.rs`), call-site adaptation only. Re-run the goldens and the three crates' suites.
+
 - [ ] **Step 4: thumbv7em builds and the full gate**
 
 ```bash
-for c in srt-runtime hls-runtime; do cargo build --locked -p $c --no-default-features --target thumbv7em-none-eabi 2>&1 | tail -1; done
+# the CI list itself (read-only; YAML is never rewritten by script): every crate CI cross-builds must still build
+LIST=$(python3 - <<'PY'
+import re
+t = open('.github/workflows/ci.yml').read()
+print(re.search(r'for c in ([^;]+); do\s*\n\s*echo "::group::\$c \(no_std\)"', t).group(1))
+PY
+)
+for c in $LIST; do cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked 2>&1 | tail -1 | grep -q Finished || echo "FAIL $c"; done
+python3 -c "import yaml,sys; yaml.safe_load(open('.github/workflows/ci.yml'))" && echo yaml-ok
+# gate takes the shared gate lock itself
 /Volumes/External/Projects/rust-broadcast/.delegate/gate-wt.sh "$PWD" 2>&1 | tee /tmp/w1-rlow-b-gate.log | grep -E '^== |^rc=|GATE-DONE|FAIL'
 ```
 
-Expected: both thumb builds `Finished` (webrtc-runtime is deliberately not built there any more); every gate step `rc=0` (14/14 incl. the per-crate no-default-features loop, both multimux feature clippy runs, the dvb-ci-runtime Linux checks, the pinned 1.97.1 clippy, `check-published-dep-consistency.py`), `GATE-DONE`. Any failure: fix and re-run the whole gate.
+Expected: no `FAIL` line (this covers srt-runtime and hls-runtime, which stay `no_std`, and every other crate CI lists; `webrtc-runtime` is no longer on the list after Task 9), `yaml-ok`; both thumb builds `Finished` (webrtc-runtime is deliberately not built there any more); every gate step `rc=0` (14/14 incl. the per-crate no-default-features loop, both multimux feature clippy runs, the dvb-ci-runtime Linux checks, the pinned 1.97.1 clippy, `check-published-dep-consistency.py`), `GATE-DONE`. Any failure: fix and re-run the whole gate.
 
 - [ ] **Step 5: Evidence and hand-off**
 
@@ -2978,6 +3004,11 @@ Every §3 inventory site and SP item assigned to this half of the R-low cluster,
 Link-header vectors/fuzz (spec §9.1 says "RFC 8288 + RFC 9725 test vectors and a fuzz target added"): `fuzz/fuzz_targets/webrtc_ice.rs` already fuzzes `parse_ice_server_links`/`format_ice_server_links` (verified), and `ice.rs` has unit tests; adding the RFC 8288 §3.5 and RFC 9725 §4.4 example vectors as `webrtc-runtime/tests/ice_link_vectors.rs` is a small additive step owned by W3 (spec §7: guards, cleanup sweep), not by this plan.
 
 ## Escalations
+
+0. **Owner decisions applied (review 2026-10-03):** `HlsClient::poll_timeout(now)` accepted; SRT stays off `UdpFramed` (see 9); duplicate `base64 0.22` / `sha1 0.10` via `headers` accepted (T's plan records the same lock entries); fixed port 8787 moved to port 0 in Task 1.
+9. **SRT does not use `UdpFramed`** (spec SP1.1 lists datagram paths; owner accepted the deviation). Why: the demultiplexing pump must route each datagram by Destination Socket ID to a per-connection channel and count per-connection drops, and `max_datagram` oversize detection needs to read one byte past the limit, which `UdpFramed`'s fixed 64 KiB buffer and decoder-per-datagram shape neither expose nor simplify; the pump keeps `UdpSocket::recv_buf_from` plus `Bytes` (zero-copy). No `socket2` here (spec lists it only for multimux, media-doctor, dvb-stream).
+10. **Link-header vectors/fuzz (spec 9.1):** deferred to a W3 task (RFC 8288 + RFC 9725 vectors in `webrtc-runtime/tests/ice_link_vectors.rs`); the `webrtc_ice` fuzz target already exists.
+11. **No new fuzz targets** for `url::resolve`, `append_pair`, the typed header helpers: they delegate to `url`/`headers`/`sdp-types`; recorded per review G7.
 
 1. **`MediaTransport::poll_timeout` is `&mut self`, not `&self`** (spec SP1.2). `rtc-ice 0.21`/`rtc-stun 0.21` implement `sansio::Protocol::poll_timeout(&mut self)` (`sansio-1.0.1/src/lib.rs:707`, `rtc-ice-0.21.0/src/agent/agent_proto.rs:135`), so an aggregate over them cannot be `&self`. The srt `Driver::poll_timeout` is `&self` as specified. Evidence is in the Task 7 interface comment. Owner action: accept the deviation.
 2. **HLS `poll_timeout` needs a caller clock.** The hls core is `no_std` and never reads a clock, so `HlsClient::poll_timeout(&self)` (no argument) cannot return an `Instant`. Delivered: `next_wait() -> Option<Duration>` (core) and `poll_timeout(&self, now: Instant) -> Option<Instant>` (feature `std`). The deadline is derived from the queued `WaitMs` hint, which is how the core already expresses its only timer. Owner action: accept, or ask for `HlsClient` to track a `now` (breaking the sans-IO contract).

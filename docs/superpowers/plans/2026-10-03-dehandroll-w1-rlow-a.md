@@ -304,6 +304,10 @@ wc -c rtsp-runtime/tests/golden/*.golden rtmp-runtime/tests/golden/*.golden dvb-
 
 Expected: every `test result: ok`; every golden file non-empty (the session transcript is a few KB; `m6_single_events.golden` has one line per section). If the dvb-stream golden is under 500 bytes the fixture produced no events: stop and investigate (the existing `differential.rs` asserts the same fixture is non-empty).
 
+- [ ] **Step 4b: Move the fixed UDP port off 43991 NOW (SP7, early)**
+
+`dvb-stream/tests/error_and_datagram.rs` binds the fixed `TEST_PORT = 43_991`; other W1 branches run tests on the same machine in parallel. Interim fix on the OLD API (Task 11 replaces it with `UdpSectionStream::from_socket`): replace `const TEST_PORT` by a port picked from the OS: `let probe = std::net::UdpSocket::bind("0.0.0.0:0").unwrap(); let test_port = probe.local_addr().unwrap().port(); drop(probe);` and use `test_port` in both the bind and the `send_to`. Run `cargo test --locked -p dvb-stream --all-features --test error_and_datagram` and expect ok (the test still skips cleanly without multicast). Include the file in this task's commit.
+
 - [ ] **Step 5: Write the three READMEs, commit**
 
 Each `README.md` (same shape, three copies):
@@ -318,7 +322,7 @@ Compared byte-for-byte by the same test without `GOLDEN_UPDATE`. Only Task 4
 ```
 
 ```bash
-git add rtsp-runtime/tests/golden_wire.rs rtsp-runtime/tests/golden rtmp-runtime/tests/golden_wire.rs rtmp-runtime/tests/golden dvb-stream/tests/golden_events.rs dvb-stream/tests/golden
+git add rtsp-runtime/tests/golden_wire.rs rtsp-runtime/tests/golden rtmp-runtime/tests/golden_wire.rs rtmp-runtime/tests/golden dvb-stream/tests/golden_events.rs dvb-stream/tests/golden dvb-stream/tests/error_and_datagram.rs
 git commit -m "test(rtsp,rtmp,dvb-stream): byte-for-byte goldens from main for the W1 adapter rewrite"
 ```
 
@@ -336,7 +340,7 @@ git commit -m "test(rtsp,rtmp,dvb-stream): byte-for-byte goldens from main for t
 **Interfaces:**
 - Consumes: nothing.
 - Produces: the dependency edges later tasks use (`tokio_util::codec::{Decoder,Encoder,Framed,FramedRead}`, `tokio_util::udp::UdpFramed`, `futures_util::{SinkExt,StreamExt}`, `bytes::{Bytes,BytesMut,Buf}`, `url::Url`, `socket2`, `http_auth::parse_challenges`).
-- `sdp-types` is not in any `rtsp-runtime` public signature (verified: `grep -n "sdp_types" rtsp-runtime/src` shows only a doc line in `lib.rs`), so the bump is not an epoch change for rtsp-runtime. The crate's own `[dependencies]` entry is unused by `src`; it stays (spec SP4 lists the bump) and moves to 0.2.
+- `sdp-types` moves to a dev-dependency only (SP4 bump to 0.2 stays satisfied); it is not in any `rtsp-runtime` public signature (verified: `grep -n "sdp_types" rtsp-runtime/src` shows only a doc line in `lib.rs`), so the bump is not an epoch change for rtsp-runtime. The crate's own `[dependencies]` entry is unused by `src`; it stays (spec SP4 lists the bump) and moves to 0.2.
 
 - [ ] **Step 1: Write the failing check (the dependency is declared but at the old version)**
 
@@ -348,7 +352,7 @@ Expected: two lines, both `"0.1"`.
 
 - [ ] **Step 2: Edit the manifests**
 
-`rtsp-runtime/Cargo.toml` `[dependencies]` — change `sdp-types  = "0.1"` to `sdp-types  = "0.2"` and add (after `getrandom`):
+`rtsp-runtime/Cargo.toml` `[dependencies]` — REMOVE the `sdp-types  = "0.1"` line (no `src` line uses it; review finding A4: a dead dependency is caught by no gate) and add (after `getrandom`):
 
 ```toml
 # Typed RTSP/auth header handling replaces hand-rolled scans (W1 SP1/SP2): the
@@ -366,7 +370,7 @@ and change the `tokio` feature line to:
 tokio = ["dep:tokio", "dep:getrandom", "dep:tokio-util", "dep:futures-util", "dep:bytes"]
 ```
 
-`[dev-dependencies]`: `sdp-types = "0.2"`, plus `tokio = { version = "1", features = ["full", "test-util"] }`.
+`[dev-dependencies]`: `sdp-types = "0.2"` (the only user is `tests/integration.rs`), plus `tokio = { version = "1", features = ["full", "test-util"] }`.
 
 `rtmp-runtime/Cargo.toml`: replace the tokio line and feature:
 
@@ -703,6 +707,39 @@ Append to `rtsp-runtime/src/transport.rs`'s test module:
         assert!(t.to_header_value().contains("layers=2"));
     }
 
+    /// RFC 2326 §12.39 tokens and parameter names are case-insensitive; the old parser accepted
+    /// any case, the typed rtsp-types parser is exact-case, so the value is case-normalised first.
+    #[test]
+    fn mixed_case_tokens_and_parameter_names_parse_like_the_old_parser() {
+        let t = Transport::parse("RTP/AVP/TCP;Interleaved=0-1").unwrap();
+        assert_eq!(t.first().unwrap().interleaved, Some((0, 1)));
+        let t = Transport::parse("rtp/avp/udp;UNICAST;Client_Port=8000-8001;SSRC=DEADBEEF").unwrap();
+        let s = t.first().unwrap();
+        assert_eq!(s.lower_transport, Some(LowerTransport::Udp));
+        assert_eq!(s.delivery, Some(Delivery::Unicast));
+        assert_eq!(s.client_port, Some((8000, 8001)));
+        assert_eq!(s.ssrc, Some(0xDEAD_BEEF));
+        // values are NOT touched: a destination keeps its case
+        let t = Transport::parse("RTP/AVP;multicast;Destination=Cam.Example").unwrap();
+        assert_eq!(t.first().unwrap().destination.as_deref(), Some("Cam.Example"));
+    }
+
+    #[test]
+    fn layers_round_trip_through_the_others_map() {
+        let t = Transport::parse("RTP/AVP;multicast;layers=3;ttl=5").unwrap();
+        let again = Transport::parse(&t.to_header_value()).unwrap();
+        assert_eq!(t, again);
+        assert_eq!(again.first().unwrap().layers, Some(3));
+    }
+
+    /// Duplicated parameters: last one wins, as in the old parser (pinned so the typed parser's
+    /// "each parameter appears once" assumption cannot silently change it).
+    #[test]
+    fn a_duplicated_parameter_keeps_the_last_value_like_before() {
+        let t = Transport::parse("RTP/AVP;unicast;client_port=1000-1001;client_port=2000-2001").unwrap();
+        assert_eq!(t.first().unwrap().client_port, Some((2000, 2001)));
+    }
+
     #[test]
     fn non_avp_profile_and_unknown_lower_transport_are_rejected() {
         assert!(Transport::parse("RTP/SAVP").is_err());
@@ -719,6 +756,29 @@ cargo test --locked -p rtsp-runtime --all-features --lib transport 2>&1 | grep -
 Expected: `serialisation_order_is_the_typed_headers_order` FAILS (old order puts `destination` first and `port` before `ttl`... the old output is `RTP/AVP/UDP;multicast;destination=224.2.0.1;ttl=16;port=3456-3457`) and `layers_survive...` may pass already. Record the failing names.
 
 - [ ] **Step 3: Implement the conversions**
+
+First the case normaliser (review finding A2; `rtsp-types-0.1.3/src/headers/transport.rs:96-108,327-336,525-560` match `RTP`/`AVP`/`TCP`/`UDP` and parameter names exact-case, the old `parse_spec` used `eq_ignore_ascii_case`). It runs on the raw header value before the typed parse, upper-casing the transport triple of each comma-separated spec and lower-casing parameter NAMES only (never values):
+
+```rust
+fn normalise_case(value: &str) -> String {
+    value
+        .split(',')
+        .map(|spec| {
+            let mut parts = spec.split(';');
+            let head = parts.next().unwrap_or("").trim();
+            let head = head.split('/').map(|t| t.trim().to_ascii_uppercase()).collect::<Vec<_>>().join("/");
+            let rest = parts.map(|p| match p.split_once('=') {
+                Some((k, v)) => format!("{}={}", k.trim().to_ascii_lowercase(), v),
+                None => p.trim().to_ascii_lowercase(),
+            });
+            std::iter::once(head).chain(rest).collect::<Vec<_>>().join(";")
+        })
+        .collect::<Vec<_>>()
+        .join(",")
+}
+```
+
+`Transport::parse` hands `normalise_case(value)` to the typed parser. (If a duplicated-parameter case is rejected rather than last-wins by the typed parser, check the OLD behaviour first with `git show $BASE:rtsp-runtime/src/transport.rs`: it assigned each occurrence, so last wins; make the conversion take the last by re-scanning, or record an escalation with the rtsp-types line `transport.rs:512` FIXME as evidence.)
 
 Replace the bodies with:
 
@@ -994,17 +1054,16 @@ async fn a_response_dripped_one_byte_at_a_time_still_times_out_as_a_whole() {
     assert!(matches!(err, Error::Timeout { what: "read" }), "got {err:?}");
 }
 
-#[tokio::test(start_paused = true)]
-async fn a_connect_that_never_completes_is_bounded() {
-    use rtsp_runtime::io::bounded_for_test;
-    let r: Result<(), Error> = bounded_for_test(
-        Duration::from_secs(3),
-        "connect",
-        std::future::pending::<Result<(), Error>>(),
-    )
-    .await;
-    assert!(matches!(r, Err(Error::Timeout { what: "connect" })));
-}
+```
+
+The `bounded` helper's own test lives in `codec.rs`'s `#[cfg(test)]` module (no `#[doc(hidden)]` public item, review finding):
+
+```rust
+    #[tokio::test(start_paused = true)]
+    async fn a_connect_that_never_completes_is_bounded() {
+        let r: Result<()> = bounded(Duration::from_secs(3), "connect", std::future::pending::<Result<()>>()).await;
+        assert!(matches!(r, Err(Error::Timeout { what: "connect" })));
+    }
 ```
 
 Add to `rtsp-runtime/src/codec.rs` (new file, tests first; the types do not exist yet):
@@ -1068,7 +1127,7 @@ and in `client.rs`'s test module:
 cargo test --locked -p rtsp-runtime --all-features --test io_timeouts 2>&1 | grep -E '^error|cannot find|no variant|test result' | head
 ```
 
-Expected: compile errors (`RtspTimeouts` not found, `Error::Timeout` not found, `bounded_for_test`). That is the FAIL.
+Expected: compile errors (`RtspTimeouts` not found, `Error::Timeout` not found, `bounded`). That is the FAIL.
 
 - [ ] **Step 3: Implement**
 
@@ -1295,7 +1354,7 @@ impl AsyncRtspClient<TcpStream> {
 }
 ```
 
-TLS: `connect_tls_with` calls `connect_tls_with_timeouts(addr, server_name, config, session, RtspTimeouts::default())`, which does `bounded(t.connect, "connect", TcpStream::connect)` then `bounded(t.handshake, "handshake", connector.connect(dns, tcp))`. Add the test hook `#[doc(hidden)] pub async fn bounded_for_test<T>(l: Duration, what: &'static str, f: impl Future<Output = Result<T>>) -> Result<T> { bounded(l, what, f).await }` in `io.rs`. Add `RtspTimeouts` (struct, `Default`, `with_*`) to `io.rs`; `pub use io::{..., RtspTimeouts}` in `lib.rs`.
+TLS: `connect_tls_with` calls `connect_tls_with_timeouts(addr, server_name, config, session, RtspTimeouts::default())`, which does `bounded(t.connect, "connect", TcpStream::connect)` then `bounded(t.handshake, "handshake", connector.connect(dns, tcp))`. Add `RtspTimeouts` (struct, `Default`, `with_*`) to `io.rs`; `pub use io::{..., RtspTimeouts}` in `lib.rs`.
 
 - [ ] **Step 4: Run, expect PASS**
 
@@ -1987,20 +2046,21 @@ async fn a_cancelled_next_events_neither_loses_nor_duplicates_the_reply() {
     let reader = tokio::spawn(async move {
         let mut got = vec![0u8; 3073];
         client.read_exact(&mut got).await.unwrap();
-        // nothing further may arrive (no duplicate)
-        let mut extra = [0u8; 1];
-        let more = tokio::time::timeout(Duration::from_millis(50), client.read(&mut extra)).await;
-        (got, more.is_err())
+        // The server side is dropped below, so EOF follows: anything else that arrives is a duplicate.
+        let mut rest = Vec::new();
+        client.read_to_end(&mut rest).await.unwrap();
+        (got, rest)
     });
     let events = c.next_events().await.unwrap().expect("the events of the cancelled call are not lost");
     assert!(events.is_empty());
-    let (got, nothing_more) = reader.await.unwrap();
+    drop(c); // closes the server side: the reader sees EOF right after the reply
+    let (got, rest) = reader.await.unwrap();
     assert_eq!(got, expected, "reply must be byte-identical and complete");
-    assert!(nothing_more, "reply must not be duplicated");
+    assert!(rest.is_empty(), "reply must not be duplicated: {} extra bytes", rest.len());
 }
 ```
 
-(The last test uses real time on purpose: it has no paused clock, and the 50 ms is a negative-assertion bound for "nothing more arrives", not a wait for progress. If review prefers no wall-clock at all, replace the final read with `drop(c)` followed by `client.read_to_end` and assert the total length is exactly 3073.)
+(No wall-clock wait anywhere: the negative assertion is "EOF arrives with nothing after the 3073 bytes".)
 
 - [ ] **Step 2: Run, expect FAIL**
 
@@ -3412,7 +3472,7 @@ Expected: no hit in `rtsp-runtime/src`, `rtmp-runtime/src`, `dvb-stream/src`. Th
 ```markdown
 ### Changed
 - **BREAKING** The tokio adapter is a `tokio_util::codec::Framed` over the sans-IO core. New `RtspTimeouts` (connect / handshake / read_idle / write; defaults 10 s / 10 s / 30 s / 10 s) and `*_with_timeouts` constructors; `AsyncRtspClient::with_stream` / `AsyncRtspServer::with_stream` keep their signatures and use the defaults. New `Error::Timeout { what }`. `read_idle` bounds the whole frame, so a peer dripping bytes times out.
-- **BREAKING** Header blocks are capped at 64 KiB and request bodies at 2 MiB (was a single 2 MiB buffer cap); the client core rejects an unterminated header over 64 KiB.
+- **BREAKING** (quadratic re-parse is BOUNDED, not removed: the core still re-parses its inbound buffer per chunk, now at most 64 KiB of head) Header blocks are capped at 64 KiB and request bodies at 2 MiB (was a single 2 MiB buffer cap); the client core rejects an unterminated header over 64 KiB.
 - `Transport` header parse/build uses `rtsp_types::headers::Transports`. Parameter ORDER of the serialised header changed (semantically equivalent); parsed values are identical. Examples: <paste the changed lines from Task 4 step 4: `RTP/AVP/UDP;multicast;destination=224.2.0.1;port=3456-3457;ttl=16` -> `RTP/AVP/UDP;multicast;ttl=16;port=3456-3457;destination=224.2.0.1`, ...>.
 - `sdp-types` 0.1 -> 0.2 (not in the public API).
 
@@ -3444,13 +3504,44 @@ multimux: no source change needed for these three crates (verified: cargo build 
 New lock packages: sdp-types 0.2.0 (+ transitive), nothing else beyond edges (tokio-util, futures-util, bytes, url, socket2, http-auth already locked).
 ```
 
+- [ ] **Step 4a: Rebase onto main and regenerate the lock (merge order is T, RA, P, RB)**
+
+Do this once every earlier branch has merged (RA consumes nothing from T but still rebases):
+
+```bash
+git fetch -q origin && git rebase origin/main
+git checkout origin/main -- Cargo.lock
+CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo update -p sdp-types --precise 0.2.0
+cargo build --workspace --all-features --locked 2>&1 | tail -2
+git diff origin/main -- Cargo.lock | grep -E '^[-+]name|^[-+]version' | paste - - | sort | uniq
+```
+
+Never hand-merge `Cargo.lock`. If `--locked` complains that a package is missing, run the plan's own `cargo update -p ...` (Task 2 lists them) and re-check that only this plan's packages differ from `origin/main`. Re-run Tasks 1's golden tests and the three crates' suites after the rebase.
+
+- [ ] **Step 4b: Confirm the CI thumbv7em cross-builds still build**
+
+None of this plan's crates is in CI's `thumbv7em-none-eabi` list, so it must stay green untouched. Read the exact list and command from `.github/workflows/ci.yml` (the `for c in ...; do cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked` step) and run it:
+
+```bash
+rustup target add thumbv7em-none-eabi
+LIST=$(python3 - <<'PY'
+import re
+t = open('.github/workflows/ci.yml').read()
+print(re.search(r'for c in ([^;]+); do\s*\n\s*echo "::group::\$c \(no_std\)"', t).group(1))
+PY
+)
+for c in $LIST; do cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked 2>&1 | tail -1 | grep -q Finished || echo "FAIL $c"; done
+```
+
+Expected: no `FAIL` line (the python only READS the list; YAML is never rewritten by script).
+
 - [ ] **Step 4: Run the full gate on the worktree**
 
 ```bash
 /Volumes/External/Projects/rust-broadcast/.delegate/gate-wt.sh "$PWD" 2>&1 | tee /tmp/w1-rlow-a-gate.log | grep -E '^== |^rc=|GATE-DONE|FAIL'
 ```
 
-Expected: every `rc=0` (14 steps including the per-crate no-default-features loop), `GATE-DONE`. Also run `tools/check-published-dep-consistency.py` (step 14 of the gate does). Any failure: fix, re-run the whole gate; do not report partial results.
+The script takes the shared gate lock itself (the orchestrator adds it); just call it. Expected: every `rc=0` (14 steps including the per-crate no-default-features loop), `GATE-DONE`. Also run `tools/check-published-dep-consistency.py` (step 14 of the gate does). Any failure: fix, re-run the whole gate; do not report partial results.
 
 - [ ] **Step 5: Final evidence and hand-off**
 
@@ -3496,6 +3587,8 @@ Every §3 inventory site and SP item assigned to this half of the R-low cluster,
 Items of the R-low row owned by the sibling plan `2026-10-03-dehandroll-w1-rlow-b.md`: srt-runtime, webrtc-runtime, hls-runtime, SP2.2/2.6, SP3 (hls, webrtc stun), SP4 (webrtc), SP5 (hls), SP6.5, defect 7, and the `Instant::now()` carry from W0.
 
 ## Escalations
+
+0. **Owner decisions applied (review 2026-10-03):** Transport parameter-order change accepted (`layers` kept through `others`, round-trip test in Task 4); case-insensitive Transport tokens/parameter names kept by normalising case before the typed parse (test with `RTP/AVP/TCP;Interleaved=0-1`); no sleeps in tests; fixed port 43991 moved to an OS-assigned port in Task 1. **No fuzz targets added** for `TsDecoder`, the RTSP/RTMP codecs and `headers_util` (review G7): the codecs delegate to cores that already have fuzz targets (`rtmp_server_session`, `rtmp_chunk_amf0`), `TsDecoder` and the RTSP codecs have none; a follow-up story should add `ts_decoder` and `rtsp_codec` targets.
 
 1. **SP1.4 for the three crates in this plan is vacuous, not skipped.** `rtsp-runtime`, `rtmp-runtime` and `dvb-stream` own no spawned task: every adapter is a per-connection future driven by the caller, and `dvb-stream`'s docs state "no internal tasks". Nothing here leaks a `JoinHandle` or a bound port, so there is no `TaskTracker`/`CancellationToken` to add. The tracked-task and cancellation work for this cluster is in the sibling plan (srt listener, hls `TokioClient`). Evidence: `grep -rn "tokio::spawn\|task::spawn\|JoinHandle" rtsp-runtime/src rtmp-runtime/src dvb-stream/src` is empty after Task 11 (it is empty on `main` too; the matches are all in `#[cfg(test)]`). Owner action: none unless they want an explicit cancellation parameter on the long-lived `next_events`/`recv_interleaved` futures; callers cancel by dropping or `select!`, which Task 8's cancel-safety test pins.
 2. **`Transport` header serialisation order changes** (Task 4). `rtsp-types` has no `layers` field and serialises parameters in its own fixed order, so the byte output of `Transport::to_header_value` differs for multi-parameter specs (semantically identical; `layers` is carried through the typed `others` map). Spec §1 criterion 3 allows this only if each difference is listed in the CHANGELOG with an example, which Task 14 does. If the owner requires byte-identical headers, the alternative is to keep the old hand-written serialiser (a §9 exception) and use the typed header for parsing only.
