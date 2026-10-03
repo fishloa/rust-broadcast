@@ -131,6 +131,7 @@ pre-sweep code) and is backed by a deterministic allocation or work counter
   output size allocated) write into pre-sized output buffers (#1081, r05-O4).
 - `Serialize` is implemented once on `SampleEntryVariant`, replacing four 17-arm matches (#1081, r05-O3).
 - `cargo test -p transmux --no-default-features` builds again (the in-crate tests link `std`) (#1079).
+- `jiff` replaces the hand-rolled `civil_from_days` (CLI `availabilityStartTime`); `base64`/`hex` crates replace the hand-rolled codecs.
 
 Intentionally not done: `BitReader::from_rbsp` borrowing (a public lifetime change for one allocation
 per SPS), the three merge-by-decode-time loops (their tie-break rules differ), and a typed-parser
@@ -655,6 +656,14 @@ rewrite of `cenc_decrypt`'s remaining box walker (#1081).
   inter-access-unit steps, capped at one second — so a single late access unit
   or an 8-second splice cannot become "the frame period" for the frames that
   follow.
+- `uri` module removed (`UriReference`, `resolve`, `merge`, `remove_dot_segments`, `resolve_segment`, `try_resolve*`, `first_forbidden_char` and the `RFC3986_*` tables, plus the crate-root `resolve_uri_reference`/`resolve_uri_segment`/`try_resolve_uri_reference`). Replaced by `base_url::{resolve, resolve_chain, first_forbidden_char}` over `url::Url` (`std` only; also `resolve_url_reference`/`resolve_base_url_chain` at the root). `Mpd::resolve_segment_url` now takes the MPD's own URL (`Option<&url::Url>`) as its first argument and returns `Option<String>`; `Mpd::try_resolve_segment_url` is removed. `BaseURL` entries are trimmed before the control-character guard (XML layout whitespace is harmless); an interior control character or space still yields `None`. Differences from the old resolver, each with an example: with no base a relative input still resolves to a contained relative result (`../../../etc/passwd` -> `etc/passwd`, as before; `%2e%2e/x` behaves like `../x`) and only an absolute-path reference the MPD wrote itself (`/x`) comes back absolute; an input naming the internal `transmux-relative:` scheme is `None`; the host is lower-cased and a default port dropped (`http://H:80/x` -> `http://h/x`); non-ASCII is percent-encoded (`é.m4s` -> `%C3%A9.m4s`); the `//g` network-path row serialises as `http://g/` and `http:g` against an `http` base resolves relatively (WHATWG, listed in `tests/base_url.rs`); a reference that does not parse is `None`.
+- `build_sdp_with_connection(IpAddr, Vec<sdp_types::Media>)` replaces the `&str` media-block parameter; RTP SDP generation is `std`-only (`RtpOutput::sdp` exists only with the `std` feature). The SDP bytes are identical (golden-tested). `sdp-types` 0.2 and `url` types appear in the public API.
+- DASH writer: `xs:duration` attributes are the shortest ISO 8601 form (`PT2.0S` -> `PT2S`, `PT0.0S` -> `PT0S`, `PT3.0S` -> `PT3S`, `PT90.0S` -> `PT1M30S`); equal durations, different bytes.
+- `dash_parse::parse_iso8601_duration` now checks the XML Schema 1.1 `xs:duration` lexical space (then converts with `jiff`) instead of hand-splitting. Every valid form representable as an unsigned `Duration` is accepted (including seconds fractions longer than nine digits, truncated to nanoseconds as before: `PT3.6666666666666665S`). Accept/reject changes vs the previous parser, with examples:
+  - now rejected, were accepted: a unit with no digits (`PTS`, `PTHS`, `PTMS` read as zero), `PT.5S` (XSD needs a digit before the point), a `+` sign (`PT+1S`, `P+1D`), and magnitudes beyond `jiff`'s span limits (`PT999999999H`, `P999999999999D`: the old parser saturated; they are now `InvalidDuration`, never a panic).
+  - unchanged rejections (still `InvalidDuration`): lower-case designators (`PT1h30m`, `Pt1S`), weeks (`P1W`), fractions on hours/minutes (`PT1.5H`), the comma separator (`PT1,5S`), calendar units (`P1Y`, `P1M`, `P1Y2M3DT4H5M6.7S`: lexically valid but a `Duration` has no calendar), negative durations (`-PT1S`: valid XSD, `Duration` is unsigned), trailing garbage and mis-ordered units.
+- `rtp::base64_decode` is stricter than the pre-crate decoder: input whose length is 1 mod 4 (`QUJDR`) is an error (the stray character used to be dropped silently), and `=` anywhere other than as the final one or two characters (`Zm9v=YmFy`, excess padding `Zg===`) is an error. Padding stays optional and non-zero trailing bits stay tolerated.
+- CLI `--key` hex now rejects a `+`/`-` sign and non-ASCII input (it used to accept the sign, and panic on non-ASCII).
 
 ### Fixed
 
@@ -1629,7 +1638,7 @@ rewrite of `cenc_decrypt`'s remaining box walker (#1081).
 - `ProgressiveMux` (and the Smooth fragment builder) derive the `mdat` header length from the
   payload size, so chunk offsets are no longer 8 bytes early once the `mdat` needs a 64-bit
   `largesize` header (#1019).
-
+- CLI `--key` no longer panics on a 32-byte non-ASCII argument and rejects a `+`/`-` sign in the hex.
 
 ## [0.24.2] - 2026-09-25
 

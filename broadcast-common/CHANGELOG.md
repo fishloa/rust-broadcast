@@ -37,6 +37,9 @@
   `PCR_flag` but declares too little length no longer has trailing payload
   bytes wrongly treated as the exempt PCR field (#1073).
 
+### Changed
+- `hex::hex_encode` now delegates to the `hex` crate (`no_std` + `alloc`); output and signature unchanged. No API change.
+
 ## [9.3.0] - 2026-08-11
 
 ### Added

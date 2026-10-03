@@ -574,14 +574,7 @@ broadcast_common::impl_spec_display!(HlsEncryptionMethod);
 /// Format a 16-byte IV as the `0x`-prefixed 32-hex-digit `EXT-X-KEY` `IV`
 /// attribute value (`docs/drm/hls-sample-aes.md` §9).
 pub fn format_iv(iv: &[u8; BLOCK_LEN]) -> String {
-    let mut s = String::with_capacity(2 + 2 * BLOCK_LEN);
-    s.push_str("0x");
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    for &b in iv {
-        s.push(HEX[(b >> 4) as usize] as char);
-        s.push(HEX[(b & 0x0F) as usize] as char);
-    }
-    s
+    format!("0x{}", ::hex::encode(iv))
 }
 
 /// Derive the implicit IV from the media sequence number: the sequence number

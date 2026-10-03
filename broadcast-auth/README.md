@@ -57,8 +57,10 @@ text, not from the `Credentials` variant).
   `Verifier::challenge()` renders the `WWW-Authenticate` value for a `401`
   and `Verifier::verify(&RequestContext)` checks an incoming request.
   Basic/Bearer compare in constant time; Digest recomputes the response hash
-  (RFC 7616 §3.4.1) and also checks the client's claimed `uri` against the
-  actual request URI. This is the production verifier behind `multimux`'s
+  (RFC 7616 §3.4.1; the `Authorization` fields are read with `http-auth`'s
+  `ChallengeParser`, including the RFC 7616 §3.4.4 `username*` extended
+  parameter) and also checks the client's claimed `uri` against the actual
+  request URI. This is the production verifier behind `multimux`'s
   shared output-auth gate.
 - **`RequestContext`** carries the method/URI/body (needed to compute or
   verify a response) plus, for server-side use, every request header

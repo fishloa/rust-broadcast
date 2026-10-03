@@ -359,31 +359,14 @@ impl Serialize for StreamEventPayload<'_> {
 /// Base-64 encode a serialized [`StreamEventPayload`] for insertion as the
 /// `privateDataByte` of a "do it now" stream-event descriptor (§6.3.1, RFC 4648).
 ///
-/// This is the standard RFC 4648 base-64 alphabet with `=` padding. Provided as a
-/// `no_std`/`alloc` convenience so callers do not pull a base-64 dependency just
-/// to follow the carriage recipe.
+/// Thin wrapper over the `base64` crate (standard RFC 4648 alphabet, `=`
+/// padding).
 #[must_use]
 pub fn base64_encode(data: &[u8]) -> Vec<u8> {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut out = Vec::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0];
-        let b1 = chunk.get(1).copied().unwrap_or(0);
-        let b2 = chunk.get(2).copied().unwrap_or(0);
-        out.push(ALPHABET[(b0 >> 2) as usize]);
-        out.push(ALPHABET[(((b0 & 0x03) << 4) | (b1 >> 4)) as usize]);
-        if chunk.len() > 1 {
-            out.push(ALPHABET[(((b1 & 0x0F) << 2) | (b2 >> 6)) as usize]);
-        } else {
-            out.push(b'=');
-        }
-        if chunk.len() > 2 {
-            out.push(ALPHABET[(b2 & 0x3F) as usize]);
-        } else {
-            out.push(b'=');
-        }
-    }
-    out
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD
+        .encode(data)
+        .into_bytes()
 }
 
 #[cfg(test)]

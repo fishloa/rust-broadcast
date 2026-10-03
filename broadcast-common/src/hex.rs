@@ -6,8 +6,8 @@
 //! is identical in every one of them, so it lives here rather than being
 //! recopied per crate.
 //!
-//! Only the *encoder* is shared. Decoding needs an error type, and each
-//! consumer's is its own (and their input-validation policies genuinely
+//! The encoder delegates to the `hex` crate. Decoding needs an error type, and
+//! each consumer's is its own (and their input-validation policies genuinely
 //! differ — e.g. a manifest parser caps input length where a local helper
 //! does not), so decoders stay with their callers.
 
@@ -26,13 +26,7 @@ use alloc::string::String;
 /// assert_eq!(hex_encode(&[]), "");
 /// ```
 pub fn hex_encode(data: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut out = String::with_capacity(data.len() * 2);
-    for &b in data {
-        out.push(HEX[(b >> 4) as usize] as char);
-        out.push(HEX[(b & 0x0F) as usize] as char);
-    }
-    out
+    ::hex::encode(data)
 }
 
 #[cfg(test)]

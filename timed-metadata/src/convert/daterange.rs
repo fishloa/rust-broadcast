@@ -28,8 +28,8 @@ pub fn scte35_to_daterange(ev: &TimedEvent, anchor: &TimeAnchor) -> Result<DateR
     };
 
     let start_date = match ev.at {
-        Some(t) => anchor.rfc3339(t),
-        None => crate::anchor::format_rfc3339_ms(anchor.utc_epoch_ms),
+        Some(t) => anchor.try_rfc3339(t)?,
+        None => crate::anchor::try_format_rfc3339_ms(anchor.utc_epoch_ms)?,
     };
 
     let planned_duration = ev.duration.map(|d| d.as_seconds_f64());

@@ -38,6 +38,8 @@ chrono = { version = "0.4", optional = true, default-features = false, features 
 # intrinsic, so the no_std build needs libm. `floor` is exact, so libm::floor is
 # bit-identical to `f64::floor` and is used uniformly in std and no_std.
 libm = "0.2"
+# Hex codec backing `hex::hex_encode` (SP5). `alloc` only: the crate stays no_std.
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
 # Only pulled in by the `serde` feature — see its comment above. Configured
 # `no_std` (`derive` only, no `std`) so it composes with the no_std build.
 serde = { version = "1", optional = true, default-features = false, features = ["derive"] }

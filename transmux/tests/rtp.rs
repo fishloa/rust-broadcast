@@ -1232,6 +1232,31 @@ fn generated_sdp_parses_with_an_independent_parser() {
     }
 }
 
+/// RFC 8866 §5: v=, o=, s=, [c=], t=, then attributes, then each m= section.
+/// An INDEPENDENT check: the writer is `sdp-types`, so its own parser can no
+/// longer vouch for it.
+#[test]
+fn sdp_line_order_follows_rfc8866_section_5() {
+    let out = packetise(&demux_fixture());
+    let kinds: Vec<char> = out
+        .sdp
+        .split("\r\n")
+        .filter(|l| !l.is_empty())
+        .map(|l| l.chars().next().unwrap())
+        .collect();
+    assert!(out.sdp.ends_with("\r\n") && !out.sdp.contains("\n\n"));
+    assert_eq!(&kinds[..5], &['v', 'o', 's', 'c', 't']);
+    let first_m = kinds.iter().position(|&c| c == 'm').unwrap();
+    assert!(kinds[5..first_m].iter().all(|&c| c == 'a'), "{kinds:?}");
+    assert!(
+        out.sdp
+            .lines()
+            .all(|l| l.len() >= 2 && l.as_bytes()[1] == b'='),
+        "{}",
+        out.sdp
+    );
+}
+
 // ── Test 4g: the depacketised decode timeline (audit r04-W29) ───────────────
 
 /// A **variable-frame-rate** stream must come back with `dts == pts`: without
@@ -1485,21 +1510,14 @@ fn connection_address_is_typed_and_emits_the_right_addrtype() {
     let media = demux_fixture();
     let out = packetise(&media);
 
-    // IPv4: `c=IN IP4 <v4>`, alongside real media blocks.
-    let media_blocks: String = out
-        .sdp
-        .lines()
-        .filter(|l| l.starts_with("m=") || l.starts_with("a="))
-        .map(|l| {
-            format!(
-                "{l}
-"
-            )
-        })
-        .collect();
+    // IPv4: `c=IN IP4 <v4>`, alongside real media sections (taken from the
+    // packetiser's own SDP through the independent parser).
+    let media_sections = sdp_types::Session::parse(out.sdp.as_bytes())
+        .expect("sdp-types accepts the packetiser's SDP")
+        .medias;
     let v4 = transmux::build_sdp_with_connection(
         IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)),
-        &media_blocks,
+        media_sections,
     );
     assert!(
         v4.contains("c=IN IP4 203.0.113.7\r\n"),
@@ -1509,7 +1527,7 @@ fn connection_address_is_typed_and_emits_the_right_addrtype() {
     // IPv6: `c=IN IP6 <v6>`, with no brackets and no TTL (RFC 8866 §5.7).
     let v6 = transmux::build_sdp_with_connection(
         IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
-        "",
+        Vec::new(),
     );
     assert!(
         v6.contains("c=IN IP6 2001:db8::1\r\n"),
@@ -1530,7 +1548,7 @@ fn connection_address_is_typed_and_emits_the_right_addrtype() {
     // under the old `&str` API: this is the closest a caller can get to it now,
     // and it yields a plain address (or a parse error), never extra fields.
     if let Ok(injected) = "1.2.3.4\r\nm=video 0 RTP/AVP 96".parse::<IpAddr>() {
-        let sdp = transmux::build_sdp_with_connection(injected, "");
+        let sdp = transmux::build_sdp_with_connection(injected, Vec::new());
         assert_eq!(
             sdp.matches("m=").count(),
             0,

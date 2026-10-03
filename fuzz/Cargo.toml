@@ -222,6 +222,18 @@ test = false
 doc  = false
 
 [[bin]]
+name = "auth_digest_header"
+path = "fuzz_targets/auth_digest_header.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "transmux_base_url"
+path = "fuzz_targets/transmux_base_url.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "rtmp_server_session"
 path = "fuzz_targets/rtmp_server_session.rs"
 test = false

@@ -1,0 +1,2 @@
+basic	Basic YWRtaW46MTIzNDU=
+bearer	Bearer mytoken123

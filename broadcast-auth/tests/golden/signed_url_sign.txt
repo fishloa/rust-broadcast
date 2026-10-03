@@ -1,0 +1,5 @@
+key-a	/live/stream.m3u8	1900000000	-	exp=1900000000&kid=key-a&sig=RtVuF2RsYjqw7kwY-EUck0kl2l6E4Q2tgUjdvhdtuRY
+key-a	/live/stream.m3u8	1900000000	192.0.2.7	exp=1900000000&kid=key-a&sig=INegURpj8bDZxcOwntYl1hpGBMNU69_iAeMLbki2tkw&ip=192.0.2.7
+key-a	/live/stream.m3u8	1900000000	2001:db8::1	exp=1900000000&kid=key-a&sig=glTx4oclieETzKpFM7B5SkfdXhndIsIejVHcVDUagIA&ip=2001%3Adb8%3A%3A1
+kid_b.2-x	/vod/seg-1.m4s	4000000000	-	exp=4000000000&kid=kid_b.2-x&sig=blg7fMn9oKMvUUpl-5q4Qoy8pQhYTysOyuE_7WcRZC0
+kid_b.2-x	/vod/seg-1.m4s	4000000000	192.0.2.7	exp=4000000000&kid=kid_b.2-x&sig=VmnsvRg2tOjLZiHZwjRywMsa54Mnj86u-UehuvXiCxk&ip=192.0.2.7

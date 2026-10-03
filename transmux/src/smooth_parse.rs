@@ -593,7 +593,7 @@ impl StreamIndex {
 }
 
 /// Hex-decode a `CodecPrivateData` attribute value into bytes (the inverse of
-/// [`crate::smooth`]'s internal `hex_upper` writer helper), bounded by
+/// [`crate::smooth`]'s `CodecPrivateData` writer), bounded by
 /// [`MAX_CODEC_PRIVATE_DATA_HEX_LEN`] (checked *before* any decode
 /// allocation, defending against a hostile Manifest's unbounded
 /// `CodecPrivateData`) and erroring on odd length or a non-hex-digit byte
@@ -602,37 +602,9 @@ pub fn hex_decode(s: &str) -> Result<Vec<u8>> {
     if s.len() > MAX_CODEC_PRIVATE_DATA_HEX_LEN {
         return Err(SmoothParseError::CodecPrivateDataTooLong { len: s.len() });
     }
-    if s.is_empty() {
-        return Ok(Vec::new());
-    }
-    let bytes = s.as_bytes();
-    if !bytes.len().is_multiple_of(2) {
-        return Err(SmoothParseError::InvalidHex {
-            value: s.to_string(),
-        });
-    }
-    let mut out = Vec::with_capacity(bytes.len() / 2);
-    let mut i = 0usize;
-    while i < bytes.len() {
-        let hi = hex_nibble(bytes[i]).ok_or_else(|| SmoothParseError::InvalidHex {
-            value: s.to_string(),
-        })?;
-        let lo = hex_nibble(bytes[i + 1]).ok_or_else(|| SmoothParseError::InvalidHex {
-            value: s.to_string(),
-        })?;
-        out.push((hi << 4) | lo);
-        i += 2;
-    }
-    Ok(out)
-}
-
-fn hex_nibble(b: u8) -> Option<u8> {
-    match b {
-        b'0'..=b'9' => Some(b - b'0'),
-        b'A'..=b'F' => Some(b - b'A' + 10),
-        b'a'..=b'f' => Some(b - b'a' + 10),
-        _ => None,
-    }
+    ::hex::decode(s).map_err(|_| SmoothParseError::InvalidHex {
+        value: s.to_string(),
+    })
 }
 
 // ---------------------------------------------------------------------------

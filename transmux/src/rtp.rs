@@ -33,7 +33,8 @@
 //! - **AAC** (RFC 3640, `AAC-hbr`): an AU-headers-length (16-bit, in bits)
 //!   prefix + one 2-byte AU-header (`sizeLength=13; indexLength=3`) + the raw
 //!   access unit.
-//! - **SDP** (RFC 4566 + `fmtp`): `sprop-parameter-sets` carries base64 SPS,PPS
+//! - **SDP** (RFC 4566 + `fmtp`; the SDP text is written with `sdp-types`, so
+//!   `RtpOutput::sdp` is `std`-only): `sprop-parameter-sets` carries base64 SPS,PPS
 //!   for video; `config` carries the hex AudioSpecificConfig for audio.
 //! - **KLV** (RFC 6597, `smpte336m`): a SMPTE ST 336 KLV unit ([`crate::klv`])
 //!   carried directly after the fixed header — no payload header — fragmented
@@ -60,6 +61,7 @@
 //! `no_std` + `alloc`.
 
 use alloc::collections::VecDeque;
+#[cfg(any(feature = "std", test))]
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -147,6 +149,7 @@ const AAC_SIZE_LENGTH: u32 = 13;
 /// `indexLength` for AAC-hbr — AU-index field width in bits (RFC 3640 §3.3.6).
 const AAC_INDEX_LENGTH: u32 = 3;
 /// `indexDeltaLength` for AAC-hbr — AU-index-delta field width in bits.
+#[cfg(feature = "std")]
 const AAC_INDEX_DELTA_LENGTH: u32 = 3;
 /// One AAC-hbr AU-header is `sizeLength + indexLength = 16` bits = 2 bytes.
 const AAC_AU_HEADER_LEN: usize = 2;
@@ -232,7 +235,9 @@ pub struct RtpStream {
 pub struct RtpOutput {
     /// One [`RtpStream`] per packetised track, in track order.
     pub streams: Vec<RtpStream>,
-    /// The session-level SDP describing every stream (RFC 4566).
+    /// The session-level SDP describing every stream (RFC 4566). `std` only:
+    /// it is written with `sdp-types`.
+    #[cfg(feature = "std")]
     pub sdp: String,
 }
 
@@ -383,7 +388,8 @@ impl Package for RtpPacketiser {
             ));
         }
         let mut streams = Vec::new();
-        let mut sdp_media = String::new();
+        #[cfg(feature = "std")]
+        let mut sdp_media: Vec<sdp_types::Media> = Vec::new();
         // One allocator per session, shared by both kinds: a payload type is a
         // session-wide binding (RFC 3551 §6), so a video and an audio stream
         // must never be handed the same one either.
@@ -419,7 +425,10 @@ impl Package for RtpPacketiser {
                         kind: RtpMediaKind::H264,
                         packets,
                     });
-                    sdp_media.push_str(&sdp_video(pt, &config.config)?);
+                    #[cfg(feature = "std")]
+                    sdp_media.push(sdp_video(pt, &config.config));
+                    #[cfg(not(feature = "std"))]
+                    let _ = config;
                 }
                 CodecConfig::Aac {
                     esds,
@@ -448,7 +457,10 @@ impl Package for RtpPacketiser {
                         packets,
                     });
                     let asc = asc_bytes(esds)?;
-                    sdp_media.push_str(&sdp_audio(pt, clock, *channel_count, asc)?);
+                    #[cfg(feature = "std")]
+                    sdp_media.push(sdp_audio(pt, clock, *channel_count, asc));
+                    #[cfg(not(feature = "std"))]
+                    let _ = (asc, channel_count);
                 }
                 _ => {
                     return Err(Error::InvalidInput(
@@ -462,8 +474,11 @@ impl Package for RtpPacketiser {
                 "no AVC/AAC tracks to packetise into RTP",
             ));
         }
-        let sdp = build_sdp(&sdp_media);
-        Ok(RtpOutput { streams, sdp })
+        Ok(RtpOutput {
+            streams,
+            #[cfg(feature = "std")]
+            sdp: build_sdp(sdp_media),
+        })
     }
 }
 
@@ -805,7 +820,7 @@ fn asc_bytes(esds: &crate::mp4esds::EsdsBox) -> Result<&[u8]> {
 // SDP generation (RFC 4566)
 // ---------------------------------------------------------------------------
 
-/// Assemble the full session-level SDP from the per-media blocks.
+/// Assemble the full session-level SDP from the per-media sections.
 ///
 /// Includes a session-level `c=` line, because RFC 4566 §5.7 requires one:
 /// "A session description MUST contain either at least one `c=` field in each
@@ -815,8 +830,9 @@ fn asc_bytes(esds: &crate::mp4esds::EsdsBox) -> Result<&[u8]> {
 /// that requirement had nothing to read and rejected the description. The
 /// address is the loopback the `o=` line already names; a caller that
 /// transmits elsewhere uses [`build_sdp_with_connection`].
-fn build_sdp(media_blocks: &str) -> String {
-    build_sdp_with_connection(LOCAL_CONNECTION_ADDRESS, media_blocks)
+#[cfg(feature = "std")]
+fn build_sdp(medias: Vec<sdp_types::Media>) -> String {
+    build_sdp_with_connection(LOCAL_CONNECTION_ADDRESS, medias)
 }
 
 /// Assemble a session-level SDP with an explicit `c=` connection address
@@ -826,79 +842,94 @@ fn build_sdp(media_blocks: &str) -> String {
 /// The address is an [`IpAddr`](core::net::IpAddr), not a string, so it cannot
 /// carry anything SDP would misread: the `<addrtype>` subfield (`IP4`/`IP6`)
 /// follows the address's own family (RFC 8866 §5.7: "This memo only defines
-/// `IP4` and `IP6`"), and no CR, LF or space can be smuggled into the line — a
-/// `&str` parameter made this function a way to inject arbitrary SDP fields
-/// into a description a caller may hand to a peer.
+/// `IP4` and `IP6`"), and no CR, LF or space can be smuggled into the line.
+/// `Session::write` performs no CR/LF escaping of the session name or
+/// attribute values; only the connection address is typed, and every other
+/// value is produced internally by this module (fmtp strings are built here,
+/// never from caller text).
+///
+/// The session is written with `sdp-types` 0.2 (`Session::write`), so this is
+/// `std`-only.
+#[cfg(feature = "std")]
 pub fn build_sdp_with_connection(
     connection_address: core::net::IpAddr,
-    media_blocks: &str,
+    medias: Vec<sdp_types::Media>,
 ) -> String {
-    let addrtype = match connection_address {
-        core::net::IpAddr::V4(_) => "IP4",
-        core::net::IpAddr::V6(_) => "IP6",
-    };
-    let mut s = String::new();
-    s.push_str("v=0\r\n");
-    s.push_str("o=- 0 0 IN IP4 127.0.0.1\r\n");
-    s.push_str("s=transmux RTP\r\n");
-    s.push_str("c=IN ");
-    s.push_str(addrtype);
-    s.push(' ');
-    // `Display` for `IpAddr` renders the canonical textual form and nothing
-    // else — no brackets, no zone suffix — which is exactly what RFC 8866
-    // §5.7's connection-address subfield is.
-    s.push_str(&alloc::format!("{connection_address}"));
-    s.push_str("\r\n");
-    s.push_str("t=0 0\r\n");
-    s.push_str(media_blocks);
-    s
+    let mut session = sdp_types::Session::new(
+        sdp_types::Origin::with_ip_addr(0, 0, core::net::Ipv4Addr::LOCALHOST),
+        "transmux RTP",
+    );
+    // `from_ip_addr` derives `IP4`/`IP6` from the address family, so no CR/LF or
+    // space can reach the c= line (the typed address is the injection guard).
+    session.connection = Some(sdp_types::Connection::from_ip_addr(connection_address));
+    session.medias = medias;
+    let mut out = Vec::new();
+    // Writing into a `Vec<u8>` cannot fail; every field is a `String`.
+    let _ = session.write(&mut out);
+    String::from_utf8_lossy(&out).into_owned()
 }
 
-/// SDP media block for an H.264 video stream (RFC 6184 §8.1).
-fn sdp_video(pt: u8, config: &crate::avc_config::AVCDecoderConfigurationRecord) -> Result<String> {
+/// SDP media section for an H.264 video stream (RFC 6184 §8.1).
+#[cfg(feature = "std")]
+fn sdp_video(
+    pt: u8,
+    config: &crate::avc_config::AVCDecoderConfigurationRecord,
+) -> sdp_types::Media {
     let profile_level_id = format!(
         "{:02X}{:02X}{:02X}",
         config.profile_indication, config.profile_compatibility, config.level_indication
     );
-    let mut sprop = String::new();
-    let mut first = true;
-    for sps in &config.sps {
-        if !first {
-            sprop.push(',');
-        }
-        sprop.push_str(&base64_encode(&sps.0));
-        first = false;
-    }
-    for pps in &config.pps {
-        if !first {
-            sprop.push(',');
-        }
-        sprop.push_str(&base64_encode(&pps.0));
-        first = false;
-    }
-    let mut s = String::new();
-    s.push_str(&format!("m=video 0 RTP/AVP {pt}\r\n"));
-    s.push_str(&format!("a=rtpmap:{pt} H264/{VIDEO_CLOCK_RATE}\r\n"));
-    s.push_str(&format!(
-        "a=fmtp:{pt} packetization-mode=1; profile-level-id={profile_level_id}; sprop-parameter-sets={sprop}\r\n"
-    ));
-    Ok(s)
+    let sprop = config
+        .sps
+        .iter()
+        .map(|n| base64_encode(&n.0))
+        .chain(config.pps.iter().map(|n| base64_encode(&n.0)))
+        .collect::<Vec<_>>()
+        .join(",");
+    let mut media = sdp_types::Media::new(
+        sdp_types::MediaType::Video,
+        0,
+        sdp_types::TransportProto::RtpAvp,
+        pt,
+    );
+    media.add_attribute(sdp_types::RtpMap::new(pt, "H264", VIDEO_CLOCK_RATE));
+    // fmtp parameter lists are codec payload-format logic (owner decision,
+    // spec §9.2): built as a string, never through `sdp_types::Fmtp`, whose
+    // `Display` joins with `;` and no space and would change the bytes.
+    media.add_attribute_with_value(
+        "fmtp",
+        format!(
+            "{pt} packetization-mode=1; profile-level-id={profile_level_id}; sprop-parameter-sets={sprop}"
+        ),
+    );
+    media
 }
 
-/// SDP media block for an AAC audio stream (`mpeg4-generic`, RFC 3640 §4.1).
-fn sdp_audio(pt: u8, clock: u32, channels: u16, asc: &[u8]) -> Result<String> {
+/// SDP media section for an AAC audio stream (`mpeg4-generic`, RFC 3640 §4.1).
+#[cfg(feature = "std")]
+fn sdp_audio(pt: u8, clock: u32, channels: u16, asc: &[u8]) -> sdp_types::Media {
     let config = hex_encode(asc);
-    let mut s = String::new();
-    s.push_str(&format!("m=audio 0 RTP/AVP {pt}\r\n"));
-    s.push_str(&format!(
-        "a=rtpmap:{pt} mpeg4-generic/{clock}/{channels}\r\n"
+    let mut media = sdp_types::Media::new(
+        sdp_types::MediaType::Audio,
+        0,
+        sdp_types::TransportProto::RtpAvp,
+        pt,
+    );
+    media.add_attribute(sdp_types::RtpMap::with_encoding_params(
+        pt,
+        "mpeg4-generic",
+        clock,
+        channels,
     ));
-    s.push_str(&format!(
-        "a=fmtp:{pt} streamtype=5; profile-level-id=1; mode=AAC-hbr; config={config}; \
-         sizeLength={AAC_SIZE_LENGTH}; indexLength={AAC_INDEX_LENGTH}; \
-         indexDeltaLength={AAC_INDEX_DELTA_LENGTH}\r\n"
-    ));
-    Ok(s)
+    media.add_attribute_with_value(
+        "fmtp",
+        format!(
+            "{pt} streamtype=5; profile-level-id=1; mode=AAC-hbr; config={config}; \
+             sizeLength={AAC_SIZE_LENGTH}; indexLength={AAC_INDEX_LENGTH}; \
+             indexDeltaLength={AAC_INDEX_DELTA_LENGTH}"
+        ),
+    );
+    media
 }
 
 // ---------------------------------------------------------------------------
@@ -2085,66 +2116,43 @@ pub fn depacketise_klv(packets: &[Vec<u8>]) -> Result<Vec<Vec<u8>>> {
 }
 
 // ---------------------------------------------------------------------------
-// Hand-rolled base64 (RFC 4648) + hex — no external dependency
+// base64 + hex (RFC 4648) via the `base64` and `hex` crates
 // ---------------------------------------------------------------------------
 
-/// Standard base64 alphabet (RFC 4648 §4).
-const B64_ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+use base64::Engine as _;
+use base64::engine::general_purpose::STANDARD;
+use base64::engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig};
 
-/// Base64-encode bytes (RFC 4648, with `=` padding).
+/// Decoder used for SDP `sprop-parameter-sets`, DRM headers and Smooth/DASH
+/// payloads: padding optional, trailing bits tolerated. Real producers emit
+/// unpadded and non-canonical base64; the crate default is strict.
+const LENIENT: GeneralPurpose = GeneralPurpose::new(
+    &base64::alphabet::STANDARD,
+    GeneralPurposeConfig::new()
+        .with_decode_padding_mode(DecodePaddingMode::Indifferent)
+        .with_decode_allow_trailing_bits(true),
+);
+
+/// Base64-encode bytes (RFC 4648 §4, with `=` padding).
 pub fn base64_encode(data: &[u8]) -> String {
-    let mut out = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
-        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
-        let n = (b0 << 16) | (b1 << 8) | b2;
-        out.push(B64_ALPHABET[((n >> 18) & 0x3F) as usize] as char);
-        out.push(B64_ALPHABET[((n >> 12) & 0x3F) as usize] as char);
-        if chunk.len() > 1 {
-            out.push(B64_ALPHABET[((n >> 6) & 0x3F) as usize] as char);
-        } else {
-            out.push('=');
-        }
-        if chunk.len() > 2 {
-            out.push(B64_ALPHABET[(n & 0x3F) as usize] as char);
-        } else {
-            out.push('=');
-        }
-    }
-    out
+    STANDARD.encode(data)
 }
 
-/// Base64-decode a string (RFC 4648); rejects invalid characters.
+/// Base64-decode a string (RFC 4648 §4); padding is optional and non-canonical
+/// trailing bits are tolerated; any other invalid input is an error.
 pub fn base64_decode(s: &str) -> Result<Vec<u8>> {
-    fn val(c: u8) -> Option<u32> {
-        match c {
-            b'A'..=b'Z' => Some((c - b'A') as u32),
-            b'a'..=b'z' => Some((c - b'a' + 26) as u32),
-            b'0'..=b'9' => Some((c - b'0' + 52) as u32),
-            b'+' => Some(62),
-            b'/' => Some(63),
-            _ => None,
-        }
-    }
-    let bytes: Vec<u8> = s.bytes().filter(|&b| b != b'=').collect();
-    let mut out = Vec::with_capacity(bytes.len() * 3 / 4);
-    let mut acc = 0u32;
-    let mut nbits = 0u32;
-    for &b in &bytes {
-        let v = val(b).ok_or(Error::InvalidValue {
+    LENIENT.decode(s).map_err(|e| match e {
+        base64::DecodeError::InvalidByte(_, byte) => Error::InvalidValue {
             field: "base64",
-            value: b as u64,
+            value: u64::from(byte),
             reason: "not a base64 character",
-        })?;
-        acc = (acc << 6) | v;
-        nbits += 6;
-        if nbits >= 8 {
-            nbits -= 8;
-            out.push((acc >> nbits) as u8);
-        }
-    }
-    Ok(out)
+        },
+        _ => Error::InvalidValue {
+            field: "base64",
+            value: s.len() as u64,
+            reason: "invalid base64 length",
+        },
+    })
 }
 
 /// Hex-encode bytes (lowercase).
@@ -2159,41 +2167,28 @@ pub fn base64_decode(s: &str) -> Result<Vec<u8>> {
 /// Imported privately, NOT re-exported: `transmux::rtp::hex_encode` is gone as
 /// a public path. Callers use `broadcast_common::hex::hex_encode` directly —
 /// one owner, one name, no compatibility alias to keep in step.
+#[cfg(any(feature = "std", test))]
 use broadcast_common::hex::hex_encode;
 
 /// Hex-decode a string; rejects odd lengths and invalid nibbles.
 pub fn hex_decode(s: &str) -> Result<Vec<u8>> {
-    fn nibble(c: u8) -> Option<u8> {
-        match c {
-            b'0'..=b'9' => Some(c - b'0'),
-            b'a'..=b'f' => Some(c - b'a' + 10),
-            b'A'..=b'F' => Some(c - b'A' + 10),
-            _ => None,
-        }
-    }
-    let bytes = s.as_bytes();
-    if !bytes.len().is_multiple_of(2) {
-        return Err(Error::InvalidValue {
+    ::hex::decode(s).map_err(|e| match e {
+        ::hex::FromHexError::OddLength => Error::InvalidValue {
             field: "hex",
-            value: bytes.len() as u64,
+            value: s.len() as u64,
             reason: "odd-length hex string",
-        });
-    }
-    let mut out = Vec::with_capacity(bytes.len() / 2);
-    for pair in bytes.chunks(2) {
-        let hi = nibble(pair[0]).ok_or(Error::InvalidValue {
+        },
+        ::hex::FromHexError::InvalidHexCharacter { c, .. } => Error::InvalidValue {
             field: "hex",
-            value: pair[0] as u64,
+            value: u64::from(c),
             reason: "not a hex digit",
-        })?;
-        let lo = nibble(pair[1]).ok_or(Error::InvalidValue {
+        },
+        ::hex::FromHexError::InvalidStringLength => Error::InvalidValue {
             field: "hex",
-            value: pair[1] as u64,
-            reason: "not a hex digit",
-        })?;
-        out.push((hi << 4) | lo);
-    }
-    Ok(out)
+            value: s.len() as u64,
+            reason: "invalid hex string length",
+        },
+    })
 }
 
 #[cfg(test)]

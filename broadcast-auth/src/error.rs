@@ -40,4 +40,11 @@ pub enum Error {
     /// module's docs).
     #[error("signed-url keyset has no key with kid {0:?}")]
     UnknownSignedUrlKeyId(String),
+
+    /// A Bearer token cannot be carried in an `Authorization` header value —
+    /// it contains a byte outside visible ASCII (control character, CR/LF, or
+    /// non-ASCII) — so no header was produced rather than a corrupt or
+    /// injectable one.
+    #[error("bearer token is not a valid Authorization header value")]
+    InvalidBearerToken,
 }

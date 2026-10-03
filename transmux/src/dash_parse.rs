@@ -45,7 +45,8 @@
 //! `BaseURL` children of one element are *alternates* consulted in order
 //! (§5.6.5), so the first non-empty one is kept. [`Mpd::resolve_segment_url`]
 //! applies RFC 3986 §5
-//! reference resolution down that chain, via [`crate::uri`].
+//! reference resolution down that chain (`url::Url::join`), via
+//! [`crate::base_url`].
 //! - **`SegmentTemplate`** (§5.3.9.4.4) — [`SegmentTemplate`]: `timescale`,
 //!   `initialization`/`media` templates, `startNumber`,
 //!   `presentationTimeOffset`, either a nominal `duration` (`$Number$`
@@ -785,102 +786,125 @@ pub struct S {
 // xs:duration
 // ---------------------------------------------------------------------------
 
-/// Seconds in a day, for the `nD` component of an `xs:duration`.
+/// Seconds in a day (used by this module's unit tests).
+#[cfg(test)]
 const SECONDS_PER_DAY: u64 = 24 * 60 * 60;
-/// Seconds in an hour, for the `nH` component.
+/// Seconds in an hour (used by this module's unit tests).
+#[cfg(test)]
 const SECONDS_PER_HOUR: u64 = 60 * 60;
-/// Seconds in a minute, for the `nM` (time-part) component.
-const SECONDS_PER_MINUTE: u64 = 60;
-/// `Duration`'s subsecond field is nanoseconds; a fractional-seconds string is
-/// padded/truncated to this many digits.
-const NANOSECOND_DIGITS: usize = 9;
 
-/// Parse an `xs:duration` string (W3C XML Schema Part 2 §3.2.6, as used by
+/// Parse an `xs:duration` string (W3C XML Schema 1.1 Part 2 §3.3.6, as used by
 /// every duration-valued MPD attribute — §5.3.1.2/§5.3.2.2/§5.3.9.2.2): the
-/// `PnDTnHnMnS` form, e.g. `PT1H2M3.5S`, `PT4S`, `PT0S`, `P1DT2H`.
+/// `PnYnMnDTnHnMnS` lexical form, e.g. `PT1H2M3.5S`, `PT4S`, `PT0S`, `P1DT2H`.
 ///
-/// Only a plain day count (`nD`) is supported for the date part — calendar
-/// `nY`/`nM` (years/months) are ambiguous without a reference date and are
-/// not used by [`crate::dash::DashPackager`]'s writer or any DASH profile
-/// this crate targets; such input is rejected with [`DashParseError::InvalidDuration`]
-/// rather than guessed at.
+/// Lexical rules (checked here, before `jiff` converts the value): the `P`
+/// and every designator (`Y M D T H S`) are UPPER case; each of the
+/// year/month/day/hour/minute numbers is digits only, in that order, each at
+/// most once; only the seconds may carry a fraction, and it needs a digit on
+/// both sides of the `.` (`PT.5S` and `PT5.S` are invalid); at least one
+/// component must be present, and `T` must be followed by one. A fraction
+/// longer than nine digits is valid XSD and is TRUNCATED to nanoseconds.
+/// Surrounding whitespace is trimmed. Weeks (`P1W`), a sign on a component, a
+/// comma decimal separator and fractions on hours/minutes are not xs:duration
+/// and are rejected.
+///
+/// The value is converted by `jiff`'s ISO 8601 span parser with a day counting
+/// as 24 hours. Every input outside that is a [`DashParseError::InvalidDuration`]
+/// (never a panic): a lexically valid but unrepresentable value — calendar
+/// `nY`/`nM` (years/months are ambiguous without a reference date), a negative
+/// duration (`-PT1S`, valid XSD but [`Duration`] is unsigned), or a magnitude
+/// beyond `jiff`'s span limits (`PT999999999H`).
 pub fn parse_iso8601_duration(s: &str) -> Result<Duration> {
     let trimmed = s.trim();
     let invalid = || DashParseError::InvalidDuration {
         value: trimmed.to_string(),
     };
-    let rest = trimmed.strip_prefix('P').ok_or_else(invalid)?;
-    let (date_part, time_part) = match rest.find('T') {
-        Some(idx) => (&rest[..idx], Some(&rest[idx + 1..])),
-        None => (rest, None),
-    };
-    if date_part.is_empty() && time_part.is_none() {
-        return Err(invalid()); // bare "P"
-    }
-
-    let mut total_secs: u64 = 0;
-
-    if !date_part.is_empty() {
-        let days_str = date_part.strip_suffix('D').ok_or_else(invalid)?;
-        let days: u64 = days_str.parse().map_err(|_| invalid())?;
-        total_secs = total_secs.saturating_add(days.saturating_mul(SECONDS_PER_DAY));
-    }
-
-    let mut nanos: u32 = 0;
-
-    if let Some(time_part) = time_part {
-        if time_part.is_empty() {
-            return Err(invalid()); // bare "T" with nothing after it
-        }
-        let mut remaining = time_part;
-        if let Some(idx) = remaining.find('H') {
-            let n: u64 = remaining[..idx].parse().map_err(|_| invalid())?;
-            total_secs = total_secs.saturating_add(n.saturating_mul(SECONDS_PER_HOUR));
-            remaining = &remaining[idx + 1..];
-        }
-        if let Some(idx) = remaining.find('M') {
-            let n: u64 = remaining[..idx].parse().map_err(|_| invalid())?;
-            total_secs = total_secs.saturating_add(n.saturating_mul(SECONDS_PER_MINUTE));
-            remaining = &remaining[idx + 1..];
-        }
-        if let Some(idx) = remaining.find('S') {
-            let secs_str = &remaining[..idx];
-            let (whole, frac) = match secs_str.split_once('.') {
-                Some((w, f)) => (w, Some(f)),
-                None => (secs_str, None),
-            };
-            let whole_secs: u64 = if whole.is_empty() {
-                0
-            } else {
-                whole.parse().map_err(|_| invalid())?
-            };
-            total_secs = total_secs.saturating_add(whole_secs);
-            if let Some(frac) = frac {
-                nanos = parse_fraction_nanos(frac).map_err(|_| invalid())?;
-            }
-            remaining = &remaining[idx + 1..];
-        }
-        if !remaining.is_empty() {
-            return Err(invalid()); // trailing garbage after S/M/H
-        }
-    }
-
-    Ok(Duration::new(total_secs, nanos))
+    let normalised = normalise_xs_duration(trimmed).ok_or_else(invalid)?;
+    let span = jiff::fmt::temporal::SpanParser::new()
+        .parse_span(normalised.as_str())
+        .map_err(|_| invalid())?;
+    // Days count as 24 h; years and months are calendar units that need a
+    // reference date, so `to_duration` refuses them.
+    let signed = span
+        .to_duration(jiff::SpanRelativeTo::days_are_24_hours())
+        .map_err(|_| invalid())?;
+    Duration::try_from(signed).map_err(|_| invalid())
 }
 
-/// Parse a fractional-seconds digit string (`"5"`, `"500"`, …) into
-/// nanoseconds, padding/truncating to [`NANOSECOND_DIGITS`] digits.
-fn parse_fraction_nanos(frac: &str) -> core::result::Result<u32, ()> {
-    if frac.is_empty() || !frac.bytes().all(|b| b.is_ascii_digit()) {
-        return Err(());
+/// Validate `s` against the xs:duration lexical grammar (see
+/// [`parse_iso8601_duration`]) and return it with the seconds fraction
+/// truncated to nine digits; `None` if it is not in the lexical space or is
+/// negative (a leading `-` is lexically valid, but `Duration` cannot hold it).
+fn normalise_xs_duration(s: &str) -> Option<String> {
+    let rest = s.strip_prefix('P')?;
+    let (date_part, time_part) = match rest.split_once('T') {
+        Some((d, t)) => (d, Some(t)),
+        None => (rest, None),
+    };
+    let mut components = 0usize;
+    let mut out = String::from("P");
+    // Date part: [nY][nM][nD], in order, digits only.
+    let mut remaining = date_part;
+    for designator in ['Y', 'M', 'D'] {
+        if let Some((digits, tail)) = remaining.split_once(designator) {
+            if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            out.push_str(digits);
+            out.push(designator);
+            remaining = tail;
+            components += 1;
+        }
     }
-    let mut digits = String::with_capacity(NANOSECOND_DIGITS);
-    digits.push_str(frac);
-    while digits.len() < NANOSECOND_DIGITS {
-        digits.push('0');
+    if !remaining.is_empty() {
+        return None;
     }
-    digits.truncate(NANOSECOND_DIGITS);
-    digits.parse::<u32>().map_err(|_| ())
+    if let Some(time) = time_part {
+        out.push('T');
+        let mut remaining = time;
+        let mut time_components = 0usize;
+        for designator in ['H', 'M'] {
+            if let Some((digits, tail)) = remaining.split_once(designator) {
+                if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+                    return None;
+                }
+                out.push_str(digits);
+                out.push(designator);
+                remaining = tail;
+                time_components += 1;
+            }
+        }
+        if let Some((number, tail)) = remaining.split_once('S') {
+            if !tail.is_empty() {
+                return None;
+            }
+            let (whole, frac) = match number.split_once('.') {
+                Some((w, f)) => (w, Some(f)),
+                None => (number, None),
+            };
+            if whole.is_empty() || !whole.bytes().all(|b| b.is_ascii_digit()) {
+                return None;
+            }
+            out.push_str(whole);
+            if let Some(frac) = frac {
+                if frac.is_empty() || !frac.bytes().all(|b| b.is_ascii_digit()) {
+                    return None;
+                }
+                out.push('.');
+                // Valid XSD allows any number of digits; Duration holds nanoseconds.
+                out.push_str(&frac[..frac.len().min(9)]);
+            }
+            out.push('S');
+            time_components += 1;
+        } else if !remaining.is_empty() {
+            return None;
+        }
+        if time_components == 0 {
+            return None;
+        }
+        components += time_components;
+    }
+    (components > 0).then_some(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -981,42 +1005,31 @@ impl Mpd {
         .collect()
     }
 
-    /// Resolve a segment reference against a Representation's `BaseURL` chain,
-    /// by RFC 3986 §5.2 reference resolution applied to each level in turn.
+    /// Resolve a segment reference against a Representation's `BaseURL` chain
+    /// and the MPD's own location, by RFC 3986 §5.2 reference resolution
+    /// (`url::Url::join`) applied to each level in turn; see
+    /// [`crate::base_url`].
     ///
+    /// `mpd_url` is the MPD's own URL — its source URL, or
+    /// `Url::from_file_path` for a file — and `None` for an in-memory MPD, in
+    /// which case a result that stays relative is returned relative.
     /// `reference` is typically a resolved `SegmentTemplate`'s
-    /// `initialization`/`media` URL, which may itself be relative. With no
-    /// `BaseURL` at any level the reference is returned unchanged, on the
-    /// caller's assumption that it is already absolute against whatever root
-    /// the MPD was fetched from.
+    /// `initialization`/`media` URL, which may itself be relative.
+    ///
+    /// `None` means the reference or a `BaseURL` carries a control character
+    /// or whitespace (a CR/LF inside a URL would let a manifest smuggle a
+    /// second request line into anything that later writes an HTTP request from
+    /// it) or does not parse.
     pub fn resolve_segment_url(
         &self,
-        period: &Period,
-        adaptation_set: &AdaptationSet,
-        representation: &Representation,
-        reference: &str,
-    ) -> String {
-        crate::uri::resolve_segment(
-            &self.base_url_chain(period, adaptation_set, representation),
-            reference,
-        )
-    }
-
-    /// [`Self::resolve_segment_url`], but rejecting a `BaseURL` or reference
-    /// carrying a control character or whitespace.
-    ///
-    /// A CR/LF inside a URL has no meaning in RFC 3986 and lets a manifest
-    /// smuggle a second request line into anything that later writes an HTTP
-    /// request from it, so a caller building requests should use this rather
-    /// than the infallible form. Returns `None` for such input.
-    pub fn try_resolve_segment_url(
-        &self,
+        mpd_url: Option<&url::Url>,
         period: &Period,
         adaptation_set: &AdaptationSet,
         representation: &Representation,
         reference: &str,
     ) -> Option<String> {
-        crate::uri::try_resolve_segment(
+        crate::base_url::resolve_chain(
+            mpd_url,
             &self.base_url_chain(period, adaptation_set, representation),
             reference,
         )

@@ -596,7 +596,8 @@ fn resolve_in(xml: &str, reference: &str) -> String {
     let period = &mpd.periods[0];
     let set = &period.adaptation_sets[0];
     let repr = &set.representations[0];
-    mpd.resolve_segment_url(period, set, repr, reference)
+    mpd.resolve_segment_url(None, period, set, repr, reference)
+        .expect("resolves")
 }
 
 /// An absolute `BaseURL` at the Period overrides the MPD's, and an absolute
@@ -761,8 +762,9 @@ fn timeline_over_parent_duration_resolves_time_addressed_urls() {
     );
     assert_eq!(media, "seg-92070.m4s");
     assert_eq!(
-        mpd.resolve_segment_url(period, set, repr, &media),
-        "https://cdn.example.com/seg-92070.m4s",
+        mpd.resolve_segment_url(None, period, set, repr, &media)
+            .as_deref(),
+        Some("https://cdn.example.com/seg-92070.m4s"),
         "a $Time$-addressed segment resolves through the BaseURL chain"
     );
 }

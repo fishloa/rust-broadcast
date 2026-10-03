@@ -73,36 +73,41 @@ const HLS_INIT_FILE: &str = "init.mp4";
 /// "Now at packaging time" is the honest choice for a file-based CLI: the media
 /// segments this run writes are available from roughly then.
 fn availability_start_time_now() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0);
-    // Days since the Unix epoch → civil date (Howard Hinnant's algorithm).
-    let days = secs / SECS_PER_DAY;
-    let rem = secs % SECS_PER_DAY;
-    let (h, m, s) = (rem / 3600, (rem % 3600) / 60, rem % 60);
-    let (y, mo, d) = civil_from_days(days as i64);
-    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+    availability_start_time(jiff::Timestamp::now().as_second())
 }
 
-/// Seconds in a day (the clock does not need leap seconds here).
-const SECS_PER_DAY: u64 = 86_400;
+/// `YYYY-MM-DDThh:mm:ssZ` for `unix_secs` (whole seconds, UTC); an instant
+/// outside `jiff`'s range falls back to the epoch rather than panicking.
+fn availability_start_time(unix_secs: i64) -> String {
+    let ts = jiff::Timestamp::from_second(unix_secs).unwrap_or(jiff::Timestamp::UNIX_EPOCH);
+    // `Timestamp`'s Display is RFC 3339 UTC with a `Z` and, for a whole-second
+    // instant, no fractional digits.
+    format!("{ts}")
+}
 
-/// Convert days since 1970-01-01 to a `(year, month, day)` civil date.
-/// Howard Hinnant's `civil_from_days` (public domain, exact for all i64 days).
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
-    (if m <= 2 { y + 1 } else { y }, m, d)
+#[cfg(test)]
+mod availability_start_time_tests {
+    use super::availability_start_time;
+
+    #[test]
+    fn formats_whole_seconds_utc_with_a_z_suffix() {
+        assert_eq!(availability_start_time(0), "1970-01-01T00:00:00Z");
+        assert_eq!(availability_start_time(951_782_400), "2000-02-29T00:00:00Z");
+        assert_eq!(
+            availability_start_time(1_700_000_000),
+            "2023-11-14T22:13:20Z"
+        );
+        assert_eq!(
+            availability_start_time(4_107_542_400),
+            "2100-03-01T00:00:00Z"
+        );
+        assert_eq!(availability_start_time(-1), "1969-12-31T23:59:59Z");
+    }
+
+    #[test]
+    fn out_of_range_seconds_clamp_to_the_epoch_not_a_panic() {
+        assert_eq!(availability_start_time(i64::MAX), "1970-01-01T00:00:00Z");
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1321,15 +1326,41 @@ fn parse_key(spec: &str) -> CliResult<([u8; 16], [u8; 16])> {
 /// Parse exactly 32 hex chars into a 16-byte array.
 #[cfg(feature = "cenc")]
 fn parse_hex16(s: &str) -> Option<[u8; 16]> {
-    let s = s.trim();
-    if s.len() != 32 {
-        return None;
-    }
     let mut out = [0u8; 16];
-    for (i, byte) in out.iter_mut().enumerate() {
-        *byte = u8::from_str_radix(&s[i * 2..i * 2 + 2], 16).ok()?;
-    }
+    ::hex::decode_to_slice(s.trim(), &mut out).ok()?;
     Some(out)
+}
+
+#[cfg(all(test, feature = "cenc"))]
+mod parse_hex16_tests {
+    use super::parse_hex16;
+
+    /// 32 BYTES but not 32 hex chars: `"a" + 15 × "é" + "b"`. The old
+    /// `&s[i * 2..i * 2 + 2]` slice cuts the first `é` in half and panics.
+    #[test]
+    fn non_ascii_input_of_the_right_byte_length_is_none_not_a_panic() {
+        let s = format!("a{}b", "é".repeat(15));
+        assert_eq!(s.len(), 32);
+        assert_eq!(parse_hex16(&s), None);
+    }
+
+    /// `u8::from_str_radix("+1", 16)` is `Ok(1)`, so the old parser accepted a
+    /// sign in place of a hex digit.
+    #[test]
+    fn a_sign_is_not_a_hex_digit() {
+        assert_eq!(parse_hex16(&"+1".repeat(16)), None);
+        assert_eq!(parse_hex16(&"-1".repeat(16)), None);
+    }
+
+    #[test]
+    fn valid_key_still_parses_and_whitespace_is_trimmed() {
+        let hex = "0102030405060708090a0b0c0d0e0f10";
+        assert_eq!(
+            parse_hex16(&format!("  {hex}\n")),
+            Some([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
+        );
+        assert_eq!(parse_hex16("0102"), None);
+    }
 }
 
 #[cfg(all(test, feature = "cenc"))]

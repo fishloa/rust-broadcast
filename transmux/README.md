@@ -113,7 +113,7 @@ round-trips through the IR.
 | RTCP control packets | `RtcpPacket` — SR/RR/SDES/BYE/APP + `CompoundPacket` (RFC 3550 §6) | ✅ |
 | RFC 6381 `CODECS` strings | `rfc6381_codec_string` (the DASH builders' codec string, shared with the HLS `#EXT-X-STREAM-INF` `CODECS` attribute) | ✅ |
 | Fragment sample addressing | `frag_offsets` — the single ISO/IEC 14496-12 §8.8.7/§8.8.8 `trun`/`tfhd` offset resolver (`mdat_ranges` once per file, `sample_ranges_in` per `moof`) shared by `Fmp4Demux`, `CencDecryptor` and the validator; a truncated final `mdat` is clamped | ✅ |
-| URI references | `uri` — RFC 3986 §5.2 reference resolution for DASH `SegmentTemplate`/`BaseURL` | ✅ |
+| URI references | `base_url` (`std`) — BaseURL-chain / URL-reference resolution for DASH `SegmentTemplate`/`BaseURL` over `url::Url::join` (RFC 3986 §5.2 as implemented by the WHATWG URL algorithm) | ✅ |
 | HLS playlists | `MediaPlaylist` / `MasterPlaylist` (RFC 8216); `#EXT-X-DISCONTINUITY` / `#EXT-X-DISCONTINUITY-SEQUENCE` (RFC 8216 §4.3.4.3/§4.3.3.3) | ✅ |
 | LL-HLS playlist directives | `MediaPlaylist::low_latency` (`LowLatencyConfig`) → `#EXT-X-SERVER-CONTROL` · `#EXT-X-PART-INF` · `#EXT-X-PART` · `#EXT-X-PRELOAD-HINT` (RFC 8216bis §4.4.3.7/§4.4.3.8/§4.4.4.9/§4.4.5.3); `MediaPlaylist::open_segment` (`hls::OpenSegment`) renders an in-progress live-edge segment as trailing `#EXT-X-PART` lines with no `#EXTINF` (RFC 8216bis §4.4.4.9) | ✅ |
 

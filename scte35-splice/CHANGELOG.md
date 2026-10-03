@@ -51,6 +51,9 @@
   serialize instead of erroring, unlike `SpliceInfoSection`'s own
   `pts_adjustment` check (#1129).
 
+### Changed
+- `dvb_ta::base64_encode` delegates to the `base64` crate (`no_std` + `alloc`); output and signature unchanged. `base64` is now a normal dependency (was a dev-dependency).
+
 ## [2.1.0] - 2026-08-11
 
 ### Changed

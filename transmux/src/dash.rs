@@ -76,6 +76,7 @@
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use core::time::Duration;
 
 use crate::aac_asc::AudioSpecificConfig;
 use crate::error::{Error, Result};
@@ -719,7 +720,7 @@ impl DashPackager {
                 "type",
                 if self.dynamic { "dynamic" } else { "static" }.to_string(),
             ),
-            ("minBufferTime", "PT2.0S".to_string()),
+            ("minBufferTime", xs_duration(Duration::from_secs(2))),
         ];
         // `xmlns:cenc` (ISO/IEC 23001-7) only when a ContentProtection system
         // actually carries a `default_KID`/`pssh` in that namespace, or a
@@ -754,13 +755,16 @@ impl DashPackager {
             }
         } else {
             // VOD: advertise the presentation duration (longest track), in
-            // tenths of a second computed with integer math (`no_std`-safe).
+            // tenths of a second computed with integer math.
             let max_tenths = reprs
                 .iter()
                 .map(|r| div_round(r.total_duration.saturating_mul(10), r.timescale as u64))
                 .max()
                 .unwrap_or(0);
-            mpd_attrs.push(("mediaPresentationDuration", xs_duration_tenths(max_tenths)));
+            mpd_attrs.push((
+                "mediaPresentationDuration",
+                xs_duration(Duration::from_millis(max_tenths.saturating_mul(100))),
+            ));
         }
         open(w, "MPD", &mpd_attrs);
 
@@ -768,7 +772,10 @@ impl DashPackager {
         open(
             w,
             "Period",
-            &[("id", "0".to_string()), ("start", "PT0.0S".to_string())],
+            &[
+                ("id", "0".to_string()),
+                ("start", xs_duration(Duration::ZERO)),
+            ],
         );
 
         // One AdaptationSet per (kind, @lang, codec family) — ISO/IEC 23009-1
@@ -1116,10 +1123,11 @@ fn div_round(num: u64, den: u64) -> u64 {
     (num + den / 2) / den
 }
 
-/// Format a duration given in tenths of a second as an xs:duration
-/// (`PT<sec>.<tenth>S`, one decimal place; integer-only for `no_std`).
-fn xs_duration_tenths(tenths: u64) -> String {
-    format!("PT{}.{}S", tenths / 10, tenths % 10)
+/// Format a [`Duration`] as the shortest ISO 8601 / xs:duration (`PT2S`,
+/// `PT2.5S`, `PT1M30S`, `PT1H`), via `jiff`'s span printer.
+fn xs_duration(d: Duration) -> String {
+    let signed = jiff::SignedDuration::try_from(d).unwrap_or(jiff::SignedDuration::MAX);
+    jiff::fmt::temporal::SpanPrinter::new().duration_to_string(&signed)
 }
 
 /// Extract the first `ISO_639_language_code` from a track's raw PMT ES_info
@@ -1234,7 +1242,7 @@ fn write_content_protection(w: &mut XmlWriter, cp: &ContentProtectionSystem) {
 /// Format a 16-byte key ID as the canonical dashed-hex UUID form
 /// (`xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, ISO/IEC 23001-7 `cenc:default_KID`).
 fn format_kid(kid: &[u8; 16]) -> String {
-    let hex = hex_lower(kid);
+    let hex = ::hex::encode(kid);
     format!(
         "{}-{}-{}-{}-{}",
         &hex[0..8],
@@ -1243,15 +1251,6 @@ fn format_kid(kid: &[u8; 16]) -> String {
         &hex[16..20],
         &hex[20..32]
     )
-}
-
-/// Lowercase hex encoding of `bytes`.
-fn hex_lower(bytes: &[u8]) -> String {
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push_str(&format!("{b:02x}"));
-    }
-    s
 }
 
 /// Write a `<SegmentTimeline>` (ISO/IEC 23009-1 §5.3.9.6) from a flat list of
@@ -1345,4 +1344,30 @@ fn finish(w: XmlWriter) -> String {
     let mut out = String::from_utf8_lossy(&w.into_inner()).into_owned();
     out.push('\n');
     out
+}
+
+#[cfg(test)]
+mod xs_duration_tests {
+    use super::xs_duration;
+    use core::time::Duration;
+
+    #[test]
+    fn xs_duration_is_the_shortest_iso_8601_form() {
+        assert_eq!(xs_duration(Duration::from_secs(2)), "PT2S");
+        assert_eq!(xs_duration(Duration::ZERO), "PT0S");
+        assert_eq!(xs_duration(Duration::from_millis(2500)), "PT2.5S");
+        assert_eq!(xs_duration(Duration::from_secs(90)), "PT1M30S");
+        assert_eq!(xs_duration(Duration::from_secs(3600)), "PT1H");
+        // Round trip through the parser (Task 12b).
+        for d in [
+            Duration::from_millis(100),
+            Duration::from_secs(7200),
+            Duration::new(61, 500_000_000),
+        ] {
+            assert_eq!(
+                crate::dash_parse::parse_iso8601_duration(&xs_duration(d)).unwrap(),
+                d
+            );
+        }
+    }
 }

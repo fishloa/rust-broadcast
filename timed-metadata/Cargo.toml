@@ -25,6 +25,10 @@ broadcast-hls = { path = "../broadcast-hls", version = "0.2", default-features =
 cc-data       = { path = "../cc-data",       version = "0.5", default-features = false, optional = true }
 dvb-vbi       = { path = "../dvb-vbi",       version = "0.4", default-features = false, optional = true }
 thiserror     = { version = "2", default-features = false }
+# RFC 3339 formatting for the wall-clock anchor (SP5); `alloc` only so the crate stays no_std (`jiff/std` rides the `std` feature).
+jiff          = { version = "0.2", default-features = false, features = ["alloc"] }
+# Hex codec for DATERANGE `SCTE35-*` attributes (SP5); `alloc` only, so the crate stays no_std.
+hex           = { version = "0.4", default-features = false, features = ["alloc"] }
 chrono        = { version = "0.4", default-features = false, optional = true }
 serde         = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
@@ -38,7 +42,7 @@ transmux = { path = "../transmux", default-features = false }
 
 [features]
 default = ["std", "serde", "chrono"]
-std     = ["scte35-splice/std", "mp4-emsg/std", "chrono?/std", "serde?/std", "cc-data?/std", "dvb-vbi?/std", "broadcast-hls/std"]
+std     = ["jiff/std", "scte35-splice/std", "mp4-emsg/std", "chrono?/std", "serde?/std", "cc-data?/std", "dvb-vbi?/std", "broadcast-hls/std"]
 serde   = ["dep:serde", "scte35-splice/serde", "mp4-emsg/serde", "cc-data?/serde", "dvb-vbi?/serde", "broadcast-hls/serde"]
 chrono  = ["dep:chrono", "chrono/alloc"]
 # CEA-608/708 -> WebVTT cue extraction (`webvtt::Cea608CueExtractor` /

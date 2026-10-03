@@ -128,7 +128,7 @@ impl DateRange {
             // text, so `bare` cannot fail.
             attrs.push((
                 String::from(s.cue.attr_key()),
-                AttrValue::bare(format!("0x{}", to_hex_upper(&s.raw)))?,
+                AttrValue::bare(format!("0x{}", ::hex::encode_upper(&s.raw)))?,
             ));
         }
         // Unknown attributes preserved from parse (or set programmatically)
@@ -269,41 +269,19 @@ fn parse_checked_f64(what: &'static str, v: &str) -> Result<f64> {
     Ok(parsed)
 }
 
-fn to_hex_upper(b: &[u8]) -> String {
-    const HEX_UPPER: &[u8; 16] = b"0123456789ABCDEF";
-    let mut s = String::with_capacity(b.len() * 2);
-    for &byte in b {
-        s.push(char::from(HEX_UPPER[usize::from(byte >> 4)]));
-        s.push(char::from(HEX_UPPER[usize::from(byte & 0x0F)]));
-    }
-    s
-}
-
 fn parse_hex(v: &str) -> Result<Vec<u8>> {
-    let h = v
+    let digits = v
         .strip_prefix("0x")
         .or_else(|| v.strip_prefix("0X"))
         .unwrap_or(v);
-    if !h.len().is_multiple_of(2) {
-        return Err(Error::AttrParse("odd-length hex".to_string()));
-    }
-    (0..h.len())
-        .step_by(2)
-        .map(|i| {
-            u8::from_str_radix(&h[i..i + 2], 16)
-                .map_err(|_| Error::AttrParse("bad hex".to_string()))
-        })
-        .collect()
+    ::hex::decode(digits).map_err(|e| match e {
+        ::hex::FromHexError::OddLength => Error::AttrParse("odd-length hex".to_string()),
+        _ => Error::AttrParse("bad hex".to_string()),
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    #[test]
-    fn hex_upper_is_zero_padded_uppercase() {
-        assert_eq!(to_hex_upper(&[0x00, 0x0F, 0xA5, 0xFF]), "000FA5FF");
-        assert_eq!(to_hex_upper(&[]), "");
-    }
-
     use super::*;
     use alloc::{string::ToString, vec};
 

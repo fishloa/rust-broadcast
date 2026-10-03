@@ -15,6 +15,16 @@ readme       = "README.md"
 # crate re-exports, shared with `broadcast-hls` — issue #878) landed there.
 broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 thiserror  = { version = "2", default-features = false }
+# Hex codec for every hex site (SP5); `alloc` only, so the core stays no_std.
+hex        = { version = "0.4", default-features = false, features = ["alloc"] }
+# base64 codec for SDP sprop, DRM headers and DASH/Smooth payloads (SP5); `alloc` only.
+base64     = { version = "0.23", default-features = false, features = ["alloc"] }
+# Calendar and duration handling (SP5): CLI availabilityStartTime, xs:duration parse/build. `std`-only, so the no_std core is unaffected.
+jiff       = { version = "0.2", default-features = false, features = ["std"], optional = true }
+# BaseURL / URL-reference resolution (SP3, `base_url`): WHATWG `Url::join`. `std`-only.
+url        = { version = "2", optional = true }
+# RTP SDP generation (SP4): `Session::write`. `sdp-types` 0.2 is `std`-only, so SDP generation is `std`-only; tests/rtp.rs also uses its parser as an oracle.
+sdp-types  = { version = "0.2", optional = true }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 # HLS (M3U8) playlist syntax (issue #878): the `ts_hls`/`ll_hls` segmenters
 # produce `broadcast_hls::MediaPlaylist`/`MediaSegment` values; the playlist
@@ -55,7 +65,7 @@ required-features = ["std"]
 
 [features]
 default = ["std", "serde", "cenc"]
-std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std", "dep:quick-xml"]
+std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std", "dep:quick-xml", "dep:jiff", "dep:url", "dep:sdp-types"]
 serde  = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtcp-packet/serde"]
 cenc   = ["dep:aes", "dep:ctr", "dep:cbc"]
 # `sample-aes` adds Apple HLS Sample-AES + full-segment AES-128 (AES-128-CBC)
@@ -80,13 +90,6 @@ serde_json   = "1.0"
 # *points* from SCTE-35 cues is left to callers, and this example is exactly
 # that follow-up wiring, not a library dependency.
 scte35-splice  = { path = "../scte35-splice", version = "2.1", default-features = false, features = ["std"] }
-# sdp-types (issue #1079, audit r04-W34) is an independent SDP parser, already
-# resolved workspace-wide at this version (rtsp-runtime depends on it, see
-# Cargo.lock), so this adds no new dependency to the tree. Used ONLY as an
-# oracle in tests/rtp.rs: the RTP spoke's own SDP output is validated by a
-# parser nobody in this repository wrote, which is the only way to catch a
-# misreading of RFC 4566 shared by the renderer and its own test.
-sdp-types      = "0.1"
 timed-metadata = { path = "../timed-metadata", default-features = false, features = ["std"] }
 
 [package.metadata.docs.rs]

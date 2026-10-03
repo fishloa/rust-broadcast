@@ -1,6 +1,48 @@
 //! Media-time ↔ wall-clock mapping for conversions that cross into UTC.
+use crate::error::{Error, Result};
 use crate::event::MediaTime;
-use alloc::{format, string::String};
+use alloc::string::String;
+use jiff::SignedDuration;
+use jiff::civil::{DateTime, date};
+use jiff::fmt::temporal::DateTimePrinter;
+
+/// Three fractional digits (`…:SS.sss`); the `Z` is appended by the caller.
+const PRINTER: DateTimePrinter = DateTimePrinter::new().precision(Some(3));
+
+/// `-9999-01-01T00:00:00Z` in milliseconds since the Unix epoch: the first
+/// instant of `jiff::civil::DateTime`'s range.
+const MIN_EPOCH_MS: i64 = -377_705_116_800_000;
+/// `9999-12-31T23:59:59.999Z` in milliseconds since the Unix epoch: the last
+/// whole millisecond of `jiff::civil::DateTime`'s range.
+const MAX_EPOCH_MS: i64 = 253_402_300_799_999;
+
+/// The UTC calendar date-time `epoch_ms` milliseconds after the Unix epoch, or
+/// `None` outside years -9999..=9999. (`jiff::Timestamp` is deliberately NOT
+/// used: its range stops at 9999-12-30T22:00Z, which would break the
+/// byte-identical output for the last day of year 9999.)
+fn civil_from_epoch_ms(epoch_ms: i64) -> Option<DateTime> {
+    date(1970, 1, 1)
+        .at(0, 0, 0, 0)
+        .checked_add(SignedDuration::from_millis(epoch_ms))
+        .ok()
+}
+
+fn render(dt: &DateTime) -> String {
+    let printed = PRINTER.datetime_to_string(dt);
+    let mut out = match printed.strip_prefix('-') {
+        // jiff prints a negative year as `-` + 6 digits (`-000001`); this crate
+        // has always printed `{year:04}`, i.e. `-001` (sign + at least 3
+        // digits), and keeps doing so. (Negative years are not RFC 3339.)
+        Some(rest) => {
+            let (year6, tail) = rest.split_at(6);
+            let digits = year6.trim_start_matches('0');
+            alloc::format!("-{digits:0>3}{tail}")
+        }
+        None => printed,
+    };
+    out.push('Z');
+    out
+}
 
 /// Maps a known 90 kHz PTS to the UTC instant it represents (linear at 90 kHz).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,44 +55,42 @@ pub struct TimeAnchor {
 }
 
 impl TimeAnchor {
-    /// Map a media instant to milliseconds since the Unix epoch.
+    /// Map a media instant to milliseconds since the Unix epoch, saturating at
+    /// the `i64` limits.
     pub fn media_to_epoch_ms(&self, t: MediaTime) -> i64 {
-        let delta_ticks = t.0 as i64 - self.pts_90k as i64;
-        // ticks / 90_000 * 1000 == ticks / 90 ; do it in i128 to avoid overflow.
-        self.utc_epoch_ms + (delta_ticks as i128 * 1000 / crate::PTS_HZ as i128) as i64
+        let delta_ticks = i128::from(t.0) - i128::from(self.pts_90k);
+        // ticks / 90_000 * 1000 == ticks / 90 ; done in i128 so nothing overflows.
+        let ms = i128::from(self.utc_epoch_ms) + delta_ticks * 1000 / i128::from(crate::PTS_HZ);
+        ms.clamp(i128::from(i64::MIN), i128::from(i64::MAX)) as i64
     }
 
-    /// Map a media instant to an RFC3339 / ISO-8601 UTC string (millisecond precision).
+    /// Map a media instant to an RFC3339 / ISO-8601 UTC string (millisecond
+    /// precision), clamped to the supported range (years -9999..=9999).
     pub fn rfc3339(&self, t: MediaTime) -> String {
         format_rfc3339_ms(self.media_to_epoch_ms(t))
     }
+
+    /// Like [`Self::rfc3339`], but an unrepresentable instant is an error.
+    pub fn try_rfc3339(&self, t: MediaTime) -> Result<String> {
+        try_format_rfc3339_ms(self.media_to_epoch_ms(t))
+    }
 }
 
-/// Format milliseconds-since-epoch as `YYYY-MM-DDTHH:MM:SS.sssZ`.
+/// Format milliseconds-since-epoch as `YYYY-MM-DDTHH:MM:SS.sssZ`; values outside
+/// years -9999..=9999 are clamped (use [`try_format_rfc3339_ms`] to detect them).
 pub fn format_rfc3339_ms(epoch_ms: i64) -> String {
-    let (secs, ms) = (epoch_ms.div_euclid(1000), epoch_ms.rem_euclid(1000));
-    let days = secs.div_euclid(86_400);
-    let tod = secs.rem_euclid(86_400);
-    let (h, m, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
-    let (y, mo, d) = civil_from_days(days);
-    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}.{ms:03}Z")
+    let clamped = epoch_ms.clamp(MIN_EPOCH_MS, MAX_EPOCH_MS);
+    // The clamped value is always in range, so this cannot fail.
+    let dt = civil_from_epoch_ms(clamped).unwrap_or(DateTime::constant(1970, 1, 1, 0, 0, 0, 0));
+    render(&dt)
 }
 
-/// Convert days-since-Unix-epoch to (year, month, day). Hinnant's algorithm.
-fn civil_from_days(z: i64) -> (i64, u32, u32) {
-    let z = z + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = z - era * 146_097; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = yoe + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
-    (if m <= 2 { y + 1 } else { y }, m, d)
+/// Fallible [`format_rfc3339_ms`]: an instant outside years -9999..=9999 is
+/// [`Error::TimestampOutOfRange`].
+pub fn try_format_rfc3339_ms(epoch_ms: i64) -> Result<String> {
+    let dt = civil_from_epoch_ms(epoch_ms).ok_or(Error::TimestampOutOfRange(epoch_ms))?;
+    Ok(render(&dt))
 }
-
-// chrono interop helpers can be added behind cfg(feature="chrono") later
 
 #[cfg(test)]
 mod tests {
@@ -73,5 +113,32 @@ mod tests {
         };
         assert_eq!(a.media_to_epoch_ms(MediaTime(90_000)), 2_000);
         assert_eq!(a.rfc3339(MediaTime(0)), "1970-01-01T00:00:01.000Z");
+    }
+
+    #[test]
+    fn range_constants_are_exactly_the_civil_range() {
+        assert!(civil_from_epoch_ms(MIN_EPOCH_MS).is_some());
+        assert!(civil_from_epoch_ms(MIN_EPOCH_MS - 1).is_none());
+        assert!(civil_from_epoch_ms(MAX_EPOCH_MS).is_some());
+        assert!(civil_from_epoch_ms(MAX_EPOCH_MS + 1).is_none());
+        assert_eq!(format_rfc3339_ms(MAX_EPOCH_MS), "9999-12-31T23:59:59.999Z");
+    }
+
+    #[test]
+    fn negative_years_keep_the_historical_four_wide_signed_form() {
+        // 0000-12-31, -0001-12-31, -0010, -9999 in the old `{y:04}` spelling.
+        assert_eq!(
+            format_rfc3339_ms(-62_167_219_200_000),
+            "0000-01-01T00:00:00.000Z"
+        );
+        assert_eq!(
+            format_rfc3339_ms(-62_167_219_200_001),
+            "-001-12-31T23:59:59.999Z"
+        );
+        assert_eq!(
+            format_rfc3339_ms(-62_798_785_600_000),
+            "-021-12-27T04:53:20.000Z"
+        );
+        assert_eq!(format_rfc3339_ms(MIN_EPOCH_MS), "-9999-01-01T00:00:00.000Z");
     }
 }

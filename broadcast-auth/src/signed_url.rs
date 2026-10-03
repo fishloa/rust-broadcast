@@ -10,6 +10,16 @@
 //! ?exp=<unix-seconds>&kid=<key-id>&sig=<base64url-nopad>[&ip=<addr>]
 //! ```
 //!
+//! The query is `application/x-www-form-urlencoded`: [`SignedUrlKeySet::sign`]
+//! percent-encodes every value (a `kid` with `&`, `=`, `%`, `+` or a space, and
+//! an IPv6 `ip=2001%3Adb8%3A%3A1`), and verification percent-decodes them, so a
+//! value can never smuggle in an extra parameter. The first occurrence of a key
+//! wins; a bare key with no `=` has the empty value. Decoding is lossy
+//! (`form_urlencoded`): different spellings of a value can read the same
+//! (`%FF` and `%EF%BF%BD` both read as U+FFFD, `%65xp` reads as `exp`); only
+//! the signed fields (path, `exp`, `ip`) matter to the signature and the
+//! first-wins rule is unchanged, so this opens no bypass.
+//!
 //! - `exp` — an absolute Unix timestamp (seconds). The token is invalid once
 //!   `now > exp`; there is no clock-skew grace period, by design (the caller
 //!   sets the window when minting the token).
@@ -64,6 +74,7 @@
 //!   signature.
 
 use core::net::IpAddr;
+use std::borrow::Cow;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
@@ -147,11 +158,14 @@ impl SignedUrlKeySet {
             .secret_for(kid)
             .ok_or_else(|| Error::UnknownSignedUrlKeyId(kid.to_string()))?;
         let sig = URL_SAFE_NO_PAD.encode(hmac_sha256(secret, &canonical_string(path, exp, ip)));
-        let mut query = format!("exp={exp}&kid={kid}&sig={sig}");
+        let mut query = form_urlencoded::Serializer::new(String::new());
+        query.append_pair("exp", &exp.to_string());
+        query.append_pair("kid", kid);
+        query.append_pair("sig", &sig);
         if let Some(ip) = ip {
-            query.push_str(&format!("&ip={ip}"));
+            query.append_pair("ip", &ip.to_string());
         }
-        Ok(query)
+        Ok(query.finish())
     }
 }
 
@@ -204,14 +218,11 @@ fn split_path_and_query(uri: &str) -> (&str, &str) {
     }
 }
 
-/// Looks up `key` in a raw (unparsed) query string — `a=1&b=2` — returning
-/// the *first* matching value, or `None` if `key` is absent. Never panics on
-/// malformed input: a pair with no `=` is simply skipped.
-fn query_get<'q>(query: &'q str, key: &str) -> Option<&'q str> {
-    query
-        .split('&')
-        .filter_map(|pair| pair.split_once('='))
-        .find(|(k, _)| *k == key)
+/// The first value for `key` in an `application/x-www-form-urlencoded` query,
+/// percent-decoded; a pair with no `=` has the value `""`.
+fn query_get<'q>(query: &'q str, key: &str) -> Option<Cow<'q, str>> {
+    form_urlencoded::parse(query.as_bytes())
+        .find(|(k, _)| k == key)
         .map(|(_, v)| v)
 }
 
@@ -249,7 +260,7 @@ pub(crate) fn verify(ctx: &RequestContext<'_>, keys: &SignedUrlKeySet) -> bool {
     let Some(sig) = query_get(query, "sig").filter(|s| !s.is_empty()) else {
         return false;
     };
-    let Some(secret) = keys.secret_for(kid) else {
+    let Some(secret) = keys.secret_for(&kid) else {
         return false;
     };
     let ip: Option<IpAddr> = match query_get(query, "ip") {
@@ -259,7 +270,7 @@ pub(crate) fn verify(ctx: &RequestContext<'_>, keys: &SignedUrlKeySet) -> bool {
         },
         None => None,
     };
-    let Ok(decoded_sig) = URL_SAFE_NO_PAD.decode(sig) else {
+    let Ok(decoded_sig) = URL_SAFE_NO_PAD.decode(sig.as_bytes()) else {
         return false;
     };
 
@@ -548,8 +559,8 @@ mod tests {
 
     #[test]
     fn query_get_skips_malformed_pairs_without_panicking() {
-        assert_eq!(query_get("a=1&garbage&b=2", "b"), Some("2"));
-        assert_eq!(query_get("a=1&garbage&b=2", "garbage"), None);
+        assert_eq!(query_get("a=1&garbage&b=2", "b").as_deref(), Some("2"));
+        assert_eq!(query_get("a=1&garbage&b=2", "garbage").as_deref(), Some(""));
         assert_eq!(query_get("", "a"), None);
     }
 

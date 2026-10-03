@@ -63,6 +63,12 @@ pub enum Error {
         /// The offending value.
         value: f64,
     },
+    /// A wall-clock instant is outside the range RFC 3339 formatting supports
+    /// (years -9999..=9999).
+    #[error(
+        "epoch milliseconds {0} are outside the representable RFC 3339 range (years -9999..=9999)"
+    )]
+    TimestampOutOfRange(i64),
 }
 
 /// Crate result alias.

@@ -1,5 +1,6 @@
 //! Stateful challenge->response computation across a session.
 
+use headers::{Authorization, Header};
 use http_auth::{PasswordClient, PasswordParams};
 
 use crate::credentials::Credentials;
@@ -62,7 +63,14 @@ impl Authenticator {
                 let Credentials::Bearer { token } = &self.credentials else {
                     unreachable!("SchemeState::Bearer only paired with Credentials::Bearer")
                 };
-                Ok(format!("Bearer {token}"))
+                let typed = Authorization::bearer(token).map_err(|_| Error::InvalidBearerToken)?;
+                let mut values: Vec<headers::HeaderValue> = Vec::with_capacity(1);
+                typed.encode(&mut values);
+                values
+                    .first()
+                    .and_then(|v| v.to_str().ok())
+                    .map(str::to_owned)
+                    .ok_or(Error::InvalidBearerToken)
             }
             SchemeState::Password(client) => {
                 let (username, password) = self

@@ -1,0 +1,3 @@
+basic	Basic realm="cameras"
+digest	Digest realm="cameras", nonce="<nonce:96 hex chars>", qop="auth", algorithm=MD5
+bearer	Bearer

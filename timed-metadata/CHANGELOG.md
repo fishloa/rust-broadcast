@@ -8,6 +8,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 - `webvtt::teletext` now calls `dvb_vbi::TeletextDataField::txt_data_block_logical()`
   instead of its own private `.map(u8::reverse_bits)` (issue #1106); no
   behaviour change, same bytes.
+- RFC 3339 formatting uses `jiff` (`no_std` + `alloc`; `jiff/std` rides the `std` feature); output is byte-identical for every instant in years -9999..=9999, including the historical `{year:04}` spelling of negative years (`-001-12-31T23:59:59.999Z`) (the calendar maths goes through `jiff::civil::DateTime`, whose range is the full year 9999, not `jiff::Timestamp`, which stops at 9999-12-30T22:00Z). `format_rfc3339_ms`/`TimeAnchor::rfc3339` now CLAMP an out-of-range instant instead of printing a many-digit year; `TimeAnchor::media_to_epoch_ms` saturates (was: sign-wrapping `u64 as i64` casts and a debug-build overflow panic); `convert::scte35_to_daterange` returns `Error::TimestampOutOfRange` for an unrepresentable `START-DATE`.
 
 ### Changed (breaking)
 - New `Error` variants `EmsgPresentationTimeOverflow` and `UnsupportedPresentationTime` (`Error` is `#[non_exhaustive]`; #1105).
@@ -75,6 +76,10 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
   `tests/webvtt_teletext_tsduck_oracle.rs`).
 - A cancelled `splice_insert` (`splice_event_cancel_indicator == true`) was
   classified as `BreakEnd` (spurious `SCTE35-IN`); it is now `Unspecified`.
+- `DateRange::parse_tag_line` no longer panics on a multi-byte character inside a `SCTE35-OUT/IN/CMD` hex value and no longer accepts a `+`/`-` sign as a hex digit (the hex now goes through the `hex` crate).
+
+### Added
+- `anchor::try_format_rfc3339_ms`, `TimeAnchor::try_rfc3339` and `Error::TimestampOutOfRange(i64)` (new variant on the `#[non_exhaustive]` enum): the fallible RFC 3339 formatters.
 
 ## [0.5.0] - 2026-08-11
 

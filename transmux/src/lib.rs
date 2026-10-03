@@ -68,8 +68,8 @@
 //!   / [`validate_media_segment`] / [`validate_cmaf_track`]).
 //! - **Utilities:** NAL keyframe classification ([`is_keyframe_nal`] /
 //!   [`nal_unit_type`]); I-frame trick-play track derivation ([`derive_iframe_track`]);
-//!   RFC 3986 URI-reference resolution for DASH `BaseURL`/`SegmentTemplate`
-//!   ([`uri`]); the single ISO/IEC 14496-12 §8.8.7/§8.8.8 fragment
+//!   URI-reference resolution for DASH `BaseURL`/`SegmentTemplate`
+//!   (`base_url`, `std` only; WHATWG `url::Url::join`); the single ISO/IEC 14496-12 §8.8.7/§8.8.8 fragment
 //!   sample-offset resolver shared by the demuxer, decryptor and validator
 //!   ([`frag_offsets`]).
 //!
@@ -135,6 +135,8 @@ pub mod annexb;
 pub mod au;
 pub mod av1;
 pub mod avc_config;
+#[cfg(feature = "std")]
+pub mod base_url;
 pub mod bitreader;
 pub mod box_types;
 pub mod cenc;
@@ -201,7 +203,6 @@ pub mod trickplay;
 pub mod ts_demux;
 pub mod ts_hls;
 pub mod ts_mux;
-pub mod uri;
 pub mod validate;
 pub mod visual_ext;
 pub mod vp9;
@@ -330,12 +331,13 @@ pub use rtmp::{
     Handshake1, Handshake2, Message, MessageHeader, ProtocolControl, RTMP_VERSION, RtmpDemux,
     RtmpError, RtmpMux,
 };
+#[cfg(feature = "std")]
+pub use rtp::build_sdp_with_connection;
 pub use rtp::{
     DEFAULT_AAC_CLOCK_RATE, DEFAULT_AUDIO_PT, DEFAULT_KLV_PT, DEFAULT_MTU, DEFAULT_VIDEO_PT,
     KLV_ENCODING_NAME, LOCAL_CONNECTION_ADDRESS, MAX_TIMING_WARNINGS, NAL_TYPE_IDR,
     RtpDepacketiser, RtpInput, RtpInputStream, RtpMediaKind, RtpOutput, RtpPacket, RtpPacketiser,
-    RtpStream, RtpTimingWarning, VIDEO_CLOCK_RATE, build_sdp_with_connection, depacketise_klv,
-    packetise_klv,
+    RtpStream, RtpTimingWarning, VIDEO_CLOCK_RATE, depacketise_klv, packetise_klv,
 };
 pub use rtp_sdp::{
     aac_config_from_asc_bytes, aac_config_from_asc_hex, aac_config_from_fmtp, avc_config_from_fmtp,
@@ -366,6 +368,8 @@ pub use smooth::{
 // would collide with `mp4esds::StreamType` (an unrelated ES descriptor
 // field); reach it via `transmux::smooth_parse::StreamType`.
 #[cfg(feature = "std")]
+pub use base_url::{resolve as resolve_url_reference, resolve_chain as resolve_base_url_chain};
+#[cfg(feature = "std")]
 pub use smooth_parse::{
     C, MAX_CHUNK_RUN, MAX_CODEC_PRIVATE_DATA_HEX_LEN, QualityLevel, SmoothManifest,
     SmoothParseError, StreamIndex, hex_decode as smooth_hex_decode, track_spec_from_quality_level,
@@ -390,10 +394,6 @@ pub use ts_demux::{
 };
 pub use ts_hls::{StreamingTsHlsSegmenter, TsHlsOutput, TsHlsPackager, TsSegment};
 pub use ts_mux::{TsContinuity, TsMux};
-pub use uri::{
-    UriReference, resolve as resolve_uri_reference, resolve_segment as resolve_uri_segment,
-    try_resolve as try_resolve_uri_reference,
-};
 pub use validate::{
     ConformanceIssue, Severity, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };

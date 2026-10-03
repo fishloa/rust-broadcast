@@ -43,6 +43,13 @@
 //!   (`scheme://authority/path`), and a legitimate client may hash either;
 //!   [`digest_uri_matches`] accepts both representations of the same target
 //!   while still rejecting a genuinely different one.
+//!   The `Authorization` fields are read with `http-auth`'s
+//!   `ChallengeParser` (RFC 7235 `auth-param` list): quoted-pairs are
+//!   unescaped, parameter names are case-insensitive, and a repeated
+//!   parameter or a second challenge is rejected. A non-ASCII user
+//!   authenticates through the RFC 7616 §3.4.4 `username*` extended parameter
+//!   (RFC 8187 `UTF-8''<pct-encoded>`); a raw non-ASCII `username` and
+//!   `userhash=true` are rejected.
 //! - **Forwarded** ([`Self::forwarded`], issue #663 extensibility wave part
 //!   1): not an RFC 7235 challenge scheme at all — trusts that a fronting
 //!   reverse proxy has already authenticated the caller and forwards the
@@ -93,15 +100,20 @@
 //! with [`Verifier::with_clock`]; a clock that steps backwards is clamped to
 //! the latest nonce issue time seen.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::HashMap;
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-use base64::Engine;
+use headers::authorization::{Basic, Bearer, Credentials as HeaderCredentials};
+use headers::{Authorization, Header, HeaderValue};
 use hmac::digest::Key;
 use hmac::{Hmac, KeyInit, Mac};
+use http_auth::{ChallengeParser, ChallengeRef};
+use lru::LruCache;
 use md5::{Digest as _, Md5};
+use percent_encoding::percent_decode_str;
 use sha2::Sha256;
+use url::{Position, Url};
 
 use crate::credentials::Credentials;
 use crate::request::RequestContext;
@@ -217,8 +229,7 @@ struct NcEntry {
     highest: u32,
     /// Bit `i` set: `highest - 1 - i` has been accepted.
     window: u64,
-    /// Key into [`NcTable::lru`].
-    last_used: u64,
+    // No `last_used`: `LruCache` owns the use order.
 }
 
 impl NcEntry {
@@ -245,10 +256,10 @@ impl NcEntry {
 }
 
 struct NcTable {
-    entries: HashMap<PairKey, NcEntry>,
-    /// Use order → key; the first entry is the least recently used.
-    lru: BTreeMap<u64, PairKey>,
-    next_use: u64,
+    /// Per-`(nonce, cnonce)` anti-replay state, in least-recently-used order.
+    /// Unbounded as far as `lru` is concerned: the cap below is enforced by
+    /// `record` so a dropped live pair can raise `floor_seq`.
+    entries: LruCache<PairKey, NcEntry>,
     capacity: usize,
     /// Nonces with a lower issue sequence are accepted only for pairs still
     /// in `entries` — raised when a live pair had to be dropped.
@@ -285,9 +296,7 @@ impl DigestNonces {
         DigestNonces {
             secret: rand::random(),
             seen: Mutex::new(NcTable {
-                entries: HashMap::new(),
-                lru: BTreeMap::new(),
-                next_use: 0,
+                entries: LruCache::unbounded(),
                 capacity: DIGEST_NC_TRACK_CAP,
                 floor_seq: 0,
                 next_seq: 0,
@@ -339,7 +348,7 @@ impl DigestNonces {
             .finalize()
             .into_bytes();
         raw[NONCE_TIME_LEN + NONCE_SEQ_LEN..].copy_from_slice(&tag);
-        hex(&raw)
+        hex::encode(raw)
     }
 
     /// The issue stamp of `nonce` if this verifier minted it, else `None`.
@@ -366,40 +375,34 @@ impl DigestNonces {
     fn record(&self, key: PairKey, stamp: NonceStamp, nc: u32, now_secs: u64) -> bool {
         let mut guard = self.table();
         let table = &mut *guard;
-        let use_id = table.next_use;
-        table.next_use += 1;
-        if let Some(entry) = table.entries.get_mut(&key) {
+        // `peek_mut` does not touch the use order: a rejected replay must not
+        // refresh the pair, only a successful accept does.
+        if let Some(entry) = table.entries.peek_mut(&key) {
             if !entry.accept(nc) {
                 return false;
             }
-            table.lru.remove(&entry.last_used);
-            entry.last_used = use_id;
-            table.lru.insert(use_id, key);
+            table.entries.promote(&key);
             return true;
         }
         while table.entries.len() >= table.capacity {
-            let Some((_, victim)) = table.lru.pop_first() else {
+            let Some((_, dropped)) = table.entries.pop_lru() else {
                 break;
             };
-            if let Some(dropped) = table.entries.remove(&victim)
-                && !Self::is_expired(dropped.stamp.time, now_secs)
-            {
+            if !Self::is_expired(dropped.stamp.time, now_secs) {
                 table.floor_seq = table.floor_seq.max(dropped.stamp.seq.saturating_add(1));
             }
         }
         if stamp.seq < table.floor_seq {
             return false;
         }
-        table.entries.insert(
+        table.entries.put(
             key,
             NcEntry {
                 stamp,
                 highest: nc,
                 window: 0,
-                last_used: use_id,
             },
         );
-        table.lru.insert(use_id, key);
         true
     }
 
@@ -407,7 +410,7 @@ impl DigestNonces {
     /// because a live pair issued no earlier was dropped.
     fn below_floor(&self, key: &PairKey, stamp: NonceStamp) -> bool {
         let table = self.table();
-        stamp.seq < table.floor_seq && !table.entries.contains_key(key)
+        stamp.seq < table.floor_seq && !table.entries.contains(key)
     }
 }
 
@@ -429,7 +432,9 @@ impl Verifier {
     /// now; every [`Self::challenge`] then issues a fresh, time-limited nonce
     /// (see the module docs' nonce handling).
     pub fn new(credentials: Credentials, realm: impl Into<String>) -> Self {
-        let realm = realm.into();
+        // Stored in the form it is rendered in, so the realm a client echoes
+        // back (and hashes into HA1) is the realm the server compares.
+        let realm = sanitize_realm(&realm.into());
         let scheme = match credentials {
             Credentials::Basic { username, password } => VerifierScheme::Basic {
                 username,
@@ -549,12 +554,13 @@ impl Verifier {
 
     fn render_challenge(&self, stale: bool) -> String {
         match &self.scheme {
-            VerifierScheme::Basic { realm, .. } => format!("Basic realm=\"{realm}\""),
+            VerifierScheme::Basic { realm, .. } => format!("Basic realm={}", quoted(realm)),
             VerifierScheme::Digest { realm, nonces, .. } => {
                 let nonce = nonces.issue(self.now_secs());
                 let stale = if stale { ", stale=true" } else { "" };
                 format!(
-                    "Digest realm=\"{realm}\", nonce=\"{nonce}\", qop=\"auth\", algorithm=MD5{stale}"
+                    "Digest realm={}, nonce=\"{nonce}\", qop=\"auth\", algorithm=MD5{stale}",
+                    quoted(realm)
                 )
             }
             VerifierScheme::Bearer { .. } => "Bearer".to_string(),
@@ -578,8 +584,8 @@ impl Verifier {
     /// `kid`/`sig`\[/`ip`\]) instead of any header at all, and `ctx.peer_addr`
     /// when the token is IP-scoped — see [`crate::signed_url`].
     ///
-    /// A pathologically large `Digest` `Authorization` header is rejected
-    /// outright rather than parsed (see `MAX_DIGEST_FIELDS`) — this bounds
+    /// A `Digest` `Authorization` header with a pathological parameter count
+    /// is rejected outright (see `MAX_DIGEST_FIELDS`) — this bounds
     /// the per-request allocation cost, but is not a substitute for a
     /// transport-level cap on header size, which callers should also enforce.
     pub fn verify(&self, ctx: &RequestContext<'_>) -> AuthResult {
@@ -650,63 +656,133 @@ impl core::fmt::Debug for Verifier {
     }
 }
 
-/// RFC 7235 §2.1: `auth-scheme` is a `token`, and tokens are matched
-/// case-insensitively — a client sending `digest realm=…` or `BASIC …` is
-/// answering the challenge just as validly as one that echoes the exact
-/// case this crate renders in [`Verifier::render_challenge`]. Returns what
-/// follows `scheme` and its separating space, still in the client's
-/// original case (only the scheme token itself is case-folded).
-fn strip_scheme<'a>(header: &'a str, scheme: &str) -> Option<&'a str> {
-    let head = header.get(..scheme.len())?;
-    if !head.eq_ignore_ascii_case(scheme) {
-        return None;
-    }
-    header[scheme.len()..].strip_prefix(' ')
+/// A realm as it can appear in a header: ASCII control characters other than
+/// HTAB (CR, LF, NUL, ...) cannot appear in a header value and are dropped
+/// rather than letting a realm split the response. HTAB is legal `qdtext`
+/// (RFC 9110 §5.6.4) and is kept. Applied once, when the [`Verifier`] is built.
+fn sanitize_realm(realm: &str) -> String {
+    realm
+        .chars()
+        .filter(|c| !c.is_ascii_control() || *c == '\t')
+        .collect()
 }
 
-/// Split a Digest `Authorization` header's field list on top-level commas
-/// (RFC 7616 §3.4.1 `auth-param`), treating a `"…"` quoted-string span as
-/// opaque — a literal comma inside a quoted value (e.g. `realm="Region,
-/// East"`) is part of that value, not a field separator. No backslash-escape
-/// handling: none of the values this crate itself renders or expects back
-/// (`realm`/`nonce`/`opaque`/`uri`/…) ever contain a literal `"`.
-fn split_digest_fields(s: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let mut start = 0usize;
-    let mut in_quotes = false;
-    for (i, c) in s.char_indices() {
-        match c {
-            '"' => in_quotes = !in_quotes,
-            ',' if !in_quotes => {
-                out.push(&s[start..i]);
-                start = i + c.len_utf8();
-            }
-            _ => {}
+/// RFC 9110 §5.6.4 `quoted-string`: `"` and `\` become quoted-pairs.
+///
+/// Rendering a `WWW-Authenticate` challenge stays a formatter here because no
+/// crate in the workspace can produce one (`http_auth::ChallengeRef`
+/// implements only `Debug`; escalation E1). `tests/challenge_render.rs` parses
+/// every rendering back with `http-auth`'s `ChallengeParser`.
+fn quoted(value: &str) -> String {
+    let mut out = String::with_capacity(value.len() + 2);
+    out.push('"');
+    for c in value
+        .chars()
+        .filter(|c| !c.is_ascii_control() || *c == '\t')
+    {
+        if matches!(c, '"' | '\\') {
+            out.push('\\');
         }
+        out.push(c);
     }
-    out.push(&s[start..]);
+    out.push('"');
     out
 }
 
+/// RFC 8187 §3.2.1 `value-chars` syntax: `pct-encoded` or `attr-char`.
+fn is_ext_value_syntax(value: &str) -> bool {
+    let b = value.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'%' => {
+                if !(i + 2 < b.len()
+                    && b[i + 1].is_ascii_hexdigit()
+                    && b[i + 2].is_ascii_hexdigit())
+                {
+                    return false;
+                }
+                i += 3;
+            }
+            c if c.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&c) => i += 1,
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// RFC 7616 §3.4.4: `username*` is an RFC 8187 ext-value
+/// (`charset "'" [language] "'" value-chars`). Only `UTF-8` is accepted;
+/// syntax and UTF-8 validity are enforced, never "lossy" (`percent_decode_str`
+/// alone passes a malformed `%zz` through as literal text).
+fn decode_ext_value(v: &str) -> Option<String> {
+    let (charset, rest) = v.split_once('\'')?;
+    let (_language, value) = rest.split_once('\'')?;
+    if !charset.eq_ignore_ascii_case("UTF-8") || !is_ext_value_syntax(value) {
+        return None;
+    }
+    percent_decode_str(value)
+        .decode_utf8()
+        .ok()
+        .map(std::borrow::Cow::into_owned)
+}
+
+/// RFC 7235 `credentials` for the Digest scheme are an `auth-param` list — the
+/// same grammar `http-auth` parses for challenges — so its parser reads them
+/// (verified against the RFC 7616 §3.9.1 examples in
+/// `tests/http_auth_rfc7616.rs`). Names are lower-cased (RFC 7235 §2.1),
+/// quoted-pairs are unescaped, and anything ambiguous is refused: more than one
+/// challenge, a scheme other than `Digest`, a repeated parameter, or more than
+/// [`MAX_DIGEST_FIELDS`] parameters.
+fn parse_digest_fields(header: &str) -> Option<HashMap<String, String>> {
+    let mut parser = ChallengeParser::new(header);
+    let challenge: ChallengeRef<'_> = parser.next()?.ok()?;
+    if parser.next().is_some()
+        || !challenge.scheme.eq_ignore_ascii_case("Digest")
+        || challenge.params.len() > MAX_DIGEST_FIELDS
+    {
+        return None;
+    }
+    let mut fields = HashMap::with_capacity(challenge.params.len());
+    for (name, value) in &challenge.params {
+        if fields
+            .insert(name.to_ascii_lowercase(), value.to_unescaped())
+            .is_some()
+        {
+            return None;
+        }
+    }
+    Some(fields)
+}
+
+/// Typed read of an `Authorization` header value for one token68 scheme
+/// (`Basic` or `Bearer`; `http-auth`'s parser cannot read token68). `headers`
+/// matches the scheme case-insensitively and tolerates extra spaces.
+fn decode<C: HeaderCredentials>(header: &str) -> Option<Authorization<C>> {
+    let value = HeaderValue::from_str(header).ok()?;
+    Authorization::<C>::decode(&mut std::iter::once(&value)).ok()
+}
+
 /// RFC 7617 §2: decode the base64 payload and compare, in constant time,
-/// against `"{username}:{password}"`.
+/// against `username`/`password`. The user-id/password split is at the FIRST
+/// `:` (RFC 7617 §2: a user-id cannot contain one), so a configured username
+/// containing `:` cannot match.
 fn verify_basic(header: &str, username: &str, password: &str) -> bool {
-    let Some(encoded) = strip_scheme(header, "Basic") else {
+    let Some(auth) = decode::<Basic>(header) else {
         return false;
     };
-    let Ok(decoded) = base64::engine::general_purpose::STANDARD.decode(encoded.trim()) else {
-        return false;
-    };
-    let expected = format!("{username}:{password}");
-    constant_time_eq(&decoded, expected.as_bytes())
+    // Both compared unconditionally: no short-circuit on the user-id.
+    let user_ok = constant_time_eq(auth.username().as_bytes(), username.as_bytes());
+    let pass_ok = constant_time_eq(auth.password().as_bytes(), password.as_bytes());
+    user_ok & pass_ok
 }
 
 /// RFC 6750 §2.1: compare the bearer token, in constant time.
 fn verify_bearer(header: &str, token: &str) -> bool {
-    let Some(sent) = strip_scheme(header, "Bearer") else {
+    let Some(auth) = decode::<Bearer>(header) else {
         return false;
     };
-    constant_time_eq(sent.trim().as_bytes(), token.as_bytes())
+    constant_time_eq(auth.token().trim().as_bytes(), token.trim().as_bytes())
 }
 
 /// A real Digest `Authorization` response (RFC 7616 §3.4.1) carries under 15
@@ -733,9 +809,9 @@ const MAX_DIGEST_FIELDS: usize = 64;
 /// (origin-form or absolute-form) while still rejecting a genuinely
 /// different `uri`.
 ///
-/// Rejects outright (without building the field map) a header carrying more
-/// than [`MAX_DIGEST_FIELDS`] comma-separated fields — see that constant's
-/// docs.
+/// Rejects outright a header carrying more than [`MAX_DIGEST_FIELDS`]
+/// parameters — see that constant's docs. The parser still allocates one
+/// entry per parameter, bounded by the header size the transport already caps.
 #[allow(clippy::too_many_arguments)]
 fn check_digest(
     header: &str,
@@ -747,24 +823,24 @@ fn check_digest(
     request_uri: &str,
     now_secs: u64,
 ) -> DigestCheck {
-    let Some(rest) = strip_scheme(header, "Digest") else {
+    let Some(fields) = parse_digest_fields(header) else {
         return DigestCheck::Reject;
     };
-    let parts = split_digest_fields(rest);
-    if parts.len() > MAX_DIGEST_FIELDS {
+    let get = |k: &str| fields.get(k).map(String::as_str).unwrap_or_default();
+
+    if get("userhash").eq_ignore_ascii_case("true") {
         return DigestCheck::Reject;
     }
-    let mut fields = HashMap::new();
-    for part in parts {
-        let part = part.trim();
-        let Some((key, value)) = part.split_once('=') else {
-            continue;
-        };
-        fields.insert(key.trim(), value.trim().trim_matches('"'));
-    }
-    let get = |k: &str| fields.get(k).copied().unwrap_or_default();
-
-    if get("username") != username || get("realm") != realm {
+    let client_user = match (fields.get("username"), fields.get("username*")) {
+        (Some(_), Some(_)) => return DigestCheck::Reject, // RFC 7616 §3.4.4
+        (Some(u), None) => u.clone(),
+        (None, Some(ext)) => match decode_ext_value(ext) {
+            Some(u) => u,
+            None => return DigestCheck::Reject,
+        },
+        (None, None) => return DigestCheck::Reject,
+    };
+    if client_user != username || get("realm") != realm {
         return DigestCheck::Reject;
     }
     let nonce = get("nonce");
@@ -831,23 +907,26 @@ fn parse_nc(nc: &str) -> Option<u32> {
 /// whatever form the caller's own request line/context uses (in this
 /// workspace, always origin-form for HTTP). This accepts:
 /// - `client_uri == request_uri` verbatim (the origin-form case), or
-/// - `client_uri` in absolute-form whose path(+query) — everything from the
-///   first `/` after the `"://"` authority — is byte-identical to
-///   `request_uri`.
+/// - `client_uri` in absolute-form that `url::Url` parses, that is ALREADY in
+///   the parser's normalised spelling (`Url::as_str() == client_uri`: no
+///   dot-segments, no upper-case scheme/host, no default port, a root `/`),
+///   and whose path+query+fragment (`Position::BeforePath..`) is
+///   byte-identical to `request_uri`.
 ///
-/// Anything else is rejected. This is a real substitution guard, not a
-/// prefix/suffix check: a `client_uri` that merely contains or is suffixed by
+/// Anything else is rejected. The normalised-spelling requirement is the
+/// substitution guard: `Url::parse` removes `.`/`..` segments (also when
+/// percent-encoded), so a naive "parse, then compare" would authorise `/b`
+/// for a response hashed over `http://h/a/../b`. This is not a prefix/suffix
+/// check either: a `client_uri` that merely contains or is suffixed by
 /// `request_uri` (or vice versa) does NOT match.
 fn digest_uri_matches(client_uri: &str, request_uri: &str) -> bool {
     if client_uri == request_uri {
         return true;
     }
-    if let Some((_scheme, after_scheme)) = client_uri.split_once("://")
-        && let Some(slash) = after_scheme.find('/')
-    {
-        return &after_scheme[slash..] == request_uri;
-    }
-    false
+    let Ok(parsed) = Url::parse(client_uri) else {
+        return false;
+    };
+    parsed.as_str() == client_uri && &parsed[Position::BeforePath..] == request_uri
 }
 
 /// Reverse-proxy forwarded-auth (see the module docs): authenticated iff
@@ -863,8 +942,7 @@ fn verify_forwarded(ctx: &RequestContext<'_>, user_header: &str) -> bool {
 fn md5_hex(input: String) -> String {
     let mut hasher = Md5::new();
     hasher.update(input.as_bytes());
-    let digest = hasher.finalize();
-    digest.iter().map(|b| format!("{b:02x}")).collect()
+    hex::encode(hasher.finalize())
 }
 
 /// Byte-equality that does not short-circuit on the first differing byte —
@@ -881,25 +959,10 @@ fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
         == 0
 }
 
-/// Lowercase hex of `bytes`.
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
 /// Decodes exactly `N` bytes of hex, or `None`.
 fn unhex<const N: usize>(text: &str) -> Option<[u8; N]> {
-    let text = text.as_bytes();
-    if text.len() != N * 2 {
-        return None;
-    }
     let mut out = [0u8; N];
-    for (byte, pair) in out.iter_mut().zip(text.chunks_exact(2)) {
-        if !pair.iter().all(u8::is_ascii_hexdigit) {
-            return None;
-        }
-        let pair = core::str::from_utf8(pair).ok()?;
-        *byte = u8::from_str_radix(pair, 16).ok()?;
-    }
+    hex::decode_to_slice(text, &mut out).ok()?; // exact length, hex digits only
     Some(out)
 }
 
@@ -909,6 +972,58 @@ mod tests {
     use crate::{Credentials, RequestContext, respond};
 
     const REALM: &str = "cameras";
+
+    /// Eviction order is least-recently-USED, not least-recently-inserted:
+    /// touching an old pair must protect it.
+    #[test]
+    fn recently_used_pair_survives_eviction() {
+        let nonces = DigestNonces::new();
+        nonces.set_capacity(2);
+        let stamp = |seq| NonceStamp { time: 100, seq };
+        let (a, b, c) = (
+            pair_key("n1", "c"),
+            pair_key("n2", "c"),
+            pair_key("n3", "c"),
+        );
+        assert!(nonces.record(a, stamp(1), 1, 100));
+        assert!(nonces.record(b, stamp(2), 1, 100));
+        // Use `a` again (nc 2), making `b` the least recently used.
+        assert!(nonces.record(a, stamp(1), 2, 100));
+        // Inserting `c` evicts `b`, not `a`.
+        assert!(nonces.record(c, stamp(3), 1, 100));
+        assert!(
+            !nonces.record(a, stamp(1), 2, 100),
+            "a still tracked: nc 2 is a replay"
+        );
+        assert_eq!(nonces.table().entries.len(), 2);
+        // `b` was evicted while still live, so its issue sequence is now below
+        // the anti-replay floor and the pair cannot be re-admitted.
+        assert!(!nonces.record(b, stamp(2), 1, 100));
+    }
+
+    #[test]
+    fn nonce_is_96_lowercase_hex_and_round_trips() {
+        let nonces = DigestNonces::new();
+        let nonce = nonces.issue(1_000);
+        assert_eq!(nonce.len(), NONCE_LEN * 2);
+        assert!(
+            nonce
+                .bytes()
+                .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
+        );
+        let stamp = nonces.issued_at(&nonce).expect("our own nonce verifies");
+        assert_eq!(stamp.time, 1_000);
+        assert!(
+            nonces.issued_at(&nonce.to_uppercase()).is_some(),
+            "hex is case-insensitive on read"
+        );
+        assert!(nonces.issued_at(&nonce[..nonce.len() - 2]).is_none());
+        assert!(
+            nonces
+                .issued_at(&format!("{}zz", &nonce[..nonce.len() - 2]))
+                .is_none()
+        );
+    }
 
     /// The infallible block-key construction in `DigestNonces::mac` must be
     /// byte-identical to the variable-length `new_from_slice` keying it
@@ -1222,6 +1337,28 @@ mod tests {
         assert!(!digest_uri_matches("/a/b/extra", "/a/b"));
         // Absolute-form with no path at all never matches a non-empty path.
         assert!(!digest_uri_matches("http://host", "/a/b"));
+    }
+
+    #[test]
+    fn digest_uri_match_is_not_loosened_by_url_normalisation() {
+        // The client hashed a spelling that is NOT the request-target, even
+        // though the url crate would normalise it to one.
+        assert!(!digest_uri_matches("http://h/a/../b", "/b"));
+        assert!(!digest_uri_matches("http://h/%2e%2e/b", "/b"));
+        assert!(!digest_uri_matches("http://h/./b", "/b"));
+        assert!(!digest_uri_matches("HTTP://H/b", "/b"));
+        assert!(!digest_uri_matches("http://h:80/b", "/b"));
+        assert!(!digest_uri_matches("http://h", "/"));
+        assert!(!digest_uri_matches("http://h/b#frag", "/b"));
+        assert!(!digest_uri_matches("http://[::1/b", "/b"));
+        // Normalised absolute-form still matches.
+        assert!(digest_uri_matches("http://h/b?x=1&y=2", "/b?x=1&y=2"));
+        assert!(digest_uri_matches("http://[2001:db8::1]:8080/b", "/b"));
+        assert!(digest_uri_matches("rtsp://cam:554/live/ch1", "/live/ch1"));
+        assert!(digest_uri_matches(
+            "rtsp://cam/live/ch1",
+            "rtsp://cam/live/ch1"
+        ));
     }
 
     #[test]

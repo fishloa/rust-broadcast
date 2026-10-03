@@ -493,10 +493,16 @@ impl SmoothPackager {
                 SmoothStreamType::Video if let (Some(wd), Some(ht)) = (s.width, s.height) => {
                     ql.push(("MaxWidth", wd.to_string()));
                     ql.push(("MaxHeight", ht.to_string()));
-                    ql.push(("CodecPrivateData", hex_upper(&s.codec_private_data)));
+                    ql.push((
+                        "CodecPrivateData",
+                        ::hex::encode_upper(&s.codec_private_data),
+                    ));
                 }
                 SmoothStreamType::Video => {
-                    ql.push(("CodecPrivateData", hex_upper(&s.codec_private_data)));
+                    ql.push((
+                        "CodecPrivateData",
+                        ::hex::encode_upper(&s.codec_private_data),
+                    ));
                 }
                 SmoothStreamType::Audio => {
                     if let Some(sr) = s.sampling_rate {
@@ -507,7 +513,10 @@ impl SmoothPackager {
                     }
                     ql.push(("BitsPerSample", AAC_BITS_PER_SAMPLE.to_string()));
                     ql.push(("AudioTag", AUDIO_TAG_AAC.to_string()));
-                    ql.push(("CodecPrivateData", hex_upper(&s.codec_private_data)));
+                    ql.push((
+                        "CodecPrivateData",
+                        ::hex::encode_upper(&s.codec_private_data),
+                    ));
                 }
             }
             empty(w, "QualityLevel", &ql);
@@ -850,17 +859,6 @@ fn splice_tfxd_into_traf(moof: &[u8], tfxd: &TfxdBox) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Hex-encode bytes as uppercase (no separators), for `CodecPrivateData`.
-fn hex_upper(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789ABCDEF";
-    let mut s = String::with_capacity(bytes.len() * 2);
-    for b in bytes {
-        s.push(HEX[(b >> 4) as usize] as char);
-        s.push(HEX[(b & 0x0F) as usize] as char);
-    }
-    s
-}
-
 // ---------------------------------------------------------------------------
 // quick-xml writer plumbing
 // ---------------------------------------------------------------------------
@@ -957,11 +955,6 @@ mod tests {
         let p = TfxdBox::parse_body(&bytes[24..]).unwrap();
         assert_eq!(p, t);
         assert_eq!(p.to_bytes(), bytes);
-    }
-
-    #[test]
-    fn hex_upper_encodes() {
-        assert_eq!(hex_upper(&[0x00, 0x01, 0xAB, 0xFF]), "0001ABFF");
     }
 
     #[test]
