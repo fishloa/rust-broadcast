@@ -121,13 +121,15 @@ fn next_item_is_mod(lines: &[&str], attr: usize) -> Option<usize> {
 /// (`mod x;` with no body ends on its own line).
 fn end_of_block(lines: &[&str], from: usize) -> usize {
     let mut depth = 0i64;
+    let mut opened = false;
     for (k, line) in lines.iter().enumerate().skip(from) {
-        let (d, opened) = brace_delta(line);
+        let (d, saw_open) = brace_delta(line);
         depth += d;
+        opened |= saw_open;
         if opened && depth <= 0 {
             return k;
         }
-        if !opened && depth == 0 && line.trim_end().ends_with(';') {
+        if !opened && line.trim_end().ends_with(';') {
             return k;
         }
     }
@@ -329,4 +331,32 @@ fn src_has_no_dom_or_hand_rolled_escaper() {
         }
     }
     assert!(hits.is_empty(), "XML guard violation(s): {hits:#?}");
+}
+
+/// Regression: `end_of_block` must find the closing brace of a MULTI-LINE
+/// `#[cfg(test)] mod`, so production code AFTER it is still scanned (a per-line
+/// `opened` made the scanner skip everything to EOF).
+#[test]
+fn code_lines_scans_past_multiline_cfg_test_mod() {
+    let src = "fn a() {}\n\
+        #[cfg(test)]\n\
+        mod tests {\n\
+        \x20   use super::*;\n\
+        \x20   #[test]\n\
+        \x20   fn t() {\n\
+        \x20       assert!(true);\n\
+        \x20   }\n\
+        }\n\
+        struct XmlNode;\n\
+        fn z() { let _ = \"x\".replace(\"&amp;\", \"&\"); }\n";
+    let code = code_lines(src);
+    assert!(
+        code.iter().any(|(_, l)| l.contains("struct XmlNode;")),
+        "offender after a multi-line cfg(test) mod was skipped: {code:?}"
+    );
+    assert!(code.iter().any(|(_, l)| l.contains(".replace(\"&amp;\"")));
+    assert!(
+        !code.iter().any(|(_, l)| l.contains("assert!(true)")),
+        "test-mod body must still be skipped"
+    );
 }
