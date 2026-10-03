@@ -5,6 +5,13 @@
 //! then validate it separately — the two passes are independent so callers can
 //! inspect a non-conformant document before deciding whether to reject it.
 //!
+//! ## Features
+//!
+//! XML parsing and serialization read and write through `quick-xml`, which needs
+//! `std`, so [`Document`], the foreign-content types and the profile validator
+//! are gated behind the (default) `std` feature. A `no_std` build exposes only
+//! [`error`] and the [`time`] expression parser.
+//!
 //! ## Round-trip guarantee
 //!
 //! Parsing, serializing, and re-parsing yields a semantically equal document
@@ -68,12 +75,18 @@
 
 extern crate alloc;
 
+#[cfg(feature = "std")]
 pub mod document;
 pub mod error;
+#[cfg(feature = "std")]
 pub mod foreign;
+#[cfg(feature = "std")]
+mod pull;
 pub mod time;
+#[cfg(feature = "std")]
 pub mod validation;
 
+#[cfg(feature = "std")]
 pub use document::{
     AudioElement, BodyElement, BrElement, ChunkElement, DataElement, DivElement, Document,
     FontElement, HeadElement, ImageElement, InlineContent, LayoutElement, PElement, RegionElement,
@@ -81,13 +94,16 @@ pub use document::{
     StylingElement, TtElement, XmlDeclaration,
 };
 pub use error::{Error, Result};
+#[cfg(feature = "std")]
 pub use foreign::{ForeignAttribute, UnknownElement, UnknownNode};
 pub use time::TimeExpression;
+#[cfg(feature = "std")]
 pub use validation::{ImscVersion, Profile, ValidationError, ValidationResult, Validator};
 
 /// Parse a TTML document from a string.
 ///
 /// This is a convenience wrapper around [`Document::parse_str`].
+#[cfg(feature = "std")]
 pub fn parse(xml: &str) -> Result<Document> {
     Document::parse_str(xml)
 }

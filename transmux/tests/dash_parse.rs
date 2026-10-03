@@ -13,6 +13,7 @@
 //!   re-parsed with `Mpd::parse` and asserted against what the packager was
 //!   told to emit — proving `dash_parse` is the writer's true inverse for
 //!   both addressing modes.
+#![cfg(feature = "std")]
 
 use std::path::PathBuf;
 

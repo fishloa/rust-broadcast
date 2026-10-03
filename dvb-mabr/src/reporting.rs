@@ -11,11 +11,15 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use roxmltree::Node;
+use std::io;
 
 use crate::error::{Error, Result};
-use crate::parse::{children, opt_attr_bool, opt_attr_f64, own_text, req_attr_u64, require_attr};
-use crate::serialize::{push_indent, write_num_attr, write_opt_bool_attr, write_opt_num_attr};
+use crate::parse::{
+    Events, StartTag, for_each_child, opt_attr_bool, opt_attr_f64, req_attr_u64, require_attr,
+};
+use crate::serialize::{
+    Out, attr, element, num_attr, opt_bool_attr, opt_num_attr, tag, text_element,
+};
 
 const LOCATOR_ELEMENT: &str = "ReportingLocator";
 
@@ -47,8 +51,8 @@ pub struct ReportingLocator {
 }
 
 impl ReportingLocator {
-    fn parse(node: Node<'_, '_>) -> Result<Self> {
-        let proportion = opt_attr_f64(node, LOCATOR_ELEMENT, "proportion")?;
+    fn parse(ev: &mut Events<'_>, tag: &StartTag) -> Result<Self> {
+        let proportion = opt_attr_f64(tag, LOCATOR_ELEMENT, "proportion")?;
         // Documented range `(0.0, 1.0]` (clause 10.2.1.0), never checked
         // (MABR-W3, #1121): `parse_f64` already rejects NaN/infinity, but not
         // an out-of-range finite value like `0.0` or `1.5`.
@@ -62,55 +66,52 @@ impl ReportingLocator {
                 reason: "must be in the range (0.0, 1.0]",
             });
         }
+        let period = require_attr(tag, LOCATOR_ELEMENT, "period")?;
+        let random_delay = req_attr_u64(tag, LOCATOR_ELEMENT, "randomDelay")?;
+        let report_session_running_events =
+            opt_attr_bool(tag, LOCATOR_ELEMENT, "reportSessionRunningEvents")?;
         Ok(ReportingLocator {
-            uri: own_text(node),
+            uri: ev.text(tag)?,
             proportion,
-            period: require_attr(node, LOCATOR_ELEMENT, "period")?,
-            random_delay: req_attr_u64(node, LOCATOR_ELEMENT, "randomDelay")?,
-            report_session_running_events: opt_attr_bool(
-                node,
-                LOCATOR_ELEMENT,
-                "reportSessionRunningEvents",
-            )?,
+            period,
+            random_delay,
+            report_session_running_events,
         })
     }
 
-    fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<ReportingLocator");
-        write_opt_num_attr(out, "proportion", self.proportion);
-        {
-            use crate::serialize::write_attr;
-            write_attr(out, "period", &self.period);
-        }
-        write_num_attr(out, "randomDelay", self.random_delay);
-        write_opt_bool_attr(
-            out,
+    fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(LOCATOR_ELEMENT);
+        opt_num_attr(&mut t, "proportion", self.proportion);
+        attr(&mut t, "period", &self.period);
+        num_attr(&mut t, "randomDelay", self.random_delay);
+        opt_bool_attr(
+            &mut t,
             "reportSessionRunningEvents",
             self.report_session_running_events,
         );
-        out.push('>');
-        out.push_str(&crate::serialize::xml_escape(&self.uri));
-        out.push_str("</ReportingLocator>\n");
+        text_element(w, t, &self.uri)
     }
 }
 
 impl MulticastGatewaySessionReporting {
-    pub(crate) fn parse(node: Node<'_, '_>) -> Result<Self> {
+    pub(crate) fn parse(ev: &mut Events<'_>, tag: &StartTag) -> Result<Self> {
         let mut locators = Vec::new();
-        for n in children(node, LOCATOR_ELEMENT) {
-            locators.push(ReportingLocator::parse(n)?);
-        }
+        for_each_child(ev, tag, |ev, child| {
+            if !child.is(LOCATOR_ELEMENT) {
+                return Ok(false);
+            }
+            locators.push(ReportingLocator::parse(ev, child)?);
+            Ok(true)
+        })?;
         Ok(MulticastGatewaySessionReporting { locators })
     }
 
-    pub(crate) fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<MulticastGatewaySessionReporting>\n");
-        for loc in &self.locators {
-            loc.write_xml(out, indent + 1);
-        }
-        push_indent(out, indent);
-        out.push_str("</MulticastGatewaySessionReporting>\n");
+    pub(crate) fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        element(w, tag("MulticastGatewaySessionReporting"), |w| {
+            for loc in &self.locators {
+                loc.write_xml(w)?;
+            }
+            Ok(())
+        })
     }
 }

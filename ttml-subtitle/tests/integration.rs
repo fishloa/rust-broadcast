@@ -1,5 +1,6 @@
 //! Integration tests: parse all 11 real IMSC fixtures, round-trip,
 //! profile validation, time expression exhaustive tests.
+#![cfg(feature = "std")]
 
 use std::fs;
 use std::path::PathBuf;
@@ -758,42 +759,125 @@ fn accepts_shallowly_nested_spans_within_limit() {
 
 // ─── TT-W1: unknown-namespace content preservation (#1110) ────────
 
+/// One element start as resolved by quick-xml's `NsReader`.
+struct SeenElement {
+    namespace: String,
+    local: String,
+    /// `(namespace, local, value)` per attribute (declarations excluded).
+    attributes: Vec<(String, String, String)>,
+}
+
+/// Walk `xml` with an independent `quick_xml::NsReader` pull loop (the test
+/// oracle: it shares no code with the crate's own tree builder), returning every
+/// element start in document order plus every trimmed non-empty text run.
+fn walk_xml(xml: &str) -> (Vec<SeenElement>, Vec<String>) {
+    use quick_xml::NsReader;
+    use quick_xml::XmlVersion;
+    use quick_xml::escape::resolve_predefined_entity;
+    use quick_xml::events::Event;
+    use quick_xml::name::ResolveResult;
+
+    fn ns_of(r: ResolveResult<'_>) -> String {
+        match r {
+            ResolveResult::Bound(ns) => ns.into_inner().to_string(),
+            ResolveResult::Unbound => String::new(),
+            ResolveResult::Unknown(p) => panic!("unbound prefix {p}"),
+        }
+    }
+
+    let mut reader = NsReader::from_str(xml);
+    let mut elements = Vec::new();
+    let mut texts = Vec::new();
+    let mut run = String::new();
+    let flush = |run: &mut String, texts: &mut Vec<String>| {
+        let t = run.trim();
+        if !t.is_empty() {
+            texts.push(t.to_string());
+        }
+        run.clear();
+    };
+    loop {
+        match reader.read_event().expect("well-formed XML") {
+            Event::Start(e) | Event::Empty(e) => {
+                flush(&mut run, &mut texts);
+                let resolver = reader.resolver();
+                let (ns, local) = resolver.resolve_element(e.name());
+                let mut attributes = Vec::new();
+                for a in e.attributes() {
+                    let a = a.expect("attribute");
+                    let prefix = a.key.prefix();
+                    let is_decl = match prefix {
+                        None => a.key.as_ref() == "xmlns",
+                        Some(p) => p.is_xmlns(),
+                    };
+                    if is_decl {
+                        continue;
+                    }
+                    let (ans, alocal) = resolver.resolve_attribute(a.key);
+                    attributes.push((
+                        ns_of(ans),
+                        alocal.into_inner().to_string(),
+                        a.normalized_value(XmlVersion::Implicit1_0)
+                            .expect("value")
+                            .into_owned(),
+                    ));
+                }
+                elements.push(SeenElement {
+                    namespace: ns_of(ns),
+                    local: local.into_inner().to_string(),
+                    attributes,
+                });
+            }
+            Event::End(_) | Event::Comment(_) | Event::PI(_) => flush(&mut run, &mut texts),
+            Event::Text(t) => run.push_str(&t.xml10_content()),
+            Event::CData(c) => run.push_str(&c.xml10_content()),
+            Event::GeneralRef(r) => match r.resolve_char_ref().expect("char ref") {
+                Some(c) => run.push(c),
+                None => run.push_str(resolve_predefined_entity(&r).expect("entity")),
+            },
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    flush(&mut run, &mut texts);
+    (elements, texts)
+}
+
+/// The namespace URI the root element binds `prefix` to, if any.
+fn root_prefix_binding(xml: &str, prefix: &str) -> Option<String> {
+    use quick_xml::NsReader;
+    use quick_xml::events::Event;
+    use quick_xml::name::{QName, ResolveResult};
+
+    let mut reader = NsReader::from_str(xml);
+    loop {
+        match reader.read_event().expect("well-formed XML") {
+            Event::Start(_) | Event::Empty(_) => {
+                let probe = format!("{prefix}:x");
+                return match reader.resolver().resolve_element(QName(&probe)).0 {
+                    ResolveResult::Bound(ns) => Some(ns.into_inner().to_string()),
+                    _ => None,
+                };
+            }
+            Event::Eof => return None,
+            _ => {}
+        }
+    }
+}
+
 /// Canonical, whitespace- and prefix-independent dump of a parsed XML tree:
 /// sorted lines of `el <uri>|<local>`, `at <uri>|<local>|<value>` and trimmed
 /// text. Two documents that are namespace-equivalent dump identically.
 fn canonical_dump(xml: &str) -> Vec<String> {
-    let doc = roxmltree::Document::parse(xml).unwrap();
+    let (elements, texts) = walk_xml(xml);
     let mut lines = Vec::new();
-    fn walk(node: roxmltree::Node, lines: &mut Vec<String>) {
-        match node.node_type() {
-            roxmltree::NodeType::Element => {
-                lines.push(format!(
-                    "el {}|{}",
-                    node.tag_name().namespace().unwrap_or(""),
-                    node.tag_name().name()
-                ));
-                for attr in node.attributes() {
-                    lines.push(format!(
-                        "at {}|{}|{}",
-                        attr.namespace().unwrap_or(""),
-                        attr.name(),
-                        attr.value()
-                    ));
-                }
-            }
-            roxmltree::NodeType::Text => {
-                let t = node.text().unwrap_or("").trim();
-                if !t.is_empty() {
-                    lines.push(format!("tx {t}"));
-                }
-            }
-            _ => {}
-        }
-        for child in node.children() {
-            walk(child, lines);
+    for el in elements {
+        lines.push(format!("el {}|{}", el.namespace, el.local));
+        for (ns, local, value) in el.attributes {
+            lines.push(format!("at {ns}|{local}|{value}"));
         }
     }
-    walk(doc.root(), &mut lines);
+    lines.extend(texts.into_iter().map(|t| format!("tx {t}")));
     lines.sort();
     lines
 }
@@ -829,13 +913,8 @@ fn unknown_namespace_prefix_binding_is_preserved() {
     let xml2 = doc.to_xml();
     // The original `acme` prefix must still be bound to the same URI in the
     // serialized document.
-    let reparsed = roxmltree::Document::parse(&xml2).unwrap();
-    let tt = reparsed.root().first_element_child().unwrap();
-    let acme = tt
-        .namespaces()
-        .find(|n| n.name() == Some("acme"))
-        .expect("acme prefix still declared");
-    assert_eq!(acme.uri(), "urn:acme:ext");
+    let acme = root_prefix_binding(&xml2, "acme").expect("acme prefix still declared");
+    assert_eq!(acme, "urn:acme:ext");
 }
 
 #[test]
@@ -863,15 +942,14 @@ fn prefix_collision_gets_fallback_binding() {
 </tt>"#;
     let mut doc = Document::parse_str(xml).unwrap();
     let out = doc.to_xml();
-    let reparsed = roxmltree::Document::parse(&out).unwrap();
-    // `v:x` is the only content that resolved to `urn:two`; roxmltree does
-    // not surface `xmlns:` declarations as attributes, so the surviving
-    // evidence is the attribute's own namespace URI.
-    let has_two = reparsed
-        .root()
-        .descendants()
-        .flat_map(|n| n.attributes())
-        .any(|a| a.namespace() == Some("urn:two"));
+    // `v:x` is the only content that resolved to `urn:two`; `xmlns:`
+    // declarations are not attributes, so the surviving evidence is the
+    // attribute's own namespace URI.
+    let (elements, _) = walk_xml(&out);
+    let has_two = elements
+        .iter()
+        .flat_map(|e| e.attributes.iter())
+        .any(|(ns, _, _)| ns == "urn:two");
     assert!(has_two, "urn:two content must survive");
     assert_eq!(canonical_dump(xml), canonical_dump(&out));
 }

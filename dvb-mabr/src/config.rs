@@ -10,16 +10,18 @@
 
 extern crate alloc;
 
-use alloc::string::{String, ToString};
+use alloc::string::String;
 use alloc::vec::Vec;
 
-use roxmltree::Document;
+use std::io;
+
+use quick_xml::events::BytesStart;
 
 use crate::error::{Error, Result};
 use crate::gateway::{ConfigurationMacro, MulticastGatewayConfigurationTransportSession};
-use crate::parse::{child, children, is_baseline_namespace, require_attr};
+use crate::parse::{Events, StartTag, for_each_child, is_baseline_namespace, require_attr};
 use crate::reporting::MulticastGatewaySessionReporting;
-use crate::serialize::{write_attr, write_opt_attr};
+use crate::serialize::{Out, attr, document, element, num_attr, opt_attr, tag};
 use crate::session::MulticastSession;
 
 const ROOT_SERVER: &str = "MulticastServerConfiguration";
@@ -88,74 +90,110 @@ broadcast_common::impl_spec_display!(BaselineNamespace);
 /// namespace (2019 or 2024). Previously only the local name was checked, so
 /// a `<MulticastServerConfiguration>` in any other (or no) namespace was
 /// silently accepted (MABR-W1, #1121).
-fn check_root(root: roxmltree::Node<'_, '_>, expected: &'static str) -> Result<()> {
-    if root.tag_name().name() != expected || !is_baseline_namespace(root.tag_name().namespace()) {
+fn check_root(root: &StartTag, expected: &'static str) -> Result<()> {
+    if root.local() != expected || !is_baseline_namespace(root.namespace()) {
         return Err(Error::UnexpectedRoot(alloc::format!(
             "{} (namespace {:?})",
-            root.tag_name().name(),
-            root.tag_name().namespace()
+            root.local(),
+            root.namespace()
         )));
     }
     Ok(())
 }
 
-fn parse_common_root(node: roxmltree::Node<'_, '_>, element: &'static str) -> Result<CommonRoot> {
+fn parse_common_root(
+    ev: &mut Events<'_>,
+    node: &StartTag,
+    element: &'static str,
+    mut on_extra: impl FnMut(&mut Events<'_>, &StartTag) -> Result<bool>,
+) -> Result<CommonRoot> {
+    let schema_version = crate::parse::req_attr_u32(node, element, "schemaVersion")?;
+    let namespace = BaselineNamespace::from_uri(node.namespace()).ok_or_else(|| {
+        Error::UnexpectedRoot(alloc::format!(
+            "{} (namespace {:?})",
+            node.local(),
+            node.namespace()
+        ))
+    })?;
+    let validity_period = require_attr(node, element, "validityPeriod").ok();
+    let valid_until = require_attr(node, element, "validUntil").ok();
     let mut gateway_config_transport_sessions = Vec::new();
-    for n in children(node, "MulticastGatewayConfigurationTransportSession") {
-        gateway_config_transport_sessions
-            .push(MulticastGatewayConfigurationTransportSession::parse(n)?);
-    }
     let mut sessions = Vec::new();
-    for n in children(node, "MulticastSession") {
-        sessions.push(MulticastSession::parse(n)?);
-    }
+    let mut reporting = None;
+    for_each_child(ev, node, |ev, child| {
+        if child.is("MulticastGatewayConfigurationTransportSession") {
+            gateway_config_transport_sessions.push(
+                MulticastGatewayConfigurationTransportSession::parse(ev, child)?,
+            );
+        } else if child.is("MulticastSession") {
+            sessions.push(MulticastSession::parse(ev, child)?);
+        } else if child.is("MulticastGatewaySessionReporting") && reporting.is_none() {
+            reporting = Some(MulticastGatewaySessionReporting::parse(ev, child)?);
+        } else {
+            return on_extra(ev, child);
+        }
+        Ok(true)
+    })?;
     Ok(CommonRoot {
-        schema_version: crate::parse::req_attr_u32(node, element, "schemaVersion")?,
-        namespace: BaselineNamespace::from_uri(node.tag_name().namespace()).ok_or_else(|| {
-            Error::UnexpectedRoot(alloc::format!(
-                "{} (namespace {:?})",
-                node.tag_name().name(),
-                node.tag_name().namespace()
-            ))
-        })?,
-        validity_period: require_attr(node, element, "validityPeriod").ok(),
-        valid_until: require_attr(node, element, "validUntil").ok(),
+        schema_version,
+        namespace,
+        validity_period,
+        valid_until,
         gateway_config_transport_sessions,
         sessions,
-        reporting: match child(node, "MulticastGatewaySessionReporting") {
-            Some(n) => Some(MulticastGatewaySessionReporting::parse(n)?),
-            None => None,
-        },
+        reporting,
     })
 }
 
+/// Parse a whole document: the root element via `parse_root`, then the rest of
+/// the input. A well-formedness error anywhere in the document takes
+/// precedence over a semantic error found earlier in it.
+fn parse_document<T>(
+    xml: &str,
+    parse_root: impl FnOnce(&mut Events<'_>, &StartTag) -> Result<T>,
+) -> Result<T> {
+    let mut ev = Events::new(xml);
+    let root = ev.root()?;
+    match parse_root(&mut ev, &root) {
+        Ok(parsed) => {
+            ev.finish()?;
+            Ok(parsed)
+        }
+        Err(e) => {
+            // Surface a syntax error later in the document before a semantic one.
+            ev.drain()?;
+            Err(e)
+        }
+    }
+}
+
 fn write_common_root(
-    out: &mut String,
+    t: &mut BytesStart<'_>,
     schema_version: u32,
     validity_period: &Option<String>,
     valid_until: &Option<String>,
 ) {
-    write_attr(out, "schemaVersion", &schema_version.to_string());
-    write_opt_attr(out, "validityPeriod", validity_period.as_deref());
-    write_opt_attr(out, "validUntil", valid_until.as_deref());
+    num_attr(t, "schemaVersion", schema_version);
+    opt_attr(t, "validityPeriod", validity_period.as_deref());
+    opt_attr(t, "validUntil", valid_until.as_deref());
 }
 
 fn write_common_body(
-    out: &mut String,
+    w: &mut Out,
     gateway_config_transport_sessions: &[MulticastGatewayConfigurationTransportSession],
     sessions: &[MulticastSession],
     reporting: &Option<MulticastGatewaySessionReporting>,
-    indent: usize,
-) {
+) -> io::Result<()> {
     for ts in gateway_config_transport_sessions {
-        ts.write_xml(out, indent);
+        ts.write_xml(w)?;
     }
     for s in sessions {
-        s.write_xml(out, indent);
+        s.write_xml(w)?;
     }
     if let Some(r) = reporting {
-        r.write_xml(out, indent);
+        r.write_xml(w)?;
     }
+    Ok(())
 }
 
 /// `MulticastServerConfiguration` — the root of a Multicast server
@@ -186,56 +224,56 @@ pub struct MulticastServerConfiguration {
 impl MulticastServerConfiguration {
     /// Parse a `MulticastServerConfiguration` XML document.
     pub fn parse_str(xml: &str) -> Result<Self> {
-        let doc = Document::parse(xml).map_err(|e| Error::XmlParse(e.to_string()))?;
-        let root = doc.root_element();
-        check_root(root, ROOT_SERVER)?;
-        let common = parse_common_root(root, ROOT_SERVER)?;
-        let mut macros = Vec::new();
-        for n in children(root, SERVER_MACRO_ELEMENT) {
-            macros.push(ConfigurationMacro::parse(n, SERVER_MACRO_ELEMENT)?);
-        }
-        Ok(MulticastServerConfiguration {
-            schema_version: common.schema_version,
-            namespace: common.namespace,
-            validity_period: common.validity_period,
-            valid_until: common.valid_until,
-            gateway_config_transport_sessions: common.gateway_config_transport_sessions,
-            sessions: common.sessions,
-            reporting: common.reporting,
-            macros,
+        parse_document(xml, |ev, root| {
+            check_root(root, ROOT_SERVER)?;
+            let mut macros = Vec::new();
+            let common = parse_common_root(ev, root, ROOT_SERVER, |ev, child| {
+                if child.is(SERVER_MACRO_ELEMENT) {
+                    macros.push(ConfigurationMacro::parse(ev, child, SERVER_MACRO_ELEMENT)?);
+                    Ok(true)
+                } else {
+                    Ok(false)
+                }
+            })?;
+            Ok(MulticastServerConfiguration {
+                schema_version: common.schema_version,
+                namespace: common.namespace,
+                validity_period: common.validity_period,
+                valid_until: common.valid_until,
+                gateway_config_transport_sessions: common.gateway_config_transport_sessions,
+                sessions: common.sessions,
+                reporting: common.reporting,
+                macros,
+            })
         })
     }
 
     /// Serialize back to a well-formed XML document (structural round-trip;
     /// see the crate root doc for what is and isn't preserved).
     pub fn to_xml(&self) -> String {
-        let mut out = String::new();
-        out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        out.push('<');
-        out.push_str(ROOT_SERVER);
-        write_attr(&mut out, "xmlns", self.namespace.uri());
-        write_attr(&mut out, "xmlns:xsi", crate::parse::NS_XSI);
-        write_common_root(
-            &mut out,
-            self.schema_version,
-            &self.validity_period,
-            &self.valid_until,
-        );
-        out.push_str(">\n");
-        write_common_body(
-            &mut out,
-            &self.gateway_config_transport_sessions,
-            &self.sessions,
-            &self.reporting,
-            1,
-        );
-        for m in &self.macros {
-            m.write_xml(&mut out, 1, SERVER_MACRO_ELEMENT);
-        }
-        out.push_str("</");
-        out.push_str(ROOT_SERVER);
-        out.push_str(">\n");
-        out
+        document(|w| {
+            let mut t = tag(ROOT_SERVER);
+            attr(&mut t, "xmlns", self.namespace.uri());
+            attr(&mut t, "xmlns:xsi", crate::parse::NS_XSI);
+            write_common_root(
+                &mut t,
+                self.schema_version,
+                &self.validity_period,
+                &self.valid_until,
+            );
+            element(w, t, |w| {
+                write_common_body(
+                    w,
+                    &self.gateway_config_transport_sessions,
+                    &self.sessions,
+                    &self.reporting,
+                )?;
+                for m in &self.macros {
+                    m.write_xml(w, SERVER_MACRO_ELEMENT)?;
+                }
+                Ok(())
+            })
+        })
     }
 }
 
@@ -266,47 +304,42 @@ pub struct MulticastGatewayConfiguration {
 impl MulticastGatewayConfiguration {
     /// Parse a `MulticastGatewayConfiguration` XML document.
     pub fn parse_str(xml: &str) -> Result<Self> {
-        let doc = Document::parse(xml).map_err(|e| Error::XmlParse(e.to_string()))?;
-        let root = doc.root_element();
-        check_root(root, ROOT_GATEWAY)?;
-        let common = parse_common_root(root, ROOT_GATEWAY)?;
-        Ok(MulticastGatewayConfiguration {
-            schema_version: common.schema_version,
-            namespace: common.namespace,
-            validity_period: common.validity_period,
-            valid_until: common.valid_until,
-            gateway_config_transport_sessions: common.gateway_config_transport_sessions,
-            sessions: common.sessions,
-            reporting: common.reporting,
+        parse_document(xml, |ev, root| {
+            check_root(root, ROOT_GATEWAY)?;
+            let common = parse_common_root(ev, root, ROOT_GATEWAY, |_, _| Ok(false))?;
+            Ok(MulticastGatewayConfiguration {
+                schema_version: common.schema_version,
+                namespace: common.namespace,
+                validity_period: common.validity_period,
+                valid_until: common.valid_until,
+                gateway_config_transport_sessions: common.gateway_config_transport_sessions,
+                sessions: common.sessions,
+                reporting: common.reporting,
+            })
         })
     }
 
     /// Serialize back to a well-formed XML document (structural round-trip;
     /// see the crate root doc for what is and isn't preserved).
     pub fn to_xml(&self) -> String {
-        let mut out = String::new();
-        out.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-        out.push('<');
-        out.push_str(ROOT_GATEWAY);
-        write_attr(&mut out, "xmlns", self.namespace.uri());
-        write_attr(&mut out, "xmlns:xsi", crate::parse::NS_XSI);
-        write_common_root(
-            &mut out,
-            self.schema_version,
-            &self.validity_period,
-            &self.valid_until,
-        );
-        out.push_str(">\n");
-        write_common_body(
-            &mut out,
-            &self.gateway_config_transport_sessions,
-            &self.sessions,
-            &self.reporting,
-            1,
-        );
-        out.push_str("</");
-        out.push_str(ROOT_GATEWAY);
-        out.push_str(">\n");
-        out
+        document(|w| {
+            let mut t = tag(ROOT_GATEWAY);
+            attr(&mut t, "xmlns", self.namespace.uri());
+            attr(&mut t, "xmlns:xsi", crate::parse::NS_XSI);
+            write_common_root(
+                &mut t,
+                self.schema_version,
+                &self.validity_period,
+                &self.valid_until,
+            );
+            element(w, t, |w| {
+                write_common_body(
+                    w,
+                    &self.gateway_config_transport_sessions,
+                    &self.sessions,
+                    &self.reporting,
+                )
+            })
+        })
     }
 }

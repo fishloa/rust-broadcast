@@ -23,11 +23,15 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use roxmltree::Node;
+use std::io;
+
+use quick_xml::events::BytesStart;
 
 use crate::error::Result;
-use crate::parse::{children, opt_attr_bool, opt_attr_u64, own_text, require_attr};
-use crate::serialize::{push_indent, write_opt_attr, write_opt_bool_attr, write_opt_num_attr};
+use crate::parse::{Events, StartTag, for_each_child, opt_attr_bool, opt_attr_u64, require_attr};
+use crate::serialize::{
+    Out, element, empty, opt_attr, opt_bool_attr, opt_num_attr, tag, text_element,
+};
 
 const OBJECT_CAROUSEL: &str = "ObjectCarousel";
 const PRESENTATION_MANIFESTS: &str = "PresentationManifests";
@@ -108,10 +112,7 @@ pub struct ResourceLocator {
 /// Returned as [`PresentationManifests`] itself and destructured by
 /// `InitSegments::parse` — a named type instead of a 4-tuple keeps clippy's
 /// `type_complexity` lint happy and documents each field once.
-fn parse_manifest_attrs(
-    node: Node<'_, '_>,
-    element: &'static str,
-) -> Result<PresentationManifests> {
+fn parse_manifest_attrs(node: &StartTag, element: &'static str) -> Result<PresentationManifests> {
     Ok(PresentationManifests {
         target_acquisition_latency: require_attr(node, element, "targetAcquisitionLatency").ok(),
         compression_preferred: opt_attr_bool(node, element, "compressionPreferred")?,
@@ -121,48 +122,50 @@ fn parse_manifest_attrs(
 }
 
 fn write_manifest_attrs(
-    out: &mut String,
+    t: &mut BytesStart<'_>,
     target_acquisition_latency: &Option<String>,
     compression_preferred: Option<bool>,
     service_id_ref: &Option<String>,
     transport_session_id_ref: &Option<String>,
 ) {
-    write_opt_attr(
-        out,
+    opt_attr(
+        t,
         "targetAcquisitionLatency",
         target_acquisition_latency.as_deref(),
     );
-    write_opt_bool_attr(out, "compressionPreferred", compression_preferred);
-    write_opt_attr(out, "serviceIdRef", service_id_ref.as_deref());
-    write_opt_attr(
-        out,
+    opt_bool_attr(t, "compressionPreferred", compression_preferred);
+    opt_attr(t, "serviceIdRef", service_id_ref.as_deref());
+    opt_attr(
+        t,
         "transportSessionIdRef",
         transport_session_id_ref.as_deref(),
     );
 }
 
 impl PresentationManifests {
-    fn parse(node: Node<'_, '_>) -> Result<Self> {
-        parse_manifest_attrs(node, PRESENTATION_MANIFESTS)
+    fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
+        let parsed = parse_manifest_attrs(node, PRESENTATION_MANIFESTS)?;
+        ev.skip(node)?;
+        Ok(parsed)
     }
 
-    fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<PresentationManifests");
+    fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(PRESENTATION_MANIFESTS);
         write_manifest_attrs(
-            out,
+            &mut t,
             &self.target_acquisition_latency,
             self.compression_preferred,
             &self.service_id_ref,
             &self.transport_session_id_ref,
         );
-        out.push_str("/>\n");
+        empty(w, t)
     }
 }
 
 impl InitSegments {
-    fn parse(node: Node<'_, '_>) -> Result<Self> {
+    fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
         let attrs = parse_manifest_attrs(node, INIT_SEGMENTS)?;
+        ev.skip(node)?;
         Ok(InitSegments {
             target_acquisition_latency: attrs.target_acquisition_latency,
             compression_preferred: attrs.compression_preferred,
@@ -171,105 +174,104 @@ impl InitSegments {
         })
     }
 
-    fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<InitSegments");
+    fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(INIT_SEGMENTS);
         write_manifest_attrs(
-            out,
+            &mut t,
             &self.target_acquisition_latency,
             self.compression_preferred,
             &self.service_id_ref,
             &self.transport_session_id_ref,
         );
-        out.push_str("/>\n");
+        empty(w, t)
     }
 }
 
 impl ResourceLocator {
-    fn parse(node: Node<'_, '_>) -> Result<Self> {
+    fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
+        let target_acquisition_latency =
+            require_attr(node, RESOURCE_LOCATOR, "targetAcquisitionLatency").ok();
+        let revalidation_period = require_attr(node, RESOURCE_LOCATOR, "revalidationPeriod").ok();
+        let compression_preferred = opt_attr_bool(node, RESOURCE_LOCATOR, "compressionPreferred")?;
         Ok(ResourceLocator {
-            uri: own_text(node),
-            target_acquisition_latency: require_attr(
-                node,
-                RESOURCE_LOCATOR,
-                "targetAcquisitionLatency",
-            )
-            .ok(),
-            revalidation_period: require_attr(node, RESOURCE_LOCATOR, "revalidationPeriod").ok(),
-            compression_preferred: opt_attr_bool(node, RESOURCE_LOCATOR, "compressionPreferred")?,
+            uri: ev.text(node)?,
+            target_acquisition_latency,
+            revalidation_period,
+            compression_preferred,
         })
     }
 
-    fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<ResourceLocator");
-        write_opt_attr(
-            out,
+    fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(RESOURCE_LOCATOR);
+        opt_attr(
+            &mut t,
             "targetAcquisitionLatency",
             self.target_acquisition_latency.as_deref(),
         );
-        write_opt_attr(
-            out,
+        opt_attr(
+            &mut t,
             "revalidationPeriod",
             self.revalidation_period.as_deref(),
         );
-        write_opt_bool_attr(out, "compressionPreferred", self.compression_preferred);
-        out.push('>');
-        out.push_str(&crate::serialize::xml_escape(&self.uri));
-        out.push_str("</ResourceLocator>\n");
+        opt_bool_attr(&mut t, "compressionPreferred", self.compression_preferred);
+        text_element(w, t, &self.uri)
     }
 }
 
 impl ObjectCarousel {
-    pub(crate) fn parse(node: Node<'_, '_>) -> Result<Self> {
+    pub(crate) fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
+        let aggregate_transport_size =
+            opt_attr_u64(node, OBJECT_CAROUSEL, "aggregateTransportSize")?;
+        let aggregate_content_size = opt_attr_u64(node, OBJECT_CAROUSEL, "aggregateContentSize")?;
         let mut presentation_manifests = Vec::new();
-        for n in children(node, PRESENTATION_MANIFESTS) {
-            presentation_manifests.push(PresentationManifests::parse(n)?);
-        }
         let mut init_segments = Vec::new();
-        for n in children(node, INIT_SEGMENTS) {
-            init_segments.push(InitSegments::parse(n)?);
-        }
         let mut resource_locators = Vec::new();
-        for n in children(node, RESOURCE_LOCATOR) {
-            resource_locators.push(ResourceLocator::parse(n)?);
-        }
+        for_each_child(ev, node, |ev, child| {
+            if child.is(PRESENTATION_MANIFESTS) {
+                presentation_manifests.push(PresentationManifests::parse(ev, child)?);
+            } else if child.is(INIT_SEGMENTS) {
+                init_segments.push(InitSegments::parse(ev, child)?);
+            } else if child.is(RESOURCE_LOCATOR) {
+                resource_locators.push(ResourceLocator::parse(ev, child)?);
+            } else {
+                return Ok(false);
+            }
+            Ok(true)
+        })?;
         Ok(ObjectCarousel {
-            aggregate_transport_size: opt_attr_u64(
-                node,
-                OBJECT_CAROUSEL,
-                "aggregateTransportSize",
-            )?,
-            aggregate_content_size: opt_attr_u64(node, OBJECT_CAROUSEL, "aggregateContentSize")?,
+            aggregate_transport_size,
+            aggregate_content_size,
             presentation_manifests,
             init_segments,
             resource_locators,
         })
     }
 
-    pub(crate) fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<ObjectCarousel");
-        write_opt_num_attr(out, "aggregateTransportSize", self.aggregate_transport_size);
-        write_opt_num_attr(out, "aggregateContentSize", self.aggregate_content_size);
-        let empty = self.presentation_manifests.is_empty()
+    pub(crate) fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(OBJECT_CAROUSEL);
+        opt_num_attr(
+            &mut t,
+            "aggregateTransportSize",
+            self.aggregate_transport_size,
+        );
+        opt_num_attr(&mut t, "aggregateContentSize", self.aggregate_content_size);
+        let no_children = self.presentation_manifests.is_empty()
             && self.init_segments.is_empty()
             && self.resource_locators.is_empty();
-        if empty {
-            out.push_str("/>\n");
-            return;
+        if no_children {
+            return empty(w, t);
         }
-        out.push_str(">\n");
-        for pm in &self.presentation_manifests {
-            pm.write_xml(out, indent + 1);
-        }
-        for is in &self.init_segments {
-            is.write_xml(out, indent + 1);
-        }
-        for rl in &self.resource_locators {
-            rl.write_xml(out, indent + 1);
-        }
-        push_indent(out, indent);
-        out.push_str("</ObjectCarousel>\n");
+        element(w, t, |w| {
+            for pm in &self.presentation_manifests {
+                pm.write_xml(w)?;
+            }
+            for is in &self.init_segments {
+                is.write_xml(w)?;
+            }
+            for rl in &self.resource_locators {
+                rl.write_xml(w)?;
+            }
+            Ok(())
+        })
     }
 }

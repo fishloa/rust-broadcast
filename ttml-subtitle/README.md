@@ -39,7 +39,7 @@ assert_eq!(body.divs[0].paragraphs[0].begin.as_deref(), Some("0s"));
 - Semantic round-trip (see [Round-Trip Guarantee](#round-trip-guarantee)) — parse → serialize → re-parse yields an equal document
 - No raw-passthrough in the serializer — output is generated from typed fields
 - Real-fixture tested against 11 W3C IMSC conformance suite documents
-- `#[no_std]` + `alloc` compatible (with `std` feature)
+- XML parsing and serialization are built on `quick-xml` and need the `std` feature (on by default); `time` and `error` stay `no_std` + `alloc`
 - Optional `serde` support
 
 ## Examples
@@ -55,17 +55,17 @@ cargo run -p ttml-subtitle --example from_scratch
 The crate provides **semantic** round-trip fidelity, not byte-identity. Parsing a document,
 serializing the typed model, and re-parsing yields an equal document (`parse → serialize →
 re-parse → equal`). But the serialized XML will differ from the input in the following
-ways (each verified against `roxmltree`'s actual API, not assumed):
+ways (each verified against the crate's `quick-xml`-based reader, not assumed):
 
 | Category | Status | Reason |
 |---|---|---|
-| XML declaration | **Lost** (roxmltree) | `roxmltree` skips `<?xml version="1.0" encoding="UTF-8"?>`; the serializer always emits `<?xml version="1.0" encoding="UTF-8"?>` |
-| Comments | **Lost** (parser) | `roxmltree` *does* expose comments (`is_comment()`, `text()`), but the parser does not store them |
-| Processing instructions | **Lost** (parser) | `roxmltree` *does* expose PIs (`NodeType::PI`), but the parser does not store them |
+| XML declaration | **Lost** (parser) | `quick-xml` reports the XML declaration as a `Decl` event and the parser ignores it; the serializer always emits `<?xml version="1.0" encoding="UTF-8"?>` |
+| Comments | **Lost** (parser) | `quick-xml` *does* report comments (`Event::Comment`), but the parser does not store them |
+| Processing instructions | **Lost** (parser) | `quick-xml` *does* report PIs (`Event::PI`), but the parser does not store them |
 | Foreign attributes (attributes in namespaces this crate does not model, e.g. vendor or `ebuttm:` extensions) | **Preserved** (TT-W1) | Kept as [`ForeignAttribute`] triples `(namespace URI, local name, value)` with the `xmlns:` prefix holding the value was resolved through |
 | Foreign/unknown child elements (elements not in this crate's explicitly modeled set, whether in a foreign namespace or an unrecognized `tt:` element) | **Preserved** (TT-W1) | Kept as an [`UnknownElement`] subtree (name, namespace, attributes, children, text) on the element that carried them; their relative order among themselves is preserved, but their position between the element's modeled children/metadata/animations is not (each group is emitted in a fixed order). Allowed by TTML2 §7.2/§7.3 |
-| Attribute order | **Deterministic, not preserved** (parser) | `roxmltree` *does* preserve document order via `attributes()`, but the parser collects known attrs into named fields and serializes them in a fixed code order (preserved foreign attributes keep their document order) |
-| Namespace prefix spelling | **Deterministic, not preserved** (roxmltree + serializer) | `roxmltree` resolves QNames to `(namespace_uri, local_name)` pairs; the prefix a *modeled* attribute used is not exposed, so the serializer uses the fixed conventional prefixes (`tts:`, `ttp:`, …). A *preserved* namespace is re-declared under the prefix it originally used; when two URIs need the same prefix the later one gets a generated `ttmfallbackN` binding (XML forbids one prefix bound to two URIs at once), so the URI round-trips even when its spelling does not |
+| Attribute order | **Deterministic, not preserved** (parser) | `quick-xml` *does* preserve attribute document order, but the parser collects known attrs into named fields and serializes them in a fixed code order (preserved foreign attributes keep their document order) |
+| Namespace prefix spelling | **Deterministic, not preserved** (quick-xml + serializer) | `quick-xml`'s `NsReader` resolves QNames to `(namespace_uri, local_name)` pairs; the prefix a *modeled* attribute used is not exposed, so the serializer uses the fixed conventional prefixes (`tts:`, `ttp:`, …). A *preserved* namespace is re-declared under the prefix it originally used; when two URIs need the same prefix the later one gets a generated `ttmfallbackN` binding (XML forbids one prefix bound to two URIs at once), so the URI round-trips even when its spelling does not |
 | `xmlns:` scope | **Widened to `<tt>`** | A `xmlns:` declaration written on an inner element is re-emitted on `<tt>`; widening a namespace scope leaves every resolved name unchanged, but it does mean an inner-scope override of a prefix is only reproduced through a `ttmfallbackN` binding for the outer URI |
 | Whitespace / indentation | **Deterministic, not preserved** | Indentation is always 2-space, closing tags always on new lines; interstitial whitespace-only text nodes are preserved by the parser but may differ in placement on re-serialization |
 

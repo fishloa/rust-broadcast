@@ -1,6 +1,7 @@
 //! Biting tests for multi-DRM `pssh` init-data generation (issue #480).
 //!
 //! Spec basis: `transmux/docs/drm/pssh.md`.
+#![cfg(feature = "std")]
 
 use transmux::cenc::ProtectionSystemSpecificHeaderBox;
 use transmux::drm::{

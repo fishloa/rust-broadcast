@@ -8,6 +8,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (breaking)
+- **BREAKING: XML support now requires the `std` feature; hand-rolled XML
+  replaced by `quick-xml`; `roxmltree` dropped.** `document`, `foreign` and
+  `validation` (and their crate-root re-exports and `parse`) are gated behind
+  `std`; a `--no-default-features` build exposes only `error` and `time`.
+  Parsing is a single pass over `quick_xml::NsReader` events straight into
+  the typed structs (an explicit stack of partially-built spans, no document
+  tree, so hostile nesting cannot overflow the stack); serialization writes
+  `quick_xml::Writer` events, so the `replace`-chain escaper is gone and every
+  attribute value and text node on output is escaped by quick-xml (an attribute value containing `\t`/`\n`/`\r`
+  is now written as a character reference so it survives a re-parse). Parse
+  results and serialized output are identical to the previous release for every
+  committed fixture. Malformed input stays a structured `Error::XmlParse` (a
+  `DOCTYPE`, undefined entity, unbound namespace prefix, second root element, or
+  content after the root is rejected).
+- **Behaviour differences from the roxmltree-based parser (all follow XML 1.0):**
+  - a root `<tt>` is the document even when it has a `<tt>` child element: for
+    `<tt xmlns="http://www.w3.org/ns/ttml"><tt xmlns="http://www.w3.org/ns/ttml"/></tt>` the outer
+    element is parsed (previously the inner one was; the inner `<tt>` is now kept as an unknown
+    child). A non-`tt` wrapper root still yields its first `<tt>` child;
+  - a numeric reference to a control character (`<p>&#x1;</p>`), or a literal one, in text or in
+    an attribute is rejected with `Error::XmlParse`;
+  - an entity reference or CDATA section before the root element is rejected;
+  - a document with more than 128 namespace declarations in scope at once is rejected (quick-xml's
+    namespace-binding limit);
+  - an attribute value containing `\t`, `\n` or `\r` is written as `&#9;`, `&#10;`, `&#13;`
+    (`region="x\ny"` renders `region="x&#10;y"`), and a `\r` in text as `&#13;`, so they survive
+    a re-parse.
 - **#1110 (TT-W1)**: attributes and child elements in namespaces the crate
   does not model are no longer dropped. They are kept as
   `ForeignAttribute` triples `(namespace URI, local name, value)` (with the

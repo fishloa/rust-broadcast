@@ -1932,50 +1932,37 @@ mod tests {
             .to_vec()
     }
 
-    /// Minimal well-formedness check: every opening tag has a matching
-    /// closing tag in LIFO order, with no tag left open at the end. There is
-    /// no XML-parsing crate anywhere in this workspace (checked before
-    /// writing this), so this is a hand-rolled substitute for "parse it,
-    /// don't just check non-empty" — genuinely biting (a mismatched/
-    /// unclosed tag panics), without pulling in a new dependency for one
-    /// test. Skips `<?...?>`/`<!...>` declarations (no matching close
-    /// required).
+    /// Well-formedness check on a real `quick-xml` pull loop: every opening
+    /// tag matches its closing tag (the reader's end-name check), entity
+    /// references resolve, there is exactly one root element, and nothing is
+    /// left open at the end. Genuinely biting: a mismatched/unclosed tag or a
+    /// stray `&` panics.
     fn assert_well_formed_xml(xml: &str) {
-        let mut stack: Vec<String> = Vec::new();
-        let mut rest = xml;
-        while let Some(start) = rest.find('<') {
-            let end = rest[start..]
-                .find('>')
-                .unwrap_or_else(|| panic!("unterminated tag starting at {:?}", &rest[start..]))
-                + start;
-            let tag = &rest[start + 1..end];
-            rest = &rest[end + 1..];
-            if tag.starts_with('?') || tag.starts_with('!') {
-                continue;
-            }
-            if let Some(name) = tag.strip_prefix('/') {
-                let name = name.trim();
-                let opened = stack
-                    .pop()
-                    .unwrap_or_else(|| panic!("closing tag </{name}> with nothing open"));
-                assert_eq!(
-                    opened, name,
-                    "mismatched closing tag: opened <{opened}>, closed </{name}>"
-                );
-                continue;
-            }
-            let self_closing = tag.trim_end().ends_with('/');
-            let name = tag
-                .trim_end_matches('/')
-                .split_whitespace()
-                .next()
-                .unwrap_or_default()
-                .to_string();
-            if !self_closing {
-                stack.push(name);
+        use quick_xml::Reader;
+        use quick_xml::events::Event;
+
+        let mut reader = Reader::from_str(xml);
+        let mut depth = 0usize;
+        let mut roots = 0usize;
+        loop {
+            match reader
+                .read_event()
+                .unwrap_or_else(|e| panic!("not well-formed XML: {e}"))
+            {
+                Event::Start(_) => {
+                    if depth == 0 {
+                        roots += 1;
+                    }
+                    depth += 1;
+                }
+                Event::Empty(_) if depth == 0 => roots += 1,
+                Event::End(_) => depth -= 1,
+                Event::Eof => break,
+                _ => {}
             }
         }
-        assert!(stack.is_empty(), "unclosed tags remain: {stack:?}");
+        assert_eq!(depth, 0, "unclosed tags remain");
+        assert_eq!(roots, 1, "exactly one root element");
     }
 
     /// The headline P4 test: one stream configured with **both** outputs

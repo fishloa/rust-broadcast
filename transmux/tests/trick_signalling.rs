@@ -21,6 +21,7 @@
 //!    [`TrickModeRepr`] from it. The rendered `RESOLUTION=` matches the
 //!    source codec-config dimensions, proving signalling is wired to the actual
 //!    track, not hardcoded.
+#![cfg(feature = "std")]
 
 use std::fs;
 use std::path::PathBuf;

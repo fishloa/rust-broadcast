@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:tt="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" xmlns:tts="http://www.w3.org/ns/ttml#styling" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:ebuttm="urn:ebu:tt:metadata" xml:lang="en">
+  <head>
+    <metadata>
+      <ttm:title>T &amp; U</ttm:title>
+      <ebuttm:documentMetadata>
+        <ebuttm:conformsToStandard>urn:a</ebuttm:conformsToStandard>
+      </ebuttm:documentMetadata>
+    </metadata>
+  </head>
+  <body/>
+</tt>

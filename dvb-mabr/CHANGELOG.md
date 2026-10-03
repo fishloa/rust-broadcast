@@ -5,6 +5,30 @@ All notable changes to dvb-mabr will be documented in this file.
 ## [Unreleased]
 
 ### Changed (breaking)
+- **BREAKING: XML support now requires the `std` feature; hand-rolled XML
+  replaced by `quick-xml`; `roxmltree` dropped.** The whole XML API
+  (`MulticastServerConfiguration`/`MulticastGatewayConfiguration` and every
+  element type) is gated behind `std`; a `--no-default-features` build exposes
+  only `error`. Parsing is a single pass over `quick_xml::NsReader` events straight
+  into the typed structs (no document tree, so hostile nesting cannot overflow
+  the stack); serialization writes `BytesStart`/`BytesText` events through
+  `quick_xml::Writer`, so every attribute value and text node is escaped by
+  quick-xml (an
+  attribute value containing `\t`/`\n`/`\r` is now written as a character
+  reference so it survives a re-parse). Parse results and serialized output are
+  identical to the previous release for every committed fixture. Malformed
+  input stays a structured `Error::XmlParse` (a `DOCTYPE`, undefined entity,
+  unbound namespace prefix, second root element, or content after the root is
+  rejected).
+- **Behaviour differences from the roxmltree-based parser (all follow XML 1.0):**
+  - a numeric reference to a control character (`&#x1;`), or a literal one, in text or in an
+    attribute is rejected with `Error::XmlParse` (it is outside the XML 1.0 `Char` production);
+  - an entity reference or CDATA section before the root element is rejected
+    (`&amp;<MulticastGatewayConfiguration ...>` is `Error::XmlParse`);
+  - a document with more than 128 namespace declarations in scope at once is rejected with
+    `Error::XmlParse` (quick-xml's namespace-binding limit);
+  - an attribute value containing `\t`, `\n` or `\r` is written as `&#9;`, `&#10;`, `&#13;`
+    (`serviceIdentifier="a\nb"` renders `serviceIdentifier="a&#10;b"`) so it survives a re-parse.
 - **Behaviour change (#1121)**: documents that parsed before are now rejected.
   The document root's namespace is checked (not just its local name): a
   `MulticastServerConfiguration`/`MulticastGatewayConfiguration` in any

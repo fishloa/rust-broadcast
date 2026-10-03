@@ -1,0 +1,793 @@
+MulticastGatewayConfiguration {
+    schema_version: 2,
+    namespace: V2024,
+    validity_period: None,
+    valid_until: Some(
+        "2024-10-01T22:26:37",
+    ),
+    gateway_config_transport_sessions: [],
+    sessions: [
+        MulticastSession {
+            service_identifier: "tag:bbc.co.uk;2019#bbc-one/scotland",
+            content_playback_availability_offset: Some(
+                "PT3.84S",
+            ),
+            manifest_locators: [
+                PresentationManifestLocator {
+                    manifest_id: "bbc-one-scotland_mpd",
+                    content_type: "application/dash+xml",
+                    transport_object_uri: Some(
+                        "tag:bbc.co.uk;2019/manifests/dash#bbc-one/scotland",
+                    ),
+                    content_playback_path_pattern: Some(
+                        "*/bbc-one/scotland/manifest.mpd",
+                    ),
+                    locator: "http://edge.cdn1.co.uk/simulcast/bbc-one/scotland/manifest.mpd",
+                },
+                PresentationManifestLocator {
+                    manifest_id: "bbc-one-scotland_hls",
+                    content_type: "application/vnd.apple.mpegURL",
+                    transport_object_uri: Some(
+                        "tag:bbc.co.uk;2019/manifests/hls#bbc-one/scotland",
+                    ),
+                    content_playback_path_pattern: Some(
+                        "*/bbc-one/scotland/master.m3u8",
+                    ),
+                    locator: "http://edge.cdn1.co.uk/simulcast/bbc-one/scotland/master.m3u8",
+                },
+            ],
+            reporting: Some(
+                MulticastGatewaySessionReporting {
+                    locators: [
+                        ReportingLocator {
+                            uri: "https://reporting.isp.net/endpoint",
+                            proportion: Some(
+                                0.3,
+                            ),
+                            period: "P5M",
+                            random_delay: 50,
+                            report_session_running_events: Some(
+                                true,
+                            ),
+                        },
+                        ReportingLocator {
+                            uri: "https://reporting.bbc.co.uk/dvb_multicast_gateway.cgi",
+                            proportion: Some(
+                                0.1,
+                            ),
+                            period: "PT1H",
+                            random_delay: 1000,
+                            report_session_running_events: Some(
+                                true,
+                            ),
+                        },
+                    ],
+                },
+            ),
+            transport_sessions: [
+                MulticastTransportSession {
+                    id: "vision-low",
+                    service_class: None,
+                    start: Some(
+                        "2024-01-01T00:00:00",
+                    ),
+                    duration: None,
+                    content_ingest_method: Some(
+                        Push,
+                    ),
+                    transmission_mode: Some(
+                        Chunked,
+                    ),
+                    transport_security: Some(
+                        IntegrityAndAuthenticity,
+                    ),
+                    session_idle_timeout: 3840,
+                    transport_protocol: TransportProtocol {
+                        protocol_identifier: "urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE",
+                        protocol_version: 1,
+                    },
+                    endpoints: [
+                        EndpointAddress {
+                            source: Some(
+                                "10.1.100.1",
+                            ),
+                            group: "232.100.1.1",
+                            port: 3922,
+                            transport_session_id: Some(
+                                1,
+                            ),
+                        },
+                    ],
+                    bit_rate: BitRate {
+                        average: Some(
+                            150000,
+                        ),
+                        maximum: 150000,
+                    },
+                    fec_params: [
+                        ForwardErrorCorrectionParameters {
+                            scheme_identifier: "urn:ietf:rmt:fec:encoding:1",
+                            overhead_percentage: 20,
+                            endpoints: [],
+                        },
+                    ],
+                    unicast_repair: Some(
+                        UnicastRepairParameters {
+                            transport_object_base_uri: None,
+                            transport_object_reception_timeout: 500,
+                            fixed_back_off_period: Some(
+                                10,
+                            ),
+                            random_back_off_period: Some(
+                                20,
+                            ),
+                            base_urls: [
+                                BaseUrl {
+                                    uri: "http://edge.cdn1.co.uk/bbc-one_scotland/vision-low",
+                                    relative_weight: Some(
+                                        7,
+                                    ),
+                                },
+                                BaseUrl {
+                                    uri: "http://edge.cdn2.co.uk/bbc-one_scotland/vision-low",
+                                    relative_weight: Some(
+                                        3,
+                                    ),
+                                },
+                            ],
+                        },
+                    ),
+                    object_carousel: Some(
+                        ObjectCarousel {
+                            aggregate_transport_size: Some(
+                                1198430,
+                            ),
+                            aggregate_content_size: Some(
+                                1566815,
+                            ),
+                            presentation_manifests: [
+                                PresentationManifests {
+                                    target_acquisition_latency: Some(
+                                        "PT1S",
+                                    ),
+                                    compression_preferred: None,
+                                    service_id_ref: None,
+                                    transport_session_id_ref: None,
+                                },
+                            ],
+                            init_segments: [
+                                InitSegments {
+                                    target_acquisition_latency: Some(
+                                        "PT1S",
+                                    ),
+                                    compression_preferred: None,
+                                    service_id_ref: None,
+                                    transport_session_id_ref: None,
+                                },
+                            ],
+                            resource_locators: [
+                                ResourceLocator {
+                                    uri: "http://media.bbc.co.uk/idents/bbc-one/bbc-one-scotland.jpg",
+                                    target_acquisition_latency: Some(
+                                        "PT15S",
+                                    ),
+                                    revalidation_period: Some(
+                                        "PT1M",
+                                    ),
+                                    compression_preferred: None,
+                                },
+                            ],
+                        },
+                    ),
+                    service_component_ids: [
+                        Dash {
+                            manifest_id_ref: "bbc-one-scotland_mpd",
+                            period_id: "period1",
+                            adaptation_set_id: 1,
+                            representation_id: "V1",
+                        },
+                        Hls {
+                            manifest_id_ref: "bbc-one-scotland_hls",
+                            media_playlist_locator: "http://edge.cdn1.co.uk/simulcast/bbc-one/scotland/V1.m3u8",
+                        },
+                    ],
+                },
+                MulticastTransportSession {
+                    id: "vision-medium",
+                    service_class: None,
+                    start: Some(
+                        "2024-01-01T20:00:00",
+                    ),
+                    duration: Some(
+                        "PT2H",
+                    ),
+                    content_ingest_method: Some(
+                        Push,
+                    ),
+                    transmission_mode: Some(
+                        Chunked,
+                    ),
+                    transport_security: Some(
+                        IntegrityAndAuthenticity,
+                    ),
+                    session_idle_timeout: 3840,
+                    transport_protocol: TransportProtocol {
+                        protocol_identifier: "urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE",
+                        protocol_version: 1,
+                    },
+                    endpoints: [
+                        EndpointAddress {
+                            source: Some(
+                                "10.1.100.1",
+                            ),
+                            group: "232.100.1.2",
+                            port: 3923,
+                            transport_session_id: Some(
+                                2,
+                            ),
+                        },
+                    ],
+                    bit_rate: BitRate {
+                        average: Some(
+                            250000,
+                        ),
+                        maximum: 250000,
+                    },
+                    fec_params: [
+                        ForwardErrorCorrectionParameters {
+                            scheme_identifier: "urn:ietf:rmt:fec:encoding:1",
+                            overhead_percentage: 20,
+                            endpoints: [],
+                        },
+                    ],
+                    unicast_repair: Some(
+                        UnicastRepairParameters {
+                            transport_object_base_uri: None,
+                            transport_object_reception_timeout: 500,
+                            fixed_back_off_period: Some(
+                                10,
+                            ),
+                            random_back_off_period: Some(
+                                20,
+                            ),
+                            base_urls: [
+                                BaseUrl {
+                                    uri: "http://edge.cdn1.co.uk/bbc-one_scotland/vision-medium",
+                                    relative_weight: Some(
+                                        7,
+                                    ),
+                                },
+                                BaseUrl {
+                                    uri: "http://edge.cdn2.co.uk/bbc-one_scotland/vision-medium",
+                                    relative_weight: Some(
+                                        3,
+                                    ),
+                                },
+                            ],
+                        },
+                    ),
+                    object_carousel: Some(
+                        ObjectCarousel {
+                            aggregate_transport_size: Some(
+                                1495526,
+                            ),
+                            aggregate_content_size: Some(
+                                1600056,
+                            ),
+                            presentation_manifests: [
+                                PresentationManifests {
+                                    target_acquisition_latency: Some(
+                                        "PT1S",
+                                    ),
+                                    compression_preferred: Some(
+                                        true,
+                                    ),
+                                    service_id_ref: None,
+                                    transport_session_id_ref: None,
+                                },
+                            ],
+                            init_segments: [
+                                InitSegments {
+                                    target_acquisition_latency: Some(
+                                        "PT1S",
+                                    ),
+                                    compression_preferred: None,
+                                    service_id_ref: None,
+                                    transport_session_id_ref: None,
+                                },
+                            ],
+                            resource_locators: [
+                                ResourceLocator {
+                                    uri: "http://media.bbc.co.uk/idents/bbc-one/bbc-one-scotland.jpg",
+                                    target_acquisition_latency: Some(
+                                        "PT15S",
+                                    ),
+                                    revalidation_period: Some(
+                                        "PT1M",
+                                    ),
+                                    compression_preferred: None,
+                                },
+                            ],
+                        },
+                    ),
+                    service_component_ids: [
+                        Dash {
+                            manifest_id_ref: "bbc-one-scotland_mpd",
+                            period_id: "period1",
+                            adaptation_set_id: 1,
+                            representation_id: "V2",
+                        },
+                        Hls {
+                            manifest_id_ref: "bbc-one-scotland_hls",
+                            media_playlist_locator: "http://edge.cdn1.co.uk/simulcast/bbc-one/scotland/V2.m3u8",
+                        },
+                    ],
+                },
+                MulticastTransportSession {
+                    id: "sound",
+                    service_class: None,
+                    start: Some(
+                        "2024-01-01T00:00:00",
+                    ),
+                    duration: None,
+                    content_ingest_method: Some(
+                        Push,
+                    ),
+                    transmission_mode: Some(
+                        Chunked,
+                    ),
+                    transport_security: Some(
+                        IntegrityAndAuthenticity,
+                    ),
+                    session_idle_timeout: 3840,
+                    transport_protocol: TransportProtocol {
+                        protocol_identifier: "urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE",
+                        protocol_version: 1,
+                    },
+                    endpoints: [
+                        EndpointAddress {
+                            source: Some(
+                                "10.1.100.1",
+                            ),
+                            group: "232.100.2.1",
+                            port: 3924,
+                            transport_session_id: Some(
+                                5,
+                            ),
+                        },
+                    ],
+                    bit_rate: BitRate {
+                        average: Some(
+                            150000,
+                        ),
+                        maximum: 150000,
+                    },
+                    fec_params: [
+                        ForwardErrorCorrectionParameters {
+                            scheme_identifier: "urn:ietf:rmt:fec:encoding:1",
+                            overhead_percentage: 20,
+                            endpoints: [],
+                        },
+                    ],
+                    unicast_repair: Some(
+                        UnicastRepairParameters {
+                            transport_object_base_uri: None,
+                            transport_object_reception_timeout: 500,
+                            fixed_back_off_period: Some(
+                                10,
+                            ),
+                            random_back_off_period: Some(
+                                20,
+                            ),
+                            base_urls: [
+                                BaseUrl {
+                                    uri: "http://edge.cdn1.co.uk/bbc-one_scotland/sound",
+                                    relative_weight: Some(
+                                        7,
+                                    ),
+                                },
+                                BaseUrl {
+                                    uri: "http://edge.cdn2.co.uk/bbc-one_scotland/sound",
+                                    relative_weight: Some(
+                                        3,
+                                    ),
+                                },
+                            ],
+                        },
+                    ),
+                    object_carousel: Some(
+                        ObjectCarousel {
+                            aggregate_transport_size: Some(
+                                1236871,
+                            ),
+                            aggregate_content_size: Some(
+                                1394220,
+                            ),
+                            presentation_manifests: [
+                                PresentationManifests {
+                                    target_acquisition_latency: Some(
+                                        "PT1S",
+                                    ),
+                                    compression_preferred: None,
+                                    service_id_ref: None,
+                                    transport_session_id_ref: None,
+                                },
+                            ],
+                            init_segments: [
+                                InitSegments {
+                                    target_acquisition_latency: Some(
+                                        "PT1S",
+                                    ),
+                                    compression_preferred: None,
+                                    service_id_ref: None,
+                                    transport_session_id_ref: None,
+                                },
+                            ],
+                            resource_locators: [
+                                ResourceLocator {
+                                    uri: "http://media.bbc.co.uk/idents/bbc-one/bbc-one-scotland.jpg",
+                                    target_acquisition_latency: Some(
+                                        "PT15S",
+                                    ),
+                                    revalidation_period: Some(
+                                        "PT1M",
+                                    ),
+                                    compression_preferred: None,
+                                },
+                            ],
+                        },
+                    ),
+                    service_component_ids: [
+                        Dash {
+                            manifest_id_ref: "bbc-one-scotland_mpd",
+                            period_id: "period1",
+                            adaptation_set_id: 2,
+                            representation_id: "A1",
+                        },
+                        Hls {
+                            manifest_id_ref: "bbc-one-scotland_hls",
+                            media_playlist_locator: "http://edge.cdn1.co.uk/simulcast/bbc-one/scotland/A1.m3u8",
+                        },
+                    ],
+                },
+            ],
+        },
+        MulticastSession {
+            service_identifier: "tag:bbc.co.uk;2019#bbc-two/scotland",
+            content_playback_availability_offset: Some(
+                "PT3.84S",
+            ),
+            manifest_locators: [
+                PresentationManifestLocator {
+                    manifest_id: "bbc-two-scotland_mpd",
+                    content_type: "application/dash+xml",
+                    transport_object_uri: Some(
+                        "tag:bbc.co.uk;2019/manifests/dash#bbc-two/scotland",
+                    ),
+                    content_playback_path_pattern: Some(
+                        "*/bbc-two/scotland/manifest.mpd",
+                    ),
+                    locator: "http://edge.cdn1.co.uk/simulcast/bbc-two/scotland/manifest.mpd",
+                },
+                PresentationManifestLocator {
+                    manifest_id: "bbc-two-scotland_hls",
+                    content_type: "application/vnd.apple.mpegURL",
+                    transport_object_uri: Some(
+                        "tag:bbc.co.uk;2019/manifests/hls#bbc-two/scotland",
+                    ),
+                    content_playback_path_pattern: Some(
+                        "*/bbc-two/scotland/master.m3u8",
+                    ),
+                    locator: "http://edge.cdn1.co.uk/simulcast/bbc-two/scotland/master.m3u8",
+                },
+            ],
+            reporting: None,
+            transport_sessions: [
+                MulticastTransportSession {
+                    id: "vision",
+                    service_class: None,
+                    start: Some(
+                        "2024-01-01T00:00:00",
+                    ),
+                    duration: None,
+                    content_ingest_method: Some(
+                        Pull,
+                    ),
+                    transmission_mode: Some(
+                        Resource,
+                    ),
+                    transport_security: Some(
+                        IntegrityAndAuthenticity,
+                    ),
+                    session_idle_timeout: 3840,
+                    transport_protocol: TransportProtocol {
+                        protocol_identifier: "urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:ROUTE",
+                        protocol_version: 1,
+                    },
+                    endpoints: [
+                        EndpointAddress {
+                            source: Some(
+                                "10.1.100.1",
+                            ),
+                            group: "232.200.1.1",
+                            port: 3922,
+                            transport_session_id: Some(
+                                11,
+                            ),
+                        },
+                    ],
+                    bit_rate: BitRate {
+                        average: Some(
+                            150000,
+                        ),
+                        maximum: 150000,
+                    },
+                    fec_params: [
+                        ForwardErrorCorrectionParameters {
+                            scheme_identifier: "urn:ietf:rmt:fec:encoding:6",
+                            overhead_percentage: 20,
+                            endpoints: [
+                                EndpointAddress {
+                                    source: Some(
+                                        "10.1.100.1",
+                                    ),
+                                    group: "232.200.2.1",
+                                    port: 3922,
+                                    transport_session_id: Some(
+                                        26,
+                                    ),
+                                },
+                            ],
+                        },
+                    ],
+                    unicast_repair: Some(
+                        UnicastRepairParameters {
+                            transport_object_base_uri: None,
+                            transport_object_reception_timeout: 500,
+                            fixed_back_off_period: Some(
+                                10,
+                            ),
+                            random_back_off_period: Some(
+                                20,
+                            ),
+                            base_urls: [
+                                BaseUrl {
+                                    uri: "http://edge.cdn1.co.uk/bbc-two_scotland/vision",
+                                    relative_weight: Some(
+                                        7,
+                                    ),
+                                },
+                                BaseUrl {
+                                    uri: "http://edge.cdn2.co.uk/bbc-two_scotland/vision",
+                                    relative_weight: Some(
+                                        3,
+                                    ),
+                                },
+                            ],
+                        },
+                    ),
+                    object_carousel: Some(
+                        ObjectCarousel {
+                            aggregate_transport_size: Some(
+                                1896351,
+                            ),
+                            aggregate_content_size: Some(
+                                1998400,
+                            ),
+                            presentation_manifests: [
+                                PresentationManifests {
+                                    target_acquisition_latency: Some(
+                                        "PT1S",
+                                    ),
+                                    compression_preferred: None,
+                                    service_id_ref: None,
+                                    transport_session_id_ref: None,
+                                },
+                            ],
+                            init_segments: [
+                                InitSegments {
+                                    target_acquisition_latency: Some(
+                                        "PT1S",
+                                    ),
+                                    compression_preferred: None,
+                                    service_id_ref: None,
+                                    transport_session_id_ref: None,
+                                },
+                            ],
+                            resource_locators: [
+                                ResourceLocator {
+                                    uri: "http://media.bbc.co.uk/idents/bbc-two/bbc-two-scotland.jpg",
+                                    target_acquisition_latency: Some(
+                                        "PT15S",
+                                    ),
+                                    revalidation_period: Some(
+                                        "PT1M",
+                                    ),
+                                    compression_preferred: None,
+                                },
+                            ],
+                        },
+                    ),
+                    service_component_ids: [
+                        Dash {
+                            manifest_id_ref: "bbc-two-scotland_mpd",
+                            period_id: "period1",
+                            adaptation_set_id: 1,
+                            representation_id: "V1",
+                        },
+                        Hls {
+                            manifest_id_ref: "bbc-two-scotland_hls",
+                            media_playlist_locator: "http://edge.cdn1.co.uk/simulcast/bbc-two/scotland/V1.m3u8",
+                        },
+                    ],
+                },
+                MulticastTransportSession {
+                    id: "sound",
+                    service_class: None,
+                    start: Some(
+                        "2024-01-01T00:00:00",
+                    ),
+                    duration: None,
+                    content_ingest_method: Some(
+                        Pull,
+                    ),
+                    transmission_mode: Some(
+                        Resource,
+                    ),
+                    transport_security: Some(
+                        IntegrityAndAuthenticity,
+                    ),
+                    session_idle_timeout: 3840,
+                    transport_protocol: TransportProtocol {
+                        protocol_identifier: "urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:ROUTE",
+                        protocol_version: 1,
+                    },
+                    endpoints: [
+                        EndpointAddress {
+                            source: Some(
+                                "10.1.100.1",
+                            ),
+                            group: "232.200.1.1",
+                            port: 3923,
+                            transport_session_id: Some(
+                                15,
+                            ),
+                        },
+                    ],
+                    bit_rate: BitRate {
+                        average: Some(
+                            150000,
+                        ),
+                        maximum: 150000,
+                    },
+                    fec_params: [
+                        ForwardErrorCorrectionParameters {
+                            scheme_identifier: "urn:ietf:rmt:fec:encoding:6",
+                            overhead_percentage: 20,
+                            endpoints: [
+                                EndpointAddress {
+                                    source: Some(
+                                        "10.1.100.1",
+                                    ),
+                                    group: "232.200.2.1",
+                                    port: 3922,
+                                    transport_session_id: Some(
+                                        26,
+                                    ),
+                                },
+                            ],
+                        },
+                    ],
+                    unicast_repair: Some(
+                        UnicastRepairParameters {
+                            transport_object_base_uri: None,
+                            transport_object_reception_timeout: 500,
+                            fixed_back_off_period: Some(
+                                10,
+                            ),
+                            random_back_off_period: Some(
+                                20,
+                            ),
+                            base_urls: [
+                                BaseUrl {
+                                    uri: "http://edge.cdn1.co.uk/bbc-one_scotland/sound",
+                                    relative_weight: Some(
+                                        7,
+                                    ),
+                                },
+                                BaseUrl {
+                                    uri: "http://edge.cdn2.co.uk/bbc-one_scotland/sound",
+                                    relative_weight: Some(
+                                        3,
+                                    ),
+                                },
+                            ],
+                        },
+                    ),
+                    object_carousel: Some(
+                        ObjectCarousel {
+                            aggregate_transport_size: Some(
+                                1478924,
+                            ),
+                            aggregate_content_size: Some(
+                                1554980,
+                            ),
+                            presentation_manifests: [
+                                PresentationManifests {
+                                    target_acquisition_latency: Some(
+                                        "PT1S",
+                                    ),
+                                    compression_preferred: None,
+                                    service_id_ref: None,
+                                    transport_session_id_ref: None,
+                                },
+                            ],
+                            init_segments: [
+                                InitSegments {
+                                    target_acquisition_latency: Some(
+                                        "PT1S",
+                                    ),
+                                    compression_preferred: None,
+                                    service_id_ref: None,
+                                    transport_session_id_ref: None,
+                                },
+                            ],
+                            resource_locators: [
+                                ResourceLocator {
+                                    uri: "http://media.bbc.co.uk/idents/bbc-two/bbc-two-scotland.jpg",
+                                    target_acquisition_latency: Some(
+                                        "PT15S",
+                                    ),
+                                    revalidation_period: Some(
+                                        "PT1M",
+                                    ),
+                                    compression_preferred: None,
+                                },
+                            ],
+                        },
+                    ),
+                    service_component_ids: [
+                        Dash {
+                            manifest_id_ref: "bbc-two-scotland_mpd",
+                            period_id: "period1",
+                            adaptation_set_id: 2,
+                            representation_id: "A1",
+                        },
+                        Hls {
+                            manifest_id_ref: "bbc-two-scotland_hls",
+                            media_playlist_locator: "http://edge.cdn1.co.uk/simulcast/bbc-two/scotland/A1.m3u8",
+                        },
+                    ],
+                },
+            ],
+        },
+    ],
+    reporting: Some(
+        MulticastGatewaySessionReporting {
+            locators: [
+                ReportingLocator {
+                    uri: "https://reporting.isp.net/endpoint",
+                    proportion: Some(
+                        0.3,
+                    ),
+                    period: "P5M",
+                    random_delay: 50,
+                    report_session_running_events: Some(
+                        false,
+                    ),
+                },
+                ReportingLocator {
+                    uri: "https://reporting.bbc.co.uk/dvb_multicast_gateway.cgi",
+                    proportion: Some(
+                        0.1,
+                    ),
+                    period: "PT1H",
+                    random_delay: 1000,
+                    report_session_running_events: Some(
+                        false,
+                    ),
+                },
+            ],
+        },
+    ),
+}

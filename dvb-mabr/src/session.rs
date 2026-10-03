@@ -9,12 +9,12 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use roxmltree::Node;
+use std::io;
 
 use crate::error::Result;
-use crate::parse::{child, children, own_text, require_attr};
+use crate::parse::{Events, StartTag, for_each_child, require_attr};
 use crate::reporting::MulticastGatewaySessionReporting;
-use crate::serialize::{push_indent, write_attr, write_opt_attr};
+use crate::serialize::{Out, attr, element, opt_attr, tag, text_element};
 use crate::transport::MulticastTransportSession;
 
 const ELEMENT: &str = "MulticastSession";
@@ -69,94 +69,88 @@ pub struct PresentationManifestLocator {
 }
 
 impl PresentationManifestLocator {
-    fn parse(node: Node<'_, '_>) -> Result<Self> {
+    fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
+        let manifest_id = require_attr(node, MANIFEST_LOCATOR_ELEMENT, "manifestId")?;
+        let content_type = require_attr(node, MANIFEST_LOCATOR_ELEMENT, "contentType")?;
+        let transport_object_uri =
+            require_attr(node, MANIFEST_LOCATOR_ELEMENT, "transportObjectURI").ok();
+        let content_playback_path_pattern =
+            require_attr(node, MANIFEST_LOCATOR_ELEMENT, "contentPlaybackPathPattern").ok();
         Ok(PresentationManifestLocator {
-            manifest_id: require_attr(node, MANIFEST_LOCATOR_ELEMENT, "manifestId")?,
-            content_type: require_attr(node, MANIFEST_LOCATOR_ELEMENT, "contentType")?,
-            transport_object_uri: require_attr(
-                node,
-                MANIFEST_LOCATOR_ELEMENT,
-                "transportObjectURI",
-            )
-            .ok(),
-            content_playback_path_pattern: require_attr(
-                node,
-                MANIFEST_LOCATOR_ELEMENT,
-                "contentPlaybackPathPattern",
-            )
-            .ok(),
-            locator: own_text(node),
+            manifest_id,
+            content_type,
+            transport_object_uri,
+            content_playback_path_pattern,
+            locator: ev.text(node)?,
         })
     }
 
-    fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<PresentationManifestLocator");
-        write_attr(out, "manifestId", &self.manifest_id);
-        write_attr(out, "contentType", &self.content_type);
-        write_opt_attr(
-            out,
+    fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(MANIFEST_LOCATOR_ELEMENT);
+        attr(&mut t, "manifestId", &self.manifest_id);
+        attr(&mut t, "contentType", &self.content_type);
+        opt_attr(
+            &mut t,
             "transportObjectURI",
             self.transport_object_uri.as_deref(),
         );
-        write_opt_attr(
-            out,
+        opt_attr(
+            &mut t,
             "contentPlaybackPathPattern",
             self.content_playback_path_pattern.as_deref(),
         );
-        out.push('>');
-        out.push_str(&crate::serialize::xml_escape(&self.locator));
-        out.push_str("</PresentationManifestLocator>\n");
+        text_element(w, t, &self.locator)
     }
 }
 
 impl MulticastSession {
-    pub(crate) fn parse(node: Node<'_, '_>) -> Result<Self> {
+    pub(crate) fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
+        let service_identifier = require_attr(node, ELEMENT, "serviceIdentifier")?;
+        let content_playback_availability_offset =
+            require_attr(node, ELEMENT, "contentPlaybackAvailabilityOffset").ok();
         let mut manifest_locators = Vec::new();
-        for n in children(node, MANIFEST_LOCATOR_ELEMENT) {
-            manifest_locators.push(PresentationManifestLocator::parse(n)?);
-        }
+        let mut reporting = None;
         let mut transport_sessions = Vec::new();
-        for n in children(node, "MulticastTransportSession") {
-            transport_sessions.push(MulticastTransportSession::parse(n)?);
-        }
+        for_each_child(ev, node, |ev, child| {
+            if child.is(MANIFEST_LOCATOR_ELEMENT) {
+                manifest_locators.push(PresentationManifestLocator::parse(ev, child)?);
+            } else if child.is("MulticastGatewaySessionReporting") && reporting.is_none() {
+                reporting = Some(MulticastGatewaySessionReporting::parse(ev, child)?);
+            } else if child.is("MulticastTransportSession") {
+                transport_sessions.push(MulticastTransportSession::parse(ev, child)?);
+            } else {
+                return Ok(false);
+            }
+            Ok(true)
+        })?;
         Ok(MulticastSession {
-            service_identifier: require_attr(node, ELEMENT, "serviceIdentifier")?,
-            content_playback_availability_offset: require_attr(
-                node,
-                ELEMENT,
-                "contentPlaybackAvailabilityOffset",
-            )
-            .ok(),
+            service_identifier,
+            content_playback_availability_offset,
             manifest_locators,
-            reporting: match child(node, "MulticastGatewaySessionReporting") {
-                Some(n) => Some(MulticastGatewaySessionReporting::parse(n)?),
-                None => None,
-            },
+            reporting,
             transport_sessions,
         })
     }
 
-    pub(crate) fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<MulticastSession");
-        write_attr(out, "serviceIdentifier", &self.service_identifier);
-        write_opt_attr(
-            out,
+    pub(crate) fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(ELEMENT);
+        attr(&mut t, "serviceIdentifier", &self.service_identifier);
+        opt_attr(
+            &mut t,
             "contentPlaybackAvailabilityOffset",
             self.content_playback_availability_offset.as_deref(),
         );
-        out.push_str(">\n");
-        for loc in &self.manifest_locators {
-            loc.write_xml(out, indent + 1);
-        }
-        if let Some(rep) = &self.reporting {
-            rep.write_xml(out, indent + 1);
-        }
-        for ts in &self.transport_sessions {
-            ts.write_xml(out, indent + 1);
-        }
-        push_indent(out, indent);
-        out.push_str("</MulticastSession>\n");
+        element(w, t, |w| {
+            for loc in &self.manifest_locators {
+                loc.write_xml(w)?;
+            }
+            if let Some(rep) = &self.reporting {
+                rep.write_xml(w)?;
+            }
+            for ts in &self.transport_sessions {
+                ts.write_xml(w)?;
+            }
+            Ok(())
+        })
     }
 }

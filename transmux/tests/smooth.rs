@@ -8,6 +8,7 @@
 //! crate's own [`transmux::smooth_parse::SmoothManifest::parse`] — not a
 //! second hand-rolled test parser — so these tests double as the parser's
 //! strongest bite: round-tripping the real writer's output.
+#![cfg(feature = "std")]
 
 use std::path::PathBuf;
 

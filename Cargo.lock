@@ -1035,7 +1035,7 @@ name = "dvb-mabr"
 version = "0.1.0"
 dependencies = [
  "broadcast-common",
- "roxmltree",
+ "quick-xml",
  "thiserror 2.0.19",
 ]
 
@@ -2156,6 +2156,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "mpeg-ts",
  "percent-encoding",
+ "quick-xml",
  "reqwest",
  "rtmp-runtime",
  "rtp-packet",
@@ -2607,6 +2608,15 @@ dependencies = [
  "wasi",
  "web-sys",
  "winapi",
+]
+
+[[package]]
+name = "quick-xml"
+version = "0.42.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "41b1177fdf999d2321d3fb46ff47159d9c1fb9ad66a4879f8c50a0b504615e9b"
+dependencies = [
+ "memchr",
 ]
 
 [[package]]
@@ -4060,6 +4070,7 @@ dependencies = [
  "mpeg-pes",
  "mpeg-ps",
  "mpeg-ts",
+ "quick-xml",
  "rtcp-packet",
  "rtp-packet",
  "scte35-splice",
@@ -4095,7 +4106,7 @@ name = "ttml-subtitle"
 version = "0.2.1"
 dependencies = [
  "broadcast-common",
- "roxmltree",
+ "quick-xml",
  "serde",
  "serde_json",
  "thiserror 2.0.19",

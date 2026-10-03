@@ -1,0 +1,1 @@
+<WRMHEADER xmlns="http://schemas.microsoft.com/DRM/2007/03/PlayReadyHeader" version="4.2.0.0"><DATA><PROTECTINFO><KIDS><KID ALGID="AESCTR" VALUE="EREREREREREREREREREREQ=="></KID><KID ALGID="AESCTR" VALUE="AwIBAAUEBwYICQoLDA0ODw=="></KID></KIDS></PROTECTINFO><LA_URL>https://la.example.com/x?a=1&amp;b=2</LA_URL></DATA></WRMHEADER>

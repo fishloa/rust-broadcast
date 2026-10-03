@@ -9,7 +9,7 @@
 //!
 //! | Feature | Default | Description |
 //! |---|---|---|
-//! | `std`   | yes     | `std::error::Error` impls |
+//! | `std`   | yes     | `std::error::Error` impls, plus `check_dash_mpd` (its MPD parser, `quick-xml`, needs `std`) |
 //! | `serde` | yes     | JSON report output via `serde` / `serde_json` |
 //! | `cli`   | yes     | `clap`-based CLI binary, incl. `watch` (issue #665) |
 //!
@@ -31,6 +31,9 @@
 extern crate alloc;
 
 mod container_codec;
+// `check_dash_mpd` parses the MPD with `transmux::Mpd`, whose quick-xml parser is
+// `std`-only.
+#[cfg(feature = "std")]
 mod dash_validator;
 mod diagnostics;
 mod hls_validator;
@@ -39,6 +42,7 @@ mod report;
 mod watch;
 
 pub use container_codec::check_container_codec;
+#[cfg(feature = "std")]
 pub use dash_validator::check_dash_mpd;
 pub use diagnostics::cc_anomaly::CcAnomalyCheck;
 pub use diagnostics::codec_signalling::CodecSignallingCheck;

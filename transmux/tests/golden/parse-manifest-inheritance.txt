@@ -1,0 +1,200 @@
+Mpd {
+    profiles: "urn:mpeg:dash:profile:isoff-live:2011",
+    mpd_type: Static,
+    media_presentation_duration: Some(
+        3s,
+    ),
+    minimum_update_period: None,
+    availability_start_time: None,
+    time_shift_buffer_depth: None,
+    base_url: None,
+    periods: [
+        Period {
+            id: Some(
+                "0",
+            ),
+            start: Some(
+                0ns,
+            ),
+            duration: None,
+            base_url: Some(
+                "https://dash.example.com/vod/",
+            ),
+            adaptation_sets: [
+                AdaptationSet {
+                    mime_type: None,
+                    content_type: Some(
+                        "video",
+                    ),
+                    base_url: None,
+                    segment_template: Some(
+                        SegmentTemplate {
+                            timescale: 90000,
+                            initialization: None,
+                            media: Some(
+                                "chunk-stream$RepresentationID$-$Number%05d$.m4s",
+                            ),
+                            start_number: 1,
+                            duration: None,
+                            presentation_time_offset: 0,
+                            timeline: Some(
+                                SegmentTimeline {
+                                    segments: [
+                                        S {
+                                            t: Some(
+                                                2070,
+                                            ),
+                                            d: 90000,
+                                            r: 2,
+                                        },
+                                    ],
+                                },
+                            ),
+                        },
+                    ),
+                    representations: [
+                        Representation {
+                            id: "0",
+                            bandwidth: 58141,
+                            codecs: Some(
+                                "avc1.4d400d",
+                            ),
+                            width: Some(
+                                320,
+                            ),
+                            height: Some(
+                                240,
+                            ),
+                            frame_rate: None,
+                            audio_sampling_rate: None,
+                            mime_type: Some(
+                                "video/mp4",
+                            ),
+                            base_url: None,
+                            segment_template: Some(
+                                SegmentTemplate {
+                                    timescale: 90000,
+                                    initialization: Some(
+                                        "init-stream$RepresentationID$.m4s",
+                                    ),
+                                    media: Some(
+                                        "chunk-stream$RepresentationID$-$Number%05d$.m4s",
+                                    ),
+                                    start_number: 1,
+                                    duration: None,
+                                    presentation_time_offset: 0,
+                                    timeline: Some(
+                                        SegmentTimeline {
+                                            segments: [
+                                                S {
+                                                    t: Some(
+                                                        2070,
+                                                    ),
+                                                    d: 90000,
+                                                    r: 2,
+                                                },
+                                            ],
+                                        },
+                                    ),
+                                },
+                            ),
+                        },
+                    ],
+                },
+                AdaptationSet {
+                    mime_type: None,
+                    content_type: Some(
+                        "audio",
+                    ),
+                    base_url: None,
+                    segment_template: Some(
+                        SegmentTemplate {
+                            timescale: 44100,
+                            initialization: None,
+                            media: Some(
+                                "chunk-stream$RepresentationID$-$Number%05d$.m4s",
+                            ),
+                            start_number: 1,
+                            duration: None,
+                            presentation_time_offset: 0,
+                            timeline: Some(
+                                SegmentTimeline {
+                                    segments: [
+                                        S {
+                                            t: Some(
+                                                2070,
+                                            ),
+                                            d: 90000,
+                                            r: 2,
+                                        },
+                                    ],
+                                },
+                            ),
+                        },
+                    ),
+                    representations: [
+                        Representation {
+                            id: "1",
+                            bandwidth: 96013,
+                            codecs: Some(
+                                "mp4a.40.2",
+                            ),
+                            width: None,
+                            height: None,
+                            frame_rate: None,
+                            audio_sampling_rate: Some(
+                                44100,
+                            ),
+                            mime_type: Some(
+                                "audio/mp4",
+                            ),
+                            base_url: None,
+                            segment_template: Some(
+                                SegmentTemplate {
+                                    timescale: 44100,
+                                    initialization: Some(
+                                        "init-stream$RepresentationID$.m4s",
+                                    ),
+                                    media: Some(
+                                        "chunk-stream$RepresentationID$-$Number%05d$.m4s",
+                                    ),
+                                    start_number: 1,
+                                    duration: None,
+                                    presentation_time_offset: 0,
+                                    timeline: Some(
+                                        SegmentTimeline {
+                                            segments: [
+                                                S {
+                                                    t: Some(
+                                                        0,
+                                                    ),
+                                                    d: 41984,
+                                                    r: 0,
+                                                },
+                                                S {
+                                                    t: None,
+                                                    d: 44032,
+                                                    r: 0,
+                                                },
+                                                S {
+                                                    t: None,
+                                                    d: 45056,
+                                                    r: 0,
+                                                },
+                                                S {
+                                                    t: None,
+                                                    d: 3072,
+                                                    r: 0,
+                                                },
+                                            ],
+                                        },
+                                    ),
+                                },
+                            ),
+                        },
+                    ],
+                },
+            ],
+        },
+    ],
+}

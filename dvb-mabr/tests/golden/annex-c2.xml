@@ -1,0 +1,71 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MulticastGatewayConfiguration xmlns="urn:dvb:metadata:MulticastSessionConfiguration:2024" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" schemaVersion="2" validityPeriod="P1D">
+  <MulticastGatewayConfigurationTransportSession transportSecurity="integrityAndAuthenticity">
+    <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE" protocolVersion="1"/>
+    <EndpointAddress>
+      <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+      <NetworkDestinationGroupAddress>232.99.1.1</NetworkDestinationGroupAddress>
+      <TransportDestinationPort>9999</TransportDestinationPort>
+      <MediaTransportSessionIdentifier>1</MediaTransportSessionIdentifier>
+    </EndpointAddress>
+    <EndpointAddress>
+      <NetworkSourceAddress>2001:DB8::4456:424D</NetworkSourceAddress>
+      <NetworkDestinationGroupAddress>FF3E::4950:4801</NetworkDestinationGroupAddress>
+      <TransportDestinationPort>9999</TransportDestinationPort>
+      <MediaTransportSessionIdentifier>1</MediaTransportSessionIdentifier>
+    </EndpointAddress>
+    <BitRate average="200" maximum="200"/>
+    <ForwardErrorCorrectionParameters>
+      <SchemeIdentifier>urn:ietf:rmt:fec:encoding:1</SchemeIdentifier>
+      <OverheadPercentage>20</OverheadPercentage>
+    </ForwardErrorCorrectionParameters>
+    <ObjectCarousel>
+      <PresentationManifests targetAcquisitionLatency="PT1S" serviceIdRef="tag:bbc.co.uk;2019#bbc-one/scotland" transportSessionIdRef="vision-low"/>
+      <PresentationManifests targetAcquisitionLatency="PT1S" serviceIdRef="tag:bbc.co.uk;2019#bbc-two/scotland" transportSessionIdRef="vision-low"/>
+      <InitSegments targetAcquisitionLatency="PT1S" serviceIdRef="tag:bbc.co.uk;2019#bbc-one/scotland" transportSessionIdRef="vision-low"/>
+      <InitSegments targetAcquisitionLatency="PT1S" serviceIdRef="tag:bbc.co.uk;2019#bbc-two/scotland" transportSessionIdRef="vision-low"/>
+      <ResourceLocator targetAcquisitionLatency="PT15S" revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-one/bbc-one-scotland.jpg</ResourceLocator>
+      <ResourceLocator targetAcquisitionLatency="PT15S" revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-one/bbc-two-scotland.jpg</ResourceLocator>
+    </ObjectCarousel>
+  </MulticastGatewayConfigurationTransportSession>
+  <MulticastGatewayConfigurationTransportSession transportSecurity="integrityAndAuthenticity">
+    <TransportProtocol protocolIdentifier="urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:ROUTE" protocolVersion="1"/>
+    <EndpointAddress>
+      <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+      <NetworkDestinationGroupAddress>232.98.1.1</NetworkDestinationGroupAddress>
+      <TransportDestinationPort>9999</TransportDestinationPort>
+      <MediaTransportSessionIdentifier>1</MediaTransportSessionIdentifier>
+    </EndpointAddress>
+    <EndpointAddress>
+      <NetworkSourceAddress>2001:DB8::4456:424D</NetworkSourceAddress>
+      <NetworkDestinationGroupAddress>FF3E::4950:4701</NetworkDestinationGroupAddress>
+      <TransportDestinationPort>9999</TransportDestinationPort>
+      <MediaTransportSessionIdentifier>1</MediaTransportSessionIdentifier>
+    </EndpointAddress>
+    <BitRate average="200" maximum="200"/>
+    <ForwardErrorCorrectionParameters>
+      <SchemeIdentifier>urn:ietf:rmt:fec:encoding:6</SchemeIdentifier>
+      <OverheadPercentage>20</OverheadPercentage>
+      <EndpointAddress>
+        <NetworkSourceAddress>10.1.100.1</NetworkSourceAddress>
+        <NetworkDestinationGroupAddress>232.99.1.1</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>8888</TransportDestinationPort>
+        <MediaTransportSessionIdentifier>2</MediaTransportSessionIdentifier>
+      </EndpointAddress>
+      <EndpointAddress>
+        <NetworkSourceAddress>2001:DB8::4456:424D</NetworkSourceAddress>
+        <NetworkDestinationGroupAddress>FF3E::4950:4702</NetworkDestinationGroupAddress>
+        <TransportDestinationPort>8888</TransportDestinationPort>
+        <MediaTransportSessionIdentifier>2</MediaTransportSessionIdentifier>
+      </EndpointAddress>
+    </ForwardErrorCorrectionParameters>
+    <ObjectCarousel aggregateTransportSize="1945320" aggregateContentSize="2040900">
+      <PresentationManifests targetAcquisitionLatency="PT1S" serviceIdRef="tag:bbc.co.uk;2019#bbc-one/scotland" transportSessionIdRef="vision-low"/>
+      <PresentationManifests targetAcquisitionLatency="PT1S" serviceIdRef="tag:bbc.co.uk;2019#bbc-two/scotland" transportSessionIdRef="vision-low"/>
+      <InitSegments targetAcquisitionLatency="PT1S" serviceIdRef="tag:bbc.co.uk;2019#bbc-one/scotland" transportSessionIdRef="vision-low"/>
+      <InitSegments targetAcquisitionLatency="PT1S" serviceIdRef="tag:bbc.co.uk;2019#bbc-two/scotland" transportSessionIdRef="vision-low"/>
+      <ResourceLocator targetAcquisitionLatency="PT15S" revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-one/bbc-one-scotland.jpg</ResourceLocator>
+      <ResourceLocator targetAcquisitionLatency="PT15S" revalidationPeriod="PT1M">http://media.bbc.co.uk/idents/bbc-one/bbc-two-scotland.jpg</ResourceLocator>
+    </ObjectCarousel>
+  </MulticastGatewayConfigurationTransportSession>
+</MulticastGatewayConfiguration>

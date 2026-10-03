@@ -68,8 +68,10 @@
 //! crate — the caller supplies them via [`DashPackager::content_protection`]
 //! (e.g. built with [`crate::drm`]'s pssh builders).
 //!
-//! The MPD is emitted with a tiny hand-rolled XML writer; the crate stays
-//! dependency-free (like `HlsPackager`).
+//! The MPD is emitted with [`quick_xml::Writer`] (every attribute value and
+//! text node is escaped by quick-xml), so this module — like
+//! [`crate::dash_parse`], [`crate::smooth`] and [`crate::smooth_parse`] — needs
+//! the `std` feature (quick-xml is `std`-only).
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -80,7 +82,8 @@ use crate::error::{Error, Result};
 use crate::media::{Media, Track};
 use crate::pipeline::CodecConfig;
 use crate::sps::rfc6381_avc1;
-use crate::xml_writer::XmlWriter;
+use quick_xml::Writer;
+use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
 
 /// DASH MPD namespace (ISO/IEC 23009-1 §5.3.1.2 — `urn:mpeg:dash:schema:mpd:2011`).
 pub const MPD_NAMESPACE: &str = "urn:mpeg:dash:schema:mpd:2011";
@@ -704,8 +707,9 @@ impl DashPackager {
 
     /// Render the MPD XML for the resolved representations.
     fn render(&self, reprs: &[ReprInfo]) -> String {
-        let mut w = XmlWriter::new();
-        w.declaration();
+        let mut writer = new_writer();
+        let w = &mut writer;
+        declaration(w);
 
         // --- MPD (root) ---
         let mut mpd_attrs = alloc::vec![
@@ -758,10 +762,11 @@ impl DashPackager {
                 .unwrap_or(0);
             mpd_attrs.push(("mediaPresentationDuration", xs_duration_tenths(max_tenths)));
         }
-        w.open("MPD", &mpd_attrs);
+        open(w, "MPD", &mpd_attrs);
 
         // --- Period ---
-        w.open(
+        open(
+            w,
             "Period",
             &[("id", "0".to_string()), ("start", "PT0.0S".to_string())],
         );
@@ -787,18 +792,18 @@ impl DashPackager {
                         break candidate;
                     }
                 };
-                self.write_adaptation_set(&mut w, kind, &group, &id);
+                self.write_adaptation_set(w, kind, &group, &id);
             }
         }
 
         // Trick-mode AdaptationSet — ISO/IEC 23009-1 §5.8.5.8 / DASH-IF IOP §3.3.5.
         if let Some(tm) = &self.trick_mode {
-            self.write_trick_adaptation_set(&mut w, tm);
+            self.write_trick_adaptation_set(w, tm);
         }
 
-        w.close("Period");
-        w.close("MPD");
-        w.finish()
+        close(w, "Period");
+        close(w, "MPD");
+        finish(writer)
     }
 
     fn write_adaptation_set(
@@ -820,11 +825,12 @@ impl DashPackager {
         if let Some(lang) = common_lang(set) {
             attrs.push(("lang", lang));
         }
-        w.open("AdaptationSet", &attrs);
+        open(w, "AdaptationSet", &attrs);
 
         // Role (ISO/IEC 23009-1 §5.8.5.5, Table 24) — every rendition here is
         // "main" (no alternate/commentary modelling in the IR).
-        w.empty(
+        empty(
+            w,
             "Role",
             &[
                 ("schemeIdUri", ROLE_SCHEME.to_string()),
@@ -865,7 +871,7 @@ impl DashPackager {
                 if let Some(v) = &ies.value {
                     ies_attrs.push(("value", v.clone()));
                 }
-                w.empty("InbandEventStream", &ies_attrs);
+                empty(w, "InbandEventStream", &ies_attrs);
             }
         }
 
@@ -886,12 +892,13 @@ impl DashPackager {
             if let Some(sr) = r.audio_sampling_rate {
                 rattrs.push(("audioSamplingRate", sr.to_string()));
             }
-            w.open("Representation", &rattrs);
+            open(w, "Representation", &rattrs);
 
             if kind == MediaKind::Audio
                 && let Some(ch) = r.audio_channels
             {
-                w.empty(
+                empty(
+                    w,
                     "AudioChannelConfiguration",
                     &[
                         ("schemeIdUri", AUDIO_CHANNEL_SCHEME.to_string()),
@@ -902,10 +909,10 @@ impl DashPackager {
 
             self.write_segment_template(w, r);
 
-            w.close("Representation");
+            close(w, "Representation");
         }
 
-        w.close("AdaptationSet");
+        close(w, "AdaptationSet");
     }
 
     /// Write one Representation's `SegmentTemplate` (ISO/IEC 23009-1
@@ -928,7 +935,8 @@ impl DashPackager {
                     Some(durs) if !durs.is_empty() => durs[0],
                     _ => r.total_duration,
                 };
-                w.empty(
+                empty(
+                    w,
                     "SegmentTemplate",
                     &[
                         ("timescale", r.timescale.to_string()),
@@ -945,7 +953,8 @@ impl DashPackager {
                     .segment_durations
                     .as_ref()
                     .expect("Addressing::Timeline requires segment_durations (validated earlier)");
-                w.open(
+                open(
+                    w,
                     "SegmentTemplate",
                     &[
                         ("timescale", r.timescale.to_string()),
@@ -955,7 +964,7 @@ impl DashPackager {
                     ],
                 );
                 write_segment_timeline(w, durations);
-                w.close("SegmentTemplate");
+                close(w, "SegmentTemplate");
             }
         }
     }
@@ -983,12 +992,13 @@ impl DashPackager {
         ];
         // segmentAlignment not required by spec for trick-mode but keep consistent.
         as_attrs.push(("segmentAlignment", "true".to_string()));
-        w.open("AdaptationSet", &as_attrs);
+        open(w, "AdaptationSet", &as_attrs);
 
         // SupplementalProperty declaring the trick-mode relationship.
         // schemeIdUri = TRICKMODE_SCHEME (urn:mpeg:dash:trickmode:2016),
         // value = the @id of the main video AdaptationSet.
-        w.empty(
+        empty(
+            w,
             "SupplementalProperty",
             &[
                 ("schemeIdUri", TRICKMODE_SCHEME.to_string()),
@@ -1007,8 +1017,9 @@ impl DashPackager {
             rattrs.push(("width", w_px.to_string()));
             rattrs.push(("height", h_px.to_string()));
         }
-        w.open("Representation", &rattrs);
-        w.empty(
+        open(w, "Representation", &rattrs);
+        empty(
+            w,
             "SegmentTemplate",
             &[
                 ("timescale", r.timescale.to_string()),
@@ -1018,9 +1029,9 @@ impl DashPackager {
                 ("media", self.media_template.clone()),
             ],
         );
-        w.close("Representation");
+        close(w, "Representation");
 
-        w.close("AdaptationSet");
+        close(w, "AdaptationSet");
     }
 }
 
@@ -1212,11 +1223,11 @@ fn write_content_protection(w: &mut XmlWriter, cp: &ContentProtectionSystem) {
     }
     match &cp.pssh {
         Some(pssh) => {
-            w.open("ContentProtection", &attrs);
-            w.text("cenc:pssh", &crate::rtp::base64_encode(pssh));
-            w.close("ContentProtection");
+            open(w, "ContentProtection", &attrs);
+            text_element(w, "cenc:pssh", &crate::rtp::base64_encode(pssh));
+            close(w, "ContentProtection");
         }
-        None => w.empty("ContentProtection", &attrs),
+        None => empty(w, "ContentProtection", &attrs),
     }
 }
 
@@ -1255,7 +1266,7 @@ fn hex_lower(bytes: &[u8]) -> String {
 /// (`prev S@t + prev@d * (prev@r+1)`, L1791), which this list satisfies by
 /// construction (no gaps/discontinuities are modelled here).
 fn write_segment_timeline(w: &mut XmlWriter, durations: &[u64]) {
-    w.open("SegmentTimeline", &[]);
+    open(w, "SegmentTimeline", &[]);
     let mut t: u64 = 0;
     let mut idx = 0usize;
     let mut first = true;
@@ -1274,9 +1285,64 @@ fn write_segment_timeline(w: &mut XmlWriter, durations: &[u64]) {
         if run > 1 {
             attrs.push(("r", (run - 1).to_string()));
         }
-        w.empty("S", &attrs);
+        empty(w, "S", &attrs);
         t += d * run as u64;
         idx += run;
     }
-    w.close("SegmentTimeline");
+    close(w, "SegmentTimeline");
+}
+
+// ---------------------------------------------------------------------------
+// quick-xml writer plumbing
+// ---------------------------------------------------------------------------
+
+/// The manifest writer: a two-space-indenting `quick_xml::Writer`. Every
+/// attribute value and text node is escaped by quick-xml. Writing to an
+/// in-memory `Vec` cannot fail, so write results are intentionally discarded.
+type XmlWriter = Writer<Vec<u8>>;
+
+fn new_writer() -> XmlWriter {
+    Writer::new_with_indent(Vec::new(), b' ', 2)
+}
+
+/// `<?xml version="1.0" encoding="utf-8"?>`.
+fn declaration(w: &mut XmlWriter) {
+    let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
+}
+
+fn element_tag<'a>(name: &'a str, attrs: &'a [(&str, String)]) -> BytesStart<'a> {
+    let mut start = BytesStart::new(name);
+    for (key, value) in attrs {
+        start.push_attribute((*key, value.as_str()));
+    }
+    start
+}
+
+/// `<name a="b">`.
+fn open(w: &mut XmlWriter, name: &str, attrs: &[(&str, String)]) {
+    let _ = w.write_event(Event::Start(element_tag(name, attrs)));
+}
+
+/// `<name a="b"/>`.
+fn empty(w: &mut XmlWriter, name: &str, attrs: &[(&str, String)]) {
+    let _ = w.write_event(Event::Empty(element_tag(name, attrs)));
+}
+
+/// `</name>`.
+fn close(w: &mut XmlWriter, name: &str) {
+    let _ = w.write_event(Event::End(BytesEnd::new(name)));
+}
+
+/// A leaf element with escaped text content on one line (`<name>text</name>`).
+fn text_element(w: &mut XmlWriter, name: &str, text: &str) {
+    open(w, name, &[]);
+    let _ = w.write_event(Event::Text(BytesText::new(text)));
+    close(w, name);
+}
+
+/// The written document plus a trailing newline.
+fn finish(w: XmlWriter) -> String {
+    let mut out = String::from_utf8_lossy(&w.into_inner()).into_owned();
+    out.push('\n');
+    out
 }

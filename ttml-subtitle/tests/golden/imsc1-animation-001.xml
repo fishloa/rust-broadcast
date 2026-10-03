@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:tt="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" xmlns:tts="http://www.w3.org/ns/ttml#styling" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xml:lang="en" ttp:profile="http://www.w3.org/ns/ttml/profile/imsc1/text">
+  <head>
+    <metadata>
+      <ttm:title>Animation Test - Animate 001</ttm:title>
+      <ttm:desc>Set backgroundColor</ttm:desc>
+      <ttm:copyright>Copyright (C) 2008 W3C (MIT, ERCIM, Keio).</ttm:copyright>
+    </metadata>
+  </head>
+  <body>
+    <div dur="20s" timeContainer="seq">
+      <p dur="10s" tts:backgroundColor="red" tts:color="white">        <set begin="5s" tts:backgroundColor="blue"/>
+
+	This background of this sentence should change from red to blue at 5s</p>
+    </div>
+  </body>
+</tt>

@@ -21,7 +21,7 @@
 //! The types are deliberately lossless: nothing is normalized or rewritten,
 //! so the serialized document re-parses to an equal tree, and a comparison
 //! against the original XML with an independent XML parser (e.g.
-//! `roxmltree`) finds the same elements, attributes, namespace URIs and
+//! `quick-xml`) finds the same elements, attributes, namespace URIs and
 //! text.
 
 use alloc::boxed::Box;
@@ -47,7 +47,7 @@ pub struct ForeignAttribute {
     /// The attribute's value.
     pub value: String,
     /// `xmlns:` declarations scoped to the element that carried this
-    /// attribute (TTML2 §7.2, #1110/TT-W1). roxmltree consumes them, so the
+    /// attribute (TTML2 §7.2, #1110/TT-W1). the XML reader consumes them, so the
     /// parse records them here; the serializer re-declares each one on the
     /// `<tt>` element (widening a namespace scope is always namespace-
     /// equivalent) and mirrors the binding internally so any original

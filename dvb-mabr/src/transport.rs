@@ -8,18 +8,21 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use roxmltree::Node;
+use alloc::string::ToString;
+use std::io;
 
 use crate::carousel::ObjectCarousel;
 use crate::component::ServiceComponentIdentifier;
 use crate::error::{Error, Result};
 use crate::fec::ForwardErrorCorrectionParameters;
 use crate::parse::{
-    child, child_text, children, opt_attr_u64, req_attr_u32, req_attr_u64, require_attr,
-    require_child,
+    Events, StartTag, for_each_child, missing_element, opt_attr_u64, req_attr_u32, req_attr_u64,
+    require_attr,
 };
 use crate::repair::UnicastRepairParameters;
-use crate::serialize::{push_indent, write_attr, write_num_attr, write_opt_attr};
+use crate::serialize::{
+    Out, attr, element, empty, num_attr, opt_attr, opt_num_attr, tag, text_element,
+};
 
 const ELEMENT: &str = "MulticastTransportSession";
 const ENDPOINT_ELEMENT: &str = "EndpointAddress";
@@ -156,23 +159,24 @@ pub struct TransportProtocol {
 }
 
 impl TransportProtocol {
-    pub(crate) fn parse(node: Node<'_, '_>) -> Result<Self> {
-        Ok(TransportProtocol {
+    pub(crate) fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
+        let parsed = TransportProtocol {
             protocol_identifier: require_attr(
                 node,
                 TRANSPORT_PROTOCOL_ELEMENT,
                 "protocolIdentifier",
             )?,
             protocol_version: req_attr_u32(node, TRANSPORT_PROTOCOL_ELEMENT, "protocolVersion")?,
-        })
+        };
+        ev.skip(node)?;
+        Ok(parsed)
     }
 
-    pub(crate) fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<TransportProtocol");
-        write_attr(out, "protocolIdentifier", &self.protocol_identifier);
-        write_num_attr(out, "protocolVersion", self.protocol_version);
-        out.push_str("/>\n");
+    pub(crate) fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(TRANSPORT_PROTOCOL_ELEMENT);
+        attr(&mut t, "protocolIdentifier", &self.protocol_identifier);
+        num_attr(&mut t, "protocolVersion", self.protocol_version);
+        empty(w, t)
     }
 }
 
@@ -194,19 +198,38 @@ pub struct EndpointAddress {
 }
 
 impl EndpointAddress {
-    pub(crate) fn parse(node: Node<'_, '_>) -> Result<Self> {
-        let group_node = require_child(node, ENDPOINT_ELEMENT, "NetworkDestinationGroupAddress")?;
-        let port_node = require_child(node, ENDPOINT_ELEMENT, "TransportDestinationPort")?;
-        let port_text = crate::parse::own_text(port_node);
+    pub(crate) fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
+        let mut source = None;
+        let mut group = None;
+        let mut port_text = None;
+        let mut session_id_text = None;
+        for_each_child(ev, node, |ev, child| {
+            if child.is("NetworkSourceAddress") && source.is_none() {
+                source = Some(ev.text(child)?);
+            } else if child.is("NetworkDestinationGroupAddress") && group.is_none() {
+                group = Some(ev.text(child)?);
+            } else if child.is("TransportDestinationPort") && port_text.is_none() {
+                port_text = Some(ev.text(child)?);
+            } else if child.is("MediaTransportSessionIdentifier") && session_id_text.is_none() {
+                session_id_text = Some(ev.text(child)?);
+            } else {
+                return Ok(false);
+            }
+            Ok(true)
+        })?;
+        let group = group
+            .ok_or_else(|| missing_element(ENDPOINT_ELEMENT, "NetworkDestinationGroupAddress"))?;
+        let port_text = port_text
+            .ok_or_else(|| missing_element(ENDPOINT_ELEMENT, "TransportDestinationPort"))?;
         Ok(EndpointAddress {
-            source: child_text(node, "NetworkSourceAddress"),
-            group: crate::parse::own_text(group_node),
+            source,
+            group,
             port: crate::parse::parse_u16(
                 ENDPOINT_ELEMENT,
                 "TransportDestinationPort",
                 &port_text,
             )?,
-            transport_session_id: match child_text(node, "MediaTransportSessionIdentifier") {
+            transport_session_id: match session_id_text {
                 Some(t) => Some(crate::parse::parse_u64(
                     ENDPOINT_ELEMENT,
                     "MediaTransportSessionIdentifier",
@@ -217,38 +240,18 @@ impl EndpointAddress {
         })
     }
 
-    pub(crate) fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<EndpointAddress>\n");
-        if let Some(source) = &self.source {
-            push_indent(out, indent + 1);
-            out.push_str("<NetworkSourceAddress>");
-            out.push_str(&crate::serialize::xml_escape(source));
-            out.push_str("</NetworkSourceAddress>\n");
-        }
-        push_indent(out, indent + 1);
-        out.push_str("<NetworkDestinationGroupAddress>");
-        out.push_str(&crate::serialize::xml_escape(&self.group));
-        out.push_str("</NetworkDestinationGroupAddress>\n");
-        push_indent(out, indent + 1);
-        {
-            use core::fmt::Write as _;
-            let _ = writeln!(
-                out,
-                "<TransportDestinationPort>{}</TransportDestinationPort>",
-                self.port
-            );
-        }
-        if let Some(id) = self.transport_session_id {
-            push_indent(out, indent + 1);
-            use core::fmt::Write as _;
-            let _ = writeln!(
-                out,
-                "<MediaTransportSessionIdentifier>{id}</MediaTransportSessionIdentifier>"
-            );
-        }
-        push_indent(out, indent);
-        out.push_str("</EndpointAddress>\n");
+    pub(crate) fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        element(w, tag(ENDPOINT_ELEMENT), |w| {
+            if let Some(source) = &self.source {
+                text_element(w, tag("NetworkSourceAddress"), source)?;
+            }
+            text_element(w, tag("NetworkDestinationGroupAddress"), &self.group)?;
+            text_element(w, tag("TransportDestinationPort"), &self.port.to_string())?;
+            if let Some(id) = self.transport_session_id {
+                text_element(w, tag("MediaTransportSessionIdentifier"), &id.to_string())?;
+            }
+            Ok(())
+        })
     }
 }
 
@@ -266,19 +269,20 @@ pub struct BitRate {
 }
 
 impl BitRate {
-    pub(crate) fn parse(node: Node<'_, '_>) -> Result<Self> {
-        Ok(BitRate {
+    pub(crate) fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
+        let parsed = BitRate {
             average: opt_attr_u64(node, BIT_RATE_ELEMENT, "average")?,
             maximum: req_attr_u64(node, BIT_RATE_ELEMENT, "maximum")?,
-        })
+        };
+        ev.skip(node)?;
+        Ok(parsed)
     }
 
-    pub(crate) fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<BitRate");
-        crate::serialize::write_opt_num_attr(out, "average", self.average);
-        write_num_attr(out, "maximum", self.maximum);
-        out.push_str("/>\n");
+    pub(crate) fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(BIT_RATE_ELEMENT);
+        opt_num_attr(&mut t, "average", self.average);
+        num_attr(&mut t, "maximum", self.maximum);
+        empty(w, t)
     }
 }
 
@@ -323,93 +327,108 @@ pub struct MulticastTransportSession {
 }
 
 impl MulticastTransportSession {
-    pub(crate) fn parse(node: Node<'_, '_>) -> Result<Self> {
-        let transport_protocol_node = require_child(node, ELEMENT, TRANSPORT_PROTOCOL_ELEMENT)?;
-        let bit_rate_node = require_child(node, ELEMENT, BIT_RATE_ELEMENT)?;
+    pub(crate) fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
+        let id = require_attr(node, ELEMENT, "id")?;
+        let service_class = require_attr(node, ELEMENT, "serviceClass").ok();
+        let start = require_attr(node, ELEMENT, "start").ok();
+        let duration = require_attr(node, ELEMENT, "duration").ok();
+        let content_ingest_method = match require_attr(node, ELEMENT, "contentIngestMethod") {
+            Ok(v) => Some(ContentIngestMethod::parse(&v)?),
+            Err(_) => None,
+        };
+        let transmission_mode = match require_attr(node, ELEMENT, "transmissionMode") {
+            Ok(v) => Some(TransmissionMode::parse(&v)?),
+            Err(_) => None,
+        };
+        let transport_security = match require_attr(node, ELEMENT, "transportSecurity") {
+            Ok(v) => Some(TransportSecurity::parse(&v)?),
+            Err(_) => None,
+        };
+        let session_idle_timeout = req_attr_u64(node, ELEMENT, "sessionIdleTimeout")?;
 
+        let mut transport_protocol = None;
+        let mut bit_rate = None;
         let mut endpoints = Vec::new();
-        for ep in children(node, ENDPOINT_ELEMENT) {
-            endpoints.push(EndpointAddress::parse(ep)?);
-        }
         let mut fec_params = Vec::new();
-        for fp in children(node, "ForwardErrorCorrectionParameters") {
-            fec_params.push(ForwardErrorCorrectionParameters::parse(fp)?);
-        }
+        let mut unicast_repair = None;
+        let mut object_carousel = None;
         let mut service_component_ids = Vec::new();
-        for sc in children(node, "ServiceComponentIdentifier") {
-            service_component_ids.push(ServiceComponentIdentifier::parse(sc)?);
-        }
+        for_each_child(ev, node, |ev, child| {
+            if child.is(TRANSPORT_PROTOCOL_ELEMENT) && transport_protocol.is_none() {
+                transport_protocol = Some(TransportProtocol::parse(ev, child)?);
+            } else if child.is(BIT_RATE_ELEMENT) && bit_rate.is_none() {
+                bit_rate = Some(BitRate::parse(ev, child)?);
+            } else if child.is(ENDPOINT_ELEMENT) {
+                endpoints.push(EndpointAddress::parse(ev, child)?);
+            } else if child.is("ForwardErrorCorrectionParameters") {
+                fec_params.push(ForwardErrorCorrectionParameters::parse(ev, child)?);
+            } else if child.is("UnicastRepairParameters") && unicast_repair.is_none() {
+                unicast_repair = Some(UnicastRepairParameters::parse(ev, child)?);
+            } else if child.is("ObjectCarousel") && object_carousel.is_none() {
+                object_carousel = Some(ObjectCarousel::parse(ev, child)?);
+            } else if child.is("ServiceComponentIdentifier") {
+                service_component_ids.push(ServiceComponentIdentifier::parse(ev, child)?);
+            } else {
+                return Ok(false);
+            }
+            Ok(true)
+        })?;
 
         Ok(MulticastTransportSession {
-            id: require_attr(node, ELEMENT, "id")?,
-            service_class: require_attr(node, ELEMENT, "serviceClass").ok(),
-            start: require_attr(node, ELEMENT, "start").ok(),
-            duration: require_attr(node, ELEMENT, "duration").ok(),
-            content_ingest_method: match require_attr(node, ELEMENT, "contentIngestMethod") {
-                Ok(v) => Some(ContentIngestMethod::parse(&v)?),
-                Err(_) => None,
-            },
-            transmission_mode: match require_attr(node, ELEMENT, "transmissionMode") {
-                Ok(v) => Some(TransmissionMode::parse(&v)?),
-                Err(_) => None,
-            },
-            transport_security: match require_attr(node, ELEMENT, "transportSecurity") {
-                Ok(v) => Some(TransportSecurity::parse(&v)?),
-                Err(_) => None,
-            },
-            session_idle_timeout: req_attr_u64(node, ELEMENT, "sessionIdleTimeout")?,
-            transport_protocol: TransportProtocol::parse(transport_protocol_node)?,
+            id,
+            service_class,
+            start,
+            duration,
+            content_ingest_method,
+            transmission_mode,
+            transport_security,
+            session_idle_timeout,
+            transport_protocol: transport_protocol
+                .ok_or_else(|| missing_element(ELEMENT, TRANSPORT_PROTOCOL_ELEMENT))?,
             endpoints,
-            bit_rate: BitRate::parse(bit_rate_node)?,
+            bit_rate: bit_rate.ok_or_else(|| missing_element(ELEMENT, BIT_RATE_ELEMENT))?,
             fec_params,
-            unicast_repair: match child(node, "UnicastRepairParameters") {
-                Some(n) => Some(UnicastRepairParameters::parse(n)?),
-                None => None,
-            },
-            object_carousel: match child(node, "ObjectCarousel") {
-                Some(n) => Some(ObjectCarousel::parse(n)?),
-                None => None,
-            },
+            unicast_repair,
+            object_carousel,
             service_component_ids,
         })
     }
 
-    pub(crate) fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<MulticastTransportSession");
-        write_attr(out, "id", &self.id);
-        write_opt_attr(out, "serviceClass", self.service_class.as_deref());
-        write_opt_attr(out, "start", self.start.as_deref());
-        write_opt_attr(out, "duration", self.duration.as_deref());
+    pub(crate) fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(ELEMENT);
+        attr(&mut t, "id", &self.id);
+        opt_attr(&mut t, "serviceClass", self.service_class.as_deref());
+        opt_attr(&mut t, "start", self.start.as_deref());
+        opt_attr(&mut t, "duration", self.duration.as_deref());
         if let Some(m) = self.content_ingest_method {
-            write_attr(out, "contentIngestMethod", m.name());
+            attr(&mut t, "contentIngestMethod", m.name());
         }
         if let Some(m) = self.transmission_mode {
-            write_attr(out, "transmissionMode", m.name());
+            attr(&mut t, "transmissionMode", m.name());
         }
         if let Some(s) = self.transport_security {
-            write_attr(out, "transportSecurity", s.name());
+            attr(&mut t, "transportSecurity", s.name());
         }
-        write_num_attr(out, "sessionIdleTimeout", self.session_idle_timeout);
-        out.push_str(">\n");
-        self.transport_protocol.write_xml(out, indent + 1);
-        for ep in &self.endpoints {
-            ep.write_xml(out, indent + 1);
-        }
-        self.bit_rate.write_xml(out, indent + 1);
-        for fp in &self.fec_params {
-            fp.write_xml(out, indent + 1);
-        }
-        if let Some(ur) = &self.unicast_repair {
-            ur.write_xml(out, indent + 1);
-        }
-        if let Some(oc) = &self.object_carousel {
-            oc.write_xml(out, indent + 1);
-        }
-        for sc in &self.service_component_ids {
-            sc.write_xml(out, indent + 1);
-        }
-        push_indent(out, indent);
-        out.push_str("</MulticastTransportSession>\n");
+        num_attr(&mut t, "sessionIdleTimeout", self.session_idle_timeout);
+        element(w, t, |w| {
+            self.transport_protocol.write_xml(w)?;
+            for ep in &self.endpoints {
+                ep.write_xml(w)?;
+            }
+            self.bit_rate.write_xml(w)?;
+            for fp in &self.fec_params {
+                fp.write_xml(w)?;
+            }
+            if let Some(ur) = &self.unicast_repair {
+                ur.write_xml(w)?;
+            }
+            if let Some(oc) = &self.object_carousel {
+                oc.write_xml(w)?;
+            }
+            for sc in &self.service_component_ids {
+                sc.write_xml(w)?;
+            }
+            Ok(())
+        })
     }
 }

@@ -1,0 +1,25 @@
+MulticastGatewayConfiguration {
+    schema_version: 2,
+    namespace: V2024,
+    validity_period: None,
+    valid_until: None,
+    gateway_config_transport_sessions: [],
+    sessions: [
+        MulticastSession {
+            service_identifier: "a&b<c>d\"e'f",
+            content_playback_availability_offset: None,
+            manifest_locators: [
+                PresentationManifestLocator {
+                    manifest_id: "m1",
+                    content_type: "application/dash+xml",
+                    transport_object_uri: None,
+                    content_playback_path_pattern: None,
+                    locator: "https://x/?a=1&b=<2> \"q\" 'z'",
+                },
+            ],
+            reporting: None,
+            transport_sessions: [],
+        },
+    ],
+    reporting: None,
+}

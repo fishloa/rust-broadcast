@@ -4,6 +4,7 @@
 //! exercises the *exact* pipeline the example runs (fixture -> hand-built
 //! SCTE-35 cue -> TS extraction -> `splice_insert` -> HLS/DASH), then asserts
 //! on the concrete rendered text/bytes — not just "it ran without panicking".
+#![cfg(feature = "std")]
 
 #[allow(dead_code)]
 #[path = "../examples/ssai_ad_stitch.rs"]

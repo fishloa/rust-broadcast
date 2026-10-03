@@ -1,0 +1,121 @@
+Mpd {
+    profiles: "urn:mpeg:dash:profile:isoff-live:2011",
+    mpd_type: Static,
+    media_presentation_duration: Some(
+        3s,
+    ),
+    minimum_update_period: None,
+    availability_start_time: None,
+    time_shift_buffer_depth: None,
+    base_url: None,
+    periods: [
+        Period {
+            id: Some(
+                "0",
+            ),
+            start: Some(
+                0ns,
+            ),
+            duration: None,
+            base_url: None,
+            adaptation_sets: [
+                AdaptationSet {
+                    mime_type: Some(
+                        "video/mp4",
+                    ),
+                    content_type: Some(
+                        "video",
+                    ),
+                    base_url: None,
+                    segment_template: None,
+                    representations: [
+                        Representation {
+                            id: "1",
+                            bandwidth: 58141,
+                            codecs: Some(
+                                "avc1.4D400D",
+                            ),
+                            width: Some(
+                                320,
+                            ),
+                            height: Some(
+                                240,
+                            ),
+                            frame_rate: Some(
+                                "25/1",
+                            ),
+                            audio_sampling_rate: None,
+                            mime_type: Some(
+                                "video/mp4",
+                            ),
+                            base_url: None,
+                            segment_template: Some(
+                                SegmentTemplate {
+                                    timescale: 90000,
+                                    initialization: Some(
+                                        "init-stream$RepresentationID$.m4s",
+                                    ),
+                                    media: Some(
+                                        "chunk-stream$RepresentationID$-$Number$.m4s",
+                                    ),
+                                    start_number: 1,
+                                    duration: Some(
+                                        270000,
+                                    ),
+                                    presentation_time_offset: 0,
+                                    timeline: None,
+                                },
+                            ),
+                        },
+                    ],
+                },
+                AdaptationSet {
+                    mime_type: Some(
+                        "audio/mp4",
+                    ),
+                    content_type: Some(
+                        "audio",
+                    ),
+                    base_url: None,
+                    segment_template: None,
+                    representations: [
+                        Representation {
+                            id: "2",
+                            bandwidth: 96014,
+                            codecs: Some(
+                                "mp4a.40.2",
+                            ),
+                            width: None,
+                            height: None,
+                            frame_rate: None,
+                            audio_sampling_rate: Some(
+                                44100,
+                            ),
+                            mime_type: Some(
+                                "audio/mp4",
+                            ),
+                            base_url: None,
+                            segment_template: Some(
+                                SegmentTemplate {
+                                    timescale: 44100,
+                                    initialization: Some(
+                                        "init-stream$RepresentationID$.m4s",
+                                    ),
+                                    media: Some(
+                                        "chunk-stream$RepresentationID$-$Number$.m4s",
+                                    ),
+                                    start_number: 1,
+                                    duration: Some(
+                                        134144,
+                                    ),
+                                    presentation_time_offset: 0,
+                                    timeline: None,
+                                },
+                            ),
+                        },
+                    ],
+                },
+            ],
+        },
+    ],
+}

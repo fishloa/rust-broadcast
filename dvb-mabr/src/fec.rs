@@ -10,11 +10,12 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use roxmltree::Node;
+use alloc::string::ToString;
+use std::io;
 
 use crate::error::Result;
-use crate::parse::{children, own_text, parse_u32, require_child};
-use crate::serialize::push_indent;
+use crate::parse::{Events, StartTag, for_each_child, missing_element, parse_u32};
+use crate::serialize::{Out, element, tag, text_element};
 use crate::transport::EndpointAddress;
 
 const ELEMENT: &str = "ForwardErrorCorrectionParameters";
@@ -36,39 +37,45 @@ pub struct ForwardErrorCorrectionParameters {
 }
 
 impl ForwardErrorCorrectionParameters {
-    pub(crate) fn parse(node: Node<'_, '_>) -> Result<Self> {
-        let scheme_id_node = require_child(node, ELEMENT, "SchemeIdentifier")?;
-        let overhead_node = require_child(node, ELEMENT, "OverheadPercentage")?;
-        let overhead_text = own_text(overhead_node);
+    pub(crate) fn parse(ev: &mut Events<'_>, tag: &StartTag) -> Result<Self> {
+        let mut scheme_identifier = None;
+        let mut overhead_text = None;
         let mut endpoints = Vec::new();
-        for ep in children(node, "EndpointAddress") {
-            endpoints.push(EndpointAddress::parse(ep)?);
-        }
+        for_each_child(ev, tag, |ev, child| {
+            if child.is("SchemeIdentifier") && scheme_identifier.is_none() {
+                scheme_identifier = Some(ev.text(child)?);
+            } else if child.is("OverheadPercentage") && overhead_text.is_none() {
+                overhead_text = Some(ev.text(child)?);
+            } else if child.is("EndpointAddress") {
+                endpoints.push(EndpointAddress::parse(ev, child)?);
+            } else {
+                return Ok(false);
+            }
+            Ok(true)
+        })?;
+        let scheme_identifier =
+            scheme_identifier.ok_or_else(|| missing_element(ELEMENT, "SchemeIdentifier"))?;
+        let overhead_text =
+            overhead_text.ok_or_else(|| missing_element(ELEMENT, "OverheadPercentage"))?;
         Ok(ForwardErrorCorrectionParameters {
-            scheme_identifier: own_text(scheme_id_node),
+            scheme_identifier,
             overhead_percentage: parse_u32(ELEMENT, "OverheadPercentage", &overhead_text)?,
             endpoints,
         })
     }
 
-    pub(crate) fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<ForwardErrorCorrectionParameters>\n");
-        push_indent(out, indent + 1);
-        out.push_str("<SchemeIdentifier>");
-        out.push_str(&crate::serialize::xml_escape(&self.scheme_identifier));
-        out.push_str("</SchemeIdentifier>\n");
-        push_indent(out, indent + 1);
-        out.push_str("<OverheadPercentage>");
-        {
-            use core::fmt::Write as _;
-            let _ = write!(out, "{}", self.overhead_percentage);
-        }
-        out.push_str("</OverheadPercentage>\n");
-        for ep in &self.endpoints {
-            ep.write_xml(out, indent + 1);
-        }
-        push_indent(out, indent);
-        out.push_str("</ForwardErrorCorrectionParameters>\n");
+    pub(crate) fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        element(w, tag(ELEMENT), |w| {
+            text_element(w, tag("SchemeIdentifier"), &self.scheme_identifier)?;
+            text_element(
+                w,
+                tag("OverheadPercentage"),
+                &self.overhead_percentage.to_string(),
+            )?;
+            for ep in &self.endpoints {
+                ep.write_xml(w)?;
+            }
+            Ok(())
+        })
     }
 }

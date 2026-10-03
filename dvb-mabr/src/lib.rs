@@ -16,6 +16,12 @@
 //! themselves (`rmt-flute` covers the ALC/LCT/FLUTE wire format TS 103 769
 //! Annex F profiles).
 //!
+//! ## Features
+//!
+//! The XML API reads and writes through `quick-xml`, which needs `std`, so it
+//! is gated behind the (default) `std` feature; a `no_std` build exposes only
+//! [`error`].
+//!
 //! ## Round-trip guarantee
 //!
 //! `parse_str → to_xml → parse_str` yields an equal document (fields
@@ -74,32 +80,56 @@
 
 extern crate alloc;
 
-pub mod carousel;
-pub mod component;
-pub mod config;
 pub mod error;
+
+// Everything below reads or writes XML through `quick-xml`, which needs `std`;
+// a `no_std` build exposes only [`error`].
+#[cfg(feature = "std")]
+pub mod carousel;
+#[cfg(feature = "std")]
+pub mod component;
+#[cfg(feature = "std")]
+pub mod config;
+#[cfg(feature = "std")]
 pub mod fec;
+#[cfg(feature = "std")]
 pub mod gateway;
+#[cfg(feature = "std")]
 mod parse;
+#[cfg(feature = "std")]
 pub mod repair;
+#[cfg(feature = "std")]
 pub mod reporting;
+#[cfg(feature = "std")]
 mod serialize;
+#[cfg(feature = "std")]
 pub mod session;
+#[cfg(feature = "std")]
 pub mod transport;
 
+#[cfg(feature = "std")]
 pub use carousel::{InitSegments, ObjectCarousel, PresentationManifests, ResourceLocator};
+#[cfg(feature = "std")]
 pub use component::ServiceComponentIdentifier;
+#[cfg(feature = "std")]
 pub use config::{BaselineNamespace, MulticastGatewayConfiguration, MulticastServerConfiguration};
 pub use error::{Error, Result};
+#[cfg(feature = "std")]
 pub use fec::ForwardErrorCorrectionParameters;
+#[cfg(feature = "std")]
 pub use gateway::{ConfigurationMacro, MulticastGatewayConfigurationTransportSession};
+#[cfg(feature = "std")]
 pub use parse::{
     NS_EXTENSIBILITY_2024, NS_MULTICAST_SESSION_CONFIGURATION_2019,
     NS_MULTICAST_SESSION_CONFIGURATION_2024, NS_XSI,
 };
+#[cfg(feature = "std")]
 pub use repair::{BaseUrl, UnicastRepairParameters};
+#[cfg(feature = "std")]
 pub use reporting::{MulticastGatewaySessionReporting, ReportingLocator};
+#[cfg(feature = "std")]
 pub use session::{MulticastSession, PresentationManifestLocator};
+#[cfg(feature = "std")]
 pub use transport::{
     BitRate, ContentIngestMethod, EndpointAddress, MulticastTransportSession, TransmissionMode,
     TransportProtocol, TransportSecurity,

@@ -20,6 +20,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 # exist in 0.23.0 (verified at the tag). Published multimux 0.8.0 shipped
 # with the understated `"0.23"` bound.
 transmux          = { path = "../transmux",     version = "0.24" }
+# Smooth manifest rendering (`output::smooth`) and the Smooth-pull encryption
+# probe: the single XML dependency of the crates that read or write XML.
+quick-xml         = { version = "0.42", default-features = false }
 container-probe   = { path = "../container-probe", version = "0.1" }
 # HLS (M3U8) playlist syntax (issue #878): `source::hls_pull` builds/parses
 # playlists via this crate directly rather than through `transmux`.

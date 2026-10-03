@@ -12,7 +12,10 @@
 //! [`Error::UnsupportedCodec`]; only `WebM → WebM`/[`MkvMux`] round-trips them.
 //! It **never encodes or decodes media**: it parses codec *config/parameter
 //! headers* only to build container boxes and derive metadata; coded samples
-//! pass through opaque. `no_std` + `alloc`.
+//! pass through opaque. `no_std` + `alloc`, except the XML manifest paths
+//! ([`dash`], [`dash_parse`], [`smooth`], [`smooth_parse`], [`LlDashPackager`] and
+//! the PlayReady [`playready_wrmheader`]/[`playready_pro`]/[`playready_pssh`]
+//! builders), which are built on `quick-xml` and need the `std` feature.
 //!
 //! The spokes are expressed through the two abstract traits in `broadcast_common`:
 //! [`Unpackage`](broadcast_common::Unpackage) (container → IR) and
@@ -109,7 +112,7 @@
 //!
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
-//! | `std`   | yes     | `std::error::Error` impls |
+//! | `std`   | yes     | `std::error::Error` impls, plus every XML path (DASH/LL-DASH MPD, Smooth Streaming, PlayReady WRMHEADER) via `quick-xml` |
 //! | `serde` | yes     | `serde::Serialize` for box types |
 //! | `cenc`  | yes     | CENC/CBCS (ISO/IEC 23001-7) AES-CTR/AES-CBC sample decrypt ([`CencDecryptor`]) + encrypt ([`CencEncryptor`]) via the RustCrypto `aes`/`ctr`/`cbc` crates. DASH/HLS DRM signalling ([`DashPackager::content_protection`], [`broadcast_hls::cenc_ext_x_key`]) reads the always-available `Track::encryption`/`cenc` box types and needs no feature |
 //! | `sample-aes` | no | HLS Sample-AES + full-segment AES-128 (AES-128-CBC) content protection ([`sample_aes`]); implies `cenc`, adds the RustCrypto `cbc` crate |
@@ -143,7 +146,9 @@ pub mod cenc_decrypt;
 pub mod cenc_encrypt;
 #[cfg(feature = "cli")]
 pub mod cli;
+#[cfg(feature = "std")]
 pub mod dash;
+#[cfg(feature = "std")]
 pub mod dash_parse;
 pub mod drm;
 pub mod dts;
@@ -184,7 +189,9 @@ pub mod sample_entries;
 pub mod sample_groups;
 pub mod segmenter;
 pub mod segments;
+#[cfg(feature = "std")]
 pub mod smooth;
+#[cfg(feature = "std")]
 pub mod smooth_parse;
 pub mod splice;
 pub mod sps;
@@ -201,8 +208,8 @@ pub mod vp9;
 pub mod vvc_config;
 pub mod webm_demux;
 mod wire_cursor;
-pub(crate) mod xml_parse;
-mod xml_writer;
+#[cfg(feature = "std")]
+pub(crate) mod xml_chars;
 
 pub use aac_asc::{
     AdtsHeader, AudioObjectType, AudioSpecificConfig, ChannelConfiguration, HeAacSignaling,
@@ -228,11 +235,13 @@ pub use cenc::{
 pub use cenc_decrypt::{CencDecryptor, KeyMap};
 #[cfg(feature = "cenc")]
 pub use cenc_encrypt::{CencEncryptor, ConstantIvSenc, EncryptConfig, IvGen, SubsamplePolicy};
+#[cfg(feature = "std")]
 pub use dash::{
     Addressing, ContentProtectionSystem, DashPackager, InbandEventStream,
     MP4_PROTECTION_SCHEME_URI, MPD_NAMESPACE, MediaKind, PROFILE_ISOFF_LIVE, TRICKMODE_SCHEME,
     TrackSegments, TrickModeAdaptationSet, TrickModeRepr, rfc6381_codec_string,
 };
+#[cfg(feature = "std")]
 pub use dash_parse::{
     AdaptationSet, DashParseError, Mpd, MpdType, Period, Representation, S, SegmentTemplate,
     SegmentTimeline, parse_iso8601_duration,
@@ -240,9 +249,10 @@ pub use dash_parse::{
 pub use drm::{
     COMMON_SYSTEM_ID, FAIRPLAY_SYSTEM_ID, PLAYREADY_SYSTEM_ID, WIDEVINE_SYSTEM_ID,
     cenc_kid_to_playready, fairplay_pssh, fairplay_pssh_data, playready_kid_to_cenc,
-    playready_kid_value_decode, playready_pro, playready_pssh, playready_wrmheader, widevine_pssh,
-    widevine_pssh_data,
+    playready_kid_value_decode, widevine_pssh, widevine_pssh_data,
 };
+#[cfg(feature = "std")]
+pub use drm::{playready_pro, playready_pssh, playready_wrmheader};
 pub use dts::{
     DDTS_BODY_LEN, DDTS_FOURCC, DTSC_FOURCC, DTSE_FOURCC, DTSH_FOURCC, DTSL_FOURCC, DtsSpecificBox,
 };
@@ -270,7 +280,9 @@ pub use klv::{
     TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UNIVERSAL_LABEL_LEN, UasLocalSet, UniversalLabel,
     ber_length, ber_oid, checksum_bcc16, encode_ber_length, encode_ber_oid,
 };
-pub use ll_dash::{Chunk, LlDashPackager, LlSegmenter};
+#[cfg(feature = "std")]
+pub use ll_dash::LlDashPackager;
+pub use ll_dash::{Chunk, LlSegmenter};
 pub use ll_hls::{LlHlsSegmenter, LlHlsStageOutput, PartInfo, SegmentInfo};
 pub use media::{
     CmafMux, Fmp4Demux, HlsPackager, Media, PcrSample, SkippedTrack, Track, TrackEncryption,
@@ -345,6 +357,7 @@ pub use sample_groups::{
 };
 pub use segmenter::{SegmentMeta, Segmenter};
 pub use segments::{FileTypeBox, MediaDataBox, SegmentTypeBox};
+#[cfg(feature = "std")]
 pub use smooth::{
     FOURCC_AACL, FOURCC_H264, SMOOTH_TIMESCALE, SmoothFragment, SmoothOutput, SmoothPackager,
     SmoothStreamType, TFXD_UUID, TfxdBox,
@@ -352,6 +365,7 @@ pub use smooth::{
 // Note: `smooth_parse::StreamType` is not re-exported at the crate root — it
 // would collide with `mp4esds::StreamType` (an unrelated ES descriptor
 // field); reach it via `transmux::smooth_parse::StreamType`.
+#[cfg(feature = "std")]
 pub use smooth_parse::{
     C, MAX_CHUNK_RUN, MAX_CODEC_PRIVATE_DATA_HEX_LEN, QualityLevel, SmoothManifest,
     SmoothParseError, StreamIndex, hex_decode as smooth_hex_decode, track_spec_from_quality_level,

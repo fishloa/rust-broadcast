@@ -146,7 +146,7 @@ fn recover_segment_timing(
 }
 
 // ---------------------------------------------------------------------------
-// Minimal XML walker — self-contained (no shared code with tests/dash.rs).
+// Element tree over `quick-xml` (self-contained: no shared code with tests/dash.rs).
 // ---------------------------------------------------------------------------
 
 #[derive(Debug, Clone)]
@@ -174,169 +174,64 @@ impl Element {
     }
 }
 
-struct XmlParser<'a> {
-    s: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> XmlParser<'a> {
-    fn new(s: &'a str) -> Self {
-        Self {
-            s: s.as_bytes(),
-            pos: 0,
-        }
-    }
-
-    /// Parse the whole document and assert nothing but whitespace trails the
-    /// root element close tag — the well-formedness check this test suite
-    /// relies on (unbalanced/garbage-trailing XML fails here).
-    fn parse_document(&mut self) -> Element {
-        self.skip_ws();
-        if self.starts_with("<?") {
-            while self.pos < self.s.len() && !self.starts_with("?>") {
-                self.pos += 1;
-            }
-            self.pos += 2;
-        }
-        self.skip_ws();
-        let root = self.parse_element().expect("root element");
-        self.skip_ws();
-        assert_eq!(
-            self.pos,
-            self.s.len(),
-            "trailing content after the root element close tag (not well-formed)"
-        );
-        root
-    }
-
-    fn parse_element(&mut self) -> Option<Element> {
-        self.skip_ws();
-        if !self.starts_with("<") || self.starts_with("</") {
-            return None;
-        }
-        self.pos += 1;
-        let name = self.read_name();
-        assert!(!name.is_empty(), "empty element name at pos {}", self.pos);
-        let mut attrs = Vec::new();
-        loop {
-            self.skip_ws();
-            match self.cur() {
-                b'/' => {
-                    self.pos += 1;
-                    self.expect(b'>');
-                    return Some(Element {
-                        name,
-                        attrs,
-                        children: Vec::new(),
-                    });
-                }
-                b'>' => {
-                    self.pos += 1;
-                    break;
-                }
-                0 => panic!("unterminated start tag <{name}>"),
-                _ => {
-                    let key = self.read_name();
-                    assert!(!key.is_empty(), "malformed attribute in <{name}>");
-                    self.skip_ws();
-                    self.expect(b'=');
-                    self.skip_ws();
-                    let value = self.read_quoted();
-                    attrs.push((key, value));
-                }
-            }
-        }
-        let mut children = Vec::new();
-        loop {
-            self.skip_ws();
-            self.skip_text();
-            self.skip_ws();
-            if self.starts_with("</") {
-                self.pos += 2;
-                let close = self.read_name();
-                assert_eq!(close, name, "mismatched close tag: <{name}> ... </{close}>");
-                self.skip_ws();
-                self.expect(b'>');
-                break;
-            }
-            match self.parse_element() {
-                Some(c) => children.push(c),
-                None => {
-                    assert!(
-                        self.pos < self.s.len(),
-                        "unterminated element <{name}> (EOF before close tag)"
-                    );
-                }
-            }
-        }
-        Some(Element {
-            name,
-            attrs,
-            children,
-        })
-    }
-
-    fn skip_text(&mut self) {
-        while self.pos < self.s.len() && self.cur() != b'<' {
-            self.pos += 1;
-        }
-    }
-    fn cur(&self) -> u8 {
-        self.s.get(self.pos).copied().unwrap_or(0)
-    }
-    fn starts_with(&self, tok: &str) -> bool {
-        self.s[self.pos.min(self.s.len())..].starts_with(tok.as_bytes())
-    }
-    fn skip_ws(&mut self) {
-        while self.pos < self.s.len() && self.s[self.pos].is_ascii_whitespace() {
-            self.pos += 1;
-        }
-    }
-    fn expect(&mut self, b: u8) {
-        assert_eq!(
-            self.cur(),
-            b,
-            "expected '{}' at pos {}",
-            b as char,
-            self.pos
-        );
-        self.pos += 1;
-    }
-    fn read_name(&mut self) -> String {
-        let start = self.pos;
-        while self.pos < self.s.len() {
-            let c = self.s[self.pos];
-            if c.is_ascii_whitespace() || c == b'=' || c == b'>' || c == b'/' {
-                break;
-            }
-            self.pos += 1;
-        }
-        String::from_utf8_lossy(&self.s[start..self.pos]).into_owned()
-    }
-    fn read_quoted(&mut self) -> String {
-        let q = self.cur();
-        assert!(q == b'"' || q == b'\'', "attribute value must be quoted");
-        self.pos += 1;
-        let start = self.pos;
-        while self.pos < self.s.len() && self.cur() != q {
-            self.pos += 1;
-        }
-        let raw = String::from_utf8_lossy(&self.s[start..self.pos]).into_owned();
-        self.pos += 1;
-        unescape(&raw)
-    }
-}
-
-fn unescape(s: &str) -> String {
-    s.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
-}
-
+/// Parse `s` with `quick-xml` into an [`Element`] tree, asserting the document
+/// is well-formed: matched tags (checked by the reader), a single root element,
+/// and nothing but whitespace outside it.
 fn parse_xml(s: &str) -> Element {
-    XmlParser::new(s).parse_document()
+    use quick_xml::Reader;
+    use quick_xml::XmlVersion;
+    use quick_xml::events::{BytesStart, Event};
+
+    fn open(e: &BytesStart<'_>) -> Element {
+        let attrs = e
+            .attributes()
+            .map(|a| {
+                let a = a.expect("well-formed attribute");
+                let v = a
+                    .normalized_value(XmlVersion::Implicit1_0)
+                    .expect("resolvable attribute value");
+                (a.key.as_ref().to_string(), v.into_owned())
+            })
+            .collect();
+        Element {
+            name: e.name().as_ref().to_string(),
+            attrs,
+            children: Vec::new(),
+        }
+    }
+
+    let mut reader = Reader::from_str(s);
+    // Bottom of the stack is a synthetic document node holding the root.
+    let mut stack = vec![Element {
+        name: String::new(),
+        attrs: Vec::new(),
+        children: Vec::new(),
+    }];
+    loop {
+        match reader.read_event().expect("well-formed XML") {
+            Event::Start(e) => stack.push(open(&e)),
+            Event::Empty(e) => {
+                let el = open(&e);
+                stack.last_mut().expect("document node").children.push(el);
+            }
+            Event::End(_) => {
+                let el = stack.pop().expect("open element");
+                stack.last_mut().expect("document node").children.push(el);
+            }
+            Event::Text(t) if stack.len() == 1 => {
+                assert!(
+                    t.trim_ascii().is_empty(),
+                    "content outside the root element (not well-formed)"
+                );
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    assert_eq!(stack.len(), 1, "unclosed element at end of document");
+    let mut doc = stack.pop().expect("document node");
+    assert_eq!(doc.children.len(), 1, "exactly one root element");
+    doc.children.pop().expect("root element")
 }
 
 // ---------------------------------------------------------------------------

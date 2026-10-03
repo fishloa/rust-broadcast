@@ -10,11 +10,11 @@ extern crate alloc;
 
 use alloc::string::String;
 
-use roxmltree::Node;
+use std::io;
 
 use crate::error::{Error, Result};
-use crate::parse::{require_attr, xsi_type};
-use crate::serialize::write_attr;
+use crate::parse::{Events, StartTag, require_attr};
+use crate::serialize::{Out, attr, empty, num_attr, tag};
 
 const ELEMENT: &str = "ServiceComponentIdentifier";
 
@@ -65,9 +65,9 @@ impl ServiceComponentIdentifier {
         }
     }
 
-    pub(crate) fn parse(node: Node<'_, '_>) -> Result<Self> {
-        let ty = xsi_type(node).ok_or(Error::MissingComponentType)?;
-        match ty.as_str() {
+    pub(crate) fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
+        let ty = node.xsi_type().ok_or(Error::MissingComponentType)?;
+        let parsed = match ty.as_str() {
             XSI_TYPE_DASH => Ok(ServiceComponentIdentifier::Dash {
                 manifest_id_ref: require_attr(node, ELEMENT, "manifestIdRef")?,
                 period_id: require_attr(node, ELEMENT, "periodIdentifier")?,
@@ -87,12 +87,14 @@ impl ServiceComponentIdentifier {
                 component_id: require_attr(node, ELEMENT, "componentIdentifier")?,
             }),
             other => Err(Error::UnknownComponentType(other.into())),
-        }
+        };
+        // The element carries no modelled content: consume it.
+        ev.skip(node)?;
+        parsed
     }
 
-    pub(crate) fn write_xml(&self, out: &mut String, indent: usize) {
-        crate::serialize::push_indent(out, indent);
-        out.push_str("<ServiceComponentIdentifier");
+    pub(crate) fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(ELEMENT);
         match self {
             ServiceComponentIdentifier::Dash {
                 manifest_id_ref,
@@ -100,34 +102,30 @@ impl ServiceComponentIdentifier {
                 adaptation_set_id,
                 representation_id,
             } => {
-                write_attr(out, "xsi:type", XSI_TYPE_DASH);
-                write_attr(out, "manifestIdRef", manifest_id_ref);
-                write_attr(out, "periodIdentifier", period_id);
-                crate::serialize::write_num_attr(
-                    out,
-                    "adaptationSetIdentifier",
-                    *adaptation_set_id,
-                );
-                write_attr(out, "representationIdentifier", representation_id);
+                attr(&mut t, "xsi:type", XSI_TYPE_DASH);
+                attr(&mut t, "manifestIdRef", manifest_id_ref);
+                attr(&mut t, "periodIdentifier", period_id);
+                num_attr(&mut t, "adaptationSetIdentifier", *adaptation_set_id);
+                attr(&mut t, "representationIdentifier", representation_id);
             }
             ServiceComponentIdentifier::Hls {
                 manifest_id_ref,
                 media_playlist_locator,
             } => {
-                write_attr(out, "xsi:type", XSI_TYPE_HLS);
-                write_attr(out, "manifestIdRef", manifest_id_ref);
-                write_attr(out, "mediaPlaylistLocator", media_playlist_locator);
+                attr(&mut t, "xsi:type", XSI_TYPE_HLS);
+                attr(&mut t, "manifestIdRef", manifest_id_ref);
+                attr(&mut t, "mediaPlaylistLocator", media_playlist_locator);
             }
             ServiceComponentIdentifier::Generic {
                 manifest_id_ref,
                 component_id,
             } => {
-                write_attr(out, "xsi:type", XSI_TYPE_GENERIC);
-                write_attr(out, "manifestIdRef", manifest_id_ref);
-                write_attr(out, "componentIdentifier", component_id);
+                attr(&mut t, "xsi:type", XSI_TYPE_GENERIC);
+                attr(&mut t, "manifestIdRef", manifest_id_ref);
+                attr(&mut t, "componentIdentifier", component_id);
             }
         }
-        out.push_str("/>\n");
+        empty(w, t)
     }
 }
 

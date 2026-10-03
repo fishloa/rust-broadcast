@@ -12,6 +12,11 @@
   `ssai-runtime` (path, default-features = false).
 
 ### Changed (breaking)
+- **BREAKING: `check_dash_mpd` now requires the `std` feature.** It parses the
+  MPD with `transmux::Mpd`, whose parser is now built on `quick-xml` (hand-rolled
+  XML replaced; XML support is `std`-only in `transmux`), so the validator and
+  its re-export are gated behind `std`; a `--no-default-features` build keeps
+  every other check.
 - **Requires the next `transmux` release.** The `length-prefix-violation`
   fix below uses `transmux::iter_length_prefixed_nals_with`, which exists only
   in `transmux`'s in-tree `[Unreleased]` — crates.io's `0.24.1` does not carry

@@ -1,0 +1,156 @@
+SmoothManifest {
+    major_version: 2,
+    minor_version: 0,
+    timescale: 10000000,
+    duration: Some(
+        30418140,
+    ),
+    is_live: false,
+    look_ahead_fragment_count: None,
+    dvr_window_length: None,
+    streams: [
+        StreamIndex {
+            stream_type: Video,
+            name: None,
+            subtype: Some(
+                "",
+            ),
+            chunks: Some(
+                2,
+            ),
+            timescale: None,
+            url: "QualityLevels({bitrate})/Fragments(video={start time})",
+            qualities: [
+                QualityLevel {
+                    index: 0,
+                    bitrate: 58141,
+                    four_cc: "H264",
+                    codec_private_data: [
+                        0,
+                        0,
+                        0,
+                        1,
+                        103,
+                        77,
+                        64,
+                        13,
+                        236,
+                        160,
+                        160,
+                        253,
+                        128,
+                        136,
+                        0,
+                        0,
+                        3,
+                        0,
+                        8,
+                        0,
+                        0,
+                        3,
+                        1,
+                        144,
+                        120,
+                        161,
+                        76,
+                        176,
+                        0,
+                        0,
+                        0,
+                        1,
+                        104,
+                        235,
+                        227,
+                        203,
+                        32,
+                    ],
+                    width: Some(
+                        320,
+                    ),
+                    height: Some(
+                        240,
+                    ),
+                    sampling_rate: None,
+                    channels: None,
+                    bits_per_sample: None,
+                    packet_size: None,
+                    audio_tag: None,
+                },
+            ],
+            chunks_list: [
+                C {
+                    t: Some(
+                        0,
+                    ),
+                    d: Some(
+                        20000000,
+                    ),
+                    r: None,
+                },
+                C {
+                    t: None,
+                    d: Some(
+                        10000000,
+                    ),
+                    r: None,
+                },
+            ],
+        },
+        StreamIndex {
+            stream_type: Audio,
+            name: None,
+            subtype: Some(
+                "",
+            ),
+            chunks: Some(
+                2,
+            ),
+            timescale: None,
+            url: "QualityLevels({bitrate})/Fragments(audio={start time})",
+            qualities: [
+                QualityLevel {
+                    index: 0,
+                    bitrate: 96014,
+                    four_cc: "AACL",
+                    codec_private_data: [
+                        18,
+                        8,
+                    ],
+                    width: None,
+                    height: None,
+                    sampling_rate: Some(
+                        44100,
+                    ),
+                    channels: Some(
+                        1,
+                    ),
+                    bits_per_sample: Some(
+                        16,
+                    ),
+                    packet_size: None,
+                    audio_tag: Some(
+                        255,
+                    ),
+                },
+            ],
+            chunks_list: [
+                C {
+                    t: Some(
+                        567574,
+                    ),
+                    d: Some(
+                        20201360,
+                    ),
+                    r: None,
+                },
+                C {
+                    t: None,
+                    d: Some(
+                        10216780,
+                    ),
+                    r: None,
+                },
+            ],
+        },
+    ],
+}

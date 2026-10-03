@@ -136,6 +136,33 @@ rewrite of `cenc_decrypt`'s remaining box walker (#1081).
 
 ### Changed (breaking)
 
+- **BREAKING: XML support now requires the `std` feature; hand-rolled XML replaced by `quick-xml`;
+  `roxmltree`/the private tokenizer dropped.** `dash`, `dash_parse`, `smooth`, `smooth_parse`,
+  `ll_dash::LlDashPackager` and `drm::{playready_wrmheader, playready_pro, playready_pssh}` are gated
+  behind `std` (and so are their crate-root re-exports); a `--no-default-features` build keeps
+  everything else (`LlSegmenter`/`Chunk`, the Widevine/FairPlay `pssh` builders, …). The private
+  `xml_parse` tokenizer and `xml_writer` are deleted: parsing is a `quick_xml::Reader` pull loop and
+  every attribute value and text node is written through quick-xml's escaping. Rendered MPD, Smooth
+  manifest, LL-DASH MPD and WRMHEADER output is byte-identical to the previous release for every
+  committed fixture; a value containing `\t`/`\n`/`\r` in an attribute is now written as a character
+  reference (`&#9;`/`&#10;`/`&#13;`) so it survives a re-parse. The parsers are stricter on malformed
+  input (an undefined entity or a mismatched end tag anywhere is an error; a raw `&` in an attribute
+  is no longer tolerated) and `DashParseError`/`SmoothParseError` gain an `Xml { pos, message }`
+  variant; `MismatchedEndTag::expected` is now a `String`. `LlDashPackager` now rewrites the base MPD
+  with `quick-xml` events instead of line-based text surgery.
+
+- **Behaviour differences from the hand-rolled XML code (all follow XML 1.0):**
+  - a literal newline, tab or carriage return inside an MPD/Manifest attribute value is normalised
+    to a space (attribute-value normalisation, XML 1.0 §3.3.3): `<Period id="a⏎b"/>` now parses
+    `id` as `"a b"` (previously `"a\nb"`); write `&#10;` to keep a newline;
+  - an attribute value containing `\t`, `\n` or `\r` is now *written* as `&#9;`, `&#10;`, `&#13;`
+    so it survives a re-parse (`profiles = "a\nb"` renders `profiles="a&#10;b"`);
+  - a duplicate attribute is an error: `<Period id="1" id="2"/>` is `MalformedAttribute` (previously
+    the first value won silently);
+  - `<BaseURL>a<x/>b</BaseURL>` (nested markup in a text-only element) now yields no base URL
+    instead of a `MismatchedEndTag` error;
+  - a character outside the XML 1.0 `Char` production, literal or via a reference
+    (`<BaseURL>&#x1;</BaseURL>`, `id="&#x1;"`), is a structured error.
 - The shared fragment `trun` builder (CMAF, LL-DASH and Smooth fragment writers) returns
   `Error::InvalidInput` for a sample larger than the 32-bit `sample_size` field (4 GiB); the old code
   wrapped the size with `as u32` and wrote a misframed `trun` (#1081, r05-O6).

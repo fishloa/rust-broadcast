@@ -33,8 +33,8 @@
 //!   AudioSpecificConfig; `AudioTag="255"` (raw AAC).
 //!
 //! Like the DASH / HLS packagers, the manifest is emitted with a tiny
-//! hand-rolled XML writer and the crate stays dependency-free. Integer
-//! arithmetic only (`no_std` + `alloc`).
+//! [`quick_xml::Writer`] (`std` feature; every attribute value and text node is
+//! escaped by quick-xml). Integer arithmetic only.
 
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -51,7 +51,8 @@ use crate::movie_fragment::{
 };
 use crate::pipeline::{CodecConfig, Sample};
 use crate::segments::{MediaDataBox, SegmentTypeBox};
-use crate::xml_writer::XmlWriter;
+use quick_xml::Writer;
+use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 
 /// The Smooth Streaming default manifest time scale — 10 MHz (100 ns ticks),
 /// [MS-SSTR] §2.2.2 (`SmoothStreamingMedia@TimeScale`).
@@ -451,11 +452,13 @@ impl SmoothPackager {
 
     /// Render the Smooth client Manifest XML for the resolved streams.
     fn render_manifest(&self, streams: &[StreamInfo]) -> String {
-        let mut w = XmlWriter::new();
-        w.declaration();
+        let mut writer = new_writer();
+        let w = &mut writer;
+        declaration(w);
 
         let duration = streams.iter().map(|s| s.total_duration).max().unwrap_or(0);
-        w.open(
+        open(
+            w,
             "SmoothStreamingMedia",
             &[
                 ("MajorVersion", MAJOR_VERSION.to_string()),
@@ -468,7 +471,8 @@ impl SmoothPackager {
         for s in streams {
             let ty = s.stream_type.name();
             let url = format!("QualityLevels({{bitrate}})/Fragments({ty}={{start time}})");
-            w.open(
+            open(
+                w,
                 "StreamIndex",
                 &[
                     ("Type", ty.to_string()),
@@ -506,7 +510,7 @@ impl SmoothPackager {
                     ql.push(("CodecPrivateData", hex_upper(&s.codec_private_data)));
                 }
             }
-            w.empty("QualityLevel", &ql);
+            empty(w, "QualityLevel", &ql);
 
             // One `c` per fragment: `d` always; `t` on the first only; `n` ordinal.
             for (i, f) in s.fragments.iter().enumerate() {
@@ -515,14 +519,14 @@ impl SmoothPackager {
                     c.push(("t", f.start_time.to_string()));
                 }
                 c.push(("d", f.duration.to_string()));
-                w.empty("c", &c);
+                empty(w, "c", &c);
             }
 
-            w.close("StreamIndex");
+            close(w, "StreamIndex");
         }
 
-        w.close("SmoothStreamingMedia");
-        w.finish()
+        close(w, "SmoothStreamingMedia");
+        finish(writer)
     }
 }
 
@@ -857,9 +861,89 @@ fn hex_upper(bytes: &[u8]) -> String {
     s
 }
 
+// ---------------------------------------------------------------------------
+// quick-xml writer plumbing
+// ---------------------------------------------------------------------------
+
+/// The manifest writer: a two-space-indenting `quick_xml::Writer`. Every
+/// attribute value and text node is escaped by quick-xml. Writing to an
+/// in-memory `Vec` cannot fail, so write results are intentionally discarded.
+type XmlWriter = Writer<Vec<u8>>;
+
+fn new_writer() -> XmlWriter {
+    Writer::new_with_indent(Vec::new(), b' ', 2)
+}
+
+/// `<?xml version="1.0" encoding="utf-8"?>`.
+fn declaration(w: &mut XmlWriter) {
+    let _ = w.write_event(Event::Decl(BytesDecl::new("1.0", Some("utf-8"), None)));
+}
+
+fn element_tag<'a>(name: &'a str, attrs: &'a [(&str, String)]) -> BytesStart<'a> {
+    let mut start = BytesStart::new(name);
+    for (key, value) in attrs {
+        start.push_attribute((*key, value.as_str()));
+    }
+    start
+}
+
+/// `<name a="b">`.
+fn open(w: &mut XmlWriter, name: &str, attrs: &[(&str, String)]) {
+    let _ = w.write_event(Event::Start(element_tag(name, attrs)));
+}
+
+/// `<name a="b"/>`.
+fn empty(w: &mut XmlWriter, name: &str, attrs: &[(&str, String)]) {
+    let _ = w.write_event(Event::Empty(element_tag(name, attrs)));
+}
+
+/// `</name>`.
+fn close(w: &mut XmlWriter, name: &str) {
+    let _ = w.write_event(Event::End(BytesEnd::new(name)));
+}
+
+/// The written document plus a trailing newline.
+fn finish(w: XmlWriter) -> String {
+    let mut out = String::from_utf8_lossy(&w.into_inner()).into_owned();
+    out.push('\n');
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Every attribute value and text node goes through quick-xml's escaping:
+    /// all five specials, exact output, and the output re-parses to the original.
+    #[test]
+    fn writer_escapes_attributes_and_text() {
+        const SPECIALS: &str = "a&b<c>d\"e'f";
+        let mut writer = new_writer();
+        let w = &mut writer;
+        open(w, "Root", &[("k", SPECIALS.to_string())]);
+        empty(w, "Leaf", &[("v", SPECIALS.to_string())]);
+        let _ = w.write_event(Event::Start(BytesStart::new("T")));
+        let _ = w.write_event(Event::Text(quick_xml::events::BytesText::new(SPECIALS)));
+        close(w, "T");
+        close(w, "Root");
+        let out = finish(writer);
+        assert_eq!(
+            out,
+            concat!(
+                "<Root k=\"a&amp;b&lt;c&gt;d&quot;e&apos;f\">\n",
+                "  <Leaf v=\"a&amp;b&lt;c&gt;d&quot;e&apos;f\"/>\n",
+                "  <T>a&amp;b&lt;c&gt;d&quot;e&apos;f</T>\n",
+                "</Root>\n"
+            )
+        );
+        let parsed = crate::smooth_parse::SmoothManifest::parse(&out);
+        // Not a Smooth manifest, but it must be well-formed XML: the parser
+        // rejects it for its root name, not for syntax.
+        assert!(matches!(
+            parsed,
+            Err(crate::smooth_parse::SmoothParseError::UnexpectedElement { .. })
+        ));
+    }
 
     #[test]
     fn tfxd_round_trip() {

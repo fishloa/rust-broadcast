@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:tt="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" xmlns:tts="http://www.w3.org/ns/ttml#styling" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:ittp="http://www.w3.org/ns/ttml/profile/imsc1#parameter" xml:lang="en" ttp:profile="http://www.w3.org/ns/ttml/profile/imsc1/text" tts:extent="640px 480px" ittp:activeArea="50% 50% 80% 80%">
+  <head>
+    <layout>
+      <region tts:backgroundColor="blue" tts:color="white" tts:displayAlign="center" tts:extent="80% 10%" tts:fontSize="24px" tts:origin="10% 10%" tts:textAlign="center" xml:id="area1"/>
+      <region tts:backgroundColor="blue" tts:color="white" tts:displayAlign="center" tts:extent="80% 10%" tts:fontSize="24px" tts:origin="10% 80%" tts:textAlign="center" xml:id="area2"/>
+      <region tts:backgroundColor="red" tts:color="yellow" tts:displayAlign="center" tts:extent="80% 6%" tts:fontSize="24px" tts:origin="10% 92%" tts:textAlign="center" xml:id="area3"/>
+    </layout>
+  </head>
+  <body>
+    <div>
+      <p begin="0s" end="6s" region="area1">This region is within the editorial area.</p>
+      <p begin="0s" end="6s" region="area2">This region is within the editorial area.</p>
+      <p begin="0s" end="6s" region="area3">This region is not.</p>
+    </div>
+  </body>
+</tt>

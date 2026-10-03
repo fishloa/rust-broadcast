@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<MulticastGatewayConfiguration xmlns="urn:dvb:metadata:MulticastSessionConfiguration:2024" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" schemaVersion="2">
+  <MulticastSession serviceIdentifier="a&amp;b&lt;c&gt;d&quot;e&apos;f">
+    <PresentationManifestLocator manifestId="m1" contentType="application/dash+xml">https://x/?a=1&amp;b=&lt;2&gt; &quot;q&quot; &apos;z&apos;</PresentationManifestLocator>
+  </MulticastSession>
+</MulticastGatewayConfiguration>

@@ -20,12 +20,21 @@
 //!   is a packager convention, **not** a formal Apple specification.
 //! - **DRM system-ID UUIDs** — `docs/drm/pssh.md` §1 (DASH-IF registry).
 
+#[cfg(feature = "std")]
 use alloc::string::String;
 use alloc::vec::Vec;
 
 use crate::cenc::ProtectionSystemSpecificHeaderBox;
 use crate::error::{Error, Result};
-use crate::rtp::{base64_decode, base64_encode};
+use crate::rtp::base64_decode;
+#[cfg(feature = "std")]
+use crate::rtp::base64_encode;
+#[cfg(feature = "std")]
+use quick_xml::Writer;
+#[cfg(feature = "std")]
+use quick_xml::escape::partial_escape;
+#[cfg(feature = "std")]
+use quick_xml::events::{BytesEnd, BytesStart, BytesText, Event};
 
 // ---------------------------------------------------------------------------
 // DRM System IDs — docs/drm/pssh.md §1 (DASH-IF content-protection registry)
@@ -95,17 +104,21 @@ pub const fn playready_kid_to_cenc(guid: [u8; 16]) -> [u8; 16] {
 // PlayReady — WRMHEADER XML + PlayReady Object (PRO) — docs/drm/pssh.md §3
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "std")]
 /// WRMHEADER XML namespace (docs/drm/pssh.md §3.2).
 const WRMHEADER_NAMESPACE: &str = "http://schemas.microsoft.com/DRM/2007/03/PlayReadyHeader";
 
+#[cfg(feature = "std")]
 /// PlayReady content-encryption algorithm id used in the WRMHEADER `ALGID`
 /// attribute (docs/drm/pssh.md §3.2). AES-128-CTR is the CENC default.
 const PLAYREADY_ALGID_AESCTR: &str = "AESCTR";
 
+#[cfg(feature = "std")]
 /// PlayReady Object Record type: PlayReady Header (PRH), holding the WRMHEADER
 /// XML (docs/drm/pssh.md §3.1).
 const PRO_RECORD_TYPE_HEADER: u16 = 0x0001;
 
+#[cfg(feature = "std")]
 /// Build a WRMHEADER v4.2.0.0 XML string (docs/drm/pssh.md §3.2).
 ///
 /// v4.2.0.0 supports multiple KIDs via a `<KIDS>` container. The `VALUE`
@@ -117,46 +130,43 @@ const PRO_RECORD_TYPE_HEADER: u16 = 0x0001;
 /// `<LA_URL>` element.
 pub fn playready_wrmheader(kids: &[[u8; 16]], la_url: Option<&str>) -> String {
     let version = "4.2.0.0";
-    let mut xml = String::new();
-    xml.push_str("<WRMHEADER xmlns=\"");
-    xml.push_str(WRMHEADER_NAMESPACE);
-    xml.push_str("\" version=\"");
-    xml.push_str(version);
-    xml.push_str("\"><DATA><PROTECTINFO><KIDS>");
+    let mut w = Writer::new(Vec::new());
+    // Writing to an in-memory `Vec` cannot fail, so the write results are
+    // intentionally discarded.
+    let mut root = BytesStart::new("WRMHEADER");
+    root.push_attribute(("xmlns", WRMHEADER_NAMESPACE));
+    root.push_attribute(("version", version));
+    let _ = w.write_event(Event::Start(root));
+    for name in ["DATA", "PROTECTINFO", "KIDS"] {
+        let _ = w.write_event(Event::Start(BytesStart::new(name)));
+    }
     for kid in kids {
         let guid = cenc_kid_to_playready(*kid);
         let value = base64_encode(&guid);
         // Attributes alphabetical: ALGID before VALUE (docs/drm/pssh.md §3.2).
-        xml.push_str("<KID ALGID=\"");
-        xml.push_str(PLAYREADY_ALGID_AESCTR);
-        xml.push_str("\" VALUE=\"");
-        xml.push_str(&value);
-        xml.push_str("\"></KID>");
+        let mut kid_tag = BytesStart::new("KID");
+        kid_tag.push_attribute(("ALGID", PLAYREADY_ALGID_AESCTR));
+        kid_tag.push_attribute(("VALUE", value.as_str()));
+        let _ = w.write_event(Event::Start(kid_tag));
+        let _ = w.write_event(Event::End(BytesEnd::new("KID")));
     }
-    xml.push_str("</KIDS></PROTECTINFO>");
+    for name in ["KIDS", "PROTECTINFO"] {
+        let _ = w.write_event(Event::End(BytesEnd::new(name)));
+    }
     if let Some(url) = la_url {
-        xml.push_str("<LA_URL>");
-        xml.push_str(&xml_escape(url));
-        xml.push_str("</LA_URL>");
+        let _ = w.write_event(Event::Start(BytesStart::new("LA_URL")));
+        // Element content: `&`, `<`, `>` escaped (quotes need no escaping in
+        // text).
+        let _ = w.write_event(Event::Text(BytesText::from_escaped(partial_escape(url))));
+        let _ = w.write_event(Event::End(BytesEnd::new("LA_URL")));
     }
-    xml.push_str("</DATA></WRMHEADER>");
-    xml
+    for name in ["DATA", "WRMHEADER"] {
+        let _ = w.write_event(Event::End(BytesEnd::new(name)));
+    }
+    String::from_utf8_lossy(&w.into_inner()).into_owned()
 }
 
-/// Minimal XML text escaping for element content (`&`, `<`, `>`).
-fn xml_escape(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            _ => out.push(c),
-        }
-    }
-    out
-}
-
+#[cfg(feature = "std")]
 /// Encode a `&str` as UTF-16LE bytes (no BOM), as required for the WRMHEADER
 /// record value (docs/drm/pssh.md §3.2).
 fn utf16le_bytes(s: &str) -> Vec<u8> {
@@ -167,6 +177,7 @@ fn utf16le_bytes(s: &str) -> Vec<u8> {
     out
 }
 
+#[cfg(feature = "std")]
 /// Build a PlayReady Object (PRO) wrapping a single PlayReady Header record
 /// (docs/drm/pssh.md §3.1).
 ///
@@ -195,6 +206,7 @@ pub fn playready_pro(kids: &[[u8; 16]], la_url: Option<&str>) -> Result<Vec<u8>>
     Ok(out)
 }
 
+#[cfg(feature = "std")]
 /// Assemble a complete PlayReady `pssh` box (version 0).
 ///
 /// `kids` are CENC big-endian UUID key-ids; the `Data` payload is the PRO from

@@ -49,4 +49,5 @@ under ETSI copyright and are not reproduced in this repository).
 
 ## MSRV
 
-Rust 1.95.0, edition 2024. `no_std` + `alloc` without the `std` feature.
+Rust 1.95.0, edition 2024. The XML API is built on `quick-xml` and needs the
+`std` feature (on by default); without it only the `error` module is available.

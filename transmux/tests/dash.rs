@@ -5,10 +5,11 @@
 //! deterministic 2-track `fixtures/ts/h264_aac.ts` (H.264 video + AAC audio)
 //! and fed to [`DashPackager`].
 //!
-//! Every test bites: the produced XML is parsed with a std-only element walker
-//! (no XML dependency) and asserted against real structure — never a bare
+//! Every test bites: the produced XML is parsed with `quick-xml` into an element
+//! tree and asserted against real structure — never a bare
 //! substring `contains`, and codec/geometry values are asserted against what
 //! the crate itself computes, not hardcoded literals.
+#![cfg(feature = "std")]
 
 use std::path::PathBuf;
 
@@ -46,7 +47,7 @@ fn ref_mpd() -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Minimal XML walker — no external dependency.
+// Element tree over `quick-xml`.
 // ---------------------------------------------------------------------------
 
 /// A parsed XML element (name + attributes + children). Text content is ignored
@@ -96,179 +97,64 @@ impl Element {
     }
 }
 
-/// A hand-rolled recursive-descent XML parser sufficient for the MPD structure:
-/// the `<?xml?>` decl, elements, attributes (double-quoted values), self-closing
-/// tags, and nesting. Not general-purpose (no entities, CDATA, comments) but the
-/// MPD we produce and the ffmpeg oracle both stay within this grammar.
-struct XmlParser<'a> {
-    s: &'a [u8],
-    pos: usize,
-}
-
-impl<'a> XmlParser<'a> {
-    fn new(s: &'a str) -> Self {
-        Self {
-            s: s.as_bytes(),
-            pos: 0,
-        }
-    }
-
-    fn parse_document(&mut self) -> Element {
-        self.skip_ws();
-        // Optional <?xml ...?> declaration.
-        if self.starts_with("<?") {
-            while self.pos < self.s.len() && !self.starts_with("?>") {
-                self.pos += 1;
-            }
-            self.pos += 2; // consume "?>"
-        }
-        self.skip_ws();
-        self.parse_element().expect("root element")
-    }
-
-    fn parse_element(&mut self) -> Option<Element> {
-        self.skip_ws();
-        // Skip comments / processing instructions between siblings.
-        while self.starts_with("<!") || self.starts_with("<?") {
-            while self.pos < self.s.len() && self.cur() != b'>' {
-                self.pos += 1;
-            }
-            self.pos += 1;
-            self.skip_ws();
-        }
-        if !self.starts_with("<") || self.starts_with("</") {
-            return None;
-        }
-        self.pos += 1; // '<'
-        let name = self.read_name();
-        let mut attrs = Vec::new();
-        loop {
-            self.skip_ws();
-            match self.cur() {
-                b'/' => {
-                    // self-closing
-                    self.pos += 1; // '/'
-                    self.expect(b'>');
-                    return Some(Element {
-                        name,
-                        attrs,
-                        children: Vec::new(),
-                    });
-                }
-                b'>' => {
-                    self.pos += 1;
-                    break;
-                }
-                _ => {
-                    let key = self.read_name();
-                    self.skip_ws();
-                    self.expect(b'=');
-                    self.skip_ws();
-                    let value = self.read_quoted();
-                    attrs.push((key, value));
-                }
-            }
-        }
-        // Children until the matching close tag.
-        let mut children = Vec::new();
-        loop {
-            self.skip_ws();
-            self.skip_text();
-            self.skip_ws();
-            if self.starts_with("</") {
-                self.pos += 2;
-                let _close = self.read_name();
-                self.skip_ws();
-                self.expect(b'>');
-                break;
-            }
-            match self.parse_element() {
-                Some(c) => children.push(c),
-                None => {
-                    if self.pos >= self.s.len() {
-                        break;
-                    }
-                }
-            }
-        }
-        Some(Element {
-            name,
-            attrs,
-            children,
-        })
-    }
-
-    fn skip_text(&mut self) {
-        while self.pos < self.s.len() && self.cur() != b'<' {
-            self.pos += 1;
-        }
-    }
-
-    fn cur(&self) -> u8 {
-        if self.pos < self.s.len() {
-            self.s[self.pos]
-        } else {
-            0
-        }
-    }
-
-    fn starts_with(&self, tok: &str) -> bool {
-        self.s[self.pos.min(self.s.len())..].starts_with(tok.as_bytes())
-    }
-
-    fn skip_ws(&mut self) {
-        while self.pos < self.s.len() && self.s[self.pos].is_ascii_whitespace() {
-            self.pos += 1;
-        }
-    }
-
-    fn expect(&mut self, b: u8) {
-        assert_eq!(
-            self.cur(),
-            b,
-            "expected '{}' at pos {}",
-            b as char,
-            self.pos
-        );
-        self.pos += 1;
-    }
-
-    fn read_name(&mut self) -> String {
-        let start = self.pos;
-        while self.pos < self.s.len() {
-            let c = self.s[self.pos];
-            if c.is_ascii_whitespace() || c == b'=' || c == b'>' || c == b'/' {
-                break;
-            }
-            self.pos += 1;
-        }
-        String::from_utf8_lossy(&self.s[start..self.pos]).into_owned()
-    }
-
-    fn read_quoted(&mut self) -> String {
-        let q = self.cur();
-        assert!(q == b'"' || q == b'\'', "attribute value must be quoted");
-        self.pos += 1;
-        let start = self.pos;
-        while self.pos < self.s.len() && self.cur() != q {
-            self.pos += 1;
-        }
-        let raw = String::from_utf8_lossy(&self.s[start..self.pos]).into_owned();
-        self.pos += 1; // closing quote
-        unescape(&raw)
-    }
-}
-
-fn unescape(s: &str) -> String {
-    s.replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&apos;", "'")
-        .replace("&amp;", "&")
-}
-
+/// Parse `s` with `quick-xml` into an [`Element`] tree, asserting the document
+/// is well-formed: matched tags (checked by the reader), a single root element,
+/// and nothing but whitespace outside it.
 fn parse_xml(s: &str) -> Element {
-    XmlParser::new(s).parse_document()
+    use quick_xml::Reader;
+    use quick_xml::XmlVersion;
+    use quick_xml::events::{BytesStart, Event};
+
+    fn open(e: &BytesStart<'_>) -> Element {
+        let attrs = e
+            .attributes()
+            .map(|a| {
+                let a = a.expect("well-formed attribute");
+                let v = a
+                    .normalized_value(XmlVersion::Implicit1_0)
+                    .expect("resolvable attribute value");
+                (a.key.as_ref().to_string(), v.into_owned())
+            })
+            .collect();
+        Element {
+            name: e.name().as_ref().to_string(),
+            attrs,
+            children: Vec::new(),
+        }
+    }
+
+    let mut reader = Reader::from_str(s);
+    // Bottom of the stack is a synthetic document node holding the root.
+    let mut stack = vec![Element {
+        name: String::new(),
+        attrs: Vec::new(),
+        children: Vec::new(),
+    }];
+    loop {
+        match reader.read_event().expect("well-formed XML") {
+            Event::Start(e) => stack.push(open(&e)),
+            Event::Empty(e) => {
+                let el = open(&e);
+                stack.last_mut().expect("document node").children.push(el);
+            }
+            Event::End(_) => {
+                let el = stack.pop().expect("open element");
+                stack.last_mut().expect("document node").children.push(el);
+            }
+            Event::Text(t) if stack.len() == 1 => {
+                assert!(
+                    t.trim_ascii().is_empty(),
+                    "content outside the root element (not well-formed)"
+                );
+            }
+            Event::Eof => break,
+            _ => {}
+        }
+    }
+    assert_eq!(stack.len(), 1, "unclosed element at end of document");
+    let mut doc = stack.pop().expect("document node");
+    assert_eq!(doc.children.len(), 1, "exactly one root element");
+    doc.children.pop().expect("root element")
 }
 
 // ---------------------------------------------------------------------------

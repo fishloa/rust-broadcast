@@ -1,0 +1,295 @@
+MulticastGatewayConfiguration {
+    schema_version: 2,
+    namespace: V2024,
+    validity_period: Some(
+        "P1D",
+    ),
+    valid_until: None,
+    gateway_config_transport_sessions: [
+        MulticastGatewayConfigurationTransportSession {
+            service_class: None,
+            transport_security: Some(
+                IntegrityAndAuthenticity,
+            ),
+            session_idle_timeout: None,
+            transport_protocol: TransportProtocol {
+                protocol_identifier: "urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:FLUTE",
+                protocol_version: 1,
+            },
+            endpoints: [
+                EndpointAddress {
+                    source: Some(
+                        "10.1.100.1",
+                    ),
+                    group: "232.99.1.1",
+                    port: 9999,
+                    transport_session_id: Some(
+                        1,
+                    ),
+                },
+                EndpointAddress {
+                    source: Some(
+                        "2001:DB8::4456:424D",
+                    ),
+                    group: "FF3E::4950:4801",
+                    port: 9999,
+                    transport_session_id: Some(
+                        1,
+                    ),
+                },
+            ],
+            bit_rate: BitRate {
+                average: Some(
+                    200,
+                ),
+                maximum: 200,
+            },
+            fec_params: [
+                ForwardErrorCorrectionParameters {
+                    scheme_identifier: "urn:ietf:rmt:fec:encoding:1",
+                    overhead_percentage: 20,
+                    endpoints: [],
+                },
+            ],
+            unicast_repair: None,
+            object_carousel: Some(
+                ObjectCarousel {
+                    aggregate_transport_size: None,
+                    aggregate_content_size: None,
+                    presentation_manifests: [
+                        PresentationManifests {
+                            target_acquisition_latency: Some(
+                                "PT1S",
+                            ),
+                            compression_preferred: None,
+                            service_id_ref: Some(
+                                "tag:bbc.co.uk;2019#bbc-one/scotland",
+                            ),
+                            transport_session_id_ref: Some(
+                                "vision-low",
+                            ),
+                        },
+                        PresentationManifests {
+                            target_acquisition_latency: Some(
+                                "PT1S",
+                            ),
+                            compression_preferred: None,
+                            service_id_ref: Some(
+                                "tag:bbc.co.uk;2019#bbc-two/scotland",
+                            ),
+                            transport_session_id_ref: Some(
+                                "vision-low",
+                            ),
+                        },
+                    ],
+                    init_segments: [
+                        InitSegments {
+                            target_acquisition_latency: Some(
+                                "PT1S",
+                            ),
+                            compression_preferred: None,
+                            service_id_ref: Some(
+                                "tag:bbc.co.uk;2019#bbc-one/scotland",
+                            ),
+                            transport_session_id_ref: Some(
+                                "vision-low",
+                            ),
+                        },
+                        InitSegments {
+                            target_acquisition_latency: Some(
+                                "PT1S",
+                            ),
+                            compression_preferred: None,
+                            service_id_ref: Some(
+                                "tag:bbc.co.uk;2019#bbc-two/scotland",
+                            ),
+                            transport_session_id_ref: Some(
+                                "vision-low",
+                            ),
+                        },
+                    ],
+                    resource_locators: [
+                        ResourceLocator {
+                            uri: "http://media.bbc.co.uk/idents/bbc-one/bbc-one-scotland.jpg",
+                            target_acquisition_latency: Some(
+                                "PT15S",
+                            ),
+                            revalidation_period: Some(
+                                "PT1M",
+                            ),
+                            compression_preferred: None,
+                        },
+                        ResourceLocator {
+                            uri: "http://media.bbc.co.uk/idents/bbc-one/bbc-two-scotland.jpg",
+                            target_acquisition_latency: Some(
+                                "PT15S",
+                            ),
+                            revalidation_period: Some(
+                                "PT1M",
+                            ),
+                            compression_preferred: None,
+                        },
+                    ],
+                },
+            ),
+            tags: [],
+            macros: [],
+        },
+        MulticastGatewayConfigurationTransportSession {
+            service_class: None,
+            transport_security: Some(
+                IntegrityAndAuthenticity,
+            ),
+            session_idle_timeout: None,
+            transport_protocol: TransportProtocol {
+                protocol_identifier: "urn:dvb:metadata:cs:MulticastTransportProtocolCS:2019:ROUTE",
+                protocol_version: 1,
+            },
+            endpoints: [
+                EndpointAddress {
+                    source: Some(
+                        "10.1.100.1",
+                    ),
+                    group: "232.98.1.1",
+                    port: 9999,
+                    transport_session_id: Some(
+                        1,
+                    ),
+                },
+                EndpointAddress {
+                    source: Some(
+                        "2001:DB8::4456:424D",
+                    ),
+                    group: "FF3E::4950:4701",
+                    port: 9999,
+                    transport_session_id: Some(
+                        1,
+                    ),
+                },
+            ],
+            bit_rate: BitRate {
+                average: Some(
+                    200,
+                ),
+                maximum: 200,
+            },
+            fec_params: [
+                ForwardErrorCorrectionParameters {
+                    scheme_identifier: "urn:ietf:rmt:fec:encoding:6",
+                    overhead_percentage: 20,
+                    endpoints: [
+                        EndpointAddress {
+                            source: Some(
+                                "10.1.100.1",
+                            ),
+                            group: "232.99.1.1",
+                            port: 8888,
+                            transport_session_id: Some(
+                                2,
+                            ),
+                        },
+                        EndpointAddress {
+                            source: Some(
+                                "2001:DB8::4456:424D",
+                            ),
+                            group: "FF3E::4950:4702",
+                            port: 8888,
+                            transport_session_id: Some(
+                                2,
+                            ),
+                        },
+                    ],
+                },
+            ],
+            unicast_repair: None,
+            object_carousel: Some(
+                ObjectCarousel {
+                    aggregate_transport_size: Some(
+                        1945320,
+                    ),
+                    aggregate_content_size: Some(
+                        2040900,
+                    ),
+                    presentation_manifests: [
+                        PresentationManifests {
+                            target_acquisition_latency: Some(
+                                "PT1S",
+                            ),
+                            compression_preferred: None,
+                            service_id_ref: Some(
+                                "tag:bbc.co.uk;2019#bbc-one/scotland",
+                            ),
+                            transport_session_id_ref: Some(
+                                "vision-low",
+                            ),
+                        },
+                        PresentationManifests {
+                            target_acquisition_latency: Some(
+                                "PT1S",
+                            ),
+                            compression_preferred: None,
+                            service_id_ref: Some(
+                                "tag:bbc.co.uk;2019#bbc-two/scotland",
+                            ),
+                            transport_session_id_ref: Some(
+                                "vision-low",
+                            ),
+                        },
+                    ],
+                    init_segments: [
+                        InitSegments {
+                            target_acquisition_latency: Some(
+                                "PT1S",
+                            ),
+                            compression_preferred: None,
+                            service_id_ref: Some(
+                                "tag:bbc.co.uk;2019#bbc-one/scotland",
+                            ),
+                            transport_session_id_ref: Some(
+                                "vision-low",
+                            ),
+                        },
+                        InitSegments {
+                            target_acquisition_latency: Some(
+                                "PT1S",
+                            ),
+                            compression_preferred: None,
+                            service_id_ref: Some(
+                                "tag:bbc.co.uk;2019#bbc-two/scotland",
+                            ),
+                            transport_session_id_ref: Some(
+                                "vision-low",
+                            ),
+                        },
+                    ],
+                    resource_locators: [
+                        ResourceLocator {
+                            uri: "http://media.bbc.co.uk/idents/bbc-one/bbc-one-scotland.jpg",
+                            target_acquisition_latency: Some(
+                                "PT15S",
+                            ),
+                            revalidation_period: Some(
+                                "PT1M",
+                            ),
+                            compression_preferred: None,
+                        },
+                        ResourceLocator {
+                            uri: "http://media.bbc.co.uk/idents/bbc-one/bbc-two-scotland.jpg",
+                            target_acquisition_latency: Some(
+                                "PT15S",
+                            ),
+                            revalidation_period: Some(
+                                "PT1M",
+                            ),
+                            compression_preferred: None,
+                        },
+                    ],
+                },
+            ),
+            tags: [],
+            macros: [],
+        },
+    ],
+    sessions: [],
+    reporting: None,
+}

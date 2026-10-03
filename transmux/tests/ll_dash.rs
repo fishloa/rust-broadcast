@@ -5,7 +5,8 @@
 //!
 //! Every test bites: chunk bytes are parsed with a std-only top-level box walker
 //! and re-demuxed via `Fmp4Demux` (no hardcoded offsets); the MPD is parsed with
-//! a std-only element walker and asserted against real elements/attributes.
+//! `quick-xml` and asserted against real elements/attributes.
+#![cfg(feature = "std")]
 
 use std::path::PathBuf;
 
@@ -512,7 +513,7 @@ fn first_sample_is_sync(traf: &[u8]) -> bool {
 }
 
 // ---------------------------------------------------------------------------
-// Minimal XML element walker for the MPD (std-only, no external dependency).
+// Element tree over `quick-xml` for the MPD.
 // ---------------------------------------------------------------------------
 
 fn descendants<'a>(e: &'a xml::Element, name: &str) -> Vec<&'a xml::Element> {
@@ -555,134 +556,63 @@ mod xml {
         }
     }
 
+    /// Parse `s` with `quick-xml` into an [`Element`] tree, asserting the
+    /// document is well-formed (matched tags, one root, nothing but whitespace
+    /// outside it). Attribute values come back unescaped.
     pub fn parse(s: &str) -> Element {
-        let mut p = Parser {
-            s: s.as_bytes(),
-            pos: 0,
-        };
-        p.skip_ws();
-        if p.starts_with("<?") {
-            while p.pos < p.s.len() && !p.starts_with("?>") {
-                p.pos += 1;
-            }
-            p.pos += 2;
-        }
-        p.skip_ws();
-        p.parse_element().expect("root element")
-    }
+        use quick_xml::Reader;
+        use quick_xml::XmlVersion;
+        use quick_xml::events::{BytesStart, Event};
 
-    struct Parser<'a> {
-        s: &'a [u8],
-        pos: usize,
-    }
-
-    impl Parser<'_> {
-        fn parse_element(&mut self) -> Option<Element> {
-            self.skip_ws();
-            if !self.starts_with("<") || self.starts_with("</") {
-                return None;
-            }
-            self.pos += 1;
-            let name = self.read_name();
-            let mut attrs = Vec::new();
-            loop {
-                self.skip_ws();
-                match self.cur() {
-                    b'/' => {
-                        self.pos += 1;
-                        self.expect(b'>');
-                        return Some(Element {
-                            name,
-                            attrs,
-                            children: Vec::new(),
-                        });
-                    }
-                    b'>' => {
-                        self.pos += 1;
-                        break;
-                    }
-                    _ => {
-                        let key = self.read_name();
-                        self.skip_ws();
-                        self.expect(b'=');
-                        self.skip_ws();
-                        let value = self.read_quoted();
-                        attrs.push((key, value));
-                    }
-                }
-            }
-            let mut children = Vec::new();
-            loop {
-                self.skip_ws();
-                while self.pos < self.s.len() && self.cur() != b'<' {
-                    self.pos += 1;
-                }
-                self.skip_ws();
-                if self.starts_with("</") {
-                    self.pos += 2;
-                    let _ = self.read_name();
-                    self.skip_ws();
-                    self.expect(b'>');
-                    break;
-                }
-                match self.parse_element() {
-                    Some(c) => children.push(c),
-                    None => {
-                        if self.pos >= self.s.len() {
-                            break;
-                        }
-                    }
-                }
-            }
-            Some(Element {
-                name,
+        fn open(e: &BytesStart<'_>) -> Element {
+            let attrs = e
+                .attributes()
+                .map(|a| {
+                    let a = a.expect("well-formed attribute");
+                    let v = a
+                        .normalized_value(XmlVersion::Implicit1_0)
+                        .expect("resolvable attribute value");
+                    (a.key.as_ref().to_string(), v.into_owned())
+                })
+                .collect();
+            Element {
+                name: e.name().as_ref().to_string(),
                 attrs,
-                children,
-            })
+                children: Vec::new(),
+            }
         }
 
-        fn cur(&self) -> u8 {
-            if self.pos < self.s.len() {
-                self.s[self.pos]
-            } else {
-                0
-            }
-        }
-        fn starts_with(&self, tok: &str) -> bool {
-            self.s[self.pos.min(self.s.len())..].starts_with(tok.as_bytes())
-        }
-        fn skip_ws(&mut self) {
-            while self.pos < self.s.len() && self.s[self.pos].is_ascii_whitespace() {
-                self.pos += 1;
-            }
-        }
-        fn expect(&mut self, b: u8) {
-            assert_eq!(self.cur(), b, "expected {}", b as char);
-            self.pos += 1;
-        }
-        fn read_name(&mut self) -> String {
-            let start = self.pos;
-            while self.pos < self.s.len() {
-                let c = self.s[self.pos];
-                if c.is_ascii_whitespace() || c == b'>' || c == b'/' || c == b'=' {
-                    break;
+        let mut reader = Reader::from_str(s);
+        let mut stack = vec![Element {
+            name: String::new(),
+            attrs: Vec::new(),
+            children: Vec::new(),
+        }];
+        loop {
+            match reader.read_event().expect("well-formed XML") {
+                Event::Start(e) => stack.push(open(&e)),
+                Event::Empty(e) => {
+                    let el = open(&e);
+                    stack.last_mut().expect("document node").children.push(el);
                 }
-                self.pos += 1;
+                Event::End(_) => {
+                    let el = stack.pop().expect("open element");
+                    stack.last_mut().expect("document node").children.push(el);
+                }
+                Event::Text(t) if stack.len() == 1 => {
+                    assert!(
+                        t.trim_ascii().is_empty(),
+                        "content outside the root element (not well-formed)"
+                    );
+                }
+                Event::Eof => break,
+                _ => {}
             }
-            String::from_utf8_lossy(&self.s[start..self.pos]).into_owned()
         }
-        fn read_quoted(&mut self) -> String {
-            let q = self.cur();
-            assert!(q == b'"' || q == b'\'', "attr value must be quoted");
-            self.pos += 1;
-            let start = self.pos;
-            while self.pos < self.s.len() && self.cur() != q {
-                self.pos += 1;
-            }
-            let v = String::from_utf8_lossy(&self.s[start..self.pos]).into_owned();
-            self.pos += 1;
-            v
-        }
+        assert_eq!(stack.len(), 1, "unclosed element at end of document");
+        let mut doc = stack.pop().expect("document node");
+        assert_eq!(doc.children.len(), 1, "exactly one root element");
+        doc.children.pop().expect("root element")
     }
 }
 
@@ -706,12 +636,17 @@ fn ll_mpd_carries_utc_timing() {
         Some("urn:mpeg:dash:utc:http-head:2014"),
         "registered 2014 scheme"
     );
-    // The test XML reader does not decode entities, so the attribute reads back
-    // in its escaped form — which is exactly what must be on the wire.
+    // quick-xml decodes the attribute, so it reads back as the caller's value.
     assert_eq!(
         utc.attr("value"),
-        Some("https://time.example/x?a=1&amp;b=2"),
-        "a raw `&` in the value must be escaped to `&amp;` (it would otherwise          not be well-formed XML)"
+        Some("https://time.example/x?a=1&b=2"),
+        "the escaped value must round-trip to the caller's string"
+    );
+    // ... and on the wire the raw `&` must be escaped to `&amp;` (it would
+    // otherwise not be well-formed XML).
+    assert!(
+        xml.contains(r#"value="https://time.example/x?a=1&amp;b=2""#),
+        "a raw `&` in the value must be escaped to `&amp;` on the wire"
     );
 }
 

@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:tt="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" xmlns:tts="http://www.w3.org/ns/ttml#styling" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xml:lang="en" ttp:displayAspectRatio="16 9" ttp:contentProfiles="http://www.w3.org/ns/ttml/profile/imsc1.1/image" tts:extent="1920px 1080px">
+  <head>
+    <layout>
+      <region tts:extent="640px 120px" tts:origin="640px 736px" xml:id="area1"/>
+    </layout>
+  </head>
+  <body>
+    <div begin="0s" end="1s" region="area1">
+      <image src="image001-img.png" type="image/png" tts:extent="640px 120px"/>
+    </div>
+  </body>
+</tt>

@@ -9,11 +9,13 @@ extern crate alloc;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use roxmltree::Node;
+use std::io;
 
 use crate::error::Result;
-use crate::parse::{children, opt_attr_u32, opt_attr_u64, own_text, req_attr_u64, require_attr};
-use crate::serialize::{push_indent, write_opt_num_attr};
+use crate::parse::{
+    Events, StartTag, for_each_child, opt_attr_u32, opt_attr_u64, req_attr_u64, require_attr,
+};
+use crate::serialize::{Out, element, empty, num_attr, opt_attr, opt_num_attr, tag, text_element};
 
 const ELEMENT: &str = "UnicastRepairParameters";
 const BASE_URL_ELEMENT: &str = "BaseURL";
@@ -48,56 +50,57 @@ pub struct BaseUrl {
 }
 
 impl UnicastRepairParameters {
-    pub(crate) fn parse(node: Node<'_, '_>) -> Result<Self> {
+    pub(crate) fn parse(ev: &mut Events<'_>, tag: &StartTag) -> Result<Self> {
+        let transport_object_base_uri = require_attr(tag, ELEMENT, "transportObjectBaseURI").ok();
+        let transport_object_reception_timeout =
+            req_attr_u64(tag, ELEMENT, "transportObjectReceptionTimeout")?;
+        let fixed_back_off_period = opt_attr_u64(tag, ELEMENT, "fixedBackOffPeriod")?;
+        let random_back_off_period = opt_attr_u64(tag, ELEMENT, "randomBackOffPeriod")?;
         let mut base_urls = Vec::new();
-        for bu in children(node, BASE_URL_ELEMENT) {
+        for_each_child(ev, tag, |ev, child| {
+            if !child.is(BASE_URL_ELEMENT) {
+                return Ok(false);
+            }
+            let relative_weight = opt_attr_u32(child, BASE_URL_ELEMENT, "relativeWeight")?;
             base_urls.push(BaseUrl {
-                uri: own_text(bu),
-                relative_weight: opt_attr_u32(bu, BASE_URL_ELEMENT, "relativeWeight")?,
+                uri: ev.text(child)?,
+                relative_weight,
             });
-        }
+            Ok(true)
+        })?;
         Ok(UnicastRepairParameters {
-            transport_object_base_uri: require_attr(node, ELEMENT, "transportObjectBaseURI").ok(),
-            transport_object_reception_timeout: req_attr_u64(
-                node,
-                ELEMENT,
-                "transportObjectReceptionTimeout",
-            )?,
-            fixed_back_off_period: opt_attr_u64(node, ELEMENT, "fixedBackOffPeriod")?,
-            random_back_off_period: opt_attr_u64(node, ELEMENT, "randomBackOffPeriod")?,
+            transport_object_base_uri,
+            transport_object_reception_timeout,
+            fixed_back_off_period,
+            random_back_off_period,
             base_urls,
         })
     }
 
-    pub(crate) fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<UnicastRepairParameters");
-        crate::serialize::write_opt_attr(
-            out,
+    pub(crate) fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(ELEMENT);
+        opt_attr(
+            &mut t,
             "transportObjectBaseURI",
             self.transport_object_base_uri.as_deref(),
         );
-        crate::serialize::write_num_attr(
-            out,
+        num_attr(
+            &mut t,
             "transportObjectReceptionTimeout",
             self.transport_object_reception_timeout,
         );
-        write_opt_num_attr(out, "fixedBackOffPeriod", self.fixed_back_off_period);
-        write_opt_num_attr(out, "randomBackOffPeriod", self.random_back_off_period);
+        opt_num_attr(&mut t, "fixedBackOffPeriod", self.fixed_back_off_period);
+        opt_num_attr(&mut t, "randomBackOffPeriod", self.random_back_off_period);
         if self.base_urls.is_empty() {
-            out.push_str("/>\n");
-            return;
+            return empty(w, t);
         }
-        out.push_str(">\n");
-        for bu in &self.base_urls {
-            push_indent(out, indent + 1);
-            out.push_str("<BaseURL");
-            write_opt_num_attr(out, "relativeWeight", bu.relative_weight);
-            out.push('>');
-            out.push_str(&crate::serialize::xml_escape(&bu.uri));
-            out.push_str("</BaseURL>\n");
-        }
-        push_indent(out, indent);
-        out.push_str("</UnicastRepairParameters>\n");
+        element(w, t, |w| {
+            for bu in &self.base_urls {
+                let mut b = tag(BASE_URL_ELEMENT);
+                opt_num_attr(&mut b, "relativeWeight", bu.relative_weight);
+                text_element(w, b, &bu.uri)?;
+            }
+            Ok(())
+        })
     }
 }

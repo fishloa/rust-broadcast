@@ -4,6 +4,7 @@
 //! below were captured from the pre-refactor code (FNV-1a 64 over the full
 //! `Debug` rendering of the produced IR / bytes), so a changed byte anywhere
 //! fails here.
+#![cfg(feature = "std")]
 
 use std::path::PathBuf;
 

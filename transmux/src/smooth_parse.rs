@@ -5,9 +5,8 @@
 //! Smooth-pull ingest (issue #759, T1) needs to fetch a remote client
 //! Manifest and resolve the fragment URLs it describes, exactly as
 //! [`crate::dash_parse`] does for DASH (issue #758). Like that parser, this
-//! one is dependency-free: it reuses the shared hand-rolled `xml_parse`
-//! tokenizer (`no_std` `alloc`, crate-private) rather than writing a second
-//! one.
+//! one reads XML with the shared [`quick_xml::Reader`]-based tokenizer
+//! (crate-private, `std` feature) rather than writing a second one.
 //!
 //! See [`transmux/docs/smooth/ms-sstr.md`](../../docs/smooth/ms-sstr.md) for
 //! the full spec transcription this module cites throughout (client Manifest
@@ -83,7 +82,12 @@ use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::{CodecConfig, TrackSpec};
 use crate::rtp_sdp::{aac_config_from_asc_bytes, avc_config_from_sps_pps};
 use crate::smooth::{FOURCC_AACH, FOURCC_AACL, FOURCC_AVC1, FOURCC_H264, SMOOTH_TIMESCALE};
-use crate::xml_parse::{XmlError, XmlEvent, XmlTokenizer, skip_element};
+use crate::xml_chars::{char_data, is_xml_char};
+use quick_xml::Reader;
+use quick_xml::XmlVersion;
+use quick_xml::errors::IllFormedError;
+use quick_xml::events::{BytesStart, Event};
+use quick_xml::name::QName;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -162,9 +166,18 @@ pub enum SmoothParseError {
     /// malformed nesting that would silently truncate the structure.
     MismatchedEndTag {
         /// The element name expected to close.
-        expected: &'static str,
+        expected: String,
         /// The element name actually found in the closing tag.
         found: String,
+    },
+    /// Any other XML well-formedness error reported by `quick-xml` (bad
+    /// entity or character reference, mismatched nesting detected by the
+    /// reader, invalid encoding, …).
+    Xml {
+        /// Byte offset (into the input) where the reader stopped.
+        pos: usize,
+        /// `quick-xml`'s description of the problem.
+        message: String,
     },
 }
 
@@ -225,6 +238,9 @@ impl fmt::Display for SmoothParseError {
                     write!(f, "expected closing tag </{expected}>, found </{found}>")
                 }
             }
+            SmoothParseError::Xml { pos, message } => {
+                write!(f, "XML error at byte offset {pos}: {message}")
+            }
         }
     }
 }
@@ -232,21 +248,147 @@ impl fmt::Display for SmoothParseError {
 #[cfg(feature = "std")]
 impl std::error::Error for SmoothParseError {}
 
-impl From<XmlError> for SmoothParseError {
-    fn from(err: XmlError) -> Self {
-        match err {
-            XmlError::UnexpectedEof => SmoothParseError::UnexpectedEof,
-            XmlError::UnterminatedTag { pos } => SmoothParseError::UnterminatedTag { pos },
-            XmlError::MalformedAttribute { pos } => SmoothParseError::MalformedAttribute { pos },
-            XmlError::MismatchedEndTag { expected, found } => {
-                SmoothParseError::MismatchedEndTag { expected, found }
+/// Crate-local result alias for this module.
+type Result<T> = core::result::Result<T, SmoothParseError>;
+
+// ---------------------------------------------------------------------------
+// quick-xml pull plumbing
+// ---------------------------------------------------------------------------
+
+/// A `quick-xml` reader over the manifest text.
+type XmlReader<'a> = Reader<&'a [u8]>;
+
+/// What a parse loop sees: the start of an element (with its decoded
+/// attributes) or the end of one. Text, comments, processing instructions, the
+/// XML declaration and DOCTYPE are consumed by [`next_tag`] and never surface.
+enum Tag {
+    /// `<Name a="b">` or the self-closing `<Name a="b"/>`; `name` is the local
+    /// name (namespace prefix stripped), attribute names keep any prefix.
+    Open {
+        name: String,
+        attrs: Vec<(String, String)>,
+        self_closing: bool,
+    },
+    /// `</Name>`.
+    Close { name: String },
+}
+
+fn new_reader(xml: &str) -> XmlReader<'_> {
+    Reader::from_str(xml)
+}
+
+/// Map a quick-xml error at the reader's current position.
+fn xml_error(reader: &XmlReader<'_>, err: &quick_xml::Error) -> SmoothParseError {
+    use quick_xml::Error as E;
+    let pos = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
+    match err {
+        E::Syntax(_) => SmoothParseError::UnterminatedTag { pos },
+        E::IllFormed(IllFormedError::MismatchedEndTag { expected, found }) => {
+            SmoothParseError::MismatchedEndTag {
+                expected: local_part(expected),
+                found: local_part(found),
             }
+        }
+        _ => SmoothParseError::Xml {
+            pos,
+            message: err.to_string(),
+        },
+    }
+}
+
+/// A well-formedness error described by `message` at the reader's position.
+fn xml_message(reader: &XmlReader<'_>, message: String) -> SmoothParseError {
+    SmoothParseError::Xml {
+        pos: usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX),
+        message,
+    }
+}
+
+/// The local part of a (possibly prefixed) qualified name.
+fn local_part(qname: &str) -> String {
+    QName(qname).local_name().into_inner().to_string()
+}
+
+fn read_event<'a>(reader: &mut XmlReader<'a>) -> Result<Event<'a>> {
+    match reader.read_event() {
+        Ok(event) => Ok(event),
+        Err(e) => Err(xml_error(reader, &e)),
+    }
+}
+
+/// Decode a start tag's attributes (values unescaped and normalized by
+/// quick-xml).
+fn read_attrs(reader: &XmlReader<'_>, e: &BytesStart<'_>) -> Result<Vec<(String, String)>> {
+    let pos = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
+    let mut attrs = Vec::new();
+    for attr in e.attributes() {
+        let attr = attr.map_err(|_| SmoothParseError::MalformedAttribute { pos })?;
+        let value = attr
+            .normalized_value(XmlVersion::Implicit1_0)
+            .map_err(|_| SmoothParseError::MalformedAttribute { pos })?;
+        if !value.chars().all(is_xml_char) {
+            return Err(SmoothParseError::MalformedAttribute { pos });
+        }
+        attrs.push((attr.key.as_ref().to_string(), value.into_owned()));
+    }
+    Ok(attrs)
+}
+
+/// The next element start/end, or `Ok(None)` at end of input.
+fn next_tag(reader: &mut XmlReader<'_>) -> Result<Option<Tag>> {
+    loop {
+        let event = read_event(reader)?;
+        // Character data between elements (and inside skipped subtrees) is
+        // validated exactly like the modelled path.
+        if char_data(&event)
+            .map_err(|message| xml_message(reader, message))?
+            .is_some()
+        {
+            continue;
+        }
+        match event {
+            Event::Start(e) => {
+                return Ok(Some(Tag::Open {
+                    name: e.local_name().into_inner().to_string(),
+                    attrs: read_attrs(reader, &e)?,
+                    self_closing: false,
+                }));
+            }
+            Event::Empty(e) => {
+                return Ok(Some(Tag::Open {
+                    name: e.local_name().into_inner().to_string(),
+                    attrs: read_attrs(reader, &e)?,
+                    self_closing: true,
+                }));
+            }
+            Event::End(e) => {
+                return Ok(Some(Tag::Close {
+                    name: e.local_name().into_inner().to_string(),
+                }));
+            }
+            Event::Eof => return Ok(None),
+            _ => {}
         }
     }
 }
 
-/// Crate-local result alias for this module.
-type Result<T> = core::result::Result<T, SmoothParseError>;
+/// Skip an already-open element's subtree, up to and including its matching
+/// end tag.
+fn skip_element(reader: &mut XmlReader<'_>) -> Result<()> {
+    let mut depth: usize = 1;
+    while depth > 0 {
+        match next_tag(reader)? {
+            Some(Tag::Open { self_closing, .. }) => {
+                if !self_closing {
+                    depth += 1;
+                }
+            }
+            Some(Tag::Close { .. }) => depth -= 1,
+            None => return Err(SmoothParseError::UnexpectedEof),
+        }
+    }
+    Ok(())
+}
 
 // ---------------------------------------------------------------------------
 // Unbounded-input caps (remote alloc-DoS defense)
@@ -494,7 +636,7 @@ fn hex_nibble(b: u8) -> Option<u8> {
 }
 
 // ---------------------------------------------------------------------------
-// Attribute helpers (XML parsing is in the xml_parse module)
+// Attribute helpers (XML parsing is in the `xml` module)
 // ---------------------------------------------------------------------------
 
 fn attr<'a>(attrs: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -563,21 +705,22 @@ impl SmoothManifest {
     /// output.
     pub fn parse(xml: &str) -> Result<SmoothManifest> {
         const EL: &str = "SmoothStreamingMedia";
-        let mut tok = XmlTokenizer::new(xml);
+        let mut xml_reader = new_reader(xml);
+        let reader = &mut xml_reader;
 
-        let (attrs, self_closing) = match tok.next_event()? {
-            Some(XmlEvent::Start {
-                name: "SmoothStreamingMedia",
+        let (attrs, self_closing) = match next_tag(reader)? {
+            Some(Tag::Open {
+                name,
                 attrs,
                 self_closing,
-            }) => (attrs, self_closing),
-            Some(XmlEvent::Start { name, .. }) => {
+            }) if name == "SmoothStreamingMedia" => (attrs, self_closing),
+            Some(Tag::Open { name, .. }) => {
                 return Err(SmoothParseError::UnexpectedElement {
                     expected: EL,
                     found: name.to_string(),
                 });
             }
-            Some(XmlEvent::End { .. }) => {
+            Some(Tag::Close { .. }) => {
                 return Err(SmoothParseError::UnexpectedElement {
                     expected: EL,
                     found: String::new(),
@@ -598,21 +741,23 @@ impl SmoothManifest {
         let mut streams = Vec::new();
         if !self_closing {
             loop {
-                match tok.next_event()? {
-                    Some(XmlEvent::Start {
-                        name: "StreamIndex",
+                match next_tag(reader)? {
+                    Some(Tag::Open {
+                        name,
                         attrs,
                         self_closing,
-                    }) => streams.push(parse_stream_index(&mut tok, attrs, self_closing)?),
-                    Some(XmlEvent::Start { self_closing, .. }) => {
+                    }) if name == "StreamIndex" => {
+                        streams.push(parse_stream_index(reader, attrs, self_closing)?)
+                    }
+                    Some(Tag::Open { self_closing, .. }) => {
                         if !self_closing {
-                            skip_element(&mut tok)?;
+                            skip_element(reader)?;
                         }
                     }
-                    Some(XmlEvent::End { name }) => {
+                    Some(Tag::Close { name }) => {
                         if name != EL {
                             return Err(SmoothParseError::MismatchedEndTag {
-                                expected: EL,
+                                expected: EL.to_string(),
                                 found: name.to_string(),
                             });
                         }
@@ -637,7 +782,7 @@ impl SmoothManifest {
 }
 
 fn parse_stream_index(
-    tok: &mut XmlTokenizer<'_>,
+    reader: &mut XmlReader<'_>,
     attrs: Vec<(String, String)>,
     self_closing: bool,
 ) -> Result<StreamIndex> {
@@ -665,39 +810,39 @@ fn parse_stream_index(
     let mut chunks_list = Vec::new();
     if !self_closing {
         loop {
-            match tok.next_event()? {
-                Some(XmlEvent::Start {
-                    name: "QualityLevel",
+            match next_tag(reader)? {
+                Some(Tag::Open {
+                    name,
                     attrs,
                     self_closing,
-                }) => {
+                }) if name == "QualityLevel" => {
                     qualities.push(parse_quality_level(&attrs)?);
                     if !self_closing {
-                        skip_element(tok)?;
+                        skip_element(reader)?;
                     }
                 }
-                Some(XmlEvent::Start {
-                    name: "c",
+                Some(Tag::Open {
+                    name,
                     attrs,
                     self_closing,
-                }) => {
+                }) if name == "c" => {
                     let t: Option<u64> = parse_attr(&attrs, "t", "c")?;
                     let d: Option<u64> = parse_attr(&attrs, "d", "c")?;
                     let r: Option<u32> = parse_attr(&attrs, "r", "c")?;
                     chunks_list.push(C { t, d, r });
                     if !self_closing {
-                        skip_element(tok)?;
+                        skip_element(reader)?;
                     }
                 }
-                Some(XmlEvent::Start { self_closing, .. }) => {
+                Some(Tag::Open { self_closing, .. }) => {
                     if !self_closing {
-                        skip_element(tok)?;
+                        skip_element(reader)?;
                     }
                 }
-                Some(XmlEvent::End { name }) => {
+                Some(Tag::Close { name }) => {
                     if name != EL {
                         return Err(SmoothParseError::MismatchedEndTag {
-                            expected: EL,
+                            expected: EL.to_string(),
                             found: name.to_string(),
                         });
                     }
@@ -1000,6 +1145,22 @@ fn channel_configuration_for(channels: u16) -> CrateResult<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Character data inside a skipped subtree (e.g. `<Protection>`) or between
+    /// elements is validated like modelled text.
+    #[test]
+    fn invalid_character_data_in_skipped_content_is_rejected() {
+        for bad in ["&nope;", "&#1;", "&#x1;", "\u{1}", "<![CDATA[\u{1}]]>"] {
+            let skipped = format!(
+                "<SmoothStreamingMedia><Protection><ProtectionHeader>{bad}</ProtectionHeader></Protection></SmoothStreamingMedia>"
+            );
+            assert!(SmoothManifest::parse(&skipped).is_err(), "skipped {bad:?}");
+            let between = format!(
+                "<SmoothStreamingMedia>{bad}<StreamIndex Type=\"video\"/></SmoothStreamingMedia>"
+            );
+            assert!(SmoothManifest::parse(&between).is_err(), "between {bad:?}");
+        }
+    }
 
     const SMALL_MANIFEST: &str = r#"<?xml version="1.0" encoding="utf-8"?>
 <SmoothStreamingMedia MajorVersion="2" MinorVersion="0" Duration="30000000" TimeScale="10000000">

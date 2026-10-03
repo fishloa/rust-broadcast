@@ -4,9 +4,11 @@
 //! `transmux` demuxes remote DASH presentations (issue #758, DASH-pull
 //! ingest) by first fetching an MPD and resolving the segment URLs it
 //! describes; this module is the piece that reads that MPD text. Like the
-//! writer, it is dependency-free: a small hand-rolled XML tokenizer
-//! (`no_std` `alloc`, no external XML crate), scoped to exactly the MPD
-//! subset the writer emits plus what real-world isoff-live MPDs use.
+//! writer, it reads XML with a [`quick_xml::Reader`] pull loop (so, like the
+//! writer, it needs the `std` feature), scoped to exactly the MPD subset the
+//! writer emits plus what real-world isoff-live MPDs use. Malformed XML (bad
+//! nesting, undefined entity references, unterminated constructs) is a
+//! structured [`DashParseError`], never a panic.
 //!
 //! # Structure parsed (ISO/IEC 23009-1:2014)
 //!
@@ -76,7 +78,12 @@ use core::fmt;
 use core::str::FromStr;
 use core::time::Duration;
 
-use crate::xml_parse::{XmlError, XmlEvent, XmlTokenizer, skip_element};
+use crate::xml_chars::{char_data, is_xml_char};
+use quick_xml::Reader;
+use quick_xml::XmlVersion;
+use quick_xml::errors::IllFormedError;
+use quick_xml::events::{BytesStart, Event};
+use quick_xml::name::QName;
 
 // ---------------------------------------------------------------------------
 // Error
@@ -147,9 +154,18 @@ pub enum DashParseError {
     /// malformed nesting that would silently truncate the structure.
     MismatchedEndTag {
         /// The element name expected to close.
-        expected: &'static str,
+        expected: String,
         /// The element name actually found in the closing tag.
         found: String,
+    },
+    /// Any other XML well-formedness error reported by `quick-xml` (bad
+    /// entity or character reference, mismatched nesting detected by the
+    /// reader, invalid encoding, …).
+    Xml {
+        /// Byte offset (into the input) where the reader stopped.
+        pos: usize,
+        /// `quick-xml`'s description of the problem.
+        message: String,
     },
 }
 
@@ -200,6 +216,9 @@ impl fmt::Display for DashParseError {
                     write!(f, "expected closing tag </{expected}>, found </{found}>")
                 }
             }
+            DashParseError::Xml { pos, message } => {
+                write!(f, "XML error at byte offset {pos}: {message}")
+            }
         }
     }
 }
@@ -207,21 +226,189 @@ impl fmt::Display for DashParseError {
 #[cfg(feature = "std")]
 impl std::error::Error for DashParseError {}
 
-impl From<XmlError> for DashParseError {
-    fn from(err: XmlError) -> Self {
-        match err {
-            XmlError::UnexpectedEof => DashParseError::UnexpectedEof,
-            XmlError::UnterminatedTag { pos } => DashParseError::UnterminatedTag { pos },
-            XmlError::MalformedAttribute { pos } => DashParseError::MalformedAttribute { pos },
-            XmlError::MismatchedEndTag { expected, found } => {
-                DashParseError::MismatchedEndTag { expected, found }
+/// Crate-local result alias for this module.
+type Result<T> = core::result::Result<T, DashParseError>;
+
+// ---------------------------------------------------------------------------
+// quick-xml pull plumbing
+// ---------------------------------------------------------------------------
+
+/// A `quick-xml` reader over the manifest text.
+type XmlReader<'a> = Reader<&'a [u8]>;
+
+/// What a parse loop sees: the start of an element (with its decoded
+/// attributes) or the end of one. Text, comments, processing instructions, the
+/// XML declaration and DOCTYPE are consumed by [`next_tag`] and never surface.
+enum Tag {
+    /// `<Name a="b">` or the self-closing `<Name a="b"/>`; `name` is the local
+    /// name (namespace prefix stripped), attribute names keep any prefix.
+    Open {
+        name: String,
+        attrs: Vec<(String, String)>,
+        self_closing: bool,
+    },
+    /// `</Name>`.
+    Close { name: String },
+}
+
+fn new_reader(xml: &str) -> XmlReader<'_> {
+    Reader::from_str(xml)
+}
+
+/// Map a quick-xml error at the reader's current position.
+fn xml_error(reader: &XmlReader<'_>, err: &quick_xml::Error) -> DashParseError {
+    use quick_xml::Error as E;
+    let pos = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
+    match err {
+        E::Syntax(_) => DashParseError::UnterminatedTag { pos },
+        E::IllFormed(IllFormedError::MismatchedEndTag { expected, found }) => {
+            DashParseError::MismatchedEndTag {
+                expected: local_part(expected),
+                found: local_part(found),
             }
+        }
+        _ => DashParseError::Xml {
+            pos,
+            message: err.to_string(),
+        },
+    }
+}
+
+/// A well-formedness error described by `message` at the reader's position.
+fn xml_message(reader: &XmlReader<'_>, message: String) -> DashParseError {
+    DashParseError::Xml {
+        pos: usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX),
+        message,
+    }
+}
+
+/// The local part of a (possibly prefixed) qualified name.
+fn local_part(qname: &str) -> String {
+    QName(qname).local_name().into_inner().to_string()
+}
+
+fn read_event<'a>(reader: &mut XmlReader<'a>) -> Result<Event<'a>> {
+    match reader.read_event() {
+        Ok(event) => Ok(event),
+        Err(e) => Err(xml_error(reader, &e)),
+    }
+}
+
+/// Decode a start tag's attributes (values unescaped and normalized by
+/// quick-xml).
+fn read_attrs(reader: &XmlReader<'_>, e: &BytesStart<'_>) -> Result<Vec<(String, String)>> {
+    let pos = usize::try_from(reader.buffer_position()).unwrap_or(usize::MAX);
+    let mut attrs = Vec::new();
+    for attr in e.attributes() {
+        let attr = attr.map_err(|_| DashParseError::MalformedAttribute { pos })?;
+        let value = attr
+            .normalized_value(XmlVersion::Implicit1_0)
+            .map_err(|_| DashParseError::MalformedAttribute { pos })?;
+        if !value.chars().all(is_xml_char) {
+            return Err(DashParseError::MalformedAttribute { pos });
+        }
+        attrs.push((attr.key.as_ref().to_string(), value.into_owned()));
+    }
+    Ok(attrs)
+}
+
+/// The next element start/end, or `Ok(None)` at end of input.
+fn next_tag(reader: &mut XmlReader<'_>) -> Result<Option<Tag>> {
+    loop {
+        let event = read_event(reader)?;
+        // Character data between elements (and inside skipped subtrees) is
+        // validated exactly like the modelled path.
+        if char_data(&event)
+            .map_err(|message| xml_message(reader, message))?
+            .is_some()
+        {
+            continue;
+        }
+        match event {
+            Event::Start(e) => {
+                return Ok(Some(Tag::Open {
+                    name: e.local_name().into_inner().to_string(),
+                    attrs: read_attrs(reader, &e)?,
+                    self_closing: false,
+                }));
+            }
+            Event::Empty(e) => {
+                return Ok(Some(Tag::Open {
+                    name: e.local_name().into_inner().to_string(),
+                    attrs: read_attrs(reader, &e)?,
+                    self_closing: true,
+                }));
+            }
+            Event::End(e) => {
+                return Ok(Some(Tag::Close {
+                    name: e.local_name().into_inner().to_string(),
+                }));
+            }
+            Event::Eof => return Ok(None),
+            _ => {}
         }
     }
 }
 
-/// Crate-local result alias for this module.
-type Result<T> = core::result::Result<T, DashParseError>;
+/// Skip an already-open element's subtree, up to and including its matching
+/// end tag.
+fn skip_element(reader: &mut XmlReader<'_>) -> Result<()> {
+    let mut depth: usize = 1;
+    while depth > 0 {
+        match next_tag(reader)? {
+            Some(Tag::Open { self_closing, .. }) => {
+                if !self_closing {
+                    depth += 1;
+                }
+            }
+            Some(Tag::Close { .. }) => depth -= 1,
+            None => return Err(DashParseError::UnexpectedEof),
+        }
+    }
+    Ok(())
+}
+
+/// The character data of an already-open element `name` (entity and character
+/// references resolved by quick-xml, CDATA included), consuming its end tag.
+/// `None` for a self-closing element or one holding nested markup (the
+/// nested subtree is skipped — callers only model text-only elements).
+fn text_content(
+    reader: &mut XmlReader<'_>,
+    name: &'static str,
+    self_closing: bool,
+) -> Result<Option<String>> {
+    if self_closing {
+        return Ok(None);
+    }
+    let mut text = String::new();
+    let mut nested = false;
+    loop {
+        let event = read_event(reader)?;
+        if let Some(piece) = char_data(&event).map_err(|message| xml_message(reader, message))? {
+            text.push_str(&piece);
+            continue;
+        }
+        match event {
+            Event::Start(_) => {
+                nested = true;
+                skip_element(reader)?;
+            }
+            Event::Empty(_) => nested = true,
+            Event::End(e) => {
+                let found = e.local_name().into_inner();
+                if found != name {
+                    return Err(DashParseError::MismatchedEndTag {
+                        expected: name.to_string(),
+                        found: found.to_string(),
+                    });
+                }
+                return Ok(if nested { None } else { Some(text) });
+            }
+            Event::Eof => return Err(DashParseError::UnexpectedEof),
+            _ => {}
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // Defaults (ISO/IEC 23009-1 §5.3.9.4.4/.6)
@@ -697,7 +884,7 @@ fn parse_fraction_nanos(frac: &str) -> core::result::Result<u32, ()> {
 }
 
 // ---------------------------------------------------------------------------
-// DASH-specific attribute helpers (XML parsing is in xml_parse module)
+// DASH-specific attribute helpers (XML parsing is in the `xml` module)
 // ---------------------------------------------------------------------------
 
 fn attr<'a>(attrs: &'a [(String, String)], key: &str) -> Option<&'a str> {
@@ -854,21 +1041,22 @@ impl Mpd {
     /// `SegmentTimeline` is taken from the lowest level that carries one.
     pub fn parse(xml: &str) -> Result<Mpd> {
         const EL: &str = "MPD";
-        let mut tok = XmlTokenizer::new(xml);
+        let mut xml_reader = new_reader(xml);
+        let reader = &mut xml_reader;
 
-        let (mpd_attrs, mpd_self_closing) = match tok.next_event()? {
-            Some(XmlEvent::Start {
-                name: "MPD",
+        let (mpd_attrs, mpd_self_closing) = match next_tag(reader)? {
+            Some(Tag::Open {
+                name,
                 attrs,
                 self_closing,
-            }) => (attrs, self_closing),
-            Some(XmlEvent::Start { name, .. }) => {
+            }) if name == "MPD" => (attrs, self_closing),
+            Some(Tag::Open { name, .. }) => {
                 return Err(DashParseError::UnexpectedElement {
                     expected: EL,
                     found: name.to_string(),
                 });
             }
-            Some(XmlEvent::End { .. }) => {
+            Some(Tag::Close { .. }) => {
                 return Err(DashParseError::UnexpectedElement {
                     expected: EL,
                     found: String::new(),
@@ -892,29 +1080,31 @@ impl Mpd {
         let mut periods = Vec::new();
         if !mpd_self_closing {
             loop {
-                match tok.next_event()? {
-                    Some(XmlEvent::Start {
-                        name: "BaseURL",
+                match next_tag(reader)? {
+                    Some(Tag::Open {
+                        name,
                         attrs,
                         self_closing,
-                    }) => {
-                        let found = parse_base_url(&mut tok, xml, &attrs, self_closing)?;
+                    }) if name == "BaseURL" => {
+                        let found = parse_base_url(reader, &attrs, self_closing)?;
                         keep_first_base_url(&mut base_url, found);
                     }
-                    Some(XmlEvent::Start {
-                        name: "Period",
+                    Some(Tag::Open {
+                        name,
                         attrs,
                         self_closing,
-                    }) => periods.push(parse_period(&mut tok, xml, attrs, self_closing)?),
-                    Some(XmlEvent::Start { self_closing, .. }) => {
+                    }) if name == "Period" => {
+                        periods.push(parse_period(reader, attrs, self_closing)?)
+                    }
+                    Some(Tag::Open { self_closing, .. }) => {
                         if !self_closing {
-                            skip_element(&mut tok)?;
+                            skip_element(reader)?;
                         }
                     }
-                    Some(XmlEvent::End { name }) => {
+                    Some(Tag::Close { name }) => {
                         if name != EL {
                             return Err(DashParseError::MismatchedEndTag {
-                                expected: EL,
+                                expected: EL.to_string(),
                                 found: name.to_string(),
                             });
                         }
@@ -947,8 +1137,7 @@ struct TemplateLayer {
 }
 
 fn parse_period<'a>(
-    tok: &mut XmlTokenizer<'a>,
-    xml: &'a str,
+    reader: &mut XmlReader<'a>,
     attrs: Vec<(String, String)>,
     self_closing: bool,
 ) -> Result<Period> {
@@ -962,45 +1151,46 @@ fn parse_period<'a>(
     let mut adaptation_sets = Vec::new();
     if !self_closing {
         loop {
-            match tok.next_event()? {
-                Some(XmlEvent::Start {
-                    name: "BaseURL",
+            match next_tag(reader)? {
+                Some(Tag::Open {
+                    name,
                     attrs,
                     self_closing,
-                }) => {
-                    let found = parse_base_url(tok, xml, &attrs, self_closing)?;
+                }) if name == "BaseURL" => {
+                    let found = parse_base_url(reader, &attrs, self_closing)?;
                     keep_first_base_url(&mut base_url, found);
                 }
-                Some(XmlEvent::Start {
-                    name: "SegmentTemplate",
+                Some(Tag::Open {
+                    name,
                     attrs,
                     self_closing,
-                }) => template = Some(parse_segment_template_layer(tok, attrs, self_closing)?),
-                Some(XmlEvent::Start {
-                    name: "AdaptationSet",
+                }) if name == "SegmentTemplate" => {
+                    template = Some(parse_segment_template_layer(reader, attrs, self_closing)?)
+                }
+                Some(Tag::Open {
+                    name,
                     attrs,
                     self_closing,
-                }) => {
+                }) if name == "AdaptationSet" => {
                     let parent = template
                         .as_ref()
                         .map(|t| merge_templates(None, t.attrs.clone(), t.timeline.clone()));
                     adaptation_sets.push(parse_adaptation_set(
-                        tok,
-                        xml,
+                        reader,
                         attrs,
                         self_closing,
                         parent.as_ref(),
                     )?);
                 }
-                Some(XmlEvent::Start { self_closing, .. }) => {
+                Some(Tag::Open { self_closing, .. }) => {
                     if !self_closing {
-                        skip_element(tok)?;
+                        skip_element(reader)?;
                     }
                 }
-                Some(XmlEvent::End { name }) => {
+                Some(Tag::Close { name }) => {
                     if name != EL {
                         return Err(DashParseError::MismatchedEndTag {
-                            expected: EL,
+                            expected: EL.to_string(),
                             found: name.to_string(),
                         });
                     }
@@ -1025,13 +1215,12 @@ fn parse_period<'a>(
 /// elements are skipped (the type allows none), and an element with no text
 /// yields `None`.
 fn parse_base_url<'a>(
-    tok: &mut XmlTokenizer<'a>,
-    data: &'a str,
+    reader: &mut XmlReader<'a>,
     attrs: &[(String, String)],
     self_closing: bool,
 ) -> Result<Option<String>> {
     let _ = attrs;
-    let text = crate::xml_parse::text_content(tok, data, "BaseURL", self_closing)?;
+    let text = text_content(reader, "BaseURL", self_closing)?;
     Ok(text.map(|t| t.trim().to_string()).filter(|t| !t.is_empty()))
 }
 
@@ -1050,8 +1239,7 @@ fn keep_first_base_url(slot: &mut Option<String>, found: Option<String>) {
 }
 
 fn parse_adaptation_set<'a>(
-    tok: &mut XmlTokenizer<'a>,
-    xml: &'a str,
+    reader: &mut XmlReader<'a>,
     attrs: Vec<(String, String)>,
     self_closing: bool,
     parent: Option<&SegmentTemplate>,
@@ -1069,34 +1257,38 @@ fn parse_adaptation_set<'a>(
     let mut parsed: Vec<(Representation, Option<TemplateLayer>)> = Vec::new();
     if !self_closing {
         loop {
-            match tok.next_event()? {
-                Some(XmlEvent::Start {
-                    name: "BaseURL",
+            match next_tag(reader)? {
+                Some(Tag::Open {
+                    name,
                     attrs,
                     self_closing,
-                }) => {
-                    let found = parse_base_url(tok, xml, &attrs, self_closing)?;
+                }) if name == "BaseURL" => {
+                    let found = parse_base_url(reader, &attrs, self_closing)?;
                     keep_first_base_url(&mut base_url, found);
                 }
-                Some(XmlEvent::Start {
-                    name: "SegmentTemplate",
+                Some(Tag::Open {
+                    name,
                     attrs,
                     self_closing,
-                }) => own_layer = Some(parse_segment_template_layer(tok, attrs, self_closing)?),
-                Some(XmlEvent::Start {
-                    name: "Representation",
+                }) if name == "SegmentTemplate" => {
+                    own_layer = Some(parse_segment_template_layer(reader, attrs, self_closing)?)
+                }
+                Some(Tag::Open {
+                    name,
                     attrs,
                     self_closing,
-                }) => parsed.push(parse_representation(tok, xml, attrs, self_closing)?),
-                Some(XmlEvent::Start { self_closing, .. }) => {
+                }) if name == "Representation" => {
+                    parsed.push(parse_representation(reader, attrs, self_closing)?)
+                }
+                Some(Tag::Open { self_closing, .. }) => {
                     if !self_closing {
-                        skip_element(tok)?;
+                        skip_element(reader)?;
                     }
                 }
-                Some(XmlEvent::End { name }) => {
+                Some(Tag::Close { name }) => {
                     if name != EL {
                         return Err(DashParseError::MismatchedEndTag {
-                            expected: EL,
+                            expected: EL.to_string(),
                             found: name.to_string(),
                         });
                     }
@@ -1138,8 +1330,7 @@ fn parse_adaptation_set<'a>(
 }
 
 fn parse_representation<'a>(
-    tok: &mut XmlTokenizer<'a>,
-    xml: &'a str,
+    reader: &mut XmlReader<'a>,
     attrs: Vec<(String, String)>,
     self_closing: bool,
 ) -> Result<(Representation, Option<TemplateLayer>)> {
@@ -1157,29 +1348,31 @@ fn parse_representation<'a>(
     let mut pending: Option<TemplateLayer> = None;
     if !self_closing {
         loop {
-            match tok.next_event()? {
-                Some(XmlEvent::Start {
-                    name: "BaseURL",
+            match next_tag(reader)? {
+                Some(Tag::Open {
+                    name,
                     attrs,
                     self_closing,
-                }) => {
-                    let found = parse_base_url(tok, xml, &attrs, self_closing)?;
+                }) if name == "BaseURL" => {
+                    let found = parse_base_url(reader, &attrs, self_closing)?;
                     keep_first_base_url(&mut base_url, found);
                 }
-                Some(XmlEvent::Start {
-                    name: "SegmentTemplate",
+                Some(Tag::Open {
+                    name,
                     attrs,
                     self_closing,
-                }) => pending = Some(parse_segment_template_layer(tok, attrs, self_closing)?),
-                Some(XmlEvent::Start { self_closing, .. }) => {
+                }) if name == "SegmentTemplate" => {
+                    pending = Some(parse_segment_template_layer(reader, attrs, self_closing)?)
+                }
+                Some(Tag::Open { self_closing, .. }) => {
                     if !self_closing {
-                        skip_element(tok)?;
+                        skip_element(reader)?;
                     }
                 }
-                Some(XmlEvent::End { name }) => {
+                Some(Tag::Close { name }) => {
                     if name != EL {
                         return Err(DashParseError::MismatchedEndTag {
-                            expected: EL,
+                            expected: EL.to_string(),
                             found: name.to_string(),
                         });
                     }
@@ -1317,40 +1510,40 @@ fn merge_templates(
 /// Parse a `SegmentTemplate` element whose effective values still depend on a
 /// parent level (`Period`/`AdaptationSet`), consuming the whole element.
 fn parse_segment_template_layer(
-    tok: &mut XmlTokenizer<'_>,
+    reader: &mut XmlReader<'_>,
     attrs: Vec<(String, String)>,
     self_closing: bool,
 ) -> Result<TemplateLayer> {
     let attrs = split_template_attrs(&attrs)?;
-    let timeline = parse_segment_template_body(tok, self_closing)?;
+    let timeline = parse_segment_template_body(reader, self_closing)?;
     Ok(TemplateLayer { attrs, timeline })
 }
 
 /// Parse the `SegmentTimeline` child of a `SegmentTemplate` element (or its
 /// absence), consuming the element's body up to its end tag.
 fn parse_segment_template_body(
-    tok: &mut XmlTokenizer<'_>,
+    reader: &mut XmlReader<'_>,
     self_closing: bool,
 ) -> Result<Option<SegmentTimeline>> {
     const EL: &str = "SegmentTemplate";
     let mut timeline = None;
     if !self_closing {
         loop {
-            match tok.next_event()? {
-                Some(XmlEvent::Start {
-                    name: "SegmentTimeline",
-                    self_closing,
-                    ..
-                }) => timeline = Some(parse_segment_timeline(tok, self_closing)?),
-                Some(XmlEvent::Start { self_closing, .. }) => {
+            match next_tag(reader)? {
+                Some(Tag::Open {
+                    name, self_closing, ..
+                }) if name == "SegmentTimeline" => {
+                    timeline = Some(parse_segment_timeline(reader, self_closing)?)
+                }
+                Some(Tag::Open { self_closing, .. }) => {
                     if !self_closing {
-                        skip_element(tok)?;
+                        skip_element(reader)?;
                     }
                 }
-                Some(XmlEvent::End { name }) => {
+                Some(Tag::Close { name }) => {
                     if name != EL {
                         return Err(DashParseError::MismatchedEndTag {
-                            expected: EL,
+                            expected: EL.to_string(),
                             found: name.to_string(),
                         });
                     }
@@ -1364,36 +1557,36 @@ fn parse_segment_template_body(
 }
 
 fn parse_segment_timeline(
-    tok: &mut XmlTokenizer<'_>,
+    reader: &mut XmlReader<'_>,
     self_closing: bool,
 ) -> Result<SegmentTimeline> {
     const EL: &str = "SegmentTimeline";
     let mut segments = Vec::new();
     if !self_closing {
         loop {
-            match tok.next_event()? {
-                Some(XmlEvent::Start {
-                    name: "S",
+            match next_tag(reader)? {
+                Some(Tag::Open {
+                    name,
                     attrs,
                     self_closing,
-                }) => {
+                }) if name == "S" => {
                     let t: Option<u64> = parse_attr(&attrs, "t", "S")?;
                     let d: u64 = required_attr_parse(&attrs, "d", "S")?;
                     let r: i64 = parse_attr(&attrs, "r", "S")?.unwrap_or(DEFAULT_REPEAT);
                     segments.push(S { t, d, r });
                     if !self_closing {
-                        skip_element(tok)?;
+                        skip_element(reader)?;
                     }
                 }
-                Some(XmlEvent::Start { self_closing, .. }) => {
+                Some(Tag::Open { self_closing, .. }) => {
                     if !self_closing {
-                        skip_element(tok)?;
+                        skip_element(reader)?;
                     }
                 }
-                Some(XmlEvent::End { name }) => {
+                Some(Tag::Close { name }) => {
                     if name != EL {
                         return Err(DashParseError::MismatchedEndTag {
-                            expected: EL,
+                            expected: EL.to_string(),
                             found: name.to_string(),
                         });
                     }
@@ -1414,6 +1607,213 @@ fn parse_segment_timeline(
 mod tests {
     use super::*;
     use alloc::vec;
+
+    // -- quick-xml pull plumbing ---------------------------------------------
+
+    /// The five XML specials in one string.
+    const SPECIALS: &str = "a&b<c>d\"e'f";
+
+    fn first_open_attrs(xml: &str) -> Vec<(String, String)> {
+        let mut reader = new_reader(xml);
+        loop {
+            match next_tag(&mut reader).expect("tokenize") {
+                Some(Tag::Open { attrs, .. }) => return attrs,
+                Some(_) => continue,
+                None => panic!("no start tag"),
+            }
+        }
+    }
+
+    /// r04-W46: a `>` inside a quoted attribute value is legal raw (XML 1.0
+    /// §2.4 requires only `<` and `&` to be escaped there) and must not
+    /// terminate the start tag.
+    #[test]
+    fn greater_than_inside_attribute_value_is_not_a_tag_end() {
+        let attrs = first_open_attrs(r#"<SegmentTemplate media="a?x=1&amp;y=2>3" id="v"/>"#);
+        assert_eq!(
+            attrs,
+            vec![
+                ("media".to_string(), "a?x=1&y=2>3".to_string()),
+                ("id".to_string(), "v".to_string()),
+            ]
+        );
+        let attrs = first_open_attrs("<X a='>' b='z'/>");
+        assert_eq!(attrs[0].1, ">");
+    }
+
+    /// Numeric character references and the five named entities resolve in
+    /// attribute values.
+    #[test]
+    fn character_and_named_references_in_attribute_values() {
+        let attrs = first_open_attrs(r#"<X media="a?x=1&#38;n=$Number$" hex="&#x26;"/>"#);
+        assert_eq!(attrs[0].1, "a?x=1&n=$Number$");
+        assert_eq!(attrs[1].1, "&");
+        let attrs = first_open_attrs(r#"<X a="&lt;&gt;&amp;&quot;&apos;"/>"#);
+        assert_eq!(attrs[0].1, "<>&\"'");
+    }
+
+    /// An undefined entity in an attribute value is a structured error (the
+    /// hand-rolled tokenizer passed it through verbatim).
+    #[test]
+    fn undefined_entity_in_attribute_is_a_structured_error() {
+        let mut reader = new_reader(r#"<X b="&nope;"/>"#);
+        assert!(matches!(
+            next_tag(&mut reader),
+            Err(DashParseError::MalformedAttribute { .. })
+        ));
+    }
+
+    /// Hostile input: unterminated constructs are structured errors, never a
+    /// panic.
+    #[test]
+    fn unterminated_constructs_are_errors_not_panics() {
+        for bad in [
+            "<X",
+            r#"<X a="unterminated"#,
+            "<X a='1'",
+            "<!-- never closed",
+            "<![CDATA[ never",
+            "<?pi",
+        ] {
+            let mut reader = new_reader(bad);
+            let mut outcome = Ok(Some(()));
+            for _ in 0..4 {
+                outcome = next_tag(&mut reader).map(|t| t.map(|_| ()));
+                if !matches!(outcome, Ok(Some(()))) {
+                    break;
+                }
+            }
+            assert!(
+                matches!(outcome, Err(_) | Ok(None)),
+                "{bad:?} must not panic"
+            );
+        }
+        let mut reader = new_reader("<X");
+        assert!(matches!(
+            next_tag(&mut reader),
+            Err(DashParseError::UnterminatedTag { .. })
+        ));
+    }
+
+    /// A mismatched end tag is reported with both names.
+    #[test]
+    fn mismatched_end_tag_names_both_elements() {
+        let mut reader = new_reader("<A><B></A>");
+        let mut err = None;
+        for _ in 0..4 {
+            match next_tag(&mut reader) {
+                Ok(Some(_)) => {}
+                Ok(None) => break,
+                Err(e) => {
+                    err = Some(e);
+                    break;
+                }
+            }
+        }
+        assert!(matches!(
+            err,
+            Some(DashParseError::MismatchedEndTag { ref expected, ref found })
+                if expected == "B" && found == "A"
+        ));
+    }
+
+    /// Element text resolves entities (named + numeric) and CDATA; the old
+    /// tokenizer's 20k-entity linearity guard, ported: a long run of `&amp;`
+    /// decodes in one pass.
+    #[test]
+    fn text_content_resolves_references_and_is_linear() {
+        let xml = format!("<BaseURL>{}</BaseURL>", "&amp;".repeat(20_000));
+        let mut reader = new_reader(&xml);
+        assert!(matches!(next_tag(&mut reader), Ok(Some(Tag::Open { .. }))));
+        let text = text_content(&mut reader, "BaseURL", false)
+            .unwrap()
+            .unwrap();
+        assert_eq!(text, "&".repeat(20_000));
+
+        let mut reader = new_reader("<B>a&#65;&#x42;&lt;<![CDATA[<&>]]></B>");
+        next_tag(&mut reader).unwrap();
+        assert_eq!(
+            text_content(&mut reader, "B", false).unwrap().as_deref(),
+            Some("aAB<<&>")
+        );
+    }
+
+    /// An undefined entity or an out-of-range character reference in element
+    /// text is an error, never a panic; nested markup is skipped.
+    #[test]
+    fn bad_references_and_nested_markup_in_text() {
+        for bad in [
+            "<B>&nope;</B>",
+            "<B>&#0;</B>",
+            "<B>&#xD800;</B>",
+            "<B>&</B>",
+        ] {
+            let mut reader = new_reader(bad);
+            next_tag(&mut reader).unwrap();
+            assert!(text_content(&mut reader, "B", false).is_err(), "{bad}");
+        }
+        let mut reader = new_reader("<B>x<c>y</c></B><Next/>");
+        next_tag(&mut reader).unwrap();
+        assert_eq!(text_content(&mut reader, "B", false).unwrap(), None);
+        assert!(matches!(
+            next_tag(&mut reader),
+            Ok(Some(Tag::Open { ref name, .. })) if name == "Next"
+        ));
+    }
+
+    /// XML 1.0 §2.2: a control character is rejected, literally or through a
+    /// character reference, in element text and in attribute values.
+    #[test]
+    fn control_characters_are_rejected() {
+        for bad in [
+            "<B>&#x1;</B>",
+            "<B>&#1;</B>",
+            "<B>\u{1}</B>",
+            "<B>&#x0;</B>",
+        ] {
+            let mut reader = new_reader(bad);
+            next_tag(&mut reader).unwrap();
+            assert!(text_content(&mut reader, "B", false).is_err(), "{bad:?}");
+        }
+        for bad in [r#"<X a="&#x1;"/>"#, "<X a=\"\u{1}\"/>"] {
+            let mut reader = new_reader(bad);
+            assert!(
+                matches!(
+                    next_tag(&mut reader),
+                    Err(DashParseError::MalformedAttribute { .. })
+                ),
+                "{bad:?}"
+            );
+        }
+        let mut reader = new_reader("<B>a&#9;&#10;b</B>");
+        next_tag(&mut reader).unwrap();
+        assert_eq!(
+            text_content(&mut reader, "B", false).unwrap().as_deref(),
+            Some("a\t\nb")
+        );
+    }
+
+    /// Character data inside an element the parser skips (or between elements)
+    /// is validated exactly like modelled text.
+    #[test]
+    fn invalid_character_data_in_skipped_content_is_rejected() {
+        for bad in ["&nope;", "&#1;", "&#x1;", "\u{1}", "<![CDATA[\u{1}]]>"] {
+            let skipped =
+                format!(r#"<MPD profiles="p"><Foo><Deep>{bad}</Deep></Foo><Period/></MPD>"#);
+            assert!(Mpd::parse(&skipped).is_err(), "skipped subtree {bad:?}");
+            let between = format!(r#"<MPD profiles="p">{bad}<Period/></MPD>"#);
+            assert!(Mpd::parse(&between).is_err(), "between elements {bad:?}");
+            let base = format!(r#"<MPD profiles="p"><BaseURL>a<x>{bad}</x></BaseURL></MPD>"#);
+            assert!(Mpd::parse(&base).is_err(), "nested in BaseURL {bad:?}");
+        }
+    }
+
+    /// `SPECIALS` survives an attribute round trip through the escaped form.
+    #[test]
+    fn specials_round_trip_through_attribute_escaping() {
+        let xml = format!("<X a=\"{}\"/>", quick_xml::escape::escape(SPECIALS));
+        assert_eq!(first_open_attrs(&xml)[0].1, SPECIALS);
+    }
 
     // -- tokenizer / model -----------------------------------------------
 

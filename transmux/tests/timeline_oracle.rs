@@ -7,6 +7,7 @@
 //! read by ffprobe as well, so neither side of the comparison is this crate's
 //! own parser. Without ffprobe those checks skip loudly and the test-local
 //! walkers (no crate box/PES parsers) still assert the same values.
+#![cfg(feature = "std")]
 
 #[cfg(feature = "cli")]
 mod common;

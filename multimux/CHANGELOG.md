@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed
+- The Smooth manifest renderer (`output::smooth`) now writes through
+  `quick_xml::Writer` (every attribute value escaped by quick-xml) instead of
+  string concatenation; the rendered bytes are identical. The Smooth-pull
+  encryption probe is a real `quick-xml` pull loop instead of a text scan, so a
+  namespace-prefixed `<ms:Protection>` is now detected and a `<Protection>`
+  inside a comment or attribute value no longer false-positives. Adds the
+  single XML dependency of the XML-handling crates, `quick-xml`; `multimux` already required
+  `transmux`'s `std` XML paths. (Hand-rolled XML replaced by quick-xml
+  workspace-wide.)
+
 ### Fixed
 - **A non-finite `target_duration_secs` no longer panics the route.**
   `Config::validate` accepted `NaN` and `+inf` (it only checked `<= 0.0`), and

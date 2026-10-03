@@ -39,6 +39,8 @@ use axum::routing::get;
 use broadcast_common::{Timestamp, Unpackage};
 use hls_runtime::server::{DEFAULT_TRACK_ID, HlsBody, HlsRequest};
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
+use quick_xml::Writer;
+use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, Event};
 use transmux::CodecConfig;
 use transmux::smooth::SMOOTH_TIMESCALE;
 use transmux::{Fmp4Demux, SmoothPackager, SmoothStreamType};
@@ -711,11 +713,19 @@ fn render_manifest(layout: &WindowLayout) -> String {
         .max()
         .unwrap_or(0);
 
-    let mut xml = String::new();
-    xml.push_str("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
-    xml.push_str(&format!(
-        "<SmoothStreamingMedia MajorVersion=\"{MAJOR_VERSION}\" MinorVersion=\"{MINOR_VERSION}\" Duration=\"{total_duration}\" TimeScale=\"{SMOOTH_TIMESCALE}\" IsLive=\"true\" LookAheadFragmentCount=\"0\" DVRWindowLength=\"{total_duration}\">\n",
-    ));
+    // Every attribute value goes through quick-xml's escaping. Writing to an
+    // in-memory `Vec` cannot fail, so the write results are discarded.
+    let mut writer = Writer::new_with_indent(Vec::new(), b' ', 2);
+    let _ = writer.write_event(Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)));
+    let mut root = BytesStart::new("SmoothStreamingMedia");
+    root.push_attribute(("MajorVersion", MAJOR_VERSION.to_string().as_str()));
+    root.push_attribute(("MinorVersion", MINOR_VERSION.to_string().as_str()));
+    root.push_attribute(("Duration", total_duration.to_string().as_str()));
+    root.push_attribute(("TimeScale", SMOOTH_TIMESCALE.to_string().as_str()));
+    root.push_attribute(("IsLive", "true"));
+    root.push_attribute(("LookAheadFragmentCount", "0"));
+    root.push_attribute(("DVRWindowLength", total_duration.to_string().as_str()));
+    let _ = writer.write_event(Event::Start(root));
 
     for (quality_index, bitrate, params, chunks) in &layout.tracks {
         let url = format!(
@@ -725,52 +735,59 @@ fn render_manifest(layout: &WindowLayout) -> String {
         // `Bitrate` is the real advertised value (see `advertised_bitrate`),
         // not the quality ordinal — a client uses it for ABR, and it is the
         // value the fragment URL's `QualityLevels(N)` carries back.
-        xml.push_str("  <StreamIndex");
-        xml.push_str(&format!(" Type=\"{}\"", params.stream_type));
-        xml.push_str(" Subtype=\"\"");
-        xml.push_str(&format!(" Chunks=\"{}\"", chunks.chunks.len()));
-        xml.push_str(" QualityLevels=\"1\"");
-        xml.push_str(&format!(" Url=\"{url}\">\n"));
+        let mut stream = BytesStart::new("StreamIndex");
+        stream.push_attribute(("Type", params.stream_type.to_string().as_str()));
+        stream.push_attribute(("Subtype", ""));
+        stream.push_attribute(("Chunks", chunks.chunks.len().to_string().as_str()));
+        stream.push_attribute(("QualityLevels", "1"));
+        stream.push_attribute(("Url", url.as_str()));
+        let _ = writer.write_event(Event::Start(stream));
 
-        xml.push_str("    <QualityLevel");
-        xml.push_str(&format!(" Index=\"0\" Bitrate=\"{bitrate}\""));
-        xml.push_str(&format!(" FourCC=\"{}\"", params.fourcc));
+        let mut level = BytesStart::new("QualityLevel");
+        level.push_attribute(("Index", "0"));
+        level.push_attribute(("Bitrate", bitrate.to_string().as_str()));
+        level.push_attribute(("FourCC", params.fourcc.to_string().as_str()));
         if let Some(w) = params.max_width {
-            xml.push_str(&format!(" MaxWidth=\"{w}\""));
+            level.push_attribute(("MaxWidth", w.to_string().as_str()));
         }
         if let Some(h) = params.max_height {
-            xml.push_str(&format!(" MaxHeight=\"{h}\""));
+            level.push_attribute(("MaxHeight", h.to_string().as_str()));
         }
         if let Some(sr) = params.sampling_rate {
-            xml.push_str(&format!(" SamplingRate=\"{sr}\""));
+            level.push_attribute(("SamplingRate", sr.to_string().as_str()));
         }
         if let Some(ch) = params.channels {
-            xml.push_str(&format!(" Channels=\"{ch}\""));
+            level.push_attribute(("Channels", ch.to_string().as_str()));
         }
         if params.stream_type == "audio" {
-            xml.push_str(" BitsPerSample=\"16\" AudioTag=\"255\"");
+            level.push_attribute(("BitsPerSample", "16"));
+            level.push_attribute(("AudioTag", "255"));
         }
-        xml.push_str(&format!(
-            " CodecPrivateData=\"{}\"/>\n",
-            params.codec_private_data
+        level.push_attribute((
+            "CodecPrivateData",
+            params.codec_private_data.to_string().as_str(),
         ));
+        let _ = writer.write_event(Event::Empty(level));
 
         // One `c` per chunk: every `t` explicit (absolute, track timeline),
         // `d` the chunk's own duration, `n` the ordinal.
         for (i, c) in chunks.chunks.iter().enumerate() {
-            xml.push_str(&format!(
-                "    <c n=\"{i}\" t=\"{}\" d=\"{}\"/>\n",
-                c.start_ticks, c.duration_ticks
-            ));
+            let mut chunk = BytesStart::new("c");
+            chunk.push_attribute(("n", i.to_string().as_str()));
+            chunk.push_attribute(("t", c.start_ticks.to_string().as_str()));
+            chunk.push_attribute(("d", c.duration_ticks.to_string().as_str()));
+            let _ = writer.write_event(Event::Empty(chunk));
         }
         // `quality_index` is used only for the fragment URL selection; the
         // ordinal is not advertised as a bitrate.
         let _ = quality_index;
 
-        xml.push_str("  </StreamIndex>\n");
+        let _ = writer.write_event(Event::End(BytesEnd::new("StreamIndex")));
     }
 
-    xml.push_str("</SmoothStreamingMedia>\n");
+    let _ = writer.write_event(Event::End(BytesEnd::new("SmoothStreamingMedia")));
+    let mut xml = String::from_utf8_lossy(&writer.into_inner()).into_owned();
+    xml.push('\n');
     xml
 }
 
@@ -902,6 +919,134 @@ mod tests {
     use super::*;
     use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
     use transmux::nalu_types::{AvcPps, AvcSps};
+
+    /// Byte-for-byte golden: the rendered manifest equals the file in
+    /// `tests/golden/`, generated from the pre-quick-xml code on `origin/main`
+    /// (see `tests/golden/README.md`). `GOLDEN_BLESS=<dir>` writes instead.
+    #[test]
+    fn render_manifest_matches_golden() {
+        fn chunks(n: u64, dur: u64) -> TrackChunks {
+            TrackChunks {
+                chunks: (0..n)
+                    .map(|i| ChunkTiming {
+                        segment_seq: i as u32,
+                        start_ticks: i * dur,
+                        duration_ticks: dur,
+                    })
+                    .collect(),
+            }
+        }
+        let video = SmoothCodecParams {
+            stream_type: "video",
+            fourcc: "H264",
+            max_width: Some(1280),
+            max_height: Some(720),
+            sampling_rate: None,
+            channels: None,
+            codec_private_data: "00000001674D401F0000000168EE3C80".to_string(),
+        };
+        let audio = SmoothCodecParams {
+            stream_type: "audio",
+            fourcc: "AACL",
+            max_width: None,
+            max_height: None,
+            sampling_rate: Some(48_000),
+            channels: Some(2),
+            codec_private_data: "1190".to_string(),
+        };
+        let layouts = [
+            (
+                "video-audio",
+                WindowLayout {
+                    tracks: vec![
+                        (0, 2_500_000, video, chunks(3, 20_000_000)),
+                        (1, 128_000, audio, chunks(5, 21_333_333)),
+                    ],
+                },
+            ),
+            ("empty", WindowLayout { tracks: Vec::new() }),
+        ];
+        for (name, layout) in layouts {
+            let actual = render_manifest(&layout);
+            let file = format!("smooth-{name}.xml");
+            if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+                std::fs::create_dir_all(&dir).expect("create golden dir");
+                std::fs::write(std::path::Path::new(&dir).join(&file), &actual).expect("write");
+                continue;
+            }
+            let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/golden")
+                .join(&file);
+            let expected = std::fs::read_to_string(&path).expect("read golden");
+            assert_eq!(actual, expected, "{file} differs from the golden output");
+        }
+    }
+
+    /// Every attribute value in the rendered manifest is escaped by quick-xml:
+    /// all five XML specials in a value are escaped on the wire (exact text) and
+    /// re-parse to the original string.
+    #[test]
+    fn render_manifest_escapes_attribute_values_and_round_trips() {
+        use quick_xml::Reader;
+        use quick_xml::XmlVersion;
+        use quick_xml::events::Event;
+
+        const SPECIALS: &str = "a&b<c>d\"e'f";
+        let layout = WindowLayout {
+            tracks: vec![(
+                0,
+                1_000_000,
+                SmoothCodecParams {
+                    stream_type: "video",
+                    fourcc: "H264",
+                    max_width: Some(1280),
+                    max_height: Some(720),
+                    sampling_rate: None,
+                    channels: None,
+                    codec_private_data: SPECIALS.to_string(),
+                },
+                TrackChunks {
+                    chunks: vec![ChunkTiming {
+                        segment_seq: 0,
+                        start_ticks: 0,
+                        duration_ticks: 20_000_000,
+                    }],
+                },
+            )],
+        };
+        let xml = render_manifest(&layout);
+        assert!(
+            xml.contains("CodecPrivateData=\"a&amp;b&lt;c&gt;d&quot;e&apos;f\"/>"),
+            "value must be escaped on the wire:\n{xml}"
+        );
+        // The braces of the fragment URL template are not XML specials.
+        assert!(
+            xml.contains("Url=\"QualityLevels({bitrate})/Fragments(video={start time})\""),
+            "{xml}"
+        );
+
+        let mut reader = Reader::from_str(&xml);
+        let mut seen = None;
+        loop {
+            match reader.read_event().expect("well-formed manifest") {
+                Event::Empty(e) if e.name().as_ref() == "QualityLevel" => {
+                    for a in e.attributes() {
+                        let a = a.expect("attribute");
+                        if a.key.as_ref() == "CodecPrivateData" {
+                            seen = Some(
+                                a.normalized_value(XmlVersion::Implicit1_0)
+                                    .expect("value")
+                                    .into_owned(),
+                            );
+                        }
+                    }
+                }
+                Event::Eof => break,
+                _ => {}
+            }
+        }
+        assert_eq!(seen.as_deref(), Some(SPECIALS));
+    }
 
     /// `CodecPrivateData` must carry the H.264 parameter sets in Annex-B form,
     /// hex-encoded. It shipped empty (issue #934), which leaves a Smooth client

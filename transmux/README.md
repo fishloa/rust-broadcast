@@ -6,7 +6,9 @@ with one documented exception: WebM's VP8/Vorbis tracks have no ISOBMFF sample
 entry in this crate, so they don't participate in the fMP4/CMAF mux path (see
 the codec table below) — only `WebM → WebM`/MKV round-trips them.
 Built to spec (ISO/IEC 14496-12, 13818-1, 23009-1; RFC 8216/3550; [MS-SSTR]).
-No transcode, no codec bitstream en/decode. `no_std` + `alloc`.
+No transcode, no codec bitstream en/decode. `no_std` + `alloc`, except the XML
+manifest paths (DASH/LL-DASH MPD, Smooth Streaming, the PlayReady WRMHEADER),
+which need the `std` feature (they are built on `quick-xml`).
 
 The spokes are the `broadcast_common` inverse-pair traits **`Unpackage`** (container
 → IR) and **`Package`** (IR → container):

@@ -5,8 +5,10 @@
 //! plus any namespace-qualified attributes in the TT Style Namespaces, TT Metadata
 //! Namespace, and TT Parameter Namespace.
 //!
-//! Parsing is done via `roxmltree`; the parsed document tree is a fully typed
-//! Rust structure that does NOT contain the original XML text (no raw-passthrough).
+//! Parsing is a single pass over `quick-xml` `NsReader` events straight into the
+//! typed structures (no intermediate document tree); serialization writes
+//! `quick_xml::Writer` events. The parsed document is a fully typed Rust
+//! structure that does NOT contain the original XML text (no raw-passthrough).
 
 extern crate alloc;
 use alloc::boxed::Box;
@@ -17,6 +19,10 @@ use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
 use crate::foreign::{ForeignAttribute, UnknownElement, UnknownNode};
+use quick_xml::Writer;
+use quick_xml::events::{BytesDecl, BytesEnd, BytesStart, BytesText, Event};
+
+use crate::pull::{Item, Pull, StartTag};
 
 // ─── Namespace constants ───────────────────────────────────────────
 
@@ -53,7 +59,7 @@ pub const NS_SMPTE: &str = "http://www.smpte-ra.org/schemas/2052-1/2010/smpte-tt
 /// XML namespace: `http://www.w3.org/XML/1998/namespace`
 pub const NS_XML: &str = "http://www.w3.org/XML/1998/namespace";
 /// The XML namespace-declaration prefix URI (XML Names 1.0). Reserving a
-/// prefix or URI here in `add_scoped` is defensive: roxmltree never reports
+/// prefix or URI here in `add_scoped` is defensive: the XML reader never reports
 /// `xmlns` itself as a namespace, but a struct-built `ForeignAttribute`
 /// naming it must not corrupt the `<tt>` declarations (#1110/TT-W1).
 pub const NS_XMLNS: &str = "http://www.w3.org/2000/xmlns/";
@@ -124,38 +130,23 @@ impl Document {
 
     /// Parse a TTML document from an XML string.
     pub fn parse_str(xml: &str) -> Result<Self> {
-        let doc = roxmltree::Document::parse(xml).map_err(|e| Error::XmlParse(e.to_string()))?;
-
-        let root = doc.root_element();
-
-        // The root element might be nested if there's an XML declaration;
-        // find the <tt> element.
-        let tt_node = root
-            .children()
-            .find(|n| n.is_element() && n.tag_name().name() == "tt")
-            .or_else(|| {
-                if root.tag_name().name() == "tt" {
-                    Some(root)
-                } else {
-                    None
-                }
-            })
-            .ok_or_else(|| Error::NotTtmlRoot(root.tag_name().name().to_string()))?;
-
-        let tt_ns = tt_node.tag_name().namespace();
-        if tt_ns != Some(NS_TT) {
-            return Err(Error::NotTtmlRoot(format!(
-                "namespace {:?}",
-                tt_ns.unwrap_or("(none)")
-            )));
+        let mut pull = Pull::new(xml);
+        let root = pull.root()?;
+        match parse_document_root(&mut pull, &root) {
+            Ok(tt) => {
+                pull.finish()?;
+                Ok(Document {
+                    tt,
+                    xml_declaration: None,
+                })
+            }
+            Err(e) => {
+                // A well-formedness error later in the document takes
+                // precedence over the semantic error found first.
+                pull.drain()?;
+                Err(e)
+            }
         }
-
-        let tt = parse_tt_element(tt_node)?;
-
-        Ok(Document {
-            tt,
-            xml_declaration: None,
-        })
     }
 
     /// Serialize this document to an XML string. Takes `&mut self` because
@@ -165,11 +156,15 @@ impl Document {
     /// re-parses with exactly the namespaces the original resolved to
     /// (#1110/TT-W1). The document remains parseable/serializable afterwards.
     pub fn to_xml(&mut self) -> String {
-        let mut buf = String::new();
-        buf.push_str(r#"<?xml version="1.0" encoding="UTF-8"?>"#);
-        buf.push('\n');
+        let mut w: W = Writer::new(Vec::new());
+        emit(
+            &mut w,
+            Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)),
+        );
+        put_nl(&mut w);
         let mut ns = collect_namespaces(&mut self.tt);
-        serialize_tt_element(&self.tt, &mut buf, 0, &mut ns);
+        serialize_tt_element(&self.tt, &mut w, 0, &mut ns);
+        let mut buf = String::from_utf8_lossy(&w.into_inner()).into_owned();
         // Ensure trailing newline
         if !buf.ends_with('\n') {
             buf.push('\n');
@@ -267,7 +262,7 @@ pub struct TtElement {
     /// TTML2 §7.2/§7.3,
     /// #1110/TT-W1).
     pub unknown_children: Vec<UnknownElement>,
-    /// Vendor `xmlns:` declarations written on `<tt>` itself. roxmltree
+    /// Vendor `xmlns:` declarations written on `<tt>` itself. The XML reader
     /// consumes every namespace declaration, so a vendor binding that only a
     /// descendant's foreign attribute uses would otherwise be lost; capturing
     /// it here lets the serializer re-declare it (TTML2 §7.2, #1110/TT-W1).
@@ -1550,14 +1545,8 @@ pub struct SourceElement {
 // Removed: resolve_ns unused, has_itts unused
 
 /// Get the prefixed name for an attribute value lookup in the document context.
-fn attribute_value<'a>(node: &roxmltree::Node<'a, 'a>, ns: &str, local: &str) -> Option<&'a str> {
-    // Try all attributes on the node matching ns + local_name
-    for attr in node.attributes() {
-        if attr.namespace() == Some(ns) && attr.name() == local {
-            return Some(attr.value());
-        }
-    }
-    None
+fn attribute_value<'a>(node: &'a StartTag, ns: &str, local: &str) -> Option<&'a str> {
+    node.attribute_in(Some(ns), local)
 }
 
 /// Namespaces whose attributes the crate models explicitly: an attribute in
@@ -1588,21 +1577,24 @@ const MODELED_ATTRIBUTE_NAMESPACES: &[&str] = &[
 /// Capture every attribute of `node` whose namespace the crate does not
 /// model, preserving the original `xmlns:` prefix that was in scope for it
 /// (TTML2 §7.2, #1110/TT-W1).
-fn foreign_attributes(node: &roxmltree::Node<'_, '_>) -> Vec<ForeignAttribute> {
+fn foreign_attributes(node: &StartTag) -> Vec<ForeignAttribute> {
     // Each preserved attribute also carries the `xmlns:` declarations in
-    // scope: roxmltree consumes declarations, and an inner-scope override of
-    // a prefix (e.g. `xmlns:v="urn:two"` written on the element itself) is
-    // otherwise unrecoverable, so the serializer needs them to reproduce the
-    // namespace each attribute resolved to (#1110/TT-W1).
+    // scope: an inner-scope override of a prefix (e.g. `xmlns:v="urn:two"`
+    // written on the element itself) is otherwise unrecoverable, so the
+    // serializer needs them to reproduce the namespace each attribute resolved
+    // to (#1110/TT-W1).
     let scoped = capture_scoped_namespaces(node);
     node.attributes()
-        .filter(|attr| !MODELED_ATTRIBUTE_NAMESPACES.contains(&attr.namespace().unwrap_or("")))
+        .iter()
+        .filter(|attr| {
+            !MODELED_ATTRIBUTE_NAMESPACES.contains(&attr.namespace.as_deref().unwrap_or(""))
+        })
         .map(|attr| {
             let mut foreign = ForeignAttribute::new(
-                prefix_for_uri(node, attr.namespace()),
-                attr.namespace(),
-                attr.name(),
-                attr.value(),
+                prefix_for_uri(node, attr.namespace.as_deref()),
+                attr.namespace.as_deref(),
+                &attr.name,
+                &attr.value,
             );
             foreign.scoped_namespaces = scoped.clone().unwrap_or_default();
             foreign
@@ -1611,7 +1603,7 @@ fn foreign_attributes(node: &roxmltree::Node<'_, '_>) -> Vec<ForeignAttribute> {
 }
 
 /// The namespaced declarations on `node` that the crate does not already
-/// re-declare on `<tt>`. roxmltree's `namespaces()` walks the whole scope
+/// re-declare on `<tt>`. the tree's `namespaces()` walks the whole scope
 /// chain, so a declaration written on an ancestor would be captured again at
 /// every descendant; declarations for URIs the crate always binds on `<tt>`
 /// (the five core bindings) and for its conventional extension prefixes are
@@ -1621,10 +1613,10 @@ fn foreign_attributes(node: &roxmltree::Node<'_, '_>) -> Vec<ForeignAttribute> {
 /// vendor binding from further up that only unknown content uses), which is
 /// mirrored to `<tt>` on output: namespace-equivalent, since widening a
 /// scope changes no resolved name.
-fn capture_scoped_namespaces(node: &roxmltree::Node<'_, '_>) -> Option<Vec<(String, String)>> {
+fn capture_scoped_namespaces(node: &StartTag) -> Option<Vec<(String, String)>> {
     let decls: Vec<(String, String)> = node
-        .namespaces()
-        .filter_map(|n| n.name().map(|p| (String::from(p), String::from(n.uri()))))
+        .scope()
+        .iter()
         .filter(|(p, u)| {
             !p.is_empty()
                 && p != "xml"
@@ -1632,20 +1624,20 @@ fn capture_scoped_namespaces(node: &roxmltree::Node<'_, '_>) -> Option<Vec<(Stri
                 && !KEY_BINDINGS.iter().any(|(_, ku)| ku == u)
                 && !KNOWN_FOREIGN_NAMESPACES.iter().any(|(_, ku)| ku == u)
         })
+        .cloned()
         .collect();
     if decls.is_empty() { None } else { Some(decls) }
 }
 
 /// Find the `xmlns:` prefix bound to `uri` in scope of `node` (`None` for
 /// no namespace or the default-namespace binding, which never carries an
-/// attribute). roxmltree lists the default namespace first in
+/// attribute). the XML reader lists the default namespace first in
 /// `namespaces()`; the first non-default prefix matching the URI wins.
-fn prefix_for_uri<'a>(node: &roxmltree::Node<'_, 'a>, uri: Option<&str>) -> Option<&'a str> {
+fn prefix_for_uri<'a>(node: &'a StartTag, uri: Option<&str>) -> Option<&'a str> {
     let uri = uri?;
-    node.namespaces().find_map(|n| {
-        let name = n.name()?;
-        (n.uri() == uri && !name.is_empty()).then_some(name)
-    })
+    node.scope()
+        .iter()
+        .find_map(|(prefix, bound)| (bound == uri && !prefix.is_empty()).then_some(prefix.as_str()))
 }
 
 /// Capture an unmodeled element as a lossless [`UnknownElement`] subtree:
@@ -1653,14 +1645,15 @@ fn prefix_for_uri<'a>(node: &roxmltree::Node<'_, 'a>, uri: Option<&str>) -> Opti
 /// that was in scope for it), child elements and merged text, in document
 /// order (TTML2 §7.2/§7.3, #1110/TT-W1).
 ///
-/// roxmltree resolves QNames and consumes `xmlns:` declarations, so the
+/// The XML reader resolves QNames and consumes `xmlns:` declarations, so the
 /// subtree is lossless in *resolved* identity (URI + local name + value)
 /// and remembers the original prefix spelling via `prefix`; the
 /// serializer re-declares every preserved URI on `<tt>` (original prefix
 /// when still free, otherwise a generated `ttmfallbackN`), which is
 /// namespace-equivalent to the original document.
 fn parse_unknown_element(
-    node: &roxmltree::Node<'_, '_>,
+    p: &mut Pull<'_>,
+    node: &StartTag,
     depth: usize,
 ) -> Result<Box<UnknownElement>> {
     if depth >= MAX_UNKNOWN_DEPTH {
@@ -1669,168 +1662,220 @@ fn parse_unknown_element(
             detail: "Foreign element nesting exceeds maximum depth of 64".to_string(),
         });
     }
+    let scanned = scan_children(p, node, depth + 1)?;
+    Ok(Box::new(unknown_from(node, scanned.children)))
+}
 
+/// What streaming over an element's content captured: every child as an
+/// [`UnknownNode`] (text runs merged, comments and PIs dropped), the text of the
+/// first child *if that child is character data*, and whether any child was an
+/// element.
+struct Scanned {
+    children: Vec<UnknownNode>,
+    first_text: String,
+    has_element: bool,
+}
+
+/// Stream over the content of `node`, capturing child elements losslessly at
+/// nesting depth `child_depth` and text runs in document order.
+fn scan_children(p: &mut Pull<'_>, node: &StartTag, child_depth: usize) -> Result<Scanned> {
+    let mut scanned = Scanned {
+        children: Vec::new(),
+        first_text: String::new(),
+        has_element: false,
+    };
+    let mut first = true;
+    loop {
+        match p.next(node)? {
+            Item::Start(child) => {
+                scanned.has_element = true;
+                scanned
+                    .children
+                    .push(UnknownNode::Element(parse_unknown_element(
+                        p,
+                        &child,
+                        child_depth,
+                    )?));
+            }
+            Item::Text(text) => {
+                if first {
+                    scanned.first_text = text.clone();
+                }
+                push_text(&mut scanned.children, text);
+            }
+            Item::Other => {}
+            Item::End => break,
+        }
+        first = false;
+    }
+    Ok(scanned)
+}
+
+/// Append a text run to unknown-subtree `children`, merging with a preceding
+/// text node (a comment splits a run into adjacent text nodes; merging keeps
+/// the re-serialized subtree stable).
+fn push_text(children: &mut Vec<UnknownNode>, text: String) {
+    if text.is_empty() {
+        return;
+    }
+    if let Some(UnknownNode::Text(last)) = children.last_mut() {
+        last.push_str(&text);
+    } else {
+        children.push(UnknownNode::Text(text));
+    }
+}
+
+/// The [`UnknownElement`] for `node` with already-captured `children`: the
+/// original prefix, namespace URI, every attribute (each with the prefix that
+/// was in scope for it) and the scoped `xmlns:` declarations.
+fn unknown_from(node: &StartTag, children: Vec<UnknownNode>) -> UnknownElement {
     let attributes: Vec<ForeignAttribute> = node
         .attributes()
+        .iter()
         .map(|attr| {
             ForeignAttribute::new(
-                prefix_for_uri(node, attr.namespace()),
-                attr.namespace(),
-                attr.name(),
-                attr.value(),
+                prefix_for_uri(node, attr.namespace.as_deref()),
+                attr.namespace.as_deref(),
+                &attr.name,
+                &attr.value,
             )
         })
         .collect();
-
-    let mut children = Vec::new();
-    for child in node.children() {
-        match child.node_type() {
-            roxmltree::NodeType::Element => {
-                children.push(UnknownNode::Element(parse_unknown_element(
-                    &child,
-                    depth + 1,
-                )?));
-            }
-            roxmltree::NodeType::Text => {
-                let text = child.text().unwrap_or("");
-                if text.is_empty() {
-                    continue;
-                }
-                // roxmltree splits text nodes at entity references; merge
-                // adjacent text so the re-serialized subtree is stable.
-                if let Some(UnknownNode::Text(last)) = children.last_mut() {
-                    last.push_str(text);
-                } else {
-                    children.push(UnknownNode::Text(String::from(text)));
-                }
-            }
-            // Comments and PIs are not representable (never serialized).
-            _ => {}
-        }
-    }
-
-    // roxmltree resolves element QNames to (uri, local) and does not expose
-    // the original element prefix; recover the first non-default prefix
-    // bound to the element's namespace in scope, which is the prefix the
-    // author must have written for a foreign element.
-    let element_ns = node.tag_name().namespace();
-    // roxmltree lists in-scope declarations innermost-first, so the *first*
-    // non-empty prefix bound to the element's URI is the one this element
-    // itself used (a local `xmlns:v` override beats an ancestor's binding).
-    let prefix = node
-        .namespaces()
-        .find(|n| n.name().is_some_and(|nm| !nm.is_empty()) && Some(n.uri()) == element_ns)
-        .and_then(|n| n.name())
-        .map(String::from);
-    Ok(Box::new(UnknownElement {
+    // The reader resolves element names to (uri, local); recover the first
+    // non-default prefix bound to the element's namespace in scope,
+    // innermost-first, which is the prefix the author must have written for a
+    // foreign element (a local `xmlns:v` override beats an ancestor's binding).
+    let prefix = prefix_for_uri(node, node.namespace()).map(String::from);
+    UnknownElement {
         prefix,
-        namespace: node.tag_name().namespace().map(String::from),
-        local_name: String::from(node.tag_name().name()),
+        namespace: node.namespace().map(String::from),
+        local_name: String::from(node.local()),
         attributes,
         children,
         scoped_namespaces: capture_scoped_namespaces(node),
-    }))
+    }
 }
 
 // ─── XML Parsing Functions ─────────────────────────────────────────
 
-/// Parse the root `<tt>` element from a roxmltree node.
-fn parse_tt_element(node: roxmltree::Node<'_, '_>) -> Result<TtElement> {
+/// Parse the document from its root start tag: the root itself when it is
+/// `<tt>`, otherwise the first `<tt>` child of a wrapper root.
+fn parse_document_root(p: &mut Pull<'_>, root: &StartTag) -> Result<TtElement> {
+    if root.local() == "tt" {
+        return parse_tt_root(p, root);
+    }
+    let mut tt = None;
+    while let Some(child) = p.next_element(root)? {
+        if tt.is_none() && child.local() == "tt" {
+            tt = Some(parse_tt_root(p, &child)?);
+        } else {
+            p.skip(&child)?;
+        }
+    }
+    tt.ok_or_else(|| Error::NotTtmlRoot(root.local().to_string()))
+}
+
+/// Check the `<tt>` namespace, then parse it.
+fn parse_tt_root(p: &mut Pull<'_>, tt: &StartTag) -> Result<TtElement> {
+    let tt_ns = tt.namespace();
+    if tt_ns != Some(NS_TT) {
+        return Err(Error::NotTtmlRoot(format!(
+            "namespace {:?}",
+            tt_ns.unwrap_or("(none)")
+        )));
+    }
+    parse_tt_element(p, tt)
+}
+
+/// Parse the root `<tt>` element from an XML tree node.
+fn parse_tt_element(p: &mut Pull<'_>, node: &StartTag) -> Result<TtElement> {
     let mut head = None;
     let mut body = None;
     let mut unknown_children = Vec::new();
 
-    for child in node.children() {
-        if !child.is_element() {
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
+    while let Some(child) = p.next_element(node)? {
+        let name = child.local();
+        let ns = child.namespace();
 
         match (name, ns) {
             ("head", Some(NS_TT)) => {
-                head = Some(parse_head_element(child)?);
+                head = Some(parse_head_element(p, &child)?);
             }
             ("body", Some(NS_TT)) => {
-                body = Some(parse_body_element(child)?);
+                body = Some(parse_body_element(p, &child)?);
             }
             // Foreign/unrecognized elements are kept losslessly (§7.2/§7.3).
             _ => {
-                unknown_children.push(*parse_unknown_element(&child, 0)?);
+                unknown_children.push(*parse_unknown_element(p, &child, 0)?);
             }
         }
     }
 
     Ok(TtElement {
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
-        ttp_time_base: attribute_value(&node, NS_TTP, "timeBase").map(|s| s.to_string()),
-        ttp_frame_rate: attribute_value(&node, NS_TTP, "frameRate").map(|s| s.to_string()),
-        ttp_frame_rate_multiplier: attribute_value(&node, NS_TTP, "frameRateMultiplier")
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
+        ttp_time_base: attribute_value(node, NS_TTP, "timeBase").map(|s| s.to_string()),
+        ttp_frame_rate: attribute_value(node, NS_TTP, "frameRate").map(|s| s.to_string()),
+        ttp_frame_rate_multiplier: attribute_value(node, NS_TTP, "frameRateMultiplier")
             .map(|s| s.to_string()),
-        ttp_tick_rate: attribute_value(&node, NS_TTP, "tickRate").map(|s| s.to_string()),
-        ttp_sub_frame_rate: attribute_value(&node, NS_TTP, "subFrameRate").map(|s| s.to_string()),
-        ttp_drop_mode: attribute_value(&node, NS_TTP, "dropMode").map(|s| s.to_string()),
-        ttp_marker_mode: attribute_value(&node, NS_TTP, "markerMode").map(|s| s.to_string()),
-        ttp_clock_mode: attribute_value(&node, NS_TTP, "clockMode").map(|s| s.to_string()),
-        ttp_cell_resolution: attribute_value(&node, NS_TTP, "cellResolution")
+        ttp_tick_rate: attribute_value(node, NS_TTP, "tickRate").map(|s| s.to_string()),
+        ttp_sub_frame_rate: attribute_value(node, NS_TTP, "subFrameRate").map(|s| s.to_string()),
+        ttp_drop_mode: attribute_value(node, NS_TTP, "dropMode").map(|s| s.to_string()),
+        ttp_marker_mode: attribute_value(node, NS_TTP, "markerMode").map(|s| s.to_string()),
+        ttp_clock_mode: attribute_value(node, NS_TTP, "clockMode").map(|s| s.to_string()),
+        ttp_cell_resolution: attribute_value(node, NS_TTP, "cellResolution").map(|s| s.to_string()),
+        ttp_pixel_aspect_ratio: attribute_value(node, NS_TTP, "pixelAspectRatio")
             .map(|s| s.to_string()),
-        ttp_pixel_aspect_ratio: attribute_value(&node, NS_TTP, "pixelAspectRatio")
+        ttp_display_aspect_ratio: attribute_value(node, NS_TTP, "displayAspectRatio")
             .map(|s| s.to_string()),
-        ttp_display_aspect_ratio: attribute_value(&node, NS_TTP, "displayAspectRatio")
+        ttp_profile: attribute_value(node, NS_TTP, "profile").map(|s| s.to_string()),
+        ttp_content_profiles: attribute_value(node, NS_TTP, "contentProfiles")
             .map(|s| s.to_string()),
-        ttp_profile: attribute_value(&node, NS_TTP, "profile").map(|s| s.to_string()),
-        ttp_content_profiles: attribute_value(&node, NS_TTP, "contentProfiles")
+        ttp_content_profile_combination: attribute_value(node, NS_TTP, "contentProfileCombination")
             .map(|s| s.to_string()),
-        ttp_content_profile_combination: attribute_value(
-            &node,
-            NS_TTP,
-            "contentProfileCombination",
-        )
-        .map(|s| s.to_string()),
-        ttp_processor_profiles: attribute_value(&node, NS_TTP, "processorProfiles")
+        ttp_processor_profiles: attribute_value(node, NS_TTP, "processorProfiles")
             .map(|s| s.to_string()),
         ttp_processor_profile_combination: attribute_value(
-            &node,
+            node,
             NS_TTP,
             "processorProfileCombination",
         )
         .map(|s| s.to_string()),
         ttp_infer_processor_profile_method: attribute_value(
-            &node,
+            node,
             NS_TTP,
             "inferProcessorProfileMethod",
         )
         .map(|s| s.to_string()),
         ttp_infer_processor_profile_source: attribute_value(
-            &node,
+            node,
             NS_TTP,
             "inferProcessorProfileSource",
         )
         .map(|s| s.to_string()),
-        ttp_permit_feature_narrowing: attribute_value(&node, NS_TTP, "permitFeatureNarrowing")
+        ttp_permit_feature_narrowing: attribute_value(node, NS_TTP, "permitFeatureNarrowing")
             .map(|s| s.to_string()),
-        ttp_permit_feature_widening: attribute_value(&node, NS_TTP, "permitFeatureWidening")
+        ttp_permit_feature_widening: attribute_value(node, NS_TTP, "permitFeatureWidening")
             .map(|s| s.to_string()),
-        ttp_validation: attribute_value(&node, NS_TTP, "validation").map(|s| s.to_string()),
-        ttp_validation_action: attribute_value(&node, NS_TTP, "validationAction")
+        ttp_validation: attribute_value(node, NS_TTP, "validation").map(|s| s.to_string()),
+        ttp_validation_action: attribute_value(node, NS_TTP, "validationAction")
             .map(|s| s.to_string()),
-        tts_extent: attribute_value(&node, NS_TTS, "extent").map(|s| s.to_string()),
-        ittp_active_area: attribute_value(&node, NS_ITTP, "activeArea").map(|s| s.to_string()),
-        ittp_aspect_ratio: attribute_value(&node, NS_ITTP, "aspectRatio").map(|s| s.to_string()),
-        ittp_progressively_decodable: attribute_value(&node, NS_ITTP, "progressivelyDecodable")
+        tts_extent: attribute_value(node, NS_TTS, "extent").map(|s| s.to_string()),
+        ittp_active_area: attribute_value(node, NS_ITTP, "activeArea").map(|s| s.to_string()),
+        ittp_aspect_ratio: attribute_value(node, NS_ITTP, "aspectRatio").map(|s| s.to_string()),
+        ittp_progressively_decodable: attribute_value(node, NS_ITTP, "progressivelyDecodable")
             .map(|s| s.to_string()),
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         head,
         body,
         unknown_children,
-        scoped_namespaces: capture_scoped_namespaces(&node),
+        scoped_namespaces: capture_scoped_namespaces(node),
     })
 }
 
-fn parse_head_element(node: roxmltree::Node<'_, '_>) -> Result<HeadElement> {
+fn parse_head_element(p: &mut Pull<'_>, node: &StartTag) -> Result<HeadElement> {
     let mut metadata = Vec::new();
     let mut styling = None;
     let mut layout = None;
@@ -1838,69 +1883,66 @@ fn parse_head_element(node: roxmltree::Node<'_, '_>) -> Result<HeadElement> {
     let mut unknown_children = Vec::new();
 
     // Also collect metadata from top-level
-    for child in node.children() {
-        if !child.is_element() {
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
+    while let Some(child) = p.next_element(node)? {
+        let name = child.local();
+        let ns = child.namespace();
 
         match (name, ns) {
             ("metadata", Some(NS_TT)) => {
-                metadata.push(MetadataChild::Metadata(*parse_metadata_element(child)?));
+                metadata.push(MetadataChild::Metadata(*parse_metadata_element(p, &child)?));
             }
             ("title", Some(NS_TTM)) => {
-                metadata.push(MetadataChild::TtmTitle(parse_ttm_text(child)?));
+                metadata.push(MetadataChild::TtmTitle(parse_ttm_text(p, &child)?));
             }
             ("desc", Some(NS_TTM)) => {
-                metadata.push(MetadataChild::TtmDesc(parse_ttm_text(child)?));
+                metadata.push(MetadataChild::TtmDesc(parse_ttm_text(p, &child)?));
             }
             ("copyright", Some(NS_TTM)) => {
-                metadata.push(MetadataChild::TtmCopyright(parse_ttm_text(child)?));
+                metadata.push(MetadataChild::TtmCopyright(parse_ttm_text(p, &child)?));
             }
             ("agent", Some(NS_TTM)) => {
-                metadata.push(MetadataChild::TtmAgent(parse_ttm_agent(child)?));
+                metadata.push(MetadataChild::TtmAgent(parse_ttm_agent(p, &child)?));
             }
             ("item", Some(NS_TTM)) => {
-                metadata.push(MetadataChild::TtmItem(parse_ttm_item(child)?));
+                metadata.push(MetadataChild::TtmItem(parse_ttm_item(p, &child)?));
             }
             ("name", Some(NS_TTM)) => {
-                metadata.push(MetadataChild::TtmName(parse_ttm_name(child)?));
+                metadata.push(MetadataChild::TtmName(parse_ttm_name(p, &child)?));
             }
             ("documentMetadata", Some(NS_EBUTTM)) => {
                 metadata.push(MetadataChild::EbuttmDocumentMetadata(parse_ebuttm_element(
-                    child,
+                    p, &child,
                 )?));
             }
             ("conformsToStandard", Some(NS_EBUTTM)) => {
                 metadata.push(MetadataChild::EbuttmConformsToStandard(parse_ebuttm_text(
-                    child,
+                    p, &child,
                 )?));
             }
             ("altText", Some(NS_ITTM)) => {
-                metadata.push(MetadataChild::IttmAltText(parse_ittm_alt_text(child)?));
+                metadata.push(MetadataChild::IttmAltText(parse_ittm_alt_text(p, &child)?));
             }
             ("styling", Some(NS_TT)) => {
-                styling = Some(parse_styling_element(child)?);
+                styling = Some(parse_styling_element(p, &child)?);
             }
             ("layout", Some(NS_TT)) => {
-                layout = Some(parse_layout_element(child)?);
+                layout = Some(parse_layout_element(p, &child)?);
             }
             ("resources", Some(NS_TT)) => {
-                resources = Some(parse_resources_element(child)?);
+                resources = Some(parse_resources_element(p, &child)?);
             }
             _ => {
-                unknown_children.push(*parse_unknown_element(&child, 0)?);
+                unknown_children.push(*parse_unknown_element(p, &child, 0)?);
             }
         }
     }
 
     Ok(HeadElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
-        foreign_attributes: foreign_attributes(&node),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
+        foreign_attributes: foreign_attributes(node),
         metadata,
         styling,
         layout,
@@ -1909,53 +1951,50 @@ fn parse_head_element(node: roxmltree::Node<'_, '_>) -> Result<HeadElement> {
     })
 }
 
-fn parse_body_element(node: roxmltree::Node<'_, '_>) -> Result<BodyElement> {
+fn parse_body_element(p: &mut Pull<'_>, node: &StartTag) -> Result<BodyElement> {
     let mut divs = Vec::new();
     let mut metadata = Vec::new();
     let mut animations = Vec::new();
     let mut unknown_children = Vec::new();
 
-    for child in node.children() {
-        if !child.is_element() {
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
+    while let Some(child) = p.next_element(node)? {
+        let name = child.local();
+        let ns = child.namespace();
 
         match (name, ns) {
             ("div", Some(NS_TT)) => {
-                divs.push(parse_div_element(child)?);
+                divs.push(parse_div_element(p, &child)?);
             }
             ("metadata", Some(NS_TT)) => {
-                metadata.push(MetadataChild::Metadata(*parse_metadata_element(child)?));
+                metadata.push(MetadataChild::Metadata(*parse_metadata_element(p, &child)?));
             }
             ("title", Some(NS_TTM)) => {
-                metadata.push(MetadataChild::TtmTitle(parse_ttm_text(child)?));
+                metadata.push(MetadataChild::TtmTitle(parse_ttm_text(p, &child)?));
             }
             ("desc", Some(NS_TTM)) => {
-                metadata.push(MetadataChild::TtmDesc(parse_ttm_text(child)?));
+                metadata.push(MetadataChild::TtmDesc(parse_ttm_text(p, &child)?));
             }
             ("copyright", Some(NS_TTM)) => {
-                metadata.push(MetadataChild::TtmCopyright(parse_ttm_text(child)?));
+                metadata.push(MetadataChild::TtmCopyright(parse_ttm_text(p, &child)?));
             }
             ("documentMetadata", Some(NS_EBUTTM)) => {
                 metadata.push(MetadataChild::EbuttmDocumentMetadata(parse_ebuttm_element(
-                    child,
+                    p, &child,
                 )?));
             }
             ("conformsToStandard", Some(NS_EBUTTM)) => {
                 metadata.push(MetadataChild::EbuttmConformsToStandard(parse_ebuttm_text(
-                    child,
+                    p, &child,
                 )?));
             }
             ("altText", Some(NS_ITTM)) => {
-                metadata.push(MetadataChild::IttmAltText(parse_ittm_alt_text(child)?));
+                metadata.push(MetadataChild::IttmAltText(parse_ittm_alt_text(p, &child)?));
             }
             ("set", Some(NS_TT)) => {
-                animations.push(AnimationChild::Set(*parse_set_element(child)?));
+                animations.push(AnimationChild::Set(*parse_set_element(p, &child)?));
             }
             _ => {
-                unknown_children.push(*parse_unknown_element(&child, 0)?);
+                unknown_children.push(*parse_unknown_element(p, &child, 0)?);
             }
         }
     }
@@ -1963,10 +2002,10 @@ fn parse_body_element(node: roxmltree::Node<'_, '_>) -> Result<BodyElement> {
     let style_attrs = parse_style_attributes(node);
 
     Ok(BodyElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         begin: node.attribute("begin").map(|s| s.to_string()),
         dur: node.attribute("dur").map(|s| s.to_string()),
         end: node.attribute("end").map(|s| s.to_string()),
@@ -1976,7 +2015,7 @@ fn parse_body_element(node: roxmltree::Node<'_, '_>) -> Result<BodyElement> {
         animate: node.attribute("animate").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         style_attributes: style_attrs,
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         divs,
         metadata,
         animations,
@@ -1984,7 +2023,7 @@ fn parse_body_element(node: roxmltree::Node<'_, '_>) -> Result<BodyElement> {
     })
 }
 
-fn parse_div_element(node: roxmltree::Node<'_, '_>) -> Result<DivElement> {
+fn parse_div_element(p: &mut Pull<'_>, node: &StartTag) -> Result<DivElement> {
     let mut paragraphs = Vec::new();
     let mut images = Vec::new();
     let mut audio = Vec::new();
@@ -1992,34 +2031,31 @@ fn parse_div_element(node: roxmltree::Node<'_, '_>) -> Result<DivElement> {
     let mut animations = Vec::new();
     let mut unknown_children = Vec::new();
 
-    for child in node.children() {
-        if !child.is_element() {
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
+    while let Some(child) = p.next_element(node)? {
+        let name = child.local();
+        let ns = child.namespace();
 
         match (name, ns) {
             ("p", Some(NS_TT)) => {
-                paragraphs.push(parse_p_element(child)?);
+                paragraphs.push(parse_p_element(p, &child)?);
             }
             ("image", Some(NS_TT)) => {
-                images.push(*parse_image_element(child)?);
+                images.push(*parse_image_element(p, &child)?);
             }
             ("audio", Some(NS_TT)) => {
-                audio.push(*parse_audio_element(child)?);
+                audio.push(*parse_audio_element(p, &child)?);
             }
             ("metadata", Some(NS_TT)) => {
-                metadata.push(MetadataChild::Metadata(*parse_metadata_element(child)?));
+                metadata.push(MetadataChild::Metadata(*parse_metadata_element(p, &child)?));
             }
             ("altText", Some(NS_ITTM)) => {
-                metadata.push(MetadataChild::IttmAltText(parse_ittm_alt_text(child)?));
+                metadata.push(MetadataChild::IttmAltText(parse_ittm_alt_text(p, &child)?));
             }
             ("set", Some(NS_TT)) => {
-                animations.push(AnimationChild::Set(*parse_set_element(child)?));
+                animations.push(AnimationChild::Set(*parse_set_element(p, &child)?));
             }
             _ => {
-                unknown_children.push(*parse_unknown_element(&child, 0)?);
+                unknown_children.push(*parse_unknown_element(p, &child, 0)?);
             }
         }
     }
@@ -2027,10 +2063,10 @@ fn parse_div_element(node: roxmltree::Node<'_, '_>) -> Result<DivElement> {
     let style_attrs = parse_style_attributes(node);
 
     Ok(DivElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         begin: node.attribute("begin").map(|s| s.to_string()),
         dur: node.attribute("dur").map(|s| s.to_string()),
         end: node.attribute("end").map(|s| s.to_string()),
@@ -2040,8 +2076,8 @@ fn parse_div_element(node: roxmltree::Node<'_, '_>) -> Result<DivElement> {
         animate: node.attribute("animate").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         style_attributes: style_attrs,
-        foreign_attributes: foreign_attributes(&node),
-        smpte_background_image: attribute_value(&node, NS_SMPTE, "backgroundImage")
+        foreign_attributes: foreign_attributes(node),
+        smpte_background_image: attribute_value(node, NS_SMPTE, "backgroundImage")
             .map(|s| s.to_string()),
         paragraphs,
         images,
@@ -2052,63 +2088,58 @@ fn parse_div_element(node: roxmltree::Node<'_, '_>) -> Result<DivElement> {
     })
 }
 
-fn parse_p_element(node: roxmltree::Node<'_, '_>) -> Result<PElement> {
+fn parse_p_element(p: &mut Pull<'_>, node: &StartTag) -> Result<PElement> {
     let mut content: Vec<InlineContent> = Vec::new();
     let mut metadata = Vec::new();
     let mut animations = Vec::new();
     let mut unknown_children = Vec::new();
 
-    for child in node.children() {
-        if child.is_text() {
-            let text = child.text().unwrap_or("");
-            if !text.is_empty() {
-                if let Some(last) = content.last_mut()
-                    && let InlineContent::Text(t) = last
-                {
-                    t.push_str(text);
-                    continue;
+    loop {
+        match p.next(node)? {
+            Item::Text(text) => {
+                if let Some(InlineContent::Text(t)) = content.last_mut() {
+                    t.push_str(&text);
+                } else {
+                    content.push(InlineContent::Text(text));
                 }
-                content.push(InlineContent::Text(text.to_string()));
             }
-        } else if child.is_element() {
-            let name = child.tag_name().name();
-            let ns = child.tag_name().namespace();
-
-            match (name, ns) {
+            Item::Start(child) => match (child.local(), child.namespace()) {
                 ("span", Some(NS_TT)) => {
-                    content.push(InlineContent::Span(parse_span_element(child)?));
+                    content.push(InlineContent::Span(parse_span_element(p, &child)?));
                 }
                 ("br", Some(NS_TT)) => {
-                    content.push(InlineContent::Br(Box::new(parse_br_element(child)?)));
+                    content.push(InlineContent::Br(Box::new(parse_br_element(p, &child)?)));
                 }
                 ("image", Some(NS_TT)) => {
-                    content.push(InlineContent::Image(parse_image_element(child)?));
+                    content.push(InlineContent::Image(parse_image_element(p, &child)?));
                 }
                 ("audio", Some(NS_TT)) => {
-                    content.push(InlineContent::Audio(parse_audio_element(child)?));
+                    content.push(InlineContent::Audio(parse_audio_element(p, &child)?));
                 }
                 ("metadata", Some(NS_TT)) => {
                     metadata.push(MetadataChild::Metadata(*parse_metadata_element_impl(
-                        child, 0,
+                        p, &child, 0,
                     )?));
                 }
                 ("set", Some(NS_TT)) => {
-                    animations.push(AnimationChild::Set(*parse_set_element(child)?));
+                    animations.push(AnimationChild::Set(*parse_set_element(p, &child)?));
                 }
                 _ => {
-                    unknown_children.push(*parse_unknown_element(&child, 0)?);
+                    unknown_children.push(*parse_unknown_element(p, &child, 0)?);
                 }
-            }
+            },
+            Item::Other => {}
+            Item::End => break,
         }
     }
 
     let style_attrs = parse_style_attributes(node);
 
     Ok(PElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         begin: node.attribute("begin").map(|s| s.to_string()),
         dur: node.attribute("dur").map(|s| s.to_string()),
         end: node.attribute("end").map(|s| s.to_string()),
@@ -2118,7 +2149,7 @@ fn parse_p_element(node: roxmltree::Node<'_, '_>) -> Result<PElement> {
         animate: node.attribute("animate").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         style_attributes: style_attrs,
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         content,
         metadata,
         animations,
@@ -2126,148 +2157,140 @@ fn parse_p_element(node: roxmltree::Node<'_, '_>) -> Result<PElement> {
     })
 }
 
-fn parse_span_element(node: roxmltree::Node<'_, '_>) -> Result<Box<SpanElement>> {
+fn parse_span_element(p: &mut Pull<'_>, node: &StartTag) -> Result<Box<SpanElement>> {
     // The nested-content parse is boxed one level deep (see
     // `parse_span_element_impl`'s own note): each recursion level returns a
     // ~1.8 KB struct, and the 64 levels this parser allows would otherwise
     // put ~115 KB of return slots on the stack (#1110).
-    parse_span_element_impl(node, 0)
+    parse_span_element_impl(p, node, 0)
 }
 
 fn parse_span_element_impl(
-    node: roxmltree::Node<'_, '_>,
+    p: &mut Pull<'_>,
+    node: &StartTag,
     depth: usize,
 ) -> Result<Box<SpanElement>> {
-    // The child walk is iterative (explicit stack): `SpanElement` is ~1.8 KB
-    // and the child *build* must live in the parent's frame, so ~64 levels of
-    // recursion would put ~115 KB of intermediates on the stack and abort a
-    // 2 MB test thread — one level deeper than `MAX_NESTING_DEPTH` allows
-    // (#1110). The public API stays `Vec<InlineContent>`; only the walk uses
-    // boxed frames.
-    if depth >= MAX_NESTING_DEPTH {
-        return Err(Error::ConstraintViolation {
+    // The walk is an explicit stack of partially-built spans (`open`), not
+    // recursion: `SpanElement` is ~1.8 KB and the child *build* must live in the
+    // parent's frame, so ~64 levels of recursion would put ~115 KB of
+    // intermediates on the stack and abort a 2 MB test thread — one level
+    // deeper than `MAX_NESTING_DEPTH` allows (#1110). The public API stays
+    // `Vec<InlineContent>`.
+    fn too_deep() -> Error {
+        Error::ConstraintViolation {
             constraint: "Span nesting depth limit".to_string(),
             detail: "Span element nesting exceeds maximum depth of 64".to_string(),
-        });
+        }
     }
 
+    /// A span whose start tag has been read and whose content is streaming in.
     struct Frame {
+        /// The span's start tag (`None` for the root span, which the caller
+        /// owns).
+        tag: Option<StartTag>,
         content: Vec<InlineContent>,
         metadata: Vec<MetadataChild>,
         animations: Vec<AnimationChild>,
         unknown_children: Vec<UnknownElement>,
     }
 
-    enum Walk<'a> {
-        Open(roxmltree::Node<'a, 'a>, usize),
-        Text(roxmltree::Node<'a, 'a>),
-        Inline(roxmltree::Node<'a, 'a>),
-        Meta(roxmltree::Node<'a, 'a>),
-        Close(roxmltree::Node<'a, 'a>),
+    fn new_frame(tag: Option<StartTag>) -> Frame {
+        Frame {
+            tag,
+            content: Vec::new(),
+            metadata: Vec::new(),
+            animations: Vec::new(),
+            unknown_children: Vec::new(),
+        }
     }
 
-    let mut stack: Vec<Walk<'_>> = alloc::vec![Walk::Open(node, depth)];
-    let mut open: Vec<Frame> = Vec::new();
-    let mut root_span: Option<SpanElement> = None;
-    while let Some(walk) = stack.pop() {
-        match walk {
-            Walk::Open(n, depth) => {
-                if depth >= MAX_NESTING_DEPTH {
-                    return Err(Error::ConstraintViolation {
-                        constraint: "Span nesting depth limit".to_string(),
-                        detail: "Span element nesting exceeds maximum depth of 64".to_string(),
-                    });
-                }
-                open.push(Frame {
-                    content: Vec::new(),
-                    metadata: Vec::new(),
-                    animations: Vec::new(),
-                    unknown_children: Vec::new(),
-                });
-                stack.push(Walk::Close(n));
-                for child in n.children().rev() {
-                    if child.is_text() {
-                        if !child.text().unwrap_or("").is_empty() {
-                            stack.push(Walk::Text(child));
-                        }
-                    } else if child.is_element() {
-                        let name = child.tag_name().name();
-                        let ns = child.tag_name().namespace();
-                        match (name, ns) {
-                            ("span", Some(NS_TT)) => {
-                                stack.push(Walk::Open(child, depth + 1));
-                            }
-                            ("br", Some(NS_TT))
-                            | ("image", Some(NS_TT))
-                            | ("audio", Some(NS_TT)) => {
-                                stack.push(Walk::Inline(child));
-                            }
-                            ("metadata", Some(NS_TT)) | ("set", Some(NS_TT)) => {
-                                stack.push(Walk::Meta(child));
-                            }
-                            _ => {
-                                stack.push(Walk::Meta(child));
-                            }
-                        }
-                    }
-                }
-            }
-            Walk::Text(child) => {
+    if depth >= MAX_NESTING_DEPTH {
+        return Err(too_deep());
+    }
+    let mut open: Vec<Frame> = alloc::vec![new_frame(None)];
+    loop {
+        let item = {
+            let Some(top) = open.last() else {
+                return Err(span_walk_invariant("an open span while streaming"));
+            };
+            p.next(top.tag.as_ref().unwrap_or(node))?
+        };
+        match item {
+            Item::Text(text) => {
                 let Some(frame) = open.last_mut() else {
                     return Err(span_walk_invariant("text inside an open span"));
                 };
-                let text = child.text().unwrap_or("");
                 if let Some(InlineContent::Text(last)) = frame.content.last_mut() {
-                    last.push_str(text);
+                    last.push_str(&text);
                 } else {
-                    frame.content.push(InlineContent::Text(text.to_string()));
+                    frame.content.push(InlineContent::Text(text));
                 }
             }
-            Walk::Inline(child) => {
-                let Some(frame) = open.last_mut() else {
-                    return Err(span_walk_invariant("inline child inside an open span"));
-                };
-                match (child.tag_name().name(), child.tag_name().namespace()) {
-                    ("br", Some(NS_TT)) => frame
-                        .content
-                        .push(InlineContent::Br(Box::new(parse_br_element(child)?))),
-                    ("image", Some(NS_TT)) => frame
-                        .content
-                        .push(InlineContent::Image(parse_image_element(child)?)),
-                    ("audio", Some(NS_TT)) => frame
-                        .content
-                        .push(InlineContent::Audio(parse_audio_element(child)?)),
-                    _ => {}
+            Item::Start(child) => {
+                let child_depth = depth + open.len();
+                match (child.local(), child.namespace()) {
+                    ("span", Some(NS_TT)) => {
+                        if child_depth >= MAX_NESTING_DEPTH {
+                            return Err(too_deep());
+                        }
+                        open.push(new_frame(Some(child)));
+                    }
+                    ("br", Some(NS_TT)) => {
+                        let br = Box::new(parse_br_element(p, &child)?);
+                        let Some(frame) = open.last_mut() else {
+                            return Err(span_walk_invariant("inline child inside an open span"));
+                        };
+                        frame.content.push(InlineContent::Br(br));
+                    }
+                    ("image", Some(NS_TT)) => {
+                        let image = parse_image_element(p, &child)?;
+                        let Some(frame) = open.last_mut() else {
+                            return Err(span_walk_invariant("inline child inside an open span"));
+                        };
+                        frame.content.push(InlineContent::Image(image));
+                    }
+                    ("audio", Some(NS_TT)) => {
+                        let audio = parse_audio_element(p, &child)?;
+                        let Some(frame) = open.last_mut() else {
+                            return Err(span_walk_invariant("inline child inside an open span"));
+                        };
+                        frame.content.push(InlineContent::Audio(audio));
+                    }
+                    ("metadata", Some(NS_TT)) => {
+                        let meta = MetadataChild::Metadata(*parse_metadata_element(p, &child)?);
+                        let Some(frame) = open.last_mut() else {
+                            return Err(span_walk_invariant("meta child inside an open span"));
+                        };
+                        frame.metadata.push(meta);
+                    }
+                    ("set", Some(NS_TT)) => {
+                        let set = AnimationChild::Set(*parse_set_element(p, &child)?);
+                        let Some(frame) = open.last_mut() else {
+                            return Err(span_walk_invariant("meta child inside an open span"));
+                        };
+                        frame.animations.push(set);
+                    }
+                    _ => {
+                        let unknown = *parse_unknown_element(p, &child, 0)?;
+                        let Some(frame) = open.last_mut() else {
+                            return Err(span_walk_invariant("meta child inside an open span"));
+                        };
+                        frame.unknown_children.push(unknown);
+                    }
                 }
             }
-            Walk::Meta(child) => {
-                let Some(frame) = open.last_mut() else {
-                    return Err(span_walk_invariant("meta child inside an open span"));
-                };
-                let name = child.tag_name().name();
-                let ns = child.tag_name().namespace();
-                match (name, ns) {
-                    ("metadata", Some(NS_TT)) => frame
-                        .metadata
-                        .push(MetadataChild::Metadata(*parse_metadata_element(child)?)),
-                    ("set", Some(NS_TT)) => frame
-                        .animations
-                        .push(AnimationChild::Set(*parse_set_element(child)?)),
-                    _ => frame
-                        .unknown_children
-                        .push(*parse_unknown_element(&child, 0)?),
-                }
-            }
-            Walk::Close(n) => {
+            Item::Other => {}
+            Item::End => {
                 let Some(frame) = open.pop() else {
                     return Err(span_walk_invariant("close without a matching open span"));
                 };
+                let n = frame.tag.as_ref().unwrap_or(node);
                 let style_attrs = parse_style_attributes(n);
                 let span = SpanElement {
-                    xml_id: attribute_value(&n, NS_XML, "id").map(|s| s.to_string()),
-                    xml_lang: attribute_value(&n, NS_XML, "lang").map(|s| s.to_string()),
-                    xml_space: parse_xml_space(attribute_value(&n, NS_XML, "space")),
-                    xml_base: attribute_value(&n, NS_XML, "base").map(|s| s.to_string()),
+                    xml_id: attribute_value(n, NS_XML, "id").map(|s| s.to_string()),
+                    xml_lang: attribute_value(n, NS_XML, "lang").map(|s| s.to_string()),
+                    xml_space: parse_xml_space(attribute_value(n, NS_XML, "space")),
+                    xml_base: attribute_value(n, NS_XML, "base").map(|s| s.to_string()),
                     begin: n.attribute("begin").map(|s| s.to_string()),
                     dur: n.attribute("dur").map(|s| s.to_string()),
                     end: n.attribute("end").map(|s| s.to_string()),
@@ -2277,7 +2300,7 @@ fn parse_span_element_impl(
                     animate: n.attribute("animate").map(|s| s.to_string()),
                     condition: n.attribute("condition").map(|s| s.to_string()),
                     style_attributes: style_attrs,
-                    foreign_attributes: foreign_attributes(&n),
+                    foreign_attributes: foreign_attributes(n),
                     content: frame.content,
                     metadata: frame.metadata,
                     animations: frame.animations,
@@ -2285,14 +2308,11 @@ fn parse_span_element_impl(
                 };
                 match open.last_mut() {
                     Some(parent) => parent.content.push(InlineContent::Span(Box::new(span))),
-                    None => root_span = Some(span),
+                    None => return Ok(Box::new(span)),
                 }
             }
         }
     }
-    root_span
-        .map(Box::new)
-        .ok_or_else(|| span_walk_invariant("the root span frame never closed"))
 }
 
 /// The iterative span walk's push/pop discipline was violated. Unreachable by
@@ -2304,68 +2324,70 @@ fn span_walk_invariant(what: &'static str) -> Error {
         detail: what.to_string(),
     }
 }
-fn parse_br_element(node: roxmltree::Node<'_, '_>) -> Result<BrElement> {
+fn parse_br_element(p: &mut Pull<'_>, node: &StartTag) -> Result<BrElement> {
+    // `<br>` has no modeled content: consume whatever it holds.
+    p.skip(node)?;
     let style_attrs = parse_style_attributes(node);
     Ok(BrElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         style: node.attribute("style").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
-        ttm_role: attribute_value(&node, NS_TTM, "role").map(|s| s.to_string()),
-        ttm_role_source: attribute_value(&node, NS_TTM, "roleSource").map(|s| s.to_string()),
+        ttm_role: attribute_value(node, NS_TTM, "role").map(|s| s.to_string()),
+        ttm_role_source: attribute_value(node, NS_TTM, "roleSource").map(|s| s.to_string()),
         style_attributes: style_attrs,
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
     })
 }
 
-fn parse_set_element(node: roxmltree::Node<'_, '_>) -> Result<Box<SetElement>> {
+fn parse_set_element(p: &mut Pull<'_>, node: &StartTag) -> Result<Box<SetElement>> {
     // Boxed return: `SetElement` embeds a full `StyleAttributes` (~1.8 KB),
     // and `<set>` recurses inside `<metadata>` up to `MAX_NESTING_DEPTH`
     // (#1110).
     let style_attrs = parse_style_attributes(node);
     let mut metadata = Vec::new();
     let mut unknown_children = Vec::new();
-    for child in node.children() {
-        if child.is_element()
-            && child.tag_name().name() == "metadata"
-            && child.tag_name().namespace() == Some(NS_TT)
-        {
-            metadata.push(MetadataChild::Metadata(*parse_metadata_element(child)?));
-        } else if child.is_element() {
-            unknown_children.push(*parse_unknown_element(&child, 0)?);
+    while let Some(child) = p.next_element(node)? {
+        if child.local() == "metadata" && child.namespace() == Some(NS_TT) {
+            metadata.push(MetadataChild::Metadata(*parse_metadata_element(p, &child)?));
+        } else {
+            unknown_children.push(*parse_unknown_element(p, &child, 0)?);
         }
     }
     Ok(Box::new(SetElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         begin: node.attribute("begin").map(|s| s.to_string()),
         dur: node.attribute("dur").map(|s| s.to_string()),
         end: node.attribute("end").map(|s| s.to_string()),
         fill: node.attribute("fill").map(|s| s.to_string()),
         repeat_count: node.attribute("repeatCount").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
-        ttm_role: attribute_value(&node, NS_TTM, "role").map(|s| s.to_string()),
-        ttm_role_source: attribute_value(&node, NS_TTM, "roleSource").map(|s| s.to_string()),
+        ttm_role: attribute_value(node, NS_TTM, "role").map(|s| s.to_string()),
+        ttm_role_source: attribute_value(node, NS_TTM, "roleSource").map(|s| s.to_string()),
         style_attributes: style_attrs,
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         metadata,
         unknown_children,
     }))
 }
 
-fn parse_image_element(node: roxmltree::Node<'_, '_>) -> Result<Box<ImageElement>> {
+fn parse_image_element(p: &mut Pull<'_>, node: &StartTag) -> Result<Box<ImageElement>> {
     // Boxed return (~2 KB struct): `<image>` is inline content, so it nests
     // with `<span>` up to `MAX_NESTING_DEPTH` (#1110).
     let mut metadata = Vec::new();
     let mut animations = Vec::new();
     let mut sources = Vec::new();
     let mut unknown_children = Vec::new();
+    // `<image>` carries no character data of its own; the text a shared walk
+    // gathers is dropped.
     parse_embedded_children(
-        &node,
+        p,
+        node,
         &mut metadata,
         &mut animations,
         &mut sources,
@@ -2375,10 +2397,10 @@ fn parse_image_element(node: roxmltree::Node<'_, '_>) -> Result<Box<ImageElement
     let style_attrs = parse_style_attributes(node);
 
     Ok(Box::new(ImageElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         begin: node.attribute("begin").map(|s| s.to_string()),
         dur: node.attribute("dur").map(|s| s.to_string()),
         end: node.attribute("end").map(|s| s.to_string()),
@@ -2387,18 +2409,18 @@ fn parse_image_element(node: roxmltree::Node<'_, '_>) -> Result<Box<ImageElement
         style: node.attribute("style").map(|s| s.to_string()),
         animate: node.attribute("animate").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
-        ttm_role: attribute_value(&node, NS_TTM, "role").map(|s| s.to_string()),
-        ttm_role_source: attribute_value(&node, NS_TTM, "roleSource").map(|s| s.to_string()),
+        ttm_role: attribute_value(node, NS_TTM, "role").map(|s| s.to_string()),
+        ttm_role_source: attribute_value(node, NS_TTM, "roleSource").map(|s| s.to_string()),
         src: node.attribute("src").map(|s| s.to_string()),
         type_: node.attribute("type").map(|s| s.to_string()),
-        tts_extent: attribute_value(&node, NS_TTS, "extent").map(|s| s.to_string()),
-        xlink_href: attribute_value(&node, NS_XLINK, "href").map(|s| s.to_string()),
-        xlink_role: attribute_value(&node, NS_XLINK, "role").map(|s| s.to_string()),
-        xlink_arcrole: attribute_value(&node, NS_XLINK, "arcrole").map(|s| s.to_string()),
-        xlink_title: attribute_value(&node, NS_XLINK, "title").map(|s| s.to_string()),
-        xlink_show: attribute_value(&node, NS_XLINK, "show").map(|s| s.to_string()),
+        tts_extent: attribute_value(node, NS_TTS, "extent").map(|s| s.to_string()),
+        xlink_href: attribute_value(node, NS_XLINK, "href").map(|s| s.to_string()),
+        xlink_role: attribute_value(node, NS_XLINK, "role").map(|s| s.to_string()),
+        xlink_arcrole: attribute_value(node, NS_XLINK, "arcrole").map(|s| s.to_string()),
+        xlink_title: attribute_value(node, NS_XLINK, "title").map(|s| s.to_string()),
+        xlink_show: attribute_value(node, NS_XLINK, "show").map(|s| s.to_string()),
         style_attributes: style_attrs,
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         metadata,
         animations,
         sources,
@@ -2406,34 +2428,93 @@ fn parse_image_element(node: roxmltree::Node<'_, '_>) -> Result<Box<ImageElement
     }))
 }
 
-fn parse_metadata_element(node: roxmltree::Node<'_, '_>) -> Result<Box<MetadataElement>> {
+fn parse_metadata_element(p: &mut Pull<'_>, node: &StartTag) -> Result<Box<MetadataElement>> {
     // The return value is boxed one level deep (see
     // `parse_span_element_impl`): the nesting this parser allows would put a
     // full `MetadataElement` return slot in every frame otherwise (#1110).
-    parse_metadata_element_impl(node, 0)
+    parse_metadata_element_impl(p, node, 0)
 }
 
-/// Decide whether an element the crate models *structurally* (text-only or
-/// fixed-shape metadata children) is actually well-formed; anything else —
-/// foreign attributes, unmodeled child elements, or an element-only subtree
-/// where only text was expected — falls back to lossless unknown capture so
-/// the shape is preserved exactly (TTML2 §7.2, #1110/TT-W1).
-fn is_pure_text_element(node: &roxmltree::Node<'_, '_>) -> bool {
-    foreign_attributes(node).is_empty() && node.children().all(|c| !c.is_element())
+/// What a structurally-modeled metadata child turned out to be: the typed
+/// element when it is well-formed, or — when it has foreign attributes,
+/// unmodeled child elements, or an element-only subtree where only text was
+/// expected — a lossless unknown capture so the shape is preserved exactly
+/// (TTML2 §7.2, #1110/TT-W1).
+enum MetaOutcome {
+    Child(MetadataChild),
+    Unknown(UnknownElement),
 }
 
-/// Same check for a container element whose modeled children are known:
-/// pass `children_ok` to say whether a child element is modeled.
-fn is_pure_container<F: Fn(&roxmltree::Node<'_, '_>) -> bool>(
-    node: &roxmltree::Node<'_, '_>,
-    children_ok: F,
-) -> bool {
-    foreign_attributes(node).is_empty()
-        && node.children().all(|c| !c.is_element() || children_ok(&c))
+/// Parse a text-only metadata child (`ttm:title`/`desc`/`copyright`,
+/// `ittm:altText`, `ebuttm:conformsToStandard`): it is typed only if it has no
+/// foreign attributes and no child elements. The content streams once into a
+/// lossless capture, from which the typed form is built when the element turns
+/// out to be plain text.
+fn parse_pure_text_child(
+    p: &mut Pull<'_>,
+    node: &StartTag,
+    typed: impl FnOnce(&StartTag, String) -> MetadataChild,
+) -> Result<MetaOutcome> {
+    let scanned = scan_children(p, node, 1)?;
+    if foreign_attributes(node).is_empty() && !scanned.has_element {
+        Ok(MetaOutcome::Child(typed(node, scanned.first_text)))
+    } else {
+        Ok(MetaOutcome::Unknown(unknown_from(node, scanned.children)))
+    }
+}
+
+/// `ebuttm:documentMetadata`: typed only if it has no foreign attributes and
+/// every child element is a plain-text `ebuttm:conformsToStandard`; otherwise a
+/// lossless unknown capture. Each candidate child is captured as it streams
+/// past, so either outcome is available at the end without re-reading.
+fn parse_document_metadata_child(p: &mut Pull<'_>, node: &StartTag) -> Result<MetaOutcome> {
+    let mut nodes: Vec<UnknownNode> = Vec::new();
+    let mut typed: Vec<MetadataChild> = Vec::new();
+    let mut all_modeled = true;
+    loop {
+        match p.next(node)? {
+            Item::Text(text) => push_text(&mut nodes, text),
+            Item::Start(child) => {
+                if child.local() == "conformsToStandard" && child.namespace() == Some(NS_EBUTTM) {
+                    let scanned = scan_children(p, &child, 2)?;
+                    if foreign_attributes(&child).is_empty() && !scanned.has_element {
+                        typed.push(MetadataChild::EbuttmConformsToStandard(build_ebuttm_text(
+                            &child,
+                            scanned.first_text,
+                        )));
+                    } else {
+                        all_modeled = false;
+                    }
+                    nodes.push(UnknownNode::Element(Box::new(unknown_from(
+                        &child,
+                        scanned.children,
+                    ))));
+                } else {
+                    all_modeled = false;
+                    nodes.push(UnknownNode::Element(parse_unknown_element(p, &child, 1)?));
+                }
+            }
+            Item::Other => {}
+            Item::End => break,
+        }
+    }
+    if foreign_attributes(node).is_empty() && all_modeled {
+        Ok(MetaOutcome::Child(MetadataChild::EbuttmDocumentMetadata(
+            EbuttmElement {
+                foreign_attributes: Vec::new(),
+                children: typed,
+                unknown_children: Vec::new(),
+                scoped_namespaces: capture_scoped_namespaces(node),
+            },
+        )))
+    } else {
+        Ok(MetaOutcome::Unknown(unknown_from(node, nodes)))
+    }
 }
 
 fn parse_metadata_element_impl(
-    node: roxmltree::Node<'_, '_>,
+    p: &mut Pull<'_>,
+    node: &StartTag,
     depth: usize,
 ) -> Result<Box<MetadataElement>> {
     if depth >= MAX_NESTING_DEPTH {
@@ -2446,171 +2527,153 @@ fn parse_metadata_element_impl(
     let mut children = Vec::new();
     let mut unknown_children = Vec::new();
 
-    for child in node.children() {
-        if !child.is_element() {
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
-
-        match (name, ns) {
+    while let Some(child) = p.next_element(node)? {
+        let outcome = match (child.local(), child.namespace()) {
             ("metadata", Some(NS_TT)) => {
                 // Moves the boxed child in; drop of a structurally deep
                 // tree is a pre-existing concern (see the span drop note).
-                children.push(MetadataChild::Metadata(*parse_metadata_element_impl(
-                    child,
+                MetaOutcome::Child(MetadataChild::Metadata(*parse_metadata_element_impl(
+                    p,
+                    &child,
                     depth + 1,
-                )?));
+                )?))
             }
-            ("title", Some(NS_TTM)) if is_pure_text_element(&child) => {
-                children.push(MetadataChild::TtmTitle(parse_ttm_text(child)?));
-            }
-            ("desc", Some(NS_TTM)) if is_pure_text_element(&child) => {
-                children.push(MetadataChild::TtmDesc(parse_ttm_text(child)?));
-            }
-            ("copyright", Some(NS_TTM)) if is_pure_text_element(&child) => {
-                children.push(MetadataChild::TtmCopyright(parse_ttm_text(child)?));
-            }
+            ("title", Some(NS_TTM)) => parse_pure_text_child(p, &child, |n, text| {
+                MetadataChild::TtmTitle(build_ttm_text(n, text, Vec::new()))
+            })?,
+            ("desc", Some(NS_TTM)) => parse_pure_text_child(p, &child, |n, text| {
+                MetadataChild::TtmDesc(build_ttm_text(n, text, Vec::new()))
+            })?,
+            ("copyright", Some(NS_TTM)) => parse_pure_text_child(p, &child, |n, text| {
+                MetadataChild::TtmCopyright(build_ttm_text(n, text, Vec::new()))
+            })?,
             ("agent", Some(NS_TTM)) => {
-                children.push(MetadataChild::TtmAgent(parse_ttm_agent(child)?));
+                MetaOutcome::Child(MetadataChild::TtmAgent(parse_ttm_agent(p, &child)?))
             }
             ("item", Some(NS_TTM)) => {
-                children.push(MetadataChild::TtmItem(parse_ttm_item(child)?));
+                MetaOutcome::Child(MetadataChild::TtmItem(parse_ttm_item(p, &child)?))
             }
             ("name", Some(NS_TTM)) => {
-                children.push(MetadataChild::TtmName(parse_ttm_name(child)?));
+                MetaOutcome::Child(MetadataChild::TtmName(parse_ttm_name(p, &child)?))
             }
-            ("documentMetadata", Some(NS_EBUTTM))
-                if is_pure_container(&child, |c| {
-                    c.tag_name().name() == "conformsToStandard"
-                        && c.tag_name().namespace() == Some(NS_EBUTTM)
-                        && is_pure_text_element(c)
-                }) =>
-            {
-                children.push(MetadataChild::EbuttmDocumentMetadata(parse_ebuttm_element(
-                    child,
-                )?));
+            ("documentMetadata", Some(NS_EBUTTM)) => parse_document_metadata_child(p, &child)?,
+            ("conformsToStandard", Some(NS_EBUTTM)) => {
+                parse_pure_text_child(p, &child, |n, text| {
+                    MetadataChild::EbuttmConformsToStandard(build_ebuttm_text(n, text))
+                })?
             }
-            ("conformsToStandard", Some(NS_EBUTTM)) if is_pure_text_element(&child) => {
-                children.push(MetadataChild::EbuttmConformsToStandard(parse_ebuttm_text(
-                    child,
-                )?));
-            }
-            ("altText", Some(NS_ITTM)) if is_pure_text_element(&child) => {
-                children.push(MetadataChild::IttmAltText(parse_ittm_alt_text(child)?));
-            }
-            _ => {
-                unknown_children.push(*parse_unknown_element(&child, 0)?);
-            }
+            ("altText", Some(NS_ITTM)) => parse_pure_text_child(p, &child, |n, text| {
+                MetadataChild::IttmAltText(build_ittm_alt_text(n, text, Vec::new()))
+            })?,
+            _ => MetaOutcome::Unknown(*parse_unknown_element(p, &child, 0)?),
+        };
+        match outcome {
+            MetaOutcome::Child(c) => children.push(c),
+            MetaOutcome::Unknown(u) => unknown_children.push(u),
         }
     }
 
     Ok(Box::new(MetadataElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         children,
         unknown_children,
-        scoped_namespaces: capture_scoped_namespaces(&node),
+        scoped_namespaces: capture_scoped_namespaces(node),
     }))
 }
 
-fn parse_ttm_text(node: roxmltree::Node<'_, '_>) -> Result<TtmTextElement> {
-    let text = node.text().unwrap_or("").to_string();
-    let unknown_children = node
-        .children()
-        .filter(|c| c.is_element())
-        .map(|c| parse_unknown_element(&c, 0).map(|u| *u))
-        .collect::<Result<Vec<_>>>()?;
-    Ok(TtmTextElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
-        condition: node.attribute("condition").map(|s| s.to_string()),
-        text,
-        foreign_attributes: foreign_attributes(&node),
-        unknown_children,
-        scoped_namespaces: capture_scoped_namespaces(&node),
-    })
+fn parse_ttm_text(p: &mut Pull<'_>, node: &StartTag) -> Result<TtmTextElement> {
+    let (text, unknown_children) = read_text_and_unknowns(p, node, 0)?;
+    Ok(build_ttm_text(node, text, unknown_children))
 }
 
-fn parse_ttm_agent(node: roxmltree::Node<'_, '_>) -> Result<TtmAgentElement> {
+fn build_ttm_text(
+    node: &StartTag,
+    text: String,
+    unknown_children: Vec<UnknownElement>,
+) -> TtmTextElement {
+    TtmTextElement {
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
+        condition: node.attribute("condition").map(|s| s.to_string()),
+        text,
+        foreign_attributes: foreign_attributes(node),
+        unknown_children,
+        scoped_namespaces: capture_scoped_namespaces(node),
+    }
+}
+
+fn parse_ttm_agent(p: &mut Pull<'_>, node: &StartTag) -> Result<TtmAgentElement> {
     let mut names = Vec::new();
     let mut unknown_children = Vec::new();
-    for child in node.children() {
-        if child.is_element()
-            && child.tag_name().name() == "name"
-            && child.tag_name().namespace() == Some(NS_TTM)
-        {
-            names.push(parse_ttm_name(child)?);
-        } else if child.is_element() {
-            unknown_children.push(*parse_unknown_element(&child, 0)?);
+    while let Some(child) = p.next_element(node)? {
+        if child.local() == "name" && child.namespace() == Some(NS_TTM) {
+            names.push(parse_ttm_name(p, &child)?);
+        } else {
+            unknown_children.push(*parse_unknown_element(p, &child, 0)?);
         }
     }
     Ok(TtmAgentElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         type_: node.attribute("type").map(|s| s.to_string()),
         names,
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         unknown_children,
-        scoped_namespaces: capture_scoped_namespaces(&node),
+        scoped_namespaces: capture_scoped_namespaces(node),
     })
 }
 
-fn parse_ttm_name(node: roxmltree::Node<'_, '_>) -> Result<TtmNameElement> {
-    let text = node.text().unwrap_or("").to_string();
-    let unknown_children = node
-        .children()
-        .filter(|c| c.is_element())
-        .map(|c| parse_unknown_element(&c, 0).map(|u| *u))
-        .collect::<Result<Vec<_>>>()?;
+fn parse_ttm_name(p: &mut Pull<'_>, node: &StartTag) -> Result<TtmNameElement> {
+    let (text, unknown_children) = read_text_and_unknowns(p, node, 0)?;
     Ok(TtmNameElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         type_: node.attribute("type").map(|s| s.to_string()),
         text,
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         unknown_children,
-        scoped_namespaces: capture_scoped_namespaces(&node),
+        scoped_namespaces: capture_scoped_namespaces(node),
     })
 }
 
-fn parse_ttm_item(node: roxmltree::Node<'_, '_>) -> Result<TtmItemElement> {
+fn parse_ttm_item(p: &mut Pull<'_>, node: &StartTag) -> Result<TtmItemElement> {
     let mut items = Vec::new();
     let mut text_parts = String::new();
     let mut unknown_children = Vec::new();
 
-    for child in node.children() {
-        if child.is_text() {
-            if let Some(t) = child.text() {
-                text_parts.push_str(t);
+    loop {
+        match p.next(node)? {
+            Item::Text(t) => text_parts.push_str(&t),
+            Item::Start(child) => {
+                if child.local() == "item" && child.namespace() == Some(NS_TTM) {
+                    items.push(parse_ttm_item(p, &child)?);
+                } else {
+                    unknown_children.push(*parse_unknown_element(p, &child, 0)?);
+                }
             }
-        } else if child.is_element()
-            && child.tag_name().name() == "item"
-            && child.tag_name().namespace() == Some(NS_TTM)
-        {
-            items.push(parse_ttm_item(child)?);
-        } else if child.is_element() {
-            unknown_children.push(*parse_unknown_element(&child, 0)?);
+            Item::Other => {}
+            Item::End => break,
         }
     }
 
     Ok(TtmItemElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         name: node.attribute("name").map(|s| s.to_string()),
         text: if text_parts.is_empty() {
@@ -2619,199 +2682,186 @@ fn parse_ttm_item(node: roxmltree::Node<'_, '_>) -> Result<TtmItemElement> {
             Some(text_parts)
         },
         items,
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         unknown_children,
-        scoped_namespaces: capture_scoped_namespaces(&node),
+        scoped_namespaces: capture_scoped_namespaces(node),
     })
 }
 
-fn parse_ittm_alt_text(node: roxmltree::Node<'_, '_>) -> Result<IttmAltTextElement> {
-    let text = node.text().unwrap_or("").to_string();
-    let unknown_children = node
-        .children()
-        .filter(|c| c.is_element())
-        .map(|c| parse_unknown_element(&c, 0).map(|u| *u))
-        .collect::<Result<Vec<_>>>()?;
-    Ok(IttmAltTextElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
-        foreign_attributes: foreign_attributes(&node),
+fn parse_ittm_alt_text(p: &mut Pull<'_>, node: &StartTag) -> Result<IttmAltTextElement> {
+    let (text, unknown_children) = read_text_and_unknowns(p, node, 0)?;
+    Ok(build_ittm_alt_text(node, text, unknown_children))
+}
+
+fn build_ittm_alt_text(
+    node: &StartTag,
+    text: String,
+    unknown_children: Vec<UnknownElement>,
+) -> IttmAltTextElement {
+    IttmAltTextElement {
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
+        foreign_attributes: foreign_attributes(node),
         unknown_children,
         text,
-        scoped_namespaces: capture_scoped_namespaces(&node),
-    })
+        scoped_namespaces: capture_scoped_namespaces(node),
+    }
 }
 
-fn parse_ebuttm_element(node: roxmltree::Node<'_, '_>) -> Result<EbuttmElement> {
+fn parse_ebuttm_element(p: &mut Pull<'_>, node: &StartTag) -> Result<EbuttmElement> {
     let mut children = Vec::new();
     let mut unknown_children = Vec::new();
-    for child in node.children() {
-        if !child.is_element() {
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
+    while let Some(child) = p.next_element(node)? {
+        let name = child.local();
+        let ns = child.namespace();
 
         if name == "conformsToStandard" && ns == Some(NS_EBUTTM) {
             children.push(MetadataChild::EbuttmConformsToStandard(parse_ebuttm_text(
-                child,
+                p, &child,
             )?));
         } else {
-            unknown_children.push(*parse_unknown_element(&child, 0)?);
+            unknown_children.push(*parse_unknown_element(p, &child, 0)?);
         }
     }
     Ok(EbuttmElement {
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         children,
         unknown_children,
-        scoped_namespaces: capture_scoped_namespaces(&node),
+        scoped_namespaces: capture_scoped_namespaces(node),
     })
 }
 
-fn parse_ebuttm_text(node: roxmltree::Node<'_, '_>) -> Result<EbuttmTextElement> {
-    let text = node.text().unwrap_or("").to_string();
-    Ok(EbuttmTextElement {
-        foreign_attributes: foreign_attributes(&node),
+fn parse_ebuttm_text(p: &mut Pull<'_>, node: &StartTag) -> Result<EbuttmTextElement> {
+    let text = read_first_text(p, node)?;
+    Ok(build_ebuttm_text(node, text))
+}
+
+fn build_ebuttm_text(node: &StartTag, text: String) -> EbuttmTextElement {
+    EbuttmTextElement {
+        foreign_attributes: foreign_attributes(node),
         text,
-        scoped_namespaces: capture_scoped_namespaces(&node),
-    })
+        scoped_namespaces: capture_scoped_namespaces(node),
+    }
 }
 
-fn parse_styling_element(node: roxmltree::Node<'_, '_>) -> Result<StylingElement> {
+fn parse_styling_element(p: &mut Pull<'_>, node: &StartTag) -> Result<StylingElement> {
     let mut initials = Vec::new();
     let mut styles = Vec::new();
     let mut unknown_children = Vec::new();
 
-    for child in node.children() {
-        if !child.is_element() {
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
+    while let Some(child) = p.next_element(node)? {
+        let name = child.local();
+        let ns = child.namespace();
 
         match (name, ns) {
             ("initial", Some(NS_TT)) => {
-                initials.push(parse_initial_element(child)?);
+                initials.push(parse_initial_element(p, &child)?);
             }
             ("style", Some(NS_TT)) => {
-                styles.push(parse_style_element(child)?);
+                styles.push(parse_style_element(p, &child)?);
             }
             _ => {
-                unknown_children.push(*parse_unknown_element(&child, 0)?);
+                unknown_children.push(*parse_unknown_element(p, &child, 0)?);
             }
         }
     }
 
     Ok(StylingElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         initials,
         styles,
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         unknown_children,
     })
 }
 
-fn parse_initial_element(node: roxmltree::Node<'_, '_>) -> Result<InitialElement> {
-    let unknown_children = node
-        .children()
-        .filter(|c| c.is_element())
-        .map(|c| parse_unknown_element(&c, 0).map(|u| *u))
-        .collect::<Result<Vec<_>>>()?;
+fn parse_initial_element(p: &mut Pull<'_>, node: &StartTag) -> Result<InitialElement> {
+    let unknown_children = read_unknown_elements(p, node)?;
     Ok(InitialElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         style_attributes: parse_style_attributes(node),
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         unknown_children,
     })
 }
 
-fn parse_style_element(node: roxmltree::Node<'_, '_>) -> Result<StyleElement> {
-    let unknown_children = node
-        .children()
-        .filter(|c| c.is_element())
-        .map(|c| parse_unknown_element(&c, 0).map(|u| *u))
-        .collect::<Result<Vec<_>>>()?;
+fn parse_style_element(p: &mut Pull<'_>, node: &StartTag) -> Result<StyleElement> {
+    let unknown_children = read_unknown_elements(p, node)?;
     Ok(StyleElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         style: node.attribute("style").map(|s| s.to_string()),
         style_attributes: parse_style_attributes(node),
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         unknown_children,
     })
 }
 
-fn parse_layout_element(node: roxmltree::Node<'_, '_>) -> Result<LayoutElement> {
+fn parse_layout_element(p: &mut Pull<'_>, node: &StartTag) -> Result<LayoutElement> {
     let mut regions = Vec::new();
     let mut unknown_children = Vec::new();
-    for child in node.children() {
-        if child.is_element()
-            && child.tag_name().name() == "region"
-            && child.tag_name().namespace() == Some(NS_TT)
-        {
-            regions.push(parse_region_element(child)?);
-        } else if child.is_element() {
-            unknown_children.push(*parse_unknown_element(&child, 0)?);
+    while let Some(child) = p.next_element(node)? {
+        if child.local() == "region" && child.namespace() == Some(NS_TT) {
+            regions.push(parse_region_element(p, &child)?);
+        } else {
+            unknown_children.push(*parse_unknown_element(p, &child, 0)?);
         }
     }
 
     Ok(LayoutElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
-        foreign_attributes: foreign_attributes(&node),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
+        foreign_attributes: foreign_attributes(node),
         unknown_children,
         regions,
     })
 }
 
-fn parse_region_element(node: roxmltree::Node<'_, '_>) -> Result<RegionElement> {
+fn parse_region_element(p: &mut Pull<'_>, node: &StartTag) -> Result<RegionElement> {
     let style_attrs = parse_style_attributes(node);
     // §11.1.2 content: Metadata.class*, Animation.class*, style*
     let mut metadata = Vec::new();
     let mut animations = Vec::new();
     let mut styles = Vec::new();
     let mut unknown_children = Vec::new();
-    for child in node.children() {
-        if !child.is_element() {
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
+    while let Some(child) = p.next_element(node)? {
+        let name = child.local();
+        let ns = child.namespace();
         match (name, ns) {
             ("metadata", Some(NS_TT)) => {
-                metadata.push(MetadataChild::Metadata(*parse_metadata_element(child)?));
+                metadata.push(MetadataChild::Metadata(*parse_metadata_element(p, &child)?));
             }
             ("set", Some(NS_TT)) => {
-                animations.push(AnimationChild::Set(*parse_set_element(child)?));
+                animations.push(AnimationChild::Set(*parse_set_element(p, &child)?));
             }
             ("style", Some(NS_TT)) => {
-                styles.push(parse_style_element(child)?);
+                styles.push(parse_style_element(p, &child)?);
             }
             _ => {
-                unknown_children.push(*parse_unknown_element(&child, 0)?);
+                unknown_children.push(*parse_unknown_element(p, &child, 0)?);
             }
         }
     }
 
     Ok(RegionElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         begin: node.attribute("begin").map(|s| s.to_string()),
         dur: node.attribute("dur").map(|s| s.to_string()),
         end: node.attribute("end").map(|s| s.to_string()),
@@ -2819,10 +2869,10 @@ fn parse_region_element(node: roxmltree::Node<'_, '_>) -> Result<RegionElement> 
         style: node.attribute("style").map(|s| s.to_string()),
         animate: node.attribute("animate").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
-        ttm_role: attribute_value(&node, NS_TTM, "role").map(|s| s.to_string()),
-        ttm_role_source: attribute_value(&node, NS_TTM, "roleSource").map(|s| s.to_string()),
+        ttm_role: attribute_value(node, NS_TTM, "role").map(|s| s.to_string()),
+        ttm_role_source: attribute_value(node, NS_TTM, "roleSource").map(|s| s.to_string()),
         style_attributes: style_attrs,
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         metadata,
         animations,
         styles,
@@ -2834,54 +2884,50 @@ fn parse_region_element(node: roxmltree::Node<'_, '_>) -> Result<RegionElement> 
 /// `source` elements, and anything else preserved as an unknown subtree
 /// (TTML2 §9.1 content model `Metadata.class*, Animation.class*, source*`).
 fn parse_embedded_children(
-    node: &roxmltree::Node<'_, '_>,
+    p: &mut Pull<'_>,
+    node: &StartTag,
     metadata: &mut Vec<MetadataChild>,
     animations: &mut Vec<AnimationChild>,
     sources: &mut Vec<SourceElement>,
     unknown_children: &mut Vec<UnknownElement>,
-) -> Result<()> {
-    for child in node.children() {
-        if !child.is_element() {
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
-        match (name, ns) {
-            ("metadata", Some(NS_TT)) => {
-                metadata.push(MetadataChild::Metadata(*parse_metadata_element(child)?));
-            }
-            ("altText", Some(NS_ITTM)) => {
-                metadata.push(MetadataChild::IttmAltText(parse_ittm_alt_text(child)?));
-            }
-            ("set", Some(NS_TT)) => {
-                animations.push(AnimationChild::Set(*parse_set_element(child)?));
-            }
-            ("source", Some(NS_TT)) => {
-                sources.push(parse_source_element(child)?);
-            }
-            _ => {
-                unknown_children.push(*parse_unknown_element(&child, 0)?);
-            }
+) -> Result<String> {
+    let mut text_parts = String::new();
+    loop {
+        match p.next(node)? {
+            Item::Text(text) => text_parts.push_str(&text),
+            Item::Start(child) => match (child.local(), child.namespace()) {
+                ("metadata", Some(NS_TT)) => {
+                    metadata.push(MetadataChild::Metadata(*parse_metadata_element(p, &child)?));
+                }
+                ("altText", Some(NS_ITTM)) => {
+                    metadata.push(MetadataChild::IttmAltText(parse_ittm_alt_text(p, &child)?));
+                }
+                ("set", Some(NS_TT)) => {
+                    animations.push(AnimationChild::Set(*parse_set_element(p, &child)?));
+                }
+                ("source", Some(NS_TT)) => {
+                    sources.push(parse_source_element(p, &child)?);
+                }
+                _ => {
+                    unknown_children.push(*parse_unknown_element(p, &child, 0)?);
+                }
+            },
+            Item::Other => {}
+            Item::End => return Ok(text_parts),
         }
     }
-    Ok(())
 }
 
-fn parse_audio_element(node: roxmltree::Node<'_, '_>) -> Result<Box<AudioElement>> {
+fn parse_audio_element(p: &mut Pull<'_>, node: &StartTag) -> Result<Box<AudioElement>> {
     // Boxed return: `<audio>` is inline content and nests with `<span>` up
     // to `MAX_NESTING_DEPTH` (#1110).
-    let mut text_parts = String::new();
-    for child in node.children() {
-        if child.is_text() {
-            text_parts.push_str(child.text().unwrap_or(""));
-        }
-    }
     let mut metadata = Vec::new();
     let mut animations = Vec::new();
     let mut sources = Vec::new();
     let mut unknown_children = Vec::new();
-    parse_embedded_children(
-        &node,
+    let text_parts = parse_embedded_children(
+        p,
+        node,
         &mut metadata,
         &mut animations,
         &mut sources,
@@ -2889,10 +2935,10 @@ fn parse_audio_element(node: roxmltree::Node<'_, '_>) -> Result<Box<AudioElement
     )?;
     let style_attrs = parse_style_attributes(node);
     Ok(Box::new(AudioElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         begin: node.attribute("begin").map(|s| s.to_string()),
         dur: node.attribute("dur").map(|s| s.to_string()),
         end: node.attribute("end").map(|s| s.to_string()),
@@ -2904,11 +2950,11 @@ fn parse_audio_element(node: roxmltree::Node<'_, '_>) -> Result<Box<AudioElement
         animate: node.attribute("animate").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         src: node.attribute("src").map(|s| s.to_string()),
-        ttm_role: attribute_value(&node, NS_TTM, "role").map(|s| s.to_string()),
-        ttm_role_source: attribute_value(&node, NS_TTM, "roleSource").map(|s| s.to_string()),
+        ttm_role: attribute_value(node, NS_TTM, "role").map(|s| s.to_string()),
+        ttm_role_source: attribute_value(node, NS_TTM, "roleSource").map(|s| s.to_string()),
         type_: node.attribute("type").map(|s| s.to_string()),
         style_attributes: style_attrs,
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         metadata,
         animations,
         sources,
@@ -2921,24 +2967,79 @@ fn parse_audio_element(node: roxmltree::Node<'_, '_>) -> Result<Box<AudioElement
     }))
 }
 
-fn parse_chunk_element(node: roxmltree::Node<'_, '_>) -> Result<ChunkElement> {
-    let text = node.text().unwrap_or("");
+fn parse_chunk_element(p: &mut Pull<'_>, node: &StartTag) -> Result<ChunkElement> {
+    let text = read_first_text(p, node)?;
     Ok(ChunkElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         encoding: node.attribute("encoding").map(|s| s.to_string()),
         length: node.attribute("length").map(|s| s.to_string()),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
-        text: if text.is_empty() {
-            None
-        } else {
-            Some(text.to_string())
-        },
-        foreign_attributes: foreign_attributes(&node),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
+        text: if text.is_empty() { None } else { Some(text) },
+        foreign_attributes: foreign_attributes(node),
     })
 }
 
-fn parse_data_element(node: roxmltree::Node<'_, '_>) -> Result<Box<DataElement>> {
+/// Stream over `node`'s content and return the text of its first child *if that
+/// child is character data* (empty otherwise), plus every child element
+/// captured as an [`UnknownElement`] at nesting depth `depth`; comments are
+/// passed over.
+fn read_text_and_unknowns(
+    p: &mut Pull<'_>,
+    node: &StartTag,
+    depth: usize,
+) -> Result<(String, Vec<UnknownElement>)> {
+    let mut text = String::new();
+    let mut unknown_children = Vec::new();
+    let mut first = true;
+    loop {
+        match p.next(node)? {
+            Item::Text(t) => {
+                if first {
+                    text = t;
+                }
+            }
+            Item::Start(child) => {
+                unknown_children.push(*parse_unknown_element(p, &child, depth)?);
+            }
+            Item::Other => {}
+            Item::End => return Ok((text, unknown_children)),
+        }
+        first = false;
+    }
+}
+
+/// Every child element of `node` captured as an [`UnknownElement`] (character
+/// data between them is ignored).
+fn read_unknown_elements(p: &mut Pull<'_>, node: &StartTag) -> Result<Vec<UnknownElement>> {
+    let mut out = Vec::new();
+    while let Some(child) = p.next_element(node)? {
+        out.push(*parse_unknown_element(p, &child, 0)?);
+    }
+    Ok(out)
+}
+
+/// Like [`read_text_and_unknowns`] but child elements are consumed and dropped
+/// (the elements that use this model no child content).
+fn read_first_text(p: &mut Pull<'_>, node: &StartTag) -> Result<String> {
+    let mut text = String::new();
+    let mut first = true;
+    loop {
+        match p.next(node)? {
+            Item::Text(t) => {
+                if first {
+                    text = t;
+                }
+            }
+            Item::Start(child) => p.skip(&child)?,
+            Item::Other => {}
+            Item::End => return Ok(text),
+        }
+        first = false;
+    }
+}
+
+fn parse_data_element(p: &mut Pull<'_>, node: &StartTag) -> Result<Box<DataElement>> {
     // Boxed return: `<data>` recurses through `<source><data>…` up to
     // `MAX_NESTING_DEPTH` (#1110).
     let mut metadata = Vec::new();
@@ -2946,49 +3047,50 @@ fn parse_data_element(node: roxmltree::Node<'_, '_>) -> Result<Box<DataElement>>
     let mut sources = Vec::new();
     let mut unknown_children = Vec::new();
     let mut text_parts = String::new();
-    for child in node.children() {
-        if child.is_text() {
-            if let Some(t) = child.text() {
-                text_parts.push_str(t);
+    loop {
+        let child = match p.next(node)? {
+            Item::Text(t) => {
+                text_parts.push_str(&t);
+                continue;
             }
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
-        match (name, ns) {
+            Item::Start(child) => child,
+            Item::Other => continue,
+            Item::End => break,
+        };
+        match (child.local(), child.namespace()) {
             ("metadata", Some(NS_TT)) => {
-                metadata.push(MetadataChild::Metadata(*parse_metadata_element(child)?));
+                metadata.push(MetadataChild::Metadata(*parse_metadata_element(p, &child)?));
             }
             ("chunk", Some(NS_TT)) => {
-                chunks.push(parse_chunk_element(child)?);
+                chunks.push(parse_chunk_element(p, &child)?);
             }
             ("source", Some(NS_TT)) => {
-                sources.push(parse_source_element(child)?);
+                sources.push(parse_source_element(p, &child)?);
             }
             _ => {
-                unknown_children.push(*parse_unknown_element(&child, 0)?);
+                unknown_children.push(*parse_unknown_element(p, &child, 0)?);
             }
         }
     }
     Ok(Box::new(DataElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         encoding: node.attribute("encoding").map(|s| s.to_string()),
         format: node.attribute("format").map(|s| s.to_string()),
         length: node.attribute("length").map(|s| s.to_string()),
         src: node.attribute("src").map(|s| s.to_string()),
         type_: node.attribute("type").map(|s| s.to_string()),
-        ttm_role: attribute_value(&node, NS_TTM, "role").map(|s| s.to_string()),
-        ttm_role_source: attribute_value(&node, NS_TTM, "roleSource").map(|s| s.to_string()),
+        ttm_role: attribute_value(node, NS_TTM, "role").map(|s| s.to_string()),
+        ttm_role_source: attribute_value(node, NS_TTM, "roleSource").map(|s| s.to_string()),
         text: if text_parts.trim().is_empty() {
             None
         } else {
             Some(text_parts)
         },
-        foreign_attributes: foreign_attributes(&node),
+        foreign_attributes: foreign_attributes(node),
         metadata,
         chunks,
         sources,
@@ -2996,37 +3098,34 @@ fn parse_data_element(node: roxmltree::Node<'_, '_>) -> Result<Box<DataElement>>
     }))
 }
 
-fn parse_font_element(node: roxmltree::Node<'_, '_>) -> Result<FontElement> {
+fn parse_font_element(p: &mut Pull<'_>, node: &StartTag) -> Result<FontElement> {
     let mut metadata = Vec::new();
     let mut animations = Vec::new();
     let mut sources = Vec::new();
     let mut unknown_children = Vec::new();
-    for child in node.children() {
-        if !child.is_element() {
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
+    while let Some(child) = p.next_element(node)? {
+        let name = child.local();
+        let ns = child.namespace();
         match (name, ns) {
             ("metadata", Some(NS_TT)) => {
-                metadata.push(MetadataChild::Metadata(*parse_metadata_element(child)?));
+                metadata.push(MetadataChild::Metadata(*parse_metadata_element(p, &child)?));
             }
             ("source", Some(NS_TT)) => {
-                sources.push(parse_source_element(child)?);
+                sources.push(parse_source_element(p, &child)?);
             }
             ("set", Some(NS_TT)) => {
-                animations.push(AnimationChild::Set(*parse_set_element(child)?));
+                animations.push(AnimationChild::Set(*parse_set_element(p, &child)?));
             }
             _ => {
-                unknown_children.push(*parse_unknown_element(&child, 0)?);
+                unknown_children.push(*parse_unknown_element(p, &child, 0)?);
             }
         }
     }
     Ok(FontElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         family: node.attribute("family").map(|s| s.to_string()),
         range: node.attribute("range").map(|s| s.to_string()),
@@ -3034,9 +3133,9 @@ fn parse_font_element(node: roxmltree::Node<'_, '_>) -> Result<FontElement> {
         src: node.attribute("src").map(|s| s.to_string()),
         type_: node.attribute("type").map(|s| s.to_string()),
         weight: node.attribute("weight").map(|s| s.to_string()),
-        ttm_role: attribute_value(&node, NS_TTM, "role").map(|s| s.to_string()),
-        ttm_role_source: attribute_value(&node, NS_TTM, "roleSource").map(|s| s.to_string()),
-        foreign_attributes: foreign_attributes(&node),
+        ttm_role: attribute_value(node, NS_TTM, "role").map(|s| s.to_string()),
+        ttm_role_source: attribute_value(node, NS_TTM, "roleSource").map(|s| s.to_string()),
+        foreign_attributes: foreign_attributes(node),
         metadata,
         animations,
         sources,
@@ -3044,46 +3143,43 @@ fn parse_font_element(node: roxmltree::Node<'_, '_>) -> Result<FontElement> {
     })
 }
 
-fn parse_resources_element(node: roxmltree::Node<'_, '_>) -> Result<ResourcesElement> {
+fn parse_resources_element(p: &mut Pull<'_>, node: &StartTag) -> Result<ResourcesElement> {
     let mut metadata = Vec::new();
     let mut data = Vec::new();
     let mut images = Vec::new();
     let mut audio = Vec::new();
     let mut fonts = Vec::new();
     let mut unknown_children = Vec::new();
-    for child in node.children() {
-        if !child.is_element() {
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
+    while let Some(child) = p.next_element(node)? {
+        let name = child.local();
+        let ns = child.namespace();
         match (name, ns) {
             ("metadata", Some(NS_TT)) => {
-                metadata.push(MetadataChild::Metadata(*parse_metadata_element(child)?));
+                metadata.push(MetadataChild::Metadata(*parse_metadata_element(p, &child)?));
             }
             ("data", Some(NS_TT)) => {
-                data.push(*parse_data_element(child)?);
+                data.push(*parse_data_element(p, &child)?);
             }
             ("image", Some(NS_TT)) => {
-                images.push(*parse_image_element(child)?);
+                images.push(*parse_image_element(p, &child)?);
             }
             ("audio", Some(NS_TT)) => {
-                audio.push(*parse_audio_element(child)?);
+                audio.push(*parse_audio_element(p, &child)?);
             }
             ("font", Some(NS_TT)) => {
-                fonts.push(parse_font_element(child)?);
+                fonts.push(parse_font_element(p, &child)?);
             }
             _ => {
-                unknown_children.push(*parse_unknown_element(&child, 0)?);
+                unknown_children.push(*parse_unknown_element(p, &child, 0)?);
             }
         }
     }
     Ok(ResourcesElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
-        foreign_attributes: foreign_attributes(&node),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
+        foreign_attributes: foreign_attributes(node),
         metadata,
         data,
         images,
@@ -3093,40 +3189,37 @@ fn parse_resources_element(node: roxmltree::Node<'_, '_>) -> Result<ResourcesEle
     })
 }
 
-fn parse_source_element(node: roxmltree::Node<'_, '_>) -> Result<SourceElement> {
+fn parse_source_element(p: &mut Pull<'_>, node: &StartTag) -> Result<SourceElement> {
     let mut metadata = Vec::new();
     let mut data = None;
     let mut unknown_children = Vec::new();
-    for child in node.children() {
-        if !child.is_element() {
-            continue;
-        }
-        let name = child.tag_name().name();
-        let ns = child.tag_name().namespace();
+    while let Some(child) = p.next_element(node)? {
+        let name = child.local();
+        let ns = child.namespace();
         match (name, ns) {
             ("metadata", Some(NS_TT)) => {
-                metadata.push(MetadataChild::Metadata(*parse_metadata_element(child)?));
+                metadata.push(MetadataChild::Metadata(*parse_metadata_element(p, &child)?));
             }
             ("data", Some(NS_TT)) => {
-                data = Some(parse_data_element(child)?);
+                data = Some(parse_data_element(p, &child)?);
             }
             _ => {
-                unknown_children.push(*parse_unknown_element(&child, 0)?);
+                unknown_children.push(*parse_unknown_element(p, &child, 0)?);
             }
         }
     }
     Ok(SourceElement {
-        xml_id: attribute_value(&node, NS_XML, "id").map(|s| s.to_string()),
-        xml_lang: attribute_value(&node, NS_XML, "lang").map(|s| s.to_string()),
-        xml_space: parse_xml_space(attribute_value(&node, NS_XML, "space")),
-        xml_base: attribute_value(&node, NS_XML, "base").map(|s| s.to_string()),
+        xml_id: attribute_value(node, NS_XML, "id").map(|s| s.to_string()),
+        xml_lang: attribute_value(node, NS_XML, "lang").map(|s| s.to_string()),
+        xml_space: parse_xml_space(attribute_value(node, NS_XML, "space")),
+        xml_base: attribute_value(node, NS_XML, "base").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         format: node.attribute("format").map(|s| s.to_string()),
         src: node.attribute("src").map(|s| s.to_string()),
         type_: node.attribute("type").map(|s| s.to_string()),
-        ttm_role: attribute_value(&node, NS_TTM, "role").map(|s| s.to_string()),
-        ttm_role_source: attribute_value(&node, NS_TTM, "roleSource").map(|s| s.to_string()),
-        foreign_attributes: foreign_attributes(&node),
+        ttm_role: attribute_value(node, NS_TTM, "role").map(|s| s.to_string()),
+        ttm_role_source: attribute_value(node, NS_TTM, "roleSource").map(|s| s.to_string()),
+        foreign_attributes: foreign_attributes(node),
         metadata,
         data,
         unknown_children,
@@ -3369,32 +3462,100 @@ impl NamespaceMap {
     }
 }
 
+// ─── quick-xml writer plumbing ──────────────────────────────────────
+//
+// The document is written through a plain (non-indenting) `quick_xml::Writer`:
+// mixed content (`<p>` text interleaved with `<span>`/`<br>`) must not gain
+// whitespace, so the layout whitespace between block elements is emitted
+// explicitly as text events. Every tag goes out as a `BytesStart`/`BytesEnd`
+// event and every attribute value and text node is escaped by quick-xml.
+// Writing to the in-memory `Vec` cannot fail, so write results are discarded.
+
+/// The writer every serializer appends to.
+type W = Writer<Vec<u8>>;
+
+fn emit(w: &mut W, event: Event<'_>) {
+    let _ = w.write_event(event);
+}
+
+/// Layout whitespace (spaces/newlines) between block elements.
+fn layout(w: &mut W, whitespace: &str) {
+    emit(w, Event::Text(BytesText::from_escaped(whitespace)));
+}
+
+/// Two spaces per nesting level.
+fn put_indent(w: &mut W, level: usize) {
+    layout(w, &"  ".repeat(level));
+}
+
+fn put_nl(w: &mut W) {
+    layout(w, "\n");
+}
+
+/// Character data, escaped by quick-xml.
+fn put_text(w: &mut W, content: &str) {
+    emit(w, Event::Text(BytesText::new(content)));
+}
+
+/// `<tag .../>` followed by a newline.
+fn empty_line(w: &mut W, t: BytesStart<'_>) {
+    emit(w, Event::Empty(t));
+    put_nl(w);
+}
+
+/// `<tag .../>` with no layout whitespace (inline content).
+fn empty_inline(w: &mut W, t: BytesStart<'_>) {
+    emit(w, Event::Empty(t));
+}
+
+/// `<tag ...>` followed by a newline.
+fn start_line(w: &mut W, t: BytesStart<'_>) {
+    emit(w, Event::Start(t));
+    put_nl(w);
+}
+
+/// `<tag ...>` with no layout whitespace (inline content or a text-only body).
+fn start_inline(w: &mut W, t: BytesStart<'_>) {
+    emit(w, Event::Start(t));
+}
+
+/// An indented `</tag>` followed by a newline.
+fn end_line(w: &mut W, level: usize, name: &str) {
+    put_indent(w, level);
+    end_inline_line(w, name);
+}
+
+/// `</tag>` followed by a newline (the text body before it was written inline).
+fn end_inline_line(w: &mut W, name: &str) {
+    emit(w, Event::End(BytesEnd::new(name)));
+    put_nl(w);
+}
+
+/// `</tag>` with no layout whitespace.
+fn end_inline(w: &mut W, name: &str) {
+    emit(w, Event::End(BytesEnd::new(name)));
+}
+
+/// Add an attribute (value escaped by quick-xml).
+fn push_attr(t: &mut BytesStart<'_>, name: &str, value: &str) {
+    t.push_attribute((name, value));
+}
+
 /// Write preserved foreign attributes at the end of an element's opening
 /// tag (TTML2 §7.2, #1110/TT-W1). Never skips one: an attribute whose
 /// namespace is undeclared (only possible for trees built through the
 /// struct API without going through `to_xml`'s collection pass) still
 /// gets written under a fallback prefix.
-fn serialize_ns_attrs(buf: &mut String, attrs: &[ForeignAttribute], ns: &mut NamespaceMap) {
+fn serialize_ns_attrs(t: &mut BytesStart<'_>, attrs: &[ForeignAttribute], ns: &mut NamespaceMap) {
     for attr in attrs {
         match attr.namespace.as_deref() {
             // Unprefixed attribute in no namespace (struct-built trees only;
             // a parsed document's unprefixed attributes are in the element's
             // default namespace and are modeled fields, never foreign).
-            None => {
-                buf.push_str(&format!(
-                    r#" {}="{}""#,
-                    xml_escape(&attr.local_name),
-                    xml_escape(&attr.value)
-                ));
-            }
+            None => push_attr(t, &attr.local_name, &attr.value),
             Some(_uri) => {
                 let prefix = ns.prefix_for_attr(attr);
-                buf.push_str(&format!(
-                    r#" {}:{}="{}""#,
-                    prefix,
-                    xml_escape(&attr.local_name),
-                    xml_escape(&attr.value)
-                ));
+                push_attr(t, &format!("{prefix}:{}", attr.local_name), &attr.value);
             }
         }
     }
@@ -3403,15 +3564,15 @@ fn serialize_ns_attrs(buf: &mut String, attrs: &[ForeignAttribute], ns: &mut Nam
 /// Write `xml:space` (§7.7): `Some(Default)` comes from an explicit
 /// `xml:space="default"`, `None` from its absence, so both spellings
 /// round-trip distinctly (#1110/TT-W1).
-fn serialize_xml_space(buf: &mut String, space: &Option<XmlSpace>) {
+fn serialize_xml_space(t: &mut BytesStart<'_>, space: &Option<XmlSpace>) {
     if let Some(space) = space {
-        buf.push_str(&format!(r#" xml:space="{}""#, space.name()));
+        push_attr(t, "xml:space", space.name());
     }
 }
 
 /// Write `xml:base` (TTML2 §7.4, #1110/TT-W1).
-fn serialize_xml_base(buf: &mut String, base: &Option<String>) {
-    serialize_opt_attr(buf, "xml:base", base);
+fn serialize_xml_base(t: &mut BytesStart<'_>, base: &Option<String>) {
+    serialize_opt_attr(t, "xml:base", base);
 }
 
 /// Walk the whole document once in document order and build the namespace
@@ -4239,16 +4400,15 @@ fn push_inlines<'a>(
 
 /// Serialize the root `<tt>` element — TTML2 §8.1.1.
 #[allow(clippy::too_many_lines)]
-fn serialize_tt_element(tt: &TtElement, buf: &mut String, indent: usize, ns: &mut NamespaceMap) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&ind);
-    buf.push_str("<tt");
+fn serialize_tt_element(tt: &TtElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
+    put_indent(w, indent);
+    let mut t = BytesStart::new("tt");
     // The five core bindings, byte-identical to the pre-#1110 output.
     for (prefix, uri) in KEY_BINDINGS {
         if prefix.is_empty() {
-            buf.push_str(&format!(r#" xmlns="{}""#, uri));
+            push_attr(&mut t, "xmlns", uri);
         } else {
-            buf.push_str(&format!(r#" xmlns:{prefix}="{}""#, uri));
+            push_attr(&mut t, &format!("xmlns:{prefix}"), uri);
         }
     }
     // Extension and preserved bindings collected from the document.
@@ -4257,104 +4417,107 @@ fn serialize_tt_element(tt: &TtElement, buf: &mut String, indent: usize, ns: &mu
         .map(|(p, u)| (String::from(p), String::from(u)))
         .collect();
     for (prefix, uri) in &extras {
-        buf.push_str(&format!(r#" xmlns:{prefix}="{}""#, xml_escape(uri)));
+        push_attr(&mut t, &format!("xmlns:{prefix}"), uri);
     }
     // Scope-narrowing overrides, declared last so they win in document
     // order (XML NS 1.0 "last one wins").
     let scoped: Vec<(String, String)> = ns.scoped.clone();
     for (prefix, uri) in &scoped {
-        buf.push_str(&format!(r#" xmlns:{prefix}="{}""#, xml_escape(uri)));
+        push_attr(&mut t, &format!("xmlns:{prefix}"), uri);
     }
 
-    serialize_opt_attr(buf, "xml:lang", &tt.xml_lang);
-    serialize_opt_attr(buf, "xml:id", &tt.xml_id);
-    serialize_xml_space(buf, &tt.xml_space);
-    serialize_xml_base(buf, &tt.xml_base);
+    serialize_opt_attr(&mut t, "xml:lang", &tt.xml_lang);
+    serialize_opt_attr(&mut t, "xml:id", &tt.xml_id);
+    serialize_xml_space(&mut t, &tt.xml_space);
+    serialize_xml_base(&mut t, &tt.xml_base);
 
-    serialize_opt_attr(buf, "ttp:timeBase", &tt.ttp_time_base);
-    serialize_opt_attr(buf, "ttp:frameRate", &tt.ttp_frame_rate);
+    serialize_opt_attr(&mut t, "ttp:timeBase", &tt.ttp_time_base);
+    serialize_opt_attr(&mut t, "ttp:frameRate", &tt.ttp_frame_rate);
     serialize_opt_attr(
-        buf,
+        &mut t,
         "ttp:frameRateMultiplier",
         &tt.ttp_frame_rate_multiplier,
     );
-    serialize_opt_attr(buf, "ttp:tickRate", &tt.ttp_tick_rate);
-    serialize_opt_attr(buf, "ttp:subFrameRate", &tt.ttp_sub_frame_rate);
-    serialize_opt_attr(buf, "ttp:dropMode", &tt.ttp_drop_mode);
-    serialize_opt_attr(buf, "ttp:markerMode", &tt.ttp_marker_mode);
-    serialize_opt_attr(buf, "ttp:clockMode", &tt.ttp_clock_mode);
-    serialize_opt_attr(buf, "ttp:cellResolution", &tt.ttp_cell_resolution);
-    serialize_opt_attr(buf, "ttp:pixelAspectRatio", &tt.ttp_pixel_aspect_ratio);
-    serialize_opt_attr(buf, "ttp:displayAspectRatio", &tt.ttp_display_aspect_ratio);
-    serialize_opt_attr(buf, "ttp:profile", &tt.ttp_profile);
-    serialize_opt_attr(buf, "ttp:contentProfiles", &tt.ttp_content_profiles);
+    serialize_opt_attr(&mut t, "ttp:tickRate", &tt.ttp_tick_rate);
+    serialize_opt_attr(&mut t, "ttp:subFrameRate", &tt.ttp_sub_frame_rate);
+    serialize_opt_attr(&mut t, "ttp:dropMode", &tt.ttp_drop_mode);
+    serialize_opt_attr(&mut t, "ttp:markerMode", &tt.ttp_marker_mode);
+    serialize_opt_attr(&mut t, "ttp:clockMode", &tt.ttp_clock_mode);
+    serialize_opt_attr(&mut t, "ttp:cellResolution", &tt.ttp_cell_resolution);
+    serialize_opt_attr(&mut t, "ttp:pixelAspectRatio", &tt.ttp_pixel_aspect_ratio);
     serialize_opt_attr(
-        buf,
+        &mut t,
+        "ttp:displayAspectRatio",
+        &tt.ttp_display_aspect_ratio,
+    );
+    serialize_opt_attr(&mut t, "ttp:profile", &tt.ttp_profile);
+    serialize_opt_attr(&mut t, "ttp:contentProfiles", &tt.ttp_content_profiles);
+    serialize_opt_attr(
+        &mut t,
         "ttp:contentProfileCombination",
         &tt.ttp_content_profile_combination,
     );
-    serialize_opt_attr(buf, "ttp:processorProfiles", &tt.ttp_processor_profiles);
+    serialize_opt_attr(&mut t, "ttp:processorProfiles", &tt.ttp_processor_profiles);
     serialize_opt_attr(
-        buf,
+        &mut t,
         "ttp:processorProfileCombination",
         &tt.ttp_processor_profile_combination,
     );
     serialize_opt_attr(
-        buf,
+        &mut t,
         "ttp:inferProcessorProfileMethod",
         &tt.ttp_infer_processor_profile_method,
     );
     serialize_opt_attr(
-        buf,
+        &mut t,
         "ttp:inferProcessorProfileSource",
         &tt.ttp_infer_processor_profile_source,
     );
     serialize_opt_attr(
-        buf,
+        &mut t,
         "ttp:permitFeatureNarrowing",
         &tt.ttp_permit_feature_narrowing,
     );
     serialize_opt_attr(
-        buf,
+        &mut t,
         "ttp:permitFeatureWidening",
         &tt.ttp_permit_feature_widening,
     );
-    serialize_opt_attr(buf, "ttp:validation", &tt.ttp_validation);
-    serialize_opt_attr(buf, "ttp:validationAction", &tt.ttp_validation_action);
+    serialize_opt_attr(&mut t, "ttp:validation", &tt.ttp_validation);
+    serialize_opt_attr(&mut t, "ttp:validationAction", &tt.ttp_validation_action);
 
-    serialize_opt_attr(buf, "tts:extent", &tt.tts_extent);
-    serialize_opt_attr(buf, "ittp:activeArea", &tt.ittp_active_area);
-    serialize_opt_attr(buf, "ittp:aspectRatio", &tt.ittp_aspect_ratio);
+    serialize_opt_attr(&mut t, "tts:extent", &tt.tts_extent);
+    serialize_opt_attr(&mut t, "ittp:activeArea", &tt.ittp_active_area);
+    serialize_opt_attr(&mut t, "ittp:aspectRatio", &tt.ittp_aspect_ratio);
     serialize_opt_attr(
-        buf,
+        &mut t,
         "ittp:progressivelyDecodable",
         &tt.ittp_progressively_decodable,
     );
 
-    serialize_ns_attrs(buf, &tt.foreign_attributes, ns);
-    buf.push_str(">\n");
+    serialize_ns_attrs(&mut t, &tt.foreign_attributes, ns);
+    start_line(w, t);
 
     if let Some(ref head) = tt.head {
-        serialize_head_element(head, buf, indent + 1, ns);
+        serialize_head_element(head, w, indent + 1, ns);
     }
     if let Some(ref body) = tt.body {
-        serialize_body_element(body, buf, indent + 1, ns);
+        serialize_body_element(body, w, indent + 1, ns);
     }
     for unknown in &tt.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
 
-    buf.push_str(&format!("{}</tt>\n", ind));
+    end_line(w, indent, "tt");
 }
 
 /// Serialize a preserved foreign subtree (§7.2/§7.3, #1110/TT-W1).
 fn serialize_unknown_element(
     elem: &UnknownElement,
-    buf: &mut String,
+    w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
 ) {
-    let ind = "  ".repeat(indent);
     let name = match elem.prefix.as_deref() {
         Some(prefix) if !prefix.is_empty() => format!("{prefix}:{}", elem.local_name),
         _ => elem.local_name.clone(),
@@ -4369,10 +4532,11 @@ fn serialize_unknown_element(
         ns.add_binding(prefix, uri);
     }
 
-    buf.push_str(&format!("{ind}<{name}"));
-    serialize_ns_attrs(buf, &elem.attributes, ns);
+    put_indent(w, indent);
+    let mut t = BytesStart::new(name.as_str());
+    serialize_ns_attrs(&mut t, &elem.attributes, ns);
     if elem.children.is_empty() {
-        buf.push_str("/>\n");
+        empty_line(w, t);
         return;
     }
     let has_element_child = elem
@@ -4382,143 +4546,131 @@ fn serialize_unknown_element(
     if !has_element_child {
         // Text-only subtree: keep it on one line so no spurious whitespace
         // text node is introduced.
-        buf.push('>');
+        start_inline(w, t);
         for child in &elem.children {
             if let UnknownNode::Text(t) = child {
-                buf.push_str(&xml_escape(t));
+                put_text(w, t);
             }
         }
-        buf.push_str(&format!("</{name}>\n"));
+        end_inline_line(w, &name);
         return;
     }
-    buf.push_str(">\n");
+    start_line(w, t);
     for child in &elem.children {
         match child {
-            UnknownNode::Element(e) => serialize_unknown_element(e, buf, indent + 1, ns),
+            UnknownNode::Element(e) => serialize_unknown_element(e, w, indent + 1, ns),
             UnknownNode::Text(t) => {
                 let text = t.trim();
                 if text.is_empty() {
                     continue;
                 }
-                buf.push_str(&format!(
-                    "{}{}\n",
-                    "  ".repeat(indent + 1),
-                    xml_escape(text)
-                ));
+                put_indent(w, indent + 1);
+                put_text(w, text);
+                put_nl(w);
             }
         }
     }
-    buf.push_str(&format!("{ind}</{name}>\n"));
+    end_line(w, indent, &name);
 }
 
 /// Serialize `<head>` — TTML2 §8.1.2.
-fn serialize_head_element(
-    head: &HeadElement,
-    buf: &mut String,
-    indent: usize,
-    ns: &mut NamespaceMap,
-) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<head"));
-    serialize_opt_attr(buf, "xml:id", &head.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &head.xml_lang);
-    serialize_xml_space(buf, &head.xml_space);
-    serialize_xml_base(buf, &head.xml_base);
-    serialize_ns_attrs(buf, &head.foreign_attributes, ns);
-    buf.push_str(">\n");
+fn serialize_head_element(head: &HeadElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
+    put_indent(w, indent);
+    let mut t = BytesStart::new("head");
+    serialize_opt_attr(&mut t, "xml:id", &head.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &head.xml_lang);
+    serialize_xml_space(&mut t, &head.xml_space);
+    serialize_xml_base(&mut t, &head.xml_base);
+    serialize_ns_attrs(&mut t, &head.foreign_attributes, ns);
+    start_line(w, t);
 
     for meta in &head.metadata {
-        serialize_metadata_child(meta, buf, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns);
     }
     if let Some(ref styling) = head.styling {
-        serialize_styling_element(styling, buf, indent + 1, ns);
+        serialize_styling_element(styling, w, indent + 1, ns);
     }
     if let Some(ref layout) = head.layout {
-        serialize_layout_element(layout, buf, indent + 1, ns);
+        serialize_layout_element(layout, w, indent + 1, ns);
     }
     if let Some(ref resources) = head.resources {
-        serialize_resources_element(resources, buf, indent + 1, ns);
+        serialize_resources_element(resources, w, indent + 1, ns);
     }
     for unknown in &head.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
 
-    buf.push_str(&format!("{ind}</head>\n"));
+    end_line(w, indent, "head");
 }
 
 /// Serialize `<body>` — TTML2 §8.1.3.
-fn serialize_body_element(
-    body: &BodyElement,
-    buf: &mut String,
-    indent: usize,
-    ns: &mut NamespaceMap,
-) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<body"));
+fn serialize_body_element(body: &BodyElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
+    put_indent(w, indent);
+    let mut t = BytesStart::new("body");
     serialize_common_timing_attrs(
-        buf,
+        &mut t,
         body.begin.as_deref(),
         body.dur.as_deref(),
         body.end.as_deref(),
         body.time_container.as_deref(),
     );
-    serialize_opt_attr(buf, "region", &body.region);
-    serialize_opt_attr(buf, "style", &body.style);
-    serialize_opt_attr(buf, "animate", &body.animate);
-    serialize_opt_attr(buf, "condition", &body.condition);
-    serialize_style_attrs(&body.style_attributes, buf);
-    serialize_opt_attr(buf, "xml:id", &body.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &body.xml_lang);
-    serialize_xml_space(buf, &body.xml_space);
-    serialize_xml_base(buf, &body.xml_base);
-    serialize_ns_attrs(buf, &body.foreign_attributes, ns);
+    serialize_opt_attr(&mut t, "region", &body.region);
+    serialize_opt_attr(&mut t, "style", &body.style);
+    serialize_opt_attr(&mut t, "animate", &body.animate);
+    serialize_opt_attr(&mut t, "condition", &body.condition);
+    serialize_style_attrs(&body.style_attributes, &mut t);
+    serialize_opt_attr(&mut t, "xml:id", &body.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &body.xml_lang);
+    serialize_xml_space(&mut t, &body.xml_space);
+    serialize_xml_base(&mut t, &body.xml_base);
+    serialize_ns_attrs(&mut t, &body.foreign_attributes, ns);
 
     let has_children = !body.divs.is_empty()
         || !body.metadata.is_empty()
         || !body.animations.is_empty()
         || !body.unknown_children.is_empty();
     if !has_children {
-        buf.push_str("/>\n");
+        empty_line(w, t);
         return;
     }
-    buf.push_str(">\n");
+    start_line(w, t);
     for meta in &body.metadata {
-        serialize_metadata_child(meta, buf, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns);
     }
     for anim in &body.animations {
-        serialize_animation_child(anim, buf, indent + 1, ns);
+        serialize_animation_child(anim, w, indent + 1, ns);
     }
     for div in &body.divs {
-        serialize_div_element(div, buf, indent + 1, ns);
+        serialize_div_element(div, w, indent + 1, ns);
     }
     for unknown in &body.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
-    buf.push_str(&format!("{ind}</body>\n"));
+    end_line(w, indent, "body");
 }
 
 /// Serialize `<div>` — TTML2 §8.1.4.
-fn serialize_div_element(div: &DivElement, buf: &mut String, indent: usize, ns: &mut NamespaceMap) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<div"));
+fn serialize_div_element(div: &DivElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
+    put_indent(w, indent);
+    let mut t = BytesStart::new("div");
     serialize_common_timing_attrs(
-        buf,
+        &mut t,
         div.begin.as_deref(),
         div.dur.as_deref(),
         div.end.as_deref(),
         div.time_container.as_deref(),
     );
-    serialize_opt_attr(buf, "region", &div.region);
-    serialize_opt_attr(buf, "style", &div.style);
-    serialize_opt_attr(buf, "animate", &div.animate);
-    serialize_opt_attr(buf, "condition", &div.condition);
-    serialize_style_attrs(&div.style_attributes, buf);
-    serialize_opt_attr(buf, "smpte:backgroundImage", &div.smpte_background_image);
-    serialize_opt_attr(buf, "xml:id", &div.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &div.xml_lang);
-    serialize_xml_space(buf, &div.xml_space);
-    serialize_xml_base(buf, &div.xml_base);
-    serialize_ns_attrs(buf, &div.foreign_attributes, ns);
+    serialize_opt_attr(&mut t, "region", &div.region);
+    serialize_opt_attr(&mut t, "style", &div.style);
+    serialize_opt_attr(&mut t, "animate", &div.animate);
+    serialize_opt_attr(&mut t, "condition", &div.condition);
+    serialize_style_attrs(&div.style_attributes, &mut t);
+    serialize_opt_attr(&mut t, "smpte:backgroundImage", &div.smpte_background_image);
+    serialize_opt_attr(&mut t, "xml:id", &div.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &div.xml_lang);
+    serialize_xml_space(&mut t, &div.xml_space);
+    serialize_xml_base(&mut t, &div.xml_base);
+    serialize_ns_attrs(&mut t, &div.foreign_attributes, ns);
 
     let has_children = !div.paragraphs.is_empty()
         || !div.images.is_empty()
@@ -4527,29 +4679,29 @@ fn serialize_div_element(div: &DivElement, buf: &mut String, indent: usize, ns: 
         || !div.animations.is_empty()
         || !div.unknown_children.is_empty();
     if !has_children {
-        buf.push_str("/>\n");
+        empty_line(w, t);
         return;
     }
-    buf.push_str(">\n");
+    start_line(w, t);
     for meta in &div.metadata {
-        serialize_metadata_child(meta, buf, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns);
     }
     for anim in &div.animations {
-        serialize_animation_child(anim, buf, indent + 1, ns);
+        serialize_animation_child(anim, w, indent + 1, ns);
     }
     for p in &div.paragraphs {
-        serialize_p_element(p, buf, indent + 1, ns);
+        serialize_p_element(p, w, indent + 1, ns);
     }
     for img in &div.images {
-        serialize_image_element(img, buf, indent + 1, ns);
+        serialize_image_element(img, w, indent + 1, ns);
     }
     for audio in &div.audio {
-        serialize_audio_element(audio, buf, indent + 1, ns);
+        serialize_audio_element(audio, w, indent + 1, ns);
     }
     for unknown in &div.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
-    buf.push_str(&format!("{ind}</div>\n"));
+    end_line(w, indent, "div");
 }
 
 /// Serialize `<p>` — TTML2 §8.1.5.
@@ -4559,49 +4711,49 @@ fn serialize_div_element(div: &DivElement, buf: &mut String, indent: usize, ns: 
 /// API cannot overflow the stack; metadata/animation children are hoisted
 /// before the inline content, glued to the opening tag so no whitespace text
 /// node appears where the source had none.
-fn serialize_p_element(p: &PElement, buf: &mut String, indent: usize, ns: &mut NamespaceMap) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<p"));
+fn serialize_p_element(p: &PElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
+    put_indent(w, indent);
+    let mut t = BytesStart::new("p");
     serialize_common_timing_attrs(
-        buf,
+        &mut t,
         p.begin.as_deref(),
         p.dur.as_deref(),
         p.end.as_deref(),
         p.time_container.as_deref(),
     );
-    serialize_opt_attr(buf, "region", &p.region);
-    serialize_opt_attr(buf, "style", &p.style);
-    serialize_opt_attr(buf, "animate", &p.animate);
-    serialize_opt_attr(buf, "condition", &p.condition);
-    serialize_style_attrs(&p.style_attributes, buf);
-    serialize_opt_attr(buf, "xml:id", &p.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &p.xml_lang);
-    serialize_xml_space(buf, &p.xml_space);
-    serialize_xml_base(buf, &p.xml_base);
-    serialize_ns_attrs(buf, &p.foreign_attributes, ns);
+    serialize_opt_attr(&mut t, "region", &p.region);
+    serialize_opt_attr(&mut t, "style", &p.style);
+    serialize_opt_attr(&mut t, "animate", &p.animate);
+    serialize_opt_attr(&mut t, "condition", &p.condition);
+    serialize_style_attrs(&p.style_attributes, &mut t);
+    serialize_opt_attr(&mut t, "xml:id", &p.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &p.xml_lang);
+    serialize_xml_space(&mut t, &p.xml_space);
+    serialize_xml_base(&mut t, &p.xml_base);
+    serialize_ns_attrs(&mut t, &p.foreign_attributes, ns);
 
     let has_children = !p.content.is_empty()
         || !p.metadata.is_empty()
         || !p.animations.is_empty()
         || !p.unknown_children.is_empty();
     if !has_children {
-        buf.push_str("/>\n");
+        empty_line(w, t);
         return;
     }
-    buf.push('>');
+    start_inline(w, t);
     for meta in &p.metadata {
-        serialize_metadata_child(meta, buf, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns);
     }
     for anim in &p.animations {
-        serialize_animation_child(anim, buf, indent + 1, ns);
+        serialize_animation_child(anim, w, indent + 1, ns);
     }
     for item in &p.content {
-        serialize_inline_content(item, buf, ns);
+        serialize_inline_content(item, w, ns);
     }
     for unknown in &p.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
-    buf.push_str("</p>\n");
+    end_inline_line(w, "p");
 }
 
 /// Serialize inline content (text, `<span>`, `<br>`, `<image>`, `<audio>`).
@@ -4609,7 +4761,7 @@ fn serialize_p_element(p: &PElement, buf: &mut String, indent: usize, ns: &mut N
 /// Iterative (explicit stack), not recursive: a `<span>` chain built via the
 /// struct API can nest far deeper than `MAX_NESTING_DEPTH` (which only bounds
 /// `Document::parse_str`), and a recursive walk would overflow the stack.
-fn serialize_inline_content(content: &InlineContent, buf: &mut String, ns: &mut NamespaceMap) {
+fn serialize_inline_content(content: &InlineContent, w: &mut W, ns: &mut NamespaceMap) {
     enum Frame<'a> {
         Node(&'a InlineContent),
         Close(&'static str),
@@ -4619,36 +4771,36 @@ fn serialize_inline_content(content: &InlineContent, buf: &mut String, ns: &mut 
     while let Some(frame) = stack.pop() {
         match frame {
             Frame::Node(InlineContent::Text(text)) => {
-                buf.push_str(&xml_escape(text));
+                put_text(w, text);
             }
             Frame::Node(InlineContent::Span(span)) => {
-                buf.push_str("<span");
+                let mut t = BytesStart::new("span");
                 serialize_common_timing_attrs(
-                    buf,
+                    &mut t,
                     span.begin.as_deref(),
                     span.dur.as_deref(),
                     span.end.as_deref(),
                     span.time_container.as_deref(),
                 );
-                serialize_opt_attr(buf, "region", &span.region);
-                serialize_opt_attr(buf, "style", &span.style);
-                serialize_opt_attr(buf, "animate", &span.animate);
-                serialize_opt_attr(buf, "condition", &span.condition);
-                serialize_style_attrs(&span.style_attributes, buf);
-                serialize_opt_attr(buf, "xml:id", &span.xml_id);
-                serialize_opt_attr(buf, "xml:lang", &span.xml_lang);
-                serialize_xml_space(buf, &span.xml_space);
-                serialize_xml_base(buf, &span.xml_base);
-                serialize_ns_attrs(buf, &span.foreign_attributes, ns);
+                serialize_opt_attr(&mut t, "region", &span.region);
+                serialize_opt_attr(&mut t, "style", &span.style);
+                serialize_opt_attr(&mut t, "animate", &span.animate);
+                serialize_opt_attr(&mut t, "condition", &span.condition);
+                serialize_style_attrs(&span.style_attributes, &mut t);
+                serialize_opt_attr(&mut t, "xml:id", &span.xml_id);
+                serialize_opt_attr(&mut t, "xml:lang", &span.xml_lang);
+                serialize_xml_space(&mut t, &span.xml_space);
+                serialize_xml_base(&mut t, &span.xml_base);
+                serialize_ns_attrs(&mut t, &span.foreign_attributes, ns);
 
                 let has_children = !span.content.is_empty()
                     || !span.metadata.is_empty()
                     || !span.animations.is_empty()
                     || !span.unknown_children.is_empty();
                 if !has_children {
-                    buf.push_str("/>");
+                    empty_inline(w, t);
                 } else {
-                    buf.push('>');
+                    start_inline(w, t);
                     stack.push(Frame::Close("span"));
                     for item in span.content.iter().rev() {
                         stack.push(Frame::Node(item));
@@ -4656,29 +4808,27 @@ fn serialize_inline_content(content: &InlineContent, buf: &mut String, ns: &mut 
                 }
             }
             Frame::Node(InlineContent::Br(br)) => {
-                buf.push_str("<br");
-                serialize_opt_attr(buf, "style", &br.style);
-                serialize_opt_attr(buf, "condition", &br.condition);
-                serialize_opt_attr(buf, "ttm:role", &br.ttm_role);
-                serialize_opt_attr(buf, "ttm:roleSource", &br.ttm_role_source);
-                serialize_opt_attr(buf, "xml:id", &br.xml_id);
-                serialize_opt_attr(buf, "xml:lang", &br.xml_lang);
-                serialize_xml_space(buf, &br.xml_space);
-                serialize_xml_base(buf, &br.xml_base);
-                serialize_style_attrs(&br.style_attributes, buf);
-                serialize_ns_attrs(buf, &br.foreign_attributes, ns);
-                buf.push_str("/>");
+                let mut t = BytesStart::new("br");
+                serialize_opt_attr(&mut t, "style", &br.style);
+                serialize_opt_attr(&mut t, "condition", &br.condition);
+                serialize_opt_attr(&mut t, "ttm:role", &br.ttm_role);
+                serialize_opt_attr(&mut t, "ttm:roleSource", &br.ttm_role_source);
+                serialize_opt_attr(&mut t, "xml:id", &br.xml_id);
+                serialize_opt_attr(&mut t, "xml:lang", &br.xml_lang);
+                serialize_xml_space(&mut t, &br.xml_space);
+                serialize_xml_base(&mut t, &br.xml_base);
+                serialize_style_attrs(&br.style_attributes, &mut t);
+                serialize_ns_attrs(&mut t, &br.foreign_attributes, ns);
+                empty_inline(w, t);
             }
             Frame::Node(InlineContent::Image(img)) => {
-                serialize_inline_image(img, buf, ns);
+                serialize_inline_image(img, w, ns);
             }
             Frame::Node(InlineContent::Audio(audio)) => {
-                serialize_inline_audio(audio, buf, ns);
+                serialize_inline_audio(audio, w, ns);
             }
             Frame::Close(tag) => {
-                buf.push_str("</");
-                buf.push_str(tag);
-                buf.push('>');
+                end_inline(w, tag);
             }
         }
     }
@@ -4686,182 +4836,170 @@ fn serialize_inline_content(content: &InlineContent, buf: &mut String, ns: &mut 
 
 /// Inline `<image>`: same attributes as the block form, written on one line
 /// (it is inline content of `<p>`/`<span>` — TTML2 §9.1.5).
-fn serialize_inline_image(image: &ImageElement, buf: &mut String, ns: &mut NamespaceMap) {
-    buf.push_str("<image");
-    serialize_image_attrs(image, buf, ns);
-    buf.push_str("/>");
+fn serialize_inline_image(image: &ImageElement, w: &mut W, ns: &mut NamespaceMap) {
+    let mut t = BytesStart::new("image");
+    serialize_image_attrs(image, &mut t, ns);
+    empty_inline(w, t);
 }
 
 /// Inline `<audio>`: attributes plus optional character data (§9.1.1).
-fn serialize_inline_audio(audio: &AudioElement, buf: &mut String, ns: &mut NamespaceMap) {
-    buf.push_str("<audio");
-    serialize_audio_attrs(audio, buf, ns);
+fn serialize_inline_audio(audio: &AudioElement, w: &mut W, ns: &mut NamespaceMap) {
+    let mut t = BytesStart::new("audio");
+    serialize_audio_attrs(audio, &mut t, ns);
     match audio.text.as_deref() {
         Some(text) if !text.is_empty() => {
-            buf.push('>');
-            buf.push_str(&xml_escape(text));
-            buf.push_str("</audio>");
+            start_inline(w, t);
+            put_text(w, text);
+            end_inline(w, "audio");
         }
-        _ => buf.push_str("/>"),
+        _ => empty_inline(w, t),
     }
 }
 
 /// The `<image>` attribute set, shared by the block and inline forms.
-fn serialize_image_attrs(image: &ImageElement, buf: &mut String, ns: &mut NamespaceMap) {
+fn serialize_image_attrs(image: &ImageElement, t: &mut BytesStart<'_>, ns: &mut NamespaceMap) {
     serialize_common_timing_attrs(
-        buf,
+        t,
         image.begin.as_deref(),
         image.dur.as_deref(),
         image.end.as_deref(),
         image.time_container.as_deref(),
     );
-    serialize_opt_attr(buf, "region", &image.region);
-    serialize_opt_attr(buf, "style", &image.style);
-    serialize_opt_attr(buf, "animate", &image.animate);
-    serialize_opt_attr(buf, "condition", &image.condition);
-    serialize_opt_attr(buf, "ttm:role", &image.ttm_role);
-    serialize_opt_attr(buf, "ttm:roleSource", &image.ttm_role_source);
-    serialize_opt_attr(buf, "src", &image.src);
-    serialize_opt_attr(buf, "type", &image.type_);
+    serialize_opt_attr(t, "region", &image.region);
+    serialize_opt_attr(t, "style", &image.style);
+    serialize_opt_attr(t, "animate", &image.animate);
+    serialize_opt_attr(t, "condition", &image.condition);
+    serialize_opt_attr(t, "ttm:role", &image.ttm_role);
+    serialize_opt_attr(t, "ttm:roleSource", &image.ttm_role_source);
+    serialize_opt_attr(t, "src", &image.src);
+    serialize_opt_attr(t, "type", &image.type_);
     // `tts:extent` lives in its own field on ImageElement; skip the copy in
     // `style_attributes` so it is never written twice.
-    serialize_opt_attr(buf, "tts:extent", &image.tts_extent);
-    serialize_style_attrs_skip_extent(&image.style_attributes, buf);
-    serialize_opt_attr(buf, "xlink:href", &image.xlink_href);
-    serialize_opt_attr(buf, "xlink:role", &image.xlink_role);
-    serialize_opt_attr(buf, "xlink:arcrole", &image.xlink_arcrole);
-    serialize_opt_attr(buf, "xlink:title", &image.xlink_title);
-    serialize_opt_attr(buf, "xlink:show", &image.xlink_show);
-    serialize_opt_attr(buf, "xml:id", &image.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &image.xml_lang);
-    serialize_xml_space(buf, &image.xml_space);
-    serialize_xml_base(buf, &image.xml_base);
-    serialize_ns_attrs(buf, &image.foreign_attributes, ns);
+    serialize_opt_attr(t, "tts:extent", &image.tts_extent);
+    serialize_style_attrs_skip_extent(&image.style_attributes, t);
+    serialize_opt_attr(t, "xlink:href", &image.xlink_href);
+    serialize_opt_attr(t, "xlink:role", &image.xlink_role);
+    serialize_opt_attr(t, "xlink:arcrole", &image.xlink_arcrole);
+    serialize_opt_attr(t, "xlink:title", &image.xlink_title);
+    serialize_opt_attr(t, "xlink:show", &image.xlink_show);
+    serialize_opt_attr(t, "xml:id", &image.xml_id);
+    serialize_opt_attr(t, "xml:lang", &image.xml_lang);
+    serialize_xml_space(t, &image.xml_space);
+    serialize_xml_base(t, &image.xml_base);
+    serialize_ns_attrs(t, &image.foreign_attributes, ns);
 }
 
 /// The `<audio>` attribute set, shared by the block and inline forms.
-fn serialize_audio_attrs(audio: &AudioElement, buf: &mut String, ns: &mut NamespaceMap) {
+fn serialize_audio_attrs(audio: &AudioElement, t: &mut BytesStart<'_>, ns: &mut NamespaceMap) {
     serialize_common_timing_attrs(
-        buf,
+        t,
         audio.begin.as_deref(),
         audio.dur.as_deref(),
         audio.end.as_deref(),
         audio.time_container.as_deref(),
     );
-    serialize_opt_attr(buf, "clipBegin", &audio.clip_begin);
-    serialize_opt_attr(buf, "clipEnd", &audio.clip_end);
-    serialize_opt_attr(buf, "region", &audio.region);
-    serialize_opt_attr(buf, "style", &audio.style);
-    serialize_opt_attr(buf, "animate", &audio.animate);
-    serialize_opt_attr(buf, "condition", &audio.condition);
-    serialize_opt_attr(buf, "ttm:role", &audio.ttm_role);
-    serialize_opt_attr(buf, "ttm:roleSource", &audio.ttm_role_source);
-    serialize_opt_attr(buf, "src", &audio.src);
-    serialize_opt_attr(buf, "type", &audio.type_);
-    serialize_style_attrs(&audio.style_attributes, buf);
-    serialize_opt_attr(buf, "xml:id", &audio.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &audio.xml_lang);
-    serialize_xml_space(buf, &audio.xml_space);
-    serialize_xml_base(buf, &audio.xml_base);
-    serialize_ns_attrs(buf, &audio.foreign_attributes, ns);
+    serialize_opt_attr(t, "clipBegin", &audio.clip_begin);
+    serialize_opt_attr(t, "clipEnd", &audio.clip_end);
+    serialize_opt_attr(t, "region", &audio.region);
+    serialize_opt_attr(t, "style", &audio.style);
+    serialize_opt_attr(t, "animate", &audio.animate);
+    serialize_opt_attr(t, "condition", &audio.condition);
+    serialize_opt_attr(t, "ttm:role", &audio.ttm_role);
+    serialize_opt_attr(t, "ttm:roleSource", &audio.ttm_role_source);
+    serialize_opt_attr(t, "src", &audio.src);
+    serialize_opt_attr(t, "type", &audio.type_);
+    serialize_style_attrs(&audio.style_attributes, t);
+    serialize_opt_attr(t, "xml:id", &audio.xml_id);
+    serialize_opt_attr(t, "xml:lang", &audio.xml_lang);
+    serialize_xml_space(t, &audio.xml_space);
+    serialize_xml_base(t, &audio.xml_base);
+    serialize_ns_attrs(t, &audio.foreign_attributes, ns);
 }
 
 /// Serialize an `<image>` child of `<div>`/`<resources>` (TTML2 §9.1.5).
-fn serialize_image_element(
-    image: &ImageElement,
-    buf: &mut String,
-    indent: usize,
-    ns: &mut NamespaceMap,
-) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<image"));
-    serialize_image_attrs(image, buf, ns);
+fn serialize_image_element(image: &ImageElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
+    put_indent(w, indent);
+    let mut t = BytesStart::new("image");
+    serialize_image_attrs(image, &mut t, ns);
 
     let has_children = !image.metadata.is_empty()
         || !image.animations.is_empty()
         || !image.sources.is_empty()
         || !image.unknown_children.is_empty();
     if !has_children {
-        buf.push_str("/>\n");
+        empty_line(w, t);
         return;
     }
-    buf.push_str(">\n");
+    start_line(w, t);
     for meta in &image.metadata {
-        serialize_metadata_child(meta, buf, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns);
     }
     for anim in &image.animations {
-        serialize_animation_child(anim, buf, indent + 1, ns);
+        serialize_animation_child(anim, w, indent + 1, ns);
     }
     for src in &image.sources {
-        serialize_source_element(src, buf, indent + 1, ns);
+        serialize_source_element(src, w, indent + 1, ns);
     }
     for unknown in &image.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
-    buf.push_str(&format!("{ind}</image>\n"));
+    end_line(w, indent, "image");
 }
 
 /// Serialize an `<audio>` child of `<div>`/`<resources>` (TTML2 §9.1.1).
-fn serialize_audio_element(
-    audio: &AudioElement,
-    buf: &mut String,
-    indent: usize,
-    ns: &mut NamespaceMap,
-) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<audio"));
-    serialize_audio_attrs(audio, buf, ns);
+fn serialize_audio_element(audio: &AudioElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
+    put_indent(w, indent);
+    let mut t = BytesStart::new("audio");
+    serialize_audio_attrs(audio, &mut t, ns);
 
     let has_element_children = !audio.metadata.is_empty()
         || !audio.animations.is_empty()
         || !audio.sources.is_empty()
         || !audio.unknown_children.is_empty();
     match (audio.text.as_deref(), has_element_children) {
-        (None, false) => buf.push_str("/>\n"),
-        (Some(""), false) => buf.push_str("/>\n"),
+        (None, false) => empty_line(w, t),
+        (Some(""), false) => empty_line(w, t),
         (Some(text), false) => {
-            buf.push('>');
-            buf.push_str(&xml_escape(text));
-            buf.push_str("</audio>\n");
+            start_inline(w, t);
+            put_text(w, text);
+            end_inline_line(w, "audio");
         }
         (None, true) => {
-            buf.push_str(">\n");
+            start_line(w, t);
             for meta in &audio.metadata {
-                serialize_metadata_child(meta, buf, indent + 1, ns);
+                serialize_metadata_child(meta, w, indent + 1, ns);
             }
             for anim in &audio.animations {
-                serialize_animation_child(anim, buf, indent + 1, ns);
+                serialize_animation_child(anim, w, indent + 1, ns);
             }
             for src in &audio.sources {
-                serialize_source_element(src, buf, indent + 1, ns);
+                serialize_source_element(src, w, indent + 1, ns);
             }
             for unknown in &audio.unknown_children {
-                serialize_unknown_element(unknown, buf, indent + 1, ns);
+                serialize_unknown_element(unknown, w, indent + 1, ns);
             }
-            buf.push_str(&format!("{ind}</audio>\n"));
+            end_line(w, indent, "audio");
         }
         (Some(text), true) => {
-            buf.push_str(">\n");
+            start_line(w, t);
             if !text.trim().is_empty() {
-                buf.push_str(&format!(
-                    "{}{}\n",
-                    "  ".repeat(indent + 1),
-                    xml_escape(text.trim())
-                ));
+                put_indent(w, indent + 1);
+                put_text(w, text.trim());
+                put_nl(w);
             }
             for meta in &audio.metadata {
-                serialize_metadata_child(meta, buf, indent + 1, ns);
+                serialize_metadata_child(meta, w, indent + 1, ns);
             }
             for anim in &audio.animations {
-                serialize_animation_child(anim, buf, indent + 1, ns);
+                serialize_animation_child(anim, w, indent + 1, ns);
             }
             for src in &audio.sources {
-                serialize_source_element(src, buf, indent + 1, ns);
+                serialize_source_element(src, w, indent + 1, ns);
             }
             for unknown in &audio.unknown_children {
-                serialize_unknown_element(unknown, buf, indent + 1, ns);
+                serialize_unknown_element(unknown, w, indent + 1, ns);
             }
-            buf.push_str(&format!("{ind}</audio>\n"));
+            end_line(w, indent, "audio");
         }
     }
 }
@@ -4869,61 +5007,56 @@ fn serialize_audio_element(
 /// Serialize `<resources>` — TTML2 §9.1.6.
 fn serialize_resources_element(
     resources: &ResourcesElement,
-    buf: &mut String,
+    w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
 ) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<resources"));
-    serialize_opt_attr(buf, "xml:id", &resources.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &resources.xml_lang);
-    serialize_xml_space(buf, &resources.xml_space);
-    serialize_xml_base(buf, &resources.xml_base);
-    serialize_ns_attrs(buf, &resources.foreign_attributes, ns);
-    buf.push_str(">\n");
+    put_indent(w, indent);
+    let mut t = BytesStart::new("resources");
+    serialize_opt_attr(&mut t, "xml:id", &resources.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &resources.xml_lang);
+    serialize_xml_space(&mut t, &resources.xml_space);
+    serialize_xml_base(&mut t, &resources.xml_base);
+    serialize_ns_attrs(&mut t, &resources.foreign_attributes, ns);
+    start_line(w, t);
     for meta in &resources.metadata {
-        serialize_metadata_child(meta, buf, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns);
     }
     for data in &resources.data {
-        serialize_data_element(data, buf, indent + 1, ns);
+        serialize_data_element(data, w, indent + 1, ns);
     }
     for img in &resources.images {
-        serialize_image_element(img, buf, indent + 1, ns);
+        serialize_image_element(img, w, indent + 1, ns);
     }
     for audio in &resources.audio {
-        serialize_audio_element(audio, buf, indent + 1, ns);
+        serialize_audio_element(audio, w, indent + 1, ns);
     }
     for font in &resources.fonts {
-        serialize_font_element(font, buf, indent + 1, ns);
+        serialize_font_element(font, w, indent + 1, ns);
     }
     for unknown in &resources.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
-    buf.push_str(&format!("{ind}</resources>\n"));
+    end_line(w, indent, "resources");
 }
 
 /// Serialize `<data>` — TTML2 §9.1.3 (inline text, `chunk`+, or `source`+).
-fn serialize_data_element(
-    data: &DataElement,
-    buf: &mut String,
-    indent: usize,
-    ns: &mut NamespaceMap,
-) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<data"));
-    serialize_opt_attr(buf, "xml:id", &data.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &data.xml_lang);
-    serialize_xml_space(buf, &data.xml_space);
-    serialize_xml_base(buf, &data.xml_base);
-    serialize_opt_attr(buf, "condition", &data.condition);
-    serialize_opt_attr(buf, "encoding", &data.encoding);
-    serialize_opt_attr(buf, "format", &data.format);
-    serialize_opt_attr(buf, "length", &data.length);
-    serialize_opt_attr(buf, "src", &data.src);
-    serialize_opt_attr(buf, "type", &data.type_);
-    serialize_opt_attr(buf, "ttm:role", &data.ttm_role);
-    serialize_opt_attr(buf, "ttm:roleSource", &data.ttm_role_source);
-    serialize_ns_attrs(buf, &data.foreign_attributes, ns);
+fn serialize_data_element(data: &DataElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
+    put_indent(w, indent);
+    let mut t = BytesStart::new("data");
+    serialize_opt_attr(&mut t, "xml:id", &data.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &data.xml_lang);
+    serialize_xml_space(&mut t, &data.xml_space);
+    serialize_xml_base(&mut t, &data.xml_base);
+    serialize_opt_attr(&mut t, "condition", &data.condition);
+    serialize_opt_attr(&mut t, "encoding", &data.encoding);
+    serialize_opt_attr(&mut t, "format", &data.format);
+    serialize_opt_attr(&mut t, "length", &data.length);
+    serialize_opt_attr(&mut t, "src", &data.src);
+    serialize_opt_attr(&mut t, "type", &data.type_);
+    serialize_opt_attr(&mut t, "ttm:role", &data.ttm_role);
+    serialize_opt_attr(&mut t, "ttm:roleSource", &data.ttm_role_source);
+    serialize_ns_attrs(&mut t, &data.foreign_attributes, ns);
 
     let has_element_children = !data.metadata.is_empty()
         || !data.chunks.is_empty()
@@ -4931,149 +5064,137 @@ fn serialize_data_element(
         || !data.unknown_children.is_empty();
     let has_text = data.text.as_deref().is_some_and(|t| !t.is_empty());
     if !has_element_children && !has_text {
-        buf.push_str("/>\n");
+        empty_line(w, t);
         return;
     }
     if !has_element_children {
-        buf.push('>');
-        buf.push_str(&xml_escape(data.text.as_deref().unwrap_or("")));
-        buf.push_str("</data>\n");
+        start_inline(w, t);
+        put_text(w, data.text.as_deref().unwrap_or(""));
+        end_inline_line(w, "data");
         return;
     }
-    buf.push_str(">\n");
+    start_line(w, t);
     if let Some(text) = data.text.as_deref().filter(|t| !t.trim().is_empty()) {
-        buf.push_str(&format!(
-            "{}{}\n",
-            "  ".repeat(indent + 1),
-            xml_escape(text.trim())
-        ));
+        put_indent(w, indent + 1);
+        put_text(w, text.trim());
+        put_nl(w);
     }
     for meta in &data.metadata {
-        serialize_metadata_child(meta, buf, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns);
     }
     for chunk in &data.chunks {
-        serialize_chunk_element(chunk, buf, indent + 1, ns);
+        serialize_chunk_element(chunk, w, indent + 1, ns);
     }
     for src in &data.sources {
-        serialize_source_element(src, buf, indent + 1, ns);
+        serialize_source_element(src, w, indent + 1, ns);
     }
     for unknown in &data.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
-    buf.push_str(&format!("{ind}</data>\n"));
+    end_line(w, indent, "data");
 }
 
 /// Serialize `<chunk>` — TTML2 §9.1.2.
-fn serialize_chunk_element(
-    chunk: &ChunkElement,
-    buf: &mut String,
-    indent: usize,
-    ns: &mut NamespaceMap,
-) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<chunk"));
-    serialize_opt_attr(buf, "xml:id", &chunk.xml_id);
-    serialize_xml_base(buf, &chunk.xml_base);
-    serialize_opt_attr(buf, "condition", &chunk.condition);
-    serialize_opt_attr(buf, "encoding", &chunk.encoding);
-    serialize_opt_attr(buf, "length", &chunk.length);
-    serialize_ns_attrs(buf, &chunk.foreign_attributes, ns);
+fn serialize_chunk_element(chunk: &ChunkElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
+    put_indent(w, indent);
+    let mut t = BytesStart::new("chunk");
+    serialize_opt_attr(&mut t, "xml:id", &chunk.xml_id);
+    serialize_xml_base(&mut t, &chunk.xml_base);
+    serialize_opt_attr(&mut t, "condition", &chunk.condition);
+    serialize_opt_attr(&mut t, "encoding", &chunk.encoding);
+    serialize_opt_attr(&mut t, "length", &chunk.length);
+    serialize_ns_attrs(&mut t, &chunk.foreign_attributes, ns);
     match chunk.text.as_deref() {
         Some(text) if !text.is_empty() => {
-            buf.push('>');
-            buf.push_str(&xml_escape(text));
-            buf.push_str("</chunk>\n");
+            start_inline(w, t);
+            put_text(w, text);
+            end_inline_line(w, "chunk");
         }
-        _ => buf.push_str("/>\n"),
+        _ => empty_line(w, t),
     }
 }
 
 /// Serialize `<font>` — TTML2 §9.1.4.
-fn serialize_font_element(
-    font: &FontElement,
-    buf: &mut String,
-    indent: usize,
-    ns: &mut NamespaceMap,
-) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<font"));
-    serialize_opt_attr(buf, "xml:id", &font.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &font.xml_lang);
-    serialize_xml_space(buf, &font.xml_space);
-    serialize_xml_base(buf, &font.xml_base);
-    serialize_opt_attr(buf, "condition", &font.condition);
-    serialize_opt_attr(buf, "family", &font.family);
-    serialize_opt_attr(buf, "range", &font.range);
-    serialize_opt_attr(buf, "style", &font.style_);
-    serialize_opt_attr(buf, "src", &font.src);
-    serialize_opt_attr(buf, "type", &font.type_);
-    serialize_opt_attr(buf, "weight", &font.weight);
-    serialize_opt_attr(buf, "ttm:role", &font.ttm_role);
-    serialize_opt_attr(buf, "ttm:roleSource", &font.ttm_role_source);
-    serialize_ns_attrs(buf, &font.foreign_attributes, ns);
+fn serialize_font_element(font: &FontElement, w: &mut W, indent: usize, ns: &mut NamespaceMap) {
+    put_indent(w, indent);
+    let mut t = BytesStart::new("font");
+    serialize_opt_attr(&mut t, "xml:id", &font.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &font.xml_lang);
+    serialize_xml_space(&mut t, &font.xml_space);
+    serialize_xml_base(&mut t, &font.xml_base);
+    serialize_opt_attr(&mut t, "condition", &font.condition);
+    serialize_opt_attr(&mut t, "family", &font.family);
+    serialize_opt_attr(&mut t, "range", &font.range);
+    serialize_opt_attr(&mut t, "style", &font.style_);
+    serialize_opt_attr(&mut t, "src", &font.src);
+    serialize_opt_attr(&mut t, "type", &font.type_);
+    serialize_opt_attr(&mut t, "weight", &font.weight);
+    serialize_opt_attr(&mut t, "ttm:role", &font.ttm_role);
+    serialize_opt_attr(&mut t, "ttm:roleSource", &font.ttm_role_source);
+    serialize_ns_attrs(&mut t, &font.foreign_attributes, ns);
 
     let has_children = !font.metadata.is_empty()
         || !font.animations.is_empty()
         || !font.sources.is_empty()
         || !font.unknown_children.is_empty();
     if !has_children {
-        buf.push_str("/>\n");
+        empty_line(w, t);
         return;
     }
-    buf.push_str(">\n");
+    start_line(w, t);
     for meta in &font.metadata {
-        serialize_metadata_child(meta, buf, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns);
     }
     for anim in &font.animations {
-        serialize_animation_child(anim, buf, indent + 1, ns);
+        serialize_animation_child(anim, w, indent + 1, ns);
     }
     for src in &font.sources {
-        serialize_source_element(src, buf, indent + 1, ns);
+        serialize_source_element(src, w, indent + 1, ns);
     }
     for unknown in &font.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
-    buf.push_str(&format!("{ind}</font>\n"));
+    end_line(w, indent, "font");
 }
 
 /// Serialize `<source>` — TTML2 §9.1.7.
 fn serialize_source_element(
     source: &SourceElement,
-    buf: &mut String,
+    w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
 ) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<source"));
-    serialize_opt_attr(buf, "xml:id", &source.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &source.xml_lang);
-    serialize_xml_space(buf, &source.xml_space);
-    serialize_xml_base(buf, &source.xml_base);
-    serialize_opt_attr(buf, "condition", &source.condition);
-    serialize_opt_attr(buf, "format", &source.format);
-    serialize_opt_attr(buf, "src", &source.src);
-    serialize_opt_attr(buf, "type", &source.type_);
-    serialize_opt_attr(buf, "ttm:role", &source.ttm_role);
-    serialize_opt_attr(buf, "ttm:roleSource", &source.ttm_role_source);
-    serialize_ns_attrs(buf, &source.foreign_attributes, ns);
+    put_indent(w, indent);
+    let mut t = BytesStart::new("source");
+    serialize_opt_attr(&mut t, "xml:id", &source.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &source.xml_lang);
+    serialize_xml_space(&mut t, &source.xml_space);
+    serialize_xml_base(&mut t, &source.xml_base);
+    serialize_opt_attr(&mut t, "condition", &source.condition);
+    serialize_opt_attr(&mut t, "format", &source.format);
+    serialize_opt_attr(&mut t, "src", &source.src);
+    serialize_opt_attr(&mut t, "type", &source.type_);
+    serialize_opt_attr(&mut t, "ttm:role", &source.ttm_role);
+    serialize_opt_attr(&mut t, "ttm:roleSource", &source.ttm_role_source);
+    serialize_ns_attrs(&mut t, &source.foreign_attributes, ns);
 
     let has_children =
         !source.metadata.is_empty() || source.data.is_some() || !source.unknown_children.is_empty();
     if !has_children {
-        buf.push_str("/>\n");
+        empty_line(w, t);
         return;
     }
-    buf.push_str(">\n");
+    start_line(w, t);
     for meta in &source.metadata {
-        serialize_metadata_child(meta, buf, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns);
     }
     if let Some(ref data) = source.data {
-        serialize_data_element(data, buf, indent + 1, ns);
+        serialize_data_element(data, w, indent + 1, ns);
     }
     for unknown in &source.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
-    buf.push_str(&format!("{ind}</source>\n"));
+    end_line(w, indent, "source");
 }
 
 /// Serialize a metadata child — TTML2 §14.1.
@@ -5083,7 +5204,7 @@ fn serialize_source_element(
 /// once built via the struct API.
 fn serialize_metadata_child(
     child: &MetadataChild,
-    buf: &mut String,
+    w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
 ) {
@@ -5096,108 +5217,107 @@ fn serialize_metadata_child(
     while let Some(frame) = stack.pop() {
         match frame {
             Frame::Node(MetadataChild::Metadata(m), depth) => {
-                let ind = "  ".repeat(depth);
-                buf.push_str(&format!("{ind}<metadata"));
-                serialize_opt_attr(buf, "xml:id", &m.xml_id);
-                serialize_opt_attr(buf, "xml:lang", &m.xml_lang);
-                serialize_xml_space(buf, &m.xml_space);
-                serialize_xml_base(buf, &m.xml_base);
-                serialize_opt_attr(buf, "condition", &m.condition);
-                serialize_ns_attrs(buf, &m.foreign_attributes, ns);
+                put_indent(w, depth);
+                let mut t = BytesStart::new("metadata");
+                serialize_opt_attr(&mut t, "xml:id", &m.xml_id);
+                serialize_opt_attr(&mut t, "xml:lang", &m.xml_lang);
+                serialize_xml_space(&mut t, &m.xml_space);
+                serialize_xml_base(&mut t, &m.xml_base);
+                serialize_opt_attr(&mut t, "condition", &m.condition);
+                serialize_ns_attrs(&mut t, &m.foreign_attributes, ns);
                 let scoped = m.scoped_namespaces.clone().unwrap_or_default();
                 register_scoped(ns, &scoped);
                 let has_children = !m.children.is_empty() || !m.unknown_children.is_empty();
                 if !has_children {
-                    buf.push_str("/>\n");
+                    empty_line(w, t);
                     continue;
                 }
-                buf.push_str(">\n");
+                start_line(w, t);
                 stack.push(Frame::Close("metadata", depth));
                 for c in m.children.iter().rev() {
                     stack.push(Frame::Node(c, depth + 1));
                 }
             }
             Frame::Node(MetadataChild::TtmTitle(t), depth) => {
-                serialize_ttm_text_like("ttm:title", t, buf, depth, ns);
+                serialize_ttm_text_like("ttm:title", t, w, depth, ns);
             }
             Frame::Node(MetadataChild::TtmDesc(t), depth) => {
-                serialize_ttm_text_like("ttm:desc", t, buf, depth, ns);
+                serialize_ttm_text_like("ttm:desc", t, w, depth, ns);
             }
             Frame::Node(MetadataChild::TtmCopyright(t), depth) => {
-                serialize_ttm_text_like("ttm:copyright", t, buf, depth, ns);
+                serialize_ttm_text_like("ttm:copyright", t, w, depth, ns);
             }
             Frame::Node(MetadataChild::TtmAgent(a), depth) => {
-                let ind = "  ".repeat(depth);
-                buf.push_str(&format!("{ind}<ttm:agent"));
-                serialize_opt_attr(buf, "type", &a.type_);
-                serialize_opt_attr(buf, "xml:id", &a.xml_id);
-                serialize_opt_attr(buf, "xml:lang", &a.xml_lang);
-                serialize_xml_space(buf, &a.xml_space);
-                serialize_xml_base(buf, &a.xml_base);
-                serialize_opt_attr(buf, "condition", &a.condition);
-                serialize_ns_attrs(buf, &a.foreign_attributes, ns);
+                put_indent(w, depth);
+                let mut t = BytesStart::new("ttm:agent");
+                serialize_opt_attr(&mut t, "type", &a.type_);
+                serialize_opt_attr(&mut t, "xml:id", &a.xml_id);
+                serialize_opt_attr(&mut t, "xml:lang", &a.xml_lang);
+                serialize_xml_space(&mut t, &a.xml_space);
+                serialize_xml_base(&mut t, &a.xml_base);
+                serialize_opt_attr(&mut t, "condition", &a.condition);
+                serialize_ns_attrs(&mut t, &a.foreign_attributes, ns);
                 let scoped = a.scoped_namespaces.clone().unwrap_or_default();
                 register_scoped(ns, &scoped);
-                buf.push_str(">\n");
+                start_line(w, t);
                 for name in &a.names {
-                    serialize_ttm_name(name, buf, depth + 1, ns);
+                    serialize_ttm_name(name, w, depth + 1, ns);
                 }
                 for u in &a.unknown_children {
-                    serialize_unknown_element(u, buf, depth + 1, ns);
+                    serialize_unknown_element(u, w, depth + 1, ns);
                 }
-                buf.push_str(&format!("{ind}</ttm:agent>\n"));
+                end_line(w, depth, "ttm:agent");
             }
             Frame::Node(MetadataChild::TtmName(n), depth) => {
-                serialize_ttm_name(n, buf, depth, ns);
+                serialize_ttm_name(n, w, depth, ns);
             }
             Frame::Node(MetadataChild::TtmItem(item), depth) => {
-                serialize_ttm_item(item, buf, depth, ns);
+                serialize_ttm_item(item, w, depth, ns);
             }
             Frame::Node(MetadataChild::EbuttmDocumentMetadata(eb), depth) => {
-                let ind = "  ".repeat(depth);
-                buf.push_str(&format!("{ind}<ebuttm:documentMetadata"));
-                serialize_ns_attrs(buf, &eb.foreign_attributes, ns);
+                put_indent(w, depth);
+                let mut t = BytesStart::new("ebuttm:documentMetadata");
+                serialize_ns_attrs(&mut t, &eb.foreign_attributes, ns);
                 let scoped = eb.scoped_namespaces.clone().unwrap_or_default();
                 register_scoped(ns, &scoped);
-                buf.push_str(">\n");
+                start_line(w, t);
                 stack.push(Frame::Close("ebuttm:documentMetadata", depth));
                 for c in eb.children.iter().rev() {
                     stack.push(Frame::Node(c, depth + 1));
                 }
                 for u in eb.unknown_children.iter().rev() {
-                    serialize_unknown_element(u, buf, depth + 1, ns);
+                    serialize_unknown_element(u, w, depth + 1, ns);
                 }
             }
             Frame::Node(MetadataChild::EbuttmConformsToStandard(cs), depth) => {
-                let ind = "  ".repeat(depth);
-                buf.push_str(&format!("{ind}<ebuttm:conformsToStandard"));
-                serialize_ns_attrs(buf, &cs.foreign_attributes, ns);
+                put_indent(w, depth);
+                let mut t = BytesStart::new("ebuttm:conformsToStandard");
+                serialize_ns_attrs(&mut t, &cs.foreign_attributes, ns);
                 let scoped = cs.scoped_namespaces.clone().unwrap_or_default();
                 register_scoped(ns, &scoped);
-                buf.push('>');
-                buf.push_str(&xml_escape(&cs.text));
-                buf.push_str("</ebuttm:conformsToStandard>\n");
+                start_inline(w, t);
+                put_text(w, &cs.text);
+                end_inline_line(w, "ebuttm:conformsToStandard");
             }
             Frame::Node(MetadataChild::IttmAltText(alt), depth) => {
-                let ind = "  ".repeat(depth);
-                buf.push_str(&format!("{ind}<ittm:altText"));
-                serialize_opt_attr(buf, "xml:id", &alt.xml_id);
-                serialize_opt_attr(buf, "xml:lang", &alt.xml_lang);
-                serialize_xml_space(buf, &alt.xml_space);
-                serialize_xml_base(buf, &alt.xml_base);
-                serialize_ns_attrs(buf, &alt.foreign_attributes, ns);
+                put_indent(w, depth);
+                let mut t = BytesStart::new("ittm:altText");
+                serialize_opt_attr(&mut t, "xml:id", &alt.xml_id);
+                serialize_opt_attr(&mut t, "xml:lang", &alt.xml_lang);
+                serialize_xml_space(&mut t, &alt.xml_space);
+                serialize_xml_base(&mut t, &alt.xml_base);
+                serialize_ns_attrs(&mut t, &alt.foreign_attributes, ns);
                 let scoped = alt.scoped_namespaces.clone().unwrap_or_default();
                 register_scoped(ns, &scoped);
-                buf.push('>');
-                buf.push_str(&xml_escape(&alt.text));
-                buf.push_str("</ittm:altText>\n");
+                start_inline(w, t);
+                put_text(w, &alt.text);
+                end_inline_line(w, "ittm:altText");
             }
             Frame::Node(MetadataChild::Unknown(u), depth) => {
-                serialize_unknown_element(u, buf, depth, ns);
+                serialize_unknown_element(u, w, depth, ns);
             }
             Frame::Close(tag, depth) => {
-                let ind = "  ".repeat(depth);
-                buf.push_str(&format!("{ind}</{tag}>\n"));
+                end_line(w, depth, tag);
             }
         }
     }
@@ -5207,60 +5327,55 @@ fn serialize_metadata_child(
 /// `ttm:copyright`) with its full attribute set — TTML2 §14.1.4/§14.1.5/§14.1.8.
 fn serialize_ttm_text_like(
     tag: &str,
-    t: &TtmTextElement,
-    buf: &mut String,
+    elem: &TtmTextElement,
+    w: &mut W,
     depth: usize,
     ns: &mut NamespaceMap,
 ) {
-    let ind = "  ".repeat(depth);
-    buf.push_str(&format!("{ind}<{tag}"));
-    serialize_opt_attr(buf, "xml:id", &t.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &t.xml_lang);
-    serialize_xml_space(buf, &t.xml_space);
-    serialize_xml_base(buf, &t.xml_base);
-    serialize_opt_attr(buf, "condition", &t.condition);
-    serialize_ns_attrs(buf, &t.foreign_attributes, ns);
-    let scoped = t.scoped_namespaces.clone().unwrap_or_default();
+    put_indent(w, depth);
+    let mut t = BytesStart::new(tag);
+    serialize_opt_attr(&mut t, "xml:id", &elem.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &elem.xml_lang);
+    serialize_xml_space(&mut t, &elem.xml_space);
+    serialize_xml_base(&mut t, &elem.xml_base);
+    serialize_opt_attr(&mut t, "condition", &elem.condition);
+    serialize_ns_attrs(&mut t, &elem.foreign_attributes, ns);
+    let scoped = elem.scoped_namespaces.clone().unwrap_or_default();
     register_scoped(ns, &scoped);
-    buf.push('>');
-    buf.push_str(&xml_escape(&t.text));
-    buf.push_str(&format!("</{tag}>\n"));
+    start_inline(w, t);
+    put_text(w, &elem.text);
+    end_inline_line(w, tag);
 }
 
 /// Serialize `<ttm:name>` — TTML2 §14.1.7.
-fn serialize_ttm_name(n: &TtmNameElement, buf: &mut String, depth: usize, ns: &mut NamespaceMap) {
-    let ind = "  ".repeat(depth);
-    buf.push_str(&format!("{ind}<ttm:name"));
-    serialize_opt_attr(buf, "type", &n.type_);
-    serialize_opt_attr(buf, "xml:id", &n.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &n.xml_lang);
-    serialize_xml_space(buf, &n.xml_space);
-    serialize_xml_base(buf, &n.xml_base);
-    serialize_opt_attr(buf, "condition", &n.condition);
-    serialize_ns_attrs(buf, &n.foreign_attributes, ns);
+fn serialize_ttm_name(n: &TtmNameElement, w: &mut W, depth: usize, ns: &mut NamespaceMap) {
+    put_indent(w, depth);
+    let mut t = BytesStart::new("ttm:name");
+    serialize_opt_attr(&mut t, "type", &n.type_);
+    serialize_opt_attr(&mut t, "xml:id", &n.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &n.xml_lang);
+    serialize_xml_space(&mut t, &n.xml_space);
+    serialize_xml_base(&mut t, &n.xml_base);
+    serialize_opt_attr(&mut t, "condition", &n.condition);
+    serialize_ns_attrs(&mut t, &n.foreign_attributes, ns);
     let scoped = n.scoped_namespaces.clone().unwrap_or_default();
     register_scoped(ns, &scoped);
-    buf.push('>');
-    buf.push_str(&xml_escape(&n.text));
-    buf.push_str("</ttm:name>\n");
+    start_inline(w, t);
+    put_text(w, &n.text);
+    end_inline_line(w, "ttm:name");
 }
 
 /// Serialize `<ttm:item>` — TTML2 §14.1.6.
-fn serialize_ttm_item(
-    item: &TtmItemElement,
-    buf: &mut String,
-    depth: usize,
-    ns: &mut NamespaceMap,
-) {
-    let ind = "  ".repeat(depth);
-    buf.push_str(&format!("{ind}<ttm:item"));
-    serialize_opt_attr(buf, "name", &item.name);
-    serialize_opt_attr(buf, "xml:id", &item.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &item.xml_lang);
-    serialize_xml_space(buf, &item.xml_space);
-    serialize_xml_base(buf, &item.xml_base);
-    serialize_opt_attr(buf, "condition", &item.condition);
-    serialize_ns_attrs(buf, &item.foreign_attributes, ns);
+fn serialize_ttm_item(item: &TtmItemElement, w: &mut W, depth: usize, ns: &mut NamespaceMap) {
+    put_indent(w, depth);
+    let mut t = BytesStart::new("ttm:item");
+    serialize_opt_attr(&mut t, "name", &item.name);
+    serialize_opt_attr(&mut t, "xml:id", &item.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &item.xml_lang);
+    serialize_xml_space(&mut t, &item.xml_space);
+    serialize_xml_base(&mut t, &item.xml_base);
+    serialize_opt_attr(&mut t, "condition", &item.condition);
+    serialize_ns_attrs(&mut t, &item.foreign_attributes, ns);
     let scoped = item.scoped_namespaces.clone().unwrap_or_default();
     register_scoped(ns, &scoped);
 
@@ -5268,465 +5383,442 @@ fn serialize_ttm_item(
     if !has_children {
         match item.text.as_deref() {
             Some(text) if !text.is_empty() => {
-                buf.push('>');
-                buf.push_str(&xml_escape(text));
-                buf.push_str("</ttm:item>\n");
+                start_inline(w, t);
+                put_text(w, text);
+                end_inline_line(w, "ttm:item");
             }
-            _ => buf.push_str("/>\n"),
+            _ => empty_line(w, t),
         }
         return;
     }
-    buf.push_str(">\n");
+    start_line(w, t);
     if let Some(text) = item.text.as_deref().filter(|t| !t.trim().is_empty()) {
-        buf.push_str(&format!(
-            "{}{}\n",
-            "  ".repeat(depth + 1),
-            xml_escape(text.trim())
-        ));
+        put_indent(w, depth + 1);
+        put_text(w, text.trim());
+        put_nl(w);
     }
     for nested in &item.items {
-        serialize_ttm_item(nested, buf, depth + 1, ns);
+        serialize_ttm_item(nested, w, depth + 1, ns);
     }
     for u in &item.unknown_children {
-        serialize_unknown_element(u, buf, depth + 1, ns);
+        serialize_unknown_element(u, w, depth + 1, ns);
     }
-    buf.push_str(&format!("{ind}</ttm:item>\n"));
+    end_line(w, depth, "ttm:item");
 }
 
 /// Serialize `<styling>` — TTML2 §10.1.3.
 fn serialize_styling_element(
     styling: &StylingElement,
-    buf: &mut String,
+    w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
 ) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<styling"));
-    serialize_opt_attr(buf, "xml:id", &styling.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &styling.xml_lang);
-    serialize_xml_space(buf, &styling.xml_space);
-    serialize_xml_base(buf, &styling.xml_base);
-    serialize_ns_attrs(buf, &styling.foreign_attributes, ns);
-    buf.push_str(">\n");
+    put_indent(w, indent);
+    let mut t = BytesStart::new("styling");
+    serialize_opt_attr(&mut t, "xml:id", &styling.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &styling.xml_lang);
+    serialize_xml_space(&mut t, &styling.xml_space);
+    serialize_xml_base(&mut t, &styling.xml_base);
+    serialize_ns_attrs(&mut t, &styling.foreign_attributes, ns);
+    start_line(w, t);
     for init in &styling.initials {
-        let inner = "  ".repeat(indent + 1);
-        buf.push_str(&format!("{inner}<initial"));
-        serialize_opt_attr(buf, "xml:id", &init.xml_id);
-        serialize_opt_attr(buf, "xml:lang", &init.xml_lang);
-        serialize_xml_space(buf, &init.xml_space);
-        serialize_xml_base(buf, &init.xml_base);
-        serialize_opt_attr(buf, "condition", &init.condition);
-        serialize_style_attrs(&init.style_attributes, buf);
-        serialize_ns_attrs(buf, &init.foreign_attributes, ns);
-        buf.push_str("/>\n");
+        put_indent(w, indent + 1);
+        let mut t = BytesStart::new("initial");
+        serialize_opt_attr(&mut t, "xml:id", &init.xml_id);
+        serialize_opt_attr(&mut t, "xml:lang", &init.xml_lang);
+        serialize_xml_space(&mut t, &init.xml_space);
+        serialize_xml_base(&mut t, &init.xml_base);
+        serialize_opt_attr(&mut t, "condition", &init.condition);
+        serialize_style_attrs(&init.style_attributes, &mut t);
+        serialize_ns_attrs(&mut t, &init.foreign_attributes, ns);
+        empty_line(w, t);
     }
     for style in &styling.styles {
-        let inner = "  ".repeat(indent + 1);
-        buf.push_str(&format!("{inner}<style"));
-        serialize_opt_attr(buf, "xml:id", &style.xml_id);
-        serialize_opt_attr(buf, "xml:lang", &style.xml_lang);
-        serialize_xml_space(buf, &style.xml_space);
-        serialize_xml_base(buf, &style.xml_base);
-        serialize_opt_attr(buf, "condition", &style.condition);
-        serialize_opt_attr(buf, "style", &style.style);
-        serialize_style_attrs(&style.style_attributes, buf);
-        serialize_ns_attrs(buf, &style.foreign_attributes, ns);
-        buf.push_str("/>\n");
+        put_indent(w, indent + 1);
+        let mut t = BytesStart::new("style");
+        serialize_opt_attr(&mut t, "xml:id", &style.xml_id);
+        serialize_opt_attr(&mut t, "xml:lang", &style.xml_lang);
+        serialize_xml_space(&mut t, &style.xml_space);
+        serialize_xml_base(&mut t, &style.xml_base);
+        serialize_opt_attr(&mut t, "condition", &style.condition);
+        serialize_opt_attr(&mut t, "style", &style.style);
+        serialize_style_attrs(&style.style_attributes, &mut t);
+        serialize_ns_attrs(&mut t, &style.foreign_attributes, ns);
+        empty_line(w, t);
     }
     for unknown in &styling.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
-    buf.push_str(&format!("{ind}</styling>\n"));
+    end_line(w, indent, "styling");
 }
 
 /// Serialize `<layout>` — TTML2 §11.1.1.
 fn serialize_layout_element(
     layout: &LayoutElement,
-    buf: &mut String,
+    w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
 ) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<layout"));
-    serialize_opt_attr(buf, "xml:id", &layout.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &layout.xml_lang);
-    serialize_xml_space(buf, &layout.xml_space);
-    serialize_xml_base(buf, &layout.xml_base);
-    serialize_ns_attrs(buf, &layout.foreign_attributes, ns);
-    buf.push_str(">\n");
+    put_indent(w, indent);
+    let mut t = BytesStart::new("layout");
+    serialize_opt_attr(&mut t, "xml:id", &layout.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &layout.xml_lang);
+    serialize_xml_space(&mut t, &layout.xml_space);
+    serialize_xml_base(&mut t, &layout.xml_base);
+    serialize_ns_attrs(&mut t, &layout.foreign_attributes, ns);
+    start_line(w, t);
     for region in &layout.regions {
-        serialize_region_element(region, buf, indent + 1, ns);
+        serialize_region_element(region, w, indent + 1, ns);
     }
     for unknown in &layout.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
-    buf.push_str(&format!("{ind}</layout>\n"));
+    end_line(w, indent, "layout");
 }
 
 /// Serialize `<region>` — TTML2 §11.1.2.
 fn serialize_region_element(
     region: &RegionElement,
-    buf: &mut String,
+    w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
 ) {
-    let ind = "  ".repeat(indent);
-    buf.push_str(&format!("{ind}<region"));
+    put_indent(w, indent);
+    let mut t = BytesStart::new("region");
     serialize_common_timing_attrs(
-        buf,
+        &mut t,
         region.begin.as_deref(),
         region.dur.as_deref(),
         region.end.as_deref(),
         region.time_container.as_deref(),
     );
-    serialize_opt_attr(buf, "style", &region.style);
-    serialize_opt_attr(buf, "animate", &region.animate);
-    serialize_opt_attr(buf, "condition", &region.condition);
-    serialize_opt_attr(buf, "ttm:role", &region.ttm_role);
-    serialize_opt_attr(buf, "ttm:roleSource", &region.ttm_role_source);
-    serialize_style_attrs(&region.style_attributes, buf);
-    serialize_opt_attr(buf, "xml:id", &region.xml_id);
-    serialize_opt_attr(buf, "xml:lang", &region.xml_lang);
-    serialize_xml_space(buf, &region.xml_space);
-    serialize_xml_base(buf, &region.xml_base);
-    serialize_ns_attrs(buf, &region.foreign_attributes, ns);
+    serialize_opt_attr(&mut t, "style", &region.style);
+    serialize_opt_attr(&mut t, "animate", &region.animate);
+    serialize_opt_attr(&mut t, "condition", &region.condition);
+    serialize_opt_attr(&mut t, "ttm:role", &region.ttm_role);
+    serialize_opt_attr(&mut t, "ttm:roleSource", &region.ttm_role_source);
+    serialize_style_attrs(&region.style_attributes, &mut t);
+    serialize_opt_attr(&mut t, "xml:id", &region.xml_id);
+    serialize_opt_attr(&mut t, "xml:lang", &region.xml_lang);
+    serialize_xml_space(&mut t, &region.xml_space);
+    serialize_xml_base(&mut t, &region.xml_base);
+    serialize_ns_attrs(&mut t, &region.foreign_attributes, ns);
 
     let has_children = !region.metadata.is_empty()
         || !region.animations.is_empty()
         || !region.styles.is_empty()
         || !region.unknown_children.is_empty();
     if !has_children {
-        buf.push_str("/>\n");
+        empty_line(w, t);
         return;
     }
-    buf.push_str(">\n");
+    start_line(w, t);
     for meta in &region.metadata {
-        serialize_metadata_child(meta, buf, indent + 1, ns);
+        serialize_metadata_child(meta, w, indent + 1, ns);
     }
     for anim in &region.animations {
-        serialize_animation_child(anim, buf, indent + 1, ns);
+        serialize_animation_child(anim, w, indent + 1, ns);
     }
     for style in &region.styles {
-        let inner = "  ".repeat(indent + 1);
-        buf.push_str(&format!("{inner}<style"));
-        serialize_opt_attr(buf, "xml:id", &style.xml_id);
-        serialize_opt_attr(buf, "xml:lang", &style.xml_lang);
-        serialize_xml_space(buf, &style.xml_space);
-        serialize_xml_base(buf, &style.xml_base);
-        serialize_opt_attr(buf, "condition", &style.condition);
-        serialize_opt_attr(buf, "style", &style.style);
-        serialize_style_attrs(&style.style_attributes, buf);
-        serialize_ns_attrs(buf, &style.foreign_attributes, ns);
-        buf.push_str("/>\n");
+        put_indent(w, indent + 1);
+        let mut t = BytesStart::new("style");
+        serialize_opt_attr(&mut t, "xml:id", &style.xml_id);
+        serialize_opt_attr(&mut t, "xml:lang", &style.xml_lang);
+        serialize_xml_space(&mut t, &style.xml_space);
+        serialize_xml_base(&mut t, &style.xml_base);
+        serialize_opt_attr(&mut t, "condition", &style.condition);
+        serialize_opt_attr(&mut t, "style", &style.style);
+        serialize_style_attrs(&style.style_attributes, &mut t);
+        serialize_ns_attrs(&mut t, &style.foreign_attributes, ns);
+        empty_line(w, t);
     }
     for unknown in &region.unknown_children {
-        serialize_unknown_element(unknown, buf, indent + 1, ns);
+        serialize_unknown_element(unknown, w, indent + 1, ns);
     }
-    buf.push_str(&format!("{ind}</region>\n"));
+    end_line(w, indent, "region");
 }
 
 /// Serialize an animation child — TTML2 §13.1.3.
 fn serialize_animation_child(
     anim: &AnimationChild,
-    buf: &mut String,
+    w: &mut W,
     indent: usize,
     ns: &mut NamespaceMap,
 ) {
-    let ind = "  ".repeat(indent);
     match anim {
         AnimationChild::Set(set) => {
-            buf.push_str(&format!("{ind}<set"));
+            put_indent(w, indent);
+            let mut t = BytesStart::new("set");
             serialize_common_timing_attrs(
-                buf,
+                &mut t,
                 set.begin.as_deref(),
                 set.dur.as_deref(),
                 set.end.as_deref(),
                 None,
             );
-            serialize_opt_attr(buf, "fill", &set.fill);
-            serialize_opt_attr(buf, "repeatCount", &set.repeat_count);
-            serialize_opt_attr(buf, "condition", &set.condition);
-            serialize_opt_attr(buf, "ttm:role", &set.ttm_role);
-            serialize_opt_attr(buf, "ttm:roleSource", &set.ttm_role_source);
-            serialize_style_attrs(&set.style_attributes, buf);
-            serialize_opt_attr(buf, "xml:id", &set.xml_id);
-            serialize_opt_attr(buf, "xml:lang", &set.xml_lang);
-            serialize_xml_space(buf, &set.xml_space);
-            serialize_xml_base(buf, &set.xml_base);
-            serialize_ns_attrs(buf, &set.foreign_attributes, ns);
+            serialize_opt_attr(&mut t, "fill", &set.fill);
+            serialize_opt_attr(&mut t, "repeatCount", &set.repeat_count);
+            serialize_opt_attr(&mut t, "condition", &set.condition);
+            serialize_opt_attr(&mut t, "ttm:role", &set.ttm_role);
+            serialize_opt_attr(&mut t, "ttm:roleSource", &set.ttm_role_source);
+            serialize_style_attrs(&set.style_attributes, &mut t);
+            serialize_opt_attr(&mut t, "xml:id", &set.xml_id);
+            serialize_opt_attr(&mut t, "xml:lang", &set.xml_lang);
+            serialize_xml_space(&mut t, &set.xml_space);
+            serialize_xml_base(&mut t, &set.xml_base);
+            serialize_ns_attrs(&mut t, &set.foreign_attributes, ns);
 
             let has_children = !set.metadata.is_empty() || !set.unknown_children.is_empty();
             if !has_children {
-                buf.push_str("/>\n");
+                empty_line(w, t);
                 return;
             }
-            buf.push_str(">\n");
+            start_line(w, t);
             for meta in &set.metadata {
-                serialize_metadata_child(meta, buf, indent + 1, ns);
+                serialize_metadata_child(meta, w, indent + 1, ns);
             }
             for unknown in &set.unknown_children {
-                serialize_unknown_element(unknown, buf, indent + 1, ns);
+                serialize_unknown_element(unknown, w, indent + 1, ns);
             }
-            buf.push_str(&format!("{ind}</set>\n"));
+            end_line(w, indent, "set");
         }
     }
 }
 
 /// Write the shared timing attributes — TTML2 §11.3.
 fn serialize_common_timing_attrs(
-    buf: &mut String,
+    t: &mut BytesStart<'_>,
     begin: Option<&str>,
     dur: Option<&str>,
     end: Option<&str>,
     time_container: Option<&str>,
 ) {
     if let Some(b) = begin {
-        buf.push_str(&format!(r#" begin="{}""#, xml_escape(b)));
+        push_attr(t, "begin", b);
     }
     if let Some(d) = dur {
-        buf.push_str(&format!(r#" dur="{}""#, xml_escape(d)));
+        push_attr(t, "dur", d);
     }
     if let Some(e) = end {
-        buf.push_str(&format!(r#" end="{}""#, xml_escape(e)));
+        push_attr(t, "end", e);
     }
     if let Some(tc) = time_container {
-        buf.push_str(&format!(r#" timeContainer="{}""#, xml_escape(tc)));
+        push_attr(t, "timeContainer", tc);
     }
 }
 
 /// Write an optional attribute, skipping absent and empty values.
-fn serialize_opt_attr(buf: &mut String, name: &str, value: &Option<String>) {
+fn serialize_opt_attr(t: &mut BytesStart<'_>, name: &str, value: &Option<String>) {
     if let Some(v) = value
         && !v.is_empty()
     {
-        buf.push_str(&format!(r#" {}="{}""#, name, xml_escape(v)));
+        push_attr(t, name, v);
     }
 }
 
-/// Basic XML escaping for attribute values and text content.
-fn xml_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
-}
 /// Like `serialize_style_attrs` but skips the tts:extent attribute
 /// (used when tts:extent is already output via an explicit field like on ImageElement).
-fn serialize_style_attrs_skip_extent(attrs: &StyleAttributes, buf: &mut String) {
-    serialize_opt_attr(buf, "tts:backgroundColor", &attrs.tts_background_color);
-    serialize_opt_attr(buf, "tts:backgroundClip", &attrs.tts_background_clip);
-    serialize_opt_attr(buf, "tts:backgroundExtent", &attrs.tts_background_extent);
-    serialize_opt_attr(buf, "tts:backgroundImage", &attrs.tts_background_image);
-    serialize_opt_attr(buf, "tts:backgroundOrigin", &attrs.tts_background_origin);
+fn serialize_style_attrs_skip_extent(attrs: &StyleAttributes, t: &mut BytesStart<'_>) {
+    serialize_opt_attr(t, "tts:backgroundColor", &attrs.tts_background_color);
+    serialize_opt_attr(t, "tts:backgroundClip", &attrs.tts_background_clip);
+    serialize_opt_attr(t, "tts:backgroundExtent", &attrs.tts_background_extent);
+    serialize_opt_attr(t, "tts:backgroundImage", &attrs.tts_background_image);
+    serialize_opt_attr(t, "tts:backgroundOrigin", &attrs.tts_background_origin);
+    serialize_opt_attr(t, "tts:backgroundPosition", &attrs.tts_background_position);
+    serialize_opt_attr(t, "tts:backgroundRepeat", &attrs.tts_background_repeat);
+    serialize_opt_attr(t, "tts:border", &attrs.tts_border);
+    serialize_opt_attr(t, "tts:bpd", &attrs.tts_bpd);
+    serialize_opt_attr(t, "tts:color", &attrs.tts_color);
+    serialize_opt_attr(t, "tts:direction", &attrs.tts_direction);
+    serialize_opt_attr(t, "tts:disparity", &attrs.tts_disparity);
+    serialize_opt_attr(t, "tts:display", &attrs.tts_display);
+    serialize_opt_attr(t, "tts:displayAlign", &attrs.tts_display_align);
+    serialize_opt_attr(t, "tts:fontFamily", &attrs.tts_font_family);
+    serialize_opt_attr(t, "tts:fontKerning", &attrs.tts_font_kerning);
     serialize_opt_attr(
-        buf,
-        "tts:backgroundPosition",
-        &attrs.tts_background_position,
-    );
-    serialize_opt_attr(buf, "tts:backgroundRepeat", &attrs.tts_background_repeat);
-    serialize_opt_attr(buf, "tts:border", &attrs.tts_border);
-    serialize_opt_attr(buf, "tts:bpd", &attrs.tts_bpd);
-    serialize_opt_attr(buf, "tts:color", &attrs.tts_color);
-    serialize_opt_attr(buf, "tts:direction", &attrs.tts_direction);
-    serialize_opt_attr(buf, "tts:disparity", &attrs.tts_disparity);
-    serialize_opt_attr(buf, "tts:display", &attrs.tts_display);
-    serialize_opt_attr(buf, "tts:displayAlign", &attrs.tts_display_align);
-    serialize_opt_attr(buf, "tts:fontFamily", &attrs.tts_font_family);
-    serialize_opt_attr(buf, "tts:fontKerning", &attrs.tts_font_kerning);
-    serialize_opt_attr(
-        buf,
+        t,
         "tts:fontSelectionStrategy",
         &attrs.tts_font_selection_strategy,
     );
-    serialize_opt_attr(buf, "tts:fontShear", &attrs.tts_font_shear);
-    serialize_opt_attr(buf, "tts:fontSize", &attrs.tts_font_size);
-    serialize_opt_attr(buf, "tts:fontStyle", &attrs.tts_font_style);
-    serialize_opt_attr(buf, "tts:fontVariant", &attrs.tts_font_variant);
-    serialize_opt_attr(buf, "tts:fontWeight", &attrs.tts_font_weight);
-    serialize_opt_attr(buf, "tts:ipd", &attrs.tts_ipd);
-    serialize_opt_attr(buf, "tts:letterSpacing", &attrs.tts_letter_spacing);
-    serialize_opt_attr(buf, "tts:lineHeight", &attrs.tts_line_height);
-    serialize_opt_attr(buf, "tts:lineShear", &attrs.tts_line_shear);
-    serialize_opt_attr(buf, "tts:luminanceGain", &attrs.tts_luminance_gain);
-    serialize_opt_attr(buf, "tts:opacity", &attrs.tts_opacity);
-    serialize_opt_attr(buf, "tts:origin", &attrs.tts_origin);
-    serialize_opt_attr(buf, "tts:overflow", &attrs.tts_overflow);
-    serialize_opt_attr(buf, "tts:padding", &attrs.tts_padding);
-    serialize_opt_attr(buf, "tts:position", &attrs.tts_position);
-    serialize_opt_attr(buf, "tts:ruby", &attrs.tts_ruby);
-    serialize_opt_attr(buf, "tts:rubyAlign", &attrs.tts_ruby_align);
-    serialize_opt_attr(buf, "tts:rubyPosition", &attrs.tts_ruby_position);
-    serialize_opt_attr(buf, "tts:rubyReserve", &attrs.tts_ruby_reserve);
-    serialize_opt_attr(buf, "tts:shear", &attrs.tts_shear);
-    serialize_opt_attr(buf, "tts:showBackground", &attrs.tts_show_background);
-    serialize_opt_attr(buf, "tts:textAlign", &attrs.tts_text_align);
-    serialize_opt_attr(buf, "tts:textCombine", &attrs.tts_text_combine);
-    serialize_opt_attr(buf, "tts:textDecoration", &attrs.tts_text_decoration);
-    serialize_opt_attr(buf, "tts:textEmphasis", &attrs.tts_text_emphasis);
-    serialize_opt_attr(buf, "tts:textOrientation", &attrs.tts_text_orientation);
-    serialize_opt_attr(buf, "tts:textOutline", &attrs.tts_text_outline);
-    serialize_opt_attr(buf, "tts:textShadow", &attrs.tts_text_shadow);
-    serialize_opt_attr(buf, "tts:unicodeBidi", &attrs.tts_unicode_bidi);
-    serialize_opt_attr(buf, "tts:visibility", &attrs.tts_visibility);
-    serialize_opt_attr(buf, "tts:wrapOption", &attrs.tts_wrap_option);
-    serialize_opt_attr(buf, "tts:writingMode", &attrs.tts_writing_mode);
-    serialize_opt_attr(buf, "tts:zIndex", &attrs.tts_z_index);
-    serialize_opt_attr(buf, "tta:gain", &attrs.tta_gain);
-    serialize_opt_attr(buf, "tta:pan", &attrs.tta_pan);
-    serialize_opt_attr(buf, "tta:pitch", &attrs.tta_pitch);
-    serialize_opt_attr(buf, "tta:speak", &attrs.tta_speak);
-    serialize_opt_attr(buf, "itts:forcedDisplay", &attrs.itts_forced_display);
-    serialize_opt_attr(buf, "itts:fillLineGap", &attrs.itts_fill_line_gap);
-    serialize_opt_attr(buf, "ebutts:linePadding", &attrs.ebutts_line_padding);
-    serialize_opt_attr(buf, "ebutts:multiRowAlign", &attrs.ebutts_multi_row_align);
+    serialize_opt_attr(t, "tts:fontShear", &attrs.tts_font_shear);
+    serialize_opt_attr(t, "tts:fontSize", &attrs.tts_font_size);
+    serialize_opt_attr(t, "tts:fontStyle", &attrs.tts_font_style);
+    serialize_opt_attr(t, "tts:fontVariant", &attrs.tts_font_variant);
+    serialize_opt_attr(t, "tts:fontWeight", &attrs.tts_font_weight);
+    serialize_opt_attr(t, "tts:ipd", &attrs.tts_ipd);
+    serialize_opt_attr(t, "tts:letterSpacing", &attrs.tts_letter_spacing);
+    serialize_opt_attr(t, "tts:lineHeight", &attrs.tts_line_height);
+    serialize_opt_attr(t, "tts:lineShear", &attrs.tts_line_shear);
+    serialize_opt_attr(t, "tts:luminanceGain", &attrs.tts_luminance_gain);
+    serialize_opt_attr(t, "tts:opacity", &attrs.tts_opacity);
+    serialize_opt_attr(t, "tts:origin", &attrs.tts_origin);
+    serialize_opt_attr(t, "tts:overflow", &attrs.tts_overflow);
+    serialize_opt_attr(t, "tts:padding", &attrs.tts_padding);
+    serialize_opt_attr(t, "tts:position", &attrs.tts_position);
+    serialize_opt_attr(t, "tts:ruby", &attrs.tts_ruby);
+    serialize_opt_attr(t, "tts:rubyAlign", &attrs.tts_ruby_align);
+    serialize_opt_attr(t, "tts:rubyPosition", &attrs.tts_ruby_position);
+    serialize_opt_attr(t, "tts:rubyReserve", &attrs.tts_ruby_reserve);
+    serialize_opt_attr(t, "tts:shear", &attrs.tts_shear);
+    serialize_opt_attr(t, "tts:showBackground", &attrs.tts_show_background);
+    serialize_opt_attr(t, "tts:textAlign", &attrs.tts_text_align);
+    serialize_opt_attr(t, "tts:textCombine", &attrs.tts_text_combine);
+    serialize_opt_attr(t, "tts:textDecoration", &attrs.tts_text_decoration);
+    serialize_opt_attr(t, "tts:textEmphasis", &attrs.tts_text_emphasis);
+    serialize_opt_attr(t, "tts:textOrientation", &attrs.tts_text_orientation);
+    serialize_opt_attr(t, "tts:textOutline", &attrs.tts_text_outline);
+    serialize_opt_attr(t, "tts:textShadow", &attrs.tts_text_shadow);
+    serialize_opt_attr(t, "tts:unicodeBidi", &attrs.tts_unicode_bidi);
+    serialize_opt_attr(t, "tts:visibility", &attrs.tts_visibility);
+    serialize_opt_attr(t, "tts:wrapOption", &attrs.tts_wrap_option);
+    serialize_opt_attr(t, "tts:writingMode", &attrs.tts_writing_mode);
+    serialize_opt_attr(t, "tts:zIndex", &attrs.tts_z_index);
+    serialize_opt_attr(t, "tta:gain", &attrs.tta_gain);
+    serialize_opt_attr(t, "tta:pan", &attrs.tta_pan);
+    serialize_opt_attr(t, "tta:pitch", &attrs.tta_pitch);
+    serialize_opt_attr(t, "tta:speak", &attrs.tta_speak);
+    serialize_opt_attr(t, "itts:forcedDisplay", &attrs.itts_forced_display);
+    serialize_opt_attr(t, "itts:fillLineGap", &attrs.itts_fill_line_gap);
+    serialize_opt_attr(t, "ebutts:linePadding", &attrs.ebutts_line_padding);
+    serialize_opt_attr(t, "ebutts:multiRowAlign", &attrs.ebutts_multi_row_align);
 }
 
 #[allow(clippy::too_many_lines)]
-fn serialize_style_attrs(attrs: &StyleAttributes, buf: &mut String) {
-    serialize_opt_attr(buf, "tts:backgroundColor", &attrs.tts_background_color);
-    serialize_opt_attr(buf, "tts:backgroundClip", &attrs.tts_background_clip);
-    serialize_opt_attr(buf, "tts:backgroundExtent", &attrs.tts_background_extent);
-    serialize_opt_attr(buf, "tts:backgroundImage", &attrs.tts_background_image);
-    serialize_opt_attr(buf, "tts:backgroundOrigin", &attrs.tts_background_origin);
+fn serialize_style_attrs(attrs: &StyleAttributes, t: &mut BytesStart<'_>) {
+    serialize_opt_attr(t, "tts:backgroundColor", &attrs.tts_background_color);
+    serialize_opt_attr(t, "tts:backgroundClip", &attrs.tts_background_clip);
+    serialize_opt_attr(t, "tts:backgroundExtent", &attrs.tts_background_extent);
+    serialize_opt_attr(t, "tts:backgroundImage", &attrs.tts_background_image);
+    serialize_opt_attr(t, "tts:backgroundOrigin", &attrs.tts_background_origin);
+    serialize_opt_attr(t, "tts:backgroundPosition", &attrs.tts_background_position);
+    serialize_opt_attr(t, "tts:backgroundRepeat", &attrs.tts_background_repeat);
+    serialize_opt_attr(t, "tts:border", &attrs.tts_border);
+    serialize_opt_attr(t, "tts:bpd", &attrs.tts_bpd);
+    serialize_opt_attr(t, "tts:color", &attrs.tts_color);
+    serialize_opt_attr(t, "tts:direction", &attrs.tts_direction);
+    serialize_opt_attr(t, "tts:disparity", &attrs.tts_disparity);
+    serialize_opt_attr(t, "tts:display", &attrs.tts_display);
+    serialize_opt_attr(t, "tts:displayAlign", &attrs.tts_display_align);
+    serialize_opt_attr(t, "tts:extent", &attrs.tts_extent);
+    serialize_opt_attr(t, "tts:fontFamily", &attrs.tts_font_family);
+    serialize_opt_attr(t, "tts:fontKerning", &attrs.tts_font_kerning);
     serialize_opt_attr(
-        buf,
-        "tts:backgroundPosition",
-        &attrs.tts_background_position,
-    );
-    serialize_opt_attr(buf, "tts:backgroundRepeat", &attrs.tts_background_repeat);
-    serialize_opt_attr(buf, "tts:border", &attrs.tts_border);
-    serialize_opt_attr(buf, "tts:bpd", &attrs.tts_bpd);
-    serialize_opt_attr(buf, "tts:color", &attrs.tts_color);
-    serialize_opt_attr(buf, "tts:direction", &attrs.tts_direction);
-    serialize_opt_attr(buf, "tts:disparity", &attrs.tts_disparity);
-    serialize_opt_attr(buf, "tts:display", &attrs.tts_display);
-    serialize_opt_attr(buf, "tts:displayAlign", &attrs.tts_display_align);
-    serialize_opt_attr(buf, "tts:extent", &attrs.tts_extent);
-    serialize_opt_attr(buf, "tts:fontFamily", &attrs.tts_font_family);
-    serialize_opt_attr(buf, "tts:fontKerning", &attrs.tts_font_kerning);
-    serialize_opt_attr(
-        buf,
+        t,
         "tts:fontSelectionStrategy",
         &attrs.tts_font_selection_strategy,
     );
-    serialize_opt_attr(buf, "tts:fontShear", &attrs.tts_font_shear);
-    serialize_opt_attr(buf, "tts:fontSize", &attrs.tts_font_size);
-    serialize_opt_attr(buf, "tts:fontStyle", &attrs.tts_font_style);
-    serialize_opt_attr(buf, "tts:fontVariant", &attrs.tts_font_variant);
-    serialize_opt_attr(buf, "tts:fontWeight", &attrs.tts_font_weight);
-    serialize_opt_attr(buf, "tts:ipd", &attrs.tts_ipd);
-    serialize_opt_attr(buf, "tts:letterSpacing", &attrs.tts_letter_spacing);
-    serialize_opt_attr(buf, "tts:lineHeight", &attrs.tts_line_height);
-    serialize_opt_attr(buf, "tts:lineShear", &attrs.tts_line_shear);
-    serialize_opt_attr(buf, "tts:luminanceGain", &attrs.tts_luminance_gain);
-    serialize_opt_attr(buf, "tts:opacity", &attrs.tts_opacity);
-    serialize_opt_attr(buf, "tts:origin", &attrs.tts_origin);
-    serialize_opt_attr(buf, "tts:overflow", &attrs.tts_overflow);
-    serialize_opt_attr(buf, "tts:padding", &attrs.tts_padding);
-    serialize_opt_attr(buf, "tts:position", &attrs.tts_position);
-    serialize_opt_attr(buf, "tts:ruby", &attrs.tts_ruby);
-    serialize_opt_attr(buf, "tts:rubyAlign", &attrs.tts_ruby_align);
-    serialize_opt_attr(buf, "tts:rubyPosition", &attrs.tts_ruby_position);
-    serialize_opt_attr(buf, "tts:rubyReserve", &attrs.tts_ruby_reserve);
-    serialize_opt_attr(buf, "tts:shear", &attrs.tts_shear);
-    serialize_opt_attr(buf, "tts:showBackground", &attrs.tts_show_background);
-    serialize_opt_attr(buf, "tts:textAlign", &attrs.tts_text_align);
-    serialize_opt_attr(buf, "tts:textCombine", &attrs.tts_text_combine);
-    serialize_opt_attr(buf, "tts:textDecoration", &attrs.tts_text_decoration);
-    serialize_opt_attr(buf, "tts:textEmphasis", &attrs.tts_text_emphasis);
-    serialize_opt_attr(buf, "tts:textOrientation", &attrs.tts_text_orientation);
-    serialize_opt_attr(buf, "tts:textOutline", &attrs.tts_text_outline);
-    serialize_opt_attr(buf, "tts:textShadow", &attrs.tts_text_shadow);
-    serialize_opt_attr(buf, "tts:unicodeBidi", &attrs.tts_unicode_bidi);
-    serialize_opt_attr(buf, "tts:visibility", &attrs.tts_visibility);
-    serialize_opt_attr(buf, "tts:wrapOption", &attrs.tts_wrap_option);
-    serialize_opt_attr(buf, "tts:writingMode", &attrs.tts_writing_mode);
-    serialize_opt_attr(buf, "tts:zIndex", &attrs.tts_z_index);
-    serialize_opt_attr(buf, "tta:gain", &attrs.tta_gain);
-    serialize_opt_attr(buf, "tta:pan", &attrs.tta_pan);
-    serialize_opt_attr(buf, "tta:pitch", &attrs.tta_pitch);
-    serialize_opt_attr(buf, "tta:speak", &attrs.tta_speak);
-    serialize_opt_attr(buf, "itts:forcedDisplay", &attrs.itts_forced_display);
-    serialize_opt_attr(buf, "itts:fillLineGap", &attrs.itts_fill_line_gap);
-    serialize_opt_attr(buf, "ebutts:linePadding", &attrs.ebutts_line_padding);
-    serialize_opt_attr(buf, "ebutts:multiRowAlign", &attrs.ebutts_multi_row_align);
+    serialize_opt_attr(t, "tts:fontShear", &attrs.tts_font_shear);
+    serialize_opt_attr(t, "tts:fontSize", &attrs.tts_font_size);
+    serialize_opt_attr(t, "tts:fontStyle", &attrs.tts_font_style);
+    serialize_opt_attr(t, "tts:fontVariant", &attrs.tts_font_variant);
+    serialize_opt_attr(t, "tts:fontWeight", &attrs.tts_font_weight);
+    serialize_opt_attr(t, "tts:ipd", &attrs.tts_ipd);
+    serialize_opt_attr(t, "tts:letterSpacing", &attrs.tts_letter_spacing);
+    serialize_opt_attr(t, "tts:lineHeight", &attrs.tts_line_height);
+    serialize_opt_attr(t, "tts:lineShear", &attrs.tts_line_shear);
+    serialize_opt_attr(t, "tts:luminanceGain", &attrs.tts_luminance_gain);
+    serialize_opt_attr(t, "tts:opacity", &attrs.tts_opacity);
+    serialize_opt_attr(t, "tts:origin", &attrs.tts_origin);
+    serialize_opt_attr(t, "tts:overflow", &attrs.tts_overflow);
+    serialize_opt_attr(t, "tts:padding", &attrs.tts_padding);
+    serialize_opt_attr(t, "tts:position", &attrs.tts_position);
+    serialize_opt_attr(t, "tts:ruby", &attrs.tts_ruby);
+    serialize_opt_attr(t, "tts:rubyAlign", &attrs.tts_ruby_align);
+    serialize_opt_attr(t, "tts:rubyPosition", &attrs.tts_ruby_position);
+    serialize_opt_attr(t, "tts:rubyReserve", &attrs.tts_ruby_reserve);
+    serialize_opt_attr(t, "tts:shear", &attrs.tts_shear);
+    serialize_opt_attr(t, "tts:showBackground", &attrs.tts_show_background);
+    serialize_opt_attr(t, "tts:textAlign", &attrs.tts_text_align);
+    serialize_opt_attr(t, "tts:textCombine", &attrs.tts_text_combine);
+    serialize_opt_attr(t, "tts:textDecoration", &attrs.tts_text_decoration);
+    serialize_opt_attr(t, "tts:textEmphasis", &attrs.tts_text_emphasis);
+    serialize_opt_attr(t, "tts:textOrientation", &attrs.tts_text_orientation);
+    serialize_opt_attr(t, "tts:textOutline", &attrs.tts_text_outline);
+    serialize_opt_attr(t, "tts:textShadow", &attrs.tts_text_shadow);
+    serialize_opt_attr(t, "tts:unicodeBidi", &attrs.tts_unicode_bidi);
+    serialize_opt_attr(t, "tts:visibility", &attrs.tts_visibility);
+    serialize_opt_attr(t, "tts:wrapOption", &attrs.tts_wrap_option);
+    serialize_opt_attr(t, "tts:writingMode", &attrs.tts_writing_mode);
+    serialize_opt_attr(t, "tts:zIndex", &attrs.tts_z_index);
+    serialize_opt_attr(t, "tta:gain", &attrs.tta_gain);
+    serialize_opt_attr(t, "tta:pan", &attrs.tta_pan);
+    serialize_opt_attr(t, "tta:pitch", &attrs.tta_pitch);
+    serialize_opt_attr(t, "tta:speak", &attrs.tta_speak);
+    serialize_opt_attr(t, "itts:forcedDisplay", &attrs.itts_forced_display);
+    serialize_opt_attr(t, "itts:fillLineGap", &attrs.itts_fill_line_gap);
+    serialize_opt_attr(t, "ebutts:linePadding", &attrs.ebutts_line_padding);
+    serialize_opt_attr(t, "ebutts:multiRowAlign", &attrs.ebutts_multi_row_align);
 }
 
-fn parse_style_attributes(node: roxmltree::Node<'_, '_>) -> StyleAttributes {
+fn parse_style_attributes(node: &StartTag) -> StyleAttributes {
     StyleAttributes {
-        tts_background_color: attribute_value(&node, NS_TTS, "backgroundColor")
+        tts_background_color: attribute_value(node, NS_TTS, "backgroundColor")
             .map(|s| s.to_string()),
-        tts_background_clip: attribute_value(&node, NS_TTS, "backgroundClip")
+        tts_background_clip: attribute_value(node, NS_TTS, "backgroundClip").map(|s| s.to_string()),
+        tts_background_extent: attribute_value(node, NS_TTS, "backgroundExtent")
             .map(|s| s.to_string()),
-        tts_background_extent: attribute_value(&node, NS_TTS, "backgroundExtent")
+        tts_background_image: attribute_value(node, NS_TTS, "backgroundImage")
             .map(|s| s.to_string()),
-        tts_background_image: attribute_value(&node, NS_TTS, "backgroundImage")
+        tts_background_origin: attribute_value(node, NS_TTS, "backgroundOrigin")
             .map(|s| s.to_string()),
-        tts_background_origin: attribute_value(&node, NS_TTS, "backgroundOrigin")
+        tts_background_position: attribute_value(node, NS_TTS, "backgroundPosition")
             .map(|s| s.to_string()),
-        tts_background_position: attribute_value(&node, NS_TTS, "backgroundPosition")
+        tts_background_repeat: attribute_value(node, NS_TTS, "backgroundRepeat")
             .map(|s| s.to_string()),
-        tts_background_repeat: attribute_value(&node, NS_TTS, "backgroundRepeat")
+        tts_border: attribute_value(node, NS_TTS, "border").map(|s| s.to_string()),
+        tts_bpd: attribute_value(node, NS_TTS, "bpd").map(|s| s.to_string()),
+        tts_color: attribute_value(node, NS_TTS, "color").map(|s| s.to_string()),
+        tts_direction: attribute_value(node, NS_TTS, "direction").map(|s| s.to_string()),
+        tts_disparity: attribute_value(node, NS_TTS, "disparity").map(|s| s.to_string()),
+        tts_display: attribute_value(node, NS_TTS, "display").map(|s| s.to_string()),
+        tts_display_align: attribute_value(node, NS_TTS, "displayAlign").map(|s| s.to_string()),
+        tts_extent: attribute_value(node, NS_TTS, "extent").map(|s| s.to_string()),
+        tts_font_family: attribute_value(node, NS_TTS, "fontFamily").map(|s| s.to_string()),
+        tts_font_kerning: attribute_value(node, NS_TTS, "fontKerning").map(|s| s.to_string()),
+        tts_font_selection_strategy: attribute_value(node, NS_TTS, "fontSelectionStrategy")
             .map(|s| s.to_string()),
-        tts_border: attribute_value(&node, NS_TTS, "border").map(|s| s.to_string()),
-        tts_bpd: attribute_value(&node, NS_TTS, "bpd").map(|s| s.to_string()),
-        tts_color: attribute_value(&node, NS_TTS, "color").map(|s| s.to_string()),
-        tts_direction: attribute_value(&node, NS_TTS, "direction").map(|s| s.to_string()),
-        tts_disparity: attribute_value(&node, NS_TTS, "disparity").map(|s| s.to_string()),
-        tts_display: attribute_value(&node, NS_TTS, "display").map(|s| s.to_string()),
-        tts_display_align: attribute_value(&node, NS_TTS, "displayAlign").map(|s| s.to_string()),
-        tts_extent: attribute_value(&node, NS_TTS, "extent").map(|s| s.to_string()),
-        tts_font_family: attribute_value(&node, NS_TTS, "fontFamily").map(|s| s.to_string()),
-        tts_font_kerning: attribute_value(&node, NS_TTS, "fontKerning").map(|s| s.to_string()),
-        tts_font_selection_strategy: attribute_value(&node, NS_TTS, "fontSelectionStrategy")
+        tts_font_shear: attribute_value(node, NS_TTS, "fontShear").map(|s| s.to_string()),
+        tts_font_size: attribute_value(node, NS_TTS, "fontSize").map(|s| s.to_string()),
+        tts_font_style: attribute_value(node, NS_TTS, "fontStyle").map(|s| s.to_string()),
+        tts_font_variant: attribute_value(node, NS_TTS, "fontVariant").map(|s| s.to_string()),
+        tts_font_weight: attribute_value(node, NS_TTS, "fontWeight").map(|s| s.to_string()),
+        tts_ipd: attribute_value(node, NS_TTS, "ipd").map(|s| s.to_string()),
+        tts_letter_spacing: attribute_value(node, NS_TTS, "letterSpacing").map(|s| s.to_string()),
+        tts_line_height: attribute_value(node, NS_TTS, "lineHeight").map(|s| s.to_string()),
+        tts_line_shear: attribute_value(node, NS_TTS, "lineShear").map(|s| s.to_string()),
+        tts_luminance_gain: attribute_value(node, NS_TTS, "luminanceGain").map(|s| s.to_string()),
+        tts_opacity: attribute_value(node, NS_TTS, "opacity").map(|s| s.to_string()),
+        tts_origin: attribute_value(node, NS_TTS, "origin").map(|s| s.to_string()),
+        tts_overflow: attribute_value(node, NS_TTS, "overflow").map(|s| s.to_string()),
+        tts_padding: attribute_value(node, NS_TTS, "padding").map(|s| s.to_string()),
+        tts_position: attribute_value(node, NS_TTS, "position").map(|s| s.to_string()),
+        tts_ruby: attribute_value(node, NS_TTS, "ruby").map(|s| s.to_string()),
+        tts_ruby_align: attribute_value(node, NS_TTS, "rubyAlign").map(|s| s.to_string()),
+        tts_ruby_position: attribute_value(node, NS_TTS, "rubyPosition").map(|s| s.to_string()),
+        tts_ruby_reserve: attribute_value(node, NS_TTS, "rubyReserve").map(|s| s.to_string()),
+        tts_shear: attribute_value(node, NS_TTS, "shear").map(|s| s.to_string()),
+        tts_show_background: attribute_value(node, NS_TTS, "showBackground").map(|s| s.to_string()),
+        tts_text_align: attribute_value(node, NS_TTS, "textAlign").map(|s| s.to_string()),
+        tts_text_combine: attribute_value(node, NS_TTS, "textCombine").map(|s| s.to_string()),
+        tts_text_decoration: attribute_value(node, NS_TTS, "textDecoration").map(|s| s.to_string()),
+        tts_text_emphasis: attribute_value(node, NS_TTS, "textEmphasis").map(|s| s.to_string()),
+        tts_text_orientation: attribute_value(node, NS_TTS, "textOrientation")
             .map(|s| s.to_string()),
-        tts_font_shear: attribute_value(&node, NS_TTS, "fontShear").map(|s| s.to_string()),
-        tts_font_size: attribute_value(&node, NS_TTS, "fontSize").map(|s| s.to_string()),
-        tts_font_style: attribute_value(&node, NS_TTS, "fontStyle").map(|s| s.to_string()),
-        tts_font_variant: attribute_value(&node, NS_TTS, "fontVariant").map(|s| s.to_string()),
-        tts_font_weight: attribute_value(&node, NS_TTS, "fontWeight").map(|s| s.to_string()),
-        tts_ipd: attribute_value(&node, NS_TTS, "ipd").map(|s| s.to_string()),
-        tts_letter_spacing: attribute_value(&node, NS_TTS, "letterSpacing").map(|s| s.to_string()),
-        tts_line_height: attribute_value(&node, NS_TTS, "lineHeight").map(|s| s.to_string()),
-        tts_line_shear: attribute_value(&node, NS_TTS, "lineShear").map(|s| s.to_string()),
-        tts_luminance_gain: attribute_value(&node, NS_TTS, "luminanceGain").map(|s| s.to_string()),
-        tts_opacity: attribute_value(&node, NS_TTS, "opacity").map(|s| s.to_string()),
-        tts_origin: attribute_value(&node, NS_TTS, "origin").map(|s| s.to_string()),
-        tts_overflow: attribute_value(&node, NS_TTS, "overflow").map(|s| s.to_string()),
-        tts_padding: attribute_value(&node, NS_TTS, "padding").map(|s| s.to_string()),
-        tts_position: attribute_value(&node, NS_TTS, "position").map(|s| s.to_string()),
-        tts_ruby: attribute_value(&node, NS_TTS, "ruby").map(|s| s.to_string()),
-        tts_ruby_align: attribute_value(&node, NS_TTS, "rubyAlign").map(|s| s.to_string()),
-        tts_ruby_position: attribute_value(&node, NS_TTS, "rubyPosition").map(|s| s.to_string()),
-        tts_ruby_reserve: attribute_value(&node, NS_TTS, "rubyReserve").map(|s| s.to_string()),
-        tts_shear: attribute_value(&node, NS_TTS, "shear").map(|s| s.to_string()),
-        tts_show_background: attribute_value(&node, NS_TTS, "showBackground")
-            .map(|s| s.to_string()),
-        tts_text_align: attribute_value(&node, NS_TTS, "textAlign").map(|s| s.to_string()),
-        tts_text_combine: attribute_value(&node, NS_TTS, "textCombine").map(|s| s.to_string()),
-        tts_text_decoration: attribute_value(&node, NS_TTS, "textDecoration")
-            .map(|s| s.to_string()),
-        tts_text_emphasis: attribute_value(&node, NS_TTS, "textEmphasis").map(|s| s.to_string()),
-        tts_text_orientation: attribute_value(&node, NS_TTS, "textOrientation")
-            .map(|s| s.to_string()),
-        tts_text_outline: attribute_value(&node, NS_TTS, "textOutline").map(|s| s.to_string()),
-        tts_text_shadow: attribute_value(&node, NS_TTS, "textShadow").map(|s| s.to_string()),
-        tts_unicode_bidi: attribute_value(&node, NS_TTS, "unicodeBidi").map(|s| s.to_string()),
-        tts_visibility: attribute_value(&node, NS_TTS, "visibility").map(|s| s.to_string()),
-        tts_wrap_option: attribute_value(&node, NS_TTS, "wrapOption").map(|s| s.to_string()),
-        tts_writing_mode: attribute_value(&node, NS_TTS, "writingMode").map(|s| s.to_string()),
-        tts_z_index: attribute_value(&node, NS_TTS, "zIndex").map(|s| s.to_string()),
-        tta_gain: attribute_value(&node, NS_TTA, "gain").map(|s| s.to_string()),
-        tta_pan: attribute_value(&node, NS_TTA, "pan").map(|s| s.to_string()),
-        tta_pitch: attribute_value(&node, NS_TTA, "pitch").map(|s| s.to_string()),
-        tta_speak: attribute_value(&node, NS_TTA, "speak").map(|s| s.to_string()),
-        itts_forced_display: attribute_value(&node, NS_ITTS, "forcedDisplay")
-            .map(|s| s.to_string()),
-        itts_fill_line_gap: attribute_value(&node, NS_ITTS, "fillLineGap").map(|s| s.to_string()),
-        ebutts_line_padding: attribute_value(&node, NS_EBUTTS, "linePadding")
-            .map(|s| s.to_string()),
-        ebutts_multi_row_align: attribute_value(&node, NS_EBUTTS, "multiRowAlign")
+        tts_text_outline: attribute_value(node, NS_TTS, "textOutline").map(|s| s.to_string()),
+        tts_text_shadow: attribute_value(node, NS_TTS, "textShadow").map(|s| s.to_string()),
+        tts_unicode_bidi: attribute_value(node, NS_TTS, "unicodeBidi").map(|s| s.to_string()),
+        tts_visibility: attribute_value(node, NS_TTS, "visibility").map(|s| s.to_string()),
+        tts_wrap_option: attribute_value(node, NS_TTS, "wrapOption").map(|s| s.to_string()),
+        tts_writing_mode: attribute_value(node, NS_TTS, "writingMode").map(|s| s.to_string()),
+        tts_z_index: attribute_value(node, NS_TTS, "zIndex").map(|s| s.to_string()),
+        tta_gain: attribute_value(node, NS_TTA, "gain").map(|s| s.to_string()),
+        tta_pan: attribute_value(node, NS_TTA, "pan").map(|s| s.to_string()),
+        tta_pitch: attribute_value(node, NS_TTA, "pitch").map(|s| s.to_string()),
+        tta_speak: attribute_value(node, NS_TTA, "speak").map(|s| s.to_string()),
+        itts_forced_display: attribute_value(node, NS_ITTS, "forcedDisplay").map(|s| s.to_string()),
+        itts_fill_line_gap: attribute_value(node, NS_ITTS, "fillLineGap").map(|s| s.to_string()),
+        ebutts_line_padding: attribute_value(node, NS_EBUTTS, "linePadding").map(|s| s.to_string()),
+        ebutts_multi_row_align: attribute_value(node, NS_EBUTTS, "multiRowAlign")
             .map(|s| s.to_string()),
     }
 }

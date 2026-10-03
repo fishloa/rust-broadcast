@@ -3,6 +3,7 @@
 //! `fixtures/PROVENANCE.md`). Byte-identical XML is explicitly NOT required
 //! for a text/markup format (attribute order, whitespace, and empty-element
 //! spelling are not preserved) — see the crate-root doc comment.
+#![cfg(feature = "std")]
 
 use std::fs;
 use std::path::PathBuf;

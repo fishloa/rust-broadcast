@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:tt="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" xmlns:tts="http://www.w3.org/ns/ttml#styling" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xml:lang="en" ttp:displayAspectRatio="4 3" ttp:contentProfiles="http://www.w3.org/ns/ttml/profile/imsc1.1/text">
+  <head>
+    <layout>
+      <region tts:backgroundColor="green" tts:color="white" tts:displayAlign="center" tts:extent="100% 100%" tts:origin="0% 0%" xml:id="area1"/>
+    </layout>
+  </head>
+  <body tts:lineHeight="100%">
+    <div>
+      <p begin="1s" end="9s" region="area1">This region should have (a) an aspect ratio of 4:3, (b) be centered within the related video object and (c) be entirely within the related video object frame, and (d) have a height or width equal to that of the related video object frame.
+			</p>
+    </div>
+  </body>
+</tt>

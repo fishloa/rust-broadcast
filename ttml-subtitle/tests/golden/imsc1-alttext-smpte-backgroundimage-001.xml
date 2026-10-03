@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<tt xmlns="http://www.w3.org/ns/ttml" xmlns:tt="http://www.w3.org/ns/ttml" xmlns:ttp="http://www.w3.org/ns/ttml#parameter" xmlns:tts="http://www.w3.org/ns/ttml#styling" xmlns:ttm="http://www.w3.org/ns/ttml#metadata" xmlns:smpte="http://www.smpte-ra.org/schemas/2052-1/2010/smpte-tt" xmlns:ittm="http://www.w3.org/ns/ttml/profile/imsc1#metadata" xml:lang="en" ttp:profile="http://www.w3.org/ns/ttml/profile/imsc1/image" tts:extent="320px 240px">
+  <head>
+    <layout>
+      <region tts:extent="160px 120px" tts:origin="80px 60px" xml:id="area1"/>
+    </layout>
+  </head>
+  <body>
+    <div begin="1s" end="9s" region="area1" smpte:backgroundImage="altText1-img.png">
+      <metadata>
+        <ittm:altText>This text should not be displayed.</ittm:altText>
+      </metadata>
+    </div>
+  </body>
+</tt>

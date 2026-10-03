@@ -63,6 +63,8 @@ use media_plane::ingress::{
     Dialer, HandshakePolicy, IngestSession, ProgramId, SessionEvent, run_dial,
 };
 use media_plane::trunk::{RetentionClass, TrunkConfig};
+use quick_xml::Reader;
+use quick_xml::events::Event;
 use reqwest::{Client as HttpClient, StatusCode};
 use tokio::task::JoinSet;
 use transmux::box_types::parse_box;
@@ -112,6 +114,10 @@ const MAX_REFRESH_MISSES: u32 = 5;
 const PIFF_SAMPLE_ENCRYPTION_UUID: [u8; 16] = [
     0xA2, 0x39, 0x4F, 0x52, 0x5A, 0x9B, 0x4F, 0x14, 0xA2, 0x44, 0x6C, 0x42, 0x7C, 0x64, 0x8D, 0xF4,
 ];
+
+/// Local name of the Smooth client Manifest's content-protection element
+/// (PlayReady/PIFF sample encryption).
+const PROTECTION_ELEMENT: &str = "Protection";
 
 /// How long a `run_*_pull` drive loop parks when its session has, momentarily,
 /// neither an outbound request queued nor a fetch in flight — and has not
@@ -839,27 +845,27 @@ fn same_stream_index(a: &StreamIndex, b: &StreamIndex) -> bool {
     a.stream_type == b.stream_type && a.name == b.name && a.url == b.url
 }
 
-/// Coarse, dependency-free tag-boundary text scan for a `<Protection` start
-/// tag anywhere in `xml`.
+/// Whether the manifest carries a `<Protection>` element (PlayReady/PIFF
+/// sample encryption) anywhere — matched by local name on a real `quick-xml`
+/// pull loop, so a prefixed `<ms:Protection>` counts, while a comment, an
+/// attribute value, or a longer name such as `<ProtectionFoo>` does not.
+///
+/// A manifest the reader cannot get through is reported `false`: the caller
+/// goes on to [`SmoothManifest::parse`], which rejects the same malformed input
+/// with its own error, so nothing unreadable is ever ingested.
 fn manifest_declares_protection(xml: &str) -> bool {
-    tag_starts_present(xml, "Protection")
-}
-
-fn tag_starts_present(xml: &str, tag: &str) -> bool {
-    let needle = format!("<{tag}");
-    let bytes = xml.as_bytes();
-    let mut search_from = 0usize;
-    while let Some(pos) = xml.get(search_from..).and_then(|rest| rest.find(&needle)) {
-        let abs = search_from + pos;
-        let after = abs + needle.len();
-        match bytes.get(after) {
-            Some(&c) if c.is_ascii_whitespace() || c == b'>' || c == b'/' => return true,
-            None => return true,
-            _ => {}
+    let mut reader = Reader::from_str(xml);
+    loop {
+        match reader.read_event() {
+            Ok(Event::Start(e) | Event::Empty(e))
+                if e.local_name().as_ref() == PROTECTION_ELEMENT =>
+            {
+                return true;
+            }
+            Ok(Event::Eof) | Err(_) => return false,
+            Ok(_) => {}
         }
-        search_from = after;
     }
-    false
 }
 
 /// Whether a fetched fragment carries CENC/PIFF sample-encryption signalling.
@@ -2017,6 +2023,17 @@ mod tests {
         ));
         assert!(!manifest_declares_protection(
             "<SmoothStreamingMedia></SmoothStreamingMedia>"
+        ));
+        // A namespace-prefixed element counts; a comment or an attribute value
+        // that merely mentions the tag does not.
+        assert!(manifest_declares_protection(
+            "<SmoothStreamingMedia xmlns:ms=\"urn:x\"><ms:Protection/></SmoothStreamingMedia>"
+        ));
+        assert!(!manifest_declares_protection(
+            "<SmoothStreamingMedia><!-- <Protection> --></SmoothStreamingMedia>"
+        ));
+        assert!(!manifest_declares_protection(
+            "<SmoothStreamingMedia note=\"<Protection>\"/>"
         ));
     }
 

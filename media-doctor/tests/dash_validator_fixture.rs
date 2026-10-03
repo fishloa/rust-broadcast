@@ -3,6 +3,7 @@
 //!
 //! Fixtures live in `fixtures/dash/`:
 //! - `manifest.mpd` — well-formed static MPD → zero findings.
+#![cfg(feature = "std")]
 
 use std::fs;
 

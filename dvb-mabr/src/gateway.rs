@@ -16,14 +16,14 @@ extern crate alloc;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use roxmltree::Node;
+use std::io;
 
 use crate::carousel::ObjectCarousel;
 use crate::error::Result;
 use crate::fec::ForwardErrorCorrectionParameters;
-use crate::parse::{child, children, opt_attr_u64, own_text, require_attr, require_child};
+use crate::parse::{Events, StartTag, for_each_child, missing_element, opt_attr_u64, require_attr};
 use crate::repair::UnicastRepairParameters;
-use crate::serialize::{push_indent, write_attr, write_num_attr, write_opt_attr};
+use crate::serialize::{Out, attr, element, opt_attr, opt_num_attr, tag, text_element};
 use crate::transport::{BitRate, EndpointAddress, TransportProtocol, TransportSecurity};
 
 const ELEMENT: &str = "MulticastGatewayConfigurationTransportSession";
@@ -46,23 +46,22 @@ pub struct ConfigurationMacro {
 }
 
 impl ConfigurationMacro {
-    pub(crate) fn parse(node: Node<'_, '_>, element: &'static str) -> Result<Self> {
+    pub(crate) fn parse(
+        ev: &mut Events<'_>,
+        node: &StartTag,
+        element: &'static str,
+    ) -> Result<Self> {
+        let key = require_attr(node, element, "key")?;
         Ok(ConfigurationMacro {
-            key: require_attr(node, element, "key")?,
-            value: own_text(node),
+            key,
+            value: ev.text(node)?,
         })
     }
 
-    pub(crate) fn write_xml(&self, out: &mut String, indent: usize, tag: &str) {
-        push_indent(out, indent);
-        out.push('<');
-        out.push_str(tag);
-        write_attr(out, "key", &self.key);
-        out.push('>');
-        out.push_str(&crate::serialize::xml_escape(&self.value));
-        out.push_str("</");
-        out.push_str(tag);
-        out.push_str(">\n");
+    pub(crate) fn write_xml(&self, w: &mut Out, element: &str) -> io::Result<()> {
+        let mut t = tag(element);
+        attr(&mut t, "key", &self.key);
+        text_element(w, t, &self.value)
     }
 }
 
@@ -101,82 +100,90 @@ pub struct MulticastGatewayConfigurationTransportSession {
 }
 
 impl MulticastGatewayConfigurationTransportSession {
-    pub(crate) fn parse(node: Node<'_, '_>) -> Result<Self> {
-        let transport_protocol_node = require_child(node, ELEMENT, "TransportProtocol")?;
-        let bit_rate_node = require_child(node, ELEMENT, "BitRate")?;
-
-        let mut endpoints = Vec::new();
-        for ep in children(node, "EndpointAddress") {
-            endpoints.push(EndpointAddress::parse(ep)?);
-        }
-        let mut fec_params = Vec::new();
-        for fp in children(node, "ForwardErrorCorrectionParameters") {
-            fec_params.push(ForwardErrorCorrectionParameters::parse(fp)?);
-        }
-        let mut macros = Vec::new();
-        for m in children(node, MACRO_ELEMENT) {
-            macros.push(ConfigurationMacro::parse(m, MACRO_ELEMENT)?);
-        }
+    pub(crate) fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
+        let service_class = require_attr(node, ELEMENT, "serviceClass").ok();
+        let transport_security = match require_attr(node, ELEMENT, "transportSecurity") {
+            Ok(v) => Some(TransportSecurity::parse(&v)?),
+            Err(_) => None,
+        };
+        let session_idle_timeout = opt_attr_u64(node, ELEMENT, "sessionIdleTimeout")?;
         let tags: Vec<String> = require_attr(node, ELEMENT, "tags")
             .map(|t| t.split_whitespace().map(ToString::to_string).collect())
             .unwrap_or_default();
 
+        let mut transport_protocol = None;
+        let mut bit_rate = None;
+        let mut endpoints = Vec::new();
+        let mut fec_params = Vec::new();
+        let mut unicast_repair = None;
+        let mut object_carousel = None;
+        let mut macros = Vec::new();
+        for_each_child(ev, node, |ev, child| {
+            if child.is("TransportProtocol") && transport_protocol.is_none() {
+                transport_protocol = Some(TransportProtocol::parse(ev, child)?);
+            } else if child.is("BitRate") && bit_rate.is_none() {
+                bit_rate = Some(BitRate::parse(ev, child)?);
+            } else if child.is("EndpointAddress") {
+                endpoints.push(EndpointAddress::parse(ev, child)?);
+            } else if child.is("ForwardErrorCorrectionParameters") {
+                fec_params.push(ForwardErrorCorrectionParameters::parse(ev, child)?);
+            } else if child.is("UnicastRepairParameters") && unicast_repair.is_none() {
+                unicast_repair = Some(UnicastRepairParameters::parse(ev, child)?);
+            } else if child.is("ObjectCarousel") && object_carousel.is_none() {
+                object_carousel = Some(ObjectCarousel::parse(ev, child)?);
+            } else if child.is(MACRO_ELEMENT) {
+                macros.push(ConfigurationMacro::parse(ev, child, MACRO_ELEMENT)?);
+            } else {
+                return Ok(false);
+            }
+            Ok(true)
+        })?;
+
         Ok(MulticastGatewayConfigurationTransportSession {
-            service_class: require_attr(node, ELEMENT, "serviceClass").ok(),
-            transport_security: match require_attr(node, ELEMENT, "transportSecurity") {
-                Ok(v) => Some(TransportSecurity::parse(&v)?),
-                Err(_) => None,
-            },
-            session_idle_timeout: opt_attr_u64(node, ELEMENT, "sessionIdleTimeout")?,
-            transport_protocol: TransportProtocol::parse(transport_protocol_node)?,
+            service_class,
+            transport_security,
+            session_idle_timeout,
+            transport_protocol: transport_protocol
+                .ok_or_else(|| missing_element(ELEMENT, "TransportProtocol"))?,
             endpoints,
-            bit_rate: BitRate::parse(bit_rate_node)?,
+            bit_rate: bit_rate.ok_or_else(|| missing_element(ELEMENT, "BitRate"))?,
             fec_params,
-            unicast_repair: match child(node, "UnicastRepairParameters") {
-                Some(n) => Some(UnicastRepairParameters::parse(n)?),
-                None => None,
-            },
-            object_carousel: match child(node, "ObjectCarousel") {
-                Some(n) => Some(ObjectCarousel::parse(n)?),
-                None => None,
-            },
+            unicast_repair,
+            object_carousel,
             tags,
             macros,
         })
     }
 
-    pub(crate) fn write_xml(&self, out: &mut String, indent: usize) {
-        push_indent(out, indent);
-        out.push_str("<MulticastGatewayConfigurationTransportSession");
-        write_opt_attr(out, "serviceClass", self.service_class.as_deref());
+    pub(crate) fn write_xml(&self, w: &mut Out) -> io::Result<()> {
+        let mut t = tag(ELEMENT);
+        opt_attr(&mut t, "serviceClass", self.service_class.as_deref());
         if let Some(s) = self.transport_security {
-            write_attr(out, "transportSecurity", s.name());
+            attr(&mut t, "transportSecurity", s.name());
         }
-        if let Some(t) = self.session_idle_timeout {
-            write_num_attr(out, "sessionIdleTimeout", t);
-        }
+        opt_num_attr(&mut t, "sessionIdleTimeout", self.session_idle_timeout);
         if !self.tags.is_empty() {
-            write_attr(out, "tags", &self.tags.join(" "));
+            attr(&mut t, "tags", &self.tags.join(" "));
         }
-        out.push_str(">\n");
-        self.transport_protocol.write_xml(out, indent + 1);
-        for ep in &self.endpoints {
-            ep.write_xml(out, indent + 1);
-        }
-        self.bit_rate.write_xml(out, indent + 1);
-        for fp in &self.fec_params {
-            fp.write_xml(out, indent + 1);
-        }
-        if let Some(ur) = &self.unicast_repair {
-            ur.write_xml(out, indent + 1);
-        }
-        if let Some(oc) = &self.object_carousel {
-            oc.write_xml(out, indent + 1);
-        }
-        for m in &self.macros {
-            m.write_xml(out, indent + 1, MACRO_ELEMENT);
-        }
-        push_indent(out, indent);
-        out.push_str("</MulticastGatewayConfigurationTransportSession>\n");
+        element(w, t, |w| {
+            self.transport_protocol.write_xml(w)?;
+            for ep in &self.endpoints {
+                ep.write_xml(w)?;
+            }
+            self.bit_rate.write_xml(w)?;
+            for fp in &self.fec_params {
+                fp.write_xml(w)?;
+            }
+            if let Some(ur) = &self.unicast_repair {
+                ur.write_xml(w)?;
+            }
+            if let Some(oc) = &self.object_carousel {
+                oc.write_xml(w)?;
+            }
+            for m in &self.macros {
+                m.write_xml(w, MACRO_ELEMENT)?;
+            }
+            Ok(())
+        })
     }
 }
