@@ -218,6 +218,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Dependency bumps, non-breaking (no public API change): `aes` 0.9, `ctr` 0.10, `aes-kw` 0.3, `pbkdf2` 0.13, `hmac` 0.13, `sha1` 0.11 (RustCrypto 0.13 generation). Key-wrap, PBKDF2 and AES-CTR output is unchanged (known-answer vectors and the libsrt interop tests pass).
+
 - `arq::seq` arithmetic now delegates to `broadcast_common::seq::SeqSpace` (one algorithm, two moduli; public functions and results unchanged) (#1141).
 
 

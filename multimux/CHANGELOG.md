@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Dependency bumps, non-breaking: `md-5` 0.11 and `base64` 0.23 (Digest/Basic auth output unchanged), plus semver-compatible lock updates (`tokio-rustls` 0.26.6, `rustls` 0.23.45).
 - The Smooth manifest renderer (`output::smooth`) now writes through
   `quick_xml::Writer` (every attribute value escaped by quick-xml) instead of
   string concatenation; the rendered bytes are identical. The Smooth-pull

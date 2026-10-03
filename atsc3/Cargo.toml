@@ -12,7 +12,7 @@ keywords     = ["atsc3", "nextgentv", "lls", "slt", "broadcast"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
-roxmltree        = { version = "0.20", default-features = false }
+roxmltree        = { version = "0.21", default-features = false }
 thiserror        = { version = "2", default-features = false }
 
 [dependencies.flate2]

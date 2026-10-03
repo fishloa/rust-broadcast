@@ -31,9 +31,9 @@ bytes      = { version = "1", default-features = false }
 # only XML dependency of the crates that read or write XML (transmux,
 # dvb-mabr, ttml-subtitle, multimux). std-only (quick-xml needs std).
 quick-xml  = { version = "0.42", default-features = false, optional = true }
-aes        = { version = "0.8", default-features = false, optional = true }
-ctr        = { version = "0.9", default-features = false, optional = true }
-cbc        = { version = "0.1", default-features = false, optional = true }
+aes        = { version = "0.9", default-features = false, optional = true }
+ctr        = { version = "0.10", default-features = false, optional = true }
+cbc        = { version = "0.2", default-features = false, optional = true }
 clap       = { version = "4.5", features = ["derive"], optional = true }
 # `cli` container detection (issue #960 / audit r05-W29): the CLI's
 # `detect_container` used a fixed-offset TS check that missed M2TS (192-byte

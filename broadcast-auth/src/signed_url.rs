@@ -67,7 +67,7 @@ use core::net::IpAddr;
 
 use base64::Engine;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use sha2::Sha256;
 use subtle::ConstantTimeEq;
 
@@ -189,8 +189,8 @@ fn canonical_string(path: &str, exp: u64, ip: Option<IpAddr>) -> String {
 /// need be), so the only way this could panic is a `hmac`/`sha2` internal
 /// bug, not anything caller-controlled.
 fn hmac_sha256(secret: &[u8], message: &str) -> Vec<u8> {
-    let mut mac =
-        <Hmac<Sha256> as Mac>::new_from_slice(secret).expect("HMAC accepts a key of any length");
+    let mut mac = <Hmac<Sha256> as KeyInit>::new_from_slice(secret)
+        .expect("HMAC accepts a key of any length");
     mac.update(message.as_bytes());
     mac.finalize().into_bytes().to_vec()
 }

@@ -31,7 +31,7 @@
 
 use aes::Aes128;
 use broadcast_common::{Parse, Serialize};
-use cipher::{BlockEncrypt, KeyInit, KeyIvInit, StreamCipher, generic_array::GenericArray};
+use cipher::{BlockCipherEncrypt, KeyInit, KeyIvInit, StreamCipher, array::Array};
 use ctr::Ctr128BE;
 use hmac::{Hmac, Mac};
 use rtc_srtp::context::Context as SrtpContext;
@@ -50,7 +50,7 @@ const B2_SESSION_KEY: [u8; 16] = [
 
 #[test]
 fn aes_cm_keystream_matches_rfc_appendix_b2() {
-    let cipher = Aes128::new(GenericArray::from_slice(&B2_SESSION_KEY));
+    let cipher = Aes128::new(&Array::from(B2_SESSION_KEY));
 
     let cases: &[([u8; 16], [u8; 16])] = &[
         (
@@ -116,7 +116,7 @@ fn aes_cm_keystream_matches_rfc_appendix_b2() {
     ];
 
     for (counter, expected_keystream) in cases {
-        let mut block = GenericArray::clone_from_slice(counter.as_slice());
+        let mut block = Array::try_from(counter.as_slice()).expect("16-byte counter");
         cipher.encrypt_block(&mut block);
         assert_eq!(
             block.as_slice(),
@@ -160,14 +160,14 @@ fn rfc3711_kdf(label: u8, master_key: [u8; 16], master_salt: [u8; 14], out_len: 
     prf_in[..14].copy_from_slice(&master_salt);
     prf_in[7] ^= label;
 
-    let cipher = Aes128::new(GenericArray::from_slice(&master_key));
+    let cipher = Aes128::new(&Array::from(master_key));
     let mut out = Vec::with_capacity(out_len);
     let mut block_index: u16 = 0;
     while out.len() < out_len {
         let mut block = prf_in;
         block[14] = (block_index >> 8) as u8;
         block[15] = (block_index & 0xFF) as u8;
-        let mut arr = GenericArray::clone_from_slice(&block);
+        let mut arr = Array::from(block);
         cipher.encrypt_block(&mut arr);
         out.extend_from_slice(&arr);
         block_index += 1;
@@ -258,15 +258,13 @@ fn independent_srtp_encrypt(plaintext_rtp: &[u8], roc: u32) -> Vec<u8> {
     let counter = generate_counter(header.sequence_number, roc, header.ssrc, &cipher_salt);
     let mut out = plaintext_rtp.to_vec();
     let mut stream = Ctr128BE::<Aes128>::new(
-        GenericArray::from_slice(&cipher_key),
-        GenericArray::from_slice(&counter),
+        &Array::try_from(cipher_key.as_slice()).expect("16-byte cipher key"),
+        &Array::from(counter),
     );
     stream.apply_keystream(&mut out[header_len..]);
 
-    // `Hmac::<Sha1>::new_from_slice` is ambiguous once `cipher::KeyInit` (used
-    // above for `Aes128::new`) is also in scope, since `KeyInit` has its own
-    // `new_from_slice` too — disambiguate via `Mac::new_from_slice`.
-    let mut mac: Hmac<Sha1> = Mac::new_from_slice(&auth_key).expect("valid HMAC key length");
+    // hmac 0.13: `new_from_slice` is `KeyInit`'s only (no longer also on `Mac`).
+    let mut mac: Hmac<Sha1> = KeyInit::new_from_slice(&auth_key).expect("valid HMAC key length");
     mac.update(&out);
     mac.update(&roc.to_be_bytes());
     let tag = mac.finalize().into_bytes();
@@ -300,6 +298,9 @@ fn srtp_context_reproduces_appendix_b3_ciphertext() {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        rtc_srtp::crypto::default_provider()
+            .expect("default crypto provider")
+            .crypto(),
     )
     .expect("build encrypt context");
     let protected = enc_ctx.encrypt_rtp(&plaintext_rtp).expect("encrypt_rtp");
@@ -320,6 +321,9 @@ fn srtp_context_reproduces_appendix_b3_ciphertext() {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        rtc_srtp::crypto::default_provider()
+            .expect("default crypto provider")
+            .crypto(),
     )
     .expect("build decrypt context");
     let recovered = dec_ctx.decrypt_rtp(&protected).expect("decrypt_rtp");
@@ -338,6 +342,9 @@ fn srtp_corrupted_ciphertext_byte_fails_auth() {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        rtc_srtp::crypto::default_provider()
+            .expect("default crypto provider")
+            .crypto(),
     )
     .unwrap();
     let mut protected = enc_ctx.encrypt_rtp(&plaintext_rtp).unwrap().to_vec();
@@ -353,6 +360,9 @@ fn srtp_corrupted_ciphertext_byte_fails_auth() {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        rtc_srtp::crypto::default_provider()
+            .expect("default crypto provider")
+            .crypto(),
     )
     .unwrap();
     assert!(
@@ -370,6 +380,9 @@ fn srtp_corrupted_ciphertext_byte_fails_auth() {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        rtc_srtp::crypto::default_provider()
+            .expect("default crypto provider")
+            .crypto(),
     )
     .unwrap();
     let recovered = dec_ctx2
@@ -411,6 +424,9 @@ fn srtcp_round_trip_and_index_behaviour() {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        rtc_srtp::crypto::default_provider()
+            .expect("default crypto provider")
+            .crypto(),
     )
     .expect("build context");
 
@@ -454,6 +470,9 @@ fn srtcp_round_trip_and_index_behaviour() {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        rtc_srtp::crypto::default_provider()
+            .expect("default crypto provider")
+            .crypto(),
     )
     .expect("build decrypt context");
     assert_eq!(
@@ -477,6 +496,9 @@ fn srtcp_corrupted_auth_tag_byte_fails() {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        rtc_srtp::crypto::default_provider()
+            .expect("default crypto provider")
+            .crypto(),
     )
     .unwrap();
     let mut protected = ctx.encrypt_rtcp(&rtcp_plaintext).unwrap().to_vec();
@@ -490,6 +512,9 @@ fn srtcp_corrupted_auth_tag_byte_fails() {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        rtc_srtp::crypto::default_provider()
+            .expect("default crypto provider")
+            .crypto(),
     )
     .unwrap();
     assert!(
@@ -504,6 +529,9 @@ fn srtcp_corrupted_auth_tag_byte_fails() {
         ProtectionProfile::Aes128CmHmacSha1_80,
         None,
         None,
+        rtc_srtp::crypto::default_provider()
+            .expect("default crypto provider")
+            .crypto(),
     )
     .unwrap();
     assert_eq!(

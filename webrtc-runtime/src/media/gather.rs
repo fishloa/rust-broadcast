@@ -14,7 +14,7 @@ use std::time::Instant;
 use bytes::BytesMut;
 use rtc_shared::{TaggedBytesMut, TransportContext, TransportProtocol};
 use rtc_stun::agent::StunEvent;
-use rtc_stun::client::{Client, ClientBuilder};
+use rtc_stun::client::{Client, ClientBuilder, TaggedMessage};
 use rtc_stun::message::{BINDING_REQUEST, Getter, Message, TransactionId};
 use rtc_stun::xoraddr::XorMappedAddress;
 use sansio::Protocol;
@@ -31,9 +31,9 @@ pub(super) struct StunGather {
 impl StunGather {
     /// Build the gatherer and queue its Binding request; the request itself
     /// is drained via [`Self::poll_transmit`].
-    pub(super) fn new(local: SocketAddr, server: SocketAddr) -> Result<Self, Error> {
+    pub(super) fn new(now: Instant, local: SocketAddr, server: SocketAddr) -> Result<Self, Error> {
         let mut client = ClientBuilder::new()
-            .build(local, server, TransportProtocol::UDP)
+            .build(now, local, server, TransportProtocol::UDP)
             .map_err(|e| Error::Media(format!("build stun client: {e}")))?;
 
         let mut msg = Message::new();
@@ -71,7 +71,7 @@ impl StunGather {
         // fixed or predictable value.
         msg.build(&[Box::new(TransactionId::new()), Box::new(BINDING_REQUEST)])
             .map_err(|e| Error::Media(format!("build stun binding request: {e}")))?;
-        Protocol::handle_write(&mut client, msg)
+        Protocol::handle_write(&mut client, TaggedMessage { now, message: msg })
             .map_err(|e| Error::Media(format!("queue stun binding request: {e}")))?;
 
         Ok(Self {
@@ -138,6 +138,14 @@ impl StunGather {
                 | StunEvent::AgentClosed => {
                     self.done = true;
                 }
+                // `StunEvent` is `#[non_exhaustive]` in rtc-stun 0.21. An event
+                // this crate does not know terminates the gather attempt
+                // (done, no srflx address) exactly like a timeout, so the
+                // caller proceeds instead of waiting on a transaction that
+                // may never conclude.
+                _ => {
+                    self.done = true;
+                }
             }
         }
         Ok(None)
@@ -180,8 +188,8 @@ mod tests {
         let local: SocketAddr = "127.0.0.1:0".parse().unwrap();
         let server: SocketAddr = "127.0.0.1:3478".parse().unwrap();
 
-        let mut first = StunGather::new(local, server).unwrap();
-        let mut second = StunGather::new(local, server).unwrap();
+        let mut first = StunGather::new(Instant::now(), local, server).unwrap();
+        let mut second = StunGather::new(Instant::now(), local, server).unwrap();
 
         let first_bytes = queued_request_bytes(&mut first);
         let second_bytes = queued_request_bytes(&mut second);

@@ -89,6 +89,12 @@ const REQ_LTC: &[u8] = &[
 /// short-term-credential messages).
 const SHORT_TERM_PASSWORD: &str = "VOkJxbRl1RmTxUk/WvJxBt";
 
+/// The feature-selected default `rtc-crypto` provider (rtc-stun 0.21 takes the
+/// crypto explicitly instead of resolving a global).
+fn crypto() -> std::sync::Arc<dyn rtc_stun::crypto::RTCCryptoProvider> {
+    rtc_stun::crypto::default_provider().expect("default crypto provider")
+}
+
 fn parse(bytes: &[u8]) -> Message {
     let mut msg = Message::new();
     msg.unmarshal_binary(bytes).expect("parse STUN message");
@@ -98,8 +104,7 @@ fn parse(bytes: &[u8]) -> Message {
 #[test]
 fn request_message_integrity_and_fingerprint() {
     let mut msg = parse(REQ);
-    MessageIntegrity::new_short_term_integrity(SHORT_TERM_PASSWORD.to_string())
-        .check(&mut msg)
+    MessageIntegrity::check(&mut msg, SHORT_TERM_PASSWORD.as_bytes(), crypto().crypto())
         .expect("MESSAGE-INTEGRITY must verify against the RFC 5769 password");
     FingerprintAttr
         .check(&msg)
@@ -109,8 +114,7 @@ fn request_message_integrity_and_fingerprint() {
 #[test]
 fn ipv4_response_xor_mapped_address_and_integrity() {
     let mut msg = parse(RESP_V4);
-    MessageIntegrity::new_short_term_integrity(SHORT_TERM_PASSWORD.to_string())
-        .check(&mut msg)
+    MessageIntegrity::check(&mut msg, SHORT_TERM_PASSWORD.as_bytes(), crypto().crypto())
         .expect("MESSAGE-INTEGRITY must verify");
     FingerprintAttr
         .check(&msg)
@@ -125,8 +129,7 @@ fn ipv4_response_xor_mapped_address_and_integrity() {
 #[test]
 fn ipv6_response_xor_mapped_address_and_integrity() {
     let mut msg = parse(RESP_V6);
-    MessageIntegrity::new_short_term_integrity(SHORT_TERM_PASSWORD.to_string())
-        .check(&mut msg)
+    MessageIntegrity::check(&mut msg, SHORT_TERM_PASSWORD.as_bytes(), crypto().crypto())
         .expect("MESSAGE-INTEGRITY must verify");
     FingerprintAttr
         .check(&msg)
@@ -151,13 +154,15 @@ fn ipv6_response_xor_mapped_address_and_integrity() {
 fn long_term_auth_message_integrity() {
     let mut msg = parse(REQ_LTC);
     let username = "\u{30de}\u{30c8}\u{30ea}\u{30c3}\u{30af}\u{30b9}".to_string();
-    MessageIntegrity::new_long_term_integrity(
+    let key = MessageIntegrity::long_term_integrity_key(
         username,
         "example.org".to_string(),
         "TheMatrIX".to_string(),
+        crypto().crypto(),
     )
-    .check(&mut msg)
-    .expect("MESSAGE-INTEGRITY must verify with the SASLprep'd long-term key");
+    .expect("long-term integrity key");
+    MessageIntegrity::check(&mut msg, &key, crypto().crypto())
+        .expect("MESSAGE-INTEGRITY must verify with the SASLprep'd long-term key");
 }
 
 // ---------------------------------------------------------------------------
@@ -201,15 +206,13 @@ fn corrupted_message_integrity_byte_fails_request() {
     bytes[tag_start] ^= 0x01;
     let mut msg = parse(&bytes);
     assert!(
-        MessageIntegrity::new_short_term_integrity(SHORT_TERM_PASSWORD.to_string())
-            .check(&mut msg)
+        MessageIntegrity::check(&mut msg, SHORT_TERM_PASSWORD.as_bytes(), crypto().crypto())
             .is_err(),
         "corrupted MESSAGE-INTEGRITY byte must fail verification"
     );
 
     bytes[tag_start] ^= 0x01;
     let mut msg = parse(&bytes);
-    MessageIntegrity::new_short_term_integrity(SHORT_TERM_PASSWORD.to_string())
-        .check(&mut msg)
+    MessageIntegrity::check(&mut msg, SHORT_TERM_PASSWORD.as_bytes(), crypto().crypto())
         .expect("restored MESSAGE-INTEGRITY must verify");
 }

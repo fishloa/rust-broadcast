@@ -36,11 +36,11 @@ serde = { version = "1", optional = true, default-features = false, features = [
 # ---------------------------------------------------------------------------
 rtp-packet  = { path = "../rtp-packet",  version = "0.4", optional = true }
 rtcp-packet = { path = "../rtcp-packet", version = "0.3", optional = true }
-rtc-ice     = { version = "0.20", optional = true }
-rtc-dtls    = { version = "0.20", optional = true }
-rtc-srtp    = { version = "0.20", optional = true }
-rtc-stun    = { version = "0.20", optional = true }
-rtc-shared  = { version = "0.20", optional = true }
+rtc-ice     = { version = "0.21", optional = true }
+rtc-dtls    = { version = "0.21", optional = true }
+rtc-srtp    = { version = "0.21", optional = true }
+rtc-stun    = { version = "0.21", optional = true }
+rtc-shared  = { version = "0.21", optional = true }
 sansio      = { version = "1",    optional = true }
 bytes       = { version = "1",    optional = true }
 # SHA-256 for the RFC 8122 DTLS certificate fingerprint signalled in SDP
@@ -48,7 +48,7 @@ bytes       = { version = "1",    optional = true }
 # issue brief, but there is no fingerprint helper on the approved rtc-*
 # crates themselves, and this is the same minimal RustCrypto crate the
 # feasibility spike used.
-sha2        = { version = "0.10", optional = true }
+sha2        = { version = "0.11", optional = true }
 
 [features]
 default = ["std"]
@@ -75,14 +75,15 @@ media = [
 tokio = { version = "1", features = ["full"] }
 # Fixture-verification only (tests/srtp_rfc3711_vectors.rs): an independent,
 # from-spec-text AES-CM + HMAC-SHA1 implementation used to cross-check
-# rtc-srtp's own output against the RFC 3711 Appendix B test vectors. Pinned
-# to the same versions rtc-srtp itself already resolves to (see Cargo.lock),
-# so this adds no new dependency version to the workspace's dependency graph.
-aes    = "0.8"
-cipher = "0.4"
-ctr    = "0.9"
-hmac   = "0.12"
-sha1   = "0.10"
+# rtc-srtp's own output against the RFC 3711 Appendix B test vectors. These
+# are RustCrypto 0.13 crates, deliberately independent of rtc-srtp's own
+# provider (rtc-crypto 0.21, ring by default), which is what makes them an
+# oracle.
+aes    = "0.9"
+cipher = "0.5"
+ctr    = "0.10"
+hmac   = "0.13"
+sha1   = "0.11"
 
 # Manual browser-interop smoke test (not run in CI): gated on `media` via
 # `required-features` so `cargo build --examples` with default features

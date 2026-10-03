@@ -34,9 +34,7 @@
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use aes::cipher::{
-    BlockDecryptMut, BlockEncryptMut, KeyIvInit, block_padding::Pkcs7, generic_array::GenericArray,
-};
+use aes::cipher::{Block, BlockModeDecrypt, BlockModeEncrypt, KeyIvInit, block_padding::Pkcs7};
 
 use broadcast_hls::AttrValue;
 
@@ -96,8 +94,10 @@ fn cbc_encrypt_blocks_in_place(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], data: 
     }
     let mut enc = Aes128CbcEnc::new(key.into(), iv.into());
     for chunk in data.chunks_exact_mut(BLOCK_LEN) {
-        let block = GenericArray::from_mut_slice(chunk);
-        enc.encrypt_block_mut(block);
+        let block: &mut Block<aes::Aes128> = chunk
+            .try_into()
+            .expect("chunks_exact_mut yields block-sized chunks");
+        enc.encrypt_block(block);
     }
 }
 
@@ -108,8 +108,10 @@ fn cbc_decrypt_blocks_in_place(key: &[u8; KEY_LEN], iv: &[u8; BLOCK_LEN], data: 
     }
     let mut dec = Aes128CbcDec::new(key.into(), iv.into());
     for chunk in data.chunks_exact_mut(BLOCK_LEN) {
-        let block = GenericArray::from_mut_slice(chunk);
-        dec.decrypt_block_mut(block);
+        let block: &mut Block<aes::Aes128> = chunk
+            .try_into()
+            .expect("chunks_exact_mut yields block-sized chunks");
+        dec.decrypt_block(block);
     }
 }
 
@@ -132,8 +134,10 @@ fn cbc_encrypt_blocks_chained(
     }
     let mut enc = Aes128CbcEnc::new(key.into(), iv.into());
     for chunk in data.chunks_exact_mut(BLOCK_LEN) {
-        let block = GenericArray::from_mut_slice(chunk);
-        enc.encrypt_block_mut(block);
+        let block: &mut Block<aes::Aes128> = chunk
+            .try_into()
+            .expect("chunks_exact_mut yields block-sized chunks");
+        enc.encrypt_block(block);
     }
     if let Some(last) = data.chunks_exact(BLOCK_LEN).next_back() {
         state.copy_from_slice(last);
@@ -160,8 +164,10 @@ fn cbc_decrypt_blocks_chained(
     }
     let mut dec = Aes128CbcDec::new(key.into(), iv.into());
     for chunk in data.chunks_exact_mut(BLOCK_LEN) {
-        let block = GenericArray::from_mut_slice(chunk);
-        dec.decrypt_block_mut(block);
+        let block: &mut Block<aes::Aes128> = chunk
+            .try_into()
+            .expect("chunks_exact_mut yields block-sized chunks");
+        dec.decrypt_block(block);
     }
     state
 }
@@ -181,7 +187,7 @@ pub fn aes128_encrypt_segment(
     plaintext: &[u8],
 ) -> Vec<u8> {
     let enc = Aes128CbcEnc::new(key.into(), iv.into());
-    enc.encrypt_padded_vec_mut::<Pkcs7>(plaintext)
+    enc.encrypt_padded_vec::<Pkcs7>(plaintext)
 }
 
 /// Decrypt an AES-128 full-segment ciphertext, stripping PKCS#7 padding
@@ -200,7 +206,7 @@ pub fn aes128_decrypt_segment(
         ));
     }
     let dec = Aes128CbcDec::new(key.into(), iv.into());
-    dec.decrypt_padded_vec_mut::<Pkcs7>(ciphertext)
+    dec.decrypt_padded_vec::<Pkcs7>(ciphertext)
         .map_err(|_| Error::InvalidInput("AES-128 segment PKCS#7 padding invalid"))
 }
 

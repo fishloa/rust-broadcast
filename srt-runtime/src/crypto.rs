@@ -44,7 +44,7 @@
 
 use aes::cipher::{KeyIvInit, StreamCipher};
 use aes::{Aes128, Aes192, Aes256};
-use aes_kw::{KekAes128, KekAes192, KekAes256};
+use aes_kw::{KeyInit, KwAes128, KwAes192, KwAes256};
 use alloc::vec;
 use alloc::vec::Vec;
 use ctr::Ctr128BE;
@@ -150,15 +150,18 @@ pub fn derive_kek(
 pub fn wrap_sek(kek: &[u8], plaintext_keys: &[u8]) -> Result<([u8; 8], Vec<u8>)> {
     let mut out = vec![0u8; plaintext_keys.len() + 8];
     match kek.len() {
-        16 => KekAes128::try_from(kek)
+        16 => KwAes128::new_from_slice(kek)
             .map_err(|_| invalid_key_length("KEK"))?
-            .wrap(plaintext_keys, &mut out),
-        24 => KekAes192::try_from(kek)
+            .wrap_key(plaintext_keys, &mut out)
+            .map(|_| ()),
+        24 => KwAes192::new_from_slice(kek)
             .map_err(|_| invalid_key_length("KEK"))?
-            .wrap(plaintext_keys, &mut out),
-        32 => KekAes256::try_from(kek)
+            .wrap_key(plaintext_keys, &mut out)
+            .map(|_| ()),
+        32 => KwAes256::new_from_slice(kek)
             .map_err(|_| invalid_key_length("KEK"))?
-            .wrap(plaintext_keys, &mut out),
+            .wrap_key(plaintext_keys, &mut out)
+            .map(|_| ()),
         _ => return Err(invalid_key_length("KEK")),
     }
     .map_err(|_| Error::InvalidField {
@@ -196,15 +199,18 @@ pub fn unwrap_sek(kek: &[u8], icv: &[u8; 8], wrapped: &[u8]) -> Result<Zeroizing
         reason: "integrity check failed (wrong KEK / passphrase, or corrupt wire data)",
     };
     match kek.len() {
-        16 => KekAes128::try_from(kek)
+        16 => KwAes128::new_from_slice(kek)
             .map_err(|_| invalid_key_length("KEK"))?
-            .unwrap(&input, &mut out[..]),
-        24 => KekAes192::try_from(kek)
+            .unwrap_key(&input, &mut out[..])
+            .map(|_| ()),
+        24 => KwAes192::new_from_slice(kek)
             .map_err(|_| invalid_key_length("KEK"))?
-            .unwrap(&input, &mut out[..]),
-        32 => KekAes256::try_from(kek)
+            .unwrap_key(&input, &mut out[..])
+            .map(|_| ()),
+        32 => KwAes256::new_from_slice(kek)
             .map_err(|_| invalid_key_length("KEK"))?
-            .unwrap(&input, &mut out[..]),
+            .unwrap_key(&input, &mut out[..])
+            .map(|_| ()),
         _ => return Err(invalid_key_length("KEK")),
     }
     .map_err(|_| bad_wrap())?;

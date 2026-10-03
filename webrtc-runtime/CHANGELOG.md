@@ -31,6 +31,10 @@ All notable changes to this crate will be documented in this file.
   misread as an ICE-restart answer, and a `DELETE` answered `204` (as common as the `200` the
   code checked for) left the client `Established` forever instead of `Closed` (#1090).
 
+### Changed
+
+- Dependency bumps, non-breaking (no public API change): `rtc-dtls`/`rtc-ice`/`rtc-shared`/`rtc-srtp`/`rtc-stun` 0.21, and dev-only RustCrypto 0.13 (`aes` 0.9, `cipher` 0.5, `ctr` 0.10, `hmac` 0.13, `sha1` 0.11, `sha2` 0.11). rtc 0.21 takes its crypto provider explicitly; this crate uses the default provider (ring), so the provider choice is unchanged, but ring now implements the primitives that were previously RustCrypto underneath (a different backend, same provider).
+
 ### Fixed
 - `ice::parse_ice_server_links`/`format_ice_server_links`: a `Link` header parameter value
   (`username`/`credential`) containing `;`, `,` or `"` — all legal in an RFC 8288

@@ -7,11 +7,12 @@
 //! The TNT fixture carries NM BBFrames (PID 0x010E); the RAI fixture also has
 //! NM BBFrames (PID TBD — extracted by the fixture helper below).
 
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use dvb_bbframe::crc::crc8;
 use dvb_bbframe::header::{BBHEADER_LEN, Bbheader, Matype, Mode, TsGs};
 use dvb_bbframe::packet::{NM_UP_SIZE, NmTsIter, up_iter};
 use dvb_bbframe::pump::BbframePump;
+use std::hint::black_box;
 
 // ── Fixtures ─────────────────────────────────────────────────────────────────
 

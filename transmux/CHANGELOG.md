@@ -93,6 +93,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
+- Dependency bumps, non-breaking (no public API change): `aes` 0.9, `ctr` 0.10, `cbc` 0.2 (RustCrypto 0.13 generation). CENC `cenc`/`cbcs` and HLS Sample-AES ciphertext is byte-identical (oracle fixtures pass).
+
 Optimization sweep (#1079, #1080, #1081). Apart from the three behaviour changes listed under
 `### Changed (breaking)` and `### Fixed`, every change below leaves the output byte-identical on the
 committed fixtures (pinned by `tests/sweep_output_golden.rs`, whose hashes were captured on the

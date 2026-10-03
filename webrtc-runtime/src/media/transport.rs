@@ -9,6 +9,7 @@ use broadcast_common::{Parse, Serialize};
 use bytes::BytesMut;
 use rtc_dtls::config::{ClientAuthType, ConfigBuilder, HandshakeConfig, VerifyPeerCertificateFn};
 use rtc_dtls::crypto::Certificate;
+use rtc_dtls::crypto_provider::{RTCCryptoProvider, default_provider};
 use rtc_dtls::endpoint::{Endpoint as DtlsEndpoint, EndpointEvent};
 use rtc_dtls::extension::extension_use_srtp::SrtpProtectionProfile;
 use rtc_ice::agent::agent_config::AgentConfig;
@@ -17,7 +18,6 @@ use rtc_ice::candidate::candidate_host::CandidateHostConfig;
 use rtc_ice::candidate::candidate_server_reflexive::CandidateServerReflexiveConfig;
 use rtc_ice::candidate::{CandidateConfig, CandidateType, unmarshal_candidate};
 use rtc_ice::mdns::MulticastDnsMode;
-use rtc_shared::crypto::KeyingMaterialExporter;
 use rtc_shared::error::Error as SharedError;
 use rtc_shared::{EcnCodepoint, TaggedBytesMut, TransportContext, TransportProtocol};
 use rtc_srtp::context::Context as SrtpContext;
@@ -513,6 +513,10 @@ pub struct MediaTransport {
     /// [`Self::purge_expired_retired_key`].
     retired_srtp_read: Option<(SrtpContext, Instant)>,
     gather: Option<StunGather>,
+    /// The crypto provider (`rtc-crypto` 0.21 takes it explicitly everywhere:
+    /// ICE agent, DTLS config/certificate, SRTP contexts), resolved once from
+    /// the feature-selected default at construction.
+    crypto_provider: Arc<dyn RTCCryptoProvider>,
     /// Remote candidates admitted so far via [`Self::add_remote_candidate`],
     /// capped at [`Self::max_remote_candidates`]. `rtc-ice`'s `IceAgent`
     /// keeps its own remote-candidate list privately (no public getter), so
@@ -576,9 +580,19 @@ impl MediaTransport {
         // Generates a fresh self-signed certificate — WebRTC authenticates
         // peers by the SDP-signalled fingerprint (RFC 8122), not a CA chain,
         // so self-signed is the norm.
-        let certificate = Certificate::generate_self_signed(vec!["localhost".to_string()])
-            .map_err(|e| Error::Media(format!("generate self-signed certificate: {e}")))?;
-        Self::with_certificate(config, remote_fingerprint_digest, certificate)
+        let crypto_provider = default_provider()
+            .map_err(|e| Error::Media(format!("resolve default crypto provider: {e}")))?;
+        let certificate = Certificate::generate_self_signed(
+            vec!["localhost".to_string()],
+            crypto_provider.crypto(),
+        )
+        .map_err(|e| Error::Media(format!("generate self-signed certificate: {e}")))?;
+        Self::with_certificate(
+            config,
+            remote_fingerprint_digest,
+            certificate,
+            crypto_provider,
+        )
     }
 
     /// The shared construction body. Split out from [`Self::new`] only so a
@@ -590,6 +604,7 @@ impl MediaTransport {
         config: MediaTransportConfig,
         remote_fingerprint_digest: [u8; FINGERPRINT_LEN],
         certificate: Certificate,
+        crypto_provider: Arc<dyn RTCCryptoProvider>,
     ) -> Result<Self, Error> {
         let is_client = config.local_setup == SetupRole::Active;
 
@@ -603,8 +618,12 @@ impl MediaTransport {
             candidate_types: vec![CandidateType::Host, CandidateType::ServerReflexive],
             ..Default::default()
         };
-        let mut ice = IceAgent::new(Arc::new(agent_config))
-            .map_err(|e| Error::Media(format!("new ice agent: {e}")))?;
+        let mut ice = IceAgent::new(
+            Instant::now(),
+            Arc::new(agent_config),
+            crypto_provider.clone(),
+        )
+        .map_err(|e| Error::Media(format!("new ice agent: {e}")))?;
 
         let host_candidate = CandidateHostConfig {
             base_config: CandidateConfig {
@@ -622,6 +641,7 @@ impl MediaTransport {
             .map_err(|e| Error::Media(format!("add host candidate: {e}")))?;
 
         ice.start_connectivity_checks(
+            Instant::now(),
             config.is_controlling,
             config.remote_ice_ufrag.clone(),
             config.remote_ice_pwd.clone(),
@@ -646,6 +666,7 @@ impl MediaTransport {
             }
         });
         let builder = ConfigBuilder::default()
+            .with_crypto_provider(crypto_provider.clone())
             .with_certificates(vec![certificate])
             .with_srtp_protection_profiles(vec![OFFERED_SRTP_PROFILE])
             .with_insecure_skip_verify(true)
@@ -684,7 +705,7 @@ impl MediaTransport {
         );
 
         let gather = match config.stun_server {
-            Some(server) => Some(StunGather::new(config.local_addr, server)?),
+            Some(server) => Some(StunGather::new(Instant::now(), config.local_addr, server)?),
             None => None,
         };
 
@@ -706,6 +727,7 @@ impl MediaTransport {
             read_rtcp_count: 0,
             retired_srtp_read: None,
             gather,
+            crypto_provider,
             remote_candidate_count: 0,
             max_remote_candidates: config.max_remote_candidates,
             known_remote_addrs: HashSet::new(),
@@ -903,7 +925,8 @@ impl MediaTransport {
         Protocol::handle_read(&mut self.ice, tagged)
             .map_err(|e| Error::Media(format!("ice handle_read: {e}")))?;
 
-        while let Some(evt) = Protocol::poll_event(&mut self.ice) {
+        while let Some(tagged_evt) = Protocol::poll_event(&mut self.ice) {
+            let evt = tagged_evt.event;
             if let IceAgentEvent::SelectedCandidatePairChange(_, remote) = &evt {
                 // RFC 5764 §5's identity check is only meaningful against
                 // the peer ICE actually nominated: record its address as
@@ -911,9 +934,9 @@ impl MediaTransport {
                 // `handle_dtls_datagram`), then dial if this side is the
                 // DTLS client.
                 self.selected_pair_addr = Some(remote.addr());
-                self.maybe_start_active_dtls(remote.addr())?;
+                self.maybe_start_active_dtls(now, remote.addr())?;
             }
-            if let Some(mapped) = map_ice_event(evt) {
+            if let Some(mapped) = map_ice_event(evt)? {
                 events.push(mapped);
             }
         }
@@ -930,12 +953,16 @@ impl MediaTransport {
     /// (`DtlsEndpoint::connect` only inserts a new association into a
     /// vacant `remote` entry, per its own doc — calling it again on an
     /// address that already has an association is harmless).
-    fn maybe_start_active_dtls(&mut self, remote_addr: SocketAddr) -> Result<(), Error> {
+    fn maybe_start_active_dtls(
+        &mut self,
+        now: Instant,
+        remote_addr: SocketAddr,
+    ) -> Result<(), Error> {
         let Some(client_config) = self.dtls_client_config.clone() else {
             return Ok(());
         };
         self.dtls
-            .connect(remote_addr, client_config, None)
+            .connect(now, remote_addr, client_config, None)
             .map_err(|e| Error::Media(format!("dtls connect (active/client role): {e}")))?;
         Ok(())
     }
@@ -970,6 +997,15 @@ impl MediaTransport {
                 EndpointEvent::ApplicationData(_) => {
                     // DTLS application data (e.g. SCTP data channels) is out
                     // of scope for this cut — see the crate README.
+                }
+                // `EndpointEvent` is `#[non_exhaustive]` in rtc-dtls 0.21. An
+                // event this crate does not understand is surfaced as an
+                // error (never silently dropped, which could stall a
+                // handshake the caller thinks is progressing).
+                _ => {
+                    return Err(Error::Media(
+                        "unrecognised rtc-dtls endpoint event".to_string(),
+                    ));
                 }
             }
         }
@@ -1086,6 +1122,7 @@ impl MediaTransport {
             .export_keying_material(SRTP_KEYING_MATERIAL_LABEL, &[], 2 * (key_len + salt_len))
             .map_err(|e| Error::Media(format!("export srtp keying material: {e}")))?;
 
+        let material = material.as_ref();
         let client_key = &material[0..key_len];
         let server_key = &material[key_len..2 * key_len];
         let client_salt = &material[2 * key_len..2 * key_len + salt_len];
@@ -1097,10 +1134,24 @@ impl MediaTransport {
             (server_key, server_salt),
         );
 
-        let read_ctx = SrtpContext::new(read_key, read_salt, srtp_profile, None, None)
-            .map_err(|e| Error::Media(format!("build srtp decrypt context: {e}")))?;
-        let write_ctx = SrtpContext::new(write_key, write_salt, srtp_profile, None, None)
-            .map_err(|e| Error::Media(format!("build srtp encrypt context: {e}")))?;
+        let read_ctx = SrtpContext::new(
+            read_key,
+            read_salt,
+            srtp_profile,
+            None,
+            None,
+            self.crypto_provider.crypto(),
+        )
+        .map_err(|e| Error::Media(format!("build srtp decrypt context: {e}")))?;
+        let write_ctx = SrtpContext::new(
+            write_key,
+            write_salt,
+            srtp_profile,
+            None,
+            None,
+            self.crypto_provider.crypto(),
+        )
+        .map_err(|e| Error::Media(format!("build srtp encrypt context: {e}")))?;
         self.srtp_read = Some(read_ctx);
         self.srtp_write = Some(write_ctx);
         Ok(())
@@ -1237,8 +1288,8 @@ impl MediaTransport {
         self.read_rtp_count = 0;
         self.read_rtcp_count = 0;
 
-        let _ = self.dtls.stop(peer);
-        self.maybe_start_active_dtls(peer)?;
+        let _ = self.dtls.stop(now, peer);
+        self.maybe_start_active_dtls(now, peer)?;
         Ok(())
     }
 
@@ -1312,12 +1363,15 @@ fn decrypt_srtp(ctx: &mut SrtpContext, is_rtcp: bool, data: &[u8]) -> Result<Med
     }
 }
 
-fn map_ice_event(evt: IceAgentEvent) -> Option<MediaEvent> {
+fn map_ice_event(evt: IceAgentEvent) -> Result<Option<MediaEvent>, Error> {
     match evt {
         IceAgentEvent::ConnectionStateChange(state) => {
-            Some(MediaEvent::IceStateChanged(state.to_string()))
+            Ok(Some(MediaEvent::IceStateChanged(state.to_string())))
         }
-        IceAgentEvent::SelectedCandidatePairChange(..) | IceAgentEvent::RoleChange(_) => None,
+        IceAgentEvent::SelectedCandidatePairChange(..) | IceAgentEvent::RoleChange(_) => Ok(None),
+        // `Event` is `#[non_exhaustive]` in rtc-ice 0.21. An unknown event is
+        // surfaced as an error, never silently dropped.
+        _ => Err(Error::Media("unrecognised rtc-ice event".to_string())),
     }
 }
 
@@ -1377,6 +1431,12 @@ fn sha256_fingerprint(der: &[u8]) -> String {
 
 #[cfg(test)]
 mod tests {
+    /// The feature-selected default `rtc-crypto` provider (ring), as
+    /// `MediaTransport::new` resolves it.
+    fn test_crypto() -> Arc<dyn RTCCryptoProvider> {
+        default_provider().expect("default crypto provider")
+    }
+
     use super::*;
 
     #[test]
@@ -1713,6 +1773,7 @@ mod tests {
                 ProtectionProfile::Aes128CmHmacSha1_80,
                 None,
                 None,
+                test_crypto().crypto(),
             )
             .unwrap(),
         );
@@ -1747,6 +1808,7 @@ mod tests {
             ProtectionProfile::Aes128CmHmacSha1_80,
             None,
             None,
+            test_crypto().crypto(),
         )
         .unwrap();
         let expected = oracle_ctx.encrypt_rtp(&packet.to_bytes()).unwrap();
@@ -1759,6 +1821,7 @@ mod tests {
             ProtectionProfile::Aes128CmHmacSha1_80,
             None,
             None,
+            test_crypto().crypto(),
         )
         .unwrap();
         assert_eq!(
@@ -1792,6 +1855,7 @@ mod tests {
             ProtectionProfile::Aes128CmHmacSha1_80,
             None,
             None,
+            test_crypto().crypto(),
         )
         .unwrap();
         assert_eq!(
@@ -1842,6 +1906,7 @@ mod tests {
             ProtectionProfile::Aes128CmHmacSha1_80,
             None,
             None,
+            test_crypto().crypto(),
         )
         .unwrap()
     }
@@ -1853,6 +1918,7 @@ mod tests {
             ProtectionProfile::Aes128CmHmacSha1_80,
             None,
             None,
+            test_crypto().crypto(),
         )
         .unwrap()
     }
@@ -2375,8 +2441,16 @@ mod tests {
     fn loopback_pair_with_max_remote(cap: usize) -> LoopbackPair {
         let a_addr = reserve_loopback_addr();
         let b_addr = reserve_loopback_addr();
-        let cert_a = Certificate::generate_self_signed(vec!["localhost".to_string()]).unwrap();
-        let cert_b = Certificate::generate_self_signed(vec!["localhost".to_string()]).unwrap();
+        let cert_a = Certificate::generate_self_signed(
+            vec!["localhost".to_string()],
+            test_crypto().crypto(),
+        )
+        .unwrap();
+        let cert_b = Certificate::generate_self_signed(
+            vec!["localhost".to_string()],
+            test_crypto().crypto(),
+        )
+        .unwrap();
         let fp_a = sha256_fingerprint(cert_a.certificate[0].as_ref());
         let fp_b = sha256_fingerprint(cert_b.certificate[0].as_ref());
         let mut a = MediaTransport::with_certificate(
@@ -2394,6 +2468,7 @@ mod tests {
             },
             parse_fingerprint_value(&format!("sha-256 {fp_b}")).unwrap(),
             cert_a,
+            test_crypto(),
         )
         .unwrap();
         let mut b = MediaTransport::with_certificate(
@@ -2411,6 +2486,7 @@ mod tests {
             },
             parse_fingerprint_value(&format!("sha-256 {fp_a}")).unwrap(),
             cert_b,
+            test_crypto(),
         )
         .unwrap();
         a.add_remote_candidate(&host_candidate_line(b_addr))
@@ -2586,13 +2662,15 @@ mod tests {
         use rtc_stun::textattrs::Username;
 
         let username = format!("{local_ufrag}:{remote_ufrag}");
+        let crypto = test_crypto();
         let mut msg = Message::new();
         msg.build(&[
             Box::new(BINDING_REQUEST),
             Box::new(TransactionId::new()),
             Box::new(Username::new(ATTR_USERNAME, username)),
-            Box::new(MessageIntegrity::new_short_term_integrity(
+            Box::new(MessageIntegrity::new_short_term_integrity_with_provider(
                 local_pwd.to_string(),
+                crypto.crypto(),
             )),
             Box::new(FINGERPRINT),
         ])
@@ -2604,7 +2682,7 @@ mod tests {
     fn stun_from_new_addresses_is_capped_and_original_peer_still_flows() {
         // Bite test: run this against the unfixed code (no
         // `known_remote_addrs` gate in `handle_stun_datagram`) and it fails.
-        // `pair.b.ice.get_remote_candidates_stats()` is `rtc-ice`'s own
+        // `pair.b.ice.get_remote_candidates_stats(Instant::now())` is `rtc-ice`'s own
         // public stats accessor — it walks the agent's private
         // `remote_candidates` list directly, so it observes the *real*
         // peer-reflexive-candidate growth this fix is supposed to stop, not
@@ -2617,7 +2695,10 @@ mod tests {
 
         // B already knows exactly one remote candidate (A's host address,
         // added by `loopback_pair_with_max_remote`).
-        assert_eq!(pair.b.ice.get_remote_candidates_stats().len(), 1);
+        assert_eq!(
+            pair.b.ice.get_remote_candidates_stats(Instant::now()).len(),
+            1
+        );
         assert_eq!(pair.b.known_remote_addrs.len(), 1);
 
         // Any WHEP viewer already knows B's ufrag/pwd (both are plain SDP
@@ -2636,7 +2717,7 @@ mod tests {
                 .expect("a capped-and-dropped datagram must not error");
         }
 
-        let remote_candidates = pair.b.ice.get_remote_candidates_stats().len();
+        let remote_candidates = pair.b.ice.get_remote_candidates_stats(Instant::now()).len();
         assert!(
             remote_candidates <= small_cap,
             "at most {small_cap} remote candidates may ever be tracked by the agent, got {remote_candidates}"

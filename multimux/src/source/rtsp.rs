@@ -1969,14 +1969,20 @@ mod tests {
                 if cursor.is_none()
                     && let Some(trunk) = driver.trunk(ProgramId(0))
                 {
-                    cursor = Some(trunk.subscribe());
+                    // `subscribe_from_backlog`, not `subscribe`: the IDR may be
+                    // published in the same feed as later AUs, i.e. before this
+                    // cursor exists, and `subscribe` would start past it.
+                    cursor = Some(trunk.subscribe_from_backlog());
                 }
                 if let Some(c) = cursor.as_mut() {
                     while let Some(item) = c.poll() {
                         if let media_plane::trunk::SampleCursorItem::Timed { track_id, sample } =
                             item
                         {
-                            sample_track = Some((track_id, sample.flags.is_sync));
+                            // Record only the FIRST sample: the assertion below is
+                            // about the first access unit, and one poll batch may
+                            // carry several (depends on read chunking).
+                            sample_track.get_or_insert((track_id, sample.flags.is_sync));
                         }
                     }
                 }

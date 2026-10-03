@@ -99,7 +99,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use base64::Engine;
 use hmac::digest::Key;
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit, Mac};
 use md5::{Digest as _, Md5};
 use sha2::Sha256;
 
@@ -316,7 +316,7 @@ impl DigestNonces {
         // without its (never-taken) error arm.
         let mut block = Key::<Hmac<Sha256>>::default();
         block[..NONCE_SECRET_LEN].copy_from_slice(&self.secret);
-        let mut mac = <Hmac<Sha256> as Mac>::new(&block);
+        let mut mac = <Hmac<Sha256> as KeyInit>::new(&block);
         mac.update(signed);
         mac
     }
@@ -919,7 +919,7 @@ mod tests {
         let nonces = DigestNonces::new();
         let signed = b"issue-time||issue-seq";
         let reference = {
-            let mut m = <Hmac<Sha256> as Mac>::new_from_slice(&nonces.secret).unwrap();
+            let mut m = <Hmac<Sha256> as KeyInit>::new_from_slice(&nonces.secret).unwrap();
             m.update(signed);
             m.finalize().into_bytes()
         };
@@ -1848,5 +1848,66 @@ mod tests {
         let v = Verifier::new(Credentials::bearer("topsecrettoken"), REALM);
         let debug = format!("{v:?}");
         assert!(!debug.contains("topsecrettoken"), "debug: {debug}");
+    }
+
+    /// RFC 2617 §3.5 worked example: pins the Digest MD5 chain.
+    #[test]
+    fn digest_md5_matches_rfc2617_worked_example() {
+        use md5::{Digest as _, Md5};
+        let ha1 = hex_of(Md5::digest(b"Mufasa:testrealm@host.com:Circle Of Life"));
+        let ha2 = hex_of(Md5::digest(b"GET:/dir/index.html"));
+        let resp = hex_of(Md5::digest(
+            format!("{ha1}:dcd98b7102dd2f0e8b11d0f600bfb0c093:00000001:0a4f113b:auth:{ha2}")
+                .as_bytes(),
+        ));
+        assert_eq!(resp, "6629fae49393a05397450978507c4ef1");
+    }
+
+    fn hex_of(bytes: impl AsRef<[u8]>) -> String {
+        bytes.as_ref().iter().map(|b| format!("{b:02x}")).collect()
+    }
+
+    /// RFC 7617 §2 example: pins Basic base64 encode/decode incl. padding.
+    #[test]
+    fn basic_credentials_base64_matches_rfc7617_example() {
+        use base64::Engine as _;
+        let enc = base64::engine::general_purpose::STANDARD.encode(b"Aladdin:open sesame");
+        assert_eq!(enc, "QWxhZGRpbjpvcGVuIHNlc2FtZQ==");
+        let dec = base64::engine::general_purpose::STANDARD
+            .decode("QWxhZGRpbjpvcGVuIHNlc2FtZQ==")
+            .unwrap();
+        assert_eq!(dec, b"Aladdin:open sesame");
+    }
+
+    /// Production-path pin: the RFC 2617 §3.5 worked example through the
+    /// crate's own `md5_hex` (what `check_digest` computes HA1/HA2/response
+    /// with) and `constant_time_eq` (what it compares with). `check_digest`
+    /// itself also needs a nonce this `DigestNonces` minted, which the RFC's
+    /// fixed nonce is not, so the chain is driven through those two
+    /// production helpers instead.
+    #[test]
+    fn production_digest_chain_matches_rfc2617_and_rejects_altered() {
+        let ha1 = md5_hex("Mufasa:testrealm@host.com:Circle Of Life".to_string());
+        let ha2 = md5_hex("GET:/dir/index.html".to_string());
+        let expected = md5_hex(format!(
+            "{ha1}:dcd98b7102dd2f0e8b11d0f600bfb0c093:00000001:0a4f113b:auth:{ha2}"
+        ));
+        let rfc = "6629fae49393a05397450978507c4ef1";
+        assert!(constant_time_eq(expected.as_bytes(), rfc.as_bytes()));
+        // One character altered: must not compare equal.
+        let altered = "6629fae49393a05397450978507c4ef2";
+        assert!(!constant_time_eq(expected.as_bytes(), altered.as_bytes()));
+    }
+
+    /// Production-path pin: RFC 7617 §2 (`Aladdin:open sesame`) through
+    /// `verify_basic`, the function `Verifier::verify` dispatches Basic to.
+    #[test]
+    fn production_basic_verify_matches_rfc7617_and_rejects_altered() {
+        let ok = "Basic QWxhZGRpbjpvcGVuIHNlc2FtZQ==";
+        assert!(verify_basic(ok, "Aladdin", "open sesame"));
+        // One character altered in the payload (`Q` -> `R`).
+        let altered = "Basic RWxhZGRpbjpvcGVuIHNlc2FtZQ==";
+        assert!(!verify_basic(altered, "Aladdin", "open sesame"));
+        assert!(!verify_basic(ok, "Aladdin", "open sesamf"));
     }
 }

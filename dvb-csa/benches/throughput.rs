@@ -5,8 +5,9 @@
 //! the bitsliced path works in: it runs the same work through the scalar path
 //! and (with `--features bitsliced`) through the batch path, so the two numbers
 //! are directly comparable per byte.
-use criterion::{Criterion, Throughput, black_box, criterion_group, criterion_main};
+use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use dvb_csa::{ControlWord, descramble, scramble};
+use std::hint::black_box;
 
 /// A full TS payload with no adaptation field.
 const PAYLOAD: usize = 184;

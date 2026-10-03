@@ -61,8 +61,8 @@
 //! do the block cipher and mode work. This module is gated on the `cenc`
 //! feature.
 
-use aes::cipher::generic_array::GenericArray;
-use aes::cipher::{BlockDecryptMut, BlockEncryptMut, KeyIvInit, StreamCipher};
+use aes::cipher::Block;
+use aes::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyIvInit, StreamCipher};
 use bytes::{Bytes, BytesMut};
 
 use crate::cenc::{CencScheme, SampleEncryptionEntry, SubSampleEntry, TrackEncryptionBox};
@@ -430,8 +430,10 @@ pub(crate) fn cbcs_pattern(
 
                 let mut dec = Aes128CbcDec::new(key.into(), (&*chain_iv).into());
                 for chunk in range[offset..offset + run_len].chunks_exact_mut(KEY_LEN) {
-                    let block = GenericArray::from_mut_slice(chunk);
-                    dec.decrypt_block_mut(block);
+                    let block: &mut Block<aes::Aes128> = chunk
+                        .try_into()
+                        .expect("chunks_exact_mut yields block-sized chunks");
+                    dec.decrypt_block(block);
                 }
                 *chain_iv = next_chain;
             }
@@ -443,8 +445,10 @@ pub(crate) fn cbcs_pattern(
                 // before touching the buffer).
                 let mut enc = Aes128CbcEnc::new(key.into(), (&*chain_iv).into());
                 for chunk in range[offset..offset + run_len].chunks_exact_mut(KEY_LEN) {
-                    let block = GenericArray::from_mut_slice(chunk);
-                    enc.encrypt_block_mut(block);
+                    let block: &mut Block<aes::Aes128> = chunk
+                        .try_into()
+                        .expect("chunks_exact_mut yields block-sized chunks");
+                    enc.encrypt_block(block);
                 }
                 chain_iv.copy_from_slice(&range[offset + run_len - KEY_LEN..offset + run_len]);
             }

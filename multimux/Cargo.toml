@@ -191,13 +191,13 @@ name = "custom_scheme"
 # `test-util`: the paused, manually advanced clock the push-flush tests use
 # instead of sleeping (feature-only; no new version in the lock).
 tokio            = { version = "1", features = ["test-util"] }
-base64           = "0.22"
+base64           = "0.23"
 # Independent RFC 7616 Digest response verification in the mock auth server
 # (`testutil`, issue #663 "Finish client-side multi-scheme auth") — the
 # `http-auth` crate (this workspace's Digest *client*) has no server-side
 # counterpart to reuse, and this is already a transitive dependency of
 # `http-auth` at the same version, so this adds no new version to the lock.
-md-5             = "0.10"
+md-5             = "0.11"
 # Adds `reqwest`'s `json` feature (`Response::json`/`RequestBuilder::json`)
 # for test-only use (`tests/admin_api.rs`, issue #749) — Cargo unifies this
 # into the one `reqwest` dependency only for test builds, never for the
