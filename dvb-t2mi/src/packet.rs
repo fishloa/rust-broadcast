@@ -61,7 +61,7 @@ impl From<num_enum::TryFromPrimitiveError<PacketType>> for crate::error::Error {
 impl PacketType {
     /// `true` when `byte` is an allocated `packet_type` (Table 1). Derived
     /// from the enum itself so the allocated set has exactly one definition.
-    pub(crate) fn is_allocated(byte: u8) -> bool {
+    pub fn is_allocated(byte: u8) -> bool {
         Self::try_from(byte).is_ok()
     }
 
