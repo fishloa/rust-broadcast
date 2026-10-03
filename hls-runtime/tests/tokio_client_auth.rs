@@ -3,7 +3,7 @@
 //! that origin naming a segment on a second host must not hand that host the
 //! `Authorization` header.
 //!
-//! Two loopback HTTP/1.1 servers (different ports, so different origins)
+//! Two loopback axum servers (different ports, so different origins)
 //! serve the committed `tests/fixtures/ts-hls/` fixture: the playlist and
 //! `index0.ts` from the first, `index1.ts` from the second.
 #![cfg(feature = "tokio")]
@@ -12,14 +12,18 @@ use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use axum::Router;
+use axum::extract::{Request, State};
+use axum::http::{StatusCode, header};
+use axum::response::IntoResponse;
 use broadcast_auth::Credentials;
 use hls_runtime::client::Output;
 use hls_runtime::client::tokio_client::{TokioClient, TokioClientConfig};
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
-/// Every request head a mock server received.
-type Log = Arc<Mutex<Vec<String>>>;
+/// Every request a mock server received: its path, and whether it carried an
+/// `Authorization` header.
+type Log = Arc<Mutex<Vec<(String, bool)>>>;
 
 fn fixture(name: &str) -> Vec<u8> {
     let path = PathBuf::from(concat!(
@@ -30,49 +34,36 @@ fn fixture(name: &str) -> Vec<u8> {
     std::fs::read(&path).unwrap_or_else(|e| panic!("read {}: {e}", path.display()))
 }
 
-/// Serves `routes` (path → (status, body)) forever, one request per
-/// connection, logging each request head.
-async fn serve(listener: TcpListener, routes: Vec<(String, u16, Vec<u8>)>, log: Log) {
-    let routes = Arc::new(routes);
-    loop {
-        let Ok((mut sock, _)) = listener.accept().await else {
-            return;
-        };
-        let (routes, log) = (routes.clone(), log.clone());
-        tokio::spawn(async move {
-            let mut head = Vec::new();
-            let mut buf = [0u8; 1024];
-            while !head.windows(4).any(|w| w == b"\r\n\r\n") {
-                match sock.read(&mut buf).await {
-                    Ok(0) | Err(_) => return,
-                    Ok(n) => head.extend_from_slice(&buf[..n]),
-                }
-            }
-            let head = String::from_utf8_lossy(&head).to_string();
-            let path = head.split_whitespace().nth(1).unwrap_or("").to_string();
-            log.lock().unwrap().push(head);
-            let (status, body) = routes
-                .iter()
-                .find(|(p, _, _)| *p == path)
-                .map(|(_, s, b)| (*s, b.clone()))
-                .unwrap_or((404, Vec::new()));
-            let reply = format!(
-                "HTTP/1.1 {status} X\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-                body.len()
-            );
-            let _ = sock.write_all(reply.as_bytes()).await;
-            let _ = sock.write_all(&body).await;
-            let _ = sock.shutdown().await;
-        });
+#[derive(Clone)]
+struct Site {
+    routes: Arc<Vec<(String, u16, Vec<u8>)>>,
+    log: Log,
+}
+
+async fn serve_one(State(s): State<Site>, req: Request) -> axum::response::Response {
+    let path = req.uri().path().to_string();
+    s.log.lock().unwrap().push((
+        path.clone(),
+        req.headers().contains_key(header::AUTHORIZATION),
+    ));
+    match s.routes.iter().find(|(p, _, _)| *p == path) {
+        Some((_, status, body)) => {
+            (StatusCode::from_u16(*status).unwrap(), body.clone()).into_response()
+        }
+        None => StatusCode::NOT_FOUND.into_response(),
     }
 }
 
-fn has_authorization(head: &str) -> bool {
-    head.lines()
-        .any(|l| l.to_ascii_lowercase().starts_with("authorization:"))
+/// Serves `routes` (path → (status, body)) forever, logging each request.
+async fn serve(listener: TcpListener, routes: Vec<(String, u16, Vec<u8>)>, log: Log) {
+    let app = Router::new().fallback(serve_one).with_state(Site {
+        routes: Arc::new(routes),
+        log,
+    });
+    axum::serve(listener, app).await.unwrap();
 }
 
-async fn run_with(auth: Credentials) -> (Vec<String>, Vec<String>) {
+async fn run_with(auth: Credentials) -> (Vec<(String, bool)>, Vec<(String, bool)>) {
     let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let other = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let origin_port = origin.local_addr().unwrap().port();
@@ -129,11 +120,11 @@ async fn run_with(auth: Credentials) -> (Vec<String>, Vec<String>) {
 async fn assert_credentials_stay_on_origin(auth: Credentials) {
     let (origin_log, other_log) = run_with(auth).await;
     assert!(
-        origin_log.iter().any(|h| h.contains("/live/index0.ts")),
+        origin_log.iter().any(|(p, _)| p == "/live/index0.ts"),
         "origin never saw its segment: {origin_log:?}"
     );
     assert!(
-        origin_log.iter().all(|h| has_authorization(h)),
+        origin_log.iter().all(|(_, auth)| *auth),
         "same-origin requests must carry the credentials: {origin_log:?}"
     );
     assert!(
@@ -141,7 +132,7 @@ async fn assert_credentials_stay_on_origin(auth: Credentials) {
         "second host never saw its segment request"
     );
     assert!(
-        other_log.iter().all(|h| !has_authorization(h)),
+        other_log.iter().all(|(_, auth)| !*auth),
         "second host received the Authorization header: {other_log:?}"
     );
 }

@@ -9,11 +9,19 @@
 //! This module is the thin tokio layer that actually moves bytes over a
 //! [`tokio::net::UdpSocket`], drives the handshake to completion, and then
 //! runs a **background driver task** per connection that pumps socket RX →
-//! engines → socket TX and, crucially, ticks the timers (retransmit, ACK,
-//! NAK, TSBPD release, keep-alive) on a fixed [`tokio::time::interval`] — so
-//! loss recovery keeps making progress even when the application is neither
-//! sending nor receiving at that instant. The sans-IO core stays `no_std`; the
-//! adapter is pure plumbing.
+//! engines → socket TX and, crucially, drives the timers (retransmit, ACK,
+//! NAK, TSBPD release, keep-alive, pacing) from the connection's own next
+//! deadline (`Driver::poll_timeout`) — so loss recovery keeps making progress
+//! even when the application is neither sending nor receiving at that instant,
+//! without a fixed tick. The sans-IO core stays `no_std`; the adapter is pure
+//! plumbing.
+//!
+//! Timeouts and the datagram size are explicit: [`IoConfig`]
+//! (`connect`/`handshake`/`read_idle`/`write`, `max_datagram`). Datagrams are
+//! [`bytes::Bytes`], one exactly-sized allocation per received datagram (never a
+//! view into a shared chunk, which would pin the whole chunk while one packet
+//! is held); the payload handed to the application is a slice of it, so there
+//! is no further copy.
 //!
 //! # Why a background task
 //!
@@ -26,7 +34,7 @@
 //! is never resent. The driver task decouples protocol progress from
 //! application call timing: [`SrtSocket::send`] enqueues a payload,
 //! [`SrtSocket::recv`] awaits a delivered payload, and the task in between
-//! runs the select loop (RX / app-send / periodic tick) until the peer shuts
+//! runs the select loop (RX / app-send / next deadline) until the peer shuts
 //! down, falls silent, or the [`SrtSocket`] is dropped.
 //!
 //! # Connection lifetime
@@ -65,9 +73,12 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use alloc::collections::VecDeque;
 use core::time::Duration;
 
+use bytes::Bytes;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::time::Instant;
+use tokio_util::sync::CancellationToken;
+use tokio_util::task::TaskTracker;
 
 use crate::arq::seq::{seq_diff, seq_in_closed_range, seq_lt, seq_next};
 use crate::arq::{Receiver as ArqReceiver, Sender as ArqSender};
@@ -89,20 +100,129 @@ use crate::tsbpd::{TickOutcome, TsbpdScheduler};
 // Constants
 // ===========================================================================
 
-/// Maximum UDP datagram size.
-const MAX_DATAGRAM: usize = 1500;
+/// Default for [`IoConfig::max_datagram`]: one Ethernet MTU of UDP payload.
+const DEFAULT_MAX_DATAGRAM: usize = 1500;
+/// Smallest accepted [`IoConfig::max_datagram`]: a full SRT header (16 bytes)
+/// plus room for a control CIF. A smaller request is clamped up to this (and a
+/// larger one down to [`MAX_MAX_DATAGRAM`]).
+pub const MIN_MAX_DATAGRAM: usize = 64;
+/// Largest accepted [`IoConfig::max_datagram`]: the biggest UDP payload.
+pub const MAX_MAX_DATAGRAM: usize = 65_535;
+
+/// Timeouts and sizes for the tokio adapter ([`SrtSocket::connect_with`],
+/// [`SrtListener::bind_with`]).
+///
+/// Every field has a documented default; use the `with_*` builders so new
+/// fields can be added without breaking callers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct IoConfig {
+    /// Largest datagram accepted from the network (bytes). Default 1500. A
+    /// larger datagram is dropped and counted in [`SocketStats::rx_oversize`]
+    /// (UDP would otherwise truncate it silently). Values below
+    /// [`MIN_MAX_DATAGRAM`] are clamped up to it.
+    pub max_datagram: usize,
+    /// Bound on resolving the remote address and binding the local socket.
+    /// Default 10 s.
+    pub connect: Duration,
+    /// Budget for the whole caller handshake. Default 5 s (the previous
+    /// `HANDSHAKE_TIMEOUT` constant).
+    pub handshake: Duration,
+    /// Longest silence from a connected peer before the connection is torn
+    /// down. Default 5 s: libsrt's `SRTO_PEERIDLETIMEO` default of 5000 ms (the
+    /// previous `PEER_IDLE_TIMEOUT` constant).
+    pub read_idle: Duration,
+    /// Longest a single `send_to` may take. Default 5 s.
+    pub write: Duration,
+}
+
+impl Default for IoConfig {
+    fn default() -> Self {
+        IoConfig {
+            max_datagram: DEFAULT_MAX_DATAGRAM,
+            connect: Duration::from_secs(10),
+            handshake: Duration::from_secs(5),
+            read_idle: Duration::from_secs(5),
+            write: Duration::from_secs(5),
+        }
+    }
+}
+
+impl IoConfig {
+    /// Set [`max_datagram`](Self::max_datagram), clamped up to [`MIN_MAX_DATAGRAM`].
+    #[must_use]
+    pub fn with_max_datagram(mut self, n: usize) -> Self {
+        self.max_datagram = n.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
+        self
+    }
+
+    /// Set [`connect`](Self::connect).
+    #[must_use]
+    pub fn with_connect(mut self, d: Duration) -> Self {
+        self.connect = d;
+        self
+    }
+
+    /// Set [`handshake`](Self::handshake).
+    #[must_use]
+    pub fn with_handshake(mut self, d: Duration) -> Self {
+        self.handshake = d;
+        self
+    }
+
+    /// Set [`read_idle`](Self::read_idle).
+    #[must_use]
+    pub fn with_read_idle(mut self, d: Duration) -> Self {
+        self.read_idle = d;
+        self
+    }
+
+    /// Set [`write`](Self::write).
+    #[must_use]
+    pub fn with_write(mut self, d: Duration) -> Self {
+        self.write = d;
+        self
+    }
+}
+
+/// Reads one datagram into the reusable `scratch` buffer (length
+/// `max + 1`) and returns it as an exactly-sized `Bytes`, or `None` for an
+/// oversize datagram (which has been counted and dropped).
+///
+/// The copy-out is deliberate: a `Bytes` that was a view into a shared receive
+/// chunk would keep the WHOLE chunk alive for as long as that one packet is
+/// staged behind a gap, queued for the application or held by it (on a shared
+/// listener socket, interleaved connections multiply that). One small
+/// allocation per datagram bounds retained memory to the datagrams actually
+/// held; the payload is still not copied again on its way to the application
+/// (`Driver::release` slices it).
+async fn recv_datagram(
+    udp: &UdpSocket,
+    scratch: &mut [u8],
+    max: usize,
+    oversize: &AtomicU64,
+) -> std::io::Result<Option<(Bytes, std::net::SocketAddr)>> {
+    // `scratch` is `max + 1` long: a datagram of max+1 bytes proves "larger
+    // than max" (UDP would otherwise truncate it silently).
+    let (n, src) = udp.recv_from(scratch).await?;
+    if n > max {
+        oversize.fetch_add(1, Ordering::Relaxed);
+        return Ok(None);
+    }
+    Ok(Some((Bytes::copy_from_slice(&scratch[..n]), src)))
+}
 
 /// One [`RouteTable`] entry: the accepted connection's ingress channel, plus
 /// the source address it was accepted from. libsrt demultiplexes its
 /// multiplexed listener socket by Destination Socket ID, not source address
 /// (draft §4.3.1; `CRcvQueue::worker` dispatches on it in `srtcore/core.cpp`)
 /// — the address is kept here only to *check* it against the datagram that
-/// claims this ID (see [`spawn_listener_routing_pump`]), so a spoofed ID from
+/// claims this ID (see [`routing_pump`]), so a spoofed ID from
 /// the wrong peer cannot be injected into someone else's session.
 #[derive(Debug, Clone)]
 struct RouteEntry {
     addr: std::net::SocketAddr,
-    tx: mpsc::Sender<Vec<u8>>,
+    tx: mpsc::Sender<Bytes>,
     /// Shared with that connection's [`Driver`]/[`SrtSocket`], so a drop
     /// here (channel full) is counted where [`SrtSocket::stats`] can see it.
     stats: Arc<Counters>,
@@ -193,17 +313,20 @@ const DELIVER_CHANNEL_CAPACITY: usize = 4096;
 /// (see `Driver::send_window_open`).
 const SEND_CHANNEL_CAPACITY: usize = 1024;
 
-/// Interval on which the driver task ticks the timer-based engine work (ACK,
-/// NAK, retransmit, TSBPD release, keep-alive). Small enough that loss
-/// recovery is prompt on a low-latency link, large enough not to busy-spin.
-const TICK_INTERVAL_MS: u64 = 2;
+/// Floor on how soon [`Driver::poll_timeout`] may ask to be woken: never a
+/// deadline in the past, and a 1 ms minimum cannot spin (it matches tokio's
+/// timer granularity).
+const MIN_WAKE: Duration = Duration::from_millis(1);
+/// Most DATA packets one `flush_outbound` pass sends, and the most pacing
+/// periods of catch-up credit a late wake may claim: with the ~1 ms timer
+/// granularity (`MIN_WAKE`) this lifts the idle-backlog drain ceiling from
+/// ~1000 packets/s to `PACING_BURST_CAP` x 1000 packets/s without ever
+/// dumping more than this many packets at once.
+const PACING_BURST_CAP: usize = 16;
 /// Initial TSBPD drift (zero: the scheduler estimates it from there).
 const DEFAULT_DRIFT_US: i64 = 0;
 /// Default max bandwidth (1 Gbps).
 const DEFAULT_MAX_BW: MaxBwConfig = MaxBwConfig::Set(125_000_000);
-/// How long [`SrtSocket::connect`] waits for the whole handshake before it
-/// gives up with [`Error::HandshakeTimedOut`].
-const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How often an unanswered handshake request is re-sent. libsrt re-sends its
 /// handshake request every 250 ms until it is answered; the previous 15 s
 /// (three five-second receive timeouts) made one lost INDUCTION cost the
@@ -217,15 +340,6 @@ const MIN_HANDSHAKE_TICK: Duration = Duration::from_millis(1);
 /// for a keep-alive packet to be sent is 1 second", measured from the last
 /// time any packet — control or data — was sent).
 const KEEPALIVE_PERIOD: Duration = Duration::from_secs(1);
-/// Peer idle timeout: the longest silence — any packet, not just DATA — from
-/// a connected peer before the connection is torn down. Matches libsrt's
-/// `SRTO_PEERIDLETIMEO` default of 5000 ms (SRT socket options reference,
-/// `srtcore/core.cpp`'s `CSrtConfig` default). Without this, an accepted
-/// connection whose peer vanished without a Shutdown (crashed, network path
-/// gone) never ends on its own — `Driver::run` would poll its dead `rx`
-/// forever, so nothing ever removes its route-table entry or drops its
-/// `SrtSocket` handle.
-const PEER_IDLE_TIMEOUT: Duration = Duration::from_millis(5000);
 /// Upper bound on concurrently in-progress listener handshakes. Every new
 /// source address that sends an INDUCTION allocates a [`PendingListener`]
 /// entry; without a cap, a flood of (possibly spoofed) handshake packets from
@@ -239,7 +353,7 @@ const PENDING_TICK_INTERVAL: Duration = Duration::from_millis(100);
 const COOKIE_KEY_ROTATION: Duration = Duration::from_secs(60);
 /// How long an accepted connection's CONCLUSION response is remembered so a
 /// repeated CONCLUSION (the response was lost) can be answered again — a
-/// little longer than the Caller's own connect budget ([`HANDSHAKE_TIMEOUT`]).
+/// little longer than the Caller's own default connect budget ([`IoConfig::handshake`]).
 const RECENT_ACCEPT_TTL: Duration = Duration::from_secs(10);
 /// Cap on remembered CONCLUSION responses (one per recently accepted source
 /// address), the same bound as [`MAX_PENDING`].
@@ -272,6 +386,7 @@ struct Counters {
     rx_dropped: AtomicU64,
     deliver_dropped: AtomicU64,
     late_dropped: AtomicU64,
+    rx_oversize: AtomicU64,
 }
 
 /// A snapshot of one connection's `Counters`, returned by
@@ -291,6 +406,9 @@ pub struct SocketStats {
     /// cursor: duplicates, retransmissions of what was already delivered or
     /// given up on, and stale sequence numbers (never staged).
     pub late_dropped: u64,
+    /// Datagrams larger than [`IoConfig::max_datagram`], dropped rather than
+    /// truncated.
+    pub rx_oversize: u64,
 }
 
 // ===========================================================================
@@ -302,10 +420,17 @@ pub struct SocketStats {
 struct ConnParams {
     udp: Arc<UdpSocket>,
     peer_addr: std::net::SocketAddr,
-    rx: mpsc::Receiver<Vec<u8>>,
+    rx: mpsc::Receiver<Bytes>,
     stats: Arc<Counters>,
     route_cleanup: RouteCleanup,
     forwarder_guard: TaskGuard,
+    /// For a listener-accepted connection: keeps the listener's tasks (and so
+    /// its socket) alive for as long as this connection is.
+    life: Option<Arc<ListenerLife>>,
+    /// [`IoConfig::read_idle`] for this connection.
+    read_idle: Duration,
+    /// [`IoConfig::write`] for this connection.
+    write: Duration,
     our_initial_seq: u32,
     peer_initial_seq: u32,
     peer_socket_id: u32,
@@ -337,9 +462,9 @@ struct ConnParams {
 pub struct SrtSocket {
     peer_addr: std::net::SocketAddr,
     /// Application payloads flowing to the driver task for transmission.
-    to_driver: mpsc::Sender<Vec<u8>>,
+    to_driver: mpsc::Sender<Bytes>,
     /// TSBPD/ARQ-delivered payloads flowing back from the driver task.
-    from_driver: mpsc::Receiver<Vec<u8>>,
+    from_driver: mpsc::Receiver<Bytes>,
     /// The driver task; aborted on drop.
     driver: Option<tokio::task::JoinHandle<()>>,
     stats: Arc<Counters>,
@@ -349,6 +474,10 @@ pub struct SrtSocket {
     peer_socket_id: u32,
     /// The connection epoch, for the SHUTDOWN's wire timestamp.
     epoch: Instant,
+    /// Keeps a listener's background tasks alive while this accepted
+    /// connection is; `None` for a [`connect`](Self::connect)ed caller.
+    /// Declared last so it drops after the SHUTDOWN in `Drop`.
+    _life: Option<Arc<ListenerLife>>,
 }
 
 impl SrtSocket {
@@ -371,9 +500,18 @@ impl SrtSocket {
         remote_addr: A,
         config: HandshakeConfig,
     ) -> Result<Self> {
+        Self::connect_with(remote_addr, config, IoConfig::default()).await
+    }
+
+    /// Like [`Self::connect`], with explicit timeouts and datagram size.
+    pub async fn connect_with<A: tokio::net::ToSocketAddrs>(
+        remote_addr: A,
+        config: HandshakeConfig,
+        io: IoConfig,
+    ) -> Result<Self> {
         refuse_crypto(&config)?;
         let local = std::net::SocketAddr::from(([0, 0, 0, 0], 0));
-        Self::connect_from(local, remote_addr, config).await
+        Self::connect_from_with(local, remote_addr, config, io).await
     }
 
     /// Connect from a specific local address.
@@ -386,11 +524,25 @@ impl SrtSocket {
         remote_addr: A,
         config: HandshakeConfig,
     ) -> Result<Self> {
+        Self::connect_from_with(local_addr, remote_addr, config, IoConfig::default()).await
+    }
+
+    /// Like [`Self::connect_from`], with explicit timeouts and datagram size.
+    pub async fn connect_from_with<A: tokio::net::ToSocketAddrs>(
+        local_addr: std::net::SocketAddr,
+        remote_addr: A,
+        config: HandshakeConfig,
+        io: IoConfig,
+    ) -> Result<Self> {
         refuse_crypto(&config)?;
-        let socket = UdpSocket::bind(local_addr)
-            .await
-            .map_err(|e| io_err("bind", e))?;
-        let peer = resolve_one(remote_addr).await?;
+        let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
+        let socket = bounded(io.connect, "bind", async {
+            UdpSocket::bind(local_addr)
+                .await
+                .map_err(|e| io_err("bind", e))
+        })
+        .await?;
+        let peer = bounded(io.connect, "resolve", resolve_one(remote_addr)).await?;
         let socket = Arc::new(socket);
 
         // Both this Caller's own Socket ID and its ISN must be freshly
@@ -406,31 +558,34 @@ impl SrtSocket {
 
         // Send INDUCTION.
         let induction = hs.start().map_err(|e| handshake_err("caller start", e))?;
-        socket
-            .send_to(&induction, peer)
-            .await
-            .map_err(|e| io_err("send induction", e))?;
+        send_bounded(&socket, &induction, peer, io.write, "send induction").await?;
 
         // Re-send an unanswered request every `HANDSHAKE_RETRANSMIT_PERIOD`
         // (the engine counts `retransmit_after_ticks` ticks per retransmit),
-        // and give up at `HANDSHAKE_TIMEOUT` whatever the retry budget says.
+        // and give up at `IoConfig::handshake` whatever the retry budget says.
         let tick_period = (HANDSHAKE_RETRANSMIT_PERIOD / config.retransmit_after_ticks.max(1))
             .max(MIN_HANDSHAKE_TICK);
         let mut ticker = tokio::time::interval_at(Instant::now() + tick_period, tick_period);
         ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
-        let deadline = Instant::now() + HANDSHAKE_TIMEOUT;
-        let mut buf = [0u8; MAX_DATAGRAM];
+        let deadline = Instant::now() + io.handshake;
+        let mut scratch = vec![0u8; max_datagram + 1];
+        // The handshake loop has no `SocketStats` yet; oversize datagrams are
+        // simply ignored (the real peer retransmits).
+        let hs_oversize = AtomicU64::new(0);
 
         loop {
             enum Event {
-                Datagram(usize, std::net::SocketAddr),
+                Datagram(Bytes, std::net::SocketAddr),
+                Oversize,
                 Tick,
                 Deadline,
             }
             let event = tokio::select! {
-                r = socket.recv_from(&mut buf) => {
-                    let (len, src) = r.map_err(|e| io_err("recv hs", e))?;
-                    Event::Datagram(len, src)
+                r = recv_datagram(&socket, &mut scratch, max_datagram, &hs_oversize) => {
+                    match r.map_err(|e| io_err("recv hs", e))? {
+                        Some((bytes, src)) => Event::Datagram(bytes, src),
+                        None => Event::Oversize,
+                    }
                 }
                 _ = ticker.tick() => Event::Tick,
                 _ = tokio::time::sleep_until(deadline) => Event::Deadline,
@@ -442,8 +597,9 @@ impl SrtSocket {
                         stage: "caller connect",
                     });
                 }
+                Event::Oversize => continue,
                 Event::Tick => (hs.tick(), None),
-                Event::Datagram(len, src) => {
+                Event::Datagram(bytes, src) => {
                     // A packet from anyone but the peer we're connecting to
                     // (some unrelated traffic that happened to land on this
                     // freshly bound port) must not fail the connect — ignore
@@ -451,26 +607,22 @@ impl SrtSocket {
                     if src != peer {
                         continue;
                     }
-                    let bytes = &buf[..len];
                     // Likewise, a packet that isn't a well-formed Handshake
                     // control packet right now (a stray Keep-Alive, a
                     // resent/duplicate reply, garbage) must not fail the
                     // connect either — only a genuine handshake rejection or
                     // timeout does that.
-                    let Ok(outputs) = hs.feed_bytes(bytes) else {
+                    let Ok(outputs) = hs.feed_bytes(&bytes) else {
                         continue;
                     };
-                    (outputs, Some(len))
+                    (outputs, Some(bytes))
                 }
             };
 
             for outcome in outputs {
                 match outcome {
                     HandshakeOutput::Send(bytes) => {
-                        socket
-                            .send_to(&bytes, peer)
-                            .await
-                            .map_err(|e| io_err("send hs", e))?;
+                        send_bounded(&socket, &bytes, peer, io.write, "send hs").await?;
                     }
                     HandshakeOutput::Connected(params) => {
                         // `Connected` only ever comes out of `feed_bytes`, so
@@ -491,11 +643,11 @@ impl SrtSocket {
                         // indistinguishable from a genuine ISN of 0 and would
                         // seed ARQ/TSBPD sequence tracking wrong for the life
                         // of the connection.
-                        let len = received.ok_or(Error::InvalidField {
+                        let received = received.ok_or(Error::InvalidField {
                             what: "handshake",
                             reason: "Connected without a received datagram",
                         })?;
-                        let peer_hs = peer_handshake(&buf[..len])?;
+                        let peer_hs = peer_handshake(&received)?;
                         let epoch = Instant::now();
                         // This socket is exclusively this connection's own
                         // (bound fresh in `connect_from`, never shared) — no
@@ -507,6 +659,7 @@ impl SrtSocket {
                             Arc::clone(&socket),
                             peer,
                             Arc::clone(&stats),
+                            max_datagram,
                         );
                         return Ok(SrtSocket::spawn(ConnParams {
                             udp: socket,
@@ -515,6 +668,9 @@ impl SrtSocket {
                             stats,
                             route_cleanup: RouteCleanup(None),
                             forwarder_guard: TaskGuard(Some(forwarder)),
+                            life: None,
+                            read_idle: io.read_idle,
+                            write: io.write,
                             our_initial_seq: config.initial_seq_number,
                             peer_initial_seq: peer_hs.initial_seq_number,
                             peer_socket_id: params.peer_socket_id,
@@ -540,12 +696,13 @@ impl SrtSocket {
     /// Build the engine state, spawn its background driver task, and return
     /// the [`SrtSocket`] handle wired to it.
     fn spawn(p: ConnParams) -> Self {
-        let (to_driver, app_out) = mpsc::channel::<Vec<u8>>(SEND_CHANNEL_CAPACITY);
+        let (to_driver, app_out) = mpsc::channel::<Bytes>(SEND_CHANNEL_CAPACITY);
         let (deliver, from_driver) = mpsc::channel(DELIVER_CHANNEL_CAPACITY);
 
         let udp = Arc::clone(&p.udp);
         let (peer_addr, peer_socket_id, epoch) = (p.peer_addr, p.peer_socket_id, p.epoch);
         let stats = Arc::clone(&p.stats);
+        let life = p.life.clone();
         let driver = Driver::new(p, deliver);
         let handle = tokio::spawn(driver.run(app_out));
 
@@ -558,6 +715,7 @@ impl SrtSocket {
             udp,
             peer_socket_id,
             epoch,
+            _life: life,
         }
     }
 
@@ -570,13 +728,16 @@ impl SrtSocket {
     /// full. Fails only if the driver task has stopped (peer shut down, went
     /// silent, or a connection error).
     pub async fn send(&mut self, payload: &[u8]) -> Result<()> {
-        self.to_driver
-            .send(payload.to_vec())
-            .await
-            .map_err(|_| Error::Io {
-                kind: std::io::ErrorKind::BrokenPipe,
-                context: "send",
-            })
+        self.send_bytes(Bytes::copy_from_slice(payload)).await
+    }
+
+    /// Like [`send`](Self::send) but takes ownership of an already-built
+    /// [`Bytes`], so the hand-off to the driver task does not copy it.
+    pub async fn send_bytes(&mut self, payload: Bytes) -> Result<()> {
+        self.to_driver.send(payload).await.map_err(|_| Error::Io {
+            kind: std::io::ErrorKind::BrokenPipe,
+            context: "send",
+        })
     }
 
     /// The peer's socket address.
@@ -587,7 +748,7 @@ impl SrtSocket {
     /// Receive the next payload, waiting until one is available.
     /// Returns `None` once the peer has shut down (or the driver task has
     /// stopped) and no further payloads will arrive.
-    pub async fn recv(&mut self) -> Result<Option<Vec<u8>>> {
+    pub async fn recv(&mut self) -> Result<Option<Bytes>> {
         Ok(self.from_driver.recv().await)
     }
 
@@ -599,6 +760,7 @@ impl SrtSocket {
             rx_dropped: self.stats.rx_dropped.load(Ordering::Relaxed),
             deliver_dropped: self.stats.deliver_dropped.load(Ordering::Relaxed),
             late_dropped: self.stats.late_dropped.load(Ordering::Relaxed),
+            rx_oversize: self.stats.rx_oversize.load(Ordering::Relaxed),
         }
     }
 }
@@ -653,11 +815,11 @@ fn send_shutdown(udp: &UdpSocket, peer: std::net::SocketAddr, peer_socket_id: u3
 /// copied once (socket buffer to this `Vec`) and then handed to the
 /// application with the header drained off the front, never copied into a
 /// second allocation.
-type StagedDatagram = Vec<u8>;
+type StagedDatagram = Bytes;
 
 /// The engine state driven by one connection's background task. Owns the
 /// socket, the sans-IO ARQ/TSBPD/LiveCC engines, and the outbound queue; runs
-/// the RX / app-send / periodic-tick select loop in [`Driver::run`].
+/// the RX / app-send / next-deadline select loop in [`Driver::run`].
 struct Driver {
     udp: Arc<UdpSocket>,
     peer_addr: std::net::SocketAddr,
@@ -678,7 +840,7 @@ struct Driver {
     // listener's own accept loop) at random. Bounded (item 4): a peer that
     // floods faster than this task's tick loop drains gets its excess
     // datagrams dropped, not buffered without bound.
-    rx: mpsc::Receiver<Vec<u8>>,
+    rx: mpsc::Receiver<Bytes>,
     // For a listener-accepted connection: removes this connection's entry
     // from the shared route table on drop — including on `SrtSocket::Drop`'s
     // task abort, not only a normal `run()` return (see [`RouteCleanup`]).
@@ -743,13 +905,24 @@ struct Driver {
 
     // Delivered payloads flowing back to the application handle. Bounded
     // (item 4): see [`DELIVER_CHANNEL_CAPACITY`].
-    deliver: mpsc::Sender<Vec<u8>>,
+    deliver: mpsc::Sender<Bytes>,
 
     peer_shutdown: bool,
+
+    /// Longest silence from the peer before the connection ends
+    /// ([`IoConfig::read_idle`]).
+    read_idle: Duration,
+    /// Longest a single `send_to` may take ([`IoConfig::write`]).
+    write_timeout: Duration,
+
+    /// Test hook: counts `tick_engines` calls, so a test can prove the run
+    /// loop wakes at deadlines rather than on a fixed tick.
+    #[cfg(test)]
+    tick_counter: Option<Arc<AtomicU64>>,
 }
 
 impl Driver {
-    fn new(p: ConnParams, deliver: mpsc::Sender<Vec<u8>>) -> Self {
+    fn new(p: ConnParams, deliver: mpsc::Sender<Bytes>) -> Self {
         let now = Instant::now();
         Driver {
             udp: p.udp,
@@ -786,15 +959,42 @@ impl Driver {
             next_data_send_at: None,
             deliver,
             peer_shutdown: false,
+            read_idle: p.read_idle,
+            write_timeout: p.write,
+            #[cfg(test)]
+            tick_counter: None,
         }
+    }
+
+    /// The next instant at which this connection must act without any inbound
+    /// event: the next Full ACK / NAK, the next TSBPD release (or too-late
+    /// skip), the Keep-Alive when idle, the peer-idle expiry and the next
+    /// pacing slot. Never in the past (floored at [`MIN_WAKE`]).
+    fn poll_timeout(&self) -> Option<Instant> {
+        let now = self.elapsed();
+        // Full ACK / NAK.
+        let mut at = self.epoch + self.receiver.next_timeout();
+        // TSBPD release / TLPKTDROP skip.
+        if let Some(t) = self.tsbpd.next_release_after(now) {
+            at = at.min(self.epoch + t);
+        }
+        // Keep-Alive (only judged when nothing is queued).
+        if self.outbound_control.is_empty() && self.outbound_data.is_empty() {
+            at = at.min(self.last_tx_at + KEEPALIVE_PERIOD);
+        }
+        // Peer idle.
+        at = at.min(self.last_rx_at + self.read_idle);
+        // Pacing slot.
+        if let Some(wait) = self.next_paced_send_wait() {
+            at = at.min(Instant::now() + wait);
+        }
+        Some(at.max(Instant::now() + MIN_WAKE))
     }
 
     /// The select loop: socket RX, application-send, and a periodic engine
     /// tick — the tick arm is what keeps retransmit/ACK/NAK progressing when
     /// neither peer is actively sending application data.
-    async fn run(mut self, mut app_out: mpsc::Receiver<Vec<u8>>) {
-        let mut ticker = tokio::time::interval(Duration::from_millis(TICK_INTERVAL_MS));
-        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    async fn run(mut self, mut app_out: mpsc::Receiver<Bytes>) {
         let mut app_open = true;
 
         // Set when the application handle is gone (its `to_driver` sender was
@@ -806,11 +1006,12 @@ impl Driver {
         let mut shutting_down = false;
 
         loop {
-            // How long until the DATA packet currently at the front of the
-            // outbound queue (if any) is allowed to go out. `None` disables
-            // this `select!` arm entirely — pacing never blocks RX/app/tick
-            // when nothing is pacing-throttled (issue #1061).
-            let pacing_wait = self.next_paced_send_wait();
+            // The next instant this connection must act on its own (ACK/NAK,
+            // TSBPD release, keep-alive, peer idle, pacing slot): the loop
+            // sleeps until then or until an event, never on a fixed tick.
+            let wake_at = self
+                .poll_timeout()
+                .unwrap_or_else(|| Instant::now() + KEEPALIVE_PERIOD);
             // Stop taking application payloads while a full flow window of
             // packets is still unacknowledged: the hand-off channel then
             // fills and `SrtSocket::send` waits, instead of the send buffer
@@ -844,17 +1045,15 @@ impl Driver {
                         None => break, // upstream demux/forwarder is gone.
                     }
                 }
-                // Periodic timers: retransmit, ACK, NAK, TSBPD release,
-                // keep-alive.
-                _ = ticker.tick() => {
-                    self.tick_engines();
-                }
-                // The pacing schedule caught up to the front of the queue —
-                // wake up to flush it. A plain `select!` arm, not a serial
-                // `.await` after the fact, so RX/app/tick keep being
-                // serviced for the whole wait rather than only after it.
-                _ = tokio::time::sleep(pacing_wait.unwrap_or(Duration::ZERO)), if pacing_wait.is_some() => {}
+                // Deadline: retransmit, ACK, NAK, TSBPD release, keep-alive
+                // and the pacing slot are all folded into `poll_timeout`.
+                _ = tokio::time::sleep_until(wake_at) => {}
             }
+
+            // Timer-driven engine work runs after EVERY wake-up: it is a pure
+            // function of `now`, so an inbound packet also gets its
+            // ACK/NAK/TSBPD release without waiting for a tick.
+            self.tick_engines();
 
             if self.flush_outbound().await.is_err() {
                 break;
@@ -877,7 +1076,7 @@ impl Driver {
             && !self.peer_shutdown
             && let Some(buf) = shutdown_datagram(self.peer_socket_id, self.elapsed_us())
         {
-            let _ = self.udp.send_to(&buf, self.peer_addr).await;
+            let _ = send_bounded(&self.udp, &buf, self.peer_addr, self.write_timeout, "send").await;
         }
         // The route-table and forwarder-task cleanup this used to do inline
         // now happens in `_route_cleanup`/`_forwarder_guard`'s `Drop` impls,
@@ -889,9 +1088,9 @@ impl Driver {
         // `recv` returns `None` (clean shutdown / task ended).
     }
 
-    /// No packet at all has arrived from the peer for [`PEER_IDLE_TIMEOUT`].
+    /// No packet at all has arrived from the peer for [`IoConfig::read_idle`].
     fn peer_idle(&self, now: Instant) -> bool {
-        now.saturating_duration_since(self.last_rx_at) >= PEER_IDLE_TIMEOUT
+        now.saturating_duration_since(self.last_rx_at) >= self.read_idle
     }
 
     /// Room in the send window: fewer than a full flow window of packets are
@@ -932,7 +1131,7 @@ impl Driver {
 
     /// Process one datagram from the peer. Takes the datagram by value so a
     /// DATA packet's own allocation can be staged without a copy.
-    fn ingress(&mut self, datagram: Vec<u8>) -> Result<()> {
+    fn ingress(&mut self, datagram: Bytes) -> Result<()> {
         // Any datagram from the peer — even one that fails to parse below —
         // is evidence the peer is still there, resetting the idle timeout.
         self.last_rx_at = Instant::now();
@@ -949,7 +1148,7 @@ impl Driver {
 
     fn ingress_data(
         &mut self,
-        datagram: Vec<u8>,
+        datagram: Bytes,
         seq_number: u32,
         timestamp: u32,
         key_flag: EncryptionKeyField,
@@ -1072,11 +1271,11 @@ impl Driver {
     /// delivery cursor instead of stalling at the lost packet forever.
     fn release(&mut self, outcome: &TickOutcome) {
         for &seq in &outcome.delivered {
-            if let Some(mut datagram) = self.staged.remove(&seq) {
+            if let Some(datagram) = self.staged.remove(&seq) {
                 // The staged datagram is a DATA packet (it parsed as one):
-                // drop its header and hand over the payload in place.
-                datagram.drain(..SRT_HEADER_LEN.min(datagram.len()));
-                if self.deliver.try_send(datagram).is_err() {
+                // hand over the payload as a view into the same allocation.
+                let payload = datagram.slice(SRT_HEADER_LEN.min(datagram.len())..);
+                if self.deliver.try_send(payload).is_err() {
                     // Full (app isn't calling `recv` fast enough) or the
                     // handle is gone; either way, drop rather than buffer
                     // without bound (item 4) and count it.
@@ -1093,6 +1292,10 @@ impl Driver {
     }
 
     fn tick_engines(&mut self) {
+        #[cfg(test)]
+        if let Some(counter) = &self.tick_counter {
+            counter.fetch_add(1, Ordering::Relaxed);
+        }
         let now = self.elapsed();
 
         // Retransmitted DATA packets first (rules 5, 15, 16, 18): they are
@@ -1204,13 +1407,18 @@ impl Driver {
         // (being its own queue) never stuck behind a not-yet-due DATA packet
         // either (item 6).
         while let Some(bytes) = self.outbound_control.pop_front() {
-            self.udp
-                .send_to(&bytes, self.peer_addr)
-                .await
-                .map_err(|e| io_err("send", e))?;
+            send_bounded(
+                &self.udp,
+                &bytes,
+                self.peer_addr,
+                self.write_timeout,
+                "send",
+            )
+            .await?;
             self.last_tx_at = Instant::now();
         }
-        while self.outbound_data.front().is_some() {
+        let mut sent = 0;
+        while self.outbound_data.front().is_some() && sent < PACING_BURST_CAP {
             let now = Instant::now();
             if let Some(deadline) = self.next_data_send_at
                 && now < deadline
@@ -1223,13 +1431,32 @@ impl Driver {
                 break;
             };
             let period = self.livecc.on_ack_received();
-            let base = self.next_data_send_at.filter(|&t| t > now).unwrap_or(now);
+            // Catch-up: a wake that arrives late (the timer has ~1 ms
+            // granularity, `MIN_WAKE`) still owes the packets whose slots
+            // passed meanwhile, so the schedule advances from the previous
+            // slot even if it is already past — but never by more than
+            // `PACING_BURST_CAP` periods of credit, so a stall cannot be
+            // repaid as an unbounded burst.
+            let floor = now
+                .checked_sub(period * PACING_BURST_CAP as u32)
+                .unwrap_or(now);
+            let base = self.next_data_send_at.map_or(now, |t| t.max(floor));
             self.next_data_send_at = Some(base + period);
-            self.udp
-                .send_to(&bytes, self.peer_addr)
-                .await
-                .map_err(|e| io_err("send", e))?;
+            sent += 1;
+            send_bounded(
+                &self.udp,
+                &bytes,
+                self.peer_addr,
+                self.write_timeout,
+                "send",
+            )
+            .await?;
             self.last_tx_at = Instant::now();
+        }
+        // An idle connection owes nothing: drop an expired slot so the next
+        // backlog starts at "now" instead of replaying the idle gap as credit.
+        if self.outbound_data.is_empty() {
+            self.next_data_send_at = self.next_data_send_at.filter(|&t| t > Instant::now());
         }
         Ok(())
     }
@@ -1266,14 +1493,15 @@ fn spawn_dedicated_socket_forwarder(
     udp: Arc<UdpSocket>,
     peer: std::net::SocketAddr,
     stats: Arc<Counters>,
-) -> (mpsc::Receiver<Vec<u8>>, tokio::task::JoinHandle<()>) {
+    max_datagram: usize,
+) -> (mpsc::Receiver<Bytes>, tokio::task::JoinHandle<()>) {
     let (tx, rx) = mpsc::channel(RX_CHANNEL_CAPACITY);
     let handle = tokio::spawn(async move {
-        let mut buf = [0u8; MAX_DATAGRAM];
+        let mut scratch = vec![0u8; max_datagram + 1];
         loop {
-            match udp.recv_from(&mut buf).await {
-                Ok((len, src)) if src == peer => {
-                    if tx.try_send(buf[..len].to_vec()).is_err() {
+            match recv_datagram(&udp, &mut scratch, max_datagram, &stats.rx_oversize).await {
+                Ok(Some((bytes, src))) if src == peer => {
+                    if tx.try_send(bytes).is_err() {
                         if tx.is_closed() {
                             break; // Driver is gone.
                         }
@@ -1283,7 +1511,7 @@ fn spawn_dedicated_socket_forwarder(
                         stats.rx_dropped.fetch_add(1, Ordering::Relaxed);
                     }
                 }
-                Ok(_) => {} // datagram from another peer; ignore.
+                Ok(_) => {} // datagram from another peer, or oversize (counted); ignore.
                 Err(_) => break,
             }
         }
@@ -1321,11 +1549,57 @@ fn spawn_dedicated_socket_forwarder(
 ///
 /// A repeated CONCLUSION from an already-accepted Caller (its copy of our
 /// response was lost) carries Destination Socket ID `0` too, so it reaches
-/// `accept`'s input — the application must keep calling
-/// [`accept`](Self::accept) (as any server loop does) for it to be answered.
+/// the listener's background task, which answers it again — no one has to be
+/// polling [`accept`](Self::accept) for that.
+///
+/// # Lifetime (defect 3)
+///
+/// Handshakes advance in a tracked background task, not inside
+/// [`accept`](Self::accept); the routing pump is a second tracked task. Both end
+/// on a [`CancellationToken`], fired when the last of {this handle, every
+/// accepted [`SrtSocket`]} is dropped — so an idle listener releases its UDP
+/// port the moment the handle is dropped, while connections it already
+/// accepted keep being routed until they too are gone.
 pub struct SrtListener {
+    /// Held only so its `Drop` (cancel the tasks) runs with the handle.
+    _life: Arc<ListenerLife>,
+    local: std::net::SocketAddr,
+    accepted: mpsc::Receiver<Result<SrtSocket>>,
+    /// Shared demux table (see [`RouteTable`]); the core and the routing pump
+    /// hold the same `Arc`. Read by tests only.
+    #[cfg_attr(not(test), allow(dead_code))]
+    routes: RouteTable,
+    unrouted_dropped: Arc<AtomicU64>,
+    overflow_dropped: Arc<AtomicU64>,
+    send_errors: Arc<AtomicU64>,
+}
+
+/// Capacity of the pending-`accept` queue: handshakes that finished while
+/// `accept` was not being polled.
+const ACCEPT_BACKLOG: usize = 64;
+
+/// Owns the listener's background tasks. Dropped when the last of the
+/// [`SrtListener`] handle and every accepted [`SrtSocket`] is gone; that
+/// cancels the tasks, which closes the UDP socket.
+#[derive(Debug)]
+struct ListenerLife {
+    cancel: CancellationToken,
+    tasks: TaskTracker,
+}
+
+impl Drop for ListenerLife {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        self.tasks.close();
+    }
+}
+
+/// The listener's handshake state, driven by one tracked background task
+/// ([`ListenerCore::run`]).
+struct ListenerCore {
     udp: Arc<UdpSocket>,
     config: HandshakeConfig,
+    io: IoConfig,
     /// Per-listener 128-bit key for [`derive_cookie`] (`draft-sharabayko-srt-01`
     /// §4.3.1.1: "a cookie that is crafted based on host, port and current
     /// time"), drawn from the OS at [`SrtListener::bind`] and rotated every
@@ -1343,14 +1617,26 @@ pub struct SrtListener {
     /// accepted connection.
     routes: RouteTable,
     /// Datagrams the routing pump could not match to any entry in `routes`
-    /// — candidate new-connection (handshake) traffic, `accept`'s own input.
-    /// Bounded (item 4): see [`UNROUTED_CHANNEL_CAPACITY`].
-    unrouted_rx: mpsc::Receiver<(std::net::SocketAddr, Vec<u8>)>,
-    /// Shared with the routing pump task, which increments it whenever
-    /// `unrouted_rx` was full (item 4) — a routed connection's own channel
-    /// being full is counted on *that* connection's [`SrtSocket::stats`]
-    /// instead (via its `RouteEntry`'s shared [`Counters`]).
-    unrouted_dropped: Arc<AtomicU64>,
+    /// — candidate new-connection (handshake) traffic. Bounded (item 4): see
+    /// [`UNROUTED_CHANNEL_CAPACITY`].
+    unrouted_rx: mpsc::Receiver<(std::net::SocketAddr, Bytes)>,
+    /// Weak, so the core never keeps the listener alive: a connection is only
+    /// handed over while a handle (or another connection) still holds the
+    /// `Arc`.
+    life: std::sync::Weak<ListenerLife>,
+    /// Finished handshakes, for [`SrtListener::accept`].
+    accepted_tx: mpsc::Sender<Result<SrtSocket>>,
+    /// Connections dropped because `accepted_tx` was full.
+    overflow_dropped: Arc<AtomicU64>,
+    /// Send failures met while answering peers (counted, never queued: they
+    /// must not compete with finished connections for `accepted_tx` slots).
+    send_errors: Arc<AtomicU64>,
+    /// `false` once the handle is gone: no new handshakes are served, but the
+    /// task keeps draining `unrouted_rx` so the routing pump (which accepted
+    /// connections still depend on) is never starved into exiting.
+    accepting: bool,
+    /// When `tick_pending` last ran: the basis of [`ListenerCore::poll_timeout`].
+    last_pending_tick: Instant,
 }
 
 /// The listener's SYN-cookie key and when it was drawn. Each pending
@@ -1403,14 +1689,24 @@ impl core::fmt::Debug for CookieKeys {
     }
 }
 
-impl core::fmt::Debug for SrtListener {
+impl core::fmt::Debug for ListenerCore {
     // Manual: the cookie key must never reach a log via `{:?}` (#1142).
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("SrtListener")
+        f.debug_struct("ListenerCore")
             .field("local_addr", &self.udp.local_addr().ok())
             .field("cookie_keys", &self.cookie_keys)
             .field("pending", &self.pending.len())
             .field("recent_accepts", &self.recent_accepts.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl core::fmt::Debug for SrtListener {
+    // Manual: only the address — the cookie key lives in `ListenerCore`,
+    // which is never printed from here (#1142).
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SrtListener")
+            .field("local_addr", &self.local)
             .finish_non_exhaustive()
     }
 }
@@ -1467,39 +1763,182 @@ impl SrtListener {
         addr: A,
         config: HandshakeConfig,
     ) -> Result<Self> {
+        Self::bind_with(addr, config, IoConfig::default()).await
+    }
+
+    /// Like [`Self::bind`], with explicit timeouts and datagram size.
+    pub async fn bind_with<A: tokio::net::ToSocketAddrs>(
+        addr: A,
+        config: HandshakeConfig,
+        io: IoConfig,
+    ) -> Result<Self> {
         refuse_crypto(&config)?;
         let socket = Arc::new(UdpSocket::bind(addr).await.map_err(|e| io_err("bind", e))?);
+        let local = socket.local_addr().map_err(|e| io_err("local_addr", e))?;
         let routes: RouteTable = Arc::new(Mutex::new(std::collections::HashMap::new()));
         let (unrouted_tx, unrouted_rx) = mpsc::channel(UNROUTED_CHANNEL_CAPACITY);
+        let (accepted_tx, accepted) = mpsc::channel(ACCEPT_BACKLOG);
         let unrouted_dropped = Arc::new(AtomicU64::new(0));
-        spawn_listener_routing_pump(
-            Arc::clone(&socket),
-            Arc::clone(&routes),
-            unrouted_tx,
-            Arc::clone(&unrouted_dropped),
-        );
-        Ok(SrtListener {
-            udp: socket,
+        let overflow_dropped = Arc::new(AtomicU64::new(0));
+        let send_errors = Arc::new(AtomicU64::new(0));
+        let life = Arc::new(ListenerLife {
+            cancel: CancellationToken::new(),
+            tasks: TaskTracker::new(),
+        });
+
+        let core = ListenerCore {
+            udp: Arc::clone(&socket),
             config,
+            io,
             cookie_keys: CookieKeys::new(Instant::now())?,
             pending: std::collections::HashMap::new(),
             outbound_queue: std::collections::HashMap::new(),
             recent_accepts: std::collections::HashMap::new(),
-            routes,
+            routes: Arc::clone(&routes),
             unrouted_rx,
+            life: Arc::downgrade(&life),
+            accepted_tx,
+            overflow_dropped: Arc::clone(&overflow_dropped),
+            send_errors: Arc::clone(&send_errors),
+            accepting: true,
+            last_pending_tick: Instant::now(),
+        };
+        life.tasks.spawn(routing_pump(
+            Arc::clone(&socket),
+            Arc::clone(&routes),
+            unrouted_tx,
+            Arc::clone(&unrouted_dropped),
+            io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM),
+            life.cancel.clone(),
+        ));
+        life.tasks.spawn(core.run(life.cancel.clone()));
+        Ok(SrtListener {
+            _life: life,
+            local,
+            accepted,
+            routes,
             unrouted_dropped,
+            overflow_dropped,
+            send_errors,
         })
     }
 
     /// Datagrams dropped because the candidate-new-connection queue was full
-    /// (item 4) — a handshake flood outrunning [`SrtListener::accept`].
+    /// (item 4) — a handshake flood outrunning the listener's handshake task —
+    /// or because they exceeded [`IoConfig::max_datagram`].
     pub fn unrouted_dropped(&self) -> u64 {
         self.unrouted_dropped.load(Ordering::Relaxed)
     }
 
+    /// Connections that finished their handshake but were dropped because
+    /// [`accept`](Self::accept) was not keeping up (the pending-accept queue
+    /// holds 64).
+    pub fn accept_overflow_dropped(&self) -> u64 {
+        self.overflow_dropped.load(Ordering::Relaxed)
+    }
+
+    /// Send failures the background task met while answering peers (for
+    /// example an unreachable spoofed source). They are counted here and never
+    /// surface from [`accept`](Self::accept), so a flood of them cannot displace
+    /// finished connections or end an `accept` loop.
+    pub fn send_errors(&self) -> u64 {
+        self.send_errors.load(Ordering::Relaxed)
+    }
+
     /// The local socket address the listener is bound to.
     pub fn local_addr(&self) -> Result<std::net::SocketAddr> {
-        self.udp.local_addr().map_err(|e| io_err("local_addr", e))
+        Ok(self.local)
+    }
+
+    /// Accept the next incoming SRT connection.
+    ///
+    /// Handshakes progress in the background whether or not this is being
+    /// polled; this only waits for a finished one. Send errors met while
+    /// answering peers are counted ([`send_errors`](Self::send_errors)), not
+    /// returned.
+    pub async fn accept(&mut self) -> Result<SrtSocket> {
+        self.accepted.recv().await.unwrap_or(Err(Error::Io {
+            kind: std::io::ErrorKind::BrokenPipe,
+            context: "listener task ended",
+        }))
+    }
+}
+
+impl ListenerCore {
+    /// Next instant a pending handshake needs a tick; `None` when nothing is
+    /// pending (an idle listener has no timer at all).
+    fn poll_timeout(&self) -> Option<Instant> {
+        (self.accepting && !self.pending.is_empty())
+            .then(|| self.last_pending_tick + PENDING_TICK_INTERVAL)
+    }
+
+    /// The handshake task: answer unrouted datagrams, tick pending handshakes
+    /// on a deadline, hand finished connections to [`SrtListener::accept`].
+    async fn run(mut self, cancel: CancellationToken) {
+        loop {
+            while self.accepting
+                && let Some(conn) = self.drain_completed()
+            {
+                match self.accepted_tx.try_send(conn) {
+                    Ok(()) => {}
+                    Err(mpsc::error::TrySendError::Full(_dropped)) => {
+                        // Dropping the SrtSocket sends the peer a SHUTDOWN; count it.
+                        self.overflow_dropped.fetch_add(1, Ordering::Relaxed);
+                    }
+                    Err(mpsc::error::TrySendError::Closed(_)) => {
+                        // The handle is gone but accepted connections may
+                        // still be alive: stop serving new handshakes, keep
+                        // draining so the routing pump keeps running.
+                        self.accepting = false;
+                        self.pending.clear();
+                        self.outbound_queue.clear();
+                    }
+                }
+            }
+            let deadline = self.poll_timeout();
+            tokio::select! {
+                _ = cancel.cancelled() => return,
+                r = self.unrouted_rx.recv() => match r {
+                    Some((src, bytes)) => {
+                        if !self.accepting {
+                            continue;
+                        }
+                        // Cookie rotation no longer rides a tick: do it whenever a
+                        // datagram arrives.
+                        self.cookie_keys.rotate_if_due(Instant::now());
+                        let _ = self.handle_datagram(src, &bytes);
+                        // Raced against cancellation: a stuck send must not
+                        // delay releasing the port by up to `io.write`.
+                        tokio::select! {
+                            _ = cancel.cancelled() => return,
+                            r = self.flush_for_peer(src) => self.count_send_error(r),
+                        }
+                    }
+                    None => return,
+                },
+                _ = async {
+                    match deadline {
+                        Some(d) => tokio::time::sleep_until(d).await,
+                        None => std::future::pending::<()>().await,
+                    }
+                } => {
+                    self.last_pending_tick = Instant::now();
+                    self.tick_pending();
+                    tokio::select! {
+                        _ = cancel.cancelled() => return,
+                        r = self.flush_all() => self.count_send_error(r),
+                    }
+                }
+            }
+        }
+    }
+
+    /// Count a send failure (one unreachable peer must neither end the
+    /// listener nor reach `accept`).
+    fn count_send_error(&self, r: Result<()>) {
+        if r.is_err() {
+            self.send_errors.fetch_add(1, Ordering::Relaxed);
+        }
     }
 
     /// Whether this listener has its own crypto config (feature-gated: with
@@ -1513,47 +1952,6 @@ impl SrtListener {
         #[cfg(not(feature = "crypto"))]
         {
             false
-        }
-    }
-
-    /// Accept the next incoming SRT connection.
-    pub async fn accept(&mut self) -> Result<SrtSocket> {
-        // Pending-handshake expiry runs on its own timer, independent of
-        // receive activity: with the previous `timeout(100ms, recv_from)`
-        // pattern, `tick_pending` only ran while the socket sat idle, so a
-        // steady trickle of traffic from *other* sources kept every stalled
-        // entry alive forever.
-        let mut ticker = tokio::time::interval(PENDING_TICK_INTERVAL);
-
-        loop {
-            if let Some(conn) = self.drain_completed() {
-                return conn;
-            }
-
-            tokio::select! {
-                // Candidate new-connection traffic the routing pump could
-                // not match to an already-accepted connection (issue #1029)
-                // — never a direct `udp.recv_from` racing every accepted
-                // connection's own driver task for the same socket.
-                r = self.unrouted_rx.recv() => {
-                    match r {
-                        Some((src, bytes)) => {
-                            let _ = self.handle_datagram(src, &bytes);
-                            self.flush_for_peer(src).await?;
-                        }
-                        None => {
-                            return Err(Error::Io {
-                                kind: std::io::ErrorKind::BrokenPipe,
-                                context: "listener routing pump ended",
-                            });
-                        }
-                    }
-                }
-                _ = ticker.tick() => {
-                    self.tick_pending();
-                    self.flush_all().await?;
-                }
-            }
         }
     }
 
@@ -1769,6 +2167,9 @@ impl SrtListener {
     }
 
     fn drain_completed(&mut self) -> Option<Result<SrtSocket>> {
+        // Every handle is gone: nothing may be handed over (the cancel token
+        // ends this task right after).
+        let life = self.life.upgrade()?;
         let addr = self
             .pending
             .iter()
@@ -1793,7 +2194,7 @@ impl SrtListener {
         // This listener's own Socket ID for this connection — the value a
         // real peer's packets carry as `dest_socket_id` from here on, and so
         // the key the routing pump demultiplexes by (item 2; see
-        // [`spawn_listener_routing_pump`]).
+        // [`routing_pump`]).
         let own_socket_id = negotiated.own_socket_id;
         // The exact ISN this listener generated for `entry` at INDUCTION
         // time (`handle_datagram`) — not `self.config.initial_seq_number`,
@@ -1838,6 +2239,9 @@ impl SrtListener {
             stats,
             route_cleanup: RouteCleanup(Some((own_socket_id, Arc::clone(&self.routes)))),
             forwarder_guard: TaskGuard(None),
+            life: Some(life),
+            read_idle: self.io.read_idle,
+            write: self.io.write,
             our_initial_seq,
             peer_initial_seq,
             peer_socket_id,
@@ -1854,10 +2258,7 @@ impl SrtListener {
     async fn flush_for_peer(&mut self, addr: std::net::SocketAddr) -> Result<()> {
         if let Some(queue) = self.outbound_queue.get_mut(&addr) {
             while let Some(bytes) = queue.pop_front() {
-                self.udp
-                    .send_to(&bytes, addr)
-                    .await
-                    .map_err(|e| io_err("send_to", e))?;
+                send_bounded(&self.udp, &bytes, addr, self.io.write, "send_to").await?;
             }
         }
         Ok(())
@@ -1872,7 +2273,7 @@ impl SrtListener {
     }
 }
 
-/// Spawn the single task that ever calls `recv_from` on a [`SrtListener`]'s
+/// The single task that ever calls `recv_from` on a [`SrtListener`]'s
 /// shared socket, demultiplexing every datagram the way libsrt does (item 2,
 /// draft §4.3.1; libsrt's `CRcvQueue::worker` dispatches on Destination
 /// Socket ID the same way): Destination Socket ID `0` always means "not yet
@@ -1885,58 +2286,61 @@ impl SrtListener {
 /// listener's `accept` loop and every accepted connection's driver task to
 /// run concurrently without racing each other for the same socket's
 /// `recv_from`.
-fn spawn_listener_routing_pump(
+async fn routing_pump(
     udp: Arc<UdpSocket>,
     routes: RouteTable,
-    unrouted_tx: mpsc::Sender<(std::net::SocketAddr, Vec<u8>)>,
+    unrouted_tx: mpsc::Sender<(std::net::SocketAddr, Bytes)>,
     unrouted_dropped: Arc<AtomicU64>,
+    max_datagram: usize,
+    cancel: CancellationToken,
 ) {
-    tokio::spawn(async move {
-        let mut buf = [0u8; MAX_DATAGRAM];
-        loop {
-            let (len, src) = match udp.recv_from(&mut buf).await {
-                Ok(v) => v,
-                Err(_) => break, // socket error — end the pump.
-            };
-            let bytes = &buf[..len];
-            match crate::packet::peek_dest_socket_id(bytes) {
-                Some(0) | None => {
-                    // `0` (candidate new connection) or too short to carry a
-                    // full header at all — either way, not a routable
-                    // established-connection packet; hand it to `accept`,
-                    // which parses (and rejects malformed bytes) properly.
-                    if unrouted_tx.try_send((src, bytes.to_vec())).is_err() {
-                        if unrouted_tx.is_closed() {
-                            // The listener itself is gone (dropped without a
-                            // final `accept`); nothing more this pump can do.
-                            break;
-                        }
-                        unrouted_dropped.fetch_add(1, Ordering::Relaxed);
+    let mut scratch = vec![0u8; max_datagram + 1];
+    loop {
+        let received = tokio::select! {
+            _ = cancel.cancelled() => break,
+            r = recv_datagram(&udp, &mut scratch, max_datagram, &unrouted_dropped) => r,
+        };
+        let (bytes, src) = match received {
+            Ok(Some(v)) => v,
+            Ok(None) => continue, // oversize: dropped and counted.
+            Err(_) => break,      // socket error — end the pump.
+        };
+        match crate::packet::peek_dest_socket_id(&bytes) {
+            Some(0) | None => {
+                // `0` (candidate new connection) or too short to carry a
+                // full header at all — either way, not a routable
+                // established-connection packet; hand it to the handshake
+                // task, which parses (and rejects malformed bytes) properly.
+                if unrouted_tx.try_send((src, bytes)).is_err() {
+                    if unrouted_tx.is_closed() {
+                        // The handshake task is gone; nothing more this pump can do.
+                        break;
                     }
+                    unrouted_dropped.fetch_add(1, Ordering::Relaxed);
                 }
-                Some(id) => {
-                    let route = lock(&routes).get(&id).cloned();
-                    // No `route` entry (no connection was ever accepted with
-                    // this ID), or one exists but from a different source
-                    // address, is never routed — spoofed-source packets
-                    // included.
-                    if let Some(entry) = route
-                        && entry.addr == src
-                        && entry.tx.try_send(bytes.to_vec()).is_err()
-                        && !entry.tx.is_closed()
-                    {
-                        // A closed channel would instead mean the
-                        // connection's driver has already exited (it
-                        // removes its own entry on the way out — see
-                        // `RouteCleanup`), a benign race, not counted; a
-                        // still-open-but-full channel is this connection's
-                        // own backpressure (item 4).
-                        entry.stats.rx_dropped.fetch_add(1, Ordering::Relaxed);
-                    }
+            }
+            Some(id) => {
+                let route = lock(&routes).get(&id).cloned();
+                // No `route` entry (no connection was ever accepted with
+                // this ID), or one exists but from a different source
+                // address, is never routed — spoofed-source packets
+                // included.
+                if let Some(entry) = route
+                    && entry.addr == src
+                    && entry.tx.try_send(bytes).is_err()
+                    && !entry.tx.is_closed()
+                {
+                    // A closed channel would instead mean the
+                    // connection's driver has already exited (it
+                    // removes its own entry on the way out — see
+                    // `RouteCleanup`), a benign race, not counted; a
+                    // still-open-but-full channel is this connection's
+                    // own backpressure (item 4).
+                    entry.stats.rx_dropped.fetch_add(1, Ordering::Relaxed);
                 }
             }
         }
-    });
+    }
 }
 
 // ===========================================================================
@@ -1988,6 +2392,37 @@ fn refuse_crypto(config: &HandshakeConfig) -> Result<()> {
     #[cfg(not(feature = "crypto"))]
     let _ = config;
     Ok(())
+}
+
+/// Runs `fut` for at most `limit`; expiry is `Error::Io { kind: TimedOut, context }`.
+async fn bounded<T>(
+    limit: Duration,
+    context: &'static str,
+    fut: impl core::future::Future<Output = Result<T>>,
+) -> Result<T> {
+    tokio::time::timeout(limit, fut)
+        .await
+        .map_err(|_| Error::Io {
+            kind: std::io::ErrorKind::TimedOut,
+            context,
+        })?
+}
+
+/// `send_to` bounded by `limit` (the [`IoConfig::write`] timeout).
+async fn send_bounded(
+    udp: &UdpSocket,
+    bytes: &[u8],
+    to: std::net::SocketAddr,
+    limit: Duration,
+    context: &'static str,
+) -> Result<()> {
+    bounded(limit, context, async {
+        udp.send_to(bytes, to)
+            .await
+            .map(|_| ())
+            .map_err(|e| io_err(context, e))
+    })
+    .await
 }
 
 /// Maps an OS I/O failure to a structured [`Error::Io`], preserving the
@@ -2273,7 +2708,7 @@ mod adapter_tests {
     /// channel, with the same engine defaults `spawn` uses — so `ingress`,
     /// `tick_engines` and `staged` can be driven directly without a live
     /// handshake.
-    async fn test_driver(max_flow_window: u32) -> (Driver, mpsc::Receiver<Vec<u8>>) {
+    async fn test_driver(max_flow_window: u32) -> (Driver, mpsc::Receiver<Bytes>) {
         let (driver, rx, _datagram_tx) = test_driver_with_ingress(max_flow_window).await;
         // The inbound-datagram sender is dropped here: the tests that use this
         // drive `ingress`/`tick_engines` directly, never `Driver::run`'s
@@ -2285,8 +2720,13 @@ mod adapter_tests {
     /// driver's inbound-datagram channel, so `Driver::run` can be spawned.
     async fn test_driver_with_ingress(
         max_flow_window: u32,
-    ) -> (Driver, mpsc::Receiver<Vec<u8>>, mpsc::Sender<Vec<u8>>) {
+    ) -> (Driver, mpsc::Receiver<Bytes>, mpsc::Sender<Bytes>) {
         let udp = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        // Make the socket's writability known up front. Without it the first
+        // `send_to` yields to the reactor, and under a paused clock the
+        // runtime would then auto-advance time to the (new) write-timeout
+        // timer before the real send completes.
+        udp.writable().await.unwrap();
         let (deliver, rx) = mpsc::channel(DELIVER_CHANNEL_CAPACITY);
         let (datagram_tx, datagram_rx) = mpsc::channel(RX_CHANNEL_CAPACITY);
         let driver = Driver::new(
@@ -2297,6 +2737,9 @@ mod adapter_tests {
                 stats: Arc::new(Counters::default()),
                 route_cleanup: RouteCleanup(None),
                 forwarder_guard: TaskGuard(None),
+                life: None,
+                read_idle: IoConfig::default().read_idle,
+                write: IoConfig::default().write,
                 our_initial_seq: 0,
                 peer_initial_seq: 0,
                 peer_socket_id: 1,
@@ -2375,7 +2818,386 @@ mod adapter_tests {
         buf
     }
 
-    fn drain_deliveries(rx: &mut mpsc::Receiver<Vec<u8>>) -> Vec<Vec<u8>> {
+    /// Review-focus 2. UDP truncates a datagram larger than the receive buffer
+    /// without telling the reader; a truncated DATA packet then parses as a
+    /// shorter, valid packet and its payload is delivered corrupted. The
+    /// forwarder must read `max + 1` bytes, drop anything longer than `max`,
+    /// and count it.
+    #[tokio::test]
+    async fn an_oversize_datagram_is_dropped_and_counted_never_truncated() {
+        let local = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let stats = Arc::new(Counters::default());
+        let (mut rx, _guard) = spawn_dedicated_socket_forwarder(
+            Arc::clone(&local),
+            peer.local_addr().unwrap(),
+            Arc::clone(&stats),
+            300,
+        );
+        let local_addr = local.local_addr().unwrap();
+        peer.send_to(&[1u8; 250], local_addr).await.unwrap();
+        peer.send_to(&[2u8; 400], local_addr).await.unwrap(); // > 300
+        peer.send_to(&[3u8; 300], local_addr).await.unwrap(); // exactly max: accepted
+        let a = rx.recv().await.unwrap();
+        let b = rx.recv().await.unwrap();
+        assert_eq!((a.len(), a[0]), (250, 1));
+        assert_eq!(
+            (b.len(), b[0]),
+            (300, 3),
+            "the 400-byte datagram must not appear, truncated or not"
+        );
+        assert_eq!(stats.rx_oversize.load(Ordering::Relaxed), 1);
+    }
+
+    #[test]
+    fn io_config_clamps_a_tiny_max_datagram() {
+        assert_eq!(
+            IoConfig::default().with_max_datagram(1).max_datagram,
+            MIN_MAX_DATAGRAM
+        );
+        assert_eq!(IoConfig::default().max_datagram, 1500);
+        assert_eq!(
+            IoConfig::default()
+                .with_max_datagram(usize::MAX)
+                .max_datagram,
+            MAX_MAX_DATAGRAM,
+            "an absurd size is clamped, never overflows `max + 1`"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_idle_driver_deadline_is_the_ack_period_not_a_two_ms_tick() {
+        let (driver, _rx) = test_driver(8192).await;
+        let d = driver
+            .poll_timeout()
+            .expect("a connected driver always has a deadline");
+        assert_eq!(d - driver.epoch, crate::arq::FULL_ACK_PERIOD);
+    }
+
+    /// The old fixed 2 ms ticker ran `tick_engines` ~50 times per 100 ms of idle time; the
+    /// deadline-driven loop wakes for the 10 ms ACK cadence only.
+    #[tokio::test(start_paused = true)]
+    async fn the_run_loop_wakes_at_deadlines_not_on_a_fixed_two_ms_tick() {
+        let (mut driver, _rx, _tx) = test_driver_with_ingress(8192).await;
+        // The loop really sends its ACKs: a loopback address accepts them, where
+        // the default non-routable test peer errors on some hosts and ends the loop.
+        driver.peer_addr = "127.0.0.1:1".parse().unwrap();
+        let ticks = Arc::new(AtomicU64::new(0));
+        driver.tick_counter = Some(Arc::clone(&ticks));
+        let (_app_tx, app_rx) = mpsc::channel(8);
+        let handle = tokio::spawn(driver.run(app_rx));
+        // `advance` jumps the clock in ONE step, so walk it 1 ms at a time to let every timer fire in order.
+        for _ in 0..100 {
+            tokio::time::advance(Duration::from_millis(1)).await;
+            tokio::task::yield_now().await;
+        }
+        let n = ticks.load(Ordering::Relaxed);
+        assert!(
+            (8..=14).contains(&n),
+            "expected ~10 wake-ups in 100 ms (10 ms ACK cadence), got {n}"
+        );
+        handle.abort();
+    }
+
+    /// A [`ListenerCore`] over a throwaway socket, never spawned: tests drive
+    /// `handle_datagram`/`tick_pending` and read its state directly.
+    async fn test_core(config: HandshakeConfig) -> ListenerCore {
+        test_core_with_channels(config).await.0
+    }
+
+    /// [`test_core`] plus the live ends of its channels: the unrouted-datagram
+    /// sender and the accepted-connection receiver.
+    async fn test_core_with_channels(
+        config: HandshakeConfig,
+    ) -> (
+        ListenerCore,
+        mpsc::Sender<(std::net::SocketAddr, Bytes)>,
+        mpsc::Receiver<Result<SrtSocket>>,
+    ) {
+        let udp = Arc::new(UdpSocket::bind("127.0.0.1:0").await.unwrap());
+        let (unrouted_tx, unrouted_rx) = mpsc::channel(UNROUTED_CHANNEL_CAPACITY);
+        let (accepted_tx, accepted) = mpsc::channel(ACCEPT_BACKLOG);
+        let core = ListenerCore {
+            udp,
+            config,
+            io: IoConfig::default(),
+            cookie_keys: CookieKeys::new(Instant::now()).unwrap(),
+            pending: std::collections::HashMap::new(),
+            outbound_queue: std::collections::HashMap::new(),
+            recent_accepts: std::collections::HashMap::new(),
+            routes: Arc::new(Mutex::new(std::collections::HashMap::new())),
+            unrouted_rx,
+            life: std::sync::Weak::new(),
+            accepted_tx,
+            overflow_dropped: Arc::new(AtomicU64::new(0)),
+            send_errors: Arc::new(AtomicU64::new(0)),
+            accepting: true,
+            last_pending_tick: Instant::now(),
+        };
+        (core, unrouted_tx, accepted)
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn bounded_turns_a_stuck_future_into_a_timed_out_io_error() {
+        let r: Result<()> = bounded(
+            Duration::from_secs(3),
+            "send",
+            std::future::pending::<Result<()>>(),
+        )
+        .await;
+        assert!(
+            matches!(
+                r,
+                Err(Error::Io {
+                    kind: std::io::ErrorKind::TimedOut,
+                    context: "send"
+                })
+            ),
+            "{r:?}"
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn the_configured_read_idle_replaces_the_five_second_constant() {
+        let (mut driver, _rx) = test_driver(8192).await;
+        driver.read_idle = Duration::from_secs(2);
+        assert!(!driver.peer_idle(Instant::now()));
+        tokio::time::advance(Duration::from_secs(2)).await;
+        assert!(
+            driver.peer_idle(Instant::now()),
+            "idle after the configured 2 s, not 5 s"
+        );
+    }
+
+    /// Real time, real socket: a paused clock would auto-advance past the
+    /// timers while the first `send_to` waits on the reactor.
+    #[tokio::test]
+    async fn the_handshake_budget_comes_from_the_config() {
+        // black hole: bound UDP socket that never answers
+        let hole = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let budget = Duration::from_millis(400);
+        let io = IoConfig::default().with_handshake(budget);
+        let t0 = Instant::now();
+        let err =
+            SrtSocket::connect_with(hole.local_addr().unwrap(), HandshakeConfig::default(), io)
+                .await
+                .expect_err("nobody answers");
+        // The default retransmit budget (12 x 250 ms) would end an unanswered connect at ~3 s with
+        // stage "caller retransmit budget"; only the configured deadline yields "caller connect".
+        assert!(
+            matches!(
+                err,
+                Error::HandshakeTimedOut {
+                    stage: "caller connect"
+                }
+            ),
+            "{err:?}"
+        );
+        let took = Instant::now() - t0;
+        assert!(
+            took >= budget && took < Duration::from_secs(2),
+            "the configured {budget:?} deadline, got {took:?}"
+        );
+        drop(hole);
+    }
+
+    // -----------------------------------------------------------------------
+    // Each `Driver::poll_timeout` term, with every EARLIER term pushed out of
+    // the way, so deleting any one of them changes the asserted deadline.
+    // -----------------------------------------------------------------------
+
+    async fn quiet_driver() -> Driver {
+        let (mut driver, _rx) = test_driver(8192).await;
+        driver.peer_addr = "127.0.0.1:1".parse().unwrap();
+        driver
+    }
+
+    /// TSBPD release: a packet due at 120 ms, the Full ACK just ticked at
+    /// 118 ms (next ACK 128 ms), so the release is the earliest deadline.
+    #[tokio::test(start_paused = true)]
+    async fn the_deadline_is_the_tsbpd_release_when_it_is_the_earliest_term() {
+        let mut driver = quiet_driver().await;
+        driver.ingress(Bytes::from(data_bytes(0, 0, b"p"))).unwrap();
+        tokio::time::advance(Duration::from_millis(118)).await;
+        driver.tick_engines();
+        assert_eq!(
+            driver.poll_timeout().unwrap(),
+            driver.epoch + Duration::from_millis(LATENCY_MS),
+            "the TSBPD release must be the next wake-up"
+        );
+    }
+
+    /// Pacing: a queued DATA packet whose slot is 3 ms away beats the 10 ms ACK.
+    #[tokio::test(start_paused = true)]
+    async fn the_deadline_is_the_pacing_slot_when_it_is_the_earliest_term() {
+        let mut driver = quiet_driver().await;
+        let now = Instant::now();
+        driver.outbound_data.push_back(alloc::vec![0u8; 100]);
+        driver.next_data_send_at = Some(now + Duration::from_millis(3));
+        assert_eq!(
+            driver.poll_timeout().unwrap(),
+            now + Duration::from_millis(3),
+            "the pacing slot must be the next wake-up"
+        );
+    }
+
+    /// Peer idle: a 4 ms read-idle limit beats the 10 ms ACK and the 1 s keep-alive.
+    #[tokio::test(start_paused = true)]
+    async fn the_deadline_is_the_peer_idle_expiry_when_it_is_the_earliest_term() {
+        let mut driver = quiet_driver().await;
+        driver.read_idle = Duration::from_millis(4);
+        assert_eq!(
+            driver.poll_timeout().unwrap(),
+            driver.last_rx_at + Duration::from_millis(4),
+            "the peer-idle expiry must be the next wake-up"
+        );
+    }
+
+    /// Keep-Alive: nothing sent for 995 ms and nothing queued, so the keep-alive
+    /// at +5 ms beats the 10 ms ACK.
+    #[tokio::test(start_paused = true)]
+    async fn the_deadline_is_the_keepalive_when_it_is_the_earliest_term() {
+        let mut driver = quiet_driver().await;
+        let now = Instant::now();
+        driver.last_tx_at = now - Duration::from_millis(995);
+        assert!(driver.outbound_control.is_empty() && driver.outbound_data.is_empty());
+        assert_eq!(
+            driver.poll_timeout().unwrap(),
+            now + Duration::from_millis(5),
+            "the keep-alive must be the next wake-up"
+        );
+        // ... and it is NOT a term while something is queued.
+        driver.outbound_control.push_back(alloc::vec![0u8; 16]);
+        assert_eq!(
+            driver.poll_timeout().unwrap(),
+            driver.epoch + crate::arq::FULL_ACK_PERIOD
+        );
+    }
+
+    /// Wake the loop exactly as `run` would (at `poll_timeout`) for `window`
+    /// of virtual time, returning how many DATA packets left the queue.
+    async fn drain_for(driver: &mut Driver, window: Duration) -> usize {
+        let start = Instant::now();
+        let before = driver.outbound_data.len();
+        while Instant::now() - start < window {
+            let at = driver.poll_timeout().unwrap();
+            tokio::time::advance(at - Instant::now()).await;
+            driver.tick_engines();
+            driver.flush_outbound().await.expect("flush");
+        }
+        before - driver.outbound_data.len()
+    }
+
+    /// A backlog with NO inbound events and no application traffic (retransmit
+    /// burst after a NAK, idle app) drains at wake-up granularity: the old
+    /// one-packet-per-wake ceiling was ~10.5 Mbit/s.
+    #[tokio::test(start_paused = true)]
+    async fn an_idle_backlog_drains_faster_than_one_packet_per_wake() {
+        let mut driver = quiet_driver().await;
+        for _ in 0..3000 {
+            driver.send_one(&[0u8; 1316]);
+        }
+        let sent = drain_for(&mut driver, Duration::from_millis(100)).await;
+        let mbit_s = sent as f64 * 1316.0 * 8.0 / 0.1 / 1e6;
+        assert!(
+            mbit_s >= 20.0,
+            "drained {sent} packets in 100 ms = {mbit_s:.1} Mbit/s"
+        );
+    }
+
+    /// Pacing still holds with catch-up: at 2.5 MB/s (20 Mbit/s) 100 ms is ~190
+    /// packets plus at most one burst, never an instantaneous dump.
+    #[tokio::test(start_paused = true)]
+    async fn catch_up_never_exceeds_the_paced_rate_by_more_than_one_burst() {
+        let mut driver = quiet_driver().await;
+        for _ in 0..3000 {
+            driver.send_one(&[0u8; 1316]);
+        }
+        driver.livecc = LiveCC::new(MaxBwConfig::Set(2_500_000));
+        driver.livecc.on_data_packet(1316);
+        let sent = drain_for(&mut driver, Duration::from_millis(100)).await;
+        let allowed = (2_500_000.0_f64 * 0.1 / 1316.0).ceil() as usize + PACING_BURST_CAP + 1;
+        assert!(
+            sent <= allowed,
+            "sent {sent} packets, paced allowance {allowed}"
+        );
+        assert!(sent >= 100, "pacing starved the drain: {sent}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Listener: the deadline wiring and send-error handling
+    // -----------------------------------------------------------------------
+
+    #[tokio::test]
+    async fn the_listener_deadline_exists_only_while_a_handshake_is_pending() {
+        let mut core = test_core(HandshakeConfig::default()).await;
+        assert_eq!(core.poll_timeout(), None, "an idle listener has no timer");
+        core.handle_datagram(peer_addr(), &induction_bytes(7))
+            .expect("induction");
+        assert_eq!(
+            core.poll_timeout(),
+            Some(core.last_pending_tick + PENDING_TICK_INTERVAL)
+        );
+        core.accepting = false;
+        assert_eq!(
+            core.poll_timeout(),
+            None,
+            "a handle-less core serves nobody"
+        );
+    }
+
+    /// The run loop actually ticks a pending handshake on that deadline: with no
+    /// further inbound traffic the INDUCTION response is retransmitted.
+    #[tokio::test]
+    async fn a_pending_handshake_is_retransmitted_by_the_listener_tick_alone() {
+        let config = HandshakeConfig {
+            retransmit_after_ticks: 1,
+            max_retries: 5,
+            ..HandshakeConfig::default()
+        };
+        let (core, unrouted_tx, _accepted) = test_core_with_channels(config).await;
+        let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
+        let cancel = CancellationToken::new();
+        let task = tokio::spawn(core.run(cancel.clone()));
+        unrouted_tx
+            .send((peer.local_addr().unwrap(), Bytes::from(induction_bytes(7))))
+            .await
+            .unwrap();
+        let mut buf = [0u8; 2048];
+        for n in 1..=2 {
+            tokio::time::timeout(Duration::from_secs(5), peer.recv_from(&mut buf))
+                .await
+                .unwrap_or_else(|_| panic!("datagram {n} never arrived: the tick is not wired"))
+                .unwrap();
+        }
+        cancel.cancel();
+        let _ = task.await;
+    }
+
+    /// Send errors are counted, never queued: a flood of them must not touch
+    /// the accept queue that finished connections depend on.
+    #[tokio::test]
+    async fn a_flood_of_send_errors_does_not_displace_completed_connections() {
+        let (core, _tx, mut accepted) = test_core_with_channels(HandshakeConfig::default()).await;
+        for _ in 0..(ACCEPT_BACKLOG * 20) {
+            core.count_send_error(Err(Error::Io {
+                kind: std::io::ErrorKind::HostUnreachable,
+                context: "send_to",
+            }));
+        }
+        assert_eq!(
+            core.send_errors.load(Ordering::Relaxed),
+            (ACCEPT_BACKLOG * 20) as u64
+        );
+        assert_eq!(
+            core.accepted_tx.capacity(),
+            ACCEPT_BACKLOG,
+            "every accept-queue slot is still free for a real connection"
+        );
+        assert!(accepted.try_recv().is_err());
+    }
+
+    fn drain_deliveries(rx: &mut mpsc::Receiver<Bytes>) -> Vec<Bytes> {
         let mut out = Vec::new();
         while let Ok(payload) = rx.try_recv() {
             out.push(payload);
@@ -2447,11 +3269,11 @@ mod adapter_tests {
         let ts = 0u32;
         // The unencrypted packet at seq 0 is staged normally.
         driver
-            .ingress(data_bytes(0, ts, b"plain"))
+            .ingress(Bytes::from(data_bytes(0, ts, b"plain")))
             .expect("ingress plain");
         // An encrypted packet (KK != 0) must never reach `staged` or the app.
         driver
-            .ingress(encrypted_data_bytes(1, ts, b"ciphertext"))
+            .ingress(Bytes::from(encrypted_data_bytes(1, ts, b"ciphertext")))
             .expect("ingress encrypted");
 
         assert!(
@@ -2460,7 +3282,7 @@ mod adapter_tests {
         );
         let delivered = drain_deliveries(&mut rx);
         assert!(
-            delivered.iter().all(|p| p != b"ciphertext"),
+            delivered.iter().all(|p| &p[..] != b"ciphertext"),
             "ciphertext must never be delivered to the application"
         );
     }
@@ -2566,7 +3388,7 @@ mod adapter_tests {
         });
         let mut ack_bytes = alloc::vec![0u8; ack.serialized_len()];
         ack.serialize_into(&mut ack_bytes).expect("serialize ack");
-        driver.ingress(ack_bytes).expect("ingress ack");
+        driver.ingress(Bytes::from(ack_bytes)).expect("ingress ack");
         assert_eq!(
             driver.outbound_control.len(),
             1,
@@ -2603,7 +3425,11 @@ mod adapter_tests {
         // seq 1 is lost and never retransmitted.
         for seq in [0u32, 2, 3] {
             driver
-                .ingress(data_bytes(seq, ts0, &[u8::try_from(seq).unwrap()]))
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    ts0,
+                    &[u8::try_from(seq).unwrap()],
+                )))
                 .expect("ingress");
         }
         assert!(
@@ -2643,7 +3469,11 @@ mod adapter_tests {
         let (mut driver, mut rx) = test_driver(8192).await;
         for seq in [0u32, 2, 3] {
             driver
-                .ingress(data_bytes(seq, 0, &[u8::try_from(seq).unwrap()]))
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    0,
+                    &[u8::try_from(seq).unwrap()],
+                )))
                 .expect("ingress");
         }
         assert_eq!(driver.receiver.ack_point(), 1, "stalled at the gap");
@@ -2668,26 +3498,26 @@ mod adapter_tests {
         );
     }
 
-    /// A delivered packet's payload is the staged datagram's own allocation
-    /// (header drained off the front) — one copy from the socket buffer, not
-    /// a second `to_vec` per packet (r08-SRT-O4). Pointer identity is the
-    /// deterministic evidence: a copy would live at a different address.
+    /// A delivered packet's payload is a view into the received datagram's own
+    /// allocation (header sliced off the front) — one copy from the socket
+    /// buffer, not a second `to_vec` per packet (r08-SRT-O4). Pointer identity
+    /// is the deterministic evidence: a copy would live at a different address.
     #[tokio::test(start_paused = true)]
     async fn delivery_reuses_the_received_datagrams_allocation() {
         let (mut driver, mut rx) = test_driver(8192).await;
-        let datagram = data_bytes(0, 0, b"zero-copy payload");
-        let allocation = datagram.as_ptr();
+        let datagram = bytes::Bytes::from(data_bytes(0, 0, b"zero-copy payload"));
+        let allocation = datagram.as_ptr() as usize;
         driver.ingress(datagram).expect("ingress");
         tokio::time::advance(Duration::from_millis(130)).await;
         driver.tick_engines();
         let mut delivered = drain_deliveries(&mut rx);
         assert_eq!(delivered.len(), 1);
         let payload = delivered.remove(0);
-        assert_eq!(payload, b"zero-copy payload");
+        assert_eq!(&payload[..], b"zero-copy payload");
         assert_eq!(
-            payload.as_ptr(),
-            allocation,
-            "the payload was copied into a second allocation"
+            payload.as_ptr() as usize,
+            allocation + SRT_HEADER_LEN,
+            "the payload must be a view into the received datagram, not a copy"
         );
     }
 
@@ -2698,7 +3528,11 @@ mod adapter_tests {
 
         for seq in [0u32, 2, 3] {
             driver
-                .ingress(data_bytes(seq, ts0, &[u8::try_from(seq).unwrap()]))
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    ts0,
+                    &[u8::try_from(seq).unwrap()],
+                )))
                 .expect("ingress");
         }
         assert!(
@@ -2708,7 +3542,7 @@ mod adapter_tests {
 
         // The peer announces it will never send seq 1.
         driver
-            .ingress(dropreq_bytes(1, 1))
+            .ingress(Bytes::from(dropreq_bytes(1, 1)))
             .expect("ingress dropreq");
 
         tokio::time::advance(Duration::from_millis(140)).await;
@@ -2729,7 +3563,11 @@ mod adapter_tests {
         // packets past the gap.
         for seq in 1..=(WINDOW + 100) {
             driver
-                .ingress(data_bytes(seq, ts, &[u8::try_from(seq).unwrap()]))
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    ts,
+                    &[u8::try_from(seq).unwrap()],
+                )))
                 .expect("ingress");
             assert!(
                 driver.staged.len() <= usize::try_from(WINDOW).unwrap(),
@@ -2746,9 +3584,7 @@ mod adapter_tests {
 
     #[tokio::test]
     async fn listener_pending_is_capped_under_a_source_flood() {
-        let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-            .await
-            .expect("bind");
+        let mut listener = test_core(HandshakeConfig::default()).await;
 
         for i in 0..5000u32 {
             let src = std::net::SocketAddr::from(([198, 18, (i >> 8) as u8, i as u8], 40_000));
@@ -2769,9 +3605,7 @@ mod adapter_tests {
             max_retries: 2,
             ..HandshakeConfig::default()
         };
-        let mut listener = SrtListener::bind("127.0.0.1:0", config)
-            .await
-            .expect("bind");
+        let mut listener = test_core(config).await;
 
         let stalling_src = std::net::SocketAddr::from(([203, 0, 113, 1], 1234));
         listener
@@ -2945,7 +3779,9 @@ mod adapter_tests {
     #[tokio::test(start_paused = true)]
     async fn a_received_keepalive_is_not_answered() {
         let (mut driver, _rx) = test_driver(8192).await;
-        driver.ingress(keepalive_bytes()).expect("ingress");
+        driver
+            .ingress(Bytes::from(keepalive_bytes()))
+            .expect("ingress");
         assert!(
             driver.outbound_control.is_empty(),
             "a Keep-Alive must not be echoed: {:?}",
@@ -2958,13 +3794,18 @@ mod adapter_tests {
     #[tokio::test(start_paused = true)]
     async fn the_peer_idle_timeout_is_five_silent_seconds() {
         let (mut driver, _rx) = test_driver(8192).await;
+        // The default (libsrt's SRTO_PEERIDLETIMEO) is five seconds.
+        const PEER_IDLE_TIMEOUT: Duration = Duration::from_secs(5);
+        assert_eq!(IoConfig::default().read_idle, PEER_IDLE_TIMEOUT);
         tokio::time::advance(PEER_IDLE_TIMEOUT - Duration::from_millis(1)).await;
         assert!(!driver.peer_idle(Instant::now()));
         tokio::time::advance(Duration::from_millis(1)).await;
         assert!(driver.peer_idle(Instant::now()));
 
         // Any datagram from the peer — even a Keep-Alive — resets it.
-        driver.ingress(keepalive_bytes()).expect("ingress");
+        driver
+            .ingress(Bytes::from(keepalive_bytes()))
+            .expect("ingress");
         assert!(!driver.peer_idle(Instant::now()));
         tokio::time::advance(PEER_IDLE_TIMEOUT - Duration::from_millis(1)).await;
         assert!(!driver.peer_idle(Instant::now()));
@@ -2992,7 +3833,7 @@ mod adapter_tests {
         });
         let mut ack_bytes = alloc::vec![0u8; ack.serialized_len()];
         ack.serialize_into(&mut ack_bytes).expect("serialize ack");
-        driver.ingress(ack_bytes).expect("ingress ack");
+        driver.ingress(Bytes::from(ack_bytes)).expect("ingress ack");
         assert!(driver.send_window_open(), "the ACK freed the window");
     }
 
@@ -3006,10 +3847,10 @@ mod adapter_tests {
         const QUEUED: usize = 24;
         let (mut driver, _rx, _datagrams) = test_driver_with_ingress(WINDOW).await;
         driver.peer_addr = "127.0.0.1:1".parse().unwrap();
-        let (app_tx, app_rx) = mpsc::channel::<Vec<u8>>(SEND_CHANNEL_CAPACITY);
+        let (app_tx, app_rx) = mpsc::channel::<Bytes>(SEND_CHANNEL_CAPACITY);
         for _ in 0..QUEUED {
             app_tx
-                .try_send(alloc::vec![0u8; 100])
+                .try_send(Bytes::from(alloc::vec![0u8; 100]))
                 .expect("queue payload");
         }
         let handle = tokio::spawn(driver.run(app_rx));
@@ -3035,9 +3876,7 @@ mod adapter_tests {
     /// the underlying codec error, not flattened to a generic invalid field.
     #[tokio::test]
     async fn listener_parse_failure_keeps_its_stage_and_cause() {
-        let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-            .await
-            .expect("bind");
+        let mut listener = test_core(HandshakeConfig::default()).await;
         let err = listener
             .handle_datagram(peer_addr(), &[0u8; 4])
             .expect_err("a 4-byte datagram is not an SRT packet");
@@ -3056,9 +3895,7 @@ mod adapter_tests {
     /// own out-of-sequence error, wrapped with its stage.
     #[tokio::test]
     async fn listener_feed_failure_is_wrapped_with_the_engine_error() {
-        let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-            .await
-            .expect("bind");
+        let mut listener = test_core(HandshakeConfig::default()).await;
         // A CONCLUSION as the very first packet from a source: the fresh
         // engine expects an INDUCTION.
         let conclusion = {
@@ -3162,6 +3999,9 @@ mod adapter_tests {
                 stats: Arc::new(Counters::default()),
                 route_cleanup: RouteCleanup(None),
                 forwarder_guard: TaskGuard(None),
+                life: None,
+                read_idle: IoConfig::default().read_idle,
+                write: IoConfig::default().write,
                 our_initial_seq: 0,
                 peer_initial_seq: 0,
                 peer_socket_id: 1,
@@ -3175,7 +4015,7 @@ mod adapter_tests {
             deliver,
         );
         driver
-            .ingress(data_bytes(0, PEER_CLOCK_US, b"first"))
+            .ingress(Bytes::from(data_bytes(0, PEER_CLOCK_US, b"first")))
             .expect("ingress");
         assert!(drain_deliveries(&mut rx).is_empty(), "not due on arrival");
         tokio::time::advance(Duration::from_millis(LATENCY_MS)).await;
@@ -3199,7 +4039,8 @@ mod adapter_tests {
     async fn data_leaves_one_packet_per_pacing_period() {
         let (mut driver, _rx) = test_driver(8192).await;
         driver.peer_addr = "127.0.0.1:1".parse().unwrap();
-        for _ in 0..4 {
+        const BACKLOG: usize = 60;
+        for _ in 0..BACKLOG {
             driver.send_one(&[0u8; 1316]);
         }
         let period = driver.livecc.on_ack_received();
@@ -3208,7 +4049,7 @@ mod adapter_tests {
         driver.flush_outbound().await.expect("flush");
         assert_eq!(
             driver.outbound_data.len(),
-            3,
+            BACKLOG - 1,
             "the first packet goes at once"
         );
 
@@ -3216,19 +4057,30 @@ mod adapter_tests {
         driver.flush_outbound().await.expect("flush");
         assert_eq!(
             driver.outbound_data.len(),
-            3,
+            BACKLOG - 1,
             "one nanosecond short of the slot"
         );
 
         tokio::time::advance(Duration::from_nanos(1)).await;
         driver.flush_outbound().await.expect("flush");
-        assert_eq!(driver.outbound_data.len(), 2, "the slot arrived: one more");
+        assert_eq!(
+            driver.outbound_data.len(),
+            BACKLOG - 2,
+            "the slot arrived: one more"
+        );
 
-        // A long idle gap does not let the backlog out in one burst — and does
-        // not make the connection pay the gap back either: one packet now.
+        // A long stall does not let the backlog out in one burst: the late
+        // wake claims at most `PACING_BURST_CAP` packets of catch-up (it used
+        // to send exactly one and lose the rest of the credit).
         tokio::time::advance(period * 100).await;
+        let before = driver.outbound_data.len();
         driver.flush_outbound().await.expect("flush");
-        assert_eq!(driver.outbound_data.len(), 1);
+        let sent = before - driver.outbound_data.len();
+        assert_eq!(
+            sent, PACING_BURST_CAP,
+            "a stalled wake must send exactly the burst cap"
+        );
+        assert!(!driver.outbound_data.is_empty());
         assert!(driver.next_paced_send_wait().is_some());
     }
 
@@ -3249,7 +4101,7 @@ mod adapter_tests {
         });
         let mut bytes = alloc::vec![0u8; nak.serialized_len()];
         nak.serialize_into(&mut bytes).expect("serialize nak");
-        driver.ingress(bytes).expect("ingress nak");
+        driver.ingress(Bytes::from(bytes)).expect("ingress nak");
         driver.tick_engines();
         assert_eq!(
             driver.outbound_data.len(),
@@ -3277,7 +4129,7 @@ mod adapter_tests {
         let peer = UdpSocket::bind("127.0.0.1:0").await.unwrap();
         let (mut driver, _rx, _datagrams) = test_driver_with_ingress(8192).await;
         driver.peer_addr = peer.local_addr().unwrap();
-        let (app_tx, app_rx) = mpsc::channel::<Vec<u8>>(SEND_CHANNEL_CAPACITY);
+        let (app_tx, app_rx) = mpsc::channel::<Bytes>(SEND_CHANNEL_CAPACITY);
         let handle = tokio::spawn(driver.run(app_rx));
         drop(app_tx);
         tokio::time::timeout(Duration::from_secs(5), handle)
@@ -3340,7 +4192,11 @@ mod adapter_tests {
         let (mut driver, mut rx) = test_driver(8192).await;
         for seq in 0..3u32 {
             driver
-                .ingress(data_bytes(seq, 0, &[u8::try_from(seq).unwrap()]))
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    0,
+                    &[u8::try_from(seq).unwrap()],
+                )))
                 .expect("ingress");
         }
         tokio::time::advance(Duration::from_millis(130)).await;
@@ -3353,7 +4209,7 @@ mod adapter_tests {
             // 2^31 - back is `back` behind the cursor at 0..3 in circular order.
             let seq = (1u32 << 31) - back;
             driver
-                .ingress(data_bytes(seq, u32::MAX, b"x"))
+                .ingress(Bytes::from(data_bytes(seq, u32::MAX, b"x")))
                 .expect("ingress");
         }
         assert!(
@@ -3366,7 +4222,9 @@ mod adapter_tests {
             u64::from(STALE)
         );
         // A duplicate of something already delivered is late too.
-        driver.ingress(data_bytes(1, 0, b"dup")).expect("ingress");
+        driver
+            .ingress(Bytes::from(data_bytes(1, 0, b"dup")))
+            .expect("ingress");
         assert!(driver.staged.is_empty());
     }
 
@@ -3380,7 +4238,11 @@ mod adapter_tests {
         driver.tsbpd = TsbpdScheduler::new(0, 0, LATENCY_MS, DEFAULT_DRIFT_US, false, None);
         for seq in [0u32, 2, 3] {
             driver
-                .ingress(data_bytes(seq, 0, &[u8::try_from(seq).unwrap()]))
+                .ingress(Bytes::from(data_bytes(
+                    seq,
+                    0,
+                    &[u8::try_from(seq).unwrap()],
+                )))
                 .expect("ingress");
         }
         // Far beyond the latency (and the too-late threshold).
@@ -3398,7 +4260,9 @@ mod adapter_tests {
         assert_eq!(driver.receiver.loss_list_len(), 1, "still asking for seq 1");
 
         // The retransmission arrives: everything flows, in order.
-        driver.ingress(data_bytes(1, 0, &[1])).expect("ingress");
+        driver
+            .ingress(Bytes::from(data_bytes(1, 0, &[1])))
+            .expect("ingress");
         driver.tick_engines();
         let delivered = drain_deliveries(&mut rx);
         assert_eq!(
@@ -3425,6 +4289,9 @@ mod adapter_tests {
                     stats: Arc::new(Counters::default()),
                     route_cleanup: RouteCleanup(None),
                     forwarder_guard: TaskGuard(None),
+                    life: None,
+                    read_idle: IoConfig::default().read_idle,
+                    write: IoConfig::default().write,
                     our_initial_seq: 0,
                     peer_initial_seq: 0,
                     peer_socket_id: 1,
@@ -3449,9 +4316,7 @@ mod adapter_tests {
     /// key, in decimal or hex.
     #[tokio::test]
     async fn listener_debug_never_prints_the_cookie_key() {
-        let listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-            .await
-            .expect("bind");
+        let listener = test_core(HandshakeConfig::default()).await;
         let key = listener.cookie_keys.current();
         assert!(
             key > u128::from(u64::MAX),
@@ -3473,7 +4338,7 @@ mod adapter_tests {
         }
     }
 
-    fn induction_cookie(listener: &mut SrtListener, src: std::net::SocketAddr) -> u32 {
+    fn induction_cookie(listener: &mut ListenerCore, src: std::net::SocketAddr) -> u32 {
         listener
             .handle_datagram(src, &induction_bytes(7))
             .expect("induction");
@@ -3492,9 +4357,7 @@ mod adapter_tests {
     /// differ from those before for the same peer.
     #[tokio::test]
     async fn the_cookie_key_rotates_every_minute() {
-        let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-            .await
-            .expect("bind");
+        let mut listener = test_core(HandshakeConfig::default()).await;
         let t0 = listener.cookie_keys.drawn_at;
         let first = listener.cookie_keys.current();
 
@@ -3531,9 +4394,7 @@ mod adapter_tests {
     #[tokio::test]
     async fn a_handshake_begun_before_a_rotation_still_completes() {
         use crate::caller::CallerHandshake;
-        let mut listener = SrtListener::bind("127.0.0.1:0", HandshakeConfig::default())
-            .await
-            .expect("bind");
+        let mut listener = test_core(HandshakeConfig::default()).await;
         let src = peer_addr();
         let mut caller = CallerHandshake::new(0x0000_0777, HandshakeConfig::default());
         let induction = caller.start().expect("start");

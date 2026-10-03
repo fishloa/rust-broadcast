@@ -4,6 +4,8 @@
 //! trickle ICE, ICE restart, teardown — and verifies state transitions
 //! and wrong-state rejections at each step.
 
+use headers::HeaderMapExt;
+use http::{HeaderMap, HeaderValue, StatusCode, header};
 use webrtc_runtime::Error;
 use webrtc_runtime::whip::client::{self, WhipClient};
 use webrtc_runtime::whip::server::{self, WhipSession};
@@ -13,6 +15,13 @@ const SESSION: &str = "https://whip.example.com/session/abc123";
 const SDP_OFFER: &[u8] = b"v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\n";
 const SDP_ANSWER: &[u8] = b"v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n";
 const ICE_FRAG: &[u8] = b"a=ice-ufrag:test\r\na=ice-pwd:test\r\n";
+
+/// Headers of a PATCH request carrying `If-Match: <value>`.
+fn if_match(value: &str) -> HeaderMap {
+    let mut m = HeaderMap::new();
+    m.insert(header::IF_MATCH, HeaderValue::from_str(value).unwrap());
+    m
+}
 
 // ---------------------------------------------------------------------------
 // Client tests
@@ -25,21 +34,24 @@ fn whip_client_full_lifecycle() {
 
     // 1. offer() — transitions Idle -> OfferSent
     let req = client.offer(SDP_OFFER.to_vec()).unwrap();
-    assert_eq!(req.method, client::Method::Post);
+    assert_eq!(req.method, http::Method::POST);
     assert_eq!(req.url, ENDPOINT);
-    assert_eq!(req.content_type, Some("application/sdp"));
+    assert_eq!(req.content_type().unwrap().to_string(), "application/sdp");
     assert_eq!(req.body, SDP_OFFER);
     assert_eq!(*client.state(), client::State::OfferSent);
 
     // 2. on_response(201) — transitions OfferSent -> Established
     let event = client
-        .on_response(client::HttpResponse {
-            status: 201,
-            content_type: Some("application/sdp".into()),
-            location: Some(SESSION.into()),
-            etag: Some("etag1".into()),
-            body: SDP_ANSWER.to_vec(),
-        })
+        .on_response(
+            client::HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_etag("etag1")
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
         .unwrap();
     assert!(matches!(event, Some(client::Event::SdpAnswer(ref a)) if a == SDP_ANSWER));
     assert!(matches!(
@@ -50,41 +62,32 @@ fn whip_client_full_lifecycle() {
 
     // 3. flush_candidates() — stays Established, sends PATCH
     let req = client.flush_candidates(ICE_FRAG.to_vec()).unwrap();
-    assert_eq!(req.method, client::Method::Patch);
+    assert_eq!(req.method, http::Method::PATCH);
     assert_eq!(req.url, SESSION);
-    assert_eq!(req.content_type, Some("application/trickle-ice-sdpfrag"));
+    assert_eq!(
+        req.content_type().unwrap().to_string(),
+        "application/trickle-ice-sdpfrag"
+    );
     // If-Match header should carry the ETag
-    let if_match = req.headers.iter().find(|(k, _)| k == "If-Match");
+    let if_match = req.headers.get("If-Match");
     assert!(if_match.is_some());
-    assert_eq!(if_match.unwrap().1, "\"etag1\"");
+    assert_eq!(if_match.unwrap(), "\"etag1\"");
 
     // 4. on_response(204) — trickle acknowledged, no event
     let event = client
-        .on_response(client::HttpResponse {
-            status: 204,
-            content_type: None,
-            location: None,
-            etag: None,
-            body: Vec::new(),
-        })
+        .on_response(client::HttpResponse::new(StatusCode::NO_CONTENT))
         .unwrap();
     assert!(event.is_none());
 
     // 5. terminate() — sends DELETE
     let req = client.terminate().unwrap();
-    assert_eq!(req.method, client::Method::Delete);
+    assert_eq!(req.method, http::Method::DELETE);
     assert_eq!(req.url, SESSION);
     assert!(req.body.is_empty());
 
     // 6. on_response(200, no ETag) — transitions Established -> Closed
     let event = client
-        .on_response(client::HttpResponse {
-            status: 200,
-            content_type: None,
-            location: None,
-            etag: None,
-            body: Vec::new(),
-        })
+        .on_response(client::HttpResponse::new(StatusCode::OK))
         .unwrap();
     assert!(matches!(event, Some(client::Event::Terminated)));
     assert_eq!(*client.state(), client::State::Closed);
@@ -108,13 +111,7 @@ fn whip_client_wrong_state_errors() {
     assert!(client.ice_restart(ICE_FRAG.to_vec()).is_err());
 
     // on_response in Idle -> error
-    let err = client.on_response(client::HttpResponse {
-        status: 200,
-        content_type: None,
-        location: None,
-        etag: None,
-        body: Vec::new(),
-    });
+    let err = client.on_response(client::HttpResponse::new(StatusCode::OK));
     assert!(matches!(err.unwrap_err(), Error::WrongState { .. }));
 
     // Advance to OfferSent
@@ -133,25 +130,22 @@ fn whip_client_wrong_state_errors() {
 
     // Advance to Established
     let _ = client
-        .on_response(client::HttpResponse {
-            status: 201,
-            content_type: Some("application/sdp".into()),
-            location: Some(SESSION.into()),
-            etag: Some("e1".into()),
-            body: SDP_ANSWER.to_vec(),
-        })
+        .on_response(
+            client::HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_etag("e1")
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
         .unwrap();
 
     // Move to Closed
     let _ = client.terminate().unwrap();
     let _ = client
-        .on_response(client::HttpResponse {
-            status: 200,
-            content_type: None,
-            location: None,
-            etag: None,
-            body: Vec::new(),
-        })
+        .on_response(client::HttpResponse::new(StatusCode::OK))
         .unwrap();
     assert_eq!(*client.state(), client::State::Closed);
 
@@ -166,37 +160,37 @@ fn whip_client_ice_restart() {
     let mut client = WhipClient::new(ENDPOINT.into(), None);
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = client
-        .on_response(client::HttpResponse {
-            status: 201,
-            content_type: Some("application/sdp".into()),
-            location: Some(SESSION.into()),
-            etag: Some("etag-v1".into()),
-            body: SDP_ANSWER.to_vec(),
-        })
+        .on_response(
+            client::HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_etag("etag-v1")
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
         .unwrap();
 
     // ICE restart — sends PATCH with If-Match: "*"
     let restart_frag = b"a=ice-ufrag:new\r\na=ice-pwd:new\r\n";
     let req = client.ice_restart(restart_frag.to_vec()).unwrap();
-    assert_eq!(req.method, client::Method::Patch);
+    assert_eq!(req.method, http::Method::PATCH);
     assert_eq!(req.url, SESSION);
-    let if_match = req
-        .headers
-        .iter()
-        .find(|(k, _)| k == "If-Match")
-        .map(|(_, v)| v.as_str());
+    let if_match = req.headers.get("If-Match").map(|v| v.to_str().unwrap());
     assert_eq!(if_match, Some("*"));
 
     // Server responds 200 with new ETag + server's new fragment
     let server_frag = b"a=ice-ufrag:srv\r\na=ice-pwd:srv\r\n";
     let event = client
-        .on_response(client::HttpResponse {
-            status: 200,
-            content_type: Some("application/trickle-ice-sdpfrag".into()),
-            location: None,
-            etag: Some("etag-v2".into()),
-            body: server_frag.to_vec(),
-        })
+        .on_response(
+            client::HttpResponse::new(StatusCode::OK)
+                .with_content_type("application/trickle-ice-sdpfrag")
+                .unwrap()
+                .with_etag("etag-v2")
+                .unwrap()
+                .with_body(server_frag.to_vec()),
+        )
         .unwrap();
 
     match event {
@@ -228,24 +222,25 @@ fn whip_client_trickle_ack_with_200_and_etag_is_not_misread_as_ice_restart() {
     let mut client = WhipClient::new(ENDPOINT.into(), None);
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = client
-        .on_response(client::HttpResponse {
-            status: 201,
-            content_type: Some("application/sdp".into()),
-            location: Some(SESSION.into()),
-            etag: Some("etag-v1".into()),
-            body: SDP_ANSWER.to_vec(),
-        })
+        .on_response(
+            client::HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_etag("etag-v1")
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
         .unwrap();
 
     let _ = client.flush_candidates(ICE_FRAG.to_vec()).unwrap();
     let event = client
-        .on_response(client::HttpResponse {
-            status: 200,
-            content_type: None,
-            location: None,
-            etag: Some("etag-v2".into()),
-            body: Vec::new(),
-        })
+        .on_response(
+            client::HttpResponse::new(StatusCode::OK)
+                .with_etag("etag-v2")
+                .unwrap(),
+        )
         .unwrap();
     assert!(
         event.is_none(),
@@ -268,24 +263,21 @@ fn whip_client_terminate_ack_with_204_transitions_to_closed() {
     let mut client = WhipClient::new(ENDPOINT.into(), None);
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = client
-        .on_response(client::HttpResponse {
-            status: 201,
-            content_type: Some("application/sdp".into()),
-            location: Some(SESSION.into()),
-            etag: Some("etag-v1".into()),
-            body: SDP_ANSWER.to_vec(),
-        })
+        .on_response(
+            client::HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_etag("etag-v1")
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
         .unwrap();
 
     let _ = client.terminate().unwrap();
     let event = client
-        .on_response(client::HttpResponse {
-            status: 204,
-            content_type: None,
-            location: None,
-            etag: None,
-            body: Vec::new(),
-        })
+        .on_response(client::HttpResponse::new(StatusCode::NO_CONTENT))
         .unwrap();
     assert!(matches!(event, Some(client::Event::Terminated)));
     assert_eq!(*client.state(), client::State::Closed);
@@ -300,38 +292,38 @@ fn whip_client_bearer_auth() {
     let req = client.offer(SDP_OFFER.to_vec()).unwrap();
     let auth = req
         .headers
-        .iter()
-        .find(|(k, _)| k == "Authorization")
-        .map(|(_, v)| v.as_str());
+        .get("Authorization")
+        .map(|v| v.to_str().unwrap());
     assert_eq!(auth, Some("Bearer my-secret-token"));
 
     // Establish session
     let _ = client
-        .on_response(client::HttpResponse {
-            status: 201,
-            content_type: Some("application/sdp".into()),
-            location: Some(SESSION.into()),
-            etag: Some("e".into()),
-            body: SDP_ANSWER.to_vec(),
-        })
+        .on_response(
+            client::HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_etag("e")
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
         .unwrap();
 
     // PATCH — should also have Authorization header
     let req = client.flush_candidates(ICE_FRAG.to_vec()).unwrap();
     let auth = req
         .headers
-        .iter()
-        .find(|(k, _)| k == "Authorization")
-        .map(|(_, v)| v.as_str());
+        .get("Authorization")
+        .map(|v| v.to_str().unwrap());
     assert_eq!(auth, Some("Bearer my-secret-token"));
 
     // DELETE — should also have Authorization header
     let req = client.terminate().unwrap();
     let auth = req
         .headers
-        .iter()
-        .find(|(k, _)| k == "Authorization")
-        .map(|(_, v)| v.as_str());
+        .get("Authorization")
+        .map(|v| v.to_str().unwrap());
     assert_eq!(auth, Some("Bearer my-secret-token"));
 }
 
@@ -340,13 +332,14 @@ fn whip_client_missing_location_on_201() {
     let mut client = WhipClient::new(ENDPOINT.into(), None);
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
 
-    let err = client.on_response(client::HttpResponse {
-        status: 201,
-        content_type: Some("application/sdp".into()),
-        location: None,
-        etag: Some("e".into()),
-        body: SDP_ANSWER.to_vec(),
-    });
+    let err = client.on_response(
+        client::HttpResponse::new(StatusCode::CREATED)
+            .with_content_type("application/sdp")
+            .unwrap()
+            .with_etag("e")
+            .unwrap()
+            .with_body(SDP_ANSWER.to_vec()),
+    );
     assert!(matches!(
         err.unwrap_err(),
         Error::MissingHeader { header: "Location" }
@@ -358,13 +351,7 @@ fn whip_client_http_error_propagated() {
     let mut client = WhipClient::new(ENDPOINT.into(), None);
     let _ = client.offer(SDP_OFFER.to_vec()).unwrap();
 
-    let err = client.on_response(client::HttpResponse {
-        status: 503,
-        content_type: None,
-        location: None,
-        etag: None,
-        body: Vec::new(),
-    });
+    let err = client.on_response(client::HttpResponse::new(StatusCode::SERVICE_UNAVAILABLE));
     assert!(matches!(err.unwrap_err(), Error::Http { status: 503 }));
 }
 
@@ -384,15 +371,21 @@ fn whip_server_full_lifecycle() {
 
     // 2. accept() — transitions to Established, returns 201
     let resp = session.accept(SDP_ANSWER.to_vec(), "etag1".into());
-    assert_eq!(resp.status, 201);
-    assert_eq!(resp.content_type, Some("application/sdp"));
+    assert_eq!(resp.status, StatusCode::CREATED);
+    assert_eq!(
+        resp.headers
+            .typed_get::<headers::ContentType>()
+            .unwrap()
+            .to_string(),
+        "application/sdp"
+    );
     assert_eq!(resp.body, SDP_ANSWER);
     // Location header
-    let location = resp.headers.iter().find(|(k, _)| k == "Location");
-    assert_eq!(location.unwrap().1, SESSION);
+    let location = resp.headers.get("Location");
+    assert_eq!(location.unwrap(), SESSION);
     // ETag header
-    let etag = resp.headers.iter().find(|(k, _)| k == "ETag");
-    assert_eq!(etag.unwrap().1, "\"etag1\"");
+    let etag = resp.headers.get("ETag");
+    assert_eq!(etag.unwrap(), "\"etag1\"");
     assert!(matches!(
         session.state(),
         server::State::Established { etag } if etag == "etag1"
@@ -400,13 +393,13 @@ fn whip_server_full_lifecycle() {
 
     // 3. on_patch() — trickle ICE (matching ETag)
     let event = session
-        .on_patch(ICE_FRAG.to_vec(), Some("\"etag1\""))
+        .on_patch(ICE_FRAG.to_vec(), &if_match("\"etag1\""))
         .unwrap();
     assert!(matches!(event, server::Event::TrickleIce { .. }));
 
     // 4. ack_trickle() — returns 204
     let resp = session.ack_trickle();
-    assert_eq!(resp.status, 204);
+    assert_eq!(resp.status, StatusCode::NO_CONTENT);
     assert!(resp.body.is_empty());
 
     // 5. on_delete() — transitions to Closed
@@ -416,7 +409,7 @@ fn whip_server_full_lifecycle() {
 
     // 6. ack_delete() — returns 200
     let resp = session.ack_delete();
-    assert_eq!(resp.status, 200);
+    assert_eq!(resp.status, StatusCode::OK);
 }
 
 #[test]
@@ -427,17 +420,25 @@ fn whip_server_ice_restart() {
 
     // ICE restart — If-Match: "*"
     let restart_frag = b"a=ice-ufrag:new\r\n";
-    let event = session.on_patch(restart_frag.to_vec(), Some("*")).unwrap();
+    let event = session
+        .on_patch(restart_frag.to_vec(), &if_match("*"))
+        .unwrap();
     assert!(matches!(event, server::Event::IceRestart { .. }));
 
     // ack_restart — updates ETag, returns 200
     let server_frag = b"a=ice-ufrag:srv\r\n";
     let resp = session.ack_restart(server_frag.to_vec(), "e2".into());
-    assert_eq!(resp.status, 200);
-    assert_eq!(resp.content_type, Some("application/trickle-ice-sdpfrag"));
+    assert_eq!(resp.status, StatusCode::OK);
+    assert_eq!(
+        resp.headers
+            .typed_get::<headers::ContentType>()
+            .unwrap()
+            .to_string(),
+        "application/trickle-ice-sdpfrag"
+    );
     assert_eq!(resp.body, server_frag);
-    let etag = resp.headers.iter().find(|(k, _)| k == "ETag");
-    assert_eq!(etag.unwrap().1, "\"e2\"");
+    let etag = resp.headers.get("ETag");
+    assert_eq!(etag.unwrap(), "\"e2\"");
     assert!(matches!(
         session.state(),
         server::State::Established { etag } if etag == "e2"
@@ -450,10 +451,10 @@ fn whip_server_etag_mismatch() {
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
     let _ = session.accept(SDP_ANSWER.to_vec(), "correct".into());
 
-    let err = session.on_patch(ICE_FRAG.to_vec(), Some("\"wrong\""));
+    let err = session.on_patch(ICE_FRAG.to_vec(), &if_match("\"wrong\""));
     assert!(matches!(
         err.unwrap_err(),
-        Error::ETagMismatch { expected, got } if expected == "correct" && got == "wrong"
+        Error::ETagMismatch { expected, got } if expected == "correct" && got == "\"wrong\""
     ));
 }
 
@@ -462,7 +463,7 @@ fn whip_server_wrong_state_errors() {
     let mut session = WhipSession::new(SESSION.into());
 
     // PATCH before offer accepted -> error
-    let err = session.on_patch(ICE_FRAG.to_vec(), None);
+    let err = session.on_patch(ICE_FRAG.to_vec(), &HeaderMap::new());
     assert!(matches!(err.unwrap_err(), Error::WrongState { .. }));
 
     // DELETE before established -> error
@@ -478,7 +479,11 @@ fn whip_server_wrong_state_errors() {
     // Close and try everything -> errors
     let _ = session.on_delete().unwrap();
     assert!(session.on_post(SDP_OFFER.to_vec()).is_err());
-    assert!(session.on_patch(ICE_FRAG.to_vec(), None).is_err());
+    assert!(
+        session
+            .on_patch(ICE_FRAG.to_vec(), &HeaderMap::new())
+            .is_err()
+    );
     assert!(session.on_delete().is_err());
 }
 
@@ -489,7 +494,9 @@ fn whip_server_trickle_no_if_match() {
     let _ = session.accept(SDP_ANSWER.to_vec(), "e".into());
 
     // PATCH without If-Match is valid for trickle ICE
-    let event = session.on_patch(ICE_FRAG.to_vec(), None).unwrap();
+    let event = session
+        .on_patch(ICE_FRAG.to_vec(), &HeaderMap::new())
+        .unwrap();
     match event {
         server::Event::TrickleIce {
             sdp_fragment,

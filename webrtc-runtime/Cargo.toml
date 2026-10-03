@@ -17,16 +17,18 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-# `default-features = false` on both, forwarded by this crate's own `std`
-# feature below. Without that forwarding the advertised `no_std` build was a
-# fiction: `--no-default-features` still pulled a std `broadcast-common` and a
-# std `thiserror`, so the crate never linked without the std runtime.
-broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
-thiserror = { version = "2", default-features = false }
+# The WHIP/WHEP core is `std` (SP2.2: it speaks `http`/`headers` types), so both
+# take their default (std) features in every configuration; the `std` feature
+# below is kept as a name so `default-features = false` consumers still resolve.
+broadcast-common = { path = "../broadcast-common", version = "9.3" }
+thiserror = { version = "2" }
 # `broadcast-auth` and `log` were declared here and referenced by not one line
 # of this crate. Both are std-only, so they alone made the bare-metal build
 # impossible — dead weight that cost the crate its headline property.
 serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
+# WHIP/WHEP state machines speak `http`/`headers` types (SP2.2): the core is `std`.
+http        = "1"
+headers     = "0.4"
 
 # ---------------------------------------------------------------------------
 # `media` feature only (see src/media/mod.rs). All optional: the default
@@ -49,6 +51,9 @@ bytes       = { version = "1",    optional = true }
 # crates themselves, and this is the same minimal RustCrypto crate the
 # feasibility spike used.
 sha2        = { version = "0.11", optional = true }
+# SDP fingerprint via typed attributes (SP4) and `stun:` host formatting (SP3).
+sdp-types   = { version = "0.2", optional = true }
+url         = { version = "2", optional = true }
 
 [features]
 default = ["std"]
@@ -69,10 +74,17 @@ media = [
     "dep:sansio",
     "dep:bytes",
     "dep:sha2",
+    "dep:sdp-types",
+    "dep:url",
 ]
 
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
+# The WHIP-lite example's signalling endpoint (Task 10).
+axum  = "0.8"
+# The WHIP-lite example reads the offer and writes the answer with `sdp-types`
+# (also the `media` feature's optional dependency; examples resolve dev-deps).
+sdp-types = "0.2"
 # Fixture-verification only (tests/srtp_rfc3711_vectors.rs): an independent,
 # from-spec-text AES-CM + HMAC-SHA1 implementation used to cross-check
 # rtc-srtp's own output against the RFC 3711 Appendix B test vectors. These

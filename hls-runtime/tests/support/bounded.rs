@@ -5,18 +5,18 @@
 //! the write end closes it. A tool that leaves a grandchild holding stdout
 //! (`mediastreamvalidator` does) therefore blocks `output()` forever even
 //! after the tool itself exited (defunct). This runner redirects stdout and
-//! stderr to temp FILES (no pipe to hold open), polls `try_wait` against a
-//! hard deadline, and kills the child on overrun with a clear error.
+//! stderr to temp FILES (no pipe to hold open), waits for the child with
+//! `wait_timeout` against a hard deadline (no poll loop, no sleeping), and
+//! kills the child on overrun with a clear error.
 
 use std::fs::{self, File};
 use std::io;
 use std::path::PathBuf;
 use std::process::{Command, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
-/// `try_wait` poll interval.
-const POLL_INTERVAL: Duration = Duration::from_millis(20);
+use wait_timeout::ChildExt;
 
 static CALL_COUNTER: AtomicU64 = AtomicU64::new(0);
 
@@ -48,23 +48,16 @@ fn run(
         .stdout(Stdio::from(File::create(out_path)?))
         .stderr(Stdio::from(File::create(err_path)?))
         .spawn()?;
-    let start = Instant::now();
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
-        }
-        if start.elapsed() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(io::Error::new(
-                io::ErrorKind::TimedOut,
-                format!(
-                    "{:?} still running after the {deadline:?} hard deadline; killed",
-                    cmd.get_program()
-                ),
-            ));
-        }
-        std::thread::sleep(POLL_INTERVAL);
+    let Some(status) = child.wait_timeout(deadline)? else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return Err(io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!(
+                "{:?} still running after the {deadline:?} hard deadline; killed",
+                cmd.get_program()
+            ),
+        ));
     };
     Ok(Output {
         status,

@@ -8,6 +8,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `HlsClient::next_wait()` (the queued `WaitMs` hint as a `Duration`, `no_std`) and `HlsClient::poll_timeout(&mut self, now)` (`std`): the wait's ABSOLUTE deadline, anchored at the first query and identical on every re-query until the wait is drained with `poll()`, so unrelated wake-ups cannot re-arm it. A wait is queued behind the fetches `on_playlist` queued with it, so it is reported once those are drained.
 - `server::HlsOrigin::master_playlist(name)` — a master playlist whose
   `BANDWIDTH` is the measured peak segment bitrate (segment bytes over
   duration, rounded up, never lowered when the peak segment leaves the
@@ -36,6 +37,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `EXT-X-TARGETDURATION`) (#1089).
 
 ### Changed (breaking)
+- `client::TokioClientConfig` gained `connect_timeout` (10 s), `jitter` (`true`) and `cancel` (a `tokio_util::sync::CancellationToken`) with `with_auth`/`with_cancel`/`with_connect_timeout`/`with_jitter`: a struct literal without `..Default::default()` no longer compiles. Once `cancel` fires, `TokioClient::next_output` abandons its in-flight request or backoff sleep and returns `Ok(None)`. Retries use `backon`'s exponential schedule with jitter (each delay `d` becomes a random value in `[d, 2d)`, clamped to `max_retry_backoff`, which stays a hard maximum); `TokioError::Stalled` replaces the 10 ms defensive sleep when the core queued no action and the stream had not ended (never observed); byte ranges are sent as a typed `headers::Range`. The `tokio` feature now needs `backon`, `headers` and `tokio-util`.
+- Playlist URI resolution is RFC 3986 (`url::Url::join`): `..` segments are resolved (`../x.m4s` against `http://h/a/b/p.m3u8` is `http://h/a/x.m4s`, not `http://h/a/b/../x.m4s`) and a `://` inside a relative reference's query no longer makes it look absolute. Results are normalised (`HTTP://H.Example/X` becomes `http://h.example/X`, spaces are percent-encoded, a default port is dropped). A relative playlist URL still gives a relative result.
+- `Action::playlist_request_url` builds the query with `query_pairs_mut`: the `_HLS_msn`/`_HLS_part`/`_HLS_skip` pairs now precede a fragment (`...?a=1#f` gives `...?a=1&_HLS_msn=5#f`; the old string builder produced `...?a=1#f&_HLS_msn=5`, where the pair was part of the fragment and never sent).
+- `EXT-X-PROGRAM-DATE-TIME` is parsed with `jiff::Timestamp`: a leap second (`23:59:60`) is clamped to `:59`, where the hand-written parser added 60 s to the minute.
 - **Every resource name served `immutable` carries a per-origin instance
   token** (audit r09-C2, #1030). `HlsOrigin::instance()` is a number that
   differs for every origin built — in this process (strictly increasing) and
@@ -139,6 +144,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `CODECS` derived from the previous init instead of keeping them (#1089).
 
 ### Fixed
+- Defect 7: relative playlist references containing `..` were joined textually (`http://h/a/b/../x.m4s`); see the URL resolution entry above.
 - `HlsOrigin`'s locks are poison-tolerant (a panic in one request no longer
   panics every later one), `render_playlist` copies the window and releases
   its lock before querying the `Trunk`, and a request with no segment

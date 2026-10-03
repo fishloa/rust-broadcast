@@ -317,7 +317,7 @@ pub async fn recv_and_feed(
         return Ok(StreamStatus::Ended);
     };
     driver.feed(&bytes, now);
-    Ok(StreamStatus::Fed(bytes))
+    Ok(StreamStatus::Fed(bytes.to_vec()))
 }
 
 /// Drives an already-open `sock` through a fresh [`TsIngestSession`] until

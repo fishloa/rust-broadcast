@@ -23,6 +23,7 @@ use rtc_shared::{EcnCodepoint, TaggedBytesMut, TransportContext, TransportProtoc
 use rtc_srtp::context::Context as SrtpContext;
 use rtc_srtp::protection_profile::ProtectionProfile;
 use sansio::Protocol;
+use sdp_types::{Attribute, Fingerprint, HashFunc, Session, TypedAttribute};
 use sha2::{Digest, Sha256};
 
 use crate::Error;
@@ -121,46 +122,29 @@ const FINGERPRINT_LEN: usize = 32;
 pub const MAX_REMOTE_CANDIDATES: usize = 100;
 
 /// Parses an SDP `a=fingerprint` attribute *value* (`"sha-256 AB:CD:…"`,
-/// RFC 8122 §5) into its raw digest: the hash-function token (case-
-/// insensitive, and only [`FINGERPRINT_HASH_TOKEN`] is accepted — SHA-256
-/// is mandatory per RFC 8827 §6.5), then exactly 32 colon-separated hex
-/// bytes (case-insensitive). Anything else is an `Err` describing why.
+/// RFC 8122 §5) into its raw digest, through `sdp-types`'s typed
+/// [`Fingerprint`]: the hash-function token (case-insensitive, and only
+/// SHA-256 is accepted — it is mandatory per RFC 8827 §6.5), then a
+/// case-insensitive hex digest that must decode to exactly 32 bytes. (The typed
+/// parser also accepts the digest without colons.) Anything else is an `Err`
+/// describing why.
 fn parse_fingerprint_value(value: &str) -> Result<[u8; FINGERPRINT_LEN], String> {
-    let mut parts = value.split_whitespace();
-    let token = parts.next().unwrap_or_default();
-    if !token.eq_ignore_ascii_case(FINGERPRINT_HASH_TOKEN) {
+    let fp: Fingerprint = value
+        .trim()
+        .parse()
+        .map_err(|e| format!("remote_fingerprint {value:?}: {e}"))?;
+    if fp.hash_func != HashFunc::Sha256 {
         return Err(format!(
             "remote_fingerprint {value:?} must use the {FINGERPRINT_HASH_TOKEN} hash function \
              (RFC 8122 §5, RFC 8827 §6.5)"
         ));
     }
-    let Some(hex) = parts.next() else {
-        return Err(format!(
-            "remote_fingerprint {value:?} has no digest after the {FINGERPRINT_HASH_TOKEN} token"
-        ));
-    };
-    if parts.next().is_some() {
-        return Err(format!("remote_fingerprint {value:?} has trailing data"));
-    }
-    let bytes: Vec<&str> = hex.split(':').collect();
-    if bytes.len() != FINGERPRINT_LEN {
-        return Err(format!(
-            "remote_fingerprint digest must be exactly {FINGERPRINT_LEN} colon-separated hex \
-             bytes, got {}",
-            bytes.len()
-        ));
-    }
-    let mut digest = [0u8; FINGERPRINT_LEN];
-    for (slot, part) in digest.iter_mut().zip(&bytes) {
-        if part.len() != 2 {
-            return Err(format!(
-                "remote_fingerprint digest byte {part:?} is not exactly two hex digits"
-            ));
-        }
-        *slot = u8::from_str_radix(part, 16)
-            .map_err(|e| format!("remote_fingerprint digest byte {part:?}: {e}"))?;
-    }
-    Ok(digest)
+    <[u8; FINGERPRINT_LEN]>::try_from(fp.fingerprint.as_slice()).map_err(|_| {
+        format!(
+            "remote_fingerprint digest must be exactly {FINGERPRINT_LEN} bytes, got {}",
+            fp.fingerprint.len()
+        )
+    })
 }
 
 /// Equality of two digests without an early-exit loop: fold the XOR of every
@@ -188,34 +172,54 @@ fn peer_cert_fingerprint_ok(peer_certs: &[Vec<u8>], expected: &[u8; FINGERPRINT_
 }
 
 /// Read the remote SDP's DTLS certificate fingerprint: the value of its
-/// first `a=fingerprint:` line (RFC 8122 §5), e.g. `"sha-256 AB:CD:…"`.
+/// first `a=fingerprint:` attribute (RFC 8122 §5), e.g. `"sha-256 AB:CD:…"`,
+/// returned in the normalised text form of `sdp-types`'s typed
+/// [`Fingerprint`] (lower-case hash token, upper-case colon-hex digest).
 ///
-/// Media-level sections are searched before session-level lines: a bundled
-/// offer signals the fingerprint per `m=` section and those are the ones a
-/// peer actually commits to, so a media-level value wins when both exist
-/// (the attribute is legal at either level, RFC 8866 §5.13). Returns `None`
-/// only when the SDP carries no `a=fingerprint` anywhere — callers must
-/// then reject the session rather than build a transport that could never
-/// be verified. Pair with [`MediaTransportConfig::remote_fingerprint`],
-/// which validates the returned value's shape at construction time.
+/// The SDP is parsed with [`Session::parse`], so it must be a well-formed
+/// session description (`v=`, `o=`, `s=`, `t=`). Media-level sections are
+/// searched before session-level: a bundled offer signals the fingerprint per
+/// `m=` section and those are the ones a peer actually commits to, so the first
+/// media section carrying one wins when both exist (the attribute is legal at
+/// either level, RFC 8866 §5.13). Returns `None` when the text is not an SDP,
+/// or carries no parseable `a=fingerprint` anywhere — callers must then reject
+/// the session rather than build a transport that could never be verified.
+/// Pair with [`MediaTransportConfig::remote_fingerprint`], which validates the
+/// returned value's shape at construction time.
 pub fn parse_remote_fingerprint(sdp: &str) -> Option<String> {
-    let mut media_level: Option<String> = None;
-    let mut session_level: Option<String> = None;
-    let mut in_media = false;
-    for line in sdp.lines() {
-        if let Some(value) = line.strip_prefix("a=fingerprint:") {
-            if in_media {
-                if media_level.is_none() {
-                    media_level = Some(value.trim().to_string());
-                }
-            } else if session_level.is_none() {
-                session_level = Some(value.trim().to_string());
-            }
-        } else if line.starts_with("m=") {
-            in_media = true;
-        }
+    /// The first `a=fingerprint` of an attribute list: `None` when the list has
+    /// none, `Some(None)` when it has one that does not parse. The value is
+    /// trimmed first (SDP producers do emit a trailing space, which the typed
+    /// parser would reject).
+    fn first_fingerprint(attributes: &[Attribute]) -> Option<Option<Fingerprint>> {
+        attributes
+            .iter()
+            .find(|a| {
+                a.attribute
+                    .eq_ignore_ascii_case(<Fingerprint as TypedAttribute>::NAME)
+            })
+            .map(|a| a.value.as_deref().and_then(|v| v.trim().parse().ok()))
     }
-    media_level.or(session_level)
+    let session = Session::parse(sdp.as_bytes()).ok()?;
+    // The first level that CARRIES a fingerprint decides: a malformed one is
+    // not skipped in favour of a later (session-level) value the peer did not
+    // put in that section.
+    let level = session
+        .medias
+        .iter()
+        .find_map(|m| first_fingerprint(&m.attributes))
+        .or_else(|| first_fingerprint(&session.attributes))?;
+    Some(level?.to_string())
+}
+
+/// The `stun:` URL of a STUN server address (RFC 7064 §3.1): an IPv6 host is
+/// bracketed, the port is always explicit.
+fn stun_url(server: SocketAddr) -> String {
+    let host = match server.ip() {
+        std::net::IpAddr::V4(a) => url::Host::<String>::Ipv4(a),
+        std::net::IpAddr::V6(a) => url::Host::<String>::Ipv6(a),
+    };
+    format!("stun:{host}:{}", server.port())
 }
 
 // ---------------------------------------------------------------------------
@@ -549,6 +553,12 @@ pub struct MediaTransport {
 impl MediaTransport {
     /// Build a transport for one peer connection.
     ///
+    /// `now` is the caller's clock reading at construction: every internal
+    /// timer (ICE agent, STUN gatherer) is scheduled from it, and the
+    /// transport never reads the wall clock itself. Schedule
+    /// [`Self::handle_timeout`] at [`Self::poll_timeout`], never on a fixed
+    /// tick.
+    ///
     /// Generates a fresh self-signed DTLS certificate — WebRTC authenticates
     /// peers by the SDP-signalled fingerprint (RFC 8122), not a CA chain, so
     /// self-signed is the norm — and a host ICE candidate from
@@ -565,7 +575,7 @@ impl MediaTransport {
     /// concrete transport can be built with — see
     /// [`MediaTransportConfig::local_setup`]), or if certificate generation
     /// or ICE/DTLS setup fails.
-    pub fn new(config: MediaTransportConfig) -> Result<Self, Error> {
+    pub fn new(config: MediaTransportConfig, now: Instant) -> Result<Self, Error> {
         let remote_fingerprint_digest =
             parse_fingerprint_value(&config.remote_fingerprint).map_err(Error::Media)?;
         if config.local_setup == SetupRole::ActPass {
@@ -592,6 +602,7 @@ impl MediaTransport {
             remote_fingerprint_digest,
             certificate,
             crypto_provider,
+            now,
         )
     }
 
@@ -605,6 +616,7 @@ impl MediaTransport {
         remote_fingerprint_digest: [u8; FINGERPRINT_LEN],
         certificate: Certificate,
         crypto_provider: Arc<dyn RTCCryptoProvider>,
+        now: Instant,
     ) -> Result<Self, Error> {
         let is_client = config.local_setup == SetupRole::Active;
 
@@ -618,12 +630,8 @@ impl MediaTransport {
             candidate_types: vec![CandidateType::Host, CandidateType::ServerReflexive],
             ..Default::default()
         };
-        let mut ice = IceAgent::new(
-            Instant::now(),
-            Arc::new(agent_config),
-            crypto_provider.clone(),
-        )
-        .map_err(|e| Error::Media(format!("new ice agent: {e}")))?;
+        let mut ice = IceAgent::new(now, Arc::new(agent_config), crypto_provider.clone())
+            .map_err(|e| Error::Media(format!("new ice agent: {e}")))?;
 
         let host_candidate = CandidateHostConfig {
             base_config: CandidateConfig {
@@ -641,7 +649,7 @@ impl MediaTransport {
             .map_err(|e| Error::Media(format!("add host candidate: {e}")))?;
 
         ice.start_connectivity_checks(
-            Instant::now(),
+            now,
             config.is_controlling,
             config.remote_ice_ufrag.clone(),
             config.remote_ice_pwd.clone(),
@@ -705,7 +713,7 @@ impl MediaTransport {
         );
 
         let gather = match config.stun_server {
-            Some(server) => Some(StunGather::new(Instant::now(), config.local_addr, server)?),
+            Some(server) => Some(StunGather::new(now, config.local_addr, server)?),
             None => None,
         };
 
@@ -732,6 +740,18 @@ impl MediaTransport {
             max_remote_candidates: config.max_remote_candidates,
             known_remote_addrs: HashSet::new(),
         })
+    }
+
+    /// Local ICE candidates as `a=candidate:` attribute bodies (the
+    /// `rtc_ice::candidate::Candidate::marshal` form, without the
+    /// `candidate:` prefix), for the caller's SDP answer or Trickle-ICE
+    /// fragment.
+    pub fn local_candidates(&self) -> Vec<String> {
+        self.ice
+            .get_local_candidates()
+            .iter()
+            .map(|c| c.marshal())
+            .collect()
     }
 
     /// The SHA-256 fingerprint of this side's self-signed DTLS certificate
@@ -834,6 +854,33 @@ impl MediaTransport {
         }
         self.purge_expired_retired_key(now);
         events
+    }
+
+    /// Earliest instant at which [`Self::handle_timeout`] has work: the
+    /// minimum over the ICE agent, every DTLS association, the STUN gatherer
+    /// and the retired-key purge. `None` when nothing is scheduled.
+    ///
+    /// Takes `&mut self` (a `&self` aggregate is impossible): the upstream
+    /// `rtc-ice`/`rtc-stun` `Protocol::poll_timeout` takes `&mut self`.
+    pub fn poll_timeout(&mut self) -> Option<Instant> {
+        fn earliest(a: Option<Instant>, b: Option<Instant>) -> Option<Instant> {
+            match (a, b) {
+                (Some(a), Some(b)) => Some(a.min(b)),
+                (a, b) => a.or(b),
+            }
+        }
+        let mut next = Protocol::poll_timeout(&mut self.ice);
+        let peers: Vec<SocketAddr> = self.dtls.get_connections_keys().copied().collect();
+        for peer in peers {
+            next = earliest(next, self.dtls.poll_timeout(&peer));
+        }
+        if let Some(g) = &mut self.gather {
+            next = earliest(next, g.poll_timeout());
+        }
+        if let Some((_, purge_at)) = &self.retired_srtp_read {
+            next = earliest(next, Some(*purge_at));
+        }
+        next
     }
 
     /// RFC 5764 §5.2's retention window on the previous read key
@@ -1308,7 +1355,7 @@ impl MediaTransport {
             },
             rel_addr: self.local_addr.ip().to_string(),
             rel_port: self.local_addr.port(),
-            url: Some(format!("stun:{stun_server}")),
+            url: Some(stun_url(stun_server)),
         }
         .new_candidate_server_reflexive()
         .map_err(|e| Error::Media(format!("build server-reflexive candidate: {e}")))?;
@@ -1488,12 +1535,67 @@ mod tests {
         }
     }
 
+    /// Review-focus 5 (clock half): `new` used to read the wall clock three times. Built at a `now`
+    /// one hour in the FUTURE, every deadline must be at or after that `now`; a wall-clock read would
+    /// put the ICE agent's first timer about an hour earlier.
+    #[test]
+    fn a_transport_schedules_from_the_supplied_now_not_the_wall_clock() {
+        let t0 = Instant::now() + Duration::from_secs(3600);
+        let mut cfg = test_config(SetupRole::Active);
+        cfg.stun_server = Some("127.0.0.1:3478".parse().unwrap());
+        let mut mt = MediaTransport::new(cfg, t0).unwrap();
+        let d = mt
+            .poll_timeout()
+            .expect("ICE connectivity checks and the STUN gatherer have timers");
+        assert!(d >= t0, "deadline is {:?} BEFORE the supplied now", t0 - d);
+        assert!(
+            d <= t0 + Duration::from_secs(30),
+            "and within a sane retransmission horizon"
+        );
+    }
+
+    #[test]
+    fn poll_timeout_always_moves_forward_so_a_driver_cannot_spin() {
+        let t0 = Instant::now();
+        let mut cfg = test_config(SetupRole::Active);
+        cfg.stun_server = Some("127.0.0.1:3478".parse().unwrap());
+        let mut mt = MediaTransport::new(cfg, t0).unwrap();
+        let mut last = t0;
+        for _ in 0..6 {
+            let Some(d) = mt.poll_timeout() else { return };
+            assert!(d >= last, "deadline went backwards");
+            let _ = mt.handle_timeout(d);
+            while mt.poll_transmit().is_some() {}
+            let next = mt.poll_timeout();
+            assert!(
+                next.is_none_or(|n| n > d),
+                "handle_timeout({d:?}) left a deadline that is not in the future: {next:?}"
+            );
+            last = d;
+        }
+    }
+
+    #[test]
+    fn local_candidates_lists_the_host_candidate_as_an_attribute_body() {
+        let cfg = test_config(SetupRole::Passive);
+        let addr = cfg.local_addr;
+        let mt = MediaTransport::new(cfg, Instant::now()).unwrap();
+        let c = mt.local_candidates();
+        assert_eq!(c.len(), 1);
+        assert!(
+            c[0].contains(&format!("{} {} typ host", addr.ip(), addr.port())),
+            "{}",
+            c[0]
+        );
+        assert!(!c[0].starts_with("candidate:") && !c[0].starts_with("a="));
+    }
+
     #[test]
     fn new_rejects_malformed_remote_fingerprint() {
         for bad in ["md5 00:11", "sha-256 00:11", "", "sha-256"] {
             let mut cfg = test_config(SetupRole::Passive);
             cfg.remote_fingerprint = bad.to_string();
-            match MediaTransport::new(cfg) {
+            match MediaTransport::new(cfg, Instant::now()) {
                 Err(Error::Media(_)) => {}
                 Err(other) => panic!("expected Error::Media for {bad:?}, got {other:?}"),
                 Ok(_) => panic!("remote_fingerprint {bad:?} must be rejected by new()"),
@@ -1542,19 +1644,92 @@ mod tests {
         assert!(!digests_equal(&a, &[1u8; 31]));
     }
 
+    const SDP_HEAD: &str = "v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\n";
+
     #[test]
     fn parse_remote_fingerprint_media_beats_session() {
-        let sdp = "v=0\r\na=fingerprint:sha-256 AA\r\nm=audio 9 RTP/AVP\r\n\
-                   a=fingerprint:sha-256 BB\r\n";
-        assert_eq!(parse_remote_fingerprint(sdp).as_deref(), Some("sha-256 BB"));
-        let sdp = "v=0\r\na=fingerprint:sha-256 AA \r\nm=audio 9 RTP/AVP\r\n";
-        assert_eq!(parse_remote_fingerprint(sdp).as_deref(), Some("sha-256 AA"));
-        assert_eq!(parse_remote_fingerprint("v=0\r\n"), None);
+        let sdp = format!(
+            "{SDP_HEAD}a=fingerprint:sha-256 AA\r\nm=audio 9 RTP/AVP 0\r\na=fingerprint:sha-256 BB\r\n"
+        );
+        assert_eq!(
+            parse_remote_fingerprint(&sdp).as_deref(),
+            Some("sha-256 BB")
+        );
+        let sdp = format!("{SDP_HEAD}a=fingerprint:sha-256 AA \r\nm=audio 9 RTP/AVP 0\r\n");
+        assert_eq!(
+            parse_remote_fingerprint(&sdp).as_deref(),
+            Some("sha-256 AA"),
+            "trailing space tolerated"
+        );
+        assert_eq!(parse_remote_fingerprint(SDP_HEAD), None);
+    }
+
+    #[test]
+    fn a_malformed_media_fingerprint_is_not_skipped_for_the_session_level_one() {
+        let sdp = format!(
+            "{SDP_HEAD}a=fingerprint:sha-256 AA\r\nm=audio 9 RTP/AVP 0\r\na=fingerprint:sha-256 not-hex\r\n"
+        );
+        assert_eq!(parse_remote_fingerprint(&sdp), None);
+    }
+
+    #[test]
+    fn parse_remote_fingerprint_takes_the_first_media_section_of_a_bundle() {
+        let sdp = format!(
+            "{SDP_HEAD}m=audio 9 RTP/AVP 0\r\na=fingerprint:sha-256 11\r\nm=video 9 RTP/AVP 96\r\na=fingerprint:sha-256 22\r\n"
+        );
+        assert_eq!(
+            parse_remote_fingerprint(&sdp).as_deref(),
+            Some("sha-256 11")
+        );
+    }
+
+    #[test]
+    fn parse_remote_fingerprint_normalises_through_the_typed_attribute() {
+        let sdp = format!("{SDP_HEAD}a=fingerprint:SHA-256 ab:cd:0f\r\n");
+        assert_eq!(
+            parse_remote_fingerprint(&sdp).as_deref(),
+            Some("sha-256 AB:CD:0F")
+        );
+    }
+
+    #[test]
+    fn something_that_is_not_an_sdp_has_no_fingerprint() {
+        assert_eq!(parse_remote_fingerprint("not sdp at all"), None);
+        assert_eq!(
+            parse_remote_fingerprint("v=0\r\n"),
+            None,
+            "an SDP without o=/s=/t= is not a session"
+        );
+    }
+
+    #[test]
+    fn a_colonless_32_byte_digest_is_accepted_like_the_typed_attribute_does() {
+        let hex = "AB".repeat(32);
+        assert_eq!(
+            parse_fingerprint_value(&format!("sha-256 {hex}")).unwrap(),
+            [0xAB; 32]
+        );
+        assert!(
+            parse_fingerprint_value(&format!("sha-256 {}", "AB".repeat(31))).is_err(),
+            "31 bytes"
+        );
+    }
+
+    #[test]
+    fn stun_urls_bracket_ipv6_and_keep_the_port() {
+        assert_eq!(
+            stun_url("192.0.2.1:3478".parse().unwrap()),
+            "stun:192.0.2.1:3478"
+        );
+        assert_eq!(
+            stun_url("[2001:db8::1]:3478".parse().unwrap()),
+            "stun:[2001:db8::1]:3478"
+        );
     }
 
     #[test]
     fn rejects_actpass_setup_role() {
-        match MediaTransport::new(test_config(SetupRole::ActPass)) {
+        match MediaTransport::new(test_config(SetupRole::ActPass), Instant::now()) {
             Err(Error::Media(_)) => {}
             Err(other) => panic!("expected Error::Media, got {other:?}"),
             Ok(_) => panic!("expected an error for local_setup: ActPass"),
@@ -1566,7 +1741,7 @@ mod tests {
         // Issue #948 item 2: SetupRole::Active used to be rejected
         // unconditionally. `Endpoint::connect` (rtc-dtls) genuinely
         // supports the DTLS-client role sans-IO, so this must now build.
-        let mt = MediaTransport::new(test_config(SetupRole::Active))
+        let mt = MediaTransport::new(test_config(SetupRole::Active), Instant::now())
             .expect("Active (DTLS client) role must now be buildable");
         assert!(
             mt.dtls_client_config.is_some(),
@@ -1576,7 +1751,7 @@ mod tests {
 
     #[test]
     fn accepts_passive_setup_role_with_no_client_config() {
-        let mt = MediaTransport::new(test_config(SetupRole::Passive))
+        let mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now())
             .expect("Passive (DTLS server) role must still build");
         assert!(
             mt.dtls_client_config.is_none(),
@@ -1590,8 +1765,8 @@ mod tests {
         // more than MAX_REMOTE_CANDIDATES distinct, well-formed host
         // candidate lines and check every one past the cap is rejected, and
         // that the transport's admitted count never exceeds the cap.
-        let mut mt =
-            MediaTransport::new(test_config(SetupRole::Passive)).expect("Passive role must build");
+        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now())
+            .expect("Passive role must build");
 
         let extra = 5;
         let mut accepted = 0usize;
@@ -1631,7 +1806,7 @@ mod tests {
         let mut config = test_config(SetupRole::Passive);
         let small_cap = 3;
         config.max_remote_candidates = small_cap;
-        let mut mt = MediaTransport::new(config).expect("Passive role must build");
+        let mut mt = MediaTransport::new(config, Instant::now()).expect("Passive role must build");
 
         let mut accepted = 0usize;
         let mut rejected = 0usize;
@@ -1765,7 +1940,7 @@ mod tests {
     /// handshake, which `select_read_write_material`'s own test above
     /// already covers independently.
     fn transport_with_appendix_b3_write_context() -> MediaTransport {
-        let mut mt = MediaTransport::new(test_config(SetupRole::Passive)).unwrap();
+        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now()).unwrap();
         mt.srtp_write = Some(
             SrtpContext::new(
                 &APPENDIX_B3_MASTER_KEY,
@@ -1866,7 +2041,7 @@ mod tests {
 
     #[test]
     fn encrypt_rtp_before_handshake_errors() {
-        let mut mt = MediaTransport::new(test_config(SetupRole::Passive)).unwrap();
+        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now()).unwrap();
         let packet = rtp_packet::RtpPacket {
             marker: false,
             payload_type: 96,
@@ -1929,7 +2104,7 @@ mod tests {
     /// `transport_with_appendix_b3_write_context` already does for the
     /// write-only tests above.
     fn transport_with_completed_handshake(setup: SetupRole) -> (MediaTransport, SocketAddr) {
-        let mut mt = MediaTransport::new(test_config(setup)).unwrap();
+        let mut mt = MediaTransport::new(test_config(setup), Instant::now()).unwrap();
         let peer: SocketAddr = "127.0.0.1:5000".parse().unwrap();
         mt.dtls_peer = Some(peer);
         mt.srtp_read = Some(b3_srtp_context());
@@ -1962,7 +2137,7 @@ mod tests {
 
     #[test]
     fn needs_rekey_reports_threshold_crossing_on_every_counter() {
-        let mut mt = MediaTransport::new(test_config(SetupRole::Passive)).unwrap();
+        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now()).unwrap();
         assert!(!mt.needs_rekey());
 
         mt.write_rtp_count = MAXIMUM_LIFETIME_PACKETS - 1;
@@ -2213,7 +2388,7 @@ mod tests {
 
     #[test]
     fn rekey_before_any_handshake_errors() {
-        let mut mt = MediaTransport::new(test_config(SetupRole::Passive)).unwrap();
+        let mut mt = MediaTransport::new(test_config(SetupRole::Passive), Instant::now()).unwrap();
         match mt.rekey(Instant::now()) {
             Err(Error::Media(_)) => {}
             Err(other) => panic!("expected Error::Media, got {other:?}"),
@@ -2411,12 +2586,6 @@ mod tests {
         addr
     }
 
-    /// The candidate-attribute body `unmarshal_candidate` expects (the SDP
-    /// line minus its `a=` prefix).
-    fn host_candidate_line(addr: SocketAddr) -> String {
-        format!("1 1 udp 2130706431 {} {} typ host", addr.ip(), addr.port())
-    }
-
     struct LoopbackPair {
         a: MediaTransport,
         b: MediaTransport,
@@ -2469,6 +2638,7 @@ mod tests {
             parse_fingerprint_value(&format!("sha-256 {fp_b}")).unwrap(),
             cert_a,
             test_crypto(),
+            Instant::now(),
         )
         .unwrap();
         let mut b = MediaTransport::with_certificate(
@@ -2487,12 +2657,11 @@ mod tests {
             parse_fingerprint_value(&format!("sha-256 {fp_a}")).unwrap(),
             cert_b,
             test_crypto(),
+            Instant::now(),
         )
         .unwrap();
-        a.add_remote_candidate(&host_candidate_line(b_addr))
-            .unwrap();
-        b.add_remote_candidate(&host_candidate_line(a_addr))
-            .unwrap();
+        a.add_remote_candidate(&b.local_candidates()[0]).unwrap();
+        b.add_remote_candidate(&a.local_candidates()[0]).unwrap();
         LoopbackPair {
             a,
             b,
@@ -2502,15 +2671,19 @@ mod tests {
     }
 
     /// Pump datagrams between the pair until both report
-    /// `DtlsHandshakeComplete` (panicking after `budget`), recording every
-    /// DTLS-band datagram A sent — its first is the ClientHello, reused by
-    /// the address-gate test.
+    /// `DtlsHandshakeComplete` (panicking after `budget` of VIRTUAL time),
+    /// recording every DTLS-band datagram A sent — its first is the
+    /// ClientHello, reused by the address-gate test.
+    ///
+    /// No sleeping: when a round makes no progress the virtual clock jumps to
+    /// the earlier of the two transports' `poll_timeout` deadlines and runs
+    /// `handle_timeout` there.
     fn pump_until_both_complete(pair: &mut LoopbackPair, budget: Duration) -> Vec<Vec<u8>> {
-        let deadline = Instant::now() + budget;
+        let t0 = Instant::now();
+        let mut now = t0;
         let mut a_dtls_datagrams = Vec::new();
         let (mut a_done, mut b_done) = (false, false);
-        while Instant::now() < deadline && !(a_done && b_done) {
-            let now = Instant::now();
+        while now - t0 <= budget && !(a_done && b_done) {
             let mut progressed = false;
             while let Some(dgram) = pair.a.poll_transmit() {
                 if dgram.bytes.first().is_some_and(|&b| (20..=63).contains(&b)) {
@@ -2539,10 +2712,21 @@ mod tests {
                 }
                 progressed = true;
             }
-            pair.a.handle_timeout(now);
-            pair.b.handle_timeout(now);
-            if !progressed {
-                std::thread::sleep(Duration::from_millis(2));
+            let both_done = a_done && b_done;
+            if !progressed && !both_done {
+                // Nothing in flight: jump the virtual clock to whichever
+                // transport is due next (at least 1 ms ahead, so the loop
+                // always advances).
+                let Some(next) = [pair.a.poll_timeout(), pair.b.poll_timeout()]
+                    .into_iter()
+                    .flatten()
+                    .min()
+                else {
+                    break;
+                };
+                now = next.max(now + Duration::from_millis(1));
+                pair.a.handle_timeout(now);
+                pair.b.handle_timeout(now);
             }
         }
         assert!(
@@ -2617,7 +2801,8 @@ mod tests {
 
         // And before any pair is selected at all, DTLS datagrams are dropped
         // too — a fresh transport never even starts an association.
-        let mut fresh = MediaTransport::new(test_config(SetupRole::Passive)).unwrap();
+        let mut fresh =
+            MediaTransport::new(test_config(SetupRole::Passive), Instant::now()).unwrap();
         let events = fresh
             .handle_datagram(Instant::now(), pair.b_addr, &a_dtls_datagrams[0])
             .unwrap();

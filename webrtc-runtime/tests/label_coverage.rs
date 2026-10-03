@@ -1,24 +1,21 @@
 //! Drift-guard for the spec/field-enum label convention (issue #204).
 //!
 //! webrtc-runtime's public enums are state-machine types (State, Event) and a
-//! structured error — those are skipped from the label convention. `Method` is
-//! NOT skipped: its variants are HTTP verb tokens that appear literally on the
-//! request line, so it carries `name()` + `impl_spec_display!` like any other
-//! wire-token enum.
+//! structured error — those are skipped from the label convention. The HTTP
+//! `Method` the WHIP/WHEP state machines used to declare themselves is now
+//! `http::Method` (re-exported), so no wire-token enum of that kind is left in
+//! this crate.
 //!
-//! This guard checks **per file**, not over the whole crate concatenated. WHIP
-//! and WHEP each declare their own `Method` (different variant sets — WHEP adds
-//! `HEAD`), so a whole-crate scan would let one module's `impl_spec_display!`
-//! satisfy the check for both, and dropping either impl would go unnoticed.
-//! `impl_spec_display!(Method)` resolves `Method` in the module it is invoked
-//! from, so per-file is also the semantically correct scope.
+//! This guard checks **per file**, not over the whole crate concatenated:
+//! `impl_spec_display!(Name)` resolves `Name` in the module it is invoked from,
+//! so per-file is the semantically correct scope.
 //!
 //! `media::transport::MediaEvent` (feature `media`) is likewise skipped: it is
 //! a data-carrying dispatch enum (some variants hold a whole `DecryptedRtp` or
 //! `rtcp_packet::CompoundPacket`), the same shape as WHIP/WHEP's own `Event` —
 //! not a spec/field label. `media::transport::SetupRole` is NOT skipped: its
 //! three variants are the literal SDP `a=setup` tokens (RFC 8842 §4.1), so it
-//! carries `name()` + `impl_spec_display!` like `Method`.
+//! carries `name()` + `impl_spec_display!`.
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -156,12 +153,10 @@ fn expected_spec_enum_set_has_not_silently_drifted() {
         .filter(|e| !SKIP.contains(&e.as_str()))
         .collect();
 
-    // The known label-bearing set: `Method`, declared independently by both
-    // the WHIP client and the WHEP player, plus `SetupRole` (feature `media`).
-    let expected: BTreeSet<String> = ["Method", "SetupRole"]
-        .iter()
-        .map(|s| s.to_string())
-        .collect();
+    // The known label-bearing set: `SetupRole` (feature `media`). (`Method` was
+    // here while the WHIP client and WHEP player each declared their own; they
+    // now re-export `http::Method`.)
+    let expected: BTreeSet<String> = ["SetupRole"].iter().map(|s| s.to_string()).collect();
 
     assert_eq!(
         non_skip, expected,

@@ -4,6 +4,8 @@
 //! (viewer) and server sides — SDP offer/answer, counter-offer exchange,
 //! trickle ICE, ICE restart, teardown, and the no-publisher 409 case.
 
+use headers::HeaderMapExt;
+use http::{HeaderMap, HeaderValue, StatusCode, header};
 use webrtc_runtime::Error;
 use webrtc_runtime::whep::player::{self, WhepPlayer};
 use webrtc_runtime::whep::server::{self, WhepSession};
@@ -14,6 +16,19 @@ const SDP_OFFER: &[u8] = b"v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\n";
 const SDP_ANSWER: &[u8] = b"v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n";
 const SERVER_OFFER: &[u8] = b"v=0\r\no=server 0 0 IN IP4 10.0.0.1\r\n";
 const ICE_FRAG: &[u8] = b"a=ice-ufrag:test\r\na=ice-pwd:test\r\n";
+
+/// Headers of a PATCH request: `Content-Type` and an optional `If-Match`.
+fn patch_headers(content_type: &str, if_match: Option<&str>) -> HeaderMap {
+    let mut m = HeaderMap::new();
+    m.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(content_type).unwrap(),
+    );
+    if let Some(v) = if_match {
+        m.insert(header::IF_MATCH, HeaderValue::from_str(v).unwrap());
+    }
+    m
+}
 
 // ---------------------------------------------------------------------------
 // Player tests
@@ -26,21 +41,24 @@ fn whep_player_direct_accept() {
 
     // 1. offer() — Idle -> OfferSent
     let req = player.offer(SDP_OFFER.to_vec()).unwrap();
-    assert_eq!(req.method, player::Method::Post);
+    assert_eq!(req.method, http::Method::POST);
     assert_eq!(req.url, ENDPOINT);
-    assert_eq!(req.content_type, Some("application/sdp"));
+    assert_eq!(req.content_type().unwrap().to_string(), "application/sdp");
     assert_eq!(req.body, SDP_OFFER);
     assert_eq!(*player.state(), player::State::OfferSent);
 
     // 2. on_response(201) — OfferSent -> Established, emits SdpAnswer
     let event = player
-        .on_response(player::HttpResponse {
-            status: 201,
-            content_type: Some("application/sdp".into()),
-            location: Some(SESSION.into()),
-            etag: Some("e1".into()),
-            body: SDP_ANSWER.to_vec(),
-        })
+        .on_response(
+            player::HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_etag("e1")
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
         .unwrap();
     assert!(matches!(event, Some(player::Event::SdpAnswer(ref a)) if a == SDP_ANSWER));
     assert!(matches!(
@@ -57,13 +75,14 @@ fn whep_player_counter_offer_flow() {
 
     // 1. on_response(406) — OfferSent -> CounterOffered, emits CounterOffer
     let event = player
-        .on_response(player::HttpResponse {
-            status: 406,
-            content_type: Some("application/sdp".into()),
-            location: Some(SESSION.into()),
-            etag: None,
-            body: SERVER_OFFER.to_vec(),
-        })
+        .on_response(
+            player::HttpResponse::new(StatusCode::NOT_ACCEPTABLE)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_body(SERVER_OFFER.to_vec()),
+        )
         .unwrap();
     match event {
         Some(player::Event::CounterOffer(ref body)) => {
@@ -78,20 +97,18 @@ fn whep_player_counter_offer_flow() {
 
     // 2. answer_counter_offer() — sends PATCH with application/sdp
     let req = player.answer_counter_offer(SDP_ANSWER.to_vec()).unwrap();
-    assert_eq!(req.method, player::Method::Patch);
+    assert_eq!(req.method, http::Method::PATCH);
     assert_eq!(req.url, SESSION);
-    assert_eq!(req.content_type, Some("application/sdp"));
+    assert_eq!(req.content_type().unwrap().to_string(), "application/sdp");
     assert_eq!(req.body, SDP_ANSWER);
 
     // 3. on_response(204) — CounterOffered -> Established
     let event = player
-        .on_response(player::HttpResponse {
-            status: 204,
-            content_type: None,
-            location: None,
-            etag: Some("e-after-counter".into()),
-            body: Vec::new(),
-        })
+        .on_response(
+            player::HttpResponse::new(StatusCode::NO_CONTENT)
+                .with_etag("e-after-counter")
+                .unwrap(),
+        )
         .unwrap();
     assert!(event.is_none());
     assert!(matches!(
@@ -107,13 +124,7 @@ fn whep_player_no_publisher() {
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
 
     // 409 Conflict -> NoPublisher error
-    let err = player.on_response(player::HttpResponse {
-        status: 409,
-        content_type: None,
-        location: None,
-        etag: None,
-        body: Vec::new(),
-    });
+    let err = player.on_response(player::HttpResponse::new(StatusCode::CONFLICT));
     assert!(matches!(err.unwrap_err(), Error::NoPublisher));
 }
 
@@ -122,41 +133,37 @@ fn whep_player_trickle_ice_and_terminate() {
     let mut player = WhepPlayer::new(ENDPOINT.into(), None);
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = player
-        .on_response(player::HttpResponse {
-            status: 201,
-            content_type: Some("application/sdp".into()),
-            location: Some(SESSION.into()),
-            etag: Some("e1".into()),
-            body: SDP_ANSWER.to_vec(),
-        })
+        .on_response(
+            player::HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_etag("e1")
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
         .unwrap();
 
     // trickle_ice() — PATCH with If-Match
     let req = player.trickle_ice(ICE_FRAG.to_vec()).unwrap();
-    assert_eq!(req.method, player::Method::Patch);
+    assert_eq!(req.method, http::Method::PATCH);
     assert_eq!(req.url, SESSION);
-    assert_eq!(req.content_type, Some("application/trickle-ice-sdpfrag"));
-    let if_match = req
-        .headers
-        .iter()
-        .find(|(k, _)| k == "If-Match")
-        .map(|(_, v)| v.as_str());
+    assert_eq!(
+        req.content_type().unwrap().to_string(),
+        "application/trickle-ice-sdpfrag"
+    );
+    let if_match = req.headers.get("If-Match").map(|v| v.to_str().unwrap());
     assert_eq!(if_match, Some("\"e1\""));
 
     // terminate() — DELETE
     let req = player.terminate().unwrap();
-    assert_eq!(req.method, player::Method::Delete);
+    assert_eq!(req.method, http::Method::DELETE);
     assert_eq!(req.url, SESSION);
 
     // 200 with no ETag -> Terminated
     let event = player
-        .on_response(player::HttpResponse {
-            status: 200,
-            content_type: None,
-            location: None,
-            etag: None,
-            body: Vec::new(),
-        })
+        .on_response(player::HttpResponse::new(StatusCode::OK))
         .unwrap();
     assert!(matches!(event, Some(player::Event::Terminated)));
     assert_eq!(*player.state(), player::State::Closed);
@@ -167,33 +174,33 @@ fn whep_player_ice_restart() {
     let mut player = WhepPlayer::new(ENDPOINT.into(), None);
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = player
-        .on_response(player::HttpResponse {
-            status: 201,
-            content_type: Some("application/sdp".into()),
-            location: Some(SESSION.into()),
-            etag: Some("e1".into()),
-            body: SDP_ANSWER.to_vec(),
-        })
+        .on_response(
+            player::HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_etag("e1")
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
         .unwrap();
 
     // ICE restart — If-Match: "*"
     let req = player.ice_restart(ICE_FRAG.to_vec()).unwrap();
-    let if_match = req
-        .headers
-        .iter()
-        .find(|(k, _)| k == "If-Match")
-        .map(|(_, v)| v.as_str());
+    let if_match = req.headers.get("If-Match").map(|v| v.to_str().unwrap());
     assert_eq!(if_match, Some("*"));
 
     // 200 with new ETag
     let event = player
-        .on_response(player::HttpResponse {
-            status: 200,
-            content_type: Some("application/trickle-ice-sdpfrag".into()),
-            location: None,
-            etag: Some("e2".into()),
-            body: b"a=ice-ufrag:srv\r\n".to_vec(),
-        })
+        .on_response(
+            player::HttpResponse::new(StatusCode::OK)
+                .with_content_type("application/trickle-ice-sdpfrag")
+                .unwrap()
+                .with_etag("e2")
+                .unwrap()
+                .with_body(b"a=ice-ufrag:srv\r\n".to_vec()),
+        )
         .unwrap();
     match event {
         Some(player::Event::IceRestart { new_etag, .. }) => {
@@ -215,24 +222,25 @@ fn whep_player_trickle_ack_with_200_and_etag_is_not_misread_as_ice_restart() {
     let mut player = WhepPlayer::new(ENDPOINT.into(), None);
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = player
-        .on_response(player::HttpResponse {
-            status: 201,
-            content_type: Some("application/sdp".into()),
-            location: Some(SESSION.into()),
-            etag: Some("e1".into()),
-            body: SDP_ANSWER.to_vec(),
-        })
+        .on_response(
+            player::HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_etag("e1")
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
         .unwrap();
 
     let _ = player.trickle_ice(ICE_FRAG.to_vec()).unwrap();
     let event = player
-        .on_response(player::HttpResponse {
-            status: 200,
-            content_type: None,
-            location: None,
-            etag: Some("e2".into()),
-            body: Vec::new(),
-        })
+        .on_response(
+            player::HttpResponse::new(StatusCode::OK)
+                .with_etag("e2")
+                .unwrap(),
+        )
         .unwrap();
     assert!(
         event.is_none(),
@@ -251,24 +259,21 @@ fn whep_player_terminate_ack_with_204_transitions_to_closed() {
     let mut player = WhepPlayer::new(ENDPOINT.into(), None);
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
     let _ = player
-        .on_response(player::HttpResponse {
-            status: 201,
-            content_type: Some("application/sdp".into()),
-            location: Some(SESSION.into()),
-            etag: Some("e1".into()),
-            body: SDP_ANSWER.to_vec(),
-        })
+        .on_response(
+            player::HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .unwrap()
+                .with_location(SESSION)
+                .unwrap()
+                .with_etag("e1")
+                .unwrap()
+                .with_body(SDP_ANSWER.to_vec()),
+        )
         .unwrap();
 
     let _ = player.terminate().unwrap();
     let event = player
-        .on_response(player::HttpResponse {
-            status: 204,
-            content_type: None,
-            location: None,
-            etag: None,
-            body: Vec::new(),
-        })
+        .on_response(player::HttpResponse::new(StatusCode::NO_CONTENT))
         .unwrap();
     assert!(matches!(event, Some(player::Event::Terminated)));
     assert_eq!(*player.state(), player::State::Closed);
@@ -300,9 +305,8 @@ fn whep_player_bearer_auth() {
     let req = player.offer(SDP_OFFER.to_vec()).unwrap();
     let auth = req
         .headers
-        .iter()
-        .find(|(k, _)| k == "Authorization")
-        .map(|(_, v)| v.as_str());
+        .get("Authorization")
+        .map(|v| v.to_str().unwrap());
     assert_eq!(auth, Some("Bearer viewer-token"));
 }
 
@@ -311,13 +315,14 @@ fn whep_player_missing_location_on_201() {
     let mut player = WhepPlayer::new(ENDPOINT.into(), None);
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
 
-    let err = player.on_response(player::HttpResponse {
-        status: 201,
-        content_type: Some("application/sdp".into()),
-        location: None,
-        etag: Some("e".into()),
-        body: SDP_ANSWER.to_vec(),
-    });
+    let err = player.on_response(
+        player::HttpResponse::new(StatusCode::CREATED)
+            .with_content_type("application/sdp")
+            .unwrap()
+            .with_etag("e")
+            .unwrap()
+            .with_body(SDP_ANSWER.to_vec()),
+    );
     assert!(matches!(
         err.unwrap_err(),
         Error::MissingHeader { header: "Location" }
@@ -329,13 +334,12 @@ fn whep_player_missing_location_on_406() {
     let mut player = WhepPlayer::new(ENDPOINT.into(), None);
     let _ = player.offer(SDP_OFFER.to_vec()).unwrap();
 
-    let err = player.on_response(player::HttpResponse {
-        status: 406,
-        content_type: Some("application/sdp".into()),
-        location: None,
-        etag: None,
-        body: SERVER_OFFER.to_vec(),
-    });
+    let err = player.on_response(
+        player::HttpResponse::new(StatusCode::NOT_ACCEPTABLE)
+            .with_content_type("application/sdp")
+            .unwrap()
+            .with_body(SERVER_OFFER.to_vec()),
+    );
     assert!(matches!(
         err.unwrap_err(),
         Error::MissingHeader { header: "Location" }
@@ -357,11 +361,17 @@ fn whep_server_direct_accept() {
 
     // 2. accept() — transitions to Established, returns 201
     let resp = session.accept(SDP_ANSWER.to_vec(), "e1".into());
-    assert_eq!(resp.status, 201);
-    assert_eq!(resp.content_type, Some("application/sdp"));
+    assert_eq!(resp.status, StatusCode::CREATED);
+    assert_eq!(
+        resp.headers
+            .typed_get::<headers::ContentType>()
+            .unwrap()
+            .to_string(),
+        "application/sdp"
+    );
     assert_eq!(resp.body, SDP_ANSWER);
-    let location = resp.headers.iter().find(|(k, _)| k == "Location");
-    assert_eq!(location.unwrap().1, SESSION);
+    let location = resp.headers.get("Location");
+    assert_eq!(location.unwrap(), SESSION);
     assert!(matches!(
         session.state(),
         server::State::Established { etag } if etag == "e1"
@@ -375,10 +385,10 @@ fn whep_server_counter_offer() {
 
     // 1. counter_offer() — transitions to CounterOffered, returns 406
     let resp = session.counter_offer(SERVER_OFFER.to_vec(), None);
-    assert_eq!(resp.status, 406);
+    assert_eq!(resp.status, StatusCode::NOT_ACCEPTABLE);
     assert_eq!(resp.body, SERVER_OFFER);
-    let location = resp.headers.iter().find(|(k, _)| k == "Location");
-    assert_eq!(location.unwrap().1, SESSION);
+    let location = resp.headers.get("Location");
+    assert_eq!(location.unwrap(), SESSION);
     assert!(matches!(
         session.state(),
         server::State::CounterOffered { .. }
@@ -386,13 +396,13 @@ fn whep_server_counter_offer() {
 
     // 2. on_patch(application/sdp) — emits SdpAnswer
     let event = session
-        .on_patch("application/sdp", SDP_ANSWER.to_vec(), None)
+        .on_patch(SDP_ANSWER.to_vec(), &patch_headers("application/sdp", None))
         .unwrap();
     assert!(matches!(event, server::Event::SdpAnswer(ref a) if a == SDP_ANSWER));
 
     // 3. ack_answer() — transitions to Established, returns 204
     let resp = session.ack_answer("e-final".into());
-    assert_eq!(resp.status, 204);
+    assert_eq!(resp.status, StatusCode::NO_CONTENT);
     assert!(matches!(
         session.state(),
         server::State::Established { etag } if etag == "e-final"
@@ -405,32 +415,27 @@ fn whep_server_counter_offer_with_valid_until() {
     let _ = session.on_post(SDP_OFFER.to_vec()).unwrap();
 
     let resp = session.counter_offer(SERVER_OFFER.to_vec(), Some("2026-08-01T00:00:00Z".into()));
-    assert_eq!(resp.status, 406);
+    assert_eq!(resp.status, StatusCode::NOT_ACCEPTABLE);
     // Content-Type should include valid-until parameter
     let ct = resp
         .headers
-        .iter()
-        .find(|(k, _)| k == "Content-Type")
-        .map(|(_, v)| v.as_str());
+        .get("Content-Type")
+        .map(|v| v.to_str().unwrap());
     assert!(ct.unwrap().contains("valid-until=\"2026-08-01T00:00:00Z\""));
 }
 
 #[test]
 fn whep_server_no_publisher_response() {
     // no_publisher is a static method — no session needed
-    let resp = WhepSession::no_publisher(Some(30));
-    assert_eq!(resp.status, 409);
-    let retry = resp
-        .headers
-        .iter()
-        .find(|(k, _)| k == "Retry-After")
-        .map(|(_, v)| v.as_str());
+    let resp = WhepSession::no_publisher(Some(std::time::Duration::from_secs(30)));
+    assert_eq!(resp.status, StatusCode::CONFLICT);
+    let retry = resp.headers.get("Retry-After").map(|v| v.to_str().unwrap());
     assert_eq!(retry, Some("30"));
     assert!(resp.body.is_empty());
 
     // Without Retry-After
     let resp = WhepSession::no_publisher(None);
-    assert_eq!(resp.status, 409);
+    assert_eq!(resp.status, StatusCode::CONFLICT);
     assert!(resp.headers.is_empty());
 }
 
@@ -443,9 +448,8 @@ fn whep_server_trickle_ice() {
     // Trickle ICE with matching ETag
     let event = session
         .on_patch(
-            "application/trickle-ice-sdpfrag",
             ICE_FRAG.to_vec(),
-            Some("\"e1\""),
+            &patch_headers("application/trickle-ice-sdpfrag", Some("\"e1\"")),
         )
         .unwrap();
     match event {
@@ -460,7 +464,7 @@ fn whep_server_trickle_ice() {
     }
 
     let resp = session.ack_trickle();
-    assert_eq!(resp.status, 204);
+    assert_eq!(resp.status, StatusCode::NO_CONTENT);
 }
 
 #[test]
@@ -472,15 +476,14 @@ fn whep_server_ice_restart() {
     // ICE restart — If-Match: "*"
     let event = session
         .on_patch(
-            "application/trickle-ice-sdpfrag",
             ICE_FRAG.to_vec(),
-            Some("*"),
+            &patch_headers("application/trickle-ice-sdpfrag", Some("*")),
         )
         .unwrap();
     assert!(matches!(event, server::Event::IceRestart { .. }));
 
     let resp = session.ack_restart(b"a=ice-ufrag:srv\r\n".to_vec(), "e2".into());
-    assert_eq!(resp.status, 200);
+    assert_eq!(resp.status, StatusCode::OK);
     assert!(matches!(
         session.state(),
         server::State::Established { etag } if etag == "e2"
@@ -494,13 +497,12 @@ fn whep_server_etag_mismatch() {
     let _ = session.accept(SDP_ANSWER.to_vec(), "correct".into());
 
     let err = session.on_patch(
-        "application/trickle-ice-sdpfrag",
         ICE_FRAG.to_vec(),
-        Some("\"wrong\""),
+        &patch_headers("application/trickle-ice-sdpfrag", Some("\"wrong\"")),
     );
     assert!(matches!(
         err.unwrap_err(),
-        Error::ETagMismatch { expected, got } if expected == "correct" && got == "wrong"
+        Error::ETagMismatch { expected, got } if expected == "correct" && got == "\"wrong\""
     ));
 }
 
@@ -511,7 +513,7 @@ fn whep_server_wrong_content_type_in_established() {
     let _ = session.accept(SDP_ANSWER.to_vec(), "e".into());
 
     // Wrong content-type PATCH in Established -> error
-    let err = session.on_patch("text/plain", ICE_FRAG.to_vec(), None);
+    let err = session.on_patch(ICE_FRAG.to_vec(), &patch_headers("text/plain", None));
     assert!(matches!(err.unwrap_err(), Error::InvalidSdpFragment { .. }));
 }
 
@@ -526,7 +528,10 @@ fn whep_server_accepts_content_type_with_a_parameter() {
     let _ = session.counter_offer(SERVER_OFFER.to_vec(), None);
 
     let event = session
-        .on_patch("application/sdp; charset=utf-8", SDP_ANSWER.to_vec(), None)
+        .on_patch(
+            SDP_ANSWER.to_vec(),
+            &patch_headers("application/sdp; charset=utf-8", None),
+        )
         .unwrap();
     assert!(matches!(event, server::Event::SdpAnswer(ref a) if a == SDP_ANSWER));
 }
@@ -548,7 +553,7 @@ fn whep_server_wrong_state_errors() {
     let mut session = WhepSession::new(SESSION.into());
 
     // PATCH before any offer -> error
-    let err = session.on_patch("application/sdp", SDP_ANSWER.to_vec(), None);
+    let err = session.on_patch(SDP_ANSWER.to_vec(), &patch_headers("application/sdp", None));
     assert!(matches!(err.unwrap_err(), Error::WrongState { .. }));
 
     // DELETE before any offer -> error

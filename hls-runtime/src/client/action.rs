@@ -1,8 +1,7 @@
 //! Actions the caller must perform IO for — [`Action`] out of
 //! [`crate::client::HlsClient::poll`].
 
-use alloc::format;
-use alloc::string::String;
+use alloc::string::{String, ToString};
 
 /// Identifies one fetchable resource: the initialisation segment, a Low-Latency
 /// HLS partial segment ("part", RFC 8216bis §4.4.4.9), or a whole media
@@ -114,13 +113,13 @@ impl Action {
             } => {
                 let mut u = url.clone();
                 if let Some(b) = blocking {
-                    u = super::url::append_query(&u, &format!("_HLS_msn={}", b.msn));
+                    u = super::url::append_pair(&u, "_HLS_msn", &b.msn.to_string());
                     if let Some(part) = b.part {
-                        u = super::url::append_query(&u, &format!("_HLS_part={part}"));
+                        u = super::url::append_pair(&u, "_HLS_part", &part.to_string());
                     }
                 }
                 if *skip {
-                    u = super::url::append_query(&u, "_HLS_skip=YES");
+                    u = super::url::append_pair(&u, "_HLS_skip", "YES");
                 }
                 Some(u)
             }

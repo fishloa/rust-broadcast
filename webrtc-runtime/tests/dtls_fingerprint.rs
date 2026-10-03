@@ -81,12 +81,6 @@ fn config(
     }
 }
 
-/// The candidate-attribute body `rtc_ice::candidate::unmarshal_candidate`
-/// expects (the SDP line minus its `a=` prefix).
-fn host_candidate(addr: SocketAddr) -> String {
-    format!("1 1 udp 2130706431 {} {} typ host", addr.ip(), addr.port())
-}
-
 /// What one [`pump`] run observed.
 struct Pumped {
     a_events: Vec<MediaEvent>,
@@ -105,9 +99,15 @@ fn is_handshake_complete(event: &MediaEvent) -> bool {
     matches!(event, MediaEvent::DtlsHandshakeComplete)
 }
 
-/// Drive both transports against each other for at most `budget` of wall
-/// clock (rtc-ice's own nomination waits read the real clock), stopping
-/// early once either side reports a completed DTLS handshake.
+/// Drive both transports against each other for at most `budget` of VIRTUAL
+/// time, stopping early once either side reports a completed DTLS handshake.
+///
+/// There is no sleeping: when a round makes no progress the virtual clock jumps
+/// to the earlier of the two transports' `poll_timeout` deadlines and runs
+/// `handle_timeout` there, so the run is deterministic and takes milliseconds
+/// whatever the retransmission schedule is. (Both transports were built with
+/// the real `Instant::now()`, which the virtual clock starts from, so no
+/// deadline is ever behind it.)
 fn pump(
     a: &mut MediaTransport,
     b: &mut MediaTransport,
@@ -122,9 +122,9 @@ fn pump(
         dtls_b_to_a: 0,
         errors: Vec::new(),
     };
-    let deadline = Instant::now() + budget;
-    while Instant::now() < deadline {
-        let now = Instant::now();
+    let t0 = Instant::now();
+    let mut now = t0;
+    while now - t0 <= budget {
         let mut progressed = false;
         while let Some(dgram) = a.poll_transmit() {
             if is_dtls_datagram(&dgram.bytes) {
@@ -146,15 +146,24 @@ fn pump(
             }
             progressed = true;
         }
-        a.handle_timeout(now);
-        b.handle_timeout(now);
         if pumped.a_events.iter().any(is_handshake_complete)
             || pumped.b_events.iter().any(is_handshake_complete)
         {
             return pumped;
         }
         if !progressed {
-            std::thread::sleep(Duration::from_millis(5));
+            // Nothing in flight: jump the virtual clock to whichever transport
+            // is due next (at least 1 ms ahead, so the loop always advances).
+            let Some(next) = [a.poll_timeout(), b.poll_timeout()]
+                .into_iter()
+                .flatten()
+                .min()
+            else {
+                return pumped;
+            };
+            now = next.max(now + Duration::from_millis(1));
+            pumped.a_events.extend(a.handle_timeout(now));
+            pumped.b_events.extend(b.handle_timeout(now));
         }
     }
     pumped
@@ -169,29 +178,35 @@ fn pump(
 fn dtls_rejects_peer_with_wrong_fingerprint() {
     let a_addr = reserve_udp_addr();
     let b_addr = reserve_udp_addr();
-    let mut a = MediaTransport::new(config(
-        a_addr,
-        "afp0ufrag",
-        "a-fp-test-ice-password-00000",
-        "bfp0ufrag",
-        "b-fp-test-ice-password-00000",
-        true,
-        SetupRole::Active,
-    ))
+    let mut a = MediaTransport::new(
+        config(
+            a_addr,
+            "afp0ufrag",
+            "a-fp-test-ice-password-00000",
+            "bfp0ufrag",
+            "b-fp-test-ice-password-00000",
+            true,
+            SetupRole::Active,
+        ),
+        Instant::now(),
+    )
     .expect("build A");
-    let mut b = MediaTransport::new(config(
-        b_addr,
-        "bfp0ufrag",
-        "b-fp-test-ice-password-00000",
-        "afp0ufrag",
-        "a-fp-test-ice-password-00000",
-        false,
-        SetupRole::Passive,
-    ))
+    let mut b = MediaTransport::new(
+        config(
+            b_addr,
+            "bfp0ufrag",
+            "b-fp-test-ice-password-00000",
+            "afp0ufrag",
+            "a-fp-test-ice-password-00000",
+            false,
+            SetupRole::Passive,
+        ),
+        Instant::now(),
+    )
     .expect("build B");
-    a.add_remote_candidate(&host_candidate(b_addr))
+    a.add_remote_candidate(&b.local_candidates()[0])
         .expect("A add B candidate");
-    b.add_remote_candidate(&host_candidate(a_addr))
+    b.add_remote_candidate(&a.local_candidates()[0])
         .expect("B add A candidate");
 
     let pumped = pump(&mut a, &mut b, a_addr, b_addr, Duration::from_secs(3));
@@ -249,7 +264,7 @@ fn new_rejects_malformed_fingerprint() {
             SetupRole::Passive,
         );
         cfg.remote_fingerprint = bad.to_string();
-        match MediaTransport::new(cfg) {
+        match MediaTransport::new(cfg, Instant::now()) {
             Err(webrtc_runtime::Error::Media(_)) => {}
             Err(other) => panic!("expected Error::Media for {bad:?}, got {other:?}"),
             Ok(_) => panic!("remote_fingerprint {bad:?} must be rejected by new()"),
@@ -265,19 +280,19 @@ fn parse_remote_fingerprint_reads_media_then_session_level() {
     let media_fp = "sha-256 BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB:BB";
 
     let both = format!(
-        "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\na=fingerprint:{session_fp}\r\n\
+        "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:{session_fp}\r\n\
          m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=fingerprint:{media_fp}\r\n"
     );
     assert_eq!(parse_remote_fingerprint(&both).as_deref(), Some(media_fp));
 
     let session_only = format!(
-        "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\na=fingerprint:{session_fp}\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
+        "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\na=fingerprint:{session_fp}\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n"
     );
     assert_eq!(
         parse_remote_fingerprint(&session_only).as_deref(),
         Some(session_fp)
     );
 
-    let none = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n";
+    let none = "v=0\r\no=- 0 0 IN IP4 127.0.0.1\r\ns=-\r\nt=0 0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\n";
     assert_eq!(parse_remote_fingerprint(none), None);
 }

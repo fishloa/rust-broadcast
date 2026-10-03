@@ -46,6 +46,10 @@ tokio = { version = "1", optional = true, default-features = false, features = [
 # also observes) — pinned to the same `0.2` line so `--locked` adds no new
 # version, only the new dependency edge.
 getrandom = { version = "0.2", optional = true, default-features = false }
+# `Bytes` datagrams (SP6.5) and the tracked-task/cancellation primitives
+# (SP1.4) for the tokio adapter only; the no_std core stays dependency-free.
+bytes      = { version = "1", optional = true, default-features = false }
+tokio-util = { version = "0.7", optional = true, default-features = false, features = ["rt"] }
 
 [dev-dependencies]
 serde_json = "1.0"
@@ -67,4 +71,4 @@ crypto = ["dep:aes", "dep:ctr", "dep:aes-kw", "dep:pbkdf2", "dep:hmac", "dep:sha
 # `tokio` enables the real-socket async UDP adapter over the sans-IO SRT
 # engines (handshake, ARQ, TSBPD, LiveCC). Implies `std`. Only available on
 # hosted targets — the `no_std` packet-codec core stays clean without it.
-tokio = ["dep:tokio", "dep:getrandom", "std"]
+tokio = ["dep:tokio", "dep:getrandom", "dep:bytes", "dep:tokio-util", "std"]

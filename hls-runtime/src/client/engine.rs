@@ -88,88 +88,14 @@ fn program_date_time_ms(seg: &MediaSegment) -> Option<i64> {
     parse_rfc3339_ms(program_date_time(seg)?)
 }
 
-/// Days from 1970-01-01 to the given proleptic-Gregorian civil date
-/// (Howard Hinnant's `days_from_civil`).
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = if m <= 2 { y - 1 } else { y };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
-}
-
 /// Parse an RFC 3339 / ISO 8601 date-time (`2024-05-01T12:00:00.250Z`,
 /// `...+02:00`, `...-0500`) into Unix milliseconds. `None` for anything that
-/// does not match exactly — never a guess.
+/// does not parse — never a guess. Delegates to [`jiff::Timestamp`] (an offset
+/// is required; a leap second is clamped to `:59`).
 fn parse_rfc3339_ms(text: &str) -> Option<i64> {
-    let b = text.as_bytes();
-    let num = |from: usize, len: usize| -> Option<i64> {
-        let digits = b.get(from..from.checked_add(len)?)?;
-        if !digits.iter().all(u8::is_ascii_digit) {
-            return None;
-        }
-        core::str::from_utf8(digits).ok()?.parse().ok()
-    };
-    if b.get(4) != Some(&b'-')
-        || b.get(7) != Some(&b'-')
-        || !matches!(b.get(10), Some(b'T' | b't' | b' '))
-        || b.get(13) != Some(&b':')
-        || b.get(16) != Some(&b':')
-    {
-        return None;
-    }
-    let (y, mo, d) = (num(0, 4)?, num(5, 2)?, num(8, 2)?);
-    let (h, mi, s) = (num(11, 2)?, num(14, 2)?, num(17, 2)?);
-    if !(1..=12).contains(&mo) || !(1..=31).contains(&d) || h > 23 || mi > 59 || s > 60 {
-        return None;
-    }
-    let mut i = 19;
-    let mut millis = 0i64;
-    if b.get(i) == Some(&b'.') {
-        i += 1;
-        let start = i;
-        while b.get(i).is_some_and(u8::is_ascii_digit) {
-            i += 1;
-        }
-        if i == start {
-            return None;
-        }
-        // Keep millisecond precision; extra digits are truncated.
-        let frac: String = text[start..i]
-            .chars()
-            .chain("000".chars())
-            .take(3)
-            .collect();
-        millis = frac.parse().ok()?;
-    }
-    let offset_secs = match b.get(i) {
-        Some(b'Z' | b'z') if i + 1 == b.len() => 0,
-        Some(sign @ (b'+' | b'-')) => {
-            let (oh, om) = if b.get(i + 3) == Some(&b':') {
-                (num(i + 1, 2)?, num(i + 4, 2)?)
-            } else {
-                (num(i + 1, 2)?, num(i + 3, 2)?)
-            };
-            let end = if b.get(i + 3) == Some(&b':') {
-                i + 6
-            } else {
-                i + 5
-            };
-            if end != b.len() || oh > 23 || om > 59 {
-                return None;
-            }
-            let secs = oh * 3600 + om * 60;
-            if *sign == b'-' { -secs } else { secs }
-        }
-        _ => return None,
-    };
-    let days = days_from_civil(y, mo, d);
-    let secs = days
-        .checked_mul(86_400)?
-        .checked_add(h * 3600 + mi * 60 + s)?
-        .checked_sub(offset_secs)?;
-    secs.checked_mul(1000)?.checked_add(millis)
+    text.parse::<jiff::Timestamp>()
+        .ok()
+        .map(|t| t.as_millisecond())
 }
 
 /// A driveable, sans-IO Low-Latency HLS (RFC 8216bis) playback client.
@@ -248,6 +174,12 @@ pub struct HlsClient {
     playlist_url: String,
 
     pending_actions: VecDeque<Action>,
+    /// The caller-clock instant at which the `WaitMs` now at the front of
+    /// `pending_actions` was first observed by [`Self::poll_timeout`]; the
+    /// wait's absolute deadline is `anchor + wait`. Cleared whenever an action
+    /// is drained, so a later wait is anchored afresh.
+    #[cfg(feature = "std")]
+    wait_anchor: Option<std::time::Instant>,
     pending_outputs: VecDeque<Output>,
 
     init_uri: Option<String>,
@@ -307,6 +239,8 @@ impl HlsClient {
         Self {
             playlist_url,
             pending_actions,
+            #[cfg(feature = "std")]
+            wait_anchor: None,
             pending_outputs: VecDeque::new(),
             init_uri: None,
             init_bytes: None,
@@ -338,7 +272,40 @@ impl HlsClient {
 
     /// Drain the next IO [`Action`] the caller must perform, if any.
     pub fn poll(&mut self) -> Option<Action> {
+        #[cfg(feature = "std")]
+        {
+            self.wait_anchor = None;
+        }
         self.pending_actions.pop_front()
+    }
+
+    /// The `WaitMs` hint at the front of the action queue, as a `Duration`;
+    /// `None` when the next queued action is a fetch (or nothing is queued). A
+    /// wait is queued BEHIND the fetches `on_playlist` queued with it, so it is
+    /// reported only once those have been drained with [`Self::poll`].
+    /// Peeking never consumes it, and the core never reads a clock.
+    pub fn next_wait(&self) -> Option<core::time::Duration> {
+        match self.pending_actions.front() {
+            Some(Action::WaitMs(ms)) => Some(core::time::Duration::from_millis(*ms)),
+            _ => None,
+        }
+    }
+
+    /// The absolute deadline of the queued `WaitMs`, for callers that schedule
+    /// on `std::time::Instant`: `None` unless a wait is at the front of the
+    /// queue (see [`Self::next_wait`]).
+    ///
+    /// The deadline is anchored the first time this is called for a given wait
+    /// (`now` + the wait) and every later call returns that SAME instant, until
+    /// the wait is drained with [`Self::poll`]. Re-querying after unrelated
+    /// wake-ups therefore never re-arms the timer. The core has no clock of its
+    /// own, so "when the wait was scheduled" is the caller's `now` at the first
+    /// query: query as soon as the wait reaches the front.
+    #[cfg(feature = "std")]
+    pub fn poll_timeout(&mut self, now: std::time::Instant) -> Option<std::time::Instant> {
+        let wait = self.next_wait()?;
+        let anchor = *self.wait_anchor.get_or_insert(now);
+        Some(anchor + wait)
     }
 
     /// Drain the next [`Output`] event, if any.
@@ -1609,6 +1576,98 @@ mod tests {
         );
         assert!(client.discontinuity_emitted.is_empty());
         assert!(client.delivered_segments.is_empty());
+    }
+
+    #[test]
+    fn next_wait_reports_the_queued_wait_hint_without_consuming_it() {
+        use core::time::Duration;
+        let mut c = HlsClient::new("http://h/p.m3u8");
+        assert_eq!(c.next_wait(), None, "the first queued action is a fetch");
+        let _ = c.poll();
+        c.on_playlist(
+            b"#EXTM3U\n#EXT-X-VERSION:3\n#EXT-X-TARGETDURATION:2\n#EXT-X-MEDIA-SEQUENCE:0\n#EXTINF:2.0,\nseg0.ts\n",
+        )
+        .unwrap();
+        while c.next_wait().is_none() {
+            c.poll()
+                .expect("a WaitMs must be queued after a non-blocking live playlist");
+        }
+        assert_eq!(
+            c.next_wait(),
+            Some(Duration::from_millis(1000)),
+            "half the 2 s target duration"
+        );
+        assert_eq!(
+            c.next_wait(),
+            Some(Duration::from_millis(1000)),
+            "peeking does not consume"
+        );
+        // The deadline is ABSOLUTE: re-queries at later `now`s (unrelated
+        // wake-ups) return the same instant instead of re-arming the wait.
+        let t0 = std::time::Instant::now();
+        let first = c.poll_timeout(t0).expect("a wait is at the front");
+        assert_eq!(first, t0 + Duration::from_millis(1000));
+        for later in [250u64, 600, 999, 5000] {
+            assert_eq!(
+                c.poll_timeout(t0 + Duration::from_millis(later)),
+                Some(first),
+                "re-query at +{later} ms must not slide the deadline"
+            );
+        }
+        // Draining the wait supersedes it: the next wait is anchored afresh.
+        assert!(matches!(c.poll(), Some(Action::WaitMs(1000))));
+        assert_eq!(c.poll_timeout(t0 + Duration::from_secs(9)), None);
+    }
+
+    #[test]
+    fn rfc3339_accepts_the_spellings_the_old_parser_accepted() {
+        assert_eq!(
+            parse_rfc3339_ms("2026-10-02 10:00:00Z"),
+            Some(1_790_935_200_000),
+            "space separator"
+        );
+        assert_eq!(
+            parse_rfc3339_ms("2026-10-02t10:00:00z"),
+            Some(1_790_935_200_000),
+            "lower-case t and z"
+        );
+        assert_eq!(
+            parse_rfc3339_ms("2026-10-02T10:00:00.123456789Z"),
+            Some(1_790_935_200_123),
+            "extra digits truncated"
+        );
+        assert_eq!(
+            parse_rfc3339_ms("1969-12-31T23:59:59Z"),
+            Some(-1_000),
+            "before the epoch"
+        );
+    }
+
+    #[test]
+    fn rfc3339_offset_spellings_all_name_the_same_instant() {
+        let want = Some(1_790_935_200_000);
+        for text in [
+            "2026-10-02T12:00:00+02:00",
+            "2026-10-02T12:00:00+0200",
+            "2026-10-02T05:00:00-05:00",
+            "2026-10-02T05:00:00-0500",
+            "2026-10-02T10:00:00+00:00",
+            "2026-10-02T10:00:00-00:00",
+        ] {
+            assert_eq!(parse_rfc3339_ms(text), want, "{text}");
+        }
+        // An hour-only offset: whatever `jiff` decides, it must never be a guess.
+        let hour_only = parse_rfc3339_ms("2026-10-02T12:00:00+02");
+        assert!(hour_only == want || hour_only.is_none(), "{hour_only:?}");
+    }
+
+    /// A leap second is clamped to :59 (jiff), where the old parser added 60 s to the minute.
+    #[test]
+    fn a_leap_second_is_clamped_to_the_last_second_of_the_minute() {
+        assert_eq!(
+            parse_rfc3339_ms("2016-12-31T23:59:60Z"),
+            Some(1_483_228_799_000)
+        );
     }
 
     #[test]

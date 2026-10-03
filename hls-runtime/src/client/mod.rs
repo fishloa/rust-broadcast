@@ -35,8 +35,11 @@
 //! Enabling the `tokio` cargo feature (NOT default) adds
 //! [`tokio_client::TokioClient`], a thin async shell (tokio + reqwest/rustls)
 //! that drives [`HlsClient`] over real HTTP — blocking-reload/preload-hint
-//! query params, byte-range `Range` headers, per-request timeouts, and
-//! retry/backoff on transient failures. See [`tokio_client`]'s module docs
+//! query params, typed byte-range `Range` headers (`headers::Range`),
+//! per-request timeouts, `backon` retry/backoff with jitter on transient
+//! failures, and a `CancellationToken` for shutdown (no polling sleeps; the
+//! core exposes [`HlsClient::next_wait`]/[`HlsClient::poll_timeout`] for
+//! callers that schedule themselves). See [`tokio_client`]'s module docs
 //! for the full behaviour and its `tests/glass_to_glass.rs` for a
 //! loopback-HTTP, sub-second glass-to-glass proof against a real
 //! `multimux`-served LL-HLS origin. This feature is entirely additive — the

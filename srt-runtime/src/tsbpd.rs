@@ -426,6 +426,21 @@ impl TsbpdScheduler {
         TickOutcome { delivered, dropped }
     }
 
+    /// Earliest buffered packet play time strictly after `now`, if any.
+    ///
+    /// A buffered packet whose time has passed but that cannot be released
+    /// (waiting for a gap with TLPKTDROP off) yields no wake-up: it is
+    /// re-examined on the next event, never by a busy timer.
+    pub fn next_release_after(&self, now: Duration) -> Option<Duration> {
+        let now_us = duration_us(now);
+        self.buffer
+            .values()
+            .copied()
+            .filter(|&t| t > now_us)
+            .min()
+            .map(Duration::from_micros)
+    }
+
     /// Release all packets that are ready for delivery in sequence order.
     ///
     /// Walks forward from `self.next_release` while the next packet is
@@ -630,6 +645,41 @@ mod tests {
     /// Helper: default scheduler for tests.
     fn sched() -> TsbpdScheduler {
         TsbpdScheduler::new(ISN, TIME_BASE_I64, DELAY_MS, 0, true, None)
+    }
+
+    #[test]
+    fn next_release_after_is_the_earliest_future_play_time() {
+        let mut s = TsbpdScheduler::new(0, 0, DELAY_MS, 0, true, None);
+        assert_eq!(
+            s.next_release_after(Duration::ZERO),
+            None,
+            "nothing buffered"
+        );
+        let _ = s.feed_data(0, 0, Duration::ZERO);
+        let t = s
+            .next_release_after(Duration::ZERO)
+            .expect("one packet buffered");
+        assert_eq!(t, Duration::from_millis(DELAY_MS));
+        assert_eq!(s.next_release_after(t), None, "strictly after");
+        let _ = s.tick(t);
+        assert_eq!(
+            s.next_release_after(Duration::ZERO),
+            None,
+            "released packets leave the buffer"
+        );
+    }
+
+    #[test]
+    fn a_stuck_gap_without_tlpktdrop_produces_no_busy_wakeup() {
+        let mut s = TsbpdScheduler::new(0, 0, DELAY_MS, 0, false, None);
+        let _ = s.feed_data(2, 0, Duration::ZERO); // 0 and 1 missing, drop disabled
+        let late = Duration::from_millis(DELAY_MS * 10);
+        let _ = s.tick(late);
+        assert_eq!(
+            s.next_release_after(late),
+            None,
+            "past-due but blocked: wait for events, not for time"
+        );
     }
 
     #[test]

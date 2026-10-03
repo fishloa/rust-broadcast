@@ -5,6 +5,10 @@ All notable changes to this crate will be documented in this file.
 ## [Unreleased]
 
 ### Changed (breaking)
+- `MediaTransport::new(config, now)` and the rest of construction take a caller-supplied `std::time::Instant`: every internal timer (ICE agent, STUN gatherer) is scheduled from it and the transport never reads the wall clock.
+- The crate is `std` (the `std` feature is kept as a name but no longer gates anything) and left CI's `thumbv7em-none-eabi` list: the WHIP/WHEP state machines now speak `http`/`headers` types. `HttpRequest`/`HttpResponse` (one shared definition, re-exported from `whip::{client,server}` and `whep::{player,server}`) carry `http::Method`, `http::StatusCode` and an `http::HeaderMap` (`HttpRequest::content_type()`/`if_match()`, `HttpResponse::new()`/`with_body()`/`with_content_type()`/`with_location()`/`with_etag()`); the old `Method` enums are `http::Method`. `WhipSession::on_patch(fragment, &HeaderMap)`, `WhepSession::on_patch(body, &HeaderMap)` (content type from the headers) and `WhepSession::no_publisher(Option<Duration>)` (typed `Retry-After`). New `Error::InvalidHeader { header }`.
+- `If-Match` is read as an RFC 9110 entity-tag list with strong comparison. `If-Match: *` is an ICE restart and the current quoted tag (`"etag1"`) a trickle update, as before; an unquoted tag (`etag1`), a quoted star (`"*"`) and a weak tag (`W/"etag1"`) no longer match (they fail with `Error::ETagMismatch`, whose `got` is now the raw header text, `"\"old\""`). A duplicated `Content-Type` on a PATCH is rejected. A session URL (non-ASCII) or ETag that cannot be sent as a header makes `accept` answer `500` with no `Location` instead of emitting a bad header. Header names are lower-case in the `HeaderMap`.
+- `media::parse_remote_fingerprint` reads the SDP with `sdp-types` (`Session::parse`): the text must be a well-formed session (`v=`/`o=`/`s=`/`t=`), the first media section carrying an `a=fingerprint` wins over the session level, and the result is the typed attribute's normalised text (`a=fingerprint:SHA-256 ab:cd:0f` gives `sha-256 AB:CD:0F`). A digest without colons is accepted when it is 32 bytes. The first level (media section, else session) that carries an `a=fingerprint` decides: an unparseable one now gives `None` instead of falling through to a later one. A weak server `ETag` is no longer reused as a strong `If-Match` tag by the WHIP/WHEP clients (it is treated as absent). `MediaTransportConfig::remote_fingerprint` is validated the same way.
 - `MediaTransport::handle_timeout` now returns `Vec<MediaEvent>` (was `()`); a failed ICE or
   DTLS timer drive is now surfaced as `MediaEvent::TimerError` instead of silently discarded
   (#1090).
@@ -36,6 +40,8 @@ All notable changes to this crate will be documented in this file.
 - Dependency bumps, non-breaking (no public API change): `rtc-dtls`/`rtc-ice`/`rtc-shared`/`rtc-srtp`/`rtc-stun` 0.21, and dev-only RustCrypto 0.13 (`aes` 0.9, `cipher` 0.5, `ctr` 0.10, `hmac` 0.13, `sha1` 0.11, `sha2` 0.11). rtc 0.21 takes its crypto provider explicitly; this crate uses the default provider (ring), so the provider choice is unchanged, but ring now implements the primitives that were previously RustCrypto underneath (a different backend, same provider).
 
 ### Fixed
+- The server-reflexive candidate's `stun:` URL brackets an IPv6 host (`stun:[2001:db8::1]:3478`).
+- `StunGather`'s deadline is the first instant at which `handle_timeout` does work: `rtc-stun` collects an expired transaction only when `deadline < now`, so a driver sleeping until the raw deadline and calling `handle_timeout` there would spin.
 - `ice::parse_ice_server_links`/`format_ice_server_links`: a `Link` header parameter value
   (`username`/`credential`) containing `;`, `,` or `"` — all legal in an RFC 8288
   `quoted-string`, e.g. a static TURN operator password — now round-trips through format ->
@@ -55,6 +61,10 @@ All notable changes to this crate will be documented in this file.
   names RTPFB/PSFB/XR as the typical cause) and WHEP liveness behavior is
   unchanged — `multimux`'s `is_liveness_event` already treated both
   `MediaEvent::Rtcp` and `MediaEvent::RtcpUnsupported` as proof of life.
+
+### Added
+- `MediaTransport::poll_timeout()` (earliest deadline over the ICE agent, every DTLS association, the STUN gatherer and the retired-key purge; schedule `handle_timeout` there, not on a fixed tick) and `MediaTransport::local_candidates()` (the host candidate as an `a=candidate:` body, from `rtc-ice`'s own marshaller).
+
 
 ## [0.2.0] - 2026-09-25
 

@@ -81,8 +81,10 @@ HTTP fetch loop would).
 
 Enabling the (non-default) `tokio` cargo feature adds `client::tokio_client::TokioClient`:
 a thin async shell (tokio + reqwest/rustls) driving `HlsClient` over real
-HTTP — blocking-reload/preload-hint query params, `Range` byte-ranges,
-per-request timeouts, and retry/backoff on transient failures. Authenticates
+HTTP — blocking-reload/preload-hint query params, typed `Range` byte-ranges,
+per-request/connect timeouts, `backon` retry/backoff with jitter on transient
+failures, and a `CancellationToken` (`TokioClientConfig::cancel`) that ends
+`next_output` with `Ok(None)` and aborts any in-flight request. Authenticates
 via the shared [`broadcast-auth`](../broadcast-auth) crate
 (`TokioClientConfig::auth` takes a `broadcast_auth::Credentials` —
 Basic/Digest/Bearer, with Digest computed end-to-end on a `401`), the same

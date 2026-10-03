@@ -33,9 +33,15 @@
 //!
 //! # Error recovery
 //!
+//! - Retry delays come from `backon`'s exponential schedule (minimum
+//!   [`TokioClientConfig::retry_backoff`], doubling, capped at
+//!   [`TokioClientConfig::max_retry_backoff`]) with optional jitter
+//!   ([`TokioClientConfig::jitter`]: each delay `d` becomes a random value in
+//!   `[d, 2d)`, clamped to `max_retry_backoff`, so many clients reloading
+//!   together do not retry in lock step but no delay ever exceeds the cap).
 //! - A **resource** (init/part/segment) fetch that keeps failing is retried
-//!   up to [`TokioClientConfig::max_resource_retries`] times with capped
-//!   exponential backoff, then [`crate::client::HlsClient::on_error`] is
+//!   up to [`TokioClientConfig::max_resource_retries`] times (total attempts)
+//!   with that schedule, then [`crate::client::HlsClient::on_error`] is
 //!   called and the adapter moves on — the sans-IO core un-marks that
 //!   resource as "requested", so the *next* playlist reload naturally
 //!   re-requests it (see `engine.rs`'s `on_error` docs). One flaky fetch
@@ -51,12 +57,22 @@
 //!   rather than ever giving up — a caller wanting a hard ceiling on how long
 //!   [`TokioClient::next_output`] may block should wrap it in
 //!   `tokio::time::timeout` itself.
+//!
+//! # Cancellation
+//!
+//! [`TokioClientConfig::cancel`] is a `CancellationToken`: once cancelled,
+//! [`TokioClient::next_output`] abandons whatever request or backoff sleep is
+//! in flight and returns `Ok(None)` (the same "stop polling" signal as the end
+//! of the stream). There is no other shutdown mechanism and no polling sleep.
 
 use std::time::Duration;
 
+use backon::{BackoffBuilder, ExponentialBuilder};
 use broadcast_auth::{Authenticator, Credentials, RequestContext};
+use headers::HeaderMapExt;
 use reqwest::header::{AUTHORIZATION, WWW_AUTHENTICATE};
 use reqwest::{Client, StatusCode};
+use tokio_util::sync::CancellationToken;
 
 use super::{Action, HlsClient, Output, ResourceId};
 
@@ -111,6 +127,17 @@ pub enum TokioError {
         /// The range's length.
         length: u64,
     },
+    /// The sans-IO core had nothing queued to do and the stream had not ended.
+    /// In normal operation `on_playlist` always queues a reload (or a wait)
+    /// before returning, so this signals a core bug rather than a network
+    /// condition; it replaces a 10 ms defensive sleep that used to hide it.
+    #[error("the HLS core queued no action and the stream has not ended")]
+    Stalled,
+    /// [`TokioClientConfig::cancel`] fired while a request was in flight.
+    /// Internal: [`TokioClient::next_output`] converts it to `Ok(None)`.
+    #[doc(hidden)]
+    #[error("cancelled")]
+    Cancelled,
 }
 
 /// Tunables for [`TokioClient`]. [`Default`] gives sane values for a
@@ -131,14 +158,53 @@ pub struct TokioClientConfig {
     /// on (see the module docs' "Error recovery" section). A playlist reload
     /// is never subject to this cap — it retries indefinitely.
     pub max_resource_retries: u32,
-    /// Initial backoff between retry attempts; doubles per attempt up to
-    /// [`Self::max_retry_backoff`].
+    /// Initial backoff between retry attempts (`backon`'s minimum delay);
+    /// doubles per attempt up to [`Self::max_retry_backoff`].
     pub retry_backoff: Duration,
     /// Ceiling the doubled [`Self::retry_backoff`] is capped at.
     pub max_retry_backoff: Duration,
     /// Optional auth attached to every request to the playlist URL's origin
     /// (see the module docs).
     pub auth: Option<Credentials>,
+    /// TCP connect timeout (reqwest's `connect_timeout`). Default 10 s.
+    pub connect_timeout: Duration,
+    /// Add `backon` jitter to every retry delay (each delay `d` becomes a
+    /// random value in `[d, 2d)`, clamped to [`Self::max_retry_backoff`], which
+    /// stays a hard maximum). Default `true`.
+    pub jitter: bool,
+    /// Cancelling this token makes [`TokioClient::next_output`] abandon its
+    /// in-flight request or backoff sleep and return `Ok(None)`.
+    pub cancel: CancellationToken,
+}
+
+impl TokioClientConfig {
+    /// Set [`Self::auth`].
+    #[must_use]
+    pub fn with_auth(mut self, auth: Credentials) -> Self {
+        self.auth = Some(auth);
+        self
+    }
+
+    /// Set [`Self::cancel`].
+    #[must_use]
+    pub fn with_cancel(mut self, cancel: CancellationToken) -> Self {
+        self.cancel = cancel;
+        self
+    }
+
+    /// Set [`Self::connect_timeout`].
+    #[must_use]
+    pub fn with_connect_timeout(mut self, d: Duration) -> Self {
+        self.connect_timeout = d;
+        self
+    }
+
+    /// Set [`Self::jitter`].
+    #[must_use]
+    pub fn with_jitter(mut self, on: bool) -> Self {
+        self.jitter = on;
+        self
+    }
 }
 
 impl Default for TokioClientConfig {
@@ -150,6 +216,9 @@ impl Default for TokioClientConfig {
             retry_backoff: Duration::from_millis(200),
             max_retry_backoff: Duration::from_secs(2),
             auth: None,
+            connect_timeout: Duration::from_secs(10),
+            jitter: true,
+            cancel: CancellationToken::new(),
         }
     }
 }
@@ -230,6 +299,7 @@ impl TokioClient {
     ) -> Result<Self, TokioError> {
         let playlist_url = playlist_url.into();
         let http = Client::builder()
+            .connect_timeout(config.connect_timeout)
             .build()
             .map_err(|source| TokioError::Http {
                 url: playlist_url.clone(),
@@ -274,6 +344,9 @@ impl TokioClient {
     /// — see the module docs' "Error recovery" section.
     pub async fn next_output(&mut self) -> Result<Option<Output>, TokioError> {
         loop {
+            if self.config.cancel.is_cancelled() {
+                return Ok(None);
+            }
             if let Some(out) = self.core.next_output() {
                 if matches!(out, Output::EndOfStream) {
                     self.ended = true;
@@ -301,7 +374,11 @@ impl TokioClient {
                     } else {
                         self.config.request_timeout
                     };
-                    let bytes = self.fetch_playlist_resilient(&request_url, timeout).await;
+                    let bytes = match self.fetch_playlist_resilient(&request_url, timeout).await {
+                        Ok(bytes) => bytes,
+                        Err(TokioError::Cancelled) => return Ok(None),
+                        Err(other) => return Err(other),
+                    };
                     self.stats.playlist_fetches += 1;
                     if is_blocking {
                         self.stats.blocking_reloads += 1;
@@ -323,6 +400,7 @@ impl TokioClient {
                         }
                         self.core.on_resource(id, &bytes)?;
                     }
+                    Err(TokioError::Cancelled) => return Ok(None),
                     Err(_source) => {
                         // Retries exhausted: un-mark as requested so the
                         // next playlist reload naturally re-requests it,
@@ -332,17 +410,24 @@ impl TokioClient {
                     }
                 },
                 Some(Action::WaitMs(ms)) => {
-                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    if self.sleep_or_cancelled(Duration::from_millis(ms)).await {
+                        return Ok(None);
+                    }
                 }
-                None => {
-                    // Defensive-only: in normal operation `on_playlist`
-                    // always re-queues a reload (or `WaitMs`) before
-                    // returning, for as long as the stream hasn't ended, so
-                    // this should never actually spin. Guard against it
-                    // anyway with a short sleep rather than a hot loop.
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
+                // In normal operation `on_playlist` always re-queues a reload
+                // (or `WaitMs`) before returning for as long as the stream has
+                // not ended, so this is a core bug, not something to sleep on.
+                None => return Err(TokioError::Stalled),
             }
+        }
+    }
+
+    /// Sleeps `d` or until [`TokioClientConfig::cancel`] fires; `true` means
+    /// cancelled.
+    async fn sleep_or_cancelled(&self, d: Duration) -> bool {
+        tokio::select! {
+            () = tokio::time::sleep(d) => false,
+            () = self.config.cancel.cancelled() => true,
         }
     }
 
@@ -444,7 +529,22 @@ impl TokioClient {
         }
     }
 
+    /// [`Self::fetch_bytes_inner`], abandoned the moment
+    /// [`TokioClientConfig::cancel`] fires.
     async fn fetch_bytes(
+        &mut self,
+        url: &str,
+        byte_range: Option<(u64, u64)>,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, TokioError> {
+        let cancel = self.config.cancel.clone();
+        tokio::select! {
+            r = self.fetch_bytes_inner(url, byte_range, timeout) => r,
+            () = cancel.cancelled() => Err(TokioError::Cancelled),
+        }
+    }
+
+    async fn fetch_bytes_inner(
         &mut self,
         url: &str,
         byte_range: Option<(u64, u64)>,
@@ -493,18 +593,27 @@ impl TokioClient {
     /// a plain GET of the playlist URL instead of being repeated forever
     /// (audit r09-C3, issue #1031); the plain URL then keeps the usual
     /// backoff.
-    async fn fetch_playlist_resilient(&mut self, url: &str, timeout: Duration) -> Vec<u8> {
-        let mut backoff = self.config.retry_backoff;
+    async fn fetch_playlist_resilient(
+        &mut self,
+        url: &str,
+        timeout: Duration,
+    ) -> Result<Vec<u8>, TokioError> {
+        let mut delays = schedule(&self.config, None);
         let mut current = url.to_string();
         loop {
             match self.fetch_bytes(&current, None, timeout).await {
-                Ok(bytes) => return bytes,
+                Ok(bytes) => return Ok(bytes),
+                Err(TokioError::Cancelled) => return Err(TokioError::Cancelled),
                 Err(source) if current != self.playlist_url && !is_retryable(&source) => {
                     current.clone_from(&self.playlist_url);
                 }
                 Err(_source) => {
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(self.config.max_retry_backoff);
+                    // An unbounded schedule never ends; the fallback only
+                    // keeps this total.
+                    let d = delays.next().unwrap_or(self.config.max_retry_backoff);
+                    if self.sleep_or_cancelled(d).await {
+                        return Err(TokioError::Cancelled);
+                    }
                 }
             }
         }
@@ -517,24 +626,54 @@ impl TokioClient {
         url: &str,
         byte_range: Option<(u64, u64)>,
     ) -> Result<Vec<u8>, TokioError> {
-        let mut backoff = self.config.retry_backoff;
+        let attempts = usize::try_from(self.config.max_resource_retries.max(1)).unwrap_or(1);
+        // `attempts` total attempts means `attempts - 1` sleeps between them.
+        let mut delays = schedule(&self.config, Some(attempts - 1));
         let mut last_err = None;
-        for _ in 0..self.config.max_resource_retries.max(1) {
+        for _ in 0..attempts {
             match self
                 .fetch_bytes(url, byte_range, self.config.request_timeout)
                 .await
             {
                 Ok(bytes) => return Ok(bytes),
+                Err(source @ TokioError::Cancelled) => return Err(source),
                 Err(source) if !is_retryable(&source) => return Err(source),
                 Err(source) => {
                     last_err = Some(source);
-                    tokio::time::sleep(backoff).await;
-                    backoff = (backoff * 2).min(self.config.max_retry_backoff);
+                    // No sleep after the last attempt.
+                    let Some(d) = delays.next() else { break };
+                    if self.sleep_or_cancelled(d).await {
+                        return Err(TokioError::Cancelled);
+                    }
                 }
             }
         }
-        Err(last_err.expect("loop runs at least once (max_resource_retries.max(1))"))
+        Err(last_err.expect("loop runs at least once (attempts >= 1)"))
     }
+}
+
+/// The retry delays for `config`: `backon` exponential (minimum
+/// `retry_backoff`, doubling, capped at `max_retry_backoff`), optionally
+/// jittered; `max_sleeps = None` never ends (playlist reloads).
+fn schedule(
+    config: &TokioClientConfig,
+    max_sleeps: Option<usize>,
+) -> impl Iterator<Item = Duration> + use<> {
+    let mut builder = ExponentialBuilder::default()
+        .with_min_delay(config.retry_backoff)
+        .with_max_delay(config.max_retry_backoff);
+    if config.jitter {
+        builder = builder.with_jitter();
+    }
+    builder = match max_sleeps {
+        Some(n) => builder.with_max_times(n),
+        None => builder.without_max_times(),
+    };
+    // `backon` adds jitter AFTER its own max-delay clamp, so an unclamped
+    // delay can reach ~2x the cap: clamp again, making
+    // `max_retry_backoff` a hard maximum for every delay.
+    let cap = config.max_retry_backoff;
+    builder.build().map(move |d| d.min(cap))
 }
 
 /// Whether a failed resource fetch is worth retrying: everything except a
@@ -570,15 +709,18 @@ fn build_request(
         // below, since a saturated `end` would produce a `Range:` header
         // for the wrong bytes rather than failing this one request. See
         // `TokioError::ByteRangeOverflow`.
-        let end =
-            offset
-                .checked_add(length.saturating_sub(1))
-                .ok_or(TokioError::ByteRangeOverflow {
-                    url: url.to_string(),
-                    offset,
-                    length,
-                })?;
-        req = req.header(reqwest::header::RANGE, format!("bytes={offset}-{end}"));
+        let overflow = || TokioError::ByteRangeOverflow {
+            url: url.to_string(),
+            offset,
+            length,
+        };
+        let end = offset
+            .checked_add(length.saturating_sub(1))
+            .ok_or_else(overflow)?;
+        let range = headers::Range::bytes(offset..=end).map_err(|_| overflow())?;
+        let mut map = reqwest::header::HeaderMap::new();
+        map.typed_insert(range);
+        req = req.headers(map);
     }
     Ok(req)
 }
@@ -645,6 +787,47 @@ mod tests {
             .get(reqwest::header::RANGE)
             .expect("Range header must be present");
         assert_eq!(header, "bytes=10-29");
+    }
+
+    #[test]
+    fn retry_schedule_without_jitter_is_exponential_and_capped() {
+        let cfg = TokioClientConfig::default().with_jitter(false);
+        let got: Vec<_> = schedule(&cfg, None).take(6).collect();
+        let want = [200, 400, 800, 1600, 2000, 2000].map(Duration::from_millis);
+        // backon multiplies in `f32` (its factor is `f32`), so a doubled delay
+        // can be a few nanoseconds off the ideal; the cap is exact.
+        for (i, (g, w)) in got.iter().zip(want).enumerate() {
+            let diff = g.abs_diff(w);
+            assert!(
+                diff < Duration::from_micros(1),
+                "delay {i} = {g:?}, want {w:?} (min 200 ms, doubling, capped at 2 s)"
+            );
+        }
+        assert_eq!(got[4], Duration::from_secs(2), "capped exactly");
+        assert_eq!(got[5], Duration::from_secs(2), "stays at the cap");
+    }
+
+    #[test]
+    fn retry_schedule_jitter_stays_within_one_extra_delay_and_never_exceeds_the_cap() {
+        let cfg = TokioClientConfig::default();
+        let cap = cfg.max_retry_backoff;
+        // Many samples: jitter is random, a single draw proves little.
+        for _ in 0..500 {
+            for (i, got) in schedule(&cfg, None).take(8).enumerate() {
+                let base = Duration::from_millis(200u64 << i.min(4)).min(cap);
+                assert!(got >= base, "delay {i} = {got:?} below its base {base:?}");
+                assert!(
+                    got <= cap,
+                    "delay {i} = {got:?} exceeds max_retry_backoff {cap:?}"
+                );
+                assert!(
+                    got < base * 2 || got == cap,
+                    "delay {i} = {got:?} outside [{base:?}, {:?})",
+                    base * 2
+                );
+            }
+        }
+        assert_eq!(schedule(&cfg, Some(2)).count(), 2, "3 attempts = 2 sleeps");
     }
 
     #[test]

@@ -167,7 +167,7 @@ async fn loss_recovery_through_io_layer() {
             let mut receiver = receiver;
             while received.len() < NUM_PAYLOADS {
                 match receiver.recv().await.expect("receiver recv") {
-                    Some(payload) => received.push(payload),
+                    Some(payload) => received.push(payload.to_vec()),
                     None => break,
                 }
             }

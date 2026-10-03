@@ -7,6 +7,8 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- `io::IoConfig` (`#[non_exhaustive]`, `with_*` builders): `max_datagram` (default 1500, clamped to `io::MIN_MAX_DATAGRAM` = 64 ..= `io::MAX_MAX_DATAGRAM` = 65535), `connect` (10 s: resolve + bind), `handshake` (5 s), `read_idle` (5 s), `write` (5 s: every `send_to`). New entry points `SrtSocket::connect_with`/`connect_from_with` and `SrtListener::bind_with`; the old ones use `IoConfig::default()`. `SrtSocket::send_bytes(Bytes)` hands a payload to the driver without a copy.
+- `SocketStats::rx_oversize` and `SrtListener::accept_overflow_dropped()`; `arq::Receiver::next_timeout()` and `tsbpd::TsbpdScheduler::next_release_after()` (the `no_std` building blocks of the driver's deadline).
 - `SrtSocket::stats()` (returning the new `SocketStats`) and `SrtListener::unrouted_dropped()`
   report datagrams a bounded internal channel dropped because it was full — this adapter's own
   backpressure, not wire-level loss ARQ/TLPKTDROP already account for.
@@ -28,6 +30,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   feature now depends on `zeroize` and `subtle`, both already in the workspace lock (#1142).
 
 ### Changed (breaking)
+- `SrtSocket::recv` now returns `Option<bytes::Bytes>` (was `Option<Vec<u8>>`): each received datagram is one exactly-sized `Bytes` (deliberately not a view into a shared receive chunk, which would pin the whole chunk while any one packet is held) and the application's payload is a slice of it, so a packet is not copied again on the way up (SP6.5). `bytes` and `tokio-util` are new dependencies of the `tokio` feature only; the `no_std` core is unchanged.
+- The `tokio` adapter's connection driver no longer ticks on a fixed 2 ms interval: it sleeps until its own next deadline (`Driver::poll_timeout`: next Full ACK/NAK, TSBPD release or too-late skip, keep-alive, peer-idle expiry, pacing slot) or until an event. An idle connection wakes 100 times a second (the 10 ms Full ACK is protocol, rule 11) instead of 500. A late wake now sends the paced packets whose slots passed (at most 16 per wake), so an idle backlog drains at ~16x the old one-packet-per-wake ceiling while pacing still holds.
+- `SrtListener` handshakes now progress in a tracked background task: `accept()` only waits for a finished handshake, so a caller connects (and a lost CONCLUSION response is answered again) whether or not anyone is polling `accept()`. Send errors met while answering a peer are counted (`SrtListener::send_errors()`), never queued or returned from `accept()`, so a flood of them cannot displace finished connections. Once the handle is gone the task stops serving new handshakes but keeps the routing pump alive for connections already accepted. At most 64 finished handshakes wait for `accept()`; more are dropped and counted (`SrtListener::accept_overflow_dropped`).
+- The `HANDSHAKE_TIMEOUT` (5 s) and `PEER_IDLE_TIMEOUT` (5 s) constants are now `IoConfig::handshake` / `IoConfig::read_idle` (same defaults).
 - `tsbpd::TsbpdScheduler::new` takes the time base and the initial drift as signed `i64`
   microseconds (was `u64`): `TsbpdTimeBase = T_NOW - HSREQ_TIMESTAMP` is negative whenever the
   peer's clock is ahead (r08-SRT-W9).
@@ -89,6 +95,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   network input.
 
 ### Fixed
+- Defect 3: dropping an `SrtListener` left its UDP port bound for as long as no further datagram arrived (the routing pump only noticed the dropped listener on its next `recv_from`). The pump and the handshake task are now owned by a `TaskTracker` and end on a `CancellationToken` when the last of {listener handle, every accepted connection} is dropped: an idle listener frees its port at once, and connections it already accepted keep being routed until they are gone.
+- A datagram larger than `IoConfig::max_datagram` used to be silently truncated by UDP and could then parse as a shorter, valid DATA packet with a corrupted payload; it is now read with one extra byte of room, dropped and counted in `SocketStats::rx_oversize`.
+- Every `send_to` is bounded by `IoConfig::write`; resolving and binding by `IoConfig::connect`.
 - A DATA packet behind the delivery cursor (a duplicate, a retransmission of what was delivered
   or given up on, or an attacker-chosen stale sequence number stamped with a future timestamp)
   was staged, ignored by TSBPD and never removed, so `staged` grew without bound; it is now

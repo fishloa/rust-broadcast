@@ -3,7 +3,11 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use headers::HeaderMapExt;
+use http::{HeaderMap, StatusCode};
+
 use crate::Error;
+use crate::http_util::{self, Precondition};
 
 /// State of a WHEP server session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,18 +29,7 @@ pub enum State {
     Closed,
 }
 
-/// An HTTP response the caller must send.
-#[derive(Debug, Clone)]
-pub struct HttpResponse {
-    /// HTTP status code to send.
-    pub status: u16,
-    /// `Content-Type` header value, if the response carries a body.
-    pub content_type: Option<&'static str>,
-    /// Additional headers to send (e.g. `Location`, `ETag`, `Retry-After`).
-    pub headers: Vec<(String, String)>,
-    /// Response body bytes.
-    pub body: Vec<u8>,
-}
+pub use crate::http_util::HttpResponse;
 
 /// Events emitted by the WHEP server.
 #[derive(Debug, Clone)]
@@ -100,81 +93,87 @@ impl WhepSession {
     }
 
     /// Build the 201 Created response (direct accept).
+    ///
+    /// A session URL or `etag` that cannot be sent as a header yields a `500`
+    /// response with no `Location` and leaves the session's state unchanged.
     pub fn accept(&mut self, sdp_answer: Vec<u8>, etag: String) -> HttpResponse {
-        self.state = State::Established { etag: etag.clone() };
-        HttpResponse {
-            status: super::status::CREATED,
-            content_type: Some(super::content_type::SDP),
-            headers: alloc::vec![
-                ("Location".into(), self.session_url.clone()),
-                ("ETag".into(), alloc::format!("\"{etag}\"")),
-            ],
-            body: sdp_answer,
+        let built = HttpResponse::new(StatusCode::CREATED)
+            .with_content_type(super::content_type::SDP)
+            .and_then(|r| r.with_location(&self.session_url))
+            .and_then(|r| r.with_etag(&etag));
+        match built {
+            Ok(resp) => {
+                self.state = State::Established { etag };
+                resp.with_body(sdp_answer)
+            }
+            Err(_) => HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR),
         }
     }
 
     /// Build the 406 Not Acceptable counter-offer response.
+    ///
+    /// A `valid_until` that cannot be sent in a `Content-Type` parameter yields
+    /// a `500` response and leaves the session's state unchanged.
     pub fn counter_offer(
         &mut self,
         sdp_offer: Vec<u8>,
         valid_until: Option<String>,
     ) -> HttpResponse {
-        self.state = State::CounterOffered { etag: None };
         let ct = match valid_until {
             Some(ref date) => alloc::format!("application/sdp; valid-until=\"{date}\""),
             None => "application/sdp".into(),
         };
-        HttpResponse {
-            status: super::status::NOT_ACCEPTABLE,
-            content_type: None,
-            headers: alloc::vec![
-                ("Location".into(), self.session_url.clone()),
-                ("Content-Type".into(), ct),
-            ],
-            body: sdp_offer,
+        let built = HttpResponse::new(StatusCode::NOT_ACCEPTABLE)
+            .with_location(&self.session_url)
+            .and_then(|r| r.with_content_type(&ct));
+        match built {
+            Ok(resp) => {
+                self.state = State::CounterOffered { etag: None };
+                resp.with_body(sdp_offer)
+            }
+            Err(_) => HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR),
         }
     }
 
     /// Process an incoming PATCH.
-    pub fn on_patch(
-        &mut self,
-        content_type: &str,
-        sdp_body: Vec<u8>,
-        if_match: Option<&str>,
-    ) -> Result<Event, Error> {
+    ///
+    /// The body's media type comes from the typed `Content-Type` in `headers`
+    /// (parameters such as `charset` are ignored, RFC 9110 §8.3.1; a duplicated
+    /// header is rejected), and `If-Match` is read as a typed RFC 9110
+    /// entity-tag list (see [`crate::whip::server::WhipSession::on_patch`]).
+    ///
+    /// # Errors
+    /// [`Error::InvalidSdpFragment`] for an unexpected content type,
+    /// [`Error::InvalidHeader`] / [`Error::ETagMismatch`] for a bad `If-Match`,
+    /// [`Error::WrongState`] otherwise.
+    pub fn on_patch(&mut self, sdp_body: Vec<u8>, headers: &HeaderMap) -> Result<Event, Error> {
         match &self.state {
             State::CounterOffered { .. }
-                if media_type_matches(content_type, super::content_type::SDP) =>
+                if http_util::content_type_is(headers, super::content_type::SDP) =>
             {
                 Ok(Event::SdpAnswer(sdp_body))
             }
             State::Established { etag } => {
-                if media_type_matches(content_type, super::content_type::TRICKLE_ICE) {
-                    if matches!(if_match, Some("*") | Some("\"*\"")) {
-                        Ok(Event::IceRestart {
+                if http_util::content_type_is(headers, super::content_type::TRICKLE_ICE) {
+                    match http_util::check_if_match(headers, etag)? {
+                        Precondition::Any => Ok(Event::IceRestart {
                             sdp_fragment: sdp_body,
-                        })
-                    } else if let Some(client_etag) = if_match {
-                        let client_etag = client_etag.trim_matches('"');
-                        if client_etag != etag {
-                            return Err(Error::ETagMismatch {
-                                expected: etag.clone(),
-                                got: client_etag.into(),
-                            });
-                        }
-                        Ok(Event::TrickleIce {
+                        }),
+                        Precondition::Passes => Ok(Event::TrickleIce {
                             sdp_fragment: sdp_body,
-                            if_match: Some(client_etag.into()),
-                        })
-                    } else {
-                        Ok(Event::TrickleIce {
+                            if_match: Some(etag.clone()),
+                        }),
+                        Precondition::Absent => Ok(Event::TrickleIce {
                             sdp_fragment: sdp_body,
                             if_match: None,
-                        })
+                        }),
                     }
                 } else {
                     Err(Error::InvalidSdpFragment {
-                        reason: alloc::format!("unexpected content-type: {content_type}"),
+                        reason: alloc::format!(
+                            "unexpected content-type: {}",
+                            http_util::content_type_text(headers)
+                        ),
                     })
                 }
             }
@@ -188,49 +187,39 @@ impl WhepSession {
     /// Build 204 response after accepting player's SDP answer to counter-offer.
     pub fn ack_answer(&mut self, etag: String) -> HttpResponse {
         self.state = State::Established { etag };
-        HttpResponse {
-            status: super::status::NO_CONTENT,
-            content_type: None,
-            headers: Vec::new(),
-            body: Vec::new(),
-        }
+        HttpResponse::new(StatusCode::NO_CONTENT)
     }
 
     /// Build 204 response for trickle ICE.
     pub fn ack_trickle(&self) -> HttpResponse {
-        HttpResponse {
-            status: super::status::NO_CONTENT,
-            content_type: None,
-            headers: Vec::new(),
-            body: Vec::new(),
-        }
+        HttpResponse::new(StatusCode::NO_CONTENT)
     }
 
     /// Build 200 OK response for ICE restart.
+    ///
+    /// A `new_etag` that cannot be sent as a header yields a `500` response and
+    /// leaves the session's tag unchanged.
     pub fn ack_restart(&mut self, sdp_fragment: Vec<u8>, new_etag: String) -> HttpResponse {
-        self.state = State::Established {
-            etag: new_etag.clone(),
-        };
-        HttpResponse {
-            status: 200,
-            content_type: Some(super::content_type::TRICKLE_ICE),
-            headers: alloc::vec![("ETag".into(), alloc::format!("\"{new_etag}\"")),],
-            body: sdp_fragment,
+        let built = HttpResponse::new(StatusCode::OK)
+            .with_content_type(super::content_type::TRICKLE_ICE)
+            .and_then(|r| r.with_etag(&new_etag));
+        match built {
+            Ok(resp) => {
+                self.state = State::Established { etag: new_etag };
+                resp.with_body(sdp_fragment)
+            }
+            Err(_) => HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR),
         }
     }
 
-    /// Build 409 Conflict response (no active publisher).
-    pub fn no_publisher(retry_after_secs: Option<u32>) -> HttpResponse {
-        let mut headers = Vec::new();
-        if let Some(secs) = retry_after_secs {
-            headers.push(("Retry-After".into(), alloc::format!("{secs}")));
+    /// Build 409 Conflict response (no active publisher), with a typed
+    /// `Retry-After` (whole seconds) when `retry_after` is given.
+    pub fn no_publisher(retry_after: Option<std::time::Duration>) -> HttpResponse {
+        let mut resp = HttpResponse::new(StatusCode::CONFLICT);
+        if let Some(delay) = retry_after {
+            resp.headers.typed_insert(http_util::retry_after(delay));
         }
-        HttpResponse {
-            status: super::status::CONFLICT,
-            content_type: None,
-            headers,
-            body: Vec::new(),
-        }
+        resp
     }
 
     /// Process an incoming DELETE.
@@ -249,27 +238,8 @@ impl WhepSession {
 
     /// Build 200 OK response for DELETE.
     pub fn ack_delete(&self) -> HttpResponse {
-        HttpResponse {
-            status: 200,
-            content_type: None,
-            headers: Vec::new(),
-            body: Vec::new(),
-        }
+        HttpResponse::new(StatusCode::OK)
     }
-}
-
-/// Matches a `Content-Type` header value against `expected` by media type
-/// only (RFC 9110 §8.3.1: the type/subtype token, case-insensitive),
-/// ignoring any `; parameter=value` suffix (audit run-09 W21) — a WHEP
-/// counter-offer answer sent as `application/sdp; charset=utf-8` (or any
-/// other legal parameter) is otherwise rejected by a strict `==` compare.
-fn media_type_matches(content_type: &str, expected: &str) -> bool {
-    content_type
-        .split(';')
-        .next()
-        .unwrap_or("")
-        .trim()
-        .eq_ignore_ascii_case(expected)
 }
 
 fn server_state_name(s: &State) -> &'static str {

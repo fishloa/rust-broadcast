@@ -19,8 +19,11 @@ Provides caller-driven state machines for both sides of two complementary protoc
 
 Each state machine is **sans-IO**: it produces `HttpRequest` descriptors the
 caller sends over whatever HTTP stack it prefers, and consumes `HttpResponse`
-values fed back. No sockets, no async runtime, no TLS -- just signalling
-logic and state transitions.
+values fed back. Requests and responses are `http` crate types
+(`http::Method`, `http::StatusCode`, `http::HeaderMap`) with typed `headers`
+accessors (`ETag`, `If-Match`, `Content-Type`, `Location`, `Retry-After`,
+`Authorization`), so they plug straight into hyper/axum/reqwest. No sockets, no
+async runtime, no TLS -- just signalling logic and state transitions.
 
 Feature `media` (see "MSRV" below) adds `webrtc_runtime::media::MediaTransport`:
 the ICE agent, DTLS handshake + RFC 5764 SRTP key export, and SRTP decrypt
@@ -58,13 +61,13 @@ let request = client.offer(sdp_offer_bytes).unwrap();
 // ... send `request` via your HTTP client ...
 
 // 2. Feed the 201 response back:
-let event = client.on_response(HttpResponse {
-    status: 201,
-    content_type: Some("application/sdp".into()),
-    location: Some("https://live.example.com/session/abc".into()),
-    etag: Some("v1".into()),
-    body: sdp_answer_bytes,
-}).unwrap();
+let event = client.on_response(
+    HttpResponse::new(http::StatusCode::CREATED)
+        .with_content_type("application/sdp").unwrap()
+        .with_location("https://live.example.com/session/abc").unwrap()
+        .with_etag("v1").unwrap()
+        .with_body(sdp_answer_bytes),
+).unwrap();
 // event is Some(Event::SdpAnswer(...)) -- pass to your WebRTC stack.
 
 // 3. Send trickle ICE candidates:
@@ -114,17 +117,13 @@ let header = format_ice_server_links(&servers);
 
 | Feature | Default | Description |
 |---------|---------|-------------|
-| `std`   | yes     | Links the standard library; forwarded to `broadcast-common` and `thiserror` |
+| `std`   | yes     | Kept as a feature name for `default-features = false` consumers; the crate is `std` regardless |
 | `serde` | no      | `Serialize`/`Deserialize` on `IceServer` |
 | `media` | no      | ICE + DTLS-SRTP transport (`webrtc_runtime::media`); implies `std` |
 
-The core state machines build with `--no-default-features` (`no_std` + `alloc`),
-cross-compiled for `thumbv7em-none-eabi` by CI's `no_std` job — which is what
-makes that a claim rather than an aspiration. It was the latter until the
-1.95.0 release audit: `std` was an empty feature that forwarded nothing, so
-`--no-default-features` still pulled a std `broadcast-common` and a std
-`thiserror`, and two std-only dependencies were declared without a single
-line referencing them.
+The core is `std` since the WHIP/WHEP state machines moved onto `http`/`headers`
+types (it was `no_std` + `alloc` before, and left CI's `thumbv7em-none-eabi`
+list at that point).
 No IO adapter exists for WHIP/WHEP signalling (see "What it does" above) —
 there is no `tokio` feature for it; one was declared but never gated any
 code, so it was removed rather than kept as dead weight (see CHANGELOG).

@@ -1,0 +1,83 @@
+whip accept -> 201
+  content-type: application/sdp
+  etag: "etag1"
+  location: https://origin.example/whip/live/s1
+  body=3B
+whip ack_trickle -> 204
+  body=0B
+whip ack_restart -> 200
+  content-type: application/trickle-ice-sdpfrag
+  etag: "etag2"
+  body=4B
+whip ack_delete -> 200
+  body=0B
+whep accept -> 201
+  content-type: application/sdp
+  etag: "e1"
+  location: https://origin.example/whip/live/s1
+  body=3B
+whep counter_offer(None) -> 406
+  content-type: application/sdp
+  location: https://origin.example/whip/live/s1
+  body=1B
+whep counter_offer(valid-until) -> 406
+  content-type: application/sdp; valid-until="2030-01-01T00:00:00Z"
+  location: https://origin.example/whip/live/s1
+  body=1B
+whep ack_answer -> 204
+  body=0B
+whep ack_trickle -> 204
+  body=0B
+whep ack_restart -> 200
+  content-type: application/trickle-ice-sdpfrag
+  etag: "e3"
+  body=4B
+whep no_publisher(Some(5)) -> 409
+  retry-after: 5
+  body=0B
+whep no_publisher(None) -> 409
+  body=0B
+whep ack_delete -> 200
+  body=0B
+whip client anon offer -> POST https://origin.example/whip/live
+  content-type: application/sdp
+  body=1B
+whip client anon flush_candidates -> PATCH https://origin.example/whip/live/s1
+  content-type: application/trickle-ice-sdpfrag
+  if-match: "etag1"
+  body=1B
+whip client anon ice_restart -> PATCH https://origin.example/whip/live/s1
+  content-type: application/trickle-ice-sdpfrag
+  if-match: *
+  body=1B
+whip client anon terminate -> DELETE https://origin.example/whip/live/s1
+  body=0B
+whip client bearer offer -> POST https://origin.example/whip/live
+  authorization: Bearer tok3n
+  content-type: application/sdp
+  body=1B
+whip client bearer flush_candidates -> PATCH https://origin.example/whip/live/s1
+  authorization: Bearer tok3n
+  content-type: application/trickle-ice-sdpfrag
+  if-match: "etag1"
+  body=1B
+whip client bearer ice_restart -> PATCH https://origin.example/whip/live/s1
+  authorization: Bearer tok3n
+  content-type: application/trickle-ice-sdpfrag
+  if-match: *
+  body=1B
+whip client bearer terminate -> DELETE https://origin.example/whip/live/s1
+  authorization: Bearer tok3n
+  body=0B
+whep player offer -> POST https://origin.example/whip/live
+  authorization: Bearer tok3n
+  content-type: application/sdp
+  body=1B
+whep player trickle_ice -> PATCH https://origin.example/whip/live/s1
+  authorization: Bearer tok3n
+  content-type: application/trickle-ice-sdpfrag
+  if-match: "e1"
+  body=1B
+whep player terminate -> DELETE https://origin.example/whip/live/s1
+  authorization: Bearer tok3n
+  body=0B

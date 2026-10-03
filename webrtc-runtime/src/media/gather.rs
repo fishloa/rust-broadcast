@@ -9,7 +9,7 @@
 //! local candidate.
 
 use std::net::SocketAddr;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use bytes::BytesMut;
 use rtc_shared::{TaggedBytesMut, TransportContext, TransportProtocol};
@@ -149,6 +149,19 @@ impl StunGather {
             }
         }
         Ok(None)
+    }
+
+    /// The next instant at which `handle_timeout` has work (the STUN client's
+    /// retransmission schedule), if any.
+    ///
+    /// `rtc-stun`'s agent collects an expired transaction only when
+    /// `deadline < now` — strictly — so `handle_timeout(deadline)` does
+    /// nothing and leaves the same deadline in place. Reporting the raw
+    /// deadline would make a driver that sleeps until it and then calls
+    /// `handle_timeout` spin; the first instant that actually does work is one
+    /// nanosecond later.
+    pub(super) fn poll_timeout(&mut self) -> Option<Instant> {
+        Protocol::poll_timeout(&mut self.client).map(|d| d + Duration::from_nanos(1))
     }
 
     /// Drive retransmission timing (RFC 8489 §6.2.1).

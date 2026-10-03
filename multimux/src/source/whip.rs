@@ -623,18 +623,21 @@ async fn handle_whip_connection(
 
     let local_ice_ufrag = rand_token(8);
     let local_ice_pwd = rand_token(24);
-    let mut media = MediaTransport::new(MediaTransportConfig {
-        local_addr,
-        local_ice_ufrag: local_ice_ufrag.clone(),
-        local_ice_pwd: local_ice_pwd.clone(),
-        remote_ice_ufrag: parsed.remote_ufrag.clone(),
-        remote_ice_pwd: parsed.remote_pwd.clone(),
-        remote_fingerprint: parsed.remote_fingerprint.clone(),
-        is_controlling: false,
-        local_setup: SetupRole::Passive,
-        stun_server: None,
-        max_remote_candidates: MAX_REMOTE_CANDIDATES,
-    })
+    let mut media = MediaTransport::new(
+        MediaTransportConfig {
+            local_addr,
+            local_ice_ufrag: local_ice_ufrag.clone(),
+            local_ice_pwd: local_ice_pwd.clone(),
+            remote_ice_ufrag: parsed.remote_ufrag.clone(),
+            remote_ice_pwd: parsed.remote_pwd.clone(),
+            remote_fingerprint: parsed.remote_fingerprint.clone(),
+            is_controlling: false,
+            local_setup: SetupRole::Passive,
+            stun_server: None,
+            max_remote_candidates: MAX_REMOTE_CANDIDATES,
+        },
+        Instant::now(),
+    )
     .map_err(|e| MultimuxError::Connect {
         reason: format!("whip: build media transport: {e}"),
     })?;
@@ -1319,7 +1322,16 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         assert_eq!(parsed.clock_rate, 90_000);
         assert_eq!(parsed.remote_ufrag, "abcd");
         assert_eq!(parsed.remote_pwd, "abcdefghijklmnopqrstuvwx");
-        assert_eq!(parsed.remote_fingerprint, OFFER_FINGERPRINT);
+        // `parse_remote_fingerprint` returns the typed (`sdp-types`) normalised
+        // text: lower-case hash token, upper-case colon-hex digest. A fingerprint
+        // is case-insensitive (RFC 8122 §5), so compare it that way.
+        assert!(
+            parsed
+                .remote_fingerprint
+                .eq_ignore_ascii_case(OFFER_FINGERPRINT),
+            "{} vs {OFFER_FINGERPRINT}",
+            parsed.remote_fingerprint
+        );
         assert_eq!(parsed.mid, "0");
         assert_eq!(parsed.candidates.len(), 1);
     }
@@ -1431,22 +1443,25 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 Arc::new(UdpSocket::from_std(s).unwrap())
             },
             media: Arc::new(TokioMutex::new(
-                MediaTransport::new(MediaTransportConfig {
-                    local_addr: "127.0.0.1:0".parse().unwrap(),
-                    local_ice_ufrag: rand_token(8),
-                    local_ice_pwd: rand_token(24),
-                    remote_ice_ufrag: rand_token(8),
-                    remote_ice_pwd: rand_token(24),
-                    is_controlling: false,
-                    local_setup: SetupRole::Passive,
-                    stun_server: None,
-                    // This test never handshakes (it exercises the deferred
-                    // `avcC` capture gate); it only needs a transport that
-                    // `MediaTransport::new` accepts — i.e. a well-formed
-                    // fingerprint. See `OFFER_FINGERPRINT`.
-                    remote_fingerprint: OFFER_FINGERPRINT.into(),
-                    max_remote_candidates: MAX_REMOTE_CANDIDATES,
-                })
+                MediaTransport::new(
+                    MediaTransportConfig {
+                        local_addr: "127.0.0.1:0".parse().unwrap(),
+                        local_ice_ufrag: rand_token(8),
+                        local_ice_pwd: rand_token(24),
+                        remote_ice_ufrag: rand_token(8),
+                        remote_ice_pwd: rand_token(24),
+                        is_controlling: false,
+                        local_setup: SetupRole::Passive,
+                        stun_server: None,
+                        // This test never handshakes (it exercises the deferred
+                        // `avcC` capture gate); it only needs a transport that
+                        // `MediaTransport::new` accepts — i.e. a well-formed
+                        // fingerprint. See `OFFER_FINGERPRINT`.
+                        remote_fingerprint: OFFER_FINGERPRINT.into(),
+                        max_remote_candidates: MAX_REMOTE_CANDIDATES,
+                    },
+                    Instant::now(),
+                )
                 .unwrap(),
             )),
             tracks: vec![WhipTrack {

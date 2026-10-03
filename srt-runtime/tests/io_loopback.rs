@@ -76,7 +76,7 @@ async fn loopback_call_to_recv() {
         while received.len() < NUM_PAYLOADS {
             match receiver.recv().await.expect("receiver recv") {
                 Some(payload) => {
-                    received.push(payload);
+                    received.push(payload.to_vec());
                 }
                 None => break,
             }

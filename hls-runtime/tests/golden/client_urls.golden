@@ -1,0 +1,36 @@
+base http://h.example/live/stream.m3u8
+  first Some(FetchPlaylist { url: "http://h.example/live/stream.m3u8", blocking: None, skip: false })
+  FetchResource { id: Segment { msn: 9 }, url: "https://cdn.example/seg9.m4s", byte_range: None }
+  FetchResource { id: Segment { msn: 10 }, url: "http://cdn2.example/seg10.m4s", byte_range: None }
+  FetchResource { id: Segment { msn: 11 }, url: "http://h.example/live/sub/seg11.m4s?token=a=b&x=y", byte_range: None }
+  FetchResource { id: Init, url: "http://h.example/live/init.mp4", byte_range: None }
+  FetchPlaylist { url: "http://h.example/live/stream.m3u8", blocking: Some(BlockingReload { msn: 12, part: Some(0) }), skip: false }
+    request_url http://h.example/live/stream.m3u8?_HLS_msn=12&_HLS_part=0
+base http://h.example:8080/live/stream.m3u8?_HLS_msn=3&k=v
+  first Some(FetchPlaylist { url: "http://h.example:8080/live/stream.m3u8?_HLS_msn=3&k=v", blocking: None, skip: false })
+  FetchResource { id: Segment { msn: 9 }, url: "https://cdn.example/seg9.m4s", byte_range: None }
+  FetchResource { id: Segment { msn: 10 }, url: "http://cdn2.example/seg10.m4s", byte_range: None }
+  FetchResource { id: Segment { msn: 11 }, url: "http://h.example:8080/live/sub/seg11.m4s?token=a=b&x=y", byte_range: None }
+  FetchResource { id: Init, url: "http://h.example:8080/live/init.mp4", byte_range: None }
+  FetchPlaylist { url: "http://h.example:8080/live/stream.m3u8?_HLS_msn=3&k=v", blocking: Some(BlockingReload { msn: 12, part: Some(0) }), skip: false }
+    request_url http://h.example:8080/live/stream.m3u8?_HLS_msn=3&k=v&_HLS_msn=12&_HLS_part=0
+base https://h.example/a/b/stream.m3u8#frag
+  first Some(FetchPlaylist { url: "https://h.example/a/b/stream.m3u8#frag", blocking: None, skip: false })
+  FetchResource { id: Segment { msn: 9 }, url: "https://cdn.example/seg9.m4s", byte_range: None }
+  FetchResource { id: Segment { msn: 10 }, url: "https://cdn2.example/seg10.m4s", byte_range: None }
+  FetchResource { id: Segment { msn: 11 }, url: "https://h.example/a/b/sub/seg11.m4s?token=a=b&x=y", byte_range: None }
+  FetchResource { id: Init, url: "https://h.example/a/b/init.mp4", byte_range: None }
+  FetchPlaylist { url: "https://h.example/a/b/stream.m3u8#frag", blocking: Some(BlockingReload { msn: 12, part: Some(0) }), skip: false }
+    request_url https://h.example/a/b/stream.m3u8?_HLS_msn=12&_HLS_part=0#frag
+matrix http://h/p.m3u8 blocking=None skip=false -> Some("http://h/p.m3u8")
+matrix http://h/p.m3u8?a=1 blocking=None skip=false -> Some("http://h/p.m3u8?a=1")
+matrix http://h/p.m3u8?a=1&b=2#f blocking=None skip=false -> Some("http://h/p.m3u8?a=1&b=2#f")
+matrix http://h/p.m3u8 blocking=Some(BlockingReload { msn: 5, part: None }) skip=false -> Some("http://h/p.m3u8?_HLS_msn=5")
+matrix http://h/p.m3u8?a=1 blocking=Some(BlockingReload { msn: 5, part: None }) skip=false -> Some("http://h/p.m3u8?a=1&_HLS_msn=5")
+matrix http://h/p.m3u8?a=1&b=2#f blocking=Some(BlockingReload { msn: 5, part: None }) skip=false -> Some("http://h/p.m3u8?a=1&b=2&_HLS_msn=5#f")
+matrix http://h/p.m3u8 blocking=Some(BlockingReload { msn: 5, part: Some(2) }) skip=true -> Some("http://h/p.m3u8?_HLS_msn=5&_HLS_part=2&_HLS_skip=YES")
+matrix http://h/p.m3u8?a=1 blocking=Some(BlockingReload { msn: 5, part: Some(2) }) skip=true -> Some("http://h/p.m3u8?a=1&_HLS_msn=5&_HLS_part=2&_HLS_skip=YES")
+matrix http://h/p.m3u8?a=1&b=2#f blocking=Some(BlockingReload { msn: 5, part: Some(2) }) skip=true -> Some("http://h/p.m3u8?a=1&b=2&_HLS_msn=5&_HLS_part=2&_HLS_skip=YES#f")
+matrix http://h/p.m3u8 blocking=None skip=true -> Some("http://h/p.m3u8?_HLS_skip=YES")
+matrix http://h/p.m3u8?a=1 blocking=None skip=true -> Some("http://h/p.m3u8?a=1&_HLS_skip=YES")
+matrix http://h/p.m3u8?a=1&b=2#f blocking=None skip=true -> Some("http://h/p.m3u8?a=1&b=2&_HLS_skip=YES#f")

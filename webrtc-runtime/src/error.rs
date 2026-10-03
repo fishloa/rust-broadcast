@@ -38,6 +38,13 @@ pub enum Error {
         got: alloc::string::String,
     },
 
+    /// A header value could not be parsed as (or built into) its typed form.
+    #[error("invalid {header} header")]
+    InvalidHeader {
+        /// The header name.
+        header: &'static str,
+    },
+
     /// A WHEP client requested playback but no publisher is active for the resource.
     #[error("no active publisher")]
     NoPublisher,

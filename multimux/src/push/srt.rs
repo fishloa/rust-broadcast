@@ -363,7 +363,7 @@ mod tests {
             // Receive until we see our payload or time out.
             while tokio::time::Instant::now() < deadline {
                 match tokio::time::timeout(Duration::from_millis(200), sock.recv()).await {
-                    Ok(Ok(Some(data))) if data.as_slice() == PAYLOAD => {
+                    Ok(Ok(Some(data))) if &data[..] == PAYLOAD => {
                         received_for_task.store(true, Ordering::SeqCst);
                         break;
                     }

@@ -17,6 +17,10 @@
 //! ([`MediaTransport::handle_timeout`]) — the same push/pull shape as
 //! [`crate::whip::client::WhipClient`], just for UDP instead of HTTP.
 //!
+//! Time is the caller's: pass `now` to [`MediaTransport::new`] (the transport
+//! never reads a clock), and schedule `handle_timeout` at
+//! [`MediaTransport::poll_timeout`] — never on a fixed tick.
+//!
 //! SDP itself is out of scope here, exactly as it is in `whip`/`whep`: the
 //! caller extracts `a=ice-ufrag`/`a=ice-pwd`/`a=fingerprint`/`a=candidate`
 //! from the negotiated SDP and passes the values in through

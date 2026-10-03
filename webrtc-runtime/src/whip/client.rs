@@ -3,7 +3,11 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use headers::{HeaderMapExt, IfMatch};
+use http::{HeaderMap, StatusCode};
+
 use crate::Error;
+use crate::http_util;
 
 /// State of a WHIP client session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,63 +28,8 @@ pub enum State {
     Closed,
 }
 
-/// An HTTP request the caller must send on behalf of the state machine.
-#[derive(Debug, Clone)]
-pub struct HttpRequest {
-    /// HTTP method to use.
-    pub method: Method,
-    /// Absolute or resource-relative URL to send the request to.
-    pub url: String,
-    /// `Content-Type` header value, if the request carries a body.
-    pub content_type: Option<&'static str>,
-    /// Additional headers to send (e.g. `Authorization`, `If-Match`).
-    pub headers: Vec<(String, String)>,
-    /// Request body bytes.
-    pub body: Vec<u8>,
-}
-
-/// HTTP method.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[non_exhaustive]
-pub enum Method {
-    /// `POST` — used to create a session with the initial SDP offer.
-    Post,
-    /// `PATCH` — used to send Trickle ICE fragments / ICE restarts.
-    Patch,
-    /// `DELETE` — used to terminate a session.
-    Delete,
-}
-
-impl Method {
-    /// The HTTP method token as it appears on the request line.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Method::Post => "POST",
-            Method::Patch => "PATCH",
-            Method::Delete => "DELETE",
-        }
-    }
-}
-
-broadcast_common::impl_spec_display!(Method);
-
-/// Parsed fields from an HTTP response.
-#[derive(Debug, Clone)]
-pub struct HttpResponse {
-    /// HTTP status code.
-    pub status: u16,
-    /// `Content-Type` header value, if present.
-    pub content_type: Option<String>,
-    /// `Location` header value, if present.
-    pub location: Option<String>,
-    /// `ETag` opaque-tag value (without DQUOTE framing), if present.
-    ///
-    /// Callers extracting this from an HTTP response MUST strip the
-    /// surrounding `"` quotes before storing the value here.
-    pub etag: Option<String>,
-    /// Response body bytes.
-    pub body: Vec<u8>,
-}
+pub use crate::http_util::{HttpRequest, HttpResponse};
+pub use http::Method;
 
 /// Events emitted by the WHIP client to the caller.
 #[derive(Debug, Clone)]
@@ -160,13 +109,14 @@ impl WhipClient {
                 state: state_name(&self.state),
             });
         }
-        self.state = State::OfferSent;
-        Ok(self.build_request(
-            Method::Post,
+        let req = self.build_request(
+            Method::POST,
             self.endpoint_url.clone(),
             Some(super::content_type::SDP),
             sdp_offer,
-        ))
+        )?;
+        self.state = State::OfferSent;
+        Ok(req)
     }
 
     /// Generate aggregated Trickle ICE PATCH for the caller's already-aggregated
@@ -174,14 +124,14 @@ impl WhipClient {
     pub fn flush_candidates(&mut self, aggregated_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
         let (session_url, etag) = self.established_fields()?;
         let mut req = self.build_request(
-            Method::Patch,
+            Method::PATCH,
             session_url,
             Some(super::content_type::TRICKLE_ICE),
             aggregated_fragment,
-        );
+        )?;
         if let Some(etag) = etag {
             req.headers
-                .push(("If-Match".into(), alloc::format!("\"{etag}\"")));
+                .typed_insert(IfMatch::from(http_util::etag(&etag)?));
         }
         self.pending = Some(PendingRequest::Trickle);
         Ok(req)
@@ -191,12 +141,12 @@ impl WhipClient {
     pub fn ice_restart(&mut self, sdp_fragment: Vec<u8>) -> Result<HttpRequest, Error> {
         let (session_url, _) = self.established_fields()?;
         let mut req = self.build_request(
-            Method::Patch,
+            Method::PATCH,
             session_url,
             Some(super::content_type::TRICKLE_ICE),
             sdp_fragment,
-        );
-        req.headers.push(("If-Match".into(), "*".into()));
+        )?;
+        req.headers.typed_insert(IfMatch::any());
         self.pending = Some(PendingRequest::IceRestart);
         Ok(req)
     }
@@ -204,8 +154,9 @@ impl WhipClient {
     /// Generate DELETE request to terminate the session.
     pub fn terminate(&mut self) -> Result<HttpRequest, Error> {
         let (session_url, _) = self.established_fields()?;
+        let req = self.build_request(Method::DELETE, session_url, None, Vec::new())?;
         self.pending = Some(PendingRequest::Delete);
-        Ok(self.build_request(Method::Delete, session_url, None, Vec::new()))
+        Ok(req)
     }
 
     /// Feed an HTTP response back into the state machine.
@@ -221,18 +172,17 @@ impl WhipClient {
     }
 
     fn handle_offer_response(&mut self, resp: HttpResponse) -> Result<Option<Event>, Error> {
-        if resp.status == super::status::CREATED {
-            let session_url = resp
-                .location
+        if resp.status == StatusCode::CREATED {
+            let session_url = http_util::location_of(&resp.headers)
                 .ok_or(Error::MissingHeader { header: "Location" })?;
             self.state = State::Established {
                 session_url,
-                etag: resp.etag,
+                etag: http_util::etag_of(&resp.headers),
             };
             Ok(Some(Event::SdpAnswer(resp.body)))
         } else {
             Err(Error::Http {
-                status: resp.status,
+                status: resp.status.as_u16(),
             })
         }
     }
@@ -244,32 +194,34 @@ impl WhipClient {
     fn handle_established_response(&mut self, resp: HttpResponse) -> Result<Option<Event>, Error> {
         match self.pending.take() {
             Some(PendingRequest::Delete) => match resp.status {
-                200 | super::status::NO_CONTENT => {
+                StatusCode::OK | StatusCode::NO_CONTENT => {
                     self.state = State::Closed;
                     Ok(Some(Event::Terminated))
                 }
                 _ => Err(Error::Http {
-                    status: resp.status,
+                    status: resp.status.as_u16(),
                 }),
             },
-            Some(PendingRequest::IceRestart) => match (resp.status, resp.etag) {
-                (200, Some(new_etag)) => {
-                    if let State::Established { etag, .. } = &mut self.state {
-                        *etag = Some(new_etag.clone());
+            Some(PendingRequest::IceRestart) => {
+                match (resp.status, http_util::etag_of(&resp.headers)) {
+                    (StatusCode::OK, Some(new_etag)) => {
+                        if let State::Established { etag, .. } = &mut self.state {
+                            *etag = Some(new_etag.clone());
+                        }
+                        Ok(Some(Event::IceRestart {
+                            sdp_fragment: resp.body,
+                            new_etag,
+                        }))
                     }
-                    Ok(Some(Event::IceRestart {
-                        sdp_fragment: resp.body,
-                        new_etag,
-                    }))
+                    (StatusCode::OK, None) => Err(Error::MissingHeader { header: "ETag" }),
+                    _ => Err(Error::Http {
+                        status: resp.status.as_u16(),
+                    }),
                 }
-                (200, None) => Err(Error::MissingHeader { header: "ETag" }),
-                _ => Err(Error::Http {
-                    status: resp.status,
-                }),
-            },
+            }
             Some(PendingRequest::Trickle) => match resp.status {
-                200 | super::status::NO_CONTENT => {
-                    if let Some(new_etag) = resp.etag
+                StatusCode::OK | StatusCode::NO_CONTENT => {
+                    if let Some(new_etag) = http_util::etag_of(&resp.headers)
                         && let State::Established { etag, .. } = &mut self.state
                     {
                         *etag = Some(new_etag);
@@ -277,7 +229,7 @@ impl WhipClient {
                     Ok(None)
                 }
                 _ => Err(Error::Http {
-                    status: resp.status,
+                    status: resp.status.as_u16(),
                 }),
             },
             None => Err(Error::WrongState {
@@ -303,18 +255,20 @@ impl WhipClient {
         url: String,
         content_type: Option<&'static str>,
         body: Vec<u8>,
-    ) -> HttpRequest {
-        let mut headers = Vec::new();
+    ) -> Result<HttpRequest, Error> {
+        let mut headers = HeaderMap::new();
         if let Some(token) = &self.bearer_token {
-            headers.push(("Authorization".into(), alloc::format!("Bearer {token}")));
+            headers.typed_insert(http_util::bearer(token)?);
         }
-        HttpRequest {
+        if let Some(ct) = content_type {
+            headers.typed_insert(http_util::content_type(ct)?);
+        }
+        Ok(HttpRequest {
             method,
             url,
-            content_type,
             headers,
             body,
-        }
+        })
     }
 }
 
@@ -324,18 +278,5 @@ fn state_name(s: &State) -> &'static str {
         State::OfferSent => "offer-sent",
         State::Established { .. } => "established",
         State::Closed => "closed",
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloc::string::ToString;
-
-    #[test]
-    fn method_display_matches_http_request_line_token() {
-        assert_eq!(Method::Post.to_string(), "POST");
-        assert_eq!(Method::Patch.to_string(), "PATCH");
-        assert_eq!(Method::Delete.to_string(), "DELETE");
     }
 }

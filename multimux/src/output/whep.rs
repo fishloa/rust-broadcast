@@ -584,18 +584,21 @@ async fn handle_whep_connection(
     let setup_role = choose_setup_role(parsed.setup.as_deref());
     let local_ice_ufrag = rand_token(8);
     let local_ice_pwd = rand_token(24);
-    let mut media = MediaTransport::new(MediaTransportConfig {
-        local_addr,
-        local_ice_ufrag: local_ice_ufrag.clone(),
-        local_ice_pwd: local_ice_pwd.clone(),
-        remote_ice_ufrag: parsed.remote_ufrag.clone(),
-        remote_ice_pwd: parsed.remote_pwd.clone(),
-        remote_fingerprint: parsed.remote_fingerprint.clone(),
-        is_controlling: false,
-        local_setup: setup_role,
-        stun_server: None,
-        max_remote_candidates: MAX_REMOTE_CANDIDATES,
-    })
+    let mut media = MediaTransport::new(
+        MediaTransportConfig {
+            local_addr,
+            local_ice_ufrag: local_ice_ufrag.clone(),
+            local_ice_pwd: local_ice_pwd.clone(),
+            remote_ice_ufrag: parsed.remote_ufrag.clone(),
+            remote_ice_pwd: parsed.remote_pwd.clone(),
+            remote_fingerprint: parsed.remote_fingerprint.clone(),
+            is_controlling: false,
+            local_setup: setup_role,
+            stun_server: None,
+            max_remote_candidates: MAX_REMOTE_CANDIDATES,
+        },
+        Instant::now(),
+    )
     .map_err(|e| MultimuxError::Connect {
         reason: format!("whep: build media transport: {e}"),
     })?;
@@ -1144,7 +1147,16 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         assert_eq!(parsed.payload_type, 96);
         assert_eq!(parsed.remote_ufrag, "abcd");
         assert_eq!(parsed.remote_pwd, "abcdefghijklmnopqrstuvwx");
-        assert_eq!(parsed.remote_fingerprint, OFFER_FINGERPRINT);
+        // `parse_remote_fingerprint` returns the typed (`sdp-types`) normalised
+        // text: lower-case hash token, upper-case colon-hex digest. A fingerprint
+        // is case-insensitive (RFC 8122 §5), so compare it that way.
+        assert!(
+            parsed
+                .remote_fingerprint
+                .eq_ignore_ascii_case(OFFER_FINGERPRINT),
+            "{} vs {OFFER_FINGERPRINT}",
+            parsed.remote_fingerprint
+        );
         assert_eq!(parsed.mid, "0");
         assert_eq!(parsed.candidates.len(), 1);
         assert_eq!(parsed.setup.as_deref(), Some("actpass"));
@@ -1409,18 +1421,21 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     async fn test_admitted_whep() -> AdmittedWhep {
         let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
         s.set_nonblocking(true).unwrap();
-        let media = MediaTransport::new(MediaTransportConfig {
-            local_addr: "127.0.0.1:0".parse().unwrap(),
-            local_ice_ufrag: rand_token(8),
-            local_ice_pwd: rand_token(24),
-            remote_ice_ufrag: rand_token(8),
-            remote_ice_pwd: rand_token(24),
-            is_controlling: false,
-            local_setup: SetupRole::Passive,
-            stun_server: None,
-            max_remote_candidates: MAX_REMOTE_CANDIDATES,
-            remote_fingerprint: OFFER_FINGERPRINT.into(),
-        })
+        let media = MediaTransport::new(
+            MediaTransportConfig {
+                local_addr: "127.0.0.1:0".parse().unwrap(),
+                local_ice_ufrag: rand_token(8),
+                local_ice_pwd: rand_token(24),
+                remote_ice_ufrag: rand_token(8),
+                remote_ice_pwd: rand_token(24),
+                is_controlling: false,
+                local_setup: SetupRole::Passive,
+                stun_server: None,
+                max_remote_candidates: MAX_REMOTE_CANDIDATES,
+                remote_fingerprint: OFFER_FINGERPRINT.into(),
+            },
+            Instant::now(),
+        )
         .unwrap();
         AdmittedWhep {
             socket: Arc::new(UdpSocket::from_std(s).unwrap()),
@@ -1650,18 +1665,21 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     /// instead of a forged STUN message.
     #[test]
     fn stun_integrity_failures_surface_as_err_not_ok() {
-        let mut media = MediaTransport::new(MediaTransportConfig {
-            local_addr: "127.0.0.1:0".parse().unwrap(),
-            local_ice_ufrag: "localuf01".into(),
-            local_ice_pwd: "local-ice-password-000000".into(),
-            remote_ice_ufrag: "remoteuf01".into(),
-            remote_ice_pwd: "remote-ice-password-00000".into(),
-            is_controlling: false,
-            local_setup: SetupRole::Passive,
-            stun_server: None,
-            max_remote_candidates: MAX_REMOTE_CANDIDATES,
-            remote_fingerprint: OFFER_FINGERPRINT.into(),
-        })
+        let mut media = MediaTransport::new(
+            MediaTransportConfig {
+                local_addr: "127.0.0.1:0".parse().unwrap(),
+                local_ice_ufrag: "localuf01".into(),
+                local_ice_pwd: "local-ice-password-000000".into(),
+                remote_ice_ufrag: "remoteuf01".into(),
+                remote_ice_pwd: "remote-ice-password-00000".into(),
+                is_controlling: false,
+                local_setup: SetupRole::Passive,
+                stun_server: None,
+                max_remote_candidates: MAX_REMOTE_CANDIDATES,
+                remote_fingerprint: OFFER_FINGERPRINT.into(),
+            },
+            Instant::now(),
+        )
         .unwrap();
         let from: SocketAddr = "127.0.0.1:9".parse().unwrap();
         let username = b"localuf01:remoteuf01";

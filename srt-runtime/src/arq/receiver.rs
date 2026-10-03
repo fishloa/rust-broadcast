@@ -370,6 +370,19 @@ impl Receiver {
         out
     }
 
+    /// Absolute (since the connection epoch) time of the next periodic Full
+    /// ACK or, while the loss list is non-empty, the next periodic NAK —
+    /// whichever is earlier. Always defined: the 10 ms Full ACK is
+    /// unconditional (rule 11), so an idle connection still has a deadline.
+    pub fn next_timeout(&self) -> Duration {
+        let ack = self.last_full_ack_at + FULL_ACK_PERIOD;
+        if self.loss_list.is_empty() {
+            return ack;
+        }
+        let nak = self.last_nak_at + nak_interval(self.rtt.rtt(), self.rtt.rtt_var());
+        ack.min(nak)
+    }
+
     /// Forget Full ACKs whose ACKACK never came (W3): a lost ACKACK, or a
     /// peer that never sends one, would otherwise leave one entry per Full
     /// ACK (100/s) forever.
@@ -508,6 +521,21 @@ mod tests {
 
     const PEER: u32 = 0xBBBB;
     const MAX_FLOW_WINDOW: u32 = 8192;
+
+    #[test]
+    fn next_timeout_is_the_full_ack_period_then_tracks_the_nak_interval() {
+        let mut r = Receiver::new(PEER, 0, MAX_FLOW_WINDOW);
+        assert_eq!(
+            r.next_timeout(),
+            FULL_ACK_PERIOD,
+            "fresh receiver: first Full ACK at 10 ms"
+        );
+        let _ = r.tick(FULL_ACK_PERIOD);
+        assert_eq!(r.next_timeout(), FULL_ACK_PERIOD * 2);
+        // a gap puts a NAK deadline on the table; it can only make the deadline earlier or equal
+        let _ = r.feed_data(5, Duration::from_millis(11)); // 1..=4 now lost
+        assert!(r.next_timeout() <= FULL_ACK_PERIOD * 2);
+    }
 
     #[test]
     fn in_order_arrivals_deliver_immediately_without_nak() {

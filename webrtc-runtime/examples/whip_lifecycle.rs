@@ -2,6 +2,7 @@
 //!
 //! Usage: cargo run -p webrtc-runtime --example whip_lifecycle
 
+use http::StatusCode;
 use webrtc_runtime::whip::client::{HttpResponse, WhipClient};
 
 fn main() {
@@ -15,17 +16,26 @@ fn main() {
         .offer(b"v=0\r\no=- 0 0 IN IP4 0.0.0.0\r\n".to_vec())
         .expect("offer");
     println!("1. {:?} {}", offer_req.method, offer_req.url);
-    println!("   Content-Type: {:?}", offer_req.content_type);
+    println!(
+        "   Content-Type: {}",
+        offer_req
+            .content_type()
+            .map(|c| c.to_string())
+            .unwrap_or_default()
+    );
 
     // Step 2: feed the 201 Created response (SDP answer).
     let event = client
-        .on_response(HttpResponse {
-            status: 201,
-            content_type: Some("application/sdp".into()),
-            location: Some("https://origin.example/whip/live/session-abc".into()),
-            etag: Some("33a64df5".into()),
-            body: b"v=0\r\no=- 1 1 IN IP4 192.0.2.1\r\n".to_vec(),
-        })
+        .on_response(
+            HttpResponse::new(StatusCode::CREATED)
+                .with_content_type("application/sdp")
+                .expect("content type")
+                .with_location("https://origin.example/whip/live/session-abc")
+                .expect("location")
+                .with_etag("33a64df5")
+                .expect("etag")
+                .with_body(b"v=0\r\no=- 1 1 IN IP4 192.0.2.1\r\n".to_vec()),
+        )
         .expect("on_response");
     println!("2. Event: {event:?}");
     println!("   State: {:?}", client.state());

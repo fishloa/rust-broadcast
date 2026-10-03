@@ -51,7 +51,13 @@ out — no wall-clock read inside the crate):
 
 **Optional `tokio` feature** — an async UDP socket adapter (`io::SrtSocket` /
 `io::SrtListener`) that drives the handshake + ARQ + TSBPD + LiveCC/FileCC
-engines end-to-end over real sockets.
+engines end-to-end over real sockets. Each connection's driver sleeps until its
+own next deadline (ACK/NAK, TSBPD release, keep-alive, pacing) instead of
+ticking; datagrams are `bytes::Bytes` views (`SrtSocket::recv` returns
+`Bytes`); `io::IoConfig` sets `max_datagram`/`connect`/`handshake`/`read_idle`/
+`write` (`connect_with`/`bind_with`); a listener's handshakes advance in a
+tracked background task, and its UDP port is released when the listener handle
+and every connection it accepted are dropped.
 
 The core is `no_std` + `alloc` (default `std` feature can be turned off); no
 `unsafe`. The `crypto` and `tokio` features are `std`-only and off by default, so

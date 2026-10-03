@@ -3,7 +3,10 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
+use http::{HeaderMap, StatusCode};
+
 use crate::Error;
+use crate::http_util::{self, Precondition};
 
 /// State of a WHIP server session.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -20,18 +23,7 @@ pub enum State {
     Closed,
 }
 
-/// An HTTP response the caller must send on behalf of the state machine.
-#[derive(Debug, Clone)]
-pub struct HttpResponse {
-    /// HTTP status code to send.
-    pub status: u16,
-    /// `Content-Type` header value, if the response carries a body.
-    pub content_type: Option<&'static str>,
-    /// Additional headers to send (e.g. `Location`, `ETag`).
-    pub headers: Vec<(String, String)>,
-    /// Response body bytes.
-    pub body: Vec<u8>,
-}
+pub use crate::http_util::HttpResponse;
 
 /// Events emitted by the WHIP server to the caller.
 #[derive(Debug, Clone)]
@@ -95,48 +87,47 @@ impl WhipSession {
     }
 
     /// Build the 201 Created response after generating an SDP answer.
+    ///
+    /// A session URL or `etag` that cannot be sent as a header (non-ASCII, a
+    /// double quote in the tag) yields a `500 Internal Server Error` response
+    /// with no `Location`, and leaves the session in its current state.
     pub fn accept(&mut self, sdp_answer: Vec<u8>, etag: String) -> HttpResponse {
-        self.state = State::Established { etag: etag.clone() };
-        HttpResponse {
-            status: super::status::CREATED,
-            content_type: Some(super::content_type::SDP),
-            headers: alloc::vec![
-                ("Location".into(), self.session_url.clone()),
-                ("ETag".into(), alloc::format!("\"{etag}\"")),
-            ],
-            body: sdp_answer,
+        let built = HttpResponse::new(StatusCode::CREATED)
+            .with_content_type(super::content_type::SDP)
+            .and_then(|r| r.with_location(&self.session_url))
+            .and_then(|r| r.with_etag(&etag));
+        match built {
+            Ok(resp) => {
+                self.state = State::Established { etag };
+                resp.with_body(sdp_answer)
+            }
+            Err(_) => HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR),
         }
     }
 
     /// Process an incoming PATCH (trickle ICE or ICE restart).
-    pub fn on_patch(
-        &mut self,
-        sdp_fragment: Vec<u8>,
-        if_match: Option<&str>,
-    ) -> Result<Event, Error> {
+    ///
+    /// `If-Match` is read as a typed RFC 9110 entity-tag list: `*` is an ICE
+    /// restart, the session's current strong tag is a trickle update, and an
+    /// absent header is a plain trickle update.
+    ///
+    /// # Errors
+    /// [`Error::InvalidHeader`] for a malformed `If-Match`;
+    /// [`Error::ETagMismatch`] if it does not strongly match the session's tag;
+    /// [`Error::WrongState`] outside [`State::Established`].
+    pub fn on_patch(&mut self, sdp_fragment: Vec<u8>, headers: &HeaderMap) -> Result<Event, Error> {
         match &self.state {
-            State::Established { etag } => {
-                if matches!(if_match, Some("*") | Some("\"*\"")) {
-                    Ok(Event::IceRestart { sdp_fragment })
-                } else if let Some(client_etag) = if_match {
-                    let client_etag = client_etag.trim_matches('"');
-                    if client_etag != etag {
-                        return Err(Error::ETagMismatch {
-                            expected: etag.clone(),
-                            got: client_etag.into(),
-                        });
-                    }
-                    Ok(Event::TrickleIce {
-                        sdp_fragment,
-                        if_match: Some(client_etag.into()),
-                    })
-                } else {
-                    Ok(Event::TrickleIce {
-                        sdp_fragment,
-                        if_match: None,
-                    })
-                }
-            }
+            State::Established { etag } => match http_util::check_if_match(headers, etag)? {
+                Precondition::Any => Ok(Event::IceRestart { sdp_fragment }),
+                Precondition::Passes => Ok(Event::TrickleIce {
+                    sdp_fragment,
+                    if_match: Some(etag.clone()),
+                }),
+                Precondition::Absent => Ok(Event::TrickleIce {
+                    sdp_fragment,
+                    if_match: None,
+                }),
+            },
             _ => Err(Error::WrongState {
                 operation: "PATCH",
                 state: server_state_name(&self.state),
@@ -146,24 +137,23 @@ impl WhipSession {
 
     /// Build the 204 No Content response for trickle ICE.
     pub fn ack_trickle(&self) -> HttpResponse {
-        HttpResponse {
-            status: super::status::NO_CONTENT,
-            content_type: None,
-            headers: Vec::new(),
-            body: Vec::new(),
-        }
+        HttpResponse::new(StatusCode::NO_CONTENT)
     }
 
     /// Build the 200 OK response for ICE restart.
+    ///
+    /// A `new_etag` that cannot be sent as a header yields a `500` response and
+    /// leaves the session's tag unchanged.
     pub fn ack_restart(&mut self, sdp_fragment: Vec<u8>, new_etag: String) -> HttpResponse {
-        self.state = State::Established {
-            etag: new_etag.clone(),
-        };
-        HttpResponse {
-            status: 200,
-            content_type: Some(super::content_type::TRICKLE_ICE),
-            headers: alloc::vec![("ETag".into(), alloc::format!("\"{new_etag}\"")),],
-            body: sdp_fragment,
+        let built = HttpResponse::new(StatusCode::OK)
+            .with_content_type(super::content_type::TRICKLE_ICE)
+            .and_then(|r| r.with_etag(&new_etag));
+        match built {
+            Ok(resp) => {
+                self.state = State::Established { etag: new_etag };
+                resp.with_body(sdp_fragment)
+            }
+            Err(_) => HttpResponse::new(StatusCode::INTERNAL_SERVER_ERROR),
         }
     }
 
@@ -183,12 +173,7 @@ impl WhipSession {
 
     /// Build the 200 OK response for DELETE.
     pub fn ack_delete(&self) -> HttpResponse {
-        HttpResponse {
-            status: 200,
-            content_type: None,
-            headers: Vec::new(),
-            body: Vec::new(),
-        }
+        HttpResponse::new(StatusCode::OK)
     }
 }
 
