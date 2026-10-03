@@ -21,6 +21,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   additive).
 
 ### Fixed
+- A received `Session` header whose id carries an unterminated quote (e.g. `ab"c;timeout=30`) no longer swallows the `;`: the id is taken up to the first `;` (as before) instead of through the unbalanced quote, so the `timeout` parameter is not lost.
 - `WWW-Authenticate` `stale=true` was missed when `stale` was the first parameter or the realm contained a comma; `Session` header parsing is now rtsp-runtime's own RFC 2326 §12.37 parser (see Changed).
 - `AsyncRtspServer::next_request` is cancel-safe on the response write: the events are kept and the response is flushed exactly once by the next call.
 - Slow-loris and never-terminated requests no longer hold a server connection or grow memory (no awaited IO is unbounded).

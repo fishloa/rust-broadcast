@@ -80,6 +80,44 @@ pub(crate) fn is_token(s: &str) -> bool {
         })
 }
 
+/// True if every `DQUOTE` in `s` is matched (no quote ends up unterminated).
+/// A quoted-pair inside a quoted-string escapes the next character, as in
+/// [`split_outside_quotes`]. A quote-aware split is meaningful only when this
+/// holds; callers fall back to a plain split otherwise.
+fn has_balanced_quotes(s: &str) -> bool {
+    let (mut in_quote, mut escaped) = (false, false);
+    for c in s.chars() {
+        if escaped {
+            escaped = false;
+        } else if in_quote && c == BACKSLASH {
+            escaped = true;
+        } else if c == DQUOTE {
+            in_quote = !in_quote;
+        }
+    }
+    !in_quote
+}
+
+/// Splits a received `Session` field value (§12.37) into the id and the parameter
+/// segments after it: the id is everything before the first `;` outside a
+/// quoted-string, LWS-trimmed. When the quotes do not balance (an unterminated
+/// quote such as `ab"c;timeout=30`) the quote-aware split is meaningless, so the
+/// id is instead everything before the first `;` — otherwise the `;` would be
+/// swallowed and the parameters lost. The returned id refs the input; the
+/// parameter segments are the (untrimmed) pieces the caller walks.
+pub(crate) fn split_session_value(s: &str) -> (&str, Vec<&str>) {
+    let mut segs = if has_balanced_quotes(s) {
+        split_outside_quotes(s, PARAM_SEP)
+    } else {
+        s.split(PARAM_SEP).collect()
+    };
+    if segs.is_empty() {
+        return ("", Vec::new());
+    }
+    let id = segs.remove(0);
+    (trim_lws(id), segs)
+}
+
 /// Splits `s` at every `sep` that is outside a quoted-string (a quoted-pair
 /// escapes the next character). Segments are returned untrimmed.
 pub(crate) fn split_outside_quotes(s: &str, sep: char) -> Vec<&str> {

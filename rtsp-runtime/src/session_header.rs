@@ -14,7 +14,10 @@
 //! names, a bad or zero `timeout` value keeps the id and falls back to the default (with a
 //! warning, see [`SessionHeader::parse_with_warnings`]), unknown parameters are
 //! preserved. The session id is everything before the first `;` outside a
-//! quoted-string, LWS-trimmed; on RECEIVE any non-empty id without a control
+//! quoted-string, LWS-trimmed; when the quotes do not balance (an unterminated
+//! quote) the id is instead everything before the first `;`, so `ab"c;timeout=30`
+//! keeps id `ab"c` and timeout 30 rather than swallowing the `;`. On RECEIVE any
+//! non-empty id without a control
 //! character is accepted verbatim (`"weird"`, `a b`, `abc,def`, `ab"c`: real servers
 //! send them and the client echoes them back unchanged). Only what we EMIT is strict
 //! (non-empty, trimmed, no control characters, representable). Output is always
@@ -64,8 +67,10 @@ impl SessionHeader {
     /// Like [`parse`](Self::parse), also returning the recoverable problems found
     /// (e.g. a malformed `timeout` that fell back to the default).
     pub fn parse_with_warnings(value: &str) -> Result<(Self, Vec<String>)> {
-        let mut segs = lex::split_outside_quotes(value, lex::PARAM_SEP).into_iter();
-        let id = lex::trim_lws(segs.next().unwrap_or(""));
+        // The lexer owns the split: the id is everything before the first `;`
+        // outside a quoted-string, falling back to the first `;` when the quotes
+        // do not balance, so `ab"c;timeout=30` keeps id `ab"c` and timeout 30.
+        let (id, segs) = lex::split_session_value(value);
         if id.is_empty() {
             return Err(Error::SessionParse("empty session id".into()));
         }
@@ -193,6 +198,22 @@ mod tests {
         assert!(SessionHeader::parse("").is_err());
         assert!(SessionHeader::parse("  ;timeout=5").is_err());
         assert_eq!(p("12345678").timeout, None);
+    }
+
+    #[test]
+    fn an_unbalanced_quote_falls_back_to_the_first_semicolon() {
+        // An unterminated quote must not swallow the `;` that introduces the params.
+        let (h, w) = SessionHeader::parse_with_warnings("ab\"c;timeout=30").unwrap();
+        assert_eq!(h.id, "ab\"c");
+        assert_eq!(h.timeout, Some(Duration::from_secs(30)));
+        assert!(w.is_empty(), "{w:?}");
+        // ... but a balanced quoted id still splits quote-aware.
+        let (h, w) = SessionHeader::parse_with_warnings("\"a;b\";timeout=30").unwrap();
+        assert_eq!(h.id, "\"a;b\"");
+        assert_eq!(h.timeout, Some(Duration::from_secs(30)));
+        assert!(w.is_empty(), "{w:?}");
+        // No parameters: the unbalanced-quote id is kept whole.
+        assert_eq!(p("ab\"c").id, "ab\"c");
     }
 
     #[test]

@@ -39,6 +39,7 @@ output**:
 | `"weird"`, `a b;timeout=30`, `abc,def`, `ab"c` | id kept verbatim (`"weird"`, `a b`, `abc,def`, `ab"c`) | interop: real servers send such ids and the client MUST echo the id unchanged; main stored and echoed them all |
 | an id containing a control character (CR, LF, ...) | error | echoing it would allow header injection |
 | `abc;foo=bar` | id `abc`, unknown parameter preserved | forward compatibility |
+| `ab"c;timeout=30` (unbalanced quote) | id `ab"c`, timeout 30 | a quoted-string that never closes is not a quoted-string: fall back to the first `;` so the parameters are not swallowed; matches the previous release |
 | empty / whitespace-only id | error | grammar requires `1*` |
 
 Serializer output is always `<id>[;timeout=<n>]` with no whitespace. The serializer is strict only for ids WE emit: it returns `Error::HeaderSerialize` (never emits) for an empty/untrimmed id, an id with a control character or that would swallow the `;` separator (unbalanced quote), a non-token extension name, or a control character in a value.
@@ -46,6 +47,6 @@ Serializer output is always `<id>[;timeout=<n>]` with no whitespace. The seriali
 ## Implementation notes
 
 `src/session_header.rs` (`SessionHeader { id, timeout, extensions }`), shared lexer
-`src/rfc2326_lex.rs`. The id is everything before the first `;` outside a quoted-string, LWS-trimmed and non-empty; any such id without a control character is accepted verbatim. A malformed
+`src/rfc2326_lex.rs`. The id is everything before the first `;` outside a quoted-string, LWS-trimmed and non-empty; when the quotes do not balance (an unterminated quote such as `ab"c;timeout=30`) the id is instead everything before the first `;`, so the `;` is not swallowed. Any such id without a control character is accepted verbatim. A malformed
 `timeout` (including more than 19 digits) keeps the id and sets the 60 s default, reported by
 `SessionHeader::parse_with_warnings`. Round-trip invariants as for Transport.
