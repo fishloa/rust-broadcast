@@ -6,7 +6,7 @@
 
 **Architecture:** One branch `w1/p` in worktree `.worktree/w1-p`, one commit per task. Three independent crate groups, executed in this order: (1) media-plane (benchmark first, then `parking_lot`, then a measured decision on a lock split); (2) dvb-ci-runtime (Linux-only, verified through the Docker recipe and Linux cross-clippy); (3) media-doctor (goldens first, an additive snapshot/exposition layer proven equivalent to the old renderer, then the server, UDP bind and binary rewrite). `render_prometheus` is deleted only after the new path has been proven semantically equal to it on the real fixture.
 
-**Tech Stack:** Rust 1.95 workspace, cargo `--locked`; `metrics` 0.24.6 + `metrics-exporter-prometheus` 0.18.3 (both already locked; `default-features = false`, recorder + `render()` only); `hyper` 1.11 + `hyper-util` 0.1.20 + `http-body-util` 0.1 + `tokio` 1.53 + `tokio-util` 0.7.19 (all already locked); `socket2` 0.6.5 (locked); `parking_lot` 0.12.5 (locked); `criterion` 0.8.2 (locked); NEW to the lock: `rustix` 1.1.5 (MSRV 1.65, checked in its `Cargo.toml`) and `wait-timeout` 0.2.1.
+**Tech Stack (socket2 audit):** every socket2 0.6.5 call used (`Domain::for_address`, `Socket::new`, `set_reuse_address`, `set_recv_buffer_size`, `recv_buffer_size`, `bind`, `join_multicast_v4`, `join_multicast_v6`, `SockRef::from`) is ungated by `all`; ONLY `set_reuse_port` needs `features = ["all"]` (verified against the 0.6.5 source). Rust 1.95 workspace, cargo `--locked`; `metrics` 0.24.6 + `metrics-exporter-prometheus` 0.18.3 (both already locked; `default-features = false`, recorder + `render()` only); `hyper` 1.11 + `hyper-util` 0.1.20 + `http-body-util` 0.1 + `tokio` 1.53 + `tokio-util` 0.7.19 (all already locked); `socket2` 0.6.5 (locked); `parking_lot` 0.12.5 (locked); `criterion` 0.8.2 (locked); NEW to the lock: `rustix` 1.1.5 (MSRV 1.65, checked in its `Cargo.toml`) and `wait-timeout` 0.2.1.
 
 **Spec:** `docs/superpowers/specs/2026-10-03-protocol-runtime-dehandroll-design.md` — §7 W1 row **P** = SP2.3 (media-doctor metrics), SP1.6 (media-doctor UDP bind), SP6.4 / SP6.6 (media-plane `Trunk`, `parking_lot`), SP6.7 (`rustix` poll), SP7 for these crates, §5 guards, §8 versioning.
 
@@ -65,7 +65,7 @@ Expected: only `test result: ok` lines. Record the per-binary passed counts in `
 - [ ] **Step 3: Baseline Linux run of dvb-ci-runtime (Docker recipe)**
 
 ```bash
-S=/private/tmp/claude-501/-Volumes-External-Projects-rust-broadcast/afee462d-1b95-42c9-a99a-a771bfef51c0/scratchpad/ci-linux
+S="${TMPDIR:-/tmp}/w1p-ci-linux"   # any session-local dir; recreated by mkdir -p
 mkdir -p $S
 cat > $S/run.sh <<'EOF'
 set -e
@@ -78,6 +78,15 @@ docker run --rm -v $S:/in:ro rust:1.95-slim bash /in/run.sh
 ```
 
 Expected: `linux::tests::read_on_empty_device_returns_immediately_not_blocking`, `read_rejects_a_frame_that_fills_the_scratch_buffer`, `read_still_returns_short_frames_normally`, `slot_info_falls_back_on_enotty` all `ok`. Record the counts. (Target dir is inside the container — never a bind mount.) Every later "Linux run" in this plan re-runs these four lines with `$S` re-tarred.
+
+- [ ] **Step 3b: thumbv7em baseline (CI job `no_std (thumbv7em-none-eabi)`, `.github/workflows/ci.yml:112-149`; both `media-plane` and `media-doctor` are in its crate list)**
+
+```bash
+rustup target add thumbv7em-none-eabi
+for c in media-plane media-doctor; do cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked 2>&1 | tail -3; done
+```
+
+Expected: both build. Record. (The gate script has no thumbv7em step, so this is the only local check; Task 15 repeats it.)
 
 - [ ] **Step 4: Record the machine** (cores, OS, `sysctl -n hw.ncpu`) in `.delegate/w1-p-report.md`; Task 2/4 numbers are only comparable on this machine.
 
@@ -772,7 +781,7 @@ git commit -m "test(media-plane): observe parked StallIngest publishers directly
 - [ ] **Step 2: Run on Linux (Docker) against the OLD code — expect 4 new passes**
 
 ```bash
-S=/private/tmp/claude-501/-Volumes-External-Projects-rust-broadcast/afee462d-1b95-42c9-a99a-a771bfef51c0/scratchpad/ci-linux
+S="${TMPDIR:-/tmp}/w1p-ci-linux"
 git ls-files -co --exclude-standard | grep -v '^private/' | tar -cf $S/x.tar -T -
 docker run --rm -v $S:/in:ro rust:1.95-slim bash /in/run.sh
 ```
@@ -1245,7 +1254,7 @@ pub async fn serve(
 
 W2/other-crate note: nothing outside media-doctor consumes these.
 
-Design facts, all verified in source: `http1::Builder::timer(TokioTimer::new()).header_read_timeout(d)` (hyper-1.11.0 `http1.rs:352,411`); `keep_alive(false)` gives `Connection: close`; `TaskTracker::{spawn, close, wait}` (`tokio-util` feature `rt`); `watch::Sender::send_replace` is callable from a non-async thread. Over-cap connections are still served — by a service that always answers `503` — so no HTTP bytes are hand-written; every connection (admitted or refused) is bounded by the same total deadline.
+Design facts, all verified in source: `http1::Builder::timer(TokioTimer::new()).header_read_timeout(d)` (hyper-1.11.0 `http1.rs:352,411`); `keep_alive(false)` gives `Connection: close`; `TaskTracker::{spawn, close, wait}` (`tokio-util` feature `rt`); `watch::Sender::send_replace` is callable from a non-async thread. **Over-cap sockets are accepted and closed immediately** (dropped in the accept loop: no task, no fd held, no write). The number of in-flight sockets is therefore bounded by `max_conns` (served) plus zero (refused), and a flood cannot exhaust fds beyond what the accept loop drains. (Owner fix; the earlier design served a 503 per over-cap socket and so held a task and an fd for up to `io_timeout` each.)
 
 - [ ] **Step 1: Cargo.toml**
 
@@ -1258,7 +1267,7 @@ tokio-util       = { version = "0.7", default-features = false, features = ["rt"
 hyper            = { version = "1", default-features = false, features = ["server", "http1"], optional = true }
 hyper-util       = { version = "0.1", default-features = false, features = ["tokio"], optional = true }
 http-body-util   = { version = "0.1", optional = true }
-socket2          = { version = "0.6", optional = true }
+socket2          = { version = "0.6", features = ["all"], optional = true } # `all` is required for `Socket::set_reuse_port` (cfg(feature = "all") at socket2-0.6.5/src/sys/unix.rs:2237)
 ...
 net     = ["metrics", "dep:tokio", "dep:tokio-util", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:socket2"]
 cli     = ["dep:clap", "dep:thiserror", "dep:container-probe", "std", "net"]
@@ -1333,21 +1342,36 @@ Tests (each names the retired test it re-expresses):
         srv.task.await.unwrap();
     }
 
-    /// Re-expresses `connections_beyond_the_cap_are_refused` and
-    /// `refusal_response_uses_crlf_framing`: the refusal is now written by
-    /// hyper, so the CRLF-framing test is retired (see Task 12's table); this
-    /// test pins the 503.
+    /// Re-expresses `connections_beyond_the_cap_are_refused` (the 503 and
+    /// `refusal_response_uses_crlf_framing` are retired: over-cap sockets are
+    /// now closed at accept, nothing is written). Bounded-pending proof: with
+    /// the cap full, FLOOD over-cap connects are each closed promptly (EOF or
+    /// reset well inside `io_timeout`), so none is parked holding a task/fd;
+    /// the count of live server tasks never exceeds `max_conns`.
     #[tokio::test]
-    async fn connection_beyond_the_cap_is_answered_503() {
+    async fn connections_beyond_the_cap_are_closed_promptly_and_do_not_accumulate() {
         const CAP: usize = 2;
+        const FLOOD: usize = 200;
         let (srv, _tx) = start(cfg(CAP, 60_000)).await;
         // Connect sequentially: the accept loop admits in connect order, so
         // the first CAP connections own the permits (no probing needed).
         let mut held = Vec::new();
         for _ in 0..CAP { held.push(TcpStream::connect(srv.addr).await.unwrap()); }
-        let over = scrape(srv.addr).await;
-        assert!(over.starts_with("HTTP/1.1 503"), "{over}");
-        drop(held);
+        let mut buf = [0u8; 16];
+        for i in 0..FLOOD {
+            let mut over = TcpStream::connect(srv.addr).await.unwrap();
+            // Closed by the server: EOF or reset, within a bound far below the 60 s io_timeout.
+            let r = tokio::time::timeout(std::time::Duration::from_secs(5), over.read(&mut buf))
+                .await.unwrap_or_else(|_| panic!("over-cap socket {i} was held open, not closed"));
+            assert!(matches!(r, Ok(0) | Err(_)), "over-cap socket {i} got data: {r:?}");
+        }
+        // The held connections still own their permits and still work.
+        for h in &mut held { h.write_all(REQ).await.unwrap(); }
+        for h in &mut held {
+            let mut out = vec![0u8; 12];
+            h.read_exact(&mut out).await.unwrap();
+            assert_eq!(&out, b"HTTP/1.1 200");
+        }
         srv.token.cancel();
         srv.task.await.unwrap();
     }
@@ -1478,7 +1502,7 @@ cargo test --locked -p media-doctor --features net --lib metrics_server 2>&1 | g
 //!
 //! hyper does all HTTP framing; this module only decides *who may connect and
 //! for how long* — the policy the old thread-per-connection server enforced
-//! (audit MD-W9): a concurrency cap (`max_conns`; over-cap peers get `503`),
+//! (audit MD-W9): a concurrency cap (`max_conns`; over-cap peers are closed at accept),
 //! a header-read timeout and a total per-connection deadline (`io_timeout`)
 //! so a dribbling or idle peer cannot hold a connection, and a
 //! `CancellationToken` that stops the accept loop and drops the listener.
@@ -1495,7 +1519,7 @@ use hyper::body::{Bytes, Incoming};
 use hyper::header::{CONTENT_TYPE, HeaderValue};
 use hyper::server::conn::http1;
 use hyper::service::service_fn;
-use hyper::{Request, Response, StatusCode};
+use hyper::{Request, Response};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use tokio::net::TcpListener;
 use tokio::sync::{Semaphore, watch};
@@ -1567,20 +1591,10 @@ impl MetricsPublisher {
     }
 }
 
-fn respond(body: Option<Arc<str>>) -> Response<Full<Bytes>> {
-    match body {
-        Some(text) => {
-            let mut r = Response::new(Full::new(Bytes::from(text.as_bytes().to_vec())));
-            r.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static(EXPOSITION_CONTENT_TYPE));
-            r
-        }
-        None => {
-            let mut r = Response::new(Full::new(Bytes::new()));
-            *r.status_mut() = StatusCode::SERVICE_UNAVAILABLE;
-            r.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static("text/plain"));
-            r
-        }
-    }
+fn respond(text: Arc<str>) -> Response<Full<Bytes>> {
+    let mut r = Response::new(Full::new(Bytes::from(text.as_bytes().to_vec())));
+    r.headers_mut().insert(CONTENT_TYPE, HeaderValue::from_static(EXPOSITION_CONTENT_TYPE));
+    r
 }
 
 /// Serve `GET /metrics` (and, this being a single-endpoint probe, any other
@@ -1608,13 +1622,16 @@ pub async fn serve(
         };
         // Taken here, in accept order, so "the first N connections own the N
         // permits" is deterministic; released when the connection task ends.
-        let permit = Arc::clone(&permits).try_acquire_owned().ok();
+        // Over the cap: close at once (drop the stream) — no task, no fd held.
+        let Ok(permit) = Arc::clone(&permits).try_acquire_owned() else {
+            drop(stream);
+            continue;
+        };
         let metrics = metrics.clone();
         let token = shutdown.clone();
         tracker.spawn(async move {
-            let admitted = permit.is_some();
             let service = service_fn(move |_req: Request<Incoming>| {
-                let body = admitted.then(|| Arc::clone(&metrics.borrow()));
+                let body = Arc::clone(&metrics.borrow());
                 async move { Ok::<_, Infallible>(respond(body)) }
             });
             let mut http = http1::Builder::new();
@@ -1654,7 +1671,7 @@ Expected: 9 passed ×20.
 
 - [ ] **Step 6: Revert-check each guarantee** (each mutation must produce the named failure; record):
   1. Delete `.timer(TokioTimer::new())` → `dribbling_client_is_dropped_at_the_deadline` still passes because of the outer `tokio::time::timeout`; therefore ALSO delete the `tokio::time::timeout(config.io_timeout, conn)` wrapper (keep `select!` with `conn` directly) and expect the dribbler test to fail ("server never dropped the dribbler" after 10 s). This proves each of the two defences is individually necessary only together — record that finding; do **not** simplify either away.
-  2. `Semaphore::new(config.max_conns + 1000)` → `connection_beyond_the_cap_is_answered_503` fails.
+  2. `Semaphore::new(config.max_conns + 1000)` → `connections_beyond_the_cap_are_closed_promptly_and_do_not_accumulate` fails (the flood sockets are served/held, not closed). Also replace the `let Ok(permit) … else { drop(stream); continue }` with a spawn that sleeps `io_timeout` before dropping: the same test fails (held-open).
   3. Remove `drop(listener)` indirectly by `std::mem::forget(listener)` at the end of `serve` → `shutdown_releases_the_port` fails.
   4. `last.is_none_or(..)` → `true` → the cadence test fails on `!p.maybe_publish(.., t(100))`.
   5. `keep_alive(false)` removed → `response_head_matches_the_main_golden_after_normalisation` fails (`connection: close` missing).
@@ -1914,10 +1931,10 @@ git commit -m "feat(media-doctor): socket2 UDP/multicast bind with configurable 
 |---|---|---|
 | `idle_client_does_not_block_a_second_scraper` (197) | **Re-expressed** | `metrics_server::tests::idle_client_does_not_block_a_second_scraper` |
 | `repeated_scrapes_all_succeed_with_a_stalled_client_outstanding` (223) | **Re-expressed** | `…::repeated_scrapes_succeed_with_stalled_clients_outstanding` |
-| `connections_beyond_the_cap_are_refused` (245) | **Re-expressed** (503, deterministic accept order, no probe loop / no sleeps) | `…::connection_beyond_the_cap_is_answered_503` |
+| `connections_beyond_the_cap_are_refused` (245) | **Re-expressed** (over-cap sockets closed at accept, bounded; deterministic accept order, no probe loop / no sleeps) | `…::connections_beyond_the_cap_are_closed_promptly_and_do_not_accumulate` |
 | `connection_flood_beyond_the_cap_still_serves_after_it_drains` (≈290) | **Re-expressed** | `…::flood_beyond_the_cap_drains_and_serving_resumes` |
 | `dribbling_client_is_dropped_at_the_total_deadline` (≈320) | **Re-expressed** (this is NOT made moot by hyper: hyper ignores `header_read_timeout` unless a timer is set; the exporter's own listener sets none) | `…::dribbling_client_is_dropped_at_the_deadline` |
-| `refusal_response_uses_crlf_framing` (≈395) | **Retired**: it pinned hand-written `HTTP/1.1 503\r\n…` bytes; hyper now writes every status line and header, so a CRLF defect in this crate is impossible by construction. The 503 itself is still pinned (cap test) | — |
+| `refusal_response_uses_crlf_framing` (≈395) | **Retired**: it pinned hand-written `HTTP/1.1 503\r\n…` bytes; hyper now writes every status line and header, so a CRLF defect in this crate is impossible by construction. Over-cap refusal is now a prompt close (no 503 written), pinned by the cap test | — |
 | helpers `free_port`, `spawn_watch`'s readiness poll, `hold_connections`, `all_open`, `PROBE_PATIENCE` | **Retired**: reserve-then-rebind port allocation and accept-order probing existed only because the old server could not report its bound address or admit deterministically (SP7 item 1). Replaced by port-0 listeners passed into `serve` | — |
 | (new, no old equivalent) | shutdown releases the port; latest body served; cadence | `shutdown_releases_the_port`, `scrape_serves_the_latest_published_body`, `publisher_renders_at_most_once_per_interval_and_flushes_on_demand` |
 
@@ -2363,9 +2380,9 @@ git commit -m "test: no-handroll tripwire guards for media-doctor, media-plane a
 
 ```markdown
 ### Changed (breaking)
-- **BREAKING: `WatchState::render_prometheus` is removed.** The Prometheus text is now produced by `metrics-exporter-prometheus`: use `media_doctor::render_metrics(&WatchState)` (feature `metrics`) or read the typed `WatchState::snapshot()`. Differences in the exposition text for the same input (checked semantically against the golden from `main`, `tests/golden/watch/m6-single.prom`): the `# clauses: …` comment line is no longer emitted (the clause is on `ConformanceSample::clause`); series order follows the exporter's. Example, before: `# clauses: continuity_count_error=…` after the `conformance_events_total` series; after: absent. HELP, TYPE and every sample value are unchanged.
+- **BREAKING: `WatchState::render_prometheus` is removed.** The Prometheus text is now produced by `metrics-exporter-prometheus`: use `media_doctor::render_metrics(&WatchState)` (feature `metrics`) or read the typed `WatchState::snapshot()`. Differences in the exposition text for the same input (checked semantically against the golden from `main`, `tests/golden/watch/m6-single.prom`): the `# clauses: …` comment line is no longer emitted — **owner-accepted loss of operator-visible information** (the clause is only on `ConformanceSample::clause`); series order follows the exporter's. Example, before: `# clauses: continuity_count_error=…` after the `conformance_events_total` series; after: absent. HELP, TYPE and every sample value are unchanged.
 - The `watch` HTTP response head differs only cosmetically (hyper writes it): header names are lower-case, a `date` header is added, header order differs. Before: `Content-Type: text/plain; version=0.0.4` / `Content-Length: N` / `Connection: close`. After: `content-type: text/plain; version=0.0.4` / `content-length: N` / `connection: close` / `date: …`.
-- `watch` no longer spawns a thread per metrics connection. Over-cap connections are answered `503` by hyper (formerly hand-written bytes); the concurrency cap, the total per-connection deadline and `--metrics-max-conns` / `--metrics-io-timeout-ms` keep their meaning and defaults. A header-read timeout (same value) is now also enforced.
+- `watch` no longer spawns a thread per metrics connection. Over-cap connections are now closed immediately at accept (formerly a hand-written `503`; a 503 per over-cap socket held a task and fd for `io_timeout`); the concurrency cap, the total per-connection deadline and `--metrics-max-conns` / `--metrics-io-timeout-ms` keep their meaning and defaults. A header-read timeout (same value) is now also enforced.
 - `watch` renders the exposition at most every 250 ms and flushes when the feed goes quiet, instead of rendering on every scrape.
 
 ### Added
@@ -2394,7 +2411,18 @@ git commit -m "test: no-handroll tripwire guards for media-doctor, media-plane a
 - (`linux` feature) device readiness polling uses `rustix::event::poll` instead of `libc::poll`; sub-millisecond timeouts are no longer truncated to zero. New dependency `rustix` (feature `linux` only). `libc` stays for the CA ioctls. No public API change.
 ```
 
-- [ ] **Step 2: The full gate, exactly as CI runs it**
+- [ ] **Step 1b: thumbv7em for the CI `no_std` job's crates in this cluster.** New dependencies (`parking_lot`, `criterion`, `metrics`, `hyper`, `tokio`, `socket2`, `wait-timeout`, `rustix`) are all optional/dev/std-gated and must not reach the no-default build:
+
+```bash
+rustup target add thumbv7em-none-eabi
+for c in media-plane media-doctor; do
+  echo "== $c"; cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
+done
+```
+
+Expected: both build (the exact CI command, `ci.yml:147`). `media-plane --no-default-features` must not compile `parking_lot` (it is behind `std`); `media-doctor --no-default-features` must not compile `watch_metrics`/`metrics_server`/`udp`/`snapshot`-only code that needs std (`WatchSnapshot` is `alloc`-only by design). If either fails, fix the gating — never remove the crate from the CI list. (dvb-ci-runtime is not in that job.)
+
+- [ ] **Step 2: The full gate, exactly as CI runs it** (run it under the shared gate lock — `gate-wt.sh` takes it; do not start a second gate or any other cargo command meanwhile)
 
 ```bash
 /Volumes/External/Projects/rust-broadcast/.delegate/gate-wt.sh "$PWD" > /Volumes/External/Projects/rust-broadcast/.delegate/gate-w1-p.log 2>&1
@@ -2423,12 +2451,27 @@ Expected: only `ok` lines, each with count 20.
 
   Also record the cross-cluster notes: (a) `bounded.rs` copies in `hls-runtime/tests/support/` (R-low) and `multimux/tests/support/` (W2) take the Task 13 replacement; (b) no multimux compile fix was needed by this cluster (confirm `cargo build --locked -p multimux --all-features` and `-p compliance-probe`); (c) multimux's `lock.rs` is untouched (W2).
 
-- [ ] **Step 5: Commit and hand off — do not merge**
+- [ ] **Step 5: Commit**
 
 ```bash
 git add media-doctor/CHANGELOG.md media-plane/CHANGELOG.md dvb-ci-runtime/CHANGELOG.md media-doctor/README.md .delegate/w1-p-report.md
 git commit -m "docs: W1-P changelogs and report"
 ```
+
+- [ ] **Step 6: Rebase after T and RA have merged (merge order T → RA → P → RB), and regenerate the lock — never hand-merge it.** Do this only when the orchestrator says T and RA are on `origin/main`:
+
+```bash
+git fetch -q origin
+git rebase origin/main            # source conflicts: stop and report; Cargo.lock conflicts: resolve ONLY as below
+git checkout origin/main -- Cargo.lock
+# re-apply this plan's lock edits, one command per dependency add (unlocked build writes the entry):
+CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo build -p media-plane --all-features --benches   # criterion edge, parking_lot edge
+CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo build -p media-doctor --all-features --tests    # metrics, metrics-exporter-prometheus, tokio, tokio-util, hyper, hyper-util, http-body-util, socket2 (features all), wait-timeout
+CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo build -p dvb-ci-runtime --all-features          # rustix
+git diff origin/main -- Cargo.lock | grep -E '^[-+]' | grep -v '^[-+][-+]'
+```
+
+Expected lock diff vs main: only the intended P edges and new packages (`rustix` + `linux-raw-sys`/`bitflags` if absent, `wait-timeout` unless RB/T already added it — then it is a no-op). Anything else: `cargo update -p <pkg> --precise <old>`. Then re-run `cargo build --workspace --all-features --locked`, Step 1b, the thumbv7em loop, and the full gate (Step 2) on the rebased branch; update the report with the post-rebase counts.
 
 **Do not merge.** The orchestrator runs the adversarial reviewer, updates `.delegate/release-versions.txt`, merges with `git merge --squash`, pushes and confirms CI green.
 
@@ -2457,6 +2500,7 @@ git commit -m "docs: W1-P changelogs and report"
 | §6 goldens from main before the wave | `/metrics` text and HTTP head | 1 |
 | §6 20 consecutive runs of every touched test | per-task loops + final sweep | 6, 10, 11, 12, 13, 15 |
 | §7 gate 14/14, CHANGELOG, §8 versions | | 15 |
+| CI `no_std` job (`thumbv7em-none-eabi`) for media-plane and media-doctor | baseline + final build | 0, 15 |
 | §8 media-doctor breaking (`render_prometheus`) | recorded, 0.9.0 | 9, 15 |
 
 ## Escalations
