@@ -449,10 +449,10 @@ fn ll_dash_mpd_is_static_and_utc_timing_is_opt_in() {
 /// `dash` demuxer does exist.
 #[test]
 fn ffprobe_dash_demuxer_availability_is_reported() {
-    let demuxers = Command::new("ffprobe")
-        .arg("-demuxers")
-        .output()
-        .expect("spawn ffprobe");
+    let Ok(demuxers) = Command::new("ffprobe").arg("-demuxers").output() else {
+        eprintln!("SKIP cli_binary: ffprobe not on PATH");
+        return;
+    };
     let listing = String::from_utf8_lossy(&demuxers.stdout);
     let has_dash = listing.lines().any(|l| {
         let mut it = l.split_whitespace();
