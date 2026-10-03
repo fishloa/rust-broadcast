@@ -15,14 +15,16 @@
 //! Everything in this module is pure, `no_std`+`alloc` ingest/accounting
 //! logic: [`WatchState::feed_datagram`] takes a raw byte slice (a UDP
 //! payload, or any other chunking of a byte stream) and updates the
-//! accumulated metrics; [`WatchState::render_prometheus`] renders the current
-//! snapshot in Prometheus text exposition format. Neither function touches a
-//! socket. The `cli`-gated binary (`src/bin/media-doctor.rs`) is a thin shell
-//! around this: a `UdpSocket`/`TcpListener` glue loop that calls these two
-//! methods from an `Arc<Mutex<WatchState>>` shared with the metrics HTTP
-//! thread. This mirrors `rtsp-runtime`'s sans-IO split: the protocol/ingest
-//! logic is a driveable state machine, and the I/O is a separate, thin,
-//! swappable layer.
+//! accumulated metrics; [`WatchState::snapshot`] returns the accumulated
+//! figures as a typed [`WatchSnapshot`], which the `metrics` feature turns into
+//! Prometheus text exposition format (`render_metrics`). Neither function
+//! touches a socket. The `cli`-gated binary (`src/bin/media-doctor.rs`) is a
+//! thin shell around this: a `UdpSocket` ingest loop on the main thread feeding
+//! the state, and a metrics HTTP server (hyper, `metrics_server`) that serves
+//! the latest rendered body from a separate thread; `WatchState` itself is
+//! never shared. This mirrors `rtsp-runtime`'s sans-IO split: the
+//! protocol/ingest logic is a driveable state machine, and the I/O is a
+//! separate, thin, swappable layer.
 //!
 //! # Pipeline
 //!
@@ -72,9 +74,7 @@
 //! one-shot `check` diagnostics for v1.
 
 use alloc::collections::btree_map::BTreeMap;
-use alloc::string::String;
 use alloc::vec::Vec;
-use core::fmt::Write as _;
 use core::time::Duration;
 
 use crate::diagnostics::codec_common::has_adts_sync;
@@ -138,11 +138,71 @@ struct ConformanceCount {
     count: u64,
 }
 
+/// One TR 101 290 indicator's accumulated event count, as exposed by
+/// [`WatchState::snapshot`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct ConformanceSample {
+    /// The indicator's name (e.g. `Continuity_count_error`).
+    pub indicator: &'static str,
+    /// The indicator's priority tier (e.g. `first priority`).
+    pub priority: &'static str,
+    /// The TR 101 290 clause the indicator comes from.
+    pub clause: &'static str,
+    /// Events observed so far.
+    pub count: u64,
+}
+
+/// A per-PID boolean figure in a [`WatchSnapshot`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PidFlag {
+    /// The elementary PID.
+    pub pid: u16,
+    /// `true` for a codec-signalling mismatch / a decode-timestamp anomaly.
+    pub set: bool,
+}
+
+/// A typed, `no_std` copy of every figure [`WatchState`] has accumulated —
+/// what the Prometheus exposition (`render_metrics`, feature `metrics`)
+/// publishes. Counters are monotonic totals; the per-PID lists only carry
+/// PIDs that currently have something to report.
+#[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
+pub struct WatchSnapshot {
+    /// Well-formed 188-byte TS packets processed.
+    pub packets: u64,
+    /// Ingest datagrams fed.
+    pub datagrams: u64,
+    /// Times TS byte-stream sync was lost and reacquired.
+    pub resync_events: u64,
+    /// Bytes dropped before/while reacquiring sync.
+    pub dropped_bytes: u64,
+    /// Whether the TR 101 290 monitor currently considers the stream in sync.
+    pub in_sync: bool,
+    /// Per-indicator TR 101 290 event counts, in indicator-name order.
+    pub conformance: Vec<ConformanceSample>,
+    /// SCTE-35 `splice_insert` events observed (cancelled ones excluded).
+    pub scte35_events: u64,
+    /// Currently-unmatched SCTE-35 `splice_insert` events.
+    pub scte35_open: u64,
+    /// Non-monotonic decode-timestamp events observed.
+    pub pts_dts_anomalies: u64,
+    /// Codec-signalling mismatch per PID (only PIDs with at least one access
+    /// unit observed).
+    pub codec_signalling: Vec<PidFlag>,
+    /// Decode-timestamp anomaly per PID (only PIDs with a decode timestamp
+    /// seen).
+    pub pts_dts_anomaly: Vec<PidFlag>,
+    /// Ingest clock of the most recently processed packet, in seconds.
+    pub last_packet_clock_seconds: f64,
+}
+
 /// The continuous ingest + metrics accumulator driving `media-doctor watch`.
 ///
 /// Feed raw byte chunks (UDP datagrams, or any other framing of a live TS
 /// byte stream) with [`feed_datagram`](Self::feed_datagram); read the current
-/// accumulated state at any time with [`render_prometheus`](Self::render_prometheus).
+/// accumulated state at any time with [`snapshot`](Self::snapshot).
 /// Never touches a socket — see the module docs for the split with the `cli`
 /// glue that does.
 pub struct WatchState {
@@ -518,215 +578,198 @@ impl WatchState {
         track.prev_decode = Some(raw);
     }
 
-    /// Render the current accumulated state in Prometheus text exposition
-    /// format (a `GET /metrics` response body).
-    ///
-    /// Values reflect state as of this call; a real Prometheus scraper
-    /// computes rates/deltas itself from successive scrapes of these
-    /// monotonic counters.
+    /// A typed, `no_std` copy of every accumulated figure — what the
+    /// Prometheus exposition (`render_metrics`, feature `metrics`) publishes.
     #[must_use]
-    pub fn render_prometheus(&self) -> String {
-        let mut out = String::new();
+    pub fn snapshot(&self) -> WatchSnapshot {
         let conformance_stats = self.conformance.stats();
         let resync_stats = self.resync.stats();
-
-        metric_header(
-            &mut out,
-            "media_doctor_packets_total",
-            "Total well-formed 188-byte TS packets processed (ISO/IEC 13818-1 section 2.4.3.2).",
-            "counter",
-        );
-        let _ = writeln!(
-            out,
-            "media_doctor_packets_total {}",
-            conformance_stats.packets
-        );
-
-        metric_header(
-            &mut out,
-            "media_doctor_datagrams_total",
-            "Total ingest datagrams fed (e.g. UDP payloads).",
-            "counter",
-        );
-        let _ = writeln!(out, "media_doctor_datagrams_total {}", self.datagrams_total);
-
-        metric_header(
-            &mut out,
-            "media_doctor_resync_events_total",
-            "Times TS byte-stream sync was lost and reacquired (mpeg_ts::resync::TsResync).",
-            "counter",
-        );
-        let _ = writeln!(
-            out,
-            "media_doctor_resync_events_total {}",
-            resync_stats.resyncs
-        );
-
-        metric_header(
-            &mut out,
-            "media_doctor_dropped_bytes_total",
-            "Bytes dropped before/while reacquiring TS packet sync.",
-            "counter",
-        );
-        let _ = writeln!(
-            out,
-            "media_doctor_dropped_bytes_total {}",
-            resync_stats.dropped_bytes
-        );
-
-        metric_header(
-            &mut out,
-            "media_doctor_conformance_in_sync",
-            "Whether the ETSI TR 101 290 monitor currently considers the stream in sync (1) or not (0).",
-            "gauge",
-        );
-        let _ = writeln!(
-            out,
-            "media_doctor_conformance_in_sync {}",
-            u8::from(conformance_stats.in_sync)
-        );
-
-        metric_header(
-            &mut out,
-            "media_doctor_conformance_events_total",
-            "ETSI TR 101 290 indicator events observed, by indicator and priority tier.",
-            "counter",
-        );
-        for (name, c) in &self.conformance_counts {
-            let _ = writeln!(
-                out,
-                "media_doctor_conformance_events_total{{indicator=\"{}\",priority=\"{}\"}} {}",
-                escape_label(name),
-                escape_label(c.priority),
-                c.count,
-            );
-        }
-        if !self.conformance_counts.is_empty() {
-            out.push_str("# clauses: ");
-            let mut first = true;
-            for (name, c) in &self.conformance_counts {
-                if !first {
-                    out.push_str(", ");
-                }
-                first = false;
-                let _ = write!(out, "{name}={}", c.clause);
-            }
-            out.push('\n');
-        }
-
-        metric_header(
-            &mut out,
-            "media_doctor_scte35_events_total",
-            "Total SCTE-35 splice_insert events observed (ANSI/SCTE 35 section 9.7.3.1), excluding cancelled events.",
-            "counter",
-        );
-        let _ = writeln!(
-            out,
-            "media_doctor_scte35_events_total {}",
-            self.scte35_events_total
-        );
-
-        let scte35_open: u64 = self
-            .scte35_tracks
-            .values()
-            .map(|t| u64::try_from(t.open_count()).unwrap_or(u64::MAX))
-            .sum();
-        metric_header(
-            &mut out,
-            "media_doctor_scte35_open_events",
-            "Currently-unmatched (\"out\" with no \"in\" yet, and no auto-return) SCTE-35 splice_insert events.",
-            "gauge",
-        );
-        let _ = writeln!(out, "media_doctor_scte35_open_events {scte35_open}");
-
-        metric_header(
-            &mut out,
-            "media_doctor_pts_dts_anomalies_total",
-            "Non-monotonic decode-timestamp (DTS, else PTS) events observed on tracked PES PIDs.",
-            "counter",
-        );
-        let _ = writeln!(
-            out,
-            "media_doctor_pts_dts_anomalies_total {}",
-            self.pts_dts_anomalies_total
-        );
-
-        metric_header(
-            &mut out,
-            "media_doctor_codec_signalling_mismatch",
-            "Whether a PMT-declared codec PID has ever shown bitstream framing disagreeing with \
-             the declared stream_type (1) or not (0); only emitted once at least one access unit \
-             has been observed on that PID (ISO/IEC 13818-1 Table 2-34).",
-            "gauge",
-        );
-        for (&pid, track) in &self.es_tracks {
-            if track.any_au {
-                let mismatch = u8::from(!track.structured);
-                let _ = writeln!(
-                    out,
-                    "media_doctor_codec_signalling_mismatch{{pid=\"0x{pid:04X}\"}} {mismatch}"
-                );
-            }
-        }
-
-        metric_header(
-            &mut out,
-            "media_doctor_pts_dts_anomaly",
-            "Whether a tracked PES PID has ever shown a non-monotonic decode timestamp (1) or not \
-             (0); only emitted once a decode timestamp has been observed on that PID.",
-            "gauge",
-        );
-        for (&pid, track) in &self.es_tracks {
-            if track.prev_decode.is_some() {
-                let _ = writeln!(
-                    out,
-                    "media_doctor_pts_dts_anomaly{{pid=\"0x{pid:04X}\"}} {}",
-                    u8::from(track.decode_anomaly)
-                );
-            }
-        }
-
-        metric_header(
-            &mut out,
-            "media_doctor_last_packet_clock_seconds",
-            "Elapsed ingest wall-clock time (seconds) of the most recently processed TS packet.",
-            "gauge",
-        );
-        let _ = writeln!(
-            out,
-            "media_doctor_last_packet_clock_seconds {}",
-            self.last_clock.as_secs_f64()
-        );
-
-        out
-    }
-}
-
-/// Append a `# HELP` / `# TYPE` pair for `name` (Prometheus text exposition
-/// format).
-fn metric_header(out: &mut String, name: &str, help: &str, ty: &str) {
-    let _ = writeln!(out, "# HELP {name} {help}");
-    let _ = writeln!(out, "# TYPE {name} {ty}");
-}
-
-/// Escape a Prometheus label value: backslash, double-quote, newline
-/// (<https://prometheus.io/docs/instrumenting/exposition_formats/>).
-fn escape_label(v: &str) -> String {
-    let mut out = String::with_capacity(v.len());
-    for c in v.chars() {
-        match c {
-            '\\' => out.push_str("\\\\"),
-            '"' => out.push_str("\\\""),
-            '\n' => out.push_str("\\n"),
-            _ => out.push(c),
+        WatchSnapshot {
+            packets: conformance_stats.packets,
+            datagrams: self.datagrams_total,
+            resync_events: resync_stats.resyncs,
+            dropped_bytes: resync_stats.dropped_bytes,
+            in_sync: conformance_stats.in_sync,
+            conformance: self
+                .conformance_counts
+                .iter()
+                .map(|(name, c)| ConformanceSample {
+                    indicator: name,
+                    priority: c.priority,
+                    clause: c.clause,
+                    count: c.count,
+                })
+                .collect(),
+            scte35_events: self.scte35_events_total,
+            scte35_open: self
+                .scte35_tracks
+                .values()
+                .map(|t| u64::try_from(t.open_count()).unwrap_or(u64::MAX))
+                .sum(),
+            pts_dts_anomalies: self.pts_dts_anomalies_total,
+            codec_signalling: self
+                .es_tracks
+                .iter()
+                .filter(|(_, t)| t.any_au)
+                .map(|(&pid, t)| PidFlag {
+                    pid,
+                    set: !t.structured,
+                })
+                .collect(),
+            pts_dts_anomaly: self
+                .es_tracks
+                .iter()
+                .filter(|(_, t)| t.prev_decode.is_some())
+                .map(|(&pid, t)| PidFlag {
+                    pid,
+                    set: t.decode_anomaly,
+                })
+                .collect(),
+            last_packet_clock_seconds: self.last_clock.as_secs_f64(),
         }
     }
-    out
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+    use alloc::string::String;
+
+    #[cfg(feature = "metrics")]
+    /// Parse Prometheus text into (family -> (help, type)) and
+    /// (series -> value), where a series key is `name` plus its labels sorted.
+    /// `# clauses:` comment lines (a media-doctor extension the exporter does
+    /// not emit) are ignored.
+    pub(crate) fn parse_exposition(
+        text: &str,
+    ) -> (BTreeMap<String, (String, String)>, BTreeMap<String, f64>) {
+        let mut meta: BTreeMap<String, (String, String)> = BTreeMap::new();
+        let mut series = BTreeMap::new();
+        for line in text.lines() {
+            if let Some(rest) = line.strip_prefix("# HELP ") {
+                let (name, help) = rest.split_once(' ').unwrap();
+                meta.entry(name.into()).or_default().0 = help.into();
+            } else if let Some(rest) = line.strip_prefix("# TYPE ") {
+                let (name, ty) = rest.split_once(' ').unwrap();
+                meta.entry(name.into()).or_default().1 = ty.into();
+            } else if line.starts_with('#') || line.is_empty() {
+                continue;
+            } else {
+                let (key, value) = line.rsplit_once(' ').unwrap();
+                let key = match key.split_once('{') {
+                    Some((name, labels)) => {
+                        let mut l: Vec<&str> = labels.trim_end_matches('}').split("\",").collect();
+                        l.sort_unstable();
+                        alloc::format!("{name}{{{}}}", l.join("\","))
+                    }
+                    None => key.into(),
+                };
+                series.insert(key, value.parse::<f64>().unwrap());
+            }
+        }
+        (meta, series)
+    }
+
+    #[cfg(feature = "metrics")]
+    /// Drop the `# HELP`/`# TYPE` entries of families that have no sample —
+    /// the exporter writes a family's headers only together with a sample, an accepted difference from the old hand-written renderer.
+    pub(crate) fn drop_header_only_families(
+        meta: &mut BTreeMap<String, (String, String)>,
+        series: &BTreeMap<String, f64>,
+    ) {
+        meta.retain(|name, _| series.keys().any(|k| family_of(k) == name));
+    }
+
+    #[cfg(feature = "metrics")]
+    /// The family a series key belongs to (`name{labels}` -> `name`).
+    fn family_of(series_key: &str) -> &str {
+        series_key
+            .split_once('{')
+            .map_or(series_key, |(name, _)| name)
+    }
+
+    /// Render `state` as Prometheus-style `name value` lines. With the
+    /// `metrics` feature this is the real exporter exposition; without it a
+    /// minimal test-only rendering of [`WatchState::snapshot`] in the same
+    /// line shape, so every WatchState behaviour test below still runs (and
+    /// asserts the same figures) under `--no-default-features --features std`.
+    #[cfg(feature = "metrics")]
+    fn render(state: &WatchState) -> String {
+        crate::watch_metrics::render(state)
+    }
+
+    #[cfg(not(feature = "metrics"))]
+    fn render(state: &WatchState) -> String {
+        use core::fmt::Write as _;
+        let s = state.snapshot();
+        let mut out = String::new();
+        let _ = writeln!(out, "media_doctor_packets_total {}", s.packets);
+        let _ = writeln!(out, "media_doctor_datagrams_total {}", s.datagrams);
+        let _ = writeln!(out, "media_doctor_resync_events_total {}", s.resync_events);
+        let _ = writeln!(out, "media_doctor_dropped_bytes_total {}", s.dropped_bytes);
+        let _ = writeln!(
+            out,
+            "media_doctor_conformance_in_sync {}",
+            u8::from(s.in_sync)
+        );
+        for c in &s.conformance {
+            let _ = writeln!(
+                out,
+                "media_doctor_conformance_events_total{{indicator=\"{}\",priority=\"{}\"}} {}",
+                c.indicator, c.priority, c.count
+            );
+        }
+        let _ = writeln!(out, "media_doctor_scte35_events_total {}", s.scte35_events);
+        let _ = writeln!(out, "media_doctor_scte35_open_events {}", s.scte35_open);
+        let _ = writeln!(
+            out,
+            "media_doctor_pts_dts_anomalies_total {}",
+            s.pts_dts_anomalies
+        );
+        for f in &s.codec_signalling {
+            let _ = writeln!(
+                out,
+                "media_doctor_codec_signalling_mismatch{{pid=\"0x{:04X}\"}} {}",
+                f.pid,
+                u8::from(f.set)
+            );
+        }
+        for f in &s.pts_dts_anomaly {
+            let _ = writeln!(
+                out,
+                "media_doctor_pts_dts_anomaly{{pid=\"0x{:04X}\"}} {}",
+                f.pid,
+                u8::from(f.set)
+            );
+        }
+        let _ = writeln!(
+            out,
+            "media_doctor_last_packet_clock_seconds {}",
+            s.last_packet_clock_seconds
+        );
+        out
+    }
+
+    #[test]
+    fn empty_state_exposes_every_unlabelled_family_before_any_datagram() {
+        let text = render(&WatchState::new());
+        for name in [
+            "media_doctor_packets_total",
+            "media_doctor_datagrams_total",
+            "media_doctor_resync_events_total",
+            "media_doctor_dropped_bytes_total",
+            "media_doctor_conformance_in_sync",
+            "media_doctor_scte35_events_total",
+            "media_doctor_scte35_open_events",
+            "media_doctor_pts_dts_anomalies_total",
+            "media_doctor_last_packet_clock_seconds",
+        ] {
+            assert!(
+                metric_value(&text, name).is_some(),
+                "family {name} missing on a fresh state:\n{text}"
+            );
+        }
+    }
 
     /// PMT PID every synthetic PMT fixture is carried on.
     const PAT_PMT_PID: u16 = 0x0100;
@@ -1000,7 +1043,7 @@ mod tests {
             clock += Duration::from_millis(1);
         }
 
-        let text = state.render_prometheus();
+        let text = render(&state);
 
         // Every packet in a whole-packet-count real capture, split on exact
         // TS_PACKET_SIZE multiples, must come out the other end — the
@@ -1056,7 +1099,7 @@ mod tests {
 
         let mut state = WatchState::new();
         state.feed_datagram(&misaligned, Duration::ZERO);
-        let text = state.render_prometheus();
+        let text = render(&state);
 
         // 20 real packets in, minus whatever partial tail didn't complete a
         // full packet after the 37-byte offset -- most must still come out.
@@ -1078,7 +1121,7 @@ mod tests {
     fn garbage_datagram_never_panics() {
         let mut state = WatchState::new();
         state.feed_datagram(&[0u8; 4096], Duration::ZERO);
-        let text = state.render_prometheus();
+        let text = render(&state);
         assert_eq!(metric_value(&text, "media_doctor_packets_total"), Some(0.0));
     }
 
@@ -1184,7 +1227,7 @@ mod tests {
             clock += Duration::from_millis(1);
         }
 
-        let text = state.render_prometheus();
+        let text = render(&state);
         assert_eq!(
             metric_value(&text, "media_doctor_scte35_events_total"),
             Some(1.0)
@@ -1328,7 +1371,7 @@ mod tests {
             );
         }
 
-        let text = state.render_prometheus();
+        let text = render(&state);
         assert_eq!(
             metric_value(&text, "media_doctor_scte35_events_total"),
             Some(f64::from(CYCLES * 3)),
@@ -1479,7 +1522,7 @@ mod tests {
             clock += Duration::from_millis(1);
         }
 
-        let text = state.render_prometheus();
+        let text = render(&state);
         assert_eq!(
             metric_value(&text, "media_doctor_pts_dts_anomalies_total"),
             Some(1.0),
@@ -1618,7 +1661,7 @@ mod tests {
         feed(&mut state, &audio_packet(0));
         feed(&mut state, &audio_packet(1));
 
-        let before = state.render_prometheus();
+        let before = render(&state);
         assert!(
             before.contains(&alloc::format!(
                 "media_doctor_codec_signalling_mismatch{{pid=\"0x{MIXED_PID:04X}\"}} 1"
@@ -1639,7 +1682,7 @@ mod tests {
         // following packet: reuse an audio packet.
         feed(&mut state, &audio_packet(4));
 
-        let after = state.render_prometheus();
+        let after = render(&state);
         assert!(
             after.contains(&alloc::format!(
                 "media_doctor_codec_signalling_mismatch{{pid=\"0x{MIXED_PID:04X}\"}} 0"
@@ -1670,7 +1713,7 @@ mod tests {
         // An open SCTE-35 event on the cue PID.
         feed(&mut state, &scte35_packet(CUE_PID, 7, true));
 
-        let before = state.render_prometheus();
+        let before = render(&state);
         assert!(
             before.contains("media_doctor_scte35_open_events 1"),
             "the out event must be open:
@@ -1683,7 +1726,7 @@ mod tests {
             &pmt_section_packet(WITH_CUE_PMT, PAT_PMT_PID, 1, &[0xC0]),
         );
 
-        let after = state.render_prometheus();
+        let after = render(&state);
         assert!(
             after.contains("media_doctor_scte35_open_events 1"),
             "a version bump that changes no PID must not close the open              event:
@@ -1727,7 +1770,7 @@ mod tests {
         feed(&mut state, &video_packet(SHARED_PID, 0));
         feed(&mut state, &video_packet(SHARED_PID, 1));
 
-        let text = state.render_prometheus();
+        let text = render(&state);
         assert!(
             text.contains(&alloc::format!(
                 "media_doctor_codec_signalling_mismatch{{pid=\"0x{SHARED_PID:04X}\"}}"
@@ -1768,7 +1811,7 @@ mod tests {
         feed(&mut state, &adts_packet(SHARED_PID, 0));
         feed(&mut state, &adts_packet(SHARED_PID, 1));
 
-        let text = state.render_prometheus();
+        let text = render(&state);
         assert!(
             text.contains(&alloc::format!(
                 "media_doctor_codec_signalling_mismatch{{pid=\"0x{SHARED_PID:04X}\"}} 0"

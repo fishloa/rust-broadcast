@@ -13,28 +13,36 @@
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::{AsFd, AsRawFd};
 use std::path::Path;
 use std::time::Duration;
+
+use rustix::event::{Nsecs, PollFd, PollFlags, Timespec};
 
 use crate::dataplane::{CiDataDevice, TS_PACKET_LEN};
 use crate::device::{CaDevice, SlotInfo};
 
 /// Poll a file descriptor for readability up to `timeout`.
-fn poll_readable(fd: libc::c_int, timeout: Duration) -> io::Result<bool> {
-    let mut pfd = libc::pollfd {
-        fd,
-        events: libc::POLLIN,
-        revents: 0,
+///
+/// `EINTR` surfaces as an `io::Error` of kind `Interrupted`, exactly as it did
+/// with `libc::poll` on `main` (which also returned `last_os_error()` on `-1`
+/// and did not retry). Nothing retries it further up either: the driver pump
+/// does `self.device.poll(timeout)?`. A stray signal therefore still aborts
+/// one pump call, unchanged by this migration. Only `POLLIN` counts as
+/// readable; `POLLHUP`/`POLLERR` alone report `false`, as before. Unlike the
+/// old millisecond truncation the timeout keeps its sub-millisecond part.
+// `Nsecs` is `i64` on rustix's linux_raw backend (where `From<u32>` would do) but
+// `c_long` (`i32`) under its libc backend on 32-bit targets, where only
+// `TryFrom` exists; keep the portable form.
+#[allow(clippy::unnecessary_fallible_conversions)]
+fn poll_readable(fd: &impl AsFd, timeout: Duration) -> io::Result<bool> {
+    let mut fds = [PollFd::new(fd, PollFlags::IN)];
+    let ts = Timespec {
+        tv_sec: i64::try_from(timeout.as_secs()).unwrap_or(i64::MAX),
+        tv_nsec: Nsecs::try_from(timeout.subsec_nanos()).unwrap_or(0),
     };
-    let ms = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
-    // SAFETY: `pfd` points at one valid pollfd for the duration of the call.
-    let r = unsafe { libc::poll(&mut pfd as *mut libc::pollfd, 1, ms) };
-    if r < 0 {
-        Err(io::Error::last_os_error())
-    } else {
-        Ok(pfd.revents & libc::POLLIN != 0)
-    }
+    rustix::event::poll(&mut fds, Some(&ts))?;
+    Ok(fds[0].revents().contains(PollFlags::IN))
 }
 
 // --- Linux _IOC ioctl encoding (uapi/asm-generic/ioctl.h) ------------------
@@ -231,7 +239,7 @@ impl CaDevice for LinuxCaDevice {
     }
 
     fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
-        poll_readable(self.file.as_raw_fd(), timeout)
+        poll_readable(&self.file, timeout)
     }
 }
 
@@ -311,7 +319,7 @@ impl CiDataDevice for LinuxCiDataDevice {
     }
 
     fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
-        poll_readable(self.file.as_raw_fd(), timeout)
+        poll_readable(&self.file, timeout)
     }
 }
 
@@ -528,6 +536,105 @@ mod tests {
         assert_eq!(info.num, 3);
         assert!(info.module_present);
         assert!(info.module_ready);
+        let _ = std::fs::remove_file(&path);
+    }
+    fn poll_file(file: &File, timeout: Duration) -> io::Result<bool> {
+        poll_readable(file, timeout)
+    }
+
+    /// `poll_readable` on an empty FIFO with a short timeout reports `false`
+    /// after about that long; with data it reports `true` immediately.
+    #[test]
+    fn poll_readable_reports_data_and_honours_the_timeout() {
+        let path = make_fifo();
+        let mut dev = LinuxCiDataDevice::open_path(&path).expect("open_path");
+        let mut writer = OpenOptions::new().write(true).open(&path).expect("writer");
+
+        let start = std::time::Instant::now();
+        assert!(
+            !dev.poll(Duration::from_millis(80)).unwrap(),
+            "empty FIFO is not readable"
+        );
+        assert!(
+            start.elapsed() >= Duration::from_millis(70),
+            "poll returned before its timeout"
+        );
+
+        writer.write_all(&[0x47; TS_PACKET_LEN]).unwrap();
+        let start = std::time::Instant::now();
+        assert!(
+            dev.poll(Duration::from_secs(5)).unwrap(),
+            "data written: readable"
+        );
+        assert!(
+            start.elapsed() < Duration::from_secs(4),
+            "must return as soon as readable"
+        );
+
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A zero timeout never blocks.
+    #[test]
+    fn poll_readable_zero_timeout_does_not_block() {
+        let path = make_fifo();
+        let mut dev = LinuxCiDataDevice::open_path(&path).expect("open_path");
+        let _writer = OpenOptions::new().write(true).open(&path).expect("writer");
+        let start = std::time::Instant::now();
+        assert!(!dev.poll(Duration::ZERO).unwrap());
+        assert!(start.elapsed() < Duration::from_millis(500));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Sub-millisecond timeouts used to truncate to `poll(.., 0)` (returning
+    /// at once); they must now sleep their true duration and never error.
+    #[test]
+    fn poll_readable_sub_millisecond_timeout_keeps_its_duration() {
+        let path = make_fifo();
+        let mut dev = LinuxCiDataDevice::open_path(&path).expect("open_path");
+        let _writer = OpenOptions::new().write(true).open(&path).expect("writer");
+        let start = std::time::Instant::now();
+        assert!(!dev.poll(Duration::from_micros(300)).unwrap());
+        assert!(
+            start.elapsed() >= Duration::from_micros(250),
+            "a 300 us timeout was truncated: returned after {:?}",
+            start.elapsed()
+        );
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// Hang-up without data (writer closed) is not "readable" for this API:
+    /// the old code tested `revents & POLLIN` only. The device itself opens
+    /// the FIFO `O_RDWR` (it is its own writer, so no hang-up ever shows), so
+    /// this drives `poll_readable` on a separate read-only descriptor, and
+    /// proves with a raw `libc::poll` that the kernel really reports POLLHUP
+    /// there (otherwise the assertion would be vacuous).
+    #[test]
+    fn poll_readable_ignores_hangup_without_data() {
+        let path = make_fifo();
+        let reader = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(&path)
+            .expect("read-only O_NONBLOCK open");
+        let writer = OpenOptions::new().write(true).open(&path).expect("writer");
+        drop(writer); // POLLHUP on the read end, no POLLIN, no data
+
+        let mut raw = libc::pollfd {
+            fd: reader.as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: `raw` is one valid pollfd for the duration of the call.
+        let r = unsafe { libc::poll(&mut raw, 1, 0) };
+        assert_eq!(r, 1, "kernel must report an event");
+        assert!(
+            raw.revents & libc::POLLHUP != 0 && raw.revents & libc::POLLIN == 0,
+            "precondition: POLLHUP without POLLIN, got revents={:#x}",
+            raw.revents
+        );
+
+        assert!(!poll_file(&reader, Duration::from_millis(50)).unwrap());
         let _ = std::fs::remove_file(&path);
     }
 }

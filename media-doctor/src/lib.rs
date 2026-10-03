@@ -37,9 +37,15 @@ mod container_codec;
 mod dash_validator;
 mod diagnostics;
 mod hls_validator;
+#[cfg(feature = "net")]
+pub mod metrics_server;
 mod playlist;
 mod report;
+#[cfg(feature = "net")]
+pub mod udp;
 mod watch;
+#[cfg(feature = "metrics")]
+mod watch_metrics;
 
 pub use container_codec::check_container_codec;
 #[cfg(feature = "std")]
@@ -57,7 +63,9 @@ pub use diagnostics::sync_byte::SyncByteCheck;
 pub use hls_validator::check_hls_playlist;
 pub use playlist::check_playlist;
 pub use report::{Finding, Location, Report, Severity};
-pub use watch::WatchState;
+pub use watch::{ConformanceSample, PidFlag, WatchSnapshot, WatchState};
+#[cfg(feature = "metrics")]
+pub use watch_metrics::{publish as publish_metrics, render as render_metrics};
 
 /// A pluggable diagnostic check that examines a Transport Stream byte buffer.
 ///

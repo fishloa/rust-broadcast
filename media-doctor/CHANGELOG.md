@@ -10,6 +10,11 @@
   (`timed_metadata::daterange::DateRange::extra_attrs`) against Apple's
   independent HLS conformance tool — both validate clean. New dev-dependency:
   `ssai-runtime` (path, default-features = false).
+- Features `metrics` (exposition) and `net` (hyper metrics server + socket2 UDP bind; implied by `cli`).
+- `WatchSnapshot`, `ConformanceSample`, `PidFlag`, `WatchState::snapshot()`.
+- `metrics_server` (`serve`, `channel`, `MetricsServerConfig`, `MetricsPublisher`) and `udp` (`bind_udp`, `UdpConfig`, `MulticastInterface`, `recv_buffer_size`) modules.
+- `watch` flags `--udp-rcvbuf`, `--udp-reuse-addr` (default off, as before), `--udp-interface`; IPv6 multicast groups are now joined.
+- Dev: `wait-timeout` in the test harness (`tests/support/bounded.rs`); `tests/no_handroll_guard.rs`; the `watch` metrics-server tests no longer reserve-then-rebind ports or sleep.
 
 ### Changed (breaking)
 - **BREAKING: `check_dash_mpd` now requires the `std` feature.** It parses the
@@ -41,6 +46,11 @@
   onto a lower one. Any code constructing or matching on `Location::pid`
   needs the wider type; `Location::new`'s second parameter is now `u32`
   (issue #1112).
+- **BREAKING: `WatchState::render_prometheus` is removed.** The Prometheus text is now produced by `metrics-exporter-prometheus`: use `media_doctor::render_metrics(&WatchState)` (feature `metrics`) or read the typed `WatchState::snapshot()`. Differences in the exposition text for the same input (checked semantically against the golden from `main`, `tests/golden/watch/m6-single.prom`): the `# clauses: ...` comment line is no longer emitted - **loss of operator-visible information, accepted by the orchestrator on 2026-10-03 under the owner's go-ahead** (the clause is only on `ConformanceSample::clause`); a family with no series yet no longer writes bare `# HELP`/`# TYPE` lines (the exporter writes headers only together with a sample); families are separated by a blank line and ordered differently. Example, before: `# clauses: Continuity_count_error=TR 101 290 v1.4.1 Table 5.0a indicator 1.4` after the `media_doctor_conformance_events_total` series, and bare `# HELP media_doctor_pts_dts_anomaly ...` / `# TYPE ... gauge` with no samples; after: both absent. Every HELP text, TYPE and sample value is unchanged.
+- The `watch` HTTP response head differs only cosmetically (hyper writes it): header names are lower-case, a `date` header is added, header order differs. Before: `Content-Type: text/plain; version=0.0.4` / `Content-Length: N` / `Connection: close`. After: `content-type: text/plain; version=0.0.4` / `connection: close` / `content-length: N` / `date: Sat, 03 Oct 2026 17:54:15 GMT`.
+- `watch` no longer spawns a thread per metrics connection. Over-cap connections are now closed immediately at accept (formerly a hand-written `503`; a 503 per over-cap socket held a task and fd for `io_timeout`); the concurrency cap, the total per-connection deadline and `--metrics-max-conns` / `--metrics-io-timeout-ms` keep their meaning and defaults. A header-read timeout (same value) is now also enforced.
+- `watch` renders the exposition at most every 250 ms and flushes when the feed goes quiet, instead of rendering on every scrape.
+- The `cli` feature now implies `net` (and so `metrics`).
 
 ### Changed
 

@@ -1,190 +1,29 @@
-//! Audit MD-W9: the `watch` metrics server must not let one idle client block
-//! every later scraper.
+//! End-to-end: the real `media-doctor watch` binary. Ports are kernel-assigned
+//! (`:0`) and learnt from the binary's own start-up line — no reserve-then-
+//! rebind, no readiness poll, no sleeps. The server's connection-policy
+//! behaviours are tested in-process in `src/metrics_server.rs`.
 //!
-//! The responder used to serve connections one at a time on a single thread
-//! with a blocking `stream.read` and no timeout, so a TCP client that
-//! connected and sent nothing (a port scanner, a half-open health check) held
-//! the accept loop until it gave up — with `--metrics-addr 0.0.0.0:9090`, the
-//! documented deployment, that is any peer on the network.
+//! Disposition of the former tests in this file (audit MD-W9 era):
 //!
-//! These tests drive the real binary over real sockets: a second client must
-//! get a complete `/metrics` response while an earlier client is still idle.
+//! | Old test | Disposition | New test |
+//! |---|---|---|
+//! | `idle_client_does_not_block_a_second_scraper` | re-expressed | `metrics_server::tests::idle_client_does_not_block_a_second_scraper` |
+//! | `repeated_scrapes_all_succeed_with_a_stalled_client_outstanding` | re-expressed | `metrics_server::tests::repeated_scrapes_succeed_with_stalled_clients_outstanding` |
+//! | `connections_beyond_the_cap_are_refused` | re-expressed (over-cap sockets are closed at accept; deterministic accept order, no probe loop, no sleeps) | `metrics_server::tests::connections_beyond_the_cap_are_closed_promptly_and_do_not_accumulate` |
+//! | `connection_flood_beyond_the_cap_still_serves_after_it_drains` | re-expressed | `metrics_server::tests::flood_beyond_the_cap_drains_and_serving_resumes` |
+//! | `dribbling_client_is_dropped_at_the_total_deadline` | re-expressed (not made moot by hyper: its header-read timeout needs a timer set) | `metrics_server::tests::dribbling_client_is_dropped_at_the_deadline` |
+//! | `refusal_response_uses_crlf_framing` | retired: pinned hand-written `HTTP/1.1 503` bytes; hyper now writes every status line and header, and over-cap refusal is a prompt close | none |
+//! | helpers `free_port`, readiness poll, `hold_connections`, `all_open`, `PROBE_PATIENCE` | retired: reserve-then-rebind port allocation and accept-order probing existed only because the old server could not report its bound address or admit deterministically; replaced by port-0 listeners | none |
 
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
-use std::path::Path;
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{SocketAddr, TcpStream, UdpSocket};
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// Concurrent-connection cap for the tests that are not about the cap.
-const DEFAULT_TEST_MAX_CONNS: usize = 8;
-/// Total per-connection deadline the tests run the server with. Small enough
-/// that an abandoned connection is reclaimed quickly, large enough that a
-/// correct server never trips it.
-const TEST_IO_TIMEOUT_MS: u64 = 3_000;
-/// Per-connection deadline for the cap tests. Their held connections must
-/// stay in their slots for as long as filling the cap takes — on a starved
-/// CI box that can exceed [`TEST_IO_TIMEOUT_MS`], which would reclaim a held
-/// slot mid-setup. The refusal being tested does not depend on this value
-/// (the over-cap client's read timeout is far shorter).
-const CAP_TEST_IO_TIMEOUT_MS: u64 = 120_000;
+const TS_PACKET_SIZE: usize = 188;
+const DATAGRAM_PACKETS: usize = 7;
 
-/// A free port.
-///
-/// Bind-then-drop is inherently racy (another process can take the port in
-/// the gap), so retry a few times; and because the server itself is started
-/// with the port we chose, a lost race shows up as the server failing to
-/// bind, which the readiness poll then times out on. Retrying the whole
-/// allocation makes that vanishingly unlikely rather than flaky.
-fn free_port() -> u16 {
-    for _ in 0..16 {
-        let Ok(listener) = TcpListener::bind("127.0.0.1:0") else {
-            continue;
-        };
-        let Ok(addr) = listener.local_addr() else {
-            continue;
-        };
-        // Hold the listener until the address is read, then release it.
-        drop(listener);
-        if addr.port() != 0 {
-            return addr.port();
-        }
-    }
-    panic!("could not obtain a free ephemeral port after 16 attempts");
-}
-
-/// Spawn `media-doctor watch` with explicit metrics limits and wait until it
-/// is accepting connections.
-///
-/// The binary prints a startup line on stderr once both sockets are bound; we
-/// poll the metrics port instead of parsing it, so the test does not depend on
-/// the message's wording.
-///
-/// Both timeouts are passed in, so the tests use small margins (hundreds of
-/// milliseconds) rather than competing with the production 5 s default under
-/// load.
-fn spawn_watch(max_conns: usize, io_timeout_ms: u64) -> (ChildGuard, u16) {
-    let exe = env!("CARGO_BIN_EXE_media-doctor");
-    assert!(Path::new(exe).exists(), "cargo must build the binary");
-
-    let udp_port = free_port();
-    let metrics_port = free_port();
-    let child = Command::new(exe)
-        .args([
-            "watch",
-            "--udp",
-            &format!("127.0.0.1:{udp_port}"),
-            "--metrics-addr",
-            &format!("127.0.0.1:{metrics_port}"),
-            "--metrics-max-conns",
-            &max_conns.to_string(),
-            "--metrics-io-timeout-ms",
-            &io_timeout_ms.to_string(),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .expect("spawn media-doctor watch");
-    let child = ChildGuard(child);
-
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        if TcpStream::connect(("127.0.0.1", metrics_port)).is_ok() {
-            return (child, metrics_port);
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    }
-    panic!("media-doctor watch never started listening on {metrics_port}");
-}
-
-/// How long one probe waits for its refusal. Generous on purpose: a probe
-/// the server has not yet got round to accepting looks exactly like one it
-/// accepted into a free slot, so a short wait makes a starved server drown in
-/// a backlog of abandoned probes faster than it can drain them.
-const PROBE_PATIENCE: Duration = Duration::from_secs(2);
-
-/// Hold exactly `cap` idle connections open and **prove** the server has put
-/// every one of them in a slot — no sleep, no guess about scheduling.
-///
-/// The proof leans on the kernel accepting in connect order: the server
-/// handles the `cap` held connections strictly before any later connection.
-/// So once a later *probe* connection is refused, every held connection has
-/// already been through the accept loop, and each either owns a slot or was
-/// itself refused (which closes it, observable below). A probe that is
-/// instead *accepted* means a slot was free (for instance one the readiness
-/// probe in [`spawn_watch`] had not released yet); it is dropped and the
-/// probe retried. If any held connection turns out to have been refused, the
-/// whole attempt is redone.
-fn hold_connections(port: u16, cap: usize) -> Vec<TcpStream> {
-    let deadline = Instant::now() + Duration::from_secs(60);
-    'attempt: while Instant::now() < deadline {
-        let held: Vec<TcpStream> = (0..cap)
-            .map(|_| TcpStream::connect(("127.0.0.1", port)).expect("connect held"))
-            .collect();
-        loop {
-            if Instant::now() >= deadline {
-                break 'attempt;
-            }
-            let mut probe = TcpStream::connect(("127.0.0.1", port)).expect("connect probe");
-            probe
-                .set_read_timeout(Some(PROBE_PATIENCE))
-                .expect("set read timeout");
-            let mut buf = [0u8; 16];
-            let refused = probe.read(&mut buf).is_ok();
-            drop(probe);
-            // A refused held connection can never be put back, so the cap
-            // can never fill with it: start over instead of probing forever.
-            if !all_open(&held) {
-                // Back off so the server can reap the slots of the dropped
-                // connections before the next attempt re-contends for them.
-                drop(held);
-                std::thread::sleep(Duration::from_millis(250));
-                continue 'attempt;
-            }
-            if refused {
-                return held;
-            }
-            // Accepted into a free slot and left idle: not full yet.
-            std::thread::sleep(Duration::from_millis(50));
-        }
-    }
-    panic!("could not fill the {cap}-connection cap within 60s");
-}
-
-/// Whether every stream is still open with nothing to read — i.e. the server
-/// has neither closed it nor answered it (a refusal does both).
-fn all_open(streams: &[TcpStream]) -> bool {
-    streams.iter().all(|stream| {
-        stream.set_nonblocking(true).expect("set nonblocking");
-        let mut b = [0u8; 1];
-        let open = matches!(
-            (&*stream).read(&mut b),
-            Err(e) if e.kind() == std::io::ErrorKind::WouldBlock
-        );
-        stream.set_nonblocking(false).expect("set blocking");
-        open
-    })
-}
-
-/// A complete `/metrics` response, read to EOF.
-fn scrape(port: u16, timeout: Duration) -> String {
-    let mut stream = TcpStream::connect(("127.0.0.1", port)).expect("connect to metrics");
-    stream
-        .set_read_timeout(Some(timeout))
-        .expect("set read timeout");
-    stream
-        .write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\n\r\n")
-        .expect("write request");
-    let mut buf = String::new();
-    let _ = stream.read_to_string(&mut buf);
-    buf
-}
-
-/// Kills and reaps the `watch` process however the test ends, including a
-/// panic — a leaked UDP/TCP listener would fail every later run on the same
-/// ephemeral ports.
 struct ChildGuard(Child);
-
 impl Drop for ChildGuard {
     fn drop(&mut self) {
         let _ = self.0.kill();
@@ -192,248 +31,202 @@ impl Drop for ChildGuard {
     }
 }
 
-/// An idle connection that has sent nothing must not delay a later scraper.
-#[test]
-fn idle_client_does_not_block_a_second_scraper() {
-    let (_guard, port) = spawn_watch(DEFAULT_TEST_MAX_CONNS, TEST_IO_TIMEOUT_MS);
-
-    // Open a connection and deliberately send nothing, leaving it open.
-    let idle = TcpStream::connect(("127.0.0.1", port)).expect("connect idle client");
-
-    // A second, well-behaved scraper must still get a full response quickly.
-    let start = Instant::now();
-    let response = scrape(port, Duration::from_secs(5));
-    let elapsed = start.elapsed();
-
-    assert!(
-        response.contains("200 OK") && response.contains("media_doctor_packets_total"),
-        "the second scraper must get a complete /metrics response; got {response:?}",
-    );
-    assert!(
-        elapsed < Duration::from_secs(3),
-        "the second scraper must not wait on the idle connection (took {elapsed:?})",
-    );
-
-    drop(idle);
+/// Spawn `watch` on port 0 for both sockets and return the addresses it printed.
+fn spawn_watch(extra: &[&str]) -> (ChildGuard, SocketAddr, SocketAddr) {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_media-doctor"))
+        .args([
+            "watch",
+            "--udp",
+            "127.0.0.1:0",
+            "--metrics-addr",
+            "127.0.0.1:0",
+        ])
+        .args(extra)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .expect("spawn watch");
+    let stderr = child.stderr.take().unwrap();
+    let guard = ChildGuard(child);
+    let mut line = String::new();
+    BufReader::new(stderr)
+        .read_line(&mut line)
+        .expect("start-up line");
+    // "media-doctor watch: ingesting UDP 127.0.0.1:PORT, metrics on http://127.0.0.1:PORT/metrics"
+    let udp = line
+        .split("UDP ")
+        .nth(1)
+        .and_then(|s| s.split(',').next())
+        .expect(&line)
+        .parse()
+        .expect(&line);
+    let http = line
+        .split("http://")
+        .nth(1)
+        .and_then(|s| s.split("/metrics").next())
+        .expect(&line)
+        .parse()
+        .expect(&line);
+    (guard, udp, http)
 }
 
-/// Several concurrent scrapers all get a response, and a half-open client
-/// left behind does not wedge the accept loop for any of them.
-#[test]
-fn repeated_scrapes_all_succeed_with_a_stalled_client_outstanding() {
-    let (_guard, port) = spawn_watch(DEFAULT_TEST_MAX_CONNS, TEST_IO_TIMEOUT_MS);
-
-    let mut idle_clients = Vec::new();
-    for _ in 0..3 {
-        idle_clients.push(TcpStream::connect(("127.0.0.1", port)).expect("connect idle"));
-    }
-
-    for round in 0..3 {
-        let response = scrape(port, Duration::from_secs(5));
-        assert!(
-            response.contains("200 OK"),
-            "scrape {round} must succeed with idle clients outstanding; got {response:?}",
-        );
-    }
-    drop(idle_clients);
+fn scrape(addr: SocketAddr) -> String {
+    let mut s = TcpStream::connect(addr).expect("connect");
+    s.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+    s.write_all(b"GET /metrics HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .unwrap();
+    let mut out = String::new();
+    let _ = s.read_to_string(&mut out);
+    out
 }
 
-/// More idle connections than the cap are refused **promptly** — observable
-/// directly, so the mechanism is pinned rather than inferred. A server with
-/// no cap would hold the extra connection until its own deadline instead.
-#[test]
-fn connections_beyond_the_cap_are_refused() {
-    const CAP: usize = 3;
-    let (_guard, port) = spawn_watch(CAP, CAP_TEST_IO_TIMEOUT_MS);
-
-    // Fill the cap with idle connections and keep them open, with proof that
-    // the server has taken every slot (no fixed sleep).
-    let held = hold_connections(port, CAP);
-
-    // The next connection must be refused promptly: either an explicit 503 or
-    // an immediate close. The read timeout is far shorter than the server's
-    // own total deadline, so a held slot would time out here.
-    let mut over = TcpStream::connect(("127.0.0.1", port)).expect("connect over cap");
-    over.set_read_timeout(Some(Duration::from_millis(750)))
-        .expect("set read timeout");
-    let mut buf = [0u8; 256];
-    match over.read(&mut buf) {
-        Ok(0) => {} // closed without a response — acceptable refusal
-        Ok(n) => {
-            let text = String::from_utf8_lossy(&buf[..n]);
-            assert!(
-                text.starts_with("HTTP/1.1 503"),
-                "a connection over the cap must be refused with 503 or closed, got {text:?}",
-            );
-        }
-        Err(e) => panic!(
-            "the over-cap connection must be refused promptly, got {e} — a server with no cap holds it instead"
-        ),
-    }
-    drop(held);
+fn metric(text: &str, name: &str) -> Option<f64> {
+    text.lines()
+        .find_map(|l| l.strip_prefix(name)?.strip_prefix(' ')?.trim().parse().ok())
 }
 
-/// A flood of idle connections beyond the cap must not wedge the server:
-/// once the flood is dropped, a fresh scrape succeeds.
 #[test]
-fn connection_flood_beyond_the_cap_still_serves_after_it_drains() {
-    const CAP: usize = 4;
-    let (_guard, port) = spawn_watch(CAP, TEST_IO_TIMEOUT_MS);
-
-    let mut flood = Vec::new();
-    for _ in 0..(CAP * 6) {
-        if let Ok(stream) = TcpStream::connect(("127.0.0.1", port)) {
-            flood.push(stream);
-        }
-    }
-    assert!(
-        !flood.is_empty(),
-        "the flood must have connected at least once",
+fn first_scrape_already_lists_every_family() {
+    let (_g, _udp, http) = spawn_watch(&[]);
+    let body = scrape(http);
+    assert!(body.starts_with("HTTP/1.1 200 OK"), "{body}");
+    assert_eq!(
+        metric(&body, "media_doctor_packets_total"),
+        Some(0.0),
+        "{body}"
     );
-    drop(flood);
+}
 
-    // Generous, timing-independent margins: poll rather than sleep.
+/// The last datagrams before the feed goes quiet must still be published
+/// (the binary flushes when its socket read times out).
+#[test]
+fn final_datagrams_become_visible_after_the_feed_stops() {
+    let (_g, udp, http) = spawn_watch(&[]);
+    let bytes = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../fixtures/ts/m6-single.ts"
+    ))
+    .unwrap();
+    let packets = bytes.len() / TS_PACKET_SIZE;
+    let tx = UdpSocket::bind("127.0.0.1:0").unwrap();
+    for chunk in bytes.chunks(DATAGRAM_PACKETS * TS_PACKET_SIZE) {
+        tx.send_to(chunk, udp).unwrap();
+    }
+    // Condition-wait, bounded; each scrape is one real round trip.
     let deadline = Instant::now() + Duration::from_secs(30);
-    let mut last = String::new();
-    while Instant::now() < deadline {
-        last = scrape(port, Duration::from_secs(3));
-        if last.contains("200 OK") && last.contains("media_doctor_packets_total") {
+    loop {
+        let body = scrape(http);
+        // UDP on loopback can drop under load; require "most", and stability of the flush.
+        if metric(&body, "media_doctor_packets_total").is_some_and(|n| n >= (packets as f64) * 0.5)
+        {
             return;
         }
-        std::thread::sleep(Duration::from_millis(100));
+        assert!(
+            Instant::now() < deadline,
+            "packets never became visible: {body}"
+        );
     }
-    panic!("no scrape succeeded within 30s of the flood draining; last response: {last:?}");
 }
 
-/// A client that connects and then dribbles one byte at a time must not hold
-/// a connection past the server's **total** deadline. A per-read timeout
-/// alone does not stop this: each byte resets it, so a slowloris holds a
-/// slot indefinitely.
-///
-/// The server only answers a *complete* request head, so a dribbler never
-/// gets a response — the only way this test sees the connection end is the
-/// server enforcing its deadline. The client probes with a short read
-/// timeout in a loop, so the measurement is the server's deadline, not the
-/// client's patience.
 #[test]
-fn dribbling_client_is_dropped_at_the_total_deadline() {
-    const IO_TIMEOUT_MS: u64 = 1_000;
-    let (_guard, port) = spawn_watch(DEFAULT_TEST_MAX_CONNS, IO_TIMEOUT_MS);
+fn bad_metrics_address_is_a_startup_error_not_a_hang() {
+    let out = Command::new(env!("CARGO_BIN_EXE_media-doctor"))
+        .args([
+            "watch",
+            "--udp",
+            "127.0.0.1:0",
+            "--metrics-addr",
+            "not-an-address",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--metrics-addr"));
+}
 
-    let slow = TcpStream::connect(("127.0.0.1", port)).expect("connect slow client");
-    // Short client-side reads: the point is to notice the server closing,
-    // not to wait on it.
-    slow.set_read_timeout(Some(Duration::from_millis(100)))
-        .expect("set read timeout");
-
-    // Dribble a byte every 200 ms from a clone, so each write resets any
-    // per-read timeout the server might be using.
-    let mut writer = slow.try_clone().expect("clone socket");
-    let dribbler = std::thread::spawn(move || {
-        for _ in 0..100 {
-            if writer.write_all(b"G").is_err() {
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(200));
-        }
-    });
-
-    let start = Instant::now();
-    let mut buf = [0u8; 64];
-    let mut closed = false;
-    let mut slow_reader = slow;
-    while start.elapsed() < Duration::from_secs(15) {
-        match slow_reader.read(&mut buf) {
-            // EOF: the server closed on us.
-            Ok(0) => {
-                closed = true;
-                break;
-            }
-            // A reset also counts as the server having dropped it.
-            Err(e)
-                if e.kind() != std::io::ErrorKind::WouldBlock
-                    && e.kind() != std::io::ErrorKind::TimedOut =>
-            {
-                closed = true;
-                break;
-            }
-            // A response would mean the server answered an incomplete
-            // request, which it must not do.
-            Ok(n) => panic!(
-                "the server must not answer an incomplete request head, got {:?}",
-                String::from_utf8_lossy(&buf[..n]),
-            ),
-            Err(_) => {}
-        }
-    }
+#[test]
+fn udp_interface_flag_is_validated() {
+    let out = Command::new(env!("CARGO_BIN_EXE_media-doctor"))
+        .args([
+            "watch",
+            "--udp",
+            "127.0.0.1:0",
+            "--udp-interface",
+            "not-an-interface",
+        ])
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    // The message is ours (not clap's "unexpected argument"): it names the
+    // flag AND says what was expected.
+    let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        closed,
-        "a dribbling client must be dropped at the total deadline ({IO_TIMEOUT_MS} ms), not held for the connection's lifetime",
+        stderr.contains("invalid --udp-interface") && stderr.contains("interface index"),
+        "{stderr}"
     );
+}
+
+const REQUEST: &[u8] = b"GET /metrics HTTP/1.1\r\nHost: localhost\r\n\r\n";
+
+/// `--metrics-max-conns` is the CAP and nothing else: with a cap of 1 and a
+/// long deadline, a held first connection keeps its slot while the second is
+/// closed at accept, and the first then still gets a full response. (Swapping
+/// the two arguments gives a 1 ms deadline and a huge cap: the first
+/// connection is dropped by the deadline, so the final request fails.)
+#[test]
+fn metrics_max_conns_flag_is_the_cap() {
+    let (_g, _udp, http) = spawn_watch(&[
+        "--metrics-max-conns",
+        "1",
+        "--metrics-io-timeout-ms",
+        "60000",
+    ]);
+    let mut first = TcpStream::connect(http).expect("first connect");
+    let mut second = TcpStream::connect(http).expect("second connect");
+    second
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let mut buf = [0u8; 16];
+    // Over the cap: the server closes it (EOF or reset), never serves it.
+    match second.read(&mut buf) {
+        Ok(0) | Err(_) => {}
+        Ok(n) => panic!("over-cap connection was served {n} bytes"),
+    }
+    // The held connection kept its slot and is still served.
+    first
+        .set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    first.write_all(REQUEST).expect("first still open");
+    let mut out = String::new();
+    let _ = first.read_to_string(&mut out);
+    assert!(out.starts_with("HTTP/1.1 200 OK"), "{out}");
+}
+
+/// `--metrics-io-timeout-ms` is the DEADLINE and nothing else: an idle
+/// connection is dropped after about that long. Swapped arguments (8 ms) end
+/// it far too early; ignoring the flag (default 5 s) far too late.
+#[test]
+fn metrics_io_timeout_flag_is_the_deadline() {
+    const TIMEOUT_MS: u64 = 400;
+    let (_g, _udp, http) =
+        spawn_watch(&["--metrics-max-conns", "8", "--metrics-io-timeout-ms", "400"]);
+    // Warm up: the metrics thread's runtime starts after the start-up line, so
+    // the first connection would otherwise include that start-up latency.
+    assert!(scrape(http).starts_with("HTTP/1.1 200 OK"));
+    let mut idle = TcpStream::connect(http).expect("connect");
+    idle.set_read_timeout(Some(Duration::from_secs(10)))
+        .unwrap();
+    let start = Instant::now();
+    let mut buf = [0u8; 256];
+    // Blocks until the server closes the idle connection.
+    let _ = idle.read(&mut buf);
     let elapsed = start.elapsed();
     assert!(
-        elapsed < Duration::from_secs(10),
-        "the drop must happen at the deadline, not by the test timing out (took {elapsed:?})",
-    );
-    let _ = dribbler.join();
-}
-
-/// The refusal response must be valid HTTP/1.1: CRLF line endings and a
-/// blank CRLF-terminated line before the body (`\n`-only framing is not
-/// HTTP/1.1 and some clients reject it outright).
-#[test]
-fn refusal_response_uses_crlf_framing() {
-    const CAP: usize = 1;
-    let (_guard, port) = spawn_watch(CAP, CAP_TEST_IO_TIMEOUT_MS);
-
-    // Fill the single slot, with proof the server has taken it.
-    let held = hold_connections(port, CAP);
-
-    let mut over = TcpStream::connect(("127.0.0.1", port)).expect("connect over cap");
-    over.set_read_timeout(Some(Duration::from_secs(5)))
-        .expect("set read timeout");
-    let mut buf = Vec::new();
-    let mut chunk = [0u8; 256];
-    // The refusal closes the connection right after the response, so read to
-    // EOF (or at least through the header block).
-    loop {
-        match over.read(&mut chunk) {
-            Ok(0) => break,
-            Ok(n) => {
-                buf.extend_from_slice(&chunk[..n]);
-                if buf.windows(4).any(|w| w == b"\r\n\r\n") {
-                    break;
-                }
-            }
-            Err(e) => panic!("reading the refusal failed: {e}"),
-        }
-    }
-    drop(held);
-
-    assert!(
-        !buf.is_empty(),
-        "the over-cap connection must receive a refusal, not silence",
-    );
-    let text = String::from_utf8(buf.clone()).expect("refusal is ASCII");
-    assert!(
-        text.starts_with("HTTP/1.1 503 Service Unavailable\r\n"),
-        "the status line must use CRLF; got {text:?}",
+        elapsed >= Duration::from_millis(TIMEOUT_MS / 2),
+        "dropped far too early: {elapsed:?}"
     );
     assert!(
-        buf.windows(4).any(|w| w == b"\r\n\r\n"),
-        "the header block must end with a blank CRLF line; got {text:?}",
+        elapsed < Duration::from_millis(TIMEOUT_MS * 5),
+        "dropped far too late (flag ignored?): {elapsed:?}"
     );
-    assert!(
-        !buf.windows(2).any(|w| w == b"\n\n"),
-        "no bare-LF framing may appear; got {text:?}",
-    );
-    // Every LF must be preceded by CR.
-    for (i, &b) in buf.iter().enumerate() {
-        if b == b'\n' {
-            assert!(
-                i > 0 && buf[i - 1] == b'\r',
-                "byte {i} is a bare LF; refusal bytes were {text:?}",
-            );
-        }
-    }
 }

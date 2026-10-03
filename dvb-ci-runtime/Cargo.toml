@@ -26,11 +26,12 @@ dvb-si     = { path = "../dvb-si", version = "10", default-features = false }
 broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
 thiserror  = { version = "2" }
 libc       = { version = "0.2.108", optional = true } # `libc::Ioctl` (used in linux.rs) first appears in 0.2.108
+rustix     = { version = "1", default-features = false, features = ["std", "event"], optional = true } # `rustix::event::poll` replaces `libc::poll` (de-hand-roll SP6.7)
 clap       = { version = "4.5", optional = true, features = ["derive"] }
 
 [features]
 default = []
 # `linux` adds the `/dev/dvb/adapterN/caM` CaDevice + the `ci-probe` CLI
-# (Linux-only; pulls `libc` for the DVB CA ioctls and `clap` for the CLI). The
+# (Linux-only; pulls `libc` for the DVB CA ioctls, `rustix` for the readiness poll and `clap` for the CLI). The
 # portable sans-IO core needs none of it.
-linux = ["dep:libc", "dep:clap"]
+linux = ["dep:libc", "dep:rustix", "dep:clap"]

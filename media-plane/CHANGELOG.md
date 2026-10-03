@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- `Trunk`'s state lock and the `StallIngest` back-pressure `Condvar` are now `parking_lot` (no poisoning; `lock_state` is now a one-line passthrough, the poison-recovery logic is gone). No public API change.
+- Measured the single-lock contention with the new `trunk_contention` criterion benchmark; numbers and the lock-split decision are in `benches/RESULTS.md`: the pre-registered rule said SPLIT, a sample-group / segment-event-part-group split was implemented and measured (16 readers: 574 ns -> 1104 ns per publish), missed the >= 30 % gain bar and was reverted.
+- Tests observe a parked `StallIngest` publisher directly (test-only probe) instead of sleeping or waiting a fixed 200 ms.
+
 ### Added
 - `SegmentWriter::try_publish_segment` — non-blocking alternative to
   `SegmentWriter::publish_segment` for the one case that can stall
@@ -35,6 +40,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   an out-of-band signal a `Stage` has no input variant for (`dash_pull`
   uses it to abandon a live-edge segment whose tolerated-`404` retries ran
   out) (issue #1083).
+- `benches/trunk_contention` (criterion): 1 publisher x N = 1, 4, 16, 64 cursors.
+- `tests/no_handroll_guard.rs`.
 
 ### Changed (breaking)
 - `Trunk::writer`/`Trunk::segment_writer` are now **re-issuable**: the

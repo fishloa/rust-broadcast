@@ -25,6 +25,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   half (`stack.rs`'s `descramble` already documents a live AlphaCrypt never
   replying to `query` at all), so it stayed off by default until that is
   confirmed on real hardware (issue #1032).
+- (`linux` feature) device readiness polling uses `rustix::event::poll` instead of `libc::poll`; sub-millisecond timeouts are no longer truncated to zero. New dependency `rustix` (feature `linux` only). `libc` stays for the CA ioctls. No public API change.
+- Dev: `tests/no_handroll_guard.rs`; Linux tests for the readiness poll (timeout, zero timeout, sub-millisecond timeout, hang-up without data).
 
 ### Fixed
 - A CAM-originated APDU or SPDU that fails to parse (e.g. a padded `tune`, a

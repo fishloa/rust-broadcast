@@ -135,8 +135,18 @@
 //! about the segmenter's program order plus lock-ordering rules for every
 //! method that touches both groups — `Trunk::writer`'s handover log spans
 //! the two sample classes, and the `StallIngest` `Condvar` is paired with the
-//! segment ring and its pins). No deterministic measurement of contention
-//! benefit exists in this crate, so the split was not made speculatively.
+//! segment ring and its pins). The contention is now measured:
+//! `benches/trunk_contention.rs` (1 publisher, N spinning [`SampleCursor`]s;
+//! numbers and the decision rule in `benches/RESULTS.md`) reads publisher cost
+//! per `publish` after the `parking_lot` swap of 38 ns at 1 reader, 125 ns at
+//! 4, 574 ns at 16 and 2.6 µs at 64 — the O(N)-in-cursor-count rule the
+//! spike found, still present. That crossed the pre-registered SPLIT
+//! threshold (`t(16) >= 3 x t(1)`), so a sample-lock / segment-event-part-lock
+//! split was implemented and measured: publisher cost at 16 readers went from
+//! 574 ns to 1104 ns, far short of the pre-registered >= 30 % gain bar, and it
+//! was **reverted**. The benchmark's publisher and readers only touch the
+//! sample group, so splitting the *other* rings off the lock cannot relieve
+//! it. See `benches/RESULTS.md` for both tables and the reasoning.
 //! The measurable cost the finding names — the O(capacity) request scans
 //! under that lock — was removed instead: `part_bytes`/`parts_in_segment`
 //! are served from a per-segment index and touch only that segment's parts.
@@ -156,7 +166,7 @@
 //! segments/parts, once one exists) and an unbounded set of reader threads
 //! (egress, analysis, DVR) must observe the *same* ring concurrently. That
 //! needs a
-//! shared, lockable interior — `std::sync::{Arc, Mutex}` here, matching
+//! shared, lockable interior — `std::sync::Arc` plus a `parking_lot::Mutex` here, matching
 //! exactly the shape validated by `spikes/trunk-bench` (§3.1 of the spec).
 //! Pulling in a `no_std` spinlock crate just to keep this one module
 //! `no_std`-capable was considered and rejected: every real `Trunk` consumer
@@ -584,10 +594,12 @@ use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::num::NonZeroUsize;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
+
+use parking_lot::{Condvar, Mutex, MutexGuard};
 
 use broadcast_common::stage::Timestamp;
 use bytes::Bytes;
@@ -1465,6 +1477,11 @@ pub struct Trunk {
     /// `AtomicUsize`, not part of `state`'s `Mutex`, so registering/releasing
     /// a listener never contends the same lock `publish`/`poll` do.
     waiter_count: AtomicUsize,
+    /// Test-only probe: the number of publishers currently parked in
+    /// [`ArchiveOverrun::StallIngest`]'s wait. Lets a test observe "blocked"
+    /// directly instead of waiting a fixed time and inferring it.
+    #[cfg(test)]
+    stalled_publishers: AtomicUsize,
     /// Copy of [`TrunkConfig::part_capacity`], read without locking `state` —
     /// the cap [`Trunk::listen`] enforces against `waiter_count`. See
     /// [The reader-wake primitive](self#the-reader-wake-primitive-listen-not-one-registration-per-remote-peer)
@@ -1500,31 +1517,20 @@ impl Trunk {
             writer_issued_once: AtomicBool::new(false),
             progress: Event::new(),
             waiter_count: AtomicUsize::new(0),
+            #[cfg(test)]
+            stalled_publishers: AtomicUsize::new(0),
             part_waiter_cap: config.part_capacity.get(),
         })
     }
 
-    /// Lock `state`, recovering from poison rather than propagating it —
-    /// every other method on this type and on [`TrunkWriter`]/
-    /// [`SegmentWriter`]/every cursor goes through this rather than calling
-    /// `self.state.lock()` directly.
-    ///
-    /// A panic on some *other* thread while it held this same lock (a
-    /// misbehaving consumer's `poll` call, say) must not turn every
-    /// subsequent writer/reader on this `Trunk` into a permanent panic too
-    /// — the stock `Mutex` poisons on exactly that, and every method here
-    /// used to propagate the poison with `.expect("Trunk state lock
-    /// poisoned")`, so one panicking consumer could take the whole `Trunk`
-    /// down with it. Recovering is sound here specifically because nothing
-    /// under this lock ever leaves `TrunkState` in a state that violates an
-    /// invariant spanning more than the one field being touched: every
-    /// critical section in this module is a bounded push/pop or a plain
-    /// counter update, with no foreign/user code (no `SegmentSink::offer`,
-    /// no callback) ever invoked while the lock is held — see
-    /// [`crate::retention`]'s module docs for why the sink hand-off in
-    /// particular is deliberately kept outside any lock this type takes.
+    /// Lock `state`. `parking_lot::Mutex` does not poison: a panic on some
+    /// other thread while it held this lock cannot turn every later writer or
+    /// reader into a panic, so no recovery wrapper is needed. (Every critical
+    /// section here is a bounded push/pop or counter update with no foreign
+    /// code inside — see [`crate::retention`] for why the sink hand-off stays
+    /// outside any lock this type takes.)
     fn lock_state(&self) -> MutexGuard<'_, TrunkState> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        self.state.lock()
     }
 
     /// Take the one [`TrunkWriter`] for this `Trunk` — the write handle for
@@ -2296,7 +2302,7 @@ impl SegmentWriter {
     /// back to [`ArchiveOverrun::Gap`] would hide that a pinned (DVR)
     /// consumer's *stronger* guarantee was just broken behind the same
     /// "ordinary, expected" loss report an unpinned cursor gets by design.
-    /// The block is a [`std::sync::Condvar::wait_timeout`], which releases
+    /// The block is a [`parking_lot::Condvar::wait_until`], which releases
     /// the shared `Mutex` while parked, so [`TrunkWriter::publish`] and
     /// every cursor's `poll` on *other* data remain free to proceed even
     /// while this call is stalled. [`Self::try_publish_segment`] is the
@@ -2357,7 +2363,7 @@ impl SegmentWriter {
             if !must_wait {
                 break;
             }
-            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            if Instant::now() >= deadline {
                 // The bound elapsed: this `StallIngest` pin's guarantee
                 // cannot be honoured any further. Terminate it — the exact
                 // same signal `ArchiveOverrun::Terminate` already emits —
@@ -2374,13 +2380,14 @@ impl SegmentWriter {
                     }
                 }
                 break;
-            };
-            let (next_state, _timeout) = self
-                .trunk
+            }
+            #[cfg(test)]
+            self.trunk.stalled_publishers.fetch_add(1, Ordering::AcqRel);
+            self.trunk
                 .segment_pin_released
-                .wait_timeout(state, remaining)
-                .unwrap_or_else(PoisonError::into_inner);
-            state = next_state;
+                .wait_until(&mut state, deadline);
+            #[cfg(test)]
+            self.trunk.stalled_publishers.fetch_sub(1, Ordering::AcqRel);
             // Loop back around: re-check capacity/oldest/pins after waking —
             // the pin that was blocking may have advanced, been dropped, or
             // (if a *different* pin also needed this entry) still be
@@ -3026,6 +3033,21 @@ impl EventCursor {
     }
 }
 
+/// Test helper (also used by `retention`'s tests): spin, yielding and never
+/// sleeping, until `n` publishers are parked in `StallIngest`'s wait. Bounded
+/// so a publisher that never parks fails the test instead of hanging it.
+#[cfg(test)]
+pub(crate) fn wait_until_stalled(trunk: &Trunk, n: usize) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while trunk.stalled_publishers.load(Ordering::Acquire) < n {
+        assert!(
+            Instant::now() < deadline,
+            "publisher never parked in StallIngest"
+        );
+        std::thread::yield_now();
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3180,7 +3202,10 @@ mod tests {
             poisoner.join().is_err(),
             "poisoner thread must have panicked"
         );
-        assert!(trunk.state.is_poisoned(), "precondition: mutex is poisoned");
+        assert!(
+            trunk.state.try_lock().is_some(),
+            "precondition: the lock is free (and, being parking_lot, unpoisoned) after the holder unwound"
+        );
 
         writer.publish(7, RetentionClass::Timed, sample(5, 4));
         match samples.poll() {
@@ -3806,8 +3831,9 @@ mod tests {
             done_tx.send(()).unwrap();
         });
 
+        wait_until_stalled(&trunk, 1);
         assert!(
-            done_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+            done_rx.try_recv().is_err(),
             "publish_segment must still be blocked: archive has not consumed seq 1 yet"
         );
 
@@ -3943,8 +3969,9 @@ mod tests {
             done_tx.send(()).unwrap();
         });
 
+        wait_until_stalled(&trunk, 1);
         assert!(
-            done_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+            done_rx.try_recv().is_err(),
             "publish_segment must block: the pin has not consumed seq 1 yet"
         );
 
@@ -3959,6 +3986,56 @@ mod tests {
         done_rx
             .recv_timeout(Duration::from_secs(60))
             .expect("publish_segment must unblock once the pin advances");
+        handle.join().unwrap();
+    }
+
+    /// The stalled-publisher probe is what replaces the 200 ms negative waits:
+    /// it must read 1 exactly while `publish_segment` is parked and 0 after.
+    /// It also bounds how long the unblock takes: the pin advance must wake
+    /// the parked publisher through `notify_all`, not let it run out
+    /// `STALL_INGEST_MAX_WAIT` (the bounded-wait path also returns, so
+    /// "it returned" alone cannot tell a lost wake from a delivered one).
+    #[test]
+    fn stalled_publisher_probe_tracks_a_parked_publish_segment() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(1), nz(8), nz(8)));
+        let writer = Arc::new(trunk.segment_writer().unwrap());
+        let mut pin = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        writer.publish_segment(segment_entry(1, 1)).unwrap();
+        assert_eq!(trunk.stalled_publishers.load(Ordering::Acquire), 0);
+
+        let bg = Arc::clone(&writer);
+        let handle = thread::spawn(move || bg.publish_segment(segment_entry(2, 2)).unwrap());
+        wait_until_stalled(&trunk, 1);
+        assert_eq!(trunk.stalled_publishers.load(Ordering::Acquire), 1);
+
+        let released_at = Instant::now();
+        assert!(pin.poll().is_some(), "consume seq 1: releases the pin");
+        handle.join().unwrap();
+        assert!(
+            released_at.elapsed() < STALL_INGEST_MAX_WAIT / 2,
+            "the publisher must be woken by the pin advance, not time out ({:?})",
+            released_at.elapsed()
+        );
+        assert_eq!(trunk.stalled_publishers.load(Ordering::Acquire), 0);
+    }
+
+    /// While a publisher is parked in StallIngest, ordinary sample publish and
+    /// cursor polls on the same Trunk must proceed (the Condvar releases the lock).
+    #[test]
+    fn sample_publish_proceeds_while_a_segment_publisher_is_stalled() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(1), nz(8), nz(8)));
+        let seg_writer = Arc::new(trunk.segment_writer().unwrap());
+        let writer = trunk.writer().unwrap();
+        let mut pin = trunk.pin_segments(ArchiveOverrun::StallIngest);
+        seg_writer.publish_segment(segment_entry(1, 1)).unwrap();
+        let bg = Arc::clone(&seg_writer);
+        let handle = thread::spawn(move || bg.publish_segment(segment_entry(2, 2)).unwrap());
+        wait_until_stalled(&trunk, 1);
+
+        writer.publish(1, RetentionClass::Timed, sample(7, 4)); // must not deadlock
+        assert_eq!(trunk.timed_len(), 1);
+
+        assert!(pin.poll().is_some());
         handle.join().unwrap();
     }
 
@@ -4905,7 +4982,6 @@ mod tests {
 
         let bg_writer = Arc::clone(&writer);
         let handle = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(50));
             // A decoy: a different part of the same segment, published
             // first. If `part_bytes` ever matched on `segment_number` alone,
             // this would be the value wrongly returned for a request for
@@ -4920,9 +4996,9 @@ mod tests {
         // bound on the *machine's* scheduling, not on this code. A 2s bound
         // here failed once during a loaded full-workspace run and passed on
         // 38 consecutive idle runs -- a false red that trains people to
-        // re-run the suite. 60s still fails instantly if the wake channel
+        // re-run the suite. 10s still fails instantly if the wake channel
         // genuinely never fires, which is the only failure worth reporting.
-        let woken = listener.wait_deadline(std::time::Instant::now() + Duration::from_secs(60));
+        let woken = listener.wait_deadline(std::time::Instant::now() + Duration::from_secs(10));
         assert!(
             woken,
             "listener must wake on publish_part, not park forever"
@@ -5225,7 +5301,7 @@ mod tests {
     ///
     /// MUTATION VERIFIED: removing `self.trunk.progress.notify(usize::MAX);`
     /// from `TrunkWriter::set_tracks` makes `listener.wait_deadline(..)`
-    /// time out (`false`) instead of waking (`true`) within the 60s bound
+    /// time out (`false`) instead of waking (`true`) within the 10s bound
     /// used below. Recompiled and re-run to confirm the failure, then
     /// reverted.
     #[test]
@@ -5239,56 +5315,105 @@ mod tests {
 
         let bg_writer = Arc::clone(&writer);
         let handle = thread::spawn(move || {
-            thread::sleep(Duration::from_millis(50));
             bg_writer.set_tracks(vec![opaque_track(1)]);
         });
 
         // Same generous, machine-independent bound as this module's other
-        // wake tests — see their comments for why 60s asserts only "it woke
+        // wake tests — see their comments for why 10s asserts only "it woke
         // at all", not "it woke fast".
-        let woken = listener.wait_deadline(std::time::Instant::now() + Duration::from_secs(60));
+        let woken = listener.wait_deadline(std::time::Instant::now() + Duration::from_secs(10));
         assert!(woken, "listener must wake on set_tracks, not park forever");
         handle.join().unwrap();
 
         assert_eq!(trunk.track_generation(), 1);
     }
 
-    /// A panic on some other thread while it holds `state` (a `Mutex`
-    /// poisons on exactly this) must not turn every later writer/reader call
-    /// on this `Trunk` into a panic too — see `Trunk::lock_state`'s doc.
-    ///
-    /// MUTATION VERIFIED: reverting `Trunk::lock_state` to
-    /// `self.state.lock().expect("Trunk state lock poisoned")` (the pre-fix
-    /// behaviour every method used inline) makes the final `publish` call
-    /// panic with "Trunk state lock poisoned" instead of completing.
-    /// Recompiled and re-run to confirm the failure, then reverted.
+    /// A panic on another thread while it holds `state` must not break later
+    /// calls. `parking_lot::Mutex` has no poisoning, so there is nothing to
+    /// recover from — the test pins that no future change reintroduces a
+    /// poisoning lock (a `.lock().unwrap()` on the std type would turn this
+    /// panic into a permanent one).
     #[test]
     fn subscriber_side_panic_while_holding_the_lock_does_not_poison_later_calls() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
 
-        // Simulate a consumer that panics while holding exactly the
-        // critical section every method in this module briefly takes —
-        // locking the same private `state` field directly, since this test
-        // module is `trunk`'s own `#[cfg(test)] mod tests`.
         let trunk_for_panic = Arc::clone(&trunk);
         let handle = thread::spawn(move || {
-            let _guard = trunk_for_panic.state.lock().unwrap();
+            let _guard = trunk_for_panic.state.lock();
             panic!("simulated panic while holding Trunk::state");
         });
         assert!(
             handle.join().is_err(),
-            "the spawned thread must actually have panicked (test setup check)"
+            "setup: the thread must have panicked"
         );
 
-        // A later call must not itself panic just because some other
-        // consumer's critical section was cut short by a panic.
         writer.publish(1, RetentionClass::Timed, sample(1, 4));
         assert_eq!(
             trunk.timed_len(),
             1,
-            "publish after the panic must have taken effect"
+            "publish after the panic must take effect"
         );
+        assert!(
+            trunk.state.try_lock().is_some(),
+            "the lock must be free after the panicking holder unwound"
+        );
+    }
+
+    /// A segment must never be observable before the samples it was built
+    /// from — the guarantee the single lock gave structurally and a split
+    /// would keep by program order + rest-then-samples read order.
+    #[test]
+    fn segment_never_overtakes_its_samples_under_a_split_lock() {
+        const ROUNDS: u32 = 2_000;
+        let trunk = Trunk::new(TrunkConfig::new(nz(4096), nz(4), nz(4096), nz(8), nz(8)));
+        let writer = trunk.writer().unwrap();
+        let seg_writer = trunk.segment_writer().unwrap();
+        let mut seg_samples = trunk.subscribe();
+        let mut watcher_samples = trunk.subscribe();
+        let mut watcher_segments = trunk.subscribe_segments();
+
+        let ingest = thread::spawn(move || {
+            for i in 0..ROUNDS {
+                writer.publish(1, RetentionClass::Timed, sample((i % 251) as u8, 4));
+            }
+        });
+        // The "segmenter": publishes segment k only after polling k samples.
+        let segmenter = thread::spawn(move || {
+            let mut seen = 0u32;
+            let mut seq = 1u32;
+            while seq <= ROUNDS {
+                if let Some(SampleCursorItem::Timed { .. }) = seg_samples.poll() {
+                    seen += 1;
+                    if seen == seq {
+                        seg_writer.publish_segment(segment_entry(0, seq)).unwrap();
+                        seq += 1;
+                    }
+                }
+            }
+        });
+        // The watcher: for each segment it sees (segment state first), the
+        // sample cursor (sample state second) must already be able to
+        // deliver at least `seq` samples.
+        let mut delivered = 0u32;
+        let mut segs = 0u32;
+        while segs < ROUNDS {
+            if let Some(SegmentCursorItem::Segment(entry)) = watcher_segments.poll() {
+                segs += 1;
+                while delivered < entry.sequence_number {
+                    match watcher_samples.poll() {
+                        Some(SampleCursorItem::Timed { .. }) => delivered += 1,
+                        Some(_) => {}
+                        None => panic!(
+                            "segment {} visible but only {delivered} samples deliverable",
+                            entry.sequence_number
+                        ),
+                    }
+                }
+            }
+        }
+        ingest.join().unwrap();
+        segmenter.join().unwrap();
     }
 
     /// `SegmentWriter::try_publish_segment` lets a single thread that owns

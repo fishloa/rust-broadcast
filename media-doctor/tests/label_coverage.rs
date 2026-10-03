@@ -10,8 +10,9 @@ use std::path::Path;
 
 /// Enums that are not spec/field labels (errors, dispatch wrappers, CLI args).
 const SKIP: &[&str] = &[
-    "CheckArgs", // clap argument struct
-    "Cli",       // clap CLI dispatch enum
+    "CheckArgs",          // clap argument struct
+    "Cli",                // clap CLI dispatch enum
+    "MulticastInterface", // config selector (which interface a group is joined on), not a spec/field label
 ];
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {

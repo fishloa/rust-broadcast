@@ -24,6 +24,10 @@ timed-metadata   = { path = "../timed-metadata", version = "0.5", default-featur
 # already depends on (see its Cargo.toml) — reusing the primitive the
 # consumer already uses, not hand-rolling a parallel one.
 event-listener   = { version = "5", default-features = false, features = ["std"], optional = true }
+# `Trunk`'s lock and back-pressure Condvar (de-hand-roll W1-P, SP6.6): no
+# poisoning (the hand-written `lock_state` poison-recovery wrapper is gone) and
+# `Condvar::wait_until(&mut guard, Instant)`.
+parking_lot      = { version = "0.12", optional = true }
 
 [dev-dependencies]
 # Builds real, valid (Parse/Serialize round-tripping) SCTE-35 splice_insert()
@@ -31,10 +35,11 @@ event-listener   = { version = "5", default-features = false, features = ["std"]
 # wrap-unroll across a genuine wrap boundary — see the event-log wrap test in
 # `src/trunk.rs`. Test-only: the library itself depends only on `timed-metadata`.
 scte35-splice = { path = "../scte35-splice", version = "2.1", default-features = false }
+criterion     = { version = "0.8", features = ["html_reports"] }
 
 [features]
 default = ["std"]
-std     = ["broadcast-common/std", "thiserror/std", "dep:transmux", "dep:timed-metadata", "dep:event-listener"]
+std     = ["broadcast-common/std", "thiserror/std", "dep:transmux", "dep:timed-metadata", "dep:event-listener", "dep:parking_lot"]
 
 [package.metadata.docs.rs]
 # `all-features = true` alone is not enough here: this crate's `std` feature
@@ -50,4 +55,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [[example]]
 name = "ingest_trunk_playback"
+required-features = ["std"]
+
+[[bench]]
+name              = "trunk_contention"
+harness           = false
 required-features = ["std"]

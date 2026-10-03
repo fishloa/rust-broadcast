@@ -60,6 +60,11 @@ on `GET /metrics`:
 |---|---|---|
 | `--udp <host:port>` | *(required)* | UDP address to listen on for raw MPEG-TS |
 | `--metrics-addr <host:port>` | `127.0.0.1:9090` | HTTP address serving `GET /metrics` |
+| `--metrics-max-conns <n>` | `32` | metrics connections served at once; a connection beyond the cap is closed immediately at accept |
+| `--metrics-io-timeout-ms <ms>` | `5000` | total time a metrics connection may take (also the header-read timeout), so a dribbling or idle client cannot hold a slot |
+| `--udp-rcvbuf <bytes>` | OS default | requested `SO_RCVBUF` for the UDP socket (the kernel may cap it; a warning is printed when it grants less) |
+| `--udp-reuse-addr` | off | set `SO_REUSEADDR` on the UDP socket (lets several probes share a multicast port) |
+| `--udp-interface <ipv4\|index>` | OS choice | interface for the multicast join: an IPv4 address for IPv4 groups, an interface index for IPv6 groups |
 
 Metrics exposed (see `media_doctor::WatchState` for the full accounting):
 
@@ -83,11 +88,17 @@ computes the equivalent PCR-repetition/discontinuity and continuity-count
 indicators from the same per-packet data.
 
 The ingest/metrics core (`media_doctor::WatchState::feed_datagram` /
-`render_prometheus`) is plain logic with no socket dependency, so it's
+`WatchState::snapshot`) is plain logic with no socket dependency, so it's
 unit-tested by feeding a real capture chunked into UDP-payload-sized pieces —
-no socket is ever opened in tests. The `watch` binary itself is a thin
-`UdpSocket`/`TcpListener` shell (two `std::thread`s sharing
-`Arc<Mutex<WatchState>>`; no async runtime) around that core.
+no socket is ever opened in those tests. The Prometheus text is produced by
+[`metrics-exporter-prometheus`](https://docs.rs/metrics-exporter-prometheus)
+(`media_doctor::render_metrics`, feature `metrics`); `WatchState::render_prometheus`
+no longer exists. The HTTP side is `hyper` (`media_doctor::metrics_server`,
+feature `net`) and the UDP bind is `socket2` (`media_doctor::udp`). The `watch`
+binary ingests on the main thread and serves the latest rendered body from one
+current-thread tokio runtime on a `metrics` thread; `WatchState` is not shared
+between threads. The exposition is re-rendered at most every 250 ms and once
+more when the feed goes quiet, so the last datagrams always become visible.
 
 ## Library
 

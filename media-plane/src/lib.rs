@@ -48,7 +48,7 @@
 //! **Only [`byte_stage`]/[`byte_tap`]/[`byte_merge`] are `no_std` + `alloc`.**
 //! [`Trunk`] and everything built on it ([`ingress`], [`egress`],
 //! [`retention`]) are gated behind, and require, the `std` feature —
-//! [`Trunk`] itself needs `std::sync::Mutex`/`Arc`/`Condvar` for cross-thread
+//! [`Trunk`] itself needs `Arc` plus a `parking_lot` `Mutex`/`Condvar` for cross-thread
 //! sharing (see the [`trunk`] module docs for why that beats a `no_std`
 //! spinlock crate here). Saying just "the plane is `no_std`-capable" without
 //! this qualifier would be true of a third of the crate and false of the
@@ -92,7 +92,7 @@
 //! Above the byte layer and demux sits [`Trunk`]: the bounded sample ring and
 //! segment log one [`TrunkWriter`] publishes into and any number of
 //! [`SampleCursor`]/[`SegmentCursor`]s read from. It requires the `std`
-//! feature (`Arc`/`Mutex`/`Condvar` for cross-thread sharing) — see the
+//! feature (`Arc` plus a `parking_lot` `Mutex`/`Condvar` for cross-thread sharing) — see the
 //! [`trunk`] module docs for why that is the right line to draw rather than
 //! reaching for a `no_std` spinlock crate, the benchmark
 //! (`spikes/trunk-bench`) that shaped the design, and — critically, before

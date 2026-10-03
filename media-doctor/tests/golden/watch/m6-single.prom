@@ -1,0 +1,35 @@
+# HELP media_doctor_packets_total Total well-formed 188-byte TS packets processed (ISO/IEC 13818-1 section 2.4.3.2).
+# TYPE media_doctor_packets_total counter
+media_doctor_packets_total 1264
+# HELP media_doctor_datagrams_total Total ingest datagrams fed (e.g. UDP payloads).
+# TYPE media_doctor_datagrams_total counter
+media_doctor_datagrams_total 181
+# HELP media_doctor_resync_events_total Times TS byte-stream sync was lost and reacquired (mpeg_ts::resync::TsResync).
+# TYPE media_doctor_resync_events_total counter
+media_doctor_resync_events_total 0
+# HELP media_doctor_dropped_bytes_total Bytes dropped before/while reacquiring TS packet sync.
+# TYPE media_doctor_dropped_bytes_total counter
+media_doctor_dropped_bytes_total 0
+# HELP media_doctor_conformance_in_sync Whether the ETSI TR 101 290 monitor currently considers the stream in sync (1) or not (0).
+# TYPE media_doctor_conformance_in_sync gauge
+media_doctor_conformance_in_sync 1
+# HELP media_doctor_conformance_events_total ETSI TR 101 290 indicator events observed, by indicator and priority tier.
+# TYPE media_doctor_conformance_events_total counter
+media_doctor_conformance_events_total{indicator="Continuity_count_error",priority="first priority"} 876
+# clauses: Continuity_count_error=TR 101 290 v1.4.1 Table 5.0a indicator 1.4
+# HELP media_doctor_scte35_events_total Total SCTE-35 splice_insert events observed (ANSI/SCTE 35 section 9.7.3.1), excluding cancelled events.
+# TYPE media_doctor_scte35_events_total counter
+media_doctor_scte35_events_total 0
+# HELP media_doctor_scte35_open_events Currently-unmatched ("out" with no "in" yet, and no auto-return) SCTE-35 splice_insert events.
+# TYPE media_doctor_scte35_open_events gauge
+media_doctor_scte35_open_events 0
+# HELP media_doctor_pts_dts_anomalies_total Non-monotonic decode-timestamp (DTS, else PTS) events observed on tracked PES PIDs.
+# TYPE media_doctor_pts_dts_anomalies_total counter
+media_doctor_pts_dts_anomalies_total 0
+# HELP media_doctor_codec_signalling_mismatch Whether a PMT-declared codec PID has ever shown bitstream framing disagreeing with the declared stream_type (1) or not (0); only emitted once at least one access unit has been observed on that PID (ISO/IEC 13818-1 Table 2-34).
+# TYPE media_doctor_codec_signalling_mismatch gauge
+# HELP media_doctor_pts_dts_anomaly Whether a tracked PES PID has ever shown a non-monotonic decode timestamp (1) or not (0); only emitted once a decode timestamp has been observed on that PID.
+# TYPE media_doctor_pts_dts_anomaly gauge
+# HELP media_doctor_last_packet_clock_seconds Elapsed ingest wall-clock time (seconds) of the most recently processed TS packet.
+# TYPE media_doctor_last_packet_clock_seconds gauge
+media_doctor_last_packet_clock_seconds 0.18

@@ -463,7 +463,7 @@ impl<S: SegmentSink> RetentionDriver<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::trunk::{NonMonotonicSequenceNumber, TrunkConfig};
+    use crate::trunk::{NonMonotonicSequenceNumber, TrunkConfig, wait_until_stalled};
     use std::num::NonZeroUsize;
     use std::sync::mpsc;
     use std::thread;
@@ -743,8 +743,9 @@ mod tests {
             done_tx.send(()).unwrap();
         });
 
+        wait_until_stalled(&trunk, 1);
         assert!(
-            done_rx.recv_timeout(Duration::from_millis(200)).is_err(),
+            done_rx.try_recv().is_err(),
             "publish_segment must block: the driver has not consumed seq 1 yet"
         );
 

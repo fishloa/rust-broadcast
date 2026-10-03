@@ -43,7 +43,7 @@ pub struct CheckArgs {
 pub struct WatchArgs {
     /// UDP address to listen on for raw MPEG-TS, e.g. `0.0.0.0:5000` for
     /// unicast or `239.1.1.1:5000` for multicast (auto-joins the multicast
-    /// group when the address is in the IPv4 multicast range).
+    /// group when the address is in the IPv4 or IPv6 multicast range).
     #[arg(long = "udp")]
     pub udp: String,
 
@@ -52,8 +52,8 @@ pub struct WatchArgs {
     pub metrics_addr: String,
 
     /// Maximum metrics connections served concurrently. A connection beyond
-    /// this is answered `503` and closed immediately, so a flood of idle
-    /// clients cannot exhaust the process's threads.
+    /// this is closed immediately at accept, so a flood of idle clients
+    /// cannot exhaust the process's tasks or file descriptors.
     #[arg(long = "metrics-max-conns", default_value_t = DEFAULT_METRICS_MAX_CONNS)]
     pub metrics_max_conns: usize,
 
@@ -63,6 +63,52 @@ pub struct WatchArgs {
     /// hold a connection open indefinitely.
     #[arg(long = "metrics-io-timeout-ms", default_value_t = DEFAULT_METRICS_IO_TIMEOUT_MS)]
     pub metrics_io_timeout_ms: u64,
+
+    /// Requested `SO_RCVBUF` for the UDP socket, in bytes (the kernel may cap
+    /// it; a warning is printed when it grants less than requested).
+    #[arg(long = "udp-rcvbuf")]
+    pub udp_rcvbuf: Option<usize>,
+
+    /// Set `SO_REUSEADDR` on the UDP socket (lets several probes share a
+    /// multicast port).
+    #[arg(long = "udp-reuse-addr")]
+    pub udp_reuse_addr: bool,
+
+    /// Interface for the multicast join: an IPv4 address (IPv4 groups) or an
+    /// interface index (IPv6 groups).
+    #[arg(long = "udp-interface")]
+    pub udp_interface: Option<String>,
+}
+
+impl WatchArgs {
+    /// The UDP socket settings from `--udp-rcvbuf`, `--udp-reuse-addr` and
+    /// `--udp-interface`.
+    ///
+    /// # Errors
+    ///
+    /// A message naming `--udp-interface` when its value is neither an IPv4
+    /// address nor an interface index.
+    pub fn udp_config(&self) -> Result<crate::udp::UdpConfig, String> {
+        use crate::udp::{MulticastInterface, UdpConfig};
+        let interface = match self.udp_interface.as_deref() {
+            None => None,
+            Some(s) => Some(
+                s.parse::<std::net::Ipv4Addr>()
+                    .map(MulticastInterface::V4)
+                    .or_else(|_| s.parse::<u32>().map(MulticastInterface::V6Index))
+                    .map_err(|_| {
+                        format!(
+                            "invalid --udp-interface {s:?}: expected an IPv4 address or an interface index"
+                        )
+                    })?,
+            ),
+        };
+        Ok(UdpConfig {
+            recv_buffer: self.udp_rcvbuf,
+            reuse_addr: self.udp_reuse_addr,
+            interface,
+        })
+    }
 }
 
 /// Default concurrent-connection cap for the metrics endpoint.
