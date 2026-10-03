@@ -30,6 +30,7 @@ Owner decisions that apply to this cluster:
 - `broadcast_common::hex` keeps its public API and delegates (NOT breaking).
 
 Cluster rules:
+- **thumbv7em-none-eabi (CI job `no_std`, `.github/workflows/ci.yml:112-149`)** cross-builds `broadcast-common`, `scte35-splice`, `transmux` and `timed-metadata` (this cluster's four) with `--no-default-features`. Every new dependency in those crates is `default-features = false` (+ `alloc` where needed), or the module needing `std` is gated behind `std`: `hex`/`base64` (`alloc`), `jiff` in timed-metadata (`alloc`; `jiff/std` only from the `std` feature), and in transmux `jiff`/`url`/`sdp-types` are optional and only enabled by `std`. After every task that touches one of those manifests run `cargo build -p <crate> --no-default-features --target thumbv7em-none-eabi --locked`. If `jiff` (`portable-atomic`) does not build on that target, STOP and escalate rather than dropping `no_std` from timed-metadata (owner decision Q2).
 - Never run two cargo commands concurrently. Never `git add -A`; add exact paths. Commit messages have no trailers.
 - Do NOT bump any `version =` in a Cargo.toml and do not edit `.delegate/release-versions.txt` — version notes go in `.delegate/w1-t-report.md` (the orchestrator records them).
 - Another W1 cluster (R-low) bumps `sdp-types` to 0.2 via rtsp-runtime, and others touch `Cargo.lock`. Expect a trivial `Cargo.lock` conflict at merge; do not pre-empt it. This branch may carry both `sdp-types` 0.1.8 (rtsp-runtime) and 0.2.0 (transmux) until R-low merges.
@@ -40,7 +41,7 @@ Cluster rules:
 ## Review Focus
 
 Five inputs most likely to bite users that no existing test would catch. Each has a test in the named task.
-1. **Digest `Authorization` strictness after moving to `http-auth`'s `ChallengeParser`** (Task 10): a client whose `username` has a `"` or `\` (the http-auth client escapes them as quoted-pairs, which the old splitter mis-parsed), a header repeating `username=` (old code: last wins — a smuggling vector; new: reject), upper-cased parameter names (RFC 7235: names are case-insensitive), and a raw non-ASCII `username` (the parser is ASCII-only; browsers send raw UTF-8 usernames; this is a deliberate, CHANGELOG-listed behaviour change — RFC 7616 §3.4 wants `username*`/`userhash` for non-ASCII). Tests: `broadcast-auth/tests/digest_params.rs`.
+1. **Digest `Authorization` strictness after moving to `http-auth`'s `ChallengeParser`** (Task 10): a client whose `username` has a `"` or `\` (the http-auth client escapes them as quoted-pairs, which the old splitter mis-parsed), a header repeating `username=` (old code: last wins — a smuggling vector; new: reject), upper-cased parameter names (RFC 7235: names are case-insensitive), and a raw non-ASCII `username` (the parser is ASCII-only, so raw UTF-8 is rejected — owner decision (a); a non-ASCII user authenticates through RFC 7616 §3.4.4 `username*`, implemented in Task 10e). Tests: `broadcast-auth/tests/digest_params.rs`, `digest_username_ext.rs`.
 2. **base64 decode leniency in SDP `sprop-parameter-sets`** (Task 7): the hand-rolled decoder accepted missing padding, stray `=`, and non-zero trailing bits; real cameras emit unpadded sprop. The `base64` crate's default is strict, so the shim uses `PAD_INDIFFERENT` + `allow_trailing_bits`. Tests: unpadded real ffmpeg sprop → byte-identical avcC; `Zh==`; RFC 4648 §10 vectors.
 3. **digest-uri substitution guard must not be loosened by URL normalisation** (Task 10b): `url::Url::parse` removes `.`/`..` segments, lower-cases hosts and drops default ports, so a naive "parse then compare" would let a response hashed over `http://h/a/../b` authorise `/b` (and `%2e%2e` likewise). The new rule requires the client's `uri` to already be in normalised form (`Url::as_str() == client_uri`) AND its path+query to equal the request-target exactly. Tests: in-module `digest_uri_matches_*`.
 4. **BaseURL resolution edge cases** (Task 13): `..` climbing above the synthetic base (returns an absolute path, listed difference), an absolute-path reference vs the stripped synthetic base (`/x` must stay `/x`), non-ASCII references (now percent-encoded by `url`), CR/LF/tab (the WHATWG parser silently DELETES them, so the CR/LF guard must run BEFORE `Url::join`), and `\` (treated as `/` for special schemes). Tests: `transmux/tests/base_url.rs`.
@@ -72,9 +73,11 @@ ln -s /Volumes/External/Projects/rust-broadcast/multimux/tests/assets/node_modul
 timeout 3600 cargo test --locked --all-features -p broadcast-common -p broadcast-auth -p scte35-splice -p timed-metadata -p transmux 2>&1 | grep -E '^test result|FAILED|panicked' | sort | uniq -c
 cargo build --locked --no-default-features -p broadcast-common -p scte35-splice -p timed-metadata -p transmux 2>&1 | tail -3
 cargo check --locked --all-features -p multimux 2>&1 | tail -3
+rustup target add thumbv7em-none-eabi
+for c in broadcast-common scte35-splice transmux timed-metadata; do cargo build -p $c --no-default-features --target thumbv7em-none-eabi --locked 2>&1 | tail -1; done
 ```
 
-Expected: only `test result: ok` lines; both builds finish with `Finished`. Record the per-binary passed counts in `.delegate/w1-t-report.md` under the heading `## Baseline` (create the file with a `# W1-T report` title first). A failure here is a pre-existing break: STOP and report it, do not "fix" it in this branch.
+Expected: only `test result: ok` lines; all builds finish with `Finished`. The four-crate loop is the subset of `.github/workflows/ci.yml:144-149` (job `no_std (thumbv7em-none-eabi)`, exact command `cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked`) that this cluster owns; the gate script does NOT run it, so it is run explicitly here and in Task 16. Record the per-binary passed counts in `.delegate/w1-t-report.md` under the heading `## Baseline` (create the file with a `# W1-T report` title first). A failure here is a pre-existing break: STOP and report it, do not "fix" it in this branch.
 
 - [ ] **Step 3: Record the baseline commit**
 
@@ -242,7 +245,7 @@ Expected: 7 tests `ok`; the `grep -c` prints `0` (no `Display` for `ChallengeRef
 
 - [ ] **Step 3: Record the verification outcome in `.delegate/w1-t-report.md`**
 
-Add a section `## SP2.4 verification (Task 1)` with: the test output, the `grep -c` result, the three source references above, and the decision (parse = `ChallengeParser`; render = formatter + escaping, escalation E1 "no crate can render a WWW-Authenticate challenge: `http-auth::ChallengeRef` has Debug only"; Basic/Bearer = `headers`; Digest `username*`/`userhash` parameters are parsed but not honoured, same as before).
+Add a section `## SP2.4 verification (Task 1)` with: the test output, the `grep -c` result, the three source references above, and the decision (parse = `ChallengeParser`; render = formatter + escaping, escalation E1 "no crate can render a WWW-Authenticate challenge: `http-auth::ChallengeRef` has Debug only"; Basic/Bearer = `headers`; Digest `username*` is decoded and honoured by Task 10e; `userhash=true` is rejected explicitly).
 
 - [ ] **Step 4: Commit**
 
@@ -1525,7 +1528,7 @@ fn a_second_challenge_after_the_credentials_is_rejected() {
 
 /// DELIBERATE behaviour change (CHANGELOG, breaking): `http-auth`'s parser is
 /// ASCII-only, so a raw UTF-8 `username` is a syntax error. RFC 7616 §3.4
-/// wants `username*`/`userhash` for non-ASCII. See escalation E2.
+/// wants `username*` for non-ASCII, implemented in Task 10e. See escalation E2.
 #[test]
 fn raw_non_ascii_username_is_rejected() {
     let v = digest_verifier("Jäs", "pw");
@@ -1967,6 +1970,232 @@ Replace `quoted(realm)` by `format!("\"{realm}\"")` in the Basic arm: `crlf_and_
 ```bash
 git add broadcast-auth/src/server.rs broadcast-auth/tests/challenge_render.rs
 git commit -m "fix(broadcast-auth): escape the WWW-Authenticate realm as a quoted-string, drop control characters"
+```
+
+---
+
+### Task 10e: broadcast-auth — Digest `username*` (RFC 7616 §3.4.4 / RFC 8187) so a non-ASCII user can authenticate
+
+Owner decision (a): raw UTF-8 in `username` stays rejected (Task 10a), and the extended parameter MUST work. Site: `server.rs` `check_digest` (the `get("username") != username` comparison right after Task 10a's field extraction). Rules:
+- `username*` is an RFC 8187 `ext-value`: `charset "'" [language] "'" value-chars`. The charset must be `UTF-8` (case-insensitive); anything else is rejected. `value-chars` is `pct-encoded / attr-char`: every `%` must be followed by two hex digits and every other byte must be an `attr-char` (`ALPHA DIGIT ! # $ & + - . ^ _ \` | ~`); `percent_decode_str` alone is NOT enough because it passes a malformed `%zz` through as literal text, so the syntax is validated first and the decode is done by the `percent-encoding` crate (no hand-rolled `%XX`).
+- The decoded bytes must be valid UTF-8.
+- `username` and `username*` together is an error (RFC 7616 §3.4.4) ⇒ `Unauthorized`.
+- `userhash=true` is rejected explicitly (the server never advertises `userhash`).
+- HA1 is computed over the decoded username, i.e. the configured one once it matches.
+
+**Files:**
+- Modify: `broadcast-auth/Cargo.toml` (`percent-encoding = "2"`, already in the lock at 2.3.2), `broadcast-auth/src/server.rs` (`check_digest`, new private `decode_ext_value`/`is_ext_value_syntax`)
+- Test: `broadcast-auth/tests/digest_username_ext.rs` (new, public API; carries its own copy of the `md5_hex`/`manual_header` helpers from `digest_params.rs`, with the `username` part replaced by a caller-supplied raw parameter text)
+- Create: `fuzz/fuzz_targets/auth_digest_header.rs` (+ `[[bin]]` entry in `fuzz/Cargo.toml`, same shape as `auth_challenge.rs`/`auth_signed_url.rs`): feeds arbitrary UTF-8 as an `Authorization` header to a Digest `Verifier::verify`; must never panic. CI's `fuzz build (nightly)` job builds it.
+
+**Interfaces:** no public change. Private `fn decode_ext_value(v: &str) -> Option<String>` (`None` for bad syntax, charset other than UTF-8, or non-UTF-8 bytes).
+
+- [ ] **Step 1: Failing tests**
+
+```rust
+//! Digest `username*` (RFC 7616 §3.4.4, RFC 8187 ext-value).
+use broadcast_auth::{AuthResult, Credentials, RequestContext, Verifier};
+use md5::{Digest as _, Md5};
+
+const REALM: &str = "cameras";
+/// RFC 7616 §3.4.4's own example value for "Jäs Schön".
+const RFC_EXT: &str = "UTF-8''J%C3%A4s%20Sch%C3%B6n";
+const RFC_USER: &str = "Jäs Schön";
+
+fn md5_hex(s: &str) -> String { hex::encode(Md5::digest(s.as_bytes())) }
+
+fn verifier(user: &str) -> Verifier {
+    Verifier::new(Credentials::Digest { username: user.into(), password: "pw".into() }, REALM)
+}
+
+/// A correctly-hashed header whose username parameter text is `user_param`
+/// verbatim (e.g. `username*=UTF-8''J%C3%A4s`), the HASH being over `hashed_user`.
+fn header(v: &Verifier, user_param: &str, hashed_user: &str, extra: &str) -> String {
+    let (method, uri) = ("GET", "/x");
+    let challenge = v.challenge();
+    let start = challenge.find("nonce=\"").unwrap() + 7;
+    let nonce = &challenge[start..start + challenge[start..].find('"').unwrap()];
+    let (nc, cnonce) = ("00000001", "0a4f113b");
+    let ha1 = md5_hex(&format!("{hashed_user}:{REALM}:pw"));
+    let ha2 = md5_hex(&format!("{method}:{uri}"));
+    let response = md5_hex(&format!("{ha1}:{nonce}:{nc}:{cnonce}:auth:{ha2}"));
+    format!(
+        "Digest {user_param}, realm=\"{REALM}\", nonce=\"{nonce}\", uri=\"{uri}\", algorithm=MD5, \
+         nc={nc}, cnonce=\"{cnonce}\", qop=auth, response=\"{response}\"{extra}"
+    )
+}
+
+fn verify(v: &Verifier, h: &str) -> AuthResult {
+    let headers = [("authorization", h)];
+    v.verify(&RequestContext::new("GET", "/x").with_headers(&headers))
+}
+
+#[test]
+fn rfc7616_ext_value_example_authenticates_a_non_ascii_user_end_to_end() {
+    let v = verifier(RFC_USER);
+    let h = header(&v, &format!("username*={RFC_EXT}"), RFC_USER, "");
+    assert_eq!(verify(&v, &h), AuthResult::Ok);
+    // Wrong password for the same user still fails (HA1 is over the decoded name).
+    let bad = header(&v, &format!("username*={RFC_EXT}"), "someone-else", "");
+    assert_eq!(verify(&v, &bad), AuthResult::Unauthorized);
+    // A different decoded user is not the configured one.
+    let other = verifier("Jas");
+    assert_eq!(verify(&other, &h), AuthResult::Unauthorized);
+}
+
+#[test]
+fn charset_is_case_insensitive_and_a_language_tag_is_allowed() {
+    let v = verifier(RFC_USER);
+    for ext in ["utf-8''J%C3%A4s%20Sch%C3%B6n", "Utf-8'de'J%C3%A4s%20Sch%C3%B6n"] {
+        let h = header(&v, &format!("username*={ext}"), RFC_USER, "");
+        assert_eq!(verify(&v, &h), AuthResult::Ok, "{ext}");
+    }
+}
+
+#[test]
+fn an_ascii_user_may_also_use_the_extended_form() {
+    let v = verifier("admin");
+    let h = header(&v, "username*=UTF-8''admin", "admin", "");
+    assert_eq!(verify(&v, &h), AuthResult::Ok);
+}
+
+#[test]
+fn username_and_username_star_together_are_an_error() {
+    let v = verifier(RFC_USER);
+    let h = header(&v, &format!("username=\"admin\", username*={RFC_EXT}"), RFC_USER, "");
+    assert_eq!(verify(&v, &h), AuthResult::Unauthorized);
+}
+
+#[test]
+fn only_the_utf8_charset_is_accepted() {
+    let v = verifier("Jäs");
+    for ext in ["ISO-8859-1''J%E4s", "US-ASCII''Jas", "''J%C3%A4s", "J%C3%A4s"] {
+        let h = header(&v, &format!("username*={ext}"), "Jäs", "");
+        assert_eq!(verify(&v, &h), AuthResult::Unauthorized, "{ext}");
+    }
+}
+
+#[test]
+fn malformed_percent_encoding_is_rejected_not_passed_through() {
+    let v = verifier("J%zzs");
+    // `%zz` would survive `percent_decode_str` as literal text and could match a
+    // configured name containing it; the syntax check must reject it first.
+    for ext in ["UTF-8''J%zzs", "UTF-8''J%C3%2", "UTF-8''J%", "UTF-8''J%C3%A4s%", "UTF-8''J s"] {
+        let h = header(&v, &format!("username*={ext}"), "J%zzs", "");
+        assert_eq!(verify(&v, &h), AuthResult::Unauthorized, "{ext}");
+    }
+}
+
+#[test]
+fn percent_encoded_bytes_that_are_not_utf8_are_rejected() {
+    let v = verifier("x");
+    for ext in ["UTF-8''%FF%FE", "UTF-8''%C3", "UTF-8''%C0%80"] {
+        let h = header(&v, &format!("username*={ext}"), "x", "");
+        assert_eq!(verify(&v, &h), AuthResult::Unauthorized, "{ext}");
+    }
+}
+
+#[test]
+fn userhash_true_is_rejected_and_userhash_false_is_not() {
+    let v = verifier("admin");
+    let on = header(&v, "username=\"admin\"", "admin", ", userhash=true");
+    assert_eq!(verify(&v, &on), AuthResult::Unauthorized);
+    let off = header(&v, "username=\"admin\"", "admin", ", userhash=false");
+    assert_eq!(verify(&v, &off), AuthResult::Ok);
+}
+
+/// Raw UTF-8 in `username` stays a syntax error (Task 10a) — only `username*` carries non-ASCII.
+#[test]
+fn raw_non_ascii_username_is_still_rejected() {
+    let v = verifier(RFC_USER);
+    let h = header(&v, &format!("username=\"{RFC_USER}\""), RFC_USER, "");
+    assert_eq!(verify(&v, &h), AuthResult::Unauthorized);
+}
+```
+
+- [ ] **Step 2: Run on the code from Task 10a — FAIL**
+
+```bash
+cargo test -p broadcast-auth --all-features --locked --test digest_username_ext 2>&1 | grep -E 'test |test result'
+```
+
+Expected FAIL: `rfc7616_ext_value_example…`, `charset_is_case_insensitive…`, `an_ascii_user_may_also_use…` (no `username` field ⇒ reject today), and `userhash_false_…` is fine but `userhash_true_…` FAILS (today `userhash` is ignored). PASS already: the mutual-exclusion, bad-charset, malformed, non-UTF-8 and raw-non-ASCII tests (everything is rejected today) — they exist to bite once decoding exists, so they are revert-checked in step 5.
+
+- [ ] **Step 3: Implement**
+
+```rust
+use percent_encoding::percent_decode_str;
+
+/// RFC 8187 §3.2.1 `value-chars` syntax: `pct-encoded` or `attr-char`.
+fn is_ext_value_syntax(value: &str) -> bool {
+    let b = value.as_bytes();
+    let mut i = 0;
+    while i < b.len() {
+        match b[i] {
+            b'%' => {
+                if !(i + 2 < b.len() && b[i + 1].is_ascii_hexdigit() && b[i + 2].is_ascii_hexdigit()) {
+                    return false;
+                }
+                i += 3;
+            }
+            c if c.is_ascii_alphanumeric() || b"!#$&+-.^_`|~".contains(&c) => i += 1,
+            _ => return false,
+        }
+    }
+    true
+}
+
+/// RFC 7616 §3.4.4: `username*` is an RFC 8187 ext-value. Only `UTF-8` is
+/// accepted; syntax and UTF-8 validity are enforced, never "lossy".
+fn decode_ext_value(v: &str) -> Option<String> {
+    let (charset, rest) = v.split_once('\'')?;
+    let (_language, value) = rest.split_once('\'')?;
+    if !charset.eq_ignore_ascii_case("UTF-8") || !is_ext_value_syntax(value) {
+        return None;
+    }
+    percent_decode_str(value).decode_utf8().ok().map(std::borrow::Cow::into_owned)
+}
+```
+(The `%` arm needs two more bytes, hence `i + 2 < b.len()`; `UTF-8''J%C3%A4s%` covers the trailing-`%` boundary.) In `check_digest`, replace the `get("username") != username` test:
+```rust
+    if get("userhash").eq_ignore_ascii_case("true") {
+        return DigestCheck::Reject;
+    }
+    let client_user = match (fields.get("username"), fields.get("username*")) {
+        (Some(_), Some(_)) => return DigestCheck::Reject, // RFC 7616 §3.4.4
+        (Some(u), None) => u.clone(),
+        (None, Some(ext)) => match decode_ext_value(ext) {
+            Some(u) => u,
+            None => return DigestCheck::Reject,
+        },
+        (None, None) => return DigestCheck::Reject,
+    };
+    if client_user != username || get("realm") != realm {
+        return DigestCheck::Reject;
+    }
+```
+The existing `username` string comparison was not constant-time and still is not (a user-id is not a secret; unchanged). Add the dependency (procedure). Add the fuzz target: `fuzz_target!(|data: &[u8]| { if let Ok(h) = core::str::from_utf8(data) { let v = Verifier::new(Credentials::Digest{ username: "admin".into(), password: "pw".into() }, "r"); let headers = [("authorization", h)]; let _ = v.verify(&RequestContext::new("GET", "/x").with_headers(&headers)); } })` and its `[[bin]]`.
+
+- [ ] **Step 4: Run — PASS**
+
+```bash
+cargo test -p broadcast-auth --all-features --locked 2>&1 | grep -E 'test result|FAILED|panicked'
+cargo +nightly build --manifest-path fuzz/Cargo.toml --bin auth_digest_header 2>&1 | tail -2
+```
+
+Expected: all `ok` (`digest_username_ext` 9 passed). (The nightly build is the CI `fuzz build` check; if nightly is unavailable locally, record that CI will build it.)
+
+- [ ] **Step 5: Revert-check, then commit**
+
+Three mutations, each recompiled and re-run (`--test digest_username_ext`), each followed by `git checkout -- broadcast-auth/src/server.rs`:
+1. Replace `.decode_utf8().ok().map(…)` and drop the `is_ext_value_syntax` call (use `decode_utf8_lossy`): `malformed_percent_encoding_is_rejected_not_passed_through` and `percent_encoded_bytes_that_are_not_utf8_are_rejected` FAIL.
+2. Delete the `(Some(_), Some(_)) => return DigestCheck::Reject` arm (let `username*` win): `username_and_username_star_together_are_an_error` FAILS.
+3. Delete the `eq_ignore_ascii_case("UTF-8")` clause: `only_the_utf8_charset_is_accepted` FAILS (the `ISO-8859-1''J%E4s` case decodes as invalid UTF-8 or, for `US-ASCII''Jas`, matches).
+Record all three in the report.
+
+```bash
+git add broadcast-auth/Cargo.toml Cargo.lock broadcast-auth/src/server.rs broadcast-auth/tests/digest_username_ext.rs fuzz/fuzz_targets/auth_digest_header.rs fuzz/Cargo.toml
+git commit -m "feat(broadcast-auth): honour Digest username* (RFC 7616 §3.4.4, RFC 8187 UTF-8 ext-value); reject userhash=true"
 ```
 
 ---
@@ -2707,12 +2936,16 @@ grep -rn 'uri::\|UriReference\|resolve_uri_' --include=*.rs --include=*.md trans
 
 Expected: all `ok`; both builds `Finished`; the grep is empty apart from CHANGELOG history (fix any README/doc mention).
 
+- [ ] **Step 4b: Fuzz target and the row-count stop rule**
+
+Add `fuzz/fuzz_targets/transmux_base_url.rs` (+ `[[bin]]` in `fuzz/Cargo.toml`) feeding arbitrary UTF-8 to `transmux::base_url::resolve(None, s)` and `resolve_chain(None, &[s.into()], s)`; it must never panic. If the §5.4 table test shows MORE than the two listed differences, stop and report them; do not extend `WHATWG_DIFFERENCES`.
+
 - [ ] **Step 5: Revert-check the guard, then commit**
 
 Move the `first_forbidden_char` check in `resolve_chain` AFTER the joins (so `Url` sees the raw text): `control_characters_and_whitespace_are_rejected_before_parsing` FAILS (`Some("http://a/b/segHost:evil.example")`-style cleaned output instead of `None`). Restore with `git checkout -- transmux/src/base_url.rs` if committed first; PASS.
 
 ```bash
-git add transmux/Cargo.toml Cargo.lock transmux/src/base_url.rs transmux/src/lib.rs transmux/src/dash_parse.rs transmux/tests/base_url.rs transmux/tests/dash_parse.rs
+git add transmux/Cargo.toml Cargo.lock transmux/src/base_url.rs transmux/src/lib.rs transmux/src/dash_parse.rs transmux/tests/base_url.rs transmux/tests/dash_parse.rs fuzz/fuzz_targets/transmux_base_url.rs fuzz/Cargo.toml
 git rm -q transmux/src/uri.rs transmux/tests/uri.rs
 git commit -m "refactor(transmux)!: delete uri.rs; BaseURL resolution via url::Url::join with a stripped synthetic base"
 ```
@@ -2756,7 +2989,7 @@ const MEDIA_BLOCK_SESSION: &str = concat!(
     "a=fmtp:96 packetization-mode=1; profile-level-id=64000D; sprop-parameter-sets=Z2QADazZQUH7ARAAAAMAEAAAAwMg8UKZYA==,aOvjyyLA\r\n"
 );
 ```
-(a parseable session whose only role is to give the test a `Media`; `MEDIA_BLOCK` itself is deleted). The goldens `rtp-sdp-conn-v4.sdp`/`-v6.sdp`/`rtp-sdp-h264-aac.sdp` are NOT edited. Add to `tests/rtp.rs`:
+(a parseable session whose only role is to give the test a `Media`; `MEDIA_BLOCK` itself is deleted). Add to the doc comment of `build_sdp_with_connection`: `Session::write` performs no CR/LF escaping of the session name or attribute values; only the connection address is typed, and every other value is produced internally by this module (fmtp strings are built here, never from caller text). The goldens `rtp-sdp-conn-v4.sdp`/`-v6.sdp`/`rtp-sdp-h264-aac.sdp` are NOT edited. Add to `tests/rtp.rs`:
 ```rust
 /// RFC 8866 §5: v=, o=, s=, [c=], t=, then attributes, then each m= section.
 /// An INDEPENDENT check: the writer is `sdp-types`, so its own parser can no
@@ -3085,10 +3318,11 @@ git commit -m "test: dehandroll tripwire guards for transmux, timed-metadata, sc
 `broadcast-auth/CHANGELOG.md`:
 - `### Changed (breaking)` —
   - Signed-URL query is `application/x-www-form-urlencoded`: `kid` (defect 6) and `ip` are percent-encoded (`ip=2001:db8::1` → `ip=2001%3Adb8%3A%3A1`; verification percent-decodes, so a `+` in a URL minted by an older version now reads as a space). A bare `ip` key (no `=`) is rejected instead of ignored.
-  - Digest `Authorization` is parsed with `http-auth`'s `ChallengeParser`: quoted-pairs are honoured, parameter names are case-insensitive, a repeated parameter or a second challenge is rejected, and a raw non-ASCII `username` is rejected (RFC 7616 §3.4: use `username*`/`userhash`).
+  - Digest `Authorization` is parsed with `http-auth`'s `ChallengeParser`: quoted-pairs are honoured, parameter names are case-insensitive, a repeated parameter or a second challenge is rejected, and a raw non-ASCII `username` is rejected — a non-ASCII user authenticates through the now-supported RFC 7616 §3.4.4 `username*` (RFC 8187 `UTF-8''<pct-encoded>`; other charsets, malformed percent-encoding, invalid UTF-8, and `username` together with `username*` are rejected); `userhash=true` is rejected.
   - Basic/Bearer use `headers::Authorization`: a Basic user-id containing `:` can no longer match (RFC 7617 §2); non-UTF-8 payloads are `Unauthorized`.
   - `Error::InvalidBearerToken` (new, `#[non_exhaustive]`): a Bearer token that cannot be a header value is refused instead of emitted.
   - `digest-uri` match requires the client's absolute-form `uri` in normalised spelling (`url::Url` round-trip) and an exact path+query match.
+- `### Added` — Digest `username*` support (above), new dependency `percent-encoding`.
 - `### Fixed` — `WWW-Authenticate` realm is rendered as an escaped quoted-string (a `"`, `\`, CR or LF in the realm can no longer break or split the header); Bearer header injection (above); `username` with `"`/`\` now verifies.
 - `### Changed` — `lru` for the Digest nonce-count table, `hex` for nonces (no behaviour change).
 
@@ -3099,7 +3333,17 @@ grep -rn 'transmux::uri\|resolve_uri\|try_resolve_segment_url\|UriReference\|han
 ```
 Fix every hit (README coverage tables, crate-root docs, `transmux/src/lib.rs` module list, `CLAUDE.md` is the ORCHESTRATOR's in W3 — only report it). Also update the doc comments that still describe the removed internals: `transmux/src/lib.rs` (`uri` mention), `rtp.rs` module doc ("SDP … hand"), `broadcast-auth/src/lib.rs`/`server.rs` module docs (Digest parsing, nc table), `broadcast-auth/Cargo.toml` description if it names the parser.
 
-- [ ] **Step 3: Full verification in this worktree**
+- [ ] **Step 3: Rebase, regenerate `Cargo.lock` (never hand-merge), full verification**
+
+Merge order is T first, so there is normally nothing to rebase onto; if `origin/main` has moved:
+```bash
+git fetch -q origin && git rebase origin/main
+git checkout origin/main -- Cargo.lock
+# re-apply this plan's dependency additions (dependency-add procedure), once per manifest touched:
+CARGO_RESOLVER_INCOMPATIBLE_RUST_VERSIONS=fallback cargo metadata --format-version 1 >/dev/null
+git diff Cargo.lock | grep -E '^[-+]name|^[-+]version' | paste - - | sort -u
+```
+Expected: only the intended additions (`headers`, `headers-core`, `httpdate`, `mime`, `base64 0.22` and `sha1 0.10` via `headers`, `lru`, `jiff` + deps, `sdp-types 0.2.0` + deps, `percent-encoding`/`url`/`form_urlencoded` already locked). Restore anything else with `cargo update -p <pkg> --precise <old>`; commit `Cargo.lock` as `chore: regenerate Cargo.lock for W1-T`.
 
 ```bash
 cargo fmt --all
@@ -3109,15 +3353,21 @@ grep -E '^==|^rc=|GATE-DONE' target/gate-w1-t.log
 grep -c '^rc=0' target/gate-w1-t.log
 ```
 
-Expected: `GATE-DONE`, `14` lines `rc=0` (14/14). Any non-zero `rc` is fixed in this branch (commit the fix with the task it belongs to via `git commit --fixup`/a new `fix:` commit) and the gate re-run until 14/14. Then the cluster-specific extras the gate does not cover:
+Call the gate exactly as above: the orchestrator's `gate-wt.sh` takes the shared gate lock itself, so four W1 gates never run concurrently. Expected: `GATE-DONE`, `14` lines `rc=0` (14/14). Any non-zero `rc` is fixed in this branch (new `fix:` commit) and the gate re-run until 14/14. Then the extras the gate does not cover:
 
 ```bash
+rustup target add thumbv7em-none-eabi
+for c in broadcast-common scte35-splice transmux timed-metadata; do
+  echo "::group::$c (no_std)"
+  cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
+done
+for c in broadcast-common scte35-splice transmux timed-metadata; do cargo build -p $c --no-default-features --locked 2>&1 | tail -1; done
 cargo test -p rtsp-runtime -p hls-runtime -p webrtc-runtime --all-features --locked 2>&1 | grep -E 'test result|FAILED' | sort | uniq -c
 cargo +1.95.0 build -p transmux -p timed-metadata -p scte35-splice -p broadcast-common -p broadcast-auth --all-features --locked 2>&1 | tail -2
 python3 tools/check-published-dep-consistency.py
 ```
 
-Expected: consumers' suites unchanged vs. Task 0's multimux/rtsp/hls baseline; MSRV build `Finished`; the dep-consistency script clean (it is the gate's step 14; run alone for readable output).
+Expected: the four thumbv7em builds `Finished` (this is the exact CI command from `.github/workflows/ci.yml:147`, restricted to this cluster's crates; any failure is fixed by `default-features = false`/`alloc` or by gating the std-needing module behind `std`, never by deleting the target); host no-default builds `Finished`; consumers' suites unchanged vs. Task 0; MSRV build `Finished`; the dep-consistency script clean (watch that two `sdp-types` epochs do not trip it).
 
 - [ ] **Step 4: Version notes and report**
 
@@ -3156,6 +3406,7 @@ Spec items owned by cluster T and the task that covers each.
 |---|---|---|
 | SP2.4 first-task verification (ChallengeParser vs RFC 7616, ChallengeRef Display) | broadcast-auth | 1 |
 | SP2.4 Authorization/Digest field parse via `http-auth` | `server.rs` `check_digest` | 10a |
+| Owner decision (a): Digest `username*` honoured (RFC 7616 §3.4.4, RFC 8187), `userhash=true` rejected | `server.rs` | 10e |
 | SP2.4 Authorization Basic/Bearer parse (spec fallback `headers`, scoped to token68 schemes) | `server.rs` `verify_basic/bearer` | 10c |
 | SP2.4 WWW-Authenticate render | `server.rs` `render_challenge` | 10d (escaping fix) + **E1** (no crate can render) |
 | SP2.4 `authenticator.rs` Bearer value | `authenticator.rs` | 10c |
@@ -3190,8 +3441,12 @@ Spec items owned by cluster T and the task that covers each.
 Each item is something the plan could not do as the spec words it. None is dropped silently.
 
 - **E1 — `WWW-Authenticate` cannot be rendered by `http-auth`'s `ChallengeRef` (spec §4 SP2.4, §10 "unverified").** Evidence: `~/.cargo/registry/src/*/http-auth-0.1.10/src/lib.rs` — `ChallengeRef` (`:117-151`) and `ParamValue` (`:678`) implement `Debug` only; `grep -c 'impl.*Display' lib.rs` = 0; no serializer exists in `parser.rs`/`digest.rs`/`basic.rs` (`digest.rs:535-570` has private client-side quoting helpers only). Verified by Task 1 step 2. Treatment in the plan: the renderer stays a small formatter (a documented exception to add to spec §9), but its real defect is fixed (quoted-string escaping, CR/LF dropped — Task 10d) and every rendering is parsed back through `ChallengeParser` in tests. Owner decision needed only if a rendering crate is preferred over the formatter: none exists (`headers` has no `WwwAuthenticate`).
-- **E2 — Digest `username` is now ASCII-only (consequence of using `ChallengeParser`).** Evidence: `parser.rs` doc, "Doesn't allow non-ASCII characters"; pinned by `raw_non_ascii_username_is_rejected` (Task 10a) and `tests/http_auth_rfc7616.rs::raw_non_ascii_quoted_value_is_a_parse_error`. Browsers send raw UTF-8 usernames in Digest responses; the old hand parser accepted them. RFC 7616 §3.4 prescribes `username*`/`userhash` for non-ASCII, which this crate never supported. Decision for the owner: accept the (CHANGELOG-listed) behaviour change, or keep a lenient fallback for non-ASCII usernames — the plan implements the former because the spec fixes the parser choice (§4 SP2.4) and the fallback would re-introduce a hand parser.
+- **E2 — Digest `username` is ASCII-only; non-ASCII users use `username*` (owner decision (a), implemented in Task 10e).** `ChallengeParser` is ASCII-only (`parser.rs` doc, pinned by `raw_non_ascii_username_is_rejected` in Tasks 10a/10e and `tests/http_auth_rfc7616.rs`), so a raw UTF-8 `username` is rejected. RFC 7616 §3.4.4 `username*` (RFC 8187 `UTF-8''…`) is decoded with the `percent-encoding` crate after a syntax check (the crate alone passes `%zz` through literally), charset `UTF-8` only, `username`+`username*` together rejected, `userhash=true` rejected. Residual: browsers that send raw UTF-8 `username` (instead of `username*`) can no longer authenticate — CHANGELOG-listed.
 - **E3 — Basic/Bearer cannot go through `ChallengeParser` (token68).** Evidence: `parser.rs` doc ("Doesn't allow `token68`"); pinned by `basic_token68_credentials_are_not_parseable` (Task 1). Treatment: `headers::Authorization<Basic|Bearer>` — the spec's own fallback, applied only to the two token68 schemes; Digest stays on `ChallengeParser`. Reported so the spec text (§4 SP2.4 "Authorization is parsed with http-auth") is amended to say Digest only.
 - **E0 (conditional)** — only if Task 1 step 2 shows `ChallengeParser` failing on an RFC 7616 credential: the spec's Digest fallback applies (keep `split_digest_fields`, skip Task 10a, escalate the Digest gap). Not expected from the source reading.
 
 Design notes that are not escalations but affect reviewers: (a) `timed-metadata`'s `format_rfc3339_ms`/`rfc3339` stay infallible and clamp, with fallible `try_*` twins, because a `Result` would force six workspace crates to take a caret-epoch change (spec §2 epoch purity; Task 11); (b) the independence of the `sdp-types` parse oracle in `tests/rtp.rs` ends when `sdp-types` becomes the writer, so Task 14 adds a hand-written RFC 8866 §5 line-order check and relies on the byte-for-byte golden; (c) two `sdp-types` versions (0.1.8 via rtsp-runtime, 0.2.0 via transmux) coexist in this branch's lock until W1-R-low merges.
+
+- **E4 — behaviour changes the owner should acknowledge (review §5).** (i) A Basic user-id containing `:` can no longer match (RFC 7617 §2 forbids it; Task 10c). (ii) The Digest `uri` check (Task 10b) stops accepting `HTTP://H/b` and `http://h:80/b` spellings for an origin-form request (the old code ignored scheme/host case and default ports); RFC-correct, low risk for `rtsp://` (non-special scheme keeps its text), minor risk for http absolute-form with an explicit `:80`. (iii) Two RFC 3986 §5.4 rows become WHATWG outputs (`//g`, `http:g`) — spec §9 should record "`Url`-based BaseURL resolution follows WHATWG, differing from RFC 3986 in listed rows" and "WWW-Authenticate is rendered by a formatter (E1)" as documented exceptions. If MORE than those two rows differ at execution, stop and list them rather than extending `WHATWG_DIFFERENCES`.
+- **E5 — lock/dependency notes (review A5, X2–X4).** `headers` 0.4.2 brings `base64 0.22` and `sha1 0.10` back into the lock alongside the 0.23/0.11 W0 took; W1-RB's `headers` use adds the same copies. `sdp-types` 0.1.8 and 0.2.0 coexist until W2 (gate step 14 must not be fooled; check its output). `jiff` is `alloc`-only in timed-metadata and `std` in transmux; Cargo unions features, so only the per-crate no-default loop and the thumbv7em build exercise the `alloc`-only path — Task 16 runs both.
+- **E6 — out of cluster, reported.** `demo/src/subtitle.rs:577` carries a hand-rolled base64 alphabet (not in the §3 inventory; `demo` is not a cluster-T crate): W3's guard sweep must either add it to the inventory or exclude `demo`. New parsers get fuzz targets where none existed: `auth_digest_header` (Task 10e) and `transmux_base_url` (Task 13).
