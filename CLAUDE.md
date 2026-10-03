@@ -42,7 +42,7 @@ A Rust workspace of DVB (Digital Video Broadcasting) protocol parsers + builders
 - **rtp-packet** — RFC 3550 §5.1 RTP fixed header + CSRC list + §5.3.1 generic header extension, with optional RFC 8285 one-byte/two-byte multiplexed extension decoding; `no_std`+`alloc`, depends only on broadcast-common; independently versioned.
 - **rtcp-packet** — RTCP control packets: SR/RR/SDES/BYE/APP + compound packet (RFC 3550 §6); spec-complete parse/serialize; `no_std`+`alloc`, depends only on broadcast-common; independently versioned.
 - **rist-runtime** — RIST Simple Profile (VSF TR-06-1:2020) RTCP message types: Generic NACK (RFC 4585), Range NACK, RTT Echo, and compound packet builders. `no_std`+`alloc`; independently versioned.
-- **st2022** — SMPTE ST 2022-6 HBRMT (SDI-over-IP) RTP payload header parser/serializer. `no_std`. Unpublished.
+- **st2022** — SMPTE ST 2022-6 HBRMT (SDI-over-IP) RTP payload header parser/serializer. `no_std`; tested against a real BSD-3-Clause HBRMT capture; independently versioned.
 - **mp4-emsg** — ISO BMFF / DASH Event Message Box (`emsg`, ISO/IEC 23009-1): version 0/1 parse + serialize for inband DASH/CMAF timed events (SCTE 35 splice, ID3, ad/tracking); `no_std`, independently versioned.
 - **timed-metadata** — Convert DPI/timed-metadata signalling between SCTE-35, HLS `EXT-X-DATERANGE` (RFC 8216 §4.4.5.1), and DASH `emsg` (ANSI/SCTE 214-3); lossless round-trips, 33-bit PTS wrap-unroll via `Timeline`; `no_std`; independently versioned.
 - **ttml-subtitle** — W3C TTML2 / IMSC 1.1 timed-text subtitle parser + profile validator; parse XML into typed Rust structures, validate against IMSC 1.1 Text/Image profiles separately; uses `roxmltree` for parsing, manual XML serializer; `no_std`+`alloc`; independently versioned.

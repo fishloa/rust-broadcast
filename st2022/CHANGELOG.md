@@ -23,27 +23,23 @@
   place rather than silently (#926). A real BSD-3-Clause capture has since
   been committed and is tested; see "Publish status" below.
 
-### Publish status — blocked pending an owner decision
+### Publish status — block lifted
 
-This crate has never been published and **publishing remains blocked** (the
-`release-st2022.yml` gate step still fails on purpose). The original blocker —
-no ST 2022-6/HBRMT capture under a licence compatible with this workspace's
-MIT OR Apache-2.0 — **no longer holds**: a genuine HBRMT/RTP/UDP capture from
-`cisco/herisson` (`ip2vf`), licensed **BSD-3-Clause** (licence text verified;
-see `fixtures/st2022/PROVENANCE.md`), is committed at
+The owner lifted the publish block on 2026-10-03, and this is the crate's
+first release. The original blocker — no ST 2022-6/HBRMT capture under a
+licence compatible with this workspace's MIT OR Apache-2.0 — no longer holds: a
+genuine HBRMT/RTP/UDP capture from `cisco/herisson` (`ip2vf`), licensed
+**BSD-3-Clause** (licence text verified; see `fixtures/st2022/PROVENANCE.md`),
+is committed at
 `fixtures/st2022/st2022-6-hbrmt-1080i5994-single-frame-loopback.pcap` (one full
 1080i59.94 frame, 4,497 RTP packets) and exercised by
 `tests/hbrmt_fixture_pcap.rs`, which parses and byte-exact round-trips every
 payload header in it and checks the `RESERVE` field width against real data.
-
-Whether to lift the block and publish is an owner decision, not made here. The
-earlier "no real fixture" wording (this section, and the `[0.1.0]` correction
-note below) describes the state before that capture landed.
+The `release-st2022.yml` block step is removed.
 
 ### Added
 
-Not yet released — this crate has never been published to crates.io (see
-"Publish status" above).
+First release (see "Publish status" above).
 
 - `PayloadHeader` parse/serialize for the 4/8/12+-byte HBRMT payload header
   (SMPTE ST 2022-6:2012 §6.4).
