@@ -429,7 +429,21 @@ broadcast-common is **not** breaking (`hex` delegates). Each wave updates
 2. **fmtp parameter lists**: codec payload-format logic, owned by transmux,
    alongside `sprop-parameter-sets`.
 3. **Product formats** listed in §1 out-of-scope.
-4. Anything the plan finds infeasible is escalated to the owner, never
+4. **RTSP `Transport` (RFC 2326 §12.39) and `Session` (§12.37) headers**,
+   rtsp-runtime `rfc2326_lex.rs` / `transport.rs` / `session_header.rs`
+   (OWNER-APPROVED exception, decision (c), 2026-10-03). `rtsp-types` 0.1.3 is
+   exact-case, does not trim whitespace, silently drops case-variant
+   parameters into an unknown-parameter map, and rejects a quoted `ssrc` or a
+   malformed `timeout` (probe: `.delegate/rtsp-types-probe.txt`; write-up under
+   "rtsp-types gaps" in `rtsp-runtime/docs/transport-header.md`, for a future
+   upstream issue). rtsp-runtime therefore owns a full, spec-grounded parser and
+   canonical serializer for these two headers, built on ONE RFC 2326 §15.1
+   lexer; `rtsp-types` stays for message framing, the other headers and
+   request/response building. The lexical guard allows exactly that lexer
+   (line-pinned). Test vectors: every Transport/Session example in
+   `docs/rfc2326.md`, the probe inputs, interop shapes, malformed-value errors,
+   and a fuzz target (`rtsp_headers`) asserting the round-trip invariants.
+5. Anything the plan finds infeasible is escalated to the owner, never
    silently kept.
 
 ## 10. Risks

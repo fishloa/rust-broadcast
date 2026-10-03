@@ -23,6 +23,7 @@
 //! - Interleaved frames are surfaced as [`ClientEvent::MediaData`].
 
 use std::collections::HashMap;
+use std::time::{Duration, Instant};
 
 use rtsp_types::{Message, Method, Request, StatusCode, Version, headers};
 
@@ -34,6 +35,22 @@ use crate::transport::Transport;
 
 /// A message body type: owned bytes.
 type Body = Vec<u8>;
+
+/// RFC 2326 §12.37: the `Session` timeout when the server declares none.
+const DEFAULT_SESSION_TIMEOUT_SECS: u64 = 60;
+
+/// The keepalive is sent at `timeout / KEEPALIVE_FRACTION_DEN` after the last
+/// activity, so one lost keepalive still leaves time for a retry.
+const KEEPALIVE_FRACTION_DEN: u32 = 2;
+
+/// Most recent `Session` warnings kept by [`ClientSession::session_warnings`]
+/// (a hostile server cannot grow memory by sending a bad header on every response).
+pub const MAX_SESSION_WARNINGS: usize = 16;
+
+/// Shortest keepalive interval, whatever the session timeout: a hostile or buggy
+/// `timeout=` (the parser already maps 0 to the default) must never turn the
+/// keepalive into a busy loop.
+pub const MIN_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(1);
 
 /// Maximum bytes retained in [`ClientSession::inbound`] while waiting for a
 /// complete response or interleaved frame. An unterminated header, or a
@@ -103,6 +120,18 @@ pub struct ClientSession {
     /// partial messages).
     inbound: Vec<u8>,
     user_agent: String,
+    /// When the caller last reported traffic (see [`ClientSession::mark_activity`]).
+    last_activity: Option<Instant>,
+    /// The URI of the most recent request, reused for the keepalive.
+    last_uri: Option<String>,
+    /// Recoverable `Session` header problems seen so far (see `session_warnings`).
+    session_warnings: Vec<String>,
+    /// Total `Session` warnings ever recorded (the list keeps only the latest).
+    session_warning_total: usize,
+    /// How much of `inbound` the header-terminator search already covered.
+    scanned: usize,
+    /// `inbound` length below which a re-parse cannot succeed (body wait).
+    skip_until: usize,
 }
 
 impl Default for ClientSession {
@@ -126,6 +155,12 @@ impl ClientSession {
             pending: HashMap::new(),
             inbound: Vec::new(),
             user_agent: "rtsp-runtime".to_string(),
+            last_activity: None,
+            last_uri: None,
+            session_warnings: Vec::new(),
+            session_warning_total: 0,
+            scanned: 0,
+            skip_until: 0,
         }
     }
 
@@ -153,6 +188,71 @@ impl ClientSession {
     /// tell "the" response apart from a stray one for an abandoned request).
     pub fn peek_next_cseq(&self) -> u32 {
         self.next_cseq
+    }
+
+    fn record_session_warning(&mut self, w: String) {
+        self.session_warning_total += 1;
+        if self.session_warnings.len() >= MAX_SESSION_WARNINGS {
+            self.session_warnings.remove(0);
+        }
+        self.session_warnings.push(w);
+    }
+
+    /// Total number of `Session` warnings recorded, including ones that have
+    /// since been dropped from [`session_warnings`](Self::session_warnings).
+    pub fn session_warning_count(&self) -> usize {
+        self.session_warning_total
+    }
+
+    /// Warnings about `Session` response headers (a malformed or zero `timeout`
+    /// that fell back to the 60 s default, or an unusable header), oldest first.
+    /// Each is also emitted with `log::warn!`.
+    pub fn session_warnings(&self) -> &[String] {
+        &self.session_warnings
+    }
+
+    /// True if a partial message or frame is buffered (bytes fed to
+    /// [`handle_data`](Self::handle_data) that did not yet form a whole one). An
+    /// adapter uses it to tell a clean end of stream from a truncated one.
+    pub fn has_buffered_input(&self) -> bool {
+        !self.inbound.is_empty()
+    }
+
+    /// Records that a request was written at `now`. The core never reads a clock;
+    /// `now` is always caller-supplied. Only requests count: the server's
+    /// session timeout is refreshed by requests (RFC 2326 §12.37), not by
+    /// inbound media or responses.
+    pub fn mark_activity(&mut self, now: Instant) {
+        self.last_activity = Some(now);
+    }
+
+    /// Next keepalive deadline: `last_activity + timeout/2` once a Session id
+    /// exists (timeout = the SETUP response's `timeout=`, else the RFC 2326
+    /// §12.37 default of 60 s). `None` before SETUP, after TEARDOWN, or if no
+    /// activity was ever recorded.
+    pub fn poll_timeout(&self) -> Option<Instant> {
+        self.session_id.as_ref()?;
+        let timeout =
+            Duration::from_secs(self.session_timeout.unwrap_or(DEFAULT_SESSION_TIMEOUT_SECS));
+        // `checked_add`: a hostile huge `timeout=` must not overflow `Instant`.
+        self.last_activity?
+            .checked_add((timeout / KEEPALIVE_FRACTION_DEN).max(MIN_KEEPALIVE_INTERVAL))
+    }
+
+    /// If `now >= poll_timeout()`, the bytes of a `GET_PARAMETER` keepalive on
+    /// the last request URI (and activity is re-armed at `now`); `Ok(None)`
+    /// otherwise.
+    pub fn handle_timeout(&mut self, now: Instant) -> Result<Option<Vec<u8>>> {
+        match self.poll_timeout() {
+            Some(deadline) if now >= deadline => {}
+            _ => return Ok(None),
+        }
+        let Some(uri) = self.last_uri.clone() else {
+            return Ok(None);
+        };
+        let bytes = self.get_parameter(&uri, b"")?;
+        self.last_activity = Some(now);
+        Ok(Some(bytes))
     }
 
     /// The negotiated session id, once a SETUP response has been processed.
@@ -193,7 +293,7 @@ impl ClientSession {
             Method::Setup,
             uri,
             None,
-            &[(headers::TRANSPORT, transport.to_header_value())],
+            &[(headers::TRANSPORT, transport.to_header_value()?)],
         )
     }
 
@@ -257,6 +357,7 @@ impl ClientSession {
         let request = self.assemble(method.clone(), uri, cseq, body, extra)?;
         let bytes = serialize(&Message::from(request.clone()))?;
         self.next_cseq += 1;
+        self.last_uri = Some(uri.to_string());
         self.pending.insert(
             cseq,
             Pending {
@@ -338,13 +439,28 @@ impl ClientSession {
                 continue;
             }
 
-            // RTSP message path.
+            // RTSP message path. `framing::head_end` is a bounded framing check
+            // (header cap, parse once per message), not protocol parsing.
+            if self.inbound.len() < self.skip_until {
+                break;
+            }
+            if crate::framing::head_end(&self.inbound, self.scanned)?.is_none() {
+                self.scanned = self.inbound.len();
+                break;
+            }
             match Message::<Body>::parse(&self.inbound) {
                 Ok((message, consumed)) => {
                     self.inbound.drain(..consumed);
+                    self.scanned = 0;
+                    self.skip_until = 0;
                     self.process_message(message, &mut events)?;
                 }
-                Err(rtsp_types::ParseError::Incomplete(_)) => break,
+                Err(rtsp_types::ParseError::Incomplete(needed)) => {
+                    if let Some(more) = needed {
+                        self.skip_until = self.inbound.len().saturating_add(more.get());
+                    }
+                    break;
+                }
                 Err(rtsp_types::ParseError::Error) => {
                     return Err(Error::MessageParse("malformed RTSP message".into()));
                 }
@@ -388,12 +504,26 @@ impl ClientSession {
                     return Ok(());
                 };
 
-                // Capture Session id + timeout (typically from SETUP).
+                // Capture Session id + timeout (typically from SETUP). Recoverable
+                // problems (a malformed or zero timeout) are logged and kept in
+                // `session_warnings()`; an unusable header is logged and ignored.
                 if let Some(session_hdr) = header_value(response.header(&headers::SESSION)) {
-                    let (id, timeout) = parse_session(session_hdr);
-                    self.session_id = Some(id);
-                    if timeout.is_some() {
-                        self.session_timeout = timeout;
+                    match crate::session_header::SessionHeader::parse_with_warnings(session_hdr) {
+                        Ok((parsed, warnings)) => {
+                            for w in warnings {
+                                log::warn!("RTSP Session header {session_hdr:?}: {w}");
+                                self.record_session_warning(w);
+                            }
+                            self.session_id = Some(parsed.id);
+                            if let Some(t) = parsed.timeout {
+                                self.session_timeout = Some(t.as_secs());
+                            }
+                        }
+                        Err(e) => {
+                            let w = format!("unusable Session header {session_hdr:?}: {e}");
+                            log::warn!("RTSP {w}");
+                            self.record_session_warning(w);
+                        }
                     }
                 }
                 // Capture negotiated transport from SETUP response.
@@ -460,7 +590,7 @@ impl ClientSession {
 
         let challenge = header_value(response.header(&headers::WWW_AUTHENTICATE))
             .ok_or_else(|| Error::Auth("401 without WWW-Authenticate".into()))?;
-        let stale = challenge_is_stale(challenge);
+        let stale = crate::headers_util::challenge_is_stale(challenge);
 
         // Always rebuild the authenticator from THIS challenge. A server can
         // rotate its nonce per session or per time window without setting
@@ -534,33 +664,6 @@ impl ClientSession {
 /// Extracts the string value of an optional header.
 fn header_value(h: Option<&headers::HeaderValue>) -> Option<&str> {
     h.map(|v| v.as_str())
-}
-
-/// Reports whether a `WWW-Authenticate` challenge carries `stale=true`
-/// (RFC 7616 §3.3), tolerating the case-insensitivity of the auth-param name
-/// and value, and either bare (`stale=true`) or quoted (`stale="true"`) form —
-/// a strict `contains("stale=true")` misses the quoted form (audit run-09 W4).
-fn challenge_is_stale(challenge: &str) -> bool {
-    challenge
-        .split(',')
-        .any(|param| match param.split_once('=') {
-            Some((name, value)) => {
-                name.trim().eq_ignore_ascii_case("stale")
-                    && value.trim().trim_matches('"').eq_ignore_ascii_case("true")
-            }
-            None => false,
-        })
-}
-
-/// Parses a `Session` header value into (id, optional timeout seconds).
-fn parse_session(value: &str) -> (String, Option<u64>) {
-    let mut parts = value.split(';').map(str::trim);
-    let id = parts.next().unwrap_or("").to_string();
-    let timeout = value
-        .split(';')
-        .filter_map(|s| s.trim().strip_prefix("timeout="))
-        .find_map(|s| s.trim().parse::<u64>().ok());
-    (id, timeout)
 }
 
 /// Serializes an RTSP message to bytes.
@@ -803,19 +906,213 @@ mod tests {
         );
     }
 
-    // Regression (audit run-09 W4): `stale` matching must tolerate a quoted
-    // value and mixed case (RFC 7616 auth-param values may be quoted); a
-    // strict `stale=true` comparison silently treated a quoted re-challenge
-    // as non-stale, so a retry already attempted once was abandoned instead
-    // of refreshed.
+    fn established(timeout: Option<u64>) -> ClientSession {
+        let mut c = ClientSession::new();
+        let _ = c
+            .setup(
+                "rtsp://h/s",
+                &Transport::single(crate::transport::TransportSpec::rtp_avp_tcp_interleaved(
+                    0, 1,
+                )),
+            )
+            .unwrap();
+        let sess = match timeout {
+            Some(t) => format!("abc;timeout={t}"),
+            None => "abc".into(),
+        };
+        let resp = format!(
+            "RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: {sess}\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+        );
+        c.handle_data(resp.as_bytes()).unwrap();
+        c
+    }
+
     #[test]
-    fn stale_detection_tolerates_quoted_and_mixed_case_values() {
-        assert!(challenge_is_stale(
-            "Digest realm=\"cam\",nonce=\"x\",stale=\"True\""
+    fn the_keepalive_interval_is_floored_and_fires_at_most_once_per_interval() {
+        // timeout=1 would give a 0.5 s half-timeout; the floor makes it 1 s.
+        let t0 = Instant::now();
+        let mut c = established(Some(1));
+        c.mark_activity(t0);
+        assert_eq!(c.poll_timeout(), Some(t0 + MIN_KEEPALIVE_INTERVAL));
+        assert!(
+            c.handle_timeout(t0 + Duration::from_millis(500))
+                .unwrap()
+                .is_none()
+        );
+        // hammer one instant: exactly one keepalive per floor interval
+        let mut sent = 0;
+        let tick = t0 + MIN_KEEPALIVE_INTERVAL;
+        for _ in 0..1000 {
+            if c.handle_timeout(tick).unwrap().is_some() {
+                sent += 1;
+            }
+        }
+        assert_eq!(sent, 1, "keepalive must not busy-loop");
+    }
+
+    #[test]
+    fn a_zero_timeout_is_a_warning_and_the_default_not_a_busy_loop() {
+        let t0 = Instant::now();
+        let mut c = ClientSession::new();
+        let _ = c
+            .setup(
+                "rtsp://h/s",
+                &Transport::single(crate::transport::TransportSpec::rtp_avp_tcp_interleaved(
+                    0, 1,
+                )),
+            )
+            .unwrap();
+        c.handle_data(
+            b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: abc;timeout=0\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n",
+        )
+        .unwrap();
+        assert_eq!(c.session_warnings().len(), 1, "{:?}", c.session_warnings());
+        assert!(c.session_warnings()[0].contains("timeout"));
+        c.mark_activity(t0);
+        assert_eq!(c.poll_timeout(), Some(t0 + Duration::from_secs(30)));
+    }
+
+    /// Interop (review round 4): every received session id is stored and echoed back
+    /// verbatim on the next request, as before the own-parser change.
+    #[test]
+    fn odd_received_session_ids_are_echoed_verbatim() {
+        for (hdr, id) in [
+            ("\"weird\"", "\"weird\""),
+            ("a b;timeout=30", "a b"),
+            ("abc,def", "abc,def"),
+            ("ab\"c", "ab\"c"),
+        ] {
+            let mut c = ClientSession::new();
+            let _ = c
+                .setup(
+                    "rtsp://h/s",
+                    &Transport::single(crate::transport::TransportSpec::rtp_avp_tcp_interleaved(
+                        0, 1,
+                    )),
+                )
+                .unwrap();
+            let resp = format!(
+                "RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: {hdr}\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
+            );
+            c.handle_data(resp.as_bytes()).unwrap();
+            assert_eq!(c.session_id(), Some(id), "{hdr}");
+            let play = String::from_utf8(c.play("rtsp://h/s").unwrap()).unwrap();
+            assert!(
+                play.contains(&format!("Session: {id}\r\n")),
+                "{hdr}: {play}"
+            );
+        }
+    }
+
+    #[test]
+    fn session_warnings_are_capped_but_counted() {
+        let mut c = ClientSession::new();
+        for i in 1..=(MAX_SESSION_WARNINGS as u32 + 10) {
+            let _ = c.options("rtsp://h/s").unwrap();
+            c.handle_data(
+                format!("RTSP/1.0 200 OK\r\nCSeq: {i}\r\nSession: abc;timeout=x\r\n\r\n")
+                    .as_bytes(),
+            )
+            .unwrap();
+        }
+        assert_eq!(c.session_warnings().len(), MAX_SESSION_WARNINGS);
+        assert_eq!(c.session_warning_count(), MAX_SESSION_WARNINGS + 10);
+    }
+
+    #[test]
+    fn an_unusable_session_header_is_observable_not_silent() {
+        let mut c = ClientSession::new();
+        let _ = c.options("rtsp://h/s").unwrap();
+        c.handle_data(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: ;timeout=5\r\n\r\n")
+            .unwrap();
+        assert!(c.session_id().is_none());
+        assert_eq!(c.session_warnings().len(), 1);
+    }
+
+    #[test]
+    fn keepalive_is_due_at_half_the_session_timeout() {
+        let t0 = Instant::now();
+        let mut c = established(Some(20));
+        assert_eq!(c.poll_timeout(), None, "no activity recorded yet");
+        c.mark_activity(t0);
+        assert_eq!(c.poll_timeout(), Some(t0 + Duration::from_secs(10)));
+        assert!(
+            c.handle_timeout(t0 + Duration::from_secs(9))
+                .unwrap()
+                .is_none()
+        );
+        let req = c
+            .handle_timeout(t0 + Duration::from_secs(10))
+            .unwrap()
+            .expect("keepalive due");
+        let text = String::from_utf8(req).unwrap();
+        assert!(
+            text.starts_with("GET_PARAMETER rtsp://h/s RTSP/1.0"),
+            "{text}"
+        );
+        assert!(text.contains("Session: abc"), "{text}");
+        // re-armed from the moment it was sent
+        assert_eq!(
+            c.poll_timeout(),
+            Some(t0 + Duration::from_secs(10) + Duration::from_secs(10))
+        );
+    }
+
+    #[test]
+    fn keepalive_uses_the_rfc_default_timeout_when_none_was_declared() {
+        let t0 = Instant::now();
+        let mut c = established(None);
+        c.mark_activity(t0);
+        assert_eq!(c.poll_timeout(), Some(t0 + Duration::from_secs(30))); // 60 s / 2
+    }
+
+    #[test]
+    fn no_keepalive_before_setup_or_after_teardown() {
+        let t0 = Instant::now();
+        let mut c = ClientSession::new();
+        c.mark_activity(t0);
+        assert_eq!(c.poll_timeout(), None);
+        assert!(
+            c.handle_timeout(t0 + Duration::from_secs(3600))
+                .unwrap()
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn head_cap_holds_for_a_70_kib_run_of_a_and_for_9000_header_lines() {
+        let mut c = ClientSession::new();
+        assert!(matches!(
+            c.handle_data(&vec![b'A'; 70 * 1024]),
+            Err(Error::MessageParse(_))
         ));
-        assert!(challenge_is_stale("Digest realm=\"cam\",STALE=true"));
-        assert!(!challenge_is_stale("Digest realm=\"cam\",nonce=\"x\""));
-        assert!(!challenge_is_stale("Digest realm=\"cam\",stale=false"));
+        let mut c = ClientSession::new();
+        let mut junk = b"RTSP/1.0 200 OK\r\n".to_vec();
+        junk.extend(b"X-A: b\r\n".repeat(9000));
+        assert!(matches!(c.handle_data(&junk), Err(Error::MessageParse(_))));
+    }
+
+    #[test]
+    fn a_response_fed_one_byte_at_a_time_is_still_decoded() {
+        let mut c = ClientSession::new();
+        let _ = c.options("rtsp://h/s").unwrap();
+        let resp = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: OPTIONS\r\n\r\n";
+        let mut got = 0;
+        for b in resp {
+            got += c.handle_data(&[*b]).unwrap().len();
+        }
+        assert_eq!(got, 1);
+    }
+
+    #[test]
+    fn an_unterminated_header_over_the_head_cap_is_rejected() {
+        let mut c = ClientSession::new();
+        let mut junk = b"RTSP/1.0 200 OK\r\nX-Pad: ".to_vec();
+        junk.extend(std::iter::repeat_n(b'a', 70 * 1024)); // no terminator, ever
+        let err = c
+            .handle_data(&junk)
+            .expect_err("header phase is capped at 64 KiB");
+        assert!(matches!(err, Error::MessageParse(_)), "{err:?}");
     }
 
     #[test]

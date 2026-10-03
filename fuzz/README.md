@@ -22,6 +22,7 @@ rustup install nightly      # libFuzzer needs nightly rustc
 | `carousel`              | `dvb_si::carousel::ModuleReassembler` fed DSI/DII/DDB parse attempts |
 | `t2mi_pump`             | `dvb_t2mi::pump::T2miPump` (TS and raw modes) |
 | `bbframe`               | `dvb_bbframe::header::Bbheader::parse` + `up_iter` + `CarryOverExtractor` |
+| `rtsp_headers`          | `rtsp_runtime::{Transport, SessionHeader}` parse + canonical round-trip invariants |
 | `roundtrip`             | parse → serialize → re-parse: asserts serialized bytes are idempotent |
 
 ## Running

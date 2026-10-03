@@ -55,6 +55,15 @@ pub enum Error {
     #[error("invalid Transport header: {0}")]
     TransportParse(String),
 
+    /// A header value could not be serialized safely (control character in a value,
+    /// or a name that is not an RFC 2326 §15.1 token / session-id character).
+    #[error("cannot serialize header: {0}")]
+    HeaderSerialize(String),
+
+    /// The `Session` header value could not be parsed per RFC 2326 §12.37.
+    #[error("invalid Session header: {0}")]
+    SessionParse(String),
+
     /// An interleaved `$` frame was malformed (RFC 2326 §10.12).
     #[error("invalid interleaved frame: {0}")]
     InterleavedFrame(String),
@@ -72,8 +81,21 @@ pub enum Error {
     #[error("socket IO error: {0}")]
     Io(String),
 
+    /// A bounded wait in the async adapter expired (feature `tokio`).
+    #[error("timed out waiting for {what}")]
+    Timeout {
+        /// Which bounded wait expired: `"connect"`, `"handshake"`, `"read"` or `"write"`.
+        what: &'static str,
+    },
+
     /// A TLS operation failed in the async adapter (feature `tls`): bad server
     /// name, handshake, or certificate configuration (`rtsps://`, RFC 2326 §19).
     #[error("TLS error: {0}")]
     Tls(String),
+}
+
+impl From<std::io::Error> for Error {
+    fn from(e: std::io::Error) -> Self {
+        Error::Io(e.to_string())
+    }
 }

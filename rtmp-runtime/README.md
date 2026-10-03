@@ -41,7 +41,8 @@ for ev in events {
 `handle_data` drives the whole exchange internally and buffers partial input
 across calls, so it runs against any transport. With the optional **`tokio`**
 feature, `io::AsyncRtmpServer` binds a listener and drives one `ServerSession`
-per connection.
+per connection, and `io::AsyncRtmpClient` publishes to a `target::RtmpTarget`
+URL; both are `tokio_util::codec::Framed` adapters bounded by `io::RtmpTimeouts`.
 
 ## What's implemented
 
@@ -61,12 +62,16 @@ per connection.
   accounting, and optional `expected_stream_key` gating. Audio/Video/Data messages
   are emitted as **FLV** (`ServerEvent::Media`) — concatenating them yields a valid
   FLV stream for `transmux`.
-- **`tokio` adapter**: `io::AsyncRtmpServer` (listener) / `RtmpConnection`
-  (feature `tokio`); the sans-IO core needs no runtime.
+- **`tokio` adapters**: `io::AsyncRtmpServer` (listener) / `RtmpConnection<S>`
+  and `io::AsyncRtmpClient<S>` over `tokio_util::codec::Framed`, every awaited IO
+  bounded by `io::RtmpTimeouts` (feature `tokio`); the sans-IO core needs no
+  runtime.
 - **Publish client** (§7): `client::ClientSession` drives the client-side
   handshake and auto-advances `connect` → `createStream` → `publish`, then
-  offers `send_audio`/`send_video`/`send_metadata` once publishing. Sans-IO
-  only — there is no `tokio` adapter for it yet, unlike the server side.
+  offers `send_audio`/`send_video`/`send_metadata` once publishing. With feature
+  `tokio`, `io::AsyncRtmpClient` drives it over a socket, and
+  `target::RtmpTarget` parses `rtmp://host[:port]/app/key` (IPv6 brackets kept in
+  `tcUrl`, userinfo/query stripped) with the `url` crate.
 
 Every wire structure implements symmetric `Parse`/`Serialize` with byte-identical
 round-trips, verified against a real ffmpeg RTMP publish capture
@@ -84,7 +89,7 @@ this README and the source doc comments.)
 | Feature | Default | Adds |
 |---|---|---|
 | `serde` | off | `Serialize`/`Deserialize` on the owned public wire/event types: `ServerEvent`, `ServerConfig`, `Amf0Value`, `Command`. |
-| `tokio` | off | The real-socket adapter (`io::AsyncRtmpServer` / `RtmpConnection`); the sans-IO core itself needs no runtime. |
+| `tokio` | off | The real-socket adapters (`io::AsyncRtmpServer` / `RtmpConnection` / `AsyncRtmpClient`, `target::RtmpTarget`); the sans-IO core itself needs no runtime. |
 
 ## MSRV
 

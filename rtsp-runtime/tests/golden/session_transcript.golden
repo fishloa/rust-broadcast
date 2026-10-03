@@ -1,0 +1,71 @@
+--- OPTIONS request ---
+OPTIONS rtsp://example.test/stream RTSP/1.0
+CSeq: 1
+User-Agent: golden-ua
+
+--- OPTIONS response ---
+RTSP/1.0 200 Ok
+CSeq: 1
+Server: rtsp-runtime
+
+--- DESCRIBE request ---
+DESCRIBE rtsp://example.test/stream RTSP/1.0
+Accept: application/sdp
+CSeq: 2
+User-Agent: golden-ua
+
+--- SETUP request ---
+SETUP rtsp://example.test/stream RTSP/1.0
+CSeq: 3
+Transport: RTP/AVP/TCP;unicast;interleaved=0-1
+User-Agent: golden-ua
+
+--- SETUP response ---
+RTSP/1.0 200 Ok
+CSeq: 3
+Server: rtsp-runtime
+Session: 000000000000abcd;timeout=60
+Transport: RTP/AVP/TCP;unicast;interleaved=0-1
+
+--- PLAY request ---
+PLAY rtsp://example.test/stream RTSP/1.0
+CSeq: 4
+Session: 000000000000abcd
+User-Agent: golden-ua
+
+--- PLAY response ---
+RTSP/1.0 200 Ok
+CSeq: 4
+Server: rtsp-runtime
+Session: 000000000000abcd
+
+--- GET_PARAMETER request ---
+GET_PARAMETER rtsp://example.test/stream RTSP/1.0
+CSeq: 5
+Session: 000000000000abcd
+User-Agent: golden-ua
+
+--- PAUSE request ---
+PAUSE rtsp://example.test/stream RTSP/1.0
+CSeq: 6
+Session: 000000000000abcd
+User-Agent: golden-ua
+
+--- PAUSE response ---
+RTSP/1.0 200 Ok
+CSeq: 6
+Server: rtsp-runtime
+Session: 000000000000abcd
+
+--- TEARDOWN request ---
+TEARDOWN rtsp://example.test/stream RTSP/1.0
+CSeq: 7
+Session: 000000000000abcd
+User-Agent: golden-ua
+
+--- TEARDOWN response ---
+RTSP/1.0 200 Ok
+CSeq: 7
+Server: rtsp-runtime
+Session: 000000000000abcd
+

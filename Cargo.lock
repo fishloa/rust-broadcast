@@ -1176,12 +1176,15 @@ name = "dvb-stream"
 version = "0.5.0"
 dependencies = [
  "broadcast-common",
+ "bytes",
  "dvb-si",
  "dvb-t2mi",
  "futures-core",
  "futures-util",
  "mpeg-ts",
+ "socket2",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -3270,12 +3273,16 @@ name = "rtmp-runtime"
 version = "0.6.1"
 dependencies = [
  "broadcast-common",
+ "bytes",
+ "futures-util",
  "log",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
  "tokio",
+ "tokio-util",
  "transmux",
+ "url",
 ]
 
 [[package]]
@@ -3293,15 +3300,20 @@ name = "rtsp-runtime"
 version = "0.7.0"
 dependencies = [
  "broadcast-auth",
+ "bytes",
+ "futures-util",
  "getrandom 0.2.17",
+ "http-auth",
  "log",
+ "memchr",
  "rtsp-types",
  "rustls",
- "sdp-types 0.1.8",
+ "sdp-types 0.2.0",
  "serde",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
+ "tokio-util",
  "webpki-roots 0.26.11",
 ]
 
@@ -3975,6 +3987,7 @@ dependencies = [
  "futures-core",
  "futures-sink",
  "futures-util",
+ "libc",
  "pin-project-lite",
  "tokio",
 ]

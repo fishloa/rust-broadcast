@@ -7,6 +7,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Changed (breaking)
+- `RtmpConnection` is now `RtmpConnection<S = TcpStream>` (a `tokio_util::codec::Framed` over the sans-IO session) with `RtmpConnection::from_stream(stream, session, RtmpTimeouts)`; `AsyncRtmpServer` gains `with_timeouts`. New `io::RtmpTimeouts` (connect / handshake / read_idle / write; defaults 10 s / 10 s / 30 s / 10 s): a deadline expiry from `next_events` is `io::ErrorKind::TimedOut` and closes the connection. The `pending_write` field is removed; `next_events` stays cancel-safe through the framed write buffer (pinned by a cancellation test).
 - `chunk::ChunkWriter::write` now returns `Result<Vec<u8>, RtmpError>` instead of `Vec<u8>`.
   `Error` gains a new `FieldOverflow` variant.
 - **#1108 (RTMP-W7)**: `ServerSession`/`ClientSession` gain a new `peer_bandwidth: Option<u32>`
@@ -20,11 +21,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   panicked on an over-long AMF0 string; see Fixed).
 
 ### Added
+- `io::AsyncRtmpClient` (feature `tokio`): the publish client adapter (`connect`, `from_stream`, `publish`, `send_audio` / `send_video` / `send_metadata`, `next_events`), bounded by `RtmpTimeouts`; `read_idle` spans the whole wait for a non-empty batch (empty chunks do not restart it). The client adapter reads inbound traffic only in `next_events`, so a send-only caller must also drive it.
+- `target::RtmpTarget` / `RtmpUrlError`: `rtmp://host[:port]/app/stream-key[?query]` parsed with the `url` crate; `tcUrl` keeps IPv6 brackets and never carries userinfo, query or fragment.
 - `DEFAULT_MAX_IN_PROGRESS_BYTES` (16 MiB) and `ServerConfig::max_in_progress_bytes` /
   `ClientConfig::max_in_progress_bytes`: the per-connection budget for bytes held across
   in-progress chunk streams (see Fixed, RTMP-W1).
 
 ### Fixed
+- No awaited IO in the tokio adapters is unbounded (an idle or stalled peer used to hold a connection forever).
+- `tcUrl` built from a bare IPv6 address and port (`rtmp://::1:1935/live`) is now bracketed (`rtmp://[::1]:1935/live`).
 - **Remote panic (release audit)**: a peer-chosen publishing name of 65 518..=65 535 bytes fit the
   request's AMF0 u16 string prefix but, echoed into the `"<key> is now published."` `onStatus`
   description, overflowed it; `Command::to_body` then hit `.expect` and panicked the server. The

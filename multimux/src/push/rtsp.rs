@@ -164,7 +164,7 @@ impl PushTransport for RtspTransport {
         // say so explicitly, or a strict server (gortsplib/`mediamtx`:
         // "transport header contains a invalid mode (null)") rejects SETUP.
         let mut spec = TransportSpec::rtp_avp_tcp_interleaved(self.channel, self.channel + 1);
-        spec.mode = Some("RECORD".to_string());
+        spec.mode = vec![rtsp_runtime::TransportMode::Record];
         let transport_spec = Transport::single(spec);
         let setup_bytes = self
             .client

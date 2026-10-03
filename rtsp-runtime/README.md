@@ -32,10 +32,13 @@ no sockets in the core. Drive `ClientSession` with the request builders and
 `handle_data`; drive `ServerSession` with `handle_request`.
 
 - **Async socket adapter** (feature `tokio`) — `AsyncRtspClient` /
-  `AsyncRtspServer` own a `tokio::net::TcpStream`, move the bytes the sans-IO
-  engine produces/consumes, buffer fragmented reads, and answer Digest `401`
-  challenges transparently. Both are generic over the stream type, so the same
-  driver logic runs over plain TCP and TLS.
+  `AsyncRtspServer` are `tokio_util::codec::Framed` adapters over the sans-IO
+  engine: the codec reassembles fragmented reads (one deadline per whole frame,
+  64 KiB header / 2 MiB message caps), and Digest `401` challenges are answered
+  transparently. Every awaited IO is bounded by `RtspTimeouts` (connect /
+  handshake / read_idle / write), and `recv_interleaved` sends the
+  `GET_PARAMETER` keepalive at half the `Session` timeout. Both are generic over
+  the stream type, so the same driver logic runs over plain TCP and TLS.
 - **`rtsps://` over TLS** (feature `tls`) — the adapter wraps the stream in a
   `tokio-rustls` session before the RTSP exchange (`AsyncRtspClient::connect_tls`
   / `AsyncRtspServer::accept_tls`), for `rtsps://` on default port **322**. The
@@ -71,3 +74,11 @@ MIT OR Apache-2.0.
 [`rtsp-types`]: https://crates.io/crates/rtsp-types
 [`sdp-types`]: https://crates.io/crates/sdp-types
 [`http-auth`]: https://crates.io/crates/http-auth
+
+## Header parsing and `rtsp-types` gaps
+
+`Transport` (RFC 2326 §12.39) and `Session` (§12.37) are parsed and serialized by this crate
+(`transport`, `session_header`, one shared RFC 2326 §15.1 lexer), not by `rtsp-types` 0.1.3,
+which is exact-case, does not trim whitespace, drops case-variant parameters and rejects a
+quoted `ssrc` / malformed `timeout`. The probe table, for a future upstream issue, is in
+[`docs/transport-header.md`](docs/transport-header.md#rtsp-types-gaps-rtsp-types-013-material-for-an-upstream-issue).

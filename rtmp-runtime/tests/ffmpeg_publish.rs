@@ -60,14 +60,6 @@ async fn ffmpeg_publish_delivers_audio_and_video() {
         .spawn()
         .expect("spawn ffmpeg");
 
-    // Watchdog: a wedged publish must fail the test, not hang it.
-    let pid = ffmpeg.id();
-    std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(40));
-        let _ = std::process::Command::new("kill")
-            .arg(pid.to_string())
-            .status();
-    });
     let mut conn = server.accept().await.expect("accept");
     let (mut audio, mut video, mut published) = (0usize, 0usize, false);
     let drive = async {
@@ -94,8 +86,16 @@ async fn ffmpeg_publish_delivers_audio_and_video() {
             }
         }
     };
-    drive.await;
+    // Watchdog on the real condition: a wedged publish fails the test instead of hanging it.
+    let outcome = tokio::time::timeout(Duration::from_secs(40), drive).await;
+    if outcome.is_err() {
+        let _ = ffmpeg.kill();
+    }
     let _ = ffmpeg.wait();
+    assert!(
+        outcome.is_ok(),
+        "publish wedged: no end-of-stream within 40 s"
+    );
     assert!(published, "no Publish event");
     assert!(audio > 0, "no audio media events");
     assert!(video > 0, "no video media events");

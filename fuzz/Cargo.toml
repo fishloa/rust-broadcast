@@ -42,6 +42,7 @@ broadcast-hls = { path = "../broadcast-hls" }
 media-doctor  = { path = "../media-doctor" }
 broadcast-auth = { path = "../broadcast-auth" }
 rtmp-runtime  = { path = "../rtmp-runtime" }
+rtsp-runtime  = { path = "../rtsp-runtime" }
 media-plane   = { path = "../media-plane" }
 ttml-subtitle = { path = "../ttml-subtitle" }
 broadcast-loudness = { path = "../broadcast-loudness" }
@@ -230,6 +231,12 @@ doc  = false
 [[bin]]
 name = "transmux_base_url"
 path = "fuzz_targets/transmux_base_url.rs"
+test = false
+doc  = false
+
+[[bin]]
+name = "rtsp_headers"
+path = "fuzz_targets/rtsp_headers.rs"
 test = false
 doc  = false
 

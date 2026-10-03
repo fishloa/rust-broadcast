@@ -20,7 +20,10 @@ dvb-si       = { path = "../dvb-si",   version = "10", default-features = false,
 dvb-t2mi     = { path = "../dvb-t2mi", version = "10", default-features = false, features = ["ts", "std"] }
 mpeg-ts      = { path = "../mpeg-ts",  version = "0.4", default-features = false, features = ["std"] }
 futures-core = "0.3"
-tokio        = { version = "1", default-features = false, features = ["io-util", "net"] }
+tokio        = { version = "1", default-features = false, features = ["io-util", "net", "time"] }
+tokio-util   = { version = "0.7", default-features = false, features = ["codec"] }
+bytes        = "1"
+socket2      = { version = "0.6", optional = true, features = ["all"] }
 
 [dev-dependencies]
 tokio         = { version = "1", default-features = false, features = ["rt", "macros", "time", "net", "io-util"] }
@@ -32,4 +35,4 @@ default = ["udp"]
 # Enables SectionStream::bind_multicast and T2miEventStream::bind_multicast.
 # tokio's "net" feature is always present in [dependencies]; this feature flag
 # just gates the convenience constructors themselves.
-udp = []
+udp = ["dep:socket2", "tokio-util/net"]

@@ -1,0 +1,18 @@
+RTP/AVP/TCP;interleaved=0-1
+  RTP/AVP/TCP;interleaved=0-1
+RTP/AVP;unicast;client_port=8000-8001
+  RTP/AVP;unicast;client_port=8000-8001
+RTP/AVP;unicast;client_port=8000-8001;server_port=9000-9001;ssrc=DEADBEEF
+  RTP/AVP;unicast;client_port=8000-8001;server_port=9000-9001;ssrc=DEADBEEF
+RTP/AVP/UDP;multicast;destination=224.2.0.1;port=3456-3457;ttl=16
+  RTP/AVP/UDP;multicast;destination=224.2.0.1;ttl=16;port=3456-3457
+RTP/AVP;unicast;mode="RECORD";append;interleaved=2-3
+  RTP/AVP;unicast;interleaved=2-3;append;mode="RECORD"
+RTP/AVP;multicast;layers=2;ttl=5
+  RTP/AVP;multicast;ttl=5;layers=2
+RTP/AVP/TCP;unicast;interleaved=4,RTP/AVP;unicast;client_port=5000-5001
+  RTP/AVP/TCP;unicast;interleaved=4-4,RTP/AVP;unicast;client_port=5000-5001
+RTP/AVP;unicast;source=10.0.0.1;destination=10.0.0.2
+  RTP/AVP;unicast;destination=10.0.0.2;source=10.0.0.1
+RTP/AVP;unicast;interleaved=6
+  RTP/AVP;unicast;interleaved=6-6

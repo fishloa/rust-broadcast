@@ -18,9 +18,9 @@
 //! - A **publish client** ([`client::ClientSession`]): the other end of that
 //!   same exchange — it drives the client-side handshake, auto-advances
 //!   `connect` → `createStream` → `publish`, and offers
-//!   `send_audio`/`send_video`/`send_metadata` once publishing. It has no
-//!   `tokio` socket adapter of its own (unlike [`server::ServerSession`], which
-//!   gets one via feature `tokio`) — callers drive its sans-IO
+//!   `send_audio`/`send_video`/`send_metadata` once publishing. With feature
+//!   `tokio` it also gets a socket adapter (`io::AsyncRtmpClient`, built from a
+//!   `target::RtmpTarget` URL); without it callers drive its sans-IO
 //!   `handle_data`/`start` directly over their own transport.
 //!
 //! An egress (play) role — pulling a stream, on either the client or server
@@ -50,9 +50,14 @@
 //!   `createStream` → `publish`, §7.2).
 //! - [`client`] — the publish client session state machine, the other end of
 //!   that same exchange (issue #744).
-//! - `io` (feature `tokio`) — the async socket adapter driving the sans-IO
-//!   server session over a real `tokio::net::TcpStream`. There is no
-//!   equivalent client adapter; [`client::ClientSession`] is sans-IO only.
+//! - `io` (feature `tokio`) — the async socket adapters over
+//!   `tokio_util::codec::Framed`: `io::AsyncRtmpServer`/`io::RtmpConnection`
+//!   drive the sans-IO server session, `io::AsyncRtmpClient` drives
+//!   [`client::ClientSession`]; every awaited IO is bounded by
+//!   `io::RtmpTimeouts`.
+//! - `target` (feature `tokio`) — `target::RtmpTarget`: an
+//!   `rtmp://host[:port]/app/key` URL parsed with the `url` crate (IPv6
+//!   brackets kept in `tcUrl`, userinfo/query stripped).
 //! - [`error`] — the [`RtmpError`] type.
 //!
 //! The handshake/chunk/message/amf0/server sans-IO engine and the `tokio`
@@ -66,6 +71,8 @@
 pub mod amf0;
 pub mod chunk;
 pub mod client;
+#[cfg(feature = "tokio")]
+mod codec;
 pub mod error;
 pub mod handshake;
 #[cfg(feature = "tokio")]
@@ -73,6 +80,9 @@ pub mod handshake;
 pub mod io;
 pub mod message;
 pub mod server;
+#[cfg(feature = "tokio")]
+#[cfg_attr(docsrs, doc(cfg(feature = "tokio")))]
+pub mod target;
 
 pub use error::RtmpError;
 

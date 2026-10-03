@@ -272,12 +272,12 @@ fn gate4b_client_emits_media_data_for_interleaved() {
 #[test]
 fn gate5_transport_round_trip_bites() {
     let a = Transport::parse("RTP/AVP/TCP;interleaved=0-1").unwrap();
-    let a2 = Transport::parse(&a.to_header_value()).unwrap();
+    let a2 = Transport::parse(&a.to_header_value().unwrap()).unwrap();
     assert_eq!(a, a2);
     assert_eq!(a.first().unwrap().interleaved, Some((0, 1)));
 
     let b = Transport::parse("RTP/AVP;unicast;client_port=8000-8001").unwrap();
-    let b2 = Transport::parse(&b.to_header_value()).unwrap();
+    let b2 = Transport::parse(&b.to_header_value().unwrap()).unwrap();
     assert_eq!(b, b2);
     assert_eq!(b.first().unwrap().client_port, Some((8000, 8001)));
 }

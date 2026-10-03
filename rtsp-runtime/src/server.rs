@@ -210,11 +210,10 @@ impl ServerSession {
             self.negotiated_transport = Some(transport.clone());
 
             let sid = session_id.clone();
-            let session_hdr = match self.session_timeout {
-                Some(t) => format!("{sid};timeout={t}"),
-                None => sid.clone(),
-            };
-            let transport_hdr = transport.to_header_value();
+            let mut session_hdr = crate::session_header::SessionHeader::new(sid.clone());
+            session_hdr.timeout = self.session_timeout.map(std::time::Duration::from_secs);
+            let session_hdr = session_hdr.to_header_value()?;
+            let transport_hdr = transport.to_header_value()?;
             let resp = self.build_response(StatusCode::Ok, cseq, |b| {
                 b.header(headers::SESSION, session_hdr)
                     .header(headers::TRANSPORT, transport_hdr)
@@ -263,7 +262,9 @@ impl ServerSession {
     fn session_header_matches(&self, method: &Method, header: Option<&str>) -> bool {
         match (header, &self.session_id) {
             (Some(value), Some(ours)) => {
-                let theirs = value.split(';').next().unwrap_or_default().trim();
+                let theirs = crate::session_header::SessionHeader::parse(value)
+                    .map(|h| h.id)
+                    .unwrap_or_default();
                 ids_equal(theirs.as_bytes(), ours.as_bytes())
             }
             (Some(_), None) => false,

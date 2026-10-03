@@ -242,8 +242,9 @@ async fn serve_one_session(mut sock: TcpStream) {
 
     let (req, cseq) = read_request(&mut sock).await;
     assert!(req.starts_with("SETUP"), "expected SETUP, got: {req}");
-    let transport =
-        TransportSpec::rtp_avp_tcp_interleaved(RTP_CHANNEL, RTP_CHANNEL + 1).to_header_value();
+    let transport = TransportSpec::rtp_avp_tcp_interleaved(RTP_CHANNEL, RTP_CHANNEL + 1)
+        .to_header_value()
+        .unwrap();
     let setup_resp = format!(
         "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 00000001\r\nTransport: {transport}\r\n\r\n"
     );
@@ -411,8 +412,9 @@ async fn serve_one_session_requiring_auth(
 
     let (req, cseq) = read_request(&mut sock).await;
     assert!(req.starts_with("SETUP"), "expected SETUP, got: {req}");
-    let transport =
-        TransportSpec::rtp_avp_tcp_interleaved(RTP_CHANNEL, RTP_CHANNEL + 1).to_header_value();
+    let transport = TransportSpec::rtp_avp_tcp_interleaved(RTP_CHANNEL, RTP_CHANNEL + 1)
+        .to_header_value()
+        .unwrap();
     let setup_resp = format!(
         "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 00000002\r\nTransport: {transport}\r\n\r\n"
     );
@@ -616,8 +618,9 @@ async fn serve_one_session_requiring_digest_auth(mut sock: TcpStream, verifier: 
 
     let (req, cseq) = read_request(&mut sock).await;
     assert!(req.starts_with("SETUP"), "expected SETUP, got: {req}");
-    let transport =
-        TransportSpec::rtp_avp_tcp_interleaved(RTP_CHANNEL, RTP_CHANNEL + 1).to_header_value();
+    let transport = TransportSpec::rtp_avp_tcp_interleaved(RTP_CHANNEL, RTP_CHANNEL + 1)
+        .to_header_value()
+        .unwrap();
     let setup_resp = format!(
         "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 00000003\r\nTransport: {transport}\r\n\r\n"
     );

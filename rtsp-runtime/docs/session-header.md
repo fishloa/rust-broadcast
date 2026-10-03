@@ -35,7 +35,17 @@ output**:
 | `abc; timeout=30` / `abc ; timeout=30` | id `abc`, timeout 30 | LWS between tokens and separators is permitted by RFC 2068 §2.1 implied LWS |
 | `abc;TIMEOUT=30`, `abc;timeout = 30` | id `abc`, timeout 30 | parameter names are case-insensitive tokens; implied LWS |
 | `abc;timeout=x` | id `abc`, timeout = default (60 s) **and** a recorded warning; header NOT rejected | a bad optional parameter must not discard the mandatory session id |
+| `abc;timeout=0` | id `abc`, timeout = default (60 s) **and** a recorded warning | 0 is not a usable timeout (it would make the keepalive deadline "now"); the client additionally floors the keepalive interval at 1 s |
+| `"weird"`, `a b;timeout=30`, `abc,def`, `ab"c` | id kept verbatim (`"weird"`, `a b`, `abc,def`, `ab"c`) | interop: real servers send such ids and the client MUST echo the id unchanged; main stored and echoed them all |
+| an id containing a control character (CR, LF, ...) | error | echoing it would allow header injection |
 | `abc;foo=bar` | id `abc`, unknown parameter preserved | forward compatibility |
 | empty / whitespace-only id | error | grammar requires `1*` |
 
-Serializer output is always `<id>[;timeout=<n>]` with no whitespace.
+Serializer output is always `<id>[;timeout=<n>]` with no whitespace. The serializer is strict only for ids WE emit: it returns `Error::HeaderSerialize` (never emits) for an empty/untrimmed id, an id with a control character or that would swallow the `;` separator (unbalanced quote), a non-token extension name, or a control character in a value.
+
+## Implementation notes
+
+`src/session_header.rs` (`SessionHeader { id, timeout, extensions }`), shared lexer
+`src/rfc2326_lex.rs`. The id is everything before the first `;` outside a quoted-string, LWS-trimmed and non-empty; any such id without a control character is accepted verbatim. A malformed
+`timeout` (including more than 19 digits) keeps the id and sets the 60 s default, reported by
+`SessionHeader::parse_with_warnings`. Round-trip invariants as for Transport.

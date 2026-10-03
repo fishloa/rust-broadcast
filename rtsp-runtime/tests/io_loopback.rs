@@ -96,6 +96,7 @@ async fn interleaved_media_over_tcp() {
     let p1 = payload1.clone();
     let p2 = payload2.clone();
 
+    let (done_tx, done_rx) = tokio::sync::oneshot::channel::<()>();
     let server = tokio::spawn(async move {
         let (sock, _) = listener.accept().await.unwrap();
         let mut srv = AsyncRtspServer::accept(sock);
@@ -110,7 +111,7 @@ async fn interleaved_media_over_tcp() {
         srv.send_interleaved(0, &p2).await.unwrap();
         srv.stream_mut().flush().await.unwrap();
         // Keep the connection open until the client has read both frames.
-        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        let _ = done_rx.await;
     });
 
     let mut client = AsyncRtspClient::connect(addr).await.unwrap();
@@ -123,6 +124,7 @@ async fn interleaved_media_over_tcp() {
     let f2 = client.recv_interleaved().await.unwrap().expect("frame 2");
     assert!(matches!(f2, ClientEvent::MediaData { channel: 0, ref data } if *data == payload2));
 
+    let _ = done_tx.send(());
     server.await.unwrap();
 }
 

@@ -1128,33 +1128,27 @@ mod tests {
     #[test]
     fn interleaved_channel_accepts_tcp_with_channels() {
         use rtsp_runtime::transport::LowerTransport;
-        let spec = TransportSpec {
-            lower_transport: Some(LowerTransport::Tcp),
-            interleaved: Some((0, 1)),
-            ..Default::default()
-        };
+        let mut spec = TransportSpec::default();
+        spec.lower_transport = Some(LowerTransport::Tcp);
+        spec.interleaved = Some((0, 1));
         assert_eq!(interleaved_channel(&spec), Some(0));
     }
 
     #[test]
     fn interleaved_channel_rejects_udp() {
         use rtsp_runtime::transport::LowerTransport;
-        let spec = TransportSpec {
-            lower_transport: Some(LowerTransport::Udp),
-            interleaved: Some((0, 1)),
-            ..Default::default()
-        };
+        let mut spec = TransportSpec::default();
+        spec.lower_transport = Some(LowerTransport::Udp);
+        spec.interleaved = Some((0, 1));
         assert_eq!(interleaved_channel(&spec), None);
     }
 
     #[test]
     fn interleaved_channel_rejects_missing_interleaved() {
         use rtsp_runtime::transport::LowerTransport;
-        let spec = TransportSpec {
-            lower_transport: Some(LowerTransport::Tcp),
-            interleaved: None,
-            ..Default::default()
-        };
+        let mut spec = TransportSpec::default();
+        spec.lower_transport = Some(LowerTransport::Tcp);
+        spec.interleaved = None;
         assert_eq!(interleaved_channel(&spec), None);
     }
 

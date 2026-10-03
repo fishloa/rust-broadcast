@@ -20,6 +20,8 @@ use std::path::Path;
 const SKIP: &[&str] = &[
     // Structured `thiserror` error enum — no spec label.
     "RtmpError",
+    // Structured `thiserror` URL-rejection enum for `target::RtmpTarget` — no spec label.
+    "RtmpUrlError",
     // Data-carrying ADT (§8.2 AMF0 value types): each variant holds its own
     // payload (Number(f64), Utf8String<'a>, Object(..), ...), so a static
     // label would be lossy — callers match the typed variant instead. See

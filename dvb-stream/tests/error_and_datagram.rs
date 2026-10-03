@@ -12,6 +12,10 @@ use std::task::{Context, Poll};
 #[cfg(feature = "udp")]
 use std::time::Duration;
 
+#[cfg(feature = "udp")]
+use dvb_stream::UdpSectionStream;
+#[cfg(feature = "udp")]
+use dvb_stream::udp::MulticastConfig;
 use dvb_stream::{SectionStream, T2miEventStream};
 use futures_core::Stream;
 use tokio::io::{AsyncRead, ReadBuf};
@@ -80,31 +84,38 @@ fn make_ts_packet(cc: u8) -> [u8; 188] {
     pkt
 }
 
+/// A valid PAT section (real CRC-32/MPEG-2) in one TS packet on PID 0 (the demux emits one event).
+#[cfg(feature = "udp")]
+fn pat_packet() -> [u8; 188] {
+    let mut section = vec![
+        0x00, 0xB0, 0x0D, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x01, 0xE0, 0x20,
+    ];
+    let crc = broadcast_common::crc32_mpeg2::compute(&section);
+    section.extend_from_slice(&crc.to_be_bytes());
+    let mut pkt = [0xFFu8; 188];
+    pkt[..5].copy_from_slice(&[0x47, 0x40, 0x00, 0x10, 0x00]);
+    pkt[5..5 + section.len()].copy_from_slice(&section);
+    pkt
+}
+
 /// Hang guard (issue #807 pattern): bounds how long we wait for a UDP
 /// multicast datagram to be delivered loopback-locally, which is normally
 /// near-instant.
 #[cfg(feature = "udp")]
 const UDP_TEST_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Multicast variant of the W-DS-2 regression: `MulticastConfig` on an OS-assigned port (no fixed
+/// port shared between parallel test runs), the port read back from the bound socket.
+/// Skips cleanly where the sandbox has no multicast bind/join/loopback.
 #[cfg(feature = "udp")]
 #[tokio::test]
 async fn udp_multicast_stream_does_not_truncate_oversized_datagram() {
-    // W-DS-2: the pre-fix 1316-byte (7×188) read buffer silently truncates
-    // any UDP datagram larger than 7 TS packets — routine for
-    // RTP-encapsulated delivery and for any encoder batching more packets
-    // per datagram. Send 10 packets (1880 bytes) in one datagram and check
-    // all 10 are counted, not just 7.
+    // W-DS-2: the pre-fix 1316-byte (7x188) read buffer silently truncates
+    // any UDP datagram larger than 7 TS packets. Send 10 packets (1880 bytes)
+    // in one datagram and check all 10 are counted, not just 7.
     let group = Ipv4Addr::new(239, 209, 7, 1);
-    // A fixed (not OS-assigned) port, since the sender needs to target it and
-    // the public API has no accessor to read back an OS-assigned port.
-    const TEST_PORT: u16 = 43_991;
-
-    let mut stream = match SectionStream::bind_multicast(
-        SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, TEST_PORT),
-        group,
-    )
-    .await
-    {
+    let config = MulticastConfig::new(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0), group);
+    let std_socket = match config.bind() {
         Ok(s) => s,
         Err(e) => {
             eprintln!(
@@ -114,6 +125,10 @@ async fn udp_multicast_stream_does_not_truncate_oversized_datagram() {
             return;
         }
     };
+    let port = std_socket.local_addr().expect("local addr").port();
+    let mut stream = UdpSectionStream::from_socket(
+        tokio::net::UdpSocket::from_std(std_socket).expect("tokio socket"),
+    );
 
     let sender = tokio::net::UdpSocket::bind(SocketAddrV4::new(Ipv4Addr::UNSPECIFIED, 0))
         .await
@@ -123,53 +138,37 @@ async fn udp_multicast_stream_does_not_truncate_oversized_datagram() {
         .expect("enable multicast loop");
 
     let mut datagram = Vec::with_capacity(188 * 10);
-    for cc in 0..10u8 {
+    for cc in 0..9u8 {
         datagram.extend_from_slice(&make_ts_packet(cc));
     }
-    assert_eq!(datagram.len(), 1880, "10 packets = 1880 bytes, > 7×188");
-
-    sender
-        .send_to(&datagram, SocketAddrV4::new(group, TEST_PORT))
+    datagram.extend_from_slice(&pat_packet()); // 10th packet: yields the event we await
+    assert_eq!(datagram.len(), 1880, "10 packets = 1880 bytes, > 7x188");
+    // Genuinely-unavailable multicast is detected UP FRONT (no bind/join above, no route to the
+    // group here), never inferred from a timeout.
+    if let Err(e) = sender
+        .send_to(&datagram, SocketAddrV4::new(group, port))
         .await
-        .expect("send oversized datagram");
-
-    let result = tokio::time::timeout(UDP_TEST_TIMEOUT, async {
-        // Drain events until the demux has seen packets (stuffing produces
-        // no SectionEvent, so poll_next alone would hang at Pending forever
-        // — poll stats directly on a short interval instead).
-        loop {
-            if stream.stats().packets > 0 {
-                return stream.stats().packets;
-            }
-            // Nudge the stream's internal read by polling it once with a
-            // waker that immediately reschedules; tokio's UDP recv future
-            // will complete once the datagram above lands.
-            let woke = std::future::poll_fn(|cx| match Pin::new(&mut stream).poll_next(cx) {
-                Poll::Ready(_) => Poll::Ready(()),
-                Poll::Pending => Poll::Pending,
-            });
-            tokio::select! {
-                _ = woke => {}
-                _ = tokio::time::sleep(Duration::from_millis(20)) => {}
-            }
-        }
-    })
-    .await;
-
-    match result {
-        Ok(packets) => {
-            assert_eq!(
-                packets, 10,
-                "W-DS-2: all 10 packets in the 1880-byte datagram must be seen, \
-                 not truncated to the old 1316-byte (7-packet) buffer"
-            );
-        }
-        Err(_) => {
-            eprintln!(
-                "skipping udp_multicast_stream_does_not_truncate_oversized_datagram: \
-                 no multicast delivery observed within {UDP_TEST_TIMEOUT:?} \
-                 (sandboxed/CI network likely blocks multicast loopback)"
-            );
-        }
+    {
+        eprintln!(
+            "skipping udp_multicast_stream_does_not_truncate_oversized_datagram: \
+             no multicast route in this environment: {e}"
+        );
+        return;
     }
+
+    // Hang guard (issue #807 pattern): the PAT (10th packet) produces a SectionEvent, so awaiting
+    // the next event, not a fixed delay, proves all 10 packets were demuxed. Multicast was
+    // verified available above, so a timeout here is a FAILURE (the 7-packet truncation
+    // regression this test exists for would show up exactly as a missing PAT).
+    tokio::time::timeout(
+        UDP_TEST_TIMEOUT,
+        std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)),
+    )
+    .await
+    .expect("W-DS-2: the 10th packet (PAT) of the 1880-byte datagram never arrived: truncated?");
+    assert_eq!(
+        stream.stats().packets,
+        10,
+        "W-DS-2: all 10 packets in the 1880-byte datagram must be seen"
+    );
 }

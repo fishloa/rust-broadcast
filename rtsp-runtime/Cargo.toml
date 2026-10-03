@@ -2,7 +2,7 @@
 name    = "rtsp-runtime"
 version = "0.7.0"
 edition = "2024"
-description = "Sans-IO RTSP 1.0 (RFC 2326) session engine — driveable client + server state machines, interleaved RTP/RTCP framing, Basic/Digest/Bearer auth (via broadcast-auth), over the rtsp-types + sdp-types codecs; optional tokio (+ rustls) socket adapter."
+description = "Sans-IO RTSP 1.0 (RFC 2326) session engine — driveable client + server state machines, interleaved RTP/RTCP framing, Basic/Digest/Bearer auth (via broadcast-auth), over the rtsp-types codec; optional tokio (+ rustls) socket adapter."
 license      = "MIT OR Apache-2.0"
 authors      = ["Alex Fishlock <alex.fishlock@racingjag.com>"]
 keywords = ["rtsp", "streaming", "rtp", "sans-io", "onvif"]
@@ -18,9 +18,9 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 rtsp-types = "0.1"
-sdp-types  = "0.1"
 broadcast-auth = { path = "../broadcast-auth", version = "0.3" }
 thiserror  = "2"
+memchr     = "2"
 log        = "0.4"
 serde      = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
@@ -32,16 +32,23 @@ webpki-roots  = { version = "0.26", optional = true }
 # OS random source for the tokio adapter's `Session` ids (the sans-IO core
 # takes ids from the caller). 0.2.17 is already in the workspace lock.
 getrandom     = { version = "0.2", optional = true }
+# Typed RTSP/auth header handling replaces hand-rolled scans (W1 SP1/SP2): the
+# stale= scan uses `parse_challenges`, Session/Transport go through rtsp-types.
+http-auth     = { version = "0.1", default-features = false }
+# Framed adapters (SP1.1). `codec` = Decoder/Encoder/Framed.
+tokio-util    = { version = "0.7", optional = true, default-features = false, features = ["codec"] }
+futures-util  = { version = "0.3", optional = true, default-features = false, features = ["sink", "std"] }
+bytes         = { version = "1", optional = true }
 
 [features]
 default = []
 # Derive serde on the public wire/event types.
 serde = ["dep:serde"]
 # Real-socket client + server IO over the sans-IO core (pulls tokio).
-tokio = ["dep:tokio", "dep:getrandom"]
+tokio = ["dep:tokio", "dep:getrandom", "dep:tokio-util", "dep:futures-util", "dep:bytes"]
 # `rtsps://` (RTSP over TLS) on top of the tokio adapter.
 tls   = ["tokio", "dep:tokio-rustls", "dep:rustls", "dep:webpki-roots"]
 
 [dev-dependencies]
-tokio     = { version = "1", features = ["full"] }
-sdp-types = "0.1"
+tokio     = { version = "1", features = ["full", "test-util"] }
+sdp-types = "0.2"

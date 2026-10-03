@@ -4,33 +4,92 @@
 //! `rtsp_runtime::io` tokio adapter shape in this same workspace).
 //!
 //! [`ServerSession`] never touches a socket: it turns inbound bytes into
-//! `(reply bytes, [`ServerEvent`]s)`. This module is the thin layer that
-//! actually owns a [`TcpStream`], reads whatever bytes are available, feeds
-//! them to [`ServerSession::handle_data`], writes the reply bytes back, and
-//! returns the events — no business logic beyond that plumbing.
+//! `(reply bytes, [`ServerEvent`]s)`. This module owns the stream as a
+//! [`tokio_util::codec::Framed`] whose decoder feeds every inbound chunk to
+//! [`ServerSession::handle_data`], writes the reply bytes back, and returns
+//! the events — no business logic beyond that plumbing.
 //!
 //! [`ServerSession::handle_data`] buffers partial handshake/chunk input
 //! internally (see its doc comment), so unlike an RTSP or HTTP adapter this
 //! one does not need to detect message boundaries itself: any chunk size,
 //! split anywhere, is fine to feed straight through.
+//!
+//! Every awaited IO is bounded by [`RtmpTimeouts`] (W1 SP1.3).
 
 use std::io;
 use std::net::SocketAddr;
+use std::time::Duration;
 
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use futures_util::{SinkExt, StreamExt};
+use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::{TcpListener, TcpStream, ToSocketAddrs};
+use tokio::time::Instant;
+use tokio_util::codec::Framed;
 
+use crate::amf0::Amf0Value;
+use crate::client::{ClientConfig, ClientEvent};
+use crate::codec::{ClientCodec, ServerCodec, io_err};
 use crate::server::{ServerConfig, ServerEvent, ServerSession};
+use crate::target::RtmpTarget;
 
-/// Size of one socket read chunk. Reads are handed to
-/// [`ServerSession::handle_data`] as soon as they arrive, so this only bounds
-/// a single `read` syscall, never a message.
-const READ_CHUNK: usize = 8192;
+/// Explicit bounds on every awaited IO of the RTMP adapters (W1 SP1.3): no wait
+/// is unbounded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct RtmpTimeouts {
+    /// DNS + TCP connect (client). Default 10 s.
+    pub connect: Duration,
+    /// From connection start until the `connect` command is accepted
+    /// ([`ServerEvent::Connected`]). Default 10 s.
+    pub handshake: Duration,
+    /// Longest wait for the next non-empty batch of events. One deadline covers the
+    /// whole wait: chunks that yield no events (a partial chunk, a handshake step)
+    /// do not restart it, so a peer dripping bytes still times out. Default 30 s.
+    pub read_idle: Duration,
+    /// Longest wait for the socket to accept pending writes. Default 10 s.
+    pub write: Duration,
+}
 
-/// Maps an [`RtmpError`](crate::RtmpError) from the sans-IO session into an
-/// [`io::Error`] so callers only deal with one error type at this layer.
-fn io_err(e: crate::RtmpError) -> io::Error {
-    io::Error::new(io::ErrorKind::InvalidData, e)
+impl Default for RtmpTimeouts {
+    fn default() -> Self {
+        Self {
+            connect: Duration::from_secs(10),
+            handshake: Duration::from_secs(10),
+            read_idle: Duration::from_secs(30),
+            write: Duration::from_secs(10),
+        }
+    }
+}
+
+impl RtmpTimeouts {
+    /// Sets [`connect`](Self::connect).
+    #[must_use]
+    pub fn with_connect(mut self, d: Duration) -> Self {
+        self.connect = d;
+        self
+    }
+    /// Sets [`handshake`](Self::handshake).
+    #[must_use]
+    pub fn with_handshake(mut self, d: Duration) -> Self {
+        self.handshake = d;
+        self
+    }
+    /// Sets [`read_idle`](Self::read_idle).
+    #[must_use]
+    pub fn with_read_idle(mut self, d: Duration) -> Self {
+        self.read_idle = d;
+        self
+    }
+    /// Sets [`write`](Self::write).
+    #[must_use]
+    pub fn with_write(mut self, d: Duration) -> Self {
+        self.write = d;
+        self
+    }
+}
+
+fn timed_out(what: &str) -> io::Error {
+    io::Error::new(io::ErrorKind::TimedOut, format!("RTMP {what} timed out"))
 }
 
 /// A `tokio::net::TcpListener` that accepts inbound RTMP publishers and hands
@@ -39,6 +98,7 @@ fn io_err(e: crate::RtmpError) -> io::Error {
 pub struct AsyncRtmpServer {
     listener: TcpListener,
     config: ServerConfig,
+    timeouts: RtmpTimeouts,
 }
 
 impl AsyncRtmpServer {
@@ -47,16 +107,28 @@ impl AsyncRtmpServer {
     /// accepted connection.
     pub async fn bind<A: ToSocketAddrs>(addr: A, config: ServerConfig) -> io::Result<Self> {
         let listener = TcpListener::bind(addr).await?;
-        Ok(Self { listener, config })
+        Ok(Self {
+            listener,
+            config,
+            timeouts: RtmpTimeouts::default(),
+        })
+    }
+
+    /// Replaces the [`RtmpTimeouts`] given to every accepted connection.
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: RtmpTimeouts) -> Self {
+        self.timeouts = timeouts;
+        self
     }
 
     /// Accepts the next inbound connection and wraps it with a fresh
     /// [`ServerSession`] built from this server's [`ServerConfig`].
     pub async fn accept(&self) -> io::Result<RtmpConnection> {
         let (stream, _peer) = self.listener.accept().await?;
-        Ok(RtmpConnection::new(
+        Ok(RtmpConnection::from_stream(
             stream,
             ServerSession::new(self.config.clone()),
+            self.timeouts,
         ))
     }
 
@@ -67,65 +139,49 @@ impl AsyncRtmpServer {
     }
 }
 
-/// One accepted RTMP connection: a [`TcpStream`] driving a [`ServerSession`].
+/// One accepted RTMP connection: a stream (a [`TcpStream`] by default) driving a
+/// [`ServerSession`].
 ///
 /// [`next_events`](Self::next_events) is the whole surface: read a chunk,
 /// drive the session, write the reply, return the events.
 #[derive(Debug)]
-pub struct RtmpConnection {
-    stream: TcpStream,
-    session: ServerSession,
-    /// Once set, the connection is done (clean EOF, `ServerEvent::Eof`, or a
-    /// prior `RtmpError`) and further calls to `next_events` return `None`
-    /// without touching the socket again.
+pub struct RtmpConnection<S = TcpStream> {
+    framed: Framed<S, ServerCodec>,
+    /// Events decoded but not yet handed to the caller. Set synchronously
+    /// together with the reply bytes, so a cancelled flush leaves both in place
+    /// for the next call.
+    ready: Option<Vec<ServerEvent>>,
+    /// Once set, the connection is done (clean EOF, `ServerEvent::Eof`, a prior
+    /// `RtmpError` or a timeout) and further calls to `next_events` return
+    /// `None` without touching the socket again.
     closed: bool,
-    /// Reply bytes generated by `handle_data` but not yet confirmed written
-    /// to the socket (#1108/RTMP-W10). `next_events` is otherwise not
-    /// cancel-safe: `write` is itself a cancellation point, so if the
-    /// calling future is dropped mid-await, the session has already
-    /// consumed the input and advanced its state (by the time `handle_data`
-    /// returns, synchronously, with no await point in between) before the
-    /// reply bytes it produced are confirmed sent — a caller wrapping this
-    /// in `tokio::time::timeout`/`select!` could otherwise lose part of the
-    /// protocol reply while the session believes it went out, stalling the
-    /// peer. Kept here and drained by [`Self::flush_pending`] one `write`
-    /// call at a time (not `write_all`, whose own partial-write count isn't
-    /// otherwise recoverable after cancellation), so a cancelled flush
-    /// leaves exactly the unsent remainder for the next call to retry —
-    /// never a duplicate resend of bytes already on the wire.
-    pending_write: Vec<u8>,
+    handshake_deadline: Option<Instant>,
+    /// Armed when a wait starts and cleared only when a batch with events is handed
+    /// out, so `read_idle` bounds a whole frame/batch, not each (possibly empty) chunk
+    /// a peer drips.
+    idle_deadline: Option<Instant>,
+    timeouts: RtmpTimeouts,
 }
 
-impl RtmpConnection {
-    fn new(stream: TcpStream, session: ServerSession) -> Self {
-        Self {
-            stream,
-            session,
-            closed: false,
-            pending_write: Vec::new(),
-        }
-    }
-
-    /// Write every byte of `self.pending_write` to the socket, draining it
-    /// as each `write` call succeeds — see the field's own doc comment for
-    /// why this isn't just `write_all`.
-    async fn flush_pending(&mut self) -> io::Result<()> {
-        while !self.pending_write.is_empty() {
-            let n = self.stream.write(&self.pending_write).await?;
-            if n == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::WriteZero,
-                    "failed to write whole RTMP reply buffer",
-                ));
-            }
-            self.pending_write.drain(..n);
-        }
-        Ok(())
-    }
-
+impl RtmpConnection<TcpStream> {
     /// The remote address of the connected publisher.
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
-        self.stream.peer_addr()
+        self.framed.get_ref().peer_addr()
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> RtmpConnection<S> {
+    /// Wraps an already-connected stream with a session and explicit
+    /// [`RtmpTimeouts`].
+    pub fn from_stream(stream: S, session: ServerSession, timeouts: RtmpTimeouts) -> Self {
+        Self {
+            framed: Framed::new(stream, ServerCodec::new(session)),
+            ready: None,
+            closed: false,
+            handshake_deadline: Some(Instant::now() + timeouts.handshake),
+            idle_deadline: None,
+            timeouts,
+        }
     }
 
     /// Reads one chunk from the socket, drives [`ServerSession::handle_data`],
@@ -138,58 +194,281 @@ impl RtmpConnection {
     /// `None` on the next call). Once a call returns `None`, every
     /// subsequent call also returns `None` without reading the socket again.
     ///
+    /// Cancel-safe: dropping the future at any await point loses neither a reply
+    /// byte nor an event (the reply sits in the framed write buffer, the events
+    /// in `self`, until a later call delivers them).
+    ///
     /// # Errors
     /// An [`io::Error`] from the underlying socket read/write, or a mapped
     /// [`RtmpError`](crate::RtmpError) (kind [`io::ErrorKind::InvalidData`])
     /// from [`ServerSession::handle_data`]. On an `RtmpError` the session is
     /// unrecoverable (per `handle_data`'s own doc): this connection is torn
     /// down immediately — marked closed and not driven further, even if the
-    /// caller keeps calling `next_events`.
+    /// caller keeps calling `next_events`. A deadline expiry
+    /// ([`RtmpTimeouts`]) is [`io::ErrorKind::TimedOut`] and closes the
+    /// connection too.
     pub async fn next_events(&mut self) -> io::Result<Option<Vec<ServerEvent>>> {
         if self.closed {
             return Ok(None);
         }
+        loop {
+            // 1. Drain whatever a cancelled earlier call left in the write buffer.
+            match tokio::time::timeout(self.timeouts.write, self.framed.flush()).await {
+                Err(_) => {
+                    self.closed = true;
+                    return Err(timed_out("write"));
+                }
+                Ok(Err(e)) => {
+                    self.closed = true;
+                    return Err(e);
+                }
+                Ok(Ok(())) => {}
+            }
+            // 2. Hand out events whose reply is now fully written.
+            if let Some(events) = self.ready.take() {
+                if events
+                    .iter()
+                    .any(|e| matches!(e, ServerEvent::Connected { .. }))
+                {
+                    self.handshake_deadline = None;
+                }
+                if events.iter().any(|e| matches!(e, ServerEvent::Eof)) {
+                    self.closed = true;
+                }
+                if !events.is_empty() {
+                    self.idle_deadline = None;
+                }
+                return Ok(Some(events));
+            }
+            // 3. Wait for the next batch under ONE deadline (handshake or
+            //    read-idle, whichever is nearer).
+            let read_idle = self.timeouts.read_idle;
+            let idle = *self
+                .idle_deadline
+                .get_or_insert_with(|| Instant::now() + read_idle);
+            let (deadline, what) = match self.handshake_deadline {
+                Some(h) if h < idle => (h, "handshake"),
+                _ => (idle, "read"),
+            };
+            match tokio::time::timeout_at(deadline, self.framed.next()).await {
+                Err(_) => {
+                    self.closed = true;
+                    return Err(timed_out(what));
+                }
+                Ok(None) => {
+                    self.closed = true;
+                    return Ok(None);
+                }
+                Ok(Some(Err(e))) => {
+                    self.closed = true;
+                    return Err(e);
+                }
+                Ok(Some(Ok(events))) => {
+                    // Synchronous from here to the next await: reply and events
+                    // move together.
+                    let reply = self.framed.codec_mut().take_reply();
+                    self.framed.write_buffer_mut().extend_from_slice(&reply);
+                    self.ready = Some(events);
+                }
+            }
+        }
+    }
+}
 
-        // #1108/RTMP-W10: flush any reply left over from a cancelled
-        // previous call before reading more input.
-        self.flush_pending().await?;
+/// A publishing RTMP client over a stream (a [`TcpStream`] by default): the
+/// adapter for [`ClientSession`](crate::client::ClientSession), mirroring
+/// [`RtmpConnection`]. Every awaited IO is bounded by [`RtmpTimeouts`].
+#[derive(Debug)]
+pub struct AsyncRtmpClient<S = TcpStream> {
+    framed: Framed<S, ClientCodec>,
+    ready: Option<Vec<ClientEvent>>,
+    closed: bool,
+    handshake_deadline: Option<Instant>,
+    /// Armed when a wait starts and cleared only when a batch with events is handed
+    /// out, so `read_idle` bounds a whole frame/batch, not each (possibly empty) chunk
+    /// a peer drips.
+    idle_deadline: Option<Instant>,
+    timeouts: RtmpTimeouts,
+}
 
-        let mut chunk = [0u8; READ_CHUNK];
-        let n = self.stream.read(&mut chunk).await?;
-        if n == 0 {
-            self.closed = true;
+impl AsyncRtmpClient<TcpStream> {
+    /// DNS + TCP connect bounded by `timeouts.connect`; `publish` is NOT started.
+    pub async fn connect(target: &RtmpTarget, timeouts: RtmpTimeouts) -> io::Result<Self> {
+        let stream = tokio::time::timeout(timeouts.connect, async {
+            let addrs = target.resolve().await?;
+            TcpStream::connect(&addrs[..]).await
+        })
+        .await
+        .map_err(|_| timed_out("connect"))??;
+        Ok(Self::from_stream(stream, target, timeouts))
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
+    /// Wraps an already-connected stream; the handshake bytes are queued and go
+    /// out with the first call that flushes.
+    pub fn from_stream(stream: S, target: &RtmpTarget, timeouts: RtmpTimeouts) -> Self {
+        let cfg = ClientConfig {
+            app: target.app.clone(),
+            stream_key: target.stream_key.clone(),
+            tc_url: Some(target.tc_url.clone()),
+            ..ClientConfig::default()
+        };
+        let mut codec = ClientCodec::new(cfg);
+        let c0c1 = codec.session_mut().start();
+        let mut framed = Framed::new(stream, codec);
+        framed.write_buffer_mut().extend_from_slice(&c0c1);
+        Self {
+            framed,
+            ready: None,
+            closed: false,
+            handshake_deadline: Some(Instant::now() + timeouts.handshake),
+            idle_deadline: None,
+            timeouts,
+        }
+    }
+
+    /// Runs handshake -> connect -> createStream -> publish; returns once the
+    /// server accepted the publish. Bounded by [`RtmpTimeouts::handshake`] as a
+    /// whole. A server error (`ClientEvent::Error`) is
+    /// [`io::ErrorKind::ConnectionRefused`].
+    pub async fn publish(&mut self) -> io::Result<()> {
+        loop {
+            let Some(events) = self.next_events().await? else {
+                return Err(io::Error::new(
+                    io::ErrorKind::UnexpectedEof,
+                    "peer closed during publish",
+                ));
+            };
+            for e in &events {
+                match e {
+                    ClientEvent::Publishing => return Ok(()),
+                    ClientEvent::Error { code, description } => {
+                        return Err(io::Error::new(
+                            io::ErrorKind::ConnectionRefused,
+                            format!("{code}: {description}"),
+                        ));
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    /// Queues one already-framed message and flushes it under `timeouts.write`. A
+    /// cancel during the flush leaves the message queued (sent by the next call),
+    /// never half-framed.
+    async fn queue(&mut self, bytes: Vec<u8>) -> io::Result<()> {
+        self.framed.write_buffer_mut().extend_from_slice(&bytes);
+        match tokio::time::timeout(self.timeouts.write, self.framed.flush()).await {
+            Err(_) => Err(timed_out("write")),
+            Ok(r) => r,
+        }
+    }
+
+    /// Sends one audio message (FLV audio tag body) at `timestamp` ms.
+    ///
+    /// The adapter reads inbound traffic (server acks, pings, errors) only inside
+    /// [`next_events`](Self::next_events); a caller that only sends must also drive
+    /// `next_events` (e.g. in a `select!`) or the server's acknowledgement window
+    /// is never serviced.
+    pub async fn send_audio(&mut self, timestamp: u32, data: &[u8]) -> io::Result<()> {
+        let bytes = self
+            .framed
+            .codec_mut()
+            .session_mut()
+            .send_audio(timestamp, data)
+            .map_err(io_err)?;
+        self.queue(bytes).await
+    }
+
+    /// Sends one video message (FLV video tag body) at `timestamp` ms.
+    pub async fn send_video(&mut self, timestamp: u32, data: &[u8]) -> io::Result<()> {
+        let bytes = self
+            .framed
+            .codec_mut()
+            .session_mut()
+            .send_video(timestamp, data)
+            .map_err(io_err)?;
+        self.queue(bytes).await
+    }
+
+    /// Sends `@setDataFrame`/`onMetaData` stream metadata.
+    pub async fn send_metadata(&mut self, metadata: &[(String, Amf0Value)]) -> io::Result<()> {
+        let bytes = self
+            .framed
+            .codec_mut()
+            .session_mut()
+            .send_metadata(metadata)
+            .map_err(io_err)?;
+        self.queue(bytes).await
+    }
+
+    /// Next batch of server events (acks, errors, close); `Ok(None)` at EOF.
+    /// Same deadline rules and cancel-safety as [`RtmpConnection::next_events`].
+    pub async fn next_events(&mut self) -> io::Result<Option<Vec<ClientEvent>>> {
+        if self.closed {
             return Ok(None);
         }
-
-        let (reply, events) = match self.session.handle_data(&chunk[..n]) {
-            Ok(v) => v,
-            Err(e) => {
-                // Unrecoverable: tear down rather than keep driving a session
-                // whose internal state may have partially advanced.
-                self.closed = true;
-                return Err(io_err(e));
+        loop {
+            match tokio::time::timeout(self.timeouts.write, self.framed.flush()).await {
+                Err(_) => {
+                    self.closed = true;
+                    return Err(timed_out("write"));
+                }
+                Ok(Err(e)) => {
+                    self.closed = true;
+                    return Err(e);
+                }
+                Ok(Ok(())) => {}
             }
-        };
-
-        if !reply.is_empty() {
-            // Recorded in `self` (synchronously, no await point since
-            // `handle_data` returned) before the first write attempt, so a
-            // cancellation during `flush_pending` never loses it.
-            self.pending_write = reply;
-            self.flush_pending().await?;
+            if let Some(events) = self.ready.take() {
+                if events.iter().any(|e| matches!(e, ClientEvent::Publishing)) {
+                    self.handshake_deadline = None;
+                }
+                if events.iter().any(|e| matches!(e, ClientEvent::Closed)) {
+                    self.closed = true;
+                }
+                if !events.is_empty() {
+                    self.idle_deadline = None;
+                }
+                return Ok(Some(events));
+            }
+            let read_idle = self.timeouts.read_idle;
+            let idle = *self
+                .idle_deadline
+                .get_or_insert_with(|| Instant::now() + read_idle);
+            let (deadline, what) = match self.handshake_deadline {
+                Some(h) if h < idle => (h, "handshake"),
+                _ => (idle, "read"),
+            };
+            match tokio::time::timeout_at(deadline, self.framed.next()).await {
+                Err(_) => {
+                    self.closed = true;
+                    return Err(timed_out(what));
+                }
+                Ok(None) => {
+                    self.closed = true;
+                    return Ok(None);
+                }
+                Ok(Some(Err(e))) => {
+                    self.closed = true;
+                    return Err(e);
+                }
+                Ok(Some(Ok(events))) => {
+                    let reply = self.framed.codec_mut().take_reply();
+                    self.framed.write_buffer_mut().extend_from_slice(&reply);
+                    self.ready = Some(events);
+                }
+            }
         }
-
-        if events.iter().any(|e| matches!(e, ServerEvent::Eof)) {
-            self.closed = true;
-        }
-
-        Ok(Some(events))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
     const FIXTURE: &str = concat!(
         env!("CARGO_MANIFEST_DIR"),
@@ -225,7 +504,7 @@ mod tests {
                 .write_all(&fixture)
                 .await
                 .expect("write fixture bytes");
-            let mut sink = [0u8; READ_CHUNK];
+            let mut sink = [0u8; 8192];
             let mut replied_bytes = 0usize;
             loop {
                 match stream.read(&mut sink).await {
@@ -282,49 +561,5 @@ mod tests {
             media_count >= 1,
             "must emit at least one Media event over the real socket, got {media_count}"
         );
-    }
-
-    /// RTMP-W10 (#1108): a reply left in `pending_write` (as if a prior
-    /// `next_events` call was cancelled mid-`write`) must be flushed by the
-    /// NEXT call, in full, before it reads any more input — not silently
-    /// dropped.
-    #[tokio::test]
-    async fn pending_write_survives_and_is_flushed_on_next_call() {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .expect("bind ephemeral loopback port");
-        let addr = listener.local_addr().expect("local_addr");
-
-        let client = tokio::spawn(async move {
-            let mut stream = TcpStream::connect(addr).await.expect("connect loopback");
-            let mut buf = [0u8; 64];
-            let n = stream.read(&mut buf).await.expect("read reply");
-            buf[..n].to_vec()
-        });
-
-        let (stream, _peer) = listener.accept().await.expect("accept");
-        let mut conn = RtmpConnection::new(stream, ServerSession::with_defaults());
-
-        // Simulate a previous `next_events` call whose `write` was
-        // cancelled after the reply was recorded in `self` but before the
-        // socket confirmed it — `pending_write` is exactly what's left.
-        conn.pending_write = b"left over from a cancelled write".to_vec();
-
-        // A real cancellation would drop `next_events`'s future before it
-        // returns; here we just let it run to completion — the point being
-        // tested is that it flushes `pending_write` FIRST, which it does
-        // unconditionally at the top of the method regardless of whether
-        // this particular call is itself later cancelled.
-        //
-        // No further input is written by the client, so `next_events`
-        // blocks on the socket read after flushing; race it against the
-        // client's read completing.
-        tokio::select! {
-            _ = conn.next_events() => {}
-            received = client => {
-                let received = received.expect("client task must not panic");
-                assert_eq!(received, b"left over from a cancelled write");
-            }
-        }
     }
 }

@@ -149,3 +149,46 @@ Multicast recording (§14.6):
 ```
 Transport: RTP/AVP;multicast;destination=224.0.1.11;port=21010-21011;mode=record;ttl=127
 ```
+
+---
+
+## Parser decisions (owner decision (c), 2026-10-03)
+
+rtsp-runtime owns the parser and canonical serializer for this header
+(`src/transport.rs`, lexer `src/rfc2326_lex.rs`, RFC 2326 §15.1; full text in
+`rfc2326.md`). Input is lenient, output canonical:
+
+- transport / profile / lower-transport tokens and parameter names are case-insensitive
+  (`rtp/avp/tcp`, `Interleaved=0-1`, `UNICAST`, `mode=record` as in RFC §14.6);
+- implied LWS around `/`, `;`, `,`, `=` and `-`; commas inside quoted-strings never split specs;
+- any value may be quoted (`ssrc="DEADBEEF"`); `mode` is accepted unquoted as well as
+  quoted although the grammar requires `<">`; the list is comma-separated;
+- `interleaved=6`, `client_port=10000` (one end) mean `lo = hi`; a bare `destination` is kept;
+- range errors: port > 65535 (max 5 digits), ttl > 255 (3 digits), channel > 255 (3 digits),
+  `ssrc` not exactly 8 hex digits, a range with more than two ends, a value-less
+  `interleaved`/`ttl`/`port`/…, a value on `unicast`/`multicast`/`append`;
+- only `RTP/AVP/{TCP|UDP}` is modelled; other protocols/profiles are errors;
+- unknown parameters are preserved in order; a repeated known parameter: last wins.
+
+Canonical output order: transport-spec, `unicast|multicast`, `destination`, `source`,
+`interleaved`, `append`, `ttl`, `layers`, `port`, `client_port`, `server_port`, `ssrc`
+(8 upper-case hex), `mode="PLAY,RECORD"`, then the unknown parameters. Invariants (tested and
+fuzzed): parse -> serialize -> parse equal; serialize -> parse equal; canonical form idempotent.
+
+## rtsp-types gaps (rtsp-types 0.1.3; material for an upstream issue)
+
+Probed with `typed_header::<Transports>()` / `typed_header::<Session>()` (raw output:
+`.delegate/rtsp-types-probe.txt`):
+
+| input | rtsp-types result |
+|---|---|
+| `Session: abc; timeout=30` | id `abc`, timeout **None** (no LWS trimming) |
+| `Session: abc ; timeout=30` | id `"abc "` (trailing space), timeout None |
+| `Session: abc;timeout = 30`, `abc;TIMEOUT=30` | timeout None |
+| `Session: abc;timeout=oops` | whole header **rejected** (session id lost) |
+| `Transport: rtp/avp/tcp;interleaved=0-1` | `Other { spec: "rtpavptcp" }` |
+| `...;Interleaved=0-1`, `;UNICAST`, `;SSRC=DEADBEEF` | parsed, but the parameter lands in the unknown map (interleaved None, unicast false, ssrc empty) |
+| `...;ssrc="DEADBEEF"` | rejected |
+| duplicate parameter | `FIXME: we assume each parameter appears only once` |
+| `layers` | `TODO layers` (only via the unknown map) |
+| unterminated header block (70 KiB of `A`) | `Message::parse` returns `Incomplete(Some(1))`, so callers cannot cap header size from the Some/None distinction |

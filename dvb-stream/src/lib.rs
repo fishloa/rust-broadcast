@@ -15,9 +15,11 @@
 //!   [`tokio::io::AsyncRead`]. Each item is an owned
 //!   [`dvb_t2mi::pump::T2miEvent`].
 //!
-//! Both streams are also constructable from a UDP multicast socket (the dominant
-//! real-world DVB transport) via the `bind_multicast` constructor when the `udp`
-//! feature is enabled.
+//! - [`UdpSectionStream`] / [`UdpT2miStream`] (feature `udp`) — the same two
+//!   pumps over a UDP/multicast socket, the dominant real-world DVB transport.
+//!   Built with `bind_multicast` / `bind(&MulticastConfig)` (`socket2`:
+//!   `SO_RCVBUF`, `SO_REUSEADDR`, multicast interface) or from an already-bound
+//!   socket with `from_socket`.
 //!
 //! # Ownership and cancellation
 //!
@@ -28,15 +30,17 @@
 //!
 //! # 188-byte TS framing and resync
 //!
-//! The adapter reads raw bytes from the `AsyncRead` source and performs 188-byte
-//! TS packet alignment via a sync-byte (`0x47`) resync on the read buffer. The
-//! resync logic is implemented once in [`resync`] and shared by both streams.
+//! The adapter frames the source with a `tokio_util::codec::FramedRead` over
+//! [`TsDecoder`], which performs 188-byte TS packet alignment via a sync-byte
+//! (`0x47`) resync. The resync logic is implemented once in [`resync`] and
+//! shared by every stream; UDP sources use [`TsDecoder::datagram`] so each
+//! datagram is resynchronised independently.
 //!
 //! # Feature flags
 //!
 //! | Feature | Default | Description |
 //! |---------|---------|-------------|
-//! | `udp`   | on      | UDP/multicast constructors (`bind_multicast`) via `tokio::net::UdpSocket`. |
+//! | `udp`   | on      | [`UdpSectionStream`] / [`UdpT2miStream`] and [`udp::MulticastConfig`] (`socket2` bind + join, `tokio_util::udp::UdpFramed` framing). |
 //!
 //! # MSRV
 //!
@@ -61,13 +65,20 @@
 // anything to police. Recorded in `broadcast-common`'s
 // `tests/workspace_drift_guard_coverage.rs` exemption lists.
 
-mod framer;
 pub mod resync;
 pub mod section_stream;
 pub mod t2mi_stream;
+mod ts_codec;
+#[cfg(feature = "udp")]
+pub mod udp;
 
 pub use section_stream::SectionStream;
+#[cfg(feature = "udp")]
+pub use section_stream::UdpSectionStream;
 pub use t2mi_stream::T2miEventStream;
+#[cfg(feature = "udp")]
+pub use t2mi_stream::UdpT2miStream;
+pub use ts_codec::TsDecoder;
 
 /// Statistics tracking resynchronisation events and discarded bytes in a TS
 /// byte stream.

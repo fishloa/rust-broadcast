@@ -1,0 +1,18 @@
+RTP/AVP/TCP;interleaved=0-1
+  Transport { specs: [TransportSpec { lower_transport: Some(Tcp), delivery: None, interleaved: Some((0, 1)), client_port: None, server_port: None, port: None, ttl: None, layers: None, ssrc: None, destination: None, source: None, mode: [], append: false, extensions: [] }] }
+RTP/AVP;unicast;client_port=8000-8001
+  Transport { specs: [TransportSpec { lower_transport: None, delivery: Some(Unicast), interleaved: None, client_port: Some((8000, 8001)), server_port: None, port: None, ttl: None, layers: None, ssrc: None, destination: None, source: None, mode: [], append: false, extensions: [] }] }
+RTP/AVP;unicast;client_port=8000-8001;server_port=9000-9001;ssrc=DEADBEEF
+  Transport { specs: [TransportSpec { lower_transport: None, delivery: Some(Unicast), interleaved: None, client_port: Some((8000, 8001)), server_port: Some((9000, 9001)), port: None, ttl: None, layers: None, ssrc: Some(3735928559), destination: None, source: None, mode: [], append: false, extensions: [] }] }
+RTP/AVP/UDP;multicast;destination=224.2.0.1;port=3456-3457;ttl=16
+  Transport { specs: [TransportSpec { lower_transport: Some(Udp), delivery: Some(Multicast), interleaved: None, client_port: None, server_port: None, port: Some((3456, 3457)), ttl: Some(16), layers: None, ssrc: None, destination: Some("224.2.0.1"), source: None, mode: [], append: false, extensions: [] }] }
+RTP/AVP;unicast;mode="RECORD";append;interleaved=2-3
+  Transport { specs: [TransportSpec { lower_transport: None, delivery: Some(Unicast), interleaved: Some((2, 3)), client_port: None, server_port: None, port: None, ttl: None, layers: None, ssrc: None, destination: None, source: None, mode: [Record], append: true, extensions: [] }] }
+RTP/AVP;multicast;layers=2;ttl=5
+  Transport { specs: [TransportSpec { lower_transport: None, delivery: Some(Multicast), interleaved: None, client_port: None, server_port: None, port: None, ttl: Some(5), layers: Some(2), ssrc: None, destination: None, source: None, mode: [], append: false, extensions: [] }] }
+RTP/AVP/TCP;unicast;interleaved=4,RTP/AVP;unicast;client_port=5000-5001
+  Transport { specs: [TransportSpec { lower_transport: Some(Tcp), delivery: Some(Unicast), interleaved: Some((4, 4)), client_port: None, server_port: None, port: None, ttl: None, layers: None, ssrc: None, destination: None, source: None, mode: [], append: false, extensions: [] }, TransportSpec { lower_transport: None, delivery: Some(Unicast), interleaved: None, client_port: Some((5000, 5001)), server_port: None, port: None, ttl: None, layers: None, ssrc: None, destination: None, source: None, mode: [], append: false, extensions: [] }] }
+RTP/AVP;unicast;source=10.0.0.1;destination=10.0.0.2
+  Transport { specs: [TransportSpec { lower_transport: None, delivery: Some(Unicast), interleaved: None, client_port: None, server_port: None, port: None, ttl: None, layers: None, ssrc: None, destination: Some("10.0.0.2"), source: Some("10.0.0.1"), mode: [], append: false, extensions: [] }] }
+RTP/AVP;unicast;interleaved=6
+  Transport { specs: [TransportSpec { lower_transport: None, delivery: Some(Unicast), interleaved: Some((6, 6)), client_port: None, server_port: None, port: None, ttl: None, layers: None, ssrc: None, destination: None, source: None, mode: [], append: false, extensions: [] }] }

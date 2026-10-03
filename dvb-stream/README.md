@@ -14,7 +14,7 @@ Async/tokio stream adapters over [`dvb-si`](https://crates.io/crates/dvb-si) `Si
 [`futures_core::Stream`] implementations, quarantining `tokio` and
 `futures-core` away from the pure-Rust parser crates.
 
-- **`SectionStream`** — feed any `tokio::io::AsyncRead` (file, TCP, UDP),
+- **`SectionStream`** — feed any `tokio::io::AsyncRead` (file, TCP),
   receive one `dvb_si::demux::SectionEvent` per changed complete SI section.
   Events are owned (`bytes::Bytes`), `'static`, `Clone`, and `Send + Sync`.
 
@@ -23,12 +23,16 @@ Async/tokio stream adapters over [`dvb-si`](https://crates.io/crates/dvb-si) `Si
   with `T2miEventStream::new(reader, pid)` for a TS-encapsulated source, or
   `T2miEventStream::with_pump(reader, pump)` for a pre-configured pump.
 
-Both streams perform 188-byte TS packet alignment and resync on the byte stream.
-No internal tasks are spawned; cancellation is simply dropping the stream.
+Both streams frame the byte stream with a `tokio_util::codec::FramedRead` over the
+public `TsDecoder` (188-byte TS packet alignment and resync). No internal tasks
+are spawned; cancellation is simply dropping the stream.
 
-With the `udp` feature (default), `bind_multicast` convenience constructors are
-provided for the dominant real-world DVB transport (UDP multicast, e.g.
-`239.0.0.1:5004`).
+With the `udp` feature (default), `UdpSectionStream` / `UdpT2miStream` read the
+dominant real-world DVB transport (UDP multicast, e.g. `239.0.0.1:5004`) through
+`tokio_util::udp::UdpFramed`, one datagram per framing unit. `bind_multicast`
+keeps the old signature; `udp::MulticastConfig` adds the `socket2` options
+(`SO_RCVBUF`, `SO_REUSEADDR`, multicast interface) and `from_socket` wraps an
+already-bound socket.
 
 `dvb-stream` is a std-only crate (tokio requires std).
 
