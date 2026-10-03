@@ -12,4 +12,5 @@ pub mod pat_pmt_version;
 pub mod pcr_check;
 pub mod pts_check;
 pub mod scte35_check;
+pub(crate) mod scte35_track;
 pub mod sync_byte;

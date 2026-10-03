@@ -94,21 +94,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 Optimization sweep (#1079, #1080, #1081). Apart from the three behaviour changes listed under
-`### Changed (breaking)` and `### Fixed
-
-- `frag_offsets`: a final `mdat` cut short by a truncated capture is now clamped
-  to the file end as documented (it was dropped because `parse_box` reports a
-  truncated box as `BufferTooShort`), so early samples in it resolve instead of
-  failing with "outside every mdat". The `mdat` scan also runs once per file
-  rather than once per `traf` (`Fmp4Demux`, `CencDecryptor` and the validator
-  were O(fragments x boxes)). `cli`: the unsupported-container message no longer
-  carries a run of spaces; `webm_demux` no longer has an `unreachable!` in
-  library code.
-, every change below leaves the output byte-identical on the
+`### Changed (breaking)` and `### Fixed`, every change below leaves the output byte-identical on the
 committed fixtures (pinned by `tests/sweep_output_golden.rs`, whose hashes were captured on the
 pre-sweep code) and is backed by a deterministic allocation or work counter
 (`tests/alloc_counts_sweep.rs` and in-module counters), never a timing.
 
+- `MovieFragmentBox` / `TrackFragmentBox` child walks use the crate's one container-child walker (`init_segment::walk_children`) instead of two private `parse_box` loops (#1141).
+- The AAC `esds` -> `DecoderSpecificInfo` / `AudioSpecificConfig` lookup is one `EsdsBox` helper shared by DASH, TS mux and Smooth; a missing DSI in the TS muxer is now `Error::UnexpectedBox` (was `InvalidInput`) (#1141).
+- AC-3 and DTS header parsing share one `bitreader::read_bits_checked` (the DTS copy lacked the `n > 64` check) (#1141).
+- `box_types::box_slices` / `find_top_box` are now the one best-effort top-level box walker over `box_iter`; the copies in `cenc_decrypt`, `media` and `progressive` and `validate::children` are gone, behaviour unchanged (#1141).
+- The four Annex B start-code scanners (`annexb::start_code_positions`, `au::first_nal_start`, the streaming splitter's resumable scan, `au::start_code_len`) and `mpeg_legacy::find_start_code` now share one `annexb::find_start_code_prefix` primitive; behaviour unchanged (#1141).
+- Progressive `stsz`/`stsc`/`stco`/`co64` sample-layout expansion is one `progressive_demux::sample_layout` shared by `ProgressiveDemux` and the protected-progressive path of `CencDecryptor` (#1141).
 - `Segmenter` no longer rebuilds the whole `moov` on every cut to detect an init change that its API
   cannot produce; the dead detection is deleted (109 -> 18 allocations per cut) (#1081, r05-O5).
 - `hvcC` parsing bounds its array/NAL pre-allocation by the body length (1 581 000 -> 32 bytes for a
@@ -633,6 +629,16 @@ rewrite of `cenc_decrypt`'s remaining box walker (#1081).
 
 ### Fixed
 
+- `CencDecryptor` on a progressive protected MP4 now honours `co64` chunk offsets (the duplicated raw-byte stbl expander read only `stco`) (#1141).
+- Progressive sample layout (`ProgressiveDemux` and the protected-progressive path of `CencDecryptor`) follows one rule for uniform and per-sample `stsz`: `stsz.sample_count` is authoritative, surplus `stsc`/`stco` capacity (a short last chunk, extra chunks) is tolerated and clamped, and only a shortfall (chunk tables cover fewer samples than `stsz` declares) is an error. `stsc.first_chunk` must now be >= 1 and strictly ascending (ISO/IEC 14496-12 §8.7.4), else `Error::InvalidValue`; the expansion is one forward pass (#1141).
+- `frag_offsets`: a final `mdat` cut short by a truncated capture is now clamped
+  to the file end as documented (it was dropped because `parse_box` reports a
+  truncated box as `BufferTooShort`), so early samples in it resolve instead of
+  failing with "outside every mdat". The `mdat` scan also runs once per file
+  rather than once per `traf` (`Fmp4Demux`, `CencDecryptor` and the validator
+  were O(fragments x boxes)). `cli`: the unsupported-container message no longer
+  carries a run of spaces; `webm_demux` no longer has an `unreachable!` in
+  library code.
 - `read_sei_varint` returns `None` when the running `payloadType`/`payloadSize` total would overflow
   `u32` (a ~16.8 MB run of `0xFF`), instead of panicking in debug builds and wrapping in release
   (#1079, r04-O6).

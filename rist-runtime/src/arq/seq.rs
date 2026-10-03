@@ -11,14 +11,14 @@
 //! spec-cited — needed so the reorder/reassembly buffers behave correctly
 //! once a stream's sequence numbers wrap past `0xFFFF` back to `0`.
 //!
-//! Mirrors `srt_runtime::arq::seq`'s resolution of the same gap for SRT's
-//! 31-bit sequence space.
+//! Shares `broadcast_common::seq` with `srt_runtime::arq::seq` (SRT's 31-bit
+//! space) — one algorithm, two moduli.
 
-/// Size of the RTP sequence-number space: `2^16` (RFC 3550 §5.1).
-const SEQ_MOD: i32 = 1 << 16;
-/// Half the sequence space — the wrap-around threshold used to decide which
-/// of two directions between two sequence numbers is the shorter one.
-const SEQ_HALF: i32 = SEQ_MOD / 2;
+use broadcast_common::seq::SeqSpace;
+
+/// The RTP sequence-number space: 16 bits (RFC 3550 §5.1). The arithmetic
+/// itself is `broadcast_common::seq` (shared with `srt-runtime`, #1141).
+const SPACE: SeqSpace = SeqSpace::new(16);
 
 /// Add `n` to a sequence number, wrapping at the 16-bit boundary.
 pub fn seq_add(seq: u16, n: u16) -> u16 {
@@ -31,30 +31,29 @@ pub fn seq_next(seq: u16) -> u16 {
 }
 
 /// Signed circular distance `a - b` in the 16-bit sequence space, in
-/// `(-SEQ_HALF, SEQ_HALF]`. Positive means `a` is ahead of `b`.
+/// `(-32768, 32768]`. Positive means `a` is ahead of `b`.
 pub fn seq_diff(a: u16, b: u16) -> i32 {
-    let raw = (i32::from(a) - i32::from(b)).rem_euclid(SEQ_MOD);
-    if raw > SEQ_HALF { raw - SEQ_MOD } else { raw }
+    SPACE.diff(u32::from(a), u32::from(b))
 }
 
 /// `a` precedes `b` in circular sequence order.
 pub fn seq_lt(a: u16, b: u16) -> bool {
-    seq_diff(a, b) < 0
+    SPACE.lt(u32::from(a), u32::from(b))
 }
 
 /// `a` precedes or equals `b`.
 pub fn seq_leq(a: u16, b: u16) -> bool {
-    seq_diff(a, b) <= 0
+    SPACE.leq(u32::from(a), u32::from(b))
 }
 
 /// `a` follows `b` in circular sequence order.
 pub fn seq_gt(a: u16, b: u16) -> bool {
-    seq_diff(a, b) > 0
+    SPACE.gt(u32::from(a), u32::from(b))
 }
 
 /// `a` follows or equals `b`.
 pub fn seq_geq(a: u16, b: u16) -> bool {
-    seq_diff(a, b) >= 0
+    SPACE.geq(u32::from(a), u32::from(b))
 }
 
 #[cfg(test)]

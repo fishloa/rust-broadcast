@@ -60,7 +60,7 @@
 //! - **`track.mfhd.sequence`** (WARNING) — `mfhd.sequence_number` should be
 //!   strictly increasing across segments (§8.8.5).
 
-use crate::box_types::{BoxRef, parse_box};
+use crate::box_types::{BoxRef, box_iter};
 use crate::movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF,
     TrackFragmentBaseMediaDecodeTimeBox, TrackFragmentHeaderBox, TrackFragmentRunBox,
@@ -168,21 +168,10 @@ impl ConformanceIssue {
 /// pairs. Stops cleanly at the first malformed child (so a truncated tail does
 /// not panic and does not abort the whole walk with an error).
 fn children(body: &[u8]) -> Vec<([u8; 4], BoxRef<'_>)> {
-    let mut out = Vec::new();
-    let mut remaining = body;
-    while !remaining.is_empty() {
-        match parse_box(remaining) {
-            Ok((bx, consumed)) => {
-                out.push((bx.header.box_type.0, bx));
-                if consumed == 0 || consumed > remaining.len() {
-                    break;
-                }
-                remaining = &remaining[consumed..];
-            }
-            Err(_) => break,
-        }
-    }
-    out
+    box_iter(body)
+        .map_while(|step| step.ok())
+        .map(|(bx, _)| (bx.header.box_type.0, bx))
+        .collect()
 }
 
 /// Whether a container `body` has a direct child of the given four-CC.

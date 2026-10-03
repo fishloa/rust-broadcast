@@ -6,33 +6,17 @@
 //! (8 bits). Signals teletext also carried in the analogue VBI lines.
 
 use super::descriptor_body;
-use super::teletext::TeletextType;
-use crate::error::{Error, Result};
-use crate::text::LangCode;
+use super::teletext::{ENTRY_LEN, HEADER_LEN, TeletextEntry, parse_entries, serialize_entries};
+use crate::error::Result;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for VBI_teletext_descriptor.
 pub const TAG: u8 = 0x46;
-const HEADER_LEN: usize = 2;
-const ENTRY_LEN: usize = 5;
-const LANG_LEN: usize = 3;
-/// Maximum body length expressible in the 8-bit `descriptor_length` field.
-const MAX_BODY_LEN: usize = u8::MAX as usize;
 
-/// One VBI teletext component.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct VbiTeletextEntry {
-    /// ISO 639-2 language code of this teletext service.
-    pub language_code: LangCode,
-    /// 5-bit teletext_type (EN 300 468 Table 102).
-    pub teletext_type: TeletextType,
-    /// 3-bit teletext_magazine_number.
-    pub magazine_number: u8,
-    /// 8-bit BCD teletext_page_number.
-    pub page_number: u8,
-}
+/// One VBI teletext component — the same entry as the teletext descriptor's
+/// (EN 300 468 Table 108 vs Table 101), so one type serves both.
+pub type VbiTeletextEntry = TeletextEntry;
 
 /// VBI Teletext Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -51,23 +35,7 @@ impl<'a> Parse<'a> for VbiTeletextDescriptor {
             "VbiTeletextDescriptor",
             "unexpected tag for VBI_teletext_descriptor",
         )?;
-        if body.len() % ENTRY_LEN != 0 {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "descriptor_length must be a multiple of 5",
-            });
-        }
-        let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
-        for chunk in body.chunks_exact(ENTRY_LEN) {
-            let language_code = LangCode([chunk[0], chunk[1], chunk[2]]);
-            let type_and_mag = chunk[LANG_LEN];
-            entries.push(VbiTeletextEntry {
-                language_code,
-                teletext_type: TeletextType::from_u8((type_and_mag >> 3) & 0x1F),
-                magazine_number: type_and_mag & 0x07,
-                page_number: chunk[LANG_LEN + 1],
-            });
-        }
+        let entries = parse_entries(body, TAG, "descriptor_length must be a multiple of 5")?;
         Ok(Self { entries })
     }
 }
@@ -79,31 +47,7 @@ impl Serialize for VbiTeletextDescriptor {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let body_len = ENTRY_LEN * self.entries.len();
-        // 8-bit descriptor_length field: error rather than silently truncate.
-        if body_len > MAX_BODY_LEN {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "VBI_teletext_descriptor body exceeds 255 bytes",
-            });
-        }
-        let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
-        crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
-        let mut pos = HEADER_LEN;
-        for e in &self.entries {
-            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-            buf[pos + LANG_LEN] =
-                ((e.teletext_type.to_u8() & 0x1F) << 3) | (e.magazine_number & 0x07);
-            buf[pos + LANG_LEN + 1] = e.page_number;
-            pos += ENTRY_LEN;
-        }
-        Ok(len)
+        serialize_entries(&self.entries, buf, TAG)
     }
 }
 impl crate::traits::DescriptorDef<'_> for VbiTeletextDescriptor {
@@ -114,6 +58,9 @@ impl crate::traits::DescriptorDef<'_> for VbiTeletextDescriptor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::descriptors::teletext::TeletextType;
+    use crate::error::Error;
+    use crate::text::LangCode;
 
     #[test]
     fn parse_single_entry() {
@@ -212,7 +159,7 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
-            Error::InvalidDescriptor { tag: TAG, .. }
+            Error::FieldOverflow(_)
         ));
     }
 

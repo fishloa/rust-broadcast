@@ -1206,22 +1206,10 @@ fn find_syncword(data: &[u8]) -> Result<usize> {
     ))
 }
 
-/// Read `n` bits MSB-first from `data` at the current `bit_pos`, advancing it.
-///
-/// Delegates to the shared [`crate::bitreader::read_bits_at`] cursor.
+/// Read `n` bits MSB-first from `data` at the current `bit_pos`, advancing it
+/// ([`crate::bitreader::read_bits_checked`]).
 fn read_bits(data: &[u8], bit_pos: &mut usize, n: usize, what: &'static str) -> Result<u64> {
-    if n > 64 {
-        return Err(Error::InvalidValue {
-            field: what,
-            value: n as u64,
-            reason: "bit count > 64",
-        });
-    }
-    crate::bitreader::read_bits_at(data, bit_pos, n).ok_or(Error::BufferTooShort {
-        need: crate::bitreader::bytes_needed(*bit_pos, n),
-        have: data.len(),
-        what,
-    })
+    crate::bitreader::read_bits_checked(data, bit_pos, n, what)
 }
 
 /// Write `n` bits from `val` MSB-first into `buf` at `bit_pos`, advancing it.

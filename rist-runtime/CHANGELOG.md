@@ -36,6 +36,11 @@ All notable changes to this crate will be documented in this file.
   consistency (#1108/RIST-W4 — audited, not a live bug: both real instances of this cast were
   already fixed by #1129).
 
+### Changed
+
+- `arq::seq` arithmetic now delegates to `broadcast_common::seq::SeqSpace` (one algorithm, two moduli; public functions and results unchanged) (#1141).
+
+
 ## [0.2.0] - 2026-09-26
 
 ### Security

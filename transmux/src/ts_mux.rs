@@ -67,7 +67,7 @@
 
 use alloc::vec::Vec;
 
-use broadcast_common::{Package, Parse, crc32_mpeg2};
+use broadcast_common::{Package, crc32_mpeg2};
 use mpeg_pes::{Pts as PesPts, StreamId};
 use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::ts::{Pcr, TS_PACKET_SIZE, TsHeader};
@@ -592,7 +592,7 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
             }
         };
         let asc = match &track.spec.config {
-            CodecConfig::Aac { esds, .. } => Some(asc_from_esds(esds)?),
+            CodecConfig::Aac { esds, .. } => Some(esds.audio_specific_config()?),
             _ => None,
         };
         let avc_sps_pps = match &track.spec.config {
@@ -1175,17 +1175,6 @@ fn rescale_signed(ticks: i64, timescale: u64) -> u64 {
 fn rescale_for_ordering(ticks: u64, timescale: u64) -> u64 {
     let scaled = (ticks as u128 * TS_CLOCK_HZ as u128 + timescale as u128 / 2) / timescale as u128;
     scaled.min(u64::MAX as u128) as u64
-}
-
-/// Recover the [`AudioSpecificConfig`] from an AAC `esds` box's
-/// DecoderSpecificInfo (the inverse of the [`TsDemux`](crate::TsDemux) build).
-fn asc_from_esds(esds: &crate::mp4esds::EsdsBox) -> Result<AudioSpecificConfig> {
-    let dsi = esds
-        .decoder_specific_info_data()
-        .ok_or(Error::InvalidInput(
-            "AAC esds carries no DecoderSpecificInfo (AudioSpecificConfig)",
-        ))?;
-    AudioSpecificConfig::parse(dsi)
 }
 
 /// Build the elementary-stream PES payload for one sample:

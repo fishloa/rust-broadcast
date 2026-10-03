@@ -44,25 +44,36 @@ pub fn iter_annexb_nals(annexb: &[u8]) -> AnnexBNalIter<'_> {
     }
 }
 
+/// Offset of the first `00 00 01` start-code prefix at or after `from`, or
+/// `None`. The single scan primitive for the crate: [`start_code_positions`],
+/// `au::first_nal_start`, the streaming splitter's resumable scan,
+/// `au::start_code_len` and `mpeg_legacy::find_start_code` all go through it
+/// (audit r04-O1 / #1141), so a fix here reaches every scanner.
+pub(crate) fn find_start_code_prefix(data: &[u8], from: usize) -> Option<usize> {
+    let n = data.len();
+    let mut p = from;
+    while p + 3 <= n {
+        if data[p] == 0 && data[p + 1] == 0 && data[p + 2] == 1 {
+            return Some(p);
+        }
+        p += 1;
+    }
+    None
+}
+
 /// Positions of every start code's first `00` (of the trailing `00 00 01`).
 ///
 /// Shared by [`iter_annexb_nals`] and the PS demuxer (which carried a verbatim
-/// copy; audit r04-O1). Other scans in the crate answer different questions and
-/// stay separate: `au` finds the first NAL start (shared with the PS demuxer
-/// through `au::first_nal_start`) and scans incrementally from a resume offset
-/// in the streaming splitter, and `mpeg_legacy::find_start_code` looks for one
-/// specific `00 00 01 <code>` MPEG-2 start code.
+/// copy; audit r04-O1). Built on [`find_start_code_prefix`], as are the other
+/// scanners in this crate (they differ only in what they do with a hit:
+/// `au` pulls back over `zero_byte`s / resumes incrementally, `mpeg_legacy`
+/// also matches the byte after the prefix).
 pub(crate) fn start_code_positions(data: &[u8]) -> Vec<usize> {
     let mut positions = Vec::new();
-    let n = data.len();
     let mut p = 0usize;
-    while p + 3 <= n {
-        if data[p] == 0 && data[p + 1] == 0 && data[p + 2] == 1 {
-            positions.push(p);
-            p += 3;
-        } else {
-            p += 1;
-        }
+    while let Some(at) = find_start_code_prefix(data, p) {
+        positions.push(at);
+        p = at + 3;
     }
     positions
 }
@@ -239,6 +250,16 @@ pub fn length_prefixed_to_annexb(lp: &[u8]) -> Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn find_start_code_prefix_resumes_and_is_exhaustive() {
+        let d = [9, 0, 0, 1, 7, 0, 0, 0, 1, 8, 0, 0];
+        assert_eq!(find_start_code_prefix(&d, 0), Some(1));
+        assert_eq!(find_start_code_prefix(&d, 2), Some(6));
+        assert_eq!(find_start_code_prefix(&d, 7), None);
+        assert_eq!(find_start_code_prefix(&d, 99), None);
+        assert_eq!(start_code_positions(&d), vec![1, 6]);
+    }
 
     #[test]
     fn splits_mixed_start_codes_and_strips_trailing_zeros() {

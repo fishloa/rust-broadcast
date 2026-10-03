@@ -614,28 +614,10 @@ impl Package for HlsPackager {
 
 /// Find a top-level box by four-CC, returning its full bytes (header + body).
 ///
-/// `pub(crate)`: shared with [`crate::progressive_demux::ProgressiveDemux`],
-/// which walks the same top-level `moov` box before descending into sample
-/// tables instead of movie fragments.
-pub(crate) fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
-    let mut offset = 0usize;
-    while offset + BOX_HEADER_MIN_SIZE <= data.len() {
-        let (bx, consumed) = parse_box(&data[offset..]).ok()?;
-        if &bx.header.box_type.0 == fourcc {
-            let end = if bx.header.size == 0 {
-                data.len()
-            } else {
-                offset + bx.header.size as usize
-            };
-            return Some(&data[offset..end]);
-        }
-        if consumed == 0 {
-            break;
-        }
-        offset += consumed;
-    }
-    None
-}
+/// Re-exported for [`crate::progressive_demux::ProgressiveDemux`], which walks
+/// the same top-level `moov` box; the one implementation is
+/// [`crate::box_types::find_top_box`] (#1141).
+pub(crate) use crate::box_types::find_top_box;
 
 /// Rebuild a [`TrackSpec`] from a parsed `trak` box (identity + codec config).
 ///

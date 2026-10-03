@@ -17,19 +17,16 @@
 //! wrap past `0x7FFF_FFFF` back to `0`.
 
 use crate::packet::SEQ_NUMBER_MASK;
+use broadcast_common::seq::SeqSpace;
 
-/// Size of the SRT sequence-number space: `2^31` (31-bit field, §3.1).
-const SEQ_MOD: i64 = (SEQ_NUMBER_MASK as i64) + 1;
-/// [`SEQ_MOD`] as an unsigned value (for [`seq_add`]).
-const SEQ_MOD_U64: u64 = (SEQ_NUMBER_MASK as u64) + 1;
-/// Half the sequence space — the wrap-around threshold used to decide which
-/// of two directions between two sequence numbers is the shorter one.
-const SEQ_HALF: i64 = SEQ_MOD / 2;
+/// The SRT sequence-number space: 31 bits (§3.1). The arithmetic itself is
+/// `broadcast_common::seq` (shared with `rist-runtime`, #1141), sized from
+/// [`SEQ_NUMBER_MASK`].
+const SPACE: SeqSpace = SeqSpace::new(SEQ_NUMBER_MASK.count_ones());
 
 /// Add `n` to a sequence number, wrapping at the 31-bit boundary.
 pub fn seq_add(seq: u32, n: u32) -> u32 {
-    // The sum of two `u32`s fits a `u64`; reduced modulo 2^31 it fits a `u32`.
-    u32::try_from((u64::from(seq) + u64::from(n)) % SEQ_MOD_U64).unwrap_or(0)
+    SPACE.add(seq, n)
 }
 
 /// The next sequence number after `seq` (wraps `0x7FFF_FFFF` -> `0`).
@@ -38,52 +35,46 @@ pub fn seq_next(seq: u32) -> u32 {
 }
 
 /// Signed circular distance `a - b` in the 31-bit sequence space, in
-/// `(-SEQ_HALF, SEQ_HALF]`. Positive means `a` is ahead of `b`.
+/// `(-2^30, 2^30]`. Positive means `a` is ahead of `b`.
 pub fn seq_diff(a: u32, b: u32) -> i32 {
-    let a = i64::from(a & SEQ_NUMBER_MASK);
-    let b = i64::from(b & SEQ_NUMBER_MASK);
-    let raw = (a - b).rem_euclid(SEQ_MOD);
-    // `raw` is in `0..2^31`; either branch lands in `(-2^30, 2^30]`, which
-    // fits an `i32`.
-    let diff = if raw > SEQ_HALF { raw - SEQ_MOD } else { raw };
-    i32::try_from(diff).unwrap_or(0)
+    SPACE.diff(a, b)
 }
 
 /// `a` precedes `b` in circular sequence order.
 pub fn seq_lt(a: u32, b: u32) -> bool {
-    seq_diff(a, b) < 0
+    SPACE.lt(a, b)
 }
 
 /// `a` precedes or equals `b`.
 pub fn seq_leq(a: u32, b: u32) -> bool {
-    seq_diff(a, b) <= 0
+    SPACE.leq(a, b)
 }
 
 /// `a` follows `b` in circular sequence order.
 pub fn seq_gt(a: u32, b: u32) -> bool {
-    seq_diff(a, b) > 0
+    SPACE.gt(a, b)
 }
 
 /// `a` follows or equals `b`.
 pub fn seq_geq(a: u32, b: u32) -> bool {
-    seq_diff(a, b) >= 0
+    SPACE.geq(a, b)
 }
 
 /// `seq` lies within the inclusive circular range `first..=last`, walking
 /// forward from `first`. A `last` that precedes `first` in circular order is
 /// an empty (malformed) range and never matches.
 pub fn seq_in_closed_range(seq: u32, first: u32, last: u32) -> bool {
-    let span = seq_diff(last, first);
-    if span < 0 {
-        return false;
-    }
-    let offset = seq_diff(seq, first);
-    offset >= 0 && offset <= span
+    SPACE.in_closed_range(seq, first, last)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn space_mask_is_the_wire_mask() {
+        assert_eq!(SPACE.mask(), SEQ_NUMBER_MASK);
+    }
 
     #[test]
     fn wrap_boundary_increment() {

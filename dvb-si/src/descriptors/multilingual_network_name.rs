@@ -4,6 +4,7 @@
 //! code, network name) pairs, each name length-prefixed by an 8-bit field.
 
 use super::descriptor_body;
+use super::lang_text::{EntryReader, LANG_LEN, text_field_len, write_lang, write_text};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
@@ -12,8 +13,6 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for multilingual_network_name_descriptor.
 pub const TAG: u8 = 0x5B;
 const HEADER_LEN: usize = 2;
-const LANG_LEN: usize = 3;
-const NAME_LEN_FIELD: usize = 1;
 
 /// One localised network name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,29 +44,14 @@ impl<'a> Parse<'a> for MultilingualNetworkNameDescriptor<'a> {
             "unexpected tag for multilingual_network_name_descriptor",
         )?;
         let mut entries = Vec::new();
-        let mut pos = 0;
-        while pos < body.len() {
-            if pos + LANG_LEN + NAME_LEN_FIELD > body.len() {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "entry header runs past descriptor end",
-                });
-            }
-            let language_code = LangCode([body[pos], body[pos + 1], body[pos + 2]]);
-            let name_len = body[pos + LANG_LEN] as usize;
-            let name_start = pos + LANG_LEN + NAME_LEN_FIELD;
-            let name_end = name_start + name_len;
-            if name_end > body.len() {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "name_length runs past descriptor end",
-                });
-            }
+        let mut reader = EntryReader::new(body, 0, TAG);
+        while reader.has_more() {
+            let language_code = reader.lang()?;
+            let network_name = reader.text("name_length runs past descriptor end", 0)?;
             entries.push(NetworkNameEntry {
                 language_code,
-                network_name: DvbText::new(&body[name_start..name_end]),
+                network_name,
             });
-            pos = name_end;
         }
         Ok(Self { entries })
     }
@@ -80,27 +64,13 @@ impl Serialize for MultilingualNetworkNameDescriptor<'_> {
             + self
                 .entries
                 .iter()
-                .map(|e| LANG_LEN + NAME_LEN_FIELD + e.network_name.len())
+                .map(|e| LANG_LEN + text_field_len(&e.network_name))
                 .sum::<usize>()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        for e in &self.entries {
-            if e.network_name.len() > u8::MAX as usize {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "network_name exceeds 255 bytes (name_length is 8-bit)",
-                });
-            }
-        }
         let len = self.serialized_len();
         let body = len - HEADER_LEN;
-        if body > u8::MAX as usize {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "multilingual_network_name_descriptor body exceeds 255 bytes",
-            });
-        }
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
                 need: len,
@@ -110,13 +80,8 @@ impl Serialize for MultilingualNetworkNameDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, body)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-            buf[pos + LANG_LEN] =
-                broadcast_common::len::fit_u8(e.network_name.len(), "network_name_length")?;
-            let name_start = pos + LANG_LEN + NAME_LEN_FIELD;
-            buf[name_start..name_start + e.network_name.len()]
-                .copy_from_slice(e.network_name.raw());
-            pos = name_start + e.network_name.len();
+            pos = write_lang(buf, pos, &e.language_code);
+            pos = write_text(buf, pos, &e.network_name, "network_name_length")?;
         }
         Ok(len)
     }
@@ -229,7 +194,7 @@ mod tests {
         };
         let mut buf = vec![0u8; d.serialized_len()];
         let err = d.serialize_into(&mut buf).unwrap_err();
-        assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
+        assert!(matches!(err, Error::FieldOverflow(_)));
     }
 
     #[cfg(feature = "serde")]

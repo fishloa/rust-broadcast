@@ -1109,6 +1109,21 @@ impl EsdsBox {
             .map(|dsi| dsi.data.as_slice())
     }
 
+    /// The `DecoderSpecificInfo` payload, or the one "no DSI in `esds`" error
+    /// every consumer reports (audit r05-O6 / #1141: `dash`, `ts_mux` and
+    /// `smooth` each carried their own lookup + message).
+    pub(crate) fn require_decoder_specific_info(&self) -> Result<&[u8]> {
+        self.decoder_specific_info_data()
+            .ok_or(Error::UnexpectedBox {
+                expected: "DecoderSpecificInfo (AudioSpecificConfig) in esds",
+            })
+    }
+
+    /// Parse the `AudioSpecificConfig` carried in the `DecoderSpecificInfo`.
+    pub(crate) fn audio_specific_config(&self) -> Result<crate::aac_asc::AudioSpecificConfig> {
+        crate::aac_asc::AudioSpecificConfig::parse(self.require_decoder_specific_info()?)
+    }
+
     /// Parse from the full box bytes (header + body).
     pub fn parse_box(data: &[u8]) -> Result<Self> {
         let header = BoxHeader::parse(data)?;

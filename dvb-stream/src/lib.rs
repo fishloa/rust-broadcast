@@ -61,6 +61,7 @@
 // anything to police. Recorded in `broadcast-common`'s
 // `tests/workspace_drift_guard_coverage.rs` exemption lists.
 
+mod framer;
 pub mod resync;
 pub mod section_stream;
 pub mod t2mi_stream;

@@ -21,6 +21,7 @@
 //!   §7.2.6.6 Table 5 — 0x60–0x65 (MPEG-2 Visual profiles, 0x61 = Main),
 //!   0x6A (MPEG-1 Visual), 0x69 (MPEG-2 Audio), 0x6B (MPEG-1 Audio).
 
+use crate::annexb::find_start_code_prefix;
 use crate::error::{Error, Result};
 
 // ── MPEG-2 video sequence header — ISO/IEC 13818-2 §6.2.2.1 ─────────────────
@@ -28,10 +29,6 @@ use crate::error::{Error, Result};
 /// The 32-bit `sequence_header_code` start code (`0x000001B3`) that prefixes a
 /// MPEG-1/2 video `sequence_header()` — ISO/IEC 13818-2 §6.2.2.1, Table 6-1.
 pub const SEQUENCE_HEADER_CODE: [u8; 4] = [0x00, 0x00, 0x01, 0xB3];
-
-/// The 24-bit start-code prefix (`0x000001`) common to every MPEG video start
-/// code — ISO/IEC 13818-2 §6.2.1.
-const START_CODE_PREFIX: [u8; 3] = [0x00, 0x00, 0x01];
 
 /// Bytes of `horizontal_size_value` + `vertical_size_value` following the
 /// 4-byte start code: 12 + 12 = 24 bits = 3 bytes (§6.2.2.1).
@@ -82,12 +79,12 @@ impl Mpeg2SeqHeader {
 
 /// Find the byte offset of a `0x000001 <code>` start code in `data`, or `None`.
 fn find_start_code(data: &[u8], code: u8) -> Option<usize> {
-    let mut i = 0usize;
-    while i + 4 <= data.len() {
-        if data[i..i + 3] == START_CODE_PREFIX && data[i + 3] == code {
-            return Some(i);
+    let mut from = 0usize;
+    while let Some(at) = find_start_code_prefix(data, from) {
+        if data.get(at + 3) == Some(&code) {
+            return Some(at);
         }
-        i += 1;
+        from = at + 1;
     }
     None
 }

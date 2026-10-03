@@ -38,6 +38,8 @@
   (issue #1112).
 
 ### Changed
+
+- `Scte35Check` and `media-doctor watch` now share one `SpliceTracker` (section reassembly, `splice_insert` parse, cancel skip, open/closed state machine incl. `auto_return`) instead of two diverged trackers; findings and metrics unchanged (#1141).
 - The crate's duplicated logic is consolidated onto single owners (audit
   MD-W10). `check_playlist` (the free function in `playlist.rs`) was a
   near-verbatim second copy of `check_hls_playlist` and had already drifted

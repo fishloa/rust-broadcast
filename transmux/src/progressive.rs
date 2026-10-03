@@ -36,7 +36,7 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Package, Parse, Serialize};
 
-use crate::box_types::{BoxHeader, BoxType};
+use crate::box_types::{BoxHeader, BoxType, find_top_box};
 use crate::error::{Error, Result};
 use crate::init_segment::{
     ChunkLargeOffsetBox, ChunkOffsetBox, EditBox, MovieBox, SampleSizeBox, SampleToChunkBox,
@@ -846,28 +846,6 @@ fn apply_track_timings(moov: &mut MovieBox, timings: &[TrackTiming]) {
 /// (ISO/IEC 14496-12:2015 §8.2.2.2).
 fn duration_fits_v0(duration: u64) -> bool {
     duration <= u64::from(u32::MAX)
-}
-
-/// Find a top-level box by four-CC in an ISOBMFF byte buffer, returning its full
-/// bytes (header + body). Walks top-level boxes by their declared `size`.
-fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
-    let mut offset = 0usize;
-    while offset + 8 <= data.len() {
-        let (bx, consumed) = crate::box_types::parse_box(&data[offset..]).ok()?;
-        if bx.header.box_type.is(fourcc) {
-            let end = if bx.header.size == 0 {
-                data.len()
-            } else {
-                offset + bx.header.size as usize
-            };
-            return Some(&data[offset..end]);
-        }
-        if consumed == 0 {
-            break;
-        }
-        offset += consumed;
-    }
-    None
 }
 
 #[cfg(test)]

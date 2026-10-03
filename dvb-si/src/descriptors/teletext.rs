@@ -11,8 +11,8 @@ use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for teletext_descriptor.
 pub const TAG: u8 = 0x56;
-const HEADER_LEN: usize = 2;
-const ENTRY_LEN: usize = 5;
+pub(super) const HEADER_LEN: usize = 2;
+pub(super) const ENTRY_LEN: usize = 5;
 const LANG_LEN: usize = 3;
 
 /// Teletext type — ETSI EN 300 468 Table 102.
@@ -79,8 +79,9 @@ impl TeletextType {
 }
 broadcast_common::impl_spec_display!(TeletextType, Reserved);
 
-/// One teletext component.
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// One teletext component. Also the entry type of the VBI teletext descriptor
+/// (EN 300 468 Table 108 is the same 5-byte loop entry as Table 101).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TeletextEntry {
     /// ISO 639-2 language code of this teletext service.
@@ -101,6 +102,61 @@ pub struct TeletextDescriptor {
     pub entries: Vec<TeletextEntry>,
 }
 
+/// Parse the 5-byte-entry loop shared by `teletext_descriptor` (tag 0x56) and
+/// `VBI_teletext_descriptor` (tag 0x46): one implementation, so the length
+/// validation cannot drift between the two (audit r03-O3, #1141).
+pub(super) fn parse_entries(
+    body: &[u8],
+    tag: u8,
+    bad_length_reason: &'static str,
+) -> Result<Vec<TeletextEntry>> {
+    if !body.len().is_multiple_of(ENTRY_LEN) {
+        return Err(Error::InvalidDescriptor {
+            tag,
+            reason: bad_length_reason,
+        });
+    }
+    let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
+    for chunk in body.chunks_exact(ENTRY_LEN) {
+        let type_and_mag = chunk[LANG_LEN];
+        entries.push(TeletextEntry {
+            language_code: LangCode([chunk[0], chunk[1], chunk[2]]),
+            teletext_type: TeletextType::from_u8((type_and_mag >> 3) & 0x1F),
+            magazine_number: type_and_mag & 0x07,
+            page_number: chunk[LANG_LEN + 1],
+        });
+    }
+    Ok(entries)
+}
+
+/// Serialize the shared entry loop with its `tag`+`descriptor_length` header.
+/// An over-range body (8-bit `descriptor_length`) is `FieldOverflow` from
+/// `write_descriptor_header`'s checked `fit_u8` (after the buffer-size
+/// check), once, for both descriptors (#1129).
+pub(super) fn serialize_entries(
+    entries: &[TeletextEntry],
+    buf: &mut [u8],
+    tag: u8,
+) -> Result<usize> {
+    let body_len = ENTRY_LEN * entries.len();
+    let len = HEADER_LEN + body_len;
+    if buf.len() < len {
+        return Err(Error::OutputBufferTooSmall {
+            need: len,
+            have: buf.len(),
+        });
+    }
+    crate::descriptors::write_descriptor_header(buf, tag, body_len)?;
+    let mut pos = HEADER_LEN;
+    for e in entries {
+        buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
+        buf[pos + LANG_LEN] = ((e.teletext_type.to_u8() & 0x1F) << 3) | (e.magazine_number & 0x07);
+        buf[pos + LANG_LEN + 1] = e.page_number;
+        pos += ENTRY_LEN;
+    }
+    Ok(len)
+}
+
 impl<'a> Parse<'a> for TeletextDescriptor {
     type Error = crate::error::Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
@@ -110,26 +166,11 @@ impl<'a> Parse<'a> for TeletextDescriptor {
             "TeletextDescriptor",
             "unexpected tag for teletext_descriptor",
         )?;
-        if body.len() % ENTRY_LEN != 0 {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "teletext_descriptor length must be a multiple of 5",
-            });
-        }
-        let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
-        for chunk in body.chunks_exact(ENTRY_LEN) {
-            let language_code = LangCode([chunk[0], chunk[1], chunk[2]]);
-            let type_and_mag = chunk[LANG_LEN];
-            let teletext_type = TeletextType::from_u8((type_and_mag >> 3) & 0x1F);
-            let magazine_number = type_and_mag & 0x07;
-            let page_number = chunk[LANG_LEN + 1];
-            entries.push(TeletextEntry {
-                language_code,
-                teletext_type,
-                magazine_number,
-                page_number,
-            });
-        }
+        let entries = parse_entries(
+            body,
+            TAG,
+            "teletext_descriptor length must be a multiple of 5",
+        )?;
         Ok(Self { entries })
     }
 }
@@ -141,23 +182,7 @@ impl Serialize for TeletextDescriptor {
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let len = self.serialized_len();
-        if buf.len() < len {
-            return Err(Error::OutputBufferTooSmall {
-                need: len,
-                have: buf.len(),
-            });
-        }
-        crate::descriptors::write_descriptor_header(buf, TAG, self.entries.len() * ENTRY_LEN)?;
-        let mut pos = HEADER_LEN;
-        for e in &self.entries {
-            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-            buf[pos + LANG_LEN] =
-                ((e.teletext_type.to_u8() & 0x1F) << 3) | (e.magazine_number & 0x07);
-            buf[pos + LANG_LEN + 1] = e.page_number;
-            pos += ENTRY_LEN;
-        }
-        Ok(len)
+        serialize_entries(&self.entries, buf, TAG)
     }
 }
 impl crate::traits::DescriptorDef<'_> for TeletextDescriptor {
@@ -216,6 +241,28 @@ mod tests {
         assert!(matches!(
             TeletextDescriptor::parse(&bytes).unwrap_err(),
             Error::InvalidDescriptor { .. }
+        ));
+    }
+
+    /// Over-range body: `FieldOverflow` through the checked header write
+    /// (#1129), the same path for both teletext descriptors (#1141).
+    #[test]
+    fn serialize_rejects_over_range_body() {
+        let d = TeletextDescriptor {
+            entries: vec![
+                TeletextEntry {
+                    language_code: LangCode(*b"eng"),
+                    teletext_type: TeletextType::Reserved(1),
+                    magazine_number: 1,
+                    page_number: 0,
+                };
+                52
+            ],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
         ));
     }
 

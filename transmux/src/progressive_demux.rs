@@ -445,22 +445,8 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
         |bytes| ChunkOffsetBox::parse(bytes).unwrap_err(),
     )?;
 
-    let chunk_offsets = chunk_offsets(co64, stco)?;
-    let samples_per_chunk = expand_stsc(stsc, chunk_offsets.len());
-    let total_samples: usize = samples_per_chunk.iter().map(|&n| n as usize).sum();
-    // `total_samples` is a wire-derived sum (stsc runs x co64/stco chunk
-    // count) fed straight into several `Vec::with_capacity(total_samples)` /
-    // `vec![_; total_samples]` allocations below (#987). No sample can occupy
-    // fewer than 1 byte of `file`, so `total_samples` can never legitimately
-    // exceed the file length — reject it up front rather than let a hostile
-    // stsc/stco pairing drive a multi-GB allocation from a tiny input.
-    if total_samples > file.len() {
-        return Err(Error::InvalidInput(
-            "stsc-derived total sample count exceeds the file size",
-        ));
-    }
-
-    let layout = chunk_layout(&chunk_offsets, &samples_per_chunk, stsz, total_samples)?;
+    let layout = sample_layout(stsz, stsc, co64, stco, file.len())?;
+    let total_samples = layout.len();
     let durations = expand_stts(stts, total_samples)?;
     let composition_offsets = expand_ctts(ctts, total_samples)?;
     let sync_flags = expand_stss(stss, total_samples);
@@ -497,6 +483,99 @@ fn samples_from_stbl(file: &[u8], trak: &TrackBox) -> Result<Vec<Sample>> {
     Ok(samples)
 }
 
+#[cfg(test)]
+thread_local! {
+    /// Work counter for [`sample_layout`]'s single forward pass: chunks visited
+    /// plus `stsc` entries stepped over (tests pin it linear in both).
+    static LAYOUT_STEPS: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
+}
+
+/// Resolve every sample's `(absolute_file_offset, size)` from the sample
+/// tables `stsz` + `stsc` + `stco`/`co64`.
+///
+/// The one stbl sample-layout expander: [`ProgressiveDemux`] and the
+/// protected-progressive path of `cenc_decrypt` both go through it (audit
+/// r05-O1 / #1141).
+///
+/// **One rule for uniform and per-sample `stsz`:** `stsz.sample_count` is
+/// authoritative. Surplus `stsc`/`stco` capacity (a last chunk shorter than
+/// `samples_per_chunk`, or more chunks than needed) is *tolerated* — the
+/// layout is clamped to `sample_count`. Only a *shortfall* (the chunk tables
+/// cover fewer samples than `stsz` declares) is an error. `sample_count` is
+/// bounded by `file_len` first (no sample occupies fewer than one byte,
+/// #987), so a hostile table cannot drive a large allocation.
+///
+/// `stsc.first_chunk` must be >= 1 and strictly ascending (ISO/IEC 14496-12
+/// §8.7.4); anything else is a structured `InvalidValue`. That ordering is
+/// what lets the expansion be one forward pass, linear in chunks + entries.
+pub(crate) fn sample_layout(
+    stsz: &SampleSizeBox,
+    stsc: &SampleToChunkBox,
+    co64: Option<&ChunkLargeOffsetBox>,
+    stco: Option<&ChunkOffsetBox>,
+    file_len: usize,
+) -> Result<Vec<(usize, usize)>> {
+    let chunk_offsets = chunk_offsets(co64, stco)?;
+    let declared = stsz.sample_count as usize;
+    if declared > file_len {
+        return Err(Error::BufferTooShort {
+            need: declared,
+            have: file_len,
+            what: "stsz sample_count vs file length",
+        });
+    }
+    let entries = &stsc.entries;
+    let mut prev_first = 0u32;
+    for e in entries {
+        if e.first_chunk <= prev_first {
+            return Err(Error::InvalidValue {
+                field: "stsc.first_chunk",
+                value: u64::from(e.first_chunk),
+                reason: "first_chunk must be >= 1 and strictly ascending (ISO/IEC 14496-12 §8.7.4)",
+            });
+        }
+        prev_first = e.first_chunk;
+    }
+
+    let mut layout = Vec::with_capacity(declared);
+    // Index of the stsc run applying to the current chunk, once one starts.
+    let mut run = 0usize;
+    for (c, &chunk_base) in chunk_offsets.iter().enumerate() {
+        if layout.len() == declared {
+            break;
+        }
+        #[cfg(test)]
+        LAYOUT_STEPS.with(|n| n.set(n.get() + 1));
+        let chunk_no = c as u64 + 1;
+        while run + 1 < entries.len() && u64::from(entries[run + 1].first_chunk) <= chunk_no {
+            #[cfg(test)]
+            LAYOUT_STEPS.with(|n| n.set(n.get() + 1));
+            run += 1;
+        }
+        let per_chunk = match entries.get(run) {
+            Some(e) if u64::from(e.first_chunk) <= chunk_no => e.samples_per_chunk,
+            _ => 0,
+        };
+        let mut cursor = chunk_base;
+        for _ in 0..per_chunk {
+            if layout.len() == declared {
+                break;
+            }
+            let size = sample_size(stsz, layout.len())?;
+            let start = usize::try_from(cursor)
+                .map_err(|_| Error::InvalidInput("chunk offset exceeds addressable range"))?;
+            layout.push((start, size));
+            cursor += size as u64;
+        }
+    }
+    if layout.len() < declared {
+        return Err(Error::InvalidInput(
+            "stsc/stco sample-to-chunk mapping did not cover all samples",
+        ));
+    }
+    Ok(layout)
+}
+
 /// Resolve the per-chunk absolute file byte offsets, preferring `co64`
 /// (64-bit, §8.7.5) over `stco` (32-bit) when both are present (well-formed
 /// files carry exactly one).
@@ -513,61 +592,6 @@ fn chunk_offsets(
             expected: "stco or co64",
         })
     }
-}
-
-/// Expand `stsc`'s compact `(first_chunk, samples_per_chunk)` runs (§8.7.4)
-/// into an explicit per-chunk sample count, one entry per chunk in
-/// `num_chunks` (from `stco`/`co64`).
-fn expand_stsc(stsc: &SampleToChunkBox, num_chunks: usize) -> Vec<u32> {
-    let mut table = alloc::vec![0u32; num_chunks];
-    for (i, entry) in stsc.entries.iter().enumerate() {
-        // first_chunk is 1-based; a run covers [first_chunk, next_run.first_chunk)
-        // or through the last chunk for the final run.
-        let start = entry.first_chunk as usize;
-        let end = stsc
-            .entries
-            .get(i + 1)
-            .map(|next| next.first_chunk as usize)
-            .unwrap_or(num_chunks + 1);
-        // Clamp to the actual chunk count before iterating: `first_chunk` is
-        // a wire `u32` and an out-of-range run (e.g. `0xFFFF_FFFF`) would
-        // otherwise spin the loop up to ~4.29 billion times per entry with
-        // nothing for the bounds check inside to skip early.
-        for chunk in start.max(1)..end.min(num_chunks + 1) {
-            table[chunk - 1] = entry.samples_per_chunk;
-        }
-    }
-    table
-}
-
-/// Walk each chunk in order, resolving every sample's `(absolute_offset,
-/// size)` from the chunk's starting file offset plus a running cursor over
-/// `stsz` sizes.
-fn chunk_layout(
-    chunk_offsets: &[u64],
-    samples_per_chunk: &[u32],
-    stsz: &SampleSizeBox,
-    total_samples: usize,
-) -> Result<Vec<(usize, usize)>> {
-    let mut layout = Vec::with_capacity(total_samples);
-    let mut sample_index = 0usize;
-    for (chunk, &count) in samples_per_chunk.iter().enumerate() {
-        let mut cursor = chunk_offsets[chunk];
-        for _ in 0..count {
-            let size = sample_size(stsz, sample_index)?;
-            let start = usize::try_from(cursor)
-                .map_err(|_| Error::InvalidInput("chunk offset exceeds addressable range"))?;
-            layout.push((start, size));
-            cursor += size as u64;
-            sample_index += 1;
-        }
-    }
-    if layout.len() != total_samples {
-        return Err(Error::InvalidInput(
-            "stsc-derived sample count does not match chunk layout",
-        ));
-    }
-    Ok(layout)
 }
 
 /// Resolve one sample's byte size from `stsz` (§8.7.3): the uniform
@@ -759,49 +783,155 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // expand_stsc (W22)
+    // sample_layout
     // -----------------------------------------------------------------------
 
-    /// An oversized `first_chunk` (up to the wire `u32` max) must not make
-    /// `expand_stsc` iterate the unclamped `[first_chunk, next.first_chunk)`
-    /// range: before the fix, `first_chunk: 1` alternating with
-    /// `first_chunk: 0xFFFF_FFFF` cost ~4.29 billion loop spins per such
-    /// entry, for a `num_chunks` no bigger than a small real fixture's actual
-    /// chunk count. This asserts the call returns promptly (this test would
-    /// not complete in any reasonable time pre-fix, so it is not run against
-    /// the unfixed code).
-    #[test]
-    fn expand_stsc_clamps_oversized_first_chunk_entries() {
-        let stsc = SampleToChunkBox {
+    fn run(first_chunk: u32, samples_per_chunk: u32) -> StscEntry {
+        StscEntry {
+            first_chunk,
+            samples_per_chunk,
+            sample_description_index: 1,
+        }
+    }
+
+    fn stsc_of(entries: Vec<StscEntry>) -> SampleToChunkBox {
+        SampleToChunkBox {
             version: 0,
             flags: 0,
-            entries: alloc::vec![
-                StscEntry {
-                    first_chunk: 1,
-                    samples_per_chunk: 2,
-                    sample_description_index: 1,
-                },
-                StscEntry {
-                    first_chunk: 0xFFFF_FFFF,
-                    samples_per_chunk: 3,
-                    sample_description_index: 1,
-                },
-                StscEntry {
-                    first_chunk: 1,
-                    samples_per_chunk: 4,
-                    sample_description_index: 1,
-                },
-                StscEntry {
-                    first_chunk: 0xFFFF_FFFF,
-                    samples_per_chunk: 5,
-                    sample_description_index: 1,
-                },
-            ],
-        };
-        // A chunk count sized like a small real fixture (this file's other
-        // stbl-child tests use single-digit chunk counts).
-        let num_chunks = 4;
-        let table = expand_stsc(&stsc, num_chunks);
-        assert_eq!(table.len(), num_chunks);
+            entries,
+        }
+    }
+
+    fn stco_of(offsets: &[u32]) -> ChunkOffsetBox {
+        ChunkOffsetBox {
+            version: 0,
+            flags: 0,
+            entries: offsets.to_vec(),
+        }
+    }
+
+    fn per_sample_stsz(sizes: &[u32]) -> SampleSizeBox {
+        SampleSizeBox {
+            version: 0,
+            flags: 0,
+            sample_size: 0,
+            sample_count: sizes.len() as u32,
+            entries: sizes.to_vec(),
+        }
+    }
+
+    fn uniform_stsz(size: u32, count: u32) -> SampleSizeBox {
+        SampleSizeBox {
+            version: 0,
+            flags: 0,
+            sample_size: size,
+            sample_count: count,
+            entries: Vec::new(),
+        }
+    }
+
+    /// (a) The last chunk holds fewer samples than `samples_per_chunk`
+    /// (surplus capacity) with a per-sample `stsz`: tolerated.
+    #[test]
+    fn layout_tolerates_surplus_capacity_per_sample_stsz() {
+        // 3 per chunk x 2 chunks = capacity 6, but only 5 samples declared.
+        let stsz = per_sample_stsz(&[10, 20, 30, 40, 50]);
+        let layout = sample_layout(
+            &stsz,
+            &stsc_of(alloc::vec![run(1, 3)]),
+            None,
+            Some(&stco_of(&[100, 1000])),
+            1 << 20,
+        )
+        .unwrap();
+        assert_eq!(
+            layout,
+            [(100, 10), (110, 20), (130, 30), (1000, 40), (1040, 50)]
+        );
+    }
+
+    /// (b) Same surplus, uniform `stsz`: clamped to `sample_count`, same rule.
+    #[test]
+    fn layout_tolerates_surplus_capacity_uniform_stsz() {
+        let layout = sample_layout(
+            &uniform_stsz(8, 4),
+            &stsc_of(alloc::vec![run(1, 3)]),
+            None,
+            Some(&stco_of(&[0, 100, 200])),
+            1 << 20,
+        )
+        .unwrap();
+        assert_eq!(layout, [(0, 8), (8, 8), (16, 8), (100, 8)]);
+    }
+
+    /// (c) The chunk tables cover fewer samples than `stsz` declares.
+    #[test]
+    fn layout_rejects_shortfall() {
+        for stsz in [uniform_stsz(8, 5), per_sample_stsz(&[8; 5])] {
+            let err = sample_layout(
+                &stsz,
+                &stsc_of(alloc::vec![run(1, 2)]),
+                None,
+                Some(&stco_of(&[0, 100])),
+                1 << 20,
+            )
+            .unwrap_err();
+            assert!(matches!(err, Error::InvalidInput(_)), "{err:?}");
+        }
+    }
+
+    /// `first_chunk` must be strictly ascending (§8.7.4): a repeat, a
+    /// descent and a zero are each a structured `InvalidValue` (this replaces
+    /// the W22 clamp test: the oversized/alternating entries it fed are now
+    /// rejected outright rather than iterated).
+    #[test]
+    fn layout_rejects_non_ascending_first_chunk() {
+        for entries in [
+            alloc::vec![run(1, 2), run(0xFFFF_FFFF, 3), run(1, 4)],
+            alloc::vec![run(2, 1), run(2, 1)],
+            alloc::vec![run(0, 1)],
+        ] {
+            let err = sample_layout(
+                &uniform_stsz(1, 1),
+                &stsc_of(entries),
+                None,
+                Some(&stco_of(&[0])),
+                1 << 20,
+            )
+            .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    Error::InvalidValue {
+                        field: "stsc.first_chunk",
+                        ..
+                    }
+                ),
+                "{err:?}"
+            );
+        }
+    }
+
+    /// (d) Work bound: one `stsc` run per chunk is one forward pass — steps
+    /// stay linear in chunks + entries (a per-chunk rescan of the run table
+    /// would be ~chunks^2/2 = 80 000 here).
+    #[test]
+    fn layout_work_is_linear_in_chunks_and_entries() {
+        const CHUNKS: u32 = 400;
+        let entries: Vec<StscEntry> = (1..=CHUNKS).map(|c| run(c, 1)).collect();
+        let offsets: Vec<u32> = (1..=CHUNKS).map(|c| c * 100).collect();
+        LAYOUT_STEPS.with(|n| n.set(0));
+        let layout = sample_layout(
+            &uniform_stsz(10, CHUNKS),
+            &stsc_of(entries),
+            None,
+            Some(&stco_of(&offsets)),
+            1 << 20,
+        )
+        .unwrap();
+        let steps = LAYOUT_STEPS.with(core::cell::Cell::get);
+        assert_eq!(layout[0], (100, 10));
+        assert_eq!(layout[CHUNKS as usize - 1], (CHUNKS as usize * 100, 10));
+        assert!(steps <= 2 * CHUNKS as usize, "steps {steps}");
     }
 }

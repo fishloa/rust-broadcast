@@ -114,6 +114,13 @@ pub(crate) struct ChildBox<'a> {
     pub largesize: bool,
 }
 
+impl ChildBox<'_> {
+    /// Whether this child's four-CC is `four_cc`.
+    pub(crate) fn is(&self, four_cc: &[u8; 4]) -> bool {
+        self.four_cc == *four_cc
+    }
+}
+
 /// Walk the children of a container body (the bytes after the container's own
 /// 8-byte header), calling `f` for each in wire order.
 ///

@@ -623,6 +623,11 @@
 - `Backoff::delay_for_attempt` — the stateless form of repeated `next()`
   (#1083).
 
+### Changed
+
+- HLS-pull resource-fetch retry delay now comes from `origin::supervisor::Backoff::delay_for_attempt` (the third, shift-based capped-exponential copy is gone; schedule unchanged and pinned by a test) (#1141).
+
+
 ## [0.11.0] - 2026-09-26
 
 ### Security

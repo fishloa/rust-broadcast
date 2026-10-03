@@ -5,6 +5,7 @@
 //! provider name and the service name.
 
 use super::descriptor_body;
+use super::lang_text::{EntryReader, LANG_LEN, text_field_len, write_lang, write_text};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
@@ -13,8 +14,6 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for multilingual_service_name_descriptor.
 pub const TAG: u8 = 0x5D;
 const HEADER_LEN: usize = 2;
-const LANG_LEN: usize = 3;
-const LEN_FIELD: usize = 1;
 
 /// One localised (provider name, service name) pair.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -48,42 +47,18 @@ impl<'a> Parse<'a> for MultilingualServiceNameDescriptor<'a> {
             "unexpected tag for multilingual_service_name_descriptor",
         )?;
         let mut entries = Vec::new();
-        let mut pos = 0;
-        while pos < body.len() {
-            if pos + LANG_LEN + LEN_FIELD > body.len() {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "entry header runs past descriptor end",
-                });
-            }
-            let language_code = LangCode([body[pos], body[pos + 1], body[pos + 2]]);
-            let provider_len_pos = pos + LANG_LEN;
-            let provider_len = body[provider_len_pos] as usize;
-            let provider_start = provider_len_pos + LEN_FIELD;
-            let provider_end = provider_start + provider_len;
-            if provider_end + LEN_FIELD > body.len() {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "service_provider_name_length runs past descriptor end",
-                });
-            }
-            let service_provider_name = DvbText::new(&body[provider_start..provider_end]);
-            let service_len = body[provider_end] as usize;
-            let service_start = provider_end + LEN_FIELD;
-            let service_end = service_start + service_len;
-            if service_end > body.len() {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "service_name_length runs past descriptor end",
-                });
-            }
-            let service_name = DvbText::new(&body[service_start..service_end]);
+        let mut reader = EntryReader::new(body, 0, TAG);
+        while reader.has_more() {
+            let language_code = reader.lang()?;
+            // One byte must follow the provider name: the service_name_length.
+            let service_provider_name =
+                reader.text("service_provider_name_length runs past descriptor end", 1)?;
+            let service_name = reader.text("service_name_length runs past descriptor end", 0)?;
             entries.push(ServiceNameEntry {
                 language_code,
                 service_provider_name,
                 service_name,
             });
-            pos = service_end;
         }
         Ok(Self { entries })
     }
@@ -98,37 +73,15 @@ impl Serialize for MultilingualServiceNameDescriptor<'_> {
                 .iter()
                 .map(|e| {
                     LANG_LEN
-                        + LEN_FIELD
-                        + e.service_provider_name.len()
-                        + LEN_FIELD
-                        + e.service_name.len()
+                        + text_field_len(&e.service_provider_name)
+                        + text_field_len(&e.service_name)
                 })
                 .sum::<usize>()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        for e in &self.entries {
-            if e.service_provider_name.len() > u8::MAX as usize {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "service_provider_name exceeds 255 bytes (length is 8-bit)",
-                });
-            }
-            if e.service_name.len() > u8::MAX as usize {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "service_name exceeds 255 bytes (length is 8-bit)",
-                });
-            }
-        }
         let len = self.serialized_len();
         let body = len - HEADER_LEN;
-        if body > u8::MAX as usize {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "multilingual_service_name_descriptor body exceeds 255 bytes",
-            });
-        }
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
                 need: len,
@@ -138,20 +91,14 @@ impl Serialize for MultilingualServiceNameDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, body)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-            pos += LANG_LEN;
-            buf[pos] = broadcast_common::len::fit_u8(
-                e.service_provider_name.len(),
+            pos = write_lang(buf, pos, &e.language_code);
+            pos = write_text(
+                buf,
+                pos,
+                &e.service_provider_name,
                 "service_provider_name_length",
             )?;
-            pos += LEN_FIELD;
-            buf[pos..pos + e.service_provider_name.len()]
-                .copy_from_slice(e.service_provider_name.raw());
-            pos += e.service_provider_name.len();
-            buf[pos] = broadcast_common::len::fit_u8(e.service_name.len(), "service_name_length")?;
-            pos += LEN_FIELD;
-            buf[pos..pos + e.service_name.len()].copy_from_slice(e.service_name.raw());
-            pos += e.service_name.len();
+            pos = write_text(buf, pos, &e.service_name, "service_name_length")?;
         }
         Ok(len)
     }
@@ -283,7 +230,7 @@ mod tests {
         };
         let mut buf = vec![0u8; d.serialized_len()];
         let err = d.serialize_into(&mut buf).unwrap_err();
-        assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
+        assert!(matches!(err, Error::FieldOverflow(_)));
     }
 
     #[cfg(feature = "serde")]

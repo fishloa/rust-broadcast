@@ -964,26 +964,19 @@ pub struct OpaqueChild {
     pub to_end: bool,
 }
 
-/// The opaque payload of a child box: everything after `size`/`type` — which
-/// keeps a `uuid`'s 16-byte usertype but **not** an 8-byte `largesize` field,
-/// whose form is remembered separately ([`OpaqueChild::largesize`]) and
-/// re-emitted with the header.
-fn opaque_payload(largesize: bool, whole: &[u8]) -> Result<Vec<u8>> {
-    let header_size = BOX_HEADER_SIZE + if largesize { LARGESIZE_SIZE } else { 0 };
-    if whole.len() < header_size {
-        return Err(Error::BufferTooShort {
-            need: header_size,
-            have: whole.len(),
-            what: "opaque child payload",
-        });
-    }
-    // Skip `size`+`type` **and** the 8 `largesize` bytes when that form was
-    // used: the serializer writes its own `largesize`, so leaving these in the
-    // payload would land them in the body as junk (audit item 1, round 3).
-    Ok(whole[header_size..].to_vec())
-}
-
 impl OpaqueChild {
+    /// An opaque child preserving everything the wire carried: the payload
+    /// after `size`/`type` (usertype of a `uuid` included, `largesize` bytes
+    /// excluded) plus the `largesize` / `size == 0` forms.
+    pub(crate) fn from_child(child: &crate::init_segment::ChildBox<'_>) -> Self {
+        Self {
+            box_type: child.four_cc,
+            data: child.payload.to_vec(),
+            largesize: child.largesize,
+            to_end: child.to_end,
+        }
+    }
+
     /// Build one from a child's four-CC and payload (everything after
     /// `size`/`type` — the usertype of a `uuid` included; the compact header
     /// form is used).
@@ -1128,42 +1121,33 @@ impl TrackFragmentBox {
     }
 
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        use crate::box_types::parse_box;
         let mut tfhd: Option<TrackFragmentHeaderBox> = None;
         let mut tfdt: Option<TrackFragmentBaseMediaDecodeTimeBox> = None;
         let mut trun: Vec<TrackFragmentRunBox> = Vec::new();
         let mut order: Vec<TrafChild> = Vec::new();
-        let mut remaining = body;
-        while !remaining.is_empty() {
-            let (bx, consumed) = parse_box(remaining)?;
-            if bx.header.box_type.is(b"tfhd") {
-                tfhd = Some(TrackFragmentHeaderBox::parse_body(bx.body)?);
+        // The crate's one container-child walker (audit r05-O3 / #1141): this
+        // loop used to be a private copy of it.
+        crate::init_segment::walk_children(body, |child| {
+            if child.is(b"tfhd") {
+                tfhd = Some(TrackFragmentHeaderBox::parse_body(child.payload)?);
                 order.push(TrafChild::Tfhd);
-            } else if bx.header.box_type.is(b"tfdt") {
-                tfdt = Some(TrackFragmentBaseMediaDecodeTimeBox::parse_body(bx.body)?);
+            } else if child.is(b"tfdt") {
+                tfdt = Some(TrackFragmentBaseMediaDecodeTimeBox::parse_body(
+                    child.payload,
+                )?);
                 order.push(TrafChild::Tfdt);
-            } else if bx.header.box_type.is(b"trun") {
-                let parsed = TrackFragmentRunBox::parse_body(bx.body)?;
+            } else if child.is(b"trun") {
+                let parsed = TrackFragmentRunBox::parse_body(child.payload)?;
                 order.push(TrafChild::Trun(trun.len()));
                 trun.push(parsed);
             } else {
-                // `bx.body` starts after the *whole* header, usertype and
-                // largesize included, so a `uuid` child (Smooth `tfxd`, a
-                // PlayReady `tfrf`) would lose its 16-byte usertype on the way
-                // back out. The payload is therefore everything after the
-                // 8-byte `size`+`type` header (audit item 1).
-                order.push(TrafChild::Opaque(OpaqueChild {
-                    box_type: bx.header.box_type.0,
-                    data: opaque_payload(bx.header.has_largesize(), &remaining[..consumed])?,
-                    largesize: bx.header.has_largesize(),
-                    to_end: bx.header.size == 0,
-                }));
+                // `payload` is everything after `size`+`type` (+ `largesize`),
+                // so a `uuid` child (Smooth `tfxd`, a PlayReady `tfrf`) keeps
+                // its 16-byte usertype on the way back out (audit item 1).
+                order.push(TrafChild::Opaque(OpaqueChild::from_child(&child)));
             }
-            if consumed == 0 {
-                break;
-            }
-            remaining = &remaining[consumed.min(remaining.len())..];
-        }
+            Ok(())
+        })?;
         let tfhd = tfhd.ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
@@ -1290,33 +1274,22 @@ impl MovieFragmentBox {
     }
 
     pub fn parse_body(body: &[u8]) -> Result<Self> {
-        use crate::box_types::parse_box;
         let mut mfhd: Option<MovieFragmentHeaderBox> = None;
         let mut traf: Vec<TrackFragmentBox> = Vec::new();
         let mut order: Vec<MoofChild> = Vec::new();
-        let mut remaining = body;
-        while !remaining.is_empty() {
-            let (bx, consumed) = parse_box(remaining)?;
-            if bx.header.box_type.is(b"mfhd") {
-                mfhd = Some(MovieFragmentHeaderBox::parse_body(bx.body)?);
+        crate::init_segment::walk_children(body, |child| {
+            if child.is(b"mfhd") {
+                mfhd = Some(MovieFragmentHeaderBox::parse_body(child.payload)?);
                 order.push(MoofChild::Mfhd);
-            } else if bx.header.box_type.is(b"traf") {
-                let parsed = TrackFragmentBox::parse_body(bx.body)?;
+            } else if child.is(b"traf") {
+                let parsed = TrackFragmentBox::parse_body(child.payload)?;
                 order.push(MoofChild::Traf(traf.len()));
                 traf.push(parsed);
             } else {
-                order.push(MoofChild::Opaque(OpaqueChild {
-                    box_type: bx.header.box_type.0,
-                    data: opaque_payload(bx.header.has_largesize(), &remaining[..consumed])?,
-                    largesize: bx.header.has_largesize(),
-                    to_end: bx.header.size == 0,
-                }));
+                order.push(MoofChild::Opaque(OpaqueChild::from_child(&child)));
             }
-            if consumed == 0 {
-                break;
-            }
-            remaining = &remaining[consumed.min(remaining.len())..];
-        }
+            Ok(())
+        })?;
         let mfhd = mfhd.ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,

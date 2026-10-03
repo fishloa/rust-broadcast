@@ -58,6 +58,7 @@ pub mod ibp;
 pub mod iod;
 pub mod iso_639_language;
 pub mod j2k_video;
+mod lang_text;
 pub mod linkage;
 pub mod local_time_offset;
 pub mod logical_channel;

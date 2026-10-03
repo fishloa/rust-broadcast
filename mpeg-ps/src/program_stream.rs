@@ -18,9 +18,6 @@ use crate::system_header::{
     PREFIX_LEN as SYSTEM_HEADER_PREFIX_LEN, SYSTEM_HEADER_START_CODE, SystemHeader,
 };
 
-/// `packet_start_code_prefix` — `0x000001` (ISO/IEC 13818-1 §2.4.3.6).
-const START_CODE_PREFIX: [u8; 3] = [0x00, 0x00, 0x01];
-
 /// `MPEG_program_end_code` — `0x000001B9`.
 const PROGRAM_END_CODE: u32 = 0x0000_01B9;
 
@@ -141,7 +138,7 @@ fn parse_pes_loop(
                 break;
             }
         }
-        if !(pos + 6 <= data.len() && data[pos..pos + 3] == START_CODE_PREFIX) {
+        if !(pos + 6 <= data.len() && data[pos..pos + 3] == crate::PACKET_START_CODE_PREFIX) {
             break;
         }
         // W5 (#1119): a Program Stream Map (`stream_id 0xBC`) is a distinct

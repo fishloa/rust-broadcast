@@ -47,6 +47,30 @@ pub(crate) fn read_bits_at(data: &[u8], bit_pos: &mut usize, n: usize) -> Option
     Some(val)
 }
 
+/// [`read_bits_at`] with this crate's typed errors: `n > 64` is
+/// [`Error::InvalidValue`], running out of data is [`Error::BufferTooShort`].
+/// The one `&[u8]`-cursor reader the AC-3 and DTS header parsers share (the
+/// DTS copy lacked the `n > 64` check — audit r04-O1 / #1141).
+pub(crate) fn read_bits_checked(
+    data: &[u8],
+    bit_pos: &mut usize,
+    n: usize,
+    what: &'static str,
+) -> Result<u64> {
+    if n > 64 {
+        return Err(Error::InvalidValue {
+            field: what,
+            value: n as u64,
+            reason: "bit count > 64",
+        });
+    }
+    read_bits_at(data, bit_pos, n).ok_or(Error::BufferTooShort {
+        need: bytes_needed(*bit_pos, n),
+        have: data.len(),
+        what,
+    })
+}
+
 /// Bytes needed to hold `n` more bits starting at `bit_pos` (saturating, for
 /// the `need` field of a `BufferTooShort`).
 pub(crate) fn bytes_needed(bit_pos: usize, n: usize) -> usize {
@@ -212,6 +236,25 @@ impl BitReader {
 
 #[cfg(test)]
 mod tests {
+    /// Drift pin (#1141): the shared checked reader rejects `n > 64` as
+    /// `InvalidValue` (DTS used to report it as a short buffer) and reports a
+    /// short buffer as `BufferTooShort`.
+    #[test]
+    fn read_bits_checked_distinguishes_oversize_from_short_buffer() {
+        let data = [0xA5u8, 0x5A];
+        let mut pos = 0usize;
+        assert!(matches!(
+            read_bits_checked(&data, &mut pos, 65, "x"),
+            Err(Error::InvalidValue { .. })
+        ));
+        assert_eq!(read_bits_checked(&data, &mut pos, 4, "x").unwrap(), 0xA);
+        assert!(matches!(
+            read_bits_checked(&data, &mut pos, 16, "x"),
+            Err(Error::BufferTooShort { .. })
+        ));
+        assert_eq!(pos, 4, "a failed read leaves the cursor unchanged");
+    }
+
     use super::*;
     use alloc::vec;
 

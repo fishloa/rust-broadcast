@@ -170,6 +170,12 @@ async fn t2mi_stream_one_byte_at_a_time_matches_oracle() {
 
 /// Build a minimal syntactically-valid T2-MI TS packet (BBFrame type 0x00).
 fn make_t2mi_ts_packet(pid: u16) -> [u8; 188] {
+    make_t2mi_ts_packet_n(pid, 0x01)
+}
+
+/// As [`make_t2mi_ts_packet`] with a chosen T2-MI `packet_count`, so
+/// consecutive packets are distinguishable.
+fn make_t2mi_ts_packet_n(pid: u16, packet_count: u8) -> [u8; 188] {
     use broadcast_common::crc32_mpeg2;
 
     // Build the T2-MI packet: header(6) + payload(3) + CRC(4).
@@ -177,7 +183,7 @@ fn make_t2mi_ts_packet(pid: u16) -> [u8; 188] {
     let payload_len_bits = (payload.len() * 8) as u16;
     let mut t2mi: Vec<u8> = Vec::with_capacity(6 + payload.len() + 4);
     t2mi.push(0x00); // packet_type: BBFrame
-    t2mi.push(0x01); // packet_count
+    t2mi.push(packet_count); // packet_count
     t2mi.push(0x00); // superframe_idx + rfu + t2mi_stream_id
     t2mi.push(0x00); // rfu
     t2mi.extend_from_slice(&payload_len_bits.to_be_bytes());
@@ -256,4 +262,73 @@ async fn t2mi_stream_stats_after_completion() {
     let stats = stream.stats();
     assert!(stats.ts_packets >= 1, "expected at least 1 ts_packets");
     assert_eq!(stats.crc_failures, 0);
+}
+
+// ── test 4: a TS packet split across two reads (partial-packet carry-over,
+// issue #1036) ─────────────────────────────────────────────────────────────
+
+/// Hands out its data in the given chunk sizes, one chunk per `poll_read`.
+struct ChunkedReader {
+    data: Vec<u8>,
+    chunks: Vec<usize>,
+    pos: usize,
+    next: usize,
+}
+
+impl tokio::io::AsyncRead for ChunkedReader {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        _cx: &mut std::task::Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
+    ) -> std::task::Poll<std::io::Result<()>> {
+        let Some(&n) = self.chunks.get(self.next) else {
+            return std::task::Poll::Ready(Ok(())); // EOF
+        };
+        let end = (self.pos + n).min(self.data.len());
+        buf.put_slice(&self.data[self.pos..end]);
+        self.pos = end;
+        self.next += 1;
+        std::task::Poll::Ready(Ok(()))
+    }
+}
+
+/// Three distinct T2-MI packets delivered as reads of 100 + 150 + 314 bytes:
+/// the first read ends mid-packet-0, the second ends mid-packet-1. The
+/// trailing partial packet must be carried into the next read (shared
+/// `TsFramer`, #1036/#1141) — all three events arrive intact, byte-equal to
+/// the synchronous oracle.
+#[tokio::test]
+async fn t2mi_stream_partial_packet_split_across_two_reads_is_carried_over() {
+    const PID: u16 = 0x0006;
+    let mut data = Vec::new();
+    for count in 1..=3u8 {
+        data.extend_from_slice(&make_t2mi_ts_packet_n(PID, count));
+    }
+    assert_eq!(data.len(), 3 * 188);
+    let oracle = t2mi_sync_oracle(&data, PID);
+    assert_eq!(oracle.len(), 3, "oracle sees all three packets");
+
+    let reader = ChunkedReader {
+        data: data.clone(),
+        chunks: vec![100, 150, 314],
+        pos: 0,
+        next: 0,
+    };
+    let mut stream = T2miEventStream::new(reader, PID);
+    let got = tokio::time::timeout(Duration::from_secs(60), async {
+        let mut events = Vec::new();
+        while let Some(ev) = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)).await {
+            events.push(ev);
+        }
+        events
+    })
+    .await
+    .expect("hang guard (issue #807) fired");
+
+    assert_eq!(got.len(), 3, "all packets delivered");
+    for (i, (g, w)) in got.iter().zip(oracle.iter()).enumerate() {
+        assert_eq!(g.bytes(), w.bytes(), "event[{i}] bytes intact");
+    }
+    assert_eq!(stream.resync_stats().bytes_discarded, 0, "nothing dropped");
+    assert_eq!(stream.resync_stats().desyncs, 0);
 }

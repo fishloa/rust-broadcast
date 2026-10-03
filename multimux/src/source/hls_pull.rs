@@ -108,18 +108,23 @@ const MAX_RESOURCE_RETRY_ATTEMPTS: u32 = 8;
 /// first retry.
 const RESOURCE_RETRY_BASE_DELAY: Duration = Duration::from_millis(500);
 
+/// Growth factor of the resource-fetch retry delay (doubling).
+const RESOURCE_RETRY_FACTOR: f64 = 2.0;
+
 /// Cap on the exponential resource-fetch retry delay.
 const RESOURCE_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 
 /// Exponential backoff for resource-fetch attempt `attempt` (1-based),
 /// capped at [`RESOURCE_RETRY_MAX_DELAY`].
 fn retry_backoff(attempt: u32) -> Duration {
-    // `2^(attempt-1)`, clamped so the multiply cannot overflow.
-    let shift = attempt.saturating_sub(1).min(16);
-    RESOURCE_RETRY_BASE_DELAY
-        .checked_mul(1u32 << shift)
-        .unwrap_or(RESOURCE_RETRY_MAX_DELAY)
-        .min(RESOURCE_RETRY_MAX_DELAY)
+    // The workspace's one capped-exponential implementation (audit r07-O1 /
+    // #1141); `attempt` here is 1-based, `delay_for_attempt` 0-based.
+    crate::origin::supervisor::Backoff::new(
+        RESOURCE_RETRY_BASE_DELAY,
+        RESOURCE_RETRY_MAX_DELAY,
+        RESOURCE_RETRY_FACTOR,
+    )
+    .delay_for_attempt(attempt.saturating_sub(1))
 }
 
 /// Spawn one resource fetch into `inflight`, after `delay`. The single place
@@ -664,6 +669,20 @@ pub async fn run_hls_pull(
 
 #[cfg(test)]
 mod tests {
+    /// Before/after pin (#1141): the shared `Backoff` reproduces the
+    /// shift-based schedule `retry_backoff` carried before consolidation.
+    #[test]
+    fn retry_backoff_matches_the_pre_consolidation_shift_schedule() {
+        for attempt in 0..40u32 {
+            let shift = attempt.saturating_sub(1).min(16);
+            let old = RESOURCE_RETRY_BASE_DELAY
+                .checked_mul(1u32 << shift)
+                .unwrap_or(RESOURCE_RETRY_MAX_DELAY)
+                .min(RESOURCE_RETRY_MAX_DELAY);
+            assert_eq!(retry_backoff(attempt), old, "attempt {attempt}");
+        }
+    }
+
     use super::*;
     use crate::testutil::MockAuthScheme;
     use broadcast_hls::{MediaPlaylist, MediaSegment};

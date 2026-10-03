@@ -51,6 +51,9 @@ pub const UUID_TYPE_BYTES: [u8; 4] = *b"uuid";
 /// Size of the fixed-size Box header fields: `size`(32) + `type`(32) = 8 bytes.
 pub const BOX_HEADER_MIN_SIZE: usize = 8;
 
+/// Byte range of the four-CC within a box's header (ISO/IEC 14496-12 §4.2).
+const BOX_TYPE_RANGE: core::ops::Range<usize> = 4..8;
+
 /// Size of the 64-bit `largesize` field (ISO/IEC 14496-12:2015 §4.2).
 pub const LARGESIZE_SIZE: usize = 8;
 
@@ -613,6 +616,27 @@ impl<'a> Iterator for BoxIter<'a> {
 /// Convenience function to create a `BoxIter`.
 pub fn box_iter(data: &[u8]) -> BoxIter<'_> {
     BoxIter::new(data)
+}
+
+/// Iterate the top-level boxes of `data`, yielding each box's *full* bytes
+/// (header + body). Best-effort: the first malformed or truncated box ends the
+/// walk silently — for navigation helpers that hand the slices to a strict
+/// typed parser. The single slice-yielding adapter over [`box_iter`]
+/// (audit r05-O1 / #1141; `cenc_decrypt`, `media`, `progressive` each carried
+/// their own walker).
+pub(crate) fn box_slices(data: &[u8]) -> impl Iterator<Item = &[u8]> {
+    let mut offset = 0usize;
+    box_iter(data).map_while(move |step| {
+        let (_, consumed) = step.ok()?;
+        let start = offset;
+        offset += consumed;
+        Some(&data[start..start + consumed])
+    })
+}
+
+/// Find a top-level box by four-CC, returning its full bytes (header + body).
+pub(crate) fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
+    box_slices(data).find(|b| b[BOX_TYPE_RANGE] == *fourcc)
 }
 
 // ---------------------------------------------------------------------------

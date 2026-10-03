@@ -24,6 +24,10 @@
   data. Partial bytes are now carried over to the next read, matching
   `SectionStream` (#1036).
 
+### Changed
+
+- `SectionStream` and `T2miEventStream` now share one internal `TsFramer` (read, resync, 188-byte alignment, partial-packet carry-over, datagram framing) instead of two diverging copies of `feed_buf` and the read loop; behaviour unchanged (#1141).
+
 
 ## [0.5.0] - 2026-08-11
 

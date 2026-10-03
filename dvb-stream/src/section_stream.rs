@@ -30,21 +30,11 @@ use std::task::{Context, Poll};
 use dvb_si::demux::{SectionEvent, SiDemux, SiDemuxBuilder};
 use futures_core::Stream;
 use tokio::io::AsyncRead;
+#[cfg(feature = "udp")]
 use tokio::io::ReadBuf;
 
 use crate::ResyncStats;
-use crate::resync::{TS_PACKET_SIZE, TS_SYNC_BYTE, resync};
-
-/// Read buffer size: 7 × 188 bytes = 1316 bytes (one UDP/RTP payload
-/// as used in DVB multicast delivery per ETSI TR 101 290 §B).
-const READ_BUF_SIZE: usize = TS_PACKET_SIZE * 7;
-
-/// Read buffer size for datagram-framed sources (UDP): the maximum possible
-/// UDP payload, so a real-world datagram larger than 7×188 bytes (e.g. an
-/// RTP-encapsulated 1328-byte payload) is never silently truncated by the OS
-/// (#1036 / W-DS-2).
-#[cfg(feature = "udp")]
-const UDP_READ_BUF_SIZE: usize = 65_535;
+use crate::framer::TsFramer;
 
 /// Async [`Stream`] of [`SectionEvent`]s from a raw TS byte source.
 ///
@@ -66,26 +56,10 @@ const UDP_READ_BUF_SIZE: usize = 65_535;
 ///
 /// Drop the stream. No internal tasks are spawned.
 pub struct SectionStream<R> {
-    reader: R,
+    /// Read + resync + packet-alignment state, shared with `T2miEventStream`.
+    framer: TsFramer<R>,
     demux: SiDemux,
     queue: VecDeque<SectionEvent>,
-    buf: Vec<u8>,
-    /// Byte offset within `buf` for the next read.
-    filled: usize,
-    /// Whether the reader has reached EOF.
-    eof: bool,
-    /// True once we have found a sync byte and trimmed the leading garbage.
-    synced: bool,
-    /// Resync statistics.
-    resync_stats: ResyncStats,
-    /// The most recent I/O error from the reader, if `poll_next` ended the
-    /// stream because of one rather than a clean EOF (#1036 / W-DS-1).
-    last_io_error: Option<std::io::Error>,
-    /// Set for datagram-framed readers (UDP): each read is one independent
-    /// datagram, so a trailing partial packet is never stitched onto the
-    /// *next* (unrelated) datagram, and every read starts at buffer offset 0
-    /// (#1036 / W-DS-2).
-    datagram_framed: bool,
 }
 
 impl<R: AsyncRead + Unpin> SectionStream<R> {
@@ -106,16 +80,9 @@ impl<R: AsyncRead + Unpin> SectionStream<R> {
     #[must_use]
     pub fn with_demux(reader: R, demux: SiDemux) -> Self {
         Self {
-            reader,
+            framer: TsFramer::new(reader),
             demux,
             queue: VecDeque::new(),
-            buf: vec![0u8; READ_BUF_SIZE],
-            filled: 0,
-            eof: false,
-            synced: false,
-            resync_stats: ResyncStats::default(),
-            last_io_error: None,
-            datagram_framed: false,
         }
     }
 
@@ -128,7 +95,7 @@ impl<R: AsyncRead + Unpin> SectionStream<R> {
     /// Access the resync statistics.
     #[must_use]
     pub fn resync_stats(&self) -> ResyncStats {
-        self.resync_stats
+        self.framer.resync_stats()
     }
 
     /// Take the I/O error that ended the stream, if `poll_next` yielded
@@ -136,73 +103,7 @@ impl<R: AsyncRead + Unpin> SectionStream<R> {
     /// A caller (e.g. a reconnect supervisor) uses this to distinguish
     /// "source finished" from "source failed" (#1036 / W-DS-1).
     pub fn take_io_error(&mut self) -> Option<std::io::Error> {
-        self.last_io_error.take()
-    }
-
-    /// Feed a completed read into the demux and push events into `queue`.
-    fn feed_buf(&mut self, data: &[u8]) {
-        // Each datagram is an independent framing unit (no relationship to
-        // the next), so resync fresh every time instead of trusting a sync
-        // state carried from an unrelated earlier datagram (#1036 / W-DS-2).
-        if self.datagram_framed {
-            self.synced = false;
-        }
-        // On first use (or after a large gap), resync to the nearest 0x47.
-        let start = if self.synced {
-            0
-        } else {
-            match resync(data) {
-                Some(off) => {
-                    self.synced = true;
-                    self.resync_stats.resyncs += 1;
-                    self.resync_stats.bytes_discarded += off as u64;
-                    off
-                }
-                None => {
-                    // no sync byte yet — discard this chunk
-                    self.resync_stats.bytes_discarded += data.len() as u64;
-                    return;
-                }
-            }
-        };
-
-        // Per-packet loop with mid-stream desync detection.
-        let aligned = &data[start..];
-        let n_packets = aligned.len() / TS_PACKET_SIZE;
-        for i in 0..n_packets {
-            let pkt_start = i * TS_PACKET_SIZE;
-            let pkt = &aligned[pkt_start..pkt_start + TS_PACKET_SIZE];
-            if pkt[0] != TS_SYNC_BYTE {
-                // Mid-stream desync: discard rest of this chunk and re-resync.
-                self.resync_stats.desyncs += 1;
-                let discarded = aligned.len() - pkt_start;
-                self.resync_stats.bytes_discarded += discarded as u64;
-                self.synced = false;
-                self.filled = 0;
-                return;
-            }
-            for event in self.demux.feed(pkt) {
-                self.queue.push_back(event);
-            }
-        }
-
-        // If the tail was not a full packet, preserve the partial bytes —
-        // unless this source is datagram-framed, where the trailing bytes
-        // belong to *this* datagram only and stitching them onto the next,
-        // unrelated datagram would misalign and corrupt both (#1036 / W-DS-2).
-        let aligned_end = start + (data[start..].len() / TS_PACKET_SIZE) * TS_PACKET_SIZE;
-        let remainder = &data[aligned_end..];
-        if !remainder.is_empty() && !self.datagram_framed {
-            // If all bytes were consumed cleanly this will be empty.
-            // Non-empty means a partial TS packet at the tail — keep for next read.
-            self.buf[..remainder.len()].copy_from_slice(remainder);
-            self.filled = remainder.len();
-        } else {
-            if !remainder.is_empty() {
-                self.resync_stats.bytes_discarded += remainder.len() as u64;
-            }
-            self.filled = 0;
-        }
+        self.framer.take_io_error()
     }
 }
 
@@ -218,37 +119,17 @@ impl<R: AsyncRead + Unpin> Stream for SectionStream<R> {
                 return Poll::Ready(Some(event));
             }
 
-            // If EOF and queue empty, the stream is done.
-            if this.eof {
-                return Poll::Ready(None);
-            }
-
-            // Read more bytes from the reader.
-            let buf_len = this.buf.len();
-            let read_from = this.filled;
-            let mut read_buf = ReadBuf::new(&mut this.buf[read_from..buf_len]);
-
-            match Pin::new(&mut this.reader).poll_read(cx, &mut read_buf) {
+            // Read more bytes; a finished source (EOF or I/O error) with an
+            // empty queue ends the stream.
+            let SectionStream {
+                framer,
+                demux,
+                queue,
+            } = &mut *this;
+            match framer.poll_feed(cx, &mut |pkt| queue.extend(demux.feed(pkt))) {
                 Poll::Pending => return Poll::Pending,
-                Poll::Ready(Err(e)) => {
-                    // Keep the error so a caller can tell a failed source
-                    // from a clean EOF (#1036 / W-DS-1) via `take_io_error`.
-                    this.last_io_error = Some(e);
-                    this.eof = true;
-                    return Poll::Ready(None);
-                }
-                Poll::Ready(Ok(())) => {
-                    let n = read_buf.filled().len();
-                    if n == 0 {
-                        this.eof = true;
-                        return Poll::Ready(None);
-                    }
-                    let total = read_from + n;
-                    // Feed the entire accumulated data (partial + new).
-                    let data: Vec<u8> = this.buf[..total].to_vec();
-                    this.feed_buf(&data);
-                    // `feed_buf` updates `this.filled`; loop to drain queue.
-                }
+                Poll::Ready(false) => return Poll::Ready(None),
+                Poll::Ready(true) => {}
             }
         }
     }
@@ -301,10 +182,9 @@ impl SectionStream<UdpReader> {
         socket.join_multicast_v4(multicast_addr, *bind_addr.ip())?;
         let mut stream = Self::new(UdpReader { socket });
         // A UDP datagram is an independent framing unit and can be larger
-        // than 7×188 bytes (RTP-encapsulated payloads) — see `feed_buf` and
-        // `UDP_READ_BUF_SIZE` (#1036 / W-DS-2).
-        stream.buf = vec![0u8; UDP_READ_BUF_SIZE];
-        stream.datagram_framed = true;
+        // than 7×188 bytes (RTP-encapsulated payloads) — see
+        // `framer::TsFramer::set_datagram_framed` (#1036 / W-DS-2).
+        stream.framer.set_datagram_framed();
         Ok(stream)
     }
 }

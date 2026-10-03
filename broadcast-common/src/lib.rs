@@ -75,6 +75,7 @@ pub mod hex;
 pub mod len;
 pub mod mux;
 pub mod pusi;
+pub mod seq;
 pub mod stage;
 pub mod time;
 pub mod traits;

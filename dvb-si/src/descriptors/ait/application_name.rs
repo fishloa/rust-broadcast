@@ -6,6 +6,9 @@
 //! SI multilingual descriptors.
 
 use crate::descriptors::descriptor_body;
+use crate::descriptors::lang_text::{
+    EntryReader, LANG_LEN, text_field_len, write_lang, write_text,
+};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
@@ -14,8 +17,6 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for application_name_descriptor (AIT namespace).
 pub const TAG: u8 = 0x01;
 const HEADER_LEN: usize = 2;
-const LANG_LEN: usize = 3;
-const NAME_LEN_FIELD: usize = 1;
 
 /// One localised application name.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,29 +48,15 @@ impl<'a> Parse<'a> for ApplicationNameDescriptor<'a> {
             "unexpected tag for application_name_descriptor",
         )?;
         let mut entries = Vec::new();
-        let mut pos = 0;
-        while pos < body.len() {
-            if pos + LANG_LEN + NAME_LEN_FIELD > body.len() {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "entry header runs past descriptor end",
-                });
-            }
-            let language_code = LangCode([body[pos], body[pos + 1], body[pos + 2]]);
-            let name_len = body[pos + LANG_LEN] as usize;
-            let name_start = pos + LANG_LEN + NAME_LEN_FIELD;
-            let name_end = name_start + name_len;
-            if name_end > body.len() {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "application_name_length runs past descriptor end",
-                });
-            }
+        let mut reader = EntryReader::new(body, 0, TAG);
+        while reader.has_more() {
+            let language_code = reader.lang()?;
+            let application_name =
+                reader.text("application_name_length runs past descriptor end", 0)?;
             entries.push(ApplicationNameEntry {
                 language_code,
-                application_name: DvbText::new(&body[name_start..name_end]),
+                application_name,
             });
-            pos = name_end;
         }
         Ok(Self { entries })
     }
@@ -82,27 +69,13 @@ impl Serialize for ApplicationNameDescriptor<'_> {
             + self
                 .entries
                 .iter()
-                .map(|e| LANG_LEN + NAME_LEN_FIELD + e.application_name.len())
+                .map(|e| LANG_LEN + text_field_len(&e.application_name))
                 .sum::<usize>()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        for e in &self.entries {
-            if e.application_name.len() > u8::MAX as usize {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "application_name exceeds 255 bytes",
-                });
-            }
-        }
         let len = self.serialized_len();
         let body_len = len - HEADER_LEN;
-        if body_len > u8::MAX as usize {
-            return Err(Error::InvalidDescriptor {
-                tag: TAG,
-                reason: "application_name_descriptor body exceeds 255 bytes",
-            });
-        }
         if buf.len() < len {
             return Err(Error::OutputBufferTooSmall {
                 need: len,
@@ -112,13 +85,8 @@ impl Serialize for ApplicationNameDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-            buf[pos + LANG_LEN] =
-                broadcast_common::len::fit_u8(e.application_name.len(), "application_name_length")?;
-            let name_start = pos + LANG_LEN + NAME_LEN_FIELD;
-            buf[name_start..name_start + e.application_name.len()]
-                .copy_from_slice(e.application_name.raw());
-            pos = name_start + e.application_name.len();
+            pos = write_lang(buf, pos, &e.language_code);
+            pos = write_text(buf, pos, &e.application_name, "application_name_length")?;
         }
         Ok(len)
     }
@@ -132,6 +100,24 @@ impl<'a> crate::traits::DescriptorDef<'a> for ApplicationNameDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Drift fix (#1141): the over-range name check is the shared
+    /// `lang_text::write_text` one, exercised here through this former copy.
+    #[test]
+    fn serialize_rejects_over_range_name() {
+        let name = alloc::vec![0u8; 256];
+        let d = ApplicationNameDescriptor {
+            entries: alloc::vec![ApplicationNameEntry {
+                language_code: LangCode(*b"eng"),
+                application_name: DvbText::new(&name),
+            }],
+        };
+        let mut buf = alloc::vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
 
     /// Body: lang(3) + name_len(1) + "Foo"(3) = 7.
     fn build_single_entry_foo() -> [u8; 9] {

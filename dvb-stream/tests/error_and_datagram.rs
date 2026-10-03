@@ -12,7 +12,7 @@ use std::task::{Context, Poll};
 #[cfg(feature = "udp")]
 use std::time::Duration;
 
-use dvb_stream::SectionStream;
+use dvb_stream::{SectionStream, T2miEventStream};
 use futures_core::Stream;
 use tokio::io::{AsyncRead, ReadBuf};
 
@@ -46,6 +46,23 @@ async fn section_stream_distinguishes_io_error_from_eof() {
     assert_eq!(err.kind(), std::io::ErrorKind::ConnectionReset);
 
     // A second take returns None — the error was consumed, not duplicated.
+    assert!(stream.take_io_error().is_none());
+}
+
+/// Drift pin (#1141): `T2miEventStream` and `SectionStream` now share one
+/// `TsFramer`, so the W-DS-1 error/EOF distinction must hold through the
+/// T2-MI call site too (it was a separately-maintained copy).
+#[tokio::test]
+async fn t2mi_stream_distinguishes_io_error_from_eof() {
+    let mut stream = T2miEventStream::new(FailingReader, 0x0006);
+
+    let item = std::future::poll_fn(|cx| Pin::new(&mut stream).poll_next(cx)).await;
+    assert!(item.is_none(), "stream must end on a reader error");
+
+    let err = stream
+        .take_io_error()
+        .expect("the ConnectionReset error must be retrievable");
+    assert_eq!(err.kind(), std::io::ErrorKind::ConnectionReset);
     assert!(stream.take_io_error().is_none());
 }
 

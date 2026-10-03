@@ -305,15 +305,8 @@ impl SmoothPackager {
     /// The `CodecPrivateData` bytes for an AAC track: the raw
     /// AudioSpecificConfig carried in the `esds` (§2.2.2.5).
     fn audio_codec_private_data(esds: &crate::mp4esds::EsdsBox) -> Result<Vec<u8>> {
-        let dsi = esds
-            .es_descriptor
-            .decoder_config
-            .as_ref()
-            .and_then(|dc| dc.decoder_specific_info.as_ref())
-            .ok_or(Error::UnexpectedBox {
-                expected: "DecoderSpecificInfo (AudioSpecificConfig) in esds",
-            })?;
-        Ok(dsi.data.clone())
+        let dsi = esds.require_decoder_specific_info()?;
+        Ok(dsi.to_vec())
     }
 
     /// Segment one track into Smooth fragments and resolve its manifest info.

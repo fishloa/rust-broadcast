@@ -78,18 +78,15 @@ use core::fmt::Write as _;
 use core::time::Duration;
 
 use crate::diagnostics::codec_common::has_adts_sync;
-use broadcast_common::Parse;
+use crate::diagnostics::scte35_track::SpliceTracker;
 use dvb_conformance::ConformanceMonitor;
 use dvb_si::demux::SiDemux;
 use dvb_si::tables::AnyTableSection;
 use dvb_si::tables::pmt::StreamType;
 use mpeg_pes::{PesAssembler, PesPacket};
 use mpeg_ts::resync::TsResync;
-use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
+use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 use transmux::iter_annexb_nals;
-
-/// `table_id` of a SCTE-35 `splice_info_section` (ANSI/SCTE 35 §9.6.1).
-const SCTE35_TABLE_ID: u8 = 0xFC;
 
 /// Half of the 33-bit PTS/DTS range: the threshold distinguishing a genuine
 /// backward jump from a legal wrap (ISO/IEC 13818-1 §2.4.3.7). The modulus
@@ -134,15 +131,6 @@ impl EsTrack {
     }
 }
 
-/// Per-PID SCTE-35 tracking: section reassembly + the set of currently *open*
-/// `splice_insert` events ("out" seen, no matching "in" and no auto-return —
-/// the map holds only open event ids, so it cannot grow over a long run).
-#[derive(Default)]
-struct Scte35Track {
-    reassembler: SectionReassembler,
-    events: BTreeMap<u32, bool>,
-}
-
 /// Accumulated count for one TR 101 290 [`dvb_conformance::Indicator`].
 struct ConformanceCount {
     priority: &'static str,
@@ -162,7 +150,7 @@ pub struct WatchState {
     conformance: ConformanceMonitor,
     demux: SiDemux,
     es_tracks: BTreeMap<u16, EsTrack>,
-    scte35_tracks: BTreeMap<u16, Scte35Track>,
+    scte35_tracks: BTreeMap<u16, SpliceTracker>,
     /// Each program's current declaration: `program_number ->
     /// (version_number, elementary_pid -> stream_type)`. A new
     /// `version_number` means the program's stream set may have changed, so
@@ -433,44 +421,14 @@ impl WatchState {
         let Some(track) = self.scte35_tracks.get_mut(&pid) else {
             return;
         };
-        track.reassembler.feed(payload, ts_packet.header.pusi);
-
-        while let Some(section) = track.reassembler.pop_section() {
-            if section.is_empty() || section[0] != SCTE35_TABLE_ID {
-                continue;
-            }
-            let Ok(sis) = scte35_splice::SpliceInfoSection::parse(&section[..]) else {
-                continue;
-            };
-            let Some(ref clear) = sis.clear else {
-                continue;
-            };
-            let scte35_splice::commands::AnyCommand::SpliceInsert(si) = &clear.command else {
-                continue;
-            };
-            if si.splice_event_cancel_indicator {
-                continue;
-            }
-
-            self.scte35_events_total += 1;
-
-            // Track only events that are still open: an "out" that expects a
-            // separate return cue. A matching "in" — or an "out" carrying
-            // `break_duration.auto_return = true`, which closes at its own
-            // duration (ANSI/SCTE 35 §9.8.2, §9.9.2.2) — removes the entry
-            // instead of leaving a closed marker behind, so the map holds one
-            // entry per *currently* open break rather than one per event ever
-            // seen in the process's lifetime (audit MD-W3).
-            let out = si.out_of_network_indicator;
-            let auto_return = si
-                .break_duration
-                .is_some_and(|break_duration| break_duration.auto_return);
-            if out && !auto_return {
-                track.events.insert(si.splice_event_id, true);
-            } else {
-                track.events.remove(&si.splice_event_id);
-            }
-        }
+        // The shared tracker keeps only events that are still open (an "out"
+        // that expects a separate return cue); a matching "in" — or an "out"
+        // carrying `break_duration.auto_return = true`, which closes at its
+        // own duration (ANSI/SCTE 35 §9.8.2, §9.9.2.2) — drops the entry, so
+        // memory is one entry per *currently* open break, not per event ever
+        // seen (audit MD-W3).
+        let events_total = &mut self.scte35_events_total;
+        track.feed(payload, ts_packet.header.pusi, |_| *events_total += 1);
     }
 
     /// Reassemble PES on a PMT-declared video/audio PID, checking codec
@@ -671,7 +629,7 @@ impl WatchState {
         let scte35_open: u64 = self
             .scte35_tracks
             .values()
-            .map(|t| u64::try_from(t.events.len()).unwrap_or(u64::MAX))
+            .map(|t| u64::try_from(t.open_count()).unwrap_or(u64::MAX))
             .sum();
         metric_header(
             &mut out,

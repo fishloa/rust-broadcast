@@ -216,6 +216,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   compare, which disagreed with a real libsrt peer for roughly a quarter of all cookie pairs —
   whenever exactly one of the two cookies had its top bit set (#1064).
 
+### Changed
+
+- `arq::seq` arithmetic now delegates to `broadcast_common::seq::SeqSpace` (one algorithm, two moduli; public functions and results unchanged) (#1141).
+
+
 ## [0.4.1] - 2026-09-25
 
 ### Security

@@ -34,6 +34,7 @@
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
+use crate::annexb::find_start_code_prefix;
 use crate::error::{Error, Result as AuResult};
 use crate::nal::{NalCodec, nal_unit_type};
 
@@ -187,19 +188,12 @@ fn first_slice_of_picture(codec: NalCodec, nal_body: &[u8]) -> bool {
 /// code pulled back over any immediately-preceding `zero_byte`s (which belong to
 /// that NAL). `None` when `data` holds no start code.
 pub(crate) fn first_nal_start(data: &[u8]) -> Option<usize> {
-    let n = data.len();
-    let mut p = 0usize;
-    while p + 3 <= n {
-        if data[p] == 0 && data[p + 1] == 0 && data[p + 2] == 1 {
-            let mut s = p;
-            while s > 0 && data[s - 1] == 0 {
-                s -= 1;
-            }
-            return Some(s);
-        }
-        p += 1;
+    let p = find_start_code_prefix(data, 0)?;
+    let mut s = p;
+    while s > 0 && data[s - 1] == 0 {
+        s -= 1;
     }
-    None
+    Some(s)
 }
 
 // ── the splitter ───────────────────────────────────────────────────────────────
@@ -350,14 +344,13 @@ impl AccessUnitSplitter {
         let mut p = self.scanned.min(n.saturating_sub(3));
         #[cfg(test)]
         let scan_start = p;
-        while p + 3 <= n {
-            if buf[p] == 0 && buf[p + 1] == 0 && buf[p + 2] == 1 {
-                starts.push(p);
-                p += 3;
-            } else {
-                p += 1;
-            }
+        while let Some(at) = find_start_code_prefix(buf, p) {
+            starts.push(at);
+            p = at + 3;
         }
+        // No further prefix: every position up to `n - 2` was proven not to
+        // begin one (the last two bytes may still start one on the next push).
+        p = p.max(n.saturating_sub(2));
         #[cfg(test)]
         {
             self.scanned_bytes += p.saturating_sub(scan_start);
@@ -435,15 +428,7 @@ impl AccessUnitSplitter {
 /// of leading `zero_byte`s followed by `00 00 01`): the offset of the first NAL
 /// header byte. Falls back to the full length if no `00 00 01` is present.
 fn start_code_len(nal_with_code: &[u8]) -> usize {
-    let n = nal_with_code.len();
-    let mut i = 0;
-    while i + 3 <= n {
-        if nal_with_code[i] == 0 && nal_with_code[i + 1] == 0 && nal_with_code[i + 2] == 1 {
-            return i + 3;
-        }
-        i += 1;
-    }
-    n
+    find_start_code_prefix(nal_with_code, 0).map_or(nal_with_code.len(), |i| i + 3)
 }
 
 /// Split a complete Annex B byte stream into access units in one call.

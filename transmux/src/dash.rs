@@ -81,7 +81,6 @@ use crate::media::{Media, Track};
 use crate::pipeline::CodecConfig;
 use crate::sps::rfc6381_avc1;
 use crate::xml_writer::XmlWriter;
-use broadcast_common::Parse;
 
 /// DASH MPD namespace (ISO/IEC 23009-1 §5.3.1.2 — `urn:mpeg:dash:schema:mpd:2011`).
 pub const MPD_NAMESPACE: &str = "urn:mpeg:dash:schema:mpd:2011";
@@ -498,7 +497,7 @@ impl DashPackager {
             CodecConfig::Hevc { config, .. } => Ok(config.config.rfc6381()),
             CodecConfig::Vvc { config, .. } => Ok(config.config.rfc6381()),
             CodecConfig::Aac { esds, .. } => {
-                let asc = asc_from_esds(esds)?;
+                let asc = esds.audio_specific_config()?;
                 Ok(asc.rfc6381())
             }
             CodecConfig::Ac3 { config, .. } => Ok(config.rfc6381().to_string()),
@@ -633,7 +632,7 @@ impl DashPackager {
                 ..
             } => {
                 // Prefer the ASC-decoded sampling rate; fall back to the entry.
-                let asc = asc_from_esds(esds).ok();
+                let asc = esds.audio_specific_config().ok();
                 info.audio_sampling_rate = Some(
                     asc.as_ref()
                         .and_then(AudioSpecificConfig::effective_sampling_frequency)
@@ -1058,16 +1057,6 @@ impl broadcast_common::Package for DashPackager {
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-/// Extract and parse the `AudioSpecificConfig` from an `esds` box.
-fn asc_from_esds(esds: &crate::mp4esds::EsdsBox) -> Result<AudioSpecificConfig> {
-    let dsi = esds
-        .decoder_specific_info_data()
-        .ok_or(Error::UnexpectedBox {
-            expected: "DecoderSpecificInfo (AudioSpecificConfig) in esds",
-        })?;
-    AudioSpecificConfig::parse(dsi)
-}
 
 /// The `objectTypeIndication` carried in an `esds` (0 if the DecoderConfig is
 /// absent) — used to build the RFC 6381 `mp4v.<OTI>` / `mp4a.<OTI>` codec string.

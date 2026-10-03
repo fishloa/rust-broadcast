@@ -81,7 +81,7 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Decrypt, Parse};
 
-use crate::box_types::{BOX_HEADER_MIN_SIZE, parse_box};
+use crate::box_types::{BOX_HEADER_MIN_SIZE, box_slices, find_top_box, parse_box};
 // Re-exported (not just `use`d) so `transmux::cenc_decrypt::CencScheme` keeps
 // resolving for existing callers even though the type now lives in
 // `crate::cenc` (issue #564 — one shared definition for decrypt/encrypt/IR).
@@ -89,10 +89,12 @@ pub use crate::cenc::CencScheme;
 use crate::cenc::{SampleEncryptionEntry, TrackEncryptionBox};
 use crate::cenc_crypto::{self, CbcsOp};
 use crate::error::{Error, Result};
+use crate::init_segment::{ChunkLargeOffsetBox, ChunkOffsetBox, SampleSizeBox, SampleToChunkBox};
 use crate::media::Media;
 use crate::movie_fragment::{
     MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC, TrackFragmentHeaderBox, TrackFragmentRunBox,
 };
+use crate::progressive_demux::sample_layout;
 use crate::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox};
 
 /// Size of a KID / content key / AES-128 key **or block**, in bytes (AES-128's
@@ -650,7 +652,7 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
 fn traf_trun_sample_count(traf: &[u8]) -> Result<usize> {
     let mut total = 0usize;
     for trun in
-        iter_boxes(&traf[BOX_HEADER_MIN_SIZE.min(traf.len())..]).filter(|b| &b[4..8] == b"trun")
+        box_slices(&traf[BOX_HEADER_MIN_SIZE.min(traf.len())..]).filter(|b| &b[4..8] == b"trun")
     {
         if trun.len() < BOX_HEADER_MIN_SIZE {
             return Err(Error::BufferTooShort {
@@ -673,7 +675,7 @@ fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
     if body_start > stsd.len() {
         return None;
     }
-    for entry in iter_boxes(&stsd[body_start..]) {
+    for entry in box_slices(&stsd[body_start..]) {
         let ty = &entry[4..8];
         if ty == b"encv" || ty == b"enca" {
             // Sample-entry child boxes start after the fixed VisualSampleEntry /
@@ -690,7 +692,7 @@ fn find_sinf_in_stsd(stsd: &[u8]) -> Option<&[u8]> {
             if child_start <= entry.len() {
                 // The child boxes start directly at `child_start` (no container
                 // header to skip), so scan them with `iter_boxes`.
-                if let Some(sinf) = iter_boxes(&entry[child_start..]).find(|b| &b[4..8] == b"sinf")
+                if let Some(sinf) = box_slices(&entry[child_start..]).find(|b| &b[4..8] == b"sinf")
                 {
                     return Some(sinf);
                 }
@@ -793,11 +795,10 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
             collect_fragment_samples(file, track_id)?
         } else {
             // Sample byte layout from stsz + stsc + stco (contiguous chunks).
-            let sizes = stsz_sizes(stbl, file.len())?;
-            let sample_offsets = sample_file_offsets(stbl, &sizes)?;
+            let layout = progressive_sample_layout(stbl, file.len())?;
 
-            let mut samples = Vec::with_capacity(sizes.len());
-            for (&size, &offset) in sizes.iter().zip(sample_offsets.iter()) {
+            let mut samples = Vec::with_capacity(layout.len());
+            for &(offset, size) in &layout {
                 let end = offset
                     .checked_add(size)
                     .ok_or(Error::InvalidInput("sample offset + size overflow"))?;
@@ -977,11 +978,11 @@ fn absorb_protected_fragment(
 /// Parse the avcC record from the (first) encv entry of an stsd.
 fn find_avcc_config(stsd: &[u8]) -> Result<crate::avc_config::AVCDecoderConfigurationRecord> {
     let body_start = BOX_HEADER_MIN_SIZE + FULL_HDR + STSD_ENTRY_COUNT;
-    for entry in iter_boxes(&stsd[body_start.min(stsd.len())..]) {
+    for entry in box_slices(&stsd[body_start.min(stsd.len())..]) {
         if &entry[4..8] == b"encv" {
             let child_start = BOX_HEADER_MIN_SIZE + VISUAL_SAMPLE_ENTRY_HDR;
             if child_start <= entry.len()
-                && let Some(avcc) = iter_boxes(&entry[child_start..]).find(|b| &b[4..8] == b"avcC")
+                && let Some(avcc) = box_slices(&entry[child_start..]).find(|b| &b[4..8] == b"avcC")
             {
                 // avcC full bytes → body after the 8-byte box header.
                 let cfg = crate::AVCConfigurationBox::parse_body(&avcc[BOX_HEADER_MIN_SIZE..])?;
@@ -998,28 +999,6 @@ fn find_avcc_config(stsd: &[u8]) -> Result<crate::avc_config::AVCDecoderConfigur
 // Small box-navigation helpers (borrow-only, no allocation).
 // ---------------------------------------------------------------------------
 
-/// Iterate the top-level boxes of `data`, yielding each box's full bytes.
-fn iter_boxes(data: &[u8]) -> impl Iterator<Item = &[u8]> {
-    let mut offset = 0usize;
-    core::iter::from_fn(move || {
-        if offset + BOX_HEADER_MIN_SIZE > data.len() {
-            return None;
-        }
-        let (bx, consumed) = parse_box(&data[offset..]).ok()?;
-        if consumed == 0 {
-            return None;
-        }
-        let size = if bx.header.size == 0 {
-            data.len() - offset
-        } else {
-            (bx.header.size as usize).min(data.len() - offset)
-        };
-        let start = offset;
-        offset += consumed;
-        Some(&data[start..start + size])
-    })
-}
-
 /// Iterate a container box's children matching a four-CC (skips the 8-byte
 /// container header first).
 fn iter_child_boxes<'a>(
@@ -1027,14 +1006,14 @@ fn iter_child_boxes<'a>(
     fourcc: &'a [u8; 4],
 ) -> impl Iterator<Item = &'a [u8]> {
     let body = &container[BOX_HEADER_MIN_SIZE.min(container.len())..];
-    iter_boxes(body).filter(move |b| &b[4..8] == fourcc)
+    box_slices(body).filter(move |b| &b[4..8] == fourcc)
 }
 
 /// Iterate every *top-level* box in `file` matching a four-CC (there can be
 /// several `moof`s in a fragmented CMAF file, unlike the single-match
 /// [`find_top_box`]).
 fn iter_top_boxes<'a>(file: &'a [u8], fourcc: &[u8; 4]) -> impl Iterator<Item = &'a [u8]> {
-    iter_boxes(file).filter(move |b| b[4..8] == *fourcc)
+    box_slices(file).filter(move |b| b[4..8] == *fourcc)
 }
 
 /// Find the first child box of `container` with the given four-CC (returns its
@@ -1042,13 +1021,7 @@ fn iter_top_boxes<'a>(file: &'a [u8], fourcc: &[u8; 4]) -> impl Iterator<Item = 
 /// skipped before scanning children).
 fn find_box<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
     let body = &container[BOX_HEADER_MIN_SIZE.min(container.len())..];
-    iter_boxes(body).find(|b| &b[4..8] == fourcc)
-}
-
-/// Find a *top-level* box by four-CC in a raw file (boxes start at offset 0, so
-/// no container header is skipped).
-fn find_top_box<'a>(file: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
-    iter_boxes(file).find(|b| &b[4..8] == fourcc)
+    box_slices(body).find(|b| &b[4..8] == fourcc)
 }
 
 /// Whether `container` (a `stbl` or `traf`, both direct `sgpd` parents per
@@ -1060,7 +1033,7 @@ fn find_top_box<'a>(file: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 /// so every child is checked rather than just the first.
 fn container_has_seig_sgpd(container: &[u8]) -> Result<bool> {
     let body = &container[BOX_HEADER_MIN_SIZE.min(container.len())..];
-    for entry in iter_boxes(body).filter(|b| &b[4..8] == b"sgpd") {
+    for entry in box_slices(body).filter(|b| &b[4..8] == b"sgpd") {
         let sgpd = SampleGroupDescriptionBox::parse(entry)?;
         if sgpd.grouping_type == GROUPING_TYPE_SEIG {
             return Ok(true);
@@ -1114,202 +1087,29 @@ fn mdhd_timescale(mdhd: &[u8]) -> Option<u32> {
     ]))
 }
 
-/// Read per-sample sizes from `stsz` (`sample_size == 0` → per-sample table).
+/// Each sample's `(absolute_file_offset, size)` from a progressive `stbl`.
 ///
-/// `file_len` bounds the declared `sample_count`: no sample occupies fewer
-/// than one byte of the file (ISO/IEC 14496-12 §8.7.3), so a count above it
-/// is wire-hostile and must be rejected before anything allocates — this
-/// used to run `Vec::with_capacity(count)` ahead of every length check, and
-/// with `sample_size != 0` the push loop was entirely unbounded (r05-C4:
-/// a ~200-byte file aborted the process on a multi-GB request).
-fn stsz_sizes(stbl: &[u8], file_len: usize) -> Result<Vec<usize>> {
-    let stsz = find_box(stbl, b"stsz").ok_or(Error::UnexpectedBox { expected: "stsz" })?;
-    let base = BOX_HEADER_MIN_SIZE + FULL_HDR;
-    let need = base + 8;
-    if stsz.len() < need {
-        return Err(Error::BufferTooShort {
-            need,
-            have: stsz.len(),
-            what: "stsz header",
-        });
-    }
-    let sample_size =
-        u32::from_be_bytes([stsz[base], stsz[base + 1], stsz[base + 2], stsz[base + 3]]);
-    let count = u32::from_be_bytes([
-        stsz[base + 4],
-        stsz[base + 5],
-        stsz[base + 6],
-        stsz[base + 7],
-    ]) as usize;
-    if count > file_len {
-        return Err(Error::BufferTooShort {
-            need: count,
-            have: file_len,
-            what: "stsz sample_count vs file length",
-        });
-    }
-    let mut sizes;
-    if sample_size != 0 {
-        sizes = Vec::with_capacity(count);
-        for _ in 0..count {
-            sizes.push(sample_size as usize);
-        }
-    } else {
-        let table = base + 8;
-        // Checked arithmetic (`count * 4` wrapped on 32-bit targets), and
-        // the table length is verified before any allocation.
-        let table_bytes = count.checked_mul(4).ok_or(Error::BufferTooShort {
-            need: usize::MAX,
-            have: stsz.len(),
-            what: "stsz sample_size table",
-        })?;
-        if table_bytes > stsz.len() - table {
-            return Err(Error::BufferTooShort {
-                need: table.saturating_add(table_bytes),
-                have: stsz.len(),
-                what: "stsz sample_size table",
-            });
-        }
-        sizes = Vec::with_capacity(count);
-        for i in 0..count {
-            let o = table + i * 4;
-            sizes.push(
-                u32::from_be_bytes([stsz[o], stsz[o + 1], stsz[o + 2], stsz[o + 3]]) as usize,
-            );
-        }
-    }
-    Ok(sizes)
-}
-
-#[cfg(test)]
-thread_local! {
-    /// Work counter at the `stsc` expansion loop in [`sample_file_offsets`]
-    /// (r05-O1): how many `stsc` entries were examined in total.
-    static STSC_ENTRIES_EXAMINED: core::cell::Cell<usize> = const { core::cell::Cell::new(0) };
-}
-
-/// Compute each sample's absolute file offset from `stsc` + `stco`.
-///
-/// Maps samples to chunks (`stsc` run-length table) and each chunk to a file
-/// offset (`stco`, 32-bit); within a chunk samples are contiguous in decode
-/// order (ISO/IEC 14496-12 §8.7.4 / §8.7.5).
-fn sample_file_offsets(stbl: &[u8], sizes: &[usize]) -> Result<Vec<usize>> {
-    let stsc = find_box(stbl, b"stsc").ok_or(Error::UnexpectedBox { expected: "stsc" })?;
-    let stco = find_box(stbl, b"stco").ok_or(Error::UnexpectedBox { expected: "stco" })?;
-    let sc_base = BOX_HEADER_MIN_SIZE + FULL_HDR;
-
-    // stco chunk offsets.
-    if stco.len() < sc_base + 4 {
-        return Err(Error::BufferTooShort {
-            need: sc_base + 4,
-            have: stco.len(),
-            what: "stco header",
-        });
-    }
-    let chunk_count = u32::from_be_bytes([
-        stco[sc_base],
-        stco[sc_base + 1],
-        stco[sc_base + 2],
-        stco[sc_base + 3],
-    ]) as usize;
-    let co_table = sc_base + 4;
-    // Bound and verify before allocating (r05-C4 — capacity came from the
-    // wire count ahead of this check pre-fix): checked arithmetic, compared
-    // against the bytes actually present.
-    let co_bytes = chunk_count.checked_mul(4).ok_or(Error::BufferTooShort {
-        need: usize::MAX,
-        have: stco.len(),
-        what: "stco chunk offsets",
-    })?;
-    if co_bytes > stco.len() - co_table {
-        return Err(Error::BufferTooShort {
-            need: co_table.saturating_add(co_bytes),
-            have: stco.len(),
-            what: "stco chunk offsets",
-        });
-    }
-    let mut chunk_offsets = Vec::with_capacity(chunk_count);
-    for i in 0..chunk_count {
-        let o = co_table + i * 4;
-        chunk_offsets
-            .push(u32::from_be_bytes([stco[o], stco[o + 1], stco[o + 2], stco[o + 3]]) as usize);
-    }
-
-    // stsc run-length: (first_chunk, samples_per_chunk, sample_desc_index).
-    if stsc.len() < sc_base + 4 {
-        return Err(Error::BufferTooShort {
-            need: sc_base + 4,
-            have: stsc.len(),
-            what: "stsc header",
-        });
-    }
-    let entry_count = u32::from_be_bytes([
-        stsc[sc_base],
-        stsc[sc_base + 1],
-        stsc[sc_base + 2],
-        stsc[sc_base + 3],
-    ]) as usize;
-    let sc_table = sc_base + 4;
-    // Same checked-before-allocate discipline as `stco` above (r05-C4).
-    let sc_bytes = entry_count.checked_mul(12).ok_or(Error::BufferTooShort {
-        need: usize::MAX,
-        have: stsc.len(),
-        what: "stsc entries",
-    })?;
-    if sc_bytes > stsc.len() - sc_table {
-        return Err(Error::BufferTooShort {
-            need: sc_table.saturating_add(sc_bytes),
-            have: stsc.len(),
-            what: "stsc entries",
-        });
-    }
-    // Expand: samples_per_chunk for each chunk index (1-based).
-    //
-    // One forward walk over the run table: chunk numbers only increase, so the
-    // prefix of entries with `first_chunk <= chunk_no` only grows and the last
-    // entry of that prefix is the applicable run. (Re-scanning the table from
-    // the start for every chunk made this O(chunks x entries), audit r05-O1;
-    // for any table, sorted or not, the entry chosen is the same.)
-    let mut samples_per_chunk = Vec::with_capacity(chunk_count);
-    let mut next_entry = 0usize;
-    let mut spc = 0u32;
-    for c in 0..chunk_count {
-        let chunk_no = (c + 1) as u32;
-        while next_entry < entry_count {
-            #[cfg(test)]
-            STSC_ENTRIES_EXAMINED.with(|n| n.set(n.get() + 1));
-            let o = sc_table + next_entry * 12;
-            let first_chunk = u32::from_be_bytes([stsc[o], stsc[o + 1], stsc[o + 2], stsc[o + 3]]);
-            if first_chunk > chunk_no {
-                break;
-            }
-            spc = u32::from_be_bytes([stsc[o + 4], stsc[o + 5], stsc[o + 6], stsc[o + 7]]);
-            next_entry += 1;
-        }
-        samples_per_chunk.push(spc);
-    }
-
-    // Walk chunks → samples, accumulating offsets from each chunk base.
-    let mut offsets = Vec::with_capacity(sizes.len());
-    let mut sample_idx = 0usize;
-    for (c, &chunk_base) in chunk_offsets.iter().enumerate() {
-        let per = samples_per_chunk.get(c).copied().unwrap_or(0) as usize;
-        let mut cursor = chunk_base;
-        for _ in 0..per {
-            if sample_idx >= sizes.len() {
-                break;
-            }
-            offsets.push(cursor);
-            cursor += sizes[sample_idx];
-            sample_idx += 1;
-        }
-    }
-    if offsets.len() != sizes.len() {
-        return Err(Error::InvalidInput(
-            "stsc/stco sample-to-chunk mapping did not cover all samples",
-        ));
-    }
-    Ok(offsets)
+/// Parses `stsz`/`stsc`/`stco`/`co64` with the typed box parsers (which bound
+/// every wire count against the bytes present) and expands them through the
+/// one shared [`sample_layout`] (audit r05-O1 / #1141 — this module used to
+/// carry its own raw-byte expander, which ignored `co64`). `file_len` bounds
+/// the declared `sample_count`: no sample occupies fewer than one byte of the
+/// file (ISO/IEC 14496-12 §8.7.3), so a larger count is rejected before
+/// anything allocates (r05-C4).
+fn progressive_sample_layout(stbl: &[u8], file_len: usize) -> Result<Vec<(usize, usize)>> {
+    let stsz = SampleSizeBox::parse(
+        find_box(stbl, b"stsz").ok_or(Error::UnexpectedBox { expected: "stsz" })?,
+    )?;
+    let stsc = SampleToChunkBox::parse(
+        find_box(stbl, b"stsc").ok_or(Error::UnexpectedBox { expected: "stsc" })?,
+    )?;
+    let stco = find_box(stbl, b"stco")
+        .map(ChunkOffsetBox::parse)
+        .transpose()?;
+    let co64 = find_box(stbl, b"co64")
+        .map(ChunkLargeOffsetBox::parse)
+        .transpose()?;
+    sample_layout(&stsz, &stsc, co64.as_ref(), stco.as_ref(), file_len)
 }
 
 #[cfg(test)]
@@ -1336,11 +1136,28 @@ mod tests {
         b
     }
 
-    /// r05-O1: the per-chunk `stsc` lookup rescanned the run table from the start
-    /// for every chunk (O(chunks x entries)). One entry per chunk here, so the old
-    /// loop examined ~chunks^2/2 entries; the forward walk examines each once.
+    fn stbl_with(boxes: &[Vec<u8>]) -> Vec<u8> {
+        let mut stbl = vec![0u8; BOX_HEADER_MIN_SIZE];
+        for b in boxes {
+            stbl.extend_from_slice(b);
+        }
+        stbl
+    }
+
+    fn stsz_box(size: u32, count: u32) -> Vec<u8> {
+        let mut b = Vec::new();
+        b.extend_from_slice(&((BOX_HEADER_MIN_SIZE + FULL_HDR + 8) as u32).to_be_bytes());
+        b.extend_from_slice(b"stsz");
+        b.extend_from_slice(&[0; FULL_HDR]);
+        b.extend_from_slice(&size.to_be_bytes());
+        b.extend_from_slice(&count.to_be_bytes());
+        b
+    }
+
+    /// r05-O1: one entry per chunk; the shared expander must lay samples out
+    /// at each chunk's `stco` offset.
     #[test]
-    fn stsc_expansion_examines_each_entry_once_not_once_per_chunk() {
+    fn stbl_layout_maps_one_sample_per_chunk_through_stco() {
         const CHUNKS: u32 = 400;
         let mut stsc = Vec::new();
         let mut stco = Vec::new();
@@ -1350,19 +1167,48 @@ mod tests {
             stsc.extend_from_slice(&1u32.to_be_bytes()); // sample_description_index
             stco.extend_from_slice(&(c * 100).to_be_bytes());
         }
-        let mut stbl = vec![0u8; BOX_HEADER_MIN_SIZE];
-        stbl.extend(full_box(b"stsc", &stsc, CHUNKS));
-        stbl.extend(full_box(b"stco", &stco, CHUNKS));
-        let sizes = vec![10usize; CHUNKS as usize];
-        STSC_ENTRIES_EXAMINED.with(|c| c.set(0));
-        let offsets = sample_file_offsets(&stbl, &sizes).unwrap();
-        let examined = STSC_ENTRIES_EXAMINED.with(core::cell::Cell::get);
-        assert_eq!(offsets[0], 100);
-        assert_eq!(offsets[CHUNKS as usize - 1], CHUNKS as usize * 100);
-        // Linear: each entry is accepted once, plus one rejecting peek per chunk
-        // (799 here; the per-chunk rescan examined 80 599).
-        assert!(examined <= 2 * CHUNKS as usize, "examined {examined}");
+        let stbl = stbl_with(&[
+            stsz_box(10, CHUNKS),
+            full_box(b"stsc", &stsc, CHUNKS),
+            full_box(b"stco", &stco, CHUNKS),
+        ]);
+        let layout = progressive_sample_layout(&stbl, 1 << 20).unwrap();
+        assert_eq!(layout.len(), CHUNKS as usize);
+        assert_eq!(layout[0], (100, 10));
+        assert_eq!(layout[CHUNKS as usize - 1], (CHUNKS as usize * 100, 10));
     }
+
+    /// Drift fix (#1141): the raw-byte copy read only `stco`, so a `co64`
+    /// file failed with "stco" missing; it now resolves through the shared
+    /// expander, which prefers `co64`.
+    #[test]
+    fn stbl_layout_resolves_co64_chunk_offsets() {
+        let mut stsc = Vec::new();
+        stsc.extend_from_slice(&1u32.to_be_bytes());
+        stsc.extend_from_slice(&2u32.to_be_bytes()); // 2 samples per chunk
+        stsc.extend_from_slice(&1u32.to_be_bytes());
+        let co64 = 0x1_0000u64.to_be_bytes();
+        let stbl = stbl_with(&[
+            stsz_box(7, 2),
+            full_box(b"stsc", &stsc, 1),
+            full_box(b"co64", &co64, 1),
+        ]);
+        let layout = progressive_sample_layout(&stbl, 1 << 20).unwrap();
+        assert_eq!(layout, vec![(0x1_0000, 7), (0x1_0007, 7)]);
+    }
+
+    /// r05-C4: a hostile `stsz.sample_count` far above the file length is
+    /// rejected up front, before any allocation.
+    #[test]
+    fn stbl_layout_rejects_sample_count_above_file_length() {
+        let stbl = stbl_with(&[
+            stsz_box(1, u32::MAX),
+            full_box(b"stsc", &[], 0),
+            full_box(b"stco", &[], 0),
+        ]);
+        assert!(progressive_sample_layout(&stbl, 64).is_err());
+    }
+
     use crate::media::Track;
     use crate::pipeline::{CodecConfig, Sample, TrackSpec};
     use broadcast_common::Unpackage;

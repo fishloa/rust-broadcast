@@ -5,6 +5,7 @@
 //! language code, text) pairs, each text length-prefixed by an 8-bit field.
 
 use super::descriptor_body;
+use super::lang_text::{EntryReader, LANG_LEN, text_field_len, write_lang, write_text};
 use crate::error::{Error, Result};
 use crate::text::{DvbText, LangCode};
 use alloc::vec::Vec;
@@ -14,8 +15,6 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x5E;
 const HEADER_LEN: usize = 2;
 const COMPONENT_TAG_LEN: usize = 1;
-const LANG_LEN: usize = 3;
-const TEXT_LEN_FIELD: usize = 1;
 
 /// One localised component description.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -56,29 +55,14 @@ impl<'a> Parse<'a> for MultilingualComponentDescriptor<'a> {
         }
         let component_tag = body[0];
         let mut entries = Vec::new();
-        let mut pos = COMPONENT_TAG_LEN;
-        while pos < body.len() {
-            if pos + LANG_LEN + TEXT_LEN_FIELD > body.len() {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "entry header runs past descriptor end",
-                });
-            }
-            let language_code = LangCode([body[pos], body[pos + 1], body[pos + 2]]);
-            let text_len = body[pos + LANG_LEN] as usize;
-            let text_start = pos + LANG_LEN + TEXT_LEN_FIELD;
-            let text_end = text_start + text_len;
-            if text_end > body.len() {
-                return Err(Error::InvalidDescriptor {
-                    tag: TAG,
-                    reason: "text_length runs past descriptor end",
-                });
-            }
+        let mut reader = EntryReader::new(body, COMPONENT_TAG_LEN, TAG);
+        while reader.has_more() {
+            let language_code = reader.lang()?;
+            let text = reader.text("text_length runs past descriptor end", 0)?;
             entries.push(ComponentTextEntry {
                 language_code,
-                text: DvbText::new(&body[text_start..text_end]),
+                text,
             });
-            pos = text_end;
         }
         Ok(Self {
             component_tag,
@@ -95,7 +79,7 @@ impl Serialize for MultilingualComponentDescriptor<'_> {
             + self
                 .entries
                 .iter()
-                .map(|e| LANG_LEN + TEXT_LEN_FIELD + e.text.len())
+                .map(|e| LANG_LEN + text_field_len(&e.text))
                 .sum::<usize>()
     }
 
@@ -112,11 +96,8 @@ impl Serialize for MultilingualComponentDescriptor<'_> {
         buf[HEADER_LEN] = self.component_tag;
         let mut pos = HEADER_LEN + COMPONENT_TAG_LEN;
         for e in &self.entries {
-            buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-            buf[pos + LANG_LEN] = broadcast_common::len::fit_u8(e.text.len(), "text_length")?;
-            let text_start = pos + LANG_LEN + TEXT_LEN_FIELD;
-            buf[text_start..text_start + e.text.len()].copy_from_slice(e.text.raw());
-            pos = text_start + e.text.len();
+            pos = write_lang(buf, pos, &e.language_code);
+            pos = write_text(buf, pos, &e.text, "text_length")?;
         }
         Ok(len)
     }

@@ -14,39 +14,16 @@
 //! the named event and neither open nor close a splice). Well-formed, balanced
 //! out→in pairs produce no findings.
 
-use alloc::collections::btree_map::{BTreeMap, Entry};
+use alloc::collections::btree_map::BTreeMap;
 
-use broadcast_common::Parse;
 use dvb_si::tables::pmt::StreamType;
 
 use crate::Diagnostic;
 use crate::Report;
 use crate::diagnostics::codec_common::{collect_pmt_streams, pids_with_stream_type};
+use crate::diagnostics::scte35_track::SpliceTracker;
 use crate::report::{Finding, Location, Severity};
-use mpeg_ts::ts::SectionReassembler;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
-
-/// `table_id` of a SCTE-35 `splice_info_section` (ANSI/SCTE 35 §9.6.1).
-const SCTE35_TABLE_ID: u8 = 0xFC;
-
-/// Tracks the open/close state of a `splice_insert` event.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum SpliceInsertState {
-    /// An "out" (out_of_network_indicator == true) has been seen for this
-    /// event_id, and no matching "in" has arrived yet.
-    Open,
-    /// A balanced out→in pair has been completed.
-    Closed,
-}
-
-/// Per-PID tracking for SCTE-35 splice events.
-#[derive(Default)]
-struct Scte35PidState {
-    /// Section reassembler for this PID.
-    reassembler: SectionReassembler,
-    /// Tracks the current state per splice_event_id.
-    events: BTreeMap<u32, SpliceInsertState>,
-}
 
 /// Checks SCTE-35 splice insertion consistency across the stream.
 ///
@@ -70,7 +47,7 @@ const SCTE35_PID: u16 = 0x01F0;
 impl Diagnostic for Scte35Check {
     fn run(&self, ts: &[u8], report: &mut Report) {
         let n_packets = ts.len() / TS_PACKET_SIZE;
-        let mut pid_states: BTreeMap<u16, Scte35PidState> = BTreeMap::new();
+        let mut pid_states: BTreeMap<u16, SpliceTracker> = BTreeMap::new();
 
         // Discover the real SCTE-35 PID(s) from the PMT (`stream_type
         // 0x86`, ANSI/SCTE 35 §8.1), the same source `watch.rs` uses —
@@ -108,114 +85,35 @@ impl Diagnostic for Scte35Check {
                 None => continue,
             };
 
-            let pusi = pkt.header.pusi;
-
             let state = pid_states.entry(pid).or_default();
-            state.reassembler.feed(payload, pusi);
-
-            // Drain completed sections.
-            while let Some(section) = state.reassembler.pop_section() {
-                let section_data = &section[..];
-
-                // table_id must be 0xFC (splice_info_section).
-                if section_data.is_empty() || section_data[0] != SCTE35_TABLE_ID {
-                    continue;
+            state.feed(payload, pkt.header.pusi, |event| {
+                if event.duplicate_open {
+                    // Duplicate open "out" with no intervening "in".
+                    report.push(Finding::new(
+                        Severity::Warning,
+                        Location::new(i, u32::from(pid)),
+                        "scte35-dup-out",
+                        alloc::format!(
+                            "duplicate open splice_insert: out event_id {} \
+                             with no intervening in",
+                            event.event_id,
+                        ),
+                    ));
                 }
-
-                // Parse with scte35_splice.
-                let Ok(sis) = scte35_splice::SpliceInfoSection::parse(section_data) else {
-                    continue;
-                };
-
-                let Some(ref clear) = sis.clear else {
-                    continue;
-                };
-
-                let command = &clear.command;
-                let scte35_splice::commands::AnyCommand::SpliceInsert(si) = command else {
-                    continue;
-                };
-
-                // Ignore cancelled events.
-                if si.splice_event_cancel_indicator {
-                    continue;
-                }
-
-                let eid = si.splice_event_id;
-                let oon = si.out_of_network_indicator;
-                // An "out" carrying `break_duration.auto_return == true` is a
-                // *self-closing* break: the splicer returns after `duration`
-                // without any "in" cue (ANSI/SCTE 35 §9.8.2 `auto_return`,
-                // §9.9.2.2). That is standard SSAI signalling, so it is never
-                // left "open".
-                let auto_return = si
-                    .break_duration
-                    .is_some_and(|break_duration| break_duration.auto_return);
-
-                match state.events.entry(eid) {
-                    Entry::Vacant(entry) => {
-                        if oon && !auto_return {
-                            // First encounter is an "out" → mark open.
-                            entry.insert(SpliceInsertState::Open);
-                        } else {
-                            // A standalone return, or an auto-return out that
-                            // closes itself — nothing left open either way.
-                            entry.insert(SpliceInsertState::Closed);
-                        }
-                    }
-                    Entry::Occupied(mut entry) => {
-                        match *entry.get() {
-                            SpliceInsertState::Open => {
-                                if oon {
-                                    // Duplicate open "out" with no intervening
-                                    // "in" — Warning.
-                                    report.push(Finding::new(
-                                        Severity::Warning,
-                                        Location::new(i, u32::from(pid)),
-                                        "scte35-dup-out",
-                                        alloc::format!(
-                                            "duplicate open splice_insert: out event_id {eid} \
-                                             with no intervening in",
-                                        ),
-                                    ));
-                                    if auto_return {
-                                        // The duplicate itself closes at its
-                                        // own duration — it does not stay
-                                        // open.
-                                        entry.insert(SpliceInsertState::Closed);
-                                    }
-                                } else {
-                                    // Matching "in" — close the event.
-                                    entry.insert(SpliceInsertState::Closed);
-                                }
-                            }
-                            SpliceInsertState::Closed => {
-                                if oon && !auto_return {
-                                    // New "out" after a completed pair — reopen.
-                                    entry.insert(SpliceInsertState::Open);
-                                }
-                                // Duplicate "in" after closed, or an
-                                // auto-return out → nothing left open.
-                            }
-                        }
-                    }
-                }
-            }
+            });
         }
 
         // End of stream: report any remaining open events.
         for (&pid, state) in pid_states.iter() {
-            for (&eid, &status) in state.events.iter() {
-                if status == SpliceInsertState::Open {
-                    report.push(Finding::new(
-                        Severity::Warning,
-                        Location::new(n_packets.saturating_sub(1), u32::from(pid)),
-                        "scte35-unbalanced",
-                        alloc::format!(
-                            "unbalanced splice_insert: out event_id {eid} with no matching in",
-                        ),
-                    ));
-                }
+            for eid in state.open_events() {
+                report.push(Finding::new(
+                    Severity::Warning,
+                    Location::new(n_packets.saturating_sub(1), u32::from(pid)),
+                    "scte35-unbalanced",
+                    alloc::format!(
+                        "unbalanced splice_insert: out event_id {eid} with no matching in",
+                    ),
+                ));
             }
         }
     }

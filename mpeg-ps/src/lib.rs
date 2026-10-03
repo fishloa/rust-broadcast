@@ -76,8 +76,9 @@ pub use program_stream_map::{EsMapEntry, ProgramStreamMap};
 pub use scr::Scr;
 pub use system_header::{StdBufferBound, SystemHeader};
 
-/// The 3-byte `packet_start_code_prefix` that opens PES and PSM packets (`0x000001`).
-pub const PACKET_START_CODE_PREFIX: [u8; 3] = [0x00, 0x00, 0x01];
+/// The 3-byte `packet_start_code_prefix` that opens PES and PSM packets
+/// (`0x000001`) — the one definition lives in `mpeg-pes` (#1141).
+pub use mpeg_pes::PACKET_START_CODE_PREFIX;
 
 /// `MPEG_program_end_code` — `0x000001B9`, terminates the program stream.
 pub const PROGRAM_END_CODE: u32 = 0x0000_01B9;
