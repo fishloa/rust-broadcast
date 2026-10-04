@@ -1722,6 +1722,40 @@ mod playout_tests {
         drop(spawned);
     }
 
+    /// I8/SP1.4 (m1): dropping a [`SpawnedReader`] WITHOUT calling
+    /// [`SpawnedReader::cancel`] explicitly must still cancel the run, purely
+    /// via `impl Drop`. The task deliberately loops the fixture
+    /// (`loop_file = true`), so a merely-detached task would run forever; the
+    /// test drops the value and waits (bounded) for the task to finish,
+    /// observed through an abort handle taken before the drop. Deleting
+    /// `impl Drop for SpawnedReader` makes the task run forever and times out.
+    #[tokio::test]
+    async fn dropping_a_spawned_reader_without_cancel_stops_the_run() {
+        let fixture = format!("{}/../fixtures/ts/h264_aac.ts", env!("CARGO_MANIFEST_DIR"));
+        let trunk = media_plane::trunk::Trunk::new(crate::source::driver_trunk_config(8));
+        let reader = FileReader::new(
+            // `loop_file = true`: a detached task would never end on its own.
+            FileReaderConfig::new(fixture.into(), true, trunk)
+                .with_pace(true)
+                .with_max_retries(0),
+        );
+        let spawned = reader.spawn();
+        // Observe the task's completion without owning the handle after drop.
+        let abort = spawned.handle.abort_handle();
+        // Drop the SpawnedReader itself (no explicit `cancel()`); `impl Drop`
+        // must cancel the run.
+        drop(spawned);
+
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !abort.is_finished() {
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "dropping the SpawnedReader must cancel the looping run, not detach it"
+            );
+            tokio::task::yield_now().await;
+        }
+    }
+
     /// Finding 5: negative PTS (reachable from a version-1 `ctts` leading
     /// B-frame) must still merge in ascending presentation order. A
     /// `.to_bits()` key inverts negative magnitudes, so `-10` would sort after
