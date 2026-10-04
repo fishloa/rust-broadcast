@@ -204,6 +204,14 @@ fn track_is_representable(spec: &TrackSpec) -> bool {
 /// [`RouteHandle::track_specs`] is [`select_representable_track`]-selectable
 /// (nothing recorded yet, or every recorded track is opaque — issue #776).
 fn render_mpd(route: &RouteHandle) -> Option<String> {
+    render_mpd_at(route, route.created_at())
+}
+
+/// Render the MPD with an explicit `now` for `availabilityStartTime`, so a
+/// golden can freeze the wall-clock value (`render_mpd` delegates with the
+/// route's own `created_at`). `#[doc(hidden)]` and only reachable from tests.
+#[doc(hidden)]
+pub fn render_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<String> {
     let specs = route.track_specs(crate::route::SPTS_PROGRAM_ID);
     // `@id` forced to DEFAULT_TRACK_ID (see module docs' "Single-rendition
     // model") regardless of which track this route's own PMT numbered it.
@@ -251,7 +259,7 @@ fn render_mpd(route: &RouteHandle) -> Option<String> {
         // `init-1.mp4`/`seg-1-<N>.m4s` filenames exactly.
         init_template: "init-$RepresentationID$.mp4".to_string(),
         media_template: "seg-$RepresentationID$-$Number$.m4s".to_string(),
-        availability_start_time: Some(format_iso8601(route.created_at())),
+        availability_start_time: Some(format_iso8601(now)),
         minimum_update_period: Some(format!("PT{target_duration_secs}S")),
         time_shift_buffer_depth: Some(format!("PT{time_shift_buffer_depth_secs}S")),
         segments,
@@ -371,6 +379,35 @@ mod tests {
     fn format_iso8601_renders_utc_z_suffix() {
         let t = UNIX_EPOCH + Duration::from_secs(0);
         assert_eq!(format_iso8601(t), "1970-01-01T00:00:00Z");
+    }
+
+    /// Byte-for-byte golden of the whole rendered MPD with the `now`-dependent
+    /// `availabilityStartTime` frozen, so the jiff migration (SP5) is proved
+    /// to change no wire byte. `GOLDEN_BLESS=<dir>` writes instead of compares.
+    #[test]
+    fn render_mpd_matches_frozen_now_golden() {
+        let route = RouteHandle::new(4.0, 500, 2);
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .expect("add_segment");
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 4.0))
+            .expect("add_segment");
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let actual = render_mpd_at(&route, now).expect("renders");
+        let file = "dash_mpd.golden";
+        if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+            std::fs::create_dir_all(&dir).expect("create golden dir");
+            std::fs::write(std::path::Path::new(&dir).join(file), &actual).expect("write");
+            return;
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/golden")
+            .join(file);
+        let expected = std::fs::read_to_string(&path).expect("read golden");
+        assert_eq!(actual, expected, "{file} differs from the golden output");
     }
 
     #[test]

@@ -69,6 +69,7 @@
 //! parts-only design, which covered only the live edge.
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use axum::Router;
 use axum::extract::State;
@@ -172,6 +173,13 @@ impl ServedEgress for LlDashOrigin {
 /// segment target (nonsensical config — `LlDashPackager::new` rejects a
 /// chunk duration longer than the segment it chunks).
 fn render_ll_dash_mpd(route: &RouteHandle) -> Option<String> {
+    render_ll_dash_mpd_at(route, route.created_at())
+}
+
+/// Render the LL-DASH MPD with an explicit `now` for `availabilityStartTime`
+/// (same freeze hook as `crate::output::dash::render_mpd_at`).
+#[doc(hidden)]
+pub fn render_ll_dash_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<String> {
     let specs = route.track_specs(crate::route::SPTS_PROGRAM_ID);
     // Single-rendition model (see `crate::output::dash`'s module docs):
     // describe exactly one Representation, `@id` forced to DEFAULT_TRACK_ID.
@@ -202,7 +210,7 @@ fn render_ll_dash_mpd(route: &RouteHandle) -> Option<String> {
         target_duration_secs,
         chunk_duration_secs,
         latency_target_ms,
-        format_iso8601(route.created_at()),
+        format_iso8601(now),
     )
     .ok()?;
     packager.base.addressing = Addressing::Number;
@@ -371,6 +379,34 @@ mod tests {
             .expect("add_segment");
         let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(mpd.contains("timeShiftBufferDepth=\"PT2S\""), "{mpd}");
+    }
+
+    /// Byte-for-byte golden of the whole LL-DASH MPD with `availabilityStartTime`
+    /// frozen, proving the jiff migration (SP5) changes no wire byte.
+    #[test]
+    fn render_ll_dash_mpd_matches_frozen_now_golden() {
+        let route = RouteHandle::new(4.0, 500, 2);
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
+            .expect("add_segment");
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(2, 4.0))
+            .expect("add_segment");
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_700_000_000);
+        let actual = render_ll_dash_mpd_at(&route, now).expect("renders");
+        let file = "ll_dash_mpd.golden";
+        if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+            std::fs::create_dir_all(&dir).expect("create golden dir");
+            std::fs::write(std::path::Path::new(&dir).join(file), &actual).expect("write");
+            return;
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/golden")
+            .join(file);
+        let expected = std::fs::read_to_string(&path).expect("read golden");
+        assert_eq!(actual, expected, "{file} differs from the golden output");
     }
 
     #[test]

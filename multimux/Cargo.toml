@@ -104,6 +104,12 @@ serde_json        = "1"
 thiserror         = "2"
 url               = "2"
 percent-encoding  = "2"
+# Dates and durations (DASH `availabilityStartTime`, `@duration`,
+# `EXT-X-PROGRAM-DATE-TIME`, DASH-pull `parse_iso8601_utc`) via `jiff` rather
+# than the hand-rolled `civil_from_days` / manual ISO-8601 parsing this crate
+# used before (SP5). `jiff` is already in the workspace lock (transmux,
+# timed-metadata), so this adds no new version.
+jiff              = "0.2"
 tracing           = "0.1"
 # Push output driver (`push`, issue #744): `#[async_trait]` drives the
 # `PushTransport` trait's async methods over the sans-IO `SrtSocket` handle.

@@ -87,3 +87,16 @@ GOLDEN_BLESS=tests/golden cargo test -p multimux --all-features --locked \
   --test whip_whep_sdp --test whep_sdp_golden
 ```
 
+## `dash_mpd.golden` / `ll_dash_mpd.golden`
+
+Byte-for-byte expected DASH (`output::dash::render_mpd_at`) and LL-DASH
+(`output::ll_dash::render_ll_dash_mpd_at`) MPD bodies with the `now`-dependent
+`@availabilityStartTime` frozen to `2023-11-14T22:13:20Z` (`UNIX_EPOCH +
+1_700_000_000s`). Captured before the SP5 jiff migration; the golden is the
+witness that no wire byte changed. Regenerate:
+
+```bash
+cd multimux
+GOLDEN_BLESS=tests/golden cargo test -p multimux --all-features --locked \
+  --lib matches_frozen_now_golden
+```
