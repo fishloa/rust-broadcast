@@ -252,3 +252,7 @@ rtp-packet       = { path = "../rtp-packet", version = "0.4", default-features =
 # construction). Already a transitive dep via `webrtc-runtime/media` at the
 # locked version, so this adds no new lock entry.
 rtc-dtls         = "0.21"
+# `ChildExt::wait_timeout` for `tests/support/bounded.rs` (SP7.3): the
+# deadline-bounded external-tool runner, replacing its `try_wait` +
+# `thread::sleep` poll loop (matching hls-runtime/media-doctor's copies).
+wait-timeout     = "0.2"
