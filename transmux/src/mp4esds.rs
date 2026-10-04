@@ -776,7 +776,47 @@ impl ESDescriptor {
 impl<'a> Parse<'a> for ESDescriptor {
     type Error = Error;
 
-    fn parse(body: &'a [u8]) -> Result<Self> {
+    /// Parse the bytes `Serialize` produces — the `ES_DescrTag` byte, then
+    /// the expandable-size varint, then the body (ISO/IEC 14496-1 §7.2.6.5
+    /// / §8.3.3) — so `parse(serialize(x)) == x` (#1148).
+    ///
+    /// Reading the *body* from offset 0 instead made the tag and size bytes
+    /// be misread as `ES_ID`/flags/`URLlength`: `parse` then consumed a few
+    /// bytes fewer than the tag+varint prefix it was fed, so its sub-descriptor
+    /// walk ended short of where the descriptor actually ends — returning a
+    /// silently truncated result, or, once a `URLstring` pushed the size
+    /// varint wide, a spurious `BufferTooShort` even though every byte was
+    /// present.
+    fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let mut tag_cursor = 0usize;
+        if tag_cursor >= bytes.len() {
+            return Err(Error::BufferTooShort {
+                need: 1,
+                have: bytes.len(),
+                what: "ES_Descriptor tag",
+            });
+        }
+        let tag = bytes[tag_cursor];
+        tag_cursor += 1;
+        if tag != Self::TAG {
+            return Err(Error::InvalidValue {
+                field: "descriptor_tag",
+                value: tag as u64,
+                reason: "expected ES_DescrTag (0x03)",
+            });
+        }
+        let (size, size_width) = parse_varint(bytes, &mut tag_cursor)?;
+        // The varint size is wire-controlled; bound it before slicing (r04-C4).
+        let end = tag_cursor
+            .checked_add(size)
+            .filter(|&end| end <= bytes.len())
+            .ok_or(Error::BufferTooShort {
+                need: tag_cursor.saturating_add(size),
+                have: bytes.len(),
+                what: "ES_Descriptor body",
+            })?;
+        let body = &bytes[tag_cursor..end];
+
         let mut cursor = 0usize;
         let mut unknown_descriptors = Vec::new();
 
@@ -924,7 +964,7 @@ impl<'a> Parse<'a> for ESDescriptor {
             decoder_config,
             sl_config,
             unknown_descriptors,
-            size_width: VARINT_WIDTH_FIXED,
+            size_width,
         })
     }
 }
@@ -1162,39 +1202,11 @@ impl EsdsBox {
         }
         let payload = &body[FULLBOX_EXTRA..];
 
-        // The payload is a single ES_Descriptor
-        let mut cursor = 0usize;
-        if cursor >= payload.len() {
-            return Err(Error::BufferTooShort {
-                need: 1,
-                have: payload.len(),
-                what: "ES_Descriptor tag",
-            });
-        }
-        let tag = payload[cursor];
-        cursor += 1;
-        if tag != TAG_ES_DESCRIPTOR {
-            return Err(Error::InvalidValue {
-                field: "descriptor_tag",
-                value: tag as u64,
-                reason: "expected ES_DescrTag (0x03) in esds box",
-            });
-        }
-        let (size, size_width) = parse_varint(payload, &mut cursor)?;
-        // The varint size is wire-controlled; bound it before slicing (r04-C4).
-        let es_end = cursor
-            .checked_add(size)
-            .filter(|&end| end <= payload.len())
-            .ok_or(Error::BufferTooShort {
-                need: cursor.saturating_add(size),
-                have: payload.len(),
-                what: "ES_Descriptor body",
-            })?;
-        let es_body = &payload[cursor..es_end];
-        let mut es_descriptor = ESDescriptor::parse(es_body)?;
-        // Record the width the box was authored with, so re-serializing keeps
-        // it (r04-W24).
-        es_descriptor.size_width = size_width;
+        // The payload is a single ES_Descriptor: tag + expandable size + body.
+        // `ESDescriptor::parse` now reads that framing itself (the same bytes
+        // `Serialize` writes — #1148), and records the size-varint width it
+        // was authored with for re-serialization (r04-W24).
+        let es_descriptor = ESDescriptor::parse(payload)?;
 
         Ok(Self { es_descriptor })
     }
@@ -1682,11 +1694,10 @@ mod tests {
     /// The boundary: exactly 255 bytes (u8::MAX) still round-trips.
     #[test]
     fn max_url_length_round_trips() {
-        // Checks the written `URLlength` byte directly: a full `parse()`
-        // round-trip through `ESDescriptor` at this size hits an unrelated,
-        // pre-existing sub-descriptor size-accounting issue (reproduces even
-        // with a 100-byte URL, so it is not this fix's concern) — this test
-        // is only about the URLlength field this fix touches.
+        // Checks the written `URLlength` byte directly (the #1129 concern);
+        // full parse/serialize symmetry for every length is covered by
+        // `es_descriptor_url_lengths_round_trip` and
+        // `es_descriptor_parse_is_symmetric_with_serialize` (#1148).
         let url = "x".repeat(255);
         let es = es_descriptor_with_url(url.clone());
         let bytes = es.try_to_bytes().unwrap();
@@ -1696,6 +1707,100 @@ mod tests {
             .position(|w| w == url_bytes)
             .expect("URL bytes present in output");
         assert_eq!(bytes[pos - 1], 255, "URLlength byte must be exactly 255");
+    }
+
+    /// #1148: an `esds` carrying a `URLstring` at every legal `URLlength`
+    /// (8 bits per ISO/IEC 14496-1 §7.2.6.5, so 0..=255) must survive
+    /// parse -> serialize -> parse with equal values and byte-identical
+    /// output — including across the 127/128 boundary where the descriptor's
+    /// own expandable-size varint may widen.
+    #[test]
+    fn es_descriptor_url_lengths_round_trip() {
+        for &len in &[0usize, 1, 100, 127, 128, 200, 255] {
+            let url: alloc::string::String = "x".repeat(len);
+            let es = es_descriptor_with_url(url.clone());
+            let bytes = EsdsBox::new(es)
+                .try_to_bytes()
+                .unwrap_or_else(|e| panic!("serialize URL length {len} failed: {e:?}"));
+            let parsed = EsdsBox::parse_box(&bytes)
+                .unwrap_or_else(|e| panic!("parse URL length {len} failed: {e:?}"));
+            assert_eq!(
+                parsed.es_descriptor.url.as_deref(),
+                Some(url.as_str()),
+                "URL length {len} did not survive parse"
+            );
+            let mut out = vec![0u8; parsed.serialized_len()];
+            let n = parsed.serialize_into(&mut out).unwrap();
+            assert_eq!(&out[..n], &bytes[..], "URL length {len} not byte-identical");
+            assert_eq!(parsed, EsdsBox::parse_box(&out[..n]).unwrap());
+        }
+    }
+
+    /// #1148: `ESDescriptor::parse` must accept exactly the bytes
+    /// `ESDescriptor::serialize_into` produces — the `ES_DescrTag` byte, the
+    /// expandable-size varint, then the body — so `parse(serialize(x)) == x`
+    /// (the crate's parse/serialize symmetry invariant, §7.2.6.5).
+    #[test]
+    fn es_descriptor_parse_is_symmetric_with_serialize() {
+        for &len in &[0usize, 1, 100, 127, 128, 200, 255] {
+            let url: alloc::string::String = "x".repeat(len);
+            let es = es_descriptor_with_url(url);
+            let bytes = es.try_to_bytes().unwrap();
+            let parsed = ESDescriptor::parse(&bytes)
+                .unwrap_or_else(|e| panic!("parse URL length {len} failed: {e:?}"));
+            assert_eq!(parsed, es, "URL length {len} did not survive parse");
+            let mut out = vec![0u8; parsed.serialized_len()];
+            let n = parsed.serialize_into(&mut out).unwrap();
+            assert_eq!(&out[..n], &bytes[..], "URL length {len} not byte-identical");
+        }
+    }
+
+    /// #1148: a wire `esds` whose `ES_Descriptor` size varint is *minimal*
+    /// width (2 bytes, as GPAC/Apple/Bento4 emit) and whose body exceeds the
+    /// 127-byte single-byte varint range because of a >100-byte URL must
+    /// parse and re-serialize byte-exactly.
+    #[test]
+    fn minimal_width_esds_with_long_url_round_trips() {
+        for &url_len in &[100usize, 127, 128, 200, 255] {
+            let url = vec![b'x'; url_len];
+            let dsi = [0x12, 0x08, 0x56, 0xe5, 0x00];
+            let dc_body = 13 + 1 + 1 + dsi.len();
+            let sl_body = 1usize;
+            let es_body = 2 + 1 + 1 + url_len + (1 + 1 + dc_body) + (1 + 1 + sl_body);
+            assert!(es_body <= 0x3FFF, "minimal ES size must fit 2 bytes");
+            let mut wire = Vec::new();
+            let es_total = 1 + 2 + es_body;
+            let box_total = 8 + 4 + es_total;
+            wire.extend_from_slice(&(box_total as u32).to_be_bytes());
+            wire.extend_from_slice(b"esds");
+            wire.extend_from_slice(&[0, 0, 0, 0]);
+            wire.extend_from_slice(&[
+                TAG_ES_DESCRIPTOR,
+                0x80 | ((es_body >> 7) as u8),
+                (es_body & 0x7F) as u8,
+            ]);
+            wire.extend_from_slice(&[0x00, 0x02]);
+            wire.push(0x40);
+            wire.push(url_len as u8);
+            wire.extend_from_slice(&url);
+            wire.extend_from_slice(&[TAG_DECODER_CONFIG, dc_body as u8]);
+            wire.extend_from_slice(&[0x40, 0x15, 0, 0, 0, 0, 1, 0x77, 0, 0, 1, 0x77, 0]);
+            wire.extend_from_slice(&[TAG_DECODER_SPECIFIC_INFO, dsi.len() as u8]);
+            wire.extend_from_slice(&dsi);
+            wire.extend_from_slice(&[TAG_SL_CONFIG, sl_body as u8, 0x02]);
+
+            let esds = EsdsBox::parse_box(&wire).unwrap_or_else(|e| {
+                panic!("parse minimal-width URL {url_len} failed: {e:?}");
+            });
+            assert_eq!(
+                esds.es_descriptor.url.as_deref().map(str::len),
+                Some(url_len)
+            );
+            assert_eq!(esds.serialized_len(), wire.len());
+            let mut out = vec![0u8; esds.serialized_len()];
+            let n = esds.serialize_into(&mut out).unwrap();
+            assert_eq!(&out[..n], &wire[..], "URL {url_len} not byte-identical");
+        }
     }
 
     // r04-C4: an ES_Descriptor whose varint size exceeds the remaining payload
