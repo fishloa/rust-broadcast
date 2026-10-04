@@ -295,3 +295,128 @@ async fn a_send_only_pusher_still_emits_a_get_parameter_keepalive() {
         "a send-only pusher must emit a GET_PARAMETER keepalive; saw {seen:?}"
     );
 }
+
+/// A `454 Session Not Found` (RFC 2326 §11.3.2) that the server sends in
+/// answer to our `GET_PARAMETER` keepalive must be SURFACED to the pusher, not
+/// silently discarded by the send-only drain: `send_interleaved` must fail with
+/// [`rtsp_runtime::Error::SessionNotFound`] so the pusher learns the session is
+/// gone on its next call (instead of only via a later write error).
+///
+/// PRE-FIX: `drain_inbound` matched every control response into `_ => {}`, so
+/// the 454 was swallowed and the pusher kept sending into a dead session.
+#[tokio::test]
+async fn a_454_keepalive_response_is_surfaced_not_discarded() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut buf: Vec<u8> = Vec::new();
+        let mut tmp = [0u8; 4096];
+        'outer: for _ in 0..64 {
+            let n = match sock.read(&mut tmp).await {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            buf.extend_from_slice(&tmp[..n]);
+            loop {
+                if buf.is_empty() {
+                    continue 'outer;
+                }
+                if buf[0] == b'$' {
+                    if buf.len() < 4 {
+                        continue 'outer;
+                    }
+                    let len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+                    if buf.len() < 4 + len {
+                        continue 'outer;
+                    }
+                    buf.drain(..4 + len);
+                    continue;
+                }
+                let Some(head_end) = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4)
+                else {
+                    continue 'outer;
+                };
+                let text = String::from_utf8_lossy(&buf[..head_end]).to_string();
+                let clen = text
+                    .lines()
+                    .find_map(|l| {
+                        let (k, v) = l.split_once(':')?;
+                        k.eq_ignore_ascii_case("content-length")
+                            .then(|| v.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if buf.len() < head_end + clen {
+                    continue 'outer;
+                }
+                let cseq = text
+                    .lines()
+                    .find_map(|l| {
+                        let (k, v) = l.split_once(':')?;
+                        k.eq_ignore_ascii_case("cseq").then(|| v.trim().to_string())
+                    })
+                    .unwrap_or_default();
+                let method = text.split(' ').next().unwrap_or("").to_string();
+                // SETUP arms a short session timeout so the keepalive fires; the
+                // answer to the keepalive's GET_PARAMETER is a 454 — the session
+                // the server "forgot".
+                let resp = match method.as_str() {
+                    "SETUP" => format!(
+                        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678;timeout=2\r\n\r\n"
+                    ),
+                    "GET_PARAMETER" => {
+                        format!(
+                            "RTSP/1.0 454 Session Not Found\r\nCSeq: {cseq}\r\n\
+                             Session: 12345678\r\n\r\n"
+                        )
+                    }
+                    _ => format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678\r\n\r\n"),
+                };
+                sock.write_all(resp.as_bytes()).await.unwrap();
+                buf.drain(..head_end + clen);
+                if method == "GET_PARAMETER" {
+                    break 'outer;
+                }
+            }
+        }
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    client.announce(URI, SDP).await.unwrap();
+    client.setup(URI, &tcp_interleaved()).await.unwrap();
+    client.record(URI).await.unwrap();
+
+    // Pause virtual time only now (real time for connect/handshake), so the
+    // keepalive half-timeout fires deterministically.
+    tokio::time::pause();
+    let mut errored = None;
+    for _ in 0..10 {
+        match client.send_interleaved(0, b"frame").await {
+            Ok(()) => {
+                // Advance past the keepalive half-timeout to trigger the next
+                // GET_PARAMETER, and let the server's 454 land.
+                tokio::time::advance(Duration::from_secs(5)).await;
+                tokio::task::yield_now().await;
+            }
+            Err(e) => {
+                errored = Some(e);
+                break;
+            }
+        }
+    }
+    tokio::time::resume();
+
+    let err = errored.expect("the 454 must surface to the pusher, not be discarded");
+    assert!(
+        matches!(
+            err,
+            rtsp_runtime::Error::SessionNotFound {
+                method: rtsp_runtime::Method::GetParameter
+            }
+        ),
+        "a 454 to the keepalive must surface as SessionNotFound(GetParameter), got {err:?}"
+    );
+    let _ = server.await;
+}

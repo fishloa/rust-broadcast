@@ -38,6 +38,14 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   additive).
 
 ### Fixed
+- The send-only push drain no longer discards a `454 Session Not Found`
+  (RFC 2326 §11.3.2) that answers our `GET_PARAMETER` keepalive. Such a
+  response now surfaces as the new `Error::SessionNotFound { method }` from
+  `send_interleaved` (its next call), so a pusher learns the session is gone
+  instead of writing into a dead one. The drain also reads with a single
+  `timeout(Duration::ZERO, framed.next())` per probe rather than nesting a
+  second `read_idle` timer around every packet, and the dead pre-check on the
+  media queue is gone.
 - A received `Session` header whose id carries an unterminated quote (e.g. `ab"c;timeout=30`) no longer swallows the `;`: the id is taken up to the first `;` (as before) instead of through the unbalanced quote, so the `timeout` parameter is not lost.
 - `WWW-Authenticate` `stale=true` was missed when `stale` was the first parameter or the realm contained a comma; `Session` header parsing is now rtsp-runtime's own RFC 2326 §12.37 parser (see Changed).
 - `AsyncRtspServer::next_request` is cancel-safe on the response write: the events are kept and the response is flushed exactly once by the next call.

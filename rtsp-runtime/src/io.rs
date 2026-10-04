@@ -321,7 +321,7 @@ where
     /// retry. Bytes already read stay buffered.
     pub async fn send_interleaved(&mut self, channel: u8, payload: &[u8]) -> Result<()> {
         self.poll_keepalive().await?;
-        self.drain_inbound().await;
+        self.drain_inbound().await?;
         let bytes = crate::interleaved::InterleavedFrame::slice_to_bytes(channel, payload)?;
         bounded(self.timeouts.write, "write", self.framed.send(bytes)).await
     }
@@ -346,24 +346,45 @@ where
     /// Non-blockingly read whatever the peer has already sent (control
     /// responses and interleaved media), applying session state and queueing
     /// media frames — so a send-only pusher keeps the socket drained without
-    /// parking on a read. A zero-duration timeout polls the framed stream once;
-    /// if no bytes are ready it returns immediately.
+    /// parking on a read.
     ///
-    /// A read error is swallowed here (it is not the push path's error to
-    /// report): the next `next_event`/`recv_interleaved` call will surface it,
-    /// and [`send_interleaved`](Self::send_interleaved)'s write is what a
-    /// pusher must see fail.
-    async fn drain_inbound(&mut self) {
+    /// One `timeout(Duration::ZERO, self.framed.next())` per readiness probe
+    /// (NOT `next_event`, whose own `read_idle` timeout would nest a second
+    /// timer around every packet): if no bytes are ready it returns
+    /// immediately.
+    ///
+    /// A control response that indicates the session is gone — `454 Session
+    /// Not Found` (RFC 2326 §11.3.2), the usual answer to a `GET_PARAMETER`
+    /// keepalive once the server dropped the session — is surfaced as
+    /// [`Error::SessionNotFound`] rather than discarded, so the send-only
+    /// pusher learns of the loss on its next call instead of only via a later
+    /// write error. Any other response is applied by the codec and dropped
+    /// (a pusher has no outstanding request of its own to correlate). A read
+    /// error (other than a 454) is swallowed: the next `next_event`/
+    /// `recv_interleaved` call surfaces it.
+    pub(crate) async fn drain_inbound(&mut self) -> Result<()> {
         loop {
-            if self.pending_media.len() >= MAX_PENDING_MEDIA_FRAMES {
-                break;
-            }
-            match tokio::time::timeout(Duration::ZERO, self.next_event()).await {
-                Err(_) => break,       // nothing ready — non-blocking
-                Ok(Err(_)) => break,   // peer error surfaces on the next real call
-                Ok(Ok(None)) => break, // EOF
-                Ok(Ok(Some(ClientEvent::MediaData { .. }))) => {}
-                Ok(Ok(Some(_))) => {} // control response applied by the codec
+            match tokio::time::timeout(Duration::ZERO, self.framed.next()).await {
+                Err(_) => return Ok(()),   // nothing ready — non-blocking
+                Ok(None) => return Ok(()), // EOF
+                // A read/decode error is not the push path's to report; the
+                // next real read surfaces it, and `send_interleaved`'s write
+                // is what a pusher must see fail.
+                Ok(Some(Err(_))) => return Ok(()),
+                Ok(Some(Ok(ClientEvent::Response { method, status, .. }))) => {
+                    if status == rtsp_types::StatusCode::SessionNotFound {
+                        return Err(Error::SessionNotFound { method });
+                    }
+                }
+                Ok(Some(Ok(event @ ClientEvent::MediaData { .. }))) => {
+                    if self.pending_media.len() >= MAX_PENDING_MEDIA_FRAMES {
+                        self.pending_media.pop_front();
+                    }
+                    self.pending_media.push_back(event);
+                }
+                // `AuthRetry`/any future variant: nothing to do for a
+                // send-only pusher.
+                Ok(Some(Ok(_))) => {}
             }
         }
     }

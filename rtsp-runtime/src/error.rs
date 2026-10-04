@@ -92,6 +92,17 @@ pub enum Error {
     /// name, handshake, or certificate configuration (`rtsps://`, RFC 2326 §19).
     #[error("TLS error: {0}")]
     Tls(String),
+
+    /// The server answered `454 Session Not Found` (RFC 2326 §11.3.2) to a
+    /// request on our session — the session is gone (timed out, or torn down
+    /// server-side), so the caller must re-`SETUP`. Surfaced by the send-only
+    /// push drain (a `GET_PARAMETER` keepalive is the usual trigger) instead
+    /// of being silently discarded.
+    #[error("RTSP session not found (454 {method:?}): the session is gone; re-SETUP")]
+    SessionNotFound {
+        /// The method whose request the server rejected with 454.
+        method: Method,
+    },
 }
 
 impl From<std::io::Error> for Error {
