@@ -25,6 +25,14 @@
   `parse_iso8601_utc`/`now_unix_secs` use `jiff` instead of hand-rolled
   `civil_from_days`/manual parsing. The whole-second `availabilityStartTime`
   spelling is unchanged (pinned by the `dash_mpd`/`ll_dash_mpd` goldens).
+- **DASH `xs:duration` values >= 60 s now use the balanced spelling.** The
+  `@minimumUpdatePeriod`/`@timeShiftBufferDepth` durations are formatted by
+  `jiff`'s span printer, which balances up to hours — one spelling rule shared
+  with `transmux`'s DASH writer. Sub-60 s values are byte-identical to the old
+  `PT{secs}S` spelling, but a `@timeShiftBufferDepth` >= 60 s (e.g. a
+  15-segment x 4 s window) now prints `PT1M` where the pre-migration code printed
+  `PT60S`, and >= 3600 s prints `PT1H`. Both are valid `xs:duration`; the
+  >= 60 s form is now golden-pinned (`dash_mpd_window60.golden`).
 - **The test harness binds `127.0.0.1:0` and passes the live listener.** New
   `serve_with_registry_on`/`serve_with_registry_on_admin`/
   `serve_config_file_with_registry_on_admin` entry points take a pre-bound

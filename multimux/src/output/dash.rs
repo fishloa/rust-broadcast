@@ -260,8 +260,10 @@ pub fn render_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<String> {
         init_template: "init-$RepresentationID$.mp4".to_string(),
         media_template: "seg-$RepresentationID$-$Number$.m4s".to_string(),
         availability_start_time: Some(format_iso8601(now)),
-        minimum_update_period: Some(xs_duration_secs(target_duration_secs)),
-        time_shift_buffer_depth: Some(xs_duration_secs(time_shift_buffer_depth_secs)),
+        minimum_update_period: Some(xs_duration_secs(target_duration_secs).ok()?),
+        time_shift_buffer_depth: Some(
+            xs_duration_secs(time_shift_buffer_depth_secs).ok()?,
+        ),
         segments,
         ..DashPackager::default()
     };
@@ -312,11 +314,24 @@ fn format_iso8601_secs(secs: i64) -> String {
 }
 
 /// Format a duration as the DASH `xs:duration` shortest spelling (`PT4S`,
-/// `PT0.5S`) via `jiff`'s `SpanPrinter` (SP5) — the form `@minimumUpdatePeriod`
-/// and `@timeShiftBufferDepth` use (ISO/IEC 23009-1 §5.3.9.2).
+/// `PT2M`, `PT0.5S`) via `jiff`'s `SpanPrinter` (SP5) — the form
+/// `@minimumUpdatePeriod` and `@timeShiftBufferDepth` use
+/// (ISO/IEC 23009-1 §5.3.9.2).
+///
+/// **One spelling rule, shared with `transmux`'s DASH writer (W1-T):** both
+/// call `jiff`'s `SpanPrinter::duration_to_string`, which balances up to
+/// hours, so a value >= 60 s prints `PT2M` (not `PT120S`) and >= 3600 s prints
+/// `PT1H`. `jiff` cannot print unbalanced seconds, and hand-rolling that
+/// spelling here to match the pre-jiff `PT{secs}S` output would be a second,
+/// divergent rule — so the balanced jiff spelling is kept and the >= 60 s wire
+/// difference is recorded in the CHANGELOG (the pre-migration code printed
+/// `PT{secs}S`, which is why the sub-60 s goldens were byte-identical).
 pub(crate) fn xs_duration(d: Duration) -> String {
     match jiff::SignedDuration::try_from(d) {
         Ok(signed) => jiff::fmt::temporal::SpanPrinter::new().duration_to_string(&signed),
+        // `u64` seconds > `i64::MAX` seconds (~292 billion years) — no
+        // realisable media duration; fall back to the whole-second spelling
+        // rather than panic.
         Err(_) => format!("PT{}S", d.as_secs()),
     }
 }
@@ -327,14 +342,33 @@ pub fn xs_duration_for_test(d: Duration) -> String {
     xs_duration(d)
 }
 
-/// Whole/ fractional seconds as an `xs:duration` (`f64` input, rounded to the
-/// nearest millisecond — the DASH attributes carry whole- or half-second values
-/// only). Negative inputs collapse to `PT0S`.
-pub(crate) fn xs_duration_secs(secs: f64) -> String {
-    if secs <= 0.0 {
-        return xs_duration(Duration::ZERO);
+/// Why [`xs_duration_secs`] could not render an `xs:duration`.
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum DurationError {
+    /// `secs` was NaN, infinite, negative, or too large to represent as a
+    /// [`Duration`].
+    #[error("invalid xs:duration input: {secs}")]
+    InvalidInput { secs: f64 },
+}
+
+/// A whole/ fractional second count as an `xs:duration` via [`xs_duration`],
+/// without panicking on a bad input.
+///
+/// `secs` must be finite, strictly positive, and within [`Duration`]'s range
+/// (`Duration::from_secs_f64` PANICS on NaN/negative/overflow — this returns
+/// [`DurationError::InvalidInput`] instead). A zero/negative input is NOT
+/// silently collapsed to `PT0S`: an invalid duration is a caller error, not a
+/// valid zero.
+pub(crate) fn xs_duration_secs(secs: f64) -> Result<String, DurationError> {
+    if !secs.is_finite() || secs <= 0.0 {
+        return Err(DurationError::InvalidInput { secs });
     }
-    xs_duration(Duration::from_secs_f64(secs))
+    // `Duration::try_from_secs_f64` rejects NaN/inf/negative/overflow — far
+    // larger than any realisable segment duration — as an `Err`, unlike the
+    // panicking `from_secs_f64`.
+    let d = Duration::try_from_secs_f64(secs)
+        .map_err(|_| DurationError::InvalidInput { secs })?;
+    Ok(xs_duration(d))
 }
 
 #[cfg(test)]
@@ -439,6 +473,77 @@ mod tests {
             .join(file);
         let expected = std::fs::read_to_string(&path).expect("read golden");
         assert_eq!(actual, expected, "{file} differs from the golden output");
+    }
+
+    /// A window large enough that `@timeShiftBufferDepth` is >= 60 s (4 s x 15
+    /// segments), golden-pinned so the >= 60 s spelling is a checked wire byte,
+    /// not an untested assumption. The pre-jiff code printed `PT{secs}S`
+    /// (`PT60S`); the jiff spelling balances to `PT1M`. This crate keeps the
+    /// jiff (balanced) spelling — one rule, shared with `transmux`'s DASH
+    /// writer (W1-T) — and the difference is recorded in the CHANGELOG.
+    /// `GOLDEN_BLESS=<dir>` writes instead of compares.
+    #[test]
+    fn render_mpd_window_over_60s_matches_frozen_now_golden() {
+        let route = RouteHandle::new(4.0, 500, 15);
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        for seq in 1..=15u32 {
+            route
+                .add_segment(crate::route::SPTS_PROGRAM_ID, seg(seq, 4.0))
+                .expect("add_segment");
+        }
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let actual = render_mpd_at(&route, now).expect("renders");
+        // A 15-segment x 4 s window => timeShiftBufferDepth = 60 s.
+        assert!(
+            actual.contains("timeShiftBufferDepth=\"PT1M\""),
+            "a 60 s window must spell the balanced jiff xs:duration PT1M: {actual}"
+        );
+        let file = "dash_mpd_window60.golden";
+        if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+            std::fs::create_dir_all(&dir).expect("create golden dir");
+            std::fs::write(std::path::Path::new(&dir).join(file), &actual).expect("write");
+            return;
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/golden")
+            .join(file);
+        let expected = std::fs::read_to_string(&path).expect("read golden");
+        assert_eq!(actual, expected, "{file} differs from the golden output");
+    }
+
+    /// The >= 3600 s spelling, pinned directly (no route this long is
+    /// realisable in a unit test): the balanced jiff form is `PT1H`.
+    #[test]
+    fn a_duration_at_or_above_an_hour_uses_the_balanced_jiff_spelling() {
+        assert_eq!(xs_duration_secs(60.0).unwrap(), "PT1M");
+        assert_eq!(xs_duration_secs(90.0).unwrap(), "PT1M30S");
+        assert_eq!(xs_duration_secs(3600.0).unwrap(), "PT1H");
+        assert_eq!(xs_duration_secs(3660.0).unwrap(), "PT1H1M");
+    }
+
+    /// `xs_duration_secs` must REJECT NaN / infinite / negative / overflow with
+    /// an error, never panic (the old `Duration::from_secs_f64` panicked and
+    /// its `secs <= 0.0` guard let NaN through).
+    #[test]
+    fn xs_duration_secs_rejects_nan_inf_negative_and_overflow() {
+        assert!(xs_duration_secs(f64::NAN).is_err(), "NaN must be rejected");
+        assert!(
+            xs_duration_secs(f64::INFINITY).is_err(),
+            "+inf must be rejected"
+        );
+        assert!(
+            xs_duration_secs(f64::NEG_INFINITY).is_err(),
+            "-inf must be rejected"
+        );
+        assert!(xs_duration_secs(-1.0).is_err(), "negative must be rejected");
+        assert!(xs_duration_secs(0.0).is_err(), "zero must be rejected");
+        assert!(
+            xs_duration_secs(f64::MAX).is_err(),
+            "overflow must be rejected, not panic"
+        );
+        // A valid value still renders.
+        assert_eq!(xs_duration_secs(4.0).unwrap(), "PT4S");
     }
 
     #[test]
