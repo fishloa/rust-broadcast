@@ -36,4 +36,27 @@ fn availability_start_time_parses_back_to_the_same_instant() {
         multimux::source::dash_pull::parse_iso8601_utc_for_test("not-a-date"),
         None
     );
+    // A fractional-second UTC form is accepted (doc claims fractional
+    // round-trip), truncated to whole seconds.
+    assert_eq!(
+        multimux::source::dash_pull::parse_iso8601_utc_for_test("2023-11-14T22:13:20.500Z"),
+        Some(1_700_000_000)
+    );
+    // An OFFSET form is rejected, not silently converted: the UTC `Z` guard is
+    // lexical, so a `+01:00` timestamp falls back rather than being
+    // reinterpreted.
+    assert_eq!(
+        multimux::source::dash_pull::parse_iso8601_utc_for_test("2023-11-14T22:13:20+01:00"),
+        None
+    );
+    assert_eq!(
+        multimux::source::dash_pull::parse_iso8601_utc_for_test("2023-11-14T22:13:20-05:00"),
+        None
+    );
+    // No `Z` and no offset is also rejected (the shape is not the one
+    // `availabilityStartTime` uses).
+    assert_eq!(
+        multimux::source::dash_pull::parse_iso8601_utc_for_test("2023-11-14T22:13:20"),
+        None
+    );
 }

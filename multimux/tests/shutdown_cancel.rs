@@ -62,7 +62,10 @@ fn test_trunk() -> Arc<Trunk> {
 
 /// Cancelling while the push is BLOCKED in a connect must return promptly —
 /// the connect is raced against the token, not awaited to its own timeout.
-#[tokio::test]
+///
+/// Runs under `start_paused`: virtual time is advanced to let the loop reach
+/// the hanging connect, then cancelled; the resolve needs no real time.
+#[tokio::test(start_paused = true)]
 async fn cancelling_during_a_push_connect_returns_promptly() {
     let cancel = tokio_util::sync::CancellationToken::new();
     let h = tokio::spawn(drive_push::<HangingConnect>(
@@ -74,9 +77,9 @@ async fn cancelling_during_a_push_connect_returns_promptly() {
         cancel.clone(),
     ));
     // Let the loop reach the (hanging) connect (one 250 ms listen tick), then
-    // cancel. Real time: the connect never returns on its own, so only the
-    // cancel race can make the task exit.
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    // cancel. The connect never returns on its own, so only the cancel race
+    // can make the task exit.
+    tokio::time::advance(Duration::from_millis(400)).await;
     cancel.cancel();
     let done = tokio::time::timeout(Duration::from_secs(2), h).await;
     assert!(
@@ -86,11 +89,13 @@ async fn cancelling_during_a_push_connect_returns_promptly() {
 }
 
 /// Cancelling during the reconnect backoff must also return promptly.
-#[tokio::test]
+///
+/// Runs under `start_paused`: virtual time is advanced into the backoff, then
+/// cancelled; the resolve needs no real time.
+#[tokio::test(start_paused = true)]
 async fn cancelling_during_a_push_backoff_wait_returns_promptly() {
     let cancel = tokio_util::sync::CancellationToken::new();
-    // A 1 s initial backoff: cancel at 400 ms (mid-backoff) must return well
-    // before the next retry at ~1.25 s.
+    // A 1 s initial backoff: advance 400 ms (mid-backoff), then cancel.
     let h = tokio::spawn(drive_push::<NeverConnect>(
         test_trunk(),
         "srt://127.0.0.1:9/streamid=x".into(),
@@ -99,7 +104,7 @@ async fn cancelling_during_a_push_backoff_wait_returns_promptly() {
         ReconnectPolicy::default(),
         cancel.clone(),
     ));
-    tokio::time::sleep(Duration::from_millis(400)).await;
+    tokio::time::advance(Duration::from_millis(400)).await;
     cancel.cancel();
     let done = tokio::time::timeout(Duration::from_millis(200), h).await;
     assert!(

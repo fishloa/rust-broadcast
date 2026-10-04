@@ -386,22 +386,26 @@ impl EitProgramme {
             }
             _ => None,
         });
-        let start = event.start_time().map(|dt| {
+        let start = event.start_time().and_then(|dt| {
             // A civil (not instant) date-time from the EIT: format it via
             // `jiff`'s civil path (whole-second precision) and append `Z`.
-            jiff::civil::date(
-                i16::try_from(dt.year).unwrap_or(i16::MAX),
-                i8::try_from(dt.month).unwrap_or(1),
-                i8::try_from(dt.day).unwrap_or(1),
+            // Every field already came back validated from `decode_mjd_bcd`
+            // (month 1-12, day 1-31, hour/minute/second in range), so a
+            // failed narrowing here would mean the decoder contract was
+            // broken; return `None` (no `start`) rather than fabricate a date
+            // from a fixed default.
+            let year = i16::try_from(dt.year).ok()?;
+            let month = i8::try_from(dt.month).ok()?;
+            let day = i8::try_from(dt.day).ok()?;
+            let hour = i8::try_from(dt.hour).ok()?;
+            let minute = i8::try_from(dt.minute).ok()?;
+            let second = i8::try_from(dt.second).ok()?;
+            Some(
+                jiff::civil::date(year, month, day)
+                    .at(hour, minute, second, 0)
+                    .strftime("%Y-%m-%dT%H:%M:%SZ")
+                    .to_string(),
             )
-            .at(
-                i8::try_from(dt.hour).unwrap_or(0),
-                i8::try_from(dt.minute).unwrap_or(0),
-                i8::try_from(dt.second).unwrap_or(0),
-                0,
-            )
-            .strftime("%Y-%m-%dT%H:%M:%SZ")
-            .to_string()
         });
         let duration_secs = event.duration().map(|d| d.as_secs());
         EitProgramme {

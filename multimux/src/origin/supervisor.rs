@@ -305,7 +305,15 @@ pub async fn supervise_driver<F, Fut>(
         }
         route_handle.set_health(HealthState::Connecting);
 
-        let result = attempt(route_handle.clone()).await;
+        // Race the in-flight attempt against cancellation (M6): a long-running
+        // attempt (an established ingest session) must be abandoned when the
+        // route is cancelled rather than awaited to its own end. The attempt
+        // future is dropped here, which tears its driver down.
+        let result = tokio::select! {
+            biased;
+            () = cancel.cancelled() => break,
+            r = attempt(route_handle.clone()) => r,
+        };
         let reached_live = route_handle.health() == HealthState::Live;
 
         match &result {
@@ -934,6 +942,40 @@ mod tests {
         tokio::time::timeout(Duration::from_secs(5), handle)
             .await
             .expect("supervise_driver must return promptly on shutdown, not after the 90s backoff")
+            .expect("supervise_driver task did not panic");
+    }
+
+    /// M6: an in-flight attempt that never returns on its own must be
+    /// ABANDONED when the route is cancelled — `supervise_driver` races the
+    /// attempt against the token, so a cancelled route does not wait out an
+    /// established ingest session. PRE-FIX: `attempt(...).await` was awaited
+    /// unconditionally, so this would time out (the attempt never returns).
+    #[tokio::test(start_paused = true)]
+    async fn shutdown_abandons_an_in_flight_attempt() {
+        let route = Arc::new(RouteHandle::new(1.0, 500, 8));
+        let cancel = tokio_util::sync::CancellationToken::new();
+
+        // An attempt that never returns.
+        let attempt = |_r: Arc<RouteHandle>| {
+            Box::pin(std::future::pending::<crate::Result<()>>())
+                as std::pin::Pin<Box<dyn Future<Output = crate::Result<()>> + Send>>
+        };
+        let handle = tokio::spawn(supervise_driver(
+            attempt,
+            route,
+            Backoff::new(Duration::from_secs(1), Duration::from_secs(30), 2.0),
+            "test-route".to_string(),
+            cancel.clone(),
+        ));
+
+        // The loop is now parked in the never-returning attempt.
+        tokio::task::yield_now().await;
+        tokio::task::yield_now().await;
+        cancel.cancel();
+
+        tokio::time::timeout(Duration::from_secs(5), handle)
+            .await
+            .expect("supervise_driver must abandon an in-flight attempt on cancel")
             .expect("supervise_driver task did not panic");
     }
 }
