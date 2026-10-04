@@ -316,7 +316,12 @@ impl WhipRoute {
         let infra = self
             .infra
             .get_or_try_init(|| async {
-                let prebound = self.prebound.lock().expect("prebound lock").take();
+                // Recover the slot even from a poisoned lock (a `with_listener`
+                // caller panicking while holding it must not abort startup).
+                let prebound = match self.prebound.lock() {
+                    Ok(mut slot) => slot.take(),
+                    Err(poisoned) => poisoned.into_inner().take(),
+                };
                 let listener = match prebound {
                     Some(listener) => listener,
                     None => TcpListener::bind(&self.listen).await.map_err(|e| {
@@ -2003,6 +2008,40 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
             local_bind_ip(None, peer_v6),
             std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
         );
+    }
+
+    /// A poisoned pre-bound lock must NOT abort WHIP startup: `ensure_infra`
+    /// recovers the inner slot and serves on the route's own bound listener.
+    /// PRE-FIX the production `.expect("prebound lock")` panicked on the
+    /// poisoned lock (the poisoning thread's panic propagated through the join
+    /// here, so `ensure_infra` panicked rather than returning `Ok`).
+    #[tokio::test]
+    async fn ensure_infra_recovers_from_a_poisoned_prebound_lock() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let route = WhipRoute::with_listener("cam", listener, DEFAULT_WHIP_MAX_SESSIONS);
+
+        // Poison `route.prebound`: hold the lock across a panic (caught so the
+        // test itself survives to observe the recovery).
+        // The caught panic still prints via the default hook; harmless, and
+        // avoiding a global `set_hook` keeps this test safe under the parallel
+        // test runner.
+        let poisoned = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let _guard = route.prebound.lock().expect("lock for poisoning");
+            panic!("poison the whip prebound lock");
+        }));
+        assert!(poisoned.is_err(), "the poisoning panic must be caught");
+
+        let infra = route
+            .ensure_infra()
+            .await
+            .expect("ensure_infra must recover from a poisoned pre-bound lock");
+        let token = infra.cancel.clone();
+        // The caller-bound address must actually accept a connection.
+        tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("the route must still serve on its own address after a poisoned lock");
+        token.cancel();
     }
 
     /// Defect 1 (structural): a transport with a pending timer (here a STUN
