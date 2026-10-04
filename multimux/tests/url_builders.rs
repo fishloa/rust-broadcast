@@ -29,16 +29,21 @@ fn redaction_keeps_percent_encoded_credentials_opaque() {
     assert!(!redact_url(url).contains("p%40ss"));
 }
 
-/// BITING (fails on old code — the old fallback kept the host, `cam local`;
-/// the NEW masking-only fallback does not). The difference is intended and
-/// listed in the CHANGELOG, and the guard test (harness_guard/no_handroll)
-/// pins that `redact_unparseable` contains no host extraction.
+/// A URL the `url` parser rejects is still MASKED for the destination: the
+/// whole authority (userinfo AND host) plus any path/query collapse to the
+/// mask tokens, so a stream key carried in the path/query (the actual leak —
+/// `rtmp://host/app/KEY`) never reaches a log line.
 #[test]
-fn redaction_still_masks_a_url_the_parser_rejects() {
+fn redaction_masks_both_authority_and_tail_of_a_url_the_parser_rejects() {
     assert_eq!(
         redact_destination("rtsp://user:p@cam local/live"),
-        "rtsp://<redacted>/live"
+        "rtsp://<redacted>/<redacted>"
     );
+    // A distinctive host and a stream-key tail must not survive.
+    let masked = redact_destination("rtmp://bad host name/app/LEAKME123?token=SEKRIT");
+    assert!(!masked.contains("LEAKME123"), "{masked}");
+    assert!(!masked.contains("SEKRIT"), "{masked}");
+    assert!(!masked.contains("bad host name"), "{masked}");
 }
 
 #[test]

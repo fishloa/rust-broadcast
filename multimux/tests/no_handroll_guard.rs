@@ -19,9 +19,9 @@ use std::path::Path;
 const ALLOW: &[(&str, &str, &str)] = &[
     // --- Redaction of a URL the `url` parser REJECTS (spec §9 documented
     // exception): the masking-only fallbacks scan the raw text for the `://`
-    // boundary and the `@`. They do NOT extract the host (no
-    // `rsplit_once('@')`; guarded in-file by
-    // `masking_fallbacks_do_not_extract_the_host`). ---
+    // boundary and the `@`. They do NOT reconstruct a secret from the text
+    // (behaviourally guarded in-file by
+    // `masking_fallbacks_do_not_reconstruct_a_secret`). ---
     (
         "redact.rs",
         "find(\"://\")",

@@ -40,10 +40,12 @@ pub fn redact_url(raw: &str) -> String {
 /// "failed to parse in the first place"). This is a spec §9 documented
 /// exception, allowlisted by name in the no-hand-roll guard.
 ///
-/// The credential prefix before the authority's `@` becomes `***@`; the host
-/// is neither extracted nor echoed (the pre-migration `rsplit_once('@')`
-/// keep-host shape is deleted). No `://` or no `@` in the authority leaves
-/// the string unchanged.
+/// The credential prefix before the authority's `@` becomes `***@` and the
+/// rest of the authority + path/query is kept, exactly as [`redact_url`]'s
+/// text scrub always did (`"rtsp://user:secret@host/s"` →
+/// `"rtsp://***@host/s"`) — the host and path are NOT secrets, so they stay
+/// legible; only the credential is masked. No `://` or no `@` in the authority
+/// leaves the string unchanged.
 fn redact_unparseable_userinfo(raw: &str) -> String {
     let Some(scheme_end) = raw.find("://") else {
         return raw.to_string();
@@ -100,8 +102,11 @@ pub fn redact_destination(raw: &str) -> String {
 /// The masking-only fallback for [`redact_destination`] on a URL the parser
 /// rejects (spec §9 documented exception, allowlisted by name in the guard).
 /// The whole authority — userinfo AND host — collapses to the single mask
-/// token, so no host-bearing text is reconstructed; anything after the
-/// authority is kept verbatim.
+/// token, and anything after the authority (path, query, fragment) collapses
+/// to `/<redacted>`: neither the host nor the tail is reconstructed from the
+/// raw text, so an RTMP stream key (`rtmp://host/app/KEY`) or an SRT
+/// `streamid` in the path/query can never reach a log line even when the URL as
+/// a whole did not parse.
 fn redact_unparseable_destination(raw: &str) -> String {
     let Some(scheme_end) = raw.find("://") else {
         return REDACTED.to_string();
@@ -111,11 +116,11 @@ fn redact_unparseable_destination(raw: &str) -> String {
     let authority_end = after_scheme
         .find(['/', '?', '#'])
         .unwrap_or(after_scheme.len());
-    let rest = &after_scheme[authority_end..];
-    if rest.is_empty() {
-        format!("{scheme}{REDACTED}")
+    let had_tail = authority_end < after_scheme.len();
+    if had_tail {
+        format!("{scheme}{REDACTED}/{REDACTED}")
     } else {
-        format!("{scheme}{REDACTED}{rest}")
+        format!("{scheme}{REDACTED}")
     }
 }
 
@@ -235,24 +240,35 @@ mod tests {
         assert!(!redacted.contains("user"));
     }
 
-    /// Guard: the two masking-only fallbacks must not extract or echo a host.
-    /// A reinstated `rsplit_once('@')`-keep-host shape (the pre-migration
-    /// fallback) would fail this.
+    /// Guard (I4): the two masking-only fallbacks must not reconstruct a
+    /// secret from the raw text. Asserted by BEHAVIOUR, not by a source-string
+    /// match: a respelling of the host extraction (e.g. `rfind('@')` rather
+    /// than `rsplit_once('@')`) must still fail this.
     #[test]
-    fn masking_fallbacks_do_not_extract_the_host() {
-        let src = include_str!("redact.rs");
-        for fn_name in [
-            "fn redact_unparseable_userinfo",
-            "fn redact_unparseable_destination",
-        ] {
-            let start = src.find(fn_name).expect("fallback fn present");
-            let body = &src[start..];
-            let end = body.find("\n}\n").expect("fallback fn closes");
-            let body = &body[..end];
+    fn masking_fallbacks_do_not_reconstruct_a_secret() {
+        // `redact_unparseable_userinfo` masks the credential and keeps host +
+        // path; the credential must never survive.
+        let userinfo = redact_unparseable_userinfo("rtsp://user:secretpass@host/s");
+        assert!(
+            !userinfo.contains("user") && !userinfo.contains("secretpass"),
+            "the userinfo fallback must not echo the credential: {userinfo}"
+        );
+        assert_eq!(userinfo, "rtsp://***@host/s");
+
+        // `redact_unparseable_destination` echoes NEITHER the host NOR the
+        // path/query — a stream key or token in the tail must not survive.
+        let dest = redact_unparseable_destination("rtmp://host/app/STREAMKEY123?token=abc");
+        for secret in ["host", "app", "STREAMKEY123", "token", "abc"] {
             assert!(
-                !body.contains("rsplit_once('@')"),
-                "{fn_name} must not extract the host via rsplit_once('@')"
+                !dest.contains(secret),
+                "the destination fallback must not echo {secret}: {dest}"
             );
         }
+        assert_eq!(dest, "rtmp://<redacted>/<redacted>");
+        // No tail: still no host.
+        assert_eq!(
+            redact_unparseable_destination("rtsp://cam.local:554"),
+            "rtsp://<redacted>"
+        );
     }
 }
