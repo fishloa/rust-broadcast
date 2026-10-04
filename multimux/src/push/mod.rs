@@ -395,11 +395,6 @@ pub async fn drive_push<T: PushTransport>(
     /// track…") still reaches the log line below via `Display`.
     const UNSATISFIABLE: &str = "no track this output's container format can carry";
 
-    /// How long to back off before retrying [`Trunk::listen`] when every
-    /// waiter slot is already taken — keeps this loop from busy-spinning a
-    /// runtime worker in that case (issue r07-C2).
-    const NO_SLOT_BACKOFF: Duration = Duration::from_millis(50);
-
     /// The longest one flush of queued messages may take before the push is
     /// treated as failed and reconnected. A transport write can block on a
     /// live peer that stopped consuming (SRT's `send` waits for flow-window
@@ -447,7 +442,14 @@ pub async fn drive_push<T: PushTransport>(
                     Some(listener) => {
                         let _ = tokio::time::timeout(Duration::from_millis(250), listener).await;
                     }
-                    None => tokio::time::sleep(NO_SLOT_BACKOFF).await,
+                    // No free waiter slot: park until one frees (or a
+                    // track-set/sample wake fires the same event) — never a
+                    // fixed 50 ms sleep-poll (B10b).
+                    None => {
+                        if let Some(freed) = trunk.waiter_slot_freed() {
+                            freed.await;
+                        }
+                    }
                 }
             } => {}
         }

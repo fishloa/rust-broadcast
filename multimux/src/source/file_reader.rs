@@ -1456,9 +1456,14 @@ pub(crate) async fn run_file_source(
                     tokio::task::yield_now().await;
                 }
             }
-            // Loop refill happens on the next feed; a short yield avoids a
-            // tight spin while the previous pass drains or refills.
-            None => tokio::time::sleep(std::time::Duration::from_millis(1)).await,
+            // Loop refill happens on the *next* `feed` (top of this loop), so
+            // this arm is hit once per pass, not per iteration. Yield rather
+            // than sleep a fixed 1 ms: `feed` refills immediately, and a
+            // non-looping drained file is already parked by `drained()` above.
+            // (Parking on the refill notification is NOT safe here: the feed
+            // that would fire it only runs after this arm, so it would never
+            // be woken in the loop-refill case.)
+            None => tokio::task::yield_now().await,
         }
     }
 }

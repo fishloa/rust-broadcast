@@ -606,6 +606,11 @@ use bytes::Bytes;
 use event_listener::{Event, EventListener, Listener};
 use thiserror::Error;
 use timed_metadata::{MediaTime, PTS_HZ, TimeAnchor, TimedEvent};
+
+/// Re-exported so a caller of [`Trunk::waiter_slot_freed`] can name (and
+/// `await`) the returned slot-freed listener without a direct `event-listener`
+/// dependency of its own.
+pub use event_listener::EventListener as SlotFreedFuture;
 use transmux::{Sample, SegmentMeta, TrackSpec};
 
 /// Which retention discipline a published entry follows once inside the
@@ -2030,6 +2035,18 @@ impl Trunk {
             listener: self.progress.listen(),
         })
     }
+
+    /// A future that resolves once a [`Trunk::listen`] waiter slot is freed
+    /// (some [`ProgressListener`] dropped), or `None` when a slot is free
+    /// right now. A caller that got `None` from [`listen`](Self::listen) parks
+    /// on this (raced against its own cancellation) instead of sleep-polling
+    /// for a slot to free (W2b-1 SP1.4/B10b).
+    pub fn waiter_slot_freed(&self) -> Option<EventListener> {
+        if self.waiter_count.load(Ordering::Acquire) < self.part_waiter_cap {
+            return None;
+        }
+        Some(self.progress.listen())
+    }
 }
 
 /// RAII release of one [`Trunk`] waiter slot — split out from
@@ -2053,6 +2070,9 @@ impl Drop for WaiterSlot {
     /// not leak a slot.
     fn drop(&mut self) {
         self.0.waiter_count.fetch_sub(1, Ordering::AcqRel);
+        // Wake any caller parked on `Trunk::waiter_slot_freed` (a would-be
+        // egress that got `None` from `listen`) that a slot is now free.
+        self.0.progress.notify(usize::MAX);
     }
 }
 
