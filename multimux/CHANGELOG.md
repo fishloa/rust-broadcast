@@ -37,6 +37,11 @@
   (`PT60S` -> `PT1M`) and `dash_mpd_window3600_main.golden`
   (`PT3600S` -> `PT1H`), each asserted to differ by exactly that one token. The
   sub-60 s `dash_mpd.golden`/`ll_dash_mpd.golden` are byte-identical to main.
+- **`validate_rtsp_push_url` now also enforces the scheme.** An `rtsp_push`
+  output URL must use the `rtsp://` or `rtsps://` scheme; a push URL with any
+  other scheme (e.g. `srt://`, `http://`) is rejected at config validation with
+  a clear error rather than failing deep in the RTSP transport at connect time.
+  This is stricter than main, which accepted any scheme here.
 - **The test harness binds `127.0.0.1:0` and passes the live listener.** New
   `serve_with_registry_on`/`serve_with_registry_on_admin`/
   `serve_config_file_with_registry_on_admin` entry points take a pre-bound

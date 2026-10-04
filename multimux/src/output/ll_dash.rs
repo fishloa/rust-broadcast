@@ -84,7 +84,8 @@ use transmux::{Addressing, LlDashPackager, Media, Track, TrackSegments};
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
 use crate::origin::resource::cors_preflight;
 use crate::output::dash::{
-    DASH_MANIFEST_CONTENT_TYPE, format_iso8601, select_representable_track, xs_duration_secs,
+    DASH_MANIFEST_CONTENT_TYPE, format_iso8601, select_representable_track,
+    xs_duration_secs_checked,
 };
 use crate::output::{Output, OutputKind};
 use crate::route::RouteHandle;
@@ -208,13 +209,28 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<Str
 
     let media = Media::new(vec![Track::new(spec, Vec::new())], timescale);
 
-    let mut packager = LlDashPackager::new(
+    let mut packager = match LlDashPackager::new(
         target_duration_secs,
         chunk_duration_secs,
         latency_target_ms,
         format_iso8601(now),
-    )
-    .ok()?;
+    ) {
+        Ok(p) => p,
+        Err(e) => {
+            // Unreachable for a validated config (`Config::validate` rejects a
+            // non-positive/non-finite `target_duration_secs`): log loudly and
+            // trip a debug assert rather than 404 the manifest silently.
+            debug_assert!(
+                false,
+                "LlDashPackager::new rejected a validated config: {e}"
+            );
+            tracing::error!(
+                error = %e,
+                "LL-DASH packager rejected a duration that should have been rejected at                  config validation"
+            );
+            return None;
+        }
+    };
     packager.base.addressing = Addressing::Number;
     packager.base.start_number = start_number;
     // `$RepresentationID$` is substituted by the DASH *client*, not here
@@ -228,13 +244,18 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<Str
     // Tuned to the chunk/part interval, not the whole-segment target -- an
     // LL-DASH client should re-poll roughly as often as a new chunk can
     // appear.
-    packager.base.minimum_update_period = Some(xs_duration_secs(chunk_duration_secs).ok()?);
+    packager.base.minimum_update_period = Some(xs_duration_secs_checked(
+        "minimum_update_period",
+        chunk_duration_secs,
+    ));
     // Unlike the old parts-only design (module docs), whole closed segments
     // stay in the route's rolling window, so a real DVR window can be
     // advertised -- same computation as `crate::output::dash::render_mpd`.
     let time_shift_buffer_depth_secs = target_duration_secs * (window.len().max(1) as f64);
-    packager.base.time_shift_buffer_depth =
-        Some(xs_duration_secs(time_shift_buffer_depth_secs).ok()?);
+    packager.base.time_shift_buffer_depth = Some(xs_duration_secs_checked(
+        "time_shift_buffer_depth",
+        time_shift_buffer_depth_secs,
+    ));
     packager.base.segments = vec![TrackSegments {
         track_id: DEFAULT_TRACK_ID,
         durations: vec![nominal_duration_ticks],

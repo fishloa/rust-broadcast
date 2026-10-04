@@ -1806,6 +1806,19 @@ impl Config {
                 reason: "must be a finite positive number".into(),
             });
         }
+        // Upper bound too: an unreasonably large target duration is not just
+        // nonsensical, it would later fail the DASH `xs:duration` render
+        // (`Duration::try_from_secs_f64` overflows the `Duration` range) and
+        // 404 the manifest — reject it up front, with a clear error.
+        if self.target_duration_secs > MAX_TIMEOUT_SECS {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "target_duration_secs",
+                reason: format!(
+                    "must not exceed {MAX_TIMEOUT_SECS} seconds (24 h), got {}",
+                    self.target_duration_secs
+                ),
+            });
+        }
         if self.part_target_ms == 0 {
             return Err(MultimuxError::ConfigInvalid {
                 field: "part_target_ms",
@@ -2199,7 +2212,16 @@ mod tests {
         ] }"#;
         let base: Config = serde_json::from_str(json).unwrap();
         base.validate().unwrap();
-        for bad in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, 0.0, -1.0] {
+        for bad in [
+            f64::NAN,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            0.0,
+            -1.0,
+            // Over the 24 h bound: would overflow the DASH xs:duration render.
+            86_401.0,
+            f64::MAX,
+        ] {
             let mut cfg = base.clone();
             cfg.target_duration_secs = bad;
             match cfg.validate() {

@@ -260,8 +260,14 @@ pub fn render_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<String> {
         init_template: "init-$RepresentationID$.mp4".to_string(),
         media_template: "seg-$RepresentationID$-$Number$.m4s".to_string(),
         availability_start_time: Some(format_iso8601(now)),
-        minimum_update_period: Some(xs_duration_secs(target_duration_secs).ok()?),
-        time_shift_buffer_depth: Some(xs_duration_secs(time_shift_buffer_depth_secs).ok()?),
+        minimum_update_period: Some(xs_duration_secs_checked(
+            "minimum_update_period",
+            target_duration_secs,
+        )),
+        time_shift_buffer_depth: Some(xs_duration_secs_checked(
+            "time_shift_buffer_depth",
+            time_shift_buffer_depth_secs,
+        )),
         segments,
         ..DashPackager::default()
     };
@@ -366,6 +372,31 @@ pub(crate) fn xs_duration_secs(secs: f64) -> Result<String, DurationError> {
     // panicking `from_secs_f64`.
     let d = Duration::try_from_secs_f64(secs).map_err(|_| DurationError::InvalidInput { secs })?;
     Ok(xs_duration(d))
+}
+
+/// [`xs_duration_secs`] for a duration that [`crate::config::Config::validate`]
+/// should already have rejected — a route's `target_duration_secs` /
+/// `part_target_ms` is validated at config time, so an invalid value here is a
+/// programming error, not user input. Renders `PT0S` and logs an error rather
+/// than silently returning `None` (which would make the DASH manifest route
+/// 404, hiding the defect); `debug_assert!` trips it in tests.
+pub(crate) fn xs_duration_secs_checked(field: &'static str, secs: f64) -> String {
+    match xs_duration_secs(secs) {
+        Ok(s) => s,
+        Err(e) => {
+            // Unreachable for a validated config: the manifest must not
+            // silently 404 on it.
+            debug_assert!(false, "invalid {field} {secs}: {e}");
+            tracing::error!(
+                field,
+                secs,
+                error = %e,
+                "DASH xs:duration could not be rendered for a value that should have been \
+                 rejected at config validation; emitting PT0S"
+            );
+            "PT0S".to_string()
+        }
+    }
 }
 
 #[cfg(test)]
@@ -626,6 +657,31 @@ mod tests {
         );
         // A valid value still renders.
         assert_eq!(xs_duration_secs(4.0).unwrap(), "PT4S");
+    }
+
+    /// `xs_duration_secs_checked` (m6) must never silently 404 the manifest for
+    /// an invalid duration: it renders `PT0S` and logs, and `debug_assert!`
+    /// trips it in tests. Deleting the `debug_assert!(false, …)` makes this
+    /// test pass silently instead of panicking.
+    #[test]
+    #[should_panic(expected = "invalid minimum_update_period")]
+    fn xs_duration_secs_checked_debug_asserts_on_an_invalid_value() {
+        let _ = xs_duration_secs_checked("minimum_update_period", f64::NAN);
+    }
+
+    /// A value `Config::validate` accepts renders a REAL `xs:duration` — not the
+    /// `PT0S` fallback — so the checked path is only ever taken for a value that
+    /// should already have been rejected.
+    #[test]
+    fn xs_duration_secs_checked_renders_a_valid_value() {
+        assert_eq!(
+            xs_duration_secs_checked("minimum_update_period", 4.0),
+            "PT4S"
+        );
+        assert_eq!(
+            xs_duration_secs_checked("time_shift_buffer_depth", 60.0),
+            "PT1M"
+        );
     }
 
     #[test]
