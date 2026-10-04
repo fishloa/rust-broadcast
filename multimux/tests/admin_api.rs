@@ -245,7 +245,7 @@ fn instant_registry() -> SchemeRegistry {
                 ctx.store,
                 Backoff::production_default(),
                 ctx.name,
-                ctx.shutdown_rx,
+                ctx.cancel,
             )))
         }) as InputFactory,
     );
@@ -257,7 +257,7 @@ fn instant_registry() -> SchemeRegistry {
                 ctx.store,
                 Backoff::production_default(),
                 ctx.name,
-                ctx.shutdown_rx,
+                ctx.cancel,
             )))
         }) as InputFactory,
     );
@@ -1262,7 +1262,7 @@ async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
                 ctx.store,
                 Backoff::production_default(),
                 ctx.name,
-                ctx.shutdown_rx,
+                ctx.cancel,
             ));
             Err(multimux::MultimuxError::UnknownScheme {
                 kind: "input",

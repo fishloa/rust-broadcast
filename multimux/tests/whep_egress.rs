@@ -513,7 +513,7 @@ mod instant {
                     ctx.store,
                     Backoff::production_default(),
                     ctx.name,
-                    ctx.shutdown_rx,
+                    ctx.cancel,
                 )))
             }) as InputFactory,
         );

@@ -112,9 +112,10 @@ struct RouteRuntime {
     route: Route,
     store: Arc<RouteHandle>,
     outputs: Vec<Arc<dyn Output>>,
-    shutdown_tx: watch::Sender<bool>,
+    /// The route's one shutdown token — cancels the ingest supervisor AND
+    /// every push/WHEP egress task (SP1.4: one token, no `watch<bool>`).
+    cancel: tokio_util::sync::CancellationToken,
     handle: tokio::task::JoinHandle<()>,
-    push_cancel: tokio_util::sync::CancellationToken,
     push_handles: Vec<tokio::task::JoinHandle<()>>,
 }
 
@@ -185,8 +186,7 @@ impl Drop for PendingRuntime {
         let Some(runtime) = self.runtime.take() else {
             return;
         };
-        runtime.push_cancel.cancel();
-        let _ = runtime.shutdown_tx.send(true);
+        runtime.cancel.cancel();
         runtime.handle.abort();
         for h in runtime.push_handles {
             h.abort();
@@ -344,7 +344,7 @@ impl RouteRegistry {
             // the admin-API (`POST /admin/routes`/reload) equivalent.
             .with_dvr(route.dvr.clone()),
         );
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let route_cancel = tokio_util::sync::CancellationToken::new();
         // Spawn the FALLIBLE ingest task first (audit run 7, A2): it is the
         // only step here that can return `Err` (an unknown `Custom` tag, or a
         // factory that returns `Err`). Doing it after the push/WHEP spawns
@@ -356,21 +356,20 @@ impl RouteRegistry {
             Arc::clone(&store),
             &self.ctx.base_config,
             &self.ctx.scheme_registry,
-            shutdown_rx,
+            route_cancel.clone(),
         )?;
         // Guard the ingest handle BEFORE spawning push/WHEP (item 7): if
         // either spawn panics (a `Custom` output factory, say), the guard's
         // Drop aborts the ingest task too, so a half-built route cannot leak
         // a running supervisor. `push_cancel` is shared, so it is created
         // and installed before the spawns as well.
-        let push_cancel = tokio_util::sync::CancellationToken::new();
+        let push_cancel = route_cancel.clone();
         let guarded = PendingRuntime::new(RouteRuntime {
             route: route.clone(),
             store,
             outputs,
-            shutdown_tx,
+            cancel: route_cancel,
             handle,
-            push_cancel: push_cancel.clone(),
             push_handles: Vec::new(),
         });
 
@@ -704,8 +703,7 @@ impl RouteRegistry {
 /// [`RouteRegistry::remove_route`]/[`RouteRegistry::reload`] never hold a
 /// lock across it (see this module's own "Concurrency" docs).
 async fn drain_route(runtime: RouteRuntime) {
-    runtime.push_cancel.cancel();
-    let _ = runtime.shutdown_tx.send(true);
+    runtime.cancel.cancel();
     let abort_handle = runtime.handle.abort_handle();
     if tokio::time::timeout(SUPERVISOR_SHUTDOWN_GRACE, runtime.handle)
         .await

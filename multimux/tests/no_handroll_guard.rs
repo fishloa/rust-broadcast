@@ -76,6 +76,12 @@ const PINNED: &[(&str, &str, &str, &str)] = &[
         "let long_sdp = \"v=0\\r\\n\".repeat(50)",
         "config.rs `route_debug_shows_sdp_length_not_full_body` test fixture (raw-string braces defeat the module skipper)",
     ),
+    (
+        "output/whep.rs",
+        "\"v=0",
+        "pub const WHEP_TEST_OFFER: &str = \"v=0",
+        "output/whep.rs `WHEP_TEST_OFFER` (W2b-1 Task 7 test fixture: a valid SDP offer to admit a real session)",
+    ),
 ];
 
 const NEEDLES: &[&str] = &[

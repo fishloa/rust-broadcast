@@ -432,12 +432,24 @@ pub async fn drive_push<T: PushTransport>(
 
         // Wait for samples, or a bounded wake-up, before draining — the
         // 250 ms cap keeps cancellation / track-set changes noticed. Both
-        // arms are real `.await`s so this never parks the runtime worker.
-        match trunk.listen() {
-            Some(listener) => {
-                let _ = tokio::time::timeout(Duration::from_millis(250), listener).await;
+        // arms are real `.await`s so this never parks the runtime worker, and
+        // the whole wait is raced against `cancel` so a shutdown returns
+        // promptly rather than after the next tick (defect 5).
+        tokio::select! {
+            () = cancel.cancelled() => {
+                if let Some(e) = egress.as_mut() {
+                    e.transport_mut().close();
+                }
+                return metrics;
             }
-            None => tokio::time::sleep(NO_SLOT_BACKOFF).await,
+            () = async {
+                match trunk.listen() {
+                    Some(listener) => {
+                        let _ = tokio::time::timeout(Duration::from_millis(250), listener).await;
+                    }
+                    None => tokio::time::sleep(NO_SLOT_BACKOFF).await,
+                }
+            } => {}
         }
 
         // Renegotiate if the track set changed since the last successful
@@ -541,7 +553,18 @@ pub async fn drive_push<T: PushTransport>(
 
         // Connect / reconnect when due and not already connected.
         if engine.should_connect() && egress.is_none() {
-            match T::connect(&url, &config).await {
+            let connect_result = tokio::select! {
+                () = cancel.cancelled() => {
+                    // Cancelled mid-connect (defect 5): do not wait out a
+                    // transport connect that may block for its own timeout.
+                    if let Some(e) = egress.as_mut() {
+                        e.transport_mut().close();
+                    }
+                    return metrics;
+                }
+                result = T::connect(&url, &config) => result,
+            };
+            match connect_result {
                 Ok(conn) => {
                     let mut e = PushTransportEgress::new(conn, UNSATISFIABLE);
                     let tracks_now = trunk.tracks();
@@ -610,7 +633,17 @@ pub async fn drive_push<T: PushTransport>(
         } else {
             let wait = engine.time_until_retry();
             if !wait.is_zero() {
-                sleep(wait).await;
+                // Cancel-aware backoff (defect 5): a shutdown during the wait
+                // must return promptly, not sit out the whole retry interval.
+                tokio::select! {
+                    () = cancel.cancelled() => {
+                        if let Some(e) = egress.as_mut() {
+                            e.transport_mut().close();
+                        }
+                        return metrics;
+                    }
+                    () = sleep(wait) => {}
+                }
             }
         }
     }

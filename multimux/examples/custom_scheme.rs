@@ -279,7 +279,7 @@ fn build_registry() -> SchemeRegistry {
                 ctx.store,
                 Backoff::production_default(),
                 ctx.name,
-                ctx.shutdown_rx,
+                ctx.cancel,
             )))
         }),
     );
@@ -321,7 +321,7 @@ async fn main() {
     // is the proof the wiring above is not just type-checked but genuinely
     // moves samples end to end.
     let store = Arc::new(RouteHandle::new(1.0, 500, 8));
-    let (_shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+    let cancel = tokio_util::sync::CancellationToken::new();
     let factory = registry.input("demo").expect("registered above");
     let handle = factory(InputCtx {
         name: "cam1".to_string(),
@@ -329,7 +329,7 @@ async fn main() {
         store: store.clone(),
         target_duration_secs: 1.0,
         part_target_ms: 500,
-        shutdown_rx,
+        cancel,
     })
     .expect("factory must succeed");
 

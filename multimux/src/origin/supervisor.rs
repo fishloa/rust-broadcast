@@ -50,8 +50,6 @@ use std::future::Future;
 use std::sync::Arc;
 use std::time::Duration;
 
-use tokio::sync::watch;
-
 use crate::MultimuxError;
 use crate::route::{HealthState, RouteHandle};
 
@@ -261,7 +259,7 @@ fn record_reconnect(name: &str) {
 ///
 /// [`Backoff`] runs between attempts, reset only once an attempt actually
 /// reached [`HealthState::Live`]; `record_route_up`/`record_reconnect` fire on
-/// every transition; a shutdown [`watch::Receiver<bool>`] is checked before
+/// every transition; a shutdown [`CancellationToken`] is checked before
 /// each attempt and around the backoff sleep so it cancels promptly.
 ///
 /// # Why this reads `route_handle.health()` back, rather than being told
@@ -276,7 +274,7 @@ fn record_reconnect(name: &str) {
 /// `attempt` returns to decide whether this attempt reached `Live` at all.
 #[tracing::instrument(
     name = "route",
-    skip(attempt, route_handle, backoff, name, shutdown),
+    skip(attempt, route_handle, backoff, name, cancel),
     fields(route = %name)
 )]
 pub async fn supervise_driver<F, Fut>(
@@ -284,7 +282,7 @@ pub async fn supervise_driver<F, Fut>(
     route_handle: Arc<RouteHandle>,
     mut backoff: Backoff,
     name: String,
-    mut shutdown: watch::Receiver<bool>,
+    cancel: tokio_util::sync::CancellationToken,
 ) where
     F: FnMut(Arc<RouteHandle>) -> Fut + Send + 'static,
     Fut: Future<Output = crate::Result<()>> + Send,
@@ -302,7 +300,7 @@ pub async fn supervise_driver<F, Fut>(
     let mut consecutive_describe_not_found: u32 = 0;
 
     loop {
-        if *shutdown.borrow() {
+        if cancel.is_cancelled() {
             break;
         }
         route_handle.set_health(HealthState::Connecting);
@@ -367,7 +365,7 @@ pub async fn supervise_driver<F, Fut>(
         record_route_up(&name, HealthState::Reconnecting);
         record_reconnect(&name);
 
-        if *shutdown.borrow() {
+        if cancel.is_cancelled() {
             break;
         }
 
@@ -379,7 +377,7 @@ pub async fn supervise_driver<F, Fut>(
         );
         tokio::select! {
             () = tokio::time::sleep(delay) => {}
-            _ = shutdown.changed() => {
+            () = cancel.cancelled() => {
                 break;
             }
         }
@@ -552,14 +550,14 @@ mod tests {
             },
             call_count.clone(),
         );
-        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let cancel = tokio_util::sync::CancellationToken::new();
 
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
             tiny_backoff(),
             "test-route".to_string(),
-            shutdown_rx,
+            cancel.clone(),
         ));
 
         // HANG GUARD: must end on its own — no shutdown signal is ever sent
@@ -599,14 +597,14 @@ mod tests {
             },
             call_count.clone(),
         );
-        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let cancel = tokio_util::sync::CancellationToken::new();
 
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
             tiny_backoff(),
             "test-route".to_string(),
-            shutdown_rx,
+            cancel.clone(),
         ));
 
         tokio::time::timeout(Duration::from_secs(30), handle)
@@ -653,13 +651,13 @@ mod tests {
                 Ok(())
             }
         };
-        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let cancel = tokio_util::sync::CancellationToken::new();
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
             tiny_backoff(),
             "test-404-recovers".to_string(),
-            shutdown_rx,
+            cancel.clone(),
         ));
 
         let reached_live = wait_until(Duration::from_secs(10), || {
@@ -702,14 +700,14 @@ mod tests {
                 Ok(())
             }) as std::pin::Pin<Box<dyn Future<Output = crate::Result<()>> + Send>>
         };
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let cancel = tokio_util::sync::CancellationToken::new();
 
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
             tiny_backoff(),
             "test-route".to_string(),
-            shutdown_rx,
+            cancel.clone(),
         ));
 
         let reached_live = wait_until(Duration::from_secs(10), || {
@@ -721,7 +719,7 @@ mod tests {
             "a camera recovering within the auth bound must still reach Live, not be given up on"
         );
 
-        shutdown_tx.send(true).unwrap();
+        cancel.cancel();
         tokio::time::timeout(Duration::from_secs(10), handle)
             .await
             .expect("supervise_driver returns promptly on shutdown")
@@ -741,14 +739,14 @@ mod tests {
             },
             call_count.clone(),
         );
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let cancel = tokio_util::sync::CancellationToken::new();
 
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
             tiny_backoff(),
             "test-route".to_string(),
-            shutdown_rx,
+            cancel.clone(),
         ));
 
         let exceeded_bound = wait_until(Duration::from_secs(10), || {
@@ -765,7 +763,7 @@ mod tests {
             "a transient connect failure must never be marked permanent"
         );
 
-        shutdown_tx.send(true).unwrap();
+        cancel.cancel();
         tokio::time::timeout(Duration::from_secs(10), handle)
             .await
             .expect("supervise_driver returns promptly on shutdown")
@@ -830,14 +828,14 @@ mod tests {
         let route = Arc::new(RouteHandle::new(1.0, 500, 8));
         let call_count = Arc::new(AtomicUsize::new(0));
         let attempt = flaky_attempt(1, call_count.clone());
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let cancel = tokio_util::sync::CancellationToken::new();
 
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route.clone(),
             tiny_backoff(),
             "test-route".to_string(),
-            shutdown_rx,
+            cancel.clone(),
         ));
 
         // HANG GUARD (issue #807): `tiny_backoff` caps at 20ms and this needs
@@ -870,7 +868,7 @@ mod tests {
             "attempt must be called again after a live attempt ends"
         );
 
-        shutdown_tx.send(true).unwrap();
+        cancel.cancel();
         // HANG GUARD (issue #807): shutdown with `tiny_backoff` (max 20ms)
         // means the loop is never sitting in a long sleep to cancel; this
         // normally returns in ~ms. Raised for load-tolerance -- only job is
@@ -918,20 +916,20 @@ mod tests {
         // below: if shutdown didn't cancel the sleep, the timeout on the
         // join would fire first and this test would fail.
         let backoff = Backoff::new(Duration::from_secs(60), Duration::from_secs(90), 2.0);
-        let (shutdown_tx, shutdown_rx) = watch::channel(false);
+        let cancel = tokio_util::sync::CancellationToken::new();
 
         let handle = tokio::spawn(supervise_driver(
             attempt,
             route,
             backoff,
             "test-route".to_string(),
-            shutdown_rx,
+            cancel.clone(),
         ));
 
         // Give the loop a moment to fail its first attempt and enter the
         // (60s) backoff sleep.
         tokio::time::sleep(Duration::from_millis(20)).await;
-        shutdown_tx.send(true).unwrap();
+        cancel.cancel();
 
         tokio::time::timeout(Duration::from_secs(5), handle)
             .await

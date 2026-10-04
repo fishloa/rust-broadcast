@@ -59,7 +59,6 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use broadcast_auth::{AuthResult, Verifier};
 use metrics_exporter_prometheus::PrometheusHandle;
-use tokio::sync::watch;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::timeout::TimeoutLayer;
 
@@ -1459,7 +1458,6 @@ async fn serve_with_registry_impl(
     let mut streams: HashMap<String, StreamRoute> = HashMap::new();
     let target_duration_secs = config.target_duration_secs;
     let part_target_ms = config.part_target_ms;
-    let (shutdown_tx, shutdown_rx) = watch::channel(false);
     let cancel = tokio_util::sync::CancellationToken::new();
     let mut supervisor_handles: Vec<(String, tokio::task::JoinHandle<()>)> = Vec::new();
 
@@ -1513,8 +1511,7 @@ async fn serve_with_registry_impl(
         }
 
         let name = route.name.clone();
-        let shutdown_rx = shutdown_rx.clone();
-        let handle = spawn_ingest(route, store, &config, &registry, shutdown_rx)?;
+        let handle = spawn_ingest(route, store, &config, &registry, cancel.clone())?;
         supervisor_handles.push((name, handle));
     }
 
@@ -1536,10 +1533,6 @@ async fn serve_with_registry_impl(
         shutdown_signal().await;
         tracing::info!("shutdown signal received, draining");
         shutdown_cancel.cancel();
-        // Best-effort: only fails if every receiver (every supervisor task)
-        // has already exited, which just means there's nothing left to
-        // notify.
-        let _ = shutdown_tx.send(true);
     };
     // The server runs on `serve_hyper_util` (SP2.1), which injects the
     // `ConnectInfo<SocketAddr>` extension `output_auth_gate` reads for
@@ -1819,14 +1812,14 @@ fn spawn_ingest(
     store: Arc<RouteHandle>,
     config: &crate::config::Config,
     registry: &SchemeRegistry,
-    shutdown_rx: watch::Receiver<bool>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> crate::Result<tokio::task::JoinHandle<()>> {
     let name = route.name.clone();
     let timeouts = crate::source::IngestTimeouts::from(config);
     let ctx = IngestSpawn {
         name: name.clone(),
         store,
-        shutdown_rx,
+        cancel,
         window_segments: config.window_segments,
         timeouts,
     };
@@ -2068,7 +2061,7 @@ fn spawn_ingest(
                 store: ctx.store,
                 target_duration_secs: config.target_duration_secs,
                 part_target_ms: config.part_target_ms,
-                shutdown_rx: ctx.shutdown_rx,
+                cancel: ctx.cancel,
             })?
         }
     })
@@ -2080,7 +2073,7 @@ fn spawn_ingest(
 struct IngestSpawn {
     name: String,
     store: Arc<RouteHandle>,
-    shutdown_rx: watch::Receiver<bool>,
+    cancel: tokio_util::sync::CancellationToken,
     window_segments: usize,
     timeouts: crate::source::IngestTimeouts,
 }
@@ -2109,7 +2102,7 @@ where
     let IngestSpawn {
         name,
         store,
-        shutdown_rx,
+        cancel,
         window_segments,
         timeouts,
     } = ctx;
@@ -2128,7 +2121,7 @@ where
         store,
         Backoff::production_default(),
         name,
-        shutdown_rx,
+        cancel,
     ))
 }
 
@@ -3990,16 +3983,15 @@ mod tests {
                 );
                 ctx.store.set_health(HealthState::Live);
                 Ok(tokio::spawn(async move {
-                    // Hold the shutdown receiver alive until told to stop,
+                    // Hold the shutdown token alive until told to stop,
                     // mirroring a real supervised connector task.
-                    let mut rx = ctx.shutdown_rx;
-                    let _ = rx.changed().await;
+                    ctx.cancel.cancelled().await;
                 }))
             }),
         );
 
         let store = Arc::new(RouteHandle::new(4.0, 500, 4));
-        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let cancel = tokio_util::sync::CancellationToken::new();
         let factory = registry.input("silence").expect("factory registered above");
         let handle = factory(crate::registry::InputCtx {
             name: "cam1".into(),
@@ -4007,7 +3999,7 @@ mod tests {
             store: store.clone(),
             target_duration_secs: 4.0,
             part_target_ms: 500,
-            shutdown_rx,
+            cancel,
         })
         .expect("factory must succeed");
 
@@ -4067,13 +4059,13 @@ mod tests {
             ..crate::config::Config::default()
         };
         let store = Arc::new(RouteHandle::new(4.0, 500, 4));
-        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let cancel = tokio_util::sync::CancellationToken::new();
         let handle = spawn_ingest(
             &cfg.routes[0],
             store.clone(),
             &cfg,
             &SchemeRegistry::new(),
-            shutdown_rx,
+            cancel,
         )
         .expect("spawn_ingest must accept a TsUdp route");
 
@@ -4291,7 +4283,7 @@ mod tests {
             "every non-Custom InputSpec kind must be represented exactly once"
         );
 
-        let (_shutdown_tx, shutdown_rx) = watch::channel(false);
+        let cancel = tokio_util::sync::CancellationToken::new();
         let registry = SchemeRegistry::new();
 
         for spec in variants {
@@ -4317,7 +4309,7 @@ mod tests {
                 store.clone(),
                 &config,
                 &registry,
-                shutdown_rx.clone(),
+                cancel.clone(),
             )
             .unwrap_or_else(|e| panic!("spawn_ingest must accept {spec:?}, got {e}"));
 

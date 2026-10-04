@@ -647,7 +647,7 @@ mod custom_dispatch_driver_backed {
                     ctx.store,
                     Backoff::production_default(),
                     ctx.name,
-                    ctx.shutdown_rx,
+                    ctx.cancel,
                 )))
             }) as InputFactory,
         );
@@ -836,7 +836,7 @@ mod custom_dispatch_driver_backed {
                     ctx.store,
                     Backoff::production_default(),
                     ctx.name,
-                    ctx.shutdown_rx,
+                    ctx.cancel,
                 )))
             }) as InputFactory,
         );

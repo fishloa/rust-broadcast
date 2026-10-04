@@ -67,11 +67,11 @@ pub struct InputCtx {
     pub target_duration_secs: f64,
     /// `crate::config::Config::part_target_ms`, forwarded unchanged.
     pub part_target_ms: u32,
-    /// The shared shutdown signal every other route's supervisor task
-    /// watches — the factory's spawned task must watch it too, so
+    /// The shared shutdown token every other route's supervisor task watches
+    /// — the factory's spawned task must watch it too, so
     /// [`crate::origin::serve_with_registry`]'s graceful shutdown actually
     /// waits for it instead of leaving it running detached.
-    pub shutdown_rx: tokio::sync::watch::Receiver<bool>,
+    pub cancel: tokio_util::sync::CancellationToken,
 }
 
 /// Builds and spawns one [`crate::config::InputSpec::Custom`] route's ingest
