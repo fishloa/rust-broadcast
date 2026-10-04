@@ -34,7 +34,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "dvr.rs",
-        591,
+        595,
         "spawn_blocking DVR write; awaited inline",
     ),
     (
@@ -94,17 +94,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        959,
+        960,
         "serve_whep_run_for_test -> run_whep_with_tracker; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        1492,
+        1494,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1513,
+        1515,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (
