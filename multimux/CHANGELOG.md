@@ -125,6 +125,12 @@
   connect, instead of silently dialing `127.0.0.1` and then panicking.
 - **`xs_duration_secs` rejects NaN/inf/negative/overflow** with an error rather
   than panicking through `Duration::from_secs_f64`.
+- **`target_duration_secs` is now capped at 24 h** (`MAX_TARGET_DURATION_SECS`)
+  and rejected above it. This is a new rejection of a previously accepted
+  config; it is a policy limit on a segment duration, not a `Duration`-overflow
+  guard. Exactly 86400.0 is accepted, 86400.1 is rejected. A part/chunk longer
+  than one whole segment (`part_target_ms/1000 > target_duration_secs`) is
+  rejected too, since the LL-DASH packager refuses that combination.
 - **`config::validate_host_port` restored to its strict shape.** Adopting `url`
   had silently accepted `host:9000/path`, `user@host:9000`, and
   `host:9000?x`; they are rejected again, and an SRT authority with a userinfo

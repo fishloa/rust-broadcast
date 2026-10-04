@@ -1743,6 +1743,15 @@ const MIN_REQUEST_TIMEOUT_SECS: f64 = 5.0;
 /// slipped through unvalidated.
 pub(crate) const MAX_TIMEOUT_SECS: f64 = 86_400.0;
 
+/// Upper bound [`Config::validate`] enforces on `target_duration_secs`
+/// (24 h). Named separately from [`MAX_TIMEOUT_SECS`] even though the two
+/// currently agree: this is a *policy* limit on a segment duration (a window
+/// longer than a day is nonsensical for a live origin), not the `Duration`
+/// overflow guard the timeout cap exists for (`Duration::try_from_secs_f64`
+/// only overflows past ~1.8e19 s). Keeping them distinct means the two can
+/// move independently without one silently redefining the other.
+const MAX_TARGET_DURATION_SECS: f64 = 86_400.0;
+
 /// Validate a seconds-valued timeout: finite, `> 0`, and `<= MAX_TIMEOUT_SECS`.
 /// Rejects NaN/infinity/negative and an overflowing-but-finite value such as
 /// `1e20` (which `Duration::from_secs_f64` would panic on) — audit W19.
@@ -1816,15 +1825,16 @@ impl Config {
                 reason: "must be a finite positive number".into(),
             });
         }
-        // Upper bound too: an unreasonably large target duration is not just
-        // nonsensical, it would later fail the DASH `xs:duration` render
-        // (`Duration::try_from_secs_f64` overflows the `Duration` range) and
-        // 404 the manifest — reject it up front, with a clear error.
-        if self.target_duration_secs > MAX_TIMEOUT_SECS {
+        // Upper bound too: an unreasonably large target duration is nonsensical
+        // for a live origin (24 h is a policy choice, not a `Duration` overflow
+        // guard — that would only bite past ~1.8e19 s), and it would also fail
+        // the DASH `xs:duration` render and 404 the manifest. Reject it up
+        // front, with a clear error.
+        if self.target_duration_secs > MAX_TARGET_DURATION_SECS {
             return Err(MultimuxError::ConfigInvalid {
                 field: "target_duration_secs",
                 reason: format!(
-                    "must not exceed {MAX_TIMEOUT_SECS} seconds (24 h), got {}",
+                    "must not exceed {MAX_TARGET_DURATION_SECS} seconds (24 h), got {}",
                     self.target_duration_secs
                 ),
             });
@@ -2258,6 +2268,24 @@ mod tests {
                 other => panic!("{bad}: expected ConfigInvalid, got {other:?}"),
             }
         }
+        // The exact upper bound is accepted; just past it is rejected.
+        let mut at_bound = base.clone();
+        at_bound.target_duration_secs = MAX_TARGET_DURATION_SECS;
+        // `part_target_ms` must not exceed the segment, so keep the part tiny.
+        at_bound.part_target_ms = 1;
+        at_bound
+            .validate()
+            .expect("exactly the 24 h bound must be accepted");
+        let mut just_over = base.clone();
+        just_over.target_duration_secs = MAX_TARGET_DURATION_SECS + 0.1;
+        just_over.part_target_ms = 1;
+        let err = just_over
+            .validate()
+            .expect_err("just past the 24 h bound must be rejected");
+        assert!(
+            matches!(err, MultimuxError::ConfigInvalid { field, .. } if field == "target_duration_secs"),
+            "got {err:?}"
+        );
     }
 
     /// A part/chunk duration that exceeds a whole segment is rejected: it is
