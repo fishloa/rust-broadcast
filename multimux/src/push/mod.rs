@@ -442,12 +442,16 @@ pub async fn drive_push<T: PushTransport>(
                     Some(listener) => {
                         let _ = tokio::time::timeout(Duration::from_millis(250), listener).await;
                     }
-                    // No free waiter slot: park until one frees (or a
-                    // track-set/sample wake fires the same event) — never a
-                    // fixed 50 ms sleep-poll (B10b).
+                    // No free waiter slot: park until one frees — never a
+                    // fixed 50 ms sleep-poll (B10b). Still capped at the same
+                    // 250 ms as the `Some` arm so a slot that frees between
+                    // `listen()` returning `None` and `waiter_slot_freed()`
+                    // registering (or a lost wake for any reason) cannot stall
+                    // the push — and its queued flush/renegotiate — forever on
+                    // an idle source.
                     None => {
                         if let Some(freed) = trunk.waiter_slot_freed() {
-                            freed.await;
+                            let _ = tokio::time::timeout(Duration::from_millis(250), freed).await;
                         }
                     }
                 }
@@ -702,21 +706,22 @@ mod tests {
     /// always returns `None` inside `drive_push`; `AlwaysFailsTransport`
     /// keeps every other step in the loop free of a real `.await`
     /// suspension (zero backoff means the retry-wait is skipped too), so
-    /// the only possible yield point is the `None` branch itself. A plain
-    /// OS thread flips `cancel` after a bounded real-time wait — sidesteps
-    /// needing the (possibly-starved) runtime to schedule the canceller —
-    /// so this test terminates even against the unfixed code, which
-    /// notices cancellation on its next loop pass without ever yielding to
-    /// the executor.
+    /// the only possible yield point is the `None` branch itself.
+    ///
+    /// Runs under `start_paused` with NO real-time sleep: virtual time only
+    /// advances when the runtime is otherwise idle, so the sibling `yield_now`
+    /// spin below can only make progress if `drive_push` actually returns
+    /// `Poll::Pending` at the `None` branch. Cancelling afterwards returns the
+    /// push.
     ///
     /// PRE-FIX FAILURE OBSERVED: `sibling_progress.load() == 0` — the
-    /// counter task was never scheduled even once during the ~50ms window,
-    /// because the old code's `if let Some(listener) = trunk.listen() { .. }`
-    /// is a no-op when `listen()` returns `None`, and every other step
-    /// (failed connect, zero backoff) resolves without a real `.await`
-    /// suspension, so `drive_push`'s task never returns `Poll::Pending` and
-    /// the `current_thread` executor never gets to run the sibling task.
-    #[tokio::test(flavor = "current_thread")]
+    /// counter task was never scheduled even once, because the old code's
+    /// `if let Some(listener) = trunk.listen() { .. }` is a no-op when
+    /// `listen()` returns `None`, and every other step (failed connect, zero
+    /// backoff) resolves without a real `.await` suspension, so `drive_push`'s
+    /// task never returns `Poll::Pending` and the `current_thread` executor
+    /// never gets to run the sibling task.
+    #[tokio::test(start_paused = true, flavor = "current_thread")]
     async fn drive_push_yields_when_no_listener_slot_is_free() {
         let trunk = Trunk::new(TrunkConfig::new(nz(1), nz(1), nz(1), nz(1), nz(1)));
         let _held_slot = trunk.listen().expect("the sole waiter slot is free here");
@@ -731,34 +736,34 @@ mod tests {
         });
 
         let cancel = CancellationToken::new();
-        let canceller = cancel.clone();
-        let canceller_thread = std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(50));
-            canceller.cancel();
-        });
-
         let reconnect = ReconnectPolicy {
             initial_backoff_ms: 0,
             max_backoff_ms: 0,
             max_attempts: None,
         };
-        drive_push::<AlwaysFailsTransport>(
+        let push = tokio::spawn(drive_push::<AlwaysFailsTransport>(
             trunk,
             "push://unreachable".to_string(),
             (),
             PushFormat::Ts,
             reconnect,
-            cancel,
-        )
-        .await;
+            cancel.clone(),
+        ));
 
-        canceller_thread.join().unwrap();
-        sibling.abort();
+        // Let both tasks be polled repeatedly. Virtual time does NOT advance
+        // here, so a `drive_push` that never yields leaves the sibling at 0.
+        for _ in 0..50 {
+            tokio::task::yield_now().await;
+        }
         assert!(
             sibling_progress.load(Ordering::Relaxed) > 10,
             "sibling task starved while every listener slot was held: {}",
             sibling_progress.load(Ordering::Relaxed)
         );
+
+        cancel.cancel();
+        sibling.abort();
+        let _ = tokio::time::timeout(Duration::from_secs(2), push).await;
     }
 
     #[test]

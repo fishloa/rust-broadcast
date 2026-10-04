@@ -80,11 +80,11 @@ const SLEEP_ALLOW: &[&str] = &[
     "whep_egress.rs",
     "whip_ingest.rs",
     "whip_whep_timers.rs",
-    // W2b-1 Task 8/9 tests: their sleeps are TIMING, not synchronisation —
-    // they give a running task time to reach the connect/backoff/no-slot park
-    // before cancelling it, which a condition wait cannot observe.
+    // W2b-1 Task 8 test: its sleeps are TIMING, not synchronisation — they
+    // give the running task time to reach the connect/backoff before
+    // cancelling it, which a condition wait cannot observe. (`no_slot_park.rs`
+    // is NOT listed: it runs under `start_paused` and no longer sleeps.)
     "shutdown_cancel.rs",
-    "no_slot_park.rs",
 ];
 
 fn test_files() -> Vec<(String, String)> {
