@@ -16,7 +16,7 @@ async fn cancelling_a_whep_route_drains_its_session_tracker_and_releases_the_por
     let (addr, sessions, handle, cancel) = multimux::output::whep::serve_whep_run_for_test().await;
 
     // Wait until the signalling server is actually accepting — a bounded
-    // condition wait (small fixed sleep between attempts, not a hot spin).
+    // condition wait (`yield_now`, no fixed delay).
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         if tokio::net::TcpStream::connect(addr).await.is_ok() {
@@ -26,7 +26,7 @@ async fn cancelling_a_whep_route_drains_its_session_tracker_and_releases_the_por
             tokio::time::Instant::now() < deadline,
             "the WHEP signalling server never bound {addr}"
         );
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        tokio::task::yield_now().await;
     }
 
     // Admit a real viewer session (a POST /whep with a valid offer), so the
@@ -56,7 +56,7 @@ async fn cancelling_a_whep_route_drains_its_session_tracker_and_releases_the_por
             tokio::time::Instant::now() < deadline,
             "the admitted session must be owned by the route's TaskTracker"
         );
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        tokio::task::yield_now().await;
     }
 
     cancel.cancel();
@@ -73,14 +73,12 @@ async fn cancelling_a_whep_route_drains_its_session_tracker_and_releases_the_por
         "the tracker must be drained after cancel"
     );
 
-    // And the port is free again — a bounded condition wait.
+    // And the port is free again — a bounded condition wait (`yield_now`).
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     loop {
         match TcpListener::bind(addr).await {
             Ok(_) => break,
-            Err(_) if tokio::time::Instant::now() < deadline => {
-                tokio::time::sleep(Duration::from_millis(5)).await
-            }
+            Err(_) if tokio::time::Instant::now() < deadline => tokio::task::yield_now().await,
             Err(e) => panic!("the route's port {addr} stayed bound after cancel: {e}"),
         }
     }

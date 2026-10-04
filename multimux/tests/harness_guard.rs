@@ -100,10 +100,6 @@ const SLEEP_ALLOW: &[&str] = &[
     "whep_egress.rs",
     "whip_ingest.rs",
     "whip_whep_timers.rs",
-    // Bounded condition-wait backoff (5 ms between re-checks of a live
-    // condition), not a fixed synchronisation delay: the port-bind and
-    // tracker-drain waits below cannot observe their condition any other way.
-    "spawn_ownership.rs",
 ];
 
 fn test_files() -> Vec<(String, String)> {
