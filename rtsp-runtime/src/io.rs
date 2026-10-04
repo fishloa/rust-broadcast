@@ -284,6 +284,36 @@ where
         self.exchange(cseq, bytes).await
     }
 
+    /// Sends `ANNOUNCE` carrying `sdp` and awaits the response (RFC 2326
+    /// §10.3) — the first request of an RTSP push (`ANNOUNCE` -> `SETUP` ->
+    /// [`record`](Self::record)).
+    pub async fn announce(&mut self, uri: &str, sdp: &str) -> Result<ClientEvent> {
+        let cseq = self.framed.codec().session.peek_next_cseq();
+        let bytes = self.framed.codec_mut().session.announce(uri, sdp)?;
+        self.exchange(cseq, bytes).await
+    }
+
+    /// Sends `RECORD` and awaits the response (RFC 2326 §10.11) — starts the
+    /// media push negotiated by a preceding [`announce`](Self::announce) +
+    /// [`setup`](Self::setup).
+    pub async fn record(&mut self, uri: &str) -> Result<ClientEvent> {
+        let cseq = self.framed.codec().session.peek_next_cseq();
+        let bytes = self.framed.codec_mut().session.record(uri)?;
+        self.exchange(cseq, bytes).await
+    }
+
+    /// Sends `payload` as an interleaved (`$`-framed) media packet on `channel`
+    /// (§10.12) — the mirror of the server's
+    /// [`AsyncRtspServer::send_interleaved`], for an RTSP push that delivers
+    /// media interleaved over the control connection. The frame is built by
+    /// [`crate::interleaved::InterleavedFrame::new`] and the write is bounded
+    /// by [`RtspTimeouts::write`].
+    pub async fn send_interleaved(&mut self, channel: u8, payload: &[u8]) -> Result<()> {
+        let frame = crate::interleaved::InterleavedFrame::new(channel, payload.to_vec());
+        let bytes = frame.to_bytes()?;
+        bounded(self.timeouts.write, "write", self.framed.send(bytes)).await
+    }
+
     /// Writes an outbound request and reads until the response correlated to
     /// `cseq` (the `CSeq` just assigned to `request`) arrives, transparently
     /// completing any Digest `AuthRetry` round-trip.
