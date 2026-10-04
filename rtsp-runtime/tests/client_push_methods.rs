@@ -183,117 +183,75 @@ async fn announce_carries_the_sdp_body_and_content_type_to_the_server() {
 }
 
 /// A SEND-ONLY pusher that only calls `send_interleaved` must still refresh its
-/// session: the keepalive fires (deterministically, under a paused clock) at
-/// the session's half-timeout.
+/// session: the keepalive fires at the session's half-timeout.
 ///
 /// PRE-FIX: `send_interleaved` never drove the keepalive, so a pusher that only
 /// sent interleaved media emitted no `GET_PARAMETER` and its session expired.
-#[tokio::test]
+///
+/// Driven over an in-memory duplex with the test acting as the server in
+/// lockstep, so the keepalive assertion does not depend on a real IO driver
+/// being polled between a clock advance and a read.
+#[tokio::test(start_paused = true)]
 async fn a_send_only_pusher_still_emits_a_get_parameter_keepalive() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
-
-    let server = tokio::spawn(async move {
-        let (mut sock, _) = listener.accept().await.unwrap();
-        let mut requests: Vec<String> = Vec::new();
-        let mut saw_frame = false;
-        let mut buf: Vec<u8> = Vec::new();
-        let mut tmp = [0u8; 4096];
-        'outer: for _ in 0..64 {
-            let n = match sock.read(&mut tmp).await {
-                Ok(0) => break,
-                Ok(n) => n,
-                Err(_) => break,
-            };
-            buf.extend_from_slice(&tmp[..n]);
-            loop {
-                if buf.is_empty() {
-                    continue 'outer;
-                }
-                if buf[0] == b'$' {
-                    if buf.len() < 4 {
-                        continue 'outer;
-                    }
-                    let len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
-                    if buf.len() < 4 + len {
-                        continue 'outer;
-                    }
-                    saw_frame = true;
-                    buf.drain(..4 + len);
-                    continue;
-                }
-                let Some(head_end) = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4)
-                else {
-                    continue 'outer;
-                };
-                let text = String::from_utf8_lossy(&buf[..head_end]).to_string();
-                let clen = text
-                    .lines()
-                    .find_map(|l| {
-                        let (k, v) = l.split_once(':')?;
-                        k.eq_ignore_ascii_case("content-length")
-                            .then(|| v.trim().parse::<usize>().ok())?
-                    })
-                    .unwrap_or(0);
-                if buf.len() < head_end + clen {
-                    continue 'outer;
-                }
-                let cseq = text
-                    .lines()
-                    .find_map(|l| {
-                        let (k, v) = l.split_once(':')?;
-                        k.eq_ignore_ascii_case("cseq").then(|| v.trim().to_string())
-                    })
-                    .unwrap_or_default();
-                let method = text.split(' ').next().unwrap_or("").to_string();
-                // A SETUP response allocates a Session id with a short declared
-                // timeout so the keepalive arms and fires quickly.
-                let resp = if method == "SETUP" {
-                    format!(
-                        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678;timeout=2\r\n\r\n"
-                    )
-                } else {
-                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678\r\n\r\n")
-                };
-                sock.write_all(resp.as_bytes()).await.unwrap();
-                buf.drain(..head_end + clen);
-                let done = saw_frame && method == "GET_PARAMETER";
-                requests.push(method);
-                if done {
-                    break 'outer;
-                }
-            }
-        }
-        requests
-    });
-
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
-    client.announce(URI, SDP).await.unwrap();
-    client.setup(URI, &tcp_interleaved()).await.unwrap();
-    client.record(URI).await.unwrap();
-
-    // Pause virtual time only now (real time for connect/handshake), so the
-    // keepalive half-timeout can be advanced deterministically, not slept out.
-    tokio::time::pause();
-    for _ in 0..5 {
-        client
-            .send_interleaved(0, b"frame")
-            .await
-            .expect("interleaved send");
-        // Advance past the keepalive half-timeout (timeout=2 -> 1 s).
-        tokio::time::advance(Duration::from_secs(5)).await;
-    }
-
-    // Resume real time so the final bounded wait cannot be short-circuited.
-    tokio::time::resume();
-    let seen = tokio::time::timeout(Duration::from_secs(5), server)
-        .await
-        .expect("the server task must finish")
-        .unwrap();
-    assert!(
-        seen.iter().any(|m| m == "GET_PARAMETER"),
-        "a send-only pusher must emit a GET_PARAMETER keepalive; saw {seen:?}"
+    let (client_io, mut peer) = duplex(64 * 1024);
+    let mut client = AsyncRtspClient::with_stream_timeouts(
+        client_io,
+        ClientSession::new(),
+        RtspTimeouts::default(),
     );
+
+    let resp = tokio::join!(client.announce(URI, SDP), answer_next(&mut peer, None));
+    assert!(matches!(resp.0.unwrap(), ClientEvent::Response { .. }));
+    let transport = tcp_interleaved();
+    let resp = tokio::join!(
+        client.setup(URI, &transport),
+        answer_next(&mut peer, Some("Session: 12345678;timeout=2"))
+    );
+    assert!(matches!(resp.0.unwrap(), ClientEvent::Response { .. }));
+    let resp = tokio::join!(client.record(URI), answer_next(&mut peer, None));
+    assert!(matches!(resp.0.unwrap(), ClientEvent::Response { .. }));
+
+    // The first send writes an interleaved frame (and no keepalive yet); read
+    // and discard it.
+    client.send_interleaved(0, b"frame").await.unwrap();
+    let frame = read_one_interleaved(&mut peer).await;
+    assert_eq!(frame, b"frame", "the pusher's frame must reach the peer");
+
+    // Advance past the keepalive half-timeout (timeout=2 -> 1 s) so the next
+    // send must emit a GET_PARAMETER as well.
+    tokio::time::advance(Duration::from_secs(5)).await;
+
+    // `send_interleaved` must emit the keepalive BEFORE the frame: read the
+    // GET_PARAMETER, answer it 200, then read the frame it wrote after it.
+    client.send_interleaved(0, b"frame").await.unwrap();
+    // Bounded so a MISSING keepalive fails cleanly instead of hanging the run.
+    let (head, _) = tokio::time::timeout(Duration::from_secs(60), read_one_request(&mut peer))
+        .await
+        .expect("the pusher must emit its keepalive instead of blocking the peer");
+    assert!(
+        head.starts_with("GET_PARAMETER"),
+        "a send-only pusher must emit a GET_PARAMETER keepalive; got: {head}"
+    );
+    let cseq = header_of(&head, "cseq");
+    peer.write_all(
+        format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678\r\n\r\n").as_bytes(),
+    )
+    .await
+    .unwrap();
+    let frame = read_one_interleaved(&mut peer).await;
+    assert_eq!(frame, b"frame", "the post-keepalive frame must reach the peer");
+}
+
+/// Read one interleaved frame (`$` + channel + big-endian length + payload) off
+/// `peer` and return its payload.
+async fn read_one_interleaved(peer: &mut tokio::io::DuplexStream) -> Vec<u8> {
+    let mut hdr = [0u8; 4];
+    peer.read_exact(&mut hdr).await.unwrap();
+    assert_eq!(hdr[0], b'$', "interleaved frame must start with $");
+    let len = usize::from(u16::from_be_bytes([hdr[2], hdr[3]]));
+    let mut payload = vec![0u8; len];
+    peer.read_exact(&mut payload).await.unwrap();
+    payload
 }
 
 /// A `454 Session Not Found` (RFC 2326 §11.3.2) that the server sends in
@@ -304,111 +262,56 @@ async fn a_send_only_pusher_still_emits_a_get_parameter_keepalive() {
 ///
 /// PRE-FIX: `drain_inbound` matched every control response into `_ => {}`, so
 /// the 454 was swallowed and the pusher kept sending into a dead session.
-#[tokio::test]
+///
+/// Driven over an in-memory duplex with the test itself acting as the server in
+/// lockstep (read a request, write its response), so there is no reliance on a
+/// real IO driver being polled between a clock advance and a read — the whole
+/// exchange is deterministic.
+#[tokio::test(start_paused = true)]
 async fn a_454_keepalive_response_is_surfaced_not_discarded() {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-    let addr = listener.local_addr().unwrap();
+    // 64 KiB each way — the manually-driven peer never fills them.
+    let (client_io, mut peer) = duplex(64 * 1024);
+    let mut client = AsyncRtspClient::with_stream_timeouts(
+        client_io,
+        ClientSession::new(),
+        RtspTimeouts::default(),
+    );
 
-    let server = tokio::spawn(async move {
-        let (mut sock, _) = listener.accept().await.unwrap();
-        let mut buf: Vec<u8> = Vec::new();
-        let mut tmp = [0u8; 4096];
-        'outer: for _ in 0..64 {
-            let n = match sock.read(&mut tmp).await {
-                Ok(0) => break,
-                Ok(n) => n,
-                Err(_) => break,
-            };
-            buf.extend_from_slice(&tmp[..n]);
-            loop {
-                if buf.is_empty() {
-                    continue 'outer;
-                }
-                if buf[0] == b'$' {
-                    if buf.len() < 4 {
-                        continue 'outer;
-                    }
-                    let len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
-                    if buf.len() < 4 + len {
-                        continue 'outer;
-                    }
-                    buf.drain(..4 + len);
-                    continue;
-                }
-                let Some(head_end) = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4)
-                else {
-                    continue 'outer;
-                };
-                let text = String::from_utf8_lossy(&buf[..head_end]).to_string();
-                let clen = text
-                    .lines()
-                    .find_map(|l| {
-                        let (k, v) = l.split_once(':')?;
-                        k.eq_ignore_ascii_case("content-length")
-                            .then(|| v.trim().parse::<usize>().ok())?
-                    })
-                    .unwrap_or(0);
-                if buf.len() < head_end + clen {
-                    continue 'outer;
-                }
-                let cseq = text
-                    .lines()
-                    .find_map(|l| {
-                        let (k, v) = l.split_once(':')?;
-                        k.eq_ignore_ascii_case("cseq").then(|| v.trim().to_string())
-                    })
-                    .unwrap_or_default();
-                let method = text.split(' ').next().unwrap_or("").to_string();
-                // SETUP arms a short session timeout so the keepalive fires; the
-                // answer to the keepalive's GET_PARAMETER is a 454 — the session
-                // the server "forgot".
-                let resp = match method.as_str() {
-                    "SETUP" => format!(
-                        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678;timeout=2\r\n\r\n"
-                    ),
-                    "GET_PARAMETER" => {
-                        format!(
-                            "RTSP/1.0 454 Session Not Found\r\nCSeq: {cseq}\r\n\
-                             Session: 12345678\r\n\r\n"
-                        )
-                    }
-                    _ => format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678\r\n\r\n"),
-                };
-                sock.write_all(resp.as_bytes()).await.unwrap();
-                buf.drain(..head_end + clen);
-                if method == "GET_PARAMETER" {
-                    break 'outer;
-                }
-            }
-        }
-    });
+    // ANNOUNCE.
+    let resp = tokio::join!(client.announce(URI, SDP), answer_next(&mut peer, None));
+    assert!(matches!(resp.0.unwrap(), ClientEvent::Response { .. }));
+    // SETUP: allocate a session with a 2 s timeout so the keepalive is due
+    // after 1 s (its half-timeout floor).
+    let transport = tcp_interleaved();
+    let resp = tokio::join!(
+        client.setup(URI, &transport),
+        answer_next(&mut peer, Some("Session: 12345678;timeout=2"))
+    );
+    assert!(matches!(resp.0.unwrap(), ClientEvent::Response { .. }));
+    // RECORD.
+    let resp = tokio::join!(client.record(URI), answer_next(&mut peer, None));
+    assert!(matches!(resp.0.unwrap(), ClientEvent::Response { .. }));
 
-    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
-    client.announce(URI, SDP).await.unwrap();
-    client.setup(URI, &tcp_interleaved()).await.unwrap();
-    client.record(URI).await.unwrap();
+    // Advance past the keepalive half-timeout so the next send emits a
+    // GET_PARAMETER (a no-op before this point).
+    tokio::time::advance(Duration::from_secs(5)).await;
 
-    // Pause virtual time only now (real time for connect/handshake), so the
-    // keepalive half-timeout fires deterministically.
-    tokio::time::pause();
-    let mut errored = None;
-    for _ in 0..10 {
-        match client.send_interleaved(0, b"frame").await {
-            Ok(()) => {
-                // Advance past the keepalive half-timeout to trigger the next
-                // GET_PARAMETER, and let the server's 454 land.
-                tokio::time::advance(Duration::from_secs(5)).await;
-                tokio::task::yield_now().await;
-            }
-            Err(e) => {
-                errored = Some(e);
-                break;
-            }
-        }
-    }
-    tokio::time::resume();
+    // Drive the keepalive explicitly, read its request to learn the CSeq, then
+    // queue the 454 the "server" answers with.
+    client.poll_keepalive().await.unwrap();
+    let cseq = read_cseq_of(&mut peer, "GET_PARAMETER").await;
+    peer.write_all(
+        format!("RTSP/1.0 454 Session Not Found\r\nCSeq: {cseq}\r\nSession: 12345678\r\n\r\n")
+            .as_bytes(),
+    )
+    .await
+    .unwrap();
 
-    let err = errored.expect("the 454 must surface to the pusher, not be discarded");
+    // The NEXT send must surface the 454 it drains, not swallow it.
+    let err = client
+        .send_interleaved(0, b"frame")
+        .await
+        .expect_err("a drained 454 must surface, not be discarded");
     assert!(
         matches!(
             err,
@@ -418,7 +321,65 @@ async fn a_454_keepalive_response_is_surfaced_not_discarded() {
         ),
         "a 454 to the keepalive must surface as SessionNotFound(GetParameter), got {err:?}"
     );
-    let _ = server.await;
+}
+
+/// Read one RTSP request off `peer` and answer it `200 OK` (the ANNOUNCE
+/// round-trip needs a CSeq); `extra_headers` is appended verbatim, e.g. a
+/// `Session` header. Returns nothing — used via `join!` alongside the client's
+/// own round-trip call.
+async fn answer_next(peer: &mut tokio::io::DuplexStream, extra_headers: Option<&str>) {
+    let (head, _body) = read_one_request(peer).await;
+    let cseq = header_of(&head, "cseq");
+    let extra = extra_headers.map(|h| format!("{h}\r\n")).unwrap_or_default();
+    peer.write_all(format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n{extra}\r\n").as_bytes())
+        .await
+        .unwrap();
+}
+
+/// Read one request off `peer`, assert its method, and return its `CSeq`.
+async fn read_cseq_of(peer: &mut tokio::io::DuplexStream, method: &str) -> String {
+    let (head, _body) = read_one_request(peer).await;
+    assert!(
+        head.starts_with(method),
+        "expected a {method} request, got: {head}"
+    );
+    header_of(&head, "cseq")
+}
+
+/// Read one RTSP request (head + `Content-Length` body) off `peer`, returning
+/// the head text and the body bytes. Reads byte-by-byte so it never over-reads
+/// past this request into a following interleaved frame.
+async fn read_one_request(peer: &mut tokio::io::DuplexStream) -> (String, Vec<u8>) {
+    const BLANK: [u8; 4] = [0x0D, 0x0A, 0x0D, 0x0A];
+    let mut buf: Vec<u8> = Vec::new();
+    let mut byte = [0u8; 1];
+    let head_end = loop {
+        let n = peer.read(&mut byte).await.unwrap();
+        assert!(n > 0, "peer closed before a full request");
+        buf.push(byte[0]);
+        if buf.len() >= 4 && buf[buf.len() - 4..] == BLANK {
+            break buf.len();
+        }
+    };
+    let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+    let clen = header_of(&head, "content-length")
+        .parse::<usize>()
+        .unwrap_or(0);
+    let mut body = vec![0u8; clen];
+    if clen > 0 {
+        peer.read_exact(&mut body).await.unwrap();
+    }
+    (head, body)
+}
+
+/// Case-insensitive lookup of a header's value in a raw RTSP head.
+fn header_of(head: &str, name: &str) -> String {
+    head.lines()
+        .find_map(|l| {
+            let (k, v) = l.split_once(':')?;
+            k.eq_ignore_ascii_case(name).then(|| v.trim().to_string())
+        })
+        .unwrap_or_default()
 }
 
 /// A peer that floods interleaved frames must not make `send_interleaved`'s
