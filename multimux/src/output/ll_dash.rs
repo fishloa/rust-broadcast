@@ -217,8 +217,10 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<Str
     ) {
         Ok(p) => p,
         Err(e) => {
-            // Unreachable for a validated config (`Config::validate` rejects a
-            // non-positive/non-finite `target_duration_secs`): log loudly and
+            // Unreachable after `Config::validate`: it rejects a
+            // non-positive/non-finite `target_duration_secs` AND a
+            // `part_target_ms/1000` chunk larger than the segment. A config that
+            // reaches here with a rejection was not validated. Log loudly and
             // trip a debug assert rather than 404 the manifest silently.
             debug_assert!(
                 false,
@@ -226,7 +228,7 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<Str
             );
             tracing::error!(
                 error = %e,
-                "LL-DASH packager rejected a duration that should have been rejected at                  config validation"
+                "LL-DASH packager rejected a duration that `Config::validate` should have              rejected"
             );
             return None;
         }

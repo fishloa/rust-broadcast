@@ -1825,6 +1825,23 @@ impl Config {
                 reason: "must be positive".into(),
             });
         }
+        // A part/chunk must fit inside a whole segment: `LlDashPackager::new`
+        // (transmux/src/ll_dash/mpd.rs) rejects `chunk_duration > segment_duration`,
+        // and `crate::output::ll_dash` builds the packager with
+        // `chunk = part_target_ms / 1000` and `segment = target_duration_secs`.
+        // Reject the combination here, where it can carry a clear error, rather
+        // than letting every MPD request for an `ll_dash` route fail at runtime.
+        let part_target_secs = f64::from(self.part_target_ms) / 1000.0;
+        if part_target_secs > self.target_duration_secs {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "part_target_ms",
+                reason: format!(
+                    "a part/chunk duration of {} s must not exceed target_duration_secs ({} s) \
+                     — a part is a sub-division of a whole segment",
+                    part_target_secs, self.target_duration_secs
+                ),
+            });
+        }
         if self.window_segments == 0 {
             return Err(MultimuxError::ConfigInvalid {
                 field: "window_segments",
@@ -2230,6 +2247,42 @@ mod tests {
                 }
                 other => panic!("{bad}: expected ConfigInvalid, got {other:?}"),
             }
+        }
+    }
+
+    /// A part/chunk duration that exceeds a whole segment is rejected: it is
+    /// exactly the combination `LlDashPackager::new` refuses, so without this
+    /// check an `ll_dash` route would fail every MPD request at runtime.
+    ///
+    /// Biting test: remove the cross-check in `validate` and the
+    /// `target_duration_secs = 0.5, part_target_ms = 1000` case validates `Ok`.
+    #[test]
+    fn validate_rejects_a_part_larger_than_a_segment() {
+        // An otherwise-valid config: one route, positive durations.
+        let json = r#"{ "routes": [
+            { "name": "cam1", "input": { "type": "rtsp", "url": "rtsp://host/stream1" } }
+        ] }"#;
+        let base: Config = serde_json::from_str(json).unwrap();
+        base.validate().unwrap();
+
+        // Exactly one part long is fine; a part longer than the segment is not.
+        let mut ok = base.clone();
+        ok.target_duration_secs = 1.0;
+        ok.part_target_ms = 1000;
+        ok.validate().expect("a full-segment part is valid");
+
+        let mut bad = base.clone();
+        bad.target_duration_secs = 0.5;
+        bad.part_target_ms = 1000;
+        match bad.validate() {
+            Err(MultimuxError::ConfigInvalid { field, reason }) => {
+                assert_eq!(field, "part_target_ms");
+                assert!(
+                    reason.contains("must not exceed target_duration_secs"),
+                    "unclear reason: {reason}"
+                );
+            }
+            other => panic!("expected ConfigInvalid, got {other:?}"),
         }
     }
 
