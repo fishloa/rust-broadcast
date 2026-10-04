@@ -3,13 +3,16 @@
 //!
 //! - **Reserve-then-rebind ports** (`reserve_tcp_addr`/`reserve_udp_addr`/
 //!   `free_tcp_addr`/`free_port`). The HTTP media/admin listeners now bind
-//!   `127.0.0.1:0` and hand the live listener in (`serve_*_on`), and WHEP/WHIP/
-//!   TS-UDP routes accept a caller-bound listener/socket. The few remaining
-//!   helpers are LINE-PINNED below (the exact `fn …` line must match) because
-//!   the address is a route-internal bind the test cannot otherwise observe
-//!   (RTMP/UDP inputs, an external `mediamtx` whose config takes a port). Note
-//!   this is a NAME guard, not a behavioural one: it stops a new `reserve_*`
-//!   helper name from appearing, not a rebind written inline.
+//!   `127.0.0.1:0` and hand the live listener in (`serve_*_on`); WHEP/WHIP/
+//!   TS-UDP config-driven routes consume a caller-bound listener/socket via
+//!   `Config::prebound`. The remaining helpers are LINE-PINNED below (the
+//!   exact `fn …` line must match): the RTMP input (its `rtmp-runtime` server
+//!   exposes only `bind(addr)`) and an external `mediamtx` whose config takes
+//!   a numeric port. A separate `probe_*_addr` helper (also line-pinned) is a
+//!   pure *observation* address for a test that asserts a route's own listener
+//!   is bound/released. Note this is a NAME guard, not a behavioural one: it
+//!   stops a new `reserve_*`/`probe_*` helper name from appearing, not a
+//!   rebind written inline.
 //! - **Bare fixed sleeps** in `tests/**` outside the files that predate this
 //!   task. A NEW sleep in a NEW test file fails here, so the pattern does not
 //!   creep back. The detector covers an explicit `tokio::time::sleep(` AND a
@@ -30,6 +33,11 @@ const PORT_HELPERS: &[&str] = &[
     "fn free_port",
 ];
 
+/// Pure-observation address helpers (bind then drop, never handed to the code
+/// under test) — allowed only on the exact line pinned in
+/// [`PROBE_HELPER_ALLOW`].
+const PROBE_HELPERS: &[&str] = &["fn probe_tcp_addr", "fn probe_udp_addr"];
+
 /// Files allowed to still define a port helper, with the reason the address is
 /// genuinely unobservable without it (W2b-1 Task 4 deviation). LINE-PINNED: the
 /// marker must appear on the same source line, so a NEW reserve helper added to
@@ -41,43 +49,32 @@ const PORT_HELPER_ALLOW: &[(&str, &str, &str)] = &[
         "external `mediamtx` config takes a numeric port; port 0 is impossible for a third-party process",
     ),
     (
+        "dispatch_ingest.rs",
+        "fn reserve_tcp_addr() -> SocketAddr",
+        "`rtmp-runtime`'s `AsyncRtmpServer` exposes only `bind(addr)` (no \
+         `from_listener`), so multimux's RTMP route cannot accept a caller-bound \
+         listen socket; the RTMP input address is a route-internal bind the test \
+         must name. The TsUdp input in this file uses `Config::prebound` instead",
+    ),
+];
+
+/// Files allowed to `probe_tcp_addr`/`probe_udp_addr` — a pure *observation*
+/// address (bind-then-drop), never handed to the code under test, used only to
+/// assert whether a route's own listener is bound/released. LINE-PINNED.
+const PROBE_HELPER_ALLOW: &[(&str, &str, &str)] = &[
+    (
         "admin_api.rs",
-        "fn reserve_tcp_addr() -> SocketAddr",
-        "the `whep_addr` is a route-internal WHEP listen the test must name",
-    ),
-    (
-        "dispatch_ingest.rs",
-        "fn reserve_tcp_addr() -> SocketAddr",
-        "the RTMP input address is a route-internal bind the test must name",
-    ),
-    (
-        "dispatch_ingest.rs",
-        "fn reserve_udp_addr() -> SocketAddr",
-        "the TsUdp input address is a route-internal bind the test must name",
-    ),
-    (
-        "smooth_oracle.rs",
-        "fn reserve_udp_addr() -> std::net::SocketAddr",
-        "the TsUdp input address is a route-internal bind the test must name; \
-         `serve_smooth_until_fragment` retries the whole attempt on a lost race \
-         (the safety net the old reserve-then-rebind loop provided)",
-    ),
-    (
-        "ts_hls_oracle.rs",
-        "fn reserve_udp_addr() -> std::net::SocketAddr",
-        "the TsUdp input address is a route-internal bind the test must name; \
-         `serve_ts_hls_until_extinf` retries the whole attempt on a lost race \
-         (the safety net the old reserve-then-rebind loop provided)",
+        "fn probe_tcp_addr() -> SocketAddr",
+        "these admin tests drive routes through the JSON reload path (which cannot \
+         carry `Config::prebound`) and assert the WHEP listener is bound/released, so \
+         they need a concrete address to probe — not a port handed to a route",
     ),
     (
         "whep_egress.rs",
-        "fn reserve_tcp_addr() -> SocketAddr",
-        "the WHIP/WHEP listen addresses are route-internal binds the test must name",
-    ),
-    (
-        "whip_ingest.rs",
-        "fn reserve_tcp_addr() -> SocketAddr",
-        "the WHIP listen address is a route-internal bind the test must name",
+        "fn probe_tcp_addr() -> SocketAddr",
+        "`admin_added_route_starts_its_whep_listener` asserts the port is unbound \
+         before the admin add and bound after it, so the address must be a probe, not \
+         a pre-bound socket",
     ),
 ];
 
@@ -144,6 +141,11 @@ fn no_new_reserve_then_rebind_port_helpers() {
         // is pinned below, so a NEW reserve helper added to an allowlisted file
         // (a second `reserve_udp_addr`) still trips the guard.
         let allowed = PORT_HELPER_ALLOW.iter().filter(|(f, ..)| f == &file);
+        // A `probe_*_addr` helper is a *pure observation* address (bind then
+        // drop, never handed to the code under test): only the pinned
+        // `PROBE_HELPER_ALLOW` line may define one, so the probe pattern cannot
+        // creep in as a disguised reserve-then-rebind.
+        let probe_allowed = PROBE_HELPER_ALLOW.iter().filter(|(f, ..)| f == &file);
         for (n, line) in src.lines().enumerate() {
             if line.trim_start().starts_with("//") {
                 continue;
@@ -151,6 +153,15 @@ fn no_new_reserve_then_rebind_port_helpers() {
             for needle in PORT_HELPERS {
                 if line.contains(needle)
                     && !allowed.clone().any(|(_, marker, _)| line.contains(marker))
+                {
+                    hits.push(format!("{file}:{}: {}", n + 1, needle));
+                }
+            }
+            for needle in PROBE_HELPERS {
+                if line.contains(needle)
+                    && !probe_allowed
+                        .clone()
+                        .any(|(_, marker, _)| line.contains(marker))
                 {
                     hits.push(format!("{file}:{}: {}", n + 1, needle));
                 }

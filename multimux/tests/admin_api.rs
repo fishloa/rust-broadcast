@@ -53,11 +53,14 @@ fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero capacity")
 }
 
-/// Reserves a free TCP port, then immediately releases it — the same
-/// "reserve then drop, hand the exact address to the thing that binds it"
-/// pattern `multimux/tests/dispatch_ingest.rs` uses.
-fn reserve_tcp_addr() -> SocketAddr {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
+/// Picks an unused TCP address purely to *observe* whether a route binds it —
+/// never handed to the code under test (which owns its own bind string). These
+/// admin tests drive routes through the JSON reload path, which cannot carry
+/// `Config::prebound`, and they assert a listener is bound/released, so they
+/// need a concrete address to probe. SEE `harness_guard.rs`'s allowlist entry
+/// for the full reason.
+fn probe_tcp_addr() -> SocketAddr {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("probe tcp port");
     let addr = listener.local_addr().expect("local addr");
     drop(listener);
     addr
@@ -1202,7 +1205,7 @@ fn panicking_router_registry() -> SchemeRegistry {
 async fn a_router_build_panic_does_not_register_the_route() {
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
-    let whep_addr = reserve_tcp_addr();
+    let whep_addr = probe_tcp_addr();
     let config = admin_config(
         media_addr,
         admin_addr,
@@ -1297,7 +1300,7 @@ async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
 
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
-    let whep_addr = reserve_tcp_addr();
+    let whep_addr = probe_tcp_addr();
     let config = admin_config(
         media_addr,
         admin_addr,
@@ -1384,7 +1387,7 @@ async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
 async fn a_failed_reload_rolls_back_and_leaves_no_bound_port() {
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
-    let whep_addr = reserve_tcp_addr();
+    let whep_addr = probe_tcp_addr();
 
     let config_path = std::env::temp_dir().join(format!(
         "multimux-admin-api-test-reload-rollback-{}-{}.json",
@@ -1488,8 +1491,8 @@ async fn a_failed_reload_rolls_back_and_leaves_no_bound_port() {
 async fn reloading_a_route_drains_the_displaced_runtime() {
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
-    let old_whep = reserve_tcp_addr();
-    let new_whep = reserve_tcp_addr();
+    let old_whep = probe_tcp_addr();
+    let new_whep = probe_tcp_addr();
 
     let config_path = std::env::temp_dir().join(format!(
         "multimux-admin-api-test-reload-restart-{}-{}.json",

@@ -384,6 +384,7 @@ impl RouteRegistry {
             guarded.store(),
             &push_cancel,
             self.ctx.output_auth.clone(),
+            &self.ctx.base_config,
         ));
         Ok(guarded.with_push_handles(push_handles).into_runtime())
     }

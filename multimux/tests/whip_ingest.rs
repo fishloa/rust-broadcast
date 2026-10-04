@@ -78,13 +78,11 @@ const HOLD_MS: u64 = 6_000;
 /// test instead of hanging the suite forever.
 const PLAYLIST_HANG_GUARD: Duration = Duration::from_secs(30);
 
-/// "Reserve then drop, hand the exact address to the thing that binds it" --
-/// see `dispatch_ingest.rs`'s identical helper.
-fn reserve_tcp_addr() -> SocketAddr {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
-    let addr = listener.local_addr().expect("local addr");
-    drop(listener);
-    addr
+/// Bind `127.0.0.1:0` and return the live address + the STILL-BOUND tokio
+/// listener, so a test hands the exact socket into the route instead of
+/// reserving a port and racing to re-bind it (SP7.1).
+fn bind_tcp_addr() -> (SocketAddr, tokio::net::TcpListener) {
+    bind_tcp()
 }
 
 fn assets_dir() -> std::path::PathBuf {
@@ -189,7 +187,9 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
     );
 
     let (bind_addr, bind_listener) = bind_tcp();
-    let whip_addr = reserve_tcp_addr();
+    let (whip_addr, whip_listener) = bind_tcp_addr();
+    let mut prebound = multimux::config::PreboundBinds::default();
+    prebound.with_tcp(whip_addr.to_string(), whip_listener);
     let config = Config {
         bind: bind_addr.to_string(),
         target_duration_secs: 0.5,
@@ -203,6 +203,7 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
             outputs: vec![OutputKind::LlHls],
             dvr: DvrConfig::default(),
         }],
+        prebound,
         ..Config::default()
     };
 
@@ -265,7 +266,9 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
     );
 
     let (bind_addr, bind_listener) = bind_tcp();
-    let whip_addr = reserve_tcp_addr();
+    let (whip_addr, whip_listener) = bind_tcp_addr();
+    let mut prebound = multimux::config::PreboundBinds::default();
+    prebound.with_tcp(whip_addr.to_string(), whip_listener);
     let config = Config {
         bind: bind_addr.to_string(),
         target_duration_secs: 0.5,
@@ -280,6 +283,7 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
             outputs: vec![OutputKind::LlHls],
             dvr: DvrConfig::default(),
         }],
+        prebound,
         ..Config::default()
     };
 

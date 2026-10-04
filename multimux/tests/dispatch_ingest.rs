@@ -77,7 +77,7 @@ use multimux::serve_with_registry_on;
 
 #[path = "support/listener.rs"]
 mod listener;
-use listener::bind_tcp;
+use listener::{bind_tcp, bind_udp};
 
 fn fixture_path() -> PathBuf {
     PathBuf::from(concat!(
@@ -99,6 +99,12 @@ fn rtmp_fixture_path() -> PathBuf {
 /// "reserve then drop, hand the exact address to the thing that binds it"
 /// pattern `multimux/src/source/ts_udp.rs`'s own loopback test uses, just
 /// for TCP (this crate's HTTP origin bind address).
+///
+/// Only the RTMP test still needs this: `rtmp-runtime`'s `AsyncRtmpServer`
+/// exposes a `bind(addr)` constructor but no `from_listener`, so multimux's
+/// RTMP route cannot accept a caller-bound listen socket (unlike WHEP/WHIP/
+/// TS-UDP, which now take one via `Config::prebound`). See
+/// `harness_guard.rs`'s RTMP allowlist entry.
 fn reserve_tcp_addr() -> SocketAddr {
     let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
     let addr = listener.local_addr().expect("local addr");
@@ -106,13 +112,11 @@ fn reserve_tcp_addr() -> SocketAddr {
     addr
 }
 
-/// Same as [`reserve_tcp_addr`], for a UDP port (the `TsUdp` route's own
-/// bind address).
-fn reserve_udp_addr() -> SocketAddr {
-    let socket = std::net::UdpSocket::bind("127.0.0.1:0").expect("reserve udp port");
-    let addr = socket.local_addr().expect("local addr");
-    drop(socket);
-    addr
+/// Bind `127.0.0.1:0` for UDP and return the live address + the still-bound
+/// socket, so a `TsUdp` route consumes it via `Config::prebound` instead of
+/// racing reserve-then-rebind (SP7.1).
+async fn bind_udp_addr() -> (SocketAddr, tokio::net::UdpSocket) {
+    bind_udp().await
 }
 
 /// One LL-HLS-only route named `"cam"`, bound at `bind`, ingesting `input` --
@@ -215,14 +219,15 @@ async fn get_non_empty(client: &reqwest::Client, url: &str) -> bytes::Bytes {
 #[tokio::test]
 async fn ts_udp_dispatch_serves_real_media_end_to_end() {
     let (bind_addr, bind_listener) = bind_tcp();
-    let udp_addr = reserve_udp_addr();
-    let config = base_config(
+    let (udp_addr, udp_socket) = bind_udp_addr().await;
+    let mut config = base_config(
         bind_addr,
         InputSpec::TsUdp {
             addr: udp_addr.to_string(),
             multicast_group: None,
         },
     );
+    config.prebound.with_udp(udp_addr.to_string(), udp_socket);
 
     let server = tokio::spawn(serve_with_registry_on(
         bind_listener,
@@ -1024,7 +1029,7 @@ async fn poll_until_200_with(
 #[tokio::test]
 async fn dash_manifest_served_without_explicit_set_track_specs() {
     let (bind_addr, bind_listener) = bind_tcp();
-    let udp_addr = reserve_udp_addr();
+    let (udp_addr, udp_socket) = bind_udp_addr().await;
     let mut config = base_config(
         bind_addr,
         InputSpec::TsUdp {
@@ -1032,6 +1037,7 @@ async fn dash_manifest_served_without_explicit_set_track_specs() {
             multicast_group: None,
         },
     );
+    config.prebound.with_udp(udp_addr.to_string(), udp_socket);
     config.routes[0].outputs = vec![OutputKind::Dash];
 
     let server = tokio::spawn(serve_with_registry_on(
@@ -1091,7 +1097,7 @@ async fn dash_manifest_served_without_explicit_set_track_specs() {
 #[tokio::test]
 async fn ll_dash_manifest_served_without_explicit_set_track_specs() {
     let (bind_addr, bind_listener) = bind_tcp();
-    let udp_addr = reserve_udp_addr();
+    let (udp_addr, udp_socket) = bind_udp_addr().await;
     let mut config = base_config(
         bind_addr,
         InputSpec::TsUdp {
@@ -1099,6 +1105,7 @@ async fn ll_dash_manifest_served_without_explicit_set_track_specs() {
             multicast_group: None,
         },
     );
+    config.prebound.with_udp(udp_addr.to_string(), udp_socket);
     config.routes[0].outputs = vec![OutputKind::LlDash];
 
     let server = tokio::spawn(serve_with_registry_on(
@@ -1158,7 +1165,7 @@ async fn ll_dash_manifest_served_without_explicit_set_track_specs() {
 #[tokio::test]
 async fn ts_udp_dash_manifest_returns_503_before_tracks_are_known() {
     let (bind_addr, bind_listener) = bind_tcp();
-    let udp_addr = reserve_udp_addr();
+    let (udp_addr, udp_socket) = bind_udp_addr().await;
     let mut config = base_config(
         bind_addr,
         InputSpec::TsUdp {
@@ -1166,6 +1173,7 @@ async fn ts_udp_dash_manifest_returns_503_before_tracks_are_known() {
             multicast_group: None,
         },
     );
+    config.prebound.with_udp(udp_addr.to_string(), udp_socket);
     config.routes[0].outputs = vec![OutputKind::Dash];
 
     let server = tokio::spawn(serve_with_registry_on(

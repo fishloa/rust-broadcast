@@ -1501,8 +1501,13 @@ async fn serve_with_registry_impl(
         for h in push_handles {
             supervisor_handles.push((route.name.clone(), h));
         }
-        let whep_handles =
-            spawn_whep_outputs(route, Arc::clone(&store), &cancel, output_auth.clone());
+        let whep_handles = spawn_whep_outputs(
+            route,
+            Arc::clone(&store),
+            &cancel,
+            output_auth.clone(),
+            &config,
+        );
         for h in whep_handles {
             supervisor_handles.push((route.name.clone(), h));
         }
@@ -1737,11 +1742,22 @@ fn spawn_whep_outputs(
     store: Arc<RouteHandle>,
     cancel: &tokio_util::sync::CancellationToken,
     output_auth: Option<Arc<Verifier>>,
+    config: &crate::config::Config,
 ) -> Vec<tokio::task::JoinHandle<()>> {
     let mut handles = Vec::new();
     for kind in &route.outputs {
         if let crate::output::OutputKind::Whep { listen } = kind {
-            let route_cfg = Arc::new(crate::output::whep::WhepRoute::new(listen.clone()));
+            // A `test-hooks` caller may have bound this exact listen address
+            // itself and handed the live listener in (`Config::prebound`), so
+            // the route consumes it rather than racing reserve-then-rebind.
+            let route_cfg = Arc::new(match config.prebound_tcp(listen) {
+                Some(listener) => crate::output::whep::WhepRoute::with_listener(
+                    "whep",
+                    listener,
+                    crate::output::whep::DEFAULT_WHEP_MAX_SESSIONS,
+                ),
+                None => crate::output::whep::WhepRoute::new(listen.clone()),
+            });
             let output_auth = output_auth.clone();
             handles.push(spawn_following(&store, cancel, move |trunk, cancel| {
                 let (route_cfg, output_auth) = (Arc::clone(&route_cfg), output_auth.clone());
@@ -1762,8 +1778,9 @@ fn spawn_whep_outputs(
     store: Arc<RouteHandle>,
     cancel: &tokio_util::sync::CancellationToken,
     output_auth: Option<Arc<Verifier>>,
+    config: &crate::config::Config,
 ) -> Vec<tokio::task::JoinHandle<()>> {
-    let _ = (route, store, cancel, output_auth);
+    let _ = (route, store, cancel, output_auth, config);
     Vec::new()
 }
 
@@ -1861,9 +1878,19 @@ fn spawn_ingest(
             addr,
             multicast_group,
         } => {
-            let route_cfg =
-                crate::source::ts_udp::TsUdpRoute::new(name, addr.clone(), multicast_group.clone())
-                    .with_timeouts(timeouts);
+            // A `test-hooks` caller may have bound this exact `addr` itself and
+            // handed the live socket in (`Config::prebound`), so the route
+            // consumes it rather than racing reserve-then-rebind.
+            let route_cfg = match config.prebound_udp(addr) {
+                Some(socket) => crate::source::ts_udp::TsUdpRoute::with_socket(name, socket)
+                    .with_timeouts(timeouts),
+                None => crate::source::ts_udp::TsUdpRoute::new(
+                    name,
+                    addr.clone(),
+                    multicast_group.clone(),
+                )
+                .with_timeouts(timeouts),
+            };
             spawn_supervised(
                 route_cfg,
                 ctx,
@@ -2016,8 +2043,16 @@ fn spawn_ingest(
                 "WHIP ingest listener is running with no authentication of any kind — \
                  any publisher that can reach this endpoint may publish"
             );
-            let route_cfg =
-                crate::source::whip::WhipRoute::new(name, listen.clone()).with_timeouts(timeouts);
+            let route_cfg = match config.prebound_tcp(listen) {
+                Some(listener) => crate::source::whip::WhipRoute::with_listener(
+                    name,
+                    listener,
+                    crate::source::whip::DEFAULT_WHIP_MAX_SESSIONS,
+                )
+                .with_timeouts(timeouts),
+                None => crate::source::whip::WhipRoute::new(name, listen.clone())
+                    .with_timeouts(timeouts),
+            };
             spawn_supervised(
                 route_cfg,
                 ctx,

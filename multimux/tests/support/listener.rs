@@ -13,3 +13,15 @@ pub fn bind_tcp() -> (SocketAddr, tokio::net::TcpListener) {
     let listener = tokio::net::TcpListener::from_std(std_listener).expect("tokio listener");
     (addr, listener)
 }
+
+/// Bind `127.0.0.1:0` for UDP, returning the concrete address and the
+/// still-bound socket — hand the socket to a route via `Config::prebound`
+/// (`test-hooks`) so no test reserves a port and races to re-bind it.
+#[allow(dead_code)]
+pub async fn bind_udp() -> (SocketAddr, tokio::net::UdpSocket) {
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("bind 127.0.0.1:0 udp");
+    let addr = socket.local_addr().expect("local addr");
+    (addr, socket)
+}

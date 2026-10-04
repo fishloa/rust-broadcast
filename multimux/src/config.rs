@@ -1621,6 +1621,66 @@ pub struct Config {
     /// admin routes, at all.
     #[serde(default)]
     pub admin: Option<AdminSpec>,
+    /// Caller-bound sockets for a config-driven route's own listen address
+    /// (`test-hooks` only, never serialized): an integration test binds
+    /// `127.0.0.1:0`, reads the live port, writes it into the route's own
+    /// `listen`/`addr` string, and hands the still-bound socket in here.
+    /// `spawn_ingest`/`spawn_whep_outputs` consume the matching entry instead
+    /// of re-binding, so no test reserves a port and then races to re-bind it
+    /// (SP7.1). Keyed by the exact `host:port` string the route configures.
+    #[cfg(feature = "test-hooks")]
+    #[serde(skip)]
+    pub prebound: PreboundBinds,
+}
+
+/// Caller-bound sockets a `test-hooks`-enabled test hands to a config-driven
+/// route so it consumes them instead of binding its own listen address — see
+/// [`Config::prebound`]. Empty in every production build (the field does not
+/// exist without `test-hooks`). The inner maps are behind an
+/// `Arc<Mutex<…>>` so a `Config` clone still observes the same slots and a
+/// route can `take` its socket from a shared `&Config`.
+#[cfg(feature = "test-hooks")]
+#[derive(Debug, Clone, Default)]
+pub struct PreboundBinds {
+    /// TCP listeners keyed by the route's `listen` string (`Whip`/`Whep`).
+    pub tcp: std::sync::Arc<
+        std::sync::Mutex<std::collections::HashMap<String, tokio::net::TcpListener>>,
+    >,
+    /// UDP sockets keyed by the route's `addr` string (`TsUdp`).
+    pub udp:
+        std::sync::Arc<std::sync::Mutex<std::collections::HashMap<String, tokio::net::UdpSocket>>>,
+}
+
+#[cfg(feature = "test-hooks")]
+impl PreboundBinds {
+    /// Insert a pre-bound TCP listener under the route `listen` string that
+    /// would otherwise be re-bound; returns `&mut Self` so calls chain.
+    pub fn with_tcp(&mut self, listen: impl Into<String>, l: tokio::net::TcpListener) -> &mut Self {
+        self.tcp
+            .lock()
+            .expect("prebound tcp lock")
+            .insert(listen.into(), l);
+        self
+    }
+
+    /// Insert a pre-bound UDP socket under the route `addr` string.
+    pub fn with_udp(&mut self, addr: impl Into<String>, s: tokio::net::UdpSocket) -> &mut Self {
+        self.udp
+            .lock()
+            .expect("prebound udp lock")
+            .insert(addr.into(), s);
+        self
+    }
+
+    /// Take the TCP listener registered for `listen`, if any.
+    pub fn take_tcp(&self, listen: &str) -> Option<tokio::net::TcpListener> {
+        self.tcp.lock().expect("prebound tcp lock").remove(listen)
+    }
+
+    /// Take the UDP socket registered for `addr`, if any.
+    pub fn take_udp(&self, addr: &str) -> Option<tokio::net::UdpSocket> {
+        self.udp.lock().expect("prebound udp lock").remove(addr)
+    }
 }
 
 /// Default [`Config::playlist_name`] when a config omits the field:
@@ -1653,6 +1713,8 @@ impl Default for Config {
             playlist_name: default_playlist_name(),
             output_auth: None,
             admin: None,
+            #[cfg(feature = "test-hooks")]
+            prebound: PreboundBinds::default(),
         }
     }
 }
@@ -1687,6 +1749,33 @@ fn validate_timeout_secs(field: &'static str, secs: f64) -> Result<()> {
 }
 
 impl Config {
+    /// Take the pre-bound TCP listener a `test-hooks` test registered for
+    /// `listen`, if any — always `None` without `test-hooks` (see
+    /// [`Config::prebound`]).
+    #[cfg(feature = "test-hooks")]
+    pub fn prebound_tcp(&self, listen: &str) -> Option<tokio::net::TcpListener> {
+        self.prebound.take_tcp(listen)
+    }
+
+    /// The `test-hooks`-off shape: no pre-bound socket ever exists.
+    #[cfg(not(feature = "test-hooks"))]
+    pub fn prebound_tcp(&self, _listen: &str) -> Option<tokio::net::TcpListener> {
+        None
+    }
+
+    /// Take the pre-bound UDP socket a `test-hooks` test registered for
+    /// `addr`, if any — always `None` without `test-hooks`.
+    #[cfg(feature = "test-hooks")]
+    pub fn prebound_udp(&self, addr: &str) -> Option<tokio::net::UdpSocket> {
+        self.prebound.take_udp(addr)
+    }
+
+    /// The `test-hooks`-off shape: no pre-bound socket ever exists.
+    #[cfg(not(feature = "test-hooks"))]
+    pub fn prebound_udp(&self, _addr: &str) -> Option<tokio::net::UdpSocket> {
+        None
+    }
+
     /// Load a JSON config file.
     pub fn from_json_file(path: &Path) -> Result<Config> {
         let bytes = std::fs::read(path).map_err(|source| MultimuxError::ConfigRead {

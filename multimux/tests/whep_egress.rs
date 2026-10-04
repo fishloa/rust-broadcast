@@ -76,9 +76,18 @@ const CONNECT_TIMEOUT_MS: u64 = 15_000;
 /// sending/decoding real media, once both are connected.
 const HOLD_MS: u64 = 6_000;
 
-/// See `whip_ingest.rs`'s identical helper.
-fn reserve_tcp_addr() -> SocketAddr {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
+/// Bind `127.0.0.1:0` and return the live address + the STILL-BOUND tokio
+/// listener, so a test hands the exact socket into the route instead of
+/// reserving a port and racing to re-bind it (SP7.1).
+fn bind_tcp_addr() -> (SocketAddr, tokio::net::TcpListener) {
+    bind_tcp()
+}
+
+/// Picks an unused TCP address purely to *observe* whether a route binds it —
+/// never handed to the code under test (which owns its own bind string). See
+/// `harness_guard.rs`'s `PROBE_HELPER_ALLOW` for the full reason.
+fn probe_tcp_addr() -> SocketAddr {
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("probe tcp port");
     let addr = listener.local_addr().expect("local addr");
     drop(listener);
     addr
@@ -170,8 +179,15 @@ async fn real_browser_whep_playback_decodes_real_video() {
     );
 
     let (bind_addr, bind_listener) = bind_tcp();
-    let whip_addr = reserve_tcp_addr();
-    let whep_addr = reserve_tcp_addr();
+    // Bind both the WHIP ingest and the WHEP egress listen addresses ourselves
+    // (`127.0.0.1:0`), then hand the LIVE sockets into the route's own listen
+    // strings via `Config::prebound` — no reserve-then-rebind race.
+    let (whip_addr, whip_listener) = bind_tcp_addr();
+    let (whep_addr, whep_listener) = bind_tcp_addr();
+    let mut prebound = multimux::config::PreboundBinds::default();
+    prebound
+        .with_tcp(whip_addr.to_string(), whip_listener)
+        .with_tcp(whep_addr.to_string(), whep_listener);
     let config = Config {
         bind: bind_addr.to_string(),
         target_duration_secs: 0.5,
@@ -187,6 +203,7 @@ async fn real_browser_whep_playback_decodes_real_video() {
             }],
             dvr: DvrConfig::default(),
         }],
+        prebound,
         ..Config::default()
     };
 
@@ -270,7 +287,11 @@ async fn admin_added_route_starts_its_whep_listener() {
 
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
-    let whep_addr = reserve_tcp_addr();
+    // A pure observation address (bind then drop, never handed to a route):
+    // this test asserts the admin-added WHEP listener is NOT bound before the
+    // add and IS bound after, so it needs a concrete address to probe rather
+    // than a pre-bound socket (which would make "before" already bound).
+    let whep_addr = probe_tcp_addr();
 
     let config = Config {
         bind: media_addr.to_string(),

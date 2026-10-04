@@ -131,8 +131,19 @@ impl Dialer for TsUdpDialer {
 /// [`recv_and_feed`]/[`run_ts_udp`] — split out so tests can synchronise on
 /// the bound address before a synthetic sender starts writing to it (UDP has
 /// no connect-then-accept handshake to synchronise on otherwise).
+///
+/// A caller-supplied pre-bound socket ([`TsUdpRoute::with_socket`]) is
+/// consumed **once**: the first `bind` takes it, and every later call (a
+/// reconnect after the read loop ends) falls back to binding `route.addr`.
+/// The pre-bound socket exists only so a *test* can own the exact port for its
+/// first attempt; a production route never sets one, so a reconnect always
+/// re-binds its configured `addr`, exactly as before `with_socket` existed.
 pub async fn bind(route: &TsUdpRoute) -> Result<UdpSocket> {
-    if let Some(socket) = route.prebound.lock().expect("ts-udp prebound lock").take() {
+    let prebound = match route.prebound.lock() {
+        Ok(mut slot) => slot.take(),
+        Err(poisoned) => poisoned.into_inner().take(),
+    };
+    if let Some(socket) = prebound {
         return Ok(socket);
     }
     bind_udp(&route.addr, route.multicast_group.as_deref()).await
@@ -348,5 +359,65 @@ mod tests {
             outcome.is_err(),
             "expected a recoverable read-timeout error"
         );
+    }
+
+    /// A pre-bound socket handed to [`TsUdpRoute::with_socket`] is consumed
+    /// **once**: the first [`bind`] takes it (its address equals the socket
+    /// the caller bound), and a second `bind` (a reconnect after the read loop
+    /// ends) falls back to binding `route.addr` — a *fresh* socket, not the
+    /// pre-bound one. Pins the documented reconnect-after-take behaviour.
+    #[tokio::test]
+    async fn with_socket_is_consumed_once_then_reconnect_rebinds_addr() {
+        use std::os::fd::AsRawFd;
+
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let addr = socket.local_addr().expect("local addr");
+        let route = TsUdpRoute::with_socket("cam-ts", socket);
+
+        // First bind: the caller's own pre-bound socket (same address).
+        let first = bind(&route).await.expect("first bind");
+        assert_eq!(
+            first.local_addr().expect("addr"),
+            addr,
+            "the first bind must return the caller's pre-bound socket"
+        );
+        let first_ptr = first.as_raw_fd();
+        // Drop the first socket so the port is free for the reconnect's bind.
+        drop(first);
+
+        // Second bind (reconnect): the pre-bound socket is gone, so the route
+        // re-binds its own `addr` — a different, freshly bound socket object.
+        let second = bind(&route).await.expect("second bind");
+        assert_eq!(
+            second.local_addr().expect("addr"),
+            addr,
+            "the reconnect must re-bind the configured addr"
+        );
+        let second_ptr = second.as_raw_fd();
+        assert_ne!(
+            first_ptr, second_ptr,
+            "the reconnect must not hand back the same pre-bound socket"
+        );
+    }
+
+    /// A poisoned pre-bound lock must NOT panic [`bind`] (production code has
+    /// no `.expect`): it recovers the inner value and binds normally. Reverting
+    /// `bind`'s match to `.expect("ts-udp prebound lock")` makes the poisoning
+    /// thread's drop panic propagate and this test fail.
+    #[tokio::test]
+    async fn bind_recovers_from_a_poisoned_prebound_lock() {
+        let route = TsUdpRoute::new("cam-ts", "127.0.0.1:0", None);
+        // Poison the lock: hold it across a panic.
+        let prebound = std::sync::Arc::clone(&route.prebound);
+        let _ = std::thread::spawn(move || {
+            let _guard = prebound.lock().expect("lock");
+            panic!("poison the prebound lock");
+        })
+        .join();
+
+        // `bind` must recover and bind the configured (ephemeral) addr, not
+        // panic on the poisoned lock.
+        let socket = bind(&route).await.expect("bind must not panic");
+        assert!(socket.local_addr().is_ok());
     }
 }
