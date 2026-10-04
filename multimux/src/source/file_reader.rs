@@ -307,7 +307,7 @@ impl FileReaderConfig {
 /// A [`FileReader`] that has been spawned onto a tokio task; the run's
 /// terminal [`Result`] arrives on the wrapped [`JoinHandle`].
 ///
-/// Owns a [`CancellationToken`] (SP1.4): dropping this value CANCELS the run
+/// Owns a `tokio_util::sync::CancellationToken` (SP1.4): dropping this value CANCELS the run
 /// rather than detaching it, so a reader whose owner goes away stops instead
 /// of playing a file forever in the background. Awaiting [`Self::handle`]
 /// still yields the outcome; a cancelled run resolves to
@@ -1711,13 +1711,10 @@ mod playout_tests {
         // Cancel (as a drop would): the run must stop, and awaiting the handle
         // must yield `Cancelled` rather than the run completing.
         spawned.cancel();
-        let outcome = tokio::time::timeout(
-            std::time::Duration::from_secs(5),
-            &mut spawned.handle,
-        )
-        .await
-        .expect("a cancelled reader must not run forever")
-        .expect("the task must not panic");
+        let outcome = tokio::time::timeout(std::time::Duration::from_secs(5), &mut spawned.handle)
+            .await
+            .expect("a cancelled reader must not run forever")
+            .expect("the task must not panic");
         assert!(
             matches!(outcome, Err(FileReaderError::Cancelled)),
             "cancelling the SpawnedReader must cancel the run, got {outcome:?}"

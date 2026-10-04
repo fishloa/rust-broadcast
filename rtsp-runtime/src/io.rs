@@ -359,11 +359,11 @@ where
                 break;
             }
             match tokio::time::timeout(Duration::ZERO, self.next_event()).await {
-                Err(_) => break,                       // nothing ready — non-blocking
-                Ok(Err(_)) => break,                   // peer error surfaces on the next real call
-                Ok(Ok(None)) => break,                 // EOF
+                Err(_) => break,       // nothing ready — non-blocking
+                Ok(Err(_)) => break,   // peer error surfaces on the next real call
+                Ok(Ok(None)) => break, // EOF
                 Ok(Ok(Some(ClientEvent::MediaData { .. }))) => {}
-                Ok(Ok(Some(_))) => {}                  // control response applied by the codec
+                Ok(Ok(Some(_))) => {} // control response applied by the codec
             }
         }
     }

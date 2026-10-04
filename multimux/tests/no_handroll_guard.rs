@@ -233,7 +233,7 @@ fn match_cfg_test_mod(b: &[u8], from: usize) -> Option<(usize, usize, Option<usi
     }
     let mod_kw = k;
     let mut m = k + 4;
-    while m < n && (b[m] as char).is_alphanumeric() || (m < n && b[m] == b'_') {
+    while m < n && (b[m] == b'_' || (b[m] as char).is_alphanumeric()) {
         m += 1;
     }
     // Find `{` or `;`, handling generics-free mod only (no generic mods).

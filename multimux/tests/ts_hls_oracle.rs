@@ -192,11 +192,7 @@ async fn serve_ts_hls_until_extinf() -> Served {
         });
 
         let url = format!("http://{bind_addr}/cam/media.m3u8");
-        match tokio::time::timeout(
-            Duration::from_secs(20),
-            poll_until_extinf(&client, &url),
-        )
-        .await
+        match tokio::time::timeout(Duration::from_secs(20), poll_until_extinf(&client, &url)).await
         {
             Ok(playlist) => {
                 return Served {

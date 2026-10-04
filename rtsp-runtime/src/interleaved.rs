@@ -172,7 +172,9 @@ mod tests {
         // The borrow-based zero-copy path must produce byte-identical output to
         // the owned `new`+`to_bytes` path, and round-trip back to the frame.
         let payload: Vec<u8> = (0u8..40).collect();
-        let owned = InterleavedFrame::new(3, payload.clone()).to_bytes().unwrap();
+        let owned = InterleavedFrame::new(3, payload.clone())
+            .to_bytes()
+            .unwrap();
         let borrowed = InterleavedFrame::slice_to_bytes(3, &payload).unwrap();
         assert_eq!(owned, borrowed);
         let (parsed, consumed) = InterleavedFrame::parse(&borrowed).unwrap().unwrap();

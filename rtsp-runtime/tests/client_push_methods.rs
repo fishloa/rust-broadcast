@@ -242,15 +242,16 @@ async fn a_send_only_pusher_still_emits_a_get_parameter_keepalive() {
                     .lines()
                     .find_map(|l| {
                         let (k, v) = l.split_once(':')?;
-                        k.eq_ignore_ascii_case("cseq")
-                            .then(|| v.trim().to_string())
+                        k.eq_ignore_ascii_case("cseq").then(|| v.trim().to_string())
                     })
                     .unwrap_or_default();
                 let method = text.split(' ').next().unwrap_or("").to_string();
                 // A SETUP response allocates a Session id with a short declared
                 // timeout so the keepalive arms and fires quickly.
                 let resp = if method == "SETUP" {
-                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678;timeout=2\r\n\r\n")
+                    format!(
+                        "RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678;timeout=2\r\n\r\n"
+                    )
                 } else {
                     format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678\r\n\r\n")
                 };

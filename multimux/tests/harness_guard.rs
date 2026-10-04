@@ -181,8 +181,7 @@ fn no_new_bare_sleeps_in_the_test_harness() {
             if line.trim_start().starts_with("//") {
                 continue;
             }
-            let bare = line
-                .contains("tokio::time::sleep(")
+            let bare = line.contains("tokio::time::sleep(")
                 || line.contains("thread::sleep(")
                 || line.contains("std::thread::sleep(")
                 || (imports_sleep

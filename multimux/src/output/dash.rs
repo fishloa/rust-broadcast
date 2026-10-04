@@ -261,9 +261,7 @@ pub fn render_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<String> {
         media_template: "seg-$RepresentationID$-$Number$.m4s".to_string(),
         availability_start_time: Some(format_iso8601(now)),
         minimum_update_period: Some(xs_duration_secs(target_duration_secs).ok()?),
-        time_shift_buffer_depth: Some(
-            xs_duration_secs(time_shift_buffer_depth_secs).ok()?,
-        ),
+        time_shift_buffer_depth: Some(xs_duration_secs(time_shift_buffer_depth_secs).ok()?),
         segments,
         ..DashPackager::default()
     };
@@ -366,8 +364,7 @@ pub(crate) fn xs_duration_secs(secs: f64) -> Result<String, DurationError> {
     // `Duration::try_from_secs_f64` rejects NaN/inf/negative/overflow — far
     // larger than any realisable segment duration — as an `Err`, unlike the
     // panicking `from_secs_f64`.
-    let d = Duration::try_from_secs_f64(secs)
-        .map_err(|_| DurationError::InvalidInput { secs })?;
+    let d = Duration::try_from_secs_f64(secs).map_err(|_| DurationError::InvalidInput { secs })?;
     Ok(xs_duration(d))
 }
 

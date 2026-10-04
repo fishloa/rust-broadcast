@@ -1465,11 +1465,9 @@ impl Route {
         // first builds its control URL.
         for kind in &self.outputs {
             if let OutputKind::RtspPush { url, .. } = kind {
-                validate_rtsp_push_url(url).map_err(|reason| {
-                    MultimuxError::ConfigInvalid {
-                        field: "routes.outputs[].url",
-                        reason,
-                    }
+                validate_rtsp_push_url(url).map_err(|reason| MultimuxError::ConfigInvalid {
+                    field: "routes.outputs[].url",
+                    reason,
                 })?;
             }
         }

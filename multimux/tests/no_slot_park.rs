@@ -118,7 +118,11 @@ async fn freeing_a_slot_wakes_a_parked_push() {
     for _ in 0..10 {
         tokio::task::yield_now().await;
     }
-    assert_eq!(trunk.waiter_count(), 1, "the push has parked, not registered");
+    assert_eq!(
+        trunk.waiter_count(),
+        1,
+        "the push has parked, not registered"
+    );
 
     // Free the slot: the parked push must take it, with virtual time frozen.
     drop(held);

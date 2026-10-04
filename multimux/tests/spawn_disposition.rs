@@ -32,11 +32,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
         643,
         "spawn_blocking DVR persist; awaited inline",
     ),
-    (
-        "dvr.rs",
-        595,
-        "spawn_blocking DVR write; awaited inline",
-    ),
+    ("dvr.rs", 595, "spawn_blocking DVR write; awaited inline"),
     (
         "source/dash_pull.rs",
         1004,
@@ -57,11 +53,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
         1070,
         "pull `inflight` JoinSet (drained on drop)",
     ),
-    (
-        "source/rtmp.rs",
-        325,
-        "RTMP accept pump TaskTracker",
-    ),
+    ("source/rtmp.rs", 325, "RTMP accept pump TaskTracker"),
     (
         "source/rtmp.rs",
         744,
