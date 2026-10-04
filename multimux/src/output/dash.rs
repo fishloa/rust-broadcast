@@ -546,6 +546,52 @@ mod tests {
     /// golden files must differ by EXACTLY that one token, nothing else. This
     /// is the "pin the intended difference" gate: a future change that alters
     /// any other byte, or that silently reverts to `PT60S`, fails here.
+    /// A FRACTIONAL target duration (`0.1` s x 3 segments) pinned against
+    /// main's captured bytes (`dash_mpd_frac_main.golden`): main printed raw
+    /// `f64` (`timeShiftBufferDepth="PT0.30000000000000004S"`), this crate's
+    /// jiff form prints `PT0.3S`. The integral-second goldens above cannot see
+    /// this, so this is the fractional-target guard — the two must differ by
+    /// exactly that one token. `GOLDEN_BLESS=<dir>` writes our side instead of
+    /// comparing.
+    #[test]
+    fn the_fractional_target_differs_from_main_by_exactly_the_rounded_token() {
+        let route = RouteHandle::new(0.1, 30, 3);
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        for seq in 1..=3u32 {
+            route
+                .add_segment(crate::route::SPTS_PROGRAM_ID, seg(seq, 0.1))
+                .expect("add_segment");
+        }
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let ours = render_mpd_at(&route, now).expect("renders");
+        assert!(
+            ours.contains("timeShiftBufferDepth=\"PT0.3S\""),
+            "a 0.3 s window must spell the jiff PT0.3S, not main's raw f64: {ours}"
+        );
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
+        let file = "dash_mpd_frac.golden";
+        if let Ok(bless) = std::env::var("GOLDEN_BLESS") {
+            std::fs::create_dir_all(&bless).expect("create golden dir");
+            std::fs::write(std::path::Path::new(&bless).join(file), &ours).expect("write");
+            return;
+        }
+        let ours_file = std::fs::read_to_string(dir.join(file)).expect("read our frac golden");
+        let main = std::fs::read_to_string(dir.join("dash_mpd_frac_main.golden"))
+            .expect("read main's frac golden");
+        assert_eq!(ours, ours_file, "the live render must match our frac golden");
+        assert_ne!(ours, main, "the jiff spelling must differ from main's raw f64");
+        assert!(
+            main.contains("timeShiftBufferDepth=\"PT0.30000000000000004S\""),
+            "main's frac golden must carry the raw f64 depth: {main}"
+        );
+        assert_eq!(
+            ours.replace("timeShiftBufferDepth=\"PT0.3S\"", "timeShiftBufferDepth=\"PT0.30000000000000004S\""),
+            main,
+            "our fractional MPD must differ from main's by ONLY PT0.30000000000000004S -> PT0.3S"
+        );
+    }
+
     #[test]
     fn the_over_60s_window_differs_from_main_by_exactly_the_balanced_token() {
         // Render a live 60 s window and compare it to main's captured golden

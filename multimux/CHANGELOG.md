@@ -37,6 +37,11 @@
   (`PT60S` -> `PT1M`) and `dash_mpd_window3600_main.golden`
   (`PT3600S` -> `PT1H`), each asserted to differ by exactly that one token. The
   sub-60 s `dash_mpd.golden`/`ll_dash_mpd.golden` are byte-identical to main.
+  A **fractional** target duration also differs from main, which printed the raw
+  `f64`: for a 0.1 s target over 3 segments main emitted
+  `timeShiftBufferDepth="PT0.30000000000000004S"` while this crate emits the
+  rounded `"PT0.3S"` (pinned by `dash_mpd_frac.golden` vs the main-captured
+  `dash_mpd_frac_main.golden`).
 - **`validate_rtsp_push_url` now also enforces the scheme.** An `rtsp_push`
   output URL must use the `rtsp://` or `rtsps://` scheme; a push URL with any
   other scheme (e.g. `srt://`, `http://`) is rejected at config validation with
