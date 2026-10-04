@@ -91,6 +91,10 @@
   enables the feature for every test build, so a plain `cargo test -p multimux`
   compiles and runs them again (previously they were silently skipped unless
   `--all-features` was passed).
+  Note the feature-unification hazard: `Config` is a `pub`, exhaustive struct, so
+  a downstream that enables `test-seams` anywhere in its graph makes every
+  `Config { .. }` literal outside this crate require a trailing
+  `..Default::default()`. See the field doc on `Config::prebound`.
   The remaining `#[doc(hidden)] pub` `*_for_test` seams stay on the default
   build because gating them would force `test-hooks` (and its `webrtc-runtime`
   dependency) onto tests that do not otherwise need it:

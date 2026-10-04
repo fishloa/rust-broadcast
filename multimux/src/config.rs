@@ -1628,6 +1628,16 @@ pub struct Config {
     /// `spawn_ingest`/`spawn_whep_outputs` consume the matching entry instead
     /// of re-binding, so no test reserves a port and then races to re-bind it
     /// (SP7.1). Keyed by the exact `host:port` string the route configures.
+    ///
+    /// **Feature-unification hazard.** `Config` is a `pub`, exhaustive struct
+    /// (no `#[non_exhaustive]`), and this field exists only when some crate in
+    /// the build graph enables `test-seams`. So a downstream that enables it
+    /// *anywhere* (including transitively, e.g. via `test-hooks`) makes every
+    /// `Config { .. }` struct literal outside this crate fail to compile unless
+    /// it ends in `..Default::default()`. Gating the field keeps it out of the
+    /// default published API, but it cannot keep it out of a graph that opted
+    /// in. Prefer `Config::default()` + field assignment at construction sites
+    /// that must survive the feature being toggled.
     #[cfg(feature = "test-seams")]
     #[serde(skip)]
     pub prebound: PreboundBinds,
