@@ -13,7 +13,8 @@ use multimux::redact::{redact_destination, redact_url};
 fn an_ipv6_host_is_bracketed_in_the_connect_address_and_tc_url() {
     let tc = multimux::push::rtmp::tc_url_for_test("rtmp://[::1]:1935/live/stream").unwrap();
     assert_eq!(tc, "rtmp://[::1]:1935/live");
-    let control = multimux::push::rtsp::control_url_for_test("rtsp://[2001:db8::1]:554/live");
+    let control = multimux::push::rtsp::control_url_for_test("rtsp://[2001:db8::1]:554/live")
+        .expect("valid rtsp URL");
     assert_eq!(control, "rtsp://[2001:db8::1]:554/live/trackID=0");
     assert!(!tc.contains("://::1"));
     assert!(!control.contains("://2001:db8::1"));
@@ -52,4 +53,19 @@ fn an_srt_query_keeps_the_address_and_streamid_separate() {
         parse_srt_url_for_test("srt://[::1]:9000?streamid=live%2Fcam&latency=120").unwrap();
     assert_eq!(addr, "[::1]:9000");
     assert_eq!(overrides.stream_id.as_deref(), Some("live/cam"));
+}
+
+/// A cannot-be-a-base RTSP push URL (`rtsp:cam` — no `//host`) parses but names
+/// no host. `control_url` must return an error, not panic on the
+/// `path_segments_mut` `expect`.
+#[test]
+fn a_cannot_be_a_base_rtsp_url_is_rejected_not_panicked() {
+    let err = multimux::push::rtsp::control_url_for_test("rtsp:cam")
+        .expect_err("`rtsp:cam` has no authority and must be rejected");
+    assert!(
+        err.contains("authority") || err.contains("host"),
+        "the error must explain the missing host: {err}"
+    );
+    // A real authority-bearing URL is still accepted.
+    assert!(multimux::push::rtsp::control_url_for_test("rtsp://cam/live").is_ok());
 }

@@ -91,7 +91,17 @@ impl PushTransport for RtspTransport {
 
     async fn connect(url: &str, config: &Self::Config) -> Result<Self, Self::Error> {
         let mut parsed = url::Url::parse(url).map_err(|e| RtspPushError::Connect(e.to_string()))?;
-        let host = parsed.host_str().unwrap_or("127.0.0.1").to_string();
+        // A cannot-be-a-base URL (`rtsp:cam`, no `//host`) parses but names no
+        // host; reject it rather than silently dialing 127.0.0.1 (the
+        // fallback below) or panicking in `control_url`.
+        let Some(host) = parsed.host_str() else {
+            return Err(RtspPushError::Connect(
+                "rtsp push URL has no host (expected `rtsp://host[:port]/path`, \
+                 e.g. not `rtsp:cam`)"
+                    .to_string(),
+            ));
+        };
+        let host = host.to_string();
         let port = parsed.port().unwrap_or(554);
         let addr = format!("{host}:{port}");
 
@@ -116,7 +126,7 @@ impl PushTransport for RtspTransport {
             client = client.with_credentials(creds);
         }
 
-        let control_url = control_url(&parsed);
+        let control_url = control_url(&parsed)?;
 
         let mut transport = Self {
             stream: Some(stream),
@@ -313,24 +323,36 @@ fn credentials_from_url(url: &url::Url) -> Result<Option<Credentials>, RtspPushE
 /// as a final path segment (RFC 2326 §10.5 `control`). Built via
 /// `Url::path_segments_mut` so a trailing slash never doubles and an IPv6 host
 /// stays bracketed.
-fn control_url(base: &url::Url) -> String {
+///
+/// Returns an error for a URL with no authority the path segments can be set
+/// on — a "cannot-be-a-base" URL such as `rtsp:cam` (no `//host`), which
+/// `Url::parse` accepts but which has no host to connect to. `connect` calls
+/// this before dialing so an operator's mistyped `rtsp:cam` is a clear
+/// [`RtspPushError`], never a panic.
+fn control_url(base: &url::Url) -> Result<String, RtspPushError> {
     let mut url = base.clone();
     {
-        let mut segs = url
-            .path_segments_mut()
-            .expect("an rtsp URL with an authority is not cannot-be-a-base");
+        let mut segs = url.path_segments_mut().map_err(|()| {
+            RtspPushError::Connect(
+                "rtsp push URL has no authority (cannot-be-a-base, e.g. `rtsp:cam`); \
+                 expected `rtsp://host[:port]/path`"
+                    .to_string(),
+            )
+        })?;
         segs.pop_if_empty();
         segs.push("trackID=0");
     }
-    url.to_string()
+    Ok(url.to_string())
 }
 
 /// `#[doc(hidden)]` test seam: parse `url` and return [`control_url`], so the
-/// URL-construction test exercises the real path.
+/// URL-construction test exercises the real path. Errors (an invalid URL, or a
+/// cannot-be-a-base `rtsp:cam`) surface as a `String`, matching the seam's
+/// test-only role.
 #[doc(hidden)]
-pub fn control_url_for_test(url: &str) -> String {
-    let parsed = url::Url::parse(url).expect("valid rtsp URL");
-    control_url(&parsed)
+pub fn control_url_for_test(url: &str) -> Result<String, String> {
+    let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
+    control_url(&parsed).map_err(|e| e.to_string())
 }
 
 /// Percent-decodes a URL userinfo component (RFC 3986 §2.1) to UTF-8. The

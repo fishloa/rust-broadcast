@@ -1009,6 +1009,25 @@ fn validate_http_url(url: &str) -> Result<()> {
     }
 }
 
+/// An `rtsp_push` output URL: must parse, use the `rtsp`/`rtsps` scheme, and
+/// name a host (a cannot-be-a-base URL such as `rtsp:cam` parses but has no
+/// authority, and the push transport cannot build a control URL or a dial
+/// address from it). Returns a plain reason string so the caller can attach
+/// the `routes.outputs[].url` field.
+pub(crate) fn validate_rtsp_push_url(url: &str) -> std::result::Result<(), String> {
+    let parsed = url::Url::parse(url).map_err(|e| format!("bad rtsp(s) push URL {url:?}: {e}"))?;
+    match parsed.scheme() {
+        "rtsp" | "rtsps" => {}
+        other => return Err(format!("scheme must be rtsp or rtsps, got {other:?}")),
+    }
+    if parsed.host_str().is_none() {
+        return Err(format!(
+            "rtsp push URL {url:?} has no host (expected `rtsp://host[:port]/path`)"
+        ));
+    }
+    Ok(())
+}
+
 /// A config-supplied [`AuthSpec`], if present, must not carry an empty
 /// `username`/`bearer_token` (an empty `password` is left unvalidated — some
 /// devices genuinely use a blank password). `None` (no config auth — the
@@ -1413,6 +1432,20 @@ impl Route {
         for kind in &self.outputs {
             if let OutputKind::SrtPush { url, .. } = kind {
                 crate::push::validate_srt_url(url).map_err(|reason| {
+                    MultimuxError::ConfigInvalid {
+                        field: "routes.outputs[].url",
+                        reason,
+                    }
+                })?;
+            }
+        }
+        // An `rtsp_push` URL is parsed/validated at config time too, so a URL
+        // with no authority (`rtsp:cam`, which `url` parses but which names no
+        // host) surfaces as a config error, not a panic when the push task
+        // first builds its control URL.
+        for kind in &self.outputs {
+            if let OutputKind::RtspPush { url, .. } = kind {
+                validate_rtsp_push_url(url).map_err(|reason| {
                     MultimuxError::ConfigInvalid {
                         field: "routes.outputs[].url",
                         reason,
@@ -2271,6 +2304,46 @@ mod tests {
             "passphrase"
         );
         assert!(mk("srt://h:9000").validate().is_ok(), "a valid URL passes");
+    }
+
+    /// An `rtsp_push` URL is validated at config time: a cannot-be-a-base URL
+    /// (`rtsp:cam`, no host) is a config error, not a panic when the push task
+    /// builds its control URL.
+    #[test]
+    fn validate_rejects_rtsp_push_url_without_a_host() {
+        let mk = |url: &str| Config {
+            routes: vec![Route {
+                name: "x".into(),
+                input: InputSpec::Rtsp {
+                    url: "rtsp://a".into(),
+                    auth: None,
+                },
+                outputs: vec![OutputKind::RtspPush {
+                    url: url.to_string(),
+                    format: None,
+                    reconnect: None,
+                }],
+                dvr: DvrConfig::default(),
+            }],
+            ..Config::default()
+        };
+        let err = mk("rtsp:cam").validate().unwrap_err();
+        assert!(
+            format!("{err}").contains("no host"),
+            "a hostless rtsp push URL must be a config error: {err}"
+        );
+        assert!(
+            mk("rtsp://cam/live").validate().is_ok(),
+            "a valid rtsp push URL passes"
+        );
+    }
+
+    /// The exact config string the reviewer cited (`rtsp:cam`) must be
+    /// rejected by the URL validator itself.
+    #[test]
+    fn validate_rtsp_push_url_rejects_rtsp_cam() {
+        assert!(validate_rtsp_push_url("rtsp:cam").is_err());
+        assert!(validate_rtsp_push_url("rtsp://cam").is_ok());
     }
 
     /// Audit run 7, W19: a zero reconnect backoff is rejected (it would
