@@ -61,7 +61,15 @@ pub use origin::serve;
 pub use origin::serve_config_file;
 /// See [`origin::serve_config_file_with_registry`].
 pub use origin::serve_config_file_with_registry;
+/// See [`origin::serve_config_file_with_registry_on_admin`] — the port-0
+/// (SP7.1) variant: a caller binds the listeners and passes them in.
+pub use origin::serve_config_file_with_registry_on_admin;
 pub use origin::serve_with_registry;
+/// See [`origin::serve_with_registry_on`] — the port-0 (SP7.1) variant.
+pub use origin::serve_with_registry_on;
+/// See [`origin::serve_with_registry_on_admin`] — the port-0 (SP7.1) variant
+/// for a media + admin listener pair.
+pub use origin::serve_with_registry_on_admin;
 /// [`supervisor::supervise_driver`](origin::supervisor::supervise_driver) is
 /// the one supported way to drive a [`registry::InputFactory`]'s ingest task
 /// (issue #805 task 5 deleted the old `SourceConnector`/`supervise` pair, the

@@ -1301,7 +1301,30 @@ pub async fn serve_config_file_with_registry(
 ) -> crate::Result<()> {
     let path = path.as_ref().to_path_buf();
     let config = crate::config::Config::from_json_file(&path)?;
-    serve_with_registry_impl(config, registry, Some(path)).await
+    serve_with_registry_impl(config, registry, Some(path), None).await
+}
+
+/// [`serve_config_file_with_registry`] over caller-supplied, already-bound
+/// media AND admin listeners (SP7.1) — the admin-enabled shape a test uses to
+/// keep `/admin/reload` working while binding port 0.
+pub async fn serve_config_file_with_registry_on_admin(
+    media: tokio::net::TcpListener,
+    admin: tokio::net::TcpListener,
+    path: impl AsRef<Path>,
+    registry: SchemeRegistry,
+) -> crate::Result<()> {
+    let path = path.as_ref().to_path_buf();
+    let config = crate::config::Config::from_json_file(&path)?;
+    serve_with_registry_impl(
+        config,
+        registry,
+        Some(path),
+        Some(PreboundListeners {
+            media,
+            admin: Some(admin),
+        }),
+    )
+    .await
 }
 
 /// Load a JSON config from `path` and run the multimux origin exactly like
@@ -1357,23 +1380,75 @@ pub async fn serve_config_file(path: impl AsRef<Path>) -> crate::Result<()> {
 /// reload). `POST /admin/reload` has no config file path to re-read under
 /// this entry point (`config` may not have come from a file at all); use
 /// [`serve_config_file_with_registry`] if reload support is needed.
+/// Pre-bound listeners for the `_on` entry points (SP7.1): a caller binds
+/// `127.0.0.1:0`, reads the live address, and passes the listener in, so no
+/// test reserves a port and then races to re-bind it.
+#[doc(hidden)]
+pub struct PreboundListeners {
+    /// The media (shared-router) listener.
+    pub media: tokio::net::TcpListener,
+    /// The admin-API listener, when `config.admin` is set.
+    pub admin: Option<tokio::net::TcpListener>,
+}
+
 pub async fn serve_with_registry(
     config: crate::config::Config,
     registry: SchemeRegistry,
 ) -> crate::Result<()> {
-    serve_with_registry_impl(config, registry, None).await
+    serve_with_registry_impl(config, registry, None, None).await
+}
+
+/// [`serve_with_registry`] over a caller-supplied, already-bound media
+/// listener (SP7.1). The admin path requires [`serve_with_registry_on_admin`].
+pub async fn serve_with_registry_on(
+    media: tokio::net::TcpListener,
+    config: crate::config::Config,
+    registry: SchemeRegistry,
+) -> crate::Result<()> {
+    serve_with_registry_impl(
+        config,
+        registry,
+        None,
+        Some(PreboundListeners {
+            media,
+            admin: None,
+        }),
+    )
+    .await
+}
+
+/// [`serve_with_registry`] over caller-supplied, already-bound media AND
+/// admin listeners (SP7.1) — the admin-enabled shape.
+pub async fn serve_with_registry_on_admin(
+    media: tokio::net::TcpListener,
+    admin: tokio::net::TcpListener,
+    config: crate::config::Config,
+    registry: SchemeRegistry,
+) -> crate::Result<()> {
+    serve_with_registry_impl(
+        config,
+        registry,
+        None,
+        Some(PreboundListeners {
+            media,
+            admin: Some(admin),
+        }),
+    )
+    .await
 }
 
 async fn serve_with_registry_impl(
     config: crate::config::Config,
     registry: SchemeRegistry,
     config_path: Option<PathBuf>,
+    prebound: Option<PreboundListeners>,
 ) -> crate::Result<()> {
     config.validate()?;
 
     if config.admin.is_some() {
-        return admin::serve_with_admin(config, registry, config_path).await;
+        return admin::serve_with_admin(config, registry, config_path, prebound).await;
     }
+    let prebound_media = prebound.map(|p| p.media);
 
     tracing::info!(
         bind = %config.bind,
@@ -1448,7 +1523,10 @@ async fn serve_with_registry_impl(
         app_state = app_state.with_output_auth(verifier);
     }
     let state = Arc::new(app_state);
-    let listener = tokio::net::TcpListener::bind(config.bind.as_str()).await?;
+    let listener = match prebound_media {
+        Some(listener) => listener,
+        None => tokio::net::TcpListener::bind(config.bind.as_str()).await?,
+    };
     // The shutdown watcher races the server but is not part of it: firing
     // `cancel` makes `serve_hyper_util` stop accepting AND drain its in-flight
     // connections (up to `DRAIN_DEADLINE`) before it returns.

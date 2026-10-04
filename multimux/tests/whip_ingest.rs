@@ -55,7 +55,11 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry;
+use multimux::serve_with_registry_on;
+
+#[path = "support/listener.rs"]
+mod listener;
+use listener::bind_tcp;
 
 /// How long the harness waits for `RTCPeerConnection.connectionState` to
 /// reach `"connected"` (ICE connectivity checks + the DTLS handshake against
@@ -184,7 +188,7 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
          in multimux/tests/assets/ first"
     );
 
-    let bind_addr = reserve_tcp_addr();
+    let (bind_addr, bind_listener) = bind_tcp();
     let whip_addr = reserve_tcp_addr();
     let config = Config {
         bind: bind_addr.to_string(),
@@ -202,7 +206,7 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
         ..Config::default()
     };
 
-    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
 
     let whip_url = format!("http://{whip_addr}/whip");
     let whip_url_for_check = whip_url.clone();
@@ -256,7 +260,7 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
          in multimux/tests/assets/ first"
     );
 
-    let bind_addr = reserve_tcp_addr();
+    let (bind_addr, bind_listener) = bind_tcp();
     let whip_addr = reserve_tcp_addr();
     let config = Config {
         bind: bind_addr.to_string(),
@@ -275,7 +279,7 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
         ..Config::default()
     };
 
-    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
 
     // Real elapsed time since the route started is the thing under test, and
     // `serve_with_registry` offers no clock to inject, so this real-browser

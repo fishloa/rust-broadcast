@@ -43,7 +43,11 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry;
+use multimux::serve_with_registry_on;
+
+#[path = "support/listener.rs"]
+mod listener;
+use listener::bind_tcp;
 
 fn fixture_path() -> PathBuf {
     PathBuf::from(concat!(
@@ -67,13 +71,6 @@ fn have_oracle(bin: &str) -> bool {
         })
     };
     probe("-version").or_else(|_| probe("-h")).is_ok()
-}
-
-fn reserve_tcp_addr() -> std::net::SocketAddr {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
-    let addr = listener.local_addr().expect("local addr");
-    drop(listener);
-    addr
 }
 
 fn reserve_udp_addr() -> std::net::SocketAddr {
@@ -153,61 +150,55 @@ impl Drop for Served {
     }
 }
 
-/// Start a TS-HLS route and feed it the fixture, retrying the whole attempt
-/// if the reserved port loses a bind race (never a bare reserve-drop-rebind).
+/// Start a TS-HLS route and feed it the fixture. The media listener is bound
+/// `:0` and handed over live (SP7.1) — no reserved port, no retry loop. The
+/// UDP input address is still reserved (the route binds it internally, so a
+/// `:0` port would be unobservable).
 async fn serve_ts_hls_until_extinf() -> Served {
     let client = reqwest::Client::new();
-    for _ in 0..10 {
-        let bind_addr = reserve_tcp_addr();
-        let udp_addr = reserve_udp_addr();
-        let config = base_config(
-            bind_addr,
-            InputSpec::TsUdp {
-                addr: udp_addr.to_string(),
-                multicast_group: None,
-            },
-        );
-        let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+    let (bind_addr, bind_listener) = bind_tcp();
+    let udp_addr = reserve_udp_addr();
+    let config = base_config(
+        bind_addr,
+        InputSpec::TsUdp {
+            addr: udp_addr.to_string(),
+            multicast_group: None,
+        },
+    );
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
 
-        let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
-        let stop = Arc::new(AtomicBool::new(false));
-        let sender_stop = Arc::clone(&stop);
-        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
-            .await
-            .expect("bind sender");
-        let sender = tokio::spawn(async move {
-            while !sender_stop.load(Ordering::Relaxed) {
-                for chunk in ts_bytes.chunks(7 * 188) {
-                    let _ = socket.send_to(chunk, udp_addr).await;
-                    // Pacing (not synchronisation): space the datagrams so the
-                    // ingest task is not starved by the flood.
-                    tokio::time::sleep(Duration::from_millis(5)).await;
-                }
-            }
-        });
-
-        let url = format!("http://{bind_addr}/cam/media.m3u8");
-        match tokio::time::timeout(Duration::from_secs(20), poll_until_extinf(&client, &url)).await
-        {
-            Ok(playlist) => {
-                return Served {
-                    bind_addr,
-                    server,
-                    stop,
-                    sender,
-                    playlist,
-                };
-            }
-            Err(_) => {
-                // Port lost the race (or the route never produced a segment):
-                // tear down and retry with a fresh port.
-                stop.store(true, Ordering::Relaxed);
-                sender.abort();
-                server.abort();
+    let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
+    let stop = Arc::new(AtomicBool::new(false));
+    let sender_stop = Arc::clone(&stop);
+    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        .await
+        .expect("bind sender");
+    let sender = tokio::spawn(async move {
+        while !sender_stop.load(Ordering::Relaxed) {
+            for chunk in ts_bytes.chunks(7 * 188) {
+                let _ = socket.send_to(chunk, udp_addr).await;
+                // Pacing (not synchronisation): space the datagrams so the
+                // ingest task is not starved by the flood.
+                tokio::time::sleep(Duration::from_millis(5)).await;
             }
         }
+    });
+
+    let url = format!("http://{bind_addr}/cam/media.m3u8");
+    let playlist = tokio::time::timeout(Duration::from_secs(20), poll_until_extinf(&client, &url))
+        .await
+        .expect("a closed-segment #EXTINF must appear within the hang guard");
+    Served {
+        bind_addr,
+        server,
+        stop,
+        sender,
+        playlist,
     }
-    panic!("could not start the TS-HLS test server after 10 attempts");
 }
 
 fn temp_dir(tag: &str) -> PathBuf {

@@ -38,8 +38,15 @@ use multimux::output::OutputKind;
 use multimux::registry::{InputCtx, InputFactory};
 use multimux::route::RouteHandle;
 use multimux::source::{DriverProgress, advance_route};
-use multimux::{Backoff, SchemeRegistry, serve_config_file_with_registry, serve_with_registry};
+use multimux::{
+    Backoff, SchemeRegistry, serve_config_file_with_registry_on_admin,
+    serve_with_registry_on_admin,
+};
 use transmux::pipeline::{CodecConfig, Sample, TrackSpec};
+
+#[path = "support/listener.rs"]
+mod listener;
+use listener::bind_tcp;
 
 const ADMIN_TOKEN: &str = "admin-test-token";
 
@@ -411,8 +418,8 @@ fn created_at_nanos(route_json: &serde_json::Value) -> u128 {
 /// Test 1: adding a route at runtime serves media, without restarting.
 #[tokio::test]
 async fn add_route_at_runtime_serves_media_without_restart() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     // `Config::validate` rejects an empty `routes` list, so start with one
     // real (but otherwise irrelevant) seed route already configured, then
     // add a brand-new second one at runtime -- exactly the real "add a
@@ -422,7 +429,7 @@ async fn add_route_at_runtime_serves_media_without_restart() {
         admin_addr,
         vec![unreachable_rtsp_route("seed", "seed")],
     );
-    let server = tokio::spawn(serve_with_registry(config, instant_registry()));
+    let server = tokio::spawn(serve_with_registry_on_admin(media_listener, admin_listener, config, instant_registry()));
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -449,14 +456,14 @@ async fn add_route_at_runtime_serves_media_without_restart() {
 /// OTHER route keeps serving completely uninterrupted.
 #[tokio::test]
 async fn delete_drains_route_without_disturbing_others() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(
         media_addr,
         admin_addr,
         vec![instant_route("cam1"), instant_route("cam2")],
     );
-    let server = tokio::spawn(serve_with_registry(config, instant_registry()));
+    let server = tokio::spawn(serve_with_registry_on_admin(media_listener, admin_listener, config, instant_registry()));
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -535,14 +542,14 @@ async fn route_up(client: &reqwest::Client, media_addr: SocketAddr, route: &str)
 /// process-wide and other tests in this binary use `cam1`/`cam2`.
 #[tokio::test]
 async fn deleted_route_is_no_longer_reported_up() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(
         media_addr,
         admin_addr,
         vec![hold_route("o5-gone"), hold_route("o5-stays")],
     );
-    let server = tokio::spawn(serve_with_registry(config, instant_registry()));
+    let server = tokio::spawn(serve_with_registry_on_admin(media_listener, admin_listener, config, instant_registry()));
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -579,10 +586,10 @@ async fn deleted_route_is_no_longer_reported_up() {
 /// still live.
 #[tokio::test]
 async fn post_duplicate_name_is_conflict_and_original_stays_live() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(media_addr, admin_addr, vec![instant_route("cam1")]);
-    let server = tokio::spawn(serve_with_registry(config, instant_registry()));
+    let server = tokio::spawn(serve_with_registry_on_admin(media_listener, admin_listener, config, instant_registry()));
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -628,10 +635,10 @@ async fn post_duplicate_name_is_conflict_and_original_stays_live() {
 /// Test 4: `DELETE` an unknown route -> `404`.
 #[tokio::test]
 async fn delete_unknown_route_is_not_found() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(media_addr, admin_addr, vec![instant_route("cam1")]);
-    let server = tokio::spawn(serve_with_registry(config, instant_registry()));
+    let server = tokio::spawn(serve_with_registry_on_admin(media_listener, admin_listener, config, instant_registry()));
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -655,10 +662,10 @@ async fn delete_unknown_route_is_not_found() {
 /// unchanged.
 #[tokio::test]
 async fn malformed_route_body_is_bad_request_and_state_unchanged() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(media_addr, admin_addr, vec![instant_route("cam1")]);
-    let server = tokio::spawn(serve_with_registry(config, instant_registry()));
+    let server = tokio::spawn(serve_with_registry_on_admin(media_listener, admin_listener, config, instant_registry()));
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -720,10 +727,10 @@ async fn malformed_route_body_is_bad_request_and_state_unchanged() {
 /// Test 7: the admin API is unreachable on the media listener port.
 #[tokio::test]
 async fn admin_api_unreachable_on_media_port() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(media_addr, admin_addr, vec![instant_route("cam1")]);
-    let server = tokio::spawn(serve_with_registry(config, instant_registry()));
+    let server = tokio::spawn(serve_with_registry_on_admin(media_listener, admin_listener, config, instant_registry()));
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -755,10 +762,10 @@ async fn admin_api_unreachable_on_media_port() {
 /// not happen.
 #[tokio::test]
 async fn unauthenticated_admin_request_is_unauthorized_and_no_mutation() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(media_addr, admin_addr, vec![instant_route("cam1")]);
-    let server = tokio::spawn(serve_with_registry(config, instant_registry()));
+    let server = tokio::spawn(serve_with_registry_on_admin(media_listener, admin_listener, config, instant_registry()));
     wait_for_port(admin_addr).await;
 
     let client = reqwest::Client::new();
@@ -813,8 +820,8 @@ async fn unauthenticated_admin_request_is_unauthorized_and_no_mutation() {
 /// removed/changed routes, and a THIRD, unchanged route is never restarted.
 #[tokio::test]
 async fn reload_leaves_unchanged_route_running_restarts_changed_route() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
 
     let config_path = std::env::temp_dir().join(format!(
         "multimux-admin-api-test-reload-{}-{}.json",
@@ -836,7 +843,9 @@ async fn reload_leaves_unchanged_route_running_restarts_changed_route() {
     )
     .expect("write initial config");
 
-    let server = tokio::spawn(serve_config_file_with_registry(
+    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
+        media_listener,
+        admin_listener,
         config_path.clone(),
         instant_registry(),
     ));
@@ -997,14 +1006,14 @@ fn initial_as_json(config: &Config) -> serde_json::Value {
 /// on-disk directory component, so `..` would escape the archive root.
 #[tokio::test]
 async fn admin_add_rejects_a_traversal_route_name() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(
         media_addr,
         admin_addr,
         vec![unreachable_rtsp_route("seed", "seed")],
     );
-    let server = tokio::spawn(serve_with_registry(config, instant_registry()));
+    let server = tokio::spawn(serve_with_registry_on_admin(media_listener, admin_listener, config, instant_registry()));
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
 
@@ -1049,10 +1058,10 @@ async fn admin_add_rejects_a_traversal_route_name() {
 /// under test. None may read outside the stream root.
 #[tokio::test]
 async fn raw_traversal_requests_never_read_outside_the_root() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let config = admin_config(media_addr, admin_addr, vec![instant_route("cam1")]);
-    let server = tokio::spawn(serve_with_registry(config, instant_registry()));
+    let server = tokio::spawn(serve_with_registry_on_admin(media_listener, admin_listener, config, instant_registry()));
     wait_for_port(media_addr).await;
     let playlist = wait_until_live(&reqwest::Client::new(), media_addr, "cam1").await;
     assert!(playlist.contains("#EXTINF:"));
@@ -1142,15 +1151,15 @@ fn panicking_router_registry() -> SchemeRegistry {
 /// and their bound ports.
 #[tokio::test]
 async fn a_router_build_panic_does_not_register_the_route() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let whep_addr = reserve_tcp_addr();
     let config = admin_config(
         media_addr,
         admin_addr,
         vec![unreachable_rtsp_route("seed", "seed")],
     );
-    let server = tokio::spawn(serve_with_registry(config, panicking_router_registry()));
+    let server = tokio::spawn(serve_with_registry_on_admin(media_listener, admin_listener, config, panicking_router_registry()));
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
 
@@ -1232,8 +1241,8 @@ async fn a_router_build_panic_does_not_register_the_route() {
 async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
     use multimux::registry::InputFactory;
 
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let whep_addr = reserve_tcp_addr();
     let config = admin_config(
         media_addr,
@@ -1262,7 +1271,7 @@ async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
         }) as InputFactory,
     );
 
-    let server = tokio::spawn(serve_with_registry(config, registry));
+    let server = tokio::spawn(serve_with_registry_on_admin(media_listener, admin_listener, config, registry));
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
 
@@ -1314,8 +1323,8 @@ async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
 #[cfg(feature = "whep")]
 #[tokio::test]
 async fn a_failed_reload_rolls_back_and_leaves_no_bound_port() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let whep_addr = reserve_tcp_addr();
 
     let config_path = std::env::temp_dir().join(format!(
@@ -1330,7 +1339,9 @@ async fn a_failed_reload_rolls_back_and_leaves_no_bound_port() {
     )
     .expect("write config");
 
-    let server = tokio::spawn(serve_config_file_with_registry(
+    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
+        media_listener,
+        admin_listener,
         config_path.clone(),
         instant_registry(),
     ));
@@ -1416,8 +1427,8 @@ async fn a_failed_reload_rolls_back_and_leaves_no_bound_port() {
 #[cfg(feature = "whep")]
 #[tokio::test]
 async fn reloading_a_route_drains_the_displaced_runtime() {
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let old_whep = reserve_tcp_addr();
     let new_whep = reserve_tcp_addr();
 
@@ -1442,7 +1453,9 @@ async fn reloading_a_route_drains_the_displaced_runtime() {
     )
     .expect("write config");
 
-    let server = tokio::spawn(serve_config_file_with_registry(
+    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
+        media_listener,
+        admin_listener,
         config_path.clone(),
         instant_registry(),
     ));

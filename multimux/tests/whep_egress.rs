@@ -62,7 +62,11 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry;
+use multimux::serve_with_registry_on;
+
+#[path = "support/listener.rs"]
+mod listener;
+use listener::bind_tcp;
 
 /// How long the harness waits for each `RTCPeerConnection.connectionState`
 /// to reach `"connected"` -- see `whip_ingest.rs`'s identical constant.
@@ -165,7 +169,7 @@ async fn real_browser_whep_playback_decodes_real_video() {
          in multimux/tests/assets/ first"
     );
 
-    let bind_addr = reserve_tcp_addr();
+    let (bind_addr, bind_listener) = bind_tcp();
     let whip_addr = reserve_tcp_addr();
     let whep_addr = reserve_tcp_addr();
     let config = Config {
@@ -186,7 +190,7 @@ async fn real_browser_whep_playback_decodes_real_video() {
         ..Config::default()
     };
 
-    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
 
     let whip_url = format!("http://{whip_addr}/whip");
     let whep_url = format!("http://{whep_addr}/whep");
@@ -258,10 +262,10 @@ async fn real_browser_whep_playback_decodes_real_video() {
 #[tokio::test]
 async fn admin_added_route_starts_its_whep_listener() {
     use multimux::config::{AdminSpec, OutputAuthSpec};
-    use multimux::serve_config_file_with_registry;
+    use multimux::serve_config_file_with_registry_on_admin;
 
-    let media_addr = reserve_tcp_addr();
-    let admin_addr = reserve_tcp_addr();
+    let (media_addr, media_listener) = bind_tcp();
+    let (admin_addr, admin_listener) = bind_tcp();
     let whep_addr = reserve_tcp_addr();
 
     let config = Config {
@@ -299,7 +303,9 @@ async fn admin_added_route_starts_its_whep_listener() {
     )
     .expect("write config");
 
-    let server = tokio::spawn(serve_config_file_with_registry(
+    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
+        media_listener,
+        admin_listener,
         cfg_path,
         instant_registry(),
     ));

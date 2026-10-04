@@ -17,17 +17,14 @@ use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;
 use multimux::output::OutputKind;
 use multimux::registry::SchemeRegistry;
-use multimux::serve_with_registry;
+use multimux::serve_with_registry_on;
+
+#[path = "support/listener.rs"]
+mod listener;
+use listener::bind_tcp;
 
 fn fixture_path() -> String {
     format!("{}/../fixtures/ts/h264_aac.ts", env!("CARGO_MANIFEST_DIR"))
-}
-
-fn reserve_tcp_addr() -> SocketAddr {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("reserve tcp port");
-    let addr = listener.local_addr().expect("local addr");
-    drop(listener);
-    addr
 }
 
 /// One LL-HLS-only route named `"cam"`, bound at `bind`, ingesting a
@@ -90,10 +87,10 @@ async fn poll_until_extinf(client: &reqwest::Client, playlist_url: &str) -> Stri
 /// serve a stale binary) makes it pass again.
 #[tokio::test]
 async fn file_route_serves_real_media_segments() {
-    let bind_addr = reserve_tcp_addr();
+    let (bind_addr, bind_listener) = bind_tcp();
     let config = file_config(bind_addr, fixture_path(), false);
 
-    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
 
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
@@ -165,9 +162,9 @@ fn segment_uris(playlist: &str) -> Vec<String> {
 /// which a `loop: false` route would never produce.
 #[tokio::test]
 async fn file_route_loop_true_keeps_serving() {
-    let bind = reserve_tcp_addr();
+    let (bind, bind_listener) = bind_tcp();
     let config = file_config(bind, fixture_path(), true);
-    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 
@@ -235,9 +232,9 @@ fn total_extinf_secs(playlist: &str) -> f64 {
 /// not silently dropped (which used to lose up to one `target_duration`).
 #[tokio::test]
 async fn file_route_loop_false_stops() {
-    let bind = reserve_tcp_addr();
+    let (bind, bind_listener) = bind_tcp();
     let config = file_config(bind, fixture_path(), false);
-    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 
@@ -312,9 +309,9 @@ async fn file_route_loop_false_stops() {
 /// never exact counts, to stay robust to scheduler jitter.
 #[tokio::test]
 async fn file_route_loop_true_paces_near_realtime() {
-    let bind = reserve_tcp_addr();
+    let (bind, bind_listener) = bind_tcp();
     let config = file_config(bind, fixture_path(), true);
-    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 
@@ -385,9 +382,9 @@ async fn file_route_loop_true_paces_near_realtime() {
 /// makes it pass again.
 #[tokio::test]
 async fn file_route_loop_true_paces_past_first_pass() {
-    let bind = reserve_tcp_addr();
+    let (bind, bind_listener) = bind_tcp();
     let config = file_config(bind, fixture_path(), true);
-    let server = tokio::spawn(serve_with_registry(config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 

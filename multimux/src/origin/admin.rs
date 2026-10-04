@@ -999,7 +999,12 @@ pub(crate) async fn serve_with_admin(
     config: Config,
     scheme_registry: SchemeRegistry,
     config_path: Option<PathBuf>,
+    prebound: Option<super::PreboundListeners>,
 ) -> crate::Result<()> {
+    let (prebound_media, prebound_admin_listener) = match prebound {
+        Some(p) => (Some(p.media), p.admin),
+        None => (None, None),
+    };
     let admin_spec = config
         .admin
         .clone()
@@ -1054,8 +1059,14 @@ pub(crate) async fn serve_with_admin(
         registry.add_route(route.clone()).await?;
     }
 
-    let media_listener = tokio::net::TcpListener::bind(config.bind.as_str()).await?;
-    let admin_listener = tokio::net::TcpListener::bind(admin_spec.bind.as_str()).await?;
+    let media_listener = match prebound_media {
+        Some(listener) => listener,
+        None => tokio::net::TcpListener::bind(config.bind.as_str()).await?,
+    };
+    let admin_listener = match prebound_admin_listener {
+        Some(listener) => listener,
+        None => tokio::net::TcpListener::bind(admin_spec.bind.as_str()).await?,
+    };
 
     let (external_shutdown_tx, external_shutdown_rx) = watch::channel(false);
     let shutdown_task = tokio::spawn(async move {
