@@ -337,25 +337,26 @@ pub(crate) fn xs_duration_secs(secs: f64) -> String {
     xs_duration(Duration::from_secs_f64(secs))
 }
 
-/// Howard Hinnant's `civil_from_days` (retained for the in-file algorithm test).
-#[cfg(test)]
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
-    let doe = (z - era * 146_097) as u64; // [0, 146096]
-    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
-    let y = yoe as i64 + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
-    let mp = (5 * doy + 2) / 153; // [0, 11]
-    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
-    let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32; // [1, 12]
-    (y + i64::from(m <= 2), m, d)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use transmux::CodecConfig;
+
+    /// Howard Hinnant's `civil_from_days` — the PRE-jiff algorithm, retained
+    /// only to prove the old spelling and `jiff` agree (SP5). Not used by any
+    /// production path.
+    fn civil_from_days(days: i64) -> (i64, u32, u32) {
+        let z = days + 719_468;
+        let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+        let doe = (z - era * 146_097) as u64; // [0, 146096]
+        let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+        let y = yoe as i64 + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+        let mp = (5 * doy + 2) / 153; // [0, 11]
+        let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+        let m = (if mp < 10 { mp + 3 } else { mp - 9 }) as u32; // [1, 12]
+        (y + i64::from(m <= 2), m, d)
+    }
     use transmux::ll_hls::SegmentInfo;
 
     fn video_spec(track_id: u32) -> TrackSpec {

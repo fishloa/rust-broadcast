@@ -17,43 +17,31 @@ use std::path::Path;
 
 /// (file suffix, needle, reason).
 const ALLOW: &[(&str, &str, &str)] = &[
-    // --- civil-date helpers (W2b-1 Task 3 replaces these via jiff). ---
-    (
-        "output/dash.rs",
-        "civil_from_days",
-        "W2b-1 Task 3 replaces with jiff",
-    ),
-    (
-        "output/dash.rs",
-        "days_from_civil",
-        "W2b-1 Task 3 replaces with jiff",
-    ),
-    (
-        "source/dash_pull.rs",
-        "civil_from_days",
-        "W2b-1 Task 3 replaces with jiff",
-    ),
-    (
-        "source/dash_pull.rs",
-        "days_from_civil",
-        "W2b-1 Task 3 replaces with jiff",
-    ),
-    // --- RTSP push ANNOUNCE SDP (W2b-1 Task 2 moves RTSP push onto rtsp-runtime's adapter). ---
-    (
-        "push/rtsp.rs",
-        "\"v=0",
-        "W2b-1 RTSP push adapter renders the ANNOUNCE SDP",
-    ),
-    // --- Scheme URL parsing (W2b-1 Task 2 replaces with url crate). ---
+    // --- Redaction of a URL the `url` parser REJECTS (spec §9 documented
+    // exception): the masking-only fallbacks scan the raw text for the `://`
+    // boundary and the `@`. They do NOT extract the host (no
+    // `rsplit_once('@')`; guarded in-file by
+    // `masking_fallbacks_do_not_extract_the_host`). ---
     (
         "redact.rs",
         "find(\"://\")",
-        "W2b-1 Task 2 replaces with url::Url",
+        "redact.rs masking-only fallback for an unparseable URL (spec §9 exception)",
     ),
+    // --- SRT query split stays manual (W2b-1 Task 2): a Haivision
+    // `streamid=#!::r=...` value contains a `#` that `url`'s `query_pairs()`
+    // would cut as a fragment delimiter. Only the AUTHORITY parse moved to the
+    // `url` crate; the scheme prefix is stripped here before `split_once('?')`.
     (
         "push/srt.rs",
         "strip_prefix(\"srt://\")",
-        "W2b-1 Task 2 replaces with url",
+        "push/srt.rs: the query split stays manual (Haivision streamid `#`)",
+    ),
+    // --- The RTSP push renders its own ANNOUNCE SDP (`build_sdp`); it moves
+    // onto rtsp-runtime's adapter in W2b-2, not here. ---
+    (
+        "push/rtsp.rs",
+        "\"v=0",
+        "push/rtsp.rs `build_sdp` renders the ANNOUNCE SDP (W2b-2 moves the RTSP push)",
     ),
 ];
 
