@@ -8,9 +8,13 @@
 //! **This is a lexical tripwire, not a proof.** A renamed helper or a string assembled from pieces
 //! evades it. Code review is the real control.
 //!
-//! Known limits: raw strings containing quotes and `/* */` comments are not
-//! understood by the brace counter, and needles are lexical (a tokeniser built
-//! on `split(',')` is not detected).
+//! The `#[cfg(test)] mod` cut is a whole-file, UTF-8-safe scanner that tracks
+//! string / raw-string (any `#` count) / char-literal / line-comment /
+//! (nested) block-comment state across lines, so a multi-line string, a raw
+//! string containing braces, a `/* */` comment, or non-ASCII text no longer
+//! desyncs it. The needles themselves are still lexical (a tokeniser built on
+//! `split(',')` is not detected), and reported line numbers are of the
+//! stripped text.
 
 use std::fs;
 use std::path::Path;
@@ -182,11 +186,13 @@ fn non_test_source(src: &str) -> String {
             out.push('\n');
             continue;
         }
-        out.push(b[i] as char);
-        // Advance a whole UTF-8 char to keep byte indices sane for ASCII source
-        // (source here is ASCII Rust); a non-ASCII byte is emitted as its raw
-        // byte to keep `i` in lockstep with the byte scan.
-        i += 1;
+        // Advance a whole UTF-8 char (not a single byte) so a non-ASCII
+        // character is copied through intact rather than cast byte-by-byte
+        // (`b[i] as char` would mangle it). The scanners above still work on
+        // byte indices, which is ASCII-safe for Rust source.
+        let ch = src[i..].chars().next().expect("i is a char boundary");
+        out.push(ch);
+        i += ch.len_utf8();
     }
     out
 }
@@ -521,5 +527,21 @@ fn the_scanner_itself_bites() {
         non_test_source(block_comment).matches("HTTP/1.").count(),
         1,
         "a comment brace must not swallow production code after the test mod"
+    );
+
+    // Non-ASCII text must survive byte-for-byte: the old `b[i] as char` walk
+    // mangled every multi-byte character (U+00E9 -> two chars), which would
+    // corrupt any needle or source line carrying non-ASCII (this workspace's
+    // doc comments use em dashes and `§`).
+    let non_ascii = "fn a() {}\n/// § \u{2014} café\n#[cfg(test)]\nmod tests {\n    fn t() { let y = \"HTTP/1.1 200\"; }\n}\nfn prod() { let x = \"HTTP/1.1 200\"; }\n";
+    let stripped = non_test_source(non_ascii);
+    assert!(
+        stripped.contains("/// § \u{2014} café"),
+        "non-ASCII text must be preserved intact, got: {stripped:?}"
+    );
+    assert_eq!(
+        stripped.matches("HTTP/1.").count(),
+        1,
+        "non-ASCII text must not desync the scanner (only the test-mod body removed)"
     );
 }
