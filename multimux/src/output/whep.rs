@@ -903,6 +903,57 @@ pub async fn serve_whep_for_test_with_trunk(
     (whep_router(state, verifier), CancellationToken::new())
 }
 
+/// Test harness for defect 3 / SP1.4: run the REAL [`run_whep_with_tracker`]
+/// over an AVC track on an ephemeral port, returning the bound address, the
+/// session [`TaskTracker`](tokio_util::task::TaskTracker), the `run_whep` join
+/// handle, and the cancel token. Cancelling the token must make `run_whep`
+/// return (its tracked signalling + session tasks all drain) and release the
+/// port.
+#[doc(hidden)]
+pub async fn serve_whep_run_for_test() -> (
+    std::net::SocketAddr,
+    tokio_util::task::TaskTracker,
+    tokio::task::JoinHandle<()>,
+    CancellationToken,
+) {
+    let trunk = trunk_with_avc_track();
+    // Discover a free ephemeral port, then have `run_whep` bind it. (This is
+    // the same reserve-then-bind shape the other WHEP harnesses use; the
+    // property under test is cancel-driven drain + release, not the bind.)
+    let probe = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = probe.local_addr().expect("addr");
+    drop(probe);
+    let route = WhepRoute::new(addr.to_string());
+    let cancel = CancellationToken::new();
+    let run_cancel = cancel.clone();
+    let sessions = tokio_util::task::TaskTracker::new();
+    let run_sessions = sessions.clone();
+    let handle = tokio::spawn(async move {
+        run_whep_with_tracker(&route, trunk, run_cancel, None, run_sessions).await;
+    });
+    (addr, sessions, handle, cancel)
+}
+
+/// A minimal, valid WHEP video-only SDP offer (the same shape the in-crate
+/// tests use) — so an integration test can drive a real session.
+#[doc(hidden)]
+pub const WHEP_TEST_OFFER: &str = "v=0\r\n\
+o=- 0 0 IN IP4 127.0.0.1\r\n\
+s=-\r\n\
+t=0 0\r\n\
+m=video 9 UDP/TLS/RTP/SAVPF 96\r\n\
+c=IN IP4 0.0.0.0\r\n\
+a=ice-ufrag:abcd\r\n\
+a=ice-pwd:abcdefghijklmnopqrstuvwx\r\n\
+a=fingerprint:sha-256 00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff:\
+00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff\r\n\
+a=setup:actpass\r\n\
+a=mid:0\r\n\
+a=rtcp-mux\r\n\
+a=rtpmap:96 H264/90000\r\n\
+a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n\
+a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
+
 /// A minimal AVC `TrackSpec` (no real SPS/PPS) — the shape the WHEP test
 /// harness announces so a `POST` negotiates an answer.
 fn whep_avc_track_spec() -> TrackSpec {
@@ -1338,6 +1389,22 @@ pub async fn run_whep(
     cancel: CancellationToken,
     output_auth: Option<Arc<Verifier>>,
 ) {
+    run_whep_with_tracker(route, trunk, cancel, output_auth, tokio_util::task::TaskTracker::new())
+        .await
+}
+
+/// [`run_whep`] with a caller-supplied session [`TaskTracker`] (SP1.4): every
+/// admitted viewer session is spawned on `sessions`, so a caller can observe
+/// the drain. `run_whep` passes a fresh tracker and the property is implicit in
+/// its return; the test harness passes one it keeps, to assert the drain.
+#[doc(hidden)]
+pub async fn run_whep_with_tracker(
+    route: &WhepRoute,
+    trunk: Arc<Trunk>,
+    cancel: CancellationToken,
+    output_auth: Option<Arc<Verifier>>,
+    sessions: tokio_util::task::TaskTracker,
+) {
     let listener = match TcpListener::bind(&route.listen).await {
         Ok(l) => l,
         Err(e) => {
@@ -1374,7 +1441,6 @@ pub async fn run_whep(
     // Session tasks are tracked (defect 3), not collected into a `VecDeque`
     // of `JoinHandle`s: `TaskTracker::close` on shutdown marks "no more
     // sessions", then the loop drains.
-    let sessions = tokio_util::task::TaskTracker::new();
     loop {
         tokio::select! {
             () = cancel.cancelled() => break,
