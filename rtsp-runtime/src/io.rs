@@ -107,6 +107,15 @@ impl RtspTimeouts {
 /// stream a fresher sample is worth more than one still queued.
 const MAX_PENDING_MEDIA_FRAMES: usize = 1024;
 
+/// Maximum items [`AsyncRtspClient::drain_inbound`] will consume from the
+/// socket in a single call. `timeout(Duration::ZERO, framed.next())` returns
+/// `Ready` for every already-buffered or readable item, so without this cap a
+/// peer streaming interleaved frames faster than we parse (or a hostile
+/// server answering a RECORD session) would keep `drain_inbound` looping
+/// forever, starving the pusher's writes and the keepalive. Whatever is left
+/// after this many items stays in the socket buffer for the next read.
+const MAX_DRAIN_ITEMS: usize = 64;
+
 /// The current instant as a `std` one, virtual-time aware under tokio's paused clock.
 fn now() -> std::time::Instant {
     tokio::time::Instant::now().into_std()
@@ -362,8 +371,12 @@ where
     /// (a pusher has no outstanding request of its own to correlate). A read
     /// error (other than a 454) is swallowed: the next `next_event`/
     /// `recv_interleaved` call surfaces it.
+    ///
+    /// At most [`MAX_DRAIN_ITEMS`] items are consumed per call, so a peer that
+    /// floods interleaved frames cannot make this loop unbounded — the excess
+    /// stays buffered for the next call.
     pub(crate) async fn drain_inbound(&mut self) -> Result<()> {
-        loop {
+        for _ in 0..MAX_DRAIN_ITEMS {
             match tokio::time::timeout(Duration::ZERO, self.framed.next()).await {
                 Err(_) => return Ok(()),   // nothing ready — non-blocking
                 Ok(None) => return Ok(()), // EOF
@@ -387,6 +400,8 @@ where
                 Ok(Some(Ok(_))) => {}
             }
         }
+        // Hit the per-call cap: leave the remainder buffered, do not spin.
+        Ok(())
     }
 
     /// Writes an outbound request and reads until the response correlated to

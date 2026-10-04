@@ -420,3 +420,39 @@ async fn a_454_keepalive_response_is_surfaced_not_discarded() {
     );
     let _ = server.await;
 }
+
+/// A peer that floods interleaved frames must not make `send_interleaved`'s
+/// inbound drain loop forever: the drain is capped per call, so the pusher's
+/// own send still completes. PRE-FIX `drain_inbound` looped until the socket
+/// went quiet, so a continuously-streaming (or hostile RECORD peer) starved the
+/// send — this call would never return.
+#[tokio::test]
+async fn a_flooding_peer_does_not_starve_the_send() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    // The peer writes interleaved RTP frames (`$` + channel + len + payload)
+    // as fast as it can, forever, until the client drops the connection.
+    let http_server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        // A 32-byte frame on channel 0: no `\r\n` so it can never be mistaken
+        // for a control response.
+        let mut frame = vec![b'$', 0u8, 0u8, 30u8];
+        frame.extend(std::iter::repeat_n(0xABu8, 30));
+        loop {
+            if sock.write_all(&frame).await.is_err() {
+                return;
+            }
+        }
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    // `send_interleaved` drains inbound first; against a peer that never stops
+    // writing it must still return promptly (the drain is capped per call).
+    let sent = tokio::time::timeout(Duration::from_secs(5), client.send_interleaved(0, b"ping")).await;
+    assert!(
+        sent.is_ok(),
+        "send_interleaved must return even while the peer floods interleaved frames"
+    );
+    http_server.abort();
+}
