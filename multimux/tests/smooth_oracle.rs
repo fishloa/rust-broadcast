@@ -111,53 +111,68 @@ struct Served {
 ///
 /// The media listener is bound `:0` here and handed over live (SP7.1), so the
 /// origin never races a reserved port; the UDP input address is still reserved
-/// (the route binds it internally, so a `:0` port would be unobservable).
+/// (the route binds it internally, so a `:0` port would be unobservable). The
+/// whole attempt is retried with a fresh port if the reserved UDP port loses a
+/// bind race (the safety net the old reserve-then-rebind loop provided).
 async fn serve_smooth_until_fragment(min_chunks: usize) -> Served {
     let client = reqwest::Client::new();
-    let (bind_addr, bind_listener) = bind_tcp();
-    let udp_addr = reserve_udp_addr();
-    let config = base_config(
-        bind_addr,
-        InputSpec::TsUdp {
-            addr: udp_addr.to_string(),
-            multicast_group: None,
-        },
-    );
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    for _ in 0..10 {
+        let (bind_addr, bind_listener) = bind_tcp();
+        let udp_addr = reserve_udp_addr();
+        let config = base_config(
+            bind_addr,
+            InputSpec::TsUdp {
+                addr: udp_addr.to_string(),
+                multicast_group: None,
+            },
+        );
+        let server = tokio::spawn(serve_with_registry_on(
+            bind_listener,
+            config,
+            SchemeRegistry::new(),
+        ));
 
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac_40s.ts fixture must exist");
-    let stop = Arc::new(AtomicBool::new(false));
-    let sender_stop = Arc::clone(&stop);
-    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac_40s.ts fixture must exist");
+        let stop = Arc::new(AtomicBool::new(false));
+        let sender_stop = Arc::clone(&stop);
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("bind sender");
+        let sender = tokio::spawn(async move {
+            while !sender_stop.load(Ordering::Relaxed) {
+                for chunk in ts_bytes.chunks(7 * 188) {
+                    let _ = socket.send_to(chunk, udp_addr).await;
+                    tokio::time::sleep(Duration::from_millis(3)).await;
+                }
+            }
+        });
+
+        let url = format!("http://{bind_addr}/cam/Manifest");
+        match tokio::time::timeout(
+            Duration::from_secs(20),
+            poll_manifest(&client, &url, min_chunks),
+        )
         .await
-        .expect("bind sender");
-    let sender = tokio::spawn(async move {
-        while !sender_stop.load(Ordering::Relaxed) {
-            for chunk in ts_bytes.chunks(7 * 188) {
-                let _ = socket.send_to(chunk, udp_addr).await;
-                tokio::time::sleep(Duration::from_millis(3)).await;
+        {
+            Ok(manifest) => {
+                return Served {
+                    bind_addr,
+                    server,
+                    stop,
+                    sender,
+                    manifest,
+                };
+            }
+            Err(_) => {
+                // UDP port lost the race (the route's bind failed) or the
+                // route never produced a fragment: tear down and retry.
+                stop.store(true, Ordering::Relaxed);
+                sender.abort();
+                server.abort();
             }
         }
-    });
-
-    let url = format!("http://{bind_addr}/cam/Manifest");
-    let manifest = tokio::time::timeout(
-        Duration::from_secs(20),
-        poll_manifest(&client, &url, min_chunks),
-    )
-    .await
-    .expect("the Smooth manifest must appear within the hang guard");
-    Served {
-        bind_addr,
-        server,
-        stop,
-        sender,
-        manifest,
     }
+    panic!("could not start the Smooth test server after 10 attempts");
 }
 
 impl Drop for Served {

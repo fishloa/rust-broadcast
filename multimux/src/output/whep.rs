@@ -151,6 +151,12 @@ const WHEP_INBOUND_SILENCE_TIMEOUT: Duration = Duration::from_secs(30);
 pub struct WhepRoute {
     listen: String,
     max_sessions: usize,
+    /// A listener bound by the caller (SP7.1): a test binds `127.0.0.1:0`,
+    /// reads the live address, and hands the listener in, so `run_whep` binds
+    /// no port and never races reserve-then-rebind. Taken on the first
+    /// `run_whep`; `None` (the production shape) makes `run_whep` bind
+    /// `listen` itself.
+    prebound: std::sync::Arc<std::sync::Mutex<Option<tokio::net::TcpListener>>>,
 }
 
 impl WhepRoute {
@@ -162,6 +168,28 @@ impl WhepRoute {
         WhepRoute {
             listen: listen.into(),
             max_sessions: DEFAULT_WHEP_MAX_SESSIONS,
+            prebound: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Build a route over an already-bound listener (SP7.1): a test binds
+    /// `127.0.0.1:0`, learns the port, and hands the bound listener in, rather
+    /// than racing reserve-then-rebind. Mirrors
+    /// `crate::source::whip::WhipRoute::with_listener`.
+    pub fn with_listener(
+        name: impl Into<String>,
+        listener: tokio::net::TcpListener,
+        max_sessions: usize,
+    ) -> Self {
+        let listen = listener
+            .local_addr()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|_| "127.0.0.1:0".to_string());
+        let _ = name.into();
+        WhepRoute {
+            listen,
+            max_sessions,
+            prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(listener))),
         }
     }
 
@@ -917,13 +945,13 @@ pub async fn serve_whep_run_for_test() -> (
     CancellationToken,
 ) {
     let trunk = trunk_with_avc_track();
-    // Discover a free ephemeral port, then have `run_whep` bind it. (This is
-    // the same reserve-then-bind shape the other WHEP harnesses use; the
-    // property under test is cancel-driven drain + release, not the bind.)
-    let probe = TcpListener::bind("127.0.0.1:0").await.expect("bind");
-    let addr = probe.local_addr().expect("addr");
-    drop(probe);
-    let route = WhepRoute::new(addr.to_string());
+    // Bind `127.0.0.1:0` and hand the LIVE listener to `WhepRoute::with_listener`
+    // — the OS picks the free port and this test owns that exact socket, so
+    // there is no probe-bind/drop/re-bind window a racing test could steal the
+    // port in.
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let route = WhepRoute::with_listener("test-whep", listener, 64);
     let cancel = CancellationToken::new();
     let run_cancel = cancel.clone();
     let sessions = tokio_util::task::TaskTracker::new();
@@ -1411,17 +1439,43 @@ pub async fn run_whep_with_tracker(
     output_auth: Option<Arc<Verifier>>,
     sessions: tokio_util::task::TaskTracker,
 ) {
-    let listener = match TcpListener::bind(&route.listen).await {
-        Ok(l) => l,
-        Err(e) => {
-            tracing::error!(listen = %route.listen, error = %e, "whep: bind failed");
-            return;
-        }
+    let prebound = route.prebound.lock().expect("whep prebound lock").take();
+    let listener = match prebound {
+        Some(listener) => listener,
+        None => match TcpListener::bind(&route.listen).await {
+            Ok(l) => l,
+            Err(e) => {
+                tracing::error!(listen = %route.listen, error = %e, "whep: bind failed");
+                return;
+            }
+        },
     };
+    run_whep_on(
+        listener,
+        trunk,
+        cancel,
+        output_auth,
+        route.max_sessions,
+        sessions,
+    )
+    .await;
+}
 
+/// [`run_whep_with_tracker`] over a caller-supplied, already-bound listener —
+/// the SP7 seam: a test binds `127.0.0.1:0` (the OS picks a free port and the
+/// test owns that exact socket), passes it here, and never has to
+/// probe-bind/close/re-bind a port a racing test could steal.
+#[doc(hidden)]
+pub async fn run_whep_on(
+    listener: TcpListener,
+    trunk: Arc<Trunk>,
+    cancel: CancellationToken,
+    output_auth: Option<Arc<Verifier>>,
+    max_sessions: usize,
+    sessions: tokio_util::task::TaskTracker,
+) {
     let (admit_tx, mut admit_rx) = mpsc::channel::<AdmittedWhep>(ACCEPT_QUEUE_CAPACITY);
     let active_sessions = Arc::new(AtomicUsize::new(0));
-    let max_sessions = route.max_sessions;
 
     // SP2.1: the signalling server is an axum router on `serve_hyper_util`
     // (header-read timeout, connection cap, graceful drain). The server task
@@ -1708,6 +1762,46 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             },
             "whep-test",
         ))
+    }
+
+    /// `WhepRoute::with_listener` runs the route over the caller's own
+    /// already-bound listener: the route serves on that exact socket (the
+    /// port is the one the caller bound), so no test reserves-then-rebinds
+    /// (SP7.1). A `GET` to the bound port is answered by the WHEP router.
+    #[tokio::test]
+    async fn with_listener_serves_on_the_caller_bound_socket() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind");
+        let addr = listener.local_addr().expect("addr");
+        let route = WhepRoute::with_listener("t", listener, 4);
+        assert_eq!(
+            route.listen(),
+            addr.to_string(),
+            "the route must report the caller's bound address"
+        );
+
+        let trunk = trunk_with_avc_track();
+        let cancel = CancellationToken::new();
+        let sessions = tokio_util::task::TaskTracker::new();
+        let run_cancel = cancel.clone();
+        let run_sessions = sessions.clone();
+        let handle = tokio::spawn(async move {
+            run_whep_with_tracker(&route, trunk, run_cancel, None, run_sessions).await;
+        });
+
+        // A real TCP connection to the bound port must reach the WHEP router
+        // (any HTTP status proves the listener is served there).
+        let mut stream = tokio::net::TcpStream::connect(addr)
+            .await
+            .expect("the caller-bound port must accept a connection");
+        use tokio::io::AsyncWriteExt as _;
+        stream
+            .write_all(b"GET /whep HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("write");
+        cancel.cancel();
+        let _ = tokio::time::timeout(Duration::from_secs(2), handle).await;
     }
 
     /// PRE-FIX FAILURE OBSERVED: `run_whep`/`handle_whep_connection` had no

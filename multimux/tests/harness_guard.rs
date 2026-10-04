@@ -42,11 +42,15 @@ const PORT_HELPER_ALLOW: &[(&str, &str)] = &[
     ),
     (
         "smooth_oracle.rs",
-        "the TsUdp input address is a route-internal bind the test must name",
+        "the TsUdp input address is a route-internal bind the test must name; \
+         `serve_smooth_until_fragment` retries the whole attempt on a lost race \
+         (the safety net the old reserve-then-rebind loop provided)",
     ),
     (
         "ts_hls_oracle.rs",
-        "the TsUdp input address is a route-internal bind the test must name",
+        "the TsUdp input address is a route-internal bind the test must name; \
+         `serve_ts_hls_until_extinf` retries the whole attempt on a lost race \
+         (the safety net the old reserve-then-rebind loop provided)",
     ),
     (
         "whep_egress.rs",

@@ -46,6 +46,11 @@ pub struct TsUdpRoute {
     addr: String,
     multicast_group: Option<String>,
     timeouts: IngestTimeouts,
+    /// A socket bound by the caller (SP7.1): a test binds `127.0.0.1:0`, reads
+    /// the live address, and hands the socket in, so `bind` uses it directly
+    /// and never races reserve-then-rebind. `None` (the production shape)
+    /// makes `bind` bind `addr` itself.
+    prebound: std::sync::Arc<std::sync::Mutex<Option<UdpSocket>>>,
 }
 
 impl std::fmt::Debug for TsUdpRoute {
@@ -70,6 +75,25 @@ impl TsUdpRoute {
             addr: addr.into(),
             multicast_group,
             timeouts: IngestTimeouts::default(),
+            prebound: std::sync::Arc::new(std::sync::Mutex::new(None)),
+        }
+    }
+
+    /// Build a route over an already-bound UDP socket (SP7.1): a test binds
+    /// `127.0.0.1:0`, learns the port, and hands the socket in, rather than
+    /// racing reserve-then-rebind. Mirrors
+    /// `crate::source::whip::WhipRoute::with_listener`.
+    pub fn with_socket(name: impl Into<String>, socket: UdpSocket) -> Self {
+        let addr = socket
+            .local_addr()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|_| "127.0.0.1:0".to_string());
+        TsUdpRoute {
+            name: name.into(),
+            addr,
+            multicast_group: None,
+            timeouts: IngestTimeouts::default(),
+            prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(socket))),
         }
     }
 
@@ -108,6 +132,9 @@ impl Dialer for TsUdpDialer {
 /// the bound address before a synthetic sender starts writing to it (UDP has
 /// no connect-then-accept handshake to synchronise on otherwise).
 pub async fn bind(route: &TsUdpRoute) -> Result<UdpSocket> {
+    if let Some(socket) = route.prebound.lock().expect("ts-udp prebound lock").take() {
+        return Ok(socket);
+    }
     bind_udp(&route.addr, route.multicast_group.as_deref()).await
 }
 
@@ -197,11 +224,11 @@ mod tests {
 
     #[tokio::test]
     async fn loopback_udp_established_and_samples_land_in_trunk() {
-        let reserved = UdpSocket::bind("127.0.0.1:0").await.expect("reserve port");
-        let addr = reserved.local_addr().expect("local addr");
-        drop(reserved);
-
-        let route = TsUdpRoute::new("cam-ts", addr.to_string(), None);
+        // Bind `127.0.0.1:0` and hand the LIVE socket to `with_socket` — no
+        // reserve-then-rebind window (SP7.1).
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let addr = socket.local_addr().expect("local addr");
+        let route = TsUdpRoute::with_socket("cam-ts", socket);
         // Enough samples (spread over several 7*188-byte datagrams, each
         // paced 5ms apart) that the PMT resolves on an early datagram while
         // later datagrams still carry fresh samples — otherwise the whole

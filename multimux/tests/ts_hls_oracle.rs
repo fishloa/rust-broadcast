@@ -153,52 +153,70 @@ impl Drop for Served {
 /// Start a TS-HLS route and feed it the fixture. The media listener is bound
 /// `:0` and handed over live (SP7.1) — no reserved port, no retry loop. The
 /// UDP input address is still reserved (the route binds it internally, so a
-/// `:0` port would be unobservable).
+/// `:0` port would be unobservable); the whole attempt is retried with a fresh
+/// port if the reserved UDP port loses a bind race, so a lost race cannot hang
+/// the test (the safety net the old reserve-then-rebind loop provided).
 async fn serve_ts_hls_until_extinf() -> Served {
     let client = reqwest::Client::new();
-    let (bind_addr, bind_listener) = bind_tcp();
-    let udp_addr = reserve_udp_addr();
-    let config = base_config(
-        bind_addr,
-        InputSpec::TsUdp {
-            addr: udp_addr.to_string(),
-            multicast_group: None,
-        },
-    );
-    let server = tokio::spawn(serve_with_registry_on(
-        bind_listener,
-        config,
-        SchemeRegistry::new(),
-    ));
+    for _ in 0..10 {
+        let (bind_addr, bind_listener) = bind_tcp();
+        let udp_addr = reserve_udp_addr();
+        let config = base_config(
+            bind_addr,
+            InputSpec::TsUdp {
+                addr: udp_addr.to_string(),
+                multicast_group: None,
+            },
+        );
+        let server = tokio::spawn(serve_with_registry_on(
+            bind_listener,
+            config,
+            SchemeRegistry::new(),
+        ));
 
-    let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
-    let stop = Arc::new(AtomicBool::new(false));
-    let sender_stop = Arc::clone(&stop);
-    let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+        let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
+        let stop = Arc::new(AtomicBool::new(false));
+        let sender_stop = Arc::clone(&stop);
+        let socket = tokio::net::UdpSocket::bind("127.0.0.1:0")
+            .await
+            .expect("bind sender");
+        let sender = tokio::spawn(async move {
+            while !sender_stop.load(Ordering::Relaxed) {
+                for chunk in ts_bytes.chunks(7 * 188) {
+                    let _ = socket.send_to(chunk, udp_addr).await;
+                    // Pacing (not synchronisation): space the datagrams so the
+                    // ingest task is not starved by the flood.
+                    tokio::time::sleep(Duration::from_millis(5)).await;
+                }
+            }
+        });
+
+        let url = format!("http://{bind_addr}/cam/media.m3u8");
+        match tokio::time::timeout(
+            Duration::from_secs(20),
+            poll_until_extinf(&client, &url),
+        )
         .await
-        .expect("bind sender");
-    let sender = tokio::spawn(async move {
-        while !sender_stop.load(Ordering::Relaxed) {
-            for chunk in ts_bytes.chunks(7 * 188) {
-                let _ = socket.send_to(chunk, udp_addr).await;
-                // Pacing (not synchronisation): space the datagrams so the
-                // ingest task is not starved by the flood.
-                tokio::time::sleep(Duration::from_millis(5)).await;
+        {
+            Ok(playlist) => {
+                return Served {
+                    bind_addr,
+                    server,
+                    stop,
+                    sender,
+                    playlist,
+                };
+            }
+            Err(_) => {
+                // UDP port lost the race (the route's bind failed) or the
+                // route never produced a segment: tear down and retry.
+                stop.store(true, Ordering::Relaxed);
+                sender.abort();
+                server.abort();
             }
         }
-    });
-
-    let url = format!("http://{bind_addr}/cam/media.m3u8");
-    let playlist = tokio::time::timeout(Duration::from_secs(20), poll_until_extinf(&client, &url))
-        .await
-        .expect("a closed-segment #EXTINF must appear within the hang guard");
-    Served {
-        bind_addr,
-        server,
-        stop,
-        sender,
-        playlist,
     }
+    panic!("could not start the TS-HLS test server after 10 attempts");
 }
 
 fn temp_dir(tag: &str) -> PathBuf {
