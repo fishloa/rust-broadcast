@@ -3,14 +3,19 @@
 //!
 //! - **Reserve-then-rebind ports** (`reserve_tcp_addr`/`reserve_udp_addr`/
 //!   `free_tcp_addr`/`free_port`). The HTTP media/admin listeners now bind
-//!   `127.0.0.1:0` and hand the live listener in (`serve_*_on`). The few
-//!   remaining helpers exist because the address is a route-internal bind the
-//!   test cannot otherwise observe (WHEP/WHIP/RTMP/UDP inputs, and an external
-//!   `mediamtx` whose config takes a port) — allowlisted per file below.
+//!   `127.0.0.1:0` and hand the live listener in (`serve_*_on`), and WHEP/WHIP/
+//!   TS-UDP routes accept a caller-bound listener/socket. The few remaining
+//!   helpers are LINE-PINNED below (the exact `fn …` line must match) because
+//!   the address is a route-internal bind the test cannot otherwise observe
+//!   (RTMP/UDP inputs, an external `mediamtx` whose config takes a port). Note
+//!   this is a NAME guard, not a behavioural one: it stops a new `reserve_*`
+//!   helper name from appearing, not a rebind written inline.
 //! - **Bare fixed sleeps** in `tests/**` outside the files that predate this
 //!   task. A NEW sleep in a NEW test file fails here, so the pattern does not
-//!   creep back. (Pacing sleeps inside a sender task, and hang-guard polls,
-//!   are the allowlisted exception.)
+//!   creep back. The detector covers an explicit `tokio::time::sleep(` AND a
+//!   bare `sleep(` made reachable by a `use …::sleep` import. (Pacing sleeps
+//!   inside a sender task, and hang-guard polls, are the allowlisted
+//!   exception.)
 //!
 //! **This is a lexical tripwire, not a proof.** Code review is the real control.
 
@@ -26,38 +31,52 @@ const PORT_HELPERS: &[&str] = &[
 ];
 
 /// Files allowed to still define a port helper, with the reason the address is
-/// genuinely unobservable without it (W2b-1 Task 4 deviation).
-const PORT_HELPER_ALLOW: &[(&str, &str)] = &[
+/// genuinely unobservable without it (W2b-1 Task 4 deviation). LINE-PINNED: the
+/// marker must appear on the same source line, so a NEW reserve helper added to
+/// one of these files still trips the guard.
+const PORT_HELPER_ALLOW: &[(&str, &str, &str)] = &[
     (
         "push_rtsp.rs",
+        "fn free_port() -> u16",
         "external `mediamtx` config takes a numeric port; port 0 is impossible for a third-party process",
     ),
     (
         "admin_api.rs",
+        "fn reserve_tcp_addr() -> SocketAddr",
         "the `whep_addr` is a route-internal WHEP listen the test must name",
     ),
     (
         "dispatch_ingest.rs",
-        "the TsUdp/RTMP input address is a route-internal bind the test must name",
+        "fn reserve_tcp_addr() -> SocketAddr",
+        "the RTMP input address is a route-internal bind the test must name",
+    ),
+    (
+        "dispatch_ingest.rs",
+        "fn reserve_udp_addr() -> SocketAddr",
+        "the TsUdp input address is a route-internal bind the test must name",
     ),
     (
         "smooth_oracle.rs",
+        "fn reserve_udp_addr() -> std::net::SocketAddr",
         "the TsUdp input address is a route-internal bind the test must name; \
          `serve_smooth_until_fragment` retries the whole attempt on a lost race \
          (the safety net the old reserve-then-rebind loop provided)",
     ),
     (
         "ts_hls_oracle.rs",
+        "fn reserve_udp_addr() -> std::net::SocketAddr",
         "the TsUdp input address is a route-internal bind the test must name; \
          `serve_ts_hls_until_extinf` retries the whole attempt on a lost race \
          (the safety net the old reserve-then-rebind loop provided)",
     ),
     (
         "whep_egress.rs",
+        "fn reserve_tcp_addr() -> SocketAddr",
         "the WHIP/WHEP listen addresses are route-internal binds the test must name",
     ),
     (
         "whip_ingest.rs",
+        "fn reserve_tcp_addr() -> SocketAddr",
         "the WHIP listen address is a route-internal bind the test must name",
     ),
 ];
@@ -122,16 +141,27 @@ fn no_new_reserve_then_rebind_port_helpers() {
         if file == "harness_guard.rs" {
             continue;
         }
-        for needle in PORT_HELPERS {
-            if src.contains(needle) && !PORT_HELPER_ALLOW.iter().any(|(f, _)| f == &file) {
-                hits.push(format!("{file}: {needle}"));
+        // Line-pin: a file is only allowed a helper when its EXACT `fn …` line
+        // is pinned below, so a NEW reserve helper added to an allowlisted file
+        // (a second `reserve_udp_addr`) still trips the guard.
+        let allowed = PORT_HELPER_ALLOW.iter().filter(|(f, ..)| f == &file);
+        for (n, line) in src.lines().enumerate() {
+            if line.trim_start().starts_with("//") {
+                continue;
+            }
+            for needle in PORT_HELPERS {
+                if line.contains(needle)
+                    && !allowed.clone().any(|(_, marker, _)| line.contains(marker))
+                {
+                    hits.push(format!("{file}:{}: {}", n + 1, needle));
+                }
             }
         }
     }
     assert!(
         hits.is_empty(),
         "reserve-then-rebind port helper reintroduced (bind `127.0.0.1:0` and pass the live \
-         listener via `serve_*_on`, or allowlist with a reason):\n{}",
+         listener via `serve_*_on`, or allowlist the exact line with a reason):\n{}",
         hits.join("\n")
     );
 }
@@ -143,14 +173,25 @@ fn no_new_bare_sleeps_in_the_test_harness() {
         if file == "harness_guard.rs" || SLEEP_ALLOW.contains(&file.as_str()) {
             continue;
         }
+        // A `use …::sleep` import lets a bare `sleep(..)` call evade a
+        // `tokio::time::sleep(`-only scan, so detect either form.
+        let imports_sleep = src.contains("use tokio::time::sleep")
+            || src.contains("use std::thread::sleep")
+            || src.contains("use core::time::sleep");
         for (n, line) in src.lines().enumerate() {
             if line.trim_start().starts_with("//") {
                 continue;
             }
-            if line.contains("tokio::time::sleep(")
+            let bare = line
+                .contains("tokio::time::sleep(")
                 || line.contains("thread::sleep(")
                 || line.contains("std::thread::sleep(")
-            {
+                || (imports_sleep
+                    && line
+                        .split(|c: char| !c.is_alphanumeric() && c != '_')
+                        .any(|w| w == "sleep")
+                    && line.contains("sleep("));
+            if bare {
                 hits.push(format!("{file}:{}: {}", n + 1, line.trim()));
             }
         }
