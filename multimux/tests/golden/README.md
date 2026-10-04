@@ -100,3 +100,24 @@ cd multimux
 GOLDEN_BLESS=tests/golden cargo test -p multimux --all-features --locked \
   --lib matches_frozen_now_golden
 ```
+
+## `dash_mpd_main.golden` / `dash_mpd_window60_main.golden` / `dash_mpd_window3600_main.golden`
+
+Capture-of-record from `origin/main` for the deliberate `xs:duration` change in
+W2b-1. Main spells `@timeShiftBufferDepth` as `PT{secs}S`; this branch uses the
+balanced jiff spelling (`jiff::fmt::temporal::SpanPrinter`). Below 60 s the two
+agree byte-for-byte (`dash_mpd_main.golden` equals `dash_mpd.golden` after
+normalising `@availabilityStartTime`); at/above it they differ:
+
+- 60 s: main `PT60S` -> ours `PT1M` (pinned against `dash_mpd_window60_main.golden`
+  by `the_over_60s_window_differs_from_main_by_exactly_the_balanced_token`).
+- 3600 s: main `PT3600S` -> ours `PT1H` (pinned against
+  `dash_mpd_window3600_main.golden` by
+  `the_over_an_hour_window_differs_from_main_by_exactly_the_balanced_token`).
+
+Each pinning test asserts the two MPDs differ by EXACTLY that one token, so a
+future change that alters any other byte (or silently reverts to `PT60S`) fails.
+Captured in a throwaway `origin/main` worktree: add the capture test to main's
+own `dash.rs`, run with `GOLDEN_BLESS=<dir>`, then normalise
+`@availabilityStartTime` to the frozen value. `ll_dash_mpd.golden` is unaffected
+(sub-60 s) and byte-identical to main.

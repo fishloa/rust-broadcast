@@ -509,6 +509,91 @@ mod tests {
         assert_eq!(actual, expected, "{file} differs from the golden output");
     }
 
+    /// The deliberate >= 60 s wire change vs main, pinned against a golden
+    /// **captured from `origin/main`** (`dash_mpd_window60_main.golden`): main
+    /// prints `PT60S`, this crate prints the balanced `PT1M` — and the two
+    /// golden files must differ by EXACTLY that one token, nothing else. This
+    /// is the "pin the intended difference" gate: a future change that alters
+    /// any other byte, or that silently reverts to `PT60S`, fails here.
+    #[test]
+    fn the_over_60s_window_differs_from_main_by_exactly_the_balanced_token() {
+        // Render a live 60 s window and compare it to main's captured golden
+        // (also check the two committed golden FILES agree) — so a code
+        // regression to `PT60S` fails here, not just a golden edit.
+        let route = RouteHandle::new(4.0, 500, 15);
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        for seq in 1..=15u32 {
+            route
+                .add_segment(crate::route::SPTS_PROGRAM_ID, seg(seq, 4.0))
+                .expect("add_segment");
+        }
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let ours = render_mpd_at(&route, now).expect("renders");
+
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden");
+        let ours_file = std::fs::read_to_string(dir.join("dash_mpd_window60.golden"))
+            .expect("read our window60 golden");
+        let main = std::fs::read_to_string(dir.join("dash_mpd_window60_main.golden"))
+            .expect("read main's window60 golden");
+        assert_eq!(ours, ours_file, "the live render must match our golden");
+        assert_ne!(
+            ours, main,
+            "the jiff spelling must differ from main's PT60S"
+        );
+        assert!(
+            main.contains("timeShiftBufferDepth=\"PT60S\""),
+            "main's golden must carry PT60S: {main}"
+        );
+        // Exactly the one intended substitution: PT60S -> PT1M.
+        assert_eq!(
+            ours.replace(
+                "timeShiftBufferDepth=\"PT1M\"",
+                "timeShiftBufferDepth=\"PT60S\""
+            ),
+            main,
+            "our 60 s MPD must differ from main's by ONLY PT60S -> PT1M"
+        );
+    }
+
+    /// The >= 3600 s wire change vs main, on a real 900-segment window
+    /// (4 s x 900 = 3600 s) — main's golden is `PT3600S`, ours is `PT1H`, and
+    /// again the two differ by exactly that token.
+    #[test]
+    fn the_over_an_hour_window_differs_from_main_by_exactly_the_balanced_token() {
+        let route = RouteHandle::new(4.0, 500, 900);
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        for seq in 1..=900u32 {
+            route
+                .add_segment(crate::route::SPTS_PROGRAM_ID, seg(seq, 4.0))
+                .expect("add_segment");
+        }
+        let now = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let ours = render_mpd_at(&route, now).expect("renders");
+        assert!(
+            ours.contains("timeShiftBufferDepth=\"PT1H\""),
+            "a 3600 s window must spell PT1H: {ours}"
+        );
+        let main = std::fs::read_to_string(
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("tests/golden/dash_mpd_window3600_main.golden"),
+        )
+        .expect("read main's window3600 golden");
+        assert!(
+            main.contains("timeShiftBufferDepth=\"PT3600S\""),
+            "main's golden must carry PT3600S: {main}"
+        );
+        assert_eq!(
+            ours.replace(
+                "timeShiftBufferDepth=\"PT1H\"",
+                "timeShiftBufferDepth=\"PT3600S\""
+            ),
+            main,
+            "our 3600 s MPD must differ from main's by ONLY PT3600S -> PT1H"
+        );
+    }
+
     /// The >= 3600 s spelling, pinned directly (no route this long is
     /// realisable in a unit test): the balanced jiff form is `PT1H`.
     #[test]

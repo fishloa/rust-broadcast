@@ -31,8 +31,12 @@
   with `transmux`'s DASH writer. Sub-60 s values are byte-identical to the old
   `PT{secs}S` spelling, but a `@timeShiftBufferDepth` >= 60 s (e.g. a
   15-segment x 4 s window) now prints `PT1M` where the pre-migration code printed
-  `PT60S`, and >= 3600 s prints `PT1H`. Both are valid `xs:duration`; the
-  >= 60 s form is now golden-pinned (`dash_mpd_window60.golden`).
+  `PT60S`, and >= 3600 s prints `PT1H`. Both are valid `xs:duration`. This is a
+  deliberate wire change vs `main`, pinned against goldens captured from
+  `origin/main`: `dash_mpd_window60.golden` vs `dash_mpd_window60_main.golden`
+  (`PT60S` -> `PT1M`) and `dash_mpd_window3600_main.golden`
+  (`PT3600S` -> `PT1H`), each asserted to differ by exactly that one token. The
+  sub-60 s `dash_mpd.golden`/`ll_dash_mpd.golden` are byte-identical to main.
 - **The test harness binds `127.0.0.1:0` and passes the live listener.** New
   `serve_with_registry_on`/`serve_with_registry_on_admin`/
   `serve_config_file_with_registry_on_admin` entry points take a pre-bound
