@@ -17,9 +17,20 @@ fuzz_target!(|data: &[u8]| {
         assert_eq!(b.to_header_value().unwrap(), canon);
     }
     if let Ok(a) = SessionHeader::parse(s) {
-        let canon = a.to_header_value().unwrap();
-        let b = SessionHeader::parse(&canon).expect("canonical Session must re-parse");
-        assert_eq!(a, b);
-        assert_eq!(b.to_header_value().unwrap(), canon);
+        // Receive is lenient (any non-empty id without control characters is kept verbatim so
+        // it can be echoed back) while emit is strict: an id that would swallow the `;`
+        // separator (e.g. a lone `"`) parses but cannot be serialised unambiguously. That
+        // asymmetry is documented (docs/session-header.md) and unit-tested, so the harness
+        // accepts exactly `HeaderSerialize` there and holds every other value to the
+        // round-trip invariants.
+        match a.to_header_value() {
+            Ok(canon) => {
+                let b = SessionHeader::parse(&canon).expect("canonical Session must re-parse");
+                assert_eq!(a, b);
+                assert_eq!(b.to_header_value().unwrap(), canon);
+            }
+            Err(rtsp_runtime::Error::HeaderSerialize(_)) => {}
+            Err(e) => panic!("unexpected Session serialise error: {e:?}"),
+        }
     }
 });

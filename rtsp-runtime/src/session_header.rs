@@ -258,4 +258,15 @@ mod tests {
         h.timeout = Some(Duration::from_secs(5));
         assert!(h.to_header_value().is_err());
     }
+    /// Fuzz regression (crash input `";;!` from the rtsp_headers target): a received id of a
+    /// lone `"` parses (receive is lenient) but cannot be emitted unambiguously (emit is strict).
+    #[test]
+    fn a_received_lone_quote_id_parses_but_is_not_emittable() {
+        let (h, _) = SessionHeader::parse_with_warnings("\";;!").unwrap();
+        assert_eq!(h.id, "\"");
+        assert!(matches!(
+            h.to_header_value(),
+            Err(crate::Error::HeaderSerialize(_))
+        ));
+    }
 }
