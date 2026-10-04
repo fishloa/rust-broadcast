@@ -1,4 +1,4 @@
-#![cfg(feature = "whip")]
+#![cfg(all(feature = "whip", feature = "test-hooks"))]
 //! SP2.1: the WHIP signalling endpoint is served by an axum `Router` on
 //! hyper-util — chunked bodies are accepted, the preflight carries CORS, and
 //! an oversized body is rejected 413 before it is read.

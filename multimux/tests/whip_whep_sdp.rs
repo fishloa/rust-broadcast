@@ -1,4 +1,4 @@
-#![cfg(feature = "whip")]
+#![cfg(all(feature = "whip", feature = "test-hooks"))]
 //! W2a Task 8: ICE credentials are read at MEDIA level first, falling back
 //! to session level (RFC 8839 §5.4) — a media section's own pair must win
 //! over a stale session-level decoy.

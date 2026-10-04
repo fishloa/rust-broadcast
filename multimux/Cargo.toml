@@ -218,6 +218,54 @@ name = "custom_scheme"
 name = "whip_whep_timers"
 required-features = ["whip", "test-hooks"]
 
+# These integration tests drive the WHIP/WHEP `*_for_test` seams, which are
+# behind `test-hooks` (non-default) so they are not part of the published API.
+[[test]]
+name = "whip_whep_sdp"
+required-features = ["whip", "test-hooks"]
+
+[[test]]
+name = "whep_sdp_golden"
+required-features = ["whep", "test-hooks"]
+
+[[test]]
+name = "whep_http"
+required-features = ["whep", "test-hooks"]
+
+[[test]]
+name = "accept_lifecycle"
+required-features = ["whip", "whep", "test-hooks"]
+
+[[test]]
+name = "limit_budgets"
+required-features = ["whip", "whep", "test-hooks"]
+
+# These build a config-driven route whose listen address they bound themselves
+# (`Config::prebound`, `test-hooks` only), or drive a WHIP `*_for_test` seam.
+[[test]]
+name = "whip_http"
+required-features = ["whip", "test-hooks"]
+
+[[test]]
+name = "whip_ingest"
+required-features = ["whip", "test-hooks"]
+
+[[test]]
+name = "whep_egress"
+required-features = ["whip", "whep", "test-hooks"]
+
+[[test]]
+name = "dispatch_ingest"
+required-features = ["test-hooks"]
+
+[[test]]
+name = "smooth_oracle"
+required-features = ["test-hooks"]
+
+[[test]]
+name = "ts_hls_oracle"
+required-features = ["test-hooks"]
+
 [dev-dependencies]
 # `test-support`: webrtc-runtime's hidden fault-injection hooks (inert without
 # `media`, so this pulls nothing extra into builds that do not enable whip/whep).

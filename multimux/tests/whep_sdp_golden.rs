@@ -1,4 +1,4 @@
-#![cfg(feature = "whep")]
+#![cfg(all(feature = "whep", feature = "test-hooks"))]
 //! Byte-for-byte golden of the WHEP SDP answer as rendered by
 //! `sdp_types::Session::write` (deterministic: the offer, local address, ICE
 //! credentials, codec config, fingerprint and candidate lines are all caller

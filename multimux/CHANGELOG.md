@@ -58,10 +58,30 @@
   `origin::serve_with_registry_on`/`serve_with_registry_on_admin`/
   `serve_config_file_with_registry_on_admin`, and `origin::PreboundListeners`
   take pre-bound listeners (SP7.1).
-- **Test-only entry points moved behind the non-default `test-hooks` feature.**
-  `output::whep::serve_whep_run_for_test` and `WHEP_TEST_OFFER` (and the other
-  `*_for_test` seams) are no longer part of the default published API; enabling
-  `test-hooks` restores them.
+- **Test-only WHIP/WHEP entry points moved behind the non-default `test-hooks`
+  feature.** No longer part of the default published API (enabling `test-hooks`
+  restores them): `output::whep::serve_whep_run_for_test`, `WHEP_TEST_OFFER`,
+  `output::whep::{whep_router_for_test, render_whep_answer_for_test,
+  serve_whep_for_test, serve_whep_for_test_saturated_accept,
+  serve_whep_for_test_with_trunk}`, `source::whip::{serve_for_test,
+  serve_for_test_with_read_timeout, serve_for_test_with_read_load,
+  serve_for_test_with_read_load_and_timeout,
+  serve_for_test_with_read_load_timeout_and_policy, parse_offer_for_test,
+  render_answer_for_test, whip_router_for_test}`, and the `Config::prebound`
+  caller-bound-socket field. The integration tests that drive them
+  (`whip_http`, `whip_ingest`, `whep_egress`, `whip_whep_sdp`, `whip_whep_timers`,
+  `whep_sdp_golden`, `whep_http`, `accept_lifecycle`, `limit_budgets`,
+  `dispatch_ingest`, `smooth_oracle`, `ts_hls_oracle`) now declare
+  `required-features = ["test-hooks", …]`.
+  The remaining `#[doc(hidden)] pub` `*_for_test` seams stay on the default
+  build because gating them would force `test-hooks` (and its `webrtc-runtime`
+  dependency) onto tests that do not otherwise need it:
+  `source::dash_pull::parse_iso8601_utc_for_test`,
+  `output::dash::{format_iso8601_for_test, xs_duration_for_test}`,
+  `push::{rtmp::tc_url_for_test, srt::parse_srt_url_for_test,
+  rtsp::control_url_for_test}`.
+  `redact::redact_url`/`redact_destination` are NOT test seams — they are the
+  crate's real redaction API and stay public.
 - `source::file_reader::SpawnedReader` now owns a cancellation token: dropping
   it cancels the reader's task instead of detaching it, and a cancelled run
   resolves to `FileReaderError::Cancelled`.

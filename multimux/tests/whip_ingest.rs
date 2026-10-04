@@ -45,7 +45,7 @@
 //! missing -- green on a fresh clone before `bun install`
 //! (`multimux/tests/assets/`) has been run, or in a CI image without Node.
 
-#![cfg(feature = "whip")]
+#![cfg(all(feature = "whip", feature = "test-hooks"))]
 
 use std::net::SocketAddr;
 use std::process::Command;

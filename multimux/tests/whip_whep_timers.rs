@@ -1,4 +1,4 @@
-#![cfg(feature = "whip")]
+#![cfg(all(feature = "whip", feature = "test-hooks"))]
 //! Defects 1 and 2 (WHIP): the media driver has a transport-deadline timer
 //! arm that never reaps, and a second publisher is admitted while a first
 //! reads continuously.

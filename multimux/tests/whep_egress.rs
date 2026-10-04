@@ -53,7 +53,7 @@
 //! install` (`multimux/tests/assets/`) has been run, or in a CI image
 //! without Node.
 
-#![cfg(all(feature = "whip", feature = "whep"))]
+#![cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
 
 use std::net::SocketAddr;
 use std::process::Command;

@@ -20,6 +20,7 @@
 //! HTTP `GET`. Both oracles skip **loudly** (with a `--nocapture`-visible
 //! line) when their binary is absent, so this file stays green on Linux/CI;
 //! run it on macOS for the genuine check.
+#![cfg(feature = "test-hooks")]
 
 use std::path::PathBuf;
 use std::process::Command;

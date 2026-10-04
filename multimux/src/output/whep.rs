@@ -522,6 +522,7 @@ struct WhepServeState {
 
 impl WhepServeState {
     /// A state with no live `Trunk`: the 401/204/413 paths never reach it.
+    #[cfg(feature = "test-hooks")]
     fn without_trunk(tx: mpsc::Sender<AdmittedWhep>, max_sessions: usize) -> Self {
         WhepServeState {
             trunk: Trunk::new(media_plane::trunk::TrunkConfig::new(
@@ -590,6 +591,7 @@ fn whep_router_with_cap(
 /// must drive the production routers, not hand-build its own (N2b).
 /// `max_pending` overrides [`whep_router_with_cap`]'s concurrency cap.
 #[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 pub fn whep_router_for_test(
     output_auth: Option<Arc<Verifier>>,
     max_pending: usize,
@@ -606,6 +608,7 @@ pub fn whep_router_for_test(
 /// ordering without the random cert/candidate values.
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
+#[cfg(feature = "test-hooks")]
 pub fn render_whep_answer_for_test(
     offer: &str,
     local_addr: SocketAddr,
@@ -883,6 +886,7 @@ fn loopback_ip_for(peer: std::net::SocketAddr) -> std::net::IpAddr {
 /// Test harness: build the WHEP router over a trunk-less state (the
 /// 401/204/413 paths never reach it) and return it with a cancel token.
 #[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 pub async fn serve_whep_for_test(
     verifier: Option<Arc<Verifier>>,
 ) -> (axum::Router, CancellationToken) {
@@ -900,6 +904,7 @@ pub async fn serve_whep_for_test(
 /// against `cancel`, so the biting property — cancel makes a blocked accept
 /// return and the port rebind — is exercised directly.
 #[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 pub async fn serve_whep_for_test_saturated_accept() -> (std::net::SocketAddr, CancellationToken) {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
@@ -917,6 +922,7 @@ pub async fn serve_whep_for_test_saturated_accept() -> (std::net::SocketAddr, Ca
 /// Test harness: build the WHEP router over a trunk that already carries a
 /// real AVC track, so a `POST` negotiates an answer and returns `201`.
 #[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 pub async fn serve_whep_for_test_with_trunk(
     verifier: Option<Arc<Verifier>>,
 ) -> (axum::Router, CancellationToken) {
@@ -986,6 +992,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
 
 /// A minimal AVC `TrackSpec` (no real SPS/PPS) — the shape the WHEP test
 /// harness announces so a `POST` negotiates an answer.
+#[cfg(feature = "test-hooks")]
 fn whep_avc_track_spec() -> TrackSpec {
     TrackSpec::new(
         1,
@@ -1012,6 +1019,7 @@ fn whep_avc_track_spec() -> TrackSpec {
 
 /// A `Trunk` with one announced AVC track — the shape `whep_egress` builds
 /// for its real sessions.
+#[cfg(feature = "test-hooks")]
 fn trunk_with_avc_track() -> Arc<Trunk> {
     let trunk = Trunk::new(media_plane::trunk::TrunkConfig::new(
         std::num::NonZeroUsize::new(4).unwrap(),

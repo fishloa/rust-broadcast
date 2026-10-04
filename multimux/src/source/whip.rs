@@ -105,7 +105,9 @@ use webrtc_runtime::media::{
 use crate::error::{MultimuxError, Result};
 use crate::route::RouteHandle;
 use crate::source::SessionClocks;
-use crate::source::{DriverProgress, IngestTimeouts, Source, handshake_policy};
+#[cfg(feature = "test-hooks")]
+use crate::source::handshake_policy;
+use crate::source::{DriverProgress, IngestTimeouts, Source};
 use axum::response::IntoResponse as _;
 
 /// Unknown coded dimensions — the SDP/RTP path gives no frame geometry at
@@ -449,6 +451,7 @@ impl WhipRouteShared {
 /// server over it, and return the bound address + a shared handle + the
 /// cancel token.
 #[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 pub async fn serve_for_test() -> (
     std::net::SocketAddr,
     WhipRouteShared,
@@ -459,6 +462,7 @@ pub async fn serve_for_test() -> (
 
 /// [`serve_for_test`] with an explicit session read timeout.
 #[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 pub async fn serve_for_test_with_read_timeout(
     read: Duration,
 ) -> (
@@ -487,6 +491,7 @@ pub async fn serve_for_test_with_read_timeout(
 /// the shared handle and a cancel token that stops both the server and the
 /// forever-looping `run_whip` task.
 #[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 pub async fn serve_for_test_with_read_load() -> (
     std::net::SocketAddr,
     WhipRouteShared,
@@ -500,6 +505,7 @@ pub async fn serve_for_test_with_read_load() -> (
 /// reaped — and its `last_datagram` entry dropped — without waiting out the
 /// default.
 #[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 pub async fn serve_for_test_with_read_load_and_timeout(
     read: Duration,
 ) -> (
@@ -518,6 +524,7 @@ pub async fn serve_for_test_with_read_load_and_timeout(
 /// deadline turns the session terminal and drops its `last_datagram` entry —
 /// rather than through the read-timeout path.
 #[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 pub async fn serve_for_test_with_read_load_timeout_and_policy(
     read: Duration,
     handshake_timeout: Duration,
@@ -569,6 +576,7 @@ pub async fn serve_for_test_with_read_load_timeout_and_policy(
 /// level first, session level fallback) so `tests/whip_whep_sdp.rs` can pin
 /// the media-first decision.
 #[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 pub fn parse_offer_for_test(offer: &str) -> (String, String) {
     let parsed = parse_whip_offer(offer).expect("parse offer");
     (parsed.remote_ufrag, parsed.remote_pwd)
@@ -580,6 +588,7 @@ pub fn parse_offer_for_test(offer: &str) -> (String, String) {
 /// `sdp_types::Session::write`'s line ordering (the review's answer-golden
 /// gap) without the random cert/candidate values.
 #[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 pub fn render_answer_for_test(
     offer: &str,
     local_addr: std::net::SocketAddr,
@@ -902,6 +911,7 @@ fn whip_router_with_cap(state: Arc<WhipServeState>, max_pending: usize) -> axum:
 /// overrides [`whip_router_with_cap`]'s concurrency cap so the test can dial it
 /// low and observe the shared pool.
 #[doc(hidden)]
+#[cfg(feature = "test-hooks")]
 pub fn whip_router_for_test(max_sessions: usize, max_pending: usize) -> axum::Router {
     let (tx, _rx) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
     let state = Arc::new(WhipServeState {

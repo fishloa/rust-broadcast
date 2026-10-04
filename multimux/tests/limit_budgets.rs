@@ -4,6 +4,10 @@
 //! RESPONSE BODY, so a test HOLDS a permit by keeping a response whose body
 //! it neither polls nor drops.
 
+// Drives the production routers through the `whip_router_for_test`/
+// `whep_router_for_test` seams, which are behind `test-hooks`.
+#![cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
+
 use std::time::Duration;
 
 use axum::body::Body;

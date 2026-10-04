@@ -1,4 +1,4 @@
-#![cfg(all(feature = "whip", feature = "whep"))]
+#![cfg(all(feature = "whip", feature = "whep", feature = "test-hooks"))]
 //! Defects 2 and 3: the RTMP/WHIP/WHEP accept pumps are tracked tasks, a
 //! blocked accept permit is cancelled on shutdown, and accepts are admitted
 //! under steady reads (no 20 ms sleep-poll).

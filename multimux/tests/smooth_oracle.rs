@@ -20,6 +20,7 @@
 //!
 //! `MP4Box`/`ffprobe` skip **loudly** when absent, so this file stays green
 //! on Linux/CI.
+#![cfg(feature = "test-hooks")]
 
 use std::path::PathBuf;
 use std::process::Command;

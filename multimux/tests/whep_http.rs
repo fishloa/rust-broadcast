@@ -1,4 +1,4 @@
-#![cfg(feature = "whep")]
+#![cfg(all(feature = "whep", feature = "test-hooks"))]
 //! SP2.1/SP2.4: the WHEP endpoint on axum, sharing the origin's output-auth
 //! middleware — a 401 must still carry CORS so a cross-origin browser can
 //! see the challenge.
