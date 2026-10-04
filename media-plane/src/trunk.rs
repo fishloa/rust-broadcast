@@ -1477,6 +1477,17 @@ pub struct Trunk {
     /// folding them into this same broad wake is additive scope, not a new
     /// channel to reason about.
     progress: Event,
+    /// Dedicated wake for a freed [`Trunk::listen`] waiter slot — the event a
+    /// caller parked on [`Trunk::waiter_slot_freed`] waits on. Kept SEPARATE
+    /// from `progress` on purpose: `progress` is the broad part/segment-close
+    /// wake every `listen()` waiter (blocking reload, push loop, egress) is
+    /// registered on, so reusing it here would let one waiter's *slot release*
+    /// wake every other waiter — and each of those, dropping its own
+    /// `ProgressListener` to re-listen, would release another slot and wake the
+    /// rest again: a ping-pong wake-storm with no media progress at all (100%
+    /// CPU for as long as >=2 callers keep re-listening). See `WaiterSlot`'s
+    /// `Drop`.
+    slot_freed: Event,
     /// Count of currently-registered, not-yet-dropped [`ProgressListener`]s —
     /// what bounds [`Trunk::listen`] against `part_waiter_cap`. A plain
     /// `AtomicUsize`, not part of `state`'s `Mutex`, so registering/releasing
@@ -1521,6 +1532,7 @@ impl Trunk {
             segment_writer_taken: AtomicBool::new(false),
             writer_issued_once: AtomicBool::new(false),
             progress: Event::new(),
+            slot_freed: Event::new(),
             waiter_count: AtomicUsize::new(0),
             #[cfg(test)]
             stalled_publishers: AtomicUsize::new(0),
@@ -2041,11 +2053,19 @@ impl Trunk {
     /// right now. A caller that got `None` from [`listen`](Self::listen) parks
     /// on this (raced against its own cancellation) instead of sleep-polling
     /// for a slot to free (W2b-1 SP1.4/B10b).
+    ///
+    /// Register-before-recheck, matching [`listen`](Self::listen)'s own
+    /// ordering contract: the listener is registered on the dedicated
+    /// `slot_freed` event FIRST, then the count is re-checked, so a slot freed
+    /// between the two cannot be missed (a check-then-listen would leave the
+    /// caller parked with no timeout until some unrelated part/segment wakes
+    /// the shared `progress` event, or forever on an idle source).
     pub fn waiter_slot_freed(&self) -> Option<EventListener> {
+        let listener = self.slot_freed.listen();
         if self.waiter_count.load(Ordering::Acquire) < self.part_waiter_cap {
             return None;
         }
-        Some(self.progress.listen())
+        Some(listener)
     }
 }
 
@@ -2070,9 +2090,13 @@ impl Drop for WaiterSlot {
     /// not leak a slot.
     fn drop(&mut self) {
         self.0.waiter_count.fetch_sub(1, Ordering::AcqRel);
-        // Wake any caller parked on `Trunk::waiter_slot_freed` (a would-be
-        // egress that got `None` from `listen`) that a slot is now free.
-        self.0.progress.notify(usize::MAX);
+        // Wake one caller parked on `Trunk::waiter_slot_freed` (a would-be
+        // egress that got `None` from `listen`) that a slot is now free. Wakes
+        // the DEDICATED `slot_freed` event, never the shared `progress` event
+        // (which every `listen()` waiter is registered on — waking it here
+        // would be a wake-storm, see the `slot_freed` field doc), and exactly
+        // ONE waiter: this drop freed exactly one slot.
+        self.0.slot_freed.notify(1);
     }
 }
 
@@ -5167,6 +5191,127 @@ mod tests {
             trunk.listen().is_some(),
             "a released slot must be re-usable"
         );
+    }
+
+    /// Releasing a waiter slot wakes ONLY a caller parked on
+    /// `waiter_slot_freed`, never an unrelated caller parked on the shared
+    /// `progress` event (the part/segment-close wake every `listen()` waiter
+    /// is on).
+    ///
+    /// MUTATION VERIFIED: restoring `self.0.progress.notify(usize::MAX);` in
+    /// `WaiterSlot::drop` (the wake-storm bug — C1) makes this test fail: the
+    /// 50 ms wait below wakes (`woken == true`) because the drop fires the
+    /// shared `progress` event the `b` waiter is registered on, instead of the
+    /// dedicated `slot_freed` event. Recompiled and re-run to confirm the
+    /// failure, then reverted.
+    #[test]
+    fn freeing_a_waiter_slot_does_not_wake_an_unrelated_progress_waiter() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
+
+        let a = trunk.listen().expect("first registration succeeds");
+        // `b` is a `progress` waiter (its listener is registered on the shared
+        // event at `listen()` time) that must NOT be woken by A's slot release.
+        let b = trunk.listen().expect("second registration succeeds");
+
+        drop(a);
+
+        let woken = b.wait_deadline(std::time::Instant::now() + Duration::from_millis(50));
+        assert!(
+            !woken,
+            "releasing a waiter slot must not wake an unrelated `progress` \
+             waiter — that is the ping-pong wake-storm (a >2-waiter caller set \
+             would 100% CPU with no media progress)"
+        );
+    }
+
+    /// A caller parked on `waiter_slot_freed` IS woken when a holder releases
+    /// its slot — the positive half of the dedicated-event fix.
+    #[test]
+    fn a_parked_slot_freed_waiter_wakes_when_a_slot_is_freed() {
+        let cap = nz(4).get();
+        let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(cap)));
+
+        // Fill to the cap so `waiter_slot_freed` returns a real listener.
+        let mut held: Vec<ProgressListener> = Vec::new();
+        for _ in 0..cap {
+            held.push(trunk.listen().expect("succeeds up to the cap"));
+        }
+        let parked = trunk
+            .waiter_slot_freed()
+            .expect("at the cap, a slot-freed future must be returned");
+
+        // A slot freed on another thread must wake the parked waiter.
+        let holder = held.pop().expect("a held slot");
+        let handle = thread::spawn(move || {
+            drop(holder);
+        });
+
+        let woken = parked
+            .wait_deadline(std::time::Instant::now() + Duration::from_secs(10))
+            .is_some();
+        assert!(
+            woken,
+            "a released slot must wake the caller parked on `waiter_slot_freed`"
+        );
+        handle.join().unwrap();
+    }
+
+    /// `waiter_slot_freed` registers BEFORE re-checking the count (the same
+    /// no-missed-wakeup ordering `listen` requires), so a slot freed between
+    /// the registration and the check cannot be lost. Bites the old
+    /// check-then-listen: with the cap saturated, a simultaneous release on
+    /// another thread races the check — a check-first shape can observe "full"
+    /// after the release and still return a listener that nothing will ever
+    /// wake.
+    ///
+    /// MUTATION VERIFIED: reordering `waiter_slot_freed` to check the count
+    /// first and only then `self.slot_freed.listen()` makes this fail
+    /// intermittently-to-deterministically (the release lands in the window);
+    /// the register-first shape cannot.
+    #[test]
+    fn waiter_slot_freed_registers_before_rechecking_the_count() {
+        let cap = nz(4).get();
+        for _ in 0..200 {
+            let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(cap)));
+            let mut held: Vec<ProgressListener> = Vec::new();
+            for _ in 0..cap {
+                held.push(trunk.listen().expect("succeeds up to the cap"));
+            }
+
+            // Release one slot concurrently with the `waiter_slot_freed` call.
+            let holder = held.pop().expect("a held slot");
+            let t = Arc::clone(&trunk);
+            let handle = thread::spawn(move || {
+                drop(holder);
+                // Keep the `Trunk` alive until the waiter below has resolved.
+                let _ = &t;
+            });
+
+            let fut = trunk.waiter_slot_freed();
+            match fut {
+                // A slot is free now (the release already landed): the caller
+                // must fall through to a live `listen`, not park.
+                None => {
+                    assert!(
+                        trunk.listen().is_some(),
+                        "a `None` from `waiter_slot_freed` promises a free slot"
+                    );
+                }
+                // The check saw "full": the registered listener must still be
+                // woken by the concurrent release (register-before-recheck).
+                Some(listener) => {
+                    let woken = listener
+                        .wait_deadline(std::time::Instant::now() + Duration::from_millis(50))
+                        .is_some();
+                    assert!(
+                        woken,
+                        "a slot freed concurrently with `waiter_slot_freed` must \
+                         wake the returned listener (check-then-listen misses it)"
+                    );
+                }
+            }
+            handle.join().unwrap();
+        }
     }
 
     /// The decided close-behaviour, asserted: a part remains addressable via
