@@ -709,10 +709,29 @@ mod tests {
     /// an invalid duration: it renders `PT0S` and logs, and `debug_assert!`
     /// trips it in tests. Deleting the `debug_assert!(false, …)` makes this
     /// test pass silently instead of panicking.
+    ///
+    /// `debug_assertions`-gated: a release build has no `debug_assert!`, so the
+    /// panic this asserts on cannot happen there (`cargo test --release` would
+    /// fail otherwise). The `PT0S` fallback itself is covered in EVERY profile
+    /// by `xs_duration_secs_checked_renders_pt0s_in_a_release_build` below.
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "invalid minimum_update_period")]
     fn xs_duration_secs_checked_debug_asserts_on_an_invalid_value() {
         let _ = xs_duration_secs_checked("minimum_update_period", f64::NAN);
+    }
+
+    /// The release-build behaviour of the checked path: an invalid value is
+    /// rendered as `PT0S` (and logged), NOT propagated as a `None` that would
+    /// make the manifest 404. Runs in every profile (in a debug build the
+    /// `debug_assert!` panics, so this is asserted only without assertions).
+    #[test]
+    #[cfg(not(debug_assertions))]
+    fn xs_duration_secs_checked_renders_pt0s_in_a_release_build() {
+        assert_eq!(
+            xs_duration_secs_checked("minimum_update_period", f64::NAN),
+            "PT0S"
+        );
     }
 
     /// A value `Config::validate` accepts renders a REAL `xs:duration` — not the
