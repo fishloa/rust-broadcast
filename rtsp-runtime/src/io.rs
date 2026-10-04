@@ -308,10 +308,64 @@ where
     /// media interleaved over the control connection. The frame is built by
     /// [`crate::interleaved::InterleavedFrame::new`] and the write is bounded
     /// by [`RtspTimeouts::write`].
+    ///
+    /// Before the write this drives the push keepalive (see
+    /// [`poll_keepalive`](Self::poll_keepalive)) and drains any server→client
+    /// bytes already buffered, so a SEND-ONLY pusher that only ever calls this
+    /// method still refreshes its session and does not let the peer's
+    /// responses/notifications fill the socket buffer (RFC 2326 §12.37).
+    ///
+    /// **A `Timeout`/cancelled write leaves a partial `$` frame in the codec's
+    /// write buffer and the connection is dead** — an interleaved frame cannot
+    /// be resynchronised mid-flight, so the caller must reconnect rather than
+    /// retry. Bytes already read stay buffered.
     pub async fn send_interleaved(&mut self, channel: u8, payload: &[u8]) -> Result<()> {
-        let frame = crate::interleaved::InterleavedFrame::new(channel, payload.to_vec());
-        let bytes = frame.to_bytes()?;
+        self.poll_keepalive().await?;
+        self.drain_inbound().await;
+        let bytes = crate::interleaved::InterleavedFrame::slice_to_bytes(channel, payload)?;
         bounded(self.timeouts.write, "write", self.framed.send(bytes)).await
+    }
+
+    /// Drive the RTSP keepalive for a SEND-ONLY pusher: if the session's
+    /// keepalive deadline ([`ClientSession::poll_timeout`]) has passed, write a
+    /// `GET_PARAMETER` liveness ping now. A no-op otherwise. Honours the
+    /// crate's rule that **only requests we send** count as keepalive activity
+    /// (inbound media/responses never do — see `next_event`), and the same
+    /// half-timeout floor inside `poll_timeout`.
+    ///
+    /// [`send_interleaved`](Self::send_interleaved) calls this automatically;
+    /// call it directly from a pusher loop that sends media by any other path
+    /// (e.g. a separate RTCP/`send` split), or when the media flow is idle.
+    pub async fn poll_keepalive(&mut self) -> Result<()> {
+        if let Some(req) = self.framed.codec_mut().session.handle_timeout(now())? {
+            self.write(req).await?;
+        }
+        Ok(())
+    }
+
+    /// Non-blockingly read whatever the peer has already sent (control
+    /// responses and interleaved media), applying session state and queueing
+    /// media frames — so a send-only pusher keeps the socket drained without
+    /// parking on a read. A zero-duration timeout polls the framed stream once;
+    /// if no bytes are ready it returns immediately.
+    ///
+    /// A read error is swallowed here (it is not the push path's error to
+    /// report): the next `next_event`/`recv_interleaved` call will surface it,
+    /// and [`send_interleaved`](Self::send_interleaved)'s write is what a
+    /// pusher must see fail.
+    async fn drain_inbound(&mut self) {
+        loop {
+            if self.pending_media.len() >= MAX_PENDING_MEDIA_FRAMES {
+                break;
+            }
+            match tokio::time::timeout(Duration::ZERO, self.next_event()).await {
+                Err(_) => break,                       // nothing ready — non-blocking
+                Ok(Err(_)) => break,                   // peer error surfaces on the next real call
+                Ok(Ok(None)) => break,                 // EOF
+                Ok(Ok(Some(ClientEvent::MediaData { .. }))) => {}
+                Ok(Ok(Some(_))) => {}                  // control response applied by the codec
+            }
+        }
     }
 
     /// Writes an outbound request and reads until the response correlated to

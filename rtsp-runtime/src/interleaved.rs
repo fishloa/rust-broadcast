@@ -57,6 +57,27 @@ impl InterleavedFrame {
         Ok(out)
     }
 
+    /// Serializes `channel` + `payload` (a borrow, NOT an owned `Vec`) into a
+    /// fresh `Vec<u8>` — the zero-copy-write path for a caller holding a slice
+    /// (e.g. an RTP packet), avoiding the `payload.to_vec()` a
+    /// [`new`](Self::new)-then-[`to_bytes`](Self::to_bytes) pair needs.
+    ///
+    /// Returns an error if the payload exceeds the 16-bit length field.
+    pub fn slice_to_bytes(channel: u8, payload: &[u8]) -> Result<Vec<u8>> {
+        let len: u16 = u16::try_from(payload.len()).map_err(|_| {
+            Error::InterleavedFrame(format!(
+                "payload of {} bytes exceeds 16-bit length field",
+                payload.len()
+            ))
+        })?;
+        let mut out = Vec::with_capacity(HEADER_LEN + payload.len());
+        out.push(MAGIC);
+        out.push(channel);
+        out.extend_from_slice(&len.to_be_bytes());
+        out.extend_from_slice(payload);
+        Ok(out)
+    }
+
     /// Appends the serialized frame to `out`.
     ///
     /// Returns an error if the payload exceeds the 16-bit length field.
@@ -147,8 +168,27 @@ mod tests {
     }
 
     #[test]
+    fn slice_to_bytes_matches_to_bytes_for_the_same_payload() {
+        // The borrow-based zero-copy path must produce byte-identical output to
+        // the owned `new`+`to_bytes` path, and round-trip back to the frame.
+        let payload: Vec<u8> = (0u8..40).collect();
+        let owned = InterleavedFrame::new(3, payload.clone()).to_bytes().unwrap();
+        let borrowed = InterleavedFrame::slice_to_bytes(3, &payload).unwrap();
+        assert_eq!(owned, borrowed);
+        let (parsed, consumed) = InterleavedFrame::parse(&borrowed).unwrap().unwrap();
+        assert_eq!(consumed, borrowed.len());
+        assert_eq!(parsed.channel, 3);
+        assert_eq!(parsed.payload, payload);
+    }
+
+    #[test]
+    fn slice_to_bytes_rejects_an_over_long_payload() {
+        let too_long = vec![0u8; usize::from(u16::MAX) + 1];
+        assert!(InterleavedFrame::slice_to_bytes(0, &too_long).is_err());
+    }
+
+    #[test]
     fn frame_channel_byte_reflects_channel() {
-        // Mutating the channel changes the serialized channel byte (offset 1).
         let f = InterleavedFrame::new(1u8, vec![9u8, 8, 7]);
         let bytes = f.to_bytes().unwrap();
         assert_eq!(bytes[0], MAGIC);

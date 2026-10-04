@@ -11,6 +11,7 @@ use rtsp_runtime::{
     TransportSpec,
 };
 use tokio::io::duplex;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpListener;
 
 const URI: &str = "rtsp://127.0.0.1/live";
@@ -54,6 +55,12 @@ async fn announce_then_record_round_trips_over_loopback() {
     assert!(
         matches!(ev, ClientEvent::Response { status, .. } if status == StatusCode::Ok),
         "{ev:?}"
+    );
+    // After RECORD the client session must be in the Recording state.
+    assert_eq!(
+        client.state(),
+        rtsp_runtime::SessionState::Recording,
+        "a pusher that has RECORDed must be in the Recording state"
     );
 
     let methods = server.await.unwrap();
@@ -110,5 +117,180 @@ async fn a_stalled_interleaved_send_times_out_at_the_write_bound() {
     assert!(
         matches!(err, rtsp_runtime::Error::Timeout { what: "write" }),
         "got {err:?}"
+    );
+}
+
+/// The ANNOUNCE the pusher sends must carry the SDP body and
+/// `Content-Type: application/sdp` on the wire (the round-trip test above only
+/// counted methods). Captured by a raw listener, since `AsyncRtspServer` does
+/// not surface the request body.
+#[tokio::test]
+async fn announce_carries_the_sdp_body_and_content_type_to_the_server() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        // Read the ANNOUNCE request (head + Content-Length body), then ack it.
+        let mut buf = Vec::new();
+        let mut tmp = [0u8; 1024];
+        let head_end = loop {
+            let n = sock.read(&mut tmp).await.unwrap();
+            assert!(n > 0, "peer closed before a full request");
+            buf.extend_from_slice(&tmp[..n]);
+            if let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                break pos + 4;
+            }
+        };
+        let head = String::from_utf8_lossy(&buf[..head_end]).to_string();
+        let clen = head
+            .lines()
+            .find_map(|l| {
+                let (k, v) = l.split_once(':')?;
+                k.eq_ignore_ascii_case("content-length")
+                    .then(|| v.trim().parse::<usize>().ok())?
+            })
+            .unwrap_or(0);
+        while buf.len() < head_end + clen {
+            let n = sock.read(&mut tmp).await.unwrap();
+            assert!(n > 0, "peer closed before the body");
+            buf.extend_from_slice(&tmp[..n]);
+        }
+        sock.write_all(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\n\r\n")
+            .await
+            .unwrap();
+        buf
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    let ev = client.announce(URI, SDP).await.unwrap();
+    assert!(matches!(ev, ClientEvent::Response { .. }), "{ev:?}");
+
+    let text = String::from_utf8_lossy(&server.await.unwrap()).to_string();
+    assert!(
+        text.starts_with("ANNOUNCE "),
+        "first request must be ANNOUNCE: {text}"
+    );
+    assert!(
+        text.to_ascii_lowercase()
+            .contains("content-type: application/sdp"),
+        "ANNOUNCE must declare application/sdp: {text}"
+    );
+    assert!(
+        text.contains(SDP.trim_end_matches("\r\n")),
+        "ANNOUNCE body must carry the SDP: {text}"
+    );
+}
+
+/// A SEND-ONLY pusher that only calls `send_interleaved` must still refresh its
+/// session: the keepalive fires (deterministically, under a paused clock) at
+/// the session's half-timeout.
+///
+/// PRE-FIX: `send_interleaved` never drove the keepalive, so a pusher that only
+/// sent interleaved media emitted no `GET_PARAMETER` and its session expired.
+#[tokio::test]
+async fn a_send_only_pusher_still_emits_a_get_parameter_keepalive() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    let server = tokio::spawn(async move {
+        let (mut sock, _) = listener.accept().await.unwrap();
+        let mut requests: Vec<String> = Vec::new();
+        let mut saw_frame = false;
+        let mut buf: Vec<u8> = Vec::new();
+        let mut tmp = [0u8; 4096];
+        'outer: for _ in 0..64 {
+            let n = match sock.read(&mut tmp).await {
+                Ok(0) => break,
+                Ok(n) => n,
+                Err(_) => break,
+            };
+            buf.extend_from_slice(&tmp[..n]);
+            loop {
+                if buf.is_empty() {
+                    continue 'outer;
+                }
+                if buf[0] == b'$' {
+                    if buf.len() < 4 {
+                        continue 'outer;
+                    }
+                    let len = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+                    if buf.len() < 4 + len {
+                        continue 'outer;
+                    }
+                    saw_frame = true;
+                    buf.drain(..4 + len);
+                    continue;
+                }
+                let Some(head_end) = buf.windows(4).position(|w| w == b"\r\n\r\n").map(|p| p + 4)
+                else {
+                    continue 'outer;
+                };
+                let text = String::from_utf8_lossy(&buf[..head_end]).to_string();
+                let clen = text
+                    .lines()
+                    .find_map(|l| {
+                        let (k, v) = l.split_once(':')?;
+                        k.eq_ignore_ascii_case("content-length")
+                            .then(|| v.trim().parse::<usize>().ok())?
+                    })
+                    .unwrap_or(0);
+                if buf.len() < head_end + clen {
+                    continue 'outer;
+                }
+                let cseq = text
+                    .lines()
+                    .find_map(|l| {
+                        let (k, v) = l.split_once(':')?;
+                        k.eq_ignore_ascii_case("cseq")
+                            .then(|| v.trim().to_string())
+                    })
+                    .unwrap_or_default();
+                let method = text.split(' ').next().unwrap_or("").to_string();
+                // A SETUP response allocates a Session id with a short declared
+                // timeout so the keepalive arms and fires quickly.
+                let resp = if method == "SETUP" {
+                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678;timeout=2\r\n\r\n")
+                } else {
+                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\nSession: 12345678\r\n\r\n")
+                };
+                sock.write_all(resp.as_bytes()).await.unwrap();
+                buf.drain(..head_end + clen);
+                let done = saw_frame && method == "GET_PARAMETER";
+                requests.push(method);
+                if done {
+                    break 'outer;
+                }
+            }
+        }
+        requests
+    });
+
+    let mut client = AsyncRtspClient::connect(addr).await.unwrap();
+    client.announce(URI, SDP).await.unwrap();
+    client.setup(URI, &tcp_interleaved()).await.unwrap();
+    client.record(URI).await.unwrap();
+
+    // Pause virtual time only now (real time for connect/handshake), so the
+    // keepalive half-timeout can be advanced deterministically, not slept out.
+    tokio::time::pause();
+    for _ in 0..5 {
+        client
+            .send_interleaved(0, b"frame")
+            .await
+            .expect("interleaved send");
+        // Advance past the keepalive half-timeout (timeout=2 -> 1 s).
+        tokio::time::advance(Duration::from_secs(5)).await;
+    }
+
+    // Resume real time so the final bounded wait cannot be short-circuited.
+    tokio::time::resume();
+    let seen = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("the server task must finish")
+        .unwrap();
+    assert!(
+        seen.iter().any(|m| m == "GET_PARAMETER"),
+        "a send-only pusher must emit a GET_PARAMETER keepalive; saw {seen:?}"
     );
 }
