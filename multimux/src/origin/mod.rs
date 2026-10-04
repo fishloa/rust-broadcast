@@ -1326,6 +1326,36 @@ pub async fn serve_config_file_with_registry_on_admin(
     .await
 }
 
+/// [`serve_config_file_with_registry_on_admin`] plus caller-bound route
+/// sockets (SP7.1, `test-seams` only). A config file cannot carry
+/// [`crate::config::Config::prebound`] (it is `serde(skip)`), so a test that
+/// serves a *file-defined* route and still wants to hand a pre-bound
+/// listener/socket in uses this entry point: the binds are spliced into the
+/// config loaded from `path` before it is served.
+#[cfg(feature = "test-seams")]
+#[doc(hidden)]
+pub async fn serve_config_file_with_registry_on_admin_prebound(
+    media: tokio::net::TcpListener,
+    admin: tokio::net::TcpListener,
+    path: impl AsRef<Path>,
+    registry: SchemeRegistry,
+    prebound: crate::config::PreboundBinds,
+) -> crate::Result<()> {
+    let path = path.as_ref().to_path_buf();
+    let mut config = crate::config::Config::from_json_file(&path)?;
+    config.prebound = prebound;
+    serve_with_registry_impl(
+        config,
+        registry,
+        Some(path),
+        Some(PreboundListeners {
+            media,
+            admin: Some(admin),
+        }),
+    )
+    .await
+}
+
 /// Load a JSON config from `path` and run the multimux origin exactly like
 /// [`serve`], but also remembering `path` so, if
 /// [`crate::config::Config::admin`] is configured, `POST /admin/reload`

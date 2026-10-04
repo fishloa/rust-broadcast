@@ -83,16 +83,6 @@ fn bind_tcp_addr() -> (SocketAddr, tokio::net::TcpListener) {
     bind_tcp()
 }
 
-/// Picks an unused TCP address purely to *observe* whether a route binds it —
-/// never handed to the code under test (which owns its own bind string). See
-/// `harness_guard.rs`'s `PROBE_HELPER_ALLOW` for the full reason.
-fn probe_tcp_addr() -> SocketAddr {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("probe tcp port");
-    let addr = listener.local_addr().expect("local addr");
-    drop(listener);
-    addr
-}
-
 fn assets_dir() -> std::path::PathBuf {
     std::path::PathBuf::from(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/assets"))
 }
@@ -283,15 +273,19 @@ async fn real_browser_whep_playback_decodes_real_video() {
 #[tokio::test]
 async fn admin_added_route_starts_its_whep_listener() {
     use multimux::config::{AdminSpec, OutputAuthSpec};
-    use multimux::serve_config_file_with_registry_on_admin;
+    use multimux::serve_config_file_with_registry_on_admin_prebound;
 
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
-    // A pure observation address (bind then drop, never handed to a route):
-    // this test asserts the admin-added WHEP listener is NOT bound before the
-    // add and IS bound after, so it needs a concrete address to probe rather
-    // than a pre-bound socket (which would make "before" already bound).
-    let whep_addr = probe_tcp_addr();
+    // Bind the WHEP listen socket and hand it in via `Config::prebound`
+    // (spliced into the file-loaded config by the `_prebound` entry point) so
+    // the admin-added route consumes it rather than racing to re-bind a probed
+    // address. "Before the add" is then observable as "the pre-bound entry is
+    // still in the map" (nothing consumed it), and "after" as "it was taken".
+    let (whep_addr, whep_listener) = bind_tcp();
+    let mut prebound = multimux::config::PreboundBinds::default();
+    prebound.with_tcp(whep_addr.to_string(), whep_listener);
+    let prebound_observer = prebound.clone();
 
     let config = Config {
         bind: media_addr.to_string(),
@@ -328,11 +322,12 @@ async fn admin_added_route_starts_its_whep_listener() {
     )
     .expect("write config");
 
-    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
+    let server = tokio::spawn(serve_config_file_with_registry_on_admin_prebound(
         media_listener,
         admin_listener,
         cfg_path,
         instant_registry(),
+        prebound,
     ));
 
     // Wait for the admin listener.
@@ -348,10 +343,15 @@ async fn admin_added_route_starts_its_whep_listener() {
         }
     }
 
-    // Before the add, nothing is listening on the WHEP port.
+    // Before the add, the route has not started: the pre-bound WHEP listener is
+    // still in the map, unconsumed.
     assert!(
-        tokio::net::TcpStream::connect(whep_addr).await.is_err(),
-        "nothing may be listening on the WHEP port before the route is added"
+        prebound_observer
+            .tcp
+            .lock()
+            .expect("prebound tcp lock")
+            .contains_key(&whep_addr.to_string()),
+        "nothing may have consumed the WHEP listener before the route is added"
     );
 
     let client = reqwest::Client::new();
@@ -372,12 +372,18 @@ async fn admin_added_route_starts_its_whep_listener() {
         "adding the WHEP route must succeed"
     );
 
-    // After the add, the WHEP listener must actually be bound — the pre-fix
-    // `spawn_route` never spawned it, so this connect would fail forever.
+    // After the add, the route's WHEP egress must have consumed the pre-bound
+    // listener AND be accepting connections — the pre-fix `spawn_route` never
+    // spawned it, so the entry would stay in the map forever.
     {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
         loop {
-            if tokio::net::TcpStream::connect(whep_addr).await.is_ok() {
+            let consumed = !prebound_observer
+                .tcp
+                .lock()
+                .expect("prebound tcp lock")
+                .contains_key(&whep_addr.to_string());
+            if consumed && tokio::net::TcpStream::connect(whep_addr).await.is_ok() {
                 break;
             }
             assert!(

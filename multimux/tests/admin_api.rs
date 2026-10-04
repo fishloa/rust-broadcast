@@ -53,19 +53,6 @@ fn nz(n: usize) -> NonZeroUsize {
     NonZeroUsize::new(n).expect("non-zero capacity")
 }
 
-/// Picks an unused TCP address purely to *observe* whether a route binds it —
-/// never handed to the code under test (which owns its own bind string). These
-/// admin tests drive routes through the JSON reload path, which cannot carry
-/// `Config::prebound`, and they assert a listener is bound/released, so they
-/// need a concrete address to probe. SEE `harness_guard.rs`'s allowlist entry
-/// for the full reason.
-fn probe_tcp_addr() -> SocketAddr {
-    let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("probe tcp port");
-    let addr = listener.local_addr().expect("local addr");
-    drop(listener);
-    addr
-}
-
 /// Waits until `addr` accepts a bare TCP connection — the origin's own
 /// listener bind happens inside the freshly-`tokio::spawn`ed server task, so
 /// a request sent immediately after `tokio::spawn` can race it (especially
@@ -1205,12 +1192,18 @@ fn panicking_router_registry() -> SchemeRegistry {
 async fn a_router_build_panic_does_not_register_the_route() {
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
-    let whep_addr = probe_tcp_addr();
-    let config = admin_config(
+    // Bind the WHEP listen socket ourselves and hand it in via `Config::prebound`
+    // (the admin POST's route consumes `base_config.prebound`) — never a probe
+    // address the route then races to re-bind.
+    let (whep_addr, whep_listener) = bind_tcp();
+    let mut config = admin_config(
         media_addr,
         admin_addr,
         vec![unreachable_rtsp_route("seed", "seed")],
     );
+    config
+        .prebound
+        .with_tcp(whep_addr.to_string(), whep_listener);
     let server = tokio::spawn(serve_with_registry_on_admin(
         media_listener,
         admin_listener,
@@ -1276,8 +1269,9 @@ async fn a_router_build_panic_does_not_register_the_route() {
         "a valid add after the router-build panic must succeed"
     );
 
-    // The leaked WHEP listener must have been released — the port is free.
-    // Bind it ourselves to prove it.
+    // The WHEP listener the route consumed from `Config::prebound` must have
+    // been released with the torn-down route — the port is free. Bind it
+    // ourselves to prove it (no leaked listener holding the socket).
     let rebound = tokio::net::TcpListener::bind(whep_addr).await;
     assert!(
         rebound.is_ok(),
@@ -1300,12 +1294,23 @@ async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
 
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
-    let whep_addr = probe_tcp_addr();
-    let config = admin_config(
+    // Bind the WHEP listen socket and hand it in via `Config::prebound`. The
+    // `spawn-then-fail` factory below makes `spawn_ingest` fail BEFORE
+    // `spawn_whep_outputs` runs, so the route must consume NOTHING from the map
+    // — a consumed entry is exactly the pre-fix leak (the WHEP task took the
+    // socket and kept it bound for a route that was never installed).
+    let (whep_addr, whep_listener) = bind_tcp();
+    let mut config = admin_config(
         media_addr,
         admin_addr,
         vec![unreachable_rtsp_route("seed", "seed")],
     );
+    config
+        .prebound
+        .with_tcp(whep_addr.to_string(), whep_listener);
+    // A clone shares the inner `Arc<Mutex<..>>`, so it observes the same slot
+    // after the (moved) `config` has been consumed by the server.
+    let prebound = config.prebound.clone();
 
     // A factory that spawns a real publisher (so `await_first_trunk`
     // resolves) and then fails, exactly the shape a broken third-party
@@ -1354,24 +1359,18 @@ async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
         resp.status()
     );
 
-    // The WHEP listener must never have been left bound. Poll briefly so a
-    // leaked task has every chance to bind, then prove the port is free.
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
-    loop {
-        match tokio::net::TcpListener::bind(whep_addr).await {
-            Ok(l) => {
-                drop(l);
-                break;
-            }
-            Err(e) => {
-                assert!(
-                    tokio::time::Instant::now() < deadline,
-                    "the WHEP port must be free after a failed add (no leaked listener): {e}"
-                );
-                tokio::time::sleep(Duration::from_millis(20)).await;
-            }
-        }
-    }
+    // The pre-bound WHEP listener must NOT have been consumed: `spawn_ingest`
+    // failed first, so `spawn_whep_outputs` never ran (pre-fix it ran first and
+    // its detached task kept the socket, i.e. the entry was taken and never
+    // released). Untouched == the WHEP egress never started for this route.
+    assert!(
+        prebound
+            .tcp
+            .lock()
+            .expect("prebound tcp lock")
+            .contains_key(&whep_addr.to_string()),
+        "the failed route consumed the pre-bound WHEP listener -- its egress          started for a route that was never installed (leaked task)"
+    );
 
     server.abort();
 }
@@ -1387,44 +1386,69 @@ async fn a_failed_route_does_not_leak_its_push_or_whep_tasks() {
 async fn a_failed_reload_rolls_back_and_leaves_no_bound_port() {
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
-    let whep_addr = probe_tcp_addr();
+    // Bind the WHEP listen socket the reloaded file's "keep" route names and
+    // hand it in via `Config::prebound` (spliced into the file-loaded config by
+    // the `_prebound` entry point) — never a probe address the route re-binds.
+    let (whep_addr, whep_listener) = bind_tcp();
+    let mut prebound = multimux::config::PreboundBinds::default();
+    prebound.with_tcp(whep_addr.to_string(), whep_listener);
 
     let config_path = std::env::temp_dir().join(format!(
         "multimux-admin-api-test-reload-rollback-{}-{}.json",
         std::process::id(),
         admin_addr.port()
     ));
-    let initial = admin_config(media_addr, admin_addr, vec![instant_route("keep")]);
+    let initial = admin_config(media_addr, admin_addr, vec![instant_route("wide")]);
     std::fs::write(
         &config_path,
         serde_json::to_string_pretty(&initial_as_json(&initial)).expect("serialize"),
     )
     .expect("write config");
 
-    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config_path.clone(),
-        instant_registry(),
-    ));
+    // A registry whose "fails-at-build" input factory *passes* standalone
+    // validation but returns `Err` when `spawn_route` invokes it — so the
+    // reload reaches the build loop and actually rolls back (an unknown tag
+    // would instead be rejected at validation, before anything is built).
+    let mut registry = instant_registry();
+    registry.register_input(
+        "fails-at-build",
+        Arc::new(|_ctx: InputCtx| {
+            Err(multimux::MultimuxError::UnknownScheme {
+                kind: "input",
+                tag: "fails-at-build".to_string(),
+            })
+        }) as InputFactory,
+    );
+
+    let server = tokio::spawn(
+        multimux::serve_config_file_with_registry_on_admin_prebound(
+            media_listener,
+            admin_listener,
+            config_path.clone(),
+            registry,
+            prebound,
+        ),
+    );
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
-    wait_until_live(&client, media_addr, "keep").await;
+    wait_until_live(&client, media_addr, "wide").await;
 
-    // A file whose SECOND route is unbuildable (an unknown custom input tag),
-    // but whose FIRST route carries a WHEP output (a real listen socket) that
-    // a pre-fix rollback would leak.
+    // A file that ADDS "keep" (carrying a WHEP output — a real listen socket a
+    // pre-fix rollback would leak) and simultaneously CHANGES "wide" to an
+    // input that fails while being built. Reload builds ADDED routes before
+    // CHANGED ones, so "keep" is spawned (and consumes its pre-bound listener)
+    // before "wide" fails — exercising the real rollback path.
     let mut cfg = initial_as_json(&admin_config(
         media_addr,
         admin_addr,
-        vec![instant_route("keep")],
+        vec![instant_route("wide")],
     ));
     cfg["routes"] = serde_json::json!([
         { "name": "keep",
           "input": { "type": "custom", "type_tag": "instant" },
           "outputs": [ { "whep": { "listen": whep_addr.to_string() } } ] },
-        { "name": "bad",
-          "input": { "type": "custom", "type_tag": "no-such-scheme" },
+        { "name": "wide",
+          "input": { "type": "custom", "type_tag": "fails-at-build" },
           "outputs": [ "llhls" ] },
     ]);
     std::fs::write(
@@ -1448,20 +1472,16 @@ async fn a_failed_reload_rolls_back_and_leaves_no_bound_port() {
         resp.status()
     );
 
-    // The original route still serves.
-    let playlist = wait_until_live(&client, media_addr, "keep").await;
+    // The original route still serves (rollback applied nothing).
+    let playlist = wait_until_live(&client, media_addr, "wide").await;
     assert!(
         playlist.contains("#EXTINF:"),
         "the original route must survive"
     );
 
-    // The rolled-back batch must not have bound its WHEP listener. (Its
-    // spawn is cancelled microseconds after it starts, so this is a
-    // behavioural guarantee rather than a distinct bite for the guard; the
-    // guard's own leak is asserted by
-    // `a_failed_route_does_not_leak_its_push_or_whep_tasks`, which drives a
-    // route whose input publishes a program so the listener would otherwise
-    // bind.)
+    // The rolled-back batch must have released the WHEP listener it consumed
+    // from `Config::prebound` — the port is free. Poll so a torn-down task has
+    // every chance to drop the socket.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(2);
     loop {
         match tokio::net::TcpListener::bind(whep_addr).await {
@@ -1491,8 +1511,14 @@ async fn a_failed_reload_rolls_back_and_leaves_no_bound_port() {
 async fn reloading_a_route_drains_the_displaced_runtime() {
     let (media_addr, media_listener) = bind_tcp();
     let (admin_addr, admin_listener) = bind_tcp();
-    let old_whep = probe_tcp_addr();
-    let new_whep = probe_tcp_addr();
+    // Bind BOTH WHEP listen sockets the two config revisions name and hand
+    // them in via `Config::prebound` — never probe addresses the routes race
+    // to re-bind.
+    let (old_whep, old_listener) = bind_tcp();
+    let (new_whep, new_listener) = bind_tcp();
+    let mut prebound = multimux::config::PreboundBinds::default();
+    prebound.with_tcp(old_whep.to_string(), old_listener);
+    prebound.with_tcp(new_whep.to_string(), new_listener);
 
     let config_path = std::env::temp_dir().join(format!(
         "multimux-admin-api-test-reload-restart-{}-{}.json",
@@ -1515,12 +1541,15 @@ async fn reloading_a_route_drains_the_displaced_runtime() {
     )
     .expect("write config");
 
-    let server = tokio::spawn(serve_config_file_with_registry_on_admin(
-        media_listener,
-        admin_listener,
-        config_path.clone(),
-        instant_registry(),
-    ));
+    let server = tokio::spawn(
+        multimux::serve_config_file_with_registry_on_admin_prebound(
+            media_listener,
+            admin_listener,
+            config_path.clone(),
+            instant_registry(),
+            prebound,
+        ),
+    );
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
 

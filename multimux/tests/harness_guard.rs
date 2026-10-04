@@ -5,14 +5,13 @@
 //!   `free_tcp_addr`/`free_port`). The HTTP media/admin listeners now bind
 //!   `127.0.0.1:0` and hand the live listener in (`serve_*_on`); WHEP/WHIP/
 //!   TS-UDP config-driven routes consume a caller-bound listener/socket via
-//!   `Config::prebound`. The remaining helpers are LINE-PINNED below (the
-//!   exact `fn …` line must match): the RTMP input (its `rtmp-runtime` server
-//!   exposes only `bind(addr)`) and an external `mediamtx` whose config takes
-//!   a numeric port. A separate `probe_*_addr` helper (also line-pinned) is a
-//!   pure *observation* address for a test that asserts a route's own listener
-//!   is bound/released. Note this is a NAME guard, not a behavioural one: it
-//!   stops a new `reserve_*`/`probe_*` helper name from appearing, not a
-//!   rebind written inline.
+//!   `Config::prebound` (including file-defined routes, via
+//!   `serve_config_file_with_registry_on_admin_prebound`). The remaining
+//!   helpers are LINE-PINNED below (the exact `fn …` line must match): the
+//!   RTMP input (its `rtmp-runtime` server exposes only `bind(addr)`) and an
+//!   external `mediamtx` whose config takes a numeric port. Note this is a
+//!   NAME guard, not a behavioural one: it stops a new `reserve_*` helper name
+//!   from appearing, not a rebind written inline.
 //! - **Bare fixed sleeps** in `tests/**` outside the files that predate this
 //!   task. A NEW sleep in a NEW test file fails here, so the pattern does not
 //!   creep back. The detector covers an explicit `tokio::time::sleep(` AND a
@@ -32,11 +31,6 @@ const PORT_HELPERS: &[&str] = &[
     "fn free_tcp_addr",
     "fn free_port",
 ];
-
-/// Pure-observation address helpers (bind then drop, never handed to the code
-/// under test) — allowed only on the exact line pinned in
-/// [`PROBE_HELPER_ALLOW`].
-const PROBE_HELPERS: &[&str] = &["fn probe_tcp_addr", "fn probe_udp_addr"];
 
 /// Files allowed to still define a port helper, with the reason the address is
 /// genuinely unobservable without it (W2b-1 Task 4 deviation). LINE-PINNED: the
@@ -58,25 +52,6 @@ const PORT_HELPER_ALLOW: &[(&str, &str, &str)] = &[
     ),
 ];
 
-/// Files allowed to `probe_tcp_addr`/`probe_udp_addr` — a pure *observation*
-/// address (bind-then-drop), never handed to the code under test, used only to
-/// assert whether a route's own listener is bound/released. LINE-PINNED.
-const PROBE_HELPER_ALLOW: &[(&str, &str, &str)] = &[
-    (
-        "admin_api.rs",
-        "fn probe_tcp_addr() -> SocketAddr",
-        "these admin tests drive routes through the JSON reload path (which cannot \
-         carry `Config::prebound`) and assert the WHEP listener is bound/released, so \
-         they need a concrete address to probe — not a port handed to a route",
-    ),
-    (
-        "whep_egress.rs",
-        "fn probe_tcp_addr() -> SocketAddr",
-        "`admin_added_route_starts_its_whep_listener` asserts the port is unbound \
-         before the admin add and bound after it, so the address must be a probe, not \
-         a pre-bound socket",
-    ),
-];
 
 /// Files allowed to contain a bare `tokio::time::sleep(` / `thread::sleep(`.
 /// Each predates the W2b-1 harness work; a NEW file (or a new line in a file
@@ -137,11 +112,6 @@ fn no_new_reserve_then_rebind_port_helpers() {
         // is pinned below, so a NEW reserve helper added to an allowlisted file
         // (a second `reserve_udp_addr`) still trips the guard.
         let allowed = PORT_HELPER_ALLOW.iter().filter(|(f, ..)| f == &file);
-        // A `probe_*_addr` helper is a *pure observation* address (bind then
-        // drop, never handed to the code under test): only the pinned
-        // `PROBE_HELPER_ALLOW` line may define one, so the probe pattern cannot
-        // creep in as a disguised reserve-then-rebind.
-        let probe_allowed = PROBE_HELPER_ALLOW.iter().filter(|(f, ..)| f == &file);
         for (n, line) in src.lines().enumerate() {
             if line.trim_start().starts_with("//") {
                 continue;
@@ -149,15 +119,6 @@ fn no_new_reserve_then_rebind_port_helpers() {
             for needle in PORT_HELPERS {
                 if line.contains(needle)
                     && !allowed.clone().any(|(_, marker, _)| line.contains(marker))
-                {
-                    hits.push(format!("{file}:{}: {}", n + 1, needle));
-                }
-            }
-            for needle in PROBE_HELPERS {
-                if line.contains(needle)
-                    && !probe_allowed
-                        .clone()
-                        .any(|(_, marker, _)| line.contains(marker))
                 {
                     hits.push(format!("{file}:{}: {}", n + 1, needle));
                 }

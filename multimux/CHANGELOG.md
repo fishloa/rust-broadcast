@@ -62,7 +62,10 @@
   listener/socket; and `source::whip::WhipRoute::with_listener`,
   `origin::serve_with_registry_on`/`serve_with_registry_on_admin`/
   `serve_config_file_with_registry_on_admin`, and `origin::PreboundListeners`
-  take pre-bound listeners (SP7.1).
+  take pre-bound listeners (SP7.1). A `test-seams`-only
+  `origin::serve_config_file_with_registry_on_admin_prebound` additionally
+  threads `Config::prebound` into a *file-loaded* config, so a route defined only
+  in the config file can also consume a caller-bound socket.
 - **Test-only WHIP/WHEP entry points moved behind the non-default `test-hooks`
   feature.** No longer part of the default published API (enabling `test-hooks`
   restores them): `output::whep::serve_whep_run_for_test`, `WHEP_TEST_OFFER`,

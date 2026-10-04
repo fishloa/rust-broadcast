@@ -64,6 +64,11 @@ pub use origin::serve_config_file_with_registry;
 /// See [`origin::serve_config_file_with_registry_on_admin`] — the port-0
 /// (SP7.1) variant: a caller binds the listeners and passes them in.
 pub use origin::serve_config_file_with_registry_on_admin;
+/// See [`origin::serve_config_file_with_registry_on_admin_prebound`] — the
+/// same, plus caller-bound route sockets for a *file-defined* route
+/// (`test-seams` only).
+#[cfg(feature = "test-seams")]
+pub use origin::serve_config_file_with_registry_on_admin_prebound;
 pub use origin::serve_with_registry;
 /// See [`origin::serve_with_registry_on`] — the port-0 (SP7.1) variant.
 pub use origin::serve_with_registry_on;
