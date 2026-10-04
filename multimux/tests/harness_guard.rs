@@ -119,9 +119,7 @@ fn no_new_reserve_then_rebind_port_helpers() {
             continue;
         }
         for needle in PORT_HELPERS {
-            if src.contains(needle)
-                && !PORT_HELPER_ALLOW.iter().any(|(f, _)| f == &file)
-            {
+            if src.contains(needle) && !PORT_HELPER_ALLOW.iter().any(|(f, _)| f == &file) {
                 hits.push(format!("{file}: {needle}"));
             }
         }

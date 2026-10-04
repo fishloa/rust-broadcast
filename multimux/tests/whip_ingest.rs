@@ -206,7 +206,11 @@ async fn real_browser_whip_publish_produces_llhls_segments() {
         ..Config::default()
     };
 
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
 
     let whip_url = format!("http://{whip_addr}/whip");
     let whip_url_for_check = whip_url.clone();
@@ -279,7 +283,11 @@ async fn real_browser_whip_publish_after_the_connect_budget_still_produces_segme
         ..Config::default()
     };
 
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
 
     // Real elapsed time since the route started is the thing under test, and
     // `serve_with_registry` offers no clock to inject, so this real-browser

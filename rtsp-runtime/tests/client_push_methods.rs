@@ -100,10 +100,13 @@ async fn a_stalled_interleaved_send_times_out_at_the_write_bound() {
         AsyncRtspClient::with_stream_timeouts(client_io, ClientSession::new(), timeouts);
     // Wrapped in an outer virtual-time bound so a MISSING write bound fails
     // with a clear message instead of hanging the suite.
-    let err = tokio::time::timeout(Duration::from_secs(5), client.send_interleaved(0, &[0u8; 64]))
-        .await
-        .expect("the stalled send must fail at the write bound, not hang")
-        .expect_err("the stalled send must fail at the write bound");
+    let err = tokio::time::timeout(
+        Duration::from_secs(5),
+        client.send_interleaved(0, &[0u8; 64]),
+    )
+    .await
+    .expect("the stalled send must fail at the write bound, not hang")
+    .expect_err("the stalled send must fail at the write bound");
     assert!(
         matches!(err, rtsp_runtime::Error::Timeout { what: "write" }),
         "got {err:?}"

@@ -90,7 +90,11 @@ async fn file_route_serves_real_media_segments() {
     let (bind_addr, bind_listener) = bind_tcp();
     let config = file_config(bind_addr, fixture_path(), false);
 
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
 
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
@@ -164,7 +168,11 @@ fn segment_uris(playlist: &str) -> Vec<String> {
 async fn file_route_loop_true_keeps_serving() {
     let (bind, bind_listener) = bind_tcp();
     let config = file_config(bind, fixture_path(), true);
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 
@@ -234,7 +242,11 @@ fn total_extinf_secs(playlist: &str) -> f64 {
 async fn file_route_loop_false_stops() {
     let (bind, bind_listener) = bind_tcp();
     let config = file_config(bind, fixture_path(), false);
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 
@@ -311,7 +323,11 @@ async fn file_route_loop_false_stops() {
 async fn file_route_loop_true_paces_near_realtime() {
     let (bind, bind_listener) = bind_tcp();
     let config = file_config(bind, fixture_path(), true);
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 
@@ -384,7 +400,11 @@ async fn file_route_loop_true_paces_near_realtime() {
 async fn file_route_loop_true_paces_past_first_pass() {
     let (bind, bind_listener) = bind_tcp();
     let config = file_config(bind, fixture_path(), true);
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind}/cam/media.m3u8");
 

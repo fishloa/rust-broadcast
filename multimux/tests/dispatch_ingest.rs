@@ -224,7 +224,11 @@ async fn ts_udp_dispatch_serves_real_media_end_to_end() {
         },
     );
 
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
 
     let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
     // Resend the whole fixture on a loop (rather than once) so the (async,
@@ -320,7 +324,11 @@ async fn ts_http_dispatch_serves_real_media_end_to_end() {
             auth: None,
         },
     );
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
 
     let client = reqwest::Client::new();
     let playlist_url = format!("http://{bind_addr}/cam/media.m3u8");
@@ -380,7 +388,11 @@ async fn rtmp_dispatch_serves_real_media_end_to_end() {
             stream_key: None,
         },
     );
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
 
     let fixture = std::fs::read(rtmp_fixture_path()).expect("rtmp fixture must exist");
     let publisher = tokio::spawn(async move {
@@ -1022,7 +1034,11 @@ async fn dash_manifest_served_without_explicit_set_track_specs() {
     );
     config.routes[0].outputs = vec![OutputKind::Dash];
 
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
 
     let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
     let stop = Arc::new(AtomicBool::new(false));
@@ -1085,7 +1101,11 @@ async fn ll_dash_manifest_served_without_explicit_set_track_specs() {
     );
     config.routes[0].outputs = vec![OutputKind::LlDash];
 
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
 
     let ts_bytes = std::fs::read(fixture_path()).expect("h264_aac.ts fixture must exist");
     let stop = Arc::new(AtomicBool::new(false));
@@ -1148,7 +1168,11 @@ async fn ts_udp_dash_manifest_returns_503_before_tracks_are_known() {
     );
     config.routes[0].outputs = vec![OutputKind::Dash];
 
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
 
     // Deliberately send nothing — the route binds its UDP socket but
     // never receives a single datagram, so no IngestSession ever

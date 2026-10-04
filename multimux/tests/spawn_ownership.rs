@@ -61,7 +61,10 @@ async fn cancelling_a_whep_route_drains_its_session_tracker_and_releases_the_por
         drained.is_ok(),
         "run_whep must return after cancel drains its tracked tasks"
     );
-    assert!(sessions.is_empty(), "the tracker must be drained after cancel");
+    assert!(
+        sessions.is_empty(),
+        "the tracker must be drained after cancel"
+    );
 
     // And the port is free again.
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);

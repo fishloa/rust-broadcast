@@ -1389,8 +1389,14 @@ pub async fn run_whep(
     cancel: CancellationToken,
     output_auth: Option<Arc<Verifier>>,
 ) {
-    run_whep_with_tracker(route, trunk, cancel, output_auth, tokio_util::task::TaskTracker::new())
-        .await
+    run_whep_with_tracker(
+        route,
+        trunk,
+        cancel,
+        output_auth,
+        tokio_util::task::TaskTracker::new(),
+    )
+    .await
 }
 
 /// [`run_whep`] with a caller-supplied session [`TaskTracker`] (SP1.4): every

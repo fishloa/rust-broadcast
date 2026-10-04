@@ -1408,10 +1408,7 @@ pub async fn serve_with_registry_on(
         config,
         registry,
         None,
-        Some(PreboundListeners {
-            media,
-            admin: None,
-        }),
+        Some(PreboundListeners { media, admin: None }),
     )
     .await
 }
@@ -4304,14 +4301,8 @@ mod tests {
                 config.window_segments,
             ));
 
-            let handle = spawn_ingest(
-                &route,
-                store.clone(),
-                &config,
-                &registry,
-                cancel.clone(),
-            )
-            .unwrap_or_else(|e| panic!("spawn_ingest must accept {spec:?}, got {e}"));
+            let handle = spawn_ingest(&route, store.clone(), &config, &registry, cancel.clone())
+                .unwrap_or_else(|e| panic!("spawn_ingest must accept {spec:?}, got {e}"));
 
             // No `.await` has happened on this task yet since `store` was
             // constructed, so the spawned supervisor task has not had a

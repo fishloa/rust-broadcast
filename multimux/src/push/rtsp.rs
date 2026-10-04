@@ -13,7 +13,7 @@
 //!   (previously hard-coded to `rtsp://localhost/push`);
 //! - userinfo credentials in the URL are honoured (`config.credentials`
 //!   still wins when both are given, matching
-//!   [`crate::source::http_auth::resolve_credentials`]'s precedence);
+//!   `crate::source::http_auth::resolve_credentials`' precedence);
 //! - every response status is checked; a non-2xx now fails `connect`/`setup`
 //!   instead of being silently ignored;
 //! - the SDP carries a session-level `c=` line (RFC 4566 requires one

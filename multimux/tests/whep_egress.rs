@@ -190,7 +190,11 @@ async fn real_browser_whep_playback_decodes_real_video() {
         ..Config::default()
     };
 
-    let server = tokio::spawn(serve_with_registry_on(bind_listener, config, SchemeRegistry::new()));
+    let server = tokio::spawn(serve_with_registry_on(
+        bind_listener,
+        config,
+        SchemeRegistry::new(),
+    ));
 
     let whip_url = format!("http://{whip_addr}/whip");
     let whep_url = format!("http://{whep_addr}/whep");

@@ -14,10 +14,10 @@ pub(crate) const REDACTED: &str = "<redacted>";
 /// `"rtsp://user:secret@host/s"` becomes `"rtsp://***@host/s"`.
 ///
 /// A URL the `url` crate parses is redacted through it
-/// ([`Url::set_username`]/[`set_password`(None)], then re-serialized), so an
+/// (`Url::set_username`/`set_password(None)`, then re-serialized), so an
 /// IPv6 host stays bracketed and every component is handled per RFC 3986.
 /// A URL that fails to parse (the common case for a connect-time error
-/// message) falls back to [`redact_unparseable_userinfo`], a masking-only
+/// message) falls back to `redact_unparseable_userinfo`, a masking-only
 /// text scrub of the `@`-delimited credential prefix. If there is nothing to
 /// redact, the string is returned unchanged.
 pub fn redact_url(raw: &str) -> String {
@@ -69,7 +69,7 @@ fn redact_unparseable_userinfo(raw: &str) -> String {
 ///
 /// A parseable URL goes through the `url` crate (host/port from the parsed
 /// authority, never a hand split). A URL the parser rejects falls back to
-/// [`redact_unparseable_destination`], a MASKING-ONLY scrub that keeps no host.
+/// `redact_unparseable_destination`, a MASKING-ONLY scrub that keeps no host.
 pub fn redact_destination(raw: &str) -> String {
     if let Ok(mut url) = url::Url::parse(raw) {
         let scheme = format!("{}://", url.scheme());
@@ -241,7 +241,10 @@ mod tests {
     #[test]
     fn masking_fallbacks_do_not_extract_the_host() {
         let src = include_str!("redact.rs");
-        for fn_name in ["fn redact_unparseable_userinfo", "fn redact_unparseable_destination"] {
+        for fn_name in [
+            "fn redact_unparseable_userinfo",
+            "fn redact_unparseable_destination",
+        ] {
             let start = src.find(fn_name).expect("fallback fn present");
             let body = &src[start..];
             let end = body.find("\n}\n").expect("fallback fn closes");

@@ -259,7 +259,7 @@ fn record_reconnect(name: &str) {
 ///
 /// [`Backoff`] runs between attempts, reset only once an attempt actually
 /// reached [`HealthState::Live`]; `record_route_up`/`record_reconnect` fire on
-/// every transition; a shutdown [`CancellationToken`] is checked before
+/// every transition; a shutdown `CancellationToken` is checked before
 /// each attempt and around the backoff sleep so it cancels promptly.
 ///
 /// # Why this reads `route_handle.health()` back, rather than being told

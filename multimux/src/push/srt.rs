@@ -124,9 +124,7 @@ fn parse_srt_url(url: &str) -> Result<(String, SrtUrlOverrides), srt_runtime::Er
 
 /// `#[doc(hidden)]` test seam over [`parse_srt_url`] (the real push path).
 #[doc(hidden)]
-pub fn parse_srt_url_for_test(
-    url: &str,
-) -> Result<(String, SrtUrlOverrides), srt_runtime::Error> {
+pub fn parse_srt_url_for_test(url: &str) -> Result<(String, SrtUrlOverrides), srt_runtime::Error> {
     parse_srt_url(url)
 }
 

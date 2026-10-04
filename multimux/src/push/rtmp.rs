@@ -353,10 +353,8 @@ impl RtmpTransport {
         // `format!("rtmp://{host}:{port}/{app}")` produced
         // `rtmp://::1:1935/live` for an IPv6 address (defect 8). The `app`/
         // `stream_key` come from the config, not the URL path.
-        let target =
-            RtmpTarget::from_parts(url, &config.app, &config.stream_key).map_err(|e| {
-                RtmpPushError::Connect(format!("bad rtmp URL: {e}"))
-            })?;
+        let target = RtmpTarget::from_parts(url, &config.app, &config.stream_key)
+            .map_err(|e| RtmpPushError::Connect(format!("bad rtmp URL: {e}")))?;
         let addr = format!("{}:{}", target.host, target.port);
 
         let mut stream = TcpStream::connect(&addr)

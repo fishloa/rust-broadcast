@@ -1115,7 +1115,9 @@ fn validate_host_port(addr: &str) -> Result<()> {
     }
     match url.port() {
         Some(_) => Ok(()),
-        None => Err(invalid(format!("bad host:port {addr:?}: missing \":port\""))),
+        None => Err(invalid(format!(
+            "bad host:port {addr:?}: missing \":port\""
+        ))),
     }
 }
 
