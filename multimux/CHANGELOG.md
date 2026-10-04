@@ -2,6 +2,51 @@
 
 ## [Unreleased]
 
+### Changed (breaking) — W2b-1
+- **A single `CancellationToken` replaces the `watch<bool>` shutdown.** The
+  public `watch<bool>` graceful-shutdown signal is removed:
+  `origin::supervisor::supervise_driver` now takes
+  `cancel: tokio_util::sync::CancellationToken`, and `registry::InputCtx` exposes
+  `cancel: CancellationToken` (was `shutdown_rx: watch::Receiver<bool>`). A
+  `Custom` input factory watches `ctx.cancel` instead of a `watch` receiver.
+  `multimux-cli` needs no change (`serve`/`serve_config_file` already translate
+  Ctrl-C/SIGTERM into the token).
+
+### Changed — W2b-1
+- **Every URL is built with the `url` crate.** `push::rtsp`'s control URL uses
+  `Url::path_segments_mut`, `push::rtmp`'s `tcUrl` comes from
+  `rtmp_runtime::target::RtmpTarget` (IPv6 hosts stay bracketed), `push::srt`'s
+  authority parse uses `url`/`SocketAddr`, and `config::validate_host_port`
+  validates through `url`. The SRT *query* split stays manual (a Haivision
+  `streamid=#!::r=…` value contains a `#` a `Url` parser would cut).
+- **Dates and durations go through `jiff`.** `availabilityStartTime` (DASH and
+  LL-DASH), the DASH `xs:duration` attributes (`@minimumUpdatePeriod`,
+  `@timeShiftBufferDepth`), the DVR EIT start time, and the DASH-pull
+  `parse_iso8601_utc`/`now_unix_secs` use `jiff` instead of hand-rolled
+  `civil_from_days`/manual parsing. The whole-second `availabilityStartTime`
+  spelling is unchanged (pinned by the `dash_mpd`/`ll_dash_mpd` goldens).
+- **The test harness binds `127.0.0.1:0` and passes the live listener.** New
+  `serve_with_registry_on`/`serve_with_registry_on_admin`/
+  `serve_config_file_with_registry_on_admin` entry points take a pre-bound
+  listener, so the reserve-then-rebind loops are gone for the HTTP media/admin
+  listeners. `multimux/tests/support/bounded.rs` uses `wait-timeout`
+  (`ChildExt::wait_timeout`) instead of a `try_wait` + `thread::sleep` poll.
+- A push's connect, its reconnect backoff, and its listen-wait are raced against
+  the cancellation token; the no-free-waiter-slot branch parks on
+  `media_plane::trunk::Trunk::waiter_slot_freed` instead of a 50 ms sleep-poll
+  (which needed the additive `Trunk::waiter_slot_freed`, and `WaiterSlot::drop`
+  now notifies it).
+
+### Fixed — W2b-1
+- **A push reconnect no longer ignores shutdown** (defect 5): cancelling during
+  the connect or the backoff sleep returns promptly.
+- **A route's WHEP session tasks are owned by the route's `TaskTracker`**
+  (defect 3): cancelling the route drains them and releases the listen port.
+- **Redaction no longer echoes the host of a URL the parser rejects.** The
+  `url`-rejected fallback is masking-only (the whole authority collapses to the
+  mask token); the previous `rsplit_once('@')` keep-host shape is deleted.
+
+
 ### Changed
 - Dependency bumps, non-breaking: `md-5` 0.11 and `base64` 0.23 (Digest/Basic auth output unchanged), plus semver-compatible lock updates (`tokio-rustls` 0.26.6, `rustls` 0.23.45).
 - `rtc-dtls` is added as a **dev-dependency** (for the WHIP loopback tests that

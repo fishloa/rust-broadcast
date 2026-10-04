@@ -13,6 +13,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `sdp-types` 0.1 -> 0.2 (used only by the tests; not in the public API).
 
 ### Added
+- **`AsyncRtspClient::{announce, record, send_interleaved}`** — `ANNOUNCE` (with
+  an SDP body), `RECORD`, and a client-side interleaved (`$`-framed) media send
+  (the mirror of the server's `AsyncRtspServer::send_interleaved`), each built on
+  the existing sans-IO `ClientSession::announce`/`record` and bounded by
+  `RtspTimeouts::write`. These unblock the RTSP pusher (W2b-1 Task 6).
 - `ClientSession::{mark_activity, poll_timeout, handle_timeout}`: keepalive deadline (half the `Session` timeout, default 60 s per RFC 2326 §12.37) driven by the adapter (`recv_interleaved` sends the `GET_PARAMETER`). Only requests written count as activity, so a busy interleaved stream does not postpone the keepalive. `ClientSession::has_buffered_input`; `recv_interleaved` now returns an error (not a clean end) when the peer closes mid-frame.
 - `ClientSession::peek_next_cseq()`: the `CSeq` the next request-builder call will assign, so an
   IO adapter can capture which response it must wait for before building the request (#1088).

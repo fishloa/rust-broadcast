@@ -13,6 +13,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Tests observe a parked `StallIngest` publisher directly (test-only probe) instead of sleeping or waiting a fixed 200 ms.
 
 ### Added
+- `Trunk::waiter_slot_freed() -> Option<SlotFreedFuture>` — resolves the next
+  time a `Trunk::listen` waiter slot is freed (its `ProgressListener` dropped),
+  or `None` when a slot is free now. Lets a caller that got `None` from
+  `listen()` park on the event (raced with its own cancellation) instead of
+  sleep-polling for a slot; `WaiterSlot::drop` now notifies it (W2b-1 B10b).
+  `event_listener::EventListener` is re-exported as `SlotFreedFuture` so the
+  return type is nameable without a direct dependency.
 - `SegmentWriter::try_publish_segment` — non-blocking alternative to
   `SegmentWriter::publish_segment` for the one case that can stall
   (`ArchiveOverrun::StallIngest`); returns `Err` instead of blocking or
