@@ -368,35 +368,47 @@ mod tests {
     /// pre-bound one. Pins the documented reconnect-after-take behaviour.
     #[tokio::test]
     async fn with_socket_is_consumed_once_then_reconnect_rebinds_addr() {
-        use std::os::fd::AsRawFd;
-
         let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
         let addr = socket.local_addr().expect("local addr");
         let route = TsUdpRoute::with_socket("cam-ts", socket);
+        // The pre-bound socket is present until the first `bind` takes it.
+        assert!(
+            route
+                .prebound
+                .lock()
+                .expect("prebound lock")
+                .as_ref()
+                .is_some(),
+            "with_socket must install the caller's socket"
+        );
 
-        // First bind: the caller's own pre-bound socket (same address).
+        // First bind: the caller's own pre-bound socket (same address), and the
+        // slot is now empty (consumed once).
         let first = bind(&route).await.expect("first bind");
         assert_eq!(
             first.local_addr().expect("addr"),
             addr,
             "the first bind must return the caller's pre-bound socket"
         );
-        let first_ptr = first.as_raw_fd();
+        assert!(
+            route
+                .prebound
+                .lock()
+                .expect("prebound lock")
+                .as_ref()
+                .is_none(),
+            "the pre-bound socket must be consumed by the first bind"
+        );
         // Drop the first socket so the port is free for the reconnect's bind.
         drop(first);
 
         // Second bind (reconnect): the pre-bound socket is gone, so the route
-        // re-binds its own `addr` — a different, freshly bound socket object.
+        // re-binds its own `addr`.
         let second = bind(&route).await.expect("second bind");
         assert_eq!(
             second.local_addr().expect("addr"),
             addr,
             "the reconnect must re-bind the configured addr"
-        );
-        let second_ptr = second.as_raw_fd();
-        assert_ne!(
-            first_ptr, second_ptr,
-            "the reconnect must not hand back the same pre-bound socket"
         );
     }
 
