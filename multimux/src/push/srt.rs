@@ -41,10 +41,13 @@ impl std::fmt::Debug for SrtTransport {
 }
 
 /// Query-string overrides parsed from an `srt://` URL.
+#[doc(hidden)]
 #[derive(Debug, Default, PartialEq, Eq)]
-struct SrtUrlOverrides {
-    stream_id: Option<String>,
-    latency_ms: Option<u16>,
+pub struct SrtUrlOverrides {
+    /// The opaque `streamid` query value (percent-decoded), if present.
+    pub stream_id: Option<String>,
+    /// The `latency` query value in milliseconds, if present.
+    pub latency_ms: Option<u16>,
 }
 
 /// Parse an SRT URL into the `host:port` to dial and its query-string
@@ -119,71 +122,42 @@ fn parse_srt_url(url: &str) -> Result<(String, SrtUrlOverrides), srt_runtime::Er
     Ok((addr, overrides))
 }
 
+/// `#[doc(hidden)]` test seam over [`parse_srt_url`] (the real push path).
+#[doc(hidden)]
+pub fn parse_srt_url_for_test(
+    url: &str,
+) -> Result<(String, SrtUrlOverrides), srt_runtime::Error> {
+    parse_srt_url(url)
+}
+
 /// Normalise an SRT authority into a `host:port` string, or `None` if it has
 /// no host. Accepts `host`, `host:port`, `[v6]`, `[v6]:port`, and a bare
 /// `v6` literal (bracketed for `ToSocketAddrs`); defaults the port.
+///
+/// The split is done by the `url` crate (via a throwaway `srt://` prefix), so
+/// a bracketed IPv6 literal is handled by the parser rather than by hand. A
+/// **bare** IPv6 literal (`::1:9000`) fails `Url::parse` — the address is
+/// ambiguous (is `9000` a port or the last group?), so the operator must
+/// bracket it to disambiguate.
 fn normalize_srt_authority(authority: &str) -> Option<String> {
     if authority.is_empty() {
         return None;
     }
-    // Bracketed IPv6: `[::1]` or `[::1]:9000`.
-    if let Some(rest) = authority.strip_prefix('[') {
-        let (host, after) = rest.split_once(']')?;
-        if host.is_empty() {
-            return None;
-        }
-        let port = match after.strip_prefix(':') {
-            Some(p) => p.parse::<u16>().ok()?,
-            None if after.is_empty() => DEFAULT_SRT_PORT,
-            None => return None,
-        };
-        return Some(format!("[{host}]:{port}"));
-    }
-    // A bare IPv6 literal (2+ colons, unbracketed) is **ambiguous** — the
-    // last group could be a port or part of the address — so it is rejected:
-    // the operator must bracket it () to disambiguate.
-    if authority.matches(':').count() >= 2 {
-        return None;
-    }
-    // `host` or `host:port`.
-    match authority.rsplit_once(':') {
-        Some((host, port)) => {
-            if host.is_empty() {
-                return None;
-            }
-            let port = port.parse::<u16>().ok()?;
-            Some(format!("{host}:{port}"))
-        }
-        None => Some(format!("{authority}:{DEFAULT_SRT_PORT}")),
-    }
+    let url = url::Url::parse(&format!("srt://{authority}")).ok()?;
+    let host = url.host()?;
+    let port = url.port().unwrap_or(DEFAULT_SRT_PORT);
+    Some(format!("{host}:{port}"))
 }
 
-/// Percent-decode an SRT query value (`%XX` → byte), leaving every other
-/// byte as-is. A Haivision `streamid=#!::r=…` value is typically left
-/// unencoded and passes through literally; a percent-encoded one (e.g. a `%23`
-/// for `#`, or `%2C` for a comma) is decoded. A stray `%` with no valid hex
-/// pair is kept literal rather than dropped.
+/// Percent-decode an SRT query value (`%XX` → byte). A Haivision
+/// `streamid=#!::r=…` value is typically left unencoded and passes through
+/// literally; a percent-encoded one (e.g. a `%23` for `#`, or `%2C` for a
+/// comma) is decoded. Delegates to `percent_encoding`, which leaves a stray
+/// `%` with no valid hex pair literal rather than dropping it.
 fn percent_decode(value: &str) -> String {
-    let bytes = value.as_bytes();
-    let mut out = Vec::with_capacity(bytes.len());
-    let mut i = 0;
-    while i < bytes.len() {
-        if bytes[i] == b'%' && i + 2 < bytes.len() {
-            let hi = (bytes[i + 1] as char).to_digit(16);
-            let lo = (bytes[i + 2] as char).to_digit(16);
-            if let (Some(hi), Some(lo)) = (hi, lo) {
-                // Both nibbles are 0..=15, so the byte is always in range.
-                if let Ok(byte) = u8::try_from(hi * 16 + lo) {
-                    out.push(byte);
-                    i += 3;
-                    continue;
-                }
-            }
-        }
-        out.push(bytes[i]);
-        i += 1;
-    }
-    String::from_utf8_lossy(&out).into_owned()
+    percent_encoding::percent_decode_str(value)
+        .decode_utf8_lossy()
+        .into_owned()
 }
 
 /// Upper bound on an SRT `latency` query value, milliseconds

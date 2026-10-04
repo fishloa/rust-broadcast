@@ -37,7 +37,7 @@ pub mod origin;
 pub mod output;
 pub mod prometheus;
 pub mod push;
-mod redact;
+pub mod redact;
 pub mod registry;
 pub mod route;
 pub mod source;

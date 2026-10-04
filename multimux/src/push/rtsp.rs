@@ -116,11 +116,7 @@ impl PushTransport for RtspTransport {
             client = client.with_credentials(creds);
         }
 
-        let control_url = if clean_url.ends_with('/') {
-            format!("{clean_url}trackID=0")
-        } else {
-            format!("{clean_url}/trackID=0")
-        };
+        let control_url = control_url(&parsed);
 
         let mut transport = Self {
             stream: Some(stream),
@@ -311,6 +307,30 @@ fn credentials_from_url(url: &url::Url) -> Result<Option<Credentials>, RtspPushE
         None => String::new(),
     };
     Ok(Some(Credentials::new(username, password)))
+}
+
+/// The RTSP presentation control URL: the base URL with `trackID=0` appended
+/// as a final path segment (RFC 2326 §10.5 `control`). Built via
+/// `Url::path_segments_mut` so a trailing slash never doubles and an IPv6 host
+/// stays bracketed.
+fn control_url(base: &url::Url) -> String {
+    let mut url = base.clone();
+    {
+        let mut segs = url
+            .path_segments_mut()
+            .expect("an rtsp URL with an authority is not cannot-be-a-base");
+        segs.pop_if_empty();
+        segs.push("trackID=0");
+    }
+    url.to_string()
+}
+
+/// `#[doc(hidden)]` test seam: parse `url` and return [`control_url`], so the
+/// URL-construction test exercises the real path.
+#[doc(hidden)]
+pub fn control_url_for_test(url: &str) -> String {
+    let parsed = url::Url::parse(url).expect("valid rtsp URL");
+    control_url(&parsed)
 }
 
 /// Percent-decodes a URL userinfo component (RFC 3986 §2.1) to UTF-8. The

@@ -14,6 +14,7 @@
 use crate::push::{PushTransport, SendMediaError};
 use rtmp_runtime::amf0::Amf0Value;
 use rtmp_runtime::client::{ClientConfig, ClientSession};
+use rtmp_runtime::target::RtmpTarget;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use transmux::CodecConfig;
@@ -347,16 +348,22 @@ impl RtmpTransport {
         url: &str,
         config: &RtmpTransportConfig,
     ) -> Result<Self, RtmpPushError> {
-        let parsed = url::Url::parse(url).map_err(|e| RtmpPushError::Connect(e.to_string()))?;
-        let host = parsed.host_str().unwrap_or("127.0.0.1");
-        let port = parsed.port().unwrap_or(1935);
-        let addr = format!("{host}:{port}");
+        // Host, port and the (IPv6-bracketed) `tcUrl` come from `RtmpTarget`,
+        // which builds tcUrl through the `url` crate — the hand-rolled
+        // `format!("rtmp://{host}:{port}/{app}")` produced
+        // `rtmp://::1:1935/live` for an IPv6 address (defect 8). The `app`/
+        // `stream_key` come from the config, not the URL path.
+        let target =
+            RtmpTarget::from_parts(url, &config.app, &config.stream_key).map_err(|e| {
+                RtmpPushError::Connect(format!("bad rtmp URL: {e}"))
+            })?;
+        let addr = format!("{}:{}", target.host, target.port);
 
         let mut stream = TcpStream::connect(&addr)
             .await
             .map_err(|e| RtmpPushError::Connect(e.to_string()))?;
 
-        let tc_url = format!("rtmp://{host}:{port}/{}", config.app);
+        let tc_url = target.tc_url;
         let mut client_config = ClientConfig::default();
         client_config.app = config.app.clone();
         client_config.stream_key = config.stream_key.clone();
@@ -409,6 +416,15 @@ pub enum RtmpPushError {
     /// I/O error.
     #[error("RTMP I/O error: {0}")]
     Io(#[from] std::io::Error),
+}
+
+/// `#[doc(hidden)]` test seam: parse `url` through [`RtmpTarget`] (the real
+/// path the connect uses) and return its `tcUrl`. Keeps an IPv6 host bracketed.
+#[doc(hidden)]
+pub fn tc_url_for_test(url: &str) -> Result<String, String> {
+    RtmpTarget::parse(url)
+        .map(|t| t.tc_url)
+        .map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

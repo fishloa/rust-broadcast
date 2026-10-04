@@ -41,9 +41,9 @@
 //! as routes are added/removed at runtime.
 
 mod egress;
-mod rtmp;
-mod rtsp;
-mod srt;
+pub mod rtmp;
+pub mod rtsp;
+pub mod srt;
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};

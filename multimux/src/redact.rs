@@ -13,14 +13,38 @@ pub(crate) const REDACTED: &str = "<redacted>";
 /// `***@`, leaving the scheme, host, and path intact — e.g.
 /// `"rtsp://user:secret@host/s"` becomes `"rtsp://***@host/s"`.
 ///
-/// Operates purely on the text (not a parsed [`url::Url`]), so it works
-/// equally on a URL that failed to parse in the first place (the common case
-/// for a connect-time error message) and one that parsed fine. Only the
-/// authority component (between `://` and the next `/`) is searched for
-/// `@`, so a literal `@` appearing later — in the path or query — is never
-/// mistaken for a userinfo separator. If there is no `://` or no `@` in the
-/// authority, the string is returned unchanged (nothing to redact).
-pub(crate) fn redact_url(raw: &str) -> String {
+/// A URL the `url` crate parses is redacted through it
+/// ([`Url::set_username`]/[`set_password`(None)], then re-serialized), so an
+/// IPv6 host stays bracketed and every component is handled per RFC 3986.
+/// A URL that fails to parse (the common case for a connect-time error
+/// message) falls back to [`redact_unparseable_userinfo`], a masking-only
+/// text scrub of the `@`-delimited credential prefix. If there is nothing to
+/// redact, the string is returned unchanged.
+pub fn redact_url(raw: &str) -> String {
+    if let Ok(mut url) = url::Url::parse(raw) {
+        if url.username().is_empty() && url.password().is_none() {
+            return raw.to_string();
+        }
+        // Keep the `***@` marker (the pre-url text scrub wrote it too), so a
+        // reader sees a credential WAS present and was redacted, rather than
+        // a bare host that looks like the URL never carried one.
+        let _ = url.set_username("***");
+        let _ = url.set_password(None);
+        return url.to_string();
+    }
+    redact_unparseable_userinfo(raw)
+}
+
+/// The masking-only fallback for a URL-shaped string the `url` parser rejects
+/// (redact.rs's documented contract: redaction must also work on a URL that
+/// "failed to parse in the first place"). This is a spec §9 documented
+/// exception, allowlisted by name in the no-hand-roll guard.
+///
+/// The credential prefix before the authority's `@` becomes `***@`; the host
+/// is neither extracted nor echoed (the pre-migration `rsplit_once('@')`
+/// keep-host shape is deleted). No `://` or no `@` in the authority leaves
+/// the string unchanged.
+fn redact_unparseable_userinfo(raw: &str) -> String {
     let Some(scheme_end) = raw.find("://") else {
         return raw.to_string();
     };
@@ -42,7 +66,43 @@ pub(crate) fn redact_url(raw: &str) -> String {
 /// (`rtmp://host/app/STREAMKEY`) or an SRT `streamid`/`passphrase` query.
 /// The userinfo (`user:pass@`) is dropped entirely. Text with no `://` is
 /// returned as `<redacted>` (a bare token could itself be the secret).
-pub(crate) fn redact_destination(raw: &str) -> String {
+///
+/// A parseable URL goes through the `url` crate (host/port from the parsed
+/// authority, never a hand split). A URL the parser rejects falls back to
+/// [`redact_unparseable_destination`], a MASKING-ONLY scrub that keeps no host.
+pub fn redact_destination(raw: &str) -> String {
+    if let Ok(mut url) = url::Url::parse(raw) {
+        let scheme = format!("{}://", url.scheme());
+        let Some(host) = url.host_str() else {
+            return REDACTED.to_string();
+        };
+        let host = host.to_string();
+        // The port only when the URL named one explicitly (`Url::port` is
+        // `None` for a non-special scheme with no explicit port — rtmp/srt
+        // have no registered default).
+        let port = url.port().map(|p| format!(":{p}")).unwrap_or_default();
+        let had_tail = !url.path().is_empty() && url.path() != "/"
+            || url.query().is_some()
+            || url.fragment().is_some();
+        // Drop the userinfo so it can never be re-serialized.
+        let _ = url.set_username("");
+        let _ = url.set_password(None);
+        if had_tail {
+            format!("{scheme}{host}{port}/{REDACTED}")
+        } else {
+            format!("{scheme}{host}{port}")
+        }
+    } else {
+        redact_unparseable_destination(raw)
+    }
+}
+
+/// The masking-only fallback for [`redact_destination`] on a URL the parser
+/// rejects (spec §9 documented exception, allowlisted by name in the guard).
+/// The whole authority — userinfo AND host — collapses to the single mask
+/// token, so no host-bearing text is reconstructed; anything after the
+/// authority is kept verbatim.
+fn redact_unparseable_destination(raw: &str) -> String {
     let Some(scheme_end) = raw.find("://") else {
         return REDACTED.to_string();
     };
@@ -51,12 +111,11 @@ pub(crate) fn redact_destination(raw: &str) -> String {
     let authority_end = after_scheme
         .find(['/', '?', '#'])
         .unwrap_or(after_scheme.len());
-    let authority = &after_scheme[..authority_end];
-    let host = authority.rsplit_once('@').map_or(authority, |(_, h)| h);
-    if authority_end < after_scheme.len() {
-        format!("{scheme}{host}/{REDACTED}")
+    let rest = &after_scheme[authority_end..];
+    if rest.is_empty() {
+        format!("{scheme}{REDACTED}")
     } else {
-        format!("{scheme}{host}")
+        format!("{scheme}{REDACTED}{rest}")
     }
 }
 
@@ -174,5 +233,23 @@ mod tests {
         let redacted = redact_url("rtsp://user@host/s");
         assert_eq!(redacted, "rtsp://***@host/s");
         assert!(!redacted.contains("user"));
+    }
+
+    /// Guard: the two masking-only fallbacks must not extract or echo a host.
+    /// A reinstated `rsplit_once('@')`-keep-host shape (the pre-migration
+    /// fallback) would fail this.
+    #[test]
+    fn masking_fallbacks_do_not_extract_the_host() {
+        let src = include_str!("redact.rs");
+        for fn_name in ["fn redact_unparseable_userinfo", "fn redact_unparseable_destination"] {
+            let start = src.find(fn_name).expect("fallback fn present");
+            let body = &src[start..];
+            let end = body.find("\n}\n").expect("fallback fn closes");
+            let body = &body[..end];
+            assert!(
+                !body.contains("rsplit_once('@')"),
+                "{fn_name} must not extract the host via rsplit_once('@')"
+            );
+        }
     }
 }

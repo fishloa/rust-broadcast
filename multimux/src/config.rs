@@ -1097,24 +1097,26 @@ fn validate_listen_addr(addr: &str) -> Result<()> {
 /// last `:`. See [`InputSpec::Srt`]'s `remote` doc (`"remote-host:9000"`) and
 /// `crate::source::srt`'s module doc.
 fn validate_host_port(addr: &str) -> Result<()> {
-    let (host, port) = addr
-        .rsplit_once(':')
-        .ok_or_else(|| MultimuxError::ConfigInvalid {
-            field: "routes.input.remote",
-            reason: format!("bad host:port {addr:?}: missing \":port\""),
-        })?;
-    if host.is_empty() {
-        return Err(MultimuxError::ConfigInvalid {
-            field: "routes.input.remote",
-            reason: format!("bad host:port {addr:?}: empty host"),
-        });
+    let field = "routes.input.remote";
+    let invalid = |reason: String| MultimuxError::ConfigInvalid { field, reason };
+    // Validate the `host:port` shape through the `url` crate (a throwaway
+    // `srt://` prefix makes `addr` the authority), so a hostname, a bracketed
+    // IPv6 literal, and the 0..=65535 port range are all checked by the
+    // parser rather than by a hand `rsplit_once(':')`. `SrtSocket::connect`
+    // resolves a hostname via `ToSocketAddrs`, so a non-IP host is allowed —
+    // this is a shape check, not a bind-address parse.
+    let Ok(url) = url::Url::parse(&format!("srt://{addr}")) else {
+        return Err(invalid(format!(
+            "bad host:port {addr:?}: not a valid host[:port]"
+        )));
+    };
+    if url.host().is_none() {
+        return Err(invalid(format!("bad host:port {addr:?}: empty host")));
     }
-    port.parse::<u16>()
-        .map(|_| ())
-        .map_err(|e| MultimuxError::ConfigInvalid {
-            field: "routes.input.remote",
-            reason: format!("bad host:port {addr:?}: invalid port: {e}"),
-        })
+    match url.port() {
+        Some(_) => Ok(()),
+        None => Err(invalid(format!("bad host:port {addr:?}: missing \":port\""))),
+    }
 }
 
 /// A multicast group must parse as an IP address and actually be multicast
