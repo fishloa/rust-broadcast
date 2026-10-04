@@ -937,6 +937,7 @@ pub async fn serve_whep_for_test_with_trunk(
 /// handle, and the cancel token. Cancelling the token must make `run_whep`
 /// return (its tracked signalling + session tasks all drain) and release the
 /// port.
+#[cfg(feature = "test-hooks")]
 #[doc(hidden)]
 pub async fn serve_whep_run_for_test() -> (
     std::net::SocketAddr,
@@ -964,6 +965,7 @@ pub async fn serve_whep_run_for_test() -> (
 
 /// A minimal, valid WHEP video-only SDP offer (the same shape the in-crate
 /// tests use) — so an integration test can drive a real session.
+#[cfg(feature = "test-hooks")]
 #[doc(hidden)]
 pub const WHEP_TEST_OFFER: &str = "v=0\r\n\
 o=- 0 0 IN IP4 127.0.0.1\r\n\

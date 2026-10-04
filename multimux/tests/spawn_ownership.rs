@@ -1,4 +1,4 @@
-#![cfg(feature = "whep")]
+#![cfg(all(feature = "whep", feature = "test-hooks"))]
 //! SP1.4 / defect 3: every detached spawn a route makes is owned by a tracked
 //! task, and cancelling the route's token drains them all and releases the
 //! route's listen port.

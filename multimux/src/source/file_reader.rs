@@ -188,6 +188,10 @@ pub enum FileReaderError {
     /// `Instant::checked_add` panic.
     #[error("sample pacing time is not representable as a wall-clock duration: {value}")]
     PacingOverflow { value: f64 },
+    /// The run was cancelled (its [`SpawnedReader`] was dropped) before it
+    /// finished — SP1.4: dropping the owner cancels rather than detaches.
+    #[error("file reader cancelled")]
+    Cancelled,
 }
 
 /// A structured document used only by a [`FileReader`] to decide where one
@@ -302,10 +306,34 @@ impl FileReaderConfig {
 
 /// A [`FileReader`] that has been spawned onto a tokio task; the run's
 /// terminal [`Result`] arrives on the wrapped [`JoinHandle`].
+///
+/// Owns a [`CancellationToken`] (SP1.4): dropping this value CANCELS the run
+/// rather than detaching it, so a reader whose owner goes away stops instead
+/// of playing a file forever in the background. Awaiting [`Self::handle`]
+/// still yields the outcome; a cancelled run resolves to
+/// [`FileReaderError::Cancelled`].
 #[non_exhaustive]
 pub struct SpawnedReader {
     /// The tokio task's join handle — awaiting it yields the run's outcome.
     pub handle: JoinHandle<Result<(), FileReaderError>>,
+    /// Cancels the run when this `SpawnedReader` is dropped.
+    cancel: tokio_util::sync::CancellationToken,
+}
+
+impl SpawnedReader {
+    /// Cancel the run now (dropping this value would do the same). Useful when
+    /// the caller wants to stop the reader but still await
+    /// [`Self::handle`] for its terminal outcome.
+    pub fn cancel(&self) {
+        self.cancel.cancel();
+    }
+}
+
+impl Drop for SpawnedReader {
+    fn drop(&mut self) {
+        // Cancel, don't detach: the task must stop when its owner goes away.
+        self.cancel.cancel();
+    }
 }
 
 /// The [`transmux`] demuxer the reader selects for a probed container — the
@@ -371,10 +399,18 @@ impl FileReader {
     }
 
     /// Spawn the reader as an independent tokio task; returns a
-    /// [`SpawnedReader`] whose handle the caller may await for the outcome.
+    /// [`SpawnedReader`] whose handle the caller may await for the outcome, and
+    /// which cancels the run when dropped (SP1.4: cancel, not detach).
     pub fn spawn(self) -> SpawnedReader {
-        let handle = tokio::spawn(self.run());
-        SpawnedReader { handle }
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let run_cancel = cancel.clone();
+        let handle = tokio::spawn(async move {
+            tokio::select! {
+                () = run_cancel.cancelled() => Err(FileReaderError::Cancelled),
+                outcome = self.run() => outcome,
+            }
+        });
+        SpawnedReader { handle, cancel }
     }
 
     /// One read+probe+demux attempt, retried on a [`FileReaderError::Read`]
@@ -1655,6 +1691,38 @@ mod playout_tests {
         ParsedFile {
             tracks: vec![Track::new(avc_spec(1, 90_000), samples)],
         }
+    }
+
+    /// I8/SP1.4: dropping a [`SpawnedReader`] CANCELS the run rather than
+    /// detaching it — the task must not keep playing a file forever after its
+    /// owner is gone. PRE-FIX: `SpawnedReader { handle }` had no cancel token,
+    /// so dropping it detached the task and this would time out (the run keeps
+    /// going), not resolve to `Cancelled`.
+    #[tokio::test]
+    async fn dropping_a_spawned_reader_cancels_the_run() {
+        let fixture = format!("{}/../fixtures/ts/h264_aac.ts", env!("CARGO_MANIFEST_DIR"));
+        let trunk = media_plane::trunk::Trunk::new(crate::source::driver_trunk_config(8));
+        let reader = FileReader::new(
+            FileReaderConfig::new(fixture.into(), true, trunk)
+                .with_pace(true)
+                .with_max_retries(0),
+        );
+        let mut spawned = reader.spawn();
+        // Cancel (as a drop would): the run must stop, and awaiting the handle
+        // must yield `Cancelled` rather than the run completing.
+        spawned.cancel();
+        let outcome = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            &mut spawned.handle,
+        )
+        .await
+        .expect("a cancelled reader must not run forever")
+        .expect("the task must not panic");
+        assert!(
+            matches!(outcome, Err(FileReaderError::Cancelled)),
+            "cancelling the SpawnedReader must cancel the run, got {outcome:?}"
+        );
+        drop(spawned);
     }
 
     /// Finding 5: negative PTS (reachable from a version-1 `ctts` leading
