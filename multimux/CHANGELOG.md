@@ -45,14 +45,47 @@
   (which needed the additive `Trunk::waiter_slot_freed`, and `WaiterSlot::drop`
   now notifies it).
 
+### Added — W2b-1
+- **New public API from the URL/harness work.** `pub mod redact`;
+  `push::{rtmp, rtsp, srt}` are now `pub`; `multimux::redact::{redact_url,
+  redact_destination}` are public; `output::whep::WhepRoute::with_listener` and
+  `source::ts_udp::TsUdpRoute::with_socket` accept a caller-bound
+  listener/socket; and `source::whip::WhipRoute::with_listener`,
+  `origin::serve_with_registry_on`/`serve_with_registry_on_admin`/
+  `serve_config_file_with_registry_on_admin`, and `origin::PreboundListeners`
+  take pre-bound listeners (SP7.1).
+- **Test-only entry points moved behind the non-default `test-hooks` feature.**
+  `output::whep::serve_whep_run_for_test` and `WHEP_TEST_OFFER` (and the other
+  `*_for_test` seams) are no longer part of the default published API; enabling
+  `test-hooks` restores them.
+- `source::file_reader::SpawnedReader` now owns a cancellation token: dropping
+  it cancels the reader's task instead of detaching it, and a cancelled run
+  resolves to `FileReaderError::Cancelled`.
+
 ### Fixed — W2b-1
 - **A push reconnect no longer ignores shutdown** (defect 5): cancelling during
   the connect or the backoff sleep returns promptly.
+- **A cancelled route abandons its in-flight ingest attempt** rather than
+  awaiting it to its own end (`supervise_driver` races the attempt against the
+  token).
 - **A route's WHEP session tasks are owned by the route's `TaskTracker`**
   (defect 3): cancelling the route drains them and releases the listen port.
-- **Redaction no longer echoes the host of a URL the parser rejects.** The
-  `url`-rejected fallback is masking-only (the whole authority collapses to the
-  mask token); the previous `rsplit_once('@')` keep-host shape is deleted.
+- **A dropped `SpawnedReader` no longer plays a file forever** — it cancels.
+- **Redaction never leaks a URL the parser rejects.** The `url`-rejected
+  fallback is masking-only: the whole authority AND the path/query collapse to
+  `<redacted>`, so an RTMP stream key or SRT token in the tail cannot reach a
+  log line.
+- **A hostless RTSP push URL (`rtsp:cam`) is rejected** at config load and at
+  connect, instead of silently dialing `127.0.0.1` and then panicking.
+- **`xs_duration_secs` rejects NaN/inf/negative/overflow** with an error rather
+  than panicking through `Duration::from_secs_f64`.
+- **`config::validate_host_port` restored to its strict shape.** Adopting `url`
+  had silently accepted `host:9000/path`, `user@host:9000`, and
+  `host:9000?x`; they are rejected again, and an SRT authority with a userinfo
+  prefix is rejected rather than silently dropped.
+- **Redaction of a parseable URL now goes through `url`**, so the host is
+  lowercased, a trailing `/` added, and percent-encoding normalised — a
+  behaviour change from the previous text-only scrub.
 
 
 ### Changed

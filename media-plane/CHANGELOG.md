@@ -19,7 +19,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `listen()` park on the event (raced with its own cancellation) instead of
   sleep-polling for a slot; `WaiterSlot::drop` now notifies it (W2b-1 B10b).
   `event_listener::EventListener` is re-exported as `SlotFreedFuture` so the
-  return type is nameable without a direct dependency.
+  return type is nameable without a direct dependency; because that puts a
+  third-party type in the public API, an `event-listener` MAJOR bump would be a
+  `media-plane` MAJOR-class change.
+  `WaiterSlot::drop` notifies a DEDICATED `slot_freed` event (never the shared
+  `progress` event — doing so woke every waiter and caused a ping-pong
+  wake-storm), and only as many waiters as slots freed.
 - `SegmentWriter::try_publish_segment` — non-blocking alternative to
   `SegmentWriter::publish_segment` for the one case that can stall
   (`ArchiveOverrun::StallIngest`); returns `Err` instead of blocking or

@@ -17,7 +17,19 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   an SDP body), `RECORD`, and a client-side interleaved (`$`-framed) media send
   (the mirror of the server's `AsyncRtspServer::send_interleaved`), each built on
   the existing sans-IO `ClientSession::announce`/`record` and bounded by
-  `RtspTimeouts::write`. These unblock the RTSP pusher (W2b-1 Task 6).
+  `RtspTimeouts::write`. These unblock the RTSP pusher (W2b-1 Task 6). New
+  public inherent methods: additive, so a minor bump (this is a 0.x series; it
+  is not a breaking change to any existing caller).
+- **`AsyncRtspClient::poll_keepalive`** — drives the `GET_PARAMETER` liveness
+  ping for a SEND-ONLY pusher (and is called automatically by
+  `send_interleaved`, which also drains buffered server→client bytes). Before
+  this, a client that only ever sent interleaved media emitted no keepalive and
+  its session expired after the server's timeout (RFC 2326 §12.37).
+  `send_interleaved` now takes the payload by borrow (no per-packet copy).
+  Documented: a `Timeout`/cancelled interleaved send leaves a partial frame and
+  the connection is DEAD — reconnect, do not retry.
+- `InterleavedFrame::slice_to_bytes(channel, &[u8])` — build the wire bytes from
+  a borrowed payload, byte-identical to `new` + `to_bytes`.
 - `ClientSession::{mark_activity, poll_timeout, handle_timeout}`: keepalive deadline (half the `Session` timeout, default 60 s per RFC 2326 §12.37) driven by the adapter (`recv_interleaved` sends the `GET_PARAMETER`). Only requests written count as activity, so a busy interleaved stream does not postpone the keepalive. `ClientSession::has_buffered_input`; `recv_interleaved` now returns an error (not a clean end) when the peer closes mid-frame.
 - `ClientSession::peek_next_cseq()`: the `CSeq` the next request-builder call will assign, so an
   IO adapter can capture which response it must wait for before building the request (#1088).
