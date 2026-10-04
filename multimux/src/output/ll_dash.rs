@@ -83,7 +83,9 @@ use transmux::{Addressing, LlDashPackager, Media, Track, TrackSegments};
 
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
 use crate::origin::resource::cors_preflight;
-use crate::output::dash::{DASH_MANIFEST_CONTENT_TYPE, format_iso8601, select_representable_track};
+use crate::output::dash::{
+    DASH_MANIFEST_CONTENT_TYPE, format_iso8601, select_representable_track, xs_duration_secs,
+};
 use crate::output::{Output, OutputKind};
 use crate::route::RouteHandle;
 
@@ -226,12 +228,12 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<Str
     // Tuned to the chunk/part interval, not the whole-segment target -- an
     // LL-DASH client should re-poll roughly as often as a new chunk can
     // appear.
-    packager.base.minimum_update_period = Some(format!("PT{chunk_duration_secs}S"));
+    packager.base.minimum_update_period = Some(xs_duration_secs(chunk_duration_secs));
     // Unlike the old parts-only design (module docs), whole closed segments
     // stay in the route's rolling window, so a real DVR window can be
     // advertised -- same computation as `crate::output::dash::render_mpd`.
     let time_shift_buffer_depth_secs = target_duration_secs * (window.len().max(1) as f64);
-    packager.base.time_shift_buffer_depth = Some(format!("PT{time_shift_buffer_depth_secs}S"));
+    packager.base.time_shift_buffer_depth = Some(xs_duration_secs(time_shift_buffer_depth_secs));
     packager.base.segments = vec![TrackSegments {
         track_id: DEFAULT_TRACK_ID,
         durations: vec![nominal_duration_ticks],

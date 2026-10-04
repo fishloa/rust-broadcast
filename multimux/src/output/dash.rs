@@ -260,8 +260,8 @@ pub fn render_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<String> {
         init_template: "init-$RepresentationID$.mp4".to_string(),
         media_template: "seg-$RepresentationID$-$Number$.m4s".to_string(),
         availability_start_time: Some(format_iso8601(now)),
-        minimum_update_period: Some(format!("PT{target_duration_secs}S")),
-        time_shift_buffer_depth: Some(format!("PT{time_shift_buffer_depth_secs}S")),
+        minimum_update_period: Some(xs_duration_secs(target_duration_secs)),
+        time_shift_buffer_depth: Some(xs_duration_secs(time_shift_buffer_depth_secs)),
         segments,
         ..DashPackager::default()
     };
@@ -282,11 +282,10 @@ pub fn render_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<String> {
 
 /// Format `t` as an ISO-8601 UTC timestamp (`YYYY-MM-DDTHH:MM:SSZ`) — the
 /// `MPD@availabilityStartTime` wire format (ISO/IEC 23009-1 §5.3.1.2 Table 3).
-/// Hand-rolled (this crate has no date/time dependency): converts the Unix
-/// timestamp's day count to a proleptic-Gregorian civil date via the
-/// well-known "civil_from_days" algorithm (Howard Hinnant,
-/// <https://howardhinnant.github.io/date_algorithms.html>, public domain),
-/// exact for every representable date.
+/// Delegates to `jiff::Timestamp` (SP5), whose whole-second `Display` spelling
+/// is byte-identical to the previous hand-rolled `civil_from_days` output (the
+/// `dash_mpd`/`ll_dash_mpd` goldens were frozen before this migration and are
+/// the witness).
 ///
 /// `pub(crate)` (not private) since issue #663 P4.2: `crate::output::ll_dash`
 /// needs the same `availabilityStartTime` formatting and reuses this rather
@@ -296,19 +295,50 @@ pub(crate) fn format_iso8601(t: SystemTime) -> String {
         .duration_since(UNIX_EPOCH)
         .unwrap_or(Duration::ZERO)
         .as_secs();
-    let days = (secs / 86_400) as i64;
-    let time_of_day = secs % 86_400;
-    let (h, m, s) = (
-        time_of_day / 3600,
-        (time_of_day / 60) % 60,
-        time_of_day % 60,
-    );
-    let (y, mo, d) = civil_from_days(days);
-    format!("{y:04}-{mo:02}-{d:02}T{h:02}:{m:02}:{s:02}Z")
+    let secs = i64::try_from(secs).unwrap_or(i64::MAX);
+    format_iso8601_secs(secs)
 }
 
-/// Howard Hinnant's `civil_from_days`: days since the Unix epoch
-/// (1970-01-01) to a proleptic-Gregorian `(year, month, day)`.
+/// `#[doc(hidden)]` test seam over [`format_iso8601`].
+#[doc(hidden)]
+pub fn format_iso8601_for_test(t: SystemTime) -> String {
+    format_iso8601(t)
+}
+
+fn format_iso8601_secs(secs: i64) -> String {
+    jiff::Timestamp::from_second(secs)
+        .map(|ts| ts.to_string())
+        .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
+}
+
+/// Format a duration as the DASH `xs:duration` shortest spelling (`PT4S`,
+/// `PT0.5S`) via `jiff`'s `SpanPrinter` (SP5) — the form `@minimumUpdatePeriod`
+/// and `@timeShiftBufferDepth` use (ISO/IEC 23009-1 §5.3.9.2).
+pub(crate) fn xs_duration(d: Duration) -> String {
+    match jiff::SignedDuration::try_from(d) {
+        Ok(signed) => jiff::fmt::temporal::SpanPrinter::new().duration_to_string(&signed),
+        Err(_) => format!("PT{}S", d.as_secs()),
+    }
+}
+
+/// `#[doc(hidden)]` test seam over [`xs_duration`].
+#[doc(hidden)]
+pub fn xs_duration_for_test(d: Duration) -> String {
+    xs_duration(d)
+}
+
+/// Whole/ fractional seconds as an `xs:duration` (`f64` input, rounded to the
+/// nearest millisecond — the DASH attributes carry whole- or half-second values
+/// only). Negative inputs collapse to `PT0S`.
+pub(crate) fn xs_duration_secs(secs: f64) -> String {
+    if secs <= 0.0 {
+        return xs_duration(Duration::ZERO);
+    }
+    xs_duration(Duration::from_secs_f64(secs))
+}
+
+/// Howard Hinnant's `civil_from_days` (retained for the in-file algorithm test).
+#[cfg(test)]
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = if z >= 0 { z } else { z - 146_096 } / 146_097;

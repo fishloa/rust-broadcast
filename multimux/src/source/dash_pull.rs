@@ -869,52 +869,31 @@ const DEFAULT_SPD_SEGMENTS: u64 = 3;
 /// yields `0`, which `live_edge_number`'s `checked_sub` then rejects, so the
 /// caller falls back to `@startNumber` rather than planning from a bogus edge.
 fn now_unix_secs() -> u64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs())
-        .unwrap_or(0)
+    u64::try_from(jiff::Timestamp::now().as_second()).unwrap_or(0)
 }
 
 /// Parse an ISO-8601 UTC timestamp (`YYYY-MM-DDThh:mm:ss[.fff]Z`, the form
 /// `MPD@availabilityStartTime` uses, §5.3.1.2) into Unix seconds. `None` for
 /// any other shape, so the caller falls back rather than guessing.
+///
+/// Parsed by `jiff::Timestamp` (SP5); a lexical guard requires the UTC `Z`
+/// suffix, so an offset form (`+01:00`) is rejected rather than silently
+/// converted. Whole-second and fractional forms both round-trip.
 fn parse_iso8601_utc(s: &str) -> Option<u64> {
     let s = s.trim();
-    let bytes = s.as_bytes();
-    // Fixed-width prefix `YYYY-MM-DDThh:mm:ss`.
-    if bytes.len() < 19 {
+    // Only the UTC `Z` form `availabilityStartTime` uses; an offset form
+    // falls back rather than being silently reinterpreted.
+    if !s.ends_with('Z') {
         return None;
     }
-    let num = |range: std::ops::Range<usize>| -> Option<i64> {
-        let part = s.get(range)?;
-        if part.bytes().all(|b| b.is_ascii_digit()) {
-            part.parse().ok()
-        } else {
-            None
-        }
-    };
-    let year = num(0..4)?;
-    let month = num(5..7)?;
-    let day = num(8..10)?;
-    let hour = num(11..13)?;
-    let minute = num(14..16)?;
-    let second = num(17..19)?;
-    if !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-    if !(0..=23).contains(&hour) || !(0..=59).contains(&minute) || !(0..=60).contains(&second) {
-        return None;
-    }
-    // Days since the Unix epoch (Howard Hinnant's `days_from_civil`).
-    let y = if month <= 2 { year - 1 } else { year };
-    let era = if y >= 0 { y } else { y - 399 } / 400;
-    let yoe = y - era * 400;
-    let mp = (month + 9) % 12;
-    let doy = (153 * mp + 2) / 5 + day - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    let days = era * 146_097 + doe - 719_468;
-    let secs = days * 86_400 + hour * 3_600 + minute * 60 + second;
-    u64::try_from(secs).ok()
+    let ts: jiff::Timestamp = s.parse().ok()?;
+    u64::try_from(ts.as_second()).ok()
+}
+
+/// `#[doc(hidden)]` test seam over [`parse_iso8601_utc`].
+#[doc(hidden)]
+pub fn parse_iso8601_utc_for_test(s: &str) -> Option<u64> {
+    parse_iso8601_utc(s)
 }
 
 fn status_error(what: &str, status: StatusCode) -> MultimuxError {

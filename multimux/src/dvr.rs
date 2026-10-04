@@ -387,10 +387,21 @@ impl EitProgramme {
             _ => None,
         });
         let start = event.start_time().map(|dt| {
-            format!(
-                "{:04}-{:02}-{:02}T{:02}:{:02}:{:02}Z",
-                dt.year, dt.month, dt.day, dt.hour, dt.minute, dt.second
+            // A civil (not instant) date-time from the EIT: format it via
+            // `jiff`'s civil path (whole-second precision) and append `Z`.
+            jiff::civil::date(
+                i16::try_from(dt.year).unwrap_or(i16::MAX),
+                i8::try_from(dt.month).unwrap_or(1),
+                i8::try_from(dt.day).unwrap_or(1),
             )
+            .at(
+                i8::try_from(dt.hour).unwrap_or(0),
+                i8::try_from(dt.minute).unwrap_or(0),
+                i8::try_from(dt.second).unwrap_or(0),
+                0,
+            )
+            .strftime("%Y-%m-%dT%H:%M:%SZ")
+            .to_string()
         });
         let duration_secs = event.duration().map(|d| d.as_secs());
         EitProgramme {
