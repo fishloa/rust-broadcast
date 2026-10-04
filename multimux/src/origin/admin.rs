@@ -80,13 +80,13 @@ use std::pin::Pin;
 use std::sync::Arc;
 use std::task::{Context, Poll};
 
+use axum::Json;
 use axum::Router;
 use axum::extract::{ConnectInfo, Path as AxumPath, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use axum::{Json, serve::IncomingStream};
 use broadcast_auth::{AuthResult, Verifier};
 use tokio::sync::watch;
 use tower::Service;
@@ -232,8 +232,10 @@ pub(crate) struct RouteRegistry {
     inner: std::sync::RwLock<HashMap<String, RouteRuntime>>,
     /// The currently-active media [`Router`], rebuilt whole on every
     /// mutation (see this module's own docs) and read by
-    /// [`DynamicMediaService`] once per accepted request.
-    router_slot: std::sync::RwLock<Router>,
+    /// [`DynamicMediaService`] once per accepted request. `ArcSwap` makes
+    /// that read lock-free: a rebuild never blocks a request already in
+    /// flight, and a request never takes a lock the rebuild path wants.
+    router_slot: arc_swap::ArcSwap<Router>,
     /// The config file this process was loaded from, if any — `None` when
     /// the embedding caller built its [`Config`] in memory (e.g.
     /// `serve_with_registry` directly): [`Self::reload`] has nothing to
@@ -251,7 +253,7 @@ impl RouteRegistry {
             ctx,
             mutation_lock: tokio::sync::Mutex::new(()),
             inner: std::sync::RwLock::new(HashMap::new()),
-            router_slot: std::sync::RwLock::new(Router::new()),
+            router_slot: arc_swap::ArcSwap::from_pointee(Router::new()),
             config_path,
         });
         registry.rebuild_router();
@@ -288,13 +290,13 @@ impl RouteRegistry {
     /// here.
     fn rebuild_router(&self) {
         let new_router = self.build_router(self.streams_snapshot());
-        *crate::lock::write(&self.router_slot) = new_router;
+        self.router_slot.store(std::sync::Arc::new(new_router));
     }
 
     /// A cheap clone of the currently-active media [`Router`] — read once
     /// per accepted request by [`DynamicMediaService`].
     pub(crate) fn current_router(&self) -> Router {
-        crate::lock::read(&self.router_slot).clone()
+        self.router_slot.load().as_ref().clone()
     }
 
     /// Builds `route`'s [`Output`]s and spawns its supervised ingest task —
@@ -462,7 +464,7 @@ impl RouteRegistry {
 
         // Commit: install the router and the runtime together.
         let runtime = pending.into_installed();
-        *crate::lock::write(&self.router_slot) = new_router;
+        self.router_slot.store(std::sync::Arc::new(new_router));
         let displaced = {
             let mut guard = crate::lock::write(&self.inner);
             guard.insert(route.name.clone(), runtime)
@@ -664,7 +666,7 @@ impl RouteRegistry {
             }
             removed_runtimes
         };
-        *crate::lock::write(&self.router_slot) = new_router;
+        self.router_slot.store(std::sync::Arc::new(new_router));
 
         futures_util::future::join_all(removed_runtimes.into_iter().map(drain_route)).await;
         // Routes that are gone for good (a *changed* route was replaced by a
@@ -938,7 +940,7 @@ pub(crate) fn admin_router(registry: Arc<RouteRegistry>, verifier: Arc<Verifier>
             get(list_routes_handler).post(add_route_handler),
         )
         .route(
-            "/admin/routes/:name",
+            "/admin/routes/{name}",
             get(get_route_handler).delete(delete_route_handler),
         )
         .route("/admin/reload", post(reload_handler))
@@ -958,7 +960,11 @@ struct DynamicMediaService {
     remote_addr: SocketAddr,
 }
 
-impl Service<Request> for DynamicMediaService {
+impl<B> Service<Request<B>> for DynamicMediaService
+where
+    B: axum::body::HttpBody<Data = bytes::Bytes> + Send + 'static,
+    B::Error: Into<axum::BoxError>,
+{
     type Response = Response;
     type Error = std::convert::Infallible;
     type Future = Pin<Box<dyn Future<Output = Result<Response, std::convert::Infallible>> + Send>>;
@@ -967,7 +973,7 @@ impl Service<Request> for DynamicMediaService {
         Poll::Ready(Ok(()))
     }
 
-    fn call(&mut self, mut req: Request) -> Self::Future {
+    fn call(&mut self, mut req: Request<B>) -> Self::Future {
         // Mirrors what `Router::into_make_service_with_connect_info` does
         // for the static path (`super::serve_with_registry`) — inserted
         // directly (rather than via `axum::Extension`'s `tower::Layer`,
@@ -977,35 +983,6 @@ impl Service<Request> for DynamicMediaService {
         req.extensions_mut().insert(ConnectInfo(self.remote_addr));
         let mut router = self.registry.current_router();
         Box::pin(async move { router.call(req).await })
-    }
-}
-
-/// Produces one [`DynamicMediaService`] per accepted TCP connection, exactly
-/// like [`axum::routing::Router::into_make_service_with_connect_info`] does
-/// for a plain (non-admin) [`Router`] — reimplemented rather than reused
-/// because [`axum::extract::connect_info::IntoMakeServiceWithConnectInfo::new`]
-/// is private to axum, so it can only ever be constructed by calling that
-/// method directly on a concrete `Router`, not on our swappable
-/// [`DynamicMediaService`].
-#[derive(Clone)]
-struct MediaMakeService {
-    registry: Arc<RouteRegistry>,
-}
-
-impl<'a> Service<IncomingStream<'a>> for MediaMakeService {
-    type Response = DynamicMediaService;
-    type Error = std::convert::Infallible;
-    type Future = std::future::Ready<Result<Self::Response, Self::Error>>;
-
-    fn poll_ready(&mut self, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        Poll::Ready(Ok(()))
-    }
-
-    fn call(&mut self, stream: IncomingStream<'a>) -> Self::Future {
-        std::future::ready(Ok(DynamicMediaService {
-            registry: Arc::clone(&self.registry),
-            remote_addr: stream.remote_addr(),
-        }))
     }
 }
 
@@ -1087,35 +1064,42 @@ pub(crate) async fn serve_with_admin(
         let _ = external_shutdown_tx.send(true);
     });
 
-    let mut media_rx = external_shutdown_rx.clone();
-    let media_shutdown = async move {
-        let _ = media_rx.changed().await;
-    };
-    let mut admin_rx = external_shutdown_rx.clone();
-    let admin_shutdown = async move {
-        let _ = admin_rx.changed().await;
-    };
+    // One shutdown token, cancelled when the watcher flips the channel — the
+    // same event both listeners used to race with `with_graceful_shutdown`.
+    let shutdown_token = tokio_util::sync::CancellationToken::new();
+    let admin_token = shutdown_token.clone();
+    let media_token = shutdown_token.clone();
+    let mut shutdown_rx = external_shutdown_rx.clone();
+    let shutdown_watch = tokio::spawn(async move {
+        let _ = shutdown_rx.changed().await;
+        shutdown_token.cancel();
+    });
 
     let admin_built = admin_router(Arc::clone(&registry), admin_verifier);
     let admin_task: tokio::task::JoinHandle<std::io::Result<()>> = tokio::spawn(async move {
-        axum::serve(
-            admin_listener,
-            admin_built.into_make_service_with_connect_info::<SocketAddr>(),
-        )
-        .with_graceful_shutdown(admin_shutdown)
-        .await
+        super::serve_hyper_util(admin_listener, admin_built, admin_token).await
     });
 
-    let media_make_service = MediaMakeService {
-        registry: Arc::clone(&registry),
-    };
-    let media_result = axum::serve(media_listener, media_make_service)
-        .with_graceful_shutdown(media_shutdown)
-        .await;
+    let media_registry = Arc::clone(&registry);
+    let media_result = super::serve_hyper_util_service(
+        media_listener,
+        move |addr| {
+            let registry = Arc::clone(&media_registry);
+            async move {
+                DynamicMediaService {
+                    registry,
+                    remote_addr: addr,
+                }
+            }
+        },
+        media_token,
+    )
+    .await;
 
     // The media server has stopped (shutdown fired, or a fatal accept-loop
-    // error) -- make sure the Ctrl-C/SIGTERM watcher task doesn't outlive us.
+    // error) -- make sure the Ctrl-C/SIGTERM watcher tasks don't outlive us.
     shutdown_task.abort();
+    shutdown_watch.abort();
 
     // Join the admin server the same bounded way every route's supervisor
     // is joined below — grab the abort handle before consuming `admin_task`

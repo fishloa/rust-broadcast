@@ -75,16 +75,15 @@
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
 use futures_util::stream::FuturesUnordered;
-use tokio::io::AsyncWriteExt;
-use tokio::net::{TcpListener, TcpStream, UdpSocket};
-use tokio::sync::{Mutex as TokioMutex, OnceCell, mpsc};
+use tokio::net::{TcpListener, UdpSocket};
+use tokio::sync::{Notify, OnceCell, mpsc};
 
 use media_plane::ingress::{
     AcceptOutcome, HandshakePolicy, IngestSession, ListenDriver, Listener, ProgramId, SessionEvent,
@@ -106,7 +105,8 @@ use webrtc_runtime::media::{
 use crate::error::{MultimuxError, Result};
 use crate::route::RouteHandle;
 use crate::source::SessionClocks;
-use crate::source::{DriverProgress, IngestTimeouts, Source};
+use crate::source::{DriverProgress, IngestTimeouts, Source, handshake_policy};
+use axum::response::IntoResponse as _;
 
 /// Unknown coded dimensions — the SDP/RTP path gives no frame geometry at
 /// all, matching `crate::source::sdp`'s own `UNKNOWN_DIMENSION` placeholder
@@ -149,11 +149,6 @@ const RTP_EXTENSION_WORD_LEN: usize = 4;
 /// connections.
 pub const DEFAULT_WHIP_MAX_SESSIONS: usize = 16;
 
-/// How often [`run_whip`]'s driving loop polls [`ListenDriver::poll_accept`]
-/// while no session has a read in flight to race it against — see
-/// `crate::source::rtmp::ACCEPT_POLL_INTERVAL`'s identical reasoning.
-const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
-
 /// Bound on the accept-pump task's channel — see
 /// `crate::source::rtmp::ACCEPT_QUEUE_CAPACITY`'s identical reasoning.
 const ACCEPT_QUEUE_CAPACITY: usize = 32;
@@ -165,10 +160,11 @@ const MAX_UDP_DATAGRAM: usize = 65_536;
 /// One negotiated WHIP session, handed from the HTTP accept-pump to
 /// [`WhipListener::poll_accept`]: the SDP exchange is already complete by
 /// the time this exists (see the module doc) — what remains is the media
-/// session itself.
+/// session itself. The [`MediaTransport`] is owned outright (SP6.3): the
+/// session task's read loop takes it by value, never through a lock.
 struct AdmittedWhip {
     socket: Arc<UdpSocket>,
-    media: Arc<TokioMutex<MediaTransport>>,
+    media: MediaTransport,
     tracks: Vec<WhipTrack>,
 }
 
@@ -185,12 +181,54 @@ struct WhipTrack {
 struct WhipInfra {
     accept_rx: Arc<StdMutex<mpsc::Receiver<AdmittedWhip>>>,
     /// Sessions admitted (SDP answered, media socket bound) but not yet
-    /// reaped — checked against `max_sessions` in `handle_whip_connection`
+    /// reaped — checked against `max_sessions` in `whip_post`
     /// *before* any of that per-connection work happens (issue r07-C11):
     /// `media_plane::ingress::ListenDriver`'s own `max_sessions` cap only
     /// takes effect once a session reaches `poll_accept`, by which point the
     /// UDP bind and ICE/DTLS setup already ran for nothing.
     active_sessions: Arc<AtomicUsize>,
+    /// Cancels the signalling server when the route is dropped, so the bound
+    /// port is released.
+    cancel: tokio_util::sync::CancellationToken,
+    /// Tracks the signalling-server task.
+    tracker: tokio_util::task::TaskTracker,
+    /// Count of `MediaTransport::handle_timeout` fires driven by the timer
+    /// arm (per route — a global would leak across tests).
+    timer_fires: Arc<AtomicU64>,
+    /// Wakes a `wait_timer_fire` waiter when the counter bumps.
+    timer_notify: Arc<Notify>,
+    /// Wakes [`run_whip`]'s accept drain when a session is admitted (I2).
+    admit_notify: Arc<Notify>,
+    /// Monotonic count of sessions the DRIVER (`poll_accept`) has admitted
+    /// (N2): distinct from `active_sessions`, which the HTTP handler also
+    /// touches — a test that reverts the I2 admit-drain fix would leave this
+    /// at 0 and fail, whereas `active_sessions` stays 2 from the handler.
+    admitted_total: Arc<AtomicUsize>,
+    /// A SEPARATE wake for the test observer of `admitted_total` (mirrors
+    /// RTMP's `admit_count_notify`), so the observer is never woken on the
+    /// driver's own `admit_notify`.
+    admit_count_notify: Arc<Notify>,
+    /// Number of live `last_datagram` (idle-clock) entries the driver holds
+    /// (minor review finding): a reaped session must drop its entry, else this
+    /// gauge climbs one per reaped session. Test-only observable.
+    last_datagram_entries: Arc<AtomicUsize>,
+    /// Test-only: staging a [`MediaEvent::TimerError`] to be surfaced on the
+    /// next `handle_timeout` drive of a freshly-admitted session's transport
+    /// (finding N3's session-end test seam — a real ICE/DTLS timer failure is
+    /// not stageable through the public API). Consumed once by `run_whip`.
+    #[cfg(feature = "test-hooks")]
+    force_timer_error: Arc<StdMutex<Option<String>>>,
+}
+
+impl WhipInfra {
+    /// Stop the signalling server and wait for it to drain (releasing the
+    /// bound port). Used by `Drop` and by the accept-lifecycle tests.
+    #[allow(dead_code)]
+    async fn shutdown(&self) {
+        self.cancel.cancel();
+        self.tracker.close();
+        self.tracker.wait().await;
+    }
 }
 
 /// A WHIP push-ingest route: binds an HTTP listen socket once and accepts
@@ -198,9 +236,12 @@ struct WhipInfra {
 pub struct WhipRoute {
     name: String,
     listen: String,
+    /// A caller-supplied, already-bound listener (tests that must know the
+    /// port before the route starts). `None` binds `listen` on first use.
+    prebound: StdMutex<Option<TcpListener>>,
     timeouts: IngestTimeouts,
     max_sessions: usize,
-    infra: OnceCell<WhipInfra>,
+    infra: OnceCell<Arc<WhipInfra>>,
 }
 
 impl std::fmt::Debug for WhipRoute {
@@ -216,15 +257,37 @@ impl std::fmt::Debug for WhipRoute {
 impl WhipRoute {
     /// Build a route whose WHIP publish endpoint listens on `listen` (e.g.
     /// `"0.0.0.0:8080"`, or `"127.0.0.1:0"` for an ephemeral test port). A
-    /// publisher `POST`s its SDP offer to `http://<listen>/` (any path is
-    /// accepted — this is a single-route listener, not a multi-tenant path
-    /// router).
+    /// publisher `POST`s its SDP offer to `http://<listen>/whip` (only the
+    /// `/whip` path is answered).
     pub fn new(name: impl Into<String>, listen: impl Into<String>) -> Self {
         WhipRoute {
             name: name.into(),
             listen: listen.into(),
+            prebound: StdMutex::new(None),
             timeouts: IngestTimeouts::default(),
             max_sessions: DEFAULT_WHIP_MAX_SESSIONS,
+            infra: OnceCell::new(),
+        }
+    }
+
+    /// Build a route over an already-bound listener (W2a SP7.1: a test binds
+    /// port 0, learns the port, and hands the bound listener in, rather than
+    /// racing reserve-then-rebind).
+    pub fn with_listener(
+        name: impl Into<String>,
+        listener: TcpListener,
+        max_sessions: usize,
+    ) -> Self {
+        let listen = listener
+            .local_addr()
+            .map(|a| a.to_string())
+            .unwrap_or_else(|_| "127.0.0.1:0".to_string());
+        WhipRoute {
+            name: name.into(),
+            listen,
+            prebound: StdMutex::new(Some(listener)),
+            timeouts: IngestTimeouts::default(),
+            max_sessions,
             infra: OnceCell::new(),
         }
     }
@@ -246,81 +309,294 @@ impl WhipRoute {
     /// Binds the HTTP listen socket and spawns the accept-pump task on the
     /// first call only — see `crate::source::rtmp::RtmpRoute::ensure_infra`'s
     /// identical "bind once" reasoning.
-    async fn ensure_infra(
-        &self,
-    ) -> Result<(
-        Arc<StdMutex<mpsc::Receiver<AdmittedWhip>>>,
-        Arc<AtomicUsize>,
-    )> {
+    async fn ensure_infra(&self) -> Result<Arc<WhipInfra>> {
         let max_sessions = self.max_sessions;
         let infra = self
             .infra
             .get_or_try_init(|| async {
-                let listener =
-                    TcpListener::bind(&self.listen)
-                        .await
-                        .map_err(|e| MultimuxError::Connect {
+                let prebound = self.prebound.lock().expect("prebound lock").take();
+                let listener = match prebound {
+                    Some(listener) => listener,
+                    None => TcpListener::bind(&self.listen).await.map_err(|e| {
+                        MultimuxError::Connect {
                             reason: format!("whip: bind {}: {e}", self.listen),
-                        })?;
+                        }
+                    })?,
+                };
                 let (tx, rx) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
                 let active_sessions = Arc::new(AtomicUsize::new(0));
-                let accept_active = Arc::clone(&active_sessions);
-                // Caps per-connection tasks in flight (issue r07-C11 follow-up):
-                // without this, a flood of TCP connections that never send a
-                // byte spawns one task each, unbounded, well before
-                // `max_sessions`/`SessionSlot` ever gets a chance to refuse
-                // anything (those only run *inside* the spawned task).
-                let accept_semaphore = Arc::new(tokio::sync::Semaphore::new(
-                    crate::webrtc_http::MAX_PENDING_HTTP_CONNECTIONS,
-                ));
-                tokio::spawn(async move {
-                    loop {
-                        match listener.accept().await {
-                            Ok((stream, _peer)) => {
-                                let tx = tx.clone();
-                                let active = Arc::clone(&accept_active);
-                                // Waits for a free slot rather than spawning
-                                // past the cap — the accept loop itself
-                                // stalls, so the OS backlog absorbs the
-                                // burst instead of this process's task set.
-                                let permit = Arc::clone(&accept_semaphore)
-                                    .acquire_owned()
-                                    .await
-                                    .expect("accept_semaphore is never closed");
-                                tokio::spawn(async move {
-                                    let _permit = permit;
-                                    if let Err(e) =
-                                        handle_whip_connection(stream, &tx, &active, max_sessions)
-                                            .await
-                                    {
-                                        tracing::warn!(
-                                            error = %e,
-                                            "whip: signalling connection failed"
-                                        );
-                                    }
-                                });
-                            }
-                            Err(e) => {
-                                tracing::warn!(
-                                    error = %e,
-                                    "whip: accept-pump ending after a listen-socket error"
-                                );
-                                break;
-                            }
-                        }
+                let admit_notify = Arc::new(Notify::new());
+                // SP2.1: serve through `serve_hyper_util` (header-read
+                // timeout, connection cap, graceful drain) rather than
+                // `axum::serve`. The `WhipInfra` holds the cancel token so
+                // dropping the route stops the listener and releases the port.
+                let state = Arc::new(WhipServeState {
+                    tx,
+                    active_sessions: Arc::clone(&active_sessions),
+                    max_sessions,
+                    admit_notify: Arc::clone(&admit_notify),
+                });
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let serve_cancel = cancel.clone();
+                let tracked = tokio_util::task::TaskTracker::new();
+                tracked.spawn(async move {
+                    if let Err(e) =
+                        crate::origin::serve_hyper_util(listener, whip_router(state), serve_cancel)
+                            .await
+                    {
+                        tracing::warn!(error = %e, "whip: signalling server ended");
                     }
                 });
-                Ok::<WhipInfra, MultimuxError>(WhipInfra {
+                Ok::<Arc<WhipInfra>, MultimuxError>(Arc::new(WhipInfra {
                     accept_rx: Arc::new(StdMutex::new(rx)),
                     active_sessions,
-                })
+                    cancel,
+                    tracker: tracked,
+                    timer_fires: Arc::new(AtomicU64::new(0)),
+                    timer_notify: Arc::new(Notify::new()),
+                    admit_notify,
+                    admitted_total: Arc::new(AtomicUsize::new(0)),
+                    admit_count_notify: Arc::new(Notify::new()),
+                    last_datagram_entries: Arc::new(AtomicUsize::new(0)),
+                    #[cfg(feature = "test-hooks")]
+                    force_timer_error: Arc::new(StdMutex::new(None)),
+                }))
             })
             .await?;
-        Ok((
-            Arc::clone(&infra.accept_rx),
-            Arc::clone(&infra.active_sessions),
-        ))
+        Ok(Arc::clone(infra))
     }
+}
+
+/// Test handle over a running `WhipRoute`: the live session count and the
+/// transport-timer fire counter, for bounded condition waits.
+#[doc(hidden)]
+pub struct WhipRouteShared {
+    infra: Arc<WhipInfra>,
+}
+
+impl WhipRouteShared {
+    /// The live admitted-session count.
+    pub fn active_sessions(&self) -> usize {
+        self.infra.active_sessions.load(Ordering::SeqCst)
+    }
+
+    /// The number of `handle_timeout` fires driven by the transport-deadline
+    /// timer arm.
+    pub fn timer_fires(&self) -> u64 {
+        self.infra.timer_fires.load(Ordering::Relaxed)
+    }
+
+    /// Waits until the transport-deadline timer has fired at least `n` times
+    /// (or forever if it never does — the caller bounds it). Registers the
+    /// `Notified` BEFORE re-checking the counter.
+    pub async fn wait_timer_fire(&self, n: u64) {
+        loop {
+            let notified = self.infra.timer_notify.notified();
+            if self.timer_fires() >= n {
+                return;
+            }
+            notified.await;
+        }
+    }
+
+    /// The number of sessions the DRIVER (`poll_accept`) has admitted (N2):
+    /// the driver-side observable a test must assert, so reverting the I2
+    /// admit-drain fix fails it even though the HTTP handler still bumps
+    /// `active_sessions`.
+    pub fn admitted_total(&self) -> usize {
+        self.infra.admitted_total.load(Ordering::SeqCst)
+    }
+
+    /// Waits until the driver has admitted at least `n` sessions within
+    /// `bound` (registering the `Notified` BEFORE the first check).
+    pub async fn wait_for_admissions(&self, n: usize, bound: Duration) -> usize {
+        use tokio::time::Instant;
+        let deadline = Instant::now() + bound;
+        loop {
+            let notified = self.infra.admit_count_notify.notified(); // register FIRST
+            let now = self.admitted_total();
+            if now >= n {
+                return now;
+            }
+            tokio::select! {
+                _ = notified => {}
+                _ = tokio::time::sleep_until(deadline) => return now,
+            }
+        }
+    }
+
+    /// Number of live `last_datagram` (idle-clock) entries the driver holds
+    /// (minor review finding): a reaped session must drop its entry, so this
+    /// returns to 0 once every session is reaped.
+    pub fn last_datagram_entries(&self) -> usize {
+        self.infra.last_datagram_entries.load(Ordering::Relaxed)
+    }
+
+    /// Stage a [`MediaEvent::TimerError`] to be surfaced by the next admitted
+    /// session's transport (test seam): `run_whip` consumes it when the
+    /// session is admitted, ending that session on its next timer drive.
+    #[cfg(feature = "test-hooks")]
+    pub fn force_next_timer_error(&self, err: impl Into<String>) {
+        *self
+            .infra
+            .force_timer_error
+            .lock()
+            .expect("force_timer_error") = Some(err.into());
+    }
+}
+
+/// Test harness: bind an ephemeral listener, start the WHIP signalling
+/// server over it, and return the bound address + a shared handle + the
+/// cancel token.
+#[doc(hidden)]
+pub async fn serve_for_test() -> (
+    std::net::SocketAddr,
+    WhipRouteShared,
+    tokio_util::sync::CancellationToken,
+) {
+    serve_for_test_with_read_timeout(IngestTimeouts::default().read).await
+}
+
+/// [`serve_for_test`] with an explicit session read timeout.
+#[doc(hidden)]
+pub async fn serve_for_test_with_read_timeout(
+    read: Duration,
+) -> (
+    std::net::SocketAddr,
+    WhipRouteShared,
+    tokio_util::sync::CancellationToken,
+) {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let mut route = WhipRoute::with_listener("cam", listener, DEFAULT_WHIP_MAX_SESSIONS);
+    route.timeouts.read = read;
+    let infra = route.ensure_infra().await.expect("ensure_infra");
+    let token = infra.cancel.clone();
+    let shared = WhipRouteShared {
+        infra: Arc::clone(&infra),
+    };
+    // `shared.infra` keeps the server alive; dropping `route` only drops its
+    // `OnceCell`'s `Arc` clone.
+    drop(route);
+    (addr, shared, token)
+}
+
+/// Test harness that ALSO spawns [`run_whip`] against the route, so the media
+/// driver drains the admit channel (defect 2's "publisher B admitted under a
+/// steady read" needs the read loop running). Returns the signalling address,
+/// the shared handle and a cancel token that stops both the server and the
+/// forever-looping `run_whip` task.
+#[doc(hidden)]
+pub async fn serve_for_test_with_read_load() -> (
+    std::net::SocketAddr,
+    WhipRouteShared,
+    tokio_util::sync::CancellationToken,
+) {
+    serve_for_test_with_read_load_and_timeout(IngestTimeouts::default().read).await
+}
+
+/// [`serve_for_test_with_read_load`] with an explicit session read timeout
+/// (test-only): a short timeout lets a test observe an idle session being
+/// reaped — and its `last_datagram` entry dropped — without waiting out the
+/// default.
+#[doc(hidden)]
+pub async fn serve_for_test_with_read_load_and_timeout(
+    read: Duration,
+) -> (
+    std::net::SocketAddr,
+    WhipRouteShared,
+    tokio_util::sync::CancellationToken,
+) {
+    // A handshake deadline that never fires in practice: the production
+    // `run_whip` default (an effectively unbounded establish budget).
+    serve_for_test_with_read_load_timeout_and_policy(read, Duration::from_secs(10_000)).await
+}
+
+/// [`serve_for_test_with_read_load_and_timeout`] with an explicit handshake
+/// deadline (test-only): a short `establish_by` deadline lets a test reap a
+/// session through the `Events` path — a datagram feed advancing past the
+/// deadline turns the session terminal and drops its `last_datagram` entry —
+/// rather than through the read-timeout path.
+#[doc(hidden)]
+pub async fn serve_for_test_with_read_load_timeout_and_policy(
+    read: Duration,
+    handshake_timeout: Duration,
+) -> (
+    std::net::SocketAddr,
+    WhipRouteShared,
+    tokio_util::sync::CancellationToken,
+) {
+    use std::num::NonZeroUsize;
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let mut route = WhipRoute::with_listener("cam", listener, DEFAULT_WHIP_MAX_SESSIONS);
+    route.timeouts.read = read;
+    let route = Arc::new(route);
+    let infra = route.ensure_infra().await.expect("ensure_infra");
+    let token = infra.cancel.clone();
+
+    let policy = handshake_policy(handshake_timeout);
+    let route_handle = Arc::new(RouteHandle::new(1.0, 500, 8));
+    let route_clone = Arc::clone(&route);
+    let abort_token = token.clone();
+    let run_task = tokio::spawn(async move {
+        let _ = run_whip(
+            &route_clone,
+            TrunkConfig::new(
+                NonZeroUsize::new(64).unwrap(),
+                NonZeroUsize::new(16).unwrap(),
+                NonZeroUsize::new(8).unwrap(),
+                NonZeroUsize::new(8).unwrap(),
+                NonZeroUsize::new(8).unwrap(),
+            ),
+            policy,
+            &route_handle,
+        )
+        .await;
+    });
+    tokio::spawn(async move {
+        abort_token.cancelled().await;
+        run_task.abort();
+    });
+
+    let shared = WhipRouteShared {
+        infra: Arc::clone(&infra),
+    };
+    (addr, shared, token)
+}
+
+/// `#[doc(hidden)]` test hook: parse a WHIP offer's ICE credentials (media
+/// level first, session level fallback) so `tests/whip_whep_sdp.rs` can pin
+/// the media-first decision.
+#[doc(hidden)]
+pub fn parse_offer_for_test(offer: &str) -> (String, String) {
+    let parsed = parse_whip_offer(offer).expect("parse offer");
+    (parsed.remote_ufrag, parsed.remote_pwd)
+}
+
+/// `#[doc(hidden)]` test hook: render a WHIP SDP answer deterministically —
+/// the offer, local address, ICE credentials, fingerprint and candidate lines
+/// are all caller-supplied, so `tests/whip_whep_sdp.rs` can golden
+/// `sdp_types::Session::write`'s line ordering (the review's answer-golden
+/// gap) without the random cert/candidate values.
+#[doc(hidden)]
+pub fn render_answer_for_test(
+    offer: &str,
+    local_addr: std::net::SocketAddr,
+    local_ice_ufrag: &str,
+    local_ice_pwd: &str,
+    fingerprint: &str,
+    candidates: &[String],
+) -> String {
+    let parsed = parse_whip_offer(offer).expect("parse offer");
+    render_answer(
+        &parsed,
+        local_addr,
+        local_ice_ufrag,
+        local_ice_pwd,
+        fingerprint,
+        candidates,
+    )
 }
 
 impl Source for WhipRoute {
@@ -345,12 +621,10 @@ struct ParsedOffer {
     candidates: Vec<String>,
     payload_type: u8,
     clock_rate: u32,
-    /// The `m=video …` line and every `a=rtpmap`/`a=fmtp`/`a=rtcp-fb` line
-    /// naming `payload_type`, verbatim — echoed into the answer so the
-    /// negotiated codec parameters match the offer exactly (RFC 3264 §6.1:
-    /// an answer's media format list is a subset of the offer's).
-    m_line: String,
-    codec_lines: Vec<String>,
+    /// The chosen `m=video` media section, cloned so the answer reconstructs
+    /// `m=`/`c=`/codec attributes from the typed offer rather than verbatim
+    /// echoed text.
+    media: sdp_types::Media,
 }
 
 /// Parses a WHIP offer for its single supported case: exactly one `m=video`
@@ -379,26 +653,34 @@ fn parse_whip_offer(offer: &str) -> Result<ParsedOffer> {
     }
     let media = video_medias[0];
 
-    let remote_ufrag =
-        sdp_attr_anywhere(offer, "a=ice-ufrag:").ok_or_else(|| MultimuxError::Sdp {
+    // ICE credentials are read at media level FIRST, falling back to session
+    // level (RFC 8839 §5.4): a bundled offer may signal them only once, on
+    // the first m= section, and a media section's own pair must win over a
+    // stale session-level decoy (the old flat scan took the first match
+    // anywhere). `session.get_first_attribute_value` exists on sdp-types 0.2.
+    let remote_ufrag = ice_attr(&session, media, "ice-ufrag")
+        .ok_or_else(|| MultimuxError::Sdp {
             reason: "whip: offer has no a=ice-ufrag".into(),
-        })?;
-    let remote_pwd = sdp_attr_anywhere(offer, "a=ice-pwd:").ok_or_else(|| MultimuxError::Sdp {
-        reason: "whip: offer has no a=ice-pwd".into(),
-    })?;
+        })?
+        .to_string();
+    let remote_pwd = ice_attr(&session, media, "ice-pwd")
+        .ok_or_else(|| MultimuxError::Sdp {
+            reason: "whip: offer has no a=ice-pwd".into(),
+        })?
+        .to_string();
     let remote_fingerprint = parse_remote_fingerprint(offer).ok_or_else(|| MultimuxError::Sdp {
         reason: "whip: offer has no a=fingerprint".into(),
     })?;
     let mid = media
         .get_first_attribute_value("mid")
-        .ok()
         .flatten()
         .unwrap_or("0")
         .to_string();
-    let candidates: Vec<String> = offer
-        .lines()
-        .filter_map(|l| l.strip_prefix("a=candidate:"))
-        .map(str::to_string)
+    let candidates: Vec<String> = media
+        .attributes
+        .iter()
+        .filter(|a| a.attribute == "candidate" && a.value.is_some())
+        .map(|a| a.value.clone().unwrap_or_default())
         .collect();
 
     // Pick the first payload type in `m=video`'s `fmt` list whose
@@ -407,42 +689,28 @@ fn parse_whip_offer(offer: &str) -> Result<ParsedOffer> {
     let mut chosen: Option<(u8, u32)> = None;
     for tok in media.fmt.split_whitespace() {
         let Ok(pt) = tok.parse::<u8>() else { continue };
-        let rtpmap = offer
-            .lines()
-            .find(|l| l.starts_with(&format!("a=rtpmap:{pt} ")));
+        let rtpmap = media.attributes.iter().find(|a| {
+            a.attribute == "rtpmap"
+                && a.value
+                    .as_deref()
+                    .and_then(|v| v.split_whitespace().next())
+                    .and_then(|pt| pt.parse::<u8>().ok())
+                    == Some(pt)
+        });
         let Some(rtpmap) = rtpmap else { continue };
-        if !rtpmap.to_ascii_uppercase().contains("H264") {
+        let Some(value) = rtpmap.value.as_deref() else {
+            continue;
+        };
+        if !value.to_ascii_uppercase().contains("H264") {
             continue;
         }
-        let clock_rate =
-            transmux::rtpmap_clock_rate(rtpmap.strip_prefix("a=rtpmap:").unwrap_or(rtpmap))
-                .unwrap_or(90_000);
+        let clock_rate = transmux::rtpmap_clock_rate(value).unwrap_or(90_000);
         chosen = Some((pt, clock_rate));
         break;
     }
     let (payload_type, clock_rate) = chosen.ok_or_else(|| MultimuxError::Sdp {
         reason: "whip: m=video has no H.264 (a=rtpmap naming H264) payload type".into(),
     })?;
-
-    let codec_lines: Vec<String> = offer
-        .lines()
-        .filter(|l| {
-            let matches_pt = |prefix: &str| {
-                l.strip_prefix(prefix)
-                    .and_then(|rest| rest.split_whitespace().next())
-                    .and_then(|pt| pt.parse::<u8>().ok())
-                    == Some(payload_type)
-            };
-            matches_pt("a=rtpmap:") || matches_pt("a=fmtp:") || matches_pt("a=rtcp-fb:")
-        })
-        .map(str::to_string)
-        .collect();
-
-    let m_line = offer
-        .lines()
-        .find(|l| l.starts_with("m=video"))
-        .unwrap_or("m=video 9 UDP/TLS/RTP/SAVPF")
-        .to_string();
 
     Ok(ParsedOffer {
         remote_ufrag,
@@ -452,26 +720,31 @@ fn parse_whip_offer(offer: &str) -> Result<ParsedOffer> {
         candidates,
         payload_type,
         clock_rate,
-        m_line,
-        codec_lines,
+        media: media.clone(),
     })
 }
 
-/// Finds the first `a=<prefix>` line's value anywhere in `sdp` — WHIP
-/// offers signal ICE credentials once (session-level, or identically on
-/// every bundled `m=` section), so unlike [`crate::source::sdp`]'s
-/// per-media attribute lookups, a flat text scan is both sufficient and
-/// simpler; mirrors `webrtc-runtime`'s own `whip_media_smoke` example.
-fn sdp_attr_anywhere(sdp: &str, prefix: &str) -> Option<String> {
-    sdp.lines()
-        .find_map(|l| l.strip_prefix(prefix))
-        .map(|v| v.trim().to_string())
+/// The first `name` attribute value, taken from the media section (media
+/// level) and falling back to the session level (RFC 8839 §5.4). The typed
+/// sdp-types attribute accessors make this resolve `Option<Option<&str>>`.
+fn ice_attr<'a>(
+    session: &'a sdp_types::Session,
+    media: &'a sdp_types::Media,
+    name: &'a str,
+) -> Option<&'a str> {
+    media
+        .get_first_attribute_value(name)
+        .flatten()
+        .or_else(|| session.get_first_attribute_value(name).flatten())
 }
 
-/// Builds this side's SDP answer: [`SetupRole::Passive`] (this route is
-/// always the DTLS server), `a=recvonly` (a WHIP publish endpoint never
-/// sends media back), `a=rtcp-mux` (required — [`MediaTransport`] demuxes
-/// RTP/RTCP on one 5-tuple per RFC 5761 §4, never a separate RTCP port).
+/// Builds this side's SDP answer via `sdp-types`' own `Session::write`
+/// (Task 8): [`SetupRole::Passive`] (this route is always the DTLS server),
+/// `a=recvonly` (a WHIP publish endpoint never sends media back),
+/// `a=rtcp-mux` (required — [`MediaTransport`] demuxes RTP/RTCP on one
+/// 5-tuple per RFC 5761 §4, never a separate RTCP port). ICE candidate lines
+/// come from [`MediaTransport::local_candidates`], and the codec attributes
+/// (`a=rtpmap`/`a=fmtp`/`a=rtcp-fb`) are echoed from the offer's typed media.
 fn build_answer(
     offer: &ParsedOffer,
     media: &MediaTransport,
@@ -479,36 +752,83 @@ fn build_answer(
     local_ice_ufrag: &str,
     local_ice_pwd: &str,
 ) -> String {
-    let candidate_line = format!(
-        "0 1 udp 2130706431 {} {} typ host",
-        local_addr.ip(),
-        local_addr.port()
-    );
-    let mut answer = String::new();
-    answer.push_str("v=0\r\n");
-    answer.push_str("o=- 0 0 IN IP4 127.0.0.1\r\n");
-    answer.push_str("s=-\r\n");
-    answer.push_str("t=0 0\r\n");
-    answer.push_str(&format!("{}\r\n", offer.m_line));
-    answer.push_str("c=IN IP4 127.0.0.1\r\n");
-    answer.push_str("a=rtcp:9 IN IP4 0.0.0.0\r\n");
-    for l in &offer.codec_lines {
-        answer.push_str(l);
-        answer.push_str("\r\n");
+    render_answer(
+        offer,
+        local_addr,
+        local_ice_ufrag,
+        local_ice_pwd,
+        media.local_fingerprint(),
+        &media.local_candidates(),
+    )
+}
+
+/// [`build_answer`]'s deterministic core (test-only export): the fingerprint
+/// and candidate lines are parameters, so a golden can pin `Session::write`'s
+/// line ordering without the random cert/candidate values.
+fn render_answer(
+    offer: &ParsedOffer,
+    local_addr: std::net::SocketAddr,
+    local_ice_ufrag: &str,
+    local_ice_pwd: &str,
+    fingerprint: &str,
+    candidates: &[String],
+) -> String {
+    use sdp_types::{Attribute, Connection, Media, Origin, Session};
+
+    let mut session = Session::new(Origin::with_ip_addr("0", 0, local_addr.ip()), "-");
+
+    // Reconstruct the m= section from the offer's typed media (echo the
+    // negotiated fmt list, RFC 3264 §6.1), with this side's c= line.
+    let mut m = Media {
+        media: offer.media.media.clone(),
+        port: offer.media.port,
+        num_ports: offer.media.num_ports,
+        proto: offer.media.proto.clone(),
+        fmt: offer.payload_type.to_string(),
+        media_title: None,
+        connections: Vec::new(),
+        bandwidths: Vec::new(),
+        key: None,
+        attributes: Vec::new(),
+    };
+    m.add_connection(Connection::from_ip_addr(local_addr.ip()));
+    m.add_attribute_with_value("rtcp", "9 IN IP4 0.0.0.0");
+    // Echo the codec attributes naming the chosen payload type.
+    for attr in &offer.media.attributes {
+        if !matches!(attr.attribute.as_str(), "rtpmap" | "fmtp" | "rtcp-fb") {
+            continue;
+        }
+        let names_pt = attr
+            .value
+            .as_deref()
+            .and_then(|v| v.split_whitespace().next())
+            .and_then(|pt| pt.parse::<u8>().ok())
+            == Some(offer.payload_type);
+        if names_pt {
+            m.attributes.push(Attribute {
+                attribute: attr.attribute.clone(),
+                value: attr.value.clone(),
+            });
+        }
     }
-    answer.push_str("a=recvonly\r\n");
-    answer.push_str(&format!("a=mid:{}\r\n", offer.mid));
-    answer.push_str("a=rtcp-mux\r\n");
-    answer.push_str(&format!("a=ice-ufrag:{local_ice_ufrag}\r\n"));
-    answer.push_str(&format!("a=ice-pwd:{local_ice_pwd}\r\n"));
-    answer.push_str(&format!(
-        "a=fingerprint:sha-256 {}\r\n",
-        media.local_fingerprint()
-    ));
-    answer.push_str("a=setup:passive\r\n");
-    answer.push_str(&format!("a=candidate:{candidate_line}\r\n"));
-    answer.push_str("a=end-of-candidates\r\n");
-    answer
+    m.add_attribute(sdp_types::Attribute::new("recvonly"));
+    m.add_attribute_with_value("mid", &offer.mid);
+    m.add_attribute(sdp_types::Attribute::new("rtcp-mux"));
+    m.add_attribute_with_value("ice-ufrag", local_ice_ufrag);
+    m.add_attribute_with_value("ice-pwd", local_ice_pwd);
+    m.add_attribute_with_value("fingerprint", format!("sha-256 {}", fingerprint));
+    m.add_attribute_with_value("setup", "passive");
+    for cand in candidates {
+        m.add_attribute_with_value("candidate", cand);
+    }
+    m.add_attribute(sdp_types::Attribute::new("end-of-candidates"));
+    session.medias.push(m);
+
+    let mut buf = Vec::new();
+    session
+        .write(&mut buf)
+        .expect("writing an SDP answer to a Vec cannot fail");
+    String::from_utf8(buf).expect("SDP answer is UTF-8")
 }
 
 /// Handles one accepted TCP connection end-to-end: read the POST, parse and
@@ -517,101 +837,224 @@ fn build_answer(
 /// negotiated session off to `tx`. An `OPTIONS` preflight (browsers send one
 /// ahead of a cross-origin `POST` with a non-simple `Content-Type`) gets a
 /// permissive CORS response and no session.
-async fn handle_whip_connection(
-    mut stream: TcpStream,
-    tx: &mpsc::Sender<AdmittedWhip>,
-    active_sessions: &Arc<AtomicUsize>,
+/// Shared state for the four WHIP signalling handlers.
+#[derive(Clone)]
+struct WhipServeState {
+    tx: mpsc::Sender<AdmittedWhip>,
+    active_sessions: Arc<AtomicUsize>,
     max_sessions: usize,
-) -> Result<()> {
-    let crate::webrtc_http::HttpRequest {
-        request_line, body, ..
-    } = match crate::webrtc_http::read_http_request(&mut stream).await {
-        Ok(r) => r,
-        Err(crate::webrtc_http::ReadRequestError::HeadersTooLarge) => {
-            let resp = "HTTP/1.1 431 Request Header Fields Too Large\r\nContent-Length: 0\r\n\r\n";
-            let _ = stream.write_all(resp.as_bytes()).await;
-            return Ok(());
-        }
-        Err(crate::webrtc_http::ReadRequestError::BodyTooLarge) => {
-            let resp = "HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\n\r\n";
-            let _ = stream.write_all(resp.as_bytes()).await;
-            return Ok(());
-        }
-        Err(crate::webrtc_http::ReadRequestError::BadRequest) => {
-            let resp = "HTTP/1.1 400 Bad Request\r\nContent-Length: 0\r\n\r\n";
-            let _ = stream.write_all(resp.as_bytes()).await;
-            return Ok(());
-        }
-        Err(crate::webrtc_http::ReadRequestError::LengthRequired) => {
-            let resp = "HTTP/1.1 411 Length Required\r\nContent-Length: 0\r\n\r\n";
-            let _ = stream.write_all(resp.as_bytes()).await;
-            return Ok(());
-        }
-        Err(crate::webrtc_http::ReadRequestError::Timeout) => {
-            return Err(MultimuxError::Connect {
-                reason: "whip: read request: timed out".into(),
-            });
-        }
-        Err(crate::webrtc_http::ReadRequestError::Io(e)) => {
-            return Err(MultimuxError::Connect {
-                reason: format!("whip: read request: {e}"),
-            });
-        }
-    };
-    if request_line.starts_with("OPTIONS") {
-        let resp = "HTTP/1.1 204 No Content\r\n\
-             Access-Control-Allow-Origin: *\r\n\
-             Access-Control-Allow-Methods: POST, PATCH, DELETE, OPTIONS\r\n\
-             Access-Control-Allow-Headers: Authorization, Content-Type, If-Match\r\n\
-             Content-Length: 0\r\n\r\n";
-        let _ = stream.write_all(resp.as_bytes()).await;
-        return Ok(());
-    }
-    if !request_line.starts_with("POST") {
-        let resp = "HTTP/1.1 405 Method Not Allowed\r\nContent-Length: 0\r\n\r\n";
-        let _ = stream.write_all(resp.as_bytes()).await;
-        return Ok(());
-    }
+    /// Fired after a session is handed to the admit channel, so [`run_whip`]
+    /// drains it immediately rather than waiting out a fixed poll interval a
+    /// steady publish load can starve (defect 2 — the I2 fix).
+    admit_notify: Arc<Notify>,
+}
 
-    let offer_sdp = String::from_utf8_lossy(&body).into_owned();
+/// The WHIP signalling router: `POST /whip` (offer), `OPTIONS /whip`
+/// (preflight) and the session resource's `PATCH`/`DELETE` (`/whip/session`).
+/// The tower layers give it the concurrency bound, the 64 KiB body cap, the
+/// 10 s request timeout and the `CorsLayer` the raw reader used to hand-roll
+/// (SP2.1).
+fn whip_router(state: Arc<WhipServeState>) -> axum::Router {
+    whip_router_with_cap(state, crate::webrtc_session::MAX_PENDING_HTTP_CONNECTIONS)
+}
+
+/// [`whip_router`] with an explicit concurrency cap (test-only): the shared
+/// pool across this router's routes is what a test dials low to observe the
+/// `GlobalConcurrencyLimitLayer` property through the production router.
+fn whip_router_with_cap(state: Arc<WhipServeState>, max_pending: usize) -> axum::Router {
+    use axum::routing::{patch, post};
+
+    axum::Router::new()
+        .route("/whip", post(whip_post).options(whip_options))
+        .route("/whip/session", patch(whip_patch).delete(whip_delete))
+        // Mirror `output::whep`'s `ensure_connect_info`: a test harness driving
+        // the router with `oneshot` has no accepted stream, so `ConnectInfo`
+        // (and the `LocalAddr` extension) is absent and `whip_post`'s
+        // `ConnectInfo(peer)` extractor would reject; inject a default so the
+        // production router is driveable by `whip_router_for_test`.
+        .layer(axum::middleware::from_fn(ensure_connect_info))
+        // ONE shared concurrency pool across every route on this listener (not
+        // one semaphore per route/method, which `ConcurrencyLimitLayer` would
+        // build): `GlobalConcurrencyLimitLayer` owns the `Arc<Semaphore>` and
+        // every `layer()` clone shares it.
+        .layer(tower::limit::GlobalConcurrencyLimitLayer::new(max_pending))
+        .layer(tower_http::limit::RequestBodyLimitLayer::new(
+            crate::webrtc_session::MAX_HTTP_BODY_BYTES,
+        ))
+        .layer(tower_http::timeout::TimeoutLayer::with_status_code(
+            axum::http::StatusCode::REQUEST_TIMEOUT,
+            crate::webrtc_session::HTTP_READ_TIMEOUT,
+        ))
+        // DEVIATION: `tower_http::cors::CorsLayer` intercepts EVERY `OPTIONS`
+        // preflight itself and answers `200 OK`, so the route's own 204
+        // handler would never run; the WHIP OPTIONS contract (and the golden)
+        // is `204 No Content`. CORS headers are therefore added by this
+        // middleware, mirroring `origin::add_response_headers`, and the
+        // handler stays reachable.
+        .layer(axum::middleware::from_fn(add_whip_cors))
+        .with_state(state)
+}
+
+/// The production [`whip_router`] built through its real [`WhipServeState`]
+/// (test-only): a test that drives BOTH the WHIP and WHEP routers through the
+/// shared-pool property must call the same `whip_router` production code, not
+/// hand-build a `Router` with `GlobalConcurrencyLimitLayer` (N2b). `max_pending`
+/// overrides [`whip_router_with_cap`]'s concurrency cap so the test can dial it
+/// low and observe the shared pool.
+#[doc(hidden)]
+pub fn whip_router_for_test(max_sessions: usize, max_pending: usize) -> axum::Router {
+    let (tx, _rx) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
+    let state = Arc::new(WhipServeState {
+        tx,
+        active_sessions: Arc::new(AtomicUsize::new(0)),
+        max_sessions,
+        admit_notify: Arc::new(Notify::new()),
+    });
+    whip_router_with_cap(state, max_pending)
+}
+
+/// Add the permissive CORS headers the WHIP signalling endpoint needs to
+/// every response (`CorsLayer` would intercept OPTIONS; see the router).
+async fn add_whip_cors(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    use axum::http::{HeaderValue, header};
+    let mut resp = next.run(req).await;
+    let headers = resp.headers_mut();
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_ORIGIN,
+        HeaderValue::from_static("*"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_METHODS,
+        HeaderValue::from_static("POST, PATCH, DELETE, OPTIONS"),
+    );
+    headers.insert(
+        header::ACCESS_CONTROL_ALLOW_HEADERS,
+        HeaderValue::from_static("Authorization, Content-Type, If-Match"),
+    );
+    // Main exposed `Location` on the 201 so a cross-origin browser can read it
+    // and DELETE by it (RFC 9725 §4.x); keep that, lost in the axum move.
+    headers.insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        HeaderValue::from_static("Location"),
+    );
+    resp
+}
+
+/// Inject a default `ConnectInfo`/`LocalAddr` when absent (a `oneshot`-driven
+/// test has no accepted stream) — the exact counterpart to
+/// `output::whep::ensure_connect_info`, so `whip_post`'s `ConnectInfo(peer)`
+/// extractor never rejects a request driven through `whip_router_for_test`.
+async fn ensure_connect_info(
+    mut req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .is_none()
+    {
+        req.extensions_mut()
+            .insert(axum::extract::ConnectInfo(std::net::SocketAddr::from((
+                std::net::Ipv4Addr::UNSPECIFIED,
+                0,
+            ))));
+    }
+    if req
+        .extensions()
+        .get::<Option<crate::origin::LocalAddr>>()
+        .is_none()
+    {
+        req.extensions_mut()
+            .insert(None::<crate::origin::LocalAddr>);
+    }
+    next.run(req).await
+}
+
+/// Convert a `webrtc_runtime` [`HttpResponse`](webrtc_runtime::whip::server::HttpResponse)
+/// into an axum response. The typed status line and headers are already on
+/// the wire form `webrtc-runtime` produced; only the body needs wrapping.
+fn to_axum(resp: webrtc_runtime::whip::server::HttpResponse) -> axum::response::Response {
+    let mut out = axum::response::Response::new(axum::body::Body::from(resp.body));
+    *out.status_mut() = resp.status;
+    *out.headers_mut() = resp.headers;
+    out
+}
+
+/// Which IP [`whip_post_inner`] binds this session's media socket on: the
+/// signalling connection's LOCAL address when one is known (correct even when
+/// peer != local — a non-loopback publisher reaches the server at the local
+/// side of its own connection, never at its own peer address), else the
+/// peer's family's unspecified address.
+fn local_bind_ip(
+    local: Option<std::net::SocketAddr>,
+    peer: std::net::SocketAddr,
+) -> std::net::IpAddr {
+    local.map(|a| a.ip()).unwrap_or_else(|| match peer {
+        std::net::SocketAddr::V4(_) => std::net::Ipv4Addr::UNSPECIFIED.into(),
+        std::net::SocketAddr::V6(_) => std::net::Ipv6Addr::UNSPECIFIED.into(),
+    })
+}
+
+/// `OPTIONS /whip`: 204; `CorsLayer` supplies the `Access-Control-*` headers.
+async fn whip_options() -> axum::http::StatusCode {
+    axum::http::StatusCode::NO_CONTENT
+}
+
+/// `POST /whip`: parse the offer, bind this session's media socket, build the
+/// [`MediaTransport`], answer `201 Created`, and hand the session to the
+/// driver over the admit channel.
+async fn whip_post(
+    axum::extract::State(state): axum::extract::State<Arc<WhipServeState>>,
+    ext: axum::extract::Extension<Option<crate::origin::LocalAddr>>,
+    axum::extract::ConnectInfo(peer): axum::extract::ConnectInfo<std::net::SocketAddr>,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    let local = ext.0.map(|l| l.0);
+    match whip_post_inner(state, peer, local, &body).await {
+        Ok(resp) => resp,
+        Err(e) => {
+            tracing::warn!(error = %e, "whip: offer rejected");
+            axum::http::StatusCode::BAD_REQUEST.into_response()
+        }
+    }
+}
+
+async fn whip_post_inner(
+    state: Arc<WhipServeState>,
+    peer: std::net::SocketAddr,
+    local: Option<std::net::SocketAddr>,
+    body: &[u8],
+) -> Result<axum::response::Response> {
+    let offer_sdp = String::from_utf8_lossy(body).into_owned();
     let parsed = parse_whip_offer(&offer_sdp)?;
 
     // Capacity check (issue r07-C11) before any of the expensive
     // per-connection work below (UDP bind, ICE/DTLS setup): refuse here, not
-    // after — `ListenDriver`'s own `max_sessions` cap only takes effect once
-    // an admitted session reaches `poll_accept`, by which point that work
-    // already ran for nothing, same as `crate::output::whep`'s own check.
-    //
-    // `slot` is an RAII guard (issue r07-C11 follow-up): every `?` between
-    // here and the successful `tx.send` below releases it automatically on
-    // drop, so a client that resets the connection (or any other mid-setup
+    // after. `slot` is an RAII guard (issue r07-C11 follow-up): every `?`
+    // between here and the successful `tx.send` below releases it
+    // automatically on drop, so a client that resets (or any other mid-setup
     // failure) can no longer leak the reservation forever. `slot.disarm()`
-    // right before the function returns `Ok` is what hands the slot's
-    // lifetime off to the admitted session — `report_and_maybe_reap` is the
-    // new owner from that point on, and decrements the same counter exactly
-    // once when the session is reaped.
-    let Some(slot) = crate::webrtc_http::SessionSlot::acquire(active_sessions, max_sessions) else {
-        let resp = "HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n\r\n";
-        let _ = stream.write_all(resp.as_bytes()).await;
-        return Ok(());
+    // right before the successful send hands the slot's lifetime off to the
+    // admitted session — `report_and_maybe_reap` is the new owner from then
+    // on.
+    let Some(slot) =
+        crate::webrtc_session::SessionSlot::acquire(&state.active_sessions, state.max_sessions)
+    else {
+        return Ok(axum::http::StatusCode::SERVICE_UNAVAILABLE.into_response());
     };
 
     // The IP to advertise as this session's ICE host candidate: not
-    // `0.0.0.0` (unreachable — that would be the address on the wire if the
-    // media socket bound the wildcard address and this just echoed it back),
-    // but the local side of the TCP connection the client used to reach this
-    // *signalling* endpoint — a real, client-reachable address by
-    // construction (whatever routing/NAT let this very connection through
-    // already applies to it). No STUN/TURN reflexive/relay candidate is
-    // gathered here (`MediaTransportConfig::stun_server: None` below), so a
-    // publisher behind NAT from this route's listener is out of scope for
-    // this cut, same as `webrtc_runtime`'s own `whip_media_smoke` example.
-    let advertise_ip = stream
-        .local_addr()
-        .map(|a| a.ip())
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("whip: signalling connection local_addr: {e}"),
-        })?;
+    // `0.0.0.0` (unreachable), but the local side of the signalling
+    // connection the client used to reach this endpoint — a real,
+    // client-reachable address by construction (whatever routing/NAT let the
+    // signalling connection through already applies to it). No STUN/TURN
+    // reflexive/relay candidate is gathered here (`stun_server: None` below).
+    // A `oneshot` test harness has no accepted stream, so fall back to the
+    // peer's family's unspecified address (the media socket still binds).
+    let advertise_ip = local_bind_ip(local, peer);
     let socket = UdpSocket::bind((advertise_ip, 0))
         .await
         .map_err(|e| MultimuxError::Connect {
@@ -643,9 +1086,8 @@ async fn handle_whip_connection(
     })?;
 
     for raw in &parsed.candidates {
-        // A candidate this side can't parse is skipped, not fatal — mirrors
-        // `whip_media_smoke`'s own handling; ICE connectivity checks simply
-        // never nominate a pair for it.
+        // A candidate this side can't parse is skipped, not fatal — ICE
+        // connectivity checks simply never nominate a pair for it.
         let _ = media.add_remote_candidate(raw);
     }
 
@@ -656,42 +1098,56 @@ async fn handle_whip_connection(
         &local_ice_ufrag,
         &local_ice_pwd,
     );
-    let resp = format!(
-        "HTTP/1.1 201 Created\r\n\
-         Content-Type: application/sdp\r\n\
-         Access-Control-Allow-Origin: *\r\n\
-         Access-Control-Expose-Headers: Location\r\n\
-         Location: /whip/session\r\n\
-         Content-Length: {}\r\n\r\n{}",
-        answer.len(),
-        answer
-    );
-    stream
-        .write_all(resp.as_bytes())
-        .await
-        .map_err(|e| MultimuxError::Connect {
-            reason: format!("whip: write answer: {e}"),
-        })?;
-    let _ = stream.shutdown().await;
+
+    // The typed state machine owns the 201's Location/ETag/Content-Type over
+    // `http`/`headers` (SP2.2), not a hand-formatted response string.
+    let mut session = webrtc_runtime::whip::server::WhipSession::new("/whip/session".to_string());
+    let _ = session.on_post(Vec::new());
+    let etag = rand_token(16);
+    let response = session.accept(answer.into_bytes(), etag);
 
     let admitted = AdmittedWhip {
         socket: Arc::new(socket),
-        media: Arc::new(TokioMutex::new(media)),
+        media,
         tracks: vec![WhipTrack {
             track_id: 1,
             payload_type: parsed.payload_type,
             clock_rate: parsed.clock_rate,
         }],
     };
-    if tx.send(admitted).await.is_ok() {
-        // Ownership of the slot passes to the admitted session from here —
-        // `report_and_maybe_reap` decrements the same counter once, when
-        // `run_whip` reaps it.
+    if state.tx.send(admitted).await.is_ok() {
+        // Ownership of the slot passes to the admitted session from here.
         slot.disarm();
+        // Wake the run loop so it drains this admission at once (I2), instead
+        // of waiting out a fixed poll interval a steady publish load starves.
+        state.admit_notify.notify_waiters();
     }
-    // If the send failed (channel closed), `slot` drops here and releases
-    // the slot itself — nothing else will ever reap this session.
-    Ok(())
+    // If the send failed (channel closed), `slot` drops here and releases it.
+    Ok(to_axum(response))
+}
+
+/// `PATCH /whip/session`: not implemented in this cut (no trickle-ICE /
+/// ICE-restart handling). Main answered every non-POST method `405 Method Not
+/// Allowed`; keep that parity rather than a stub that acks without effect
+/// (RFC 9110 §15.5.6 requires an `Allow` header on a 405).
+async fn whip_patch() -> axum::response::Response {
+    let mut resp = axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response();
+    resp.headers_mut().insert(
+        axum::http::header::ALLOW,
+        axum::http::HeaderValue::from_static("POST, OPTIONS"),
+    );
+    resp
+}
+
+/// `DELETE /whip/session`: not implemented in this cut (no session teardown
+/// path). Main answered `405` for every non-POST method; keep parity.
+async fn whip_delete() -> axum::response::Response {
+    let mut resp = axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response();
+    resp.headers_mut().insert(
+        axum::http::header::ALLOW,
+        axum::http::HeaderValue::from_static("POST, OPTIONS"),
+    );
+    resp
 }
 
 /// A short pseudo-random token for ICE ufrag/pwd — see
@@ -755,7 +1211,13 @@ type CapturedConfig = Option<AVCConfigurationBox>;
 /// `crate::source::rtmp::RtmpIngestSession::conn_handle`.
 pub struct WhipIngestSession {
     socket: Arc<UdpSocket>,
-    media: Arc<TokioMutex<MediaTransport>>,
+    /// The sans-IO [`MediaTransport`], owned outright (SP6.3): the read loop
+    /// takes it by value via [`Self::take_transport`] and holds no lock
+    /// across any `send_to().await`. Held behind a *synchronous* mutex only
+    /// so [`WhipIngestSession`] stays `Send + Sync` (a raw `Option<T>` would
+    /// make it `!Sync`, since `MediaTransport` is `Send + !Sync`); the guard
+    /// is taken within a single synchronous `take`, never across an await.
+    media: std::sync::Mutex<Option<MediaTransport>>,
     depacketiser: RtpStreamDepacketiser,
     pt_to_track: HashMap<u8, u32>,
     clock_rate_by_track: HashMap<u32, u32>,
@@ -809,7 +1271,7 @@ impl WhipIngestSession {
         }
         WhipIngestSession {
             socket: admitted.socket,
-            media: admitted.media,
+            media: std::sync::Mutex::new(Some(admitted.media)),
             depacketiser: RtpStreamDepacketiser::new(tracks),
             pt_to_track,
             clock_rate_by_track,
@@ -827,10 +1289,16 @@ impl WhipIngestSession {
         Arc::clone(&self.socket)
     }
 
-    /// A cheap `Arc` clone of the [`MediaTransport`] — see
-    /// [`Self::socket_handle`].
-    fn media_handle(&self) -> Arc<TokioMutex<MediaTransport>> {
-        Arc::clone(&self.media)
+    /// Hands the owned [`MediaTransport`] to the read loop (SP6.3): the
+    /// session task OWNS it outright, so the loop takes it by value and holds
+    /// no lock across `send_to().await`. The `std::sync::Mutex` is held only
+    /// for the synchronous `take`, never across an await.
+    fn take_transport(&self) -> MediaTransport {
+        self.media
+            .lock()
+            .expect("media transport mutex")
+            .take()
+            .expect("media transport already taken")
     }
 
     /// Scans `sample`'s length-prefixed NAL data (see [`NAL_LENGTH_PREFIX`])
@@ -1041,10 +1509,20 @@ fn rebuild_rtp_wire(pkt: &webrtc_runtime::media::DecryptedRtp) -> Vec<u8> {
 
 /// What one [`read_one`] call observed — mirrors
 /// `crate::source::rtmp::ReadOutcome`'s shape.
+#[derive(Debug)]
 enum ReadOutcome {
     /// Zero or more decrypted RTP packets, each ready to
-    /// [`ListenDriver::feed`] in order.
+    /// [`ListenDriver::feed`] in order. A datagram arrived (even if it
+    /// produced no RTP), so the idle clock resets.
     Events(Vec<Vec<u8>>),
+    /// The transport's own timer fired with no inbound datagram (defect 1):
+    /// `handle_timeout` ran and the session stays live. Does NOT reset the
+    /// idle clock.
+    Timer,
+    /// A [`MediaEvent::TimerError`] surfaced from `handle_timeout` (finding
+    /// N3): the ICE/DTLS timer drive failed, so the session is ended rather
+    /// than silently stuck.
+    TimerError(String),
     /// No datagram within [`IngestTimeouts::read`] — treated as ending this
     /// session, same as `crate::source::rtmp`'s own "timeouts still bound
     /// reads" policy.
@@ -1053,81 +1531,190 @@ enum ReadOutcome {
     TransportError(String),
 }
 
-type BoxedRead = Pin<Box<dyn Future<Output = (SessionId, ReadOutcome)> + Send>>;
+type BoxedRead = Pin<Box<dyn Future<Output = (SessionId, MediaTransport, ReadOutcome)> + Send>>;
 
-/// Awaits the next UDP datagram for session `id`, bounded by `read_timeout`:
-/// decrypts it through `media` (ICE/DTLS/SRTP), drains and sends every
-/// outbound datagram [`MediaTransport::poll_transmit`] now wants sent, and
-/// reconstructs wire bytes for every [`MediaEvent::Rtp`] observed. Boxed so
-/// [`run_whip`] can hold many of these, one per admitted session, in one
-/// [`FuturesUnordered`] — mirrors `crate::source::rtmp::read_one`.
+/// Awaits the next UDP datagram for session `id`, bounded by `idle_deadline`
+/// (an absolute instant when the session may end for lack of inbound
+/// datagrams — set from the last datagram so a transport-timer wake never
+/// re-arms it): decrypts through `media` (ICE/DTLS/SRTP), drains and sends
+/// every outbound datagram [`MediaTransport::poll_transmit`] now wants sent,
+/// and reconstructs wire bytes for every [`MediaEvent::Rtp`] observed. The
+/// [`MediaTransport`] is owned outright and returned in the outcome so the
+/// next [`read_one`] takes it again (SP6.3). Boxed so [`run_whip`] can hold
+/// many of these, one per admitted session, in one [`FuturesUnordered`] —
+/// mirrors `crate::source::rtmp::read_one`.
 fn read_one(
     id: SessionId,
     socket: Arc<UdpSocket>,
-    media: Arc<TokioMutex<MediaTransport>>,
-    read_timeout: Duration,
+    mut media: MediaTransport,
+    idle_deadline: Instant,
+    timer_fires: Arc<AtomicU64>,
+    timer_notify: Arc<Notify>,
 ) -> BoxedRead {
     Box::pin(async move {
         let mut buf = [0u8; MAX_UDP_DATAGRAM];
-        let outcome = match tokio::time::timeout(read_timeout, socket.recv_from(&mut buf)).await {
-            Ok(Ok((n, peer))) => {
-                let mut guard = media.lock().await;
-                match guard.handle_datagram(Instant::now(), peer, &buf[..n]) {
-                    Ok(events) => {
-                        while let Some(Datagram { peer, bytes }) = guard.poll_transmit() {
-                            let _ = socket.send_to(&bytes, peer).await;
+        // The transport's own next timer, taken BEFORE the select so a quiet
+        // session still gets its ICE/DTLS retransmits (defect 1) — the timer
+        // arm fires `handle_timeout` WITHOUT ending the session.
+        let deadline = media.poll_timeout();
+        let outcome = tokio::select! {
+            received = socket.recv_from(&mut buf) => match received {
+                Ok((n, peer)) => {
+                    match media.handle_datagram(Instant::now(), peer, &buf[..n]) {
+                        Ok(events) => {
+                            let outbound = drain_transmit(&mut media);
+                            for Datagram { peer, bytes } in outbound {
+                                let _ = socket.send_to(&bytes, peer).await;
+                            }
+                            let wire: Vec<Vec<u8>> = events
+                                .into_iter()
+                                .filter_map(|e| match e {
+                                    MediaEvent::Rtp(pkt) => Some(rebuild_rtp_wire(&pkt)),
+                                    _ => None,
+                                })
+                                .collect();
+                            ReadOutcome::Events(wire)
                         }
-                        let wire: Vec<Vec<u8>> = events
-                            .into_iter()
-                            .filter_map(|e| match e {
-                                MediaEvent::Rtp(pkt) => Some(rebuild_rtp_wire(&pkt)),
-                                _ => None,
-                            })
-                            .collect();
-                        ReadOutcome::Events(wire)
-                    }
-                    // A per-datagram failure is NOT session-fatal.
-                    //
-                    // `handle_datagram` returns `Err` for any SRTP
-                    // authentication failure, and post-handshake this socket
-                    // accepts datagrams from anyone: `recv_from`'s peer is
-                    // passed straight to the transport with no source-address
-                    // or ICE-pair check. Treating that as fatal meant a single
-                    // unauthenticated datagram in the RFC 5764 §5.1.2 SRTP
-                    // band (first byte 128..=191) tore down a live ingest.
-                    //
-                    // Failing to authenticate is the *expected* outcome for a
-                    // packet that was not sent by the peer, so it is logged and
-                    // skipped — exactly as the WHEP egress path already did for
-                    // the identical error (`output::whep`). The asymmetry was
-                    // the bug: same error, fatal on ingest, harmless on egress.
-                    Err(e) => {
-                        tracing::debug!(error = %e, %peer, "whip: datagram rejected, skipping");
-                        // Still flush anything the transport wants to send
-                        // (ICE keepalives, DTLS retransmits) before moving on.
-                        while let Some(Datagram { peer, bytes }) = guard.poll_transmit() {
-                            let _ = socket.send_to(&bytes, peer).await;
+                        // A per-datagram failure is NOT session-fatal; an
+                        // unauthenticated datagram is logged and skipped.
+                        Err(e) => {
+                            tracing::debug!(error = %e, %peer, "whip: datagram rejected, skipping");
+                            let outbound = drain_transmit(&mut media);
+                            for Datagram { peer, bytes } in outbound {
+                                let _ = socket.send_to(&bytes, peer).await;
+                            }
+                            ReadOutcome::Events(Vec::new())
                         }
-                        ReadOutcome::Events(Vec::new())
                     }
                 }
-            }
-            // A socket-level read error IS fatal — the session has no
-            // transport left to recover onto.
-            Ok(Err(e)) => ReadOutcome::TransportError(e.to_string()),
-            Err(_) => {
-                // A read timeout still lets the transport act on the passage
-                // of time (ICE retransmits, etc.) before this session ends.
-                let mut guard = media.lock().await;
-                guard.handle_timeout(Instant::now());
-                while let Some(Datagram { peer, bytes }) = guard.poll_transmit() {
+                // A socket-level read error IS fatal — the session has no
+                // transport left to recover onto.
+                Err(e) => ReadOutcome::TransportError(e.to_string()),
+            },
+            // The read-timeout bound: a session with no datagram since
+            // `idle_deadline` ends. This is the transport-timer-independent
+            // "vanished publisher" reap.
+            () = sleep_until_opt(Some(idle_deadline)) => {
+                media.handle_timeout(Instant::now());
+                let outbound = drain_transmit(&mut media);
+                for Datagram { peer, bytes } in outbound {
                     let _ = socket.send_to(&bytes, peer).await;
                 }
                 ReadOutcome::TimedOut
+            },
+            // Defect 1: the transport's own timer fired. Run `handle_timeout`
+            // while the session stays live (a timer wake is NOT a session end,
+            // and does NOT reset the idle clock). Finding N3: the sleep is
+            // floored to MIN_TIMER_INTERVAL so a stuck (always-overdue)
+            // deadline cannot fire `handle_timeout` back-to-back and spin a
+            // core, and a fatal TimerError ends the session.
+            () = crate::webrtc_session::sleep_until_timer(deadline, Instant::now()) => {
+                let events = media.handle_timeout(Instant::now());
+                timer_fires.fetch_add(1, Ordering::Relaxed);
+                timer_notify.notify_waiters();
+                let outbound = drain_transmit(&mut media);
+                for Datagram { peer, bytes } in outbound {
+                    let _ = socket.send_to(&bytes, peer).await;
+                }
+                match first_timer_error(&events) {
+                    Some(err) => {
+                        tracing::warn!(error = %err, "whip: transport timer failed; ending session");
+                        ReadOutcome::TimerError(err)
+                    }
+                    None => ReadOutcome::Timer,
+                }
             }
         };
-        (id, outcome)
+        (id, media, outcome)
     })
+}
+
+/// Drain everything the transport currently wants to send, returned as a
+/// `Vec` so no `&mut MediaTransport` is held across any `send_to().await` —
+/// the session owns the transport here (SP6.3): lock, drain, drop the lock,
+/// then send.
+fn drain_transmit(media: &mut MediaTransport) -> Vec<Datagram> {
+    let mut out = Vec::new();
+    while let Some(d) = media.poll_transmit() {
+        out.push(d);
+    }
+    out
+}
+
+/// The first [`MediaEvent::TimerError`] among `handle_timeout`'s returned
+/// events, if any (finding N3): a fatal ICE/DTLS timer-drive failure ends the
+/// session rather than being silently discarded.
+fn first_timer_error(events: &[MediaEvent]) -> Option<String> {
+    events.iter().find_map(|e| match e {
+        MediaEvent::TimerError(err) => Some(err.clone()),
+        _ => None,
+    })
+}
+
+/// The `last_datagram` idle-clock map with an optional live-size gauge (minor
+/// review finding): the driver's `last_datagram` must drop a reaped session's
+/// entry, else the map leaks one entry per reaped session. Wrapping the
+/// `HashMap` here (rather than three bare mutation sites) keeps the gauge and
+/// the map in lock-step so a test can observe the leak.
+struct IdleClockMap {
+    map: HashMap<SessionId, Instant>,
+    live: Option<Arc<AtomicUsize>>,
+}
+
+impl IdleClockMap {
+    fn new(live: Option<Arc<AtomicUsize>>) -> Self {
+        Self {
+            map: HashMap::new(),
+            live,
+        }
+    }
+
+    /// Set the idle clock for `id` (inserting it if new), returning the
+    /// resulting value; increments the gauge only on a NEW insertion.
+    fn set(&mut self, id: SessionId, t: Instant) -> Instant {
+        use std::collections::hash_map::Entry;
+        match self.map.entry(id) {
+            Entry::Occupied(mut e) => {
+                *e.get_mut() = t;
+                t
+            }
+            Entry::Vacant(e) => {
+                e.insert(t);
+                if let Some(g) = &self.live {
+                    g.fetch_add(1, Ordering::Relaxed);
+                }
+                t
+            }
+        }
+    }
+
+    fn get(&self, id: &SessionId) -> Option<Instant> {
+        self.map.get(id).copied()
+    }
+
+    fn remove(&mut self, id: &SessionId) {
+        if self.map.remove(id).is_some()
+            && let Some(g) = &self.live
+        {
+            g.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// Sleep until an optional wall-clock deadline (`std::time::Instant`, as
+/// `MediaTransport::poll_timeout` returns), or never fire when `None`. An
+/// already-overdue deadline fires IMMEDIATELY (it maps to a completed future,
+/// never `pending()`): the deadline is sampled before the `select!`, so by the
+/// time the timer arm is polled the deadline may already be in the past and
+/// must be treated as ready, or the transport's timer would be delayed until
+/// the read timeout.
+fn sleep_until_opt(deadline: Option<Instant>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
+    let now = Instant::now();
+    match deadline {
+        None => Box::pin(std::future::pending()),
+        Some(d) if d <= now => Box::pin(std::future::ready(())),
+        Some(d) => Box::pin(tokio::time::sleep(d.saturating_duration_since(now))),
+    }
 }
 
 /// Per-session [`DriverProgress`] bookkeeping — mirrors
@@ -1191,10 +1778,12 @@ pub(crate) async fn run_whip_with_clock(
     route_handle: &Arc<RouteHandle>,
     clock: &(dyn Fn() -> Instant + Sync),
 ) -> MultimuxError {
-    let (accept_rx, active_sessions) = match route.ensure_infra().await {
+    let infra = match route.ensure_infra().await {
         Ok(v) => v,
         Err(e) => return e,
     };
+    let accept_rx = Arc::clone(&infra.accept_rx);
+    let active_sessions = Arc::clone(&infra.active_sessions);
     let listener = WhipListener {
         accept_rx,
         max_sessions: route.max_sessions,
@@ -1211,38 +1800,27 @@ pub(crate) async fn run_whip_with_clock(
     let mut progress: ProgressBySession = HashMap::new();
     // Each session's own clock origin (see `SessionClocks`).
     let mut clocks = SessionClocks::new(start);
+    // The last time each session received a datagram, driving the idle reap
+    // bound (a transport-timer wake must NOT reset it).
+    let mut last_datagram = IdleClockMap::new({
+        let g = Arc::clone(&infra.last_datagram_entries);
+        Some(g)
+    });
     let mut reads: FuturesUnordered<BoxedRead> = FuturesUnordered::new();
 
     loop {
         tokio::select! {
-            () = tokio::time::sleep(ACCEPT_POLL_INTERVAL) => {
+            // I2: admits on a wake from the signalling accept pump, instead of
+            // a fixed poll interval a steady publish load can starve.
+            () = infra.admit_notify.notified() => {
                 clocks.retain(|id| progress.contains_key(id));
-                loop {
-                    match driver.poll_accept() {
-                        AcceptOutcome::Idle => break,
-                        AcceptOutcome::Refused => {
-                            tracing::warn!("whip: connection refused, max_sessions reached");
-                        }
-                        AcceptOutcome::Error(e) => return e,
-                        AcceptOutcome::Admitted(id) => {
-                            let session = driver
-                                .driver(id)
-                                .expect("just admitted by poll_accept")
-                                .session();
-                            let socket = session.socket_handle();
-                            let media = session.media_handle();
-                            progress.insert(id, DriverProgress::new());
-                            clocks.admit(id, clock());
-                            reads.push(read_one(id, socket, media, read_timeout));
-                        }
-                        _ => break,
-                    }
-                }
             }
-            Some((id, outcome)) = reads.next(), if !reads.is_empty() => {
+            Some((id, media, outcome)) = reads.next(), if !reads.is_empty() => {
                 let now = clocks.now(id, clock());
                 match outcome {
                     ReadOutcome::Events(events) => {
+                        // A datagram arrived: reset the idle clock.
+                        last_datagram.set(id, clock());
                         // Fed via `driver_mut`/`IngestDriver::feed`, not
                         // `ListenDriver::feed` — that convenience wrapper
                         // removes a session that goes terminal as a *result*
@@ -1256,12 +1834,25 @@ pub(crate) async fn run_whip_with_clock(
                         }
                         let reaped =
                             report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
-                        if !reaped
+                        if reaped {
+                            // The session is gone: drop its idle-clock entry, or
+                            // the map leaks one entry per reaped session.
+                            last_datagram.remove(&id);
+                        } else if let Some(d) = driver.driver(id) {
+                            let socket = d.session().socket_handle();
+                            let idle_deadline = last_datagram.get(&id).unwrap_or_else(clock) + read_timeout;
+                            reads.push(read_one(id, socket, media, idle_deadline, Arc::clone(&infra.timer_fires), Arc::clone(&infra.timer_notify)));
+                        }
+                    }
+                    // A transport-timer wake (defect 1): the session stays live
+                    // and its idle clock is NOT reset.
+                    ReadOutcome::Timer => {
+                        if progress.contains_key(&id)
                             && let Some(d) = driver.driver(id)
                         {
                             let socket = d.session().socket_handle();
-                            let media = d.session().media_handle();
-                            reads.push(read_one(id, socket, media, read_timeout));
+                            let idle_deadline = last_datagram.get(&id).unwrap_or_else(clock) + read_timeout;
+                            reads.push(read_one(id, socket, media, idle_deadline, Arc::clone(&infra.timer_fires), Arc::clone(&infra.timer_notify)));
                         }
                     }
                     ReadOutcome::TimedOut => {
@@ -1269,6 +1860,7 @@ pub(crate) async fn run_whip_with_clock(
                         if let Some(d) = driver.driver_mut(id) {
                             d.finish();
                         }
+                        last_datagram.remove(&id);
                         report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
                     }
                     ReadOutcome::TransportError(reason) => {
@@ -1276,9 +1868,70 @@ pub(crate) async fn run_whip_with_clock(
                         if let Some(d) = driver.driver_mut(id) {
                             d.finish();
                         }
+                        last_datagram.remove(&id);
+                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
+                    }
+                    // A fatal ICE/DTLS timer error (finding N3): log and end
+                    // the session (a stuck transport can never recover).
+                    ReadOutcome::TimerError(reason) => {
+                        tracing::warn!(error = %reason, "whip: transport timer error; ending session");
+                        if let Some(d) = driver.driver_mut(id) {
+                            d.finish();
+                        }
+                        last_datagram.remove(&id);
                         report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
                     }
                 }
+            }
+        }
+
+        // Drain every admitted session, on every loop iteration (whichever arm
+        // won): a continuously-ready read can no longer starve an admission.
+        loop {
+            match driver.poll_accept() {
+                AcceptOutcome::Idle => break,
+                AcceptOutcome::Refused => {
+                    tracing::warn!("whip: connection refused, max_sessions reached");
+                }
+                AcceptOutcome::Error(e) => return e,
+                AcceptOutcome::Admitted(id) => {
+                    #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
+                    let (socket, mut media) = {
+                        let s = driver
+                            .driver(id)
+                            .expect("just admitted by poll_accept")
+                            .session();
+                        (s.socket_handle(), s.take_transport())
+                    };
+                    // Test seam: a staged fatal timer error is applied to the
+                    // freshly-admitted transport so its next `handle_timeout`
+                    // ends the session (finding N3).
+                    #[cfg(feature = "test-hooks")]
+                    {
+                        if let Some(err) = infra
+                            .force_timer_error
+                            .lock()
+                            .expect("force_timer_error")
+                            .take()
+                        {
+                            media.force_next_timer_error(err);
+                        }
+                    }
+                    infra.admitted_total.fetch_add(1, Ordering::SeqCst);
+                    infra.admit_count_notify.notify_waiters();
+                    progress.insert(id, DriverProgress::new());
+                    clocks.admit(id, clock());
+                    let idle_deadline = last_datagram.set(id, clock());
+                    reads.push(read_one(
+                        id,
+                        socket,
+                        media,
+                        idle_deadline + read_timeout,
+                        Arc::clone(&infra.timer_fires),
+                        Arc::clone(&infra.timer_notify),
+                    ));
+                }
+                _ => break,
             }
         }
     }
@@ -1287,6 +1940,7 @@ pub(crate) async fn run_whip_with_clock(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::net::TcpStream;
 
     /// A well-formed SHA-256 SDP fingerprint (RFC 8122 §5) — the shape
     /// `MediaTransport::new` validates and pins to its DTLS verify callback.
@@ -1314,6 +1968,153 @@ a=rtcp-mux\r\n\
 a=rtpmap:96 H264/90000\r\n\
 a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n\
 a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
+
+    #[test]
+    fn local_bind_ip_uses_the_signalling_local_address_not_the_peer() {
+        // A non-loopback publisher (peer 192.0.2.7) reaching a server whose
+        // own side of that connection is 10.0.0.1 must bind 10.0.0.1, not the
+        // peer address (which is the client's, and `EADDRNOTAVAIL` on this
+        // host).
+        let peer: std::net::SocketAddr = "192.0.2.7:12345".parse().unwrap();
+        let local = Some("10.0.0.1:8080".parse::<std::net::SocketAddr>().unwrap());
+        assert_eq!(
+            local_bind_ip(local, peer),
+            "10.0.0.1".parse::<std::net::IpAddr>().unwrap(),
+            "must bind the signalling connection's LOCAL address"
+        );
+        // Without a known local address, fall back to the peer's family.
+        let peer_v4: std::net::SocketAddr = "192.0.2.7:12345".parse().unwrap();
+        assert_eq!(
+            local_bind_ip(None, peer_v4),
+            std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)
+        );
+        let peer_v6: std::net::SocketAddr = "[::1]:12345".parse().unwrap();
+        assert_eq!(
+            local_bind_ip(None, peer_v6),
+            std::net::IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED)
+        );
+    }
+
+    /// Defect 1 (structural): a transport with a pending timer (here a STUN
+    /// gatherer, armed with `stun_server`) fires the timer arm in `read_one`
+    /// with NO inbound datagram — `timer_fires` increments and the outcome is
+    /// `Timer`, never a reap. If `poll_timeout` were not consulted this test
+    /// could not observe any fire.
+    #[tokio::test]
+    async fn a_transport_timer_fires_with_no_inbound_datagram() {
+        let socket = {
+            let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+            s.set_nonblocking(true).unwrap();
+            Arc::new(UdpSocket::from_std(s).unwrap())
+        };
+        let mut media = MediaTransport::new(
+            MediaTransportConfig {
+                local_addr: "127.0.0.1:0".parse().unwrap(),
+                local_ice_ufrag: rand_token(8),
+                local_ice_pwd: rand_token(24),
+                remote_ice_ufrag: rand_token(8),
+                remote_ice_pwd: rand_token(24),
+                remote_fingerprint: OFFER_FINGERPRINT.into(),
+                is_controlling: false,
+                local_setup: SetupRole::Passive,
+                // A STUN server arms the gatherer, which schedules a Binding
+                // retransmit — so `poll_timeout` returns `Some` with nothing
+                // inbound, the exact "vanished publisher" case under test.
+                stun_server: Some("127.0.0.1:9".parse().unwrap()),
+                max_remote_candidates: MAX_REMOTE_CANDIDATES,
+            },
+            Instant::now(),
+        )
+        .unwrap();
+        assert!(
+            media.poll_timeout().is_some(),
+            "a transport with a STUN gatherer must have a pending timer"
+        );
+
+        let timer_fires = Arc::new(AtomicU64::new(0));
+        let timer_notify = Arc::new(Notify::new());
+        // Idle deadline far in the future so the transport-timer arm, not the
+        // read-timeout arm, is what completes. No datagram is sent, so only
+        // the timer arm can fire.
+        let idle_deadline = Instant::now() + Duration::from_secs(3600);
+        let fut = read_one(
+            SessionId(0),
+            socket,
+            media,
+            idle_deadline,
+            Arc::clone(&timer_fires),
+            Arc::clone(&timer_notify),
+        );
+
+        // Bound the wait generously; the STUN gatherer's first retransmit is
+        // the arm that fires (real time, sub-second).
+        let (_id, _media, outcome) = tokio::time::timeout(Duration::from_secs(10), fut)
+            .await
+            .expect("the timer arm must fire (no inbound datagram)");
+        assert!(
+            matches!(outcome, ReadOutcome::Timer),
+            "a transport timer must fire as `Timer`, not reap: {outcome:?}"
+        );
+        assert!(
+            timer_fires.load(Ordering::Relaxed) > 0,
+            "the timer counter must observe the fire"
+        );
+    }
+
+    /// `sleep_until_opt` treats an already-overdue deadline as READY
+    /// immediately (it is sampled before the `select!`, so by the time the arm
+    /// is polled it may already be past); `pending()` would delay a transport
+    /// timer until the read timeout.
+    #[tokio::test]
+    async fn an_overdue_deadline_is_ready_immediately() {
+        let past = Instant::now() - Duration::from_secs(1);
+        tokio::time::timeout(Duration::from_secs(1), sleep_until_opt(Some(past)))
+            .await
+            .expect("an overdue deadline must resolve immediately, not hang");
+    }
+
+    /// Finding N3: a stuck deadline (one that keeps returning an instant at or
+    /// before now) can never drive `handle_timeout` faster than the
+    /// `MIN_TIMER_INTERVAL` floor. Under a paused clock, two consecutive
+    /// `sleep_until_timer(Some(now), now)` waits advance elapsed time by at
+    /// least the floor each — if the floor were missing the first would be
+    /// `ready` and the loop would spin.
+    #[tokio::test(start_paused = true)]
+    async fn a_stuck_deadline_can_not_spin_faster_than_the_timer_floor() {
+        // Drive many consecutive "overdue" deadlines and confirm each wait
+        // advances the paused clock by at least MIN_TIMER_INTERVAL.
+        for _ in 0..128 {
+            let before = tokio::time::Instant::now();
+            {
+                let now = tokio::time::Instant::now().into_std();
+                crate::webrtc_session::sleep_until_timer(Some(now), now).await;
+            }
+            let elapsed = before.elapsed();
+            assert!(
+                elapsed >= crate::webrtc_session::MIN_TIMER_INTERVAL,
+                "an overdue deadline must still be floored to MIN_TIMER_INTERVAL, \
+                 but only {elapsed:?} elapsed"
+            );
+        }
+    }
+
+    /// Finding N3: a `MediaEvent::TimerError` is surfaced (not silently
+    /// dropped) and maps to an end-of-session outcome.
+    #[test]
+    fn a_timer_error_event_is_surfaced() {
+        assert_eq!(
+            first_timer_error(&[MediaEvent::TimerError("boom".into())]).as_deref(),
+            Some("boom")
+        );
+        assert_eq!(
+            first_timer_error(&[
+                MediaEvent::DtlsHandshakeComplete,
+                MediaEvent::IceStateChanged("connected".into()),
+            ]),
+            None,
+            "a non-error event must not be mistaken for a timer failure"
+        );
+    }
 
     #[test]
     fn parses_video_only_offer() {
@@ -1442,28 +2243,26 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 s.set_nonblocking(true).unwrap();
                 Arc::new(UdpSocket::from_std(s).unwrap())
             },
-            media: Arc::new(TokioMutex::new(
-                MediaTransport::new(
-                    MediaTransportConfig {
-                        local_addr: "127.0.0.1:0".parse().unwrap(),
-                        local_ice_ufrag: rand_token(8),
-                        local_ice_pwd: rand_token(24),
-                        remote_ice_ufrag: rand_token(8),
-                        remote_ice_pwd: rand_token(24),
-                        is_controlling: false,
-                        local_setup: SetupRole::Passive,
-                        stun_server: None,
-                        // This test never handshakes (it exercises the deferred
-                        // `avcC` capture gate); it only needs a transport that
-                        // `MediaTransport::new` accepts — i.e. a well-formed
-                        // fingerprint. See `OFFER_FINGERPRINT`.
-                        remote_fingerprint: OFFER_FINGERPRINT.into(),
-                        max_remote_candidates: MAX_REMOTE_CANDIDATES,
-                    },
-                    Instant::now(),
-                )
-                .unwrap(),
-            )),
+            media: MediaTransport::new(
+                MediaTransportConfig {
+                    local_addr: "127.0.0.1:0".parse().unwrap(),
+                    local_ice_ufrag: rand_token(8),
+                    local_ice_pwd: rand_token(24),
+                    remote_ice_ufrag: rand_token(8),
+                    remote_ice_pwd: rand_token(24),
+                    is_controlling: false,
+                    local_setup: SetupRole::Passive,
+                    stun_server: None,
+                    // This test never handshakes (it exercises the deferred
+                    // `avcC` capture gate); it only needs a transport that
+                    // `MediaTransport::new` accepts — i.e. a well-formed
+                    // fingerprint. See `OFFER_FINGERPRINT`.
+                    remote_fingerprint: OFFER_FINGERPRINT.into(),
+                    max_remote_candidates: MAX_REMOTE_CANDIDATES,
+                },
+                Instant::now(),
+            )
+            .unwrap(),
             tracks: vec![WhipTrack {
                 track_id: 1,
                 payload_type: 96,
@@ -1510,43 +2309,79 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     /// parsing the offer, releasing the slot it reserved to check, and
     /// never reach the `UdpSocket::bind`/`MediaTransport::new` work below
     /// it (issue r07-C11): nothing is sent to `tx`, so a driver on the
-    /// other end never sees an admitted session at all.
-    #[tokio::test]
-    async fn whip_at_capacity_answers_503_without_admitting_a_session() {
-        use tokio::io::AsyncReadExt;
+    /// A WHIP signalling server bound to an ephemeral port, plus the address
+    /// to reach it and the admit-channel receiver. Kept alive by the caller.
+    struct TestServer {
+        addr: std::net::SocketAddr,
+        rx: mpsc::Receiver<AdmittedWhip>,
+        active_sessions: Arc<AtomicUsize>,
+        _cancel: tokio_util::sync::CancellationToken,
+    }
 
+    async fn test_server(max_sessions: usize) -> TestServer {
         let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
-        let mut client = TcpStream::connect(addr).await.unwrap();
-        let (server, _) = listener.accept().await.unwrap();
-
-        let request = format!(
-            "POST /whip HTTP/1.1\r\nContent-Length: {}\r\n\r\n{}",
-            OFFER.len(),
-            OFFER
-        );
-        client.write_all(request.as_bytes()).await.unwrap();
-
-        let (tx, mut rx) = mpsc::channel::<AdmittedWhip>(1);
+        let (tx, rx) = mpsc::channel::<AdmittedWhip>(1);
         let active_sessions = Arc::new(AtomicUsize::new(0));
-        handle_whip_connection(server, &tx, &active_sessions, 0)
-            .await
-            .expect("a full route answers 503, not a hard error");
+        let state = Arc::new(WhipServeState {
+            tx,
+            active_sessions: Arc::clone(&active_sessions),
+            max_sessions,
+            admit_notify: Arc::new(Notify::new()),
+        });
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let serve_cancel = cancel.clone();
+        tokio::spawn(async move {
+            let _ =
+                crate::origin::serve_hyper_util(listener, whip_router(state), serve_cancel).await;
+        });
+        TestServer {
+            addr,
+            rx,
+            active_sessions,
+            _cancel: cancel,
+        }
+    }
 
-        let mut resp = Vec::new();
-        client.read_to_end(&mut resp).await.unwrap();
-        let resp = String::from_utf8_lossy(&resp);
+    /// Send one raw request and read the whole response (the caller closes).
+    async fn exchange(addr: std::net::SocketAddr, request: &str) -> String {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        let mut client = TcpStream::connect(addr).await.unwrap();
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut buf = Vec::new();
+        let _ = tokio::time::timeout(Duration::from_secs(5), client.read_to_end(&mut buf)).await;
+        String::from_utf8_lossy(&buf).into_owned()
+    }
+
+    fn post_offer_request(offer: &str) -> String {
+        format!(
+            "POST /whip HTTP/1.1\r\nContent-Type: application/sdp\r\n\
+             Content-Length: {}\r\nConnection: close\r\n\r\n{offer}",
+            offer.len()
+        )
+    }
+
+    /// `max_sessions: 0` means the very first connection is already "at
+    /// capacity" — the router must answer `503` right after parsing the
+    /// offer, releasing the slot it reserved to check, and never reach the
+    /// `UdpSocket::bind`/`MediaTransport::new` work below it (issue
+    /// r07-C11): nothing is sent to `tx`, so a driver on the other end never
+    /// sees an admitted session at all.
+    #[tokio::test]
+    async fn whip_at_capacity_answers_503_without_admitting_a_session() {
+        let mut server = test_server(0).await;
+        let resp = exchange(server.addr, &post_offer_request(OFFER)).await;
         assert!(
             resp.starts_with("HTTP/1.1 503"),
             "expected a 503 response, got: {resp}"
         );
         assert_eq!(
-            active_sessions.load(Ordering::SeqCst),
+            server.active_sessions.load(Ordering::SeqCst),
             0,
             "the capacity slot reserved to check must be released, not leaked"
         );
         assert!(
-            matches!(rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
+            matches!(server.rx.try_recv(), Err(mpsc::error::TryRecvError::Empty)),
             "a route at capacity must never admit a session"
         );
     }
@@ -1557,40 +2392,12 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     /// it) and the WHIP methods.
     #[tokio::test]
     async fn whip_preflight_allows_authorization_and_methods() {
-        use tokio::io::AsyncReadExt;
-
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let mut client = TcpStream::connect(addr).await.unwrap();
-        let (server, _) = listener.accept().await.unwrap();
-
-        let crlf = String::from_utf8(vec![13, 10]).unwrap();
-        let request = [
-            "OPTIONS /whip HTTP/1.1",
-            "Origin: https://publisher.example",
-            "Access-Control-Request-Method: POST",
-            "Access-Control-Request-Headers: authorization",
-            "Content-Length: 0",
-            "",
-            "",
-        ]
-        .join(&crlf);
-        client.write_all(request.as_bytes()).await.unwrap();
-
-        let (tx, _rx) = mpsc::channel::<AdmittedWhip>(1);
-        let active_sessions = Arc::new(AtomicUsize::new(0));
-        handle_whip_connection(server, &tx, &active_sessions, 4)
-            .await
-            .expect("preflight");
-
-        // Bounded read: the preflight keeps the connection open after its
-        // `Content-Length: 0` response, so `read_to_end` would block.
-        let mut buf = [0u8; 1024];
-        let n = tokio::time::timeout(Duration::from_secs(5), client.read(&mut buf))
-            .await
-            .expect("read must not hang")
-            .expect("read");
-        let resp = String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase();
+        let server = test_server(4).await;
+        let request = "OPTIONS /whip HTTP/1.1\r\nOrigin: https://publisher.example\r\n\
+             Access-Control-Request-Method: POST\r\n\
+             Access-Control-Request-Headers: authorization\r\n\
+             Connection: close\r\n\r\n";
+        let resp = exchange(server.addr, request).await.to_ascii_lowercase();
         assert!(resp.starts_with("http/1.1 204"), "preflight got: {resp}");
         assert!(
             resp.contains("access-control-allow-headers: authorization"),
@@ -1604,16 +2411,16 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         }
     }
 
-    /// PRE-FIX FAILURE OBSERVED: before the `SessionSlot` RAII guard,
-    /// `handle_whip_connection` only decremented `active_sessions` on the
+    /// PRE-FIX FAILURE OBSERVED: before the `SessionSlot` RAII guard, the
+    /// connection handler only decremented `active_sessions` on the
     /// *specific* `MediaTransport::new` failure via a hand-written
     /// `map_err` closure — reverting that closure back to a plain
     /// `.map_err(|e| MultimuxError::Connect { .. })?` (no decrement) leaves
-    /// `active_sessions.load() == 1` after this test's connection resets
+    /// `active_sessions.load() == 1` after this test's request fails
     /// instead of returning to `0`; every *other* `?` on the way there
-    /// (`local_addr`, `UdpSocket::bind`, the answer `write_all`) had no
-    /// decrement at all even before that. The guard fixes all of them at
-    /// once because it doesn't matter which `?` fires.
+    /// (`local_addr`, `UdpSocket::bind`, the answer write) had no decrement
+    /// at all even before that. The guard fixes all of them at once because
+    /// it doesn't matter which `?` fires.
     #[tokio::test]
     async fn capacity_slot_is_released_when_media_transport_build_fails() {
         // A syntactically-present but too-short digest: `parse_whip_offer`
@@ -1625,25 +2432,14 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
 00:11:22:33:44:55:66:77:88:99:aa:bb:cc:dd:ee:ff\r\n",
             "a=fingerprint:sha-256 00:11\r\n",
         );
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let mut client = TcpStream::connect(addr).await.unwrap();
-        let (server, _) = listener.accept().await.unwrap();
-        let request = format!(
-            "POST /whip HTTP/1.1\r\nContent-Length: {}\r\n\r\n{offer}",
-            offer.len()
-        );
-        client.write_all(request.as_bytes()).await.unwrap();
-
-        let (tx, _rx) = mpsc::channel::<AdmittedWhip>(1);
-        let active_sessions = Arc::new(AtomicUsize::new(0));
-        let result = handle_whip_connection(server, &tx, &active_sessions, 4).await;
+        let server = test_server(4).await;
+        let resp = exchange(server.addr, &post_offer_request(&offer)).await;
         assert!(
-            result.is_err(),
-            "a malformed fingerprint must surface as an error, not a 201"
+            !resp.starts_with("HTTP/1.1 201"),
+            "a malformed fingerprint must not produce a 201: {resp}"
         );
         assert_eq!(
-            active_sessions.load(Ordering::SeqCst),
+            server.active_sessions.load(Ordering::SeqCst),
             0,
             "the capacity slot must be released when setup fails after it was reserved"
         );
@@ -1656,24 +2452,11 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     /// `disarm()`).
     #[tokio::test]
     async fn capacity_slot_is_decremented_exactly_once_after_a_normal_session() {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let addr = listener.local_addr().unwrap();
-        let mut client = TcpStream::connect(addr).await.unwrap();
-        let (server, _) = listener.accept().await.unwrap();
-        let request = format!(
-            "POST /whip HTTP/1.1\r\nContent-Length: {}\r\n\r\n{}",
-            OFFER.len(),
-            OFFER
-        );
-        client.write_all(request.as_bytes()).await.unwrap();
-
-        let (tx, mut rx) = mpsc::channel::<AdmittedWhip>(1);
-        let active_sessions = Arc::new(AtomicUsize::new(0));
-        handle_whip_connection(server, &tx, &active_sessions, 4)
-            .await
-            .expect("a well-formed offer is admitted");
+        let mut server = test_server(4).await;
+        let resp = exchange(server.addr, &post_offer_request(OFFER)).await;
+        assert!(resp.starts_with("HTTP/1.1 201"), "admitted: {resp}");
         assert_eq!(
-            active_sessions.load(Ordering::SeqCst),
+            server.active_sessions.load(Ordering::SeqCst),
             1,
             "the slot stays reserved for the live session"
         );
@@ -1681,12 +2464,87 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         // Stands in for `report_and_maybe_reap`'s own decrement once
         // `run_whip`'s driver reaps this session — the one place that owns
         // the slot from here on.
-        let _admitted = rx.recv().await.expect("the session was admitted");
-        active_sessions.fetch_sub(1, Ordering::SeqCst);
+        let _admitted = server.rx.recv().await.expect("the session was admitted");
+        server.active_sessions.fetch_sub(1, Ordering::SeqCst);
         assert_eq!(
-            active_sessions.load(Ordering::SeqCst),
+            server.active_sessions.load(Ordering::SeqCst),
             0,
             "exactly one decrement must bring the counter back to 0 — no leak, no double-release"
+        );
+    }
+
+    /// Byte-for-byte golden of the WHIP signalling RESPONSE HEADERS (W2a
+    /// Task 1 Step 1): the `201 Created` (POST offer), the `204 No Content`
+    /// (OPTIONS preflight) and the `413 Payload Too Large` (oversized body).
+    /// Taken from `main` BEFORE the axum 0.8 / tower-http 0.7 bump and the
+    /// WP2.1 move onto an axum router. Only the status line and the header
+    /// lines are pinned; the SDP body (and its `Content-Length`) is not.
+    /// `GOLDEN_BLESS=<dir>` writes instead of comparing.
+    #[tokio::test]
+    async fn whip_response_headers_match_golden() {
+        async fn response_headers(request: &str) -> String {
+            let server = test_server(4).await;
+            let text = exchange(server.addr, request).await;
+            let head = text.split("\r\n\r\n").next().unwrap_or(&text);
+            let mut lines = head.lines();
+            let status = lines.next().unwrap_or("").to_string();
+            let mut headers: Vec<String> = lines
+                .filter(|l| !l.to_ascii_lowercase().starts_with("content-length:"))
+                // `date` is the wall clock and `etag` a fresh random token —
+                // neither is stable, so normalise both to a placeholder. The
+                // golden pins the header SET, not one instant.
+                .map(|l| {
+                    let lower = l.to_ascii_lowercase();
+                    if lower.starts_with("date:") {
+                        "date: {date}".to_string()
+                    } else if lower.starts_with("etag:") {
+                        "etag: {etag}".to_string()
+                    } else {
+                        l.to_string()
+                    }
+                })
+                .collect();
+            headers.sort();
+            let mut out = status;
+            out.push('\n');
+            for h in headers {
+                out.push_str(&h);
+                out.push('\n');
+            }
+            out
+        }
+
+        let post_offer = post_offer_request(OFFER);
+        let preflight = "OPTIONS /whip HTTP/1.1\r\nOrigin: https://p.example\r\n\
+             Access-Control-Request-Method: POST\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let over_limit = "POST /whip HTTP/1.1\r\nContent-Type: application/sdp\r\n\
+             Content-Length: 131073\r\nConnection: close\r\n\r\n";
+
+        let mut actual = String::new();
+        actual.push_str("POST /whip 201\n");
+        actual.push_str(&response_headers(post_offer.as_str()).await);
+        actual.push_str("OPTIONS /whip 204\n");
+        actual.push_str(&response_headers(preflight).await);
+        actual.push_str("POST /whip 413\n");
+        actual.push_str(&response_headers(over_limit).await);
+
+        if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+            std::fs::create_dir_all(&dir).expect("create golden dir");
+            std::fs::write(
+                std::path::Path::new(&dir).join("whip_response_headers.golden"),
+                &actual,
+            )
+            .expect("write golden");
+            return;
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/golden/whip_response_headers.golden");
+        let expected = std::fs::read_to_string(&path).expect("read whip header golden");
+        assert_eq!(
+            actual, expected,
+            "WHIP response headers differ from the golden; every wire-visible \
+             change (e.g. the WP2.1 router move) must be listed in the \
+             multimux CHANGELOG"
         );
     }
 }

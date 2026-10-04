@@ -1,0 +1,16 @@
+POST /whep no-auth 401
+HTTP/1.1 401 Unauthorized
+access-control-allow-headers: Authorization, Content-Type, If-Match
+access-control-allow-methods: POST, PATCH, DELETE, OPTIONS
+access-control-allow-origin: *
+access-control-expose-headers: Location
+has-www-authenticate: present
+OPTIONS /whep 204
+HTTP/1.1 204 No Content
+access-control-allow-headers: Authorization, Content-Type, If-Match
+access-control-allow-methods: POST, PATCH, DELETE, OPTIONS
+access-control-allow-origin: *
+access-control-expose-headers: Location
+POST /whep 413
+HTTP/1.1 413 Payload Too Large
+content-type: text/plain; charset=utf-8

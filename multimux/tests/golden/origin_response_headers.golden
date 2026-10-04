@@ -1,0 +1,49 @@
+/cam1/master.m3u8	200
+/cam1/master.m3u8	200	access-control-allow-headers: authorization, range, content-type
+/cam1/master.m3u8	200	access-control-allow-methods: GET, HEAD, OPTIONS
+/cam1/master.m3u8	200	access-control-allow-origin: *
+/cam1/master.m3u8	200	access-control-expose-headers: content-length, content-range, date, etag
+/cam1/master.m3u8	200	cache-control: no-cache
+/cam1/master.m3u8	200	content-length: 63
+/cam1/master.m3u8	200	content-type: application/vnd.apple.mpegurl
+/cam1/master.m3u8	200	vary: Origin
+/cam1/media.m3u8	200
+/cam1/media.m3u8	200	access-control-allow-headers: authorization, range, content-type
+/cam1/media.m3u8	200	access-control-allow-methods: GET, HEAD, OPTIONS
+/cam1/media.m3u8	200	access-control-allow-origin: *
+/cam1/media.m3u8	200	access-control-expose-headers: content-length, content-range, date, etag
+/cam1/media.m3u8	200	cache-control: no-cache
+/cam1/media.m3u8	200	content-length: 248
+/cam1/media.m3u8	200	content-type: application/vnd.apple.mpegurl
+/cam1/media.m3u8	200	vary: Origin
+/cam1/init-1-{instance}-1.mp4	200
+/cam1/init-1-{instance}-1.mp4	200	access-control-allow-headers: authorization, range, content-type
+/cam1/init-1-{instance}-1.mp4	200	access-control-allow-methods: GET, HEAD, OPTIONS
+/cam1/init-1-{instance}-1.mp4	200	access-control-allow-origin: *
+/cam1/init-1-{instance}-1.mp4	200	access-control-expose-headers: content-length, content-range, date, etag
+/cam1/init-1-{instance}-1.mp4	200	cache-control: immutable, max-age=31536000
+/cam1/init-1-{instance}-1.mp4	200	content-length: 4
+/cam1/init-1-{instance}-1.mp4	200	content-type: video/mp4
+/cam1/init-1-{instance}-1.mp4	200	vary: Origin
+/cam1/seg-1-1.m4s	200
+/cam1/seg-1-1.m4s	200	access-control-allow-headers: authorization, range, content-type
+/cam1/seg-1-1.m4s	200	access-control-allow-methods: GET, HEAD, OPTIONS
+/cam1/seg-1-1.m4s	200	access-control-allow-origin: *
+/cam1/seg-1-1.m4s	200	access-control-expose-headers: content-length, content-range, date, etag
+/cam1/seg-1-1.m4s	200	cache-control: max-age=10
+/cam1/seg-1-1.m4s	200	content-length: 16
+/cam1/seg-1-1.m4s	200	content-type: video/mp4
+/cam1/seg-1-1.m4s	200	vary: Origin
+/cam1/manifest.mpd	200
+/cam1/manifest.mpd	200	access-control-allow-headers: authorization, range, content-type
+/cam1/manifest.mpd	200	access-control-allow-methods: GET, HEAD, OPTIONS
+/cam1/manifest.mpd	200	access-control-allow-origin: *
+/cam1/manifest.mpd	200	access-control-expose-headers: content-length, content-range, date, etag
+/cam1/manifest.mpd	200	cache-control: no-cache
+/cam1/manifest.mpd	200	content-length: 875
+/cam1/manifest.mpd	200	content-type: application/dash+xml
+/cam1/manifest.mpd	200	vary: Origin
+/metrics	200
+/metrics	200	content-type: text/plain; version=0.0.4
+/healthz	200
+/healthz	200	content-length: 0

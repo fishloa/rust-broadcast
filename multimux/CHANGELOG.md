@@ -4,6 +4,11 @@
 
 ### Changed
 - Dependency bumps, non-breaking: `md-5` 0.11 and `base64` 0.23 (Digest/Basic auth output unchanged), plus semver-compatible lock updates (`tokio-rustls` 0.26.6, `rustls` 0.23.45).
+- `rtc-dtls` is added as a **dev-dependency** (for the WHIP loopback tests that
+  pre-generate a client certificate); it was already a transitive dependency via
+  `webrtc-runtime/media`, so no new package version enters the lock.
+  The `errno`/`quinn-udp`/`winapi-util` `windows-sys` edges stay on `0.52.0`, as on `main`.
+  Also a dev-dependency: `webrtc-runtime` with its `test-support` feature (hidden test hooks).
 - The Smooth manifest renderer (`output::smooth`) now writes through
   `quick_xml::Writer` (every attribute value escaped by quick-xml) instead of
   string concatenation; the rendered bytes are identical. The Smooth-pull
@@ -14,7 +19,84 @@
   `transmux`'s `std` XML paths. (Hand-rolled XML replaced by quick-xml
   workspace-wide.)
 
+### Changed (breaking)
+- **`axum` 0.8, `tower-http` 0.7, `reqwest` 0.13.** The path-parameter syntax
+  moves to `{param}`/`{*rest}` (matchit 0.8); `hls-runtime`'s `reqwest::Error`
+  epoch bumps with it.
+- **Every HTTP listener is served through a hyper-util `http1` server**
+  (`origin::serve_hyper_util`) instead of `axum::serve`: a **header-read
+  timeout** (10 s), a **connection cap** (1024) enforced at `accept`, and a
+  **graceful shutdown drain** (up to 30 s) — with **no total per-connection
+  deadline** (a hard cap would truncate long-lived LL-HLS/DVR/TS responses).
+  The listeners are plain HTTP/1: h2c prior-knowledge is no longer served,
+  and the `h2`/`fnv` dependencies are dropped. Finished connection tasks are
+  reaped continuously, so a long-running listener does not accumulate one
+  finished entry per connection ever accepted.
+- **WHIP and WHEP are served from axum `Router`s.** `POST` is answered only on
+  the `/whip` and `/whep` paths (main accepted any path); `PATCH`/`DELETE` on
+  the `/whip/session`/`/whep/session` resources now answer `405` + `Allow`
+  (main answered `405` too — there is no trickle-ICE/teardown this cut, and no
+  success-without-effect stubs). Chunked request bodies are accepted; the
+  hand-rolled `webrtc_http` reader is deleted. The WHIP/WHEP responses now
+  carry `Date`/`ETag`, and a `text/plain` `Content-Type` on `413`; the WHEP
+  `401` now carries the CORS headers (main hand-built a bare `401`). The WHIP
+  `413` carries the CORS headers but the WHEP `413` does not (a layer-order
+  asymmetry, not a behaviour goal).
+- **The WHIP/WHEP SDP answers are built through `sdp-types` `Session::write`**
+  (not hand-formatted): offer *parsing* and answer *writing* both go through
+  sdp-types 0.2, ICE credentials read media-level-first, and candidate lines
+  come from `MediaTransport::local_candidates()`. Intended wire differences:
+  - main hard-coded the origin/connection lines to the loopback address
+    (`o=- 0 0 IN IP4 127.0.0.1` / `c=IN IP4 127.0.0.1`) regardless of the bound
+    local address, while `Session::write` now writes the actual local IP (e.g. a
+    non-loopback listener answers `o=- 0 0 IN IP4 192.0.2.7` / `c=IN IP4
+    192.0.2.7`).
+  - **WHIP `m=` fmt list** now lists only the chosen payload type (RFC 3264
+    §6.1): an offer `m=video 9 UDP/TLS/RTP/SAVPF 96 97 98` was answered
+    `m=video 9 UDP/TLS/RTP/SAVPF 96 97 98` on main (the whole offered list
+    echoed), and is answered `m=video 9 UDP/TLS/RTP/SAVPF 96` now. WHEP already
+    listed only the selected PT on main, so its answer is byte-identical.
+  - **WHIP offer candidates are read from the media section only** (main
+    scanned every line for `a=candidate:`), so a session-level candidate line
+    is no longer picked up.
+  The answer ordering is pinned by `tests/golden/whip_answer.golden` /
+  `whep_answer.golden`.
+- **The origin's concurrency budgets are tower layers** whose shared pools are
+  owned by the layer (`BudgetLimitLayer`), with `503` + `Retry-After` shed
+  after a queue timeout; the permit is pinned to the response body. The admin
+  media router is an `ArcSwap`.
+- **WHIP/WHEP use a single shared request-concurrency pool per listener**
+  (`GlobalConcurrencyLimitLayer`), not one per route/method.
+- **WHIP/WHEP signalling adds `Access-Control-Expose-Headers: Location`** back
+  onto every response (main had it on the 201 so a cross-origin browser can
+  read `Location`); the axum move initially dropped it.
+- **WHIP/WHEP/RTMP accept pumps are defect-fixed:** timers fire off
+  `MediaTransport::poll_timeout` (never reaped by the timer arm, never re-arming
+  the idle read timeout), accepts are admitted without a 20 ms sleep-poll, and
+  the pumps are tracked/cancel-aware (a blocked accept is cancelled and the
+  port released). The WebRTC session tasks now OWN their `MediaTransport`
+  outright (no lock held across `send_to().await`). A stuck transport deadline
+  is floored to a 1 ms minimum interval (so it cannot spin a core), and a
+  fatal ICE/DTLS [`MediaEvent::TimerError`] ends the session.
+
+### Changed
+- The origin's CORS/`Cache-Control` headers are written through typed
+  `headers` values. Wire-visible, semantically-identical differences: the
+  `Access-Control-Allow-Headers`/`Expose-Headers` header NAMES render
+  lowercased (`authorization, range, content-type`, …), and the instance-named
+  `Cache-Control` renders `immutable, max-age=31536000` (directive order).
+
 ### Fixed
+- **Slow-loris header reads are dropped** at the header-read timeout and every
+  listener still serves the next request.
+- **WHIP/WHEP protocol timers fire while a session is idle** (defect 1): the
+  transport deadline drives `handle_timeout` without reaping the session.
+- **Accepts are admitted under steady reads** (defect 2): the WHIP/RTMP accept
+  pumps drain on a wake and every loop iteration, never a starved sleep-poll.
+- **The WHIP/WHEP/RTMP accept pumps are tracked and cancel-aware** (defect 3):
+  a blocked accept is cancelled and the bound port released.
+- **ICE credentials resolve media-level-first** so a stale session-level pair
+  no longer wins over a media section's own pair.
 - **A non-finite `target_duration_secs` no longer panics the route.**
   `Config::validate` accepted `NaN` and `+inf` (it only checked `<= 0.0`), and
   `ProgramServing::new` then `expect`ed `HlsOriginBuilder::build` — which
@@ -638,6 +720,13 @@
 ### Changed
 
 - HLS-pull resource-fetch retry delay now comes from `origin::supervisor::Backoff::delay_for_attempt` (the third, shift-based capped-exponential copy is gone; schedule unchanged and pinned by a test) (#1141).
+
+### Known limitations
+- The WHIP/WHEP `201 Created` `Location` resource (`/whip/session`,
+  `/whep/session`) is still not deletable: `DELETE` answers `405`, where RFC
+  9725 §4.2 expects the resource to be deletable. This is parity with the
+  previous release (which also answered `405`), tracked as a follow-up rather
+  than a regression.
 
 
 ## [0.11.0] - 2026-09-26

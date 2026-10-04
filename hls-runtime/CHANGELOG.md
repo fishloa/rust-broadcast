@@ -7,6 +7,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed (breaking)
+- **`reqwest` 0.12 → 0.13.** `tokio::TokioError::Http`'s `source` is still
+  `reqwest::Error`, but the `reqwest` type's epoch changes. The `tokio`
+  feature's `rustls-tls` feature slot is renamed to `rustls` (reqwest 0.13's
+  name).
+
 ### Added
 - `HlsClient::next_wait()` (the queued `WaitMs` hint as a `Duration`, `no_std`) and `HlsClient::poll_timeout(&mut self, now)` (`std`): the wait's ABSOLUTE deadline, anchored at the first query and identical on every re-query until the wait is drained with `poll()`, so unrelated wake-ups cannot re-arm it. A wait is queued behind the fetches `on_playlist` queued with it, so it is reported once those are drained.
 - `server::HlsOrigin::master_playlist(name)` — a master playlist whose

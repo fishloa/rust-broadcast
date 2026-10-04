@@ -1456,7 +1456,7 @@ mod tests {
             }
         }
         let mut app = Router::new()
-            .route("/:name", get(handler))
+            .route("/{name}", get(handler))
             .with_state((fixture_dir(), stall_segment));
         if let Some(scheme) = auth {
             app = crate::testutil::require_auth(app, scheme);
@@ -1936,7 +1936,7 @@ mod tests {
                     async move { mpd }
                 }),
             )
-            .route("/:name", get(serve_fixture_file))
+            .route("/{name}", get(serve_fixture_file))
             .with_state(dir);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -2054,7 +2054,7 @@ mod tests {
 
         let below_edge = std::sync::Arc::new(AtomicU64::new(0));
         let app = Router::new()
-            .route("/:name", get(handler))
+            .route("/{name}", get(handler))
             .with_state(State {
                 dir: fixture_dir(),
                 mpd,

@@ -72,16 +72,33 @@ bytes             = "1"
 # fails to compile against a lock that pins 0.2.0 (hit for real while
 # bumping axis-origin, née acap-multimux).
 broadcast-auth    = { path = "../broadcast-auth", version = "0.3.1" }
-sdp-types         = "0.1"
+sdp-types         = "0.2"
 tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
-axum              = "0.7"
+axum              = "0.8"
+# Every multimux HTTP listener is served through hyper-util's server builder
+# (`origin::serve_hyper_util`) rather than `axum::serve`, so it can set a
+# header-read timeout, a connection cap, and graceful drain on shutdown
+# (W2a SP2.1) — `axum::serve` sets none of them. The listeners are plain
+# HTTP/1 (no h2c/TLS-ALPN upgrade), so `server-auto`'s http2 half is dropped.
+hyper             = { version = "1", features = ["server", "http1"] }
+hyper-util        = { version = "0.1", features = ["server", "http1", "server-graceful", "tokio", "service"] }
 # HTTP-layer resource limits (issue #663 P5, audit-concurrency #3): request
 # timeout + request-body size cap (`tower-http`) and a concurrency bound
 # (`tower::limit`) — see `origin::HttpLimits`/`origin::router`. `util` is
 # needed for `tower::ServiceExt::oneshot` in this crate's own axum-router
-# tests.
-tower-http        = { version = "0.5", default-features = false, features = ["timeout", "limit"] }
+# tests. `cors` is for the WHIP/WHEP signalling routers (W2a SP2.1).
+tower-http        = { version = "0.7", default-features = false, features = ["timeout", "limit", "cors"] }
 tower             = { version = "0.5", default-features = false, features = ["limit", "util"] }
+# `http_body::{Frame, SizeHint}` for `origin::limit::PermitBody` (the response
+# body that owns a concurrency permit): `axum::body` re-exports only
+# `HttpBody`/`Body`/`Bytes`, not these. Already in the lock at 1.1.0.
+http-body        = "1"
+# Typed response headers (`CacheControl`, `AccessControlAllow*`, `Vary`) in
+# `origin::add_response_headers` (W2a Task 3) instead of hand-built constants.
+headers          = "0.4"
+# `ArcSwap<Router>` for the admin media router (W2a Task 3) so a per-request
+# read never takes a write lock on the rebuild path.
+arc-swap         = "1"
 serde             = { version = "1", features = ["derive"] }
 serde_json        = "1"
 thiserror         = "2"
@@ -104,10 +121,10 @@ tokio-rustls      = { version = "0.26", optional = true }
 # new version to the lock.
 rustls            = { version = "0.23", optional = true }
 # TS-over-HTTP ingest (`source::ts_http`, issue #663 P3c): a streaming GET
-# fed straight into `StreamingTsDemux`. `rustls-tls` for consistency with the
-# rest of the workspace's TLS backend (rustls/aws-lc-rs); `stream` for
-# `Response::bytes_stream()`.
-reqwest           = { version = "0.12", default-features = false, features = ["rustls-tls", "stream"] }
+# fed straight into `StreamingTsDemux`. `rustls` (the renamed `rustls-tls` in
+# reqwest 0.13) for consistency with the rest of the workspace's TLS backend
+# (rustls/aws-lc-rs); `stream` for `Response::bytes_stream()`.
+reqwest           = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
 # `.next()` on `reqwest::Response::bytes_stream()` (a bare `Stream`, no
 # extension methods of its own).
 futures-util      = { version = "0.3", default-features = false, features = ["std"] }
@@ -170,6 +187,10 @@ tls         = ["rtsp-runtime/tls", "dep:tokio-rustls", "dep:rustls"]
 # The workspace MSRV is now 1.95.0 (issue #949), so that gap is gone and the
 # feature is opt-in purely on dependency weight.
 whip        = ["dep:webrtc-runtime", "webrtc-runtime/media"]
+# Test hooks (`WhipRouteShared::force_next_timer_error`) that stage a fatal
+# transport timer error. Non-default; implies `webrtc-runtime/test-support`.
+# `tests/whip_whep_timers.rs` requires it.
+test-hooks  = ["dep:webrtc-runtime", "webrtc-runtime/test-support"]
 # WHEP (draft-ietf-wish-whep) egress (issue #743): accepts a viewer's HTTP
 # `POST` + SDP offer, negotiates ICE/DTLS-SRTP, and pushes the route's
 # `Trunk` samples out as SRTP RTP — the mirror image of `whip` (see
@@ -187,7 +208,14 @@ name = "serve_rtsp"
 [[example]]
 name = "custom_scheme"
 
+[[test]]
+name = "whip_whep_timers"
+required-features = ["whip", "test-hooks"]
+
 [dev-dependencies]
+# `test-support`: webrtc-runtime's hidden fault-injection hooks (inert without
+# `media`, so this pulls nothing extra into builds that do not enable whip/whep).
+webrtc-runtime   = { path = "../webrtc-runtime", version = "0.2", default-features = false, features = ["test-support"] }
 # `test-util`: the paused, manually advanced clock the push-flush tests use
 # instead of sleeping (feature-only; no new version in the lock).
 tokio            = { version = "1", features = ["test-util"] }
@@ -202,9 +230,19 @@ md-5             = "0.11"
 # for test-only use (`tests/admin_api.rs`, issue #749) — Cargo unifies this
 # into the one `reqwest` dependency only for test builds, never for the
 # library target itself.
-reqwest          = { version = "0.12", default-features = false, features = ["json"] }
+reqwest          = { version = "0.13", default-features = false, features = ["json"] }
 # An INDEPENDENT SCTE-35 parser (no shared code with `timed-metadata`) so
 # `tests/emsg_mp4box.rs` can decode the `message_data` of an emitted DASH
 # `emsg` back to the source section and prove the bytes are the source's own
 # (issue #1083, E).
 scte35-splice    = { path = "../scte35-splice", version = "2.1" }
+# `rtp-packet` (default-features off, matching the `whep` optional dep) so
+# `tests/whip_whep_timers.rs` can build the RTP packet a loopback WebRTC
+# peer encrypts and sends — the only honest way to drive a WHIP session to a
+# decrypted `Events` feed (the reap path the idle-clock-leak test pins).
+rtp-packet       = { path = "../rtp-packet", version = "0.4", default-features = false }
+# `rtc-dtls` so the same loopback test can pre-generate its client DTLS
+# certificate (and so signal its genuine fingerprint in the offer before
+# construction). Already a transitive dep via `webrtc-runtime/media` at the
+# locked version, so this adds no new lock entry.
+rtc-dtls         = "0.21"

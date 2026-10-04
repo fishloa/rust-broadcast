@@ -548,6 +548,18 @@ pub struct MediaTransport {
     /// public getter), gating new source addresses here, before they ever
     /// reach the agent, is the only enforcement point available.
     known_remote_addrs: HashSet<SocketAddr>,
+    /// Test-only injection: if `Some`, the next [`Self::handle_timeout`] emits
+    /// this as a [`MediaEvent::TimerError`] (instead of any real timer drive).
+    /// Lets an integration test drive the caller's fatal-timer-error handling
+    /// without staging an internal ICE/DTLS timer failure.
+    #[cfg(feature = "test-support")]
+    pending_timer_error: Option<String>,
+    /// Test-only: when set, [`Self::poll_timeout`] reports an always-overdue
+    /// deadline (a stuck transport whose timer is perpetually due) while
+    /// [`Self::handle_timeout`] does nothing — the state the WHEP fairness
+    /// test uses to prove a stuck deadline cannot starve the silence reap.
+    #[cfg(feature = "test-support")]
+    stuck_timer: bool,
 }
 
 impl MediaTransport {
@@ -597,6 +609,38 @@ impl MediaTransport {
             crypto_provider.crypto(),
         )
         .map_err(|e| Error::Media(format!("generate self-signed certificate: {e}")))?;
+        Self::with_certificate(
+            config,
+            remote_fingerprint_digest,
+            certificate,
+            crypto_provider,
+            now,
+        )
+    }
+
+    /// Construct a transport over a caller-supplied DTLS certificate. The
+    /// certificate *is* this side's identity — its SHA-256 fingerprint is
+    /// what the peer signals as `a=fingerprint` — so supplying it (rather
+    /// than `new`'s internally-generated one) lets a caller know the
+    /// fingerprint before construction and build a pair that already hold
+    /// each other's genuine fingerprint. The remote's digest is still read
+    /// from `config.remote_fingerprint` (verified against the peer's leaf
+    /// certificate during the handshake).
+    ///
+    /// `#[doc(hidden)]`: a loopback-test seam, not a public API promise — it
+    /// exists so an in-tree integration test can drive a real ICE + DTLS +
+    /// SRTP handshake against a peer transport without a browser.
+    #[doc(hidden)]
+    #[cfg(feature = "test-support")]
+    pub fn with_certificate_for_test(
+        config: MediaTransportConfig,
+        certificate: Certificate,
+        now: Instant,
+    ) -> Result<Self, Error> {
+        let crypto_provider = default_provider()
+            .map_err(|e| Error::Media(format!("resolve default crypto provider: {e}")))?;
+        let remote_fingerprint_digest =
+            parse_fingerprint_value(&config.remote_fingerprint).map_err(Error::Media)?;
         Self::with_certificate(
             config,
             remote_fingerprint_digest,
@@ -739,6 +783,10 @@ impl MediaTransport {
             remote_candidate_count: 0,
             max_remote_candidates: config.max_remote_candidates,
             known_remote_addrs: HashSet::new(),
+            #[cfg(feature = "test-support")]
+            pending_timer_error: None,
+            #[cfg(feature = "test-support")]
+            stuck_timer: false,
         })
     }
 
@@ -835,6 +883,12 @@ impl MediaTransport {
     /// (audit run-09 W20).
     pub fn handle_timeout(&mut self, now: Instant) -> Vec<MediaEvent> {
         let mut events = Vec::new();
+        // Test-only injection: a staged timer error takes the place of a real
+        // (hard-to-stage) ICE/DTLS failure, and is single-fire.
+        #[cfg(feature = "test-support")]
+        if let Some(err) = self.pending_timer_error.take() {
+            events.push(MediaEvent::TimerError(err));
+        }
         if let Err(e) = Protocol::handle_timeout(&mut self.ice, now) {
             events.push(MediaEvent::TimerError(format!("ice handle_timeout: {e}")));
         }
@@ -869,6 +923,11 @@ impl MediaTransport {
                 (a, b) => a.or(b),
             }
         }
+        // A staged timer error (test seam) is due immediately.
+        #[cfg(feature = "test-support")]
+        if self.pending_timer_error.is_some() || self.stuck_timer {
+            return Some(Instant::now());
+        }
         let mut next = Protocol::poll_timeout(&mut self.ice);
         let peers: Vec<SocketAddr> = self.dtls.get_connections_keys().copied().collect();
         for peer in peers {
@@ -895,6 +954,29 @@ impl MediaTransport {
         {
             self.retired_srtp_read = None;
         }
+    }
+
+    /// Stage a [`MediaEvent::TimerError`] to be emitted by the next
+    /// [`Self::handle_timeout`] (single-fire), in place of a real ICE/DTLS
+    /// timer failure. While a staged error is pending, [`Self::poll_timeout`]
+    /// reports an immediate deadline, so a caller driving off `poll_timeout`
+    /// reaches the error on its very next timer wake. `#[doc(hidden)]`: a test
+    /// seam — a real internal timer failure is not something a caller can
+    /// stage through the public API.
+    #[doc(hidden)]
+    #[cfg(feature = "test-support")]
+    pub fn force_next_timer_error(&mut self, err: impl Into<String>) {
+        self.pending_timer_error = Some(err.into());
+    }
+
+    /// Stage a perpetually-overdue transport timer (test seam): `poll_timeout`
+    /// reports an immediate deadline and `handle_timeout` is a no-op — the
+    /// "stuck transport deadline" the WHEP fairness test needs to prove an
+    /// always-ready timer arm cannot starve the silence reap. `#[doc(hidden)]`.
+    #[doc(hidden)]
+    #[cfg(feature = "test-support")]
+    pub fn force_stuck_timer(&mut self) {
+        self.stuck_timer = true;
     }
 
     /// Feed one inbound UDP datagram from `peer`, demultiplexing it as
@@ -1366,6 +1448,18 @@ impl MediaTransport {
             .map_err(|e| Error::Media(format!("add server-reflexive candidate: {e}")))?;
         Ok(marshaled)
     }
+}
+
+/// The colon-hex SHA-256 fingerprint of a DTLS certificate's leaf (RFC 8122
+/// §5), the value an SDP `a=fingerprint:sha-256 <this>` carries.
+///
+/// `#[doc(hidden)]`: the loopback-test counterpart to
+/// [`MediaTransport::with_certificate_for_test`] — a caller generating its own
+/// certificate must know the fingerprint to signal it *before* construction.
+#[doc(hidden)]
+#[cfg(feature = "test-support")]
+pub fn certificate_fingerprint(certificate: &Certificate) -> String {
+    sha256_fingerprint(certificate.certificate[0].as_ref())
 }
 
 /// Decrypt one SRTP or SRTCP datagram with `ctx` and parse the result into

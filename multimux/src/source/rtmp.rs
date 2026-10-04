@@ -128,6 +128,7 @@ use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::convert::Infallible;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
 
@@ -168,15 +169,6 @@ type BoxedRead = Pin<Box<dyn Future<Output = (SessionId, ReadOutcome)> + Send>>;
 /// own `max_sessions`/`max_programs` docs describe).
 pub const DEFAULT_RTMP_MAX_SESSIONS: usize = 16;
 
-/// How often [`run_rtmp`]'s driving loop polls [`ListenDriver::poll_accept`]
-/// for a newly accepted connection, while no session currently has a read in
-/// flight to race it against. Small enough that a new publisher is admitted
-/// promptly; a fixed poll rather than a wake-on-send `Notify` because
-/// `RtmpListener::poll_accept` is itself required to be non-blocking and O(1)
-/// — polling it on a short tick is exactly as cheap as a real wake-up and
-/// avoids a second synchronization primitive for no behavioural difference.
-const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(20);
-
 /// Bound on the accept-pump task's channel — see [`RtmpRoute::ensure_infra`].
 /// A publisher that completes its TCP handshake is queued here until
 /// [`RtmpListener::poll_accept`] drains it (whether or not a `max_sessions`
@@ -196,6 +188,30 @@ struct RtmpInfra {
     /// requires to be non-blocking — can `try_recv()` without an executor
     /// bridge.
     accept_rx: Arc<StdMutex<mpsc::Receiver<RtmpConnection>>>,
+    /// Fired whenever the accept pump has queued a connection, so the drive
+    /// loop admits it immediately instead of waiting out a fixed poll
+    /// interval (defect 2: a steady read load starved the sleep-poll arm).
+    admit_notify: Arc<tokio::sync::Notify>,
+    /// Live admitted-session count (not monotonic — decremented on reap).
+    session_count: Arc<AtomicUsize>,
+    /// Monotonic total of sessions ever admitted (a session reaped for an
+    /// invalid early handshake is still "accepted" for defect-2 purposes).
+    admitted_total: Arc<AtomicUsize>,
+    /// A SEPARATE wake for the test observer of `admitted_total` (I9): the
+    /// drive loop never waits on it, so a test's bounded wait can never steal
+    /// the loop's own `admit_notify` permit (or vice versa).
+    admit_count_notify: Arc<tokio::sync::Notify>,
+    /// Tracks the accept-pump task so `Drop` can cancel and drain it
+    /// (defect 3: an untracked pump leaked a bound listen socket).
+    tracker: tokio_util::task::TaskTracker,
+    cancel: tokio_util::sync::CancellationToken,
+}
+
+impl Drop for RtmpInfra {
+    fn drop(&mut self) {
+        self.cancel.cancel();
+        self.tracker.close();
+    }
 }
 
 /// An RTMP push-ingest route: binds `listen` once and accepts publishers
@@ -210,7 +226,7 @@ pub struct RtmpRoute {
     timeouts: IngestTimeouts,
     max_sessions: usize,
     /// Bind-once, reuse-forever — see the module doc.
-    infra: OnceCell<RtmpInfra>,
+    infra: OnceCell<Arc<RtmpInfra>>,
 }
 
 /// Manual `Debug` (rather than `#[derive(Debug)]`), mirroring
@@ -286,7 +302,7 @@ impl RtmpRoute {
     /// call only (`OnceCell`); every later call — a fresh [`run_rtmp`]
     /// attempt — is handed a clone of the same shared receiver, never
     /// re-binding. See the module doc's "Bind once" note.
-    async fn ensure_infra(&self) -> Result<Arc<StdMutex<mpsc::Receiver<RtmpConnection>>>> {
+    async fn ensure_infra(&self) -> Result<Arc<RtmpInfra>> {
         let infra = self
             .infra
             .get_or_try_init(|| async {
@@ -299,9 +315,20 @@ impl RtmpRoute {
                         reason: format!("rtmp: bind {}: {e}", self.listen),
                     })?;
                 let (tx, rx) = mpsc::channel(ACCEPT_QUEUE_CAPACITY);
-                tokio::spawn(async move {
+                // Defect 3: the accept pump is TRACKED and cancel-aware, so
+                // dropping the route stops it and releases the listen socket.
+                let admit_notify = Arc::new(tokio::sync::Notify::new());
+                let pump_notify = Arc::clone(&admit_notify);
+                let cancel = tokio_util::sync::CancellationToken::new();
+                let pump_cancel = cancel.clone();
+                let tracker = tokio_util::task::TaskTracker::new();
+                tracker.spawn(async move {
                     loop {
-                        match server.accept().await {
+                        let accepted = tokio::select! {
+                            () = pump_cancel.cancelled() => break,
+                            accepted = server.accept() => accepted,
+                        };
+                        match accepted {
                             Ok(conn) => {
                                 if tx.send(conn).await.is_err() {
                                     // No `RtmpListener` is receiving any more
@@ -310,6 +337,11 @@ impl RtmpRoute {
                                     // for.
                                     break;
                                 }
+                                // Wake the drive loop so it admits this
+                                // connection at once (defect 2), rather than
+                                // waiting out a fixed poll interval that a
+                                // steady read load can starve.
+                                pump_notify.notify_one();
                             }
                             Err(e) => {
                                 tracing::warn!(
@@ -321,12 +353,18 @@ impl RtmpRoute {
                         }
                     }
                 });
-                Ok::<RtmpInfra, MultimuxError>(RtmpInfra {
+                Ok::<Arc<RtmpInfra>, MultimuxError>(Arc::new(RtmpInfra {
                     accept_rx: Arc::new(StdMutex::new(rx)),
-                })
+                    admit_notify,
+                    session_count: Arc::new(AtomicUsize::new(0)),
+                    admitted_total: Arc::new(AtomicUsize::new(0)),
+                    admit_count_notify: Arc::new(tokio::sync::Notify::new()),
+                    tracker,
+                    cancel,
+                }))
             })
             .await?;
-        Ok(Arc::clone(&infra.accept_rx))
+        Ok(Arc::clone(infra))
     }
 }
 
@@ -637,6 +675,98 @@ async fn report_and_maybe_reap(
     reaped
 }
 
+/// Test harness handle over a running `RtmpRoute`: the monotonic admission
+/// count and the accept-pump notify, for a bounded condition wait.
+#[doc(hidden)]
+pub struct RtmpRouteShared {
+    admitted_total: Arc<AtomicUsize>,
+    admit_count_notify: Arc<tokio::sync::Notify>,
+}
+
+impl RtmpRouteShared {
+    /// The total number of sessions ever admitted (monotonic — a session
+    /// reaped for an invalid early handshake is still "accepted").
+    pub fn session_count(&self) -> usize {
+        self.admitted_total.load(Ordering::SeqCst)
+    }
+
+    /// Polls until `n` sessions have ever been admitted (or `bound` elapses).
+    /// The `Notified` future is CREATED BEFORE the count check (`event_listener`
+    /// idiom): creating it after the check can miss a notification that fires
+    /// between the check and the `await` — a lost wakeup waiting out the whole
+    /// bound.
+    pub async fn wait_for_sessions(&self, n: usize, bound: Duration) -> std::io::Result<usize> {
+        let deadline = tokio::time::Instant::now() + bound;
+        loop {
+            let notified = self.admit_count_notify.notified(); // register FIRST
+            let count = self.session_count();
+            if count >= n {
+                return Ok(count);
+            }
+            tokio::select! {
+                _ = notified => {}
+                _ = tokio::time::sleep_until(deadline) => {
+                    return Err(std::io::Error::new(
+                        std::io::ErrorKind::TimedOut,
+                        format!("only {count}/{n} sessions admitted"),
+                    ));
+                }
+            }
+        }
+    }
+}
+
+/// Bind an ephemeral loopback listener, start `run_rtmp` against a re-bound
+/// listen address, and return that address + a handle + a cancel token.
+#[doc(hidden)]
+pub async fn serve_for_test_with_read_load() -> (
+    std::net::SocketAddr,
+    Arc<RtmpRouteShared>,
+    tokio_util::sync::CancellationToken,
+) {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    drop(listener);
+    let route = RtmpRoute::new("cam-rtmp", addr.to_string());
+    let infra = route.ensure_infra().await.expect("ensure_infra");
+    let shared = Arc::new(RtmpRouteShared {
+        admitted_total: Arc::clone(&infra.admitted_total),
+        admit_count_notify: Arc::clone(&infra.admit_count_notify),
+    });
+    let route_handle = Arc::new(RouteHandle::new(1.0, 500, 8));
+    // `run_rtmp`'s task owns the route (and its `OnceCell<Arc<RtmpInfra>>`),
+    // keeping the accept pump alive. The cancel token aborts the run task so
+    // the test binary exits rather than hanging on a forever-looping loop.
+    let token = tokio_util::sync::CancellationToken::new();
+    let abort_token = token.clone();
+    let run_task = tokio::spawn(async move {
+        let _ = run_rtmp(
+            &route,
+            trunk_config_for_test(),
+            handshake_for_test(),
+            &route_handle,
+        )
+        .await;
+    });
+    tokio::spawn(async move {
+        abort_token.cancelled().await;
+        run_task.abort();
+    });
+    (addr, shared, token)
+}
+
+fn trunk_config_for_test() -> TrunkConfig {
+    use std::num::NonZeroUsize;
+    let nz = |n: usize| NonZeroUsize::new(n).unwrap();
+    TrunkConfig::new(nz(64), nz(16), nz(8), nz(8), nz(8))
+}
+
+fn handshake_for_test() -> HandshakePolicy {
+    HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX))
+}
+
 /// Binds `route` (once ever — see the module doc), then admits and drives up
 /// to [`Listener::max_sessions`] RTMP publishers **concurrently** until a
 /// listen-socket-level failure occurs. Never returns in ordinary operation —
@@ -673,12 +803,12 @@ pub(crate) async fn run_rtmp_with_clock(
     route_handle: &Arc<RouteHandle>,
     clock: &(dyn Fn() -> Instant + Sync),
 ) -> MultimuxError {
-    let accept_rx = match route.ensure_infra().await {
-        Ok(rx) => rx,
+    let infra = match route.ensure_infra().await {
+        Ok(infra) => infra,
         Err(e) => return e,
     };
     let listener = RtmpListener {
-        accept_rx,
+        accept_rx: Arc::clone(&infra.accept_rx),
         app: route.app.clone(),
         max_sessions: route.max_sessions,
     };
@@ -697,34 +827,14 @@ pub(crate) async fn run_rtmp_with_clock(
     let mut reads: FuturesUnordered<BoxedRead> = FuturesUnordered::new();
 
     loop {
+        // Admits on a wake-up from the accept pump AND after every read,
+        // rather than a fixed poll interval (defect 2: the old 20 ms
+        // sleep-poll arm was starved by a session whose read future was
+        // continuously ready — `reads.next()` won the `select!` every time
+        // and reset the poll sleep before it ever fired).
         tokio::select! {
-            () = tokio::time::sleep(ACCEPT_POLL_INTERVAL) => {
+            () = infra.admit_notify.notified() => {
                 clocks.retain(|id| progress.contains_key(id));
-                loop {
-                    match driver.poll_accept() {
-                        AcceptOutcome::Idle => break,
-                        AcceptOutcome::Refused => {
-                            tracing::warn!("rtmp: connection refused, max_sessions reached");
-                        }
-                        AcceptOutcome::Error(e) => return e,
-                        AcceptOutcome::Admitted(id) => {
-                            let conn = driver
-                                .driver(id)
-                                .expect("just admitted by poll_accept")
-                                .session()
-                                .conn_handle();
-                            progress.insert(id, DriverProgress::new());
-                            clocks.admit(id, clock());
-                            reads.push(read_one(id, conn, read_timeout));
-                        }
-                        // `AcceptOutcome` is `#[non_exhaustive]`: a future
-                        // variant this loop has no reaction to yet is
-                        // treated like `Idle` (stop draining for this tick)
-                        // rather than looping forever on an unrecognized
-                        // outcome.
-                        _ => break,
-                    }
-                }
             }
             Some((id, outcome)) = reads.next(), if !reads.is_empty() => {
                 let now = clocks.now(id, clock());
@@ -735,6 +845,7 @@ pub(crate) async fn run_rtmp_with_clock(
                         }
                         let reaped =
                             report_and_maybe_reap(&mut driver, id, route_handle, &mut progress).await;
+                        infra.session_count.store(progress.len(), Ordering::SeqCst);
                         if !reaped
                             && let Some(d) = driver.driver(id)
                         {
@@ -747,6 +858,7 @@ pub(crate) async fn run_rtmp_with_clock(
                             d.finish();
                         }
                         report_and_maybe_reap(&mut driver, id, route_handle, &mut progress).await;
+                        infra.session_count.store(progress.len(), Ordering::SeqCst);
                     }
                     ReadOutcome::TransportError(reason) => {
                         tracing::warn!(error = %reason, "rtmp: session read failed");
@@ -754,6 +866,7 @@ pub(crate) async fn run_rtmp_with_clock(
                             d.finish();
                         }
                         report_and_maybe_reap(&mut driver, id, route_handle, &mut progress).await;
+                        infra.session_count.store(progress.len(), Ordering::SeqCst);
                     }
                     ReadOutcome::TimedOut => {
                         tracing::warn!("rtmp: session idle past read timeout");
@@ -761,8 +874,38 @@ pub(crate) async fn run_rtmp_with_clock(
                             d.finish();
                         }
                         report_and_maybe_reap(&mut driver, id, route_handle, &mut progress).await;
+                        infra.session_count.store(progress.len(), Ordering::SeqCst);
                     }
                 }
+            }
+        }
+
+        // Drain every accepted connection and queue its first read, on every
+        // loop iteration (whichever arm won): a continuously-ready read can
+        // no longer starve an accept.
+        loop {
+            match driver.poll_accept() {
+                AcceptOutcome::Idle => break,
+                AcceptOutcome::Refused => {
+                    tracing::warn!("rtmp: connection refused, max_sessions reached");
+                }
+                AcceptOutcome::Error(e) => return e,
+                AcceptOutcome::Admitted(id) => {
+                    let conn = driver
+                        .driver(id)
+                        .expect("just admitted by poll_accept")
+                        .session()
+                        .conn_handle();
+                    infra.session_count.fetch_add(1, Ordering::SeqCst);
+                    infra.admitted_total.fetch_add(1, Ordering::SeqCst);
+                    infra.admit_count_notify.notify_waiters();
+                    progress.insert(id, DriverProgress::new());
+                    clocks.admit(id, clock());
+                    reads.push(read_one(id, conn, read_timeout));
+                }
+                // `AcceptOutcome` is `#[non_exhaustive]`; an unrecognized
+                // variant stops this tick like `Idle`.
+                _ => break,
             }
         }
     }

@@ -30,11 +30,10 @@ pub fn parse_sdp_tracks(sdp: &[u8]) -> Result<Vec<TrackInit>> {
     // Track IDs are 1-based media order; `channel` is stepped separately (and
     // saturatingly) below because it advances by `CHANNEL_STEP`, not by 1.
     for (track_id, media) in (1u32..).zip(session.medias.iter()) {
-        let fmtp = media.get_first_attribute_value("fmtp").ok().flatten();
-        let rtpmap = media.get_first_attribute_value("rtpmap").ok().flatten();
+        let fmtp = media.get_first_attribute_value("fmtp").flatten();
+        let rtpmap = media.get_first_attribute_value("rtpmap").flatten();
         let control = media
             .get_first_attribute_value("control")
-            .ok()
             .flatten()
             .map(|s| s.to_string());
         let clock_rate = rtpmap

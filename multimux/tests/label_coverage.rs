@@ -45,6 +45,10 @@
 //! - `ReconnectState` (`push`) — the push reconnect FSM's state discriminant
 //!   (`Ready`/`Backoff`/`Failed`), an internal driver enum whose three states
 //!   carry no wire token; a static label would add nothing.
+//! - `Budget` (`origin::limit`) — the request-concurrency budget
+//!   classification (`Exempt`/`BlockingReload`/`Ordinary`); its `label()` is a
+//!   Prometheus `kind` label, not a spec/field wire token, and it is
+//!   `#[doc(hidden)]` (an implementation detail of the origin's router).
 
 use std::collections::BTreeSet;
 use std::fs;
@@ -67,6 +71,7 @@ const SKIP: &[&str] = &[
     "SmoothAction",
     "StreamStatus",
     "ReconnectState",
+    "Budget",
 ];
 
 /// Every `.rs` file under `src/`, as `(display path, contents)`.

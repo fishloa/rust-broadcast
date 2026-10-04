@@ -4,6 +4,9 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+- `test-support` feature (non-default, `#[doc(hidden)]` hooks, not public API): `MediaTransport::with_certificate_for_test`, `force_next_timer_error`, `force_stuck_timer` and `media::certificate_fingerprint`, used by `multimux`'s loopback/fault-injection tests. None of it exists in a default build (guarded by `tests/test_support_is_gated.rs`). The `rtc-dtls` dependency `multimux` lists is a `[dev-dependencies]` entry of `multimux` only; `webrtc-runtime`'s own dependency set is unchanged.
+
 ### Changed (breaking)
 - `MediaTransport::new(config, now)` and the rest of construction take a caller-supplied `std::time::Instant`: every internal timer (ICE agent, STUN gatherer) is scheduled from it and the transport never reads the wall clock.
 - The crate is `std` (the `std` feature is kept as a name but no longer gates anything) and left CI's `thumbv7em-none-eabi` list: the WHIP/WHEP state machines now speak `http`/`headers` types. `HttpRequest`/`HttpResponse` (one shared definition, re-exported from `whip::{client,server}` and `whep::{player,server}`) carry `http::Method`, `http::StatusCode` and an `http::HeaderMap` (`HttpRequest::content_type()`/`if_match()`, `HttpResponse::new()`/`with_body()`/`with_content_type()`/`with_location()`/`with_etag()`); the old `Method` enums are `http::Method`. `WhipSession::on_patch(fragment, &HeaderMap)`, `WhepSession::on_patch(body, &HeaderMap)` (content type from the headers) and `WhepSession::no_publisher(Option<Duration>)` (typed `Retry-After`). New `Error::InvalidHeader { header }`.

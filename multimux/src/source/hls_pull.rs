@@ -797,7 +797,7 @@ Content-Length: {over}
 
         let requests = std::sync::Arc::new(AtomicU64::new(0));
         let app = Router::new()
-            .route("/:name", get(handler))
+            .route("/{name}", get(handler))
             .with_state(State2 {
                 playlist: playlist_text,
                 init,
@@ -1012,7 +1012,7 @@ Content-Length: {over}
             segments: std::sync::Arc::new(segments),
         };
         let mut app = Router::new()
-            .route("/:name", get(handler))
+            .route("/{name}", get(handler))
             .with_state(state);
         if let Some(scheme) = auth {
             app = crate::testutil::require_auth(app, scheme);
@@ -1332,7 +1332,7 @@ Content-Length: {over}
 
         let seg0_requests = std::sync::Arc::new(AtomicU64::new(0));
         let app = Router::new()
-            .route("/:name", get(handler))
+            .route("/{name}", get(handler))
             .with_state(State2 {
                 playlist: playlist_text,
                 init,

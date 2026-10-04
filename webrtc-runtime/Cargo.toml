@@ -59,6 +59,12 @@ url         = { version = "2", optional = true }
 default = ["std"]
 std     = ["broadcast-common/std", "thiserror/std"]
 serde   = ["dep:serde"]
+# Hidden fault-injection / loopback-test hooks on `media::MediaTransport`
+# (`with_certificate_for_test`, `force_next_timer_error`, `force_stuck_timer`,
+# `media::certificate_fingerprint`). NOT part of the public API and never on by
+# default; consumers' test suites (multimux) enable it from `[dev-dependencies]`.
+# Only has an effect together with `media`.
+test-support = []
 # ICE + DTLS-SRTP media transport. Optional on dependency weight alone —
 # it used to also require a newer rustc than the workspace MSRV (`rcgen`
 # needs 1.88, the MSRV was 1.86), but the MSRV is now 1.95.0 (issue #949).

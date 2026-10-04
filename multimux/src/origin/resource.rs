@@ -128,7 +128,7 @@ impl Drop for BlockingRequestGuard {
 /// policy uniformly.
 pub(crate) fn router(route: Arc<RouteHandle>) -> Router {
     Router::new()
-        .route("/:file", get(dynamic_file).options(cors_preflight))
+        .route("/{file}", get(dynamic_file).options(cors_preflight))
         .with_state(route)
 }
 

@@ -112,9 +112,8 @@ pub struct HttpLimits {
     /// Maximum accepted request body size, in bytes.
     pub max_request_body_bytes: usize,
     /// How long a request may wait for a concurrency permit before it is shed
-    /// with `503` (issue #1083, B) — see
-    /// [`limit::GlobalLimit::with_queue_timeout`]. Config-surfaced so an
-    /// operator can tighten or loosen it.
+    /// with `503` (issue #1083, B) — see [`limit::BudgetLimitLayer::new`].
+    /// Config-surfaced so an operator can tighten or loosen it.
     pub queue_timeout: Duration,
 }
 
@@ -272,7 +271,7 @@ impl AppState {
 /// audit-concurrency #3).
 ///
 /// [`HttpLimits::max_concurrent_requests`] is applied here, via
-/// [`limit::GlobalLimitLayer`], whose semaphores live behind `Arc`s and are
+/// [`limit::BudgetLimitLayer`], whose semaphores live behind `Arc`s and are
 /// therefore shared by every per-endpoint clone (`Router::layer` clones a
 /// layer once per route) — that is exactly why it can be a `Router::layer`
 /// where [`tower::limit::ConcurrencyLimitLayer`] could not (it owns its
@@ -313,18 +312,436 @@ pub fn router(state: Arc<AppState>) -> Router {
 
     router
         .merge(root)
-        .layer(TimeoutLayer::new(limits.request_timeout))
+        .layer(TimeoutLayer::with_status_code(
+            StatusCode::REQUEST_TIMEOUT,
+            limits.request_timeout,
+        ))
         .layer(RequestBodyLimitLayer::new(limits.max_request_body_bytes))
         .layer(middleware::from_fn_with_state(state.clone(), track_http))
         // The concurrency bound is outermost: it must see every request
         // including its own `503` (which `track_http` never observes, being
         // layered inside it), and it must be *outside* the timeout layer so
         // the queue wait is bounded by the limit's own timeout, not the
-        // request timeout.
-        .layer(limit::GlobalLimitLayer::new(
-            limit::GlobalLimit::new(limits.max_concurrent_requests)
-                .with_queue_timeout(limits.queue_timeout),
+        // request timeout. The layer is built ONCE here, because the pools
+        // live in the layer value: building it per route would give one pool
+        // per route.
+        .layer(limit::BudgetLimitLayer::new(
+            limits.max_concurrent_requests,
+            (limits.max_concurrent_requests / limit::DEFAULT_BLOCKING_RELOAD_DIVISOR).max(1),
+            limits.queue_timeout,
         ))
+}
+
+/// A real [`router`] over a one-stream (`cam1`) state with `ordinary`
+/// concurrent ordinary-request permits and a `queue` wait — the harness
+/// `tests/limit_budgets.rs` drives to hold a permit in an unread response
+/// body and prove the shared pool sheds a cross-route request.
+#[doc(hidden)]
+pub fn limit_budget_test_app(ordinary: usize, queue: Duration) -> Router {
+    let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+    store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+    store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+    let mut streams = HashMap::new();
+    streams.insert(
+        "cam1".to_string(),
+        (
+            store,
+            vec![Arc::new(crate::output::llhls::LlHlsOutput::default()) as Arc<dyn Output>],
+        ),
+    );
+    let state = AppState::new(streams).with_limits(HttpLimits {
+        max_concurrent_requests: ordinary,
+        queue_timeout: queue,
+        ..HttpLimits::default()
+    });
+    router(Arc::new(state))
+}
+
+/// The local address of the accepted connection, injected per connection by
+/// the server (`serve_hyper_util`; a handler reachable only through an axum
+/// `Router` has no stream to ask).
+#[derive(Clone, Copy, Debug)]
+pub struct LocalAddr(pub std::net::SocketAddr);
+
+/// How long a client may take to finish its request header before the
+/// connection is closed (SP2.1). `axum::serve` sets none.
+pub const HEADER_READ_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Hard cap on concurrent live connections (accepted and being served). A
+/// connection accepted past this cap is closed immediately, at `accept`,
+/// rather than parked in the kernel backlog.
+pub const MAX_CONNECTIONS: usize = 1024;
+
+/// How long, once shutdown begins, an already-streaming connection is given
+/// to finish before it is force-closed. Only applies to connections in
+/// flight at shutdown; a long-lived media response is never truncated before
+/// this bound, and never at all if it finishes inside it.
+pub const DRAIN_DEADLINE: Duration = Duration::from_secs(30);
+
+/// Back-off between `accept()` attempts after a transient error (EMFILE,
+/// ECONNABORTED, ENFILE). An accept error must never end the listener.
+const ACCEPT_BACKOFF: Duration = Duration::from_millis(100);
+
+/// Serve `app` on `listener` through hyper-util's auto builder with a Tokio
+/// timer, [`HEADER_READ_TIMEOUT`], a [`MAX_CONNECTIONS`] connection cap
+/// enforced at `accept`, and graceful shutdown on `token` that drains
+/// in-flight responses up to [`DRAIN_DEADLINE`] before force-closing. There
+/// is deliberately NO total per-connection deadline: the origin serves
+/// long-lived responses (LL-HLS blocking reload, DVR catch-up, TS streams)
+/// whose bodies a hard cap would truncate mid-stream.
+///
+/// `ConnectInfo<SocketAddr>` (read by `output_auth_gate`) is injected by
+/// wrapping the router in `axum::Extension` per connection — the same
+/// mechanism axum's own `IntoMakeServiceWithConnectInfo` uses, built here
+/// because `axum::serve::IncomingStream` cannot be constructed outside axum
+/// (private fields, axum 0.8.9 `serve/mod.rs:424`).
+///
+/// The origin's listeners are plain HTTP/1 (no h2c/TLS-ALPN upgrade exists in
+/// any `serve*` path), so [`serve_impl`] uses `hyper`'s http1 connection
+/// directly — no HTTP/2 prior-knowledge preface is served, and no h2/fnv
+/// dependency is pulled in.
+pub(crate) async fn serve_hyper_util(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    token: tokio_util::sync::CancellationToken,
+) -> std::io::Result<()> {
+    serve_hyper_util_with_timeout(listener, app, token, HEADER_READ_TIMEOUT, DRAIN_DEADLINE).await
+}
+
+/// [`serve_hyper_util`] with explicit header-read + drain timeouts (test-only).
+#[doc(hidden)]
+pub async fn serve_hyper_util_with_timeout(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    token: tokio_util::sync::CancellationToken,
+    header_read: Duration,
+    drain: Duration,
+) -> std::io::Result<()> {
+    serve_hyper_util_with_limits(listener, app, token, header_read, drain, MAX_CONNECTIONS).await
+}
+
+/// [`serve_hyper_util`] with explicit header-read + drain timeouts AND a
+/// connection cap (test-only): the cap is what the connection-cap test dials
+/// low so it can observe over-cap sockets being closed at `accept`.
+#[doc(hidden)]
+pub async fn serve_hyper_util_with_limits(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    token: tokio_util::sync::CancellationToken,
+    header_read: Duration,
+    drain: Duration,
+    max_connections: usize,
+) -> std::io::Result<()> {
+    serve_impl(
+        listener,
+        app,
+        token,
+        header_read,
+        drain,
+        max_connections,
+        |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
+    )
+    .await
+}
+
+/// Serve `app` with an injectable accept source (test-only): `accept_source`
+/// is called for every connection and must return the next connection's
+/// `(stream, remote_addr)`, allowing a test to inject a transient `accept()`
+/// error (EMFILE) and prove the listener survives it.
+#[doc(hidden)]
+pub async fn serve_hyper_util_with_accept_source<A, Fut>(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    token: tokio_util::sync::CancellationToken,
+    header_read: Duration,
+    drain: Duration,
+    accept_source: A,
+) -> std::io::Result<()>
+where
+    A: Fn(Arc<tokio::net::TcpListener>) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = std::io::Result<(tokio::net::TcpStream, std::net::SocketAddr)>>
+        + Send
+        + 'static,
+{
+    serve_impl(
+        listener,
+        app,
+        token,
+        header_read,
+        drain,
+        MAX_CONNECTIONS,
+        accept_source,
+    )
+    .await
+}
+
+/// [`serve_hyper_util_with_limits`] plus a live-task gauge (test-only): `gauge`
+/// tracks the number of connection tasks currently spawned but not yet
+/// reaped, so a test can assert the finished-task set stays bounded across
+/// many sequential connections (finding N1).
+#[doc(hidden)]
+pub async fn serve_hyper_util_with_task_gauge(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    token: tokio_util::sync::CancellationToken,
+    header_read: Duration,
+    drain: Duration,
+    max_connections: usize,
+    live_tasks: Arc<std::sync::atomic::AtomicUsize>,
+) -> std::io::Result<()> {
+    serve_impl_with_task_gauge(
+        listener,
+        app,
+        token,
+        header_read,
+        drain,
+        max_connections,
+        Some(live_tasks),
+        |l: Arc<tokio::net::TcpListener>| Box::pin(async move { l.accept().await }),
+    )
+    .await
+}
+
+/// The core accept/drain loop shared by [`serve_hyper_util`] (a `Router`) and
+/// [`serve_hyper_util_service`] (a per-connection service factory): every
+/// connection is wrapped in `hyper_util::server::graceful::GracefulShutdown`
+/// so shutdown drains in-flight responses up to `drain` before force-closing.
+async fn serve_impl<A, Fut>(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    token: tokio_util::sync::CancellationToken,
+    header_read: Duration,
+    drain: Duration,
+    max_connections: usize,
+    accept_source: A,
+) -> std::io::Result<()>
+where
+    A: Fn(Arc<tokio::net::TcpListener>) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = std::io::Result<(tokio::net::TcpStream, std::net::SocketAddr)>>
+        + Send
+        + 'static,
+{
+    serve_impl_with_task_gauge(
+        listener,
+        app,
+        token,
+        header_read,
+        drain,
+        max_connections,
+        None,
+        accept_source,
+    )
+    .await
+}
+
+/// [`serve_impl`] with an optional live-task gauge (test-only): the gauge is
+/// incremented when a connection task is spawned and decremented when it
+/// finishes, so a test can assert the finished-task set is reaped (bounded)
+/// rather than accumulating one entry per connection.
+#[allow(clippy::too_many_arguments)]
+async fn serve_impl_with_task_gauge<A, Fut>(
+    listener: tokio::net::TcpListener,
+    app: axum::Router,
+    token: tokio_util::sync::CancellationToken,
+    header_read: Duration,
+    drain: Duration,
+    max_connections: usize,
+    live_tasks: Option<Arc<std::sync::atomic::AtomicUsize>>,
+    accept_source: A,
+) -> std::io::Result<()>
+where
+    A: Fn(Arc<tokio::net::TcpListener>) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = std::io::Result<(tokio::net::TcpStream, std::net::SocketAddr)>>
+        + Send
+        + 'static,
+{
+    use std::net::SocketAddr;
+    use std::sync::Arc;
+
+    use hyper::server::conn::http1;
+    use hyper_util::rt::{TokioIo, TokioTimer};
+    use hyper_util::server::graceful::GracefulShutdown;
+    use hyper_util::service::TowerToHyperService;
+
+    let listener = Arc::new(listener);
+    let conns = Arc::new(tokio::sync::Semaphore::new(max_connections));
+    let graceful = GracefulShutdown::new();
+    let mut tasks = tokio::task::JoinSet::new();
+
+    loop {
+        // Reap finished connection tasks continuously (never `join_next` only
+        // after the loop exits): a long-running listener would otherwise retain
+        // one finished entry per connection ever accepted. The gauge (when
+        // present) decrements by the number reaped so it reflects the LIVE
+        // (unreaped) set exactly.
+        if let Some(gauge) = &live_tasks {
+            let mut reaped = 0usize;
+            while tasks.try_join_next().is_some() {
+                reaped += 1;
+            }
+            gauge.fetch_sub(reaped, std::sync::atomic::Ordering::Relaxed);
+        } else {
+            while tasks.try_join_next().is_some() {}
+        }
+
+        let accepted = tokio::select! {
+            () = token.cancelled() => break,
+            accepted = accept_source(Arc::clone(&listener)) => accepted,
+        };
+        let (stream, remote_addr) = match accepted {
+            Ok(ok) => ok,
+            Err(e) => {
+                tracing::warn!(error = %e, "origin: accept error; backing off and continuing");
+                // Back off (bounded) so a transient EMFILE/ENFILE storm does
+                // not spin; the listener itself is never torn down.
+                tokio::select! {
+                    () = token.cancelled() => break,
+                    () = tokio::time::sleep(ACCEPT_BACKOFF) => {}
+                }
+                continue;
+            }
+        };
+
+        // Enforce the connection cap AT accept: a connection past the cap is
+        // closed here (dropped), not left unaccepted in the kernel backlog.
+        let permit = match conns.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!("origin: connection cap reached; closing the accepted socket");
+                drop(stream);
+                continue;
+            }
+        };
+
+        let app = app.clone();
+        let watcher = graceful.watcher();
+        if let Some(gauge) = &live_tasks {
+            gauge.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        tasks.spawn(async move {
+            let _permit = permit;
+            use axum::extract::connect_info::ConnectInfo;
+            use tower::Layer as _;
+            let local_addr = stream.local_addr().ok();
+            let svc = axum::Extension(ConnectInfo(remote_addr as SocketAddr))
+                .layer(axum::Extension(local_addr.map(LocalAddr)).layer(app));
+            let mut builder = http1::Builder::new();
+            builder
+                .timer(TokioTimer::new())
+                .header_read_timeout(Some(header_read));
+            let io = TokioIo::new(stream);
+            let conn = builder.serve_connection(io, TowerToHyperService::new(svc));
+            // `watch` signals `graceful_shutdown` on the connection and keeps
+            // awaiting it, so an in-flight response drains to completion
+            // rather than being cut when the watcher fires.
+            let _ = watcher.watch(conn).await;
+        });
+    }
+
+    // Stop accepting (loop exited). Signal every watched connection to
+    // graceful-shutdown and drain them up to `DRAIN_DEADLINE`; force-close
+    // any straggler that is still open past that bound.
+    if tokio::time::timeout(drain, graceful.shutdown())
+        .await
+        .is_err()
+    {
+        tracing::warn!("origin: draining connections past the deadline; force-closing");
+        tasks.abort_all();
+    }
+    while tasks.join_next().await.is_some() {}
+    drop(conns);
+    Ok(())
+}
+
+/// [`serve_hyper_util`] for a caller-supplied per-connection service factory —
+/// the admin media listener's `DynamicMediaService` shape. `build` receives
+/// only the PEER address: the service it builds is a per-request dispatcher
+/// over shared state (`DynamicMediaService` holds an `Arc<RouteRegistry>`, not
+/// the stream), so the stream is never moved into the closure and stays owned
+/// by the connection task for the `TokioIo` wrap below. All timeouts/bounds
+/// are identical to [`serve_hyper_util`].
+pub(crate) async fn serve_hyper_util_service<S, F, Fut>(
+    listener: tokio::net::TcpListener,
+    build: F,
+    token: tokio_util::sync::CancellationToken,
+) -> std::io::Result<()>
+where
+    F: Fn(std::net::SocketAddr) -> Fut + Send + Sync + 'static,
+    Fut: std::future::Future<Output = S> + Send + 'static,
+    S: tower::Service<
+            hyper::Request<hyper::body::Incoming>,
+            Response = axum::response::Response,
+            Error = std::convert::Infallible,
+        > + Clone
+        + Send
+        + 'static,
+    S::Future: Send + 'static,
+{
+    use std::sync::Arc;
+
+    use hyper::server::conn::http1;
+    use hyper_util::rt::{TokioIo, TokioTimer};
+    use hyper_util::server::graceful::GracefulShutdown;
+    use hyper_util::service::TowerToHyperService;
+
+    let conns = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
+    let graceful = GracefulShutdown::new();
+    let mut tasks = tokio::task::JoinSet::new();
+    let build = Arc::new(build);
+
+    loop {
+        // Reap finished connection tasks continuously (see `serve_impl`).
+        while tasks.try_join_next().is_some() {}
+
+        let accepted = tokio::select! {
+            () = token.cancelled() => break,
+            accepted = listener.accept() => accepted,
+        };
+        let (stream, remote_addr) = match accepted {
+            Ok(ok) => ok,
+            Err(e) => {
+                tracing::warn!(error = %e, "origin: accept error; backing off and continuing");
+                tokio::select! {
+                    () = token.cancelled() => break,
+                    () = tokio::time::sleep(ACCEPT_BACKOFF) => {}
+                }
+                continue;
+            }
+        };
+        let permit = match conns.clone().try_acquire_owned() {
+            Ok(p) => p,
+            Err(_) => {
+                tracing::warn!("origin: connection cap reached; closing the accepted socket");
+                drop(stream);
+                continue;
+            }
+        };
+
+        let build = Arc::clone(&build);
+        let watcher = graceful.watcher();
+        tasks.spawn(async move {
+            let _permit = permit;
+            let svc = build(remote_addr).await;
+            let mut builder = http1::Builder::new();
+            builder
+                .timer(TokioTimer::new())
+                .header_read_timeout(Some(HEADER_READ_TIMEOUT));
+            let io = TokioIo::new(stream);
+            let conn = builder.serve_connection(io, TowerToHyperService::new(svc));
+            let _ = watcher.watch(conn).await;
+        });
+    }
+
+    if tokio::time::timeout(DRAIN_DEADLINE, graceful.shutdown())
+        .await
+        .is_err()
+    {
+        tracing::warn!("origin: draining connections past the deadline; force-closing");
+        tasks.abort_all();
+    }
+    while tasks.join_next().await.is_some() {}
+    drop(conns);
+    Ok(())
 }
 
 /// Middleware gating every route in the router it wraps (see [`router`], the
@@ -350,7 +767,7 @@ pub fn router(state: Arc<AppState>) -> Router {
 /// `X-Forwarded-For` the same way Basic/Digest/Bearer read `Authorization` —
 /// all through the one [`Verifier::verify`] call, keeping every scheme's
 /// logic inside `broadcast-auth` rather than duplicated here.
-async fn output_auth_gate(
+pub(crate) async fn output_auth_gate(
     State(state): State<Arc<AppState>>,
     req: Request,
     next: Next,
@@ -358,8 +775,20 @@ async fn output_auth_gate(
     let Some(verifier) = &state.output_auth else {
         return next.run(req).await;
     };
+    match check_output_auth(verifier, &req) {
+        None => next.run(req).await,
+        Some(resp) => resp,
+    }
+}
+
+/// The shared output-auth decision: `None` when `req` is authorized,
+/// `Some(401)` (with the challenge) when it is not, and `None` for an
+/// `OPTIONS` preflight (which never carries the request's credentials). Used
+/// by [`output_auth_gate`] and by `crate::output::whep`'s own router, so the
+/// two share one implementation (SP2.4).
+pub(crate) fn check_output_auth(verifier: &Verifier, req: &Request) -> Option<Response> {
     if req.method() == Method::OPTIONS {
-        return next.run(req).await;
+        return None;
     }
     let method = req.method().as_str().to_string();
     // Use the pre-`nest`-rewrite URI (`OriginalUri`, e.g. `/cam1/master.m3u8`)
@@ -398,7 +827,7 @@ async fn output_auth_gate(
         tracing::debug!(%forwarded_for, "output-auth: forwarded-for header");
     }
     match verifier.verify(&ctx) {
-        AuthResult::Ok => next.run(req).await,
+        AuthResult::Ok => None,
         AuthResult::Unauthorized => {
             let mut resp = StatusCode::UNAUTHORIZED.into_response();
             // `challenge_for` (not `challenge`): an expired nonce must be
@@ -409,14 +838,14 @@ async fn output_auth_gate(
             if let Ok(value) = HeaderValue::from_str(&verifier.challenge_for(&ctx)) {
                 resp.headers_mut().insert(header::WWW_AUTHENTICATE, value);
             }
-            resp
+            Some(resp)
         }
         // `AuthResult` is `#[non_exhaustive]` (broadcast-auth may add finer-
         // grained outcomes later, e.g. a rate-limited variant) — default-deny
         // any variant this middleware doesn't yet know how to treat as
         // authenticated, rather than silently letting an unrecognized
         // outcome through.
-        _ => StatusCode::UNAUTHORIZED.into_response(),
+        _ => Some(StatusCode::UNAUTHORIZED.into_response()),
     }
 }
 
@@ -433,17 +862,17 @@ async fn output_auth_gate(
 /// because it must cover the shared resource route too, which no single
 /// `Output` owns.
 async fn add_response_headers(req: Request, next: Next) -> Response {
+    use headers::HeaderMapExt as _;
+
     let path = req.uri().path().to_string();
     let mut resp = next.run(req).await;
     let cache_control = cache_control_for(&path, resp.status());
     let headers = resp.headers_mut();
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_ORIGIN,
-        HeaderValue::from_static("*"),
-    );
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_METHODS,
-        HeaderValue::from_static("GET, HEAD, OPTIONS"),
+    headers.typed_insert(headers::AccessControlAllowOrigin::ANY);
+    headers.typed_insert(
+        [Method::GET, Method::HEAD, Method::OPTIONS]
+            .into_iter()
+            .collect::<headers::AccessControlAllowMethods>(),
     );
     // An explicit header list, not `*`: the Fetch spec's `*` wildcard never
     // covers `Authorization`, so a browser player sending Basic or Bearer
@@ -454,30 +883,35 @@ async fn add_response_headers(req: Request, next: Next) -> Response {
     // spec forbids it) with the `*` origin wildcard this origin sends, and
     // these are not credentialed requests — the browser sends the auth header
     // explicitly, not as an ambient cookie.
-    headers.insert(
-        header::ACCESS_CONTROL_ALLOW_HEADERS,
-        HeaderValue::from_static(CORS_ALLOW_HEADERS),
+    headers.typed_insert(
+        [header::AUTHORIZATION, header::RANGE, header::CONTENT_TYPE]
+            .into_iter()
+            .collect::<headers::AccessControlAllowHeaders>(),
     );
     // Let a browser read the response metadata a media client needs
     // (byte-range and cache validators), which CORS otherwise hides.
-    headers.insert(
-        header::ACCESS_CONTROL_EXPOSE_HEADERS,
-        HeaderValue::from_static(CORS_EXPOSE_HEADERS),
+    headers.typed_insert(
+        [
+            header::CONTENT_LENGTH,
+            header::CONTENT_RANGE,
+            header::DATE,
+            header::ETAG,
+        ]
+        .into_iter()
+        .collect::<headers::AccessControlExposeHeaders>(),
     );
     // The `Access-Control-Allow-Origin: *` value does not vary by request, but
     // `Vary` is still set so a shared cache never serves a response whose CORS
     // headers were computed for a different `Origin`.
-    // Append, not insert:  may already carry  (e.g.
-    // from a compression layer), and  would drop it.
+    // Append, not insert: the response may already carry a `Vary` (e.g. from a
+    // compression layer), and `insert` would drop it.
     headers.append(header::VARY, HeaderValue::from_static("Origin"));
-    headers.insert(
-        header::CACHE_CONTROL,
-        HeaderValue::from_static(cache_control),
-    );
+    headers.typed_insert(cache_control);
     resp
 }
 
-/// The `Cache-Control` for a response to `path` with `status`.
+/// The `Cache-Control` for a response to `path` with `status`, as a typed
+/// [`headers::CacheControl`].
 ///
 /// | resource | success | otherwise |
 /// |---|---|---|
@@ -494,15 +928,22 @@ async fn add_response_headers(req: Request, next: Next) -> Response {
 /// non-success response (a `404` for a part that does not exist *yet*, `401`,
 /// `503`) is `no-cache`: a year-long `immutable` on a transient error let a
 /// CDN keep serving it after the resource appeared.
-fn cache_control_for(path: &str, status: StatusCode) -> &'static str {
+fn cache_control_for(path: &str, status: StatusCode) -> headers::CacheControl {
+    use std::time::Duration;
+
     let file = path.rsplit('/').next().unwrap_or(path);
-    if file.ends_with(".m3u8") || file.ends_with(".mpd") || !status.is_success() {
-        return CACHE_CONTROL_MANIFEST;
-    }
-    match media_name_kind(path) {
-        MediaName::InstanceNamed => CACHE_CONTROL_IMMUTABLE,
-        MediaName::TokenLess => CACHE_CONTROL_SHORT,
-        MediaName::Other => CACHE_CONTROL_MANIFEST,
+    let manifest = file.ends_with(".m3u8") || file.ends_with(".mpd") || !status.is_success();
+    let kind = if manifest {
+        MediaName::Other
+    } else {
+        media_name_kind(path)
+    };
+    match kind {
+        MediaName::InstanceNamed => headers::CacheControl::new()
+            .with_immutable()
+            .with_max_age(Duration::from_secs(31_536_000)),
+        MediaName::TokenLess => headers::CacheControl::new().with_max_age(Duration::from_secs(10)),
+        MediaName::Other => headers::CacheControl::new().with_no_cache(),
     }
 }
 
@@ -557,26 +998,18 @@ fn media_name_kind(path: &str) -> MediaName {
 /// `Cache-Control` for manifests (`master.m3u8`/`media.m3u8`/`manifest.mpd`):
 /// they must always be re-fetched for liveness, never served stale from a
 /// cache.
+#[cfg(test)]
 const CACHE_CONTROL_MANIFEST: &str = "no-cache";
-
-/// The explicit `Access-Control-Allow-Headers` list this origin sends (audit
-/// run 7, W18). `Authorization` must be named literally — the Fetch spec's `*`
-/// wildcard does not cover it — alongside `Range` (byte-range fetches) and
-/// `Content-Type` (a preflighted body, e.g. a WHEP/WHIP answer).
-const CORS_ALLOW_HEADERS: &str = "Authorization, Range, Content-Type";
-
-/// The response headers a browser media client must be able to read
-/// (`Access-Control-Expose-Headers`) — byte-range and cache-validator metadata
-/// CORS hides by default.
-const CORS_EXPOSE_HEADERS: &str = "Content-Length, Content-Range, Date, ETag";
 
 /// `Cache-Control` for instance-named init/segment/part byte ranges: the name
 /// carries the origin's instance token, so it maps to one origin's bytes for
 /// ever (see [`cache_control_for`]).
-const CACHE_CONTROL_IMMUTABLE: &str = "max-age=31536000, immutable";
+#[cfg(test)]
+const CACHE_CONTROL_IMMUTABLE: &str = "immutable, max-age=31536000";
 
 /// `Cache-Control` for media whose name cannot be proven unique to its bytes
 /// (see [`cache_control_for`]'s table): a short, finite `max-age`.
+#[cfg(test)]
 const CACHE_CONTROL_SHORT: &str = "max-age=10";
 
 /// `GET /metrics` — the process's current Prometheus text-exposition
@@ -907,12 +1340,12 @@ pub async fn serve_config_file(path: impl AsRef<Path>) -> crate::Result<()> {
 /// rather than panicking or silently no-opping.
 ///
 /// Installs a graceful-shutdown signal (Ctrl-C, plus SIGTERM on unix): on
-/// receipt, axum stops accepting new connections and drains in-flight
-/// requests (including blocked LL-HLS long-poll reloads) via
-/// [`axum::serve::Serve::with_graceful_shutdown`], the same signal breaks
-/// every route's supervise loop, and `serve` joins each supervisor task
-/// (forcibly aborting one that doesn't return within a short grace period)
-/// before returning `Ok(())`.
+/// receipt, the server stops accepting new connections and drains in-flight
+/// requests (including blocked LL-HLS long-poll reloads) up to
+/// [`DRAIN_DEADLINE`] via the origin's `serve_hyper_util` `GracefulShutdown`, the same
+/// signal breaks every route's supervise loop, and `serve` joins each
+/// supervisor task (forcibly aborting one that doesn't return within a short
+/// grace period) before returning `Ok(())`.
 ///
 /// Otherwise returns only on a bind failure or if the HTTP server itself
 /// stops (e.g. a fatal accept-loop I/O error).
@@ -1016,30 +1449,32 @@ async fn serve_with_registry_impl(
     }
     let state = Arc::new(app_state);
     let listener = tokio::net::TcpListener::bind(config.bind.as_str()).await?;
+    // The shutdown watcher races the server but is not part of it: firing
+    // `cancel` makes `serve_hyper_util` stop accepting AND drain its in-flight
+    // connections (up to `DRAIN_DEADLINE`) before it returns.
+    let serve_cancel = cancel.clone();
+    let shutdown_cancel = cancel.clone();
     let shutdown_future = async move {
         shutdown_signal().await;
         tracing::info!("shutdown signal received, draining");
-        cancel.cancel();
+        shutdown_cancel.cancel();
         // Best-effort: only fails if every receiver (every supervisor task)
         // has already exited, which just means there's nothing left to
         // notify.
         let _ = shutdown_tx.send(true);
     };
-    // `into_make_service_with_connect_info` inserts a
-    // `ConnectInfo<SocketAddr>` extension into every accepted request, which
-    // `output_auth_gate` reads for `RequestContext::peer_addr` (issue #663
-    // extensibility wave part 1) — without it, `peer_addr` would always be
-    // `None`, same as it is in tests that `oneshot` the router directly.
+    // The server runs on `serve_hyper_util` (SP2.1), which injects the
+    // `ConnectInfo<SocketAddr>` extension `output_auth_gate` reads for
+    // `RequestContext::peer_addr` (issue #663 extensibility wave part 1) —
+    // without it, `peer_addr` would always be `None`, same as it is in tests
+    // that `oneshot` the router directly.
     //
     // The concurrency bound is applied inside `router()` itself (audit run
     // 7, W4/B), so it is present whether this entry point or a library
     // caller's own server drives it.
-    let serve_result = axum::serve(
-        listener,
-        router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
-    )
-    .with_graceful_shutdown(shutdown_future)
-    .await;
+    let shutdown_task = tokio::spawn(shutdown_future);
+    let serve_result = serve_hyper_util(listener, router(state), serve_cancel).await;
+    shutdown_task.abort();
 
     // axum has stopped accepting connections and drained in-flight requests
     // by the time `.await` above returns (whether that's because shutdown
@@ -2356,6 +2791,124 @@ mod tests {
         }
     }
 
+    /// Byte-for-byte golden of the origin's response HEADERS (W2a Task 1
+    /// Step 1): one line per probe, `path<TAB>status<TAB>name: value`, the
+    /// header names sorted. Taken from `main` BEFORE the axum 0.8 /
+    /// tower-http 0.7 bump, because `add_response_headers` and `CorsLayer`
+    /// both write the wire (see `tests/golden/README.md`).
+    /// `GOLDEN_BLESS=<dir>` writes instead of comparing.
+    #[tokio::test]
+    async fn origin_response_headers_match_golden() {
+        let store = Arc::new(RouteHandle::new(4.0, 500, 4));
+        store.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        store.set_init(crate::route::SPTS_PROGRAM_ID, vec![0xAA; 4]);
+        store.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![transmux::TrackSpec::new(
+                1,
+                90_000,
+                transmux::CodecConfig::Vp8 {
+                    width: 640,
+                    height: 480,
+                },
+            )],
+        );
+        store
+            .add_segment(
+                crate::route::SPTS_PROGRAM_ID,
+                transmux::ll_hls::SegmentInfo {
+                    bytes: vec![0x33; 16],
+                    duration: 4.0,
+                    segment_seq: 1,
+                    part_count: 1,
+                },
+            )
+            .expect("add_segment");
+        // Probe a real instance-named init resource (`init-{track}-{instance}-
+        // {generation}.mp4`, the immutable-cache form) so the golden also
+        // pins the instance-named branch of `cache_control_for`. The
+        // instance token is a fresh wall-clock-seeded number per `HlsOrigin`
+        // build, so it is captured here and normalised out of both the URI
+        // and the golden file: the golden pins the header SET, not one
+        // random token.
+        let ll_hls = store
+            .ll_hls(crate::route::SPTS_PROGRAM_ID)
+            .expect("program published");
+        let instance = ll_hls.instance().to_string();
+        let init_uri = format!("/cam1/{}", ll_hls.init_name(1, 1));
+        let mut streams = HashMap::new();
+        streams.insert(
+            "cam1".to_string(),
+            (
+                store,
+                vec![
+                    Arc::new(LlHlsOutput::default()) as Arc<dyn Output>,
+                    Arc::new(crate::output::dash::DashOutput) as Arc<dyn Output>,
+                ],
+            ),
+        );
+        let app = router(Arc::new(AppState::new(streams)));
+
+        let probes = [
+            "/cam1/master.m3u8",
+            "/cam1/media.m3u8",
+            init_uri.as_str(),
+            "/cam1/seg-1-1.m4s",
+            "/cam1/manifest.mpd",
+            "/metrics",
+            "/healthz",
+        ];
+        // The instance token is a fresh wall-clock-seeded number per
+        // `HlsOrigin` build, so replace it with a stable placeholder before
+        // comparing: the golden pins the header SET, not one random token.
+        let mut actual = String::new();
+        for uri in probes {
+            let resp = app.clone().oneshot(get(uri)).await.unwrap();
+            let status = resp.status().as_u16();
+            let uri = uri.replace(&instance, "{instance}");
+            actual.push_str(&format!("{uri}\t{status}\n"));
+            let mut names: Vec<String> = resp
+                .headers()
+                .keys()
+                .map(|n| n.as_str().to_string())
+                .collect();
+            names.sort();
+            for name in names {
+                // `/metrics`' body (and therefore its `Content-Length`) is a
+                // process-global counter exposition that other tests in this
+                // binary also increment, so it is not golden-able; every
+                // other header of every probe is.
+                if uri == "/metrics" && name == "content-length" {
+                    continue;
+                }
+                let value = resp
+                    .headers()
+                    .get(name.as_str())
+                    .map(|v| v.to_str().unwrap_or("<binary>"))
+                    .unwrap_or("");
+                actual.push_str(&format!("{uri}\t{status}\t{name}: {value}\n"));
+            }
+        }
+
+        if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+            std::fs::create_dir_all(&dir).expect("create golden dir");
+            std::fs::write(
+                std::path::Path::new(&dir).join("origin_response_headers.golden"),
+                &actual,
+            )
+            .expect("write golden");
+            return;
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/golden/origin_response_headers.golden");
+        let expected = std::fs::read_to_string(&path).expect("read origin header golden");
+        assert_eq!(
+            actual, expected,
+            "origin response headers differ from the golden; every wire-visible \
+             change must be listed in the multimux CHANGELOG"
+        );
+    }
+
     // --- issue #663 P5: HTTP-layer resource limits (audit-concurrency #3) ---
 
     fn post_with_body(uri: &str, body: Vec<u8>) -> axum::http::Request<axum::body::Body> {
@@ -3222,12 +3775,15 @@ mod tests {
                 .and_then(|v| v.to_str().ok()),
             Some("Origin")
         );
-        // The metadata a media client needs is exposed.
+        // The metadata a media client needs is exposed. Header NAMES are
+        // case-insensitive (RFC 9110 §5.1) and `headers` renders them
+        // lowercased, so compare case-insensitively.
         let expose = headers
             .get(axum::http::header::ACCESS_CONTROL_EXPOSE_HEADERS)
             .and_then(|v| v.to_str().ok())
-            .unwrap_or_default();
-        for want in ["Content-Length", "Content-Range", "ETag"] {
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        for want in ["content-length", "content-range", "etag"] {
             assert!(expose.contains(want), "must expose {want}: {expose}");
         }
         // HEAD is allowed (a client may probe a segment's size).
@@ -3954,11 +4510,22 @@ mod tests {
     }
 
     /// Audit r07-C2 (#1030): `immutable` is for URIs that can never map to
-    /// other bytes — not the bare current-init name, and not an error.
+    /// other bytes — not the bare current-init name, and not an error. The
+    /// expected value is the RENDERED header (the typed `headers::CacheControl`
+    /// serialises the directives in its own canonical order).
     #[test]
     fn cache_control_is_immutable_only_for_names_that_cannot_change() {
         use axum::http::StatusCode as S;
         let ok = S::OK;
+        let render = |path: &str, status| {
+            let mut map = axum::http::HeaderMap::new();
+            headers::HeaderMapExt::typed_insert(&mut map, cache_control_for(path, status));
+            map.get(axum::http::header::CACHE_CONTROL)
+                .unwrap()
+                .to_str()
+                .unwrap()
+                .to_string()
+        };
         for (path, status, expected) in [
             (
                 "/cam1/seg-1-1790000000000-7.m4s",
@@ -4004,7 +4571,7 @@ mod tests {
             ),
             ("/cam1/something-else.bin", ok, CACHE_CONTROL_MANIFEST),
         ] {
-            assert_eq!(cache_control_for(path, status), expected, "{path} {status}");
+            assert_eq!(render(path, status), expected, "{path} {status}");
         }
     }
 

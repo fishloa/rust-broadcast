@@ -97,6 +97,9 @@
 mod gather;
 mod transport;
 
+#[cfg(feature = "test-support")]
+#[doc(hidden)]
+pub use transport::certificate_fingerprint;
 pub use transport::{
     Datagram, DecryptedRtp, DecryptedRtpExtension, MAX_REMOTE_CANDIDATES, MediaEvent,
     MediaTransport, MediaTransportConfig, SetupRole, parse_remote_fingerprint,

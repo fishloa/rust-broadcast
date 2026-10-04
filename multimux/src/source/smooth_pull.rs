@@ -1566,7 +1566,7 @@ mod tests {
             stall: stall.map(|(k, t)| (k.to_string(), t)),
         };
         let app = Router::new()
-            .route("/*path", get(fixture_handler))
+            .route("/{*path}", get(fixture_handler))
             .with_state(state);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
@@ -1592,7 +1592,7 @@ mod tests {
             }
         }
         let app = Router::new()
-            .route("/*path", get(handler))
+            .route("/{*path}", get(handler))
             .with_state(manifest);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await

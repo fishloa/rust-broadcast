@@ -80,17 +80,17 @@ impl Output for CatchupOutput {
 
     /// Routes (relative — mounted by the origin under `/{stream}/`):
     /// - `GET /catchup.m3u8`
-    /// - `GET /vod/:period` (`period` is `p{N}.m3u8`)
-    /// - `GET /catchup/:file` (`file` is `seg-{seq}.{ext}`)
+    /// - `GET /vod/{period}` (`period` is `p{N}.m3u8`)
+    /// - `GET /catchup/{file}` (`file` is `seg-{seq}.{ext}`)
     fn manifest_routes(&self, route: Arc<RouteHandle>) -> Router {
         Router::new()
             .route(
                 "/catchup.m3u8",
                 get(catchup_playlist).options(cors_preflight),
             )
-            .route("/vod/:period", get(vod_playlist).options(cors_preflight))
+            .route("/vod/{period}", get(vod_playlist).options(cors_preflight))
             .route(
-                "/catchup/:file",
+                "/catchup/{file}",
                 get(catchup_resource).options(cors_preflight),
             )
             .with_state(route)

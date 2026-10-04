@@ -30,3 +30,60 @@ GOLDEN_BLESS=<this directory> cargo test -p multimux --lib render_manifest_match
 The test compares the current output to these files and fails on any byte difference.
 Intended differences from main are listed in the multimux CHANGELOG; none is exercised by
 these inputs.
+
+## `origin_response_headers.golden`
+
+Byte-for-byte expected HTTP response headers of the origin's shared router
+(`multimux/src/origin/mod.rs::add_response_headers` plus the axum route stack), one line per
+probe: `path<TAB>status` followed by one `path<TAB>status<TAB>name: value` line per header
+(names sorted). Generated from `origin/main` commit `9dd1e31e` (the W2a plan commit) **before**
+the axum 0.8 / tower-http 0.7 bump, because `CorsLayer` changes the exact `Access-Control-*`
+set on the wire. The HlsOrigin instance token in the instance-named init URI is normalised to
+`{instance}` (it is a fresh wall-clock-seeded number per build), and `/metrics`' varying
+`Content-Length` (a process-global counter exposition) is omitted. Regenerate:
+
+```bash
+GOLDEN_BLESS=multimux/tests/golden cargo test -p multimux --all-features --locked \
+  --lib origin::tests::origin_response_headers_match_golden
+```
+
+## `whip_response_headers.golden` / `whep_response_headers.golden`
+
+Byte-for-byte expected response HEADERS of the WHIP (`source/whip.rs`) and WHEP
+(`output/whep.rs`) signalling endpoints — the `201 Created` / `204 No Content` (OPTIONS
+preflight) / `413 Payload Too Large`, plus WHEP's `401 Unauthorized`. Only the status line and
+header lines are pinned (the SDP body and its `Content-Length`, the `WWW-Authenticate`
+challenge value, the wall-clock `Date`, and the random `ETag` are not — the last two are
+normalised to `{date}`/`{etag}`). Generated from `origin/main` commit `9dd1e31e` **before** the axum
+0.8 / tower-http 0.7 bump and the WP2.1 move of both endpoints onto an axum router with a
+`CorsLayer`. Regenerate:
+
+```bash
+GOLDEN_BLESS=multimux/tests/golden cargo test -p multimux --all-features --locked --lib \
+  source::whip::tests::whip_response_headers_match_golden \
+  output::whep::tests::whep_response_headers_match_golden
+```
+
+## `whip_answer.golden` / `whep_answer.golden`
+
+Byte-for-byte expected SDP ANSWER bodies of the WHIP (`source/whip.rs`) and WHEP
+(`output/whep.rs`) endpoints, as rendered by `sdp_types::Session::write`. The offer, local
+address, ICE credentials, codec config (WHEP), fingerprint and candidate lines are all
+caller-supplied through the `render_*_answer_for_test` hooks, so the golden pins only the
+`o=`/`c=`/`m=`/attribute LINE ORDERING — the random certificate fingerprint and ephemeral
+candidate values never appear.
+
+The offer is **multi-payload-type** (`m=video … 96 97 98`, two H.264 entries plus a VP8 entry)
+so the golden pins the WHIP `m=` fmt-list change: main echoed the offer's whole `fmt` list
+(`m=video 9 UDP/TLS/RTP/SAVPF 96 97 98`), while the sdp-types answer lists only the chosen
+payload type (`… 96`) per RFC 3264 §6.1. Captured (fingerprint normalised to the deterministic
+value) from `origin/main` `9dd1e31e` in a throwaway `w2-main-golden` worktree; the WHEP answer
+is byte-identical to main (main already listed only the selected PT). See the CHANGELOG.
+Regenerate:
+
+```bash
+cd multimux
+GOLDEN_BLESS=tests/golden cargo test -p multimux --all-features --locked \
+  --test whip_whep_sdp --test whep_sdp_golden
+```
+
