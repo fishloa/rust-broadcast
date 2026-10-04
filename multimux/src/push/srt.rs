@@ -142,6 +142,12 @@ fn normalize_srt_authority(authority: &str) -> Option<String> {
         return None;
     }
     let url = url::Url::parse(&format!("srt://{authority}")).ok()?;
+    // Reject a userinfo prefix rather than silently dropping it: an SRT
+    // authority is `host[:port]`, and a caller that put a credential there
+    // (a stream key after `@`) must not have it vanish into a bare host:port.
+    if !url.username().is_empty() || url.password().is_some() {
+        return None;
+    }
     let host = url.host()?;
     let port = url.port().unwrap_or(DEFAULT_SRT_PORT);
     Some(format!("{host}:{port}"))
@@ -304,6 +310,10 @@ mod tests {
         assert!(parse_srt_url("host:9000?latency=99999").is_err());
         assert!(parse_srt_url("host:9000?mode=listener").is_err());
         assert!(parse_srt_url("host:9000?passphrase=secret").is_err());
+        // A userinfo prefix is rejected, not silently dropped (the parser
+        // would otherwise reduce `user:key@host:9000` to `host:9000`).
+        assert!(parse_srt_url("srt://user:key@host:9000").is_err());
+        assert!(parse_srt_url("srt://user@host:9000").is_err());
         // `mode=caller` is accepted.
         assert!(parse_srt_url("host:9000?mode=caller").is_ok());
     }

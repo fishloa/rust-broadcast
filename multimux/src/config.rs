@@ -1124,6 +1124,12 @@ fn validate_host_port(addr: &str) -> Result<()> {
     // parser rather than by a hand `rsplit_once(':')`. `SrtSocket::connect`
     // resolves a hostname via `ToSocketAddrs`, so a non-IP host is allowed —
     // this is a shape check, not a bind-address parse.
+    //
+    // `url` is LOOSER than the old `rsplit_once(':')` + `u16` parse: it accepts
+    // a path/query/fragment after the port (`host:9000/path`), a userinfo
+    // prefix (`user@host:9000`), and a trailing `/`. Reject all of those
+    // explicitly so the accepted set matches the old strict check (a bare
+    // `host:port`), and no silently-dropped tail reaches `SrtSocket::connect`.
     let Ok(url) = url::Url::parse(&format!("srt://{addr}")) else {
         return Err(invalid(format!(
             "bad host:port {addr:?}: not a valid host[:port]"
@@ -1131,6 +1137,20 @@ fn validate_host_port(addr: &str) -> Result<()> {
     };
     if url.host().is_none() {
         return Err(invalid(format!("bad host:port {addr:?}: empty host")));
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err(invalid(format!(
+            "bad host:port {addr:?}: must be a bare host:port (no userinfo)"
+        )));
+    }
+    // `Url::path()` is "" (or "/" for a special scheme) for an authority-only
+    // URL; anything longer is a path the old `rsplit_once(':')`+`u16` parse
+    // would have rejected. `addr` is also checked literally, since `url`
+    // normalises some tails away (a trailing `/`).
+    if !matches!(url.path(), "" | "/") || addr.contains(['/', '?', '#']) {
+        return Err(invalid(format!(
+            "bad host:port {addr:?}: must be a bare host:port (no path/query/fragment)"
+        )));
     }
     match url.port() {
         Some(_) => Ok(()),
@@ -4055,6 +4075,34 @@ mod tests {
         input
             .validate()
             .expect("literal socket addr remote must validate");
+    }
+
+    /// The `url`-crate host:port check must reject the shapes its OWN parser is
+    /// looser about than the old `rsplit_once(':')` + `u16` parse: a path, a
+    /// query, a fragment, and a userinfo prefix after/before the authority.
+    /// (I10: adopting `url` silently accepted `host:9000/path` etc.)
+    #[test]
+    fn srt_caller_remote_rejects_a_non_bare_host_port() {
+        for bad in [
+            "host:9000/path",
+            "host:9000/path/", // trailing slash normalised to a path
+            "user@host:9000",
+            "user:pass@host:9000",
+            "host:9000?x=1",
+            "host:9000#frag",
+        ] {
+            let input = srt_input(None, Some(bad));
+            assert!(
+                input.validate().is_err(),
+                "{bad:?} must be rejected as not a bare host:port"
+            );
+        }
+        // The bare forms still pass.
+        for ok in ["example.com:9000", "127.0.0.1:9000", "[::1]:9000"] {
+            srt_input(None, Some(ok))
+                .validate()
+                .unwrap_or_else(|e| panic!("{ok:?} must validate: {e:?}"));
+        }
     }
 
     /// A `remote` with no `:port` at all must fail `validate()`, and the

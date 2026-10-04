@@ -418,9 +418,23 @@ pub enum RtmpPushError {
 
 /// `#[doc(hidden)]` test seam: parse `url` through [`RtmpTarget`] (the real
 /// path the connect uses) and return its `tcUrl`. Keeps an IPv6 host bracketed.
+/// `#[doc(hidden)]` test seam: build the `tcUrl` through
+/// [`RtmpTarget::from_parts`] — the REAL path the connect uses (production
+/// takes `app`/`stream_key` from config and only the host/port from the URL) —
+/// so the test exercises the same constructor, not the parallel
+/// `RtmpTarget::parse`. The `app` is the URL's first path segment and the
+/// stream key the rest.
 #[doc(hidden)]
 pub fn tc_url_for_test(url: &str) -> Result<String, String> {
-    RtmpTarget::parse(url)
+    let parsed = url::Url::parse(url).map_err(|e| e.to_string())?;
+    let mut segs = parsed
+        .path_segments()
+        .map(|s| s.filter(|p| !p.is_empty()))
+        .into_iter()
+        .flatten();
+    let app = segs.next().unwrap_or("").to_string();
+    let stream_key = segs.collect::<Vec<_>>().join("/");
+    RtmpTarget::from_parts(url, &app, &stream_key)
         .map(|t| t.tc_url)
         .map_err(|e| e.to_string())
 }
