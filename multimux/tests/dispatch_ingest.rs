@@ -62,7 +62,7 @@
 //! `crate::source::segment::drive_program_segmenters`'s segmenting) is
 //! caught here too for the `Custom` dispatch path specifically, not just by
 //! every built-in source's own loopback tests.
-#![cfg(feature = "test-hooks")]
+#![cfg(feature = "test-seams")]
 
 use std::net::SocketAddr;
 use std::path::PathBuf;

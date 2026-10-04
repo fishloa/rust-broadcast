@@ -193,10 +193,17 @@ tls         = ["rtsp-runtime/tls", "dep:tokio-rustls", "dep:rustls"]
 # The workspace MSRV is now 1.95.0 (issue #949), so that gap is gone and the
 # feature is opt-in purely on dependency weight.
 whip        = ["dep:webrtc-runtime", "webrtc-runtime/media"]
-# Test hooks (`WhipRouteShared::force_next_timer_error`) that stage a fatal
-# transport timer error. Non-default; implies `webrtc-runtime/test-support`.
-# `tests/whip_whep_timers.rs` requires it.
-test-hooks  = ["dep:webrtc-runtime", "webrtc-runtime/test-support"]
+# Dependency-free test seams (`Config::prebound`, the `PreboundListeners`
+# hand-in entry points): a caller binds `127.0.0.1:0` and hands the live
+# listener in instead of reserving a port and racing to re-bind it. Deliberately
+# split out of `test-hooks` so a test that needs only a pre-bound socket (e.g.
+# the TS-UDP / Smooth / TS-HLS end-to-end binaries) does not drag in
+# `webrtc-runtime`'s whole ICE/DTLS-SRTP tree. `test-hooks` implies it.
+test-seams  = []
+# WebRTC fault injection (`WhipRouteShared::force_next_timer_error`) that stages
+# a fatal transport timer error. Non-default; implies `test-seams` plus
+# `webrtc-runtime/test-support`. `tests/whip_whep_timers.rs` requires it.
+test-hooks  = ["test-seams", "dep:webrtc-runtime", "webrtc-runtime/test-support"]
 # WHEP (draft-ietf-wish-whep) egress (issue #743): accepts a viewer's HTTP
 # `POST` + SDP offer, negotiates ICE/DTLS-SRTP, and pushes the route's
 # `Trunk` samples out as SRTP RTP — the mirror image of `whip` (see
@@ -256,15 +263,15 @@ required-features = ["whip", "whep", "test-hooks"]
 
 [[test]]
 name = "dispatch_ingest"
-required-features = ["test-hooks"]
+required-features = ["test-seams"]
 
 [[test]]
 name = "smooth_oracle"
-required-features = ["test-hooks"]
+required-features = ["test-seams"]
 
 [[test]]
 name = "ts_hls_oracle"
-required-features = ["test-hooks"]
+required-features = ["test-seams"]
 
 [dev-dependencies]
 # `test-support`: webrtc-runtime's hidden fault-injection hooks (inert without
@@ -304,3 +311,11 @@ rtc-dtls         = "0.21"
 # deadline-bounded external-tool runner, replacing its `try_wait` +
 # `thread::sleep` poll loop (matching hls-runtime/media-doctor's copies).
 wait-timeout     = "0.2"
+# A dependency on ourselves, enabling the tiny `test-seams` feature for every
+# test build. Without it a plain `cargo test -p multimux` (default features)
+# would fail to compile any test that uses `Config::prebound`, silently
+# excluding the TS-UDP/Smooth/TS-HLS end-to-end binaries from a lean run (the
+# `required-features` entries alone only SKIP a target, they do not enable the
+# feature). This is the standard self-dev-dependency pattern (Cargo allows a
+# crate to dev-depend on itself); it adds no new package to the lock.
+multimux         = { path = ".", features = ["test-seams"] }

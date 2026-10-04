@@ -75,9 +75,19 @@
   render_answer_for_test, whip_router_for_test}`, and the `Config::prebound`
   caller-bound-socket field. The integration tests that drive them
   (`whip_http`, `whip_ingest`, `whep_egress`, `whip_whep_sdp`, `whip_whep_timers`,
-  `whep_sdp_golden`, `whep_http`, `accept_lifecycle`, `limit_budgets`,
-  `dispatch_ingest`, `smooth_oracle`, `ts_hls_oracle`) now declare
-  `required-features = ["test-hooks", …]`.
+  `whep_sdp_golden`, `whep_http`, `accept_lifecycle`, `limit_budgets`) now
+  declare `required-features = ["test-hooks", …]`.
+- **A dependency-free `test-seams` feature gates the pre-bound-socket seams.**
+  `Config::prebound` and `Config::PreboundBinds` moved out of `test-hooks` (which
+  pulls `webrtc-runtime`'s ICE/DTLS-SRTP tree) into a new, dependency-free
+  `test-seams` feature; `test-hooks = ["test-seams", …]` implies it. The three
+  integration binaries that need *only* a pre-bound socket — `dispatch_ingest`,
+  `smooth_oracle`, `ts_hls_oracle` (the TS-UDP route-dispatch end-to-end and the
+  Smooth/TS-HLS oracles) — now declare `required-features = ["test-seams"]`, and
+  a self dev-dependency (`multimux = { path = ".", features = ["test-seams"] }`)
+  enables the feature for every test build, so a plain `cargo test -p multimux`
+  compiles and runs them again (previously they were silently skipped unless
+  `--all-features` was passed).
   The remaining `#[doc(hidden)] pub` `*_for_test` seams stay on the default
   build because gating them would force `test-hooks` (and its `webrtc-runtime`
   dependency) onto tests that do not otherwise need it:
