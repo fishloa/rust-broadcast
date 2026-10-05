@@ -71,7 +71,7 @@ gate acts on `LANES` (64) payloads at once.
 
 ```toml
 [dependencies]
-dvb-csa = { version = "0.2", features = ["bitsliced"] }
+dvb-csa = { version = "0.3", features = ["bitsliced"] }
 ```
 
 ```rust

@@ -16,7 +16,7 @@ profiles.
 
 ```toml
 [dependencies]
-atsc3-route = "0.1"
+atsc3-route = "0.2"
 ```
 
 ## What this implements

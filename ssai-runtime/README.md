@@ -97,7 +97,7 @@ cargo run -p ssai-runtime --example session_playlist
 
 ```toml
 [dependencies]
-ssai-runtime = "0.1"
+ssai-runtime = "0.2"
 ```
 
 ## Spec references
