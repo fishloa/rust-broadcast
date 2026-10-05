@@ -450,7 +450,9 @@ broadcast-common is **not** breaking (`hex` delegates). Each wave updates
    URL already failed to parse at connect time (the common case for the
    connect-time error messages this exists to sanitize). The fallback
    therefore scans the raw text for the `://` boundary and the `@`, and only
-   ever MASK the credential prefix (`redact.rs:50,111`, `:134`); the host and
+   ever MASK the credential prefix (`redact.rs:50`, `:111`, `:134`; the `@`
+   boundary at `redact.rs:56` and the userinfo split at `redact.rs:138` are
+   the same masking sites); the host and
    path are not secrets and stay legible. `redact_url` uses `url`'s
    `set_username`/`set_password` whenever parsing succeeds, so an IPv6 host
    stays bracketed and every component is handled per RFC 3986; the fallback
@@ -458,7 +460,9 @@ broadcast-common is **not** breaking (`hex` delegates). Each wave updates
    both paths, including the behaviourally-guarded
    `masking_fallbacks_do_not_reconstruct_a_secret` (a host/substring present
    in the low-entropy input must never be reconstructed from the raw text).
-   The lexical guard line-pins all four sites by name.
+   The lexical guard line-pins all five sites by name: the three
+   `find("://")` scans (`redact.rs:50`, `:111`, `:134`) plus `rfind('@')`
+   (`redact.rs:56`) and `rsplit_once('@')` (`redact.rs:138`).
 6. **SRT query split** (`multimux/src/push/srt.rs`), which does NOT use
    `url`'s `query_pairs()` for the query portion of an opaque `srt://` URL.
    Verified against the `url` crate (2.5.8): a Haivision
@@ -469,8 +473,8 @@ broadcast-common is **not** breaking (`hex` delegates). Each wave updates
    the handshake extension block and is opaque (it never parses a URL), so no
    crate in the workspace covers this form; `percent-encoding` alone decodes
    but does not split. The split is therefore manual (`strip_prefix("srt://")`
-   + `split_once('?')`, `srt.rs:79-80`), while the AUTHORITY is still parsed by
-   `url::Url::parse` (`srt.rs:144`) so IPv6 bracketing is the parser's job.
+   + `split_once('?')`, `srt.rs:81-82`), while the AUTHORITY is still parsed by
+   `url::Url::parse` (`srt.rs:146`) so IPv6 bracketing is the parser's job.
    Test vectors: `srt.rs`'s `parse_srt_url_for_test` cases, including the
    unencoded-`#` Haivision form and the percent-encoded (`%23`) form. The
    lexical guard line-pins the `strip_prefix("srt://")` site by name.
