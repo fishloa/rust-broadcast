@@ -162,10 +162,21 @@ async fn an_explicit_receive_buffer_overrides_the_default() {
     );
 }
 
-/// I4: `reuse_port` is accepted on Unix (no error) and the bind succeeds.
+/// I-C: with `reuse_port`, two sockets bind the SAME unicast port; without
+/// it, the second bind fails (the negative control). A no-op `reuse_port`
+/// implementation cannot pass both halves. Unix-only (socket2 gates
+/// `set_reuse_port` to the same predicate `source::udp` uses).
+#[cfg(not(any(
+    target_os = "solaris",
+    target_os = "illumos",
+    target_os = "cygwin",
+    target_os = "nuttx",
+    target_os = "wasi"
+)))]
 #[tokio::test]
-async fn reuse_port_is_accepted() {
-    let socket = bind_udp(
+async fn reuse_port_lets_two_sockets_share_a_port() {
+    // First socket claims an ephemeral port (also with reuse_port).
+    let first = bind_udp(
         "127.0.0.1:0",
         None,
         UdpBindOptions {
@@ -175,5 +186,28 @@ async fn reuse_port_is_accepted() {
     )
     .await
     .unwrap();
-    assert!(socket.local_addr().unwrap().port() > 0);
+    let addr = first.local_addr().unwrap();
+
+    // Second socket binds the SAME port with reuse_port => succeeds.
+    let second = bind_udp(
+        &addr.to_string(),
+        None,
+        UdpBindOptions {
+            reuse_port: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .expect("a second socket with reuse_port must share the port");
+    assert_eq!(second.local_addr().unwrap().port(), addr.port());
+
+    // Negative control: a socket binding a port held WITHOUT reuse_port fails.
+    let plain = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let held = plain.local_addr().unwrap();
+    let conflict = bind_udp(&held.to_string(), None, UdpBindOptions::default()).await;
+    assert!(
+        conflict.is_err(),
+        "binding a port held without reuse_port must fail (got {:?})",
+        conflict.map(|s| s.local_addr())
+    );
 }

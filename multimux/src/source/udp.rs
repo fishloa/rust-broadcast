@@ -93,8 +93,19 @@ pub async fn bind_udp(
                 reason: format!("SO_REUSEADDR: {e}"),
             })?;
     }
-    // SO_REUSEPORT: Unix only — see the module doc's per-OS multicast note.
-    #[cfg(unix)]
+    // SO_REUSEPORT: use socket2's OWN target gate so this can never fail to
+    // build where socket2's `set_reuse_port` is absent (solaris/illumos/
+    // cygwin/nuttx/wasi, or a build without socket2's `all` feature) — see
+    // socket2 `src/sys/unix.rs`'s cfg on `set_reuse_port`. Elsewhere the
+    // option is ignored, not mis-set.
+    #[cfg(not(any(
+        target_os = "solaris",
+        target_os = "illumos",
+        target_os = "cygwin",
+        target_os = "nuttx",
+        target_os = "wasi",
+        not(target_family = "unix")
+    )))]
     if opts.reuse_port {
         socket
             .set_reuse_port(true)
@@ -102,7 +113,14 @@ pub async fn bind_udp(
                 reason: format!("SO_REUSEPORT: {e}"),
             })?;
     }
-    #[cfg(not(unix))]
+    #[cfg(any(
+        target_os = "solaris",
+        target_os = "illumos",
+        target_os = "cygwin",
+        target_os = "nuttx",
+        target_os = "wasi",
+        not(target_family = "unix")
+    ))]
     let _ = opts.reuse_port;
     // A requested buffer is a request; a default applies when none is given,
     // so a high-bitrate input is not left at the OS default. Best-effort: the
