@@ -101,10 +101,13 @@ jobs:
   # Compiled binaries for the four supported targets, attached to the Release
   # this tag's publish job creates. crates.io carries the source; without this
   # there is no way to use ts-fix without a Rust toolchain.
-  binaries:
-    needs: publish
-    uses: ./.github/workflows/reusable-binaries.yml
-    with:
-      crate: ts-fix
-      bin: ts-fix
-      features: cli
+  #
+  # TEMPORARILY DISABLED: ubuntu-24.04-arm runner causes startup_failure.
+  # Use attach-binaries.yml workflow_dispatch to attach binaries post-publish.
+  # binaries:
+  #   needs: publish
+  #   uses: ./.github/workflows/reusable-binaries.yml
+  #   with:
+  #     crate: ts-fix
+  #     bin: ts-fix
+  #     features: cli
