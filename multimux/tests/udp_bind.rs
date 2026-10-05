@@ -50,7 +50,7 @@ async fn the_configured_receive_buffer_is_applied_to_the_socket() {
     // Linux doubles the request; macOS adds overhead. Accept 64..=256 KiB,
     // and assert it is NOT the untouched default the plain socket reports.
     assert!(
-        got >= 64 * 1024 && got <= 256 * 1024,
+        (64 * 1024..=256 * 1024).contains(&got),
         "SO_RCVBUF was not applied: got {got} (expected the requested 64 KiB, possibly doubled)"
     );
     // On a host whose OS default happens to equal the doubled request this

@@ -46,7 +46,7 @@ const MAX_RTP_PAYLOAD: usize = TS_PACKET_LEN * MAX_TS_PACKETS_PER_RTP;
 const RTP_CLOCK_HZ: u64 = 90_000;
 
 /// Per-connection configuration for the RTSP push transport.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct RtspTransportConfig {
     /// Optional credentials for RTSP auth. Takes precedence over any
     /// username/password already present in the push URL's userinfo.
@@ -54,15 +54,6 @@ pub struct RtspTransportConfig {
     /// Bounds on every awaited IO the push performs (SP6.1, defect 4): the
     /// OPTIONS/ANNOUNCE/SETUP/RECORD exchanges and each interleaved write.
     pub timeouts: rtsp_runtime::RtspTimeouts,
-}
-
-impl Default for RtspTransportConfig {
-    fn default() -> Self {
-        Self {
-            credentials: None,
-            timeouts: rtsp_runtime::RtspTimeouts::default(),
-        }
-    }
 }
 
 impl RtspTransportConfig {

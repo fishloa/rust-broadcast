@@ -160,10 +160,7 @@ impl PushTransport for RtmpTransport {
             .client
             .as_mut()
             .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
-        client
-            .send_video(0, data)
-            .await
-            .map_err(|e| RtmpPushError::Io(e))
+        client.send_video(0, data).await.map_err(RtmpPushError::Io)
     }
 
     /// Writes `message` to the socket verbatim (issue #942) — unlike
