@@ -30,6 +30,23 @@
 //! (`crate::push::drive_push`) calls once per iteration to actually push
 //! those queued messages out over `T`.
 //!
+//! # Encoded-frame ordering is load-bearing (I3)
+//!
+//! An RTMP message is chunk-stream-framed relative to the previous message on
+//! its chunk stream, so once [`PushTransport::encode_media`] has produced a
+//! frame, that frame must be written **in order** and **exactly once** — a
+//! dropped, reordered or half-written frame leaves the peer's chunk-header
+//! state disagreeing with the sender's, i.e. a corrupt stream rather than a
+//! clean error. `outbound` is therefore a strict FIFO: [`PushEgress::send`]
+//! only appends, [`PushEgress::poll_transmit`] only pops the front, and
+//! [`Self::flush_transmit`] awaits [`PushTransport::write_message`] (which
+//! writes verbatim — see that method) for each popped message before popping
+//! the next. A write that fails mid-flush returns
+//! [`FlushOutcome::Failed`], which `drive_push` turns into a connection
+//! teardown that discards the transport (and its queue) **together** — so a
+//! later frame is never written on a connection whose header state the peer
+//! did not see.
+//!
 //! # Where the codec-refusal vocabulary moved
 //!
 //! `push::rtmp::RtmpTransport` used to decide "can I carry this track" via
@@ -679,6 +696,94 @@ mod tests {
         assert!(
             connects.load(std::sync::atomic::Ordering::SeqCst) >= 2,
             "a stalled write must be treated as a push failure and reconnected"
+        );
+    }
+
+    /// A transport double whose `write_message` fails on the Nth call,
+    /// recording the (frame-index, order-of-write) of every attempt, to pin
+    /// I3: the egress writes encoded frames strictly in order and, on a
+    /// failure, never proceeds to a later frame (which would carry stale
+    /// chunk-header state) — the caller tears the connection down instead.
+    #[derive(Default)]
+    struct FailingTransport {
+        /// How many `write_message` calls succeed before failing.
+        fail_after: usize,
+        /// The payloads attempted, in order.
+        attempted: Vec<Vec<u8>>,
+    }
+
+    #[async_trait]
+    impl PushTransport for FailingTransport {
+        type Config = ();
+        type Error = FakeError;
+
+        async fn connect(_url: &str, _config: &Self::Config) -> Result<Self, Self::Error> {
+            Ok(Self::default())
+        }
+
+        async fn send(&mut self, _data: &[u8]) -> Result<(), Self::Error> {
+            Ok(())
+        }
+
+        /// Encode each batch as N distinct "frames" (one per byte of the
+        /// single sample), so ordering across messages is observable.
+        fn encode_media(&mut self, _media: &Media) -> Result<Vec<Bytes>, SendMediaError> {
+            Ok(vec![Bytes::from_static(b"f0"), Bytes::from_static(b"f1")])
+        }
+
+        async fn write_message(&mut self, message: &[u8]) -> Result<(), Self::Error> {
+            self.attempted.push(message.to_vec());
+            if self.attempted.len() > self.fail_after {
+                return Err(FakeError);
+            }
+            Ok(())
+        }
+
+        fn close(&mut self) {}
+    }
+
+    /// I3: encoded frames are written strictly in order, and a mid-flush
+    /// write failure stops the flush (returns `Failed`) rather than writing a
+    /// later frame on a connection whose chunk-header state the peer never
+    /// saw. After the failure, no further frames are attempted.
+    #[tokio::test]
+    async fn a_mid_flush_write_failure_stops_before_a_later_frame() {
+        use media_plane::egress::PushEgress as _;
+        let mut egress = PushTransportEgress::new(
+            FailingTransport {
+                fail_after: 1,
+                attempted: Vec::new(),
+            },
+            "unreachable",
+        );
+        let tracks = [avc_spec(1)];
+        let _ = egress.negotiate(&tracks);
+        // Queue two frames (encode_media yields f0, f1).
+        let media = Media::new(vec![Track::new(avc_spec(1), vec![sample()])], 90_000);
+        egress
+            .send(&SampleCursorItem::Timed {
+                track_id: 1,
+                sample: sample(),
+            })
+            .expect("send");
+        let _ = media;
+
+        let outcome = egress
+            .flush_transmit_bounded(
+                &tokio_util::sync::CancellationToken::new(),
+                std::time::Duration::from_secs(1),
+            )
+            .await;
+        assert!(
+            matches!(outcome, FlushOutcome::Failed(_)),
+            "a mid-flush write failure must be reported as Failed, got {outcome:?}"
+        );
+        // f0 was written, f1 was attempted (and failed) — the second frame is
+        // NOT skipped silently and no third frame follows.
+        assert_eq!(
+            egress.transport_mut().attempted,
+            vec![b"f0".to_vec(), b"f1".to_vec()],
+            "frames must be attempted strictly in order, stopping at the failure"
         );
     }
 }
