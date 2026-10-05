@@ -24,7 +24,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
   error (#1126).
 - `TransitionPlan::rebase` now documents that `source_pts` must already be
   unwrapped: a source whose own PTS numbering wraps mid-entry (e.g. a 33-bit
-  MPEG PTS) needs unrolling (`transmux::Timeline` already does this) before
+  MPEG PTS) needs unrolling (`timed_metadata::Timeline` already does this) before
   being passed here, since `rebase` is pure and has no state to detect a
   wrap itself (#1126). No behaviour change — both are documentation fixes.
 
