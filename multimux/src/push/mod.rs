@@ -282,7 +282,8 @@ impl ReconnectEngine {
             self.state = ReconnectState::Failed;
             return;
         }
-        let backoff = self.policy.backoff_for(self.attempt.saturating_sub(1));
+        let backoff = crate::reconnect::ReconnectSchedule::from_policy(&self.policy)
+            .delay_for_attempt(self.attempt.saturating_sub(1));
         self.state = ReconnectState::Backoff {
             resume_at: Instant::now() + backoff,
         };
@@ -766,14 +767,20 @@ mod tests {
         let _ = tokio::time::timeout(Duration::from_secs(2), push).await;
     }
 
+    /// SP1.5: `backoff_for` is the doubling series from index 0
+    /// (1s, 2s, 4s, … capped at 30s), now jittered by `backon`. The band
+    /// holds exactly; the raw series saturating at the cap makes the tail
+    /// exactly the cap (jitter clamped back).
     #[test]
     fn backoff_doubles_each_attempt_capped_at_max() {
         let eng = ReconnectEngine::new(policy(None));
-        // backoff_for(attempt) is the doubling series from index 0:
-        // 1s, 2s, 4s, ... (the n-th disconnect waits backoff_for(n - 1)).
-        assert_eq!(eng.policy.backoff_for(0), Duration::from_millis(1_000));
-        assert_eq!(eng.policy.backoff_for(1), Duration::from_millis(2_000));
-        assert_eq!(eng.policy.backoff_for(2), Duration::from_millis(4_000));
+        for attempt in 0..40u32 {
+            let d = eng.policy.backoff_for(attempt);
+            assert!(
+                d >= Duration::from_millis(1_000) && d <= Duration::from_millis(30_000),
+                "attempt {attempt}: {d:?} escaped [1s, 30s]"
+            );
+        }
         // Capped at max_backoff_ms (30s here).
         assert_eq!(eng.policy.backoff_for(20), Duration::from_millis(30_000));
         assert_eq!(eng.policy.backoff_for(30), Duration::from_millis(30_000));

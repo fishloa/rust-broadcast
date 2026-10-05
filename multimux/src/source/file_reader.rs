@@ -416,17 +416,26 @@ impl FileReader {
     /// One read+probe+demux attempt, retried on a [`FileReaderError::Read`]
     /// up to `max_retries` times at `retry_interval`.
     async fn read_probe_demux(&self) -> Result<ParsedFile, FileReaderError> {
-        let mut attempt = 0u32;
-        loop {
+        // A constant retry interval (factor 1.0), as before: the schedule is
+        // the workspace's one backoff implementation, so even the flat case
+        // goes through it (SP1.5).
+        let schedule = crate::reconnect::ReconnectSchedule::from_parts(
+            self.config.retry_interval,
+            self.config.retry_interval,
+            1.0,
+        );
+        for attempt in 0..self.config.max_retries {
             match self.read_probe_demux_once().await {
                 Ok(parsed) => return Ok(parsed),
-                Err(FileReaderError::Read { .. }) if attempt < self.config.max_retries => {
-                    attempt += 1;
-                    tokio::time::sleep(self.config.retry_interval).await;
+                Err(FileReaderError::Read { .. }) => {
+                    tokio::time::sleep(schedule.delay_for_attempt(attempt)).await;
                 }
                 Err(e) => return Err(e),
             }
         }
+        // The final attempt's own error propagates (there is no attempt left
+        // to sleep before).
+        self.read_probe_demux_once().await
     }
 
     /// Read the whole file, probe it, and demux it into the playable tracks —

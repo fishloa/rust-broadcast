@@ -390,7 +390,7 @@ impl Default for ReconnectPolicy {
 
 /// A push output's reconnect backoff doubles on every attempt (1 s, 2 s, 4 s,
 /// … up to [`ReconnectPolicy::max_backoff_ms`]).
-const RECONNECT_BACKOFF_FACTOR: f64 = 2.0;
+pub(crate) const RECONNECT_BACKOFF_FACTOR: f64 = 2.0;
 
 impl ReconnectPolicy {
     fn default_initial_backoff_ms() -> u64 {
@@ -401,12 +401,7 @@ impl ReconnectPolicy {
     }
 
     pub fn backoff_for(&self, attempt: u32) -> std::time::Duration {
-        crate::origin::supervisor::Backoff::new(
-            std::time::Duration::from_millis(self.initial_backoff_ms),
-            std::time::Duration::from_millis(self.max_backoff_ms),
-            RECONNECT_BACKOFF_FACTOR,
-        )
-        .delay_for_attempt(attempt)
+        crate::reconnect::ReconnectSchedule::from_policy(self).delay_for_attempt(attempt)
     }
 
     /// Validate the policy (audit run 7, W19): a zero backoff (either bound)

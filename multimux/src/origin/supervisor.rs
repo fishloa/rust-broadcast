@@ -51,6 +51,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use crate::MultimuxError;
+use crate::reconnect::ReconnectSchedule;
 use crate::route::{HealthState, RouteHandle};
 
 /// Production default backoff: starts at 500 ms, doubles, caps at 30 s.
@@ -127,31 +128,29 @@ pub(crate) fn is_permanent_describe_not_found(err: &MultimuxError) -> bool {
     )
 }
 
-/// Attempt numbers beyond this stop growing the delay (`factor^30` is already
-/// far past any cap; it only keeps the power finite).
-const MAX_BACKOFF_EXPONENT: u32 = 30;
-
-/// Capped exponential backoff: [`Backoff::next`] returns the current delay
-/// then grows it by `factor` (capped at `max`); [`Backoff::reset`] restores
-/// it to `min` after a successful (re)connect so a long outage doesn't
-/// permanently slow down subsequent quick recoveries.
+/// Capped exponential backoff with jitter, backed by
+/// [`ReconnectSchedule`] (SP1.5): [`Backoff::next`] returns the delay for
+/// *this* attempt, then grows it (capped at `max`) for the next;
+/// [`Backoff::reset`] restores it to `min` after a successful (re)connect so
+/// a long outage doesn't permanently slow down subsequent quick recoveries.
+///
+/// The jitter is deliberately part of the delay (a fleet of inputs pointed
+/// at one server must not reconnect in lockstep); a test asserting an exact
+/// delay therefore uses [`Backoff::delay_for_attempt`]'s underlying
+/// [`ReconnectSchedule`] with a fixed seed, not this iterator.
 #[derive(Debug, Clone)]
 pub struct Backoff {
-    min: Duration,
-    max: Duration,
-    factor: f64,
-    current: Duration,
+    schedule: ReconnectSchedule,
+    attempt: u32,
 }
 
 impl Backoff {
-    /// A backoff starting at `min`, doubling (or whatever `factor` is) on
-    /// every [`next`](Backoff::next) call, never exceeding `max`.
+    /// A backoff starting at `min`, growing by `factor` on every
+    /// [`next`](Backoff::next), never exceeding `max`.
     pub fn new(min: Duration, max: Duration, factor: f64) -> Self {
         Backoff {
-            min,
-            max,
-            factor,
-            current: min,
+            schedule: ReconnectSchedule::from_parts(min, max, factor),
+            attempt: 0,
         }
     }
 
@@ -174,34 +173,26 @@ impl Backoff {
     /// practice.
     #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Duration {
-        let delay = self.current;
-        let grown = self.current.mul_f64(self.factor);
-        self.current = grown.min(self.max);
+        let delay = self.schedule.delay_for_attempt(self.attempt);
+        self.attempt = self.attempt.saturating_add(1);
         delay
     }
 
     /// The delay for attempt number `attempt` (0-based) without touching the
-    /// running state: `min * factor^attempt`, capped at `max`. The stateless
-    /// form of repeated [`Self::next`] calls — [`ReconnectPolicy::backoff_for`]
-    /// (push outputs) uses this so the workspace has one capped-exponential
-    /// implementation, not a shift-based copy beside it (audit r07-O1).
+    /// running state. The stateless form of repeated [`Self::next`] calls —
+    /// [`ReconnectPolicy::backoff_for`] (push outputs) uses this so the
+    /// workspace has one capped-exponential implementation, not a shift-based
+    /// copy beside it (audit r07-O1).
     ///
     /// [`ReconnectPolicy::backoff_for`]: crate::config::ReconnectPolicy::backoff_for
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
-        // The exponent saturates well before `f64` does (2^30 already dwarfs
-        // any sane cap); a non-finite or negative product falls back to `max`.
-        let exponent = i32::try_from(attempt.min(MAX_BACKOFF_EXPONENT)).unwrap_or(i32::MAX);
-        let secs = self.min.as_secs_f64() * self.factor.powi(exponent);
-        if !secs.is_finite() || secs < 0.0 {
-            return self.max;
-        }
-        Duration::try_from_secs_f64(secs).map_or(self.max, |d| d.min(self.max))
+        self.schedule.delay_for_attempt(attempt)
     }
 
     /// Resets the delay back to `min` — call after a successful connect so
     /// the *next* outage starts backing off from the bottom again.
     pub fn reset(&mut self) {
-        self.current = self.min;
+        self.attempt = 0;
     }
 }
 
@@ -399,6 +390,11 @@ mod tests {
     /// Audit r07-O1 (#1083): the stateless `delay_for_attempt` is the same
     /// series repeated `next()` calls produce, and stays total on hostile
     /// parameters instead of panicking in `Duration` arithmetic.
+    ///
+    /// SP1.5: the schedule is jittered (`backon`), so the two views are
+    /// compared through ONE seeded schedule and the assertions are bands
+    /// within `[min, cap]` rather than exact values — the exact series is
+    /// `multimux/tests/reconnect_policy.rs`'s job, on a seeded schedule.
     #[test]
     fn delay_for_attempt_matches_repeated_next_and_is_total() {
         let backoff = Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0);
@@ -410,13 +406,14 @@ mod tests {
                 "attempt {attempt}"
             );
         }
-        // Literal series: 0.5 s, 1 s, 2 s, ... capped at 30 s.
-        assert_eq!(backoff.delay_for_attempt(0), Duration::from_millis(500));
-        assert_eq!(backoff.delay_for_attempt(1), Duration::from_secs(1));
-        assert_eq!(backoff.delay_for_attempt(5), Duration::from_secs(16));
-        assert_eq!(backoff.delay_for_attempt(6), Duration::from_secs(30));
-        assert_eq!(backoff.delay_for_attempt(u32::MAX), Duration::from_secs(30));
-
+        // Every attempt stays within the configured band.
+        for attempt in 0..40u32 {
+            let d = backoff.delay_for_attempt(attempt);
+            assert!(
+                d >= Duration::from_millis(500) && d <= Duration::from_secs(30),
+                "attempt {attempt}: {d:?} escaped [500ms, 30s]"
+            );
+        }
         // Hostile factors never panic and never exceed the cap.
         for factor in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -2.0, 1e300] {
             let hostile = Backoff::new(Duration::from_secs(1), Duration::from_secs(60), factor);
@@ -428,6 +425,22 @@ mod tests {
         let inverted = Backoff::new(Duration::from_secs(90), Duration::from_secs(60), 2.0);
         assert_eq!(inverted.delay_for_attempt(0), Duration::from_secs(60));
     }
+
+    /// SP1.5: the underlying schedule is deterministic under a fixed seed
+    /// and every view of it (stateless and stepped) agrees — the property the
+    /// hand-rolled `powi` series had to hand-maintain (audit r07-O1).
+    #[test]
+    fn the_underlying_schedule_is_deterministic_under_a_seed() {
+        let bl = Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0);
+        // A huge attempt is answered from the cap, not by stepping a
+        // four-billion-item iterator.
+        assert_eq!(bl.delay_for_attempt(u32::MAX), Duration::from_secs(30));
+        assert_eq!(bl.delay_for_attempt(6), Duration::from_secs(30));
+        // The floor is honoured on attempt 0 (jitter only adds to it).
+        assert!(bl.delay_for_attempt(0) >= Duration::from_millis(500));
+        assert!(bl.delay_for_attempt(0) < Duration::from_secs(1));
+    }
+
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     /// Tiny backoff for tests: keeps the whole suite fast regardless of how
@@ -452,28 +465,36 @@ mod tests {
         }
     }
 
+    /// SP1.5: `next` grows towards the cap and stays inside the band —
+    /// jittered, so the assertions are bounds, not exact values.
     #[test]
     fn backoff_grows_and_caps() {
         let mut b = Backoff::new(Duration::from_millis(10), Duration::from_millis(100), 2.0);
-        assert_eq!(b.next(), Duration::from_millis(10));
-        assert_eq!(b.next(), Duration::from_millis(20));
-        assert_eq!(b.next(), Duration::from_millis(40));
-        assert_eq!(b.next(), Duration::from_millis(80));
-        // Would grow to 160ms, but caps at 100ms.
-        assert_eq!(b.next(), Duration::from_millis(100));
+        for i in 0..8 {
+            let d = b.next();
+            assert!(
+                d >= Duration::from_millis(10) && d <= Duration::from_millis(100),
+                "step {i}: {d:?} escaped [10ms, 100ms]"
+            );
+        }
+        // The raw series saturates at the cap, so the last steps are exactly
+        // the cap (jitter clamped back).
+        assert_eq!(b.next(), Duration::from_millis(100), "stays capped");
         assert_eq!(b.next(), Duration::from_millis(100), "stays capped");
     }
 
+    /// A reset restarts the series at the floor (the raw delay returns to
+    /// `min`, so the jittered delay is back under `2 * min`).
     #[test]
     fn backoff_reset_returns_to_min() {
         let mut b = Backoff::new(Duration::from_millis(10), Duration::from_millis(100), 2.0);
         let _ = b.next();
         let _ = b.next();
         b.reset();
-        assert_eq!(
-            b.next(),
-            Duration::from_millis(10),
-            "back to min after reset"
+        let after = b.next();
+        assert!(
+            after >= Duration::from_millis(10) && after < Duration::from_millis(20),
+            "back to min after reset (jittered): got {after:?}"
         );
     }
 

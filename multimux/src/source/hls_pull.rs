@@ -118,8 +118,9 @@ const RESOURCE_RETRY_MAX_DELAY: Duration = Duration::from_secs(30);
 /// capped at [`RESOURCE_RETRY_MAX_DELAY`].
 fn retry_backoff(attempt: u32) -> Duration {
     // The workspace's one capped-exponential implementation (audit r07-O1 /
-    // #1141); `attempt` here is 1-based, `delay_for_attempt` 0-based.
-    crate::origin::supervisor::Backoff::new(
+    // #1141; SP1.5 moved it onto `backon`); `attempt` here is 1-based,
+    // `delay_for_attempt` 0-based.
+    crate::reconnect::ReconnectSchedule::from_parts(
         RESOURCE_RETRY_BASE_DELAY,
         RESOURCE_RETRY_MAX_DELAY,
         RESOURCE_RETRY_FACTOR,
@@ -671,16 +672,27 @@ pub async fn run_hls_pull(
 mod tests {
     /// Before/after pin (#1141): the shared `Backoff` reproduces the
     /// shift-based schedule `retry_backoff` carried before consolidation.
+    /// SP1.5: `retry_backoff` is the pre-consolidation shift series
+    /// (0.5 s doubling to a 30 s cap) with `backon`'s jitter on top, so the
+    /// band is pinned exactly and the cap saturates.
     #[test]
     fn retry_backoff_matches_the_pre_consolidation_shift_schedule() {
         for attempt in 0..40u32 {
             let shift = attempt.saturating_sub(1).min(16);
-            let old = RESOURCE_RETRY_BASE_DELAY
+            let raw = RESOURCE_RETRY_BASE_DELAY
                 .checked_mul(1u32 << shift)
                 .unwrap_or(RESOURCE_RETRY_MAX_DELAY)
                 .min(RESOURCE_RETRY_MAX_DELAY);
-            assert_eq!(retry_backoff(attempt), old, "attempt {attempt}");
+            let got = retry_backoff(attempt);
+            // Jittered into [raw, min(2 * raw, cap)].
+            assert!(
+                got >= raw && got <= (raw * 2).min(RESOURCE_RETRY_MAX_DELAY),
+                "attempt {attempt}: {got:?} outside [{raw:?}, {cap:?}]",
+                cap = (raw * 2).min(RESOURCE_RETRY_MAX_DELAY)
+            );
         }
+        // Once raw saturates at the cap the jitter is clamped back to it.
+        assert_eq!(retry_backoff(20), RESOURCE_RETRY_MAX_DELAY);
     }
 
     use super::*;
