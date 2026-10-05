@@ -5,7 +5,7 @@
 ## [0.5.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-74gr-mvr4-2qp8.
+Includes fixes for privately reported security issues; no public advisory is published.
 
 ### Fixed
 - `PusiReassembler` now ignores non-PUSI payloads until the first PUSI is received (ISO/IEC 13818-1 §2.4.3.2), preventing unrelated bytes from being prepended to reassembled units.

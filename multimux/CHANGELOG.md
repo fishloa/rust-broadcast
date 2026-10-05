@@ -6,8 +6,8 @@
 ## [0.11.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-6cpc-jqv3-qcj3, GHSA-c5v7-p4jv-2fhc, GHSA-jwfh-m4vx-fhwx and GHSA-2w4r-qf2x-pqm6, and
-picks up GHSA-48qq-7p78-2jvj (webrtc-runtime 0.2.0) for WHIP/WHEP.
+Fixes security issues in route/output auth, push outputs, RTP input and WHIP/WHEP ingest (the WHIP/WHEP
+ones via webrtc-runtime 0.2.0). No public advisory is published.
 
 ### Changed (breaking)
 - Requires `hls-runtime` 0.7 (was 0.6), `broadcast-auth` 0.4 (was 0.3; needs

@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-9gp9-h275-mjjh.
+Includes fixes for privately reported security issues; no public advisory is published.
 
 ### Fixed
 - `parse_span_element` and `parse_metadata_element` now enforce a maximum nesting depth of 64 levels to prevent stack overflow on deeply nested span/metadata elements.

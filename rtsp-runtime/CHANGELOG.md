@@ -10,7 +10,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.7.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-3rw9-cq7p-4v47. Upgrade if you run `ServerSession`/`io::AsyncRtspServer` against
+Security fix. Upgrade if you run `ServerSession`/`io::AsyncRtspServer` against
 clients you do not control.
 
 ### Changed (breaking)

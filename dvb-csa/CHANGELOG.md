@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.3.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-f4mf-69xv-w6rp. Upgrade if a `ControlWord`'s lifetime in memory matters to your threat
+Security fix. Upgrade if a `ControlWord`'s lifetime in memory matters to your threat
 model (e.g. the process handles multiple subscribers' keys, or memory can be inspected after a
 crash/core dump).
 

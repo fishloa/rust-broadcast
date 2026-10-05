@@ -9,7 +9,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.5.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-28hg-fc5v-m865, GHSA-gjm5-23jf-293p, GHSA-r6hf-93jv-c3wc and GHSA-7346-x8wq-2rgr.
+Includes fixes for privately reported security issues; no public advisory is published.
 Upgrade if you use the tokio adapter (`io::SrtSocket` / `io::SrtListener`).
 
 ### Changed

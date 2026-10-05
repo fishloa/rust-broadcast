@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.4.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-6w6c-9736-x7gr.
+Includes fixes for privately reported security issues; no public advisory is published.
 
 ### Fixed
 - `ObjectDefinition1::parse` now bounds-checks before indexing the audio description flag byte, preventing panic on truncated input.

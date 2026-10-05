@@ -10,20 +10,20 @@ Read together with: [broadcast-hls-0.3.0.md](broadcast-hls-0.3.0.md), [mpeg-ts-0
 
 Twelve advisories, each with a regression test that fails on 0.24.1; `tests/hostile_input_bounds.rs` runs the allocation cases under a per-thread 64 MiB allocator cap.
 
-| Advisory | Area | Before |
-|---|---|---|
-| GHSA-q6vr-4pp5-mcfv | KLV | a long-form BER length overflowed offset arithmetic and panicked |
-| GHSA-3554-x4jf-7frw | `esds` | an ES_Descriptor size larger than the box, or a size-0 box, panicked the fMP4 demuxer |
-| GHSA-c722-96gr-hgq2 | `sinf` | an oversized `frma` or header-only `schm` panicked |
-| GHSA-gmmr-7cqm-5p32 | `pssh` v1 | a body with no `DataSize` panicked |
-| GHSA-2mg2-jj9h-c5vr | progressive demux | one `stts`/`ctts` run could allocate about 17 GB from a roughly 100-byte file |
-| GHSA-9m92-jr3c-4cq7 | `CencDecryptor` progressive path | `stsz`/`stco` counts allocated before their length checks |
-| GHSA-j76h-pqjr-p54h | `sgpd` | zero-length entries could be pushed up to 2^32 times |
-| GHSA-643q-pgwj-8v2h | H.264/H.265 SPS | `read_ue` returned 0 at end of data, so a roughly 20-byte SPS could loop effectively for ever |
-| GHSA-6vc8-3c25-4c9w | RTMP chunk reader | a fmt 1/2 header after an incomplete message carried stale bytes into the new one and underflowed its length |
-| GHSA-mq46-69j5-7gqj | `CencEncryptor::encrypt` | a sample rejected mid-call left earlier samples encrypted with the IV counter unchanged, so a retry reused IVs |
-| GHSA-59ph-4f24-q79x | `KeyMap`, `CencEncryptor`, `CencDecryptor`, `cli::Args`, `cli::CliError::BadKey` | derived `Debug` printed raw content-key bytes or the raw `<KID>:<key>` argument |
-| GHSA-v965-v82c-2f8x | `progressive_demux` `stsc` | a chunk-run `first_chunk` was iterated to as written (up to `u32::MAX`) instead of clamped to the real chunk count |
+| Area | Before |
+|---|---|
+| KLV | a long-form BER length overflowed offset arithmetic and panicked |
+| `esds` | an ES_Descriptor size larger than the box, or a size-0 box, panicked the fMP4 demuxer |
+| `sinf` | an oversized `frma` or header-only `schm` panicked |
+| `pssh` v1 | a body with no `DataSize` panicked |
+| progressive demux | one `stts`/`ctts` run could allocate about 17 GB from a roughly 100-byte file |
+| `CencDecryptor` progressive path | `stsz`/`stco` counts allocated before their length checks |
+| `sgpd` | zero-length entries could be pushed up to 2^32 times |
+| H.264/H.265 SPS | `read_ue` returned 0 at end of data, so a roughly 20-byte SPS could loop effectively for ever |
+| RTMP chunk reader | a fmt 1/2 header after an incomplete message carried stale bytes into the new one and underflowed its length |
+| `CencEncryptor::encrypt` | a sample rejected mid-call left earlier samples encrypted with the IV counter unchanged, so a retry reused IVs |
+| `KeyMap`, `CencEncryptor`, `CencDecryptor`, `cli::Args`, `cli::CliError::BadKey` | derived `Debug` printed raw content-key bytes or the raw `<KID>:<key>` argument |
+| `progressive_demux` `stsc` | a chunk-run `first_chunk` was iterated to as written (up to `u32::MAX`) instead of clamped to the real chunk count |
 
 Behaviour that follows: `BitReader::read_ue` errors at end of data and past 32 leading zeros, and SPS parsing rejects out-of-range fields (`chroma_format_idc > 3`, `bit_depth_*_minus8` above 6 for H.264 or 8 for H.265, `num_ref_frames_in_pic_order_cnt_cycle > 255`, `num_short_term_ref_pic_sets > 64`); an `esds` box with `size == 0` extends to the end of its container (ISO/IEC 14496-12 §4.2); `CencEncryptor::encrypt` plans every sample before encrypting any, so a rejected call leaves the media byte-identical and the IV counter unchanged; `KeyMap`, `CencEncryptor` and `CencDecryptor` hand-write `Debug` to redact key bytes (KIDs still print), and `cli::Args`/`BadKey` carry only the KID half or the argument length.
 

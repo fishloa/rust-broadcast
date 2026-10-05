@@ -9,7 +9,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.4.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-j7jp-f64w-73hv. Upgrade if you use `Verifier`'s Digest scheme.
+Security fix. Upgrade if you use `Verifier`'s Digest scheme.
 
 ### Fixed
 - Digest `Verifier`: nonces are now issued per challenge as `issue-time ‖

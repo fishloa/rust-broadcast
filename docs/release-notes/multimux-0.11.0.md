@@ -2,19 +2,19 @@
 
 _Released 2026-10-05._
 
-Breaking (0.x minor) and security release of the multi-input / multi-output repackaging origin. It is three things at once: the five security fixes (GHSA-jwfh-m4vx-fhwx, GHSA-48qq-7p78-2jvj, GHSA-6cpc-jqv3-qcj3, GHSA-c5v7-p4jv-2fhc, GHSA-2w4r-qf2x-pqm6) that were prepared as 0.11.0 but never tagged; the de-hand-roll rewrite of the HTTP stack, URL/SDP/XML/date handling, reconnect backoff and the ingest/push drivers onto maintained crates; and a large audit-fix pass over the origin, pull sources, DVR/catch-up and WHIP/WHEP. **Everyone should upgrade.** Operators running the `multimux` binary (see [multimux-cli-0.9.0.md](multimux-cli-0.9.0.md)) must read "Behaviour changes", because some JSON configs that loaded on 0.10 are now rejected and several served resources changed shape. Embedders using the library must read "Breaking API changes". Unlike what an earlier draft of this note said, **config and HTTP behaviour are not unchanged.**
+Breaking (0.x minor) and security release of the multi-input / multi-output repackaging origin. It is three things at once: the five security fixes (listed in the table below) that were prepared as 0.11.0 but never tagged; the de-hand-roll rewrite of the HTTP stack, URL/SDP/XML/date handling, reconnect backoff and the ingest/push drivers onto maintained crates; and a large audit-fix pass over the origin, pull sources, DVR/catch-up and WHIP/WHEP. **Everyone should upgrade.** Operators running the `multimux` binary (see [multimux-cli-0.9.0.md](multimux-cli-0.9.0.md)) must read "Behaviour changes", because some JSON configs that loaded on 0.10 are now rejected and several served resources changed shape. Embedders using the library must read "Breaking API changes". Unlike what an earlier draft of this note said, **config and HTTP behaviour are not unchanged.**
 
 Read together with: [transmux-0.25.0.md](transmux-0.25.0.md), [hls-runtime-0.7.0.md](hls-runtime-0.7.0.md), [media-plane-0.5.0.md](media-plane-0.5.0.md), [broadcast-hls-0.3.0.md](broadcast-hls-0.3.0.md), [broadcast-auth-0.4.0.md](broadcast-auth-0.4.0.md), [rtsp-runtime-0.7.0.md](rtsp-runtime-0.7.0.md), [rtmp-runtime-0.7.0.md](rtmp-runtime-0.7.0.md), [srt-runtime-0.5.0.md](srt-runtime-0.5.0.md), [webrtc-runtime-0.2.0.md](webrtc-runtime-0.2.0.md) (for `whip`/`whep`), [timed-metadata-0.6.0.md](timed-metadata-0.6.0.md).
 
 ## Security
 
-| Advisory | Area | Before this release |
-|---|---|---|
-| GHSA-jwfh-m4vx-fhwx | WHEP / WHIP HTTP | WHEP did not apply the configured `output_auth`. Sessions never ended, so the 64 slots filled permanently. The request reader had no header or body limit and no timeout. WHIP allocated a session before checking capacity. |
-| GHSA-48qq-7p78-2jvj | WHIP / WHEP media | The DTLS peer was not authenticated against the SDP fingerprint (fixed in webrtc-runtime 0.2.0; multimux now passes the offer's `a=fingerprint`). |
-| GHSA-6cpc-jqv3-qcj3 | push outputs | `drive_push` parked a runtime worker thread and busy-spun when every listener slot was taken. |
-| GHSA-c5v7-p4jv-2fhc | RTP/UDP input | One malformed datagram froze the route permanently while it still reported Live. |
-| GHSA-2w4r-qf2x-pqm6 | route ingest / output auth | A route accepted a second, concurrent RTMP/WHIP publisher and silently handed program ownership to it (or froze once the first disconnected); output-auth and admin-auth Digest challenges re-prompted on an expired nonce instead of returning `stale=true`; nothing told an operator when an ingest route ran with no authentication. |
+| Area | Before this release |
+|---|---|
+| WHEP / WHIP HTTP | WHEP did not apply the configured `output_auth`. Sessions never ended, so the 64 slots filled permanently. The request reader had no header or body limit and no timeout. WHIP allocated a session before checking capacity. |
+| WHIP / WHEP media | The DTLS peer was not authenticated against the SDP fingerprint (fixed in webrtc-runtime 0.2.0; multimux now passes the offer's `a=fingerprint`). |
+| push outputs | `drive_push` parked a runtime worker thread and busy-spun when every listener slot was taken. |
+| RTP/UDP input | One malformed datagram froze the route permanently while it still reported Live. |
+| route ingest / output auth | A route accepted a second, concurrent RTMP/WHIP publisher and silently handed program ownership to it (or froze once the first disconnected); output-auth and admin-auth Digest challenges re-prompted on an expired nonce instead of returning `stale=true`; nothing told an operator when an ingest route ran with no authentication. |
 
 Other hardening in this release (issue #1083 and the audit rounds behind it): a route name of `..` could make the DVR/catch-up archive escape `archive_root` (names are now restricted, see below); pull sources read whole response bodies into memory (now capped at 64 MiB, `source::MAX_HTTP_BODY_BYTES`, with a 3-hop redirect limit that refuses an `https` to `http` downgrade); push destinations (userinfo, stream keys, SRT `passphrase`/`streamid`) no longer appear in any log line, error text or `Debug` output; and `max_concurrent_requests` is now actually one server-wide bound (it was per route, method and stream).
 

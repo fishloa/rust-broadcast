@@ -11,7 +11,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.7.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-grg8-55qr-gxgf. Upgrade if you use `client::tokio_client::TokioClient` with
+Security fix. Upgrade if you use `client::tokio_client::TokioClient` with
 `TokioClientConfig::auth` set.
 
 ### Fixed
