@@ -12,14 +12,22 @@
   one server no longer reconnects in lockstep. `Backoff`'s public shape
   (`new`/`production_default`/`next`/`delay_for_attempt`/`reset`) is unchanged.
   A new public module `reconnect` exposes the schedule.
-- **The three pull sources share one fetch scheduler and one fixed
-  `WaitMs` bug fix.** `hls_pull`/`dash_pull`/`smooth_pull` drive a single
+- **The three pull sources share one fetch scheduler; the `WaitMs` hint is
+  now a pacing floor AND a ready fetch is no longer starved.**
+  `hls_pull`/`dash_pull`/`smooth_pull` drive a single
   `source::pull::PullScheduler` (in-flight bound, retry queue, session
   `WaitMs` hint, idle park) instead of three hand-rolled `JoinSet` loops.
-  A session `WaitMs` hint no longer delays a fetch that is already ready:
-  the pre-migration loop slept the hint inline before joining, so a fetch
-  completing 50 ms into a 1 s hint was not serviced for another 950 ms
-  (defect 5). `source::may_spawn_fetch` is removed (the scheduler owns the
+  The HLS engine's `Action::WaitMs(target_duration/2)` reload hint was a
+  *pacing floor on the next playlist fetch* on `main` (RFC 8216 §4.3.3.1):
+  the pre-migration loop slept the hint inline before joining, so the next
+  playlist GET started one hint after the previous one — but that same inline
+  sleep also starved a ready resource fetch (a segment completing 50 ms into
+  a 1 s hint waited another 950 ms, defect 5). The scheduler keeps both: the
+  hint is a not-before floor on the *next* paced fetch's dispatch
+  (`PullScheduler::push_at`), while an already-running fetch's result is
+  returned the moment it completes. Without the floor a non-LL live source
+  reloads back-to-back at RTT rate (hundreds of GETs/s against a local or CDN
+  origin). `source::may_spawn_fetch` is removed (the scheduler owns the
   bound).
 - **UDP binds go through `socket2` with configurable socket options.**
   `ts_udp`/`rtp` inputs gain optional `recv_buffer_bytes`, `reuse_address`

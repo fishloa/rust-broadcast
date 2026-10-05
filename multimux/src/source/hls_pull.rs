@@ -503,9 +503,18 @@ pub async fn run_hls_pull(
     // far. A playlist fetch is not tracked — a broken manifest is a
     // route-level failure, not a transient one.
     let mut resource_retries: HashMap<HlsFetchId, (String, u32)> = HashMap::new();
-    // The session's own reload-pacing hint (`Action::WaitMs`), consumed by
-    // the scheduler's first `next` call and cleared after it is bounded.
-    let mut wait_hint: Option<Duration> = None;
+    // The session's own reload-pacing floor (`Action::WaitMs`): the *next*
+    // playlist fetch is dispatched no earlier than this. `None` until the
+    // engine has paced once. Set to `last playlist dispatch + hint` when a
+    // `WaitMs` is seen, so non-LL live HLS reloads at the engine's cadence
+    // (RFC 8216 §4.3.3.1), not back-to-back at RTT rate — while a ready
+    // resource fetch is still serviced the moment it completes (defect 5).
+    let mut playlist_floor: Option<tokio::time::Instant> = None;
+    // When the previous playlist fetch was *dispatched* — the origin of the
+    // floor's `+ hint` (see `playlist_floor`).
+    let mut last_playlist_dispatch: Option<tokio::time::Instant> = None;
+    // The most recent `WaitMs` hint, applied to the next playlist dispatch.
+    let mut reload_hint: Option<Duration> = None;
     let start = std::time::Instant::now();
     let mut progress = crate::source::DriverProgress::new();
 
@@ -513,24 +522,26 @@ pub async fn run_hls_pull(
         while let Some(action) = driver.poll_transmit() {
             match action {
                 Action::WaitMs(ms) => {
-                    // `Action::WaitMs` is the session's own *request* for how
-                    // long to wait (drained via `poll_transmit`, exactly like
-                    // a fetch), so the decision of how long, and the timing,
-                    // live entirely on the IO side. It bounds the wait for the
-                    // next fetch result; it must not delay a fetch that is
-                    // already ready (defect 5).
-                    wait_hint = Some(Duration::from_millis(ms));
+                    // The engine's own reload-pacing request (drained via
+                    // `poll_transmit`, exactly like a fetch). It is a floor on
+                    // the *next* playlist dispatch, never a delay on an
+                    // already-running fetch's result.
+                    reload_hint = Some(Duration::from_millis(ms));
+                    playlist_floor = last_playlist_dispatch.map(|t| t + Duration::from_millis(ms));
                 }
                 Action::FetchPlaylist { .. } => {
                     let url = action
                         .playlist_request_url()
                         .expect("FetchPlaylist always has a request URL");
-                    scheduler.push(playlist_fetch(
-                        http.clone(),
-                        credentials.clone(),
-                        url,
-                        read_timeout,
-                    ));
+                    // Dispatched at the pacing floor when one is pending, so a
+                    // fast playlist response is not re-fetched immediately.
+                    scheduler.push_at(
+                        playlist_fetch(http.clone(), credentials.clone(), url, read_timeout),
+                        playlist_floor,
+                    );
+                    last_playlist_dispatch = Some(tokio::time::Instant::now());
+                    // The floor is one-shot: the next hint re-arms it.
+                    playlist_floor = None;
                 }
                 Action::FetchResource { id, url, .. } => {
                     // Remember the URL so a transient failure can be retried
@@ -567,12 +578,12 @@ pub async fn run_hls_pull(
             // Nothing running, queued or awaiting a retry: the client has
             // genuinely nothing to do right now. Park briefly rather than
             // spinning — see `IDLE_POLL_INTERVAL`.
-            wait_hint = None;
+            reload_hint = None;
             scheduler.next(None, IDLE_POLL_INTERVAL).await;
             continue;
         }
 
-        let joined = scheduler.next(wait_hint.take(), IDLE_POLL_INTERVAL).await;
+        let joined = scheduler.next(reload_hint, IDLE_POLL_INTERVAL).await;
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         match joined {
             Some(crate::source::pull::FetchOutcome::Ready(fetch_id, bytes)) => {
@@ -671,14 +682,15 @@ pub async fn run_hls_pull(
     }
 }
 
-/// Production-wiring TRIPWIRE (lexical, honestly labelled): once `hls_pull`
-/// is migrated, every wait in its non-test code lives in `PullScheduler`
-/// (the `WaitMs` hint, the idle park and the retry delay), so its production
-/// half contains no `tokio::time::` + `sleep(` call at all. Reintroducing
-/// the inline `Action::WaitMs` sleep arm anywhere in `run_hls_pull`
-/// trips this, independent of the engine tests. On main today the production
-/// half had THREE such sites (`:144`, `:518`, `:576`), so this FAILS
-/// pre-migration.
+/// Lexical tripwire, honestly labelled: it asserts only that `run_hls_pull`'s
+/// production half contains no `tokio::time::` + `sleep(` — i.e. that no wait
+/// was re-inlined at this call site. It does NOT guard the reload-pacing
+/// *behaviour* (a `scheduler.next(Some(hint))` that dropped the floor would
+/// still pass it); that is what the paused-time pacing tests in
+/// `source::pull::tests` (`a_paced_fetch_is_dispatched_at_its_floor_..`,
+/// `a_resource_fetch_completes_while_a_pacing_floor_..`) are for. On `main`
+/// the production half had THREE such sleeps (`:144`, `:518`, `:576`), so this
+/// FAILED pre-migration.
 #[test]
 fn hls_pull_has_no_inline_sleep_outside_the_scheduler() {
     let src = include_str!("hls_pull.rs");

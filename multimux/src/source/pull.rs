@@ -9,18 +9,30 @@
 //! fetches have heterogeneous keys (`HlsFetchId`, a fragment URL, a Smooth
 //! fragment) and a retry that must re-enter the SAME in-flight bound rather
 //! than bypass it, so the fan-out is a `JoinSet` behind a small explicit
-//! scheduler: `push` (the backlog), `push_retry` (due retries, which take a
-//! free slot before the backlog), `pump` (fill free slots) and `next` (join
-//! one, bounded by the session's own `WaitMs` hint). It is the same
-//! structure `hls_pull` grew by hand, extracted — the point of the wave.
+//! scheduler: `push` (the backlog), `push_at` (a paced fetch with a
+//! not-before floor), `push_retry` (due retries, which take a free slot
+//! before the backlog), `pump` (fill free slots) and `next` (join one,
+//! bounded by the session's own `WaitMs` hint). It is the same structure
+//! `hls_pull` grew by hand, extracted — the point of the wave.
 //!
-//! # The `WaitMs` hint must not starve a ready fetch (defect 5)
+//! # The `WaitMs` hint: a pacing floor, not a starve (defect 5 + C1)
 //!
-//! The pre-migration loop slept the session's `Action::WaitMs` hint inline
-//! *before* joining an in-flight fetch, so a fetch that completed 50 ms into
-//! a 1 s hint was not serviced for another 950 ms. [`PullScheduler::next`]
-//! instead races `join_next()` against the hint, so a fetch completing during
-//! the hint is returned as soon as it completes.
+//! The HLS engine (`hls-runtime/src/client/engine.rs`) queues
+//! `FetchPlaylist` THEN `Action::WaitMs(target_duration/2)`
+//! (RFC 8216 §4.3.3.1: a client SHOULD NOT reload more often than once per
+//! Target Duration). That hint is a **pacing floor for the next playlist
+//! fetch**: on `main` the loop spawned the fetch and then slept the hint
+//! inline before joining, so the next playlist GET effectively started one
+//! hint after the previous one. The pre-fix loop therefore also *starved* a
+//! ready resource fetch (a segment completing 50 ms into a 1 s hint was not
+//! serviced for another 950 ms).
+//!
+//! [`PullScheduler`] keeps both properties: the hint bounds when the *next
+//! paced fetch may start* (via [`PullScheduler::push_at`], a not-before
+//! floor applied on dispatch), and [`PullScheduler::next`] races
+//! `join_next()` against the hint so an in-flight resource fetch is still
+//! returned the moment it completes — the floor delays the paced fetch's
+//! *start*, it never delays an already-running fetch's result.
 
 use std::collections::VecDeque;
 use std::fmt;
@@ -54,16 +66,16 @@ impl<K: fmt::Debug> fmt::Debug for FetchOutcome<K> {
 
 type FetchFuture<K> = Pin<Box<dyn Future<Output = (K, Result<Vec<u8>, MultimuxError>)> + Send>>;
 
-/// One fetch to spawn. The key travels inside `fut`'s result, so it is not
-/// repeated here.
+/// One fetch to spawn.
 pub(crate) struct PendingFetch<K> {
+    /// How long to wait before this fetch's future is first polled (its
+    /// "dispatch"). A retry uses it for its backoff; a paced fetch (see
+    /// [`PullScheduler::push_at`]) uses it for its not-before floor.
     pub delay: Duration,
     pub fut: FetchFuture<K>,
 }
 
-/// The single fetch/retry/wait engine for the pull sources. This module was
-/// compile-verified with its tests in a scratch crate against main's
-/// `MultimuxError` and tokio 1.53.
+/// The single fetch/retry/wait engine for the pull sources.
 pub(crate) struct PullScheduler<K: Send + 'static> {
     inflight: JoinSet<(K, Result<Vec<u8>, MultimuxError>)>,
     backlog: VecDeque<PendingFetch<K>>,
@@ -84,6 +96,21 @@ impl<K: Send + 'static> PullScheduler<K> {
 
     /// Queue a fetch behind everything already backlogged.
     pub fn push(&mut self, fetch: PendingFetch<K>) {
+        self.backlog.push_back(fetch);
+    }
+
+    /// Queue a *paced* fetch: it is dispatched no earlier than `not_before`
+    /// (a pacing floor — see the module doc's `WaitMs` section). The floor is
+    /// resolved against the current instant here, so later pump/backlog
+    /// churn cannot shorten or lengthen it.
+    pub fn push_at(
+        &mut self,
+        mut fetch: PendingFetch<K>,
+        not_before: Option<tokio::time::Instant>,
+    ) {
+        if let Some(not_before) = not_before {
+            fetch.delay = not_before.saturating_duration_since(tokio::time::Instant::now());
+        }
         self.backlog.push_back(fetch);
     }
 
@@ -295,5 +322,82 @@ mod tests {
         let out = s.next(None, Duration::from_millis(5)).await;
         assert!(matches!(out, Some(FetchOutcome::Ready(7, _))), "{out:?}");
         assert_eq!(t0.elapsed(), Duration::from_millis(250));
+    }
+
+    /// C1 (reload pacing). A playlist fetch returns in 20 ms under a 1 s
+    /// pacing hint: the NEXT playlist fetch must be *dispatched* at exactly
+    /// the floor (previous dispatch + hint), not re-fetched at RTT rate.
+    ///
+    /// The floor is the previous playlist's dispatch instant (t=0) plus the
+    /// hint (1 s). A fetch pushed with `push_at(.., Some(floor))` records its
+    /// dispatch time inside its own future, so the assertion is on the real
+    /// dispatch instant, not on a delivery time.
+    ///
+    /// Revert-check: push the second playlist fetch with `push` (no floor,
+    /// the pre-fix shape) and the observed dispatch is 20 ms, not 1 s.
+    #[tokio::test(start_paused = true)]
+    async fn a_paced_fetch_is_dispatched_at_its_floor_not_at_the_first_result() {
+        use std::sync::{Arc, Mutex};
+        let t0 = Instant::now();
+        // The pacing floor: the previous playlist dispatch (now) plus 1 s.
+        let floor = t0 + Duration::from_millis(1000);
+
+        // Playlist #1 returns in 20 ms.
+        let mut s = PullScheduler::<u32>::new(8);
+        s.push(fetch_after(1, Duration::from_millis(20), b"pl"));
+        s.pump();
+        let first = s.next(None, Duration::from_millis(5)).await;
+        assert!(
+            matches!(first, Some(FetchOutcome::Ready(1, _))),
+            "{first:?}"
+        );
+        assert_eq!(t0.elapsed(), Duration::from_millis(20));
+
+        // Playlist #2 is paced: record when its future actually runs.
+        let dispatched: Arc<Mutex<Option<Duration>>> = Arc::new(Mutex::new(None));
+        let slot = Arc::clone(&dispatched);
+        s.push_at(
+            PendingFetch {
+                delay: Duration::ZERO,
+                fut: Box::pin(async move {
+                    *slot.lock().unwrap() = Some(t0.elapsed());
+                    (2u32, Ok(b"pl2".to_vec()))
+                }),
+            },
+            Some(floor),
+        );
+        s.pump();
+        let second = s.next(None, Duration::from_millis(5)).await;
+        assert!(
+            matches!(second, Some(FetchOutcome::Ready(2, _))),
+            "{second:?}"
+        );
+        assert_eq!(
+            *dispatched.lock().unwrap(),
+            Some(Duration::from_millis(1000)),
+            "the paced playlist fetch must be dispatched at the floor (1 s), not at 20 ms"
+        );
+    }
+
+    /// C1 (defect 5 preserved). While a playlist floor is pending, a resource
+    /// fetch that completes in 50 ms is fed at 50 ms — the floor on the next
+    /// playlist dispatch never delays an already-running fetch.
+    #[tokio::test(start_paused = true)]
+    async fn a_resource_fetch_completes_while_a_pacing_floor_is_pending() {
+        let t0 = Instant::now();
+        let floor = t0 + Duration::from_millis(1000);
+        let mut s = PullScheduler::<u32>::new(8);
+        // A paced playlist fetch (dispatched at 1 s) and a resource fetch
+        // (dispatched now, completes at 50 ms).
+        s.push_at(fetch_after(1, Duration::ZERO, b"pl"), Some(floor));
+        s.push(fetch_after(2, Duration::from_millis(50), b"seg"));
+        s.pump();
+        let out = s.next(None, Duration::from_millis(5)).await;
+        assert!(matches!(out, Some(FetchOutcome::Ready(2, _))), "{out:?}");
+        assert_eq!(
+            t0.elapsed(),
+            Duration::from_millis(50),
+            "a ready resource fetch must be serviced during the pacing floor"
+        );
     }
 }
