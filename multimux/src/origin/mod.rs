@@ -1910,10 +1910,18 @@ fn spawn_ingest(
         } => {
             // A `test-hooks` caller may have bound this exact `addr` itself and
             // handed the live socket in (`Config::prebound`), so the route
-            // consumes it rather than racing reserve-then-rebind.
+            // consumes it rather than racing reserve-then-rebind. A configured
+            // `multicast_group` cannot be joined on a caller-bound socket, so
+            // carry it onto the route: `bind` then rejects the contradiction
+            // instead of silently dropping the group.
             let route_cfg = match config.prebound_udp(addr) {
-                Some(socket) => crate::source::ts_udp::TsUdpRoute::with_socket(name, socket)
-                    .with_timeouts(timeouts),
+                Some(socket) => {
+                    let mut route = crate::source::ts_udp::TsUdpRoute::with_socket(name, socket);
+                    if let Some(group) = multicast_group.clone() {
+                        route = route.with_multicast_group(group);
+                    }
+                    route.with_timeouts(timeouts)
+                }
                 None => crate::source::ts_udp::TsUdpRoute::new(
                     name,
                     addr.clone(),

@@ -136,6 +136,10 @@
   guard. Exactly 86400.0 is accepted, 86400.1 is rejected. A part/chunk longer
   than one whole segment (`part_target_ms/1000 > target_duration_secs`) is
   rejected too, since the LL-DASH packager refuses that combination.
+- **A `TsUdp` route whose pre-bound socket carries a `multicast_group` is
+  rejected** rather than silently using the socket without joining the group.
+  `TsUdpRoute::with_multicast_group` now carries the group onto a
+  `with_socket` route so `bind` can detect the contradiction.
 - **`config::validate_host_port` restored to its strict shape.** Adopting `url`
   had silently accepted `host:9000/path`, `user@host:9000`, and
   `host:9000?x`; they are rejected again, and an SRT authority with a userinfo

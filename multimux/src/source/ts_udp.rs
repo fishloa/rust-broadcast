@@ -83,6 +83,10 @@ impl TsUdpRoute {
     /// `127.0.0.1:0`, learns the port, and hands the socket in, rather than
     /// racing reserve-then-rebind. Mirrors
     /// `crate::source::whip::WhipRoute::with_listener`.
+    ///
+    /// The supplied socket is used verbatim, so a `multicast_group` cannot be
+    /// joined on it: setting one (via [`Self::with_multicast_group`]) makes
+    /// [`bind`] return an error rather than silently ignore the group.
     pub fn with_socket(name: impl Into<String>, socket: UdpSocket) -> Self {
         let addr = socket
             .local_addr()
@@ -95,6 +99,16 @@ impl TsUdpRoute {
             timeouts: IngestTimeouts::default(),
             prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(socket))),
         }
+    }
+
+    /// Configure the multicast group to join. Meaningful only for a route that
+    /// binds its own `addr`; on a [`Self::with_socket`] route it is a
+    /// contradiction (`bind` returns an error rather than silently dropping
+    /// it) — see that ctor.
+    #[must_use]
+    pub fn with_multicast_group(mut self, group: impl Into<String>) -> Self {
+        self.multicast_group = Some(group.into());
+        self
     }
 
     /// Overrides the default [`IngestTimeouts`].
@@ -144,6 +158,19 @@ pub async fn bind(route: &TsUdpRoute) -> Result<UdpSocket> {
         Err(poisoned) => poisoned.into_inner().take(),
     };
     if let Some(socket) = prebound {
+        // A caller-supplied socket is used as-is; joining a multicast group on
+        // it is not implemented, so refuse rather than silently ignoring the
+        // configured group (which would leave the operator's multicast source
+        // unreachable with no signal).
+        if let Some(group) = route.multicast_group.as_deref() {
+            return Err(crate::MultimuxError::ConfigInvalid {
+                field: "routes.input.multicast_group",
+                reason: format!(
+                    "a pre-bound socket cannot join multicast_group {group:?}; drop the group, \
+                     or let the route bind its own addr"
+                ),
+            });
+        }
         return Ok(socket);
     }
     bind_udp(&route.addr, route.multicast_group.as_deref()).await
@@ -409,6 +436,28 @@ mod tests {
             second.local_addr().expect("addr"),
             addr,
             "the reconnect must re-bind the configured addr"
+        );
+    }
+
+    /// A `with_socket` route carrying a configured `multicast_group` must be
+    /// REJECTED by `bind`, not silently use the caller's socket without joining
+    /// the group (which would leave the multicast source unreachable with no
+    /// signal). PRE-FIX `bind` returned the pre-bound socket and dropped the
+    /// group, so this returned `Ok`.
+    #[tokio::test]
+    async fn with_socket_rejects_a_configured_multicast_group() {
+        let socket = UdpSocket::bind("127.0.0.1:0").await.expect("bind");
+        let route = TsUdpRoute::with_socket("cam-ts", socket).with_multicast_group("239.1.2.3");
+        let err = bind(&route)
+            .await
+            .expect_err("a pre-bound socket cannot join a multicast group");
+        assert!(
+            matches!(
+                err,
+                crate::MultimuxError::ConfigInvalid { field, .. }
+                    if field == "routes.input.multicast_group"
+            ),
+            "got {err:?}"
         );
     }
 
