@@ -300,6 +300,10 @@ pub struct UdpSocketSpec {
     /// interface index as a decimal string. `None` joins on any interface.
     #[serde(default)]
     pub multicast_interface: Option<String>,
+    /// Set `SO_REUSEPORT` before bind (Unix only; ignored elsewhere). See
+    /// `source::udp`'s per-OS multicast-sharing note. Defaults to `false`.
+    #[serde(default)]
+    pub reuse_port: bool,
 }
 
 impl std::fmt::Debug for UdpSocketSpec {
@@ -308,6 +312,7 @@ impl std::fmt::Debug for UdpSocketSpec {
             .field("recv_buffer_bytes", &self.recv_buffer_bytes)
             .field("reuse_address", &self.reuse_address)
             .field("multicast_interface", &self.multicast_interface)
+            .field("reuse_port", &self.reuse_port)
             .finish()
     }
 }
@@ -319,6 +324,7 @@ impl UdpSocketSpec {
             recv_buffer_bytes: self.recv_buffer_bytes,
             reuse_address: self.reuse_address,
             multicast_interface: self.multicast_interface.clone(),
+            reuse_port: self.reuse_port,
         }
     }
 

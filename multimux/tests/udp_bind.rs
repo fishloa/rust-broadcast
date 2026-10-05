@@ -65,6 +65,7 @@ async fn reuse_address_is_applied_and_a_multicast_group_can_join_a_specified_int
         recv_buffer_bytes: None,
         reuse_address: true,
         multicast_interface: Some("0.0.0.0".into()),
+        reuse_port: false,
     };
     // A multicast join needs a group route on the host; on a host without
     // one the join errors — this test asserts the OPTION PATH, tolerating
@@ -89,5 +90,60 @@ async fn an_explicit_reuse_address_bind_still_succeeds() {
         .await
         .expect("bind must not hang")
         .unwrap();
+    assert!(socket.local_addr().unwrap().port() > 0);
+}
+
+/// I4: with no explicit `recv_buffer_bytes`, the default (4 MiB) is requested
+/// — the getter proves a value well above the OS default was applied, so a
+/// high-bitrate input is not left at ~208 KiB (Linux) / ~786 KiB (macOS).
+#[tokio::test]
+async fn the_default_receive_buffer_is_larger_than_the_os_default() {
+    let socket = bind_udp("127.0.0.1:0", None, UdpBindOptions::default())
+        .await
+        .unwrap();
+    let got = socket.recv_buffer_size_for_test();
+    // The requested default is 4 MiB; Linux may double it, macOS adds
+    // overhead. Accept [1 MiB, 16 MiB] — comfortably above every observed OS
+    // default (macOS ~786 KiB), proving the default took effect.
+    assert!(
+        (1024 * 1024..=16 * 1024 * 1024).contains(&got),
+        "the default SO_RCVBUF must be applied (got {got}, expected ~4 MiB)"
+    );
+}
+
+/// I4: an explicit override still round-trips through the getter (the
+/// requested value, not the default).
+#[tokio::test]
+async fn an_explicit_receive_buffer_overrides_the_default() {
+    let socket = bind_udp(
+        "127.0.0.1:0",
+        None,
+        UdpBindOptions {
+            recv_buffer_bytes: Some(128 * 1024),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    let got = socket.recv_buffer_size_for_test();
+    assert!(
+        (128 * 1024..=512 * 1024).contains(&got),
+        "the explicit 128 KiB request must round-trip (got {got})"
+    );
+}
+
+/// I4: `reuse_port` is accepted on Unix (no error) and the bind succeeds.
+#[tokio::test]
+async fn reuse_port_is_accepted() {
+    let socket = bind_udp(
+        "127.0.0.1:0",
+        None,
+        UdpBindOptions {
+            reuse_port: true,
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
     assert!(socket.local_addr().unwrap().port() > 0);
 }

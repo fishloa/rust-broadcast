@@ -38,7 +38,12 @@
   `ts_udp`/`rtp` inputs gain optional `recv_buffer_bytes`, `reuse_address`
   and `multicast_interface` keys (SP1.6); `source::udp::bind_udp` is now
   public and takes a `source::udp::UdpBindOptions`, and a requested
-  `SO_RCVBUF` is applied rather than left at the OS default. **Rust-level
+  `SO_RCVBUF` is applied rather than left at the OS default; a default
+  (4 MiB) is now requested when none is given, best-effort (the OS may clamp
+  it and a failed `set` never fails the bind). A **new `reuse_port` option**
+  (Unix only; ignored elsewhere) is available alongside `reuse_address` for
+  the per-OS multicast-sharing semantics `source::udp` now documents.
+  **Rust-level
   breaking addition:** `InputSpec::Rtp` and `InputSpec::TsUdp` each gain a
   new `socket: UdpSocketSpec` field, so an exhaustive construction or pattern
   match on those variants outside this crate must be updated (the JSON shape

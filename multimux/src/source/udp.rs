@@ -5,12 +5,35 @@
 //! there is exactly one bind/join implementation between them (issue #663
 //! P3a; SP1.6 moved the bind onto `socket2` so `SO_RCVBUF`/`SO_REUSEADDR`
 //! and the multicast interface are real options rather than defaults).
+//!
+//! # Multicast port sharing is per-OS (be honest about it)
+//!
+//! Two receivers on one multicast group/port need different options per OS:
+//! - **Linux**: `SO_REUSEADDR` (set here) suffices for two binds to the same
+//!   multicast address+port.
+//! - **BSD / macOS**: `SO_REUSEADDR` on a UDP socket behaves like
+//!   `SO_REUSEPORT` for multicast, so `reuse_address` is usually enough — but
+//!   `reuse_port` is available (and is what the platform documents) when a
+//!   caller wants it explicit.
+//! - **Windows**: `SO_REUSEADDR` lets a second socket *hijack* the port
+//!   (undefined which receives); `SO_REUSEPORT` does not exist there, so
+//!   multi-receiver sharing on Windows is genuinely unsupported by this
+//!   helper — do not rely on it.
+//!
+//! `reuse_port` is applied only on Unix (`cfg(unix)`); on other platforms it
+//! is ignored rather than silently mis-set.
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
 use tokio::net::UdpSocket;
 
 use crate::error::{MultimuxError, Result};
+
+/// The receive-buffer size requested when a caller does not set one (4 MiB):
+/// comfortably above the observed OS defaults (Linux ~208 KiB, macOS ~786 KiB)
+/// so a burst between scheduler wakeups is not dropped. Best-effort — the OS
+/// may clamp it and the bind still succeeds.
+pub const DEFAULT_RECV_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
 /// The socket options a UDP bind applies. Every field is a *request*: the
 /// kernel may clamp `SO_RCVBUF` (Linux doubles it and floors at
@@ -28,6 +51,9 @@ pub struct UdpBindOptions {
     /// IPv6 interface *index* (as a decimal string). `None` joins on the
     /// unspecified interface (any).
     pub multicast_interface: Option<String>,
+    /// Set `SO_REUSEPORT` before bind (Unix only; ignored elsewhere). See the
+    /// module doc's per-OS multicast-sharing note. Defaults to `false`.
+    pub reuse_port: bool,
 }
 
 /// Binds a UDP socket to `addr` (`host:port`), applying `opts`, and joining
@@ -60,14 +86,29 @@ pub async fn bind_udp(
                 reason: format!("SO_REUSEADDR: {e}"),
             })?;
     }
-    if let Some(bytes) = opts.recv_buffer_bytes {
-        // The OS clamps (Linux doubles, floors at rmem_default); the getter
-        // proves application, the value is a request not a guarantee.
+    // SO_REUSEPORT: Unix only — see the module doc's per-OS multicast note.
+    #[cfg(unix)]
+    if opts.reuse_port {
         socket
-            .set_recv_buffer_size(bytes)
+            .set_reuse_port(true)
             .map_err(|e| MultimuxError::Connect {
-                reason: format!("SO_RCVBUF: {e}"),
+                reason: format!("SO_REUSEPORT: {e}"),
             })?;
+    }
+    #[cfg(not(unix))]
+    let _ = opts.reuse_port;
+    // A requested buffer is a request; a default applies when none is given,
+    // so a high-bitrate input is not left at the OS default. Best-effort: the
+    // OS may clamp it (Linux doubles and floors at `rmem_default`; macOS adds
+    // overhead), and a failed/clamped `set` must NOT fail the bind — log and
+    // carry on.
+    let wanted_recv = opts.recv_buffer_bytes.unwrap_or(DEFAULT_RECV_BUFFER_BYTES);
+    if let Err(e) = socket.set_recv_buffer_size(wanted_recv) {
+        tracing::warn!(
+            requested = wanted_recv,
+            error = %e,
+            "SO_RCVBUF not applied; the socket keeps the OS default"
+        );
     }
     let sin = socket2::SockAddr::from(bind_addr);
     socket.bind(&sin).map_err(|e| MultimuxError::Connect {
