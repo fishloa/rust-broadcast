@@ -52,6 +52,7 @@ Plus **MSRV 1.95.0** (`rust-toolchain.toml`, single source) and, for `no_std` cr
 ## 5. `no_std`, labels, fuzz, examples, CLI
 - **`no_std` + `alloc`** where practical; `--no-default-features` + bare-metal build green.
 - **#204 label convention**: every public spec/field enum gets `name() -> &'static str` (hand-written) + `broadcast_common::impl_spec_display!`; a per-crate `tests/label_coverage.rs` drift-guard (or a documented SKIP list).
+- **No-hand-roll tripwire** (protocol/runtime crate): a lexical `tests/no_handroll_guard.rs` (or `tests/dehandroll_guard.rs`) scanning `src/**/*.rs` outside `#[cfg(test)] mod` bodies for the de-hand-roll spec **§5** pattern list (`"HTTP/1.`, `"\r\n\r\n"`, `find("://")`, `strip_prefix("<scheme>://")`, SDP `"a=`/`"m=`/`"v=0` building, `civil_from_days`/`days_from_civil`, a base64 alphabet literal, `thread::sleep`/`sleep(` in non-test async code), with a **reasoned allowlist**. Each allow entry names the file, pins the exact source line (so a new occurrence of the same needle elsewhere still fails) and gives the reason; a genuinely-infeasible site is a **documented exception** in the de-hand-roll spec §9, not a silent allow. The module doc states it is a lexical tripwire and that review is the real control.
 - **Fuzz target** added (the workspace fuzzes every parser crate; nightly fuzz-build gate).
 - **≥2 runnable examples** (`cargo run -p <crate> --example …`), fixtures via `std::fs` at runtime.
 - **CLI** (if any) follows [`CLI-STANDARD.md`](CLI-STANDARD.md): clap derive, named flags, no positional magic numbers, auto `--help`/`--version`.
@@ -70,5 +71,6 @@ Independent crates version on their own cadence; lockstep crates move together. 
 - [ ] Committed **real fixture**; per-op **biting** test (fault-inject→assert-known-good for transforms)
 - [ ] 6-gate CI suite + MSRV 1.95.0 (+ thumbv7em if no_std) — run by the orchestrator
 - [ ] #204 labels + label_coverage · fuzz target · ≥2 examples · CLI-STANDARD (if CLI)
+- [ ] No-hand-roll tripwire (`tests/*guard*.rs`) with a reasoned, line-pinned allowlist (protocol/runtime crate)
 - [ ] RELEASE-DOCS complete (CHANGELOG/release-note/README/crate-root/docs.rs metadata)
 - [ ] Versioning + dep-refs consistent; publish staged for owner sign-off
