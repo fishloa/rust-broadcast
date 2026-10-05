@@ -586,4 +586,68 @@ mod tests {
             "must emit at least one Media event over the real socket, got {media_count}"
         );
     }
+
+    /// I2: the sans-IO `encode_video`/`encode_audio`/`encode_metadata` +
+    /// `write_frame` split round-trips through the server's chunk parser, and
+    /// two video frames exercise chunk-header compression (the second message
+    /// reuses the first's chunk-stream basic header via a type-2/3 header).
+    #[tokio::test]
+    async fn encode_then_write_frames_decode_on_the_server_with_header_compression() {
+        let server = AsyncRtmpServer::bind("127.0.0.1:0", ServerConfig::default())
+            .await
+            .expect("bind");
+        let addr = server.local_addr().expect("addr");
+        let target = RtmpTarget::from_parts(&format!("rtmp://{addr}/live"), "live", "testkey")
+            .expect("target");
+
+        // Drive the server concurrently: `publish` needs the server to answer
+        // the handshake/connect/createStream/publish exchange as the client
+        // sends.
+        let server_task = tokio::spawn(async move {
+            let mut conn = server.accept().await.expect("accept");
+            let mut media = 0usize;
+            let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+            while media < 2 && tokio::time::Instant::now() < deadline {
+                match tokio::time::timeout_at(deadline, conn.next_events()).await {
+                    Ok(Ok(Some(batch))) => {
+                        media += batch
+                            .iter()
+                            .filter(|e| matches!(e, ServerEvent::Media { .. }))
+                            .count();
+                    }
+                    Ok(Ok(None)) | Ok(Err(_)) | Err(_) => break,
+                }
+            }
+            media
+        });
+
+        let mut client = AsyncRtmpClient::connect(&target, RtmpTimeouts::default())
+            .await
+            .expect("connect");
+        client.publish().await.expect("publish");
+
+        // Two video messages (FLV AVCVIDEOPACKET bodies) via the sans-IO
+        // encode half, then the write half — the shape `multimux`'s egress
+        // uses.
+        let frame_a = client
+            .encode_video(0, &[0x17, 0x01, 0, 0, 0, 0xAA])
+            .expect("encode a");
+        let frame_b = client
+            .encode_video(33, &[0x17, 0x01, 0, 0, 0, 0xBB])
+            .expect("encode b");
+        // A metadata message too.
+        let meta = client
+            .encode_metadata(&[("width".to_string(), crate::amf0::Amf0Value::Number(1280.0))])
+            .expect("encode meta");
+        for bytes in [meta, frame_a, frame_b] {
+            client.write_frame(bytes).await.expect("write_frame");
+        }
+
+        let media = server_task.await.expect("server join");
+        assert!(
+            media >= 2,
+            "both encoded video frames must decode on the server (chunk-header \
+             compression exercised), got {media} media events"
+        );
+    }
 }

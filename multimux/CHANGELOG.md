@@ -38,7 +38,16 @@
   `ts_udp`/`rtp` inputs gain optional `recv_buffer_bytes`, `reuse_address`
   and `multicast_interface` keys (SP1.6); `source::udp::bind_udp` is now
   public and takes a `source::udp::UdpBindOptions`, and a requested
-  `SO_RCVBUF` is applied rather than left at the OS default.
+  `SO_RCVBUF` is applied rather than left at the OS default. **Rust-level
+  breaking addition:** `InputSpec::Rtp` and `InputSpec::TsUdp` each gain a
+  new `socket: UdpSocketSpec` field, so an exhaustive construction or pattern
+  match on those variants outside this crate must be updated (the JSON shape
+  is additive via serde defaults; only the Rust enum changed).
+- **Push transport configs gain fields (Rust-level breaking additions).**
+  `RtspTransportConfig` gains `timeouts: rtsp_runtime::RtspTimeouts`;
+  `RtmpTransportConfig` gains `write_timeout: Option<Duration>`. An
+  exhaustive struct construction or pattern match outside this crate must be
+  updated (both keep a `Default`).
 - **The five one-connection dial sources share one ingest scaffold.** The
   `rtsp`/`rtp`/`ts_udp`/`ts_http`/`srt` drive loops become one
   `source::driver::run_ingest_scaffold` (deadline, cancel, bounded write,
