@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-05
 ### Changed
 - `webvtt::teletext` now calls `dvb_vbi::TeletextDataField::txt_data_block_logical()`
   instead of its own private `.map(u8::reverse_bits)` (issue #1106); no

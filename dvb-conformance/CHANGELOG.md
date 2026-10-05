@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [11.0.0] - 2026-10-05
 ### Fixed
 - TR 101 290 v1.4.1 Table 5.0a indicators 1.3.a (`PAT_error_2`) / 1.5.a
   (`PMT_error_2`): the presence timers were refreshed by any payload-bearing

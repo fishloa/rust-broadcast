@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [11.0.0] - 2026-10-05
 ### Fixed
 - Normal-Mode (NM) CRC-8 mismatches are now detected and flagged with the
   Transport Error Indicator (TEI, ISO/IEC 13818-1 §2.4.3.2) to alert

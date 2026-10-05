@@ -1,6 +1,6 @@
 [package]
 name                    = "atsc3-route"
-version                 = "0.1.0"
+version                 = "0.2.0"
 description             = "ATSC A/331 Annex A ROUTE binary framing: EXT_ROUTE_PRESENTATION_TIME / EXT_TOL header-extension type (HET) constants, source/repair FEC Payload ID layouts, and the Codepoint (CP) delivery-object semantics table. Built on rmt-flute's LCT/ALC/FLUTE; no XML/S-TSID/SLS."
 authors.workspace       = true
 edition.workspace       = true
@@ -17,8 +17,8 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.3",   default-features = false }
-rmt-flute         = { path = "../rmt-flute",         version = "0.5", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.4",   default-features = false }
+rmt-flute         = { path = "../rmt-flute",         version = "0.6", default-features = false }
 thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", optional = true, features = ["derive"] }
 

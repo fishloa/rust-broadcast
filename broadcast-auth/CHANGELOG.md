@@ -6,6 +6,7 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-05
 ### Changed
 
 - Dependency bumps, non-breaking (no public API change): `hmac` 0.13, `sha2` 0.11, `md-5` 0.11 (RustCrypto 0.13 generation) and `base64` 0.23. Digest MD5 responses and HMAC-SHA256 signed URLs are byte-identical; new tests pin the RFC 2617 §3.5 and RFC 7617 §2 examples.

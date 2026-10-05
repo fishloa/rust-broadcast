@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-05
 ### Added
 - `splice::condition_splice_point_wrapping` + `PTS_MODULUS_33`: circular
   distance/direction on a wrapping clock, so a cue at `2^33 - 100` snaps to a

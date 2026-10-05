@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
 ### Changed (breaking)
 - `OwnedTsPacket`'s fields (`raw`, `pid`, `pusi`, `has_adaptation`, `has_payload`, `tei`, `scrambling`, `continuity_counter`) are now **private**, with getters of the same names (`raw()` returning `&[u8; 188]`, `into_raw()`, `pid()`, `pusi()`, `has_adaptation()`, `has_payload()`, `tei()`, `scrambling()`, `continuity_counter()`). A public copy of a header field a caller could assign drifted silently from `raw`, which is what serialises (audit r01-W8, #1074). `discontinuity` stays public: it is caller metadata, not a copy of wire bytes. `ts-fix` and `transmux` call sites updated.
 - Requires `broadcast-common` 9.4 (`broadcast_common::len`).

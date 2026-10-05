@@ -6,6 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
 ### Added
 - `io::IoConfig` (`#[non_exhaustive]`, `with_*` builders): `max_datagram` (default 1500, clamped to `io::MIN_MAX_DATAGRAM` = 64 ..= `io::MAX_MAX_DATAGRAM` = 65535), `connect` (10 s: resolve + bind), `handshake` (5 s), `read_idle` (5 s), `write` (5 s: every `send_to`). New entry points `SrtSocket::connect_with`/`connect_from_with` and `SrtListener::bind_with`; the old ones use `IoConfig::default()`. `SrtSocket::send_bytes(Bytes)` hands a payload to the driver without a copy.
 - `SocketStats::rx_oversize` and `SrtListener::accept_overflow_dropped()`; `arq::Receiver::next_timeout()` and `tsbpd::TsbpdScheduler::next_release_after()` (the `no_std` building blocks of the driver's deadline).

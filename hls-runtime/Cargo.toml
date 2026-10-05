@@ -15,15 +15,15 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
-transmux          = { path = "../transmux", version = "0.24", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
+transmux          = { path = "../transmux", version = "0.25", default-features = false }
 # HLS (M3U8) playlist syntax (issue #878): the client/origin engines parse
 # and render playlists via this crate directly rather than through `transmux`.
-broadcast-hls     = { path = "../broadcast-hls", version = "0.2", default-features = false }
+broadcast-hls     = { path = "../broadcast-hls", version = "0.3", default-features = false }
 # `server::engine::HlsOrigin` renders SCTE-35 cues from the trunk's event
 # ring as `#EXT-X-DATERANGE` tag lines via `Timeline::with_anchor`/`to_daterange`
 # (issue #965). timed-metadata is `no_std`+`alloc`, so it does not force `std`.
-timed-metadata    = { path = "../timed-metadata", version = "0.5", default-features = false }
+timed-metadata    = { path = "../timed-metadata", version = "0.6", default-features = false }
 thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 # Only pulled in by the `std` feature: `server::engine::HlsOrigin` renders
@@ -33,7 +33,7 @@ serde             = { version = "1", optional = true, default-features = false, 
 # used to. `bytes` is needed directly (not just transitively) because
 # `Trunk::part_bytes`/`SegmentEntry::bytes` hand back `bytes::Bytes` this
 # crate's own types carry forward (e.g. `HlsBody::Resource`).
-media-plane       = { path = "../media-plane", version = "0.4", optional = true, default-features = false }
+media-plane       = { path = "../media-plane", version = "0.5", optional = true, default-features = false }
 bytes             = { version = "1", optional = true, default-features = false }
 # Only pulled in by the `tokio` feature (issue #717 slice 5) — the sans-IO
 # core (`client/engine.rs`) never depends on either.
@@ -43,7 +43,7 @@ reqwest           = { version = "0.13", optional = true, default-features = fals
 # response (reqwest itself only has Basic/Bearer helpers) delegates to the
 # same shared model `rtsp-runtime` and `multimux`'s HTTP input adapters use
 # (issue #663 P3b/P3c) — see `client::tokio_client`'s module doc.
-broadcast-auth    = { path = "../broadcast-auth", version = "0.3", optional = true }
+broadcast-auth    = { path = "../broadcast-auth", version = "0.4", optional = true }
 # RFC 3986 reference resolution (SP3, defect 7) and RFC 3339 dates (SP5): both
 # work in `alloc`-only builds, so the no_std core keeps building for thumbv7em.
 url               = { version = "2", default-features = false }

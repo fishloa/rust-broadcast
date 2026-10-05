@@ -1,6 +1,6 @@
 [package]
 name         = "transmux"
-version      = "0.24.2"
+version      = "0.25.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -29,13 +29,13 @@ serde      = { version = "1", default-features = false, features = ["derive", "a
 # HLS (M3U8) playlist syntax (issue #878): the `ts_hls`/`ll_hls` segmenters
 # produce `broadcast_hls::MediaPlaylist`/`MediaSegment` values; the playlist
 # syntax itself no longer lives in this crate.
-broadcast-hls = { path = "../broadcast-hls", version = "0.2", default-features = false }
+broadcast-hls = { path = "../broadcast-hls", version = "0.3", default-features = false }
 mp4-emsg   = { path = "../mp4-emsg",  version = "0.4", default-features = false }
-mpeg-ts    = { path = "../mpeg-ts",  version = "0.4", default-features = false }
-mpeg-pes   = { path = "../mpeg-pes", version = "0.4", default-features = false }
-mpeg-ps    = { path = "../mpeg-ps",  version = "0.4", default-features = false }
+mpeg-ts    = { path = "../mpeg-ts",  version = "0.5", default-features = false }
+mpeg-pes   = { path = "../mpeg-pes", version = "0.5", default-features = false }
+mpeg-ps    = { path = "../mpeg-ps",  version = "0.5", default-features = false }
 rtp-packet = { path = "../rtp-packet", version = "0.4", default-features = false }
-rtcp-packet = { path = "../rtcp-packet", version = "0.3", default-features = false }
+rtcp-packet = { path = "../rtcp-packet", version = "0.4", default-features = false }
 bytes      = { version = "1", default-features = false }
 # XML codec for the DASH MPD / Smooth Streaming / PlayReady WRMHEADER paths: the
 # only XML dependency of the crates that read or write XML (transmux,
@@ -89,7 +89,7 @@ serde_json   = "1.0"
 # dependency (see `splice.rs`'s module docs, "Follow-up") — selecting splice
 # *points* from SCTE-35 cues is left to callers, and this example is exactly
 # that follow-up wiring, not a library dependency.
-scte35-splice  = { path = "../scte35-splice", version = "2.1", default-features = false, features = ["std"] }
+scte35-splice  = { path = "../scte35-splice", version = "3.0", default-features = false, features = ["std"] }
 timed-metadata = { path = "../timed-metadata", default-features = false, features = ["std"] }
 
 [package.metadata.docs.rs]

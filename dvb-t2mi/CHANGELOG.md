@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [11.0.0] - 2026-10-05
 ### Added
 
 - `PacketType::is_allocated(byte)` — whether a `packet_type` byte is allocated in TS 102 773 Table 1 (the single definition the raw-mode resync uses).

@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-05
 ### Fixed
 - `LtcFrame::parse` now rejects a time-address field whose units nibble is
   above 9 (not a legal BCD digit) with the new `Error::InvalidBcdDigit`

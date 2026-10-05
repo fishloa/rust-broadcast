@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-05
 ### Fixed
 - **#1109** (reopens #974): `parse_webvtt` failed the *whole document* when
   the `WEBVTT` header contained any line other than `X-TIMESTAMP-MAP`

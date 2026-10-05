@@ -19,23 +19,23 @@ rustdoc-args = ["--cfg", "docsrs"]
 # `flv_sequence_header_payloads` / `flv_frame_payloads`, which do not
 # exist in 0.23.0 (verified at the tag). Published multimux 0.8.0 shipped
 # with the understated `"0.23"` bound.
-transmux          = { path = "../transmux",     version = "0.24" }
+transmux          = { path = "../transmux",     version = "0.25" }
 # Smooth manifest rendering (`output::smooth`) and the Smooth-pull encryption
 # probe: the single XML dependency of the crates that read or write XML.
 quick-xml         = { version = "0.42", default-features = false }
 container-probe   = { path = "../container-probe", version = "0.1" }
 # HLS (M3U8) playlist syntax (issue #878): `source::hls_pull` builds/parses
 # playlists via this crate directly rather than through `transmux`.
-broadcast-hls     = { path = "../broadcast-hls", version = "0.2" }
+broadcast-hls     = { path = "../broadcast-hls", version = "0.3" }
 rtsp-runtime      = { path = "../rtsp-runtime",  version = "0.7", features = ["tokio"] }
 # RTMP push ingest (`source::rtmp`, issue #738): the `tokio` feature pulls
 # `rtmp_runtime::io::AsyncRtmpServer`/`RtmpConnection`, the real-socket
 # adapter over the sans-IO `ServerSession`.
-rtmp-runtime      = { path = "../rtmp-runtime",  version = "0.6", features = ["tokio"] }
+rtmp-runtime      = { path = "../rtmp-runtime",  version = "0.7", features = ["tokio"] }
 # SRT push/pull ingest (`source::srt`, issue #739): the `tokio` feature
 # pulls `srt_runtime::io::{SrtListener, SrtSocket}`, the real-socket adapter
 # over the sans-IO ARQ/TSBPD/handshake engines.
-srt-runtime       = { path = "../srt-runtime",   version = "0.4", features = ["tokio"] }
+srt-runtime       = { path = "../srt-runtime",   version = "0.5", features = ["tokio"] }
 # The LL-HLS origin engine itself (rolling window/store, blocking-reload +
 # part-availability decision logic, playlist rendering — issue #663/#717
 # Stage 2). multimux is now a thin tokio+axum adapter over
@@ -57,11 +57,11 @@ hls-runtime       = { path = "../hls-runtime",   version = "0.7", features = ["s
 # resolving 9.0/9.1 fails to compile it today. The pin below is 9.3, above
 # that floor, tracking the current published line; same caret bucket, so it
 # is not an epoch change.
-broadcast-common  = { path = "../broadcast-common", version = "9.3" }
+broadcast-common  = { path = "../broadcast-common", version = "9.4" }
 # The media-plane ingress traits this crate's sources port onto (plan step
 # 5a): `Dialer`/`Listener`/`IngestSession`/`IngestDriver`/`ListenDriver`, and
 # the `Trunk` every ported session publishes into.
-media-plane       = { path = "../media-plane", version = "0.4", features = ["std"] }
+media-plane       = { path = "../media-plane", version = "0.5", features = ["std"] }
 bytes             = "1"
 # Shared Basic/Digest/Bearer auth model + challenge/response helper
 # (`source::http_auth`, issue #663 P3b/P3c) — the same crate `rtsp-runtime`
@@ -71,7 +71,7 @@ bytes             = "1"
 # which lacks them — multimux 0.8.0 shipped with that understated bound and
 # fails to compile against a lock that pins 0.2.0 (hit for real while
 # bumping axis-origin, née acap-multimux).
-broadcast-auth    = { path = "../broadcast-auth", version = "0.3.1" }
+broadcast-auth    = { path = "../broadcast-auth", version = "0.4" }
 sdp-types         = "0.2"
 tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
 axum              = "0.8"
@@ -170,7 +170,7 @@ rtp-packet        = { path = "../rtp-packet", version = "0.4", optional = true, 
 # clock. `default-features = false` — only `std` (this crate always links
 # std) + `ts` (the section reassembler `SiDemux` needs); `chrono`/`serde`
 # are not needed since `dvr::EitProgramme` decodes MJD+BCD itself.
-dvb-si            = { path = "../dvb-si", version = "10", default-features = false, features = ["std", "ts"] }
+dvb-si            = { path = "../dvb-si", version = "11.0", default-features = false, features = ["std", "ts"] }
 # TS packet/PSI-section framing. Two uses: `mpeg_ts::pid::Pid`, which
 # `dvr::DvrRecorder::new` wraps the EIT PID (`dvb_si::tables::eit::PID`) in
 # to pass to `SiDemux::builder().pid(..)`; and
@@ -178,14 +178,14 @@ dvb-si            = { path = "../dvb-si", version = "10", default-features = fal
 # genuine-bytes transition section back into TS packets. Also still used by
 # `source::segment`'s MPTS test (issue #887). Promoted from
 # `[dev-dependencies]` because production code (`dvr.rs`) now needs it too.
-mpeg-ts           = { path = "../mpeg-ts", version = "0.4" }
+mpeg-ts           = { path = "../mpeg-ts", version = "0.5" }
 # Canonical timed-metadata event types (issue #969): `source::scte35` /
 # `route` ingest `timed_metadata::TimedEvent` values into the trunk's event
 # log, and `origin::resource::inject_segment_events` pattern-matches on
 # `timed_metadata::event::SourcePayload::Scte35`. A transitive dep through
 # `media-plane` alone cannot be named inside a pattern match (edition 2024
 # requires it be declared), hence the direct dependency.
-timed-metadata    = { path = "../timed-metadata", version = "0.5", default-features = false }
+timed-metadata    = { path = "../timed-metadata", version = "0.6", default-features = false }
 
 [features]
 # `tls` is default-on: `rtsps://` sources should work out of the box. It pulls
@@ -311,7 +311,7 @@ reqwest          = { version = "0.13", default-features = false, features = ["js
 # `tests/emsg_mp4box.rs` can decode the `message_data` of an emitted DASH
 # `emsg` back to the source section and prove the bytes are the source's own
 # (issue #1083, E).
-scte35-splice    = { path = "../scte35-splice", version = "2.1" }
+scte35-splice    = { path = "../scte35-splice", version = "3.0" }
 # `rtp-packet` (default-features off, matching the `whep` optional dep) so
 # `tests/whip_whep_timers.rs` can build the RTP packet a loopback WebRTC
 # peer encrypts and sends — the only honest way to drive a WHIP session to a

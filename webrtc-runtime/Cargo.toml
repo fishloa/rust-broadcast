@@ -20,7 +20,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 # The WHIP/WHEP core is `std` (SP2.2: it speaks `http`/`headers` types), so both
 # take their default (std) features in every configuration; the `std` feature
 # below is kept as a name so `default-features = false` consumers still resolve.
-broadcast-common = { path = "../broadcast-common", version = "9.3" }
+broadcast-common = { path = "../broadcast-common", version = "9.4" }
 thiserror = { version = "2" }
 # `broadcast-auth` and `log` were declared here and referenced by not one line
 # of this crate. Both are std-only, so they alone made the bare-metal build
@@ -37,7 +37,7 @@ headers     = "0.4"
 # transport and its dependency tree.
 # ---------------------------------------------------------------------------
 rtp-packet  = { path = "../rtp-packet",  version = "0.4", optional = true }
-rtcp-packet = { path = "../rtcp-packet", version = "0.3", optional = true }
+rtcp-packet = { path = "../rtcp-packet", version = "0.4", optional = true }
 rtc-ice     = { version = "0.21", optional = true }
 rtc-dtls    = { version = "0.21", optional = true }
 rtc-srtp    = { version = "0.21", optional = true }

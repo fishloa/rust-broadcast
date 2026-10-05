@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
 ### Changed
 
 - `PACKET_START_CODE_PREFIX` is now re-exported from `mpeg-pes` (same path and value) and `program_stream` no longer carries a private copy (#1141).

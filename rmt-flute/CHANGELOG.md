@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-05
 ### Changed (breaking)
 - `ExtCenc` gained a `reserved: u16` field (the 16 reserved bits, preserved
   verbatim instead of always re-encoded as 0). `ExtTime` gained

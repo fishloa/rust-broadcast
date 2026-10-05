@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-05
 ### Changed (breaking)
 - **Removed `ExtRoutePresentationTime`** and **`ExtTol`** typed decoders removed from the
   public API. No publicly-available ATSC 3.0 ROUTE capture contains either

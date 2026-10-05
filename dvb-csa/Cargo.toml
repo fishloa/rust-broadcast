@@ -22,7 +22,7 @@ thiserror        = { version = "2", default-features = false }
 # `TsPacket` has no mutable-in-place payload accessor (its `payload` field
 # borrows immutably), which this crate needs to (de)scramble in place — see
 # `src/ts.rs` for why the payload slicing itself stays hand-rolled.
-mpeg-ts          = { path = "../mpeg-ts", version = "0.4", default-features = false }
+mpeg-ts          = { path = "../mpeg-ts", version = "0.5", default-features = false }
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports"] }

@@ -1,6 +1,6 @@
 [package]
 name         = "ts-fix"
-version      = "0.5.0"
+version      = "0.6.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -12,11 +12,11 @@ exclude      = ["tests/fixtures/**"]
 readme       = "README.md"
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
-mpeg-ts   = { path = "../mpeg-ts",  version = "0.4", default-features = false }
-mpeg-pes  = { path = "../mpeg-pes", version = "0.4", default-features = false }
-dvb-si    = { path = "../dvb-si",   version = "10",   default-features = false }
-dvb-conformance = { path = "../dvb-conformance", version = "10", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
+mpeg-ts   = { path = "../mpeg-ts",  version = "0.5", default-features = false }
+mpeg-pes  = { path = "../mpeg-pes", version = "0.5", default-features = false }
+dvb-si    = { path = "../dvb-si",   version = "11.0",   default-features = false }
+dvb-conformance = { path = "../dvb-conformance", version = "11.0", default-features = false }
 thiserror = { version = "2",        default-features = false }
 # Only the `ts-fix` binary uses clap; the library uses no `std` path at all.
 # Unconditional, it made `#![no_std]` unreachable — the crate root carried the
@@ -37,7 +37,7 @@ path = "src/bin/ts-fix.rs"
 required-features = ["cli"]
 
 [dev-dependencies]
-scte35-splice = { path = "../scte35-splice", version = "2.1", default-features = false }
+scte35-splice = { path = "../scte35-splice", version = "3.0", default-features = false }
 
 [package.metadata.docs.rs]
 all-features = true
