@@ -23,12 +23,12 @@
   XML replaced; XML support is `std`-only in `transmux`), so the validator and
   its re-export are gated behind `std`; a `--no-default-features` build keeps
   every other check.
-- **Requires the next `transmux` release.** The `length-prefix-violation`
-  fix below uses `transmux::iter_length_prefixed_nals_with`, which exists only
-  in `transmux`'s in-tree `[Unreleased]` — crates.io's `0.24.1` does not carry
+- **Requires `transmux` 0.25.** The `length-prefix-violation`
+  fix below uses `transmux::iter_length_prefixed_nals_with`, which is new in
+  `transmux` 0.25 — crates.io's `0.24.1` does not carry
   it. The dependency is declared the way this workspace declares every
   in-tree pre-release dependency (a path + caret version, here
-  `path = "../transmux", version = "0.24"`), so `check-published-dep-consistency.py`
+  `path = "../transmux", version = "0.25"`), so `check-published-dep-consistency.py`
   is satisfied, but **`media-doctor` cannot be published until `transmux` is
   released with that API** — release prep must order the `transmux` tag first.
   No version is changed here; releases are the orchestrator's job.

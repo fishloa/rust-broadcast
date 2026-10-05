@@ -10,7 +10,7 @@ Fixes GHSA-6cpc-jqv3-qcj3, GHSA-c5v7-p4jv-2fhc, GHSA-jwfh-m4vx-fhwx and GHSA-2w4
 picks up GHSA-48qq-7p78-2jvj (webrtc-runtime 0.2.0) for WHIP/WHEP.
 
 ### Changed (breaking)
-- Requires `hls-runtime` 0.7 (was 0.6), `broadcast-auth` 0.3.1 (was 0.3, needs
+- Requires `hls-runtime` 0.7 (was 0.6), `broadcast-auth` 0.4 (was 0.3; needs
   `Verifier::challenge_for`), `rtsp-runtime` 0.7 (was 0.6) and, with the `whip`/`whep` features,
   `webrtc-runtime` 0.2 (was 0.1).
 
@@ -18,12 +18,12 @@ picks up GHSA-48qq-7p78-2jvj (webrtc-runtime 0.2.0) for WHIP/WHEP.
   moves to `{param}`/`{*rest}` (matchit 0.8); `hls-runtime`'s `reqwest::Error`
   epoch bumps with it.
 - **Every HTTP listener is served through a hyper-util `http1` server**
-  (`origin::serve_hyper_util`) instead of `axum::serve`: a **header-read
+  (`origin::serve_hyper_util_with_*`) instead of `axum::serve`: a **header-read
   timeout** (10 s), a **connection cap** (1024) enforced at `accept`, and a
   **graceful shutdown drain** (up to 30 s) — with **no total per-connection
   deadline** (a hard cap would truncate long-lived LL-HLS/DVR/TS responses).
   The listeners are plain HTTP/1: h2c prior-knowledge is no longer served,
-  and the `h2`/`fnv` dependencies are dropped. Finished connection tasks are
+  and `h2` is no longer served. Finished connection tasks are
   reaped continuously, so a long-running listener does not accumulate one
   finished entry per connection ever accepted.
 - **WHIP and WHEP are served from axum `Router`s.** `POST` is answered only on
@@ -107,8 +107,8 @@ picks up GHSA-48qq-7p78-2jvj (webrtc-runtime 0.2.0) for WHIP/WHEP.
   (`Content-Length, Content-Range, Date, ETag`), `Vary: Origin` (appended),
   and `GET, HEAD, OPTIONS`.
 - **Pull sources bound their responses** (#1083): a `$Number$` plan is capped
-  at `dash_pull::MAX_PLAN_ENTRIES`, and every pull-source HTTP client uses
-  `source::redirect_policy` (3 hops, no `https`→`http` downgrade). An origin
+  at `dash_pull::MAX_PLAN_ENTRIES`, and every pull-source HTTP client follows
+  at most 3 redirects and refuses an `https`→`http` downgrade. An origin
   that relied on following more redirects, or on a downgrade, is affected.
 - `push::RtmpTransportConfig` gained a `connect_timeout: Option<Duration>`
   field (#1083) — `None` uses the new `RTMP_CONNECT_TIMEOUT` (15 s). A
@@ -118,8 +118,6 @@ picks up GHSA-48qq-7p78-2jvj (webrtc-runtime 0.2.0) for WHIP/WHEP.
 - `source::advance_route` is now `async` (#1083): its DVR-drain step writes
   segment bytes to disk, so it is dispatched to the blocking pool rather than
   run inline on the calling runtime worker.
-- `origin::admin::RouteRegistry::add_route` is now `async` (#1083): it
-  builds the prospective router and drains a displaced route on overwrite.
 - **Newly rejected configuration** (#1083): a route name that is not a single
   safe path segment (`[A-Za-z0-9._-]`, not `.`/`..`, at most
   `MAX_ROUTE_NAME_LEN` = 255 bytes), a duplicate name differing only in case

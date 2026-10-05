@@ -74,7 +74,7 @@ impl TransitionPlan {
     /// way to detect that from a single `source_pts` value: `rebase` is
     /// pure, with no memory of previously-seen values to compare against.
     /// The caller must unroll any source-clock wrap *before* calling this
-    /// (`transmux::Timeline` already does exactly this for 33-bit MPEG PTS)
+    /// (`timed_metadata::Timeline` already does exactly this for 33-bit MPEG PTS)
     /// so every `source_pts` passed here is monotonic within the entry.
     #[must_use]
     pub fn rebase(&self, source_pts: u64) -> Option<u64> {
