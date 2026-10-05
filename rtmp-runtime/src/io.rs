@@ -605,20 +605,25 @@ mod tests {
         // sends.
         let server_task = tokio::spawn(async move {
             let mut conn = server.accept().await.expect("accept");
-            let mut media = 0usize;
+            // Collect the raw FLV bodies in arrival order, so the test can
+            // check both the count AND the payload bytes/order (a
+            // header-compression bug that still yields 2 events would
+            // otherwise pass).
+            let mut medias: Vec<Vec<u8>> = Vec::new();
             let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
-            while media < 2 && tokio::time::Instant::now() < deadline {
+            while medias.len() < 2 && tokio::time::Instant::now() < deadline {
                 match tokio::time::timeout_at(deadline, conn.next_events()).await {
                     Ok(Ok(Some(batch))) => {
-                        media += batch
-                            .iter()
-                            .filter(|e| matches!(e, ServerEvent::Media { .. }))
-                            .count();
+                        for e in batch {
+                            if let ServerEvent::Media { flv } = e {
+                                medias.push(flv);
+                            }
+                        }
                     }
                     Ok(Ok(None)) | Ok(Err(_)) | Err(_) => break,
                 }
             }
-            media
+            medias
         });
 
         let mut client = AsyncRtmpClient::connect(&target, RtmpTimeouts::default())
@@ -643,11 +648,23 @@ mod tests {
             client.write_frame(bytes).await.expect("write_frame");
         }
 
-        let media = server_task.await.expect("server join");
+        let medias = server_task.await.expect("server join");
+        // Filter to the two VIDEO frames we sent (the metadata message is also
+        // a media event on some paths), preserving arrival order.
+        let video: Vec<&Vec<u8>> = medias
+            .iter()
+            .filter(|m| m.contains(&0xAA) || m.contains(&0xBB))
+            .collect();
+        assert_eq!(
+            video.len(),
+            2,
+            "both encoded video frames must decode on the server (chunk-header compression exercised): {medias:?}"
+        );
+        // Order + payload bytes: 0xAA first, then 0xBB — a reordered or
+        // corrupt stream fails this.
         assert!(
-            media >= 2,
-            "both encoded video frames must decode on the server (chunk-header \
-             compression exercised), got {media} media events"
+            video[0].contains(&0xAA) && video[1].contains(&0xBB),
+            "frames must arrive in order with their own payloads: {medias:?}"
         );
     }
 }

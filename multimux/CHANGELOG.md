@@ -45,13 +45,14 @@
   `SO_RCVBUF` is applied rather than left at the OS default; a default
   (4 MiB) is now requested when none is given, best-effort (the OS may clamp
   it and a failed `set` never fails the bind). A **new `reuse_port` option**
-  (Unix only; ignored elsewhere) is available alongside `reuse_address` for
-  the per-OS multicast-sharing semantics `source::udp` now documents.
-  **Rust-level
-  breaking addition:** `InputSpec::Rtp` and `InputSpec::TsUdp` each gain a
-  new `socket: UdpSocketSpec` field, so an exhaustive construction or pattern
-  match on those variants outside this crate must be updated (the JSON shape
-  is additive via serde defaults; only the Rust enum changed).
+  (Unix only, gated with socket2's own `set_reuse_port` target predicate;
+  ignored elsewhere) is available alongside `reuse_address` for the per-OS
+  multicast-sharing semantics `source::udp` now documents.
+  **Rust-level breaking additions:** `InputSpec::Rtp`/`InputSpec::TsUdp` gain
+  a `socket: UdpSocketSpec` field, and `UdpSocketSpec` itself gains
+  `reuse_port: bool` — an exhaustive construction or pattern match on any of
+  these outside this crate must be updated (the JSON shape is additive via
+  serde defaults; only the Rust types changed).
 - **Push transport configs gain fields (Rust-level breaking additions).**
   `RtspTransportConfig` gains `timeouts: rtsp_runtime::RtspTimeouts`;
   `RtmpTransportConfig` gains `write_timeout: Option<Duration>`. An
