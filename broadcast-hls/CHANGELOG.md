@@ -89,6 +89,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   like any other quoted-string (a CR or LF in it is rejected, per
   BH-W7).
 ### Changed (breaking)
+- `broadcast_hls::Error` no longer derives `Eq` (now `PartialEq` only): the new `InvalidDecimalSeconds`/`InvalidSignedDecimalSeconds` variants carry an `f64`. Code requiring `Error: Eq` must relax the bound.
 - **`Variant::codecs` is now `Option<String>`** (audit BH-W6, #1111): the
   `CODECS` attribute of `#EXT-X-STREAM-INF` (RFC 8216bis §4.4.6.2) is
   optional, but an absent one was parsed into `codecs: String = ""` and the
@@ -120,9 +121,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `MediaPlaylist::parse`) could still hold a NaN/inf/negative duration,
   which the (necessarily infallible) `to_m3u8` renderer previously had to
   silently clamp to `"0"` rather than reject — the same
-  never-silently-mangle discipline `AttrValue` already applies to quoted
+  never-silently-mangle discipline `AttrValue` applies to quoted
   strings, now applied to decimals. `effective_part_hold_back()` returns
-  `DecimalSeconds`, not `f64`. `AttrValue` gains hand-written
+  `DecimalSeconds`, not `f64`. `AttrValue` has hand-written
   `Serialize`/`Deserialize` (feature `serde`) that goes through
   `quoted`/`bare` on deserialize, so a downstream crate's `#[derive(...)]`
   struct holding `Vec<(String, AttrValue)>` can't deserialize an
@@ -139,10 +140,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   injected a whole tag line into the rendered playlist while an
   embedded `"` broke out of the attribute list and truncated the
   value. The same characters are now rejected by the per-tag
-  renderers (`push_part_line`/`push_map_line`/`push_define_line`/
-  `push_session_data_line`/`push_session_key_line`, all now
-  `-> Result<()>`), so a caller that renders a tag line directly gets
-  the same guarantee. `transmux::ts_hls::StreamingTsHlsSegmenter::playlist`
+  renderers (the private `push_part_line`/`push_map_line`/`push_define_line`/
+  `push_session_data_line`/`push_session_key_line`, internally now
+  `-> Result<()>`; not public API). `transmux::ts_hls::StreamingTsHlsSegmenter::playlist`
   and `multimux::catchup::render_playlist` are fallible in step.
 - **`LowLatencyConfig::extra_attrs` is removed** (audit BH-W8, #1111):
   the struct carried each unmodeled `#EXT-X-SERVER-CONTROL` /
@@ -157,7 +157,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   covers all three and the union is gone. `parse` is unaffected (it
   always populated all four identically).
 - **Every `extra_attrs: Vec<(String, String)>` field is now
-  `Vec<(String, AttrValue)>`, and `AttrValue` is now an opaque struct**
+  `Vec<(String, AttrValue)>`, and the new `AttrValue` is an opaque struct**
   (issue #1045 / audit BH-C1, T12): quoting is recorded losslessly from
   the real wire token at parse time instead of being guessed on render
   from a small table of known RFC 8216bis attribute names. Previously,
@@ -171,8 +171,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   AVPlayer) rejects or misinterprets. Fixed for every attribute name, known
   or not. Verified against a committed real Apple HLS fixture, a private
   `X-` attribute, and `mediastreamvalidator` directly.
-  - `AttrValue` no longer exposes public `Quoted`/`Bare` variants.
-    Construct it through `AttrValue::quoted(s)` or `AttrValue::bare(s)`
+  - `AttrValue` is new in 0.3.0 (it did not exist at 0.2.1) and is an opaque
+    struct with no public `Quoted`/`Bare` variants. Construct it through `AttrValue::quoted(s)` or `AttrValue::bare(s)`
     (both `-> Result<Self, Error>`), or `AttrValue::for_attr(name, value)`
     (a convenience choosing `quoted`/`bare` from the same known-name
     table the old fix used, for a caller that doesn't already know the

@@ -14,9 +14,10 @@ crates in the wave are **breaking** (a new 0.x minor or a new major).
 
 - **HTTP.** multimux serves on hyper-util behind axum and tower layers (a
   shared concurrency pool, a header-read timeout, typed headers) instead of a
-  hand-written request reader. media-doctor's metrics server, the WHIP/WHEP
-  signalling in webrtc-runtime and the HLS client's range and query handling
-  moved to the same typed HTTP stack. See `multimux-0.11.0`,
+  hand-written request reader. media-doctor's metrics server uses hyper, and
+  the WHIP/WHEP signalling in webrtc-runtime and the HLS client's range and
+  query handling use the typed `http`, `headers` and `url` types instead of
+  hand-built header and query strings. See `multimux-0.11.0`,
   `webrtc-runtime-0.2.0`, `media-doctor-0.9.0`, `hls-runtime-0.7.0`.
 - **Authentication.** `broadcast-auth` 0.4.0 parses Digest and Basic/Bearer
   with `http-auth` and `headers`. This changes what is accepted: a client that
