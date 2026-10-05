@@ -1709,11 +1709,14 @@ mod tests {
         assert_eq!(bytes[pos - 1], 255, "URLlength byte must be exactly 255");
     }
 
-    /// #1148: an `esds` carrying a `URLstring` at every legal `URLlength`
+    /// Regression guard (NOT the #1148 bite): an `esds` carrying a `URLstring` at every legal `URLlength`
     /// (8 bits per ISO/IEC 14496-1 §7.2.6.5, so 0..=255) must survive
     /// parse -> serialize -> parse with equal values and byte-identical
     /// output — including across the 127/128 boundary where the descriptor's
-    /// own expandable-size varint may widen.
+    /// own expandable-size varint may widen. Goes through `EsdsBox`, whose
+    /// body-parsing path was already correct before #1148; the test that
+    /// fails on the old source is
+    /// `es_descriptor_parse_is_symmetric_with_serialize` (public `Parse`).
     #[test]
     fn es_descriptor_url_lengths_round_trip() {
         for &len in &[0usize, 1, 100, 127, 128, 200, 255] {
@@ -1736,13 +1739,17 @@ mod tests {
         }
     }
 
-    /// #1148: `ESDescriptor::parse` must accept exactly the bytes
+    /// #1148 THE BITE: `ESDescriptor::parse` must accept exactly the bytes
     /// `ESDescriptor::serialize_into` produces — the `ES_DescrTag` byte, the
     /// expandable-size varint, then the body — so `parse(serialize(x)) == x`
     /// (the crate's parse/serialize symmetry invariant, §7.2.6.5).
+    ///
+    /// This goes through the *public* `Parse` impl directly and fails on the
+    /// pre-#1148 source, which misread the tag+varint prefix as ES_ID/flags/
+    /// `URLlength`. The box-path tests are regression guards, not this.
     #[test]
     fn es_descriptor_parse_is_symmetric_with_serialize() {
-        for &len in &[0usize, 1, 100, 127, 128, 200, 255] {
+        for &len in &[0usize, 1, 100, 101, 127, 128, 200, 255] {
             let url: alloc::string::String = "x".repeat(len);
             let es = es_descriptor_with_url(url);
             let bytes = es.try_to_bytes().unwrap();
@@ -1755,10 +1762,12 @@ mod tests {
         }
     }
 
-    /// #1148: a wire `esds` whose `ES_Descriptor` size varint is *minimal*
+    /// Regression guard (NOT the #1148 bite): a wire `esds` whose `ES_Descriptor` size varint is *minimal*
     /// width (2 bytes, as GPAC/Apple/Bento4 emit) and whose body exceeds the
     /// 127-byte single-byte varint range because of a >100-byte URL must
-    /// parse and re-serialize byte-exactly.
+    /// parse and re-serialize byte-exactly. This exercises `EsdsBox` over
+    /// hand-built wire bytes; the test that fails on the pre-#1148 public
+    /// `Parse` is `es_descriptor_parse_is_symmetric_with_serialize`.
     #[test]
     fn minimal_width_esds_with_long_url_round_trips() {
         for &url_len in &[100usize, 127, 128, 200, 255] {
