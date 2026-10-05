@@ -152,3 +152,17 @@ fn a_policy_maps_to_the_same_min_and_cap() {
         );
     }
 }
+
+/// m-1: a clone never duplicates the original's jitter sequence (Clone
+/// reseeds), and two independently seeded fresh schedules differ.
+#[test]
+fn a_clone_reseeds_and_fresh_schedules_do_not_share_a_sequence() {
+    let a = ReconnectSchedule::from_parts(Duration::from_millis(500), Duration::from_secs(30), 2.0);
+    let b = a.clone();
+    let seq_a: Vec<_> = (0..8).map(|i| a.delay_for_attempt(i)).collect();
+    let seq_b: Vec<_> = (0..8).map(|i| b.delay_for_attempt(i)).collect();
+    assert_ne!(
+        seq_a, seq_b,
+        "a clone must reseed, not replay the original's jitter sequence"
+    );
+}

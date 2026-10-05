@@ -35,7 +35,14 @@ use backon::BackoffBuilder as _;
 /// is `min * factor^attempt`, capped at `max`; the returned delay is
 /// `raw * uniform[0.5, 1.0)`, so it is always in `[raw/2, raw)` and therefore
 /// within `[min/2, max)`.
-#[derive(Debug, Clone)]
+/// # Concurrency
+///
+/// The jitter state is a `Cell<u64>`, so a `ReconnectSchedule` is **not
+/// `Sync`** (and `delay_for_attempt(&self)` mutates it — it is not a pure
+/// read). It is meant to be owned by one task. `Clone` is implemented by hand
+/// to **reseed** rather than duplicate the RNG state, so a clone can never
+/// replay the original's jitter sequence.
+#[derive(Debug)]
 pub struct ReconnectSchedule {
     /// Produces the *raw* capped series (jitter disabled).
     builder: backon::ExponentialBuilder,
@@ -87,12 +94,14 @@ impl ReconnectSchedule {
         // xorshift64; the low bits of the multiply-shift are fine for a
         // timing jitter that needs no cryptographic quality.
         let mut x = self.rng.get();
-        x ^= x << 13;
-        x ^= x >> 7;
-        x ^= x << 17;
+        x ^= x << XORSHIFT_LEFT_A;
+        x ^= x >> XORSHIFT_RIGHT_B;
+        x ^= x << XORSHIFT_LEFT_C;
         self.rng.set(x);
-        // 24 high bits as a float in [0, 1).
-        ((x >> 40) as f32) / (1u32 << 24) as f32
+        // `UNIT_FRACTION_BITS` HIGH bits of the 64-bit state as a float in
+        // [0, 1): shift right by `64 - UNIT_FRACTION_BITS`.
+        let shift = u64::BITS - UNIT_FRACTION_BITS;
+        ((x >> shift) as f32) / (UNIT_FRACTION_SCALE as f32)
     }
 
     /// The raw capped exponential delay for `attempt` (no jitter).
@@ -111,12 +120,44 @@ impl ReconnectSchedule {
     /// the result is always in `[raw/2, raw) ⊆ [min/2, max)`.
     pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
         let raw = self.raw_delay_for_attempt(attempt);
-        let factor = 0.5 + 0.5 * self.next_unit();
+        let factor = JITTER_LOW + (1.0 - JITTER_LOW) * f64::from(self.next_unit());
         // `raw` is at most `max`, so `raw * factor < max` always; the `min`
         // guards a `raw` of zero.
-        raw.mul_f64(f64::from(factor)).max(self.min / 2)
+        raw.mul_f64(factor).max(self.min / 2)
     }
 }
+
+impl Clone for ReconnectSchedule {
+    /// A clone with a *fresh* jitter seed (never a duplicate sequence).
+    fn clone(&self) -> Self {
+        Self {
+            builder: self.builder,
+            min: self.min,
+            max: self.max,
+            rng: std::cell::Cell::new(random_seed() | 1),
+        }
+    }
+}
+
+/// SplitMix64 constants (Steele et al. 2014): the golden-ratio increment, the
+/// two 64-bit multipliers, and the three avalanche shift amounts.
+const SPLITMIX_GOLDEN: u64 = 0x9E37_79B9_7F4A_7C15;
+const SPLITMIX_MUL_A: u64 = 0xBF58_476D_1CE4_E5B9;
+const SPLITMIX_MUL_B: u64 = 0x94D0_49BB_1331_11EB;
+const SPLITMIX_SHIFT_A: u32 = 30;
+const SPLITMIX_SHIFT_B: u32 = 27;
+const SPLITMIX_SHIFT_C: u32 = 31;
+
+/// xorshift64 shift triple (Marsaglia 2003): 13 left, 7 right, 17 left.
+const XORSHIFT_LEFT_A: u32 = 13;
+const XORSHIFT_RIGHT_B: u32 = 7;
+const XORSHIFT_LEFT_C: u32 = 17;
+/// How many high bits of the xorshift state become the unit fraction.
+const UNIT_FRACTION_BITS: u32 = 24;
+/// `1 << UNIT_FRACTION_BITS` — the divisor that turns those bits into `[0,1)`.
+const UNIT_FRACTION_SCALE: u32 = 1u32 << UNIT_FRACTION_BITS;
+/// Equal-jitter band: multiply the raw delay by `uniform[JITTER_LOW, 1.0)`.
+const JITTER_LOW: f64 = 0.5;
 
 /// A non-cryptographic seed, mixed with a per-process counter so two
 /// schedules created in the same coarse clock tick (a route loop spawning
@@ -128,11 +169,13 @@ fn random_seed() -> u64 {
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
         .unwrap_or(0);
-    // SplitMix-style avalanche of the tick ^ a montonically increasing counter.
-    let mut z = nanos ^ COUNTER.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
-    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-    z ^ (z >> 31)
+    // SplitMix64 avalanche of the tick ^ a monotonically increasing counter
+    // (Steele et al. 2014): a golden-ratio increment, then three shift-xor-
+    // multiply rounds.
+    let mut z = nanos ^ COUNTER.fetch_add(SPLITMIX_GOLDEN, Ordering::Relaxed);
+    z = (z ^ (z >> SPLITMIX_SHIFT_A)).wrapping_mul(SPLITMIX_MUL_A);
+    z = (z ^ (z >> SPLITMIX_SHIFT_B)).wrapping_mul(SPLITMIX_MUL_B);
+    z ^ (z >> SPLITMIX_SHIFT_C)
 }
 
 /// The highest attempt whose delay is worth iterating for. `backon`'s
