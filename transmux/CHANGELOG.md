@@ -527,21 +527,6 @@ GHSA-v965-v82c-2f8x. Upgrade if transmux parses or encrypts untrusted input.
   an encoder may put SPS and PPS in separate access units. Guarded by a
   complexity test that counts probes at the scan site and asserts they stay
   proportional to the input length.
-- **`uri` resolution is total over `&str`: no input panics.** `remove_dot_segments`
-  sliced at byte 1 to skip a leading `/`, which panicked on any multi-byte first
-  character — reachable straight from `resolve` with a non-ASCII relative
-  reference (`"g:é"`) or base. It walks character boundaries now, and every other
-  slice in the module is derived from a `find`/`rfind` result rather than a raw
-  byte offset. Covered by a path/query/fragment sweep of all 19 607 strings up to
-  length 5 over `["a", "/", ".", "é", "?", "#", ":"]` plus empty, very long, and
-  multi-byte-in-every-position cases (#1079).
-- **`uri` rejects a control character or whitespace in a resolved reference**
-  (`try_resolve`/`try_resolve_segment`, and `dash_parse`'s
-  `Mpd::try_resolve_segment_url`). A raw CR/LF in a URL has no meaning in
-  RFC 3986 and lets a manifest smuggle a second request line into anything that
-  later writes an HTTP request from the resolved value; a percent-encoded
-  `%0D%0A` is still allowed through, since that is data rather than structure
-  (#1079).
 - **`dash_parse::Mpd::parse` keeps `@duration` and `SegmentTimeline` exclusive in
   both directions.** A child `SegmentTemplate` that declares its own `@duration`
   used to inherit the parent's `SegmentTimeline` unconditionally, so the
@@ -695,9 +680,8 @@ GHSA-v965-v82c-2f8x. Upgrade if transmux parses or encrypts untrusted input.
   one, and an empty one no longer clears the value. `Mpd`/`Period`/
   `AdaptationSet`/`Representation` each report their own level's value
   (`Mpd::base_url` is new) and `Mpd::base_url_chain`/`Mpd::resolve_segment_url`
-  walk the chain, resolving each reference by RFC 3986 §5 (new `uri` module:
-  `parse`/`resolve`/`merge`/`remove_dot_segments`, verified against the
-  standard's own §5.4.1 and §5.4.2 example tables) (#1079).
+  walk the chain, resolving each reference against its parent (new `base_url` module,
+  `std` only, over the `url` crate) (#1079).
 - **`rtp::RtpDepacketiser` no longer fails the whole input on ordinary loss**
   (audit r04-W31). An FU-A continuation fragment with no preceding start fragment
   — a mid-stream capture, or one lost start packet — made every packet after it
@@ -1069,20 +1053,7 @@ GHSA-v965-v82c-2f8x. Upgrade if transmux parses or encrypts untrusted input.
   Carrying the IV across an *independent + dependent* syncframe pair has no
   independent oracle (`ORACLES.md` B3) — that case resets too and is labelled
   unverified.
-- **`uri` — RFC 3986 URI-reference parsing and resolution.** `UriReference::parse`
-  (§3) and `to_uri_string` (§5.3), `resolve` (§5.2.2), `merge` (§5.2.3),
-  `remove_dot_segments` (§5.2.4) and `resolve_segment` for a `BaseURL` chain.
-  `try_resolve`/`try_resolve_segment` are the same with a base or reference
-  containing a control character or whitespace **rejected** (`None`), since a
-  raw CR/LF in a URL has no meaning in RFC 3986 and lets a manifest smuggle a
-  second request line into anything that later writes an HTTP request from it;
-  `first_forbidden_char` is the predicate. Also exports the standard's own
-  §5.4.1 and §5.4.2 example tables (`RFC3986_NORMAL_EXAMPLES`,
-  `RFC3986_ABNORMAL_EXAMPLES`) as data, which the crate's tests assert against.
-  This is what `dash_parse::Mpd::resolve_segment_url` /
-  `try_resolve_segment_url` resolve through (#1079, audit r04-W11). The crate
-  root re-exports `resolve_uri_reference`, `resolve_uri_segment` and
-  `try_resolve_uri_reference`.
+- **`base_url` — URL-reference resolution for `BaseURL` chains** (`std` only, over the `url` crate, WHATWG `Url::join`): `resolve`, `resolve_chain`, `first_forbidden_char`, with crate-root `resolve_url_reference`/`resolve_base_url_chain`. A base or reference containing a control character or whitespace is rejected (`None`), since a raw CR/LF in a URL lets a manifest smuggle a second request line into anything that later writes an HTTP request from it. `dash_parse::Mpd::resolve_segment_url` (new; takes the MPD's own URL as `Option<&url::Url>` and returns `Option<String>`) and `Mpd::base_url_chain` resolve through it (#1079, audit r04-W11).
 - `ac3::split_ac3_syncframes_resyncing` and `ac3::split_ac3_syncframe_ranges` —
   frame splitting that resynchronises after an unparseable frame, returning byte
   ranges rather than slices (#1079, audit r04-W20).
@@ -1139,6 +1110,7 @@ per SPS), the three merge-by-decode-time loops (their tie-break rules differ), a
 rewrite of `cenc_decrypt`'s remaining box walker (#1081).
 
 ### Changed (breaking)
+- `transmux::Error` no longer derives `Eq` (now `PartialEq` only); code that required `Error: Eq` (e.g. as a `HashMap` key or in a generic `Eq` bound) must relax the bound.
 - **BREAKING: XML support now requires the `std` feature; hand-rolled XML replaced by `quick-xml`;
   `roxmltree`/the private tokenizer dropped.** `dash`, `dash_parse`, `smooth`, `smooth_parse`,
   `ll_dash::LlDashPackager` and `drm::{playready_wrmheader, playready_pro, playready_pssh}` are gated
@@ -1656,8 +1628,6 @@ rewrite of `cenc_decrypt`'s remaining box walker (#1081).
   inter-access-unit steps, capped at one second — so a single late access unit
   or an 8-second splice cannot become "the frame period" for the frames that
   follow.
-- `uri` module removed (`UriReference`, `resolve`, `merge`, `remove_dot_segments`, `resolve_segment`, `try_resolve*`, `first_forbidden_char` and the `RFC3986_*` tables, plus the crate-root `resolve_uri_reference`/`resolve_uri_segment`/`try_resolve_uri_reference`). Replaced by `base_url::{resolve, resolve_chain, first_forbidden_char}` over `url::Url` (`std` only; also `resolve_url_reference`/`resolve_base_url_chain` at the root). `Mpd::resolve_segment_url` now takes the MPD's own URL (`Option<&url::Url>`) as its first argument and returns `Option<String>`; `Mpd::try_resolve_segment_url` is removed. `BaseURL` entries are trimmed before the control-character guard (XML layout whitespace is harmless); an interior control character or space still yields `None`. Differences from the old resolver, each with an example: with no base a relative input still resolves to a contained relative result (`../../../etc/passwd` -> `etc/passwd`, as before; `%2e%2e/x` behaves like `../x`) and only an absolute-path reference the MPD wrote itself (`/x`) comes back absolute; an input naming the internal `transmux-relative:` scheme is `None`; the host is lower-cased and a default port dropped (`http://H:80/x` -> `http://h/x`); non-ASCII is percent-encoded (`é.m4s` -> `%C3%A9.m4s`); the `//g` network-path row serialises as `http://g/` and `http:g` against an `http` base resolves relatively (WHATWG, listed in `tests/base_url.rs`); a reference that does not parse is `None`.
-- `build_sdp_with_connection(IpAddr, Vec<sdp_types::Media>)` replaces the `&str` media-block parameter; RTP SDP generation is `std`-only (`RtpOutput::sdp` exists only with the `std` feature). The SDP bytes are identical (golden-tested). `sdp-types` 0.2 and `url` types appear in the public API.
 - DASH writer: `xs:duration` attributes are the shortest ISO 8601 form (`PT2.0S` -> `PT2S`, `PT0.0S` -> `PT0S`, `PT3.0S` -> `PT3S`, `PT90.0S` -> `PT1M30S`); equal durations, different bytes.
 - `dash_parse::parse_iso8601_duration` now checks the XML Schema 1.1 `xs:duration` lexical space (then converts with `jiff`) instead of hand-splitting. Every valid form representable as an unsigned `Duration` is accepted (including seconds fractions longer than nine digits, truncated to nanoseconds as before: `PT3.6666666666666665S`). Accept/reject changes vs the previous parser, with examples:
   - now rejected, were accepted: a unit with no digits (`PTS`, `PTHS`, `PTMS` read as zero), `PT.5S` (XSD needs a digit before the point), a `+` sign (`PT+1S`, `P+1D`), and magnitudes beyond `jiff`'s span limits (`PT999999999H`, `P999999999999D`: the old parser saturated; they are now `InvalidDuration`, never a panic).
