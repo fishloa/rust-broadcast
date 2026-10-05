@@ -37,7 +37,7 @@ pub fn redact_url(raw: &str) -> String {
 
 /// The masking-only fallback for a URL-shaped string the `url` parser rejects
 /// (redact.rs's documented contract: redaction must also work on a URL that
-/// "failed to parse in the first place"). This is a spec §9 documented
+/// "failed to parse in the first place"). This is spec §9.5 documented
 /// exception, allowlisted by name in the no-hand-roll guard.
 ///
 /// The credential prefix before the authority's `@` becomes `***@` and the
@@ -100,7 +100,7 @@ pub fn redact_destination(raw: &str) -> String {
 }
 
 /// The masking-only fallback for [`redact_destination`] on a URL the parser
-/// rejects (spec §9 documented exception, allowlisted by name in the guard).
+/// rejects (spec §9.5 documented exception, allowlisted by name in the guard).
 /// The whole authority — userinfo AND host — collapses to the single mask
 /// token, and anything after the authority (path, query, fragment) collapses
 /// to `/<redacted>`: neither the host nor the tail is reconstructed from the

@@ -25,7 +25,7 @@ use std::path::Path;
 /// (the previous file+needle allowlist let any new `find("://")` in `redact.rs`
 /// through).
 const ALLOW: &[(&str, &str, &str, &str)] = &[
-    // --- Redaction of a URL the `url` parser REJECTS (spec §9 documented
+    // --- Redaction of a URL the `url` parser REJECTS (spec §9.5 documented
     // exception): the masking-only fallbacks scan the raw text for the `://`
     // boundary and the `@`. They do NOT reconstruct a secret from the text
     // (behaviourally guarded in-file by
@@ -35,19 +35,19 @@ const ALLOW: &[(&str, &str, &str, &str)] = &[
         "redact.rs",
         "find(\"://\")",
         "let Some(scheme_end) = raw.find(\"://\") else {",
-        "redact.rs masking-only `://` boundary scan for an unparseable URL (spec §9)",
+        "redact.rs masking-only `://` boundary scan for an unparseable URL (spec §9.5)",
     ),
     (
         "redact.rs",
         "find(\"://\")",
         "if let Some(scheme_end) = url.find(\"://\") {",
-        "redact.rs `scrub_destination_secrets`: the `://` boundary of the URL being scrubbed from an error message",
+        "redact.rs `scrub_destination_secrets`: the `://` boundary of the URL being scrubbed from an error message (spec §9.5)",
     ),
     (
         "redact.rs",
         "rfind('@')",
         "let Some(at) = authority.rfind('@') else {",
-        "redact.rs masking-only fallback: locate the credential's `@` boundary (spec §9)",
+        "redact.rs masking-only fallback: locate the credential's `@` boundary (spec §9.5)",
     ),
     (
         "redact.rs",
@@ -67,15 +67,16 @@ const ALLOW: &[(&str, &str, &str, &str)] = &[
         "if let Some((userinfo, _host)) = authority.rsplit_once('@') {",
         "`split_once('@')` is a substring of this `rsplit_once('@')` line (same scrub site)",
     ),
-    // --- SRT query split stays manual (W2b-1 Task 2): a Haivision
-    // `streamid=#!::r=...` value contains a `#` that `url`'s `query_pairs()`
-    // would cut as a fragment delimiter. Only the AUTHORITY parse moved to the
-    // `url` crate; the scheme prefix is stripped here before `split_once('?')`.
+    // --- SRT query split stays manual (spec §9.6 documented exception): a
+    // Haivision `streamid=#!::r=...` value contains an unencoded `#` that
+    // `url`'s `query_pairs()` cuts as a fragment delimiter (verified against
+    // url 2.5.8). Only the AUTHORITY parse moved to the `url` crate; the scheme
+    // prefix is stripped here before `split_once('?')`.
     (
         "push/srt.rs",
         "strip_prefix(\"srt://\")",
         "let stripped = url.strip_prefix(\"srt://\").unwrap_or(url);",
-        "push/srt.rs: the query split stays manual (Haivision streamid `#`)",
+        "push/srt.rs: the query split stays manual (Haivision streamid `#`, spec §9.6)",
     ),
 ];
 

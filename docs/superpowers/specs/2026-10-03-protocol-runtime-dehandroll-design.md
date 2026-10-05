@@ -443,7 +443,38 @@ broadcast-common is **not** breaking (`hex` delegates). Each wave updates
    (line-pinned). Test vectors: every Transport/Session example in
    `docs/rfc2326.md`, the probe inputs, interop shapes, malformed-value errors,
    and a fuzz target (`rtsp_headers`) asserting the round-trip invariants.
-5. Anything the plan finds infeasible is escalated to the owner, never
+5. **multimux redaction fallback** (`multimux/src/redact.rs`), the
+   masking-only scrub for a URL-shaped string the `url` parser REJECTS. A
+   crate cannot do this: the whole point is that the string is not a URL, so
+   there is nothing to hand to a parser — `Url::parse` returns `Err` and the
+   URL already failed to parse at connect time (the common case for the
+   connect-time error messages this exists to sanitize). The fallback
+   therefore scans the raw text for the `://` boundary and the `@`, and only
+   ever MASK the credential prefix (`redact.rs:50,111`, `:134`); the host and
+   path are not secrets and stay legible. `redact_url` uses `url`'s
+   `set_username`/`set_password` whenever parsing succeeds, so an IPv6 host
+   stays bracketed and every component is handled per RFC 3986; the fallback
+   is reached only when that fails. Test vectors: `redact.rs`'s own tests for
+   both paths, including the behaviourally-guarded
+   `masking_fallbacks_do_not_reconstruct_a_secret` (a host/substring present
+   in the low-entropy input must never be reconstructed from the raw text).
+   The lexical guard line-pins all four sites by name.
+6. **SRT query split** (`multimux/src/push/srt.rs`), which does NOT use
+   `url`'s `query_pairs()` for the query portion of an opaque `srt://` URL.
+   Verified against the `url` crate (2.5.8): a Haivision
+   `streamid=#!::r=stream,m=publish` value contains an unencoded `#`, and
+   `url` treats everything from that `#` on as the fragment — `query_pairs()`
+   yields `("streamid", "")` and the real `streamid` moves to the fragment,
+   cutting the value short. `srt-runtime`'s `as_stream_id` reads the ID from
+   the handshake extension block and is opaque (it never parses a URL), so no
+   crate in the workspace covers this form; `percent-encoding` alone decodes
+   but does not split. The split is therefore manual (`strip_prefix("srt://")`
+   + `split_once('?')`, `srt.rs:79-80`), while the AUTHORITY is still parsed by
+   `url::Url::parse` (`srt.rs:144`) so IPv6 bracketing is the parser's job.
+   Test vectors: `srt.rs`'s `parse_srt_url_for_test` cases, including the
+   unencoded-`#` Haivision form and the percent-encoded (`%23`) form. The
+   lexical guard line-pins the `strip_prefix("srt://")` site by name.
+7. Anything the plan finds infeasible is escalated to the owner, never
    silently kept.
 
 ## 10. Risks

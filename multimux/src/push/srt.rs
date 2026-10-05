@@ -62,8 +62,10 @@ pub struct SrtUrlOverrides {
 /// The query is split off **manually** (first `?`), not via `url`'s
 /// `query_pairs()`, because a Haivision `streamid=#!::r=…` value contains a
 /// `#` that a `Url` parser treats as a fragment delimiter, cutting the value
-/// short unless it is percent-encoded. Splitting on the raw string keeps the
-/// whole value.
+/// short unless it is percent-encoded (verified against `url` 2.5.8:
+/// `query_pairs()` yields `("streamid", "")` and the real value moves to the
+/// fragment). Splitting on the raw string keeps the whole value. This is spec
+/// §9.6 documented exception; the lexical guard allowlists the site by name.
 ///
 /// Recognised keys: `streamid` (opaque, passed to the handshake) and `latency`
 /// (milliseconds, `0..=MAX_SRT_LATENCY_MS`; an out-of-range or unparseable
