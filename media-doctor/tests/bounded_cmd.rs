@@ -4,8 +4,7 @@
 //! runner returns as soon as the tool itself exits.
 #![cfg(unix)]
 
-#[path = "support/bounded.rs"]
-mod bounded;
+use test_bounded::output_bounded;
 
 use std::os::unix::fs::PermissionsExt;
 use std::path::PathBuf;
@@ -53,7 +52,7 @@ fn pipe_based_output_hangs_on_a_pipe_holding_grandchild() {
 fn bounded_runner_returns_despite_pipe_holding_grandchild() {
     let tool = leaky_stub();
     let start = Instant::now();
-    let out = bounded::output_bounded(&mut Command::new(&tool), DEADLINE).expect("run");
+    let out = output_bounded(&mut Command::new(&tool), DEADLINE).expect("run");
     assert!(out.status.success());
     assert_eq!(out.stdout, b"hello\n");
     assert!(
@@ -67,7 +66,7 @@ fn bounded_runner_returns_despite_pipe_holding_grandchild() {
 fn bounded_runner_kills_an_overrunning_tool_with_a_clear_error() {
     let tool = stub("slow-tool", "exec sleep 30");
     let start = Instant::now();
-    let err = bounded::output_bounded(&mut Command::new(&tool), Duration::from_millis(300))
+    let err = output_bounded(&mut Command::new(&tool), Duration::from_millis(300))
         .expect_err("must time out");
     assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
     assert!(err.to_string().contains("slow-tool"), "{err}");

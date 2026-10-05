@@ -33,8 +33,7 @@ use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-#[path = "support/bounded.rs"]
-mod bounded;
+use test_bounded::output_bounded;
 
 /// Hard deadline for a `--version`/`-version` availability probe.
 const PROBE_DEADLINE: Duration = Duration::from_secs(10);
@@ -73,7 +72,7 @@ fn scratch_dir(name: &str) -> PathBuf {
 /// Run an availability probe; a probe that hangs panics loudly rather than
 /// reading as "tool absent" (a silent skip is worse than no oracle).
 fn probe_ok(bin: &str, arg: &str) -> bool {
-    match bounded::output_bounded(Command::new(bin).arg(arg), PROBE_DEADLINE) {
+    match output_bounded(Command::new(bin).arg(arg), PROBE_DEADLINE) {
         Ok(o) => o.status.success(),
         Err(e) if e.kind() == std::io::ErrorKind::TimedOut => panic!("{e}"),
         Err(_) => false,
@@ -241,7 +240,7 @@ impl Drop for MediaMtx {
 /// connected) so a regression that makes the stream unreadable fails fast
 /// rather than hanging. Returns `(success, stdout, stderr)`.
 fn ffprobe_read(url: &str) -> (bool, String, String) {
-    let out = bounded::output_bounded(
+    let out = output_bounded(
         Command::new("ffprobe")
             .args([
                 "-v",

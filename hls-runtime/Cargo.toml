@@ -74,6 +74,9 @@ tokio = ["std", "dep:tokio", "dep:reqwest", "dep:broadcast-auth", "dep:backon", 
 # Loopback mock HTTP servers for `tests/tokio_client_auth.rs` (tokio is
 # already a dependency; these are features only).
 tokio             = { version = "1", features = ["net", "io-util", "rt", "macros", "time", "test-util"] }
-# Bounded child-process waits for the CLI-driven tests (SP7) and axum test origins.
-wait-timeout      = "0.2"
+# Bounded child-process waits for the CLI-driven tests (SP7). The runner
+# itself lives in the shared `test-bounded` crate (one copy, not the three
+# byte-identical `tests/support/bounded.rs` files it replaced); this is a
+# path-only dev-dep, so it never reaches a published manifest.
+test-bounded      = { path = "../test-bounded" }
 axum              = "0.8"

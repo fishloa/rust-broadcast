@@ -27,8 +27,7 @@ use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
 
-#[path = "support/bounded.rs"]
-mod bounded;
+use test_bounded::output_bounded;
 
 /// The validator's own `-t` timeout, seconds.
 const VALIDATOR_TIMEOUT_SECS: u64 = 3;
@@ -725,7 +724,7 @@ fn validator_unavailable() -> Option<&'static str> {
     if !cfg!(target_os = "macos") {
         return Some("`mediastreamvalidator` is macOS-only and this is not macOS");
     }
-    let present = match bounded::output_bounded(
+    let present = match output_bounded(
         Command::new("mediastreamvalidator").arg("--version"),
         PROBE_DEADLINE,
     ) {
@@ -749,7 +748,7 @@ fn scratch(name: &str) -> PathBuf {
 /// level 1) messages it reports, anywhere in its JSON.
 fn validator_errors(dir: &Path, entry: &str, extra: &[&str]) -> Vec<String> {
     let out = dir.join("out.json");
-    let status = bounded::output_bounded(
+    let status = output_bounded(
         Command::new("mediastreamvalidator")
             .current_dir(dir)
             .args(extra)

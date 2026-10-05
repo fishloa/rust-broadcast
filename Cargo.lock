@@ -1567,13 +1567,13 @@ dependencies = [
  "media-plane",
  "reqwest",
  "serde",
+ "test-bounded",
  "thiserror 2.0.21",
  "timed-metadata",
  "tokio",
  "tokio-util",
  "transmux",
  "url",
- "wait-timeout",
 ]
 
 [[package]]
@@ -2170,12 +2170,12 @@ dependencies = [
  "serde_json",
  "socket2",
  "ssai-runtime",
+ "test-bounded",
  "thiserror 2.0.21",
  "timed-metadata",
  "tokio",
  "tokio-util",
  "transmux",
- "wait-timeout",
 ]
 
 [[package]]
@@ -2368,6 +2368,7 @@ dependencies = [
  "serde_json",
  "socket2",
  "srt-runtime",
+ "test-bounded",
  "thiserror 2.0.21",
  "timed-metadata",
  "tokio",
@@ -2378,7 +2379,6 @@ dependencies = [
  "tracing",
  "transmux",
  "url",
- "wait-timeout",
  "webrtc-runtime",
 ]
 
@@ -3942,6 +3942,13 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.119",
+]
+
+[[package]]
+name = "test-bounded"
+version = "0.1.0"
+dependencies = [
+ "wait-timeout",
 ]
 
 [[package]]

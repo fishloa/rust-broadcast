@@ -83,8 +83,7 @@ use broadcast_hls::{
 use serde_json::Value;
 use transmux::cli::{Opts, Output, OutputFormat, run_bytes};
 
-#[path = "support/bounded.rs"]
-mod bounded;
+use test_bounded::output_bounded;
 
 /// Hard deadline for a `--version` availability probe.
 const PROBE_DEADLINE: Duration = Duration::from_secs(10);
@@ -116,7 +115,7 @@ fn scratch_dir(name: &str) -> PathBuf {
 // ── External-tool availability gate ─────────────────────────────────────────
 
 fn validator_available() -> bool {
-    match bounded::output_bounded(
+    match output_bounded(
         Command::new("mediastreamvalidator").arg("--version"),
         PROBE_DEADLINE,
     ) {
@@ -217,7 +216,7 @@ fn run_validator(dir: &Path, entry: &str, parse_only: bool, timeout_secs: u32) -
         .arg("-O")
         .arg(&out_json)
         .arg(entry);
-    let out = bounded::output_bounded(
+    let out = output_bounded(
         &mut cmd,
         Duration::from_secs(u64::from(timeout_secs)) + VALIDATOR_MARGIN,
     )

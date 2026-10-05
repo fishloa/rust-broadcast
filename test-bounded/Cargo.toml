@@ -1,0 +1,12 @@
+[package]
+name = "test-bounded"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+publish = false
+description = "Deadline-bounded external-tool runner shared by workspace test suites (unpublished)."
+
+[dependencies]
+wait-timeout = "0.2"

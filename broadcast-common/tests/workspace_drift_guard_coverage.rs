@@ -40,6 +40,10 @@ const LABEL_COVERAGE_EXEMPT: &[(&str, &str)] = &[
         "dvb-csa",
         "only public enum is Error (exempt from #204 labels)",
     ),
+    (
+        "test-bounded",
+        "no public enums in src/ (the shared deadline-bounded test runner, one fn)",
+    ),
 ];
 
 /// Library crates exempt from `tests/non_exhaustive_coverage.rs`, with a
@@ -53,6 +57,10 @@ const NON_EXHAUSTIVE_EXEMPT: &[(&str, &str)] = &[
     (
         "dvb-csa",
         "only public enum is Error (exempt from #[non_exhaustive] guard)",
+    ),
+    (
+        "test-bounded",
+        "no public enums in src/ (the shared deadline-bounded test runner, one fn)",
     ),
 ];
 

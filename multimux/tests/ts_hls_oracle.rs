@@ -28,8 +28,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
-#[path = "support/bounded.rs"]
-mod bounded;
+use test_bounded::output_bounded;
 
 /// Hard deadline for a `--version`/`-version` availability probe.
 const PROBE_DEADLINE: Duration = Duration::from_secs(10);
@@ -67,7 +66,7 @@ fn which(bin: &str) -> Option<PathBuf> {
 
 fn have_oracle(bin: &str) -> bool {
     let probe = |arg: &str| {
-        bounded::output_bounded(Command::new(bin).arg(arg), PROBE_DEADLINE).inspect_err(|e| {
+        output_bounded(Command::new(bin).arg(arg), PROBE_DEADLINE).inspect_err(|e| {
             assert!(e.kind() != std::io::ErrorKind::TimedOut, "{e}");
         })
     };
@@ -277,7 +276,7 @@ async fn ffprobe_recognises_served_segment_as_mpegts() {
         .expect("segment body");
     std::fs::write(dir.join(&seg_uri), &seg_bytes).expect("write segment");
 
-    let out = bounded::output_bounded(
+    let out = output_bounded(
         Command::new("ffprobe")
             .args([
                 "-hide_banner",
@@ -342,7 +341,7 @@ async fn mediastreamvalidator_accepts_served_ts_hls_playlist() {
     }
 
     let json_path = dir.join("report.json");
-    let out = bounded::output_bounded(
+    let out = output_bounded(
         Command::new(&validator)
             .args([
                 "--parse-playlist-only",

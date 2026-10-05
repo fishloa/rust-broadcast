@@ -8,6 +8,13 @@
 //! stderr to temp FILES (no pipe to hold open), waits for the child with
 //! `wait_timeout` against a hard deadline (no poll loop, no sleeping), and
 //! kills the child on overrun with a clear error.
+//!
+//! This is the ONE copy: `hls-runtime`, `multimux` and `media-doctor` (and
+//! `compliance-probe`-adjacent suites) used to carry byte-identical
+//! `tests/support/bounded.rs` copies. They now dev-depend on this unpublished
+//! crate instead (de-hand-roll W3, spec §7 SP7.3). It is `publish = false`
+//! and takes no workspace-sibling deps, so a path-only dev-dependency on it
+//! never appears in a published manifest.
 
 use std::fs::{self, File};
 use std::io;

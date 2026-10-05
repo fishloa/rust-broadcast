@@ -322,10 +322,12 @@ rtp-packet       = { path = "../rtp-packet", version = "0.4", default-features =
 # construction). Already a transitive dep via `webrtc-runtime/media` at the
 # locked version, so this adds no new lock entry.
 rtc-dtls         = "0.21"
-# `ChildExt::wait_timeout` for `tests/support/bounded.rs` (SP7.3): the
-# deadline-bounded external-tool runner, replacing its `try_wait` +
-# `thread::sleep` poll loop (matching hls-runtime/media-doctor's copies).
-wait-timeout     = "0.2"
+# `output_bounded`: the deadline-bounded external-tool runner (SP7.3). The
+# runner itself lives in the shared `test-bounded` crate (one copy across
+# hls-runtime/multimux/media-doctor, not three byte-identical
+# `tests/support/bounded.rs` files); this is a path-only dev-dep, so it never
+# reaches a published manifest.
+test-bounded     = { path = "../test-bounded" }
 # A dependency on ourselves, enabling the tiny `test-seams` feature for every
 # test build. Without it a plain `cargo test -p multimux` (default features)
 # would fail to compile any test that uses `Config::prebound`, silently

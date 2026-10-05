@@ -462,11 +462,6 @@ fn parse_seg_filename(file: &str, ext: &str) -> Option<u32> {
         .ok()
 }
 
-/// Deadline-bounded external-tool runner shared with `tests/` (see its docs).
-#[cfg(test)]
-#[path = "../../tests/support/bounded.rs"]
-mod bounded_cmd;
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1134,7 +1129,7 @@ mod tests {
     // --- independent oracle: Apple's `mediastreamvalidator` over the served
     //     catch-up playlist and the files it names ---
 
-    use super::bounded_cmd as bounded;
+    use test_bounded::output_bounded;
 
     /// Hard deadline for the `--version` availability probe.
     const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
@@ -1147,7 +1142,7 @@ mod tests {
         if !cfg!(target_os = "macos") {
             return Some("`mediastreamvalidator` is macOS-only and this is not macOS");
         }
-        let present = match bounded::output_bounded(
+        let present = match output_bounded(
             std::process::Command::new("mediastreamvalidator").arg("--version"),
             PROBE_DEADLINE,
         ) {
@@ -1161,7 +1156,7 @@ mod tests {
     /// MUST-level (requirement level 1) findings in the validator's JSON.
     fn validator_errors(dir: &std::path::Path, entry: &str) -> Vec<String> {
         let out = dir.join("out.json");
-        let status = bounded::output_bounded(
+        let status = output_bounded(
             std::process::Command::new("mediastreamvalidator")
                 .current_dir(dir)
                 .args(["--quiet", "-t", &VALIDATOR_TIMEOUT_SECS.to_string(), "-O"])
