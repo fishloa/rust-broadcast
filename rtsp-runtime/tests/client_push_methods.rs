@@ -239,7 +239,10 @@ async fn a_send_only_pusher_still_emits_a_get_parameter_keepalive() {
     .await
     .unwrap();
     let frame = read_one_interleaved(&mut peer).await;
-    assert_eq!(frame, b"frame", "the post-keepalive frame must reach the peer");
+    assert_eq!(
+        frame, b"frame",
+        "the post-keepalive frame must reach the peer"
+    );
 }
 
 /// Read one interleaved frame (`$` + channel + big-endian length + payload) off
@@ -330,7 +333,9 @@ async fn a_454_keepalive_response_is_surfaced_not_discarded() {
 async fn answer_next(peer: &mut tokio::io::DuplexStream, extra_headers: Option<&str>) {
     let (head, _body) = read_one_request(peer).await;
     let cseq = header_of(&head, "cseq");
-    let extra = extra_headers.map(|h| format!("{h}\r\n")).unwrap_or_default();
+    let extra = extra_headers
+        .map(|h| format!("{h}\r\n"))
+        .unwrap_or_default();
     peer.write_all(format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n{extra}\r\n").as_bytes())
         .await
         .unwrap();
@@ -410,7 +415,8 @@ async fn a_flooding_peer_does_not_starve_the_send() {
     let mut client = AsyncRtspClient::connect(addr).await.unwrap();
     // `send_interleaved` drains inbound first; against a peer that never stops
     // writing it must still return promptly (the drain is capped per call).
-    let sent = tokio::time::timeout(Duration::from_secs(5), client.send_interleaved(0, b"ping")).await;
+    let sent =
+        tokio::time::timeout(Duration::from_secs(5), client.send_interleaved(0, b"ping")).await;
     assert!(
         sent.is_ok(),
         "send_interleaved must return even while the peer floods interleaved frames"

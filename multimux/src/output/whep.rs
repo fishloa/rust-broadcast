@@ -1854,7 +1854,10 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             .await
             .expect("the route must still serve on its own address after a poisoned lock");
         use tokio::io::AsyncWriteExt as _;
-        stream.write_all(b"GET /whep HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n").await.ok();
+        stream
+            .write_all(b"GET /whep HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n")
+            .await
+            .ok();
         cancel.cancel();
         let joined = tokio::time::timeout(Duration::from_secs(2), handle).await;
         assert!(

@@ -1420,15 +1420,13 @@ async fn a_failed_reload_rolls_back_and_leaves_no_bound_port() {
         }) as InputFactory,
     );
 
-    let server = tokio::spawn(
-        multimux::serve_config_file_with_registry_on_admin_prebound(
-            media_listener,
-            admin_listener,
-            config_path.clone(),
-            registry,
-            prebound,
-        ),
-    );
+    let server = tokio::spawn(multimux::serve_config_file_with_registry_on_admin_prebound(
+        media_listener,
+        admin_listener,
+        config_path.clone(),
+        registry,
+        prebound,
+    ));
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
     wait_until_live(&client, media_addr, "wide").await;
@@ -1541,15 +1539,13 @@ async fn reloading_a_route_drains_the_displaced_runtime() {
     )
     .expect("write config");
 
-    let server = tokio::spawn(
-        multimux::serve_config_file_with_registry_on_admin_prebound(
-            media_listener,
-            admin_listener,
-            config_path.clone(),
-            instant_registry(),
-            prebound,
-        ),
-    );
+    let server = tokio::spawn(multimux::serve_config_file_with_registry_on_admin_prebound(
+        media_listener,
+        admin_listener,
+        config_path.clone(),
+        instant_registry(),
+        prebound,
+    ));
     wait_for_port(admin_addr).await;
     let client = reqwest::Client::new();
 

@@ -579,14 +579,23 @@ mod tests {
         let ours_file = std::fs::read_to_string(dir.join(file)).expect("read our frac golden");
         let main = std::fs::read_to_string(dir.join("dash_mpd_frac_main.golden"))
             .expect("read main's frac golden");
-        assert_eq!(ours, ours_file, "the live render must match our frac golden");
-        assert_ne!(ours, main, "the jiff spelling must differ from main's raw f64");
+        assert_eq!(
+            ours, ours_file,
+            "the live render must match our frac golden"
+        );
+        assert_ne!(
+            ours, main,
+            "the jiff spelling must differ from main's raw f64"
+        );
         assert!(
             main.contains("timeShiftBufferDepth=\"PT0.30000000000000004S\""),
             "main's frac golden must carry the raw f64 depth: {main}"
         );
         assert_eq!(
-            ours.replace("timeShiftBufferDepth=\"PT0.3S\"", "timeShiftBufferDepth=\"PT0.30000000000000004S\""),
+            ours.replace(
+                "timeShiftBufferDepth=\"PT0.3S\"",
+                "timeShiftBufferDepth=\"PT0.30000000000000004S\""
+            ),
             main,
             "our fractional MPD must differ from main's by ONLY PT0.30000000000000004S -> PT0.3S"
         );
