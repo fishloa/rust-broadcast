@@ -379,14 +379,9 @@ async fn close_twice_sends_exactly_one_teardown() {
 
     let mut teardowns = 0usize;
     let deadline = tokio::time::Instant::now() + GUARD;
-    loop {
-        match tokio::time::timeout_at(deadline, rx.recv()).await {
-            Ok(Some(m)) => {
-                if m == "TEARDOWN" {
-                    teardowns += 1;
-                }
-            }
-            Ok(None) | Err(_) => break,
+    while let Ok(Some(m)) = tokio::time::timeout_at(deadline, rx.recv()).await {
+        if m == "TEARDOWN" {
+            teardowns += 1;
         }
     }
     assert_eq!(teardowns, 1, "close() twice must send exactly one TEARDOWN");
