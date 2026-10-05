@@ -768,22 +768,28 @@ mod tests {
     }
 
     /// SP1.5: `backoff_for` is the doubling series from index 0
-    /// (1s, 2s, 4s, … capped at 30s), now jittered by `backon`. The band
-    /// holds exactly; the raw series saturating at the cap makes the tail
-    /// exactly the cap (jitter clamped back).
+    /// (1s, 2s, 4s, … capped at 30s), now equal-jittered. The band holds
+    /// across every attempt, and the saturated tail stays jittered in
+    /// `[cap/2, cap)` rather than collapsing to the cap.
     #[test]
     fn backoff_doubles_each_attempt_capped_at_max() {
         let eng = ReconnectEngine::new(policy(None));
         for attempt in 0..40u32 {
             let d = eng.policy.backoff_for(attempt);
             assert!(
-                d >= Duration::from_millis(1_000) && d <= Duration::from_millis(30_000),
-                "attempt {attempt}: {d:?} escaped [1s, 30s]"
+                d >= Duration::from_millis(500) && d < Duration::from_millis(30_000),
+                "attempt {attempt}: {d:?} escaped [0.5s, 30s)"
             );
         }
-        // Capped at max_backoff_ms (30s here).
-        assert_eq!(eng.policy.backoff_for(20), Duration::from_millis(30_000));
-        assert_eq!(eng.policy.backoff_for(30), Duration::from_millis(30_000));
+        // C2: at the cap the delay stays equal-jittered in [15s, 30s), never
+        // a single constant (add-only jitter would collapse it to 30s).
+        for _ in 0..40 {
+            let d = eng.policy.backoff_for(20);
+            assert!(
+                d >= Duration::from_millis(15_000) && d < Duration::from_millis(30_000),
+                "capped backoff {d:?} must stay jittered in [15s, 30s)"
+            );
+        }
     }
 
     #[test]

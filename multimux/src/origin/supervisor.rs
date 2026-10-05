@@ -391,9 +391,9 @@ mod tests {
     /// series repeated `next()` calls produce, and stays total on hostile
     /// parameters instead of panicking in `Duration` arithmetic.
     ///
-    /// SP1.5: the schedule is jittered (`backon`), so the two views are
-    /// compared through ONE seeded schedule and the assertions are bands
-    /// within `[min, cap]` rather than exact values — the exact series is
+    /// SP1.5: the schedule is equal-jittered, so the two views are compared
+    /// through ONE seeded schedule and the assertions are bands within
+    /// `[min/2, cap)` rather than exact values — the exact series is
     /// `multimux/tests/reconnect_policy.rs`'s job, on a seeded schedule.
     #[test]
     fn delay_for_attempt_matches_repeated_next_and_is_total() {
@@ -406,39 +406,40 @@ mod tests {
                 "attempt {attempt}"
             );
         }
-        // Every attempt stays within the configured band.
+        // Every attempt stays within the configured band `[min/2, cap)`.
         for attempt in 0..40u32 {
             let d = backoff.delay_for_attempt(attempt);
             assert!(
-                d >= Duration::from_millis(500) && d <= Duration::from_secs(30),
-                "attempt {attempt}: {d:?} escaped [500ms, 30s]"
+                d >= Duration::from_millis(250) && d < Duration::from_secs(30),
+                "attempt {attempt}: {d:?} escaped [250ms, 30s)"
             );
         }
         // Hostile factors never panic and never exceed the cap.
         for factor in [f64::NAN, f64::INFINITY, f64::NEG_INFINITY, -2.0, 1e300] {
             let hostile = Backoff::new(Duration::from_secs(1), Duration::from_secs(60), factor);
             for attempt in [0u32, 1, 30, u32::MAX] {
-                assert!(hostile.delay_for_attempt(attempt) <= Duration::from_secs(60));
+                assert!(hostile.delay_for_attempt(attempt) < Duration::from_secs(60));
             }
         }
-        // A minimum above the cap is clamped to it.
+        // A minimum above the cap is clamped to it at the raw level, so the
+        // equal-jittered result stays below the cap.
         let inverted = Backoff::new(Duration::from_secs(90), Duration::from_secs(60), 2.0);
-        assert_eq!(inverted.delay_for_attempt(0), Duration::from_secs(60));
+        assert!(inverted.delay_for_attempt(0) < Duration::from_secs(60));
     }
 
-    /// SP1.5: the underlying schedule is deterministic under a fixed seed
-    /// and every view of it (stateless and stepped) agrees — the property the
-    /// hand-rolled `powi` series had to hand-maintain (audit r07-O1).
+    /// SP1.5/C2: the underlying schedule is deterministic under a fixed seed
+    /// and the cap is answered without stepping a four-billion-item iterator,
+    /// while staying below the cap (equal jitter).
     #[test]
     fn the_underlying_schedule_is_deterministic_under_a_seed() {
         let bl = Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0);
         // A huge attempt is answered from the cap, not by stepping a
-        // four-billion-item iterator.
-        assert_eq!(bl.delay_for_attempt(u32::MAX), Duration::from_secs(30));
-        assert_eq!(bl.delay_for_attempt(6), Duration::from_secs(30));
-        // The floor is honoured on attempt 0 (jitter only adds to it).
-        assert!(bl.delay_for_attempt(0) >= Duration::from_millis(500));
-        assert!(bl.delay_for_attempt(0) < Duration::from_secs(1));
+        // four-billion-item iterator, and stays jittered below it.
+        assert!(bl.delay_for_attempt(u32::MAX) < Duration::from_secs(30));
+        assert!(bl.delay_for_attempt(6) < Duration::from_secs(30));
+        // The floor is honoured on attempt 0 (equal jitter: `[min/2, min)`).
+        assert!(bl.delay_for_attempt(0) >= Duration::from_millis(250));
+        assert!(bl.delay_for_attempt(0) < Duration::from_millis(500));
     }
 
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -473,18 +474,23 @@ mod tests {
         for i in 0..8 {
             let d = b.next();
             assert!(
-                d >= Duration::from_millis(10) && d <= Duration::from_millis(100),
-                "step {i}: {d:?} escaped [10ms, 100ms]"
+                d >= Duration::from_millis(5) && d < Duration::from_millis(100),
+                "step {i}: {d:?} escaped [min/2, cap)"
             );
         }
-        // The raw series saturates at the cap, so the last steps are exactly
-        // the cap (jitter clamped back).
-        assert_eq!(b.next(), Duration::from_millis(100), "stays capped");
-        assert_eq!(b.next(), Duration::from_millis(100), "stays capped");
+        // C2: at the cap the delay stays equal-jittered inside `[max/2, max)`,
+        // never exactly `max` (add-only jitter would collapse it to the cap).
+        for _ in 0..8 {
+            let d = b.next();
+            assert!(
+                d >= Duration::from_millis(50) && d < Duration::from_millis(100),
+                "capped step {d:?} must stay jittered in [50ms, 100ms)"
+            );
+        }
     }
 
     /// A reset restarts the series at the floor (the raw delay returns to
-    /// `min`, so the jittered delay is back under `2 * min`).
+    /// `min`, so the equal-jittered delay is back under `min`).
     #[test]
     fn backoff_reset_returns_to_min() {
         let mut b = Backoff::new(Duration::from_millis(10), Duration::from_millis(100), 2.0);
@@ -493,8 +499,8 @@ mod tests {
         b.reset();
         let after = b.next();
         assert!(
-            after >= Duration::from_millis(10) && after < Duration::from_millis(20),
-            "back to min after reset (jittered): got {after:?}"
+            after >= Duration::from_millis(5) && after < Duration::from_millis(10),
+            "back to min after reset (equal-jittered): got {after:?}"
         );
     }
 

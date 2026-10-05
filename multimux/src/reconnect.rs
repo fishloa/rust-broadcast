@@ -1,32 +1,50 @@
 //! One reconnect schedule for every multimux retry, backed by `backon`
-//! (SP1.5). Two verified `backon` 1.6.0 facts shape this wrapper
+//! (SP1.5). Verified `backon` 1.6.0 facts that shape this wrapper
 //! (`backon/src/backoff/exponential.rs`):
 //!
 //! 1. `ExponentialBuilder::new()` defaults `max_times: Some(3)` — an
 //!    un-overridden builder stops yielding after 3 attempts, so every
 //!    schedule here sets `without_max_times()` and applies its own bound.
-//! 2. Jitter is ADDED after `backon`'s internal max-delay clamp
-//!    (`tmp_cur.saturating_add(tmp_cur.mul_f32(rng.f32()))`), so a jittered
-//!    delay can exceed `max_delay`; this wrapper re-clamps with `.min(max)`
-//!    for a hard cap.
+//! 2. `backon`'s built-in jitter is **add-only and applied after its own
+//!    max-delay clamp** (`tmp_cur.saturating_add(tmp_cur.mul_f32(rng.f32()))`),
+//!    so at the cap it produces `[max, 2*max)` clamped back to exactly `max`
+//!    — i.e. **zero jitter in steady state**, which is where a long outage
+//!    lives. This wrapper therefore disables `backon`'s jitter and applies
+//!    its own **equal jitter** to the raw capped series.
+//!
+//! # Equal jitter
+//!
+//! For a raw delay `raw` (the capped exponential), the returned delay is
+//! `raw * uniform[0.5, 1.0)`. This keeps a non-degenerate spread at *every*
+//! attempt, including the cap (`[max/2, max)`), so a fleet of routes pointed
+//! at one dead server never retries in lockstep — the thundering herd SP1.5
+//! exists to remove. It also never exceeds `max`, so no re-clamp is needed.
 //!
 //! Callers apply the returned [`Duration`] themselves (`tokio::time::sleep`
 //! at the retry site), which is why `backon`'s own `tokio-sleep` feature is
 //! off: a schedule is timing policy, not an executor.
 
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use backon::BackoffBuilder as _;
 
-/// A capped, jittered exponential retry schedule.
+/// A capped, equal-jittered exponential retry schedule.
 ///
 /// `delay_for_attempt(0)` is the delay before the FIRST retry. The raw series
-/// is `min * factor^attempt`, capped at `max`; a random jitter of up to the
-/// pre-jitter delay is then added, and the result is clamped back to `max`.
+/// is `min * factor^attempt`, capped at `max`; the returned delay is
+/// `raw * uniform[0.5, 1.0)`, so it is always in `[raw/2, raw)` and therefore
+/// within `[min/2, max)`.
 #[derive(Debug, Clone)]
 pub struct ReconnectSchedule {
+    /// Produces the *raw* capped series (jitter disabled).
     builder: backon::ExponentialBuilder,
+    min: Duration,
     max: Duration,
+    /// Per-schedule jitter state: a 64-bit xorshift seeded from the caller's
+    /// seed (see [`random_seed`]). Cheap, dependency-free, and repr-independent
+    /// of `backon`'s own RNG.
+    rng: std::cell::Cell<u64>,
 }
 
 impl ReconnectSchedule {
@@ -38,17 +56,19 @@ impl ReconnectSchedule {
     /// A schedule with an explicit jitter seed (deterministic for tests).
     pub fn from_parts_seeded(min: Duration, max: Duration, factor: f64, seed: u64) -> Self {
         Self {
-            // `with_jitter()` is REQUIRED: `backon` 1.6.0's builder defaults
-            // `jitter: false` and `with_jitter_seed` only seeds the rng — it
-            // does not enable jitter.
+            // Jitter is DISABLED here — this wrapper applies equal jitter
+            // itself (see the module doc); `backon` is used only for its raw
+            // capped exponential series and its `without_max_times` flag.
             builder: backon::ExponentialBuilder::new()
-                .with_jitter()
-                .with_jitter_seed(seed)
                 .with_factor(factor as f32)
                 .with_min_delay(min)
                 .with_max_delay(max)
                 .without_max_times(),
+            min,
             max,
+            // A zero seed would make xorshift a fixed point; or in the low
+            // bit so it never is.
+            rng: std::cell::Cell::new(seed | 1),
         }
     }
 
@@ -62,9 +82,21 @@ impl ReconnectSchedule {
         )
     }
 
-    /// The delay before the `attempt + 1`-th retry, bounded by `max` AFTER
-    /// jitter.
-    pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
+    /// The next `uniform[0, 1)` draw from this schedule's xorshift state.
+    fn next_unit(&self) -> f32 {
+        // xorshift64; the low bits of the multiply-shift are fine for a
+        // timing jitter that needs no cryptographic quality.
+        let mut x = self.rng.get();
+        x ^= x << 13;
+        x ^= x >> 7;
+        x ^= x << 17;
+        self.rng.set(x);
+        // 24 high bits as a float in [0, 1).
+        ((x >> 40) as f32) / (1u32 << 24) as f32
+    }
+
+    /// The raw capped exponential delay for `attempt` (no jitter).
+    fn raw_delay_for_attempt(&self, attempt: u32) -> Duration {
         if attempt > MAX_ATTEMPT_INDEX {
             return self.max;
         }
@@ -73,22 +105,40 @@ impl ReconnectSchedule {
             None => self.max,
         }
     }
+
+    /// The delay before the `attempt + 1`-th retry: the raw capped series
+    /// (`min * factor^attempt`, capped at `max`) times `uniform[0.5, 1.0)`, so
+    /// the result is always in `[raw/2, raw) ⊆ [min/2, max)`.
+    pub fn delay_for_attempt(&self, attempt: u32) -> Duration {
+        let raw = self.raw_delay_for_attempt(attempt);
+        let factor = 0.5 + 0.5 * self.next_unit();
+        // `raw` is at most `max`, so `raw * factor < max` always; the `min`
+        // guards a `raw` of zero.
+        raw.mul_f64(f64::from(factor)).max(self.min / 2)
+    }
 }
 
-/// A non-cryptographic seed. `backon`'s jitter only needs to spread reconnect
-/// storms across peers, not resist an adversary, and a wall-clock nanosecond
-/// value is what `rand`'s own thread rng would seed from anyway.
+/// A non-cryptographic seed, mixed with a per-process counter so two
+/// schedules created in the same coarse clock tick (a route loop spawning
+/// many routes, or macOS's low `SystemTime` granularity) do not share a seed
+/// and therefore an identical jitter sequence.
 fn random_seed() -> u64 {
-    std::time::SystemTime::now()
+    static COUNTER: AtomicU64 = AtomicU64::new(0);
+    let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_nanos() as u64)
-        .unwrap_or(0)
+        .unwrap_or(0);
+    // SplitMix-style avalanche of the tick ^ a montonically increasing counter.
+    let mut z = nanos ^ COUNTER.fetch_add(0x9E37_79B9_7F4A_7C15, Ordering::Relaxed);
+    z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    z ^ (z >> 31)
 }
 
 /// The highest attempt whose delay is worth iterating for. `backon`'s
-/// `ExponentialBackoff` is an `Iterator`, so `delay_for_attempt(u32::MAX)`
-/// would step four billion times; well before this the raw series has
-/// saturated at `max` (with any sane factor), so every later attempt returns
-/// the cap without touching the iterator (matching the pre-SP1.5
+/// `ExponentialBackoff` is an `Iterator`, so iterating for `u32::MAX` would
+/// step four billion times; well before this the raw series has saturated at
+/// `max` (with any sane factor), so every later attempt returns the cap
+/// without touching the iterator (matching the pre-SP1.5
 /// `MAX_BACKOFF_EXPONENT` short-circuit).
 const MAX_ATTEMPT_INDEX: u32 = 30;

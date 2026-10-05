@@ -3,13 +3,18 @@
 ## [Unreleased]
 
 ### Changed (breaking) — W2b-2
-- **Every reconnect/retry delay is jittered.** `supervisor::Backoff`,
+- **Every reconnect/retry delay is equal-jittered.** `supervisor::Backoff`,
   `config::ReconnectPolicy::backoff_for`, `ReconnectEngine`, `file_reader`'s
-  probe retry and `hls_pull`'s resource retry now share one `backon`-backed
-  schedule (`reconnect::ReconnectSchedule`). A delay is no longer exactly
-  `min * factor^attempt`: a random jitter of up to the pre-jitter delay is
-  added and the result re-clamped to the cap, so a fleet of inputs pointed at
-  one server no longer reconnects in lockstep. `Backoff`'s public shape
+  probe retry and `hls_pull`'s resource retry now share one schedule
+  (`reconnect::ReconnectSchedule`). A delay is no longer exactly
+  `min * factor^attempt`: the raw capped series is multiplied by
+  `uniform[0.5, 1.0)` (**equal jitter**), so the delay is always in
+  `[raw/2, raw)` and stays **spread even at the cap** (`[max/2, max)`) — the
+  add-only jitter `backon` provides collapses to exactly `max` in steady
+  state, which is where a long outage lives. A fleet of inputs pointed at one
+  server therefore no longer reconnects in lockstep. Seeds are mixed with a
+  per-process counter so schedules created in one clock tick differ.
+  `Backoff`'s public shape
   (`new`/`production_default`/`next`/`delay_for_attempt`/`reset`) is unchanged.
   A new public module `reconnect` exposes the schedule.
 - **The three pull sources share one fetch scheduler; the `WaitMs` hint is

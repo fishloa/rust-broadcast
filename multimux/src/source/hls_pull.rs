@@ -724,15 +724,22 @@ mod tests {
                 .unwrap_or(RESOURCE_RETRY_MAX_DELAY)
                 .min(RESOURCE_RETRY_MAX_DELAY);
             let got = retry_backoff(attempt);
-            // Jittered into [raw, min(2 * raw, cap)].
+            // Equal jitter: `raw * [0.5, 1.0)`.
             assert!(
-                got >= raw && got <= (raw * 2).min(RESOURCE_RETRY_MAX_DELAY),
-                "attempt {attempt}: {got:?} outside [{raw:?}, {cap:?}]",
-                cap = (raw * 2).min(RESOURCE_RETRY_MAX_DELAY)
+                got >= raw / 2 && got < raw + Duration::from_nanos(1),
+                "attempt {attempt}: {got:?} outside [{:?}, {raw:?})",
+                raw / 2
             );
         }
-        // Once raw saturates at the cap the jitter is clamped back to it.
-        assert_eq!(retry_backoff(20), RESOURCE_RETRY_MAX_DELAY);
+        // C2: once raw saturates at the cap the delay stays jittered in
+        // [cap/2, cap), never a single constant.
+        for _ in 0..40 {
+            let d = retry_backoff(20);
+            assert!(
+                d >= RESOURCE_RETRY_MAX_DELAY / 2 && d < RESOURCE_RETRY_MAX_DELAY,
+                "capped retry {d:?} must stay jittered in [cap/2, cap)"
+            );
+        }
     }
 
     use super::*;
