@@ -249,12 +249,16 @@ async fn drive_push_reconnects_at_the_transport_write_bound_not_the_ten_second_f
         },
         cancel.clone(),
     ));
-    // Load generator: one 256 KiB sample every 2 ms until the 2nd connection.
+    // Prime the trunk with enough large samples to overflow any loopback
+    // socket buffer, then just wait for the reconnect (a condition wait, not
+    // a fixed-interval ticker): once the socket is full the transport's own
+    // write bound will trip without further publishing.
+    for _ in 0..512 {
+        writer.publish(1, RetentionClass::Timed, big_sample());
+    }
     let reconnected = tokio::time::timeout(GUARD, async {
-        let mut tick = tokio::time::interval(Duration::from_millis(2));
         while accepted.load(Ordering::SeqCst) < 2 {
-            tick.tick().await;
-            writer.publish(1, RetentionClass::Timed, big_sample());
+            tokio::task::yield_now().await;
         }
     })
     .await;

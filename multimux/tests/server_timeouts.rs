@@ -240,23 +240,36 @@ async fn a_response_longer_than_thirty_seconds_is_not_cut() {
     let token = tokio_util::sync::CancellationToken::new();
 
     // A body that streams one chunk, waits 31 s, then another. Under a paused
-    // clock the 31 s span is advanced deterministically.
+    // clock the 31 s span is advanced deterministically. A `oneshot` fired by
+    // the handler when it starts gives the test a REAL sync point: only once
+    // the handler is running is the 31 s sleep actually pending, so advancing
+    // the clock is what fires it (the previous `for _ in 0..70 { sleep }` loop
+    // coupled virtual-clock progression to real-I/O completion, which is
+    // exactly what flaked under load).
+    let (started_tx, started_rx) = tokio::sync::oneshot::channel::<()>();
+    let started_tx = std::sync::Arc::new(std::sync::Mutex::new(Some(started_tx)));
     let app = axum::Router::new().route(
         "/slow",
-        get(|| async {
-            axum::body::Body::from_stream(futures_util::stream::unfold(0u8, |i| async move {
-                match i {
-                    0 => {
-                        tokio::time::sleep(Duration::from_secs(31)).await;
-                        Some((
-                            Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"first")),
-                            1,
-                        ))
-                    }
-                    1 => Some((Ok(axum::body::Bytes::from_static(b"-second")), 2)),
-                    _ => None,
+        get(move || {
+            let started_tx = std::sync::Arc::clone(&started_tx);
+            async move {
+                if let Some(tx) = started_tx.lock().unwrap().take() {
+                    let _ = tx.send(());
                 }
-            }))
+                axum::body::Body::from_stream(futures_util::stream::unfold(0u8, |i| async move {
+                    match i {
+                        0 => {
+                            tokio::time::sleep(Duration::from_secs(31)).await;
+                            Some((
+                                Ok::<_, std::io::Error>(axum::body::Bytes::from_static(b"first")),
+                                1,
+                            ))
+                        }
+                        1 => Some((Ok(axum::body::Bytes::from_static(b"-second")), 2)),
+                        _ => None,
+                    }
+                }))
+            }
         }),
     );
 
@@ -275,9 +288,10 @@ async fn a_response_longer_than_thirty_seconds_is_not_cut() {
         .await
         .unwrap();
 
-    // Advance the paused clock well past 30 s: the body must still complete
-    // (no total deadline cuts it). Advance in small steps, yielding so the
-    // server's paused sleep fires and the chunks are written to the socket.
+    // Wait for the handler to actually start (a real sync point), then advance
+    // the paused clock past 30 s and let the body complete. The read is awaited
+    // directly under an outer 120 s hang guard.
+    started_rx.await.expect("handler must start");
     let read = tokio::spawn(async move {
         let mut buf = Vec::new();
         tokio::io::AsyncReadExt::read_to_end(&mut c, &mut buf)
@@ -285,18 +299,23 @@ async fn a_response_longer_than_thirty_seconds_is_not_cut() {
             .unwrap();
         buf
     });
-    for _ in 0..70 {
-        tokio::task::yield_now().await;
-        tokio::time::sleep(Duration::from_millis(500)).await;
-        if read.is_finished() {
-            break;
+    // Advance the paused clock past 30 s. The handler's 31 s `sleep` is only
+    // registered once the runtime has polled the body stream (after the real
+    // accept/parse/handler path), so advance-yield until the reader finishes,
+    // bounded by an outer hang guard. This never relies on virtual/real-I/O
+    // interleaving for correctness: any pending timer fires on advance, and a
+    // missing one is caught again on the next iteration.
+    let body = tokio::time::timeout(Duration::from_secs(120), async {
+        loop {
+            tokio::time::advance(Duration::from_secs(5)).await;
+            tokio::task::yield_now().await;
+            if read.is_finished() {
+                return read.await.expect("read task");
+            }
         }
-    }
-    assert!(
-        read.is_finished(),
-        "a >30 s response must complete, not be cut by a total deadline"
-    );
-    let body = read.await.unwrap();
+    })
+    .await
+    .expect("a >30 s response must complete, not be cut by a total deadline");
     let body = String::from_utf8_lossy(&body);
     assert!(
         body.contains("first") && body.contains("second"),
