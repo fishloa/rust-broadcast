@@ -152,7 +152,10 @@ fn resource_fetch(
                             ),
                         })
                     });
-            (fetch_id, result)
+            (
+                fetch_id,
+                crate::source::pull::FetchResult::from_result(result),
+            )
         }),
     }
 }
@@ -176,7 +179,10 @@ fn playlist_fetch(
                             reason: format!("hls-pull: playlist read exceeded {read_timeout:?}"),
                         })
                     });
-            (HlsFetchId::Playlist, result)
+            (
+                HlsFetchId::Playlist,
+                crate::source::pull::FetchResult::from_result(result),
+            )
         }),
     }
 }
@@ -654,6 +660,10 @@ pub async fn run_hls_pull(
                     }
                     HlsFetchId::Playlist => return Err(e),
                 }
+            }
+            Some(crate::source::pull::FetchOutcome::NotReady(_fetch_id, e)) => {
+                // HLS never uses the NotReady signal; treat it as a failure.
+                return Err(e);
             }
             Some(crate::source::pull::FetchOutcome::TaskPanic(detail)) => {
                 return Err(MultimuxError::Connect {

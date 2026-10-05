@@ -936,12 +936,6 @@ const MAX_PLAN_ENTRIES: usize = 100_000;
 /// that a normal segment cadence is always covered.
 const LIVE_NUMBER_LOOKAHEAD: usize = 3;
 
-/// Whether a fetch failure is a tolerated `404` (retry) rather than a real
-/// error — see [`NOT_READY_SENTINEL`].
-fn is_not_ready(e: &MultimuxError) -> bool {
-    matches!(e, MultimuxError::Connect { reason } if reason == NOT_READY_SENTINEL)
-}
-
 /// The scheduler key for one DASH fetch: everything [`run_dash_pull`]'s join
 /// loop needs to either feed the result to the session or retry the exact
 /// same fetch. `id` alone is not enough — a tolerated-`404` retry of one
@@ -963,9 +957,8 @@ type DashPendingFetch = crate::source::pull::PendingFetch<DashFetch>;
 
 /// Builds the [`PendingFetch`] for one fetch (after `delay`, for a retry).
 /// The delay is applied by [`PullScheduler::pump`], not here. A tolerated
-/// `404` is reported by feeding the session a sentinel the join loop
-/// recognises: since [`FetchOutcome::Ready`] carries opaque bytes and this
-/// request is retried rather than fed, the sentinel never reaches `feed`.
+/// `404` resolves to [`FetchResult::NotReady`] — a typed signal the join loop
+/// retries the same fetch, rather than a sentinel error string (M6).
 #[allow(clippy::too_many_arguments)]
 fn pending_fetch(
     http: HttpClient,
@@ -983,16 +976,23 @@ fn pending_fetch(
     crate::source::pull::PendingFetch {
         delay,
         fut: Box::pin(async move {
-            let outcome = tokio::time::timeout(
+            let result = match tokio::time::timeout(
                 read_timeout,
                 fetch_one_bytes(&http, &url, creds.as_ref(), what, tolerate_404),
             )
             .await
-            .unwrap_or_else(|_| {
-                Err(MultimuxError::Connect {
+            {
+                Ok(Ok(FetchOne::Bytes(b))) => crate::source::pull::FetchResult::Ready(b),
+                Ok(Ok(FetchOne::NotReady)) => {
+                    crate::source::pull::FetchResult::NotReady(MultimuxError::Connect {
+                        reason: format!("dash-pull {what} ({id:?}) not ready yet"),
+                    })
+                }
+                Ok(Err(e)) => crate::source::pull::FetchResult::Failed(e),
+                Err(_) => crate::source::pull::FetchResult::Failed(MultimuxError::Connect {
                     reason: format!("dash-pull {what} ({id:?}) read exceeded {read_timeout:?}"),
-                })
-            });
+                }),
+            };
             let key = DashFetch {
                 id,
                 number,
@@ -1001,38 +1001,40 @@ fn pending_fetch(
                 tolerate_404,
                 attempt,
             };
-            (key, outcome)
+            (key, result)
         }),
     }
 }
 
-/// Like [`fetch_one`], but returns the raw bytes and reports a tolerated
-/// `404` as a [`MultimuxError`] carrying [`NADA_NOT_READY`] so the source's
-/// join loop can tell it from a real failure.
+/// What one DASH fetch observed (before it is mapped to a [`FetchResult`]).
+enum FetchOne {
+    /// The body bytes.
+    Bytes(Vec<u8>),
+    /// A tolerated `404`: the live-edge segment is not ready yet.
+    NotReady,
+}
+
+/// Fetches one resource, reporting a tolerated `404` as
+/// [`FetchOne::NotReady`] (a typed retry signal) rather than an error.
 async fn fetch_one_bytes(
     client: &HttpClient,
     url: &str,
     creds: Option<&Credentials>,
     what: &str,
     tolerate_404: bool,
-) -> Result<Vec<u8>> {
+) -> Result<FetchOne> {
     let response = authenticated_get(client, url, creds).await?;
     let status = response.status();
     if tolerate_404 && status == StatusCode::NOT_FOUND {
-        return Err(MultimuxError::Connect {
-            reason: NOT_READY_SENTINEL.to_string(),
-        });
+        return Ok(FetchOne::NotReady);
     }
     if !status.is_success() {
         return Err(status_error(what, status));
     }
-    crate::source::read_body_capped(response, crate::source::MAX_HTTP_BODY_BYTES, what).await
+    crate::source::read_body_capped(response, crate::source::MAX_HTTP_BODY_BYTES, what)
+        .await
+        .map(FetchOne::Bytes)
 }
-
-/// A `Connect` error whose reason is exactly this string is a tolerated `404`
-/// (retry), not a real failure. A dedicated sentinel keeps the retry signal
-/// out of the scheduler's type (its `Failed` arm carries a plain error).
-const NOT_READY_SENTINEL: &str = "dash-pull: segment not ready (tolerated 404)";
 
 fn build_client(route: &DashPullRoute) -> Result<(HttpClient, Url, Option<Credentials>)> {
     let parsed = Url::parse(&route.url).map_err(|e| MultimuxError::Connect {
@@ -1202,13 +1204,13 @@ pub async fn run_dash_pull(
                 driver.feed((fetch.id, bytes.as_slice()), now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(crate::source::pull::FetchOutcome::Failed(fetch, e)) => {
+            Some(crate::source::pull::FetchOutcome::Failed(_fetch, e)) => {
+                // A real fetch failure ends the session.
+                return Err(e);
+            }
+            Some(crate::source::pull::FetchOutcome::NotReady(fetch, e)) => {
                 // A tolerated `404` (a live-edge segment not yet available)
-                // is retried directly, without touching the session — see the
-                // module doc's `FetchOutcome::NotReady`.
-                if !fetch.tolerate_404 || !is_not_ready(&e) {
-                    return Err(e);
-                }
+                // is retried directly, without touching the session.
                 let DashResourceId::Segment(rep, number) = fetch.id else {
                     // Only segment fetches are ever tolerant of 404 — see
                     // `fetch_one`'s callers.
@@ -1508,7 +1510,7 @@ mod tests {
                 DashAction::FetchMpd { url } => {
                     let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "mpd", false),
+                        fetch_bytes(&http, &url, credentials.as_ref(), "mpd", false),
                     )
                     .await
                     .map_err(|_| MultimuxError::Connect {
@@ -1519,7 +1521,7 @@ mod tests {
                 DashAction::FetchInit { rep, url } => {
                     let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "init", false),
+                        fetch_bytes(&http, &url, credentials.as_ref(), "init", false),
                     )
                     .await
                     .map_err(|_| MultimuxError::Connect {
@@ -1536,7 +1538,7 @@ mod tests {
                 } => {
                     let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "segment", tolerate_404),
+                        fetch_bytes(&http, &url, credentials.as_ref(), "segment", tolerate_404),
                     )
                     .await
                     .map_err(|_| MultimuxError::Connect {
@@ -1595,7 +1597,7 @@ mod tests {
                 DashAction::FetchMpd { url } => {
                     let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "mpd", false),
+                        fetch_bytes(&http, &url, credentials.as_ref(), "mpd", false),
                     )
                     .await
                     .map_err(|_| MultimuxError::Connect {
@@ -1606,7 +1608,7 @@ mod tests {
                 DashAction::FetchInit { rep, url } => {
                     let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "init", false),
+                        fetch_bytes(&http, &url, credentials.as_ref(), "init", false),
                     )
                     .await
                     .map_err(|_| MultimuxError::Connect {
@@ -1623,7 +1625,7 @@ mod tests {
                 } => {
                     let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "segment", tolerate_404),
+                        fetch_bytes(&http, &url, credentials.as_ref(), "segment", tolerate_404),
                     )
                     .await
                     .map_err(|_| MultimuxError::Connect {
@@ -1780,7 +1782,7 @@ mod tests {
                 DashAction::FetchMpd { url } => {
                     let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "mpd", false),
+                        fetch_bytes(&http, &url, credentials.as_ref(), "mpd", false),
                     )
                     .await
                     .unwrap()
@@ -1792,7 +1794,7 @@ mod tests {
                 DashAction::FetchInit { rep, url } => {
                     let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "init", false),
+                        fetch_bytes(&http, &url, credentials.as_ref(), "init", false),
                     )
                     .await
                     .unwrap()
@@ -1852,7 +1854,7 @@ mod tests {
                 DashAction::FetchMpd { url } => {
                     let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "mpd", false),
+                        fetch_bytes(&http, &url, credentials.as_ref(), "mpd", false),
                     )
                     .await
                     .unwrap()
@@ -1864,7 +1866,7 @@ mod tests {
                 DashAction::FetchInit { rep, url } => {
                     let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "init", false),
+                        fetch_bytes(&http, &url, credentials.as_ref(), "init", false),
                     )
                     .await
                     .unwrap()
@@ -2139,13 +2141,13 @@ mod tests {
             let now = Timestamp::from_nanos(0);
             match action {
                 DashAction::FetchMpd { url } => {
-                    let b = fetch_one_bytes(&http, &url, credentials.as_ref(), "mpd", false)
+                    let b = fetch_bytes(&http, &url, credentials.as_ref(), "mpd", false)
                         .await
                         .expect("fetch");
                     driver.feed((DashResourceId::Mpd, b.as_slice()), now);
                 }
                 DashAction::FetchInit { rep, url } => {
-                    let b = fetch_one_bytes(&http, &url, credentials.as_ref(), "init", false)
+                    let b = fetch_bytes(&http, &url, credentials.as_ref(), "init", false)
                         .await
                         .expect("fetch");
                     driver.feed((DashResourceId::Init(rep), b.as_slice()), now);
@@ -2157,10 +2159,9 @@ mod tests {
                     tolerate_404,
                     ..
                 } => {
-                    let b =
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "segment", tolerate_404)
-                            .await
-                            .expect("fetch");
+                    let b = fetch_bytes(&http, &url, credentials.as_ref(), "segment", tolerate_404)
+                        .await
+                        .expect("fetch");
                     driver.feed((DashResourceId::Segment(rep, number), b.as_slice()), now);
                 }
             }
@@ -2284,5 +2285,22 @@ mod tests {
             "Basic auth from URL userinfo must authenticate: {result:?}"
         );
         server.abort();
+    }
+
+    /// Test-only: `fetch_one_bytes`, unwrapped to the body bytes (tests never
+    /// use the `NotReady` signal with `tolerate_404: false`).
+    async fn fetch_bytes(
+        http: &HttpClient,
+        url: &str,
+        creds: Option<&Credentials>,
+        what: &str,
+        tolerate_404: bool,
+    ) -> Result<Vec<u8>> {
+        match fetch_one_bytes(http, url, creds, what, tolerate_404).await? {
+            FetchOne::Bytes(b) => Ok(b),
+            FetchOne::NotReady => Err(MultimuxError::Connect {
+                reason: "not ready (test)".into(),
+            }),
+        }
     }
 }

@@ -44,12 +44,41 @@ use tokio::task::JoinSet;
 
 use crate::error::MultimuxError;
 
+impl FetchResult {
+    /// Map a plain `Result` (the common case — no "not ready" signal) onto a
+    /// [`FetchResult`].
+    pub fn from_result(r: Result<Vec<u8>, MultimuxError>) -> Self {
+        match r {
+            Ok(b) => FetchResult::Ready(b),
+            Err(e) => FetchResult::Failed(e),
+        }
+    }
+}
+
+/// What one fetch future resolved to, before the scheduler attaches its key.
+/// `NotReady` is a typed "retry the same fetch" signal (a tolerated `404`),
+/// distinct from a real failure (M6) — no sentinel error string.
+pub(crate) enum FetchResult {
+    /// The fetch resolved to bytes.
+    Ready(Vec<u8>),
+    /// The fetch failed.
+    Failed(MultimuxError),
+    /// The fetch is not ready yet (retry the same fetch).
+    NotReady(MultimuxError),
+}
+
 /// The outcome of one spawned fetch.
 pub(crate) enum FetchOutcome<K> {
     /// The fetch resolved: `(key, bytes)`.
     Ready(K, Vec<u8>),
     /// The fetch failed: `(key, error)` — the source decides retry vs terminal.
     Failed(K, MultimuxError),
+    /// The fetch reported "not ready yet" (a tolerated `404` from a live-edge
+    /// pull source): `(key, error)` — a typed signal the source retries the
+    /// same fetch, distinct from a real [`Failed`](Self::Failed). Carrying it
+    /// as its own variant avoids smuggling retry metadata through a sentinel
+    /// error string (M6).
+    NotReady(K, MultimuxError),
     /// The spawned fetch task itself panicked or was aborted.
     TaskPanic(String),
 }
@@ -59,12 +88,13 @@ impl<K: fmt::Debug> fmt::Debug for FetchOutcome<K> {
         match self {
             FetchOutcome::Ready(k, b) => write!(f, "Ready({k:?}, {} bytes)", b.len()),
             FetchOutcome::Failed(k, e) => write!(f, "Failed({k:?}, {e})"),
+            FetchOutcome::NotReady(k, e) => write!(f, "NotReady({k:?}, {e})"),
             FetchOutcome::TaskPanic(e) => write!(f, "TaskPanic({e})"),
         }
     }
 }
 
-type FetchFuture<K> = Pin<Box<dyn Future<Output = (K, Result<Vec<u8>, MultimuxError>)> + Send>>;
+type FetchFuture<K> = Pin<Box<dyn Future<Output = (K, FetchResult)> + Send>>;
 
 /// One fetch to spawn.
 pub(crate) struct PendingFetch<K> {
@@ -77,7 +107,7 @@ pub(crate) struct PendingFetch<K> {
 
 /// The single fetch/retry/wait engine for the pull sources.
 pub(crate) struct PullScheduler<K: Send + 'static> {
-    inflight: JoinSet<(K, Result<Vec<u8>, MultimuxError>)>,
+    inflight: JoinSet<(K, FetchResult)>,
     backlog: VecDeque<PendingFetch<K>>,
     retries: VecDeque<PendingFetch<K>>,
     max_inflight: usize,
@@ -176,8 +206,9 @@ impl<K: Send + 'static> PullScheduler<K> {
             None => self.inflight.join_next().await,
         };
         match joined {
-            Some(Ok((key, Ok(bytes)))) => Some(FetchOutcome::Ready(key, bytes)),
-            Some(Ok((key, Err(e)))) => Some(FetchOutcome::Failed(key, e)),
+            Some(Ok((key, FetchResult::Ready(bytes)))) => Some(FetchOutcome::Ready(key, bytes)),
+            Some(Ok((key, FetchResult::Failed(e)))) => Some(FetchOutcome::Failed(key, e)),
+            Some(Ok((key, FetchResult::NotReady(e)))) => Some(FetchOutcome::NotReady(key, e)),
             Some(Err(e)) => Some(FetchOutcome::TaskPanic(e.to_string())),
             None => None,
         }
@@ -194,12 +225,12 @@ mod tests {
             delay: Duration::ZERO,
             fut: Box::pin(async move {
                 tokio::time::sleep(after).await;
-                (key, Ok(bytes.to_vec()))
+                (key, FetchResult::Ready(bytes.to_vec()))
             }),
         }
     }
 
-    fn boom() -> (u32, Result<Vec<u8>, MultimuxError>) {
+    fn boom() -> (u32, FetchResult) {
         panic!("fetch task died")
     }
 
@@ -316,7 +347,7 @@ mod tests {
         let mut s = PullScheduler::<u32>::new(1);
         s.push_retry(PendingFetch {
             delay: Duration::from_millis(250),
-            fut: Box::pin(async { (7u32, Ok(b"late".to_vec())) }),
+            fut: Box::pin(async { (7u32, FetchResult::Ready(b"late".to_vec())) }),
         });
         s.pump();
         let out = s.next(None, Duration::from_millis(5)).await;
@@ -361,7 +392,7 @@ mod tests {
                 delay: Duration::ZERO,
                 fut: Box::pin(async move {
                     *slot.lock().unwrap() = Some(t0.elapsed());
-                    (2u32, Ok(b"pl2".to_vec()))
+                    (2u32, FetchResult::Ready(b"pl2".to_vec()))
                 }),
             },
             Some(floor),
@@ -399,5 +430,32 @@ mod tests {
             Duration::from_millis(50),
             "a ready resource fetch must be serviced during the pacing floor"
         );
+    }
+
+    /// M6: the typed `FetchResult::from_result` maps a plain result, and
+    /// `NotReady` is a distinct outcome the join loop can match on without a
+    /// sentinel error string.
+    #[tokio::test(start_paused = true)]
+    async fn a_not_ready_fetch_is_reported_typed_not_as_a_sentinel_error() {
+        let mut s = PullScheduler::<u32>::new(8);
+        s.push(PendingFetch {
+            delay: Duration::ZERO,
+            fut: Box::pin(async {
+                (
+                    9u32,
+                    FetchResult::NotReady(MultimuxError::Connect {
+                        reason: "not ready".into(),
+                    }),
+                )
+            }),
+        });
+        s.pump();
+        let out = s.next(None, Duration::from_millis(5)).await;
+        assert!(matches!(out, Some(FetchOutcome::NotReady(9, _))), "{out:?}");
+        // And `from_result` maps a plain success to `Ready`.
+        assert!(matches!(
+            FetchResult::from_result(Ok(vec![1, 2])),
+            FetchResult::Ready(_)
+        ));
     }
 }

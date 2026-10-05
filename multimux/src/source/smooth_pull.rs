@@ -996,38 +996,35 @@ fn status_error(what: &str, status: StatusCode) -> MultimuxError {
     }
 }
 
-/// Whether a fetch failure is a tolerated `404` (retry) rather than a real
-/// error — see [`NOT_READY_SENTINEL`].
-fn is_not_ready(e: &MultimuxError) -> bool {
-    matches!(e, MultimuxError::Connect { reason } if reason == NOT_READY_SENTINEL)
+/// What one Smooth fetch observed, before mapping to a [`FetchResult`].
+enum FetchOne {
+    /// The body bytes.
+    Bytes(Vec<u8>),
+    /// A tolerated `404`: the live-edge fragment is not ready yet.
+    NotReady,
 }
 
-/// Like [`fetch_one`], but returns the raw bytes and reports a tolerated
-/// `404` as a [`MultimuxError`] carrying [`NOT_READY_SENTINEL`] so the
-/// source's join loop can tell it from a real failure.
+/// Fetches one resource, reporting a tolerated `404` as
+/// [`FetchOne::NotReady`] (a typed retry signal) rather than an error.
 async fn fetch_one_bytes(
     client: &HttpClient,
     url: &str,
     creds: Option<&Credentials>,
     what: &str,
     tolerate_404: bool,
-) -> Result<Vec<u8>> {
+) -> Result<FetchOne> {
     let response = authenticated_get(client, url, creds).await?;
     let status = response.status();
     if tolerate_404 && status == StatusCode::NOT_FOUND {
-        return Err(MultimuxError::Connect {
-            reason: NOT_READY_SENTINEL.to_string(),
-        });
+        return Ok(FetchOne::NotReady);
     }
     if !status.is_success() {
         return Err(status_error(what, status));
     }
-    crate::source::read_body_capped(response, crate::source::MAX_HTTP_BODY_BYTES, what).await
+    crate::source::read_body_capped(response, crate::source::MAX_HTTP_BODY_BYTES, what)
+        .await
+        .map(FetchOne::Bytes)
 }
-
-/// A `Connect` error whose reason is exactly this string is a tolerated `404`
-/// (retry), not a real failure.
-const NOT_READY_SENTINEL: &str = "smooth-pull: fragment not ready (tolerated 404)";
 
 fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<Credentials>)> {
     let parsed = Url::parse(&route.url).map_err(|e| MultimuxError::Connect {
@@ -1083,16 +1080,22 @@ fn pending_fetch(
     crate::source::pull::PendingFetch {
         delay,
         fut: Box::pin(async move {
-            let outcome = tokio::time::timeout(
+            use crate::source::pull::FetchResult;
+            let result = match tokio::time::timeout(
                 read_timeout,
                 fetch_one_bytes(&http, &url, creds.as_ref(), what, tolerate_404),
             )
             .await
-            .unwrap_or_else(|_| {
-                Err(MultimuxError::Connect {
+            {
+                Ok(Ok(FetchOne::Bytes(b))) => FetchResult::Ready(b),
+                Ok(Ok(FetchOne::NotReady)) => FetchResult::NotReady(MultimuxError::Connect {
+                    reason: format!("smooth-pull {what} ({id:?}) not ready yet"),
+                }),
+                Ok(Err(e)) => FetchResult::Failed(e),
+                Err(_) => FetchResult::Failed(MultimuxError::Connect {
                     reason: format!("smooth-pull {what} ({id:?}) read exceeded {read_timeout:?}"),
-                })
-            });
+                }),
+            };
             let key = SmoothFetch {
                 id,
                 t,
@@ -1101,7 +1104,7 @@ fn pending_fetch(
                 tolerate_404,
                 attempt,
             };
-            (key, outcome)
+            (key, result)
         }),
     }
 }
@@ -1253,12 +1256,13 @@ pub async fn run_smooth_pull(
                 driver.feed((fetch.id, bytes.as_slice()), now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(crate::source::pull::FetchOutcome::Failed(fetch, e)) => {
+            Some(crate::source::pull::FetchOutcome::Failed(_fetch, e)) => {
+                // A real fetch failure ends the session.
+                return Err(e);
+            }
+            Some(crate::source::pull::FetchOutcome::NotReady(fetch, e)) => {
                 // A tolerated `404` (a live-edge fragment not yet available)
                 // is retried directly, without touching the session.
-                if !fetch.tolerate_404 || !is_not_ready(&e) {
-                    return Err(e);
-                }
                 let SmoothResourceId::Fragment(stream, _) = fetch.id else {
                     // Only fragment fetches are ever tolerant of 404.
                     return Err(e);
@@ -1696,14 +1700,13 @@ mod tests {
             let now = Timestamp::from_nanos(0);
             match action {
                 SmoothAction::FetchManifest { url } => {
-                    let b = fetch_one_bytes(&http, &url, credentials.as_ref(), "manifest", false)
-                        .await?;
+                    let b =
+                        fetch_bytes(&http, &url, credentials.as_ref(), "manifest", false).await?;
                     session.feed((SmoothResourceId::Manifest, b.as_slice()), now)?;
                 }
                 SmoothAction::FetchFirstFragment { stream, url } => {
-                    let b =
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "first fragment", false)
-                            .await?;
+                    let b = fetch_bytes(&http, &url, credentials.as_ref(), "first fragment", false)
+                        .await?;
                     session.feed((SmoothResourceId::FirstFragment(stream), b.as_slice()), now)?;
                 }
                 SmoothAction::FetchFragment {
@@ -1713,14 +1716,9 @@ mod tests {
                     tolerate_404,
                     ..
                 } => {
-                    let b = fetch_one_bytes(
-                        &http,
-                        &url,
-                        credentials.as_ref(),
-                        "fragment",
-                        tolerate_404,
-                    )
-                    .await?;
+                    let b =
+                        fetch_bytes(&http, &url, credentials.as_ref(), "fragment", tolerate_404)
+                            .await?;
                     session.feed((SmoothResourceId::Fragment(stream, t), b.as_slice()), now)?;
                 }
             }
@@ -1854,16 +1852,15 @@ mod tests {
             let now = Timestamp::from_nanos(0);
             match action {
                 SmoothAction::FetchManifest { url } => {
-                    let b = fetch_one_bytes(&http, &url, credentials.as_ref(), "manifest", false)
+                    let b = fetch_bytes(&http, &url, credentials.as_ref(), "manifest", false)
                         .await
                         .expect("fetch");
                     driver.feed((SmoothResourceId::Manifest, b.as_slice()), now);
                 }
                 SmoothAction::FetchFirstFragment { stream, url } => {
-                    let b =
-                        fetch_one_bytes(&http, &url, credentials.as_ref(), "first fragment", false)
-                            .await
-                            .expect("fetch");
+                    let b = fetch_bytes(&http, &url, credentials.as_ref(), "first fragment", false)
+                        .await
+                        .expect("fetch");
                     driver.feed((SmoothResourceId::FirstFragment(stream), b.as_slice()), now);
                 }
                 SmoothAction::FetchFragment {
@@ -1873,15 +1870,10 @@ mod tests {
                     tolerate_404,
                     ..
                 } => {
-                    let b = fetch_one_bytes(
-                        &http,
-                        &url,
-                        credentials.as_ref(),
-                        "fragment",
-                        tolerate_404,
-                    )
-                    .await
-                    .expect("fetch");
+                    let b =
+                        fetch_bytes(&http, &url, credentials.as_ref(), "fragment", tolerate_404)
+                            .await
+                            .expect("fetch");
                     driver.feed((SmoothResourceId::Fragment(stream, t), b.as_slice()), now);
                 }
             }
@@ -2212,5 +2204,22 @@ mod tests {
     fn discover_moof_track_id_errors_not_panics_on_garbage() {
         assert!(discover_moof_track_id(b"not a fragment at all").is_err());
         assert!(discover_moof_track_id(&[]).is_err());
+    }
+
+    /// Test-only: `fetch_one_bytes`, unwrapped to the body bytes (tests never
+    /// use the `NotReady` signal with `tolerate_404: false`).
+    async fn fetch_bytes(
+        http: &HttpClient,
+        url: &str,
+        creds: Option<&Credentials>,
+        what: &str,
+        tolerate_404: bool,
+    ) -> Result<Vec<u8>> {
+        match fetch_one_bytes(http, url, creds, what, tolerate_404).await? {
+            FetchOne::Bytes(b) => Ok(b),
+            FetchOne::NotReady => Err(MultimuxError::Connect {
+                reason: "not ready (test)".into(),
+            }),
+        }
     }
 }
