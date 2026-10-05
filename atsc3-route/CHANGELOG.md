@@ -22,8 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 Split out of `atsc3` (issue #943): `atsc3` keeps the signalling half (LLS +
 SLS XML), this crate is the binary ROUTE delta over `rmt-flute`'s RFC
-5651/5775/6726 LCT/ALC/FLUTE implementation. Not yet published — no
-`atsc3-route` version exists on crates.io and no `atsc3-route-v*` tag exists.
+5651/5775/6726 LCT/ALC/FLUTE implementation. First release of the split crate.
 
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV

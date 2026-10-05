@@ -8,12 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ## [0.5.0] - 2026-10-05
-### Changed
-- `Trunk`'s state lock and the `StallIngest` back-pressure `Condvar` are now `parking_lot` (no poisoning; `lock_state` is now a one-line passthrough, the poison-recovery logic is gone). No public API change.
-- Measured the single-lock contention with the new `trunk_contention` criterion benchmark; numbers and the lock-split decision are in `benches/RESULTS.md`: the pre-registered rule said SPLIT, a sample-group / segment-event-part-group split was implemented and measured (16 readers: 574 ns -> 1104 ns per publish), missed the >= 30 % gain bar and was reverted.
-- Tests observe a parked `StallIngest` publisher directly (test-only probe) instead of sleeping or waiting a fixed 200 ms.
 
 ### Added
+- `Trunk::time_anchor()` — public getter for the wall-clock anchor the
+  trunk's event log has been given via `SegmentWriter::set_time_anchor`,
+  returning `None` until one has been set. Needed by `hls-runtime` 0.7.0
+  to build a `timed_metadata::Timeline` for `EXT-X-DATERANGE` rendering
+  (issue #965).
+
 - `Trunk::waiter_slot_freed() -> Option<SlotFreedFuture>` — resolves the next
   time a `Trunk::listen` waiter slot is freed (its `ProgressListener` dropped),
   or `None` when a slot is free now. Lets a caller that got `None` from
@@ -55,6 +57,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   out) (issue #1083).
 - `benches/trunk_contention` (criterion): 1 publisher x N = 1, 4, 16, 64 cursors.
 - `tests/no_handroll_guard.rs`.
+
+### Changed
+- `Trunk`'s state lock and the `StallIngest` back-pressure `Condvar` are now `parking_lot` (no poisoning; `lock_state` is now a one-line passthrough, the poison-recovery logic is gone). No public API change.
+- Measured the single-lock contention with the new `trunk_contention` criterion benchmark; numbers and the lock-split decision are in `benches/RESULTS.md`: the pre-registered rule said SPLIT, a sample-group / segment-event-part-group split was implemented and measured (16 readers: 574 ns -> 1104 ns per publish), missed the >= 30 % gain bar and was reverted.
+- Tests observe a parked `StallIngest` publisher directly (test-only probe) instead of sleeping or waiting a fixed 200 ms.
 
 ### Changed (breaking)
 - `Trunk::writer`/`Trunk::segment_writer` are now **re-issuable**: the
@@ -155,15 +162,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Cursor ring indexing no longer uses wrapping `as usize` casts on
   `consumed - base` (checked `ring_offset`), and two `expect`s on pin lookups
   in `SegmentCursor::poll` became non-panicking `if let`s (#1134, #1082).
-
-## [0.4.1] - 2026-08-16
-
-### Added
-- `Trunk::time_anchor()` — public getter for the wall-clock anchor the
-  trunk's event log has been given via `SegmentWriter::set_time_anchor`,
-  returning `None` until one has been set. Needed by `hls-runtime` 0.7.0
-  to build a `timed_metadata::Timeline` for `EXT-X-DATERANGE` rendering
-  (issue #965).
 
 ## [0.4.0] - 2026-08-11
 

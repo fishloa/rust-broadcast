@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ## [11.0.0] - 2026-10-05
+
+Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
+
 ### Fixed
 - TR 101 290 v1.4.1 Table 5.0a indicators 1.3.a (`PAT_error_2`) / 1.5.a
   (`PMT_error_2`): the presence timers were refreshed by any payload-bearing
@@ -58,10 +61,6 @@
   TS packet, as each packet's payload physically arrives (ISO/IEC 13818-1
   §2.4.2.3), so it drains correctly between packets instead of receiving
   the whole section at once (#1035).
-
-
-## [10.1.0] - 2026-09-26
-Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
 
 ## [10.0.1] - 2026-08-30
 Lockstep patch alongside `dvb-si` 10.0.1; no source changes in this crate.

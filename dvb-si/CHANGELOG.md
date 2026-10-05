@@ -129,14 +129,14 @@
   check, inconsistent with `DirectoryMessage`'s guarded equivalent; several
   BIOP IOR profile length fields (`NameComponent`, `ServiceLocation`,
   `TaggedProfile`, `IOR`) had the same gap (#1129).
-- Added a shared `dvb_si::tables::write_section_length` helper that every
+- Added a shared crate-internal `write_section_length` helper (not public API) that every
   table serializer now routes its outer `section_length` write through, so
   the guard cannot be forgotten again for a future table.
 - ~80 descriptor serializers (starting from the `network_name_descriptor`
   template) wrote the outer 8-bit `descriptor_length` header byte with no
   range check, so a body over 255 bytes wrapped mod 256 and misframed the
   rest of the descriptor loop (#1129). Added a shared
-  `dvb_si::descriptors::write_descriptor_header` helper (tag + checked 8-bit
+  crate-internal `write_descriptor_header` helper (not public API; tag + checked 8-bit
   length) that every descriptor serializer now routes its header write
   through.
 - Nested per-field lengths and counts inside descriptor bodies had the same
@@ -236,7 +236,7 @@
   and `Ior::parse` didn't check that `taggedProfiles` consumed the whole
   input. `Binding`/`ServiceGatewayInfo` used `ior.serialized_len()` as a
   stand-in for "bytes consumed", which was only correct because of that
-  missing validation. Added `Ior::parse_at` (returns the real consumed
+  missing validation. Added a crate-internal `Ior::parse_at` (returns the real consumed
   count) and used it at both call sites; slack is now rejected everywhere.
 - `demux::SiDemux`: a changed PAT added new PMT PIDs to the watch set but
   never stopped watching one a programme no longer used, so a stale PMT

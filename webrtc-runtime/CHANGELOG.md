@@ -4,10 +4,29 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
-### Added
-- `test-support` feature (non-default, `#[doc(hidden)]` hooks, not public API): `MediaTransport::with_certificate_for_test`, `force_next_timer_error`, `force_stuck_timer` and `media::certificate_fingerprint`, used by `multimux`'s loopback/fault-injection tests. None of it exists in a default build (guarded by `tests/test_support_is_gated.rs`). The `rtc-dtls` dependency `multimux` lists is a `[dev-dependencies]` entry of `multimux` only; `webrtc-runtime`'s own dependency set is unchanged.
+
+## [0.2.0] - 2026-10-05
+
+### Security
+Fixes GHSA-48qq-7p78-2jvj (the DTLS peer certificate was never verified) and
+GHSA-89f2-5m24-r6m7 (the remote-ICE-candidate cap could be bypassed via STUN peer-reflexive
+candidates). Upgrade if you use the `media` feature.
 
 ### Changed (breaking)
+- `media::MediaTransportConfig` has a new required field `remote_fingerprint` (the remote SDP's
+  `a=fingerprint`). The DTLS handshake now fails unless the peer's certificate matches it, the
+  passive role requires a client certificate, DTLS is accepted only from the ICE-selected
+  address, and an established session's SRTP keys cannot be replaced by another association.
+- `media::MediaTransportConfig` has a new required field `max_remote_candidates`.
+  `media::MediaTransport::add_remote_candidate` previously admitted an unbounded number of
+  remote ICE candidates; a caller (e.g. a WHIP offer or a trickle ICE fragment) that supplied a
+  very large number of candidates aimed at arbitrary IP/port pairs could make the transport
+  originate an unbounded number of STUN connectivity checks. RFC 8445 §6.1.2.5 requires this
+  cap to be configurable, so every constructor must now supply a value; pass the new
+  `MAX_REMOTE_CANDIDATES` constant (100, the spec's own recommended default) unless a stricter
+  cap is wanted. Candidates past the configured cap are rejected with `Error::Media`, never
+  silently dropped.
+
 - `MediaTransport::new(config, now)` and the rest of construction take a caller-supplied `std::time::Instant`: every internal timer (ICE agent, STUN gatherer) is scheduled from it and the transport never reads the wall clock.
 - The crate is `std` (the `std` feature is kept as a name but no longer gates anything) and left CI's `thumbv7em-none-eabi` list: the WHIP/WHEP state machines now speak `http`/`headers` types. `HttpRequest`/`HttpResponse` (one shared definition, re-exported from `whip::{client,server}` and `whep::{player,server}`) carry `http::Method`, `http::StatusCode` and an `http::HeaderMap` (`HttpRequest::content_type()`/`if_match()`, `HttpResponse::new()`/`with_body()`/`with_content_type()`/`with_location()`/`with_etag()`); the old `Method` enums are `http::Method`. `WhipSession::on_patch(fragment, &HeaderMap)`, `WhepSession::on_patch(body, &HeaderMap)` (content type from the headers) and `WhepSession::no_publisher(Option<Duration>)` (typed `Retry-After`). New `Error::InvalidHeader { header }`.
 - `If-Match` is read as an RFC 9110 entity-tag list with strong comparison. `If-Match: *` is an ICE restart and the current quoted tag (`"etag1"`) a trickle update, as before; an unquoted tag (`etag1`), a quoted star (`"*"`) and a weak tag (`W/"etag1"`) no longer match (they fail with `Error::ETagMismatch`, whose `got` is now the raw header text, `"\"old\""`). A duplicated `Content-Type` on a PATCH is rejected. A session URL (non-ASCII) or ETag that cannot be sent as a header makes `accept` answer `500` with no `Location` instead of emitting a bad header. Header names are lower-case in the `HeaderMap`.
@@ -38,11 +57,30 @@ All notable changes to this crate will be documented in this file.
   misread as an ICE-restart answer, and a `DELETE` answered `204` (as common as the `200` the
   code checked for) left the client `Established` forever instead of `Closed` (#1090).
 
-### Changed
+### Added
+- `parse_remote_fingerprint(sdp)` to read `a=fingerprint` from an SDP body.
+- `media::MediaEvent::RtcpUnsupported(rtcp_packet::Error)`: an inbound SRTCP packet that
+  decrypted and authenticated but is not an RFC 3550 §6 compound `rtcp-packet` decodes (e.g.
+  RFC 4585 PLI/NACK/REMB feedback, which is most of what a browser receiver sends).
 
-- Dependency bumps, non-breaking (no public API change): `rtc-dtls`/`rtc-ice`/`rtc-shared`/`rtc-srtp`/`rtc-stun` 0.21, and dev-only RustCrypto 0.13 (`aes` 0.9, `cipher` 0.5, `ctr` 0.10, `hmac` 0.13, `sha1` 0.11, `sha2` 0.11). rtc 0.21 takes its crypto provider explicitly; this crate uses the default provider (ring), so the provider choice is unchanged, but ring now implements the primitives that were previously RustCrypto underneath (a different backend, same provider).
+- `test-support` feature (non-default, `#[doc(hidden)]` hooks, not public API): `MediaTransport::with_certificate_for_test`, `force_next_timer_error`, `force_stuck_timer` and `media::certificate_fingerprint`, used by `multimux`'s loopback/fault-injection tests. None of it exists in a default build (guarded by `tests/test_support_is_gated.rs`). The `rtc-dtls` dependency `multimux` lists is a `[dev-dependencies]` entry of `multimux` only; `webrtc-runtime`'s own dependency set is unchanged.
+
+- `MediaTransport::poll_timeout()` (earliest deadline over the ICE agent, every DTLS association, the STUN gatherer and the retired-key purge; schedule `handle_timeout` there, not on a fixed tick) and `MediaTransport::local_candidates()` (the host candidate as an `a=candidate:` body, from `rtc-ice`'s own marshaller).
 
 ### Fixed
+- `MediaTransport::handle_datagram` no longer returns `Err` for such a packet. It passed SRTCP
+  authentication, so it is a genuine packet from the peer, not a transport error. It also now
+  counts toward the RFC 3711 key-lifetime read counter.
+- `media::MediaTransport::add_remote_candidate`'s cap on remote ICE candidates
+  (RFC 8445 §6.1.2.5) could be bypassed entirely: an authenticated STUN Binding
+  Request from a source address the transport didn't already recognize made
+  the ICE agent create its own peer-reflexive remote candidate, uncounted by
+  the cap. Since the remote peer already knows the negotiated ICE
+  ufrag/password, it could grow the remote-candidate (and pair) count without
+  bound by sending from many source ports (RFC 8445 §19.5.1). New STUN
+  source addresses are now checked against the same configured cap before
+  being handed to the ICE agent; an address already admitted keeps working.
+
 - The server-reflexive candidate's `stun:` URL brackets an IPv6 host (`stun:[2001:db8::1]:3478`).
 - `StunGather`'s deadline is the first instant at which `handle_timeout` does work: `rtc-stun` collects an expired transaction only when `deadline < now`, so a driver sleeping until the raw deadline and calling `handle_timeout` there would spin.
 - `ice::parse_ice_server_links`/`format_ice_server_links`: a `Link` header parameter value
@@ -65,51 +103,8 @@ All notable changes to this crate will be documented in this file.
   unchanged — `multimux`'s `is_liveness_event` already treated both
   `MediaEvent::Rtcp` and `MediaEvent::RtcpUnsupported` as proof of life.
 
-### Added
-- `MediaTransport::poll_timeout()` (earliest deadline over the ICE agent, every DTLS association, the STUN gatherer and the retired-key purge; schedule `handle_timeout` there, not on a fixed tick) and `MediaTransport::local_candidates()` (the host candidate as an `a=candidate:` body, from `rtc-ice`'s own marshaller).
-
-
-## [0.2.0] - 2026-09-25
-
-### Security
-Fixes GHSA-48qq-7p78-2jvj (the DTLS peer certificate was never verified) and
-GHSA-89f2-5m24-r6m7 (the remote-ICE-candidate cap could be bypassed via STUN peer-reflexive
-candidates). Upgrade if you use the `media` feature.
-
-### Changed (breaking)
-- `media::MediaTransportConfig` has a new required field `remote_fingerprint` (the remote SDP's
-  `a=fingerprint`). The DTLS handshake now fails unless the peer's certificate matches it, the
-  passive role requires a client certificate, DTLS is accepted only from the ICE-selected
-  address, and an established session's SRTP keys cannot be replaced by another association.
-- `media::MediaTransportConfig` has a new required field `max_remote_candidates`.
-  `media::MediaTransport::add_remote_candidate` previously admitted an unbounded number of
-  remote ICE candidates; a caller (e.g. a WHIP offer or a trickle ICE fragment) that supplied a
-  very large number of candidates aimed at arbitrary IP/port pairs could make the transport
-  originate an unbounded number of STUN connectivity checks. RFC 8445 §6.1.2.5 requires this
-  cap to be configurable, so every constructor must now supply a value; pass the new
-  `MAX_REMOTE_CANDIDATES` constant (100, the spec's own recommended default) unless a stricter
-  cap is wanted. Candidates past the configured cap are rejected with `Error::Media`, never
-  silently dropped.
-
-### Added
-- `parse_remote_fingerprint(sdp)` to read `a=fingerprint` from an SDP body.
-- `media::MediaEvent::RtcpUnsupported(rtcp_packet::Error)`: an inbound SRTCP packet that
-  decrypted and authenticated but is not an RFC 3550 §6 compound `rtcp-packet` decodes (e.g.
-  RFC 4585 PLI/NACK/REMB feedback, which is most of what a browser receiver sends).
-
-### Fixed
-- `MediaTransport::handle_datagram` no longer returns `Err` for such a packet. It passed SRTCP
-  authentication, so it is a genuine packet from the peer, not a transport error. It also now
-  counts toward the RFC 3711 key-lifetime read counter.
-- `media::MediaTransport::add_remote_candidate`'s cap on remote ICE candidates
-  (RFC 8445 §6.1.2.5) could be bypassed entirely: an authenticated STUN Binding
-  Request from a source address the transport didn't already recognize made
-  the ICE agent create its own peer-reflexive remote candidate, uncounted by
-  the cap. Since the remote peer already knows the negotiated ICE
-  ufrag/password, it could grow the remote-candidate (and pair) count without
-  bound by sending from many source ports (RFC 8445 §19.5.1). New STUN
-  source addresses are now checked against the same configured cap before
-  being handed to the ICE agent; an address already admitted keeps working.
+### Changed
+- Dependency bumps, non-breaking (no public API change): `rtc-dtls`/`rtc-ice`/`rtc-shared`/`rtc-srtp`/`rtc-stun` 0.21, and dev-only RustCrypto 0.13 (`aes` 0.9, `cipher` 0.5, `ctr` 0.10, `hmac` 0.13, `sha1` 0.11, `sha2` 0.11). rtc 0.21 takes its crypto provider explicitly; this crate uses the default provider (ring), so the provider choice is unchanged, but ring now implements the primitives that were previously RustCrypto underneath (a different backend, same provider).
 
 ## [0.1.0] - 2026-08-11
 

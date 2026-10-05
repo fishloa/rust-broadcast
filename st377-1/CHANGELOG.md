@@ -35,15 +35,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     old canonical behaviour) for a freshly built value — so existing code
     that only ever builds values programmatically sees no behaviour
     change, but any exhaustive struct-literal construction of these types
-    needs the new field (or `..Default::default()`).
+    needs the new field (`PartitionPack` has no `Default`, so it
+    must be given explicitly; the other five can use `..Default::default()`).
   - `PartialEq`/`Eq` for all six types now compare every field EXCEPT
     `len_size`, which is a serialization-*form* preference, not part of a
     value's logical identity — so the project's "parse -> serialize ->
     parse gives an equal value" round-trip convention stays meaningful (a
     freshly-built `Minimal` value and the same value reparsed, which always
     carries the concrete `Fixed` width it found, still compare equal).
-  - New `BerLength` enum + `ber::{ber_length_size_for, encode_ber_length_as}`
-    helpers; new `Error::FixedBerLengthTooSmall` (only reachable by
+  - New public `BerLength` enum (the `ber::{ber_length_size_for,
+    encode_ber_length_as}` helpers behind it are in a private module, not
+    public API); new `Error::FixedBerLengthTooSmall` (only reachable by
     constructing/mutating a value into an inconsistent state, never by
     re-serializing a value as parsed).
   - `tests/fixture_real_op1a.rs`'s round-trip assertions now compare
@@ -53,6 +55,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
     re-canonicalization, so it never actually exercised this bug. A new
     `real_fixture_non_minimal_ber_lengths_round_trip_byte_identically` test
     quantifies and verifies the fix directly.
+
+- `op1a::Op1aQualifier`'s bit remap (see Fixed) is also a behaviour change:
+  `Op1aQualifier::default().to_byte()` is now `0x01` (was `0x00`, the
+  always-set marker bit is now included), and the `with_*` setters/getters
+  for `external_essence`/`non_streamable`/`multi_track` now use bits
+  1/2/3 instead of 0/1/2 (#1048).
 
 ### Changed
 - The `Serialize` skeleton (`finish_owned_set` + `serialize_owned_set` /

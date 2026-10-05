@@ -7,95 +7,45 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ## [0.5.0] - 2026-10-05
-### Added
-- `io::IoConfig` (`#[non_exhaustive]`, `with_*` builders): `max_datagram` (default 1500, clamped to `io::MIN_MAX_DATAGRAM` = 64 ..= `io::MAX_MAX_DATAGRAM` = 65535), `connect` (10 s: resolve + bind), `handshake` (5 s), `read_idle` (5 s), `write` (5 s: every `send_to`). New entry points `SrtSocket::connect_with`/`connect_from_with` and `SrtListener::bind_with`; the old ones use `IoConfig::default()`. `SrtSocket::send_bytes(Bytes)` hands a payload to the driver without a copy.
-- `SocketStats::rx_oversize` and `SrtListener::accept_overflow_dropped()`; `arq::Receiver::next_timeout()` and `tsbpd::TsbpdScheduler::next_release_after()` (the `no_std` building blocks of the driver's deadline).
-- `SrtSocket::stats()` (returning the new `SocketStats`) and `SrtListener::unrouted_dropped()`
-  report datagrams a bounded internal channel dropped because it was full — this adapter's own
-  backpressure, not wire-level loss ARQ/TLPKTDROP already account for.
-- Typed handshake errors (#1084, r08-SRT-W12): `Error::Rejected(RejectionReason)` carries the
-  peer's own reason (a wrong secret is distinguishable from a refused backlog),
-  `Error::HandshakeTimedOut { stage }`, `Error::EncryptionUnsupported`, and
-  `Error::Handshake { stage, source }`, which keeps the underlying parse/engine error as its
-  source instead of flattening it.
-- `arq::FeedOutcome::out_of_window` and `arq::Receiver::with_mtu` (r08-SRT-W2/W4); the receiver's
-  periodic NAK is sized against the negotiated MTU.
-- `tsbpd::TsbpdScheduler::time_base_us()` / `drift_us()` and the constants
-  `tsbpd::DRIFT_SAMPLE_COUNT` / `tsbpd::DRIFT_MAX_US` (r08-SRT-W9).
-- `handshake_sm::SecretBytes` (`crypto` feature): the type of a negotiated SEK, and the constants
-  `handshake_sm::REJECTION_CODE_LIMIT` and `handshake_sm::DEFAULT_MAX_RETRIES`.
-- `arq::seq::seq_in_closed_range(seq, first, last)`: circular inclusive-range membership (a
-  `last` preceding `first` is an empty range and never matches).
-- `io::SocketStats::late_dropped` and `tsbpd::TsbpdScheduler::tlpktdrop_enabled()`.
-- `CryptoConfig` and `SecretBytes` implement `zeroize::Zeroize` / `ZeroizeOnDrop`. The `crypto`
-  feature now depends on `zeroize` and `subtle`, both already in the workspace lock (#1142).
 
-### Changed (breaking)
-- `SrtSocket::recv` now returns `Option<bytes::Bytes>` (was `Option<Vec<u8>>`): each received datagram is one exactly-sized `Bytes` (deliberately not a view into a shared receive chunk, which would pin the whole chunk while any one packet is held) and the application's payload is a slice of it, so a packet is not copied again on the way up (SP6.5). `bytes` and `tokio-util` are new dependencies of the `tokio` feature only; the `no_std` core is unchanged.
-- The `tokio` adapter's connection driver no longer ticks on a fixed 2 ms interval: it sleeps until its own next deadline (`Driver::poll_timeout`: next Full ACK/NAK, TSBPD release or too-late skip, keep-alive, peer-idle expiry, pacing slot) or until an event. An idle connection wakes 100 times a second (the 10 ms Full ACK is protocol, rule 11) instead of 500. A late wake now sends the paced packets whose slots passed (at most 16 per wake), so an idle backlog drains at ~16x the old one-packet-per-wake ceiling while pacing still holds.
-- `SrtListener` handshakes now progress in a tracked background task: `accept()` only waits for a finished handshake, so a caller connects (and a lost CONCLUSION response is answered again) whether or not anyone is polling `accept()`. Send errors met while answering a peer are counted (`SrtListener::send_errors()`), never queued or returned from `accept()`, so a flood of them cannot displace finished connections. Once the handle is gone the task stops serving new handshakes but keeps the routing pump alive for connections already accepted. At most 64 finished handshakes wait for `accept()`; more are dropped and counted (`SrtListener::accept_overflow_dropped`).
-- The `HANDSHAKE_TIMEOUT` (5 s) and `PEER_IDLE_TIMEOUT` (5 s) constants are now `IoConfig::handshake` / `IoConfig::read_idle` (same defaults).
-- `tsbpd::TsbpdScheduler::new` takes the time base and the initial drift as signed `i64`
-  microseconds (was `u64`): `TsbpdTimeBase = T_NOW - HSREQ_TIMESTAMP` is negative whenever the
-  peer's clock is ahead (r08-SRT-W9).
-- `NegotiatedParams::sek` is an `Option<SecretBytes>` (was `Option<Vec<u8>>`; it derefs to
-  `&[u8]`), is never serialized by the `serde` feature, and `CryptoConfig`, `NegotiatedParams` and
-  `KeyMaterial` no longer print passphrases, keys, wrapped keys or ICVs in `Debug` — only lengths
-  (#1142). `CryptoConfig` now wipes itself on drop, so its fields can no longer be moved out of
-  it, and compares secrets in constant time.
-- `KeyMaterial::parse` and `serialize_into` both reject `KK = 00b` ("no SEK provided", which
-  §3.2.2 calls invalid): the old parse accepted a message `serialize_into` could not reproduce
-  (r08-SRT-W13).
-- `RejectionReason::from_handshake_type` only recognises `1000..2^31` as a rejection; libsrt's
-  negative `URQ_*` range (for instance `0xFFFF_FFFC`) is no longer reported as
-  `Rejected(Reserved(..))` (r08-SRT-W14).
-- `HandshakeConfig::default().max_retries` is 12 (was 5): twelve 250 ms retransmits are libsrt's
-  3 s connect timeout.
-- `handshake_sm::derive_cookie` is SipHash-2-4 keyed by a 128-bit `secret: u128` (was a `u64`
-  fed to an unkeyed-strength splitmix mix), so every cookie value changes (r08-SRT-O5). The
-  tokio listener draws that key from the OS and replaces it every minute; a handshake begun
-  under the previous key still completes, because its pending entry keeps the cookie it was
-  issued.
-- The tokio adapter's connect/bind/accept errors are the new typed variants instead of
-  `Error::InvalidField` (refused crypto is `EncryptionUnsupported`, a peer refusal is `Rejected`,
-  an unanswered handshake is `HandshakeTimedOut`, an engine failure is `Handshake`).
-- `SrtSocket::send` waits (bounded hand-off channel) while the sender already holds a full flow
-  window of unacknowledged packets or the hand-off queue is full, instead of queueing without
-  limit; it fails only once the connection has ended (r08-SRT-W6).
-- A received Keep-Alive is no longer echoed back (each side now sends its own, §3.2.3).
-- `arq::Sender::on_data` returns `Result<Vec<u8>>`: `Error::FieldTooWide` for a `seq` wider than 31
-  bits or a `message_number` wider than 26 (nothing is buffered), and it expects `seq` to increase
-  (checked by a `debug_assert!`). `on_nak` resolves ranges against the send buffer instead of
-  expanding them, ignores a range whose end precedes its start, and examines at most 65 536
-  sequence numbers per NAK datagram.
-- `arq::Receiver::new` takes a third argument, `max_flow_window: u32` (the Available Buffer Size
-  its Full ACK advertises, §3.2.1): `Receiver::new(dest_socket_id, initial_seq, max_flow_window)`.
-- `arq::Receiver::feed_data` ignores (`FeedOutcome::out_of_window`) a sequence number wider than
-  31 bits or further ahead of the ack point than the flow window (clamped to 262 144), and a
-  first packet beyond the peer's ISN now reveals the gap before it.
-- `NegotiatedParams` gains `mtu` and `max_flow_window_size`: the smaller of the two sides'
-  advertised values (§3.2.1), computed by the Caller, Listener and Rendezvous engines.
-- The sans-IO engines refuse a peer ISN wider than 31 bits (`Rejected(Rogue)`): it would seed the
-  receive side out of range and stall the connection. The Rendezvous engine returns
-  `HandshakeOutOfSequence` instead of panicking on a broken internal invariant.
-- `crypto::derive_kek` and `crypto::unwrap_sek` return `Zeroizing<Vec<u8>>` (wiped on drop)
-  instead of `Vec<u8>`; the `serde` feature no longer serializes a `KeyMaterial`'s salt, ICV or
-  wrapped keys, and `Debug` redacts them (#1142).
-- The Caller's Key Material request now carries `SE` = 2 (MPEG-TS/SRT) on the wire (was 0).
-- The wire `Timestamp` of every packet the adapter and engines build wraps modulo 2^32 µs
-  (~71.6 min) instead of saturating at `u32::MAX` (#1063, listed under Fixed below).
-- `KeepAlivePacket`, `CongestionWarningPacket`, `ShutdownPacket`, `AckAckPacket`, and `PeerErrorPacket`
-  now carry a `libsrt_pad: bool` field, so both the pure-spec 16-byte (empty CIF) and libsrt's 20-byte
-  (4-byte zero-pad CIF) wire shapes round-trip byte-identically.
-- `KeyMaterial::serialize_into` now returns `Error::FieldTooWide` instead of silently
-  truncating, when a length does not fit its wire field (#1129).
-- The tokio adapter's internal per-connection ingress channel, the listener's
-  candidate-new-connection queue, and the delivered-payload channel to the application are now
-  bounded (dropped and counted on full, via `try_send`) instead of unbounded — a fast peer, or a
-  slow/stalled application, could previously grow this process's memory without bound purely from
-  network input.
+### Security
+Fixes GHSA-28hg-fc5v-m865, GHSA-gjm5-23jf-293p, GHSA-r6hf-93jv-c3wc and GHSA-7346-x8wq-2rgr.
+Upgrade if you use the tokio adapter (`io::SrtSocket` / `io::SrtListener`).
+
+### Changed
+- The tokio adapter (`io::SrtSocket`, `io::SrtListener`) now refuses encrypted connections:
+  a `HandshakeConfig` with `crypto` set is rejected before any I/O, an incoming handshake that
+  requests encryption is rejected, and encrypted data packets are never delivered. The sans-IO
+  engines still negotiate keys; the adapter will support encryption once its data path does.
+- Too-late packet drop is now enabled by default in the tokio adapter (live mode).
+
+- Dependency bumps, non-breaking (no public API change): `aes` 0.9, `ctr` 0.10, `aes-kw` 0.3, `pbkdf2` 0.13, `hmac` 0.13, `sha1` 0.11 (RustCrypto 0.13 generation). Key-wrap, PBKDF2 and AES-CTR output is unchanged (known-answer vectors and the libsrt interop tests pass).
+
+- `arq::seq` arithmetic now delegates to `broadcast_common::seq::SeqSpace` (one algorithm, two moduli; public functions and results unchanged) (#1141).
 
 ### Fixed
+- The tokio adapter handles DROPREQ and caps its receive staging buffer at the flow window, so a
+  loss the sender will not retransmit no longer stalls delivery or grows memory.
+- `SrtListener` bounds the number of in-progress handshakes and expires them on a timer, even
+  under continuous traffic.
+- `tsbpd::TsbpdScheduler` with too-late drop enabled no longer waits forever on a missing
+  packet: per the receiver-buffer read rule (§4.6), once the next buffered packet's play time
+  arrives the gap is skipped and that packet delivered, and `TickOutcome::dropped` now reports
+  the skipped sequence numbers from both `feed_data` and `tick`. With too-late drop disabled the
+  scheduler still waits for the gap (reliable in-order delivery).
+- The tokio adapter (`io::SrtSocket::connect`/`connect_from`, `io::SrtListener`) now generates a
+  fresh, random Initial Sequence Number and SRT Socket ID for every connection instead of reusing
+  a fixed/default `HandshakeConfig::initial_seq_number` for both, or handing out sequential Socket
+  IDs. The sans-IO handshake engines were already caller-driven on both values (unchanged, still
+  no `pub` API change); only the tokio adapter's own choice of what to hand them was fixed. The
+  adapter's randomness (this and the existing cookie-secret derivation) now comes from the OS
+  source via an optional `getrandom` dependency, enabled only by the `tokio` feature, rather than
+  `std::collections::hash_map::RandomState` — the `no_std` sans-IO core stays dependency-free.
+- The tokio adapter's generated SRT Socket IDs could land anywhere in the full 32-bit range,
+  including values a real libsrt peer never allocates (its group-id marker bit set, or its top bit
+  set, which reads back negative in libsrt's signed `int`). Generated Socket IDs are now folded
+  into the same `1..=0x3FFF_FFFF` range libsrt itself allocates from.
+
 - Defect 3: dropping an `SrtListener` left its UDP port bound for as long as no further datagram arrived (the routing pump only noticed the dropped listener on its next `recv_from`). The pump and the handshake task are now owned by a `TaskTracker` and end on a `CancellationToken` when the last of {listener handle, every accepted connection} is dropped: an idle listener frees its port at once, and connections it already accepted keep being routed until they are gone.
 - A datagram larger than `IoConfig::max_datagram` used to be silently truncated by UDP and could then parse as a shorter, valid DATA packet with a corrupted payload; it is now read with one extra byte of room, dropped and counted in `SocketStats::rx_oversize`.
 - Every `send_to` is bounded by `IoConfig::write`; resolving and binding by `IoConfig::connect`.
@@ -226,48 +176,93 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   compare, which disagreed with a real libsrt peer for roughly a quarter of all cookie pairs —
   whenever exactly one of the two cookies had its top bit set (#1064).
 
-### Changed
+### Added
+- `io::IoConfig` (`#[non_exhaustive]`, `with_*` builders): `max_datagram` (default 1500, clamped to `io::MIN_MAX_DATAGRAM` = 64 ..= `io::MAX_MAX_DATAGRAM` = 65535), `connect` (10 s: resolve + bind), `handshake` (5 s), `read_idle` (5 s), `write` (5 s: every `send_to`). New entry points `SrtSocket::connect_with`/`connect_from_with` and `SrtListener::bind_with`; the old ones use `IoConfig::default()`. `SrtSocket::send_bytes(Bytes)` hands a payload to the driver without a copy.
+- `SocketStats::rx_oversize` and `SrtListener::accept_overflow_dropped()`; `arq::Receiver::next_timeout()` and `tsbpd::TsbpdScheduler::next_release_after()` (the `no_std` building blocks of the driver's deadline).
+- `SrtSocket::stats()` (returning the new `SocketStats`) and `SrtListener::unrouted_dropped()`
+  report datagrams a bounded internal channel dropped because it was full — this adapter's own
+  backpressure, not wire-level loss ARQ/TLPKTDROP already account for.
+- Typed handshake errors (#1084, r08-SRT-W12): `Error::Rejected(RejectionReason)` carries the
+  peer's own reason (a wrong secret is distinguishable from a refused backlog),
+  `Error::HandshakeTimedOut { stage }`, `Error::EncryptionUnsupported`, and
+  `Error::Handshake { stage, source }`, which keeps the underlying parse/engine error as its
+  source instead of flattening it.
+- `arq::FeedOutcome::out_of_window` and `arq::Receiver::with_mtu` (r08-SRT-W2/W4); the receiver's
+  periodic NAK is sized against the negotiated MTU.
+- `tsbpd::TsbpdScheduler::time_base_us()` / `drift_us()` and the constants
+  `tsbpd::DRIFT_SAMPLE_COUNT` / `tsbpd::DRIFT_MAX_US` (r08-SRT-W9).
+- `handshake_sm::SecretBytes` (`crypto` feature): the type of a negotiated SEK, and the constants
+  `handshake_sm::REJECTION_CODE_LIMIT` and `handshake_sm::DEFAULT_MAX_RETRIES`.
+- `arq::seq::seq_in_closed_range(seq, first, last)`: circular inclusive-range membership (a
+  `last` preceding `first` is an empty range and never matches).
+- `io::SocketStats::late_dropped` and `tsbpd::TsbpdScheduler::tlpktdrop_enabled()`.
+- `CryptoConfig` and `SecretBytes` implement `zeroize::Zeroize` / `ZeroizeOnDrop`. The `crypto`
+  feature now depends on `zeroize` and `subtle`, both already in the workspace lock (#1142).
 
-- Dependency bumps, non-breaking (no public API change): `aes` 0.9, `ctr` 0.10, `aes-kw` 0.3, `pbkdf2` 0.13, `hmac` 0.13, `sha1` 0.11 (RustCrypto 0.13 generation). Key-wrap, PBKDF2 and AES-CTR output is unchanged (known-answer vectors and the libsrt interop tests pass).
-
-- `arq::seq` arithmetic now delegates to `broadcast_common::seq::SeqSpace` (one algorithm, two moduli; public functions and results unchanged) (#1141).
-
-
-## [0.4.1] - 2026-09-25
-
-### Security
-Fixes GHSA-28hg-fc5v-m865, GHSA-gjm5-23jf-293p, GHSA-r6hf-93jv-c3wc and GHSA-7346-x8wq-2rgr.
-Upgrade if you use the tokio adapter (`io::SrtSocket` / `io::SrtListener`).
-
-### Changed
-- The tokio adapter (`io::SrtSocket`, `io::SrtListener`) now refuses encrypted connections:
-  a `HandshakeConfig` with `crypto` set is rejected before any I/O, an incoming handshake that
-  requests encryption is rejected, and encrypted data packets are never delivered. The sans-IO
-  engines still negotiate keys; the adapter will support encryption once its data path does.
-- Too-late packet drop is now enabled by default in the tokio adapter (live mode).
-
-### Fixed
-- The tokio adapter handles DROPREQ and caps its receive staging buffer at the flow window, so a
-  loss the sender will not retransmit no longer stalls delivery or grows memory.
-- `SrtListener` bounds the number of in-progress handshakes and expires them on a timer, even
-  under continuous traffic.
-- `tsbpd::TsbpdScheduler` with too-late drop enabled no longer waits forever on a missing
-  packet: per the receiver-buffer read rule (§4.6), once the next buffered packet's play time
-  arrives the gap is skipped and that packet delivered, and `TickOutcome::dropped` now reports
-  the skipped sequence numbers from both `feed_data` and `tick`. With too-late drop disabled the
-  scheduler still waits for the gap (reliable in-order delivery).
-- The tokio adapter (`io::SrtSocket::connect`/`connect_from`, `io::SrtListener`) now generates a
-  fresh, random Initial Sequence Number and SRT Socket ID for every connection instead of reusing
-  a fixed/default `HandshakeConfig::initial_seq_number` for both, or handing out sequential Socket
-  IDs. The sans-IO handshake engines were already caller-driven on both values (unchanged, still
-  no `pub` API change); only the tokio adapter's own choice of what to hand them was fixed. The
-  adapter's randomness (this and the existing cookie-secret derivation) now comes from the OS
-  source via an optional `getrandom` dependency, enabled only by the `tokio` feature, rather than
-  `std::collections::hash_map::RandomState` — the `no_std` sans-IO core stays dependency-free.
-- The tokio adapter's generated SRT Socket IDs could land anywhere in the full 32-bit range,
-  including values a real libsrt peer never allocates (its group-id marker bit set, or its top bit
-  set, which reads back negative in libsrt's signed `int`). Generated Socket IDs are now folded
-  into the same `1..=0x3FFF_FFFF` range libsrt itself allocates from.
+### Changed (breaking)
+- `SrtSocket::recv` now returns `Option<bytes::Bytes>` (was `Option<Vec<u8>>`): each received datagram is one exactly-sized `Bytes` (deliberately not a view into a shared receive chunk, which would pin the whole chunk while any one packet is held) and the application's payload is a slice of it, so a packet is not copied again on the way up (SP6.5). `bytes` and `tokio-util` are new dependencies of the `tokio` feature only; the `no_std` core is unchanged.
+- The `tokio` adapter's connection driver no longer ticks on a fixed 2 ms interval: it sleeps until its own next deadline (`Driver::poll_timeout`: next Full ACK/NAK, TSBPD release or too-late skip, keep-alive, peer-idle expiry, pacing slot) or until an event. An idle connection wakes 100 times a second (the 10 ms Full ACK is protocol, rule 11) instead of 500. A late wake now sends the paced packets whose slots passed (at most 16 per wake), so an idle backlog drains at ~16x the old one-packet-per-wake ceiling while pacing still holds.
+- `SrtListener` handshakes now progress in a tracked background task: `accept()` only waits for a finished handshake, so a caller connects (and a lost CONCLUSION response is answered again) whether or not anyone is polling `accept()`. Send errors met while answering a peer are counted (`SrtListener::send_errors()`), never queued or returned from `accept()`, so a flood of them cannot displace finished connections. Once the handle is gone the task stops serving new handshakes but keeps the routing pump alive for connections already accepted. At most 64 finished handshakes wait for `accept()`; more are dropped and counted (`SrtListener::accept_overflow_dropped`).
+- The `HANDSHAKE_TIMEOUT` (5 s) and `PEER_IDLE_TIMEOUT` (5 s) constants are now `IoConfig::handshake` / `IoConfig::read_idle` (same defaults).
+- `tsbpd::TsbpdScheduler::new` takes the time base and the initial drift as signed `i64`
+  microseconds (was `u64`): `TsbpdTimeBase = T_NOW - HSREQ_TIMESTAMP` is negative whenever the
+  peer's clock is ahead (r08-SRT-W9).
+- `NegotiatedParams::sek` is an `Option<SecretBytes>` (was `Option<Vec<u8>>`; it derefs to
+  `&[u8]`), is never serialized by the `serde` feature, and `CryptoConfig`, `NegotiatedParams` and
+  `KeyMaterial` no longer print passphrases, keys, wrapped keys or ICVs in `Debug` — only lengths
+  (#1142). `CryptoConfig` now wipes itself on drop, so its fields can no longer be moved out of
+  it, and compares secrets in constant time.
+- `KeyMaterial::parse` and `serialize_into` both reject `KK = 00b` ("no SEK provided", which
+  §3.2.2 calls invalid): the old parse accepted a message `serialize_into` could not reproduce
+  (r08-SRT-W13).
+- `RejectionReason::from_handshake_type` only recognises `1000..2^31` as a rejection; libsrt's
+  negative `URQ_*` range (for instance `0xFFFF_FFFC`) is no longer reported as
+  `Rejected(Reserved(..))` (r08-SRT-W14).
+- `HandshakeConfig::default().max_retries` is 12 (was 5): twelve 250 ms retransmits are libsrt's
+  3 s connect timeout.
+- `handshake_sm::derive_cookie` is SipHash-2-4 keyed by a 128-bit `secret: u128` (was a `u64`
+  fed to an unkeyed-strength splitmix mix), so every cookie value changes (r08-SRT-O5). The
+  tokio listener draws that key from the OS and replaces it every minute; a handshake begun
+  under the previous key still completes, because its pending entry keeps the cookie it was
+  issued.
+- The tokio adapter's connect/bind/accept errors are the new typed variants instead of
+  `Error::InvalidField` (refused crypto is `EncryptionUnsupported`, a peer refusal is `Rejected`,
+  an unanswered handshake is `HandshakeTimedOut`, an engine failure is `Handshake`).
+- `SrtSocket::send` waits (bounded hand-off channel) while the sender already holds a full flow
+  window of unacknowledged packets or the hand-off queue is full, instead of queueing without
+  limit; it fails only once the connection has ended (r08-SRT-W6).
+- A received Keep-Alive is no longer echoed back (each side now sends its own, §3.2.3).
+- `arq::Sender::on_data` returns `Result<Vec<u8>>`: `Error::FieldTooWide` for a `seq` wider than 31
+  bits or a `message_number` wider than 26 (nothing is buffered), and it expects `seq` to increase
+  (checked by a `debug_assert!`). `on_nak` resolves ranges against the send buffer instead of
+  expanding them, ignores a range whose end precedes its start, and examines at most 65 536
+  sequence numbers per NAK datagram.
+- `arq::Receiver::new` takes a third argument, `max_flow_window: u32` (the Available Buffer Size
+  its Full ACK advertises, §3.2.1): `Receiver::new(dest_socket_id, initial_seq, max_flow_window)`.
+- `arq::Receiver::feed_data` ignores (`FeedOutcome::out_of_window`) a sequence number wider than
+  31 bits or further ahead of the ack point than the flow window (clamped to 262 144), and a
+  first packet beyond the peer's ISN now reveals the gap before it.
+- `NegotiatedParams` gains `mtu` and `max_flow_window_size`: the smaller of the two sides'
+  advertised values (§3.2.1), computed by the Caller, Listener and Rendezvous engines.
+- The sans-IO engines refuse a peer ISN wider than 31 bits (`Rejected(Rogue)`): it would seed the
+  receive side out of range and stall the connection. The Rendezvous engine returns
+  `HandshakeOutOfSequence` instead of panicking on a broken internal invariant.
+- `crypto::derive_kek` and `crypto::unwrap_sek` return `Zeroizing<Vec<u8>>` (wiped on drop)
+  instead of `Vec<u8>`; the `serde` feature no longer serializes a `KeyMaterial`'s salt, ICV or
+  wrapped keys, and `Debug` redacts them (#1142).
+- The Caller's Key Material request now carries `SE` = 2 (MPEG-TS/SRT) on the wire (was 0).
+- The wire `Timestamp` of every packet the adapter and engines build wraps modulo 2^32 µs
+  (~71.6 min) instead of saturating at `u32::MAX` (#1063, listed under Fixed below).
+- `KeepAlivePacket`, `CongestionWarningPacket`, `ShutdownPacket`, `AckAckPacket`, and `PeerErrorPacket`
+  now carry a `libsrt_pad: bool` field, so both the pure-spec 16-byte (empty CIF) and libsrt's 20-byte
+  (4-byte zero-pad CIF) wire shapes round-trip byte-identically.
+- `KeyMaterial::serialize_into` now returns `Error::FieldTooWide` instead of silently
+  truncating, when a length does not fit its wire field (#1129).
+- The tokio adapter's internal per-connection ingress channel, the listener's
+  candidate-new-connection queue, and the delivered-payload channel to the application are now
+  bounded (dropped and counted on full, via `try_send`) instead of unbounded — a fast peer, or a
+  slow/stalled application, could previously grow this process's memory without bound purely from
+  network input.
 
 ## [0.4.0] - 2026-08-11
 

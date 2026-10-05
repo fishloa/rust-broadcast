@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ## [11.0.0] - 2026-10-05
+
+Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
+
 ### Fixed
 - `pids` bitrate estimate: pick one PCR PID and use only its own first/last
   PCR readings, instead of mixing the first PCR seen on any PID with the
@@ -20,9 +23,6 @@
   identical `service_id` on a second transport stream (SDT-other, or a
   second TS entry in the NIT) previously overwrote the first service and
   could be shown with the wrong LCN (issue #1100).
-
-## [10.1.0] - 2026-09-26
-Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
 
 ## [10.0.1] - 2026-08-30
 Lockstep patch alongside `dvb-si` 10.0.1; no source changes in this crate.

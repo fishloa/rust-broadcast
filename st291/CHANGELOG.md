@@ -20,13 +20,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The ST 2038 PES serializer no longer silently masks a PTS of 2^33 or more
   to a different (wrapped) timestamp; it now rejects it with
   `Error::FieldTooWide` (#1116, #1129).
-- `ts::AncPacket::read_from` (via `AncDataPacket::parse`) now rejects a
+- `AncDataPacket::parse` (through the private `AncPacket::read_from`) now rejects a
   nonzero leading `'000000'` field, a byte-alignment padding region that is
   not all `'1'` bits, and nonzero `ESCR_flag`/`ES_rate_flag`/
   `DSM_trick_mode_flag`/`additional_copy_info_flag`/`PES_CRC_flag`/
   `PES_extension_flag` bits in the PES optional header — all three were
   previously skipped unchecked, so a corrupt packet parsed `Ok` and
-  reserialized to different bytes (#1116).
+  reserialized to different bytes (#1116). The error is
+  `Error::BadFixedBits`.
 - Named the byte-6/byte-7 PES flag bitmasks instead of inline hex literals
   (#1116).
 

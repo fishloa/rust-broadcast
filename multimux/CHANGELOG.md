@@ -2,280 +2,18 @@
 
 ## [Unreleased]
 
-### Changed (breaking) — W2b-2
-- **Every reconnect/retry delay is equal-jittered.** `supervisor::Backoff`,
-  `config::ReconnectPolicy::backoff_for`, `ReconnectEngine`, `file_reader`'s
-  probe retry and `hls_pull`'s resource retry now share one schedule
-  (`reconnect::ReconnectSchedule`). A delay is no longer exactly
-  `min * factor^attempt`: the raw capped series is multiplied by
-  `uniform[0.5, 1.0)` (**equal jitter**), so the delay is always in
-  `[raw/2, raw)` and stays **spread even at the cap** (`[max/2, max)`) — the
-  add-only jitter `backon` provides collapses to exactly `max` in steady
-  state, which is where a long outage lives. A fleet of inputs pointed at one
-  server therefore no longer reconnects in lockstep. Seeds are mixed with a
-  per-process counter so schedules created in one clock tick differ.
-  `Backoff`'s public shape
-  (`new`/`production_default`/`next`/`delay_for_attempt`/`reset`) is unchanged.
-  A new public module `reconnect` exposes the schedule.
-- **The three pull sources share one fetch scheduler; the `WaitMs` hint is
-  now a pacing floor AND a ready fetch is no longer starved.**
-  `hls_pull`/`dash_pull`/`smooth_pull` drive a single
-  `source::pull::PullScheduler` (in-flight bound, retry queue, session
-  `WaitMs` hint, idle park) instead of three hand-rolled `JoinSet` loops.
-  The HLS engine's `Action::WaitMs(target_duration/2)` reload hint was a
-  *pacing floor on the next playlist fetch* on `main` (RFC 8216 §4.3.3.1):
-  the pre-migration loop slept the hint inline before joining, so the next
-  playlist GET started one hint after the previous one — but that same inline
-  sleep also starved a ready resource fetch (a segment completing 50 ms into
-  a 1 s hint waited another 950 ms, defect 5). The scheduler keeps both: the
-  hint arms a not-before floor on the *next* paced fetch's dispatch
-  (`PullScheduler::push_at`), and the floor is anchored to the **real dispatch
-  instant** of the previous playlist fetch (`max(now, floor)`, not the earlier
-  instant it was merely pushed), so N reload cycles with hint `h` and a small
-  RTT dispatch at exactly `0, h, 2h, 3h, …` — anchoring to the push instant
-  instead let a second GET slip through back-to-back, i.e. roughly 2× the
-  intended rate. An already-running fetch's result is returned the moment it
-  completes. Without the floor a non-LL live source reloads back-to-back at
-  RTT rate (hundreds of GETs/s against a local or CDN origin).
-  `source::may_spawn_fetch` is removed (the scheduler owns the bound).
-- **UDP binds go through `socket2` with configurable socket options.**
-  `ts_udp`/`rtp` inputs gain optional `recv_buffer_bytes`, `reuse_address`
-  and `multicast_interface` keys (SP1.6); `source::udp::bind_udp` is now
-  public and takes a `source::udp::UdpBindOptions`, and a requested
-  `SO_RCVBUF` is applied rather than left at the OS default; a default
-  (4 MiB) is now requested when none is given, best-effort (the OS may clamp
-  it and a failed `set` never fails the bind). A **new `reuse_port` option**
-  (Unix only, gated with socket2's own `set_reuse_port` target predicate;
-  ignored elsewhere) is available alongside `reuse_address` for the per-OS
-  multicast-sharing semantics `source::udp` now documents.
-  **Rust-level breaking additions:** `InputSpec::Rtp`/`InputSpec::TsUdp` gain
-  a `socket: UdpSocketSpec` field, and `UdpSocketSpec` itself gains
-  `reuse_port: bool` — an exhaustive construction or pattern match on any of
-  these outside this crate must be updated (the JSON shape is additive via
-  serde defaults; only the Rust types changed).
-- **Push transport configs gain fields (Rust-level breaking additions).**
-  `RtspTransportConfig` gains `timeouts: rtsp_runtime::RtspTimeouts`;
-  `RtmpTransportConfig` gains `write_timeout: Option<Duration>`. An
-  exhaustive struct construction or pattern match outside this crate must be
-  updated (both keep a `Default`).
-- **The five one-connection dial sources share one ingest scaffold.** The
-  `rtsp`/`rtp`/`ts_udp`/`ts_http`/`srt` drive loops become one
-  `source::driver::run_ingest_scaffold` (deadline, cancel, bounded write,
-  stall check, `advance_route`, terminal tail) with a small per-source
-  `IngestStep` (its read + `feed`). The **RTSP source's outbound write** is
-  now bounded by a 10 s timeout (defect 4: it was an unbounded
-  `write_all`). A session that goes `HandshakeTimedOut` now ends the route
-  promptly instead of reading until the stall. `run_rtsp`/`run_ts_udp`/
-  `run_rtp_udp`/`run_ts_http`/`run_srt_caller`/`run_srt_listener_once`/
-  `drive_socket` each take a `CancellationToken`.
-- **The RTSP push uses rtsp-runtime's `AsyncRtspClient`.** `RtspTransport`
-  drives `announce`/`setup`/`record` and sends media with `send_interleaved`
-  rather than a hand-rolled `ClientSession` + raw `TcpStream` loop, and the
-  ANNOUNCE body is built and rendered with `sdp-types`. **Every awaited IO is
-  now bounded**: the OPTIONS/ANNOUNCE/SETUP/RECORD exchanges and each
-  interleaved write honour `RtspTransportConfig::timeouts` (new, a
-  `rtsp_runtime::RtspTimeouts`), where the old transport's `roundtrip` read
-  and its `write_all` had no bound at all (defect 4). The ANNOUNCE SDP bytes
-  are unchanged, pinned by `tests/golden/rtsp_announce.sdp`. `close()` now
-  sends a bounded best-effort `TEARDOWN` (RFC 2326 §10.10) on a spawned task
-  owned by the transport (a second `close()` is a no-op, a superseded handle
-  is aborted, and outside a Tokio runtime the TEARDOWN is skipped, never
-  panicking), so a server frees the publisher slot immediately rather than at
-  its own timeout — best-effort at process shutdown, where a spawned TEARDOWN
-  may not run; and a server `454 Session Not Found` surfaces as a distinct
-  `RtspPushError::SessionLost` (new variant) rather than a generic protocol
-  error, so the push reconnects.
-- **The RTMP push uses rtmp-runtime's `AsyncRtmpClient`.** `RtmpTransport`
-  drives `connect`/`publish` and sends media with `send_video`/`send_audio`/
-  `send_metadata` rather than hand-rolling the C0/C1/C2 handshake and a raw
-  `TcpStream` write loop. **Every write is now bounded** by
-  `RtmpTransportConfig::write_timeout` (new, `None` = a 10 s default), which
-  the old transport's bare `write_all` had no bound on (defect 4). The
-  sans-IO `encode_media` path (for `PushTransportEgress`) uses the adapter's
-  new `encode_video`/`encode_audio`/`encode_metadata` methods. The `tcUrl`
-  bytes are unchanged.
-- **Locks use `parking_lot`; `src/lock.rs` is deleted.** Every
-  `std::sync::Mutex`/`RwLock` reached through `crate::lock::*` (route,
-  admin, smooth, catchup, srt) is now a `parking_lot` lock with infallible
-  `.lock()`/`.read()`/`.write()`, so a panicking holder can never poison a
-  lock and cascade a permanent panic. The generic poison-recovery wrappers are
-  deleted. **The DVR fail-closed safety property is KEPT, not deleted**: a
-  panic while persisting a `DvrRecorder`'s multi-step state still stops
-  recording for that program (the recorder is dropped), logs, and increments
-  `multimux_dvr_failed_total` — now via `catch_unwind` around the persist in
-  `poll_dvr_blocking` rather than via poisoning.
 
-### Changed (breaking) — W2b-1
-- **A single `CancellationToken` replaces the `watch<bool>` shutdown.** The
-  public `watch<bool>` graceful-shutdown signal is removed:
-  `origin::supervisor::supervise_driver` now takes
-  `cancel: tokio_util::sync::CancellationToken`, and `registry::InputCtx` exposes
-  `cancel: CancellationToken` (was `shutdown_rx: watch::Receiver<bool>`). A
-  `Custom` input factory watches `ctx.cancel` instead of a `watch` receiver.
-  `multimux-cli` needs no change (`serve`/`serve_config_file` already translate
-  Ctrl-C/SIGTERM into the token).
+## [0.11.0] - 2026-10-05
 
-### Changed — W2b-1
-- **Every URL is built with the `url` crate.** `push::rtsp`'s control URL uses
-  `Url::path_segments_mut`, `push::rtmp`'s `tcUrl` comes from
-  `rtmp_runtime::target::RtmpTarget` (IPv6 hosts stay bracketed), `push::srt`'s
-  authority parse uses `url`/`SocketAddr`, and `config::validate_host_port`
-  validates through `url`. The SRT *query* split stays manual (a Haivision
-  `streamid=#!::r=…` value contains a `#` a `Url` parser would cut).
-- **Dates and durations go through `jiff`.** `availabilityStartTime` (DASH and
-  LL-DASH), the DASH `xs:duration` attributes (`@minimumUpdatePeriod`,
-  `@timeShiftBufferDepth`), the DVR EIT start time, and the DASH-pull
-  `parse_iso8601_utc`/`now_unix_secs` use `jiff` instead of hand-rolled
-  `civil_from_days`/manual parsing. The whole-second `availabilityStartTime`
-  spelling is unchanged (pinned by the `dash_mpd`/`ll_dash_mpd` goldens).
-- **DASH `xs:duration` values >= 60 s now use the balanced spelling.** The
-  `@minimumUpdatePeriod`/`@timeShiftBufferDepth` durations are formatted by
-  `jiff`'s span printer, which balances up to hours — one spelling rule shared
-  with `transmux`'s DASH writer. Sub-60 s values are byte-identical to the old
-  `PT{secs}S` spelling, but a `@timeShiftBufferDepth` >= 60 s (e.g. a
-  15-segment x 4 s window) now prints `PT1M` where the pre-migration code printed
-  `PT60S`, and >= 3600 s prints `PT1H`. Both are valid `xs:duration`. This is a
-  deliberate wire change vs `main`, pinned against goldens captured from
-  `origin/main`: `dash_mpd_window60.golden` vs `dash_mpd_window60_main.golden`
-  (`PT60S` -> `PT1M`) and `dash_mpd_window3600_main.golden`
-  (`PT3600S` -> `PT1H`), each asserted to differ by exactly that one token. The
-  sub-60 s `dash_mpd.golden`/`ll_dash_mpd.golden` are byte-identical to main.
-  A **fractional** target duration also differs from main, which printed the raw
-  `f64`: for a 0.1 s target over 3 segments main emitted
-  `timeShiftBufferDepth="PT0.30000000000000004S"` while this crate emits the
-  rounded `"PT0.3S"` (pinned by `dash_mpd_frac.golden` vs the main-captured
-  `dash_mpd_frac_main.golden`).
-- **`validate_rtsp_push_url` now also enforces the scheme.** An `rtsp_push`
-  output URL must use the `rtsp://` or `rtsps://` scheme; a push URL with any
-  other scheme (e.g. `srt://`, `http://`) is rejected at config validation with
-  a clear error rather than failing deep in the RTSP transport at connect time.
-  This is stricter than main, which accepted any scheme here.
-- **The test harness binds `127.0.0.1:0` and passes the live listener.** New
-  `serve_with_registry_on`/`serve_with_registry_on_admin`/
-  `serve_config_file_with_registry_on_admin` entry points take a pre-bound
-  listener, so the reserve-then-rebind loops are gone for the HTTP media/admin
-  listeners. `multimux/tests/support/bounded.rs` uses `wait-timeout`
-  (`ChildExt::wait_timeout`) instead of a `try_wait` + `thread::sleep` poll.
-- A push's connect, its reconnect backoff, and its listen-wait are raced against
-  the cancellation token; the no-free-waiter-slot branch parks on
-  `media_plane::trunk::Trunk::waiter_slot_freed` instead of a 50 ms sleep-poll
-  (which needed the additive `Trunk::waiter_slot_freed`, and `WaiterSlot::drop`
-  now notifies it).
-
-### Added — W2b-1
-- **New public API from the URL/harness work.** `pub mod redact`;
-  `push::{rtmp, rtsp, srt}` are now `pub`; `multimux::redact::{redact_url,
-  redact_destination}` are public; `output::whep::WhepRoute::with_listener` and
-  `source::ts_udp::TsUdpRoute::with_socket` accept a caller-bound
-  listener/socket; and `source::whip::WhipRoute::with_listener`,
-  `origin::serve_with_registry_on`/`serve_with_registry_on_admin`/
-  `serve_config_file_with_registry_on_admin`, and `origin::PreboundListeners`
-  take pre-bound listeners (SP7.1). A `test-seams`-only
-  `origin::serve_config_file_with_registry_on_admin_prebound` additionally
-  threads `Config::prebound` into a *file-loaded* config, so a route defined only
-  in the config file can also consume a caller-bound socket.
-- **Test-only WHIP/WHEP entry points moved behind the non-default `test-hooks`
-  feature.** No longer part of the default published API (enabling `test-hooks`
-  restores them): `output::whep::serve_whep_run_for_test`, `WHEP_TEST_OFFER`,
-  `output::whep::{whep_router_for_test, render_whep_answer_for_test,
-  serve_whep_for_test, serve_whep_for_test_saturated_accept,
-  serve_whep_for_test_with_trunk}`, `source::whip::{serve_for_test,
-  serve_for_test_with_read_timeout, serve_for_test_with_read_load,
-  serve_for_test_with_read_load_and_timeout,
-  serve_for_test_with_read_load_timeout_and_policy, parse_offer_for_test,
-  render_answer_for_test, whip_router_for_test}`, and the `Config::prebound`
-  caller-bound-socket field. The integration tests that drive them
-  (`whip_http`, `whip_ingest`, `whep_egress`, `whip_whep_sdp`, `whip_whep_timers`,
-  `whep_sdp_golden`, `whep_http`, `accept_lifecycle`, `limit_budgets`) now
-  declare `required-features = ["test-hooks", …]`.
-- **A dependency-free `test-seams` feature gates the pre-bound-socket seams.**
-  `Config::prebound` and `Config::PreboundBinds` moved out of `test-hooks` (which
-  pulls `webrtc-runtime`'s ICE/DTLS-SRTP tree) into a new, dependency-free
-  `test-seams` feature; `test-hooks = ["test-seams", …]` implies it. The three
-  integration binaries that need *only* a pre-bound socket — `dispatch_ingest`,
-  `smooth_oracle`, `ts_hls_oracle` (the TS-UDP route-dispatch end-to-end and the
-  Smooth/TS-HLS oracles) — now declare `required-features = ["test-seams"]`, and
-  a self dev-dependency (`multimux = { path = ".", features = ["test-seams"] }`)
-  enables the feature for every test build, so a plain `cargo test -p multimux`
-  compiles and runs them again (previously they were silently skipped unless
-  `--all-features` was passed).
-  Note the feature-unification hazard: `Config` is a `pub`, exhaustive struct, so
-  a downstream that enables `test-seams` anywhere in its graph makes every
-  `Config { .. }` literal outside this crate require a trailing
-  `..Default::default()`. See the field doc on `Config::prebound`.
-  The remaining `#[doc(hidden)] pub` `*_for_test` seams stay on the default
-  build because gating them would force `test-hooks` (and its `webrtc-runtime`
-  dependency) onto tests that do not otherwise need it:
-  `source::dash_pull::parse_iso8601_utc_for_test`,
-  `output::dash::{format_iso8601_for_test, xs_duration_for_test}`,
-  `push::{rtmp::tc_url_for_test, srt::parse_srt_url_for_test,
-  rtsp::control_url_for_test}`.
-  `redact::redact_url`/`redact_destination` are NOT test seams — they are the
-  crate's real redaction API and stay public.
-- `source::file_reader::SpawnedReader` now owns a cancellation token: dropping
-  it cancels the reader's task instead of detaching it, and a cancelled run
-  resolves to `FileReaderError::Cancelled`.
-
-### Fixed — W2b-1
-- **Every dial-source session exit path releases its publisher slot.** The
-  ingest scaffold's stall, write-failure, `StepOutcome::Failed`, peer-EOF,
-  terminal-health and cancel exits all call `release_route` (M1/I-E), so the
-  supervisor's reconnect is never rejected as a second concurrent publisher.
-  The bounded-write failure message now describes the per-write bound it
-  enforces (M2).
-- **A push reconnect no longer ignores shutdown** (defect 5): cancelling during
-  the connect or the backoff sleep returns promptly.
-- **A cancelled route abandons its in-flight ingest attempt** rather than
-  awaiting it to its own end (`supervise_driver` races the attempt against the
-  token).
-- **A route's WHEP session tasks are owned by the route's `TaskTracker`**
-  (defect 3): cancelling the route drains them and releases the listen port.
-- **A dropped `SpawnedReader` no longer plays a file forever** — it cancels.
-- **Redaction never leaks a URL the parser rejects.** The `url`-rejected
-  fallback is masking-only: the whole authority AND the path/query collapse to
-  `<redacted>`, so an RTMP stream key or SRT token in the tail cannot reach a
-  log line.
-- **A hostless RTSP push URL (`rtsp:cam`) is rejected** at config load and at
-  connect, instead of silently dialing `127.0.0.1` and then panicking.
-- **`xs_duration_secs` rejects NaN/inf/negative/overflow** with an error rather
-  than panicking through `Duration::from_secs_f64`.
-- **`target_duration_secs` is now capped at 24 h** (`MAX_TARGET_DURATION_SECS`)
-  and rejected above it. This is a new rejection of a previously accepted
-  config; it is a policy limit on a segment duration, not a `Duration`-overflow
-  guard. Exactly 86400.0 is accepted, 86400.1 is rejected. A part/chunk longer
-  than one whole segment (`part_target_ms/1000 > target_duration_secs`) is
-  rejected too, since the LL-DASH packager refuses that combination.
-- **A `TsUdp` route whose pre-bound socket carries a `multicast_group` is
-  rejected** rather than silently using the socket without joining the group.
-  `TsUdpRoute::with_multicast_group` now carries the group onto a
-  `with_socket` route so `bind` can detect the contradiction.
-- **`config::validate_host_port` restored to its strict shape.** Adopting `url`
-  had silently accepted `host:9000/path`, `user@host:9000`, and
-  `host:9000?x`; they are rejected again, and an SRT authority with a userinfo
-  prefix is rejected rather than silently dropped.
-- **Redaction of a parseable URL now goes through `url`**, so the host is
-  lowercased, a trailing `/` added, and percent-encoding normalised — a
-  behaviour change from the previous text-only scrub.
-
-
-### Changed
-- Dependency bumps, non-breaking: `md-5` 0.11 and `base64` 0.23 (Digest/Basic auth output unchanged), plus semver-compatible lock updates (`tokio-rustls` 0.26.6, `rustls` 0.23.45).
-- `rtc-dtls` is added as a **dev-dependency** (for the WHIP loopback tests that
-  pre-generate a client certificate); it was already a transitive dependency via
-  `webrtc-runtime/media`, so no new package version enters the lock.
-  The `errno`/`quinn-udp`/`winapi-util` `windows-sys` edges stay on `0.52.0`, as on `main`.
-  Also a dev-dependency: `webrtc-runtime` with its `test-support` feature (hidden test hooks).
-- The Smooth manifest renderer (`output::smooth`) now writes through
-  `quick_xml::Writer` (every attribute value escaped by quick-xml) instead of
-  string concatenation; the rendered bytes are identical. The Smooth-pull
-  encryption probe is a real `quick-xml` pull loop instead of a text scan, so a
-  namespace-prefixed `<ms:Protection>` is now detected and a `<Protection>`
-  inside a comment or attribute value no longer false-positives. Adds the
-  single XML dependency of the XML-handling crates, `quick-xml`; `multimux` already required
-  `transmux`'s `std` XML paths. (Hand-rolled XML replaced by quick-xml
-  workspace-wide.)
+### Security
+Fixes GHSA-6cpc-jqv3-qcj3, GHSA-c5v7-p4jv-2fhc, GHSA-jwfh-m4vx-fhwx and GHSA-2w4r-qf2x-pqm6, and
+picks up GHSA-48qq-7p78-2jvj (webrtc-runtime 0.2.0) for WHIP/WHEP.
 
 ### Changed (breaking)
+- Requires `hls-runtime` 0.7 (was 0.6), `broadcast-auth` 0.3.1 (was 0.3, needs
+  `Verifier::challenge_for`), `rtsp-runtime` 0.7 (was 0.6) and, with the `whip`/`whep` features,
+  `webrtc-runtime` 0.2 (was 0.1).
+
 - **`axum` 0.8, `tower-http` 0.7, `reqwest` 0.13.** The path-parameter syntax
   moves to `{param}`/`{*rest}` (matchit 0.8); `hls-runtime`'s `reqwest::Error`
   epoch bumps with it.
@@ -335,14 +73,126 @@
   is floored to a 1 ms minimum interval (so it cannot spin a core), and a
   fatal ICE/DTLS [`MediaEvent::TimerError`] ends the session.
 
-### Changed
-- The origin's CORS/`Cache-Control` headers are written through typed
-  `headers` values. Wire-visible, semantically-identical differences: the
-  `Access-Control-Allow-Headers`/`Expose-Headers` header NAMES render
-  lowercased (`authorization, range, content-type`, …), and the instance-named
-  `Cache-Control` renders `immutable, max-age=31536000` (directive order).
+- **The Smooth client Manifest changed shape** (#1083): HEVC tracks are no
+  longer advertised (Smooth cannot serve them — they 404'd); each
+  `StreamIndex` now carries its **own** `c` timeline in absolute 10 MHz ticks
+  derived from that track's samples (so audio reflects AAC's real frame timing
+  and a chunk's `t`/`d` is stable as the window slides), replacing the shared
+  muxed segment duration; `QualityLevel@Bitrate` is now a real bitrate (was the
+  quality ordinal), and a fragment URL's `QualityLevels(N)` carries that
+  bitrate; `mfhd.sequence_number` is the segment sequence number (was the
+  constant track ordinal). A client that keyed on the old values must be
+  updated.
+- **An SRT push URL is now validated at config time** (#1083): a missing host,
+  an unsupported `mode` (only `caller`), a `passphrase` (SRT encryption is not
+  implemented), an out-of-range `latency`, or an unbracketed IPv6 authority is
+  a config error (surfaced on admin add/reload too).
+- **A live DASH `$Number$` route now starts at the live edge** (#1083),
+  derived from `availabilityStartTime`, `Period@start`, `presentationTimeOffset`
+  and a documented 3-segment suggested-presentation-delay, computed in the
+  template's tick domain — not at `@startNumber`. A dynamic `$Time$` MPD plans
+  only its last few `SegmentTimeline` entries.
+- **Config validation now rejects values it previously accepted** (#1083):
+  a `ReconnectPolicy` with a zero backoff, an `initial_backoff_ms` greater
+  than `max_backoff_ms`, or a backoff above 24 h; and an
+  `ingest_connect_timeout_secs`/`ingest_read_timeout_secs` that is not a
+  finite number in `(0, 86_400]` (so a non-finite or overflowing value such
+  as `1e20` is now a config error, not a startup panic). A config that
+  validated before this change still does unless it used one of those
+  degenerate values.
+- **WHIP/WHEP and the origin's CORS responses changed** (#1083): WHIP/WHEP
+  now answer a preflight with `Access-Control-Allow-Methods: POST, PATCH,
+  DELETE, OPTIONS` and `Access-Control-Allow-Headers: Authorization,
+  Content-Type, If-Match`; the origin adds `Access-Control-Expose-Headers`
+  (`Content-Length, Content-Range, Date, ETag`), `Vary: Origin` (appended),
+  and `GET, HEAD, OPTIONS`.
+- **Pull sources bound their responses** (#1083): a `$Number$` plan is capped
+  at `dash_pull::MAX_PLAN_ENTRIES`, and every pull-source HTTP client uses
+  `source::redirect_policy` (3 hops, no `https`→`http` downgrade). An origin
+  that relied on following more redirects, or on a downgrade, is affected.
+- `push::RtmpTransportConfig` gained a `connect_timeout: Option<Duration>`
+  field (#1083) — `None` uses the new `RTMP_CONNECT_TIMEOUT` (15 s). A
+  struct literal outside this crate must add it (`..Default::default()`).
+- `RouteHandle::add_segment` returns `Result<(), AddSegmentError>` instead of
+  logging and dropping a segment it could not publish (#1082).
+- `source::advance_route` is now `async` (#1083): its DVR-drain step writes
+  segment bytes to disk, so it is dispatched to the blocking pool rather than
+  run inline on the calling runtime worker.
+- `origin::admin::RouteRegistry::add_route` is now `async` (#1083): it
+  builds the prospective router and drains a displaced route on overwrite.
+- **Newly rejected configuration** (#1083): a route name that is not a single
+  safe path segment (`[A-Za-z0-9._-]`, not `.`/`..`, at most
+  `MAX_ROUTE_NAME_LEN` = 255 bytes), a duplicate name differing only in case
+  (they share one `archive_root/<name>` directory on a case-insensitive
+  filesystem), and two outputs mounting the same manifest path (which panics
+  the axum router build). Multiple push/`custom`/`whep` outputs on one route
+  — which mount no HTTP path — remain valid; the previous
+  `mem::discriminant`-based check wrongly rejected them.
+- `ProgramSegmenter` is now `pub` (#1083) so an embedder or test can drive the
+  exact production segmenting path (`try_new` → push → `pump` → `flush`).
+- **Two public structs gained fields** (#1083), so a struct literal or
+  exhaustive pattern outside this crate must be updated:
+  `origin::HttpLimits` gained `queue_timeout: Duration`, and
+  `config::Config` gained `concurrency_queue_timeout_secs: f64` (its serde
+  default is the 5 s `DEFAULT_QUEUE_TIMEOUT`). `HttpLimits::from(&Config)` now
+  clamps an unvalidated (NaN/negative/overflowing) timeout to the default
+  rather than panicking in `Duration::from_secs_f64`.
+- `catchup::read_archived_bytes` now returns `Result<Bytes,
+  ReadArchivedError>` instead of `Result<Bytes, String>` (crate-private), and
+  `catchup::read_period_segments` returns `Arc<Vec<ArchivedSegment>>` — both
+  to distinguish an evicted period (a `404` to a racing catch-up request)
+  from a corrupt archive (a `500`).
+- **`IndexEntry::seq` in the DVR archive, and the numbers `catchup/seg-{n}`
+  uses, are now the route's playlist numbers** (Trunk number + media-sequence
+  offset) instead of the bare `Trunk` number (#1083). They are equal until the
+  route's source reconnects or the process restarts. A pre-existing archive
+  written by an older version keeps its own numbers; a restarted process
+  numbers above the highest it finds.
+- `DvrRecorder` never appends into a period file an earlier recorder wrote: a
+  recorder built over an existing archive starts a new period after the
+  highest on disk (#1083).
+- **Restarts rename.** The origin's playlist names every init, segment and
+  part with the origin's instance token (`seg-{t}-{instance}-{msn}.*`, see the
+  Cache-Control entry and `hls-runtime`); the bare `init-{t}.mp4` and the
+  token-less `seg-{t}-{msn}`/`part-…` still resolve, but are no longer served
+  `immutable`. A route restart renames everything and, without DVR, renumbers
+  from 1 (media sequence continuity across a *process* restart needs the DVR
+  archive's floor); within a process a reconnect continues the numbers and
+  skips the old origin's open segment's (#1030/#1083).
+- `OutputKind`'s `Debug` output redacts push URLs and `Custom` params (it was
+  derived) (#1083).
 
 ### Fixed
+- WHIP input and WHEP output pass the offer's `a=fingerprint` to the media transport, so the
+  DTLS peer is authenticated (webrtc-runtime 0.2.0); an offer without a fingerprint is rejected.
+- Push outputs await the trunk listener instead of blocking a runtime worker, and back off when
+  every listener slot is taken.
+- An RTP/UDP route drops a malformed packet instead of failing, and a failed session now ends
+  the route so the supervisor reconnects it.
+- WHEP applies the configured output auth, ends sessions after 30 s without inbound traffic, and
+  WHIP/WHEP cap HTTP header and body size and time out slow requests; WHIP checks capacity before
+  allocating a session.
+- The WHIP/WHEP session-capacity slot is released on every failure path after it is reserved;
+  both accept loops cap concurrent connections; chunked transfer-encoding is refused (411) and an
+  unparseable `Content-Length` is a 400; the WHEP silence timer resets only on RTP, RTCP or a
+  completed DTLS handshake.
+- A WHEP viewer's session no longer ends after 30 seconds. The silence timer counted only
+  RTCP that `rtcp-packet` could decode, but a browser viewer sends RFC 4585 feedback (PLI,
+  NACK, REMB), which it cannot. Any SRTCP packet that authenticates now counts (needs
+  `webrtc-runtime`'s new `MediaEvent::RtcpUnsupported`). A datagram that fails authentication
+  still does not.
+- A route now rejects a second, concurrent RTMP/WHIP publisher instead of letting it silently
+  take over (or freeze, once the first disconnects) the program the route is already receiving
+  from. The rejected connection's own session is reaped normally by its listener's usual
+  timeout/error handling; once the active publisher's session ends, the route accepts a new one
+  for that program again (a legitimate reconnect, or a backup encoder taking over).
+- Output-auth and admin-auth Digest challenges now use `broadcast_auth::Verifier::challenge_for`
+  instead of `challenge`, so a request that correctly answers an expired nonce gets a fresh
+  challenge carrying `stale=true` (RFC 7616 §3.3) rather than being silently re-prompted for
+  credentials.
+- Config docs for `InputSpec::Rtmp`/`Whip`/`Srt` now say plainly when an ingest listener runs
+  with no authentication at all, and a startup log line warns for each such route.
+
 - **Slow-loris header reads are dropped** at the header-read timeout and every
   listener still serves the next request.
 - **WHIP/WHEP protocol timers fire while a session is idle** (defect 1): the
@@ -813,97 +663,13 @@
   that had lost their line-continuation (runs of spaces inside the message)
   are repaired (#1083).
 
-### Changed (breaking)
-- **The Smooth client Manifest changed shape** (#1083): HEVC tracks are no
-  longer advertised (Smooth cannot serve them — they 404'd); each
-  `StreamIndex` now carries its **own** `c` timeline in absolute 10 MHz ticks
-  derived from that track's samples (so audio reflects AAC's real frame timing
-  and a chunk's `t`/`d` is stable as the window slides), replacing the shared
-  muxed segment duration; `QualityLevel@Bitrate` is now a real bitrate (was the
-  quality ordinal), and a fragment URL's `QualityLevels(N)` carries that
-  bitrate; `mfhd.sequence_number` is the segment sequence number (was the
-  constant track ordinal). A client that keyed on the old values must be
-  updated.
-- **An SRT push URL is now validated at config time** (#1083): a missing host,
-  an unsupported `mode` (only `caller`), a `passphrase` (SRT encryption is not
-  implemented), an out-of-range `latency`, or an unbracketed IPv6 authority is
-  a config error (surfaced on admin add/reload too).
-- **A live DASH `$Number$` route now starts at the live edge** (#1083),
-  derived from `availabilityStartTime`, `Period@start`, `presentationTimeOffset`
-  and a documented 3-segment suggested-presentation-delay, computed in the
-  template's tick domain — not at `@startNumber`. A dynamic `$Time$` MPD plans
-  only its last few `SegmentTimeline` entries.
-- **Config validation now rejects values it previously accepted** (#1083):
-  a `ReconnectPolicy` with a zero backoff, an `initial_backoff_ms` greater
-  than `max_backoff_ms`, or a backoff above 24 h; and an
-  `ingest_connect_timeout_secs`/`ingest_read_timeout_secs` that is not a
-  finite number in `(0, 86_400]` (so a non-finite or overflowing value such
-  as `1e20` is now a config error, not a startup panic). A config that
-  validated before this change still does unless it used one of those
-  degenerate values.
-- **WHIP/WHEP and the origin's CORS responses changed** (#1083): WHIP/WHEP
-  now answer a preflight with `Access-Control-Allow-Methods: POST, PATCH,
-  DELETE, OPTIONS` and `Access-Control-Allow-Headers: Authorization,
-  Content-Type, If-Match`; the origin adds `Access-Control-Expose-Headers`
-  (`Content-Length, Content-Range, Date, ETag`), `Vary: Origin` (appended),
-  and `GET, HEAD, OPTIONS`.
-- **Pull sources bound their responses** (#1083): a `$Number$` plan is capped
-  at `dash_pull::MAX_PLAN_ENTRIES`, and every pull-source HTTP client uses
-  `source::redirect_policy` (3 hops, no `https`→`http` downgrade). An origin
-  that relied on following more redirects, or on a downgrade, is affected.
-- `push::RtmpTransportConfig` gained a `connect_timeout: Option<Duration>`
-  field (#1083) — `None` uses the new `RTMP_CONNECT_TIMEOUT` (15 s). A
-  struct literal outside this crate must add it (`..Default::default()`).
-- `RouteHandle::add_segment` returns `Result<(), AddSegmentError>` instead of
-  logging and dropping a segment it could not publish (#1082).
-- `source::advance_route` is now `async` (#1083): its DVR-drain step writes
-  segment bytes to disk, so it is dispatched to the blocking pool rather than
-  run inline on the calling runtime worker.
-- `origin::admin::RouteRegistry::add_route` is now `async` (#1083): it
-  builds the prospective router and drains a displaced route on overwrite.
-- **Newly rejected configuration** (#1083): a route name that is not a single
-  safe path segment (`[A-Za-z0-9._-]`, not `.`/`..`, at most
-  `MAX_ROUTE_NAME_LEN` = 255 bytes), a duplicate name differing only in case
-  (they share one `archive_root/<name>` directory on a case-insensitive
-  filesystem), and two outputs mounting the same manifest path (which panics
-  the axum router build). Multiple push/`custom`/`whep` outputs on one route
-  — which mount no HTTP path — remain valid; the previous
-  `mem::discriminant`-based check wrongly rejected them.
-- `ProgramSegmenter` is now `pub` (#1083) so an embedder or test can drive the
-  exact production segmenting path (`try_new` → push → `pump` → `flush`).
-- **Two public structs gained fields** (#1083), so a struct literal or
-  exhaustive pattern outside this crate must be updated:
-  `origin::HttpLimits` gained `queue_timeout: Duration`, and
-  `config::Config` gained `concurrency_queue_timeout_secs: f64` (its serde
-  default is the 5 s `DEFAULT_QUEUE_TIMEOUT`). `HttpLimits::from(&Config)` now
-  clamps an unvalidated (NaN/negative/overflowing) timeout to the default
-  rather than panicking in `Duration::from_secs_f64`.
-- `catchup::read_archived_bytes` now returns `Result<Bytes,
-  ReadArchivedError>` instead of `Result<Bytes, String>` (crate-private), and
-  `catchup::read_period_segments` returns `Arc<Vec<ArchivedSegment>>` — both
-  to distinguish an evicted period (a `404` to a racing catch-up request)
-  from a corrupt archive (a `500`).
-- **`IndexEntry::seq` in the DVR archive, and the numbers `catchup/seg-{n}`
-  uses, are now the route's playlist numbers** (Trunk number + media-sequence
-  offset) instead of the bare `Trunk` number (#1083). They are equal until the
-  route's source reconnects or the process restarts. A pre-existing archive
-  written by an older version keeps its own numbers; a restarted process
-  numbers above the highest it finds.
-- `DvrRecorder` never appends into a period file an earlier recorder wrote: a
-  recorder built over an existing archive starts a new period after the
-  highest on disk (#1083).
-- **Restarts rename.** The origin's playlist names every init, segment and
-  part with the origin's instance token (`seg-{t}-{instance}-{msn}.*`, see the
-  Cache-Control entry and `hls-runtime`); the bare `init-{t}.mp4` and the
-  token-less `seg-{t}-{msn}`/`part-…` still resolve, but are no longer served
-  `immutable`. A route restart renames everything and, without DVR, renumbers
-  from 1 (media sequence continuity across a *process* restart needs the DVR
-  archive's floor); within a process a reconnect continues the numbers and
-  skips the old origin's open segment's (#1030/#1083).
-- `OutputKind`'s `Debug` output redacts push URLs and `Custom` params (it was
-  derived) (#1083).
-
 ### Added
+- **DASH SCTE-35 inband event signalling** (issue #969). MPD now declares
+  `<InbandEventStream schemeIdUri="urn:scte:scte35:2013:bin">`, and served
+  fMP4 segments carry serialized `emsg` boxes (after `styp`, before `moof`)
+  for segments with resolved SCTE-35 events in the trunk's event ring.
+  Non-segment resources and eventless segments pass through unchanged.
+
 - `RouteHandle::release_program` — gives a program's publish slot back once
   the driver-backed session that owned its `Trunk` is reaped, so a later
   publisher can bind (the counterpart to `publish_program`'s
@@ -973,7 +739,283 @@
 - `Backoff::delay_for_attempt` — the stateless form of repeated `next()`
   (#1083).
 
+### Changed (breaking) — W2b-2
+- **Every reconnect/retry delay is equal-jittered.** `supervisor::Backoff`,
+  `config::ReconnectPolicy::backoff_for`, `ReconnectEngine`, `file_reader`'s
+  probe retry and `hls_pull`'s resource retry now share one schedule
+  (`reconnect::ReconnectSchedule`). A delay is no longer exactly
+  `min * factor^attempt`: the raw capped series is multiplied by
+  `uniform[0.5, 1.0)` (**equal jitter**), so the delay is always in
+  `[raw/2, raw)` and stays **spread even at the cap** (`[max/2, max)`) — the
+  add-only jitter `backon` provides collapses to exactly `max` in steady
+  state, which is where a long outage lives. A fleet of inputs pointed at one
+  server therefore no longer reconnects in lockstep. Seeds are mixed with a
+  per-process counter so schedules created in one clock tick differ.
+  `Backoff`'s public shape
+  (`new`/`production_default`/`next`/`delay_for_attempt`/`reset`) is unchanged.
+  A new public module `reconnect` exposes the schedule.
+- **The three pull sources share one fetch scheduler; the `WaitMs` hint is
+  now a pacing floor AND a ready fetch is no longer starved.**
+  `hls_pull`/`dash_pull`/`smooth_pull` drive a single
+  `source::pull::PullScheduler` (in-flight bound, retry queue, session
+  `WaitMs` hint, idle park) instead of three hand-rolled `JoinSet` loops.
+  The HLS engine's `Action::WaitMs(target_duration/2)` reload hint was a
+  *pacing floor on the next playlist fetch* on `main` (RFC 8216 §4.3.3.1):
+  the pre-migration loop slept the hint inline before joining, so the next
+  playlist GET started one hint after the previous one — but that same inline
+  sleep also starved a ready resource fetch (a segment completing 50 ms into
+  a 1 s hint waited another 950 ms, defect 5). The scheduler keeps both: the
+  hint arms a not-before floor on the *next* paced fetch's dispatch
+  (`PullScheduler::push_at`), and the floor is anchored to the **real dispatch
+  instant** of the previous playlist fetch (`max(now, floor)`, not the earlier
+  instant it was merely pushed), so N reload cycles with hint `h` and a small
+  RTT dispatch at exactly `0, h, 2h, 3h, …` — anchoring to the push instant
+  instead let a second GET slip through back-to-back, i.e. roughly 2× the
+  intended rate. An already-running fetch's result is returned the moment it
+  completes. Without the floor a non-LL live source reloads back-to-back at
+  RTT rate (hundreds of GETs/s against a local or CDN origin).
+  `source::may_spawn_fetch` is removed (the scheduler owns the bound).
+- **UDP binds go through `socket2` with configurable socket options.**
+  `ts_udp`/`rtp` inputs gain optional `recv_buffer_bytes`, `reuse_address`
+  and `multicast_interface` keys (SP1.6); `source::udp::bind_udp` is now
+  public and takes a `source::udp::UdpBindOptions`, and a requested
+  `SO_RCVBUF` is applied rather than left at the OS default; a default
+  (4 MiB) is now requested when none is given, best-effort (the OS may clamp
+  it and a failed `set` never fails the bind). A **new `reuse_port` option**
+  (Unix only, gated with socket2's own `set_reuse_port` target predicate;
+  ignored elsewhere) is available alongside `reuse_address` for the per-OS
+  multicast-sharing semantics `source::udp` now documents.
+  **Rust-level breaking additions:** `InputSpec::Rtp`/`InputSpec::TsUdp` gain
+  a `socket: UdpSocketSpec` field, and `UdpSocketSpec` itself gains
+  `reuse_port: bool` — an exhaustive construction or pattern match on any of
+  these outside this crate must be updated (the JSON shape is additive via
+  serde defaults; only the Rust types changed).
+- **Push transport configs gain fields (Rust-level breaking additions).**
+  `RtspTransportConfig` gains `timeouts: rtsp_runtime::RtspTimeouts`;
+  `RtmpTransportConfig` gains `write_timeout: Option<Duration>`. An
+  exhaustive struct construction or pattern match outside this crate must be
+  updated (both keep a `Default`).
+- **The five one-connection dial sources share one ingest scaffold.** The
+  `rtsp`/`rtp`/`ts_udp`/`ts_http`/`srt` drive loops become one
+  `source::driver::run_ingest_scaffold` (deadline, cancel, bounded write,
+  stall check, `advance_route`, terminal tail) with a small per-source
+  `IngestStep` (its read + `feed`). The **RTSP source's outbound write** is
+  now bounded by a 10 s timeout (defect 4: it was an unbounded
+  `write_all`). A session that goes `HandshakeTimedOut` now ends the route
+  promptly instead of reading until the stall. `run_rtsp`/`run_ts_udp`/
+  `run_rtp_udp`/`run_ts_http`/`run_srt_caller`/`run_srt_listener_once`/
+  `drive_socket` each take a `CancellationToken`.
+- **The RTSP push uses rtsp-runtime's `AsyncRtspClient`.** `RtspTransport`
+  drives `announce`/`setup`/`record` and sends media with `send_interleaved`
+  rather than a hand-rolled `ClientSession` + raw `TcpStream` loop, and the
+  ANNOUNCE body is built and rendered with `sdp-types`. **Every awaited IO is
+  now bounded**: the OPTIONS/ANNOUNCE/SETUP/RECORD exchanges and each
+  interleaved write honour `RtspTransportConfig::timeouts` (new, a
+  `rtsp_runtime::RtspTimeouts`), where the old transport's `roundtrip` read
+  and its `write_all` had no bound at all (defect 4). The ANNOUNCE SDP bytes
+  are unchanged, pinned by `tests/golden/rtsp_announce.sdp`. `close()` now
+  sends a bounded best-effort `TEARDOWN` (RFC 2326 §10.10) on a spawned task
+  owned by the transport (a second `close()` is a no-op, a superseded handle
+  is aborted, and outside a Tokio runtime the TEARDOWN is skipped, never
+  panicking), so a server frees the publisher slot immediately rather than at
+  its own timeout — best-effort at process shutdown, where a spawned TEARDOWN
+  may not run; and a server `454 Session Not Found` surfaces as a distinct
+  `RtspPushError::SessionLost` (new variant) rather than a generic protocol
+  error, so the push reconnects.
+- **The RTMP push uses rtmp-runtime's `AsyncRtmpClient`.** `RtmpTransport`
+  drives `connect`/`publish` and sends media with `send_video`/`send_audio`/
+  `send_metadata` rather than hand-rolling the C0/C1/C2 handshake and a raw
+  `TcpStream` write loop. **Every write is now bounded** by
+  `RtmpTransportConfig::write_timeout` (new, `None` = a 10 s default), which
+  the old transport's bare `write_all` had no bound on (defect 4). The
+  sans-IO `encode_media` path (for `PushTransportEgress`) uses the adapter's
+  new `encode_video`/`encode_audio`/`encode_metadata` methods. The `tcUrl`
+  bytes are unchanged.
+- **Locks use `parking_lot`; `src/lock.rs` is deleted.** Every
+  `std::sync::Mutex`/`RwLock` reached through `crate::lock::*` (route,
+  admin, smooth, catchup, srt) is now a `parking_lot` lock with infallible
+  `.lock()`/`.read()`/`.write()`, so a panicking holder can never poison a
+  lock and cascade a permanent panic. The generic poison-recovery wrappers are
+  deleted. **The DVR fail-closed safety property is KEPT, not deleted**: a
+  panic while persisting a `DvrRecorder`'s multi-step state still stops
+  recording for that program (the recorder is dropped), logs, and increments
+  `multimux_dvr_failed_total` — now via `catch_unwind` around the persist in
+  `poll_dvr_blocking` rather than via poisoning.
+
+### Changed (breaking) — W2b-1
+- **A single `CancellationToken` replaces the `watch<bool>` shutdown.** The
+  public `watch<bool>` graceful-shutdown signal is removed:
+  `origin::supervisor::supervise_driver` now takes
+  `cancel: tokio_util::sync::CancellationToken`, and `registry::InputCtx` exposes
+  `cancel: CancellationToken` (was `shutdown_rx: watch::Receiver<bool>`). A
+  `Custom` input factory watches `ctx.cancel` instead of a `watch` receiver.
+  `multimux-cli` needs no change (`serve`/`serve_config_file` already translate
+  Ctrl-C/SIGTERM into the token).
+
+### Changed — W2b-1
+- **Every URL is built with the `url` crate.** `push::rtsp`'s control URL uses
+  `Url::path_segments_mut`, `push::rtmp`'s `tcUrl` comes from
+  `rtmp_runtime::target::RtmpTarget` (IPv6 hosts stay bracketed), `push::srt`'s
+  authority parse uses `url`/`SocketAddr`, and `config::validate_host_port`
+  validates through `url`. The SRT *query* split stays manual (a Haivision
+  `streamid=#!::r=…` value contains a `#` a `Url` parser would cut).
+- **Dates and durations go through `jiff`.** `availabilityStartTime` (DASH and
+  LL-DASH), the DASH `xs:duration` attributes (`@minimumUpdatePeriod`,
+  `@timeShiftBufferDepth`), the DVR EIT start time, and the DASH-pull
+  `parse_iso8601_utc`/`now_unix_secs` use `jiff` instead of hand-rolled
+  `civil_from_days`/manual parsing. The whole-second `availabilityStartTime`
+  spelling is unchanged (pinned by the `dash_mpd`/`ll_dash_mpd` goldens).
+- **DASH `xs:duration` values >= 60 s now use the balanced spelling.** The
+  `@minimumUpdatePeriod`/`@timeShiftBufferDepth` durations are formatted by
+  `jiff`'s span printer, which balances up to hours — one spelling rule shared
+  with `transmux`'s DASH writer. Sub-60 s values are byte-identical to the old
+  `PT{secs}S` spelling, but a `@timeShiftBufferDepth` >= 60 s (e.g. a
+  15-segment x 4 s window) now prints `PT1M` where the pre-migration code printed
+  `PT60S`, and >= 3600 s prints `PT1H`. Both are valid `xs:duration`. This is a
+  deliberate wire change vs `main`, pinned against goldens captured from
+  `origin/main`: `dash_mpd_window60.golden` vs `dash_mpd_window60_main.golden`
+  (`PT60S` -> `PT1M`) and `dash_mpd_window3600_main.golden`
+  (`PT3600S` -> `PT1H`), each asserted to differ by exactly that one token. The
+  sub-60 s `dash_mpd.golden`/`ll_dash_mpd.golden` are byte-identical to main.
+  A **fractional** target duration also differs from main, which printed the raw
+  `f64`: for a 0.1 s target over 3 segments main emitted
+  `timeShiftBufferDepth="PT0.30000000000000004S"` while this crate emits the
+  rounded `"PT0.3S"` (pinned by `dash_mpd_frac.golden` vs the main-captured
+  `dash_mpd_frac_main.golden`).
+- **`validate_rtsp_push_url` now also enforces the scheme.** An `rtsp_push`
+  output URL must use the `rtsp://` or `rtsps://` scheme; a push URL with any
+  other scheme (e.g. `srt://`, `http://`) is rejected at config validation with
+  a clear error rather than failing deep in the RTSP transport at connect time.
+  This is stricter than main, which accepted any scheme here.
+- **The test harness binds `127.0.0.1:0` and passes the live listener.** New
+  `serve_with_registry_on`/`serve_with_registry_on_admin`/
+  `serve_config_file_with_registry_on_admin` entry points take a pre-bound
+  listener, so the reserve-then-rebind loops are gone for the HTTP media/admin
+  listeners. `multimux/tests/support/bounded.rs` uses `wait-timeout`
+  (`ChildExt::wait_timeout`) instead of a `try_wait` + `thread::sleep` poll.
+- A push's connect, its reconnect backoff, and its listen-wait are raced against
+  the cancellation token; the no-free-waiter-slot branch parks on
+  `media_plane::trunk::Trunk::waiter_slot_freed` instead of a 50 ms sleep-poll
+  (which needed the additive `Trunk::waiter_slot_freed`, and `WaiterSlot::drop`
+  now notifies it).
+
+### Added — W2b-1
+- **New public API from the URL/harness work.** `pub mod redact`;
+  `push::{rtmp, rtsp, srt}` are now `pub`; `multimux::redact::{redact_url,
+  redact_destination}` are public; `output::whep::WhepRoute::with_listener` and
+  `source::ts_udp::TsUdpRoute::with_socket` accept a caller-bound
+  listener/socket; and `source::whip::WhipRoute::with_listener`,
+  `origin::serve_with_registry_on`/`serve_with_registry_on_admin`/
+  `serve_config_file_with_registry_on_admin`, and `origin::PreboundListeners`
+  take pre-bound listeners (SP7.1). A `test-seams`-only
+  `origin::serve_config_file_with_registry_on_admin_prebound` additionally
+  threads `Config::prebound` into a *file-loaded* config, so a route defined only
+  in the config file can also consume a caller-bound socket.
+- **Test-only WHIP/WHEP entry points moved behind the non-default `test-hooks`
+  feature.** No longer part of the default published API (enabling `test-hooks`
+  restores them): `output::whep::serve_whep_run_for_test`, `WHEP_TEST_OFFER`,
+  `output::whep::{whep_router_for_test, render_whep_answer_for_test,
+  serve_whep_for_test, serve_whep_for_test_saturated_accept,
+  serve_whep_for_test_with_trunk}`, `source::whip::{serve_for_test,
+  serve_for_test_with_read_timeout, serve_for_test_with_read_load,
+  serve_for_test_with_read_load_and_timeout,
+  serve_for_test_with_read_load_timeout_and_policy, parse_offer_for_test,
+  render_answer_for_test, whip_router_for_test}`, and the `Config::prebound`
+  caller-bound-socket field. The integration tests that drive them
+  (`whip_http`, `whip_ingest`, `whep_egress`, `whip_whep_sdp`, `whip_whep_timers`,
+  `whep_sdp_golden`, `whep_http`, `accept_lifecycle`, `limit_budgets`) now
+  declare `required-features = ["test-hooks", …]`.
+- **A dependency-free `test-seams` feature gates the pre-bound-socket seams.**
+  `Config::prebound` and `Config::PreboundBinds` moved out of `test-hooks` (which
+  pulls `webrtc-runtime`'s ICE/DTLS-SRTP tree) into a new, dependency-free
+  `test-seams` feature; `test-hooks = ["test-seams", …]` implies it. The three
+  integration binaries that need *only* a pre-bound socket — `dispatch_ingest`,
+  `smooth_oracle`, `ts_hls_oracle` (the TS-UDP route-dispatch end-to-end and the
+  Smooth/TS-HLS oracles) — now declare `required-features = ["test-seams"]`, and
+  a self dev-dependency (`multimux = { path = ".", features = ["test-seams"] }`)
+  enables the feature for every test build, so a plain `cargo test -p multimux`
+  compiles and runs them again (previously they were silently skipped unless
+  `--all-features` was passed).
+  Note the feature-unification hazard: `Config` is a `pub`, exhaustive struct, so
+  a downstream that enables `test-seams` anywhere in its graph makes every
+  `Config { .. }` literal outside this crate require a trailing
+  `..Default::default()`. See the field doc on `Config::prebound`.
+  The remaining `#[doc(hidden)] pub` `*_for_test` seams stay on the default
+  build because gating them would force `test-hooks` (and its `webrtc-runtime`
+  dependency) onto tests that do not otherwise need it:
+  `source::dash_pull::parse_iso8601_utc_for_test`,
+  `output::dash::{format_iso8601_for_test, xs_duration_for_test}`,
+  `push::{rtmp::tc_url_for_test, srt::parse_srt_url_for_test,
+  rtsp::control_url_for_test}`.
+  `redact::redact_url`/`redact_destination` are NOT test seams — they are the
+  crate's real redaction API and stay public.
+- `source::file_reader::SpawnedReader` now owns a cancellation token: dropping
+  it cancels the reader's task instead of detaching it, and a cancelled run
+  resolves to `FileReaderError::Cancelled`.
+
+### Fixed — W2b-1
+- **Every dial-source session exit path releases its publisher slot.** The
+  ingest scaffold's stall, write-failure, `StepOutcome::Failed`, peer-EOF,
+  terminal-health and cancel exits all call `release_route` (M1/I-E), so the
+  supervisor's reconnect is never rejected as a second concurrent publisher.
+  The bounded-write failure message now describes the per-write bound it
+  enforces (M2).
+- **A push reconnect no longer ignores shutdown** (defect 5): cancelling during
+  the connect or the backoff sleep returns promptly.
+- **A cancelled route abandons its in-flight ingest attempt** rather than
+  awaiting it to its own end (`supervise_driver` races the attempt against the
+  token).
+- **A route's WHEP session tasks are owned by the route's `TaskTracker`**
+  (defect 3): cancelling the route drains them and releases the listen port.
+- **A dropped `SpawnedReader` no longer plays a file forever** — it cancels.
+- **Redaction never leaks a URL the parser rejects.** The `url`-rejected
+  fallback is masking-only: the whole authority AND the path/query collapse to
+  `<redacted>`, so an RTMP stream key or SRT token in the tail cannot reach a
+  log line.
+- **A hostless RTSP push URL (`rtsp:cam`) is rejected** at config load and at
+  connect, instead of silently dialing `127.0.0.1` and then panicking.
+- **`xs_duration_secs` rejects NaN/inf/negative/overflow** with an error rather
+  than panicking through `Duration::from_secs_f64`.
+- **`target_duration_secs` is now capped at 24 h** (`MAX_TARGET_DURATION_SECS`)
+  and rejected above it. This is a new rejection of a previously accepted
+  config; it is a policy limit on a segment duration, not a `Duration`-overflow
+  guard. Exactly 86400.0 is accepted, 86400.1 is rejected. A part/chunk longer
+  than one whole segment (`part_target_ms/1000 > target_duration_secs`) is
+  rejected too, since the LL-DASH packager refuses that combination.
+- **A `TsUdp` route whose pre-bound socket carries a `multicast_group` is
+  rejected** rather than silently using the socket without joining the group.
+  `TsUdpRoute::with_multicast_group` now carries the group onto a
+  `with_socket` route so `bind` can detect the contradiction.
+- **`config::validate_host_port` restored to its strict shape.** Adopting `url`
+  had silently accepted `host:9000/path`, `user@host:9000`, and
+  `host:9000?x`; they are rejected again, and an SRT authority with a userinfo
+  prefix is rejected rather than silently dropped.
+- **Redaction of a parseable URL now goes through `url`**, so the host is
+  lowercased, a trailing `/` added, and percent-encoding normalised — a
+  behaviour change from the previous text-only scrub.
+
 ### Changed
+- Dependency bumps, non-breaking: `md-5` 0.11 and `base64` 0.23 (Digest/Basic auth output unchanged), plus semver-compatible lock updates (`tokio-rustls` 0.26.6, `rustls` 0.23.45).
+- `rtc-dtls` is added as a **dev-dependency** (for the WHIP loopback tests that
+  pre-generate a client certificate); it was already a transitive dependency via
+  `webrtc-runtime/media`, so no new package version enters the lock.
+  The `errno`/`quinn-udp`/`winapi-util` `windows-sys` edges stay on `0.52.0`, as on `main`.
+  Also a dev-dependency: `webrtc-runtime` with its `test-support` feature (hidden test hooks).
+- The Smooth manifest renderer (`output::smooth`) now writes through
+  `quick_xml::Writer` (every attribute value escaped by quick-xml) instead of
+  string concatenation; the rendered bytes are identical. The Smooth-pull
+  encryption probe is a real `quick-xml` pull loop instead of a text scan, so a
+  namespace-prefixed `<ms:Protection>` is now detected and a `<Protection>`
+  inside a comment or attribute value no longer false-positives. Adds the
+  single XML dependency of the XML-handling crates, `quick-xml`; `multimux` already required
+  `transmux`'s `std` XML paths. (Hand-rolled XML replaced by quick-xml
+  workspace-wide.)
+
+- The origin's CORS/`Cache-Control` headers are written through typed
+  `headers` values. Wire-visible, semantically-identical differences: the
+  `Access-Control-Allow-Headers`/`Expose-Headers` header NAMES render
+  lowercased (`authorization, range, content-type`, …), and the instance-named
+  `Cache-Control` renders `immutable, max-age=31536000` (directive order).
 
 - HLS-pull resource-fetch retry delay now comes from `origin::supervisor::Backoff::delay_for_attempt` (the third, shift-based capped-exponential copy is gone; schedule unchanged and pinned by a test) (#1141).
 
@@ -983,56 +1025,6 @@
   9725 §4.2 expects the resource to be deletable. This is parity with the
   previous release (which also answered `405`), tracked as a follow-up rather
   than a regression.
-
-
-## [0.11.0] - 2026-09-26
-
-### Security
-Fixes GHSA-6cpc-jqv3-qcj3, GHSA-c5v7-p4jv-2fhc, GHSA-jwfh-m4vx-fhwx and GHSA-2w4r-qf2x-pqm6, and
-picks up GHSA-48qq-7p78-2jvj (webrtc-runtime 0.2.0) for WHIP/WHEP.
-
-### Changed (breaking)
-- Requires `hls-runtime` 0.7 (was 0.6), `broadcast-auth` 0.3.1 (was 0.3, needs
-  `Verifier::challenge_for`), `rtsp-runtime` 0.7 (was 0.6) and, with the `whip`/`whep` features,
-  `webrtc-runtime` 0.2 (was 0.1).
-
-### Fixed
-- WHIP input and WHEP output pass the offer's `a=fingerprint` to the media transport, so the
-  DTLS peer is authenticated (webrtc-runtime 0.2.0); an offer without a fingerprint is rejected.
-- Push outputs await the trunk listener instead of blocking a runtime worker, and back off when
-  every listener slot is taken.
-- An RTP/UDP route drops a malformed packet instead of failing, and a failed session now ends
-  the route so the supervisor reconnects it.
-- WHEP applies the configured output auth, ends sessions after 30 s without inbound traffic, and
-  WHIP/WHEP cap HTTP header and body size and time out slow requests; WHIP checks capacity before
-  allocating a session.
-- The WHIP/WHEP session-capacity slot is released on every failure path after it is reserved;
-  both accept loops cap concurrent connections; chunked transfer-encoding is refused (411) and an
-  unparseable `Content-Length` is a 400; the WHEP silence timer resets only on RTP, RTCP or a
-  completed DTLS handshake.
-- A WHEP viewer's session no longer ends after 30 seconds. The silence timer counted only
-  RTCP that `rtcp-packet` could decode, but a browser viewer sends RFC 4585 feedback (PLI,
-  NACK, REMB), which it cannot. Any SRTCP packet that authenticates now counts (needs
-  `webrtc-runtime`'s new `MediaEvent::RtcpUnsupported`). A datagram that fails authentication
-  still does not.
-- A route now rejects a second, concurrent RTMP/WHIP publisher instead of letting it silently
-  take over (or freeze, once the first disconnects) the program the route is already receiving
-  from. The rejected connection's own session is reaped normally by its listener's usual
-  timeout/error handling; once the active publisher's session ends, the route accepts a new one
-  for that program again (a legitimate reconnect, or a backup encoder taking over).
-- Output-auth and admin-auth Digest challenges now use `broadcast_auth::Verifier::challenge_for`
-  instead of `challenge`, so a request that correctly answers an expired nonce gets a fresh
-  challenge carrying `stale=true` (RFC 7616 §3.3) rather than being silently re-prompted for
-  credentials.
-- Config docs for `InputSpec::Rtmp`/`Whip`/`Srt` now say plainly when an ingest listener runs
-  with no authentication at all, and a startup log line warns for each such route.
-
-### Added
-- **DASH SCTE-35 inband event signalling** (issue #969). MPD now declares
-  `<InbandEventStream schemeIdUri="urn:scte:scte35:2013:bin">`, and served
-  fMP4 segments carry serialized `emsg` boxes (after `styp`, before `moof`)
-  for segments with resolved SCTE-35 events in the trunk's event ring.
-  Non-segment resources and eventless segments pass through unchanged.
 
 ## [0.10.0] - 2026-08-14
 

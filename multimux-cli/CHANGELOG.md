@@ -4,7 +4,17 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ## [Unreleased]
 
+
+## [0.9.0] - 2026-10-05
+
 ### Changed
+- Built on `multimux` 0.11.0, which carries WHIP/WHEP, push-output, RTP-input and route/output-
+  auth security fixes (GHSA-6cpc-jqv3-qcj3, GHSA-c5v7-p4jv-2fhc, GHSA-jwfh-m4vx-fhwx,
+  GHSA-2w4r-qf2x-pqm6, and GHSA-48qq-7p78-2jvj via webrtc-runtime 0.2.0) — including the
+  single-publisher rule for concurrent RTMP/WHIP ingest, startup warnings for unauthenticated
+  ingest routes, and stale (rather than silently re-prompted) Digest challenges; see its release
+  note. No CLI changes.
+
 - The `0.9.0` entry below says "No CLI changes", which understates it: the
   `multimux` 0.11 breaking changes alter what the CLI's `--config` / flag-built
   routes accept and serve. A config that worked on `0.8.x` may now be
@@ -30,16 +40,6 @@ All notable changes to `multimux-cli` will be documented in this file.
     restart renames them.
   - New output-visible behaviour: CORS preflight allows `Authorization`, and
     the global concurrency bound answers `503` + `Retry-After`.
-
-## [0.9.0] - 2026-09-26
-
-### Changed
-- Built on `multimux` 0.11.0, which carries WHIP/WHEP, push-output, RTP-input and route/output-
-  auth security fixes (GHSA-6cpc-jqv3-qcj3, GHSA-c5v7-p4jv-2fhc, GHSA-jwfh-m4vx-fhwx,
-  GHSA-2w4r-qf2x-pqm6, and GHSA-48qq-7p78-2jvj via webrtc-runtime 0.2.0) — including the
-  single-publisher rule for concurrent RTMP/WHIP ingest, startup warnings for unauthenticated
-  ingest routes, and stale (rather than silently re-prompted) Digest challenges; see its release
-  note. No CLI changes.
 
 ## [0.8.0] - 2026-08-14
 

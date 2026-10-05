@@ -3,12 +3,15 @@
 ## [Unreleased]
 
 ## [11.0.0] - 2026-10-05
+
+Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
+
 ### Fixed
 - Normal-Mode (NM) CRC-8 mismatches are now detected and flagged with the
   Transport Error Indicator (TEI, ISO/IEC 13818-1 §2.4.3.2) to alert
   downstream receivers of corruption (EN 302 755 §5.1.6). Previously the
   CRC-8 chain was checked but only counted diagnostically; corrupted packets
-  went undetected. Stats now includes `crc8_mismatches` (#1094).
+  went undetected. `CarryOverStats` now includes `crc8_mismatches` (#1094).
 - `BbframePump` now allocates its 256-element extractor array on the heap
   (via `Box`) instead of the stack, preventing a 59 KB stack overflow on
   embedded or small-stack contexts (#1094).
@@ -31,10 +34,6 @@
   fallible: a non-zero stride below 188 returns the new
   `Error::InvalidStride` (it previously panicked in `next()` on short input);
   the iterator also no longer overflows on `pos + stride`.
-
-
-## [10.1.0] - 2026-09-26
-Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
 
 ## [10.0.1] - 2026-08-30
 Lockstep patch alongside `dvb-si` 10.0.1; no source changes in this crate.

@@ -7,35 +7,30 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ## [0.7.0] - 2026-10-05
-### Added
-- `AsyncRtmpClient` gains sans-IO `encode_video`/`encode_audio`/`encode_metadata`
-  (returning the chunk-stream-framed message bytes without writing) and
-  `write_frame` (writing one already-framed message under `RtmpTimeouts::write`),
-  so a caller driving its own egress can frame and write separately.
-  `send_video`/`send_audio`/`send_metadata` now delegate to the `encode_*` half.
 
-### Changed (breaking)
-- `RtmpConnection` is now `RtmpConnection<S = TcpStream>` (a `tokio_util::codec::Framed` over the sans-IO session) with `RtmpConnection::from_stream(stream, session, RtmpTimeouts)`; `AsyncRtmpServer` gains `with_timeouts`. New `io::RtmpTimeouts` (connect / handshake / read_idle / write; defaults 10 s / 10 s / 30 s / 10 s): a deadline expiry from `next_events` is `io::ErrorKind::TimedOut` and closes the connection. The `pending_write` field is removed; `next_events` stays cancel-safe through the framed write buffer (pinned by a cancellation test).
-- `chunk::ChunkWriter::write` now returns `Result<Vec<u8>, RtmpError>` instead of `Vec<u8>`.
-  `Error` gains a new `FieldOverflow` variant.
-- **#1108 (RTMP-W7)**: `ServerSession`/`ClientSession` gain a new `peer_bandwidth: Option<u32>`
-  field, tracking `SetPeerBandwidth`'s declared value separately from `ack_threshold` (see Fixed,
-  below). `ClientSession` also gains `advertised_window_ack_size: u32`.
-- **#1108 (RTMP-W1)**: `chunk::ChunkAssembler` gains a new `pub fn abort(&mut self, csid: u32)`,
-  and `io::RtmpConnection` gains a new private `pending_write` field (both additive).
-- **#1108 (RTMP-W6)**: `server::ServerEvent` gains a new `Unsupported { message_type_id: u8 }`
-  variant (additive; the enum is `#[non_exhaustive]`).
-- `amf0::Command::to_body` now returns `Result<Vec<u8>, RtmpError>` instead of `Vec<u8>` (it
-  panicked on an over-long AMF0 string; see Fixed).
-
-### Added
-- `io::AsyncRtmpClient` (feature `tokio`): the publish client adapter (`connect`, `from_stream`, `publish`, `send_audio` / `send_video` / `send_metadata`, `next_events`), bounded by `RtmpTimeouts`; `read_idle` spans the whole wait for a non-empty batch (empty chunks do not restart it). The client adapter reads inbound traffic only in `next_events`, so a send-only caller must also drive it.
-- `target::RtmpTarget` / `RtmpUrlError`: `rtmp://host[:port]/app/stream-key[?query]` parsed with the `url` crate; `tcUrl` keeps IPv6 brackets and never carries userinfo, query or fragment.
-- `DEFAULT_MAX_IN_PROGRESS_BYTES` (16 MiB) and `ServerConfig::max_in_progress_bytes` /
-  `ClientConfig::max_in_progress_bytes`: the per-connection budget for bytes held across
-  in-progress chunk streams (see Fixed, RTMP-W1).
+### Security
+Fixes GHSA-fjrp-rx2c-c9pw and GHSA-hgmf-qpx9-6gg2.
 
 ### Fixed
+- `publish`'s stream-key check now compares in constant time instead of a
+  plain `!=`, so a mismatch cannot be distinguished by comparison timing.
+- A connection is now closed after `MAX_FAILED_PUBLISH_ATTEMPTS` (3)
+  `publish` attempts with a mismatched stream key, instead of allowing
+  unlimited retries on the same connection.
+- `chunk::ChunkAssembler` reassembled a chunked message by cloning the whole
+  accumulated payload on every continuation chunk and compacting its input
+  buffer once per chunk, so a message split into many small chunks (e.g. an
+  8 MiB message at a 1-byte chunk size, reachable via an early, pre-`connect`
+  Set Chunk Size) cost O(message_length²/chunk_size) instead of
+  O(message_length). Each chunk's bytes are now appended in place to the
+  owning chunk stream's own persistent buffer (never cloned), and the
+  consumed prefix of the input buffer is compacted once per assembled
+  message rather than once per chunk. `set_chunk_size` still accepts any
+  peer-announced value from `1..=MAX_CHUNK_SIZE` unchanged (a peer's own
+  chosen chunk size must be honoured exactly, or every later chunk boundary
+  is misparsed) — this fix is the reassembly algorithm, not a stricter
+  chunk-size floor.
+
 - No awaited IO in the tokio adapters is unbounded (an idle or stalled peer used to hold a connection forever).
 - `tcUrl` built from a bare IPv6 address and port (`rtmp://::1:1935/live`) is now bracketed (`rtmp://[::1]:1935/live`).
 - **Remote panic (release audit)**: a peer-chosen publishing name of 65 518..=65 535 bytes fit the
@@ -79,10 +74,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `handle_data` had already consumed the input and advanced the session's state before
   `write_all(&reply)` (itself a cancellation point) confirmed the reply was sent, so a caller
   wrapping this in `tokio::time::timeout`/`select!` could lose part of the protocol reply while
-  the session believed it had gone out. The reply is now recorded in a new `pending_write` field
-  synchronously (no await point) before any write attempt, flushed one `write` call at a time
-  (never `write_all`, whose own partial-write count isn't recoverable after cancellation) so a
-  cancelled flush leaves exactly the unsent remainder for the next call to retry.
+  the session believed it had gone out. The reply is now queued in the `Framed` codec's write buffer
+  (see Changed: `RtmpConnection` is a `Framed` over the sans-IO session) before any flush is
+  attempted, so a cancelled flush leaves exactly the unsent remainder queued for the next call
+  to retry.
 - **#1108 (RTMP-W11)**: the C0/S0 version byte was parsed and discarded, so an RTMPE peer
   (version 6) or garbage was accepted here and only surfaced later as a confusing chunk-parse
   error. Both handshake sides now reject a version other than 3 with `Malformed`.
@@ -92,30 +87,29 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - AMF0 Object/ECMA-array key lengths and ECMA-array/strict-array/long-string counts are now
   range-checked instead of silently truncated (#1129).
 
-## [0.6.1] - 2026-09-26
+### Added
+- `AsyncRtmpClient` gains sans-IO `encode_video`/`encode_audio`/`encode_metadata`
+  (returning the chunk-stream-framed message bytes without writing) and
+  `write_frame` (writing one already-framed message under `RtmpTimeouts::write`),
+  so a caller driving its own egress can frame and write separately.
+  `send_video`/`send_audio`/`send_metadata` now delegate to the `encode_*` half.
 
-### Security
-Fixes GHSA-fjrp-rx2c-c9pw and GHSA-hgmf-qpx9-6gg2.
+- `io::AsyncRtmpClient` (feature `tokio`): the publish client adapter (`connect`, `from_stream`, `publish`, `send_audio` / `send_video` / `send_metadata`, `next_events`), bounded by `RtmpTimeouts`; `read_idle` spans the whole wait for a non-empty batch (empty chunks do not restart it). The client adapter reads inbound traffic only in `next_events`, so a send-only caller must also drive it.
+- `target::RtmpTarget` / `RtmpUrlError`: `rtmp://host[:port]/app/stream-key[?query]` parsed with the `url` crate; `tcUrl` keeps IPv6 brackets and never carries userinfo, query or fragment.
+- `DEFAULT_MAX_IN_PROGRESS_BYTES` (16 MiB) and `ServerConfig::max_in_progress_bytes` /
+  `ClientConfig::max_in_progress_bytes`: the per-connection budget for bytes held across
+  in-progress chunk streams (see Fixed, RTMP-W1).
 
-### Fixed
-- `publish`'s stream-key check now compares in constant time instead of a
-  plain `!=`, so a mismatch cannot be distinguished by comparison timing.
-- A connection is now closed after `MAX_FAILED_PUBLISH_ATTEMPTS` (3)
-  `publish` attempts with a mismatched stream key, instead of allowing
-  unlimited retries on the same connection.
-- `chunk::ChunkAssembler` reassembled a chunked message by cloning the whole
-  accumulated payload on every continuation chunk and compacting its input
-  buffer once per chunk, so a message split into many small chunks (e.g. an
-  8 MiB message at a 1-byte chunk size, reachable via an early, pre-`connect`
-  Set Chunk Size) cost O(message_length²/chunk_size) instead of
-  O(message_length). Each chunk's bytes are now appended in place to the
-  owning chunk stream's own persistent buffer (never cloned), and the
-  consumed prefix of the input buffer is compacted once per assembled
-  message rather than once per chunk. `set_chunk_size` still accepts any
-  peer-announced value from `1..=MAX_CHUNK_SIZE` unchanged (a peer's own
-  chosen chunk size must be honoured exactly, or every later chunk boundary
-  is misparsed) — this fix is the reassembly algorithm, not a stricter
-  chunk-size floor.
+### Changed (breaking)
+- `RtmpConnection` is now `RtmpConnection<S = TcpStream>` (a `tokio_util::codec::Framed` over the sans-IO session) with `RtmpConnection::from_stream(stream, session, RtmpTimeouts)`; `AsyncRtmpServer` gains `with_timeouts`. New `io::RtmpTimeouts` (connect / handshake / read_idle / write; defaults 10 s / 10 s / 30 s / 10 s): a deadline expiry from `next_events` is `io::ErrorKind::TimedOut` and closes the connection. The `pending_write` field is removed; `next_events` stays cancel-safe through the framed write buffer (pinned by a cancellation test).
+- `chunk::ChunkWriter::write` now returns `Result<Vec<u8>, RtmpError>` instead of `Vec<u8>`.
+  `Error` gains a new `FieldOverflow` variant.
+- **#1108 (RTMP-W1)**: `chunk::ChunkAssembler` gains a new `pub fn abort(&mut self, csid: u32)`,
+  (additive).
+- **#1108 (RTMP-W6)**: `server::ServerEvent` gains a new `Unsupported { message_type_id: u8 }`
+  variant (additive; the enum is `#[non_exhaustive]`).
+- `amf0::Command::to_body` now returns `Result<Vec<u8>, RtmpError>` instead of `Vec<u8>` (it
+  panicked on an over-long AMF0 string; see Fixed).
 
 ## [0.6.0] - 2026-08-11
 
