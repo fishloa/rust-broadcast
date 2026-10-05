@@ -35,6 +35,13 @@ use crate::error::{MultimuxError, Result};
 /// may clamp it and the bind still succeeds.
 pub const DEFAULT_RECV_BUFFER_BYTES: usize = 4 * 1024 * 1024;
 
+/// The `SO_RCVBUF` size [`bind_udp`] will request: the caller's explicit value,
+/// or [`DEFAULT_RECV_BUFFER_BYTES`] when none was given. A pure function so the
+/// choice of default is unit-testable without a socket (I-B).
+pub fn requested_recv_buffer_bytes(recv_buffer_bytes: Option<usize>) -> usize {
+    recv_buffer_bytes.unwrap_or(DEFAULT_RECV_BUFFER_BYTES)
+}
+
 /// The socket options a UDP bind applies. Every field is a *request*: the
 /// kernel may clamp `SO_RCVBUF` (Linux doubles it and floors at
 /// `rmem_default`; macOS adds overhead), so a caller that needs to know what
@@ -102,7 +109,7 @@ pub async fn bind_udp(
     // OS may clamp it (Linux doubles and floors at `rmem_default`; macOS adds
     // overhead), and a failed/clamped `set` must NOT fail the bind — log and
     // carry on.
-    let wanted_recv = opts.recv_buffer_bytes.unwrap_or(DEFAULT_RECV_BUFFER_BYTES);
+    let wanted_recv = requested_recv_buffer_bytes(opts.recv_buffer_bytes);
     if let Err(e) = socket.set_recv_buffer_size(wanted_recv) {
         tracing::warn!(
             requested = wanted_recv,

@@ -93,22 +93,52 @@ async fn an_explicit_reuse_address_bind_still_succeeds() {
     assert!(socket.local_addr().unwrap().port() > 0);
 }
 
-/// I4: with no explicit `recv_buffer_bytes`, the default (4 MiB) is requested
-/// — the getter proves a value well above the OS default was applied, so a
-/// high-bitrate input is not left at ~208 KiB (Linux) / ~786 KiB (macOS).
+/// I-B: the pure "requested size" choice is the named default when unset.
+#[test]
+fn the_requested_receive_buffer_defaults_to_the_named_constant() {
+    assert_eq!(
+        multimux::source::udp::requested_recv_buffer_bytes(None),
+        multimux::source::udp::DEFAULT_RECV_BUFFER_BYTES
+    );
+    assert_eq!(
+        multimux::source::udp::requested_recv_buffer_bytes(Some(1234)),
+        1234
+    );
+}
+
+/// I-B: with no explicit `recv_buffer_bytes`, the default IS applied — but the
+/// assertion is platform-independent: it compares against the buffer an
+/// unconfigured socket reports in the SAME test (a plain `UdpSocket::bind`),
+/// not a hard-coded ≥1 MiB a Linux runner's `net.core.rmem_max` clamp
+/// (default 212992, doubled ≈ 425984) would fail. The requested size is
+/// separately pinned by the pure test above.
 #[tokio::test]
-async fn the_default_receive_buffer_is_larger_than_the_os_default() {
+async fn the_default_receive_buffer_is_larger_than_an_unconfigured_socket() {
+    // Baseline: the OS default for a plain socket, same environment.
+    let plain = tokio::net::UdpSocket::bind("127.0.0.1:0").await.unwrap();
+    let baseline = plain.recv_buffer_size_for_test();
+
     let socket = bind_udp("127.0.0.1:0", None, UdpBindOptions::default())
         .await
         .unwrap();
     let got = socket.recv_buffer_size_for_test();
-    // The requested default is 4 MiB; Linux may double it, macOS adds
-    // overhead. Accept [1 MiB, 16 MiB] — comfortably above every observed OS
-    // default (macOS ~786 KiB), proving the default took effect.
-    assert!(
-        (1024 * 1024..=16 * 1024 * 1024).contains(&got),
-        "the default SO_RCVBUF must be applied (got {got}, expected ~4 MiB)"
-    );
+
+    // When the environment does NOT clamp at its own ceiling, the applied
+    // default must exceed an unconfigured socket's buffer. When the baseline
+    // already sits at a >= 1 MiB ceiling (a runner whose `rmem_max` raises the
+    // plain default into our range), equality is a clamp, not a missing
+    // request — the pure test above is what pins the requested value there.
+    const CLAMP_CEILING: usize = 1024 * 1024;
+    if baseline < CLAMP_CEILING {
+        assert!(
+            got > baseline,
+            "the default SO_RCVBUF must be applied (baseline {baseline}, got {got})"
+        );
+    } else {
+        eprintln!(
+            "NOTE: environment clamps SO_RCVBUF near {baseline}; equality is a              clamp (the default was still requested — see the pure test)"
+        );
+    }
 }
 
 /// I4: an explicit override still round-trips through the getter (the
