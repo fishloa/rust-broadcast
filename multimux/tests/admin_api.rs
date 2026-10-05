@@ -1272,13 +1272,20 @@ async fn a_router_build_panic_does_not_register_the_route() {
     // The WHEP listener the route consumed from `Config::prebound` must have
     // been released with the torn-down route — the port is free. Bind it
     // ourselves to prove it (no leaked listener holding the socket).
-    let rebound = tokio::net::TcpListener::bind(whep_addr).await;
-    assert!(
-        rebound.is_ok(),
-        "the WHEP port must be free after the failed add (no leaked listener): {:?}",
-        rebound.err()
-    );
-    drop(rebound);
+    //
+    // Only meaningful with the `whep` feature: without it no WHEP output is
+    // started, so nothing consumes the pre-bound socket from `Config::prebound`
+    // and the server's own config keeps holding it (AddrInUse is then
+    // expected, not a leak).
+    if cfg!(feature = "whep") {
+        let rebound = tokio::net::TcpListener::bind(whep_addr).await;
+        assert!(
+            rebound.is_ok(),
+            "the WHEP port must be free after the failed add (no leaked listener): {:?}",
+            rebound.err()
+        );
+        drop(rebound);
+    }
 
     server.abort();
 }
