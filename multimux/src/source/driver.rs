@@ -304,7 +304,11 @@ mod tests {
             // A source honours its window: a read longer than the window is
             // an Idle (timeout) at the window.
             tokio::time::sleep(delay.min(window)).await;
-            if delay > window { StepOutcome::Idle } else { outcome() }
+            if delay > window {
+                StepOutcome::Idle
+            } else {
+                outcome()
+            }
         }
     }
 

@@ -27,12 +27,10 @@
 //!   the push even after rtsp-runtime's own C1 fix.
 
 use crate::push::PushTransport;
+use rtsp_runtime::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
-use rtsp_runtime::interleaved::InterleavedFrame;
 use rtsp_runtime::transport::{Transport, TransportSpec};
-use rtsp_runtime::{Credentials, StatusCode};
 use std::time::Instant;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use transmux::ir::TrackSpec;
 
@@ -46,21 +44,43 @@ const MAX_TS_PACKETS_PER_RTP: usize = 7;
 const MAX_RTP_PAYLOAD: usize = TS_PACKET_LEN * MAX_TS_PACKETS_PER_RTP;
 /// RFC 2250 §2's fixed RTP clock rate for MP2T.
 const RTP_CLOCK_HZ: u64 = 90_000;
-/// Read buffer for one RTSP response (SDP + headers comfortably fit).
-const READ_BUF_LEN: usize = 4096;
 
 /// Per-connection configuration for the RTSP push transport.
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct RtspTransportConfig {
     /// Optional credentials for RTSP auth. Takes precedence over any
     /// username/password already present in the push URL's userinfo.
     pub credentials: Option<(String, String)>,
+    /// Bounds on every awaited IO the push performs (SP6.1, defect 4): the
+    /// OPTIONS/ANNOUNCE/SETUP/RECORD exchanges and each interleaved write.
+    pub timeouts: rtsp_runtime::RtspTimeouts,
 }
 
-/// The RTSP push transport: an owned TCP connection + [`ClientSession`].
+impl Default for RtspTransportConfig {
+    fn default() -> Self {
+        Self {
+            credentials: None,
+            timeouts: rtsp_runtime::RtspTimeouts::default(),
+        }
+    }
+}
+
+impl RtspTransportConfig {
+    /// Set the IO timeouts (SP6.1). A caller that needs `rtsps://` TLS
+    /// termination outside this transport, or a tighter bound in a test,
+    /// overrides the defaults here.
+    #[must_use]
+    pub fn with_timeouts(mut self, timeouts: rtsp_runtime::RtspTimeouts) -> Self {
+        self.timeouts = timeouts;
+        self
+    }
+}
+
+/// The RTSP push transport: the rtsp-runtime async client adapter over an
+/// owned TCP connection (SP6.1).
 pub struct RtspTransport {
-    stream: Option<TcpStream>,
-    client: ClientSession,
+    /// The connected client, or `None` once closed.
+    client: Option<rtsp_runtime::AsyncRtspClient<TcpStream>>,
     channel: u8,
     /// The presentation URL (credentials stripped): OPTIONS/ANNOUNCE/RECORD.
     url: String,
@@ -77,7 +97,7 @@ pub struct RtspTransport {
 impl std::fmt::Debug for RtspTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RtspTransport")
-            .field("connected", &self.stream.is_some())
+            .field("connected", &self.client.is_some())
             // Path/query can carry a stream key: destination only.
             .field("url", &crate::redact::redact_destination(&self.url))
             .finish()
@@ -96,8 +116,7 @@ impl PushTransport for RtspTransport {
         // fallback below) or panicking in `control_url`.
         let Some(host) = parsed.host_str() else {
             return Err(RtspPushError::Connect(
-                "rtsp push URL has no host (expected `rtsp://host[:port]/path`, \
-                 e.g. not `rtsp:cam`)"
+                "rtsp push URL has no host (expected `rtsp://host[:port]/path`,                  e.g. not `rtsp:cam`)"
                     .to_string(),
             ));
         };
@@ -112,180 +131,119 @@ impl PushTransport for RtspTransport {
         let _ = parsed.set_password(None);
         let clean_url = parsed.to_string();
 
-        let stream = TcpStream::connect(&addr)
-            .await
-            .map_err(|e| RtspPushError::Connect(e.to_string()))?;
-
-        let mut client = ClientSession::new();
+        let mut session = ClientSession::new();
         let creds = config
             .credentials
             .as_ref()
             .map(|(user, pass)| Credentials::new(user.clone(), pass.clone()))
             .or(url_credentials);
         if let Some(creds) = creds {
-            client = client.with_credentials(creds);
+            session = session.with_credentials(creds);
         }
 
         let control_url = control_url(&parsed)?;
 
-        let mut transport = Self {
-            stream: Some(stream),
-            client,
+        // Every IO the adapter performs is bounded by `config.timeouts`
+        // (SP6.1, defect 4): the OPTIONS exchange below and every later
+        // ANNOUNCE/SETUP/RECORD and interleaved write.
+        let mut client =
+            rtsp_runtime::AsyncRtspClient::connect_with_timeouts(&addr, session, config.timeouts)
+                .await
+                .map_err(|e| RtspPushError::Connect(e.to_string()))?;
+
+        match client.options(&clean_url).await {
+            Ok(ClientEvent::Response { status, .. }) if status.is_success() => {}
+            Ok(ClientEvent::Response { status, .. }) => {
+                return Err(RtspPushError::Protocol(format!(
+                    "OPTIONS rejected: {status:?}"
+                )));
+            }
+            Ok(_) => {
+                return Err(RtspPushError::Protocol(
+                    "OPTIONS: unexpected event".to_string(),
+                ));
+            }
+            Err(e) => return Err(RtspPushError::Protocol(e.to_string())),
+        }
+
+        Ok(Self {
+            client: Some(client),
             channel: 0,
             url: clean_url,
             control_url,
             seq: 0,
             ssrc: rand_ssrc(),
             started: Instant::now(),
-        };
-
-        let options_bytes = transport
-            .client
-            .options(&transport.url)
-            .map_err(|e| RtspPushError::Protocol(e.to_string()))?;
-        let (status, _) = transport.roundtrip(options_bytes).await?;
-        if !status.is_success() {
-            return Err(RtspPushError::Protocol(format!(
-                "OPTIONS rejected: {status:?}"
-            )));
-        }
-
-        Ok(transport)
+        })
     }
 
     async fn setup(&mut self, _tracks: &[TrackSpec]) -> Result<(), Self::Error> {
         let sdp = build_sdp();
-        let announce_bytes = self
-            .client
-            .announce(&self.url, &sdp)
-            .map_err(|e| RtspPushError::Protocol(e.to_string()))?;
-        let (status, _) = self.roundtrip(announce_bytes).await?;
-        if !status.is_success() {
-            return Err(RtspPushError::Protocol(format!(
-                "ANNOUNCE rejected: {status:?}"
-            )));
-        }
-
         // RFC 2326 §12.39: `mode` defaults to PLAY: a RECORD session must
         // say so explicitly, or a strict server (gortsplib/`mediamtx`:
         // "transport header contains a invalid mode (null)") rejects SETUP.
         let mut spec = TransportSpec::rtp_avp_tcp_interleaved(self.channel, self.channel + 1);
         spec.mode = vec![rtsp_runtime::TransportMode::Record];
         let transport_spec = Transport::single(spec);
-        let setup_bytes = self
+        let channel = self.channel;
+        let (url, control_url) = (self.url.clone(), self.control_url.clone());
+        let client = self
             .client
-            .setup(&self.control_url, &transport_spec)
-            .map_err(|e| RtspPushError::Protocol(e.to_string()))?;
-        let (status, _) = self.roundtrip(setup_bytes).await?;
-        if !status.is_success() {
-            return Err(RtspPushError::Protocol(format!(
-                "SETUP rejected: {status:?}"
-            )));
-        }
+            .as_mut()
+            .ok_or_else(|| RtspPushError::Connect("not connected".into()))?;
 
-        let record_bytes = self
-            .client
-            .record(&self.url)
-            .map_err(|e| RtspPushError::Protocol(e.to_string()))?;
-        let (status, _) = self.roundtrip(record_bytes).await?;
-        if !status.is_success() {
-            return Err(RtspPushError::Protocol(format!(
-                "RECORD rejected: {status:?}"
-            )));
+        for (what, event) in [
+            ("ANNOUNCE", client.announce(&url, &sdp).await),
+            ("SETUP", client.setup(&control_url, &transport_spec).await),
+            ("RECORD", client.record(&url).await),
+        ] {
+            match event {
+                Ok(ClientEvent::Response { status, .. }) if status.is_success() => {}
+                Ok(ClientEvent::Response { status, .. }) => {
+                    return Err(RtspPushError::Protocol(format!(
+                        "{what} rejected: {status:?}"
+                    )));
+                }
+                Ok(_) => {
+                    return Err(RtspPushError::Protocol(format!("{what}: unexpected event")));
+                }
+                Err(e) => return Err(RtspPushError::Protocol(e.to_string())),
+            }
         }
-
+        let _ = channel;
         Ok(())
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), Self::Error> {
-        if self.stream.is_none() {
-            return Err(RtspPushError::Connect("not connected".into()));
-        }
+        let channel = self.channel;
         // RFC 2250 §2: no more than 7 whole 188-byte TS packets per RTP
         // packet. `MAX_RTP_PAYLOAD` is a multiple of `TS_PACKET_LEN`, and
         // `data` is always a whole number of TS packets (it comes from
         // `TsMux::package`), so every chunk here — including the last — is
         // itself a whole number of TS packets; none is split mid-packet.
-        for chunk in data.chunks(MAX_RTP_PAYLOAD) {
-            let packet = self.rtp_packet(chunk);
-            let frame = InterleavedFrame::new(self.channel, packet);
-            let bytes = frame
-                .to_bytes()
+        let packets: Vec<Vec<u8>> = data
+            .chunks(MAX_RTP_PAYLOAD)
+            .map(|chunk| self.rtp_packet(chunk))
+            .collect();
+        let client = self
+            .client
+            .as_mut()
+            .ok_or_else(|| RtspPushError::Connect("not connected".into()))?;
+        for packet in packets {
+            client
+                .send_interleaved(channel, &packet)
+                .await
                 .map_err(|e| RtspPushError::Protocol(e.to_string()))?;
-            let stream = self
-                .stream
-                .as_mut()
-                .ok_or_else(|| RtspPushError::Connect("not connected".into()))?;
-            stream.write_all(&bytes).await.map_err(RtspPushError::Io)?;
         }
         Ok(())
     }
 
     fn close(&mut self) {
-        self.stream = None;
+        self.client = None;
     }
 }
 
 impl RtspTransport {
-    /// Writes `request` and reads responses until a terminal
-    /// [`ClientEvent::Response`], transparently writing any
-    /// [`ClientEvent::AuthRetry`] the engine emits along the way. Without
-    /// this loop, a 401 challenge's retry bytes (computed by rtsp-runtime)
-    /// are simply dropped and the push never reaches RECORD (audit run-07
-    /// C3 / run-09 C1, #1025).
-    async fn roundtrip(
-        &mut self,
-        request: Vec<u8>,
-    ) -> Result<(StatusCode, Vec<u8>), RtspPushError> {
-        {
-            let stream = self
-                .stream
-                .as_mut()
-                .ok_or_else(|| RtspPushError::Connect("not connected".into()))?;
-            stream
-                .write_all(&request)
-                .await
-                .map_err(RtspPushError::Io)?;
-        }
-
-        let mut buf = [0u8; READ_BUF_LEN];
-        loop {
-            let n = {
-                let stream = self
-                    .stream
-                    .as_mut()
-                    .ok_or_else(|| RtspPushError::Connect("not connected".into()))?;
-                stream.read(&mut buf).await.map_err(RtspPushError::Io)?
-            };
-            if n == 0 {
-                return Err(RtspPushError::Connect("connection closed by peer".into()));
-            }
-            let events = self
-                .client
-                .handle_data(&buf[..n])
-                .map_err(|e| RtspPushError::Protocol(e.to_string()))?;
-            for event in events {
-                match event {
-                    ClientEvent::Response { status, body, .. } => return Ok((status, body)),
-                    ClientEvent::AuthRetry { request, .. } => {
-                        let stream = self
-                            .stream
-                            .as_mut()
-                            .ok_or_else(|| RtspPushError::Connect("not connected".into()))?;
-                        stream
-                            .write_all(&request)
-                            .await
-                            .map_err(RtspPushError::Io)?;
-                    }
-                    ClientEvent::MediaData { .. } => {}
-                    // `ClientEvent` is `#[non_exhaustive]`; nothing else is
-                    // expected on a push connection's read side.
-                    _ => {}
-                }
-            }
-        }
-    }
-
     /// Builds one RTP packet (RFC 3550 §5.1) carrying `payload` as MP2T.
     fn rtp_packet(&mut self, payload: &[u8]) -> Vec<u8> {
         let elapsed_micros = self.started.elapsed().as_micros() as u64;
@@ -379,16 +337,31 @@ fn rand_ssrc() -> u32 {
 /// this single RTP session, matching the one SETUP/one interleaved channel
 /// this transport actually uses, not one `m=` line per elementary track.
 fn build_sdp() -> String {
-    format!(
-        "v=0\r\n\
-         o=- 0 0 IN IP4 0.0.0.0\r\n\
-         s=multimux push\r\n\
-         c=IN IP4 0.0.0.0\r\n\
-         t=0 0\r\n\
-         m=video 0 RTP/AVP {PT_MP2T}\r\n\
-         a=rtpmap:{PT_MP2T} MP2T/90000\r\n\
-         a=control:trackID=0\r\n"
-    )
+    use sdp_types::{
+        AddrType, Attribute, Connection, Media, MediaType, NetType, Origin, Session, TransportProto,
+    };
+
+    let origin = Origin::new("0", 0, NetType::In, AddrType::Ip4, "0.0.0.0");
+    let mut session = Session::new(origin, "multimux push");
+    session.set_connection(Connection::new(NetType::In, AddrType::Ip4, "0.0.0.0"));
+    let mut media = Media::new(
+        MediaType::Video,
+        0,
+        TransportProto::RtpAvp,
+        PT_MP2T.to_string(),
+    );
+    media.add_attribute(Attribute::with_value(
+        "rtpmap",
+        format!("{PT_MP2T} MP2T/{RTP_CLOCK_HZ}"),
+    ));
+    media.add_attribute(Attribute::with_value("control", "trackID=0"));
+    session.add_media(media);
+
+    let mut out = Vec::new();
+    session
+        .write(&mut out)
+        .expect("writing SDP into a Vec never fails");
+    String::from_utf8(out).expect("SDP is always valid UTF-8")
 }
 
 /// Errors from the RTSP push transport.
@@ -407,13 +380,32 @@ pub enum RtspPushError {
 mod tests {
     use super::*;
 
+    /// Byte-for-byte golden (SP4.1): the ANNOUNCE SDP body the transport
+    /// sends equals `tests/golden/rtsp_announce.sdp`, captured from the
+    /// pre-`sdp-types` `format!` on `origin/main`. `GOLDEN_BLESS=<dir>`
+    /// writes instead.
+    #[test]
+    fn announce_sdp_golden() {
+        let actual = build_sdp();
+        let file = "rtsp_announce.sdp";
+        if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
+            std::fs::create_dir_all(&dir).expect("create golden dir");
+            std::fs::write(std::path::Path::new(&dir).join(file), &actual).expect("write");
+            return;
+        }
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/golden")
+            .join(file);
+        let expected = std::fs::read_to_string(&path).expect("read golden");
+        assert_eq!(actual, expected, "{file} differs from the golden output");
+    }
+
     /// Audit T14 (#1142): `Debug` of a transport prints the destination only
     /// (the path and query can carry a stream key).
     #[test]
     fn rtsp_transport_debug_does_not_print_the_stream_key() {
         let transport = RtspTransport {
-            stream: None,
-            client: ClientSession::new(),
+            client: None,
             channel: 0,
             url: "rtsp://cam.example:554/live/STREAMKEY123?token=abc".to_string(),
             control_url: "rtsp://cam.example:554/live/STREAMKEY123/trackID=0".to_string(),
@@ -477,8 +469,7 @@ mod tests {
     #[test]
     fn rtp_packet_header_is_v2_pt33_with_incrementing_seq() {
         let mut transport = RtspTransport {
-            stream: None,
-            client: ClientSession::new(),
+            client: None,
             channel: 0,
             url: "rtsp://h/push".to_string(),
             control_url: "rtsp://h/push/trackID=0".to_string(),
@@ -516,22 +507,63 @@ mod tests {
     // `client_session_debug_does_not_leak_embedded_credentials_secret`).
     #[test]
     fn transport_debug_does_not_leak_the_configured_password() {
-        let mut client = ClientSession::new();
-        client = client.with_credentials(Credentials::new("user", "extremely-secret-password"));
+        // `RtspTransport` holds an `AsyncRtspClient` whose `ClientSession`
+        // carries the credentials, but `Debug` prints only `connected` and
+        // the redacted URL, so the secret can never reach a log line.
         let transport = RtspTransport {
-            stream: None,
-            client,
+            client: None,
             channel: 0,
-            url: "rtsp://h/push".to_string(),
-            control_url: "rtsp://h/push/trackID=0".to_string(),
+            url: "rtsp://cam.example:554/live/STREAMKEY123?token=abc".to_string(),
+            control_url: "rtsp://cam.example:554/live/STREAMKEY123/trackID=0".to_string(),
             seq: 0,
             ssrc: 1,
             started: Instant::now(),
         };
         let debug = format!("{transport:?}");
         assert!(
-            !debug.contains("extremely-secret-password"),
+            !debug.contains("STREAMKEY123") && !debug.contains("token"),
             "leaked via RtspTransport Debug: {debug}"
         );
+    }
+}
+
+#[cfg(test)]
+mod muxcheck_tmp {
+    #[test]
+    fn muxcheck() {
+        use broadcast_common::Package as _;
+        use transmux::TsMux;
+        use transmux::ir::{Media, Sample, Track, TrackSpec};
+        let spec = TrackSpec::new(
+            1,
+            90_000,
+            transmux::CodecConfig::Avc {
+                config: transmux::AVCConfigurationBox::new(
+                    transmux::AVCDecoderConfigurationRecord {
+                        configuration_version: 1,
+                        profile_indication: 0x42,
+                        profile_compatibility: 0,
+                        level_indication: 0x1f,
+                        length_size_minus_one: 3,
+                        sps: Vec::new(),
+                        pps: Vec::new(),
+                        chroma_format: None,
+                        bit_depth_luma_minus8: None,
+                        bit_depth_chroma_minus8: None,
+                        sps_ext: Vec::new(),
+                    },
+                ),
+                width: 0,
+                height: 0,
+            },
+        );
+        let mut nal = vec![0, 0, 0, 1, 0x65];
+        nal.resize(256 * 1024, 0xAA);
+        let s = Sample::new(bytes::Bytes::from(nal), Some(0), Some(0), Some(3_000), true);
+        let media = Media::new(vec![Track::new(spec, vec![s])], 90_000);
+        match TsMux::new().package(&media) {
+            Ok(b) => eprintln!("PACKAGED {} bytes", b.len()),
+            Err(e) => eprintln!("MUX ERR {e}"),
+        }
     }
 }

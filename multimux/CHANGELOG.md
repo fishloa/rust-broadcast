@@ -36,6 +36,15 @@
   promptly instead of reading until the stall. `run_rtsp`/`run_ts_udp`/
   `run_rtp_udp`/`run_ts_http`/`run_srt_caller`/`run_srt_listener_once`/
   `drive_socket` each take a `CancellationToken`.
+- **The RTSP push uses rtsp-runtime's `AsyncRtspClient`.** `RtspTransport`
+  drives `announce`/`setup`/`record` and sends media with `send_interleaved`
+  rather than a hand-rolled `ClientSession` + raw `TcpStream` loop, and the
+  ANNOUNCE body is built and rendered with `sdp-types`. **Every awaited IO is
+  now bounded**: the OPTIONS/ANNOUNCE/SETUP/RECORD exchanges and each
+  interleaved write honour `RtspTransportConfig::timeouts` (new, a
+  `rtsp_runtime::RtspTimeouts`), where the old transport's `roundtrip` read
+  and its `write_all` had no bound at all (defect 4). The ANNOUNCE SDP bytes
+  are unchanged, pinned by `tests/golden/rtsp_announce.sdp`.
 
 ### Changed (breaking) — W2b-1
 - **A single `CancellationToken` replaces the `watch<bool>` shutdown.** The
