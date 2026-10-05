@@ -8,20 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ## [0.4.0] - 2026-10-05
-### Changed (breaking)
-- `BedDefinition1`/`ObjectDefinition1` gained a new `align_bits: u8` field
-  (#1114): RDD 29 gives its `AlignBits` byte-alignment padding no documented
-  value (unlike this crate's other reserved fields, which all carry an
-  explicit "set to X"), so it is now preserved verbatim instead of being
-  discarded on parse and forced to zero on serialize — the same "no fixed
-  value given" treatment already used for `st337`'s `Pf`. `BedDefinition1::
-  new`/`ObjectDefinition1::new` set it to `0`.
+
+### Security
+Fixes GHSA-6w6c-9736-x7gr.
 
 ### Fixed
-- `AtmosFrame::serialize_into`'s pan-sub-block mismatch error reported the
-  element's index as `InvalidValue::value`; it now reports the offending
-  `pan_sub_blocks.len()` (release audit).
-- `AtmosFrame` with a reserved `FrameRate` and no `ObjectDefinition1` element parsed but failed to serialize (Table 7 lookup ran unconditionally), breaking the round trip; the lookup now only runs when an `ObjectDefinition1` needs it (CI fuzz finding).
+- `ObjectDefinition1::parse` now bounds-checks before indexing the audio description flag byte, preventing panic on truncated input.
+- The `rdd29` fuzz target now checks that a parsed `AtmosFrame` reserializes to the original input bytes (not just to a stable canonical form), so it can catch a parser that silently drops or normalizes input; the real-fixture round trip in `tests/fixture_eac3.rs` already checks the same property deterministically in CI.
+
 - `read_plex` now rejects a non-minimally-encoded `Plex` escape (a value that
   fits the previous, narrower escalation level's direct range) with the new
   `Error::NonMinimalPlex`, instead of silently accepting it and reserializing
@@ -37,14 +31,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   whose `pan_sub_blocks.len()` does not match the frame's own
   `frame_rate.num_pan_sub_blocks()` (#1114).
 
-## [0.3.2] - 2026-09-26
+### Changed (breaking)
+- `BedDefinition1`/`ObjectDefinition1` gained a new `align_bits: u8` field
+  (#1114): RDD 29 gives its `AlignBits` byte-alignment padding no documented
+  value (unlike this crate's other reserved fields, which all carry an
+  explicit "set to X"), so it is now preserved verbatim instead of being
+  discarded on parse and forced to zero on serialize — the same "no fixed
+  value given" treatment already used for `st337`'s `Pf`. `BedDefinition1::
+  new`/`ObjectDefinition1::new` set it to `0`.
 
-### Security
-Fixes GHSA-6w6c-9736-x7gr.
-
-### Fixed
-- `ObjectDefinition1::parse` now bounds-checks before indexing the audio description flag byte, preventing panic on truncated input.
-- The `rdd29` fuzz target now checks that a parsed `AtmosFrame` reserializes to the original input bytes (not just to a stable canonical form), so it can catch a parser that silently drops or normalizes input; the real-fixture round trip in `tests/fixture_eac3.rs` already checks the same property deterministically in CI.
+### Changed
+- The pan-sub-block-count check `AtmosFrame::serialize_into` performs (new in
+  this release, see Fixed) reports the offending `pan_sub_blocks.len()` as
+  `InvalidValue::value` (release audit; no earlier release had this check or
+  error).
+- That same new check looks up `FrameRate::num_pan_sub_blocks()` (Table 7)
+  only when an `ObjectDefinition1` element needs it, so an `AtmosFrame` with a
+  reserved `FrameRate` and no `ObjectDefinition1` still parses and
+  reserializes byte-identically (caught by the CI fuzz target while the check
+  was being added; 0.3.1 had no such lookup, so this was never a released
+  defect).
 
 ## [0.3.1] - 2026-08-14
 ### Fixed

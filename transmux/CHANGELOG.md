@@ -8,682 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ## [0.25.0] - 2026-10-05
-### Added
 
-- `CencDecryptor::from_fmp4_bytes` — `from_fmp4` over an already-shared `bytes::Bytes`, so the file is
-  not copied and `demux` hands out samples as slices of it (#1081, r05-O2).
-- `AudioSpecificConfig::effective_sampling_frequency` — the explicit rate when present, else the
-  `samplingFrequencyIndex` rate (#1081, r04-O5).
-- `impl Serialize for SampleEntryVariant` (#1081, r05-O3).
-- `ll_dash::UTCTIMING_HTTP_HEAD_2014` / `_HTTP_XSDATE_2014` / `_HTTP_ISO_2014` /
-  `_NTP_2014` / `_HTTP_NTP_2014` / `_DIRECT_2014` — the registered
-  `urn:mpeg:dash:utc:*:2014` `UTCTiming` scheme identifiers (ISO/IEC 23009-1
-  §5.8.4.11) accepted by `LlDashPackager::with_utc_timing`.
-- `webm_demux::ns_to_ir_ticks` — nanoseconds to IR ticks, rounding to nearest
-  (used for per-frame timing of laced WebM blocks).
-- `ac3::Ec3SpecificBox::from_es_all` — parse every E-AC-3 syncframe of an
-  elementary stream (independent plus dependent), stopping at the first bad
-  sync word or truncated tail.
-- `annexb::NAL_LENGTH_SIZE_MINUS_ONE` — the `lengthSizeMinusOne` (3) an
-  `avcC`/`hvcC` must declare for the IR's 4-byte NAL length prefix
-  (ISO/IEC 14496-15 §5.3.3).
-- `frag_offsets::mdat_ranges` / `MdatRange` / `sample_ranges_in` — scan the
-  file's `mdat` payload ranges once and resolve each `moof` against them.
-- `rfc6381_codec_string(&CodecConfig)` — the RFC 6381 codec string `DashPackager`
-  writes into `Representation@codecs`, exposed so an HLS origin can fill
-  `#EXT-X-STREAM-INF` `CODECS` (#1089).
-- `smooth::SmoothPackager::package_track_fragment` — build **one** Smooth
-  fragment for a single track at an explicit smooth-timeline start (a
-  `SmoothFragment` whose `tfxd` `FragmentAbsoluteTime` is the caller's value
-  and whose duration is the track's own summed `trun` durations), without
-  segmenting the track. Needed by `multimux`'s live Smooth output, whose
-  per-track `c@t` timeline must match the served fragment's `tfxd` and must be
-  stable as the window slides (#1083).
-
-- **`init_segment::sampling_rate_override`** (#1081, audit r05-W31) — reads the
-  `srat` value out of an audio sample entry's config children, returning `None`
-  when the box is absent, malformed, or declares `sampling_rate == 0` (a zero
-  rate is not a rate; honouring it would replace a good 16.16 field with "0
-  Hz"). `SamplingRateBox::parse` now also validates the four-CC.
-- **`init_segment::SamplingRateBox` and `init_segment::AudioSampleEntryV1`**
-  (#1081, audit r05-W31). `SamplingRateBox` is the `srat` FullBox
-  (ISO/IEC 14496-12:2015 §12.2.3.1) with `new`/`FOURCC`/`SIZE` and the
-  `Parse`/`Serialize` pair; `AudioSampleEntryV1` names the v1 sound-entry form
-  (§12.2.3.2 as amended by Amd 1:2017) via `ENTRY_VERSION`,
-  `STSD_VERSION`, `SAMPLERATE_PLACEHOLDER` and `rate_fits_v0`. Also new:
-  `SampleEntryVariant::required_stsd_version()`, which reports the `stsd`
-  version an entry demands (1 for an `AudioSampleEntryV1`, else 0).
-- `sample_aes::eac3_encrypt_frame` / `eac3_decrypt_frame` — Sample-AES for a
-  **multi-syncframe** E-AC-3 audio frame, and `ac3::split_eac3_syncframe_ranges`
-  (#1080, audit r05-W2). The protected block is a single syncframe, so each gets
-  its own 16-byte clear leader, whole 16-byte blocks are encrypted and a partial
-  tail is clear (`ac3_encrypt_frame` applies one leader over whatever slice it is
-  handed, which skips the later leaders in a multi-syncframe frame). The IV is
-  **reset at every syncframe**, per the independent oracle
-  (`transmux/tests/fixtures/sample_aes_eac3/`; ffmpeg decodes the reset form 9/9
-  audio frames and a carried chain 1/9, and Bento4's encryptor is byte-identical
-  to the reset reference). Both return `Result`: a payload that is not a clean
-  run of syncframes (no sync word, or a truncated / trailing-junk syncframe) is
-  `Error::InvalidInput` rather than being emitted unchanged or half-encrypted.
-  Carrying the IV across an *independent + dependent* syncframe pair has no
-  independent oracle (`ORACLES.md` B3) — that case resets too and is labelled
-  unverified.
-- **`uri` — RFC 3986 URI-reference parsing and resolution.** `UriReference::parse`
-  (§3) and `to_uri_string` (§5.3), `resolve` (§5.2.2), `merge` (§5.2.3),
-  `remove_dot_segments` (§5.2.4) and `resolve_segment` for a `BaseURL` chain.
-  `try_resolve`/`try_resolve_segment` are the same with a base or reference
-  containing a control character or whitespace **rejected** (`None`), since a
-  raw CR/LF in a URL has no meaning in RFC 3986 and lets a manifest smuggle a
-  second request line into anything that later writes an HTTP request from it;
-  `first_forbidden_char` is the predicate. Also exports the standard's own
-  §5.4.1 and §5.4.2 example tables (`RFC3986_NORMAL_EXAMPLES`,
-  `RFC3986_ABNORMAL_EXAMPLES`) as data, which the crate's tests assert against.
-  This is what `dash_parse::Mpd::resolve_segment_url` /
-  `try_resolve_segment_url` resolve through (#1079, audit r04-W11). The crate
-  root re-exports `resolve_uri_reference`, `resolve_uri_segment` and
-  `try_resolve_uri_reference`.
-- `ac3::split_ac3_syncframes_resyncing` and `ac3::split_ac3_syncframe_ranges` —
-  frame splitting that resynchronises after an unparseable frame, returning byte
-  ranges rather than slices (#1079, audit r04-W20).
-- `ts_hls::StreamingTsHlsSegmenter::with_start_sequence` — seeds a streaming classic-TS
-  segmenter's segment numbering from a caller-given value instead of `Self::new`'s implicit `0`,
-  the classic-TS analogue of `ll_hls::LlHlsSegmenter::with_part_target_at`. Lets a consumer
-  (`multimux::source::segment::ProgramSegmenter`) resume numbering across a rebuild rather than
-  renumbering from `0` against a `Trunk` that already holds segments, which its monotonic
-  `sequence_number` guard rejects forever after.
-
-### Changed
-
-- Dependency bumps, non-breaking (no public API change): `aes` 0.9, `ctr` 0.10, `cbc` 0.2 (RustCrypto 0.13 generation). CENC `cenc`/`cbcs` and HLS Sample-AES ciphertext is byte-identical (oracle fixtures pass).
-
-Optimization sweep (#1079, #1080, #1081). Apart from the three behaviour changes listed under
-`### Changed (breaking)` and `### Fixed`, every change below leaves the output byte-identical on the
-committed fixtures (pinned by `tests/sweep_output_golden.rs`, whose hashes were captured on the
-pre-sweep code) and is backed by a deterministic allocation or work counter
-(`tests/alloc_counts_sweep.rs` and in-module counters), never a timing.
-
-- `MovieFragmentBox` / `TrackFragmentBox` child walks use the crate's one container-child walker (`init_segment::walk_children`) instead of two private `parse_box` loops (#1141).
-- The AAC `esds` -> `DecoderSpecificInfo` / `AudioSpecificConfig` lookup is one `EsdsBox` helper shared by DASH, TS mux and Smooth; a missing DSI in the TS muxer is now `Error::UnexpectedBox` (was `InvalidInput`) (#1141).
-- AC-3 and DTS header parsing share one `bitreader::read_bits_checked` (the DTS copy lacked the `n > 64` check) (#1141).
-- `box_types::box_slices` / `find_top_box` are now the one best-effort top-level box walker over `box_iter`; the copies in `cenc_decrypt`, `media` and `progressive` and `validate::children` are gone, behaviour unchanged (#1141).
-- The four Annex B start-code scanners (`annexb::start_code_positions`, `au::first_nal_start`, the streaming splitter's resumable scan, `au::start_code_len`) and `mpeg_legacy::find_start_code` now share one `annexb::find_start_code_prefix` primitive; behaviour unchanged (#1141).
-- Progressive `stsz`/`stsc`/`stco`/`co64` sample-layout expansion is one `progressive_demux::sample_layout` shared by `ProgressiveDemux` and the protected-progressive path of `CencDecryptor` (#1141).
-- `Segmenter` no longer rebuilds the whole `moov` on every cut to detect an init change that its API
-  cannot produce; the dead detection is deleted (109 -> 18 allocations per cut) (#1081, r05-O5).
-- `hvcC` parsing bounds its array/NAL pre-allocation by the body length (1 581 000 -> 32 bytes for a
-  hostile header) (#1079, r04-O4).
-- `AudioSpecificConfig::heaac_signaling`/`rfc6381` no longer allocate per call (#1079, r04-O2).
-- Duplicates removed (#1079, r04-O1/O5, #1081, r05-O6): `ps_demux`'s copy of the Annex B start-code
-  scanner (now `annexb::start_code_positions`) and its copy of the first-NAL-start finder (now
-  `au::first_nal_start`); the three per-module bit readers (now one `read_bits_at`); the avcC/hvcC
-  byte cursors; the sfi -> Hz table; the esds ASC accessor; the XML writer; the sample-flag constants;
-  the `tfhd`/`trun` builder. The streaming splitter's resumable scan in `au` and
-  `mpeg_legacy::find_start_code` answer different questions and stay separate.
-- `PsDemux` keeps access-unit ranges instead of per-unit copies (MPEG-2 video 3.70x -> 3.05x of input
-  bytes allocated); `TsDemux` hands a live track the PES payload by reference (10.08x -> 9.44x);
-  `read_chunks` moves the per-csid context instead of cloning its partial message (468 750 464 -> 524 544
-  bytes for a 200 kB message); the RTP depacketiser moves each packet into the AU buffer (7.47x ->
-  6.47x); `WebmDemux` partitions blocks by track once (8000 -> 1000 block visits for 8 tracks x 1000
-  blocks) (#1079, #1080, r04-O6/O7/O9/O10).
-- `CencDecryptor` shares the file buffer and slices samples out of it (2.14x -> 1.21x of the file size;
-  0.21x through the new `from_fmp4_bytes`), and its `stsc` expansion is one forward walk (80 599 -> 799
-  entry examinations for 400 chunks) (#1081, r05-O1/O2).
-- `ProgressiveMux` (4.12x -> 2.20x), `MkvMux` (11.45x -> 2.93x) and `TsMux` (7.70x -> 5.40x of the
-  output size allocated) write into pre-sized output buffers (#1081, r05-O4).
-- `Serialize` is implemented once on `SampleEntryVariant`, replacing four 17-arm matches (#1081, r05-O3).
-- `cargo test -p transmux --no-default-features` builds again (the in-crate tests link `std`) (#1079).
-- `jiff` replaces the hand-rolled `civil_from_days` (CLI `availabilityStartTime`); `base64`/`hex` crates replace the hand-rolled codecs.
-
-Intentionally not done: `BitReader::from_rbsp` borrowing (a public lifetime change for one allocation
-per SPS), the three merge-by-decode-time loops (their tie-break rules differ), and a typed-parser
-rewrite of `cenc_decrypt`'s remaining box walker (#1081).
-
-### Changed (breaking)
-
-- **BREAKING: XML support now requires the `std` feature; hand-rolled XML replaced by `quick-xml`;
-  `roxmltree`/the private tokenizer dropped.** `dash`, `dash_parse`, `smooth`, `smooth_parse`,
-  `ll_dash::LlDashPackager` and `drm::{playready_wrmheader, playready_pro, playready_pssh}` are gated
-  behind `std` (and so are their crate-root re-exports); a `--no-default-features` build keeps
-  everything else (`LlSegmenter`/`Chunk`, the Widevine/FairPlay `pssh` builders, …). The private
-  `xml_parse` tokenizer and `xml_writer` are deleted: parsing is a `quick_xml::Reader` pull loop and
-  every attribute value and text node is written through quick-xml's escaping. Rendered MPD, Smooth
-  manifest, LL-DASH MPD and WRMHEADER output is byte-identical to the previous release for every
-  committed fixture; a value containing `\t`/`\n`/`\r` in an attribute is now written as a character
-  reference (`&#9;`/`&#10;`/`&#13;`) so it survives a re-parse. The parsers are stricter on malformed
-  input (an undefined entity or a mismatched end tag anywhere is an error; a raw `&` in an attribute
-  is no longer tolerated) and `DashParseError`/`SmoothParseError` gain an `Xml { pos, message }`
-  variant; `MismatchedEndTag::expected` is now a `String`. `LlDashPackager` now rewrites the base MPD
-  with `quick-xml` events instead of line-based text surgery.
-
-- **Behaviour differences from the hand-rolled XML code (all follow XML 1.0):**
-  - a literal newline, tab or carriage return inside an MPD/Manifest attribute value is normalised
-    to a space (attribute-value normalisation, XML 1.0 §3.3.3): `<Period id="a⏎b"/>` now parses
-    `id` as `"a b"` (previously `"a\nb"`); write `&#10;` to keep a newline;
-  - an attribute value containing `\t`, `\n` or `\r` is now *written* as `&#9;`, `&#10;`, `&#13;`
-    so it survives a re-parse (`profiles = "a\nb"` renders `profiles="a&#10;b"`);
-  - a duplicate attribute is an error: `<Period id="1" id="2"/>` is `MalformedAttribute` (previously
-    the first value won silently);
-  - `<BaseURL>a<x/>b</BaseURL>` (nested markup in a text-only element) now yields no base URL
-    instead of a `MismatchedEndTag` error;
-  - a character outside the XML 1.0 `Char` production, literal or via a reference
-    (`<BaseURL>&#x1;</BaseURL>`, `id="&#x1;"`), is a structured error.
-- The shared fragment `trun` builder (CMAF, LL-DASH and Smooth fragment writers) returns
-  `Error::InvalidInput` for a sample larger than the 32-bit `sample_size` field (4 GiB); the old code
-  wrapped the size with `as u32` and wrote a misframed `trun` (#1081, r05-O6).
-- **The eight public audio sample-entry structs gained three fields** (#1081,
-  audit r05-W31). `Mp4aSampleEntry`, `Ac3SampleEntry`, `Ec3SampleEntry`,
-  `OpusSampleEntry`, `FlacSampleEntry`, `Ac4SampleEntry`, `MhaSampleEntry` and
-  `DtsSampleEntry` each carry `entry_version: u16`, `reserved_1: [u8; 6]` and
-  `compression_id_and_packet_size: [u8; 4]` — the fixed sound-description
-  fields a parse now preserves (see the round-trip fix below). A struct-literal
-  construction must name them; `entry_version`/`reserved_1` are the QuickTime
-  version and `revision_level`/`vendor`, and
-  `compression_id_and_packet_size` is ISO/IEC 14496-12's
-  `pre_defined`/`reserved` pair or QuickTime's
-  `compression_ID`/`packet_size` (all zeros for output this crate muxes).
-
-- **Transport-stream packaging gained continuity state and closed its
-  `stream_id` families; the CLI and the DASH/LL-DASH packagers changed shape**
-  (#1080, audit r05-W22/W27/W29). New public API:
-  - `transmux::TsContinuity` — per-PID `continuity_counter` state
-    (ISO/IEC 13818-1 §2.4.3.3), threaded across every `.ts` segment by
-    `TsHlsPackager` and `StreamingTsHlsSegmenter`, so concatenating a stream's
-    segments no longer jumps the counter on every PID at each boundary.
-  - `ll_dash::LlDashPackager::with_utc_timing(scheme, value)` and a
-    `pub utc_timing` field, with the `ll_dash::UTCTIMING_*_2014` scheme
-    constants: a `dynamic` MPD without `MPD/UTCTiming` (ISO/IEC 23009-1
-    §5.8.4.11) leaves a client with no way to obtain the wall clock its
-    `availabilityStartTime` is measured against.
-  - `Error::TooManyElementaryStreams { family, max }`: a program exceeding the
-    16-video / 32-audio `stream_id` families (Table 2-22) is refused instead of
-    wrapping into `ECM_stream` or the video range.
-  - `cli::CliError::UnsupportedContainer(&'static str)`: container detection now
-    runs `container-probe` (a `cli`-only optional dependency) and distinguishes
-    "recognised but not demuxable here" from "not recognised".
-  - `TsMux` now returns `Error::BufferCapExceeded` for a non-video PES whose
-    `PES_packet_length` would exceed 65535 (`0`, the unbounded form, is defined
-    only for video), and it now prepends an access unit delimiter to every
-    AVC/HEVC access unit that lacks one.
-  - `validate::validate_media_segment` gained the `media.mdat.overlap`,
-    `media.tfhd.default-base-is-moof`, `media.sample.non-sync-first` (WARNING)
-    and `track.tfhd.unknown-track` checks; `track.tfdt.discontinuity` now pairs
-    fragments by `tfhd.track_id`.
-  - **The CLI's segmented outputs changed shape.** `--segment-duration` is now
-    honoured by every segmented format, so:
-    - `-f hls` writes a separate `init.mp4` (the `#EXT-X-MAP` target) and
-      **media-only** `segN.m4s` files (`styp`+`moof`+`mdat`), where it used to
-      write one self-initializing blob per `#EXTINF` and repeat the init bytes
-      under every segment name. Each `#EXTINF` is the segment's real measured
-      duration (and `#EXT-X-TARGETDURATION` its ceiling), not the presentation
-      span divided by the segment count.
-    - `-f dash` writes per-Representation media segments whose boundaries are
-      **shared** across tracks (so the `segmentAlignment="true"` the MPD
-      declares is true), each carrying no `moov` — ISO/IEC 23009-1 §6.3.4.2
-      forbids one in a media segment.
-    - `-f dash --ll` now emits a `static` MPD with `mediaPresentationDuration`
-      (the CLI writes static files; a `dynamic` MPD over them computes a live
-      edge a player cannot resolve) and **no** `MPD/UTCTiming` unless
-      `--utc-timing-url <URL>` is given — the previous build baked a third-party
-      time server into every LL MPD.
-    - `AdaptationSet@id` values are now emitted (`t0`, `t1`, …), unique within
-      the MPD.
-- **Box containers record their children's wire order, and several public
-  structs gained fields and constructors** (#1080, audit r05-W11/W12 and the
-  round-3 follow-ups). A container's typed fields carry no order of their own,
-  so serializing them in declaration order reordered any file that did not
-  already match — a `moov`'s `pssh` moved after the `trak`s, a subtitle track's
-  `sthd` moved after `stbl`, a `vp09`/`av01` entry's `pasp` moved after its
-  config box, and a `moof`/`traf` lost every child the crate does not model.
-  New public API:
-  - `init_segment::ChildOrder` and a `pub order: ChildOrder` field on
-    `MovieBox`, `TrackBox`, `MediaBox`, `MediaInformationBox`,
-    `DataInformationBox`, `EditBox`, `MovieExtendsBox` and `SampleTableBox`;
-    `ChildOrder::append_opaque(four_cc)` must accompany an `opaque` push on a
-    parsed container so the two stay in step.
-  - `movie_fragment::{TrafChild, MoofChild, OpaqueChild}` and a
-    `pub order: Vec<TrafChild>` / `Vec<MoofChild>` field on
-    `TrackFragmentBox` / `MovieFragmentBox`.
-  - `init_segment::OpaqueBox` and `movie_fragment::OpaqueChild` gain
-    `pub to_end: bool` and `pub largesize: bool`: the `size == 0` and `size == 1`
-    wire forms are preserved rather than rewritten (ISO/IEC 14496-12:2015 §4.2).
-    A `size == 0` child is only written that way when it is its container's last
-    child, since §4.2 defines it as "extends to the end of the enclosing
-    container" and a sibling appended after it would otherwise be swallowed. An
-    opaque child's stored payload is the bytes after `size`/`type` — a `uuid`'s
-    usertype included, the 8 `largesize` bytes excluded.
-  - `sample_entries::SampleEntryChild` (`Config`, or `Other(bytes)`) and
-    `Vp9SampleEntry::children` / `Av1SampleEntry::children`, replacing
-    `extra_boxes`: the config box's position among the entry's children is now
-    recorded.
-  - `movie_fragment::TrackFragmentHeaderBox`/`TrackFragmentRunBox` gain
-    `effective_flags()`; `TrackFragmentRunBox` gains `check_sample_fields`.
-  - `movie_fragment::TrunSample::sample_composition_time_offset` and
-    `frag_offsets::FragmentSampleRange::composition_offset` are `Option<i64>` /
-    `i64`, not `Option<i32>` / `i32`: `trun` version 0's field is unsigned, so a
-    legal v0 offset can exceed `i32::MAX`.
-  - `sample_groups::SampleGroupDescriptionBox` gains
-    `pub default_sample_description_index: Option<u32>` (the v2 syntax field).
-  - `MovieBox`, `TrackBox`, `MediaBox`, `MediaInformationBox`,
-    `DataInformationBox`, `EditBox`, `MovieExtendsBox`, `TrackFragmentBox` and
-    `MovieFragmentBox` gain a `new(...)` constructor, and the `MkvMux` cluster
-    builder returns `Result<Vec<u8>>`; a struct literal must switch to the
-    constructor or set the new fields.
-- **H.264 Sample-AES now chains the CBC state across the encrypted blocks of one
-  NAL; the previous per-block IV reset is corrected** (#1080, audit r05-W1).
-  `sample_aes::h264_encrypt_nal`/`h264_decrypt_nal` restarted the CBC context at
-  every encrypted 16-byte block, so every block after the first in each slice
-  NAL was wrong — the IV is reset only at the start of each NAL, then chains
-  (each block uses the previous ciphertext block as its IV). This is what
-  ffmpeg's `libavformat/hls_sample_aes.c` `decrypt_nal_unit` does: a chained
-  stream decodes identically to clear (10/10 frames) while the old per-block
-  reset decodes to nothing (0/10). Pinned by the independent fixtures in
-  `transmux/tests/fixtures/sample_aes_h264/` (python reference, Bento4
-  `mp4hls`, ffmpeg) — see `ORACLES.md`. **Output bytes change**, so any
-  SAMPLE-AES H.264 output produced by this crate before this fix must be
-  re-encrypted. The transcription (`docs/drm/hls-sample-aes.md` §3.4/§11) and
-  the module doc are corrected to match.
-- **`CencEncryptor::encrypt` rejects overlapping AES-CTR counter-block ranges
-  under `cenc`** (#1080, audit r05-W3). `IvGen::Explicit`'s uniqueness check
-  compared IVs for equality only, but under `cenc` the per-sample IV *is* the
-  128-bit AES-CTR counter block and the counter advances once per 16-byte
-  protected block (ISO/IEC 23001-7 §10.1). A caller that supplied the natural
-  sequential list `base + i` passed that check while sample *i+1*'s first
-  keystream block equalled sample *i*'s second — a two-time pad across every
-  consecutive pair, the exact bug the uniqueness rule exists to prevent. Such a
-  config is now `Error::InvalidInput`, checked on the planned IV/subsample
-  sequences before a byte is ciphered (so a rejection still leaves `media`
-  byte-identical), and `cbcs` is exempt because its IV seeds a CBC chain rather
-  than a counter. An existing per-sample IV list must be spaced by at least the
-  preceding sample's protected block count.
-- **`IvGen::Counter` under `cbcs` now emits 16-byte per-sample IVs** (#1080,
-  audit r05-W4). It emitted 8-byte IVs — the shape this module's own
-  `IvGen::Constant` doc records that Bento4's `mp4decrypt` silently no-ops, so
-  a default `EncryptConfig { scheme: Cbcs, iv: IvGen::default(), .. }` produced
-  output a reference decryptor would not touch. The width is now
-  scheme-dependent (8 under `cenc`, the common CMAF convention; 16 under
-  `cbcs`), so existing `cbcs` output changes and any decryptor must be fed the
-  matching `tenc.default_per_sample_iv_size`.
-- **`smooth_parse::track_spec_from_quality_level` dispatches on the `QualityLevel`'s
-  `FourCC` instead of assuming H.264/AAC** ([MS-SSTR] §2.2.2.5). Every audio level was
-  parsed as an AudioSpecificConfig whatever its FourCC, so a Dolby `FourCC="EC-3"`/`"AC-3"`
-  level (whose `CodecPrivateData` is Dolby, and which "parses" as an ASC for any ≥2-byte
-  input) produced a garbage `CodecConfig::Aac` track with a nonsense rate/channel count;
-  a non-H264 video level likewise built an `avcC` from bytes that are not Annex-B SPS/PPS.
-  The match is now case-insensitive over `H264`/`AVC1` (video) and `AACL`/`AACH` (audio);
-  any other token — a Dolby `EC-3`/`AC-3`, an `H265`, a private one — returns
-  `Error::UnsupportedCodec` (reject-only: Dolby audio, HEVC video are not synthesised).
-  An empty `CodecPrivateData` on an `AACL`/`AACH` level now synthesises the
-  `AudioSpecificConfig` from `SamplingRate`/`Channels` (ISO/IEC 14496-3 §1.6.2.1) instead
-  of failing `BufferTooShort` — the plain **core** AAC-LC config for both FourCCs, so an
-  `AACH` level's SBR is carried implicitly (the hierarchical explicit-signalling form is not
-  synthesised; the `esds` reports the core rate, not twice it). A `SamplingRate` that is not
-  an ISO/IEC 14496-3 Table 1.10 entry, or a channel count with no Table 1.19 configuration
-  (Table 1.19 has no 7-channel entry — `Ch7_1` is eight), is `Error::UnsupportedCodec`
-  rather than a guessed value. Both the SPS-decoded geometry and the `MaxWidth`/`MaxHeight`
-  fallback are converted to the IR's `u16` with `try_from`, so an over-range value is
-  `Error::InvalidValue` rather than a wrapped dimension (#1080, audit r04-W41).
-- **`vvc_config::VvcPtlRecord::general_constraint_info` is a `Vec<u8>`, not a `u64`**, and
-  `VvcDecoderConfigurationRecord::dimensions` returns `Option<(u32, u32)>`, not
-  `Option<(u16, u16)>` (#1080, audit r04-W42). `num_bytes_constraint_info` is a 6-bit field,
-  so a `general_constraint_info` of more than 8 bytes (up to 502 bits) did not fit a `u64`:
-  the reader rejected it with `n > 64`, failing the whole `vvcC` and with it the whole VVC
-  track — and `decode_vvc_sps` likewise rejected any SPS with `gci_present_flag == 1`, which
-  is ordinary in the field. The SPS reader now steps over the `general_constraint_info()`
-  block exactly (ITU-T H.266 §7.3.3.2) instead of rejecting it, and the payload is carried as
-  bytes. `dimensions()` widened because `sps_pic_width_max_in_luma_samples` is `ue(v)`: a
-  `u16` cast reported a wrapped geometry (65 536 → 0). A caller converting to the sample
-  entry's `u16` field uses `try_from`.
-- **`sps::rfc6381_vvc1` takes the constraint bytes as `&[u8]`, not a `u64`**, and
-  `VvcPtlRecord` serialization validates `general_constraint_info` (#1080, audit r04-W42).
-  The `u64` argument could not represent a constraint block wider than 64 bits, so it went
-  with the `Vec<u8>` field; a caller must pass `&ptl.general_constraint_info`. A record whose
-  `general_constraint_info` is shorter than its `num_bytes_constraint_info` is now
-  `Error::InvalidValue` on serialize instead of panicking on an out-of-bounds index. The SPS
-  reader also skips the exact reserved-bit count of `general_constraints_info()` (ITU-T H.266
-  §7.3.3.2: `gci_num_additional_bits - (n > 5 ? 6 : 0)` `gci_reserved_bit`s) instead of
-  skipping none for a count of 1..=5.
-- **Pass-through demuxers normalise NAL length prefixes to the crate's 4-byte form and say so
-  in the config they emit** (`WebmDemux`, `FlvDemux`, `StreamingFlvDemux`) (#1080, audit
-  r04-W43). An `avcC`/`hvcC` declares its NAL length-prefix size as `lengthSizeMinusOne + 1`
-  (ISO/IEC 14496-15 §5.3.3: 1, 2 or 4 bytes), and these demuxers carried a block's payload
-  verbatim — but the rest of the pipeline (`iter_length_prefixed_nals`, keyframe detection,
-  the TS/RTP writers) is fixed at 4 bytes, so a 2-byte-length source parsed every sample as
-  garbage lengths and produced a corrupt stream. New `annexb::normalise_nal_length_size` /
-  `iter_length_prefixed_nals_with` rewrite a sample's prefixes, and the emitted
-  `AVCDecoderConfigurationRecord`/`HEVCDecoderConfigurationRecord` now carries
-  `length_size_minus_one = 3` so a fMP4/CMAF/TS mux describes the samples it actually has
-  (previously it kept the source's value, promising 2-byte lengths over 4-byte samples). The
-  framing is validated for every length size, including the canonical 4 (a declared length
-  past the buffer is an error rather than a silent pass-through); a length size other than 1,
-  2 or 4 is an error — 3 (`lengthSizeMinusOne = 2`) is reserved by §5.3.3, so it is rejected
-  rather than guessed at.
-- **`Fmp4Demux` and `ProgressiveDemux` normalise an AVC/HEVC track's NAL length prefixes the
-  same way** (`media::normalise_track_nal_lengths`) (#1080, audit r04-W43). Both carried a
-  sample's bytes verbatim, so an fMP4 whose `avcC`/`hvcC` declared `lengthSizeMinusOne` 0 or 1
-  gave the IR 1-/2-byte-prefixed samples while every downstream consumer
-  (`iter_length_prefixed_nals`, keyframe detection, the TS/RTP writers) is fixed at 4 bytes —
-  a corrupt remux. The samples are now rewritten and the reported config's
-  `lengthSizeMinusOne` set to match; a track whose samples then fail to walk (a truncated
-  prefix, a declared length past the buffer) is skipped with a reason rather than passed on.
-- **`vpcC` boxes whose FullBox version is not 1 are now rejected outright** (#1080, audit
-  r04-W44). The VP Codec ISO Media File Format Binding v1.0 declares
-  `FullBox('vpcC', version = 1, 0)` and states "Version 0 is deprecated and should not be
-  used" — it publishes no v0 syntax for the record. The parser previously accepted any
-  version and always read the v1 layout, so a **version-0 box (written by some early
-  ffmpeg/libwebm muxers) parsed to wrong bit depth / chroma / colour values and was then
-  re-serialized as v1**. Such boxes are now `Error::InvalidValue` on both parse and
-  serialize, so media that used to demux (incorrectly) no longer parses at all — the intended
-  behaviour, since a guessed layout is worse than a clear refusal. `Vp9ConfigurationBox`
-  loses the two `color_space` / `transfer_function` fields that existed only for that
-  undocumented layout, so a caller constructing the struct must drop them. `bit_depth` (4
-  bits) and `chroma_subsampling` (3 bits) are written through the checked `fit_bits` helper,
-  so an over-range value is `Error::FieldOverflow` instead of shifting bits out of the byte or
-  corrupting `videoFullRangeFlag`. A `codecInitializationDataSize` that overruns the box is
-  `Error::BufferTooShort` rather than a silent `min(len)` truncation.
-- **Every serializer writes its reserved/`pre_defined` bytes as zeros instead of skipping
-  them** (audit r04-W45). `Serialize::serialize_into` accepts any `&mut [u8]`, so a reused or
-  dirty output buffer kept whatever was there: `VisualSampleEntry`'s 6 + 16 reserved bytes and
-  the audio `SampleEntry`/`AudioSampleEntry` 6 + 8 + 4 reserved/`pre_defined` bytes
-  (`sample_entries.rs`), the `stpp`/`wvtt` 6 reserved bytes (`subtitle_entries.rs`), `mvhd`'s
-  reserved(10)/`pre_defined`(24), `tkhd`'s reserved(4)/reserved[2](8)/reserved(2), `mdhd`'s
-  quality(2), `hdlr`'s `pre_defined`(4)+`reserved[3]`(12) and `smhd`'s reserved(2)
-  (`init_segment.rs`), and the `vpcC`-style bit writer used by the VVC PTL record
-  (`vvc_config.rs`, which OR-ed set bits and left alignment padding untouched) all emitted
-  garbage, which a conformance validator rejects. Each site now zeroes the range it advances
-  over, and a dirty-buffer test covers `mvhd`, `tkhd` (v0/v1), `mdhd`, `hdlr`, `smhd`, `vmhd`
-  and every audio sample-entry FourCC.
-- **The manifest XML tokenizer ends a start tag at the first `>` outside a quoted attribute
-  value, and resolves numeric character references in attribute values** (audit r04-W46). XML
-  1.0 §2.4 requires only `<` and `&` to be escaped in an attribute value, so a `>` there is
-  legal raw — but the tag scan stopped at it, truncating a DASH `SegmentTemplate@media` or a
-  `ContentProtection` value (and every later event was misparsed). Numeric references
-  (`&#38;`, `&#x26;`) were also left literal, so a template written with them resolved to a
-  URL containing `&#38;`; attribute values now use the same resolution rule as text content.
-  A reference candidate also ends at the next `&` as well as the first `;`, so a bare `&`
-  before a later valid reference (`"a & b &amp; c"`) no longer consumes it as text.
-  A numeric reference outside XML 1.0 §2.2's `Char` production (a zero code point, a bare
-  control character, a surrogate, anything above `#x10FFFF`, or a leading `+`/`-`) is left
-  verbatim rather than decoded into an illegal character, and the reference scan advances past
-  the terminating `;` (or the whole malformed `&`-run) every iteration, so it is linear in the
-  input rather than rescanning each `&`.
-- **`RtpPacketiser` now stamps each access unit's RTP timestamp with the sample's
-  `pts`, not its `dts`** (audit r04-W29). RFC 6184 §5.1: "The RTP timestamp is set
-  to the sampling timestamp of the content", and receivers "SHOULD use the RTP
-  timestamp for synchronizing the display process" — a *presentation* time. On a
-  B-frame stream the two differ substantially (`fixtures/ts/h264/high.ts`: 12 of
-  its 15 samples), and stamping decode times made a receiver present frames in
-  decode order at the wrong instants.
-- **`RtpPacketiser` fragments an AAC access unit that exceeds the payload budget
-  instead of refusing it** (audit r04-W31). RFC 3640 §3.2.3.1 requires it — one
-  fragment per packet, all sharing the AU's timestamp, marker on the last — and
-  §3.2.3.2 makes the AU-header's `AU-size` the size of the *entire* AU rather than
-  of the fragment, which is exactly what lets a receiver reassemble. Such an AU is
-  the ordinary case for high-rate audio (a 640 kb/s 5.1 frame is ~3.7 kB), and a
-  track carrying one previously failed to packetise at all.
-
-- **`RtpPacketiser` gives every stream its own SDP payload type.** A payload type is
-  a session-wide binding (RFC 3551 §6 reserves 96-127 "for dynamic assignment"), but
-  only "has a video track been seen" was tracked, so a third video (or audio) track
-  reused `video_pt + 2` — colliding with the second track's type — and `96 + 2 = 98`
-  collided with `DEFAULT_KLV_PT`. Allocation now walks the dynamic range from the
-  configured bases (96 video, 97 audio by default, both still honoured for the
-  common single-video/single-audio session) and never reuses a value, erroring with
-  `Error::InvalidInput` if a session needs more than the 32 dynamic types. The
-  generated SDP's `a=rtpmap` therefore binds each stream exactly once.
-- **The generated SDP gains a session-level `c=` line** (RFC 4566 §5.7: "A session
-  description MUST contain either at least one `c=` field in each media
-  description or a single `c=` field at the session level"). Without it a strict
-  parser had no connection data to resolve and rejected the description. The
-  address is `LOCAL_CONNECTION_ADDRESS` (the loopback the `o=` line already names);
-  `build_sdp_with_connection` is new for a caller that transmits elsewhere.
-
-- **`rtp::RtpInputStream` is `#[non_exhaustive]` and can no longer be built by struct
-  literal** — use `RtpInputStream::new(kind, packets)` plus `with_clock_rate`/
-  `with_config`, which also validate kind/clock/config agreement (see below). It
-  gains `clock_rate` and `config` fields on top of that, and the batch
-  `RtpDepacketiser` now describes each depacketised track with its own payload
-  format, RTP clock and codec config (audit r04-W30). An RTP timestamp is a count
-  in the stream's own clock (RFC 3550 §5.1), but every track the depacketiser
-  returned was declared AVC at the 90 kHz video clock — so an AAC stream came back
-  as a 90 kHz video track whose durations were the audio sample counts (1024 per
-  frame, not 1920), and any packager consuming it wrote a video sample entry for
-  audio. `Media`'s movie timescale was `0` for the same reason and is now the video
-  clock. `RtpInputStream::new`/`with_clock_rate`/`with_config` build the struct
-  (`#[non_exhaustive]`, so its fields are no longer directly constructible).
-  An AAC stream with no `config` is now `Error::InvalidInput` rather than silently
-  described by an invented AVC config: RTP carries no codec config, so a caller
-  must supply the SDP's `config=` parameter (RFC 3640 §4.1). A zero `clock_rate` is
-  rejected for the same reason. **An AAC stream's clock rate is taken from its
-  config's own sample rate** — RFC 3640 §3.1 defines an MPEG-4 audio stream's RTP
-  clock as its sampling rate, so `with_config` sets it and the
-  `DEFAULT_AAC_CLOCK_RATE` (48000 Hz) constructor placeholder is replaced; a rate
-  asserted with `with_clock_rate` that disagrees with the config, a non-90 kHz
-  clock on an AVC config, and a `kind` that disagrees with the config's variant are
-  each `Error::InvalidValue`/`Error::InvalidInput` rather than silently timed at
-  whichever value happened to win. A caller constructing the struct literally must
-  add the two fields (plus the private explicit-clock flag).
-
-- **`StreamingFlvDemux` now emits `DemuxEvent::TrackUpdated` when a publisher re-sends a track's
-  sequence header, carrying the new codec config** (FLV/RTMP ingest). Previously the second and later
-  sequence header was ignored, so an encoder that changed resolution, profile, sample rate or
-  channel count mid-publish (routine for OBS/ffmpeg) kept reporting the stale config and every
-  downstream init segment described a stream that was no longer being sent. `TrackUpdated` was
-  documented as never changing `config`; it can now, and a consumer must treat it as "reload the
-  init segment" (#1079, audit r04-W13). `DemuxEvent::TrackUpdated`'s doc is updated accordingly.
-- `FlvDemux::unpackage` and `StreamingFlvDemux::feed` return
-  `FlvError::Codec(Error::InvalidInput)` for an AVC sequence header whose SPS decodes to a width or
-  height that does not fit the IR's `u16`. An SPS's `pic_width_in_mbs_minus1` is an unbounded
-  `ue(v)`, so a 65 536-wide SPS previously came back as a track claiming width 0 (#1079, audit
-  r04-W38).
-- **`FlvMux::package` now returns `FlvError::Codec(Error::InvalidInput)` for a composition offset it
-  cannot represent and for a zero track timescale**, rather than writing a truncated or flattened
-  value. An offset outside `CompositionTime`'s signed 24-bit millisecond field (Annex E §E.4.3.2)
-  used to be written with its low 24 bits, describing a moment the sample is not at; and a track
-  whose `TrackSpec::timescale` is 0 made every tag's `Timestamp` 0, flattening the whole file onto
-  one instant (#1079, audit r04-W12). A zero timescale is reachable: `RtpDepacketiser` has produced
-  such tracks (audit r04-W30).
-- `rtmp::RtmpError` gains the `Amf0TooDeep { depth }` variant. The enum is `#[non_exhaustive]`, so
-  this is an additive change for matching callers, but an exhaustive `match` over it outside this
-  crate (allowed only via a wildcard arm) now has a case it did not before (#1079, audit r04-W27).
-- **Several paths that previously returned a value now return an error**, because accepting the
-  input produced a box/header that misdescribed itself. Each is listed again under `### Fixed` with
-  its full rationale:
-  - `FlacSpecificBox::parse` rejects a `dfLa` metadata block whose declared 24-bit length runs past
-    the end of the box, and a first block that is not STREAMINFO (r04-W17).
-  - `BoxHeader::serialize_into` rejects a `uuid` header with no `usertype`, a header with
-    `size == 1` but no largesize, and a compact header whose `size` exceeds 32 bits (r04-W8).
-  - `ColourInformationBox::serialize_into` rejects a `nclx` `colr` with no `nclx` params (r04-W39).
-  - `ESDescriptor::serialize_into` rejects a `streamDependenceFlag`/`URL_Flag`/`OCRstreamFlag` that
-    disagrees with its field (r04-W24).
-  - `Ec3SpecificBox::serialize_into` rejects `substreams.len() != num_ind_sub + 1` (r04-W6).
-  - `webm_demux::WebmDemux` rejects a laced block whose declared lace sizes do not
-    describe its payload (r04-W40).
-- **`klv::crc16_ccitt` is removed, replaced by `checksum_bcc16`** (audit r04-W10). The
-  name documented the wrong algorithm: MISB ST 0601 tag 1 is a running 16-bit sum, not a
-  CRC (§5.5/§7.1). A caller that used `crc16_ccitt` directly should call `checksum_bcc16`
-  instead; its result is deliberately different.
-- **`klv::UasLocalSet::serialize_with_checksum` writes a different (correct) tag-1 value**,
-  so byte-for-byte comparisons against a packet this crate produced before the change will
-  differ — as will `verify_checksum`'s verdict on any real ST 0601 stream, which it now
-  accepts (r04-W10).
-- **`dash_parse::Mpd` gains a `base_url: Option<String>` field**, and
-  `dash_parse::Period`, `AdaptationSet` and `Representation` each gain one
-  (`BaseURL`, §5.3.9.2), and `Mpd::parse` now resolves
-  `SegmentTemplate` inheritance attribute-by-attribute rather than whole-element, so the
-  `segment_template` a caller reads is the merged effective one (r04-W11). A struct literal
-  for any of the four must add the new field; code that relied on a child's template
-  *replacing* its parent's now sees the inherited values, which is the spec behaviour.
-  `Mpd::base_url_chain` and `Mpd::resolve_segment_url` are new.
-- `ps_demux::PsDemux` emits one track per `private_stream_1` substream rather than one per
-  `stream_id`, so a PS whose 0xBD stream multiplexes several substreams now yields several
-  tracks (and skips substreams that are not AC-3) (r04-W19). Its signatures are unchanged,
-  but a video stream whose reassembled Annex B data exceeds `au::AccessUnitSplitter`'s
-  buffered-NAL cap is now an error rather than a silently absent track (r04-W21).
-- `au::AccessUnitSplitter::push` now returns `Result<()>`: a stream whose open NAL or assembled
-  access unit grows past a 64 MiB cap without completing is rejected instead of buffering without
-  limit (`Error::InvalidValue`). The bound is far above any real coded picture, so a conformant
-  stream never reaches it (#1079, audit r04-W3).
-- `mp4esds` descriptor types now record the wire width of their size varint and every uncommon
-  sub-descriptor, and `ESDescriptor` presence is derived from its fields. `DecoderSpecificInfo`,
-  `SLConfigDescriptor` and `DecoderConfigDescriptor` gain a `size_width: usize` field;
-  `DecoderConfigDescriptor` and `ESDescriptor` gain `unknown_descriptors: Vec<UnknownDescriptor>`
-  (new public type); `ESDescriptor` gains `size_width`. Constructors `DecoderSpecificInfo::new`,
-  `SLConfigDescriptor::new`/`predefined_two`, `DecoderConfigDescriptor::new` and
-  `ESDescriptor::new` cover the common MP4-storage shapes. An `esds` authored with minimal
-  (GPAC/Apple/Bento4) size varints previously always re-serialized with the 4-byte expanded form, so
-  it grew on every round trip; unmodelled sub-descriptors (e.g. the
-  `ProfileLevelIndicationIndexDescriptor` 0x14, an IPI pointer or language descriptor) were dropped
-  entirely; and a `streamDependenceFlag`/`URL_Flag`/`OCRstreamFlag` set without its field made the
-  declared descriptor size count bytes that were never written, misframing the descriptor while
-  still returning `Ok` (now `Error::InvalidValue`) (#1079, audit r04-W24).
-
-- `ac3::Ec3SpecificBox` gains a `reserved_tail: Vec<u8>` field (ETSI TS 102 366 §F.6.2.14) and its
-  serializer now returns `Error::InvalidValue` when `substreams.len() != num_ind_sub + 1`, because
-  §F.6.1 derives the independent-substream count from `num_ind_sub` — a mismatched struct previously
-  serialized to a `dec3` that parsed back differently. The tail is captured verbatim on parse, so a
-  Dolby Atmos `dec3` (whose extension signalling lives in those reserved bytes) now survives a
-  parse/serialize round trip instead of being dropped (#1079, audit r04-W6).
-- `ac3`'s `chanmap`->`chan_loc` derivation is corrected against ETSI TS 102 366 §E.1.3.1.8 / §F.6.2.13:
-  Table E.1.4 numbers its bits **MSB-first** ("bit 0 … is stored in the most significant bit of the
-  `chanmap` field"), so the previous `1 << n` test read every location mirrored. The `bsi()` walk
-  also gates the programme-mix block on `strmtyp == 0x0` rather than "not a dependent stream", since
-  `strmtyp == 0x2` is an AC-3-derived *independent* stream with no programme-mix block. Both tables
-  and the `bsi()` structure are transcribed with clause citations in
-  `docs/codec/eac3-bsi-chanmap.md`. (#1079, audit r04-W5)
-- `ac3::Ec3SyncframeInfo` gains `chanmap: Option<u16>` and `bsmod: u8`;
-  `Ec3SyncframeInfo::into_dec3` and the new `Ec3SpecificBox::from_syncframes` both return `Result`.
-  They take the syncframes of a **single access unit** (`Ec3SyncframeInfo::from_es_first_au`) so
-  dependent substreams are folded into `num_dep_sub`/`chan_loc` and `num_ind_sub` is §F.6.2.3's
-  "substreamID of the last independent substream". Previously the count came from the writing
-  frame's own `substreamid`, `num_dep_sub` was always 0, `chan_loc` always `None`, and `bsmod` was
-  hardcoded 0 — so a 7.1 DD+ stream was signalled as 5.1 with an inflated substream count. Feeding
-  a whole demuxer backlog (N repeated access units -> N substreams, `data_rate` summed) is what
-  `ts_demux` did and produced a `dec3` its own serializer rejects; a dependent-only or empty slice
-  now returns `Error::InvalidValue` rather than that unserializable box (#1079, audit r04-W5).
-
-- **`sample_aes::ExtXKey::to_tag` now returns `Result<String>`** (was
-  `String`), and the inherent `Display` impl for `ExtXKey` is removed
-  (issue #1140 / audit r05-W10, T12): `uri`/`keyformat`/
-  `keyformatversions` are caller-supplied (often assembled from a
-  key-server request) and previously went straight into the tag with no
-  validation, so a `"`, CR or LF in any of them terminated the attribute
-  list and injected arbitrary playlist tags. `to_tag` now builds through
-  `broadcast_hls::AttrValue`'s checked constructors and the shared
-  `broadcast_hls::render_attribute_list` (the single workspace attribute
-  renderer this issue introduced), returning the new
-  `Error::HlsAttrValue` for an invalid value instead.
-- Serializers now return an error, instead of silently truncating, when a length, count, or
-  offset does not fit its wire field (#1129). `Error` gains a new `FieldOverflow` variant; several
-  previously-infallible builders (`transmux::rtmp::write_chunks`, `MessageHeader::write_into`,
-  `OutTag::write_into`, `HevcNalUnit`/`HevcNalArray::serialize_into`, `drm::playready_pro`/
-  `playready_pssh`) now return `Result` for the same reason.
-- `cenc::SampleAuxInfoSizesBox` and `init_segment::SampleSizeBox` gain a `sample_count: u32`
-  field. Previously the uniform-size form (`default_sample_info_size`/`sample_size != 0`) derived
-  the wire `sample_count` from the always-empty per-sample table, so it silently collapsed to 0 on
-  every parse -> serialize round trip of a real whole-sample-protected or constant-bitrate track
-  (#1013, #1018).
-- `init_segment::Mp4aSampleEntry` gains a `codec_type: [u8; 4]` field recording the real sample
-  entry four-CC (`mp4a` or `enca`); serialize previously hard-coded `mp4a`, silently re-labelling a
-  CENC-protected (`enca`) audio track as clear (#1017).
-
-- **`StreamingTsDemux` now emits `DemuxEvent::TrackUpdated` when a TS track's
-  in-band codec configuration actually changes mid-stream, and drops — rather
-  than delivers — access units damaged by a continuity-counter gap**
-  (#1080, audit r04-W49/W51). Both are visible behaviour changes for a consumer,
-  which is why they are listed here as well as under `### Fixed` below.
-
-  **`TrackUpdated` from TS.** Codec-config recovery used to be single-shot for
-  the life of a stream, so a mid-stream SPS/PPS or AAC-config change (an SD↔HD
-  ad break, a re-encode, a multiplex reconfiguration) left the track labelled
-  with its original `avcC`/`hvcC`/`esds`. Now an AVC/HEVC track whose
-  accumulated parameter sets change, or an AAC track whose
-  `audioObjectType`/`samplingFrequencyIndex`/`channelConfiguration` change,
-  raises `DemuxEvent::TrackUpdated` with the same `track_id` and the new config
-  — the two-source contract `DemuxEvent::TrackUpdated` already documented for
-  FLV. A consumer that rebuilds its init segment only on `TrackAdded` will now
-  miss such a change; `TrackUpdated` means "reload the init segment / rebuild
-  the sample entry". An **unchanged** repeat emits nothing, so the event rate
-  stays low (encoders resend their headers on every keyframe).
-
-  **Damage-aware delivery.** An access unit is dropped rather than delivered
-  truncated when either of two things is true, and only these two:
-
-  1. a continuity-counter gap landed on one of **its own** packets (a gap on a
-     continuation packet: those bytes provably belong to it); or
-  2. it is a **bounded** PES (`PES_packet_length != 0`) that arrived shorter
-     than its own header declared — no continuity-counter evidence is needed for
-     this one, since the declared length settles it outright.
-
-  A legal §2.4.3.3 duplicate packet is discarded before it reaches the
-  reassembler (it used to be detected for the CC check and then fed in anyway,
-  duplicating 184 payload bytes inside the access unit under construction). A
-  stream with genuine CC gaps therefore yields **fewer samples than before** —
-  the damaged ones are gone rather than corrupt.
-
-  A `discontinuity_indicator` is **not**, by itself, a reason to drop anything.
-  It marks where the source's time base changes, and a normal HLS or splice seam
-  has an intact last unit of the old segment immediately before it; treating the
-  indicator as damage lost that unit at every seam. When the indicator lands on
-  a *continuation* packet it coincides with a gap and rule 1 applies as usual.
-
-  **Documented tradeoff (unbounded PES at a CC-jump boundary).** A
-  `payload_unit_start` ends the previous unit, so a counter restart there is the
-  ordinary segment-concatenation shape and is not damage. For an **unbounded**
-  PES (`PES_packet_length == 0`, what every video PES uses) that also means an
-  access unit which really did lose its tail is indistinguishable from one that
-  ended cleanly, and it is delivered. H.222.0 gives no length to tell them
-  apart: the alternative — dropping every unit that precedes a counter jump —
-  loses a whole access unit at every seam instead of occasionally carrying a
-  short one. A bounded PES has no such tradeoff.
-
-  **ADTS channel count.** `CodecConfig::Aac`'s `channel_count` for a TS AAC
-  track now maps `channel_configuration` through ISO/IEC 14496-3 Table 1.19
-  instead of using the raw field: configuration 7 reports **8** (7.1) where it
-  used to report 7, and configuration 0 (an in-band `program_config_element`,
-  which this crate does not decode) reports **0** — "not derivable", never a
-  fabricated count, matching `flv_stream`'s convention. A caller that treated 0
-  as "mono" must check for it.
-
-  **Signalled-discontinuity rebase.** A TS track's decode timeline is now
-  rebased at a signalled discontinuity so `dts` stays monotonic across a splice;
-  previously every downstream muxer could write negative or zero deltas there.
-  The rebase is **scoped to the signalling program**: per ITU-T H.222.0
-  §2.4.3.5 a system time-base discontinuity is signalled on the program's
-  `PCR_PID`, so only that program's elementary streams are lifted and a
-  multi-program multiplex leaves the other services' timelines untouched. The
-  lift is non-negative and one nominal frame period past the last stamp emitted
-  (never a reduction, so a forward splice survives as the real gap it is), and
-  the frame period it uses is the **median of the last five** plausible
-  inter-access-unit steps, capped at one second — so a single late access unit
-  or an 8-second splice cannot become "the frame period" for the frames that
-  follow.
-- `uri` module removed (`UriReference`, `resolve`, `merge`, `remove_dot_segments`, `resolve_segment`, `try_resolve*`, `first_forbidden_char` and the `RFC3986_*` tables, plus the crate-root `resolve_uri_reference`/`resolve_uri_segment`/`try_resolve_uri_reference`). Replaced by `base_url::{resolve, resolve_chain, first_forbidden_char}` over `url::Url` (`std` only; also `resolve_url_reference`/`resolve_base_url_chain` at the root). `Mpd::resolve_segment_url` now takes the MPD's own URL (`Option<&url::Url>`) as its first argument and returns `Option<String>`; `Mpd::try_resolve_segment_url` is removed. `BaseURL` entries are trimmed before the control-character guard (XML layout whitespace is harmless); an interior control character or space still yields `None`. Differences from the old resolver, each with an example: with no base a relative input still resolves to a contained relative result (`../../../etc/passwd` -> `etc/passwd`, as before; `%2e%2e/x` behaves like `../x`) and only an absolute-path reference the MPD wrote itself (`/x`) comes back absolute; an input naming the internal `transmux-relative:` scheme is `None`; the host is lower-cased and a default port dropped (`http://H:80/x` -> `http://h/x`); non-ASCII is percent-encoded (`é.m4s` -> `%C3%A9.m4s`); the `//g` network-path row serialises as `http://g/` and `http:g` against an `http` base resolves relatively (WHATWG, listed in `tests/base_url.rs`); a reference that does not parse is `None`.
-- `build_sdp_with_connection(IpAddr, Vec<sdp_types::Media>)` replaces the `&str` media-block parameter; RTP SDP generation is `std`-only (`RtpOutput::sdp` exists only with the `std` feature). The SDP bytes are identical (golden-tested). `sdp-types` 0.2 and `url` types appear in the public API.
-- DASH writer: `xs:duration` attributes are the shortest ISO 8601 form (`PT2.0S` -> `PT2S`, `PT0.0S` -> `PT0S`, `PT3.0S` -> `PT3S`, `PT90.0S` -> `PT1M30S`); equal durations, different bytes.
-- `dash_parse::parse_iso8601_duration` now checks the XML Schema 1.1 `xs:duration` lexical space (then converts with `jiff`) instead of hand-splitting. Every valid form representable as an unsigned `Duration` is accepted (including seconds fractions longer than nine digits, truncated to nanoseconds as before: `PT3.6666666666666665S`). Accept/reject changes vs the previous parser, with examples:
-  - now rejected, were accepted: a unit with no digits (`PTS`, `PTHS`, `PTMS` read as zero), `PT.5S` (XSD needs a digit before the point), a `+` sign (`PT+1S`, `P+1D`), and magnitudes beyond `jiff`'s span limits (`PT999999999H`, `P999999999999D`: the old parser saturated; they are now `InvalidDuration`, never a panic).
-  - unchanged rejections (still `InvalidDuration`): lower-case designators (`PT1h30m`, `Pt1S`), weeks (`P1W`), fractions on hours/minutes (`PT1.5H`), the comma separator (`PT1,5S`), calendar units (`P1Y`, `P1M`, `P1Y2M3DT4H5M6.7S`: lexically valid but a `Duration` has no calendar), negative durations (`-PT1S`: valid XSD, `Duration` is unsigned), trailing garbage and mis-ordered units.
-- `rtp::base64_decode` is stricter than the pre-crate decoder: input whose length is 1 mod 4 (`QUJDR`) is an error (the stray character used to be dropped silently), and `=` anywhere other than as the final one or two characters (`Zm9v=YmFy`, excess padding `Zg===`) is an error. Padding stays optional and non-zero trailing bits stay tolerated.
-- CLI `--key` hex now rejects a `+`/`-` sign and non-ASCII input (it used to accept the sign, and panic on non-ASCII).
-
-- `ESDescriptor::parse` now reads the bytes `Serialize` writes — `ES_DescrTag` + expandable-size varint + body — instead of the body alone, so the public `Parse` impl no longer misreads that framing as `ES_ID`/flags/`URLlength` and silently truncates the descriptor chain; an `esds` carrying a `URLstring` longer than ~100 bytes (up to the 255 its 8-bit `URLlength` allows, ISO/IEC 14496-1 §7.2.6.5) no longer fails parse with a spurious `BufferTooShort` (#1148).
-  **Breaking (migration):** the *input contract* of the public `Parse` impl changed: it used to read
-  the bare descriptor body and now reads the framed bytes `Serialize` writes (`ES_DescrTag` +
-  expandable-size varint + body). A caller that previously fed `ESDescriptor::parse` the bare body
-  (the bytes after a manually stripped tag/size prefix) must now pass the framed bytes instead, or
-  keep parsing through `EsdsBox::parse_body`/`parse_box`, which strip the box and FullBox framing
-  themselves and pass exactly what this impl expects. The only in-workspace caller was
-  `EsdsBox::parse_body` (`esds` box path); no other crate, example, fuzz target or binding calls
-  `ESDescriptor::parse`. Feeding bare-body bytes now returns `InvalidValue { field:
-  "descriptor_tag" }` (or a silently misread result if the first body byte happens to be `0x03`).
-- `ESDescriptor::parse` rejects a non-UTF-8 `URLstring` with `InvalidValue { field: "URLstring" }`
-  instead of decoding it lossily: ISO/IEC 14496-1 §7.2.6.5 defines the field as UTF-8 (ISO/IEC
-  10646-1), and a lossy decode (0xFF -> U+FFFD) silently broke byte-identical round trips (the
-  re-serialized bytes differed, and 765 replacement bytes from a 255-byte input overflowed
-  `URLlength`). A wire `esds` with an invalid URL byte failed to round-trip before and now fails to
-  parse at all (#1148 E).
+### Security
+Fixes for twelve advisories: GHSA-q6vr-4pp5-mcfv, GHSA-3554-x4jf-7frw, GHSA-2mg2-jj9h-c5vr,
+GHSA-6vc8-3c25-4c9w, GHSA-643q-pgwj-8v2h, GHSA-c722-96gr-hgq2, GHSA-gmmr-7cqm-5p32,
+GHSA-9m92-jr3c-4cq7, GHSA-j76h-pqjr-p54h, GHSA-mq46-69j5-7gqj, GHSA-59ph-4f24-q79x,
+GHSA-v965-v82c-2f8x. Upgrade if transmux parses or encrypts untrusted input.
 
 ### Fixed
+- Reject malformed KLV BER lengths, `esds` descriptor sizes, `sinf` child boxes and `pssh` v1
+  bodies with an error instead of panicking.
+- Bound sample-table, sample-group and SPS field counts by the input actually present, so a
+  malformed file is rejected instead of allocating or looping without limit.
+- RTMP chunk reassembly starts a fresh message on every fmt 0/1/2 chunk header instead of
+  carrying over bytes from an incomplete previous message.
+- `CencEncryptor::encrypt` validates every sample before encrypting any, so a rejected call leaves
+  the media and the IV counter untouched, as documented.
+- `KeyMap`, `CencEncryptor` and `CencDecryptor` no longer derive `Debug`: a manual impl on each
+  now redacts content key bytes (KIDs, which are not secret, still print) and, for
+  `CencDecryptor`, summarizes the protected file by length instead of dumping its bytes.
+- `progressive_demux`'s `stsc` chunk-run expansion now clamps each entry's chunk range to the
+  track's actual chunk count before iterating, instead of iterating the wire `first_chunk` value
+  directly (an out-of-range `first_chunk`, up to `u32::MAX`, could cost billions of loop
+  iterations per entry).
+- `cli::Args` now implements `Debug` by hand: `--key` entries are redacted to their (non-secret)
+  KID half instead of being printed as the raw `<KID>:<key>` argument.
+- `cli::CliError::BadKey` now carries an already-redacted form of the offending `--key` argument
+  (the KID half if it parsed, otherwise just the argument's length) instead of the raw string, so
+  neither its `Display` nor its derived `Debug` can print key hex.
 
 - `CencDecryptor` on a progressive protected MP4 now honours `co64` chunk offsets (the duplicated raw-byte stbl expander read only `stco`) (#1141).
 - Progressive sample layout (`ProgressiveDemux` and the protected-progressive path of `CencDecryptor`) follows one rule for uniform and per-sample `stsz`: `stsz.sample_count` is authoritative, surplus `stsc`/`stco` capacity (a short last chunk, extra chunks) is tolerated and clamped, and only a shortfall (chunk tables cover fewer samples than `stsz` declares) is an error. `stsc.first_chunk` must now be >= 1 and strictly ascending (ISO/IEC 14496-12 §8.7.4), else `Error::InvalidValue`; the expansion is one forward pass (#1141).
@@ -1658,35 +1010,677 @@ rewrite of `cenc_decrypt`'s remaining box walker (#1081).
   `largesize` header (#1019).
 - CLI `--key` no longer panics on a 32-byte non-ASCII argument and rejects a `+`/`-` sign in the hex.
 
-## [0.24.2] - 2026-09-25
+### Added
+- `CencDecryptor::from_fmp4_bytes` — `from_fmp4` over an already-shared `bytes::Bytes`, so the file is
+  not copied and `demux` hands out samples as slices of it (#1081, r05-O2).
+- `AudioSpecificConfig::effective_sampling_frequency` — the explicit rate when present, else the
+  `samplingFrequencyIndex` rate (#1081, r04-O5).
+- `impl Serialize for SampleEntryVariant` (#1081, r05-O3).
+- `ll_dash::UTCTIMING_HTTP_HEAD_2014` / `_HTTP_XSDATE_2014` / `_HTTP_ISO_2014` /
+  `_NTP_2014` / `_HTTP_NTP_2014` / `_DIRECT_2014` — the registered
+  `urn:mpeg:dash:utc:*:2014` `UTCTiming` scheme identifiers (ISO/IEC 23009-1
+  §5.8.4.11) accepted by `LlDashPackager::with_utc_timing`.
+- `webm_demux::ns_to_ir_ticks` — nanoseconds to IR ticks, rounding to nearest
+  (used for per-frame timing of laced WebM blocks).
+- `ac3::Ec3SpecificBox::from_es_all` — parse every E-AC-3 syncframe of an
+  elementary stream (independent plus dependent), stopping at the first bad
+  sync word or truncated tail.
+- `annexb::NAL_LENGTH_SIZE_MINUS_ONE` — the `lengthSizeMinusOne` (3) an
+  `avcC`/`hvcC` must declare for the IR's 4-byte NAL length prefix
+  (ISO/IEC 14496-15 §5.3.3).
+- `frag_offsets::mdat_ranges` / `MdatRange` / `sample_ranges_in` — scan the
+  file's `mdat` payload ranges once and resolve each `moof` against them.
+- `rfc6381_codec_string(&CodecConfig)` — the RFC 6381 codec string `DashPackager`
+  writes into `Representation@codecs`, exposed so an HLS origin can fill
+  `#EXT-X-STREAM-INF` `CODECS` (#1089).
+- `smooth::SmoothPackager::package_track_fragment` — build **one** Smooth
+  fragment for a single track at an explicit smooth-timeline start (a
+  `SmoothFragment` whose `tfxd` `FragmentAbsoluteTime` is the caller's value
+  and whose duration is the track's own summed `trun` durations), without
+  segmenting the track. Needed by `multimux`'s live Smooth output, whose
+  per-track `c@t` timeline must match the served fragment's `tfxd` and must be
+  stable as the window slides (#1083).
 
-### Security
-Fixes for twelve advisories: GHSA-q6vr-4pp5-mcfv, GHSA-3554-x4jf-7frw, GHSA-2mg2-jj9h-c5vr,
-GHSA-6vc8-3c25-4c9w, GHSA-643q-pgwj-8v2h, GHSA-c722-96gr-hgq2, GHSA-gmmr-7cqm-5p32,
-GHSA-9m92-jr3c-4cq7, GHSA-j76h-pqjr-p54h, GHSA-mq46-69j5-7gqj, GHSA-59ph-4f24-q79x,
-GHSA-v965-v82c-2f8x. Upgrade if transmux parses or encrypts untrusted input.
+- **`init_segment::sampling_rate_override`** (#1081, audit r05-W31) — reads the
+  `srat` value out of an audio sample entry's config children, returning `None`
+  when the box is absent, malformed, or declares `sampling_rate == 0` (a zero
+  rate is not a rate; honouring it would replace a good 16.16 field with "0
+  Hz"). `SamplingRateBox::parse` now also validates the four-CC.
+- **`init_segment::SamplingRateBox` and `init_segment::AudioSampleEntryV1`**
+  (#1081, audit r05-W31). `SamplingRateBox` is the `srat` FullBox
+  (ISO/IEC 14496-12:2015 §12.2.3.1) with `new`/`FOURCC`/`SIZE` and the
+  `Parse`/`Serialize` pair; `AudioSampleEntryV1` names the v1 sound-entry form
+  (§12.2.3.2 as amended by Amd 1:2017) via `ENTRY_VERSION`,
+  `STSD_VERSION`, `SAMPLERATE_PLACEHOLDER` and `rate_fits_v0`. Also new:
+  `SampleEntryVariant::required_stsd_version()`, which reports the `stsd`
+  version an entry demands (1 for an `AudioSampleEntryV1`, else 0).
+- `sample_aes::eac3_encrypt_frame` / `eac3_decrypt_frame` — Sample-AES for a
+  **multi-syncframe** E-AC-3 audio frame, and `ac3::split_eac3_syncframe_ranges`
+  (#1080, audit r05-W2). The protected block is a single syncframe, so each gets
+  its own 16-byte clear leader, whole 16-byte blocks are encrypted and a partial
+  tail is clear (`ac3_encrypt_frame` applies one leader over whatever slice it is
+  handed, which skips the later leaders in a multi-syncframe frame). The IV is
+  **reset at every syncframe**, per the independent oracle
+  (`transmux/tests/fixtures/sample_aes_eac3/`; ffmpeg decodes the reset form 9/9
+  audio frames and a carried chain 1/9, and Bento4's encryptor is byte-identical
+  to the reset reference). Both return `Result`: a payload that is not a clean
+  run of syncframes (no sync word, or a truncated / trailing-junk syncframe) is
+  `Error::InvalidInput` rather than being emitted unchanged or half-encrypted.
+  Carrying the IV across an *independent + dependent* syncframe pair has no
+  independent oracle (`ORACLES.md` B3) — that case resets too and is labelled
+  unverified.
+- **`uri` — RFC 3986 URI-reference parsing and resolution.** `UriReference::parse`
+  (§3) and `to_uri_string` (§5.3), `resolve` (§5.2.2), `merge` (§5.2.3),
+  `remove_dot_segments` (§5.2.4) and `resolve_segment` for a `BaseURL` chain.
+  `try_resolve`/`try_resolve_segment` are the same with a base or reference
+  containing a control character or whitespace **rejected** (`None`), since a
+  raw CR/LF in a URL has no meaning in RFC 3986 and lets a manifest smuggle a
+  second request line into anything that later writes an HTTP request from it;
+  `first_forbidden_char` is the predicate. Also exports the standard's own
+  §5.4.1 and §5.4.2 example tables (`RFC3986_NORMAL_EXAMPLES`,
+  `RFC3986_ABNORMAL_EXAMPLES`) as data, which the crate's tests assert against.
+  This is what `dash_parse::Mpd::resolve_segment_url` /
+  `try_resolve_segment_url` resolve through (#1079, audit r04-W11). The crate
+  root re-exports `resolve_uri_reference`, `resolve_uri_segment` and
+  `try_resolve_uri_reference`.
+- `ac3::split_ac3_syncframes_resyncing` and `ac3::split_ac3_syncframe_ranges` —
+  frame splitting that resynchronises after an unparseable frame, returning byte
+  ranges rather than slices (#1079, audit r04-W20).
+- `ts_hls::StreamingTsHlsSegmenter::with_start_sequence` — seeds a streaming classic-TS
+  segmenter's segment numbering from a caller-given value instead of `Self::new`'s implicit `0`,
+  the classic-TS analogue of `ll_hls::LlHlsSegmenter::with_part_target_at`. Lets a consumer
+  (`multimux::source::segment::ProgramSegmenter`) resume numbering across a rebuild rather than
+  renumbering from `0` against a `Trunk` that already holds segments, which its monotonic
+  `sequence_number` guard rejects forever after.
 
-### Fixed
-- Reject malformed KLV BER lengths, `esds` descriptor sizes, `sinf` child boxes and `pssh` v1
-  bodies with an error instead of panicking.
-- Bound sample-table, sample-group and SPS field counts by the input actually present, so a
-  malformed file is rejected instead of allocating or looping without limit.
-- RTMP chunk reassembly starts a fresh message on every fmt 0/1/2 chunk header instead of
-  carrying over bytes from an incomplete previous message.
-- `CencEncryptor::encrypt` validates every sample before encrypting any, so a rejected call leaves
-  the media and the IV counter untouched, as documented.
-- `KeyMap`, `CencEncryptor` and `CencDecryptor` no longer derive `Debug`: a manual impl on each
-  now redacts content key bytes (KIDs, which are not secret, still print) and, for
-  `CencDecryptor`, summarizes the protected file by length instead of dumping its bytes.
-- `progressive_demux`'s `stsc` chunk-run expansion now clamps each entry's chunk range to the
-  track's actual chunk count before iterating, instead of iterating the wire `first_chunk` value
-  directly (an out-of-range `first_chunk`, up to `u32::MAX`, could cost billions of loop
-  iterations per entry).
-- `cli::Args` now implements `Debug` by hand: `--key` entries are redacted to their (non-secret)
-  KID half instead of being printed as the raw `<KID>:<key>` argument.
-- `cli::CliError::BadKey` now carries an already-redacted form of the offending `--key` argument
-  (the KID half if it parsed, otherwise just the argument's length) instead of the raw string, so
-  neither its `Display` nor its derived `Debug` can print key hex.
+### Changed
+- Dependency bumps, non-breaking (no public API change): `aes` 0.9, `ctr` 0.10, `cbc` 0.2 (RustCrypto 0.13 generation). CENC `cenc`/`cbcs` and HLS Sample-AES ciphertext is byte-identical (oracle fixtures pass).
+
+Optimization sweep (#1079, #1080, #1081). Apart from the three behaviour changes listed under
+`### Changed (breaking)` and `### Fixed`, every change below leaves the output byte-identical on the
+committed fixtures (pinned by `tests/sweep_output_golden.rs`, whose hashes were captured on the
+pre-sweep code) and is backed by a deterministic allocation or work counter
+(`tests/alloc_counts_sweep.rs` and in-module counters), never a timing.
+
+- `MovieFragmentBox` / `TrackFragmentBox` child walks use the crate's one container-child walker (`init_segment::walk_children`) instead of two private `parse_box` loops (#1141).
+- The AAC `esds` -> `DecoderSpecificInfo` / `AudioSpecificConfig` lookup is one `EsdsBox` helper shared by DASH, TS mux and Smooth; a missing DSI in the TS muxer is now `Error::UnexpectedBox` (was `InvalidInput`) (#1141).
+- AC-3 and DTS header parsing share one `bitreader::read_bits_checked` (the DTS copy lacked the `n > 64` check) (#1141).
+- `box_types::box_slices` / `find_top_box` are now the one best-effort top-level box walker over `box_iter`; the copies in `cenc_decrypt`, `media` and `progressive` and `validate::children` are gone, behaviour unchanged (#1141).
+- The four Annex B start-code scanners (`annexb::start_code_positions`, `au::first_nal_start`, the streaming splitter's resumable scan, `au::start_code_len`) and `mpeg_legacy::find_start_code` now share one `annexb::find_start_code_prefix` primitive; behaviour unchanged (#1141).
+- Progressive `stsz`/`stsc`/`stco`/`co64` sample-layout expansion is one `progressive_demux::sample_layout` shared by `ProgressiveDemux` and the protected-progressive path of `CencDecryptor` (#1141).
+- `Segmenter` no longer rebuilds the whole `moov` on every cut to detect an init change that its API
+  cannot produce; the dead detection is deleted (109 -> 18 allocations per cut) (#1081, r05-O5).
+- `hvcC` parsing bounds its array/NAL pre-allocation by the body length (1 581 000 -> 32 bytes for a
+  hostile header) (#1079, r04-O4).
+- `AudioSpecificConfig::heaac_signaling`/`rfc6381` no longer allocate per call (#1079, r04-O2).
+- Duplicates removed (#1079, r04-O1/O5, #1081, r05-O6): `ps_demux`'s copy of the Annex B start-code
+  scanner (now `annexb::start_code_positions`) and its copy of the first-NAL-start finder (now
+  `au::first_nal_start`); the three per-module bit readers (now one `read_bits_at`); the avcC/hvcC
+  byte cursors; the sfi -> Hz table; the esds ASC accessor; the XML writer; the sample-flag constants;
+  the `tfhd`/`trun` builder. The streaming splitter's resumable scan in `au` and
+  `mpeg_legacy::find_start_code` answer different questions and stay separate.
+- `PsDemux` keeps access-unit ranges instead of per-unit copies (MPEG-2 video 3.70x -> 3.05x of input
+  bytes allocated); `TsDemux` hands a live track the PES payload by reference (10.08x -> 9.44x);
+  `read_chunks` moves the per-csid context instead of cloning its partial message (468 750 464 -> 524 544
+  bytes for a 200 kB message); the RTP depacketiser moves each packet into the AU buffer (7.47x ->
+  6.47x); `WebmDemux` partitions blocks by track once (8000 -> 1000 block visits for 8 tracks x 1000
+  blocks) (#1079, #1080, r04-O6/O7/O9/O10).
+- `CencDecryptor` shares the file buffer and slices samples out of it (2.14x -> 1.21x of the file size;
+  0.21x through the new `from_fmp4_bytes`), and its `stsc` expansion is one forward walk (80 599 -> 799
+  entry examinations for 400 chunks) (#1081, r05-O1/O2).
+- `ProgressiveMux` (4.12x -> 2.20x), `MkvMux` (11.45x -> 2.93x) and `TsMux` (7.70x -> 5.40x of the
+  output size allocated) write into pre-sized output buffers (#1081, r05-O4).
+- `Serialize` is implemented once on `SampleEntryVariant`, replacing four 17-arm matches (#1081, r05-O3).
+- `cargo test -p transmux --no-default-features` builds again (the in-crate tests link `std`) (#1079).
+- `jiff` replaces the hand-rolled `civil_from_days` (CLI `availabilityStartTime`); `base64`/`hex` crates replace the hand-rolled codecs.
+
+Intentionally not done: `BitReader::from_rbsp` borrowing (a public lifetime change for one allocation
+per SPS), the three merge-by-decode-time loops (their tie-break rules differ), and a typed-parser
+rewrite of `cenc_decrypt`'s remaining box walker (#1081).
+
+### Changed (breaking)
+- **BREAKING: XML support now requires the `std` feature; hand-rolled XML replaced by `quick-xml`;
+  `roxmltree`/the private tokenizer dropped.** `dash`, `dash_parse`, `smooth`, `smooth_parse`,
+  `ll_dash::LlDashPackager` and `drm::{playready_wrmheader, playready_pro, playready_pssh}` are gated
+  behind `std` (and so are their crate-root re-exports); a `--no-default-features` build keeps
+  everything else (`LlSegmenter`/`Chunk`, the Widevine/FairPlay `pssh` builders, …). The private
+  `xml_parse` tokenizer and `xml_writer` are deleted: parsing is a `quick_xml::Reader` pull loop and
+  every attribute value and text node is written through quick-xml's escaping. Rendered MPD, Smooth
+  manifest, LL-DASH MPD and WRMHEADER output is byte-identical to the previous release for every
+  committed fixture; a value containing `\t`/`\n`/`\r` in an attribute is now written as a character
+  reference (`&#9;`/`&#10;`/`&#13;`) so it survives a re-parse. The parsers are stricter on malformed
+  input (an undefined entity or a mismatched end tag anywhere is an error; a raw `&` in an attribute
+  is no longer tolerated) and `DashParseError`/`SmoothParseError` gain an `Xml { pos, message }`
+  variant; `MismatchedEndTag::expected` is now a `String`. `LlDashPackager` now rewrites the base MPD
+  with `quick-xml` events instead of line-based text surgery.
+
+- **Behaviour differences from the hand-rolled XML code (all follow XML 1.0):**
+  - a literal newline, tab or carriage return inside an MPD/Manifest attribute value is normalised
+    to a space (attribute-value normalisation, XML 1.0 §3.3.3): `<Period id="a⏎b"/>` now parses
+    `id` as `"a b"` (previously `"a\nb"`); write `&#10;` to keep a newline;
+  - an attribute value containing `\t`, `\n` or `\r` is now *written* as `&#9;`, `&#10;`, `&#13;`
+    so it survives a re-parse (`profiles = "a\nb"` renders `profiles="a&#10;b"`);
+  - a duplicate attribute is an error: `<Period id="1" id="2"/>` is `MalformedAttribute` (previously
+    the first value won silently);
+  - `<BaseURL>a<x/>b</BaseURL>` (nested markup in a text-only element) now yields no base URL
+    instead of a `MismatchedEndTag` error;
+  - a character outside the XML 1.0 `Char` production, literal or via a reference
+    (`<BaseURL>&#x1;</BaseURL>`, `id="&#x1;"`), is a structured error.
+- The shared fragment `trun` builder (CMAF, LL-DASH and Smooth fragment writers) returns
+  `Error::InvalidInput` for a sample larger than the 32-bit `sample_size` field (4 GiB); the old code
+  wrapped the size with `as u32` and wrote a misframed `trun` (#1081, r05-O6).
+- **The eight public audio sample-entry structs gained three fields** (#1081,
+  audit r05-W31). `Mp4aSampleEntry`, `Ac3SampleEntry`, `Ec3SampleEntry`,
+  `OpusSampleEntry`, `FlacSampleEntry`, `Ac4SampleEntry`, `MhaSampleEntry` and
+  `DtsSampleEntry` each carry `entry_version: u16`, `reserved_1: [u8; 6]` and
+  `compression_id_and_packet_size: [u8; 4]` — the fixed sound-description
+  fields a parse now preserves (see the round-trip fix below). A struct-literal
+  construction must name them; `entry_version`/`reserved_1` are the QuickTime
+  version and `revision_level`/`vendor`, and
+  `compression_id_and_packet_size` is ISO/IEC 14496-12's
+  `pre_defined`/`reserved` pair or QuickTime's
+  `compression_ID`/`packet_size` (all zeros for output this crate muxes).
+
+- **Transport-stream packaging gained continuity state and closed its
+  `stream_id` families; the CLI and the DASH/LL-DASH packagers changed shape**
+  (#1080, audit r05-W22/W27/W29). New public API:
+  - `transmux::TsContinuity` — per-PID `continuity_counter` state
+    (ISO/IEC 13818-1 §2.4.3.3), threaded across every `.ts` segment by
+    `TsHlsPackager` and `StreamingTsHlsSegmenter`, so concatenating a stream's
+    segments no longer jumps the counter on every PID at each boundary.
+  - `ll_dash::LlDashPackager::with_utc_timing(scheme, value)` and a
+    `pub utc_timing` field, with the `ll_dash::UTCTIMING_*_2014` scheme
+    constants: a `dynamic` MPD without `MPD/UTCTiming` (ISO/IEC 23009-1
+    §5.8.4.11) leaves a client with no way to obtain the wall clock its
+    `availabilityStartTime` is measured against.
+  - `Error::TooManyElementaryStreams { family, max }`: a program exceeding the
+    16-video / 32-audio `stream_id` families (Table 2-22) is refused instead of
+    wrapping into `ECM_stream` or the video range.
+  - `cli::CliError::UnsupportedContainer(&'static str)`: container detection now
+    runs `container-probe` (a `cli`-only optional dependency) and distinguishes
+    "recognised but not demuxable here" from "not recognised".
+  - `TsMux` now returns `Error::BufferCapExceeded` for a non-video PES whose
+    `PES_packet_length` would exceed 65535 (`0`, the unbounded form, is defined
+    only for video), and it now prepends an access unit delimiter to every
+    AVC/HEVC access unit that lacks one.
+  - `validate::validate_media_segment` gained the `media.mdat.overlap`,
+    `media.tfhd.default-base-is-moof`, `media.sample.non-sync-first` (WARNING)
+    and `track.tfhd.unknown-track` checks; `track.tfdt.discontinuity` now pairs
+    fragments by `tfhd.track_id`.
+  - **The CLI's segmented outputs changed shape.** `--segment-duration` is now
+    honoured by every segmented format, so:
+    - `-f hls` writes a separate `init.mp4` (the `#EXT-X-MAP` target) and
+      **media-only** `segN.m4s` files (`styp`+`moof`+`mdat`), where it used to
+      write one self-initializing blob per `#EXTINF` and repeat the init bytes
+      under every segment name. Each `#EXTINF` is the segment's real measured
+      duration (and `#EXT-X-TARGETDURATION` its ceiling), not the presentation
+      span divided by the segment count.
+    - `-f dash` writes per-Representation media segments whose boundaries are
+      **shared** across tracks (so the `segmentAlignment="true"` the MPD
+      declares is true), each carrying no `moov` — ISO/IEC 23009-1 §6.3.4.2
+      forbids one in a media segment.
+    - `-f dash --ll` now emits a `static` MPD with `mediaPresentationDuration`
+      (the CLI writes static files; a `dynamic` MPD over them computes a live
+      edge a player cannot resolve) and **no** `MPD/UTCTiming` unless
+      `--utc-timing-url <URL>` is given — the previous build baked a third-party
+      time server into every LL MPD.
+    - `AdaptationSet@id` values are now emitted (`t0`, `t1`, …), unique within
+      the MPD.
+- **Box containers record their children's wire order, and several public
+  structs gained fields and constructors** (#1080, audit r05-W11/W12 and the
+  round-3 follow-ups). A container's typed fields carry no order of their own,
+  so serializing them in declaration order reordered any file that did not
+  already match — a `moov`'s `pssh` moved after the `trak`s, a subtitle track's
+  `sthd` moved after `stbl`, a `vp09`/`av01` entry's `pasp` moved after its
+  config box, and a `moof`/`traf` lost every child the crate does not model.
+  New public API:
+  - `init_segment::ChildOrder` and a `pub order: ChildOrder` field on
+    `MovieBox`, `TrackBox`, `MediaBox`, `MediaInformationBox`,
+    `DataInformationBox`, `EditBox`, `MovieExtendsBox` and `SampleTableBox`;
+    `ChildOrder::append_opaque(four_cc)` must accompany an `opaque` push on a
+    parsed container so the two stay in step.
+  - `movie_fragment::{TrafChild, MoofChild, OpaqueChild}` and a
+    `pub order: Vec<TrafChild>` / `Vec<MoofChild>` field on
+    `TrackFragmentBox` / `MovieFragmentBox`.
+  - `init_segment::OpaqueBox` and `movie_fragment::OpaqueChild` gain
+    `pub to_end: bool` and `pub largesize: bool`: the `size == 0` and `size == 1`
+    wire forms are preserved rather than rewritten (ISO/IEC 14496-12:2015 §4.2).
+    A `size == 0` child is only written that way when it is its container's last
+    child, since §4.2 defines it as "extends to the end of the enclosing
+    container" and a sibling appended after it would otherwise be swallowed. An
+    opaque child's stored payload is the bytes after `size`/`type` — a `uuid`'s
+    usertype included, the 8 `largesize` bytes excluded.
+  - `sample_entries::SampleEntryChild` (`Config`, or `Other(bytes)`) and
+    `Vp9SampleEntry::children` / `Av1SampleEntry::children`, replacing
+    `extra_boxes`: the config box's position among the entry's children is now
+    recorded.
+  - `movie_fragment::TrackFragmentHeaderBox`/`TrackFragmentRunBox` gain
+    `effective_flags()`; `TrackFragmentRunBox` gains `check_sample_fields`.
+  - `movie_fragment::TrunSample::sample_composition_time_offset` and
+    `frag_offsets::FragmentSampleRange::composition_offset` are `Option<i64>` /
+    `i64`, not `Option<i32>` / `i32`: `trun` version 0's field is unsigned, so a
+    legal v0 offset can exceed `i32::MAX`.
+  - `sample_groups::SampleGroupDescriptionBox` gains
+    `pub default_sample_description_index: Option<u32>` (the v2 syntax field).
+  - `MovieBox`, `TrackBox`, `MediaBox`, `MediaInformationBox`,
+    `DataInformationBox`, `EditBox`, `MovieExtendsBox`, `TrackFragmentBox` and
+    `MovieFragmentBox` gain a `new(...)` constructor, and the `MkvMux` cluster
+    builder returns `Result<Vec<u8>>`; a struct literal must switch to the
+    constructor or set the new fields.
+- **H.264 Sample-AES now chains the CBC state across the encrypted blocks of one
+  NAL; the previous per-block IV reset is corrected** (#1080, audit r05-W1).
+  `sample_aes::h264_encrypt_nal`/`h264_decrypt_nal` restarted the CBC context at
+  every encrypted 16-byte block, so every block after the first in each slice
+  NAL was wrong — the IV is reset only at the start of each NAL, then chains
+  (each block uses the previous ciphertext block as its IV). This is what
+  ffmpeg's `libavformat/hls_sample_aes.c` `decrypt_nal_unit` does: a chained
+  stream decodes identically to clear (10/10 frames) while the old per-block
+  reset decodes to nothing (0/10). Pinned by the independent fixtures in
+  `transmux/tests/fixtures/sample_aes_h264/` (python reference, Bento4
+  `mp4hls`, ffmpeg) — see `ORACLES.md`. **Output bytes change**, so any
+  SAMPLE-AES H.264 output produced by this crate before this fix must be
+  re-encrypted. The transcription (`docs/drm/hls-sample-aes.md` §3.4/§11) and
+  the module doc are corrected to match.
+- **`CencEncryptor::encrypt` rejects overlapping AES-CTR counter-block ranges
+  under `cenc`** (#1080, audit r05-W3). `IvGen::Explicit`'s uniqueness check
+  compared IVs for equality only, but under `cenc` the per-sample IV *is* the
+  128-bit AES-CTR counter block and the counter advances once per 16-byte
+  protected block (ISO/IEC 23001-7 §10.1). A caller that supplied the natural
+  sequential list `base + i` passed that check while sample *i+1*'s first
+  keystream block equalled sample *i*'s second — a two-time pad across every
+  consecutive pair, the exact bug the uniqueness rule exists to prevent. Such a
+  config is now `Error::InvalidInput`, checked on the planned IV/subsample
+  sequences before a byte is ciphered (so a rejection still leaves `media`
+  byte-identical), and `cbcs` is exempt because its IV seeds a CBC chain rather
+  than a counter. An existing per-sample IV list must be spaced by at least the
+  preceding sample's protected block count.
+- **`IvGen::Counter` under `cbcs` now emits 16-byte per-sample IVs** (#1080,
+  audit r05-W4). It emitted 8-byte IVs — the shape this module's own
+  `IvGen::Constant` doc records that Bento4's `mp4decrypt` silently no-ops, so
+  a default `EncryptConfig { scheme: Cbcs, iv: IvGen::default(), .. }` produced
+  output a reference decryptor would not touch. The width is now
+  scheme-dependent (8 under `cenc`, the common CMAF convention; 16 under
+  `cbcs`), so existing `cbcs` output changes and any decryptor must be fed the
+  matching `tenc.default_per_sample_iv_size`.
+- **`smooth_parse::track_spec_from_quality_level` dispatches on the `QualityLevel`'s
+  `FourCC` instead of assuming H.264/AAC** ([MS-SSTR] §2.2.2.5). Every audio level was
+  parsed as an AudioSpecificConfig whatever its FourCC, so a Dolby `FourCC="EC-3"`/`"AC-3"`
+  level (whose `CodecPrivateData` is Dolby, and which "parses" as an ASC for any ≥2-byte
+  input) produced a garbage `CodecConfig::Aac` track with a nonsense rate/channel count;
+  a non-H264 video level likewise built an `avcC` from bytes that are not Annex-B SPS/PPS.
+  The match is now case-insensitive over `H264`/`AVC1` (video) and `AACL`/`AACH` (audio);
+  any other token — a Dolby `EC-3`/`AC-3`, an `H265`, a private one — returns
+  `Error::UnsupportedCodec` (reject-only: Dolby audio, HEVC video are not synthesised).
+  An empty `CodecPrivateData` on an `AACL`/`AACH` level now synthesises the
+  `AudioSpecificConfig` from `SamplingRate`/`Channels` (ISO/IEC 14496-3 §1.6.2.1) instead
+  of failing `BufferTooShort` — the plain **core** AAC-LC config for both FourCCs, so an
+  `AACH` level's SBR is carried implicitly (the hierarchical explicit-signalling form is not
+  synthesised; the `esds` reports the core rate, not twice it). A `SamplingRate` that is not
+  an ISO/IEC 14496-3 Table 1.10 entry, or a channel count with no Table 1.19 configuration
+  (Table 1.19 has no 7-channel entry — `Ch7_1` is eight), is `Error::UnsupportedCodec`
+  rather than a guessed value. Both the SPS-decoded geometry and the `MaxWidth`/`MaxHeight`
+  fallback are converted to the IR's `u16` with `try_from`, so an over-range value is
+  `Error::InvalidValue` rather than a wrapped dimension (#1080, audit r04-W41).
+- **`vvc_config::VvcPtlRecord::general_constraint_info` is a `Vec<u8>`, not a `u64`**, and
+  `VvcDecoderConfigurationRecord::dimensions` returns `Option<(u32, u32)>`, not
+  `Option<(u16, u16)>` (#1080, audit r04-W42). `num_bytes_constraint_info` is a 6-bit field,
+  so a `general_constraint_info` of more than 8 bytes (up to 502 bits) did not fit a `u64`:
+  the reader rejected it with `n > 64`, failing the whole `vvcC` and with it the whole VVC
+  track — and `decode_vvc_sps` likewise rejected any SPS with `gci_present_flag == 1`, which
+  is ordinary in the field. The SPS reader now steps over the `general_constraint_info()`
+  block exactly (ITU-T H.266 §7.3.3.2) instead of rejecting it, and the payload is carried as
+  bytes. `dimensions()` widened because `sps_pic_width_max_in_luma_samples` is `ue(v)`: a
+  `u16` cast reported a wrapped geometry (65 536 → 0). A caller converting to the sample
+  entry's `u16` field uses `try_from`.
+- **`sps::rfc6381_vvc1` takes the constraint bytes as `&[u8]`, not a `u64`**, and
+  `VvcPtlRecord` serialization validates `general_constraint_info` (#1080, audit r04-W42).
+  The `u64` argument could not represent a constraint block wider than 64 bits, so it went
+  with the `Vec<u8>` field; a caller must pass `&ptl.general_constraint_info`. A record whose
+  `general_constraint_info` is shorter than its `num_bytes_constraint_info` is now
+  `Error::InvalidValue` on serialize instead of panicking on an out-of-bounds index. The SPS
+  reader also skips the exact reserved-bit count of `general_constraints_info()` (ITU-T H.266
+  §7.3.3.2: `gci_num_additional_bits - (n > 5 ? 6 : 0)` `gci_reserved_bit`s) instead of
+  skipping none for a count of 1..=5.
+- **Pass-through demuxers normalise NAL length prefixes to the crate's 4-byte form and say so
+  in the config they emit** (`WebmDemux`, `FlvDemux`, `StreamingFlvDemux`) (#1080, audit
+  r04-W43). An `avcC`/`hvcC` declares its NAL length-prefix size as `lengthSizeMinusOne + 1`
+  (ISO/IEC 14496-15 §5.3.3: 1, 2 or 4 bytes), and these demuxers carried a block's payload
+  verbatim — but the rest of the pipeline (`iter_length_prefixed_nals`, keyframe detection,
+  the TS/RTP writers) is fixed at 4 bytes, so a 2-byte-length source parsed every sample as
+  garbage lengths and produced a corrupt stream. New `annexb::normalise_nal_length_size` /
+  `iter_length_prefixed_nals_with` rewrite a sample's prefixes, and the emitted
+  `AVCDecoderConfigurationRecord`/`HEVCDecoderConfigurationRecord` now carries
+  `length_size_minus_one = 3` so a fMP4/CMAF/TS mux describes the samples it actually has
+  (previously it kept the source's value, promising 2-byte lengths over 4-byte samples). The
+  framing is validated for every length size, including the canonical 4 (a declared length
+  past the buffer is an error rather than a silent pass-through); a length size other than 1,
+  2 or 4 is an error — 3 (`lengthSizeMinusOne = 2`) is reserved by §5.3.3, so it is rejected
+  rather than guessed at.
+- **`Fmp4Demux` and `ProgressiveDemux` normalise an AVC/HEVC track's NAL length prefixes the
+  same way** (`media::normalise_track_nal_lengths`) (#1080, audit r04-W43). Both carried a
+  sample's bytes verbatim, so an fMP4 whose `avcC`/`hvcC` declared `lengthSizeMinusOne` 0 or 1
+  gave the IR 1-/2-byte-prefixed samples while every downstream consumer
+  (`iter_length_prefixed_nals`, keyframe detection, the TS/RTP writers) is fixed at 4 bytes —
+  a corrupt remux. The samples are now rewritten and the reported config's
+  `lengthSizeMinusOne` set to match; a track whose samples then fail to walk (a truncated
+  prefix, a declared length past the buffer) is skipped with a reason rather than passed on.
+- **`vpcC` boxes whose FullBox version is not 1 are now rejected outright** (#1080, audit
+  r04-W44). The VP Codec ISO Media File Format Binding v1.0 declares
+  `FullBox('vpcC', version = 1, 0)` and states "Version 0 is deprecated and should not be
+  used" — it publishes no v0 syntax for the record. The parser previously accepted any
+  version and always read the v1 layout, so a **version-0 box (written by some early
+  ffmpeg/libwebm muxers) parsed to wrong bit depth / chroma / colour values and was then
+  re-serialized as v1**. Such boxes are now `Error::InvalidValue` on both parse and
+  serialize, so media that used to demux (incorrectly) no longer parses at all — the intended
+  behaviour, since a guessed layout is worse than a clear refusal. `Vp9ConfigurationBox`
+  loses the two `color_space` / `transfer_function` fields that existed only for that
+  undocumented layout, so a caller constructing the struct must drop them. `bit_depth` (4
+  bits) and `chroma_subsampling` (3 bits) are written through the checked `fit_bits` helper,
+  so an over-range value is `Error::FieldOverflow` instead of shifting bits out of the byte or
+  corrupting `videoFullRangeFlag`. A `codecInitializationDataSize` that overruns the box is
+  `Error::BufferTooShort` rather than a silent `min(len)` truncation.
+- **Every serializer writes its reserved/`pre_defined` bytes as zeros instead of skipping
+  them** (audit r04-W45). `Serialize::serialize_into` accepts any `&mut [u8]`, so a reused or
+  dirty output buffer kept whatever was there: `VisualSampleEntry`'s 6 + 16 reserved bytes and
+  the audio `SampleEntry`/`AudioSampleEntry` 6 + 8 + 4 reserved/`pre_defined` bytes
+  (`sample_entries.rs`), the `stpp`/`wvtt` 6 reserved bytes (`subtitle_entries.rs`), `mvhd`'s
+  reserved(10)/`pre_defined`(24), `tkhd`'s reserved(4)/reserved[2](8)/reserved(2), `mdhd`'s
+  quality(2), `hdlr`'s `pre_defined`(4)+`reserved[3]`(12) and `smhd`'s reserved(2)
+  (`init_segment.rs`), and the `vpcC`-style bit writer used by the VVC PTL record
+  (`vvc_config.rs`, which OR-ed set bits and left alignment padding untouched) all emitted
+  garbage, which a conformance validator rejects. Each site now zeroes the range it advances
+  over, and a dirty-buffer test covers `mvhd`, `tkhd` (v0/v1), `mdhd`, `hdlr`, `smhd`, `vmhd`
+  and every audio sample-entry FourCC.
+- **The manifest XML tokenizer ends a start tag at the first `>` outside a quoted attribute
+  value, and resolves numeric character references in attribute values** (audit r04-W46). XML
+  1.0 §2.4 requires only `<` and `&` to be escaped in an attribute value, so a `>` there is
+  legal raw — but the tag scan stopped at it, truncating a DASH `SegmentTemplate@media` or a
+  `ContentProtection` value (and every later event was misparsed). Numeric references
+  (`&#38;`, `&#x26;`) were also left literal, so a template written with them resolved to a
+  URL containing `&#38;`; attribute values now use the same resolution rule as text content.
+  A reference candidate also ends at the next `&` as well as the first `;`, so a bare `&`
+  before a later valid reference (`"a & b &amp; c"`) no longer consumes it as text.
+  A numeric reference outside XML 1.0 §2.2's `Char` production (a zero code point, a bare
+  control character, a surrogate, anything above `#x10FFFF`, or a leading `+`/`-`) is left
+  verbatim rather than decoded into an illegal character, and the reference scan advances past
+  the terminating `;` (or the whole malformed `&`-run) every iteration, so it is linear in the
+  input rather than rescanning each `&`.
+- **`RtpPacketiser` now stamps each access unit's RTP timestamp with the sample's
+  `pts`, not its `dts`** (audit r04-W29). RFC 6184 §5.1: "The RTP timestamp is set
+  to the sampling timestamp of the content", and receivers "SHOULD use the RTP
+  timestamp for synchronizing the display process" — a *presentation* time. On a
+  B-frame stream the two differ substantially (`fixtures/ts/h264/high.ts`: 12 of
+  its 15 samples), and stamping decode times made a receiver present frames in
+  decode order at the wrong instants.
+- **`RtpPacketiser` fragments an AAC access unit that exceeds the payload budget
+  instead of refusing it** (audit r04-W31). RFC 3640 §3.2.3.1 requires it — one
+  fragment per packet, all sharing the AU's timestamp, marker on the last — and
+  §3.2.3.2 makes the AU-header's `AU-size` the size of the *entire* AU rather than
+  of the fragment, which is exactly what lets a receiver reassemble. Such an AU is
+  the ordinary case for high-rate audio (a 640 kb/s 5.1 frame is ~3.7 kB), and a
+  track carrying one previously failed to packetise at all.
+
+- **`RtpPacketiser` gives every stream its own SDP payload type.** A payload type is
+  a session-wide binding (RFC 3551 §6 reserves 96-127 "for dynamic assignment"), but
+  only "has a video track been seen" was tracked, so a third video (or audio) track
+  reused `video_pt + 2` — colliding with the second track's type — and `96 + 2 = 98`
+  collided with `DEFAULT_KLV_PT`. Allocation now walks the dynamic range from the
+  configured bases (96 video, 97 audio by default, both still honoured for the
+  common single-video/single-audio session) and never reuses a value, erroring with
+  `Error::InvalidInput` if a session needs more than the 32 dynamic types. The
+  generated SDP's `a=rtpmap` therefore binds each stream exactly once.
+- **The generated SDP gains a session-level `c=` line** (RFC 4566 §5.7: "A session
+  description MUST contain either at least one `c=` field in each media
+  description or a single `c=` field at the session level"). Without it a strict
+  parser had no connection data to resolve and rejected the description. The
+  address is `LOCAL_CONNECTION_ADDRESS` (the loopback the `o=` line already names);
+  `build_sdp_with_connection` is new for a caller that transmits elsewhere.
+
+- **`rtp::RtpInputStream` is `#[non_exhaustive]` and can no longer be built by struct
+  literal** — use `RtpInputStream::new(kind, packets)` plus `with_clock_rate`/
+  `with_config`, which also validate kind/clock/config agreement (see below). It
+  gains `clock_rate` and `config` fields on top of that, and the batch
+  `RtpDepacketiser` now describes each depacketised track with its own payload
+  format, RTP clock and codec config (audit r04-W30). An RTP timestamp is a count
+  in the stream's own clock (RFC 3550 §5.1), but every track the depacketiser
+  returned was declared AVC at the 90 kHz video clock — so an AAC stream came back
+  as a 90 kHz video track whose durations were the audio sample counts (1024 per
+  frame, not 1920), and any packager consuming it wrote a video sample entry for
+  audio. `Media`'s movie timescale was `0` for the same reason and is now the video
+  clock. `RtpInputStream::new`/`with_clock_rate`/`with_config` build the struct
+  (`#[non_exhaustive]`, so its fields are no longer directly constructible).
+  An AAC stream with no `config` is now `Error::InvalidInput` rather than silently
+  described by an invented AVC config: RTP carries no codec config, so a caller
+  must supply the SDP's `config=` parameter (RFC 3640 §4.1). A zero `clock_rate` is
+  rejected for the same reason. **An AAC stream's clock rate is taken from its
+  config's own sample rate** — RFC 3640 §3.1 defines an MPEG-4 audio stream's RTP
+  clock as its sampling rate, so `with_config` sets it and the
+  `DEFAULT_AAC_CLOCK_RATE` (48000 Hz) constructor placeholder is replaced; a rate
+  asserted with `with_clock_rate` that disagrees with the config, a non-90 kHz
+  clock on an AVC config, and a `kind` that disagrees with the config's variant are
+  each `Error::InvalidValue`/`Error::InvalidInput` rather than silently timed at
+  whichever value happened to win. A caller constructing the struct literally must
+  add the two fields (plus the private explicit-clock flag).
+
+- **`StreamingFlvDemux` now emits `DemuxEvent::TrackUpdated` when a publisher re-sends a track's
+  sequence header, carrying the new codec config** (FLV/RTMP ingest). Previously the second and later
+  sequence header was ignored, so an encoder that changed resolution, profile, sample rate or
+  channel count mid-publish (routine for OBS/ffmpeg) kept reporting the stale config and every
+  downstream init segment described a stream that was no longer being sent. `TrackUpdated` was
+  documented as never changing `config`; it can now, and a consumer must treat it as "reload the
+  init segment" (#1079, audit r04-W13). `DemuxEvent::TrackUpdated`'s doc is updated accordingly.
+- `FlvDemux::unpackage` and `StreamingFlvDemux::feed` return
+  `FlvError::Codec(Error::InvalidInput)` for an AVC sequence header whose SPS decodes to a width or
+  height that does not fit the IR's `u16`. An SPS's `pic_width_in_mbs_minus1` is an unbounded
+  `ue(v)`, so a 65 536-wide SPS previously came back as a track claiming width 0 (#1079, audit
+  r04-W38).
+- **`FlvMux::package` now returns `FlvError::Codec(Error::InvalidInput)` for a composition offset it
+  cannot represent and for a zero track timescale**, rather than writing a truncated or flattened
+  value. An offset outside `CompositionTime`'s signed 24-bit millisecond field (Annex E §E.4.3.2)
+  used to be written with its low 24 bits, describing a moment the sample is not at; and a track
+  whose `TrackSpec::timescale` is 0 made every tag's `Timestamp` 0, flattening the whole file onto
+  one instant (#1079, audit r04-W12). A zero timescale is reachable: `RtpDepacketiser` has produced
+  such tracks (audit r04-W30).
+- `rtmp::RtmpError` gains the `Amf0TooDeep { depth }` variant. The enum is `#[non_exhaustive]`, so
+  this is an additive change for matching callers, but an exhaustive `match` over it outside this
+  crate (allowed only via a wildcard arm) now has a case it did not before (#1079, audit r04-W27).
+- **Several paths that previously returned a value now return an error**, because accepting the
+  input produced a box/header that misdescribed itself. Each is listed again under `### Fixed` with
+  its full rationale:
+  - `FlacSpecificBox::parse` rejects a `dfLa` metadata block whose declared 24-bit length runs past
+    the end of the box, and a first block that is not STREAMINFO (r04-W17).
+  - `BoxHeader::serialize_into` rejects a `uuid` header with no `usertype`, a header with
+    `size == 1` but no largesize, and a compact header whose `size` exceeds 32 bits (r04-W8).
+  - `ColourInformationBox::serialize_into` rejects a `nclx` `colr` with no `nclx` params (r04-W39).
+  - `ESDescriptor::serialize_into` rejects a `streamDependenceFlag`/`URL_Flag`/`OCRstreamFlag` that
+    disagrees with its field (r04-W24).
+  - `Ec3SpecificBox::serialize_into` rejects `substreams.len() != num_ind_sub + 1` (r04-W6).
+  - `webm_demux::WebmDemux` rejects a laced block whose declared lace sizes do not
+    describe its payload (r04-W40).
+- **`klv::crc16_ccitt` is removed, replaced by `checksum_bcc16`** (audit r04-W10). The
+  name documented the wrong algorithm: MISB ST 0601 tag 1 is a running 16-bit sum, not a
+  CRC (§5.5/§7.1). A caller that used `crc16_ccitt` directly should call `checksum_bcc16`
+  instead; its result is deliberately different.
+- **`klv::UasLocalSet::serialize_with_checksum` writes a different (correct) tag-1 value**,
+  so byte-for-byte comparisons against a packet this crate produced before the change will
+  differ — as will `verify_checksum`'s verdict on any real ST 0601 stream, which it now
+  accepts (r04-W10).
+- **`dash_parse::Mpd` gains a `base_url: Option<String>` field**, and
+  `dash_parse::Period`, `AdaptationSet` and `Representation` each gain one
+  (`BaseURL`, §5.3.9.2), and `Mpd::parse` now resolves
+  `SegmentTemplate` inheritance attribute-by-attribute rather than whole-element, so the
+  `segment_template` a caller reads is the merged effective one (r04-W11). A struct literal
+  for any of the four must add the new field; code that relied on a child's template
+  *replacing* its parent's now sees the inherited values, which is the spec behaviour.
+  `Mpd::base_url_chain` and `Mpd::resolve_segment_url` are new.
+- `ps_demux::PsDemux` emits one track per `private_stream_1` substream rather than one per
+  `stream_id`, so a PS whose 0xBD stream multiplexes several substreams now yields several
+  tracks (and skips substreams that are not AC-3) (r04-W19). Its signatures are unchanged,
+  but a video stream whose reassembled Annex B data exceeds `au::AccessUnitSplitter`'s
+  buffered-NAL cap is now an error rather than a silently absent track (r04-W21).
+- `au::AccessUnitSplitter::push` now returns `Result<()>`: a stream whose open NAL or assembled
+  access unit grows past a 64 MiB cap without completing is rejected instead of buffering without
+  limit (`Error::InvalidValue`). The bound is far above any real coded picture, so a conformant
+  stream never reaches it (#1079, audit r04-W3).
+- `mp4esds` descriptor types now record the wire width of their size varint and every uncommon
+  sub-descriptor, and `ESDescriptor` presence is derived from its fields. `DecoderSpecificInfo`,
+  `SLConfigDescriptor` and `DecoderConfigDescriptor` gain a `size_width: usize` field;
+  `DecoderConfigDescriptor` and `ESDescriptor` gain `unknown_descriptors: Vec<UnknownDescriptor>`
+  (new public type); `ESDescriptor` gains `size_width`. Constructors `DecoderSpecificInfo::new`,
+  `SLConfigDescriptor::new`/`predefined_two`, `DecoderConfigDescriptor::new` and
+  `ESDescriptor::new` cover the common MP4-storage shapes. An `esds` authored with minimal
+  (GPAC/Apple/Bento4) size varints previously always re-serialized with the 4-byte expanded form, so
+  it grew on every round trip; unmodelled sub-descriptors (e.g. the
+  `ProfileLevelIndicationIndexDescriptor` 0x14, an IPI pointer or language descriptor) were dropped
+  entirely; and a `streamDependenceFlag`/`URL_Flag`/`OCRstreamFlag` set without its field made the
+  declared descriptor size count bytes that were never written, misframing the descriptor while
+  still returning `Ok` (now `Error::InvalidValue`) (#1079, audit r04-W24).
+
+- `ac3::Ec3SpecificBox` gains a `reserved_tail: Vec<u8>` field (ETSI TS 102 366 §F.6.2.14) and its
+  serializer now returns `Error::InvalidValue` when `substreams.len() != num_ind_sub + 1`, because
+  §F.6.1 derives the independent-substream count from `num_ind_sub` — a mismatched struct previously
+  serialized to a `dec3` that parsed back differently. The tail is captured verbatim on parse, so a
+  Dolby Atmos `dec3` (whose extension signalling lives in those reserved bytes) now survives a
+  parse/serialize round trip instead of being dropped (#1079, audit r04-W6).
+- `ac3`'s `chanmap`->`chan_loc` derivation is corrected against ETSI TS 102 366 §E.1.3.1.8 / §F.6.2.13:
+  Table E.1.4 numbers its bits **MSB-first** ("bit 0 … is stored in the most significant bit of the
+  `chanmap` field"), so the previous `1 << n` test read every location mirrored. The `bsi()` walk
+  also gates the programme-mix block on `strmtyp == 0x0` rather than "not a dependent stream", since
+  `strmtyp == 0x2` is an AC-3-derived *independent* stream with no programme-mix block. Both tables
+  and the `bsi()` structure are transcribed with clause citations in
+  `docs/codec/eac3-bsi-chanmap.md`. (#1079, audit r04-W5)
+- `ac3::Ec3SyncframeInfo` gains `chanmap: Option<u16>` and `bsmod: u8`;
+  `Ec3SyncframeInfo::into_dec3` and the new `Ec3SpecificBox::from_syncframes` both return `Result`.
+  They take the syncframes of a **single access unit** (`Ec3SyncframeInfo::from_es_first_au`) so
+  dependent substreams are folded into `num_dep_sub`/`chan_loc` and `num_ind_sub` is §F.6.2.3's
+  "substreamID of the last independent substream". Previously the count came from the writing
+  frame's own `substreamid`, `num_dep_sub` was always 0, `chan_loc` always `None`, and `bsmod` was
+  hardcoded 0 — so a 7.1 DD+ stream was signalled as 5.1 with an inflated substream count. Feeding
+  a whole demuxer backlog (N repeated access units -> N substreams, `data_rate` summed) is what
+  `ts_demux` did and produced a `dec3` its own serializer rejects; a dependent-only or empty slice
+  now returns `Error::InvalidValue` rather than that unserializable box (#1079, audit r04-W5).
+
+- **`sample_aes::ExtXKey::to_tag` now returns `Result<String>`** (was
+  `String`), and the inherent `Display` impl for `ExtXKey` is removed
+  (issue #1140 / audit r05-W10, T12): `uri`/`keyformat`/
+  `keyformatversions` are caller-supplied (often assembled from a
+  key-server request) and previously went straight into the tag with no
+  validation, so a `"`, CR or LF in any of them terminated the attribute
+  list and injected arbitrary playlist tags. `to_tag` now builds through
+  `broadcast_hls::AttrValue`'s checked constructors and the shared
+  `broadcast_hls::render_attribute_list` (the single workspace attribute
+  renderer this issue introduced), returning the new
+  `Error::HlsAttrValue` for an invalid value instead.
+- Serializers now return an error, instead of silently truncating, when a length, count, or
+  offset does not fit its wire field (#1129). `Error` gains a new `FieldOverflow` variant; several
+  previously-infallible builders (`transmux::rtmp::write_chunks`, `MessageHeader::write_into`,
+  `OutTag::write_into`, `HevcNalUnit`/`HevcNalArray::serialize_into`, `drm::playready_pro`/
+  `playready_pssh`) now return `Result` for the same reason.
+- `cenc::SampleAuxInfoSizesBox` and `init_segment::SampleSizeBox` gain a `sample_count: u32`
+  field. Previously the uniform-size form (`default_sample_info_size`/`sample_size != 0`) derived
+  the wire `sample_count` from the always-empty per-sample table, so it silently collapsed to 0 on
+  every parse -> serialize round trip of a real whole-sample-protected or constant-bitrate track
+  (#1013, #1018).
+- `init_segment::Mp4aSampleEntry` gains a `codec_type: [u8; 4]` field recording the real sample
+  entry four-CC (`mp4a` or `enca`); serialize previously hard-coded `mp4a`, silently re-labelling a
+  CENC-protected (`enca`) audio track as clear (#1017).
+
+- **`StreamingTsDemux` now emits `DemuxEvent::TrackUpdated` when a TS track's
+  in-band codec configuration actually changes mid-stream, and drops — rather
+  than delivers — access units damaged by a continuity-counter gap**
+  (#1080, audit r04-W49/W51). Both are visible behaviour changes for a consumer,
+  which is why they are listed here as well as under `### Fixed` below.
+
+  **`TrackUpdated` from TS.** Codec-config recovery used to be single-shot for
+  the life of a stream, so a mid-stream SPS/PPS or AAC-config change (an SD↔HD
+  ad break, a re-encode, a multiplex reconfiguration) left the track labelled
+  with its original `avcC`/`hvcC`/`esds`. Now an AVC/HEVC track whose
+  accumulated parameter sets change, or an AAC track whose
+  `audioObjectType`/`samplingFrequencyIndex`/`channelConfiguration` change,
+  raises `DemuxEvent::TrackUpdated` with the same `track_id` and the new config
+  — the two-source contract `DemuxEvent::TrackUpdated` already documented for
+  FLV. A consumer that rebuilds its init segment only on `TrackAdded` will now
+  miss such a change; `TrackUpdated` means "reload the init segment / rebuild
+  the sample entry". An **unchanged** repeat emits nothing, so the event rate
+  stays low (encoders resend their headers on every keyframe).
+
+  **Damage-aware delivery.** An access unit is dropped rather than delivered
+  truncated when either of two things is true, and only these two:
+
+  1. a continuity-counter gap landed on one of **its own** packets (a gap on a
+     continuation packet: those bytes provably belong to it); or
+  2. it is a **bounded** PES (`PES_packet_length != 0`) that arrived shorter
+     than its own header declared — no continuity-counter evidence is needed for
+     this one, since the declared length settles it outright.
+
+  A legal §2.4.3.3 duplicate packet is discarded before it reaches the
+  reassembler (it used to be detected for the CC check and then fed in anyway,
+  duplicating 184 payload bytes inside the access unit under construction). A
+  stream with genuine CC gaps therefore yields **fewer samples than before** —
+  the damaged ones are gone rather than corrupt.
+
+  A `discontinuity_indicator` is **not**, by itself, a reason to drop anything.
+  It marks where the source's time base changes, and a normal HLS or splice seam
+  has an intact last unit of the old segment immediately before it; treating the
+  indicator as damage lost that unit at every seam. When the indicator lands on
+  a *continuation* packet it coincides with a gap and rule 1 applies as usual.
+
+  **Documented tradeoff (unbounded PES at a CC-jump boundary).** A
+  `payload_unit_start` ends the previous unit, so a counter restart there is the
+  ordinary segment-concatenation shape and is not damage. For an **unbounded**
+  PES (`PES_packet_length == 0`, what every video PES uses) that also means an
+  access unit which really did lose its tail is indistinguishable from one that
+  ended cleanly, and it is delivered. H.222.0 gives no length to tell them
+  apart: the alternative — dropping every unit that precedes a counter jump —
+  loses a whole access unit at every seam instead of occasionally carrying a
+  short one. A bounded PES has no such tradeoff.
+
+  **ADTS channel count.** `CodecConfig::Aac`'s `channel_count` for a TS AAC
+  track now maps `channel_configuration` through ISO/IEC 14496-3 Table 1.19
+  instead of using the raw field: configuration 7 reports **8** (7.1) where it
+  used to report 7, and configuration 0 (an in-band `program_config_element`,
+  which this crate does not decode) reports **0** — "not derivable", never a
+  fabricated count, matching `flv_stream`'s convention. A caller that treated 0
+  as "mono" must check for it.
+
+  **Signalled-discontinuity rebase.** A TS track's decode timeline is now
+  rebased at a signalled discontinuity so `dts` stays monotonic across a splice;
+  previously every downstream muxer could write negative or zero deltas there.
+  The rebase is **scoped to the signalling program**: per ITU-T H.222.0
+  §2.4.3.5 a system time-base discontinuity is signalled on the program's
+  `PCR_PID`, so only that program's elementary streams are lifted and a
+  multi-program multiplex leaves the other services' timelines untouched. The
+  lift is non-negative and one nominal frame period past the last stamp emitted
+  (never a reduction, so a forward splice survives as the real gap it is), and
+  the frame period it uses is the **median of the last five** plausible
+  inter-access-unit steps, capped at one second — so a single late access unit
+  or an 8-second splice cannot become "the frame period" for the frames that
+  follow.
+- `uri` module removed (`UriReference`, `resolve`, `merge`, `remove_dot_segments`, `resolve_segment`, `try_resolve*`, `first_forbidden_char` and the `RFC3986_*` tables, plus the crate-root `resolve_uri_reference`/`resolve_uri_segment`/`try_resolve_uri_reference`). Replaced by `base_url::{resolve, resolve_chain, first_forbidden_char}` over `url::Url` (`std` only; also `resolve_url_reference`/`resolve_base_url_chain` at the root). `Mpd::resolve_segment_url` now takes the MPD's own URL (`Option<&url::Url>`) as its first argument and returns `Option<String>`; `Mpd::try_resolve_segment_url` is removed. `BaseURL` entries are trimmed before the control-character guard (XML layout whitespace is harmless); an interior control character or space still yields `None`. Differences from the old resolver, each with an example: with no base a relative input still resolves to a contained relative result (`../../../etc/passwd` -> `etc/passwd`, as before; `%2e%2e/x` behaves like `../x`) and only an absolute-path reference the MPD wrote itself (`/x`) comes back absolute; an input naming the internal `transmux-relative:` scheme is `None`; the host is lower-cased and a default port dropped (`http://H:80/x` -> `http://h/x`); non-ASCII is percent-encoded (`é.m4s` -> `%C3%A9.m4s`); the `//g` network-path row serialises as `http://g/` and `http:g` against an `http` base resolves relatively (WHATWG, listed in `tests/base_url.rs`); a reference that does not parse is `None`.
+- `build_sdp_with_connection(IpAddr, Vec<sdp_types::Media>)` replaces the `&str` media-block parameter; RTP SDP generation is `std`-only (`RtpOutput::sdp` exists only with the `std` feature). The SDP bytes are identical (golden-tested). `sdp-types` 0.2 and `url` types appear in the public API.
+- DASH writer: `xs:duration` attributes are the shortest ISO 8601 form (`PT2.0S` -> `PT2S`, `PT0.0S` -> `PT0S`, `PT3.0S` -> `PT3S`, `PT90.0S` -> `PT1M30S`); equal durations, different bytes.
+- `dash_parse::parse_iso8601_duration` now checks the XML Schema 1.1 `xs:duration` lexical space (then converts with `jiff`) instead of hand-splitting. Every valid form representable as an unsigned `Duration` is accepted (including seconds fractions longer than nine digits, truncated to nanoseconds as before: `PT3.6666666666666665S`). Accept/reject changes vs the previous parser, with examples:
+  - now rejected, were accepted: a unit with no digits (`PTS`, `PTHS`, `PTMS` read as zero), `PT.5S` (XSD needs a digit before the point), a `+` sign (`PT+1S`, `P+1D`), and magnitudes beyond `jiff`'s span limits (`PT999999999H`, `P999999999999D`: the old parser saturated; they are now `InvalidDuration`, never a panic).
+  - unchanged rejections (still `InvalidDuration`): lower-case designators (`PT1h30m`, `Pt1S`), weeks (`P1W`), fractions on hours/minutes (`PT1.5H`), the comma separator (`PT1,5S`), calendar units (`P1Y`, `P1M`, `P1Y2M3DT4H5M6.7S`: lexically valid but a `Duration` has no calendar), negative durations (`-PT1S`: valid XSD, `Duration` is unsigned), trailing garbage and mis-ordered units.
+- `rtp::base64_decode` is stricter than the pre-crate decoder: input whose length is 1 mod 4 (`QUJDR`) is an error (the stray character used to be dropped silently), and `=` anywhere other than as the final one or two characters (`Zm9v=YmFy`, excess padding `Zg===`) is an error. Padding stays optional and non-zero trailing bits stay tolerated.
+- CLI `--key` hex now rejects a `+`/`-` sign and non-ASCII input (it used to accept the sign, and panic on non-ASCII).
+
+- `ESDescriptor::parse` now reads the bytes `Serialize` writes — `ES_DescrTag` + expandable-size varint + body — instead of the body alone, so the public `Parse` impl no longer misreads that framing as `ES_ID`/flags/`URLlength` and silently truncates the descriptor chain; an `esds` carrying a `URLstring` longer than ~100 bytes (up to the 255 its 8-bit `URLlength` allows, ISO/IEC 14496-1 §7.2.6.5) no longer fails parse with a spurious `BufferTooShort` (#1148).
+  **Breaking (migration):** the *input contract* of the public `Parse` impl changed: it used to read
+  the bare descriptor body and now reads the framed bytes `Serialize` writes (`ES_DescrTag` +
+  expandable-size varint + body). A caller that previously fed `ESDescriptor::parse` the bare body
+  (the bytes after a manually stripped tag/size prefix) must now pass the framed bytes instead, or
+  keep parsing through `EsdsBox::parse_body`/`parse_box`, which strip the box and FullBox framing
+  themselves and pass exactly what this impl expects. The only in-workspace caller was
+  `EsdsBox::parse_body` (`esds` box path); no other crate, example, fuzz target or binding calls
+  `ESDescriptor::parse`. Feeding bare-body bytes now returns `InvalidValue { field:
+  "descriptor_tag" }` (or a silently misread result if the first body byte happens to be `0x03`).
+- `ESDescriptor::parse` rejects a non-UTF-8 `URLstring` with `InvalidValue { field: "URLstring" }`
+  instead of decoding it lossily: ISO/IEC 14496-1 §7.2.6.5 defines the field as UTF-8 (ISO/IEC
+  10646-1), and a lossy decode (0xFF -> U+FFFD) silently broke byte-identical round trips (the
+  re-serialized bytes differed, and 765 replacement bytes from a 255-byte input overflowed
+  `URLlength`). A wire `esds` with an invalid URL byte failed to round-trip before and now fails to
+  parse at all (#1148 E).
 
 ## [0.24.1] - 2026-08-30
 
@@ -2043,7 +2037,6 @@ shipping additive API as a patch.
   `transmux/docs/rtp/rtp-sequence-validation.md` for the RFC 3550 §A.1
   transcription this is adapted from, and `rtp_stream`'s module docs for why
   the signal surfaces locally rather than in `ir::DemuxEvent`.
-
 
 **Publish order:** `broadcast-common` 8.7.0 → `transmux` 0.20.0 → `media-doctor` → (steps 4/5: `ll-hls-runtime`, `multimux`, `multimux-cli`).
 

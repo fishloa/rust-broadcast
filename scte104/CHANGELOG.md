@@ -8,28 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ## [0.5.0] - 2026-10-05
-### Changed (breaking)
-- New `Error::FieldOverflow` variant (wrapping `broadcast_common::len::FieldOverflow`),
-  returned when a length or count does not fit its wire field instead of the
-  value silently wrapping (#1129); `Error` is `#[non_exhaustive]`.
-- `InsertDescriptor::descriptor_count`, `InsertAvailDescriptor::num_provider_avails`,
-  and `StartScheduleDownload::num_provider_avails` are removed as stored fields;
-  each is now derived from its vec's length at serialize time (via
-  `broadcast_common::len::fit_u8`, erroring past 255 items rather than
-  wrapping) and available as a `descriptor_count()`/`num_provider_avails()`
-  method. A separately-stored count could disagree with the vec it
-  described — e.g. a stored count of 2 with only one item in the vec would
-  misframe the following operation for a peer reading the declared count
-  (audit run-09 S4-W1).
 
-### Changed
-- Requires `broadcast-common` 9.4 (`broadcast_common::len`).
-- `MultipleOperationMessage::new` now saturates the stored `message_size` at
-  `u16::MAX` for operation bodies too large for the 16-bit wire field (it
-  previously overflowed `u16` arithmetic); `serialize_into` still recomputes
-  the true size and rejects one that does not fit.
+### Security
+Fixes GHSA-mgg2-9ggf-xq48.
 
 ### Fixed
+- `SingleOperationMessage::parse` now rejects messages with `messageSize < 13` (HEADER_LEN, per ANSI/SCTE 104 2023 §8.2.2).
+- `SingleOperationMessage::serialize_into` computes message size from fields instead of trusting the stored value, preventing panics on malformed input.
+
 - `MultipleOperationMessage::serialized_len` now recomputes the true size
   from `operations` instead of returning the cached `message_size` field,
   which goes stale the moment a caller mutates the `pub operations` vec
@@ -57,14 +43,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `as u8`/`as u16` casts, wrapping to a small value for 256+ items or 64
   Ki+ bytes while every item was still serialized (#1129).
 
-## [0.4.1] - 2026-09-26
+### Changed (breaking)
+- New `Error::FieldOverflow` variant (wrapping `broadcast_common::len::FieldOverflow`),
+  returned when a length or count does not fit its wire field instead of the
+  value silently wrapping (#1129); `Error` is `#[non_exhaustive]`.
+- `InsertDescriptor::descriptor_count`, `InsertAvailDescriptor::num_provider_avails`,
+  and `StartScheduleDownload::num_provider_avails` are removed as stored fields;
+  each is now derived from its vec's length at serialize time (via
+  `broadcast_common::len::fit_u8`, erroring past 255 items rather than
+  wrapping) and available as a `descriptor_count()`/`num_provider_avails()`
+  method. A separately-stored count could disagree with the vec it
+  described — e.g. a stored count of 2 with only one item in the vec would
+  misframe the following operation for a peer reading the declared count
+  (audit run-09 S4-W1).
 
-### Security
-Fixes GHSA-mgg2-9ggf-xq48.
-
-### Fixed
-- `SingleOperationMessage::parse` now rejects messages with `messageSize < 13` (HEADER_LEN, per ANSI/SCTE 104 2023 §8.2.2).
-- `SingleOperationMessage::serialize_into` computes message size from fields instead of trusting the stored value, preventing panics on malformed input.
+### Changed
+- Requires `broadcast-common` 9.4 (`broadcast_common::len`).
+- `MultipleOperationMessage::new` now saturates the stored `message_size` at
+  `u16::MAX` for operation bodies too large for the 16-bit wire field (it
+  previously overflowed `u16` arithmetic); `serialize_into` still recomputes
+  the true size and rejects one that does not fit.
 
 ## [0.4.0] - 2026-08-11
 

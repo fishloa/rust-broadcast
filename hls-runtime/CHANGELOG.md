@@ -7,13 +7,53 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed (breaking)
-- **`reqwest` 0.12 → 0.13.** `tokio::TokioError::Http`'s `source` is still
-  `reqwest::Error`, but the `reqwest` type's epoch changes. The `tokio`
-  feature's `rustls-tls` feature slot is renamed to `rustls` (reqwest 0.13's
-  name).
+
+## [0.7.0] - 2026-10-05
+
+### Security
+Fixes GHSA-grg8-55qr-gxgf. Upgrade if you use `client::tokio_client::TokioClient` with
+`TokioClientConfig::auth` set.
+
+### Fixed
+- `TokioClient` sends `TokioClientConfig::auth` credentials (Basic, Bearer,
+  and Digest challenge answers) only to the playlist URL's origin (scheme +
+  host + port); requests a playlist directs to any other host go without an
+  `Authorization` header.
+- `TokioClient` no longer retries a resource fetch answered with a `4xx`
+  other than `408`/`429` (e.g. a `404` for a stale preload hint); it goes to
+  `HlsClient::on_error` at once instead of after the full backoff.
+
+- Defect 7: relative playlist references containing `..` were joined textually (`http://h/a/b/../x.m4s`); see the URL resolution entry above.
+- `HlsOrigin`'s locks are poison-tolerant (a panic in one request no longer
+  panics every later one), `render_playlist` copies the window and releases
+  its lock before querying the `Trunk`, and a request with no segment
+  published since the last drain skips the cursor and window locks (audit
+  r09-O4, #1089, #1134).
+- Client state no longer grows for the life of a pull: every record keyed by
+  a Media Sequence Number below the playlist's first segment, and the
+  byte-range cursor of every URL a full playlist no longer references, is
+  dropped after each playlist; a fetch still in flight keeps being accepted
+  (#1089).
+- `HlsClient`'s Media Sequence arithmetic, `EXT-X-SKIP` merge index and part
+  indexes use checked/`try_from` conversions instead of `as` casts and
+  unchecked additions (#1089).
+- `server::engine`'s DATERANGE-per-window render now follows
+  `timed-metadata::daterange::DateRange::to_tag_line`'s new fallible
+  signature (issue #1140): an event whose DATERANGE can't be rendered as a
+  valid attribute list (e.g. a `"`/CR/LF from an upstream
+  `segmentation_upid`, or a non-finite duration) is skipped for that
+  window, the same treatment already given to a `to_daterange` failure,
+  rather than the crate failing to build.
 
 ### Added
+- `server::HlsOrigin` now renders SCTE-35 cues published to the trunk's
+  event ring as `#EXT-X-DATERANGE` tag lines in Media Playlists (issue
+  #965). Events are per-segment via `Trunk::events_in_segment`, and carry a
+  wall-clock `START-DATE` (via `timed_metadata::Timeline::with_anchor`) only
+  once the trunk has been given a `time_anchor`; events skipped otherwise.
+  Rendered after the unconditional `#EXT-X-MAP` line under `Container::Fmp4`.
+  Purely internal to `render_playlist` — no new public API on `HlsOrigin`.
+
 - `HlsClient::next_wait()` (the queued `WaitMs` hint as a `Duration`, `no_std`) and `HlsClient::poll_timeout(&mut self, now)` (`std`): the wait's ABSOLUTE deadline, anchored at the first query and identical on every re-query until the wait is drained with `poll()`, so unrelated wake-ups cannot re-arm it. A wait is queued behind the fetches `on_playlist` queued with it, so it is reported once those are drained.
 - `server::HlsOrigin::master_playlist(name)` — a master playlist whose
   `BANDWIDTH` is the measured peak segment bitrate (segment bytes over
@@ -43,6 +83,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   `EXT-X-TARGETDURATION`) (#1089).
 
 ### Changed (breaking)
+- **`reqwest` 0.12 → 0.13.** `tokio::TokioError::Http`'s `source` is still
+  `reqwest::Error`, but the `reqwest` type's epoch changes. The `tokio`
+  feature's `rustls-tls` feature slot is renamed to `rustls` (reqwest 0.13's
+  name).
+
 - `client::TokioClientConfig` gained `connect_timeout` (10 s), `jitter` (`true`) and `cancel` (a `tokio_util::sync::CancellationToken`) with `with_auth`/`with_cancel`/`with_connect_timeout`/`with_jitter`: a struct literal without `..Default::default()` no longer compiles. Once `cancel` fires, `TokioClient::next_output` abandons its in-flight request or backoff sleep and returns `Ok(None)`. Retries use `backon`'s exponential schedule with jitter (each delay `d` becomes a random value in `[d, 2d)`, clamped to `max_retry_backoff`, which stays a hard maximum); `TokioError::Stalled` replaces the 10 ms defensive sleep when the core queued no action and the stream had not ended (never observed); byte ranges are sent as a typed `headers::Range`. The `tokio` feature now needs `backon`, `headers` and `tokio-util`.
 - Playlist URI resolution is RFC 3986 (`url::Url::join`): `..` segments are resolved (`../x.m4s` against `http://h/a/b/p.m3u8` is `http://h/a/x.m4s`, not `http://h/a/b/../x.m4s`) and a `://` inside a relative reference's query no longer makes it look absolute. Results are normalised (`HTTP://H.Example/X` becomes `http://h.example/X`, spaces are percent-encoded, a default port is dropped). A relative playlist URL still gives a relative result.
 - `Action::playlist_request_url` builds the query with `query_pairs_mut`: the `_HLS_msn`/`_HLS_part`/`_HLS_skip` pairs now precede a fragment (`...?a=1#f` gives `...?a=1&_HLS_msn=5#f`; the old string builder produced `...?a=1#f&_HLS_msn=5`, where the pair was part of the fragment and never sent).
@@ -148,53 +193,6 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sequence range are now build errors (#1089).
 - `HlsOrigin::set_init` with an init that cannot be read now drops the
   `CODECS` derived from the previous init instead of keeping them (#1089).
-
-### Fixed
-- Defect 7: relative playlist references containing `..` were joined textually (`http://h/a/b/../x.m4s`); see the URL resolution entry above.
-- `HlsOrigin`'s locks are poison-tolerant (a panic in one request no longer
-  panics every later one), `render_playlist` copies the window and releases
-  its lock before querying the `Trunk`, and a request with no segment
-  published since the last drain skips the cursor and window locks (audit
-  r09-O4, #1089, #1134).
-- Client state no longer grows for the life of a pull: every record keyed by
-  a Media Sequence Number below the playlist's first segment, and the
-  byte-range cursor of every URL a full playlist no longer references, is
-  dropped after each playlist; a fetch still in flight keeps being accepted
-  (#1089).
-- `HlsClient`'s Media Sequence arithmetic, `EXT-X-SKIP` merge index and part
-  indexes use checked/`try_from` conversions instead of `as` casts and
-  unchecked additions (#1089).
-- `server::engine`'s DATERANGE-per-window render now follows
-  `timed-metadata::daterange::DateRange::to_tag_line`'s new fallible
-  signature (issue #1140): an event whose DATERANGE can't be rendered as a
-  valid attribute list (e.g. a `"`/CR/LF from an upstream
-  `segmentation_upid`, or a non-finite duration) is skipped for that
-  window, the same treatment already given to a `to_daterange` failure,
-  rather than the crate failing to build.
-
-## [0.7.0] - 2026-08-16
-
-### Security
-Fixes GHSA-grg8-55qr-gxgf. Upgrade if you use `client::tokio_client::TokioClient` with
-`TokioClientConfig::auth` set.
-
-### Fixed
-- `TokioClient` sends `TokioClientConfig::auth` credentials (Basic, Bearer,
-  and Digest challenge answers) only to the playlist URL's origin (scheme +
-  host + port); requests a playlist directs to any other host go without an
-  `Authorization` header.
-- `TokioClient` no longer retries a resource fetch answered with a `4xx`
-  other than `408`/`429` (e.g. a `404` for a stale preload hint); it goes to
-  `HlsClient::on_error` at once instead of after the full backoff.
-
-### Added
-- `server::HlsOrigin` now renders SCTE-35 cues published to the trunk's
-  event ring as `#EXT-X-DATERANGE` tag lines in Media Playlists (issue
-  #965). Events are per-segment via `Trunk::events_in_segment`, and carry a
-  wall-clock `START-DATE` (via `timed_metadata::Timeline::with_anchor`) only
-  once the trunk has been given a `time_anchor`; events skipped otherwise.
-  Rendered after the unconditional `#EXT-X-MAP` line under `Container::Fmp4`.
-  Purely internal to `render_playlist` — no new public API on `HlsOrigin`.
 
 ## [0.6.0] - 2026-08-11
 

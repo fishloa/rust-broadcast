@@ -7,7 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+
+## [0.3.0] - 2026-10-05
+
+### Security
+Fixes GHSA-f4mf-69xv-w6rp. Upgrade if a `ControlWord`'s lifetime in memory matters to your threat
+model (e.g. the process handles multiple subscribers' keys, or memory can be inspected after a
+crash/core dump).
+
 ### Changed (breaking)
+- `ControlWord` no longer implements `Copy` (`Clone` is kept). A `Copy` value can be duplicated
+  on the stack without the type's `Drop` zeroing every copy, so a caller can no longer rely on
+  the compiler to hand out implicit duplicates — clone explicitly where a second owned value is
+  needed. Every in-crate call site (lib, tests, examples, benches) already borrowed `&ControlWord`
+  or used a single owned value, so this needed no call-site changes beyond the type definition.
+- `ControlWord::expand_block`/`expand_stream` are now `pub(crate)` (they were previously public
+  and returned the raw key schedule/stream seed derived from the control word — a second,
+  unaudited way to hand out key material). Nothing outside the crate referenced either method.
+
 - `ts::scramble_ts_packet`/`ts::descramble_ts_packet` take a new
   `ts::KeyParity` (`Even`/`Odd`) parameter naming which control word `cw`
   is. `scramble_ts_packet` now rejects a packet whose
@@ -27,23 +44,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Dropped the unused `broadcast-common` dependency (never referenced in
   source), so this crate no longer tracks its epoch (#1093).
 
-## [0.3.0] - 2026-09-26
-
-### Security
-Fixes GHSA-f4mf-69xv-w6rp. Upgrade if a `ControlWord`'s lifetime in memory matters to your threat
-model (e.g. the process handles multiple subscribers' keys, or memory can be inspected after a
-crash/core dump).
-
-### Changed (breaking)
-- `ControlWord` no longer implements `Copy` (`Clone` is kept). A `Copy` value can be duplicated
-  on the stack without the type's `Drop` zeroing every copy, so a caller can no longer rely on
-  the compiler to hand out implicit duplicates — clone explicitly where a second owned value is
-  needed. Every in-crate call site (lib, tests, examples, benches) already borrowed `&ControlWord`
-  or used a single owned value, so this needed no call-site changes beyond the type definition.
-- `ControlWord::expand_block`/`expand_stream` are now `pub(crate)` (they were previously public
-  and returned the raw key schedule/stream seed derived from the control word — a second,
-  unaudited way to hand out key material). Nothing outside the crate referenced either method.
-
 ### Fixed
 - `ControlWord`'s `Debug` impl is now hand-written and prints a redacted placeholder instead of
   the control word's bytes.
@@ -56,6 +56,8 @@ crash/core dump).
   `ControlWord` itself does. The expanded key schedule/stream seed `scramble`/`descramble` and the
   bitsliced batch functions hold in local variables before handing them to those types is now
   wrapped in a small zeroizing newtype too, so the local copy is cleared as well.
+
+## [0.2.0] - 2026-08-11
 
 ### Changed
 - `ts::ts_payload_mut` now decodes `adaptation_field_control` via

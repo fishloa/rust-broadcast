@@ -8,70 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ## [0.3.0] - 2026-10-05
-### Changed (breaking)
-- **BREAKING: XML support now requires the `std` feature; hand-rolled XML
-  replaced by `quick-xml`; `roxmltree` dropped.** `document`, `foreign` and
-  `validation` (and their crate-root re-exports and `parse`) are gated behind
-  `std`; a `--no-default-features` build exposes only `error` and `time`.
-  Parsing is a single pass over `quick_xml::NsReader` events straight into
-  the typed structs (an explicit stack of partially-built spans, no document
-  tree, so hostile nesting cannot overflow the stack); serialization writes
-  `quick_xml::Writer` events, so the `replace`-chain escaper is gone and every
-  attribute value and text node on output is escaped by quick-xml (an attribute value containing `\t`/`\n`/`\r`
-  is now written as a character reference so it survives a re-parse). Parse
-  results and serialized output are identical to the previous release for every
-  committed fixture. Malformed input stays a structured `Error::XmlParse` (a
-  `DOCTYPE`, undefined entity, unbound namespace prefix, second root element, or
-  content after the root is rejected).
-- **Behaviour differences from the roxmltree-based parser (all follow XML 1.0):**
-  - a root `<tt>` is the document even when it has a `<tt>` child element: for
-    `<tt xmlns="http://www.w3.org/ns/ttml"><tt xmlns="http://www.w3.org/ns/ttml"/></tt>` the outer
-    element is parsed (previously the inner one was; the inner `<tt>` is now kept as an unknown
-    child). A non-`tt` wrapper root still yields its first `<tt>` child;
-  - a numeric reference to a control character (`<p>&#x1;</p>`), or a literal one, in text or in
-    an attribute is rejected with `Error::XmlParse`;
-  - an entity reference or CDATA section before the root element is rejected;
-  - a document with more than 128 namespace declarations in scope at once is rejected (quick-xml's
-    namespace-binding limit);
-  - an attribute value containing `\t`, `\n` or `\r` is written as `&#9;`, `&#10;`, `&#13;`
-    (`region="x\ny"` renders `region="x&#10;y"`), and a `\r` in text as `&#13;`, so they survive
-    a re-parse.
-- **#1110 (TT-W1)**: attributes and child elements in namespaces the crate
-  does not model are no longer dropped. They are kept as
-  `ForeignAttribute` triples `(namespace URI, local name, value)` (with the
-  `xmlns:` prefix binding each was resolved through) and as `UnknownElement`
-  subtrees, and re-emitted (TTML2 §7.2/§7.3) — each element's
-  `unknown_children` keep their relative document order, but their position
-  *between* modeled children, `metadata` and `animations` is not tracked
-  (each group lives in its own `Vec` and is emitted in a fixed group order). Every element
-  type gained `foreign_attributes` and `unknown_children` fields, each
-  metadata-like type also a `scoped_namespaces` field, and `MetadataChild`
-  gained an `Unknown` variant — struct-literal construction must now use
-  `..Default::default()`.
-- **#1110 (TT-W2)**: TTML2 §9 embedded/resource elements are modeled instead
-  of dropped: `AudioElement`, `ChunkElement`, `DataElement`, `FontElement`,
-  `ResourcesElement` and `SourceElement`, plus the `InlineContent::Image` and
-  `InlineContent::Audio` variants (Embedded.class is legal in `<p>`/`<span>`)
-  and `HeadElement::resources` / `DivElement::audio`. TTML2 §9 elements
-  without a typed struct are still preserved through the foreign-content
-  mechanism rather than dropped.
-- **#1108 (TT-W5)**: `WallclockForm::DateTime.seconds` is now `Option<u8>`
-  (was `u8`), to preserve the `hhmm-time`-vs-`hhmmss-time` distinction
-  (`date-time`'s `wall-time` grammar allows omitting seconds) so
-  `format_time_expression` doesn't reinsert a `:00` that wasn't in the
-  source.
 
-- **#1110 (TT-W1)** also changed these public signatures/fields:
-  `Document::to_xml` now takes `&mut self` (was `&self`; it assigns fallback
-  prefixes for outer-scope vendor namespaces), the `other_attributes:
-  BTreeMap<(String, String), String>` field was removed from every element
-  type in favour of `foreign_attributes`, and `TtElement::text: Option<String>`
-  (spec-empty content) was removed. New fields `xml_base`, `ttm_role`
-  / `ttm_role_source` and `xlink_href` / `xlink_role` (and siblings) were
-  added to the element types that carry them; struct-literal construction
-  must use `..Default::default()`.
+### Security
+Fixes GHSA-9gp9-h275-mjjh.
 
 ### Fixed
+- `parse_span_element` and `parse_metadata_element` now enforce a maximum nesting depth of 64 levels to prevent stack overflow on deeply nested span/metadata elements.
+- `Document::to_xml` no longer recurses per nesting level when serializing `<span>`/`<metadata>`/`<ebuttm:documentMetadata>` trees (and the namespace-usage scan that runs before it), so a document built directly through the struct API with very deep nesting no longer overflows the stack. Output is unchanged for all existing documents.
+
 - **#1110 (TT-W1)**: an inner-scope `xmlns:` prefix override no longer
   silently re-points an outer-scope vendor attribute at the wrong namespace;
   the outer URI keeps a declaration of its own under a generated
@@ -104,14 +48,68 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `time::parse_time_expression` (§12.3.1), so `begin="garbage"` is rejected
   instead of validating.
 
-## [0.2.1] - 2026-09-26
+### Changed (breaking)
+- **BREAKING: XML support now requires the `std` feature; hand-rolled XML
+  replaced by `quick-xml`; `roxmltree` dropped.** `document`, `foreign` and
+  `validation` (and their crate-root re-exports and `parse`) are gated behind
+  `std`; a `--no-default-features` build exposes only `error` and `time`.
+  Parsing is a single pass over `quick_xml::NsReader` events straight into
+  the typed structs (an explicit stack of partially-built spans, no document
+  tree, so hostile nesting cannot overflow the stack); serialization writes
+  `quick_xml::Writer` events, so the `replace`-chain escaper is gone and every
+  attribute value and text node on output is escaped by quick-xml (an attribute value containing `\t`/`\n`/`\r`
+  is now written as a character reference so it survives a re-parse). Parse
+  results and serialized output are identical to the previous release for every
+  committed fixture. Malformed input stays a structured `Error::XmlParse` (a
+  `DOCTYPE`, undefined entity, unbound namespace prefix, second root element, or
+  content after the root is rejected).
+- **Behaviour differences from the roxmltree-based parser (all follow XML 1.0):**
+  - a root `<tt>` is the document even when it has a `<tt>` child element: for
+    `<tt xmlns="http://www.w3.org/ns/ttml"><tt xmlns="http://www.w3.org/ns/ttml"/></tt>` the outer
+    element is parsed (previously the inner one was; the inner `<tt>` is now kept as an unknown
+    child). A non-`tt` wrapper root still yields its first `<tt>` child;
+  - a numeric reference to a control character (`<p>&#x1;</p>`), or a literal one, in text or in
+    an attribute is rejected with `Error::XmlParse`;
+  - an entity reference or CDATA section before the root element is rejected;
+  - a document with more than 128 namespace declarations in scope at once is rejected (quick-xml's
+    namespace-binding limit);
+  - an attribute value containing `\t`, `\n` or `\r` is written as `&#9;`, `&#10;`, `&#13;`
+    (`region="x\ny"` renders `region="x&#10;y"`), and a `\r` in text as `&#13;`, so they survive
+    a re-parse.
+- **#1110 (TT-W1)**: attributes and child elements in namespaces the crate
+  does not model are no longer dropped. They are kept as
+  `ForeignAttribute` values (`prefix`, `namespace` URI, `local_name`, `value`
+  and the `scoped_namespaces` binding each was resolved through) and as `UnknownElement`
+  subtrees, and re-emitted (TTML2 §7.2/§7.3) — each element's
+  `unknown_children` keep their relative document order, but their position
+  *between* modeled children, `metadata` and `animations` is not tracked
+  (each group lives in its own `Vec` and is emitted in a fixed group order). Every element
+  type gained `foreign_attributes` and `unknown_children` fields, each
+  metadata-like type also a `scoped_namespaces` field, and `MetadataChild`
+  gained an `Unknown` variant (the element types are `#[non_exhaustive]`, so
+  the new fields are not themselves a break for downstream crates).
+- **#1110 (TT-W2)**: TTML2 §9 embedded/resource elements are modeled instead
+  of dropped: `AudioElement`, `ChunkElement`, `DataElement`, `FontElement`,
+  `ResourcesElement` and `SourceElement`, plus the `InlineContent::Image` and
+  `InlineContent::Audio` variants (Embedded.class is legal in `<p>`/`<span>`)
+  and `HeadElement::resources` / `DivElement::audio`. TTML2 §9 elements
+  without a typed struct are still preserved through the foreign-content
+  mechanism rather than dropped.
+- **#1108 (TT-W5)**: `WallclockForm::DateTime.seconds` is now `Option<u8>`
+  (was `u8`), to preserve the `hhmm-time`-vs-`hhmmss-time` distinction
+  (`date-time`'s `wall-time` grammar allows omitting seconds) so
+  `format_time_expression` doesn't reinsert a `:00` that wasn't in the
+  source.
 
-### Security
-Fixes GHSA-9gp9-h275-mjjh.
-
-### Fixed
-- `parse_span_element` and `parse_metadata_element` now enforce a maximum nesting depth of 64 levels to prevent stack overflow on deeply nested span/metadata elements.
-- `Document::to_xml` no longer recurses per nesting level when serializing `<span>`/`<metadata>`/`<ebuttm:documentMetadata>` trees (and the namespace-usage scan that runs before it), so a document built directly through the struct API with very deep nesting no longer overflows the stack. Output is unchanged for all existing documents.
+- **#1110 (TT-W1)** also changed these public signatures/fields:
+  `Document::to_xml` now takes `&mut self` (was `&self`; it assigns fallback
+  prefixes for outer-scope vendor namespaces), the `other_attributes:
+  BTreeMap<(String, String), String>` field was removed from every element
+  type in favour of `foreign_attributes`, and `TtElement::text: Option<String>`
+  (spec-empty content) was removed. New fields `xml_base`, `ttm_role`
+  / `ttm_role_source` and `xlink_href` / `xlink_role` (and siblings) were
+  added to the element types that carry them (additive: the element types
+  are `#[non_exhaustive]`).
 
 ## [0.2.0] - 2026-08-11
 

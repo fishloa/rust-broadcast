@@ -3,13 +3,13 @@
 ## [Unreleased]
 
 ## [11.0.0] - 2026-10-05
-### Added
 
+Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
+
+### Added
 - `PacketType::is_allocated(byte)` — whether a `packet_type` byte is allocated in TS 102 773 Table 1 (the single definition the raw-mode resync uses).
 
 ### Changed (breaking)
-- Serializers now return an error, instead of silently truncating, when a
-  length or count does not fit its wire field (#1129).
 - Serializers now return an error, instead of silently truncating, when a
   length or count does not fit its wire field (#1129).
 - `payload::l1::pre::L1Pre::to_bytes`, `crc32`, and `serialize_with_crc`
@@ -63,9 +63,6 @@
   release a wrap that wrote bits beyond the declared length and misframed
   the L1EXT region. A `data`/`data_bit_len` mismatch is now rejected with
   `ReservedBitsViolation` (#1095, W-T2-5).
-
-## [10.1.0] - 2026-09-26
-Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
 
 ## [10.0.1] - 2026-08-30
 Lockstep patch alongside `dvb-si` 10.0.1; no source changes in this crate.

@@ -39,7 +39,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `DisparitySignallingSegment` now reject (`Error::TrailingEntryBytes`/
   `Error::BufferTooShort`) a trailing remainder that isn't a whole entry,
   instead of silently dropping it (integer division / a bare loop `break`).
-  `PageCompositionSegment`'s `suffix` field is removed — it could never hold
+  `PageCompositionSegment`'s internal `pub(crate)` `suffix` field is removed
+  (not public API, so not itself a break) — it could never hold
   anything, since parse already rejected a non-whole-entry region loop
   before it was ever populated.
 - Serializers now return an error, instead of silently truncating, when a

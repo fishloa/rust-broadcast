@@ -1,8 +1,9 @@
 //! # ARCHIVED — no further development
 //!
-//! ATSC 3.0 work in this workspace is **abandoned** and these crates are
-//! **permanently unpublished**. The market is US/South Korea only and closed
-//! enough that real fixtures are unobtainable: an extensive hunt across three
+//! ATSC 3.0 work in this workspace is **abandoned**: the `atsc3` signalling
+//! crate is **permanently unpublished**, and `atsc3-route` (published as 0.1.0
+//! before the work stopped) receives only maintenance releases. The market is US/South Korea only and
+//! closed enough that real fixtures are unobtainable: an extensive hunt across three
 //! independent public sources turned up scraps, and the two ROUTE header
 //! extensions this crate once decoded appear in **zero** of 14 000+ real
 //! captured packets.

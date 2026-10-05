@@ -4,7 +4,18 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+
+## [0.2.0] - 2026-10-05
+
+### Security
+Fixes GHSA-w4f3-953h-6jfm, GHSA-q5vp-jg67-2xp9.
+
 ### Changed (breaking)
+- `arq::Sender::on_range_nack`/`on_generic_nack` now take an additional
+  `now: Duration` parameter (matching how the rest of this sans-IO crate
+  already threads the clock) and require `&mut self` instead of `&self`,
+  needed to fix the response-amplification issue below.
+
 - Serializers now return an error, instead of silently truncating, when a length or count does
   not fit its wire field (#1129). `Error` gains a new `FieldOverflow` variant.
 - **RIST-W3**: both compound types now carry the leading report as a public `ReportPart` enum
@@ -18,39 +29,6 @@ All notable changes to this crate will be documented in this file.
   dropped or misclassified — they are preserved byte-verbatim in a new `unknown: Vec<UnknownPacket>`
   field at their original wire position and re-emit unchanged, so a re-serialized compound is
   byte-identical to the parse input (#1086).
-
-### Fixed
-- **#1108 (RIST-W1)**: `arq::sender::Sender::new` now clamps `max_buffered` strictly below half
-  the 16-bit sequence space (32 767). At `>= 32768`, once `seq` wrapped, `by_seq.insert` for a
-  reused sequence number overwrote the OLDER generation's entry in place instead of going through
-  `order`'s eviction path — `by_seq.len()` stopped growing (looking bounded) while `order` grew a
-  duplicate `u16` on every send, forever.
-- **#1108 (RIST-W2)**: due-request ordering (`Receiver::tick`) sorted numerically, not
-  circularly. Across a 16-bit seq wrap, the newest losses sorted before older, more urgent ones,
-  so the per-tick cap (`MAX_RANGE_ENTRIES`) dropped the oldest losses instead of the newest, and
-  they aged out unrequested. Now sorted by circular distance from `next_expected`.
-- `GenericNack`/`RttEcho` no longer silently truncate the RTCP `length` field (16 bits) when the
-  packet's word count exceeds it — the FCI/padding is still fully written, so the old code
-  emitted a misframed packet with `Ok` (#1129). `RangeNack`'s equivalent cast (already provably
-  bounded by its own `MAX_RANGE_ENTRIES` check) is also switched to the same checked helper for
-  consistency (#1108/RIST-W4 — audited, not a live bug: both real instances of this cast were
-  already fixed by #1129).
-
-### Changed
-
-- `arq::seq` arithmetic now delegates to `broadcast_common::seq::SeqSpace` (one algorithm, two moduli; public functions and results unchanged) (#1141).
-
-
-## [0.2.0] - 2026-09-26
-
-### Security
-Fixes GHSA-w4f3-953h-6jfm, GHSA-q5vp-jg67-2xp9.
-
-### Changed (breaking)
-- `arq::Sender::on_range_nack`/`on_generic_nack` now take an additional
-  `now: Duration` parameter (matching how the rest of this sans-IO crate
-  already threads the clock) and require `&mut self` instead of `&self`,
-  needed to fix the response-amplification issue below.
 
 ### Fixed
 - `arq::Sender::on_range_nack`/`on_generic_nack` returned one retransmission
@@ -72,6 +50,26 @@ Fixes GHSA-w4f3-953h-6jfm, GHSA-q5vp-jg67-2xp9.
   once confirmed by `RESYNC_CONFIRM_COUNT` consecutive packets continuing
   from the new position — an unconfirmed one-off jump is dropped as an
   outlier instead of resetting the stream.
+
+- **#1108 (RIST-W1)**: `arq::sender::Sender::new` now clamps `max_buffered` strictly below half
+  the 16-bit sequence space (32 767). At `>= 32768`, once `seq` wrapped, `by_seq.insert` for a
+  reused sequence number overwrote the OLDER generation's entry in place instead of going through
+  `order`'s eviction path — `by_seq.len()` stopped growing (looking bounded) while `order` grew a
+  duplicate `u16` on every send, forever.
+- **#1108 (RIST-W2)**: due-request ordering (`Receiver::tick`) sorted numerically, not
+  circularly. Across a 16-bit seq wrap, the newest losses sorted before older, more urgent ones,
+  so the per-tick cap (`MAX_RANGE_ENTRIES`) dropped the oldest losses instead of the newest, and
+  they aged out unrequested. Now sorted by circular distance from `next_expected`.
+- `GenericNack`/`RttEcho` no longer silently truncate the RTCP `length` field (16 bits) when the
+  packet's word count exceeds it — the FCI/padding is still fully written, so the old code
+  emitted a misframed packet with `Ok` (#1129).
+
+### Changed
+- `RangeNack`'s equivalent length cast (already provably bounded by its own
+  `MAX_RANGE_ENTRIES` check, so not a live bug: both real instances of this cast were the
+  `GenericNack`/`RttEcho` ones fixed by #1129) is switched to the same checked helper for
+  consistency (#1108/RIST-W4).
+- `arq::seq` arithmetic now delegates to `broadcast_common::seq::SeqSpace` (one algorithm, two moduli; public functions and results unchanged) (#1141).
 
 ## [0.1.1] - 2026-08-30
 

@@ -6,38 +6,34 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
-- **BREAKING** The tokio adapter is a `tokio_util::codec::Framed` over the sans-IO core. New `RtspTimeouts` (connect / handshake / read_idle / write; defaults 10 s / 10 s / 30 s / 10 s) and `*_with_timeouts` constructors; `AsyncRtspClient::with_stream` / `AsyncRtspServer::with_stream` keep their signatures and use the defaults. New `Error::Timeout { what }` (and `From<std::io::Error>`). `read_idle` bounds the whole frame, so a peer dripping bytes times out; on a server connection the first request is bounded by `handshake`.
-- **BREAKING** Header blocks are capped at 64 KiB while no `Content-Length` is known, and request bodies at 2 MiB (was a single 2 MiB buffer cap); the client core rejects an unterminated header over 64 KiB. The cap is enforced on the bytes buffered before the header terminator by an incremental `memchr` search resumed from the last scanned offset (a bounded framing check, not protocol parsing), so `rtsp_types::Message::parse` runs once per message instead of once per read and no unterminated shape (a long run of one byte, thousands of valid header lines) can reach the 2 MiB cap or force quadratic re-parsing; a server codec re-parses a body only once it can be complete.
-- **BREAKING** `Transport` (RFC 2326 §12.39) and `Session` (§12.37) are now parsed and serialized by rtsp-runtime itself (owner decision (c); `rtsp-types` mis-parses real-world values, see README "rtsp-types gaps"): one RFC 2326 §15.1 lexer, a typed model of every parameter, canonical symmetric output. `TransportSpec` / `Transport` are `#[non_exhaustive]` (use `Default` / `rtp_avp_tcp_interleaved`), `TransportSpec::mode` is now `Vec<TransportMode>` (new public enum) and `TransportSpec::extensions` preserves unknown parameters in order; new `SessionHeader`, `session_header::DEFAULT_SESSION_TIMEOUT`, `Error::SessionParse`. Input is case-insensitive, LWS-tolerant, accepts quoted values and unquoted `mode`; range errors are rejected (port > 65535, ttl/channel > 255, ssrc not 8 hex digits). `to_header_value` is now fallible (`Result<String>`, new `Error::HeaderSerialize`): a control character in a value, a non-token parameter/extension/mode name, or an invalid session id is rejected, never emitted. Every output difference from the previous release: (1) parameter order is the spec listing order, e.g. `RTP/AVP;unicast;interleaved=2-3;mode="RECORD";append` is now `RTP/AVP;unicast;interleaved=2-3;append;mode="RECORD"` (and `append` now precedes `ttl`); (2) `mode` is upper-cased and normalised: `mode=record` was `mode="record"` and is now `mode="RECORD"`, `mode="play, record"` is now `mode="PLAY,RECORD"`; (3) unknown parameters are now preserved and emitted (`RTP/AVP;unicast;x-foo=Bar;client_port=1-2` kept `x-foo=Bar` in the new output; it was dropped); (4) a bare `destination` is emitted as `destination` (it was `destination=`); ranges stay `lo-hi`, `ssrc` stays 8 upper-case hex. `Session: x;timeout=0` and a non-numeric timeout use the 60 s default (with a warning), `ClientSession::session_warnings()` exposes the most recent `MAX_SESSION_WARNINGS` (16) warnings and `session_warning_count()` the total (also `log::warn!`); a received session id is kept verbatim whatever it contains (`"weird"`, `a b`, `abc,def`, `ab"c`) except control characters, and echoed unchanged, and the keepalive interval is floored at `MIN_KEEPALIVE_INTERVAL` (1 s).
-- `sdp-types` 0.1 -> 0.2 (used only by the tests; not in the public API).
 
-### Added
-- **`AsyncRtspClient::{announce, record, send_interleaved}`** — `ANNOUNCE` (with
-  an SDP body), `RECORD`, and a client-side interleaved (`$`-framed) media send
-  (the mirror of the server's `AsyncRtspServer::send_interleaved`), each built on
-  the existing sans-IO `ClientSession::announce`/`record` and bounded by
-  `RtspTimeouts::write`. These unblock the RTSP pusher (W2b-1 Task 6). New
-  public inherent methods: additive, so a minor bump (this is a 0.x series; it
-  is not a breaking change to any existing caller).
-- **`AsyncRtspClient::poll_keepalive`** — drives the `GET_PARAMETER` liveness
-  ping for a SEND-ONLY pusher (and is called automatically by
-  `send_interleaved`, which also drains buffered server→client bytes). Before
-  this, a client that only ever sent interleaved media emitted no keepalive and
-  its session expired after the server's timeout (RFC 2326 §12.37).
-  `send_interleaved` now takes the payload by borrow (no per-packet copy).
-  Documented: a `Timeout`/cancelled interleaved send leaves a partial frame and
-  the connection is DEAD — reconnect, do not retry.
-- `InterleavedFrame::slice_to_bytes(channel, &[u8])` — build the wire bytes from
-  a borrowed payload, byte-identical to `new` + `to_bytes`.
-- `ClientSession::{mark_activity, poll_timeout, handle_timeout}`: keepalive deadline (half the `Session` timeout, default 60 s per RFC 2326 §12.37) driven by the adapter (`recv_interleaved` sends the `GET_PARAMETER`). Only requests written count as activity, so a busy interleaved stream does not postpone the keepalive. `ClientSession::has_buffered_input`; `recv_interleaved` now returns an error (not a clean end) when the peer closes mid-frame.
-- `ClientSession::peek_next_cseq()`: the `CSeq` the next request-builder call will assign, so an
-  IO adapter can capture which response it must wait for before building the request (#1088).
-- `ServerEvent::MediaData`: an interleaved `$`-framed block (RFC 2326 §10.12) received by a
-  server, surfaced instead of an error (see Fixed; the enum is `#[non_exhaustive]`, so this is
-  additive).
+## [0.7.0] - 2026-10-05
+
+### Security
+Fixes GHSA-3rw9-cq7p-4v47. Upgrade if you run `ServerSession`/`io::AsyncRtspServer` against
+clients you do not control.
+
+### Changed (breaking)
+- `ServerSession::new` now takes the `Session` id source,
+  `impl FnMut() -> u64 + Send + 'static`, which must be a CSPRNG (RFC 2326
+  §3.4); `impl Default for ServerSession` is removed and `Debug` is now
+  hand-written. `io::AsyncRtspServer::accept`/`accept_tls` supply the OS RNG
+  (new optional `getrandom` dependency under the `tokio` feature).
+  `with_session_seed` keeps its signature but is now `#[doc(hidden)]` and
+  documented as for deterministic tests only.
 
 ### Fixed
+- `ServerSession` ids are 64 random bits rendered as 16 hex digits instead of
+  the fixed counter `305419896`, so separate connections no longer share ids.
+- A request whose `Session` header names another id, or a
+  `PLAY`/`PAUSE`/`RECORD`/`TEARDOWN` carrying none once a session exists, is
+  answered `454 Session Not Found` (RFC 2326 §11.3.2, §12.37) instead of `200`.
+- The SETUP reply's `Transport` header carries only the chosen (first) spec
+  rather than every offered one (§12.39); `negotiated_transport()` and
+  `ServerEvent::SessionSetup` hold that single spec.
+- An unparseable `Transport` header on SETUP is answered `461 Unsupported
+  Transport` instead of returning `Err` (which dropped the connection).
+
 - The send-only push drain no longer discards a `454 Session Not Found`
   (RFC 2326 §11.3.2) that answers our `GET_PARAMETER` keepalive. Such a
   response now surfaces as the new `Error::SessionNotFound { method }` from
@@ -79,32 +75,36 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   sending RTCP receiver reports (ffmpeg, VLC, GStreamer all do) previously had its connection
   dropped at the first one (#1088).
 
-## [0.7.0] - 2026-09-26
+### Changed
+- **BREAKING** The tokio adapter is a `tokio_util::codec::Framed` over the sans-IO core. New `RtspTimeouts` (connect / handshake / read_idle / write; defaults 10 s / 10 s / 30 s / 10 s) and `*_with_timeouts` constructors; `AsyncRtspClient::with_stream` / `AsyncRtspServer::with_stream` keep their signatures and use the defaults. New `Error::Timeout { what }` (and `From<std::io::Error>`). `read_idle` bounds the whole frame, so a peer dripping bytes times out; on a server connection the first request is bounded by `handshake`.
+- **BREAKING** Header blocks are capped at 64 KiB while no `Content-Length` is known, and request bodies at 2 MiB (was a single 2 MiB buffer cap); the client core rejects an unterminated header over 64 KiB. The cap is enforced on the bytes buffered before the header terminator by an incremental `memchr` search resumed from the last scanned offset (a bounded framing check, not protocol parsing), so `rtsp_types::Message::parse` runs once per message instead of once per read and no unterminated shape (a long run of one byte, thousands of valid header lines) can reach the 2 MiB cap or force quadratic re-parsing; a server codec re-parses a body only once it can be complete.
+- **BREAKING** `Transport` (RFC 2326 §12.39) and `Session` (§12.37) are now parsed and serialized by rtsp-runtime itself (owner decision (c); `rtsp-types` mis-parses real-world values, see README "rtsp-types gaps"): one RFC 2326 §15.1 lexer, a typed model of every parameter, canonical symmetric output. `TransportSpec` / `Transport` are `#[non_exhaustive]` (use `Default` / `rtp_avp_tcp_interleaved`), `TransportSpec::mode` is now `Vec<TransportMode>` (new public enum) and `TransportSpec::extensions` preserves unknown parameters in order; new `SessionHeader`, `session_header::DEFAULT_SESSION_TIMEOUT`, `Error::SessionParse`. Input is case-insensitive, LWS-tolerant, accepts quoted values and unquoted `mode`; range errors are rejected (port > 65535, ttl/channel > 255, ssrc not 8 hex digits). `to_header_value` is now fallible (`Result<String>`, new `Error::HeaderSerialize`): a control character in a value, a non-token parameter/extension/mode name, or an invalid session id is rejected, never emitted. Every output difference from the previous release: (1) parameter order is the spec listing order, e.g. `RTP/AVP;unicast;interleaved=2-3;mode="RECORD";append` is now `RTP/AVP;unicast;interleaved=2-3;append;mode="RECORD"` (and `append` now precedes `ttl`); (2) `mode` is upper-cased and normalised: `mode=record` was `mode="record"` and is now `mode="RECORD"`, `mode="play, record"` is now `mode="PLAY,RECORD"`; (3) unknown parameters are now preserved and emitted (`RTP/AVP;unicast;x-foo=Bar;client_port=1-2` kept `x-foo=Bar` in the new output; it was dropped); (4) a bare `destination` is emitted as `destination` (it was `destination=`); ranges stay `lo-hi`, `ssrc` stays 8 upper-case hex. `Session: x;timeout=0` and a non-numeric timeout use the 60 s default (with a warning), `ClientSession::session_warnings()` exposes the most recent `MAX_SESSION_WARNINGS` (16) warnings and `session_warning_count()` the total (also `log::warn!`); a received session id is kept verbatim whatever it contains (`"weird"`, `a b`, `abc,def`, `ab"c`) except control characters, and echoed unchanged, and the keepalive interval is floored at `MIN_KEEPALIVE_INTERVAL` (1 s).
+- `sdp-types` 0.1 -> 0.2 (used only by the tests; not in the public API).
 
-### Security
-Fixes GHSA-3rw9-cq7p-4v47. Upgrade if you run `ServerSession`/`io::AsyncRtspServer` against
-clients you do not control.
-
-### Changed (breaking)
-- `ServerSession::new` now takes the `Session` id source,
-  `impl FnMut() -> u64 + Send + 'static`, which must be a CSPRNG (RFC 2326
-  §3.4); `impl Default for ServerSession` is removed and `Debug` is now
-  hand-written. `io::AsyncRtspServer::accept`/`accept_tls` supply the OS RNG
-  (new optional `getrandom` dependency under the `tokio` feature).
-  `with_session_seed` keeps its signature but is now `#[doc(hidden)]` and
-  documented as for deterministic tests only.
-
-### Fixed
-- `ServerSession` ids are 64 random bits rendered as 16 hex digits instead of
-  the fixed counter `305419896`, so separate connections no longer share ids.
-- A request whose `Session` header names another id, or a
-  `PLAY`/`PAUSE`/`RECORD`/`TEARDOWN` carrying none once a session exists, is
-  answered `454 Session Not Found` (RFC 2326 §11.3.2, §12.37) instead of `200`.
-- The SETUP reply's `Transport` header carries only the chosen (first) spec
-  rather than every offered one (§12.39); `negotiated_transport()` and
-  `ServerEvent::SessionSetup` hold that single spec.
-- An unparseable `Transport` header on SETUP is answered `461 Unsupported
-  Transport` instead of returning `Err` (which dropped the connection).
+### Added
+- **`AsyncRtspClient::{announce, record, send_interleaved}`** — `ANNOUNCE` (with
+  an SDP body), `RECORD`, and a client-side interleaved (`$`-framed) media send
+  (the mirror of the server's `AsyncRtspServer::send_interleaved`), each built on
+  the existing sans-IO `ClientSession::announce`/`record` and bounded by
+  `RtspTimeouts::write`. These unblock the RTSP pusher (W2b-1 Task 6). New
+  public inherent methods: additive, so a minor bump (this is a 0.x series; it
+  is not a breaking change to any existing caller).
+- **`AsyncRtspClient::poll_keepalive`** — drives the `GET_PARAMETER` liveness
+  ping for a SEND-ONLY pusher (and is called automatically by
+  `send_interleaved`, which also drains buffered server→client bytes). Before
+  this, a client that only ever sent interleaved media emitted no keepalive and
+  its session expired after the server's timeout (RFC 2326 §12.37).
+  `send_interleaved` now takes the payload by borrow (no per-packet copy).
+  Documented: a `Timeout`/cancelled interleaved send leaves a partial frame and
+  the connection is DEAD — reconnect, do not retry.
+- `InterleavedFrame::slice_to_bytes(channel, &[u8])` — build the wire bytes from
+  a borrowed payload, byte-identical to `new` + `to_bytes`.
+- `ClientSession::{mark_activity, poll_timeout, handle_timeout}`: keepalive deadline (half the `Session` timeout, default 60 s per RFC 2326 §12.37) driven by the adapter (`recv_interleaved` sends the `GET_PARAMETER`). Only requests written count as activity, so a busy interleaved stream does not postpone the keepalive. `ClientSession::has_buffered_input`; `recv_interleaved` now returns an error (not a clean end) when the peer closes mid-frame.
+- `ClientSession::peek_next_cseq()`: the `CSeq` the next request-builder call will assign, so an
+  IO adapter can capture which response it must wait for before building the request (#1088).
+- `ServerEvent::MediaData`: an interleaved `$`-framed block (RFC 2326 §10.12) received by a
+  server, surfaced instead of an error (see Fixed; the enum is `#[non_exhaustive]`, so this is
+  additive).
 
 ## [0.6.0] - 2026-08-11
 

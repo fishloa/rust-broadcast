@@ -1,63 +1,70 @@
-# dvb-csa 0.3.0 — 2026-09-26
+# dvb-csa 0.3.0
 
-Security release: `ControlWord` and its derived cipher state no longer outlive their usefulness
-in memory. **Upgrade if a `ControlWord`'s lifetime in memory matters to your threat model** —
-for example a process that handles multiple subscribers' control words, or one whose memory
-could be inspected after a crash or core dump. This is a breaking release: `ControlWord` no
-longer implements `Copy`, and two previously-public key-expansion methods are now crate-private.
+_Released 2026-10-05._
 
-## Security
-
-| Advisory | Before this release |
-|---|---|
-| GHSA-f4mf-69xv-w6rp | `ControlWord` implemented `Copy`, so a value could be duplicated on the stack without the type's `Drop` zeroing every copy — a caller had no way to be sure a control word wasn't lingering in an extra stack slot after the original was dropped. `Debug` printed the raw 8 key bytes. Nothing zeroed a dropped `ControlWord`'s bytes, or the expanded key schedule/stream seed held by `BlockCipher`, `StreamCipher`, or the bitsliced batch types, so key material could remain readable in freed memory. `PartialEq` also used a derived, short-circuiting comparison, which is not appropriate for secret material. |
+Breaking release (0.2 -> 0.3) with two parts. First, a key-material hygiene change: `ControlWord` and every type holding control-word-derived cipher state now zero themselves on drop, and `ControlWord` is no longer `Copy`, so a value cannot be silently duplicated on the stack past the reach of its `Drop` (the CHANGELOG ties this to GHSA-f4mf-69xv-w6rp). Second, the TS-packet helpers become correct for even/odd key pairs: `scramble_ts_packet` and `descramble_ts_packet` now take a `KeyParity` and refuse to scramble twice or descramble with the wrong key (#1093). Upgrade if a control word's lifetime in memory matters to your threat model (for example a process that handles several subscribers' control words, or whose memory could be inspected after a crash or core dump), or if you use the `ts` helpers on streams that mix clear and scrambled packets. You must act if you call `ts::scramble_ts_packet` / `ts::descramble_ts_packet`, copy a `ControlWord` implicitly, or call `ControlWord::expand_block` / `expand_stream`.
 
 ## Breaking changes
 
-- **`ControlWord` no longer implements `Copy`** (`Clone` is kept). A `Copy` type can be
-  duplicated on the stack without running `Drop` on each copy, so the compiler could hand out
-  implicit duplicates a caller never explicitly asked for. Clone explicitly where a second owned
-  value is genuinely needed. Every in-crate call site (lib, tests, examples, benches) already
-  borrowed `&ControlWord` or used a single owned value, so downstream code that follows the same
-  pattern needs no changes; code that relied on an implicit copy now gets a compile error at the
-  point that copy happened.
-- **`ControlWord::expand_block`/`expand_stream` are now `pub(crate)`.** They returned the raw key
-  schedule/stream seed derived from a control word — a second, unaudited way to hand out key
-  material alongside the crate's own scramble/descramble API. If nothing outside this crate
-  referenced them, this is a no-op; if something did, it needs to route key material through the
-  crate's public (de)scrambling functions instead.
+### 1. `ts::scramble_ts_packet` / `ts::descramble_ts_packet` take a `KeyParity` (#1093)
 
-## Behaviour changes
+Both gain a `parity: ts::KeyParity` parameter (`Even` or `Odd`, `#[non_exhaustive]`) naming which control word `cw` is.
 
-- **`ControlWord`'s `Debug` impl is hand-written** and prints a redacted placeholder instead of
-  the control word's bytes.
-- **`ControlWord` zeroes its 8 bytes on `Drop`** (a per-byte volatile write plus a compiler
-  fence), so a dropped value does not linger readable in freed memory.
-- **`ControlWord`'s `PartialEq` folds XOR over all 8 bytes** instead of a derived,
-  short-circuiting byte-at-a-time comparison.
-- **Every type holding control-word-derived cipher state** (`BlockCipher`, `StreamCipher`, and
-  the bitsliced `BitslicedBlock`/`BitslicedStream`) now zeroes that state on `Drop`, the same way
-  `ControlWord` does. The expanded key schedule/stream seed that `scramble`/`descramble` and the
-  bitsliced batch functions hold in local variables before handing off to those types is now
-  wrapped in a small zeroizing newtype too, so the local copy is cleared as well.
+```rust
+// before (0.2): always stamped transport_scrambling_control = 10 (even)
+ts::scramble_ts_packet(&cw, &mut packet)?;
+ts::descramble_ts_packet(&cw, &mut packet)?;
+// after (0.3)
+use dvb_csa::ts::{self, KeyParity};
+ts::scramble_ts_packet(&cw, KeyParity::Even, &mut packet)?;
+ts::descramble_ts_packet(&cw, KeyParity::Even, &mut packet)?;
+```
 
-## Other changes
+Behaviour that goes with it:
+- `scramble_ts_packet` writes `10` or `11` into `transport_scrambling_control` according to `parity`, and returns `Error::AlreadyScrambled { found }` if the packet's field is not already `00`. Before, it re-scrambled blindly and always stamped `10`.
+- `descramble_ts_packet` is now a no-op returning `Ok(())`, payload untouched, on a packet whose field is `00` (for example a PSI or PCR-only packet interleaved with a scrambled stream). Before, it ran the cipher over it and corrupted data that was never encrypted. A packet scrambled under the other parity returns `Error::ParityMismatch { expected, found }` instead of being descrambled with the wrong control word.
+- `Error` (which is `#[non_exhaustive]`) gained `NoPayload` (adaptation-field-only packets, or an `adaptation_field_length` that consumes the whole packet), `AlreadyScrambled` and `ParityMismatch`. Cases that used to report a fabricated `BufferTooShort` for "no payload present" now report `NoPayload`; the 188-byte buffer was never short.
 
-- `ts::ts_payload_mut` now decodes `adaptation_field_control` via the `mpeg-ts` dependency's
-  `mpeg_ts::ts::TsHeader::parse` instead of hand-rolling the same AFC bit decode — a
-  duplication-audit finding. Magic numbers `188`/`0x3f`/`0x80` are replaced with named,
-  spec-cited constants (`mpeg_ts::ts::TS_PACKET_SIZE`/`SCRAMBLING_MASK`, plus a local
-  `TSC_EVEN_KEY`). The payload byte-offset computation and the mutable slicing itself stay
-  hand-rolled, since `mpeg_ts::ts::TsPacket` only exposes an immutable `payload: &[u8]` and CSA
-  (de)scrambling needs to write back into the caller's own buffer. Identical behaviour; no public
-  API change beyond the breaking changes above.
+### 2. `ControlWord` no longer implements `Copy`
 
-## Migration
+`Clone` is kept. A `Copy` type can be duplicated on the stack without running `Drop` on each copy, so an implicit duplicate could linger unzeroed. Clone explicitly where a second owned value is genuinely needed. Code that already borrowed `&ControlWord` or used a single owned value is unchanged; code that relied on an implicit copy (passing one by value twice, storing it in a `Copy` struct) now fails to compile at that point.
 
-Most call sites are unaffected. If your code copies a `ControlWord` implicitly (e.g. passing one
-by value more than once, or storing it in a `Copy` struct), switch to an explicit `.clone()`. If
-you called `ControlWord::expand_block`/`expand_stream` directly, use the crate's public
-scramble/descramble functions instead — they are the crate's own way to reach the same
-key-derived state without exposing it further.
+```rust
+// before: let a = cw; let b = cw;
+// after:  let a = cw.clone(); let b = cw;
+```
 
-MSRV 1.95.0.
+### 3. `ControlWord::expand_block` / `expand_stream` are `pub(crate)`
+
+They returned the raw key schedule and stream seed derived from a control word, a second unaudited way to hand out key material. If you called them, route through the public `scramble` / `descramble` functions (and the `ts` helpers) instead.
+
+## Behaviour changes (no signature change)
+
+- `ControlWord`'s `Debug` is hand-written and prints a redacted placeholder instead of the 8 key bytes.
+- `ControlWord` zeroes its 8 bytes on `Drop` (a per-byte volatile write plus a compiler fence).
+- `ControlWord`'s `PartialEq` folds XOR over all 8 bytes instead of a derived, short-circuiting byte-at-a-time comparison, so comparison time does not depend on where two control words first differ.
+- `BlockCipher`, `StreamCipher` and the bitsliced `BitslicedBlock` / `BitslicedStream` zero their expanded key schedule / stream seed on `Drop`. The expanded schedule that `scramble` / `descramble` and the bitsliced batch functions hold in local variables is wrapped in a small zeroizing newtype, so that local copy is cleared too. The new code is in `src/zeroize.rs`.
+
+## Dependencies and features (from the Cargo.toml diff against `dvb-csa-v0.2.0`)
+
+```toml
+# before (0.2.0)
+broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
+mpeg-ts          = { path = "../mpeg-ts", version = "0.4", default-features = false }
+criterion = { version = "0.5", features = ["html_reports"] }   # dev-dependency
+std       = ["broadcast-common/std", "thiserror/std", "mpeg-ts/std"]
+# after (0.3.0)
+mpeg-ts          = { path = "../mpeg-ts", version = "0.5", default-features = false }
+criterion = { version = "0.8", features = ["html_reports"] }   # dev-dependency
+std       = ["thiserror/std", "mpeg-ts/std"]
+```
+
+- `broadcast-common` is dropped: it was never referenced in source, so this crate no longer tracks its epoch.
+- `mpeg-ts` `0.4` -> `0.5`: a new caret epoch for the TS types whose constants and `ScramblingControl` this crate uses. If you also depend on `mpeg-ts` directly, move it to `0.5` too. See `mpeg-ts-0.5.0.md`.
+- MSRV is unchanged at 1.95.0 (already 1.95.0 at `dvb-csa-v0.2.0`).
+
+The README example now shows the `KeyParity` form and is compiled as a doctest on `ts::scramble_ts_packet`.
+
+---
+
+Published from tag `dvb-csa-v0.3.0`.
