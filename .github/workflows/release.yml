@@ -11,6 +11,12 @@ on:
 
 env:
   CARGO_TERM_COLOR: always
+  # The lockstep gate runs the whole workspace test suite, which includes
+  # multimux's external-oracle tests (e.g. tests/emsg_mp4box.rs needs Bento4
+  # `mp4dump`). Those FAIL when their tool is missing unless this is set. The
+  # Ubuntu runners don't ship Bento4, and ci.yml sets the same flag, so the
+  # oracles are skipped here explicitly (they print SKIP) exactly as in CI.
+  MULTIMUX_ALLOW_ORACLE_SKIP: "1"
 
 jobs:
   publish:
