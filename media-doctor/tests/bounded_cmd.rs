@@ -6,8 +6,6 @@
 
 use test_bounded::output_bounded;
 
-use std::os::unix::fs::PermissionsExt;
-use std::path::PathBuf;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
@@ -18,28 +16,27 @@ const OUTPUT_BLOCK_WINDOW: Duration = Duration::from_secs(2);
 /// Deadline handed to the bounded runner.
 const DEADLINE: Duration = Duration::from_secs(4);
 
-fn stub(name: &str, body: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!("bounded-stub-{}-{name}", std::process::id()));
-    std::fs::create_dir_all(&dir).expect("stub dir");
-    let path = dir.join(name);
-    std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("write stub");
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("chmod");
-    path
+/// A command that runs `body` through `sh -c`. No file is ever written, so
+/// there is no write-then-exec ETXTBSY ("text file busy") race between
+/// parallel test threads, and no temp directory is left behind.
+fn stub(body: &str) -> Command {
+    let mut cmd = Command::new("/bin/sh");
+    cmd.arg("-c").arg(body);
+    cmd
 }
 
-fn leaky_stub() -> PathBuf {
-    stub(
-        "leaky-tool",
-        &format!("sleep {GRANDCHILD_SLEEP_SECS} &\necho hello\nexit 0"),
-    )
+fn leaky_stub() -> Command {
+    stub(&format!(
+        "sleep {GRANDCHILD_SLEEP_SECS} &\necho hello\nexit 0"
+    ))
 }
 
 #[test]
 fn pipe_based_output_hangs_on_a_pipe_holding_grandchild() {
-    let tool = leaky_stub();
+    let mut tool = leaky_stub();
     let (tx, rx) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
-        let out = Command::new(&tool).output().expect("spawn");
+        let out = tool.output().expect("spawn");
         let _ = tx.send(out);
     });
     assert!(
@@ -50,9 +47,9 @@ fn pipe_based_output_hangs_on_a_pipe_holding_grandchild() {
 
 #[test]
 fn bounded_runner_returns_despite_pipe_holding_grandchild() {
-    let tool = leaky_stub();
+    let mut tool = leaky_stub();
     let start = Instant::now();
-    let out = output_bounded(&mut Command::new(&tool), DEADLINE).expect("run");
+    let out = output_bounded(&mut tool, DEADLINE).expect("run");
     assert!(out.status.success());
     assert_eq!(out.stdout, b"hello\n");
     assert!(
@@ -64,12 +61,11 @@ fn bounded_runner_returns_despite_pipe_holding_grandchild() {
 
 #[test]
 fn bounded_runner_kills_an_overrunning_tool_with_a_clear_error() {
-    let tool = stub("slow-tool", "exec sleep 30");
+    let mut tool = stub("exec sleep 30");
     let start = Instant::now();
-    let err = output_bounded(&mut Command::new(&tool), Duration::from_millis(300))
-        .expect_err("must time out");
+    let err = output_bounded(&mut tool, Duration::from_millis(300)).expect_err("must time out");
     assert_eq!(err.kind(), std::io::ErrorKind::TimedOut);
-    assert!(err.to_string().contains("slow-tool"), "{err}");
+    assert!(err.to_string().contains("/bin/sh"), "{err}");
     assert!(err.to_string().contains("hard deadline"), "{err}");
     assert!(start.elapsed() < Duration::from_secs(5));
 }
