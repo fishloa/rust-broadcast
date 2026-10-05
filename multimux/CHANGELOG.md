@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 
+### Changed (breaking) — W2b-2
+- **Every reconnect/retry delay is jittered.** `supervisor::Backoff`,
+  `config::ReconnectPolicy::backoff_for`, `ReconnectEngine`, `file_reader`'s
+  probe retry and `hls_pull`'s resource retry now share one `backon`-backed
+  schedule (`reconnect::ReconnectSchedule`). A delay is no longer exactly
+  `min * factor^attempt`: a random jitter of up to the pre-jitter delay is
+  added and the result re-clamped to the cap, so a fleet of inputs pointed at
+  one server no longer reconnects in lockstep. `Backoff`'s public shape
+  (`new`/`production_default`/`next`/`delay_for_attempt`/`reset`) is unchanged.
+  A new public module `reconnect` exposes the schedule.
+
 ### Changed (breaking) — W2b-1
 - **A single `CancellationToken` replaces the `watch<bool>` shutdown.** The
   public `watch<bool>` graceful-shutdown signal is removed:
