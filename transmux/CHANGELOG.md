@@ -675,6 +675,12 @@ rewrite of `cenc_decrypt`'s remaining box walker (#1081).
   `EsdsBox::parse_body` (`esds` box path); no other crate, example, fuzz target or binding calls
   `ESDescriptor::parse`. Feeding bare-body bytes now returns `InvalidValue { field:
   "descriptor_tag" }` (or a silently misread result if the first body byte happens to be `0x03`).
+- `ESDescriptor::parse` rejects a non-UTF-8 `URLstring` with `InvalidValue { field: "URLstring" }`
+  instead of decoding it lossily: ISO/IEC 14496-1 §7.2.6.5 defines the field as UTF-8 (ISO/IEC
+  10646-1), and a lossy decode (0xFF -> U+FFFD) silently broke byte-identical round trips (the
+  re-serialized bytes differed, and 765 replacement bytes from a 255-byte input overflowed
+  `URLlength`). A wire `esds` with an invalid URL byte failed to round-trip before and now fails to
+  parse at all (#1148 E).
 
 ### Fixed
 

@@ -729,7 +729,9 @@ pub struct ESDescriptor {
     pub stream_priority: u8,
     /// `dependsOn_ES_ID` (only present when `stream_dependence_flag` is true).
     pub depends_on_es_id: Option<u16>,
-    /// `URLstring` (only present when `url_flag` is true).
+    /// `URLstring` (only present when `url_flag` is true). ISO/IEC 14496-1
+    /// §7.2.6.5 defines it as UTF-8 (ISO/IEC 10646-1); non-UTF-8 bytes are
+    /// rejected at parse time rather than decoded lossily (#1148 E).
     pub url: Option<alloc::string::String>,
     /// `OCR_ES_Id` (only present when `ocr_stream_flag` is true).
     pub ocr_es_id: Option<u16>,
@@ -880,10 +882,18 @@ impl<'a> Parse<'a> for ESDescriptor {
                     what: "URLstring",
                 });
             }
-            let u = alloc::string::String::from_utf8_lossy(&body[cursor..cursor + url_len])
-                .into_owned();
+            // ISO/IEC 14496-1 §7.2.6.5: URLstring is UTF-8 (ISO/IEC 10646-1),
+            // so invalid bytes are a structured error — a lossy decode would
+            // silently break the byte-identical round trip (#1148 E).
+            let u = core::str::from_utf8(&body[cursor..cursor + url_len]).map_err(|eve| {
+                Error::InvalidValue {
+                    field: "URLstring",
+                    value: body[cursor + eve.valid_up_to()] as u64,
+                    reason: "URLstring must be UTF-8 (ISO/IEC 14496-1 §7.2.6.5)",
+                }
+            })?;
             cursor += url_len;
-            Some(u)
+            Some(alloc::string::String::from(u))
         } else {
             None
         };
@@ -1930,6 +1940,56 @@ mod tests {
         let err =
             ESDescriptor::parse(hostile).expect_err("hostile size varint must fail, not panic");
         assert!(matches!(err, Error::BufferTooShort { .. }), "got {err:?}");
+    }
+
+    /// #1148/E: ISO/IEC 14496-1 §7.2.6.5 defines `URLstring` as UTF-8, so
+    /// non-UTF-8 bytes are a structured `InvalidValue` — a lossy decode would
+    /// rewrite 0xFF into U+FFFD, and the re-serialized form would differ
+    /// (wrong bytes, and `URLlength` would overflow when it reaches 255).
+    #[test]
+    fn es_descriptor_non_utf8_url_is_rejected() {
+        // Hand-built framed payload: tag + 1-byte size 5 + ES_ID + flags
+        // (URL_Flag) + URLlength 1 + URL byte 0xFF (invalid UTF-8). Positions
+        // are fixed by construction, so nothing can be mistaken for the URL.
+        #[rustfmt::skip]
+        let payload: &[u8] = &[
+            TAG_ES_DESCRIPTOR, 0x05,
+            0x00, 0x01,             // ES_ID = 1
+            0x40,                   // URL_Flag
+            0x01, 0xFF,             // URLlength 1, invalid UTF-8 byte
+        ];
+        let err = ESDescriptor::parse(payload)
+            .expect_err("non-UTF-8 URLstring must fail, not decode lossily");
+        assert!(
+            matches!(
+                err,
+                Error::InvalidValue {
+                    field: "URLstring",
+                    ..
+                }
+            ),
+            "expected InvalidValue for URLstring, got {err:?}"
+        );
+
+        // Same rejection through the box path (FullBox header in front).
+        #[rustfmt::skip]
+        let mut boxed = Vec::new();
+        boxed.extend_from_slice(&((8 + 4 + payload.len()) as u32).to_be_bytes());
+        boxed.extend_from_slice(b"esds");
+        boxed.extend_from_slice(&[0, 0, 0, 0]);
+        boxed.extend_from_slice(payload);
+        let e = EsdsBox::parse_box(&boxed).expect_err("box path must reject too");
+        assert!(matches!(e, Error::InvalidValue { .. }), "got {e:?}");
+
+        // A valid UTF-8 URL (multi-byte code point included) parses and
+        // re-serializes to the same bytes.
+        let ok = alloc::string::String::from("http://ex.test/\u{1F512}");
+        let framed = es_descriptor_with_url(ok.clone())
+            .try_to_bytes()
+            .expect("serialize valid utf-8 URL");
+        let desc = ESDescriptor::parse(&framed).expect("valid UTF-8 parses");
+        assert_eq!(desc.url.as_deref(), Some(ok.as_str()));
+        assert_eq!(desc.try_to_bytes().expect("re-serialize"), framed);
     }
 
     /// Regression guard (NOT the #1148 bite): a wire `esds` whose `ES_Descriptor` size varint is *minimal*
