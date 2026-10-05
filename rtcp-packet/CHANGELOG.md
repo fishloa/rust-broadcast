@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-05
 ### Changed (breaking)
 - **Behaviour change (#1123)**: SR/RR/SDES/BYE/APP parsing now validates and strips the `P`
   (padding) octets per RFC 3550 §6.4.1 instead of leaving them in the body, and **rejects** a

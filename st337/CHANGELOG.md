@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2026-10-05
 ### Documentation
 - `BurstPreamble::length_code` and the `burst` module doc now explain, in
   rustdoc-visible text (not just the excluded `docs/` tree), why this crate

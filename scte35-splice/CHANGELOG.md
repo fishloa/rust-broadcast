@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-10-05
 ### Changed (breaking)
 - Serializers now return an error, instead of silently truncating, when a
   length, count, or out-of-range field value does not fit its wire field

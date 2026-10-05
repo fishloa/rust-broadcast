@@ -1,6 +1,6 @@
 [package]
 name    = "container-probe"
-version = "0.1.0"
+version = "0.1.1"
 edition = "2024"
 description = "Robust media container-format detection — MPEG-2 TS (188/192/204/208 stride + phase), ISOBMFF, Matroska/WebM, MPEG-PS, FLV, MXF, WAV, Ogg, ASF, and elementary streams."
 license      = "MIT OR Apache-2.0"
@@ -17,15 +17,15 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 
 # Dev-only: the drift guard pins this crate's constants against the crates that
 # already validate them against real fixtures. Never a runtime dependency — the
 # runtime graph is `broadcast-common` only.
 [dev-dependencies]
-mpeg-ts  = { path = "../mpeg-ts",  version = "0.4" }
-mpeg-ps  = { path = "../mpeg-ps",  version = "0.4" }
-st377-1  = { path = "../st377-1",  version = "0.3" }
+mpeg-ts  = { path = "../mpeg-ts",  version = "0.5" }
+mpeg-ps  = { path = "../mpeg-ps",  version = "0.5" }
+st377-1  = { path = "../st377-1",  version = "0.4" }
 
 [features]
 default = ["std"]

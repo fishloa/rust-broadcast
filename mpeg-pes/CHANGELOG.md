@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
 ### Changed (breaking)
 - `PesExtension::pes_extension_field` is now `Option<PesExtensionField<'a>>`
   instead of `Option<&'a [u8]>` (#1052): `PesExtensionField` types the

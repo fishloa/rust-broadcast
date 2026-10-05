@@ -1,6 +1,6 @@
 [package]
 name         = "timed-metadata"
-version      = "0.5.0"
+version      = "0.6.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -15,14 +15,14 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-scte35-splice = { path = "../scte35-splice", version = "2.1", default-features = false }
+scte35-splice = { path = "../scte35-splice", version = "3.0", default-features = false }
 mp4-emsg      = { path = "../mp4-emsg",      version = "0.4", default-features = false }
-broadcast-common    = { path = "../broadcast-common",    version = "9.3", default-features = false }
+broadcast-common    = { path = "../broadcast-common",    version = "9.4", default-features = false }
 # The shared HLS attribute-list tokenizer/renderer (issue #1140 T12):
 # `daterange.rs` used to carry its own copy of the quoted-comma splitter and
 # hand-format `,NAME="VALUE"` with no validation of interpolated content.
-broadcast-hls = { path = "../broadcast-hls", version = "0.2", default-features = false }
-cc-data       = { path = "../cc-data",       version = "0.5", default-features = false, optional = true }
+broadcast-hls = { path = "../broadcast-hls", version = "0.3", default-features = false }
+cc-data       = { path = "../cc-data",       version = "0.6", default-features = false, optional = true }
 dvb-vbi       = { path = "../dvb-vbi",       version = "0.4", default-features = false, optional = true }
 thiserror     = { version = "2", default-features = false }
 # RFC 3339 formatting for the wall-clock anchor (SP5); `alloc` only so the crate stays no_std (`jiff/std` rides the `std` feature).

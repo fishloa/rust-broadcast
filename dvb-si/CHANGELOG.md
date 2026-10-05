@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [11.0.0] - 2026-10-05
 ### Changed (breaking)
 
 - **#1141 (r03-O1, r03-O3)**: the four `multilingual_*` descriptors and the AIT `application_name_descriptor` now share one `lang_text` reader/writer, and `teletext_descriptor` / `VBI_teletext_descriptor` share one entry loop (and one over-range length check). Observable changes: an over-range name/provider/text in `multilingual_network_name`, `multilingual_service_name` and `application_name` now serializes to `Error::FieldOverflow` (as `multilingual_bouquet_name`/`multilingual_component` already did) instead of `Error::InvalidDescriptor`; `teletext_descriptor` and `VBI_teletext_descriptor` now share one serializer, so an over-range body (over 255 bytes) is `Error::FieldOverflow` from the checked `descriptor_length` write for both (the VBI copy used to return `InvalidDescriptor` from a hand-written check); `VbiTeletextEntry` is now a type alias of `TeletextEntry` (same fields; `TeletextEntry` gains `Copy`). Wire output and parse results are unchanged.

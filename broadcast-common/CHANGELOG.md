@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [9.4.0] - 2026-10-05
 ### Added
 - **`seq`** — `SeqSpace`: wrap-safe modular sequence-number arithmetic (`add`/`diff`/`lt`/`leq`/`gt`/`geq`/`in_closed_range`) over a `bits`-wide space, the one algorithm behind `rist-runtime` (16-bit) and `srt-runtime` (31-bit) `arq::seq` (audit r08-RIST-O1, #1141).
 - **`pusi::PusiAccumulator`** (+ `DEFAULT_MAX_UNIT_SIZE`, 16 MiB) — the one PUSI-delimited unit-accumulation rule (ISO/IEC 13818-1 §2.4.3.2: ignore payload before the first PUSI, a PUSI closes the in-progress unit, a capped unit is discarded until the next PUSI), shared by `mpeg-pes::PesAssembler` and `mpeg-ts::PusiReassembler` instead of two diverged copies (audit r01-W13, #1074).

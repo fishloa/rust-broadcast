@@ -1,6 +1,6 @@
 [package]
 name    = "dvb-ci"
-version = "0.8.1"
+version = "0.9.0"
 edition = "2024"
 description = "DVB Common Interface (EN 50221) — APDU/resource objects, session/transport PDUs, and a CA_PMT builder from a dvb-si PMT."
 license      = "MIT OR Apache-2.0"
@@ -18,7 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
-dvb-si     = { path = "../dvb-si", version = "10", default-features = false }
+dvb-si     = { path = "../dvb-si", version = "11.0", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 

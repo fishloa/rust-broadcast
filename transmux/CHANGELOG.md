@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.25.0] - 2026-10-05
 ### Added
 
 - `CencDecryptor::from_fmp4_bytes` — `from_fmp4` over an already-shared `bytes::Bytes`, so the file is

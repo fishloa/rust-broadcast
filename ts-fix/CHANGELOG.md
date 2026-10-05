@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-05
 ### Fixed
 - `--service` (service extract, `PidFilterOp`): the keep-set was built from the
   PMT's `pcr_pid` + `elementary_pid`s only, so every ECM PID (from the

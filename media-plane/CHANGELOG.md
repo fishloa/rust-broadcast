@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
 ### Changed
 - `Trunk`'s state lock and the `StallIngest` back-pressure `Condvar` are now `parking_lot` (no poisoning; `lock_state` is now a one-line passthrough, the poison-recovery logic is gone). No public API change.
 - Measured the single-lock contention with the new `trunk_contention` criterion benchmark; numbers and the lock-split decision are in `benches/RESULTS.md`: the pre-registered rule said SPLIT, a sample-group / segment-event-part-group split was implemented and measured (16 readers: 574 ns -> 1104 ns per publish), missed the >= 30 % gain bar and was reverted.

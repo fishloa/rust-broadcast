@@ -1,6 +1,6 @@
 [package]
 name    = "broadcast-hls"
-version      = "0.2.1"
+version      = "0.3.0"
 edition = "2024"
 description = "HLS (M3U8) playlist syntax (RFC 8216 / RFC 8216bis) — Media/Master Playlist parse + serialize, no_std."
 license      = "MIT OR Apache-2.0"
@@ -22,7 +22,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 # is 9.3, deliberately above that floor: it tracks the current published line so
 # the whole workspace resolves one `broadcast-common`, and 9.2 vs 9.3 is the
 # same caret bucket, so this is not an epoch change.
-broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 

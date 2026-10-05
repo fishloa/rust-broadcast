@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-05
 ### Added
 - `udp::MulticastConfig` (`socket2` bind + join: `SO_RCVBUF`, opt-in `SO_REUSEADDR` / `SO_REUSEPORT` (default off, as with the plain bind it replaces), multicast interface), `UdpSectionStream::bind` / `UdpT2miStream::bind`, and `from_socket` constructors for an already-bound socket (tests bind port 0).
 - `SectionStream::take_io_error` / `T2miEventStream::take_io_error`: when

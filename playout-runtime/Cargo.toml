@@ -1,6 +1,6 @@
 [package]
 name         = "playout-runtime"
-version      = "0.1.0"
+version      = "0.2.0"
 edition      = "2024"
 description  = "Sans-IO linear channel playout: a schedule model (programme/ad/slate), transition planning across a join (PTS-rebase offset + discontinuity detection), and SCTE-35 splice_insert() emission points built with scte35-splice. No HTTP, no tokio, no transcoding."
 license      = "MIT OR Apache-2.0"
@@ -16,14 +16,14 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-broadcast-common = { path = "../broadcast-common", version = "9.3", default-features = false }
+broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 # Splice-point conditioning (nearest-boundary snap with an explicit
 # tolerance): this crate decides *when* a transition happens, ssai-runtime
 # decides *how the splice lands* — see the crate-root docs. Not duplicated
 # here.
-ssai-runtime     = { path = "../ssai-runtime",     version = "0.1", default-features = false }
+ssai-runtime     = { path = "../ssai-runtime",     version = "0.2", default-features = false }
 # Builds + serializes the splice_insert() a transition implies.
-scte35-splice    = { path = "../scte35-splice",    version = "2.1",   default-features = false }
+scte35-splice    = { path = "../scte35-splice",    version = "3.0",   default-features = false }
 thiserror        = { version = "2", default-features = false }
 serde            = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 

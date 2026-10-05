@@ -4,6 +4,7 @@ All notable changes to dvb-mabr will be documented in this file.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-05
 ### Changed (breaking)
 - **BREAKING: XML support now requires the `std` feature; hand-rolled XML
   replaced by `quick-xml`; `roxmltree` dropped.** The whole XML API

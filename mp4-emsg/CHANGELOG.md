@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10-05
 ### Fixed
 - `EmsgBox::serialize_into` now rejects `scheme_id_uri`/`value` containing an
   embedded NUL byte with `Error::InvalidString` (#1104). Previously it wrote

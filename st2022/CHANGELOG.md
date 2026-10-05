@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.1.0] - 2026-10-05
 ### Changed
 - MSRV raised to **1.95.0** (issue #949). This removes the workspace's MSRV
   split: `webrtc-runtime`'s optional `media` feature needed rustc 1.88 (via

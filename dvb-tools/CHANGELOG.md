@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [11.0.0] - 2026-10-05
 ### Fixed
 - `pids` bitrate estimate: pick one PCR PID and use only its own first/last
   PCR readings, instead of mixing the first PCR seen on any PID with the

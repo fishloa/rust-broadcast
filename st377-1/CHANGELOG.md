@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.4.0] - 2026-10-05
 ### Changed (breaking)
 - **#1108 (MX-W3)**: `Preface::identifications` is now `Option<Vec<UlBytes>>`
   (was `Vec<UlBytes>`) — `None` when the Identifications property (`0x3B06`)

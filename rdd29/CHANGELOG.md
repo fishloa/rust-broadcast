@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-10-05
 ### Changed (breaking)
 - `BedDefinition1`/`ObjectDefinition1` gained a new `align_bits: u8` field
   (#1114): RDD 29 gives its `AlignBits` byte-alignment padding no documented

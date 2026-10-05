@@ -7,6 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-10-05
 ### Changed (breaking)
 - New `Error::FieldOverflow` variant (wrapping `broadcast_common::len::FieldOverflow`),
   returned when a length or count does not fit its wire field instead of the

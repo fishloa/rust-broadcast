@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-10-05
 ### Fixed
 - `scte35::build_splice_insert` conditions on the 33-bit SCTE-35 circle
   (`ssai_runtime::splice::condition_splice_point_wrapping`): `requested_pts`

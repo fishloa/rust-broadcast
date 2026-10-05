@@ -6,6 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-10-05
 ### Added
 - `AsyncRtmpClient` gains sans-IO `encode_video`/`encode_audio`/`encode_metadata`
   (returning the chunk-stream-framed message bytes without writing) and
