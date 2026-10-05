@@ -121,3 +121,22 @@ Captured in a throwaway `origin/main` worktree: add the capture test to main's
 own `dash.rs`, run with `GOLDEN_BLESS=<dir>`, then normalise
 `@availabilityStartTime` to the frozen value. `ll_dash_mpd.golden` is unaffected
 (sub-60 s) and byte-identical to main.
+
+## `rtsp_announce.sdp`
+
+Byte-for-byte expected ANNOUNCE SDP body of the RTSP push transport
+(`multimux/src/push/rtsp.rs::build_sdp`), generated from the **pre-`sdp-types` `format!`**
+on `origin/main` (commit `25dab1fc`) before SP4.1 moved the body onto `sdp_types::Session`.
+The writer reproduces the hand-built body exactly (same line order, same CRLF), so this is
+byte-identical to main. To regenerate, add a capture test to **main's own `rtsp.rs`**:
+
+```bash
+git worktree add --detach /tmp/multimux-main 25dab1fc
+# append to /tmp/multimux-main/multimux/src/push/rtsp.rs a `#[cfg(test)]` fn that writes
+# `super::build_sdp()` to `$GOLDEN_OUT/rtsp_announce.sdp`, then:
+cd /tmp/multimux-main
+GOLDEN_OUT=<this directory> cargo test -p multimux --lib <that test> --locked
+```
+
+`GOLDEN_BLESS=<dir>` in the migration's `announce_sdp_golden` test writes the file instead of
+asserting.
