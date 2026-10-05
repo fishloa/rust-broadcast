@@ -17,5 +17,9 @@ fn a_panicking_lock_holder_does_not_wedge_the_next_acquire() {
 
     // The next acquire succeeds and sees the pre-panic state.
     let got = shared.lock();
-    assert_eq!(*got, vec![1], "the lock must be usable after a panicking holder");
+    assert_eq!(
+        *got,
+        vec![1],
+        "the lock must be usable after a panicking holder"
+    );
 }

@@ -77,14 +77,6 @@ const ALLOW: &[(&str, &str, &str, &str)] = &[
         "let stripped = url.strip_prefix(\"srt://\").unwrap_or(url);",
         "push/srt.rs: the query split stays manual (Haivision streamid `#`)",
     ),
-    // --- The RTSP push renders its own ANNOUNCE SDP (`build_sdp`); it moves
-    // onto rtsp-runtime's adapter in W2b-2, not here. ---
-    (
-        "push/rtsp.rs",
-        "\"v=0",
-        "\"v=0\\r\\n\\",
-        "push/rtsp.rs `build_sdp` renders the ANNOUNCE SDP (W2b-2 moves the RTSP push)",
-    ),
 ];
 
 /// (file suffix, needle, line marker, reason) — like [`ALLOW`] but for the
