@@ -665,9 +665,19 @@ rewrite of `cenc_decrypt`'s remaining box walker (#1081).
 - `rtp::base64_decode` is stricter than the pre-crate decoder: input whose length is 1 mod 4 (`QUJDR`) is an error (the stray character used to be dropped silently), and `=` anywhere other than as the final one or two characters (`Zm9v=YmFy`, excess padding `Zg===`) is an error. Padding stays optional and non-zero trailing bits stay tolerated.
 - CLI `--key` hex now rejects a `+`/`-` sign and non-ASCII input (it used to accept the sign, and panic on non-ASCII).
 
+- `ESDescriptor::parse` now reads the bytes `Serialize` writes — `ES_DescrTag` + expandable-size varint + body — instead of the body alone, so the public `Parse` impl no longer misreads that framing as `ES_ID`/flags/`URLlength` and silently truncates the descriptor chain; an `esds` carrying a `URLstring` longer than ~100 bytes (up to the 255 its 8-bit `URLlength` allows, ISO/IEC 14496-1 §7.2.6.5) no longer fails parse with a spurious `BufferTooShort` (#1148).
+  **Breaking (migration):** the *input contract* of the public `Parse` impl changed: it used to read
+  the bare descriptor body and now reads the framed bytes `Serialize` writes (`ES_DescrTag` +
+  expandable-size varint + body). A caller that previously fed `ESDescriptor::parse` the bare body
+  (the bytes after a manually stripped tag/size prefix) must now pass the framed bytes instead, or
+  keep parsing through `EsdsBox::parse_body`/`parse_box`, which strip the box and FullBox framing
+  themselves and pass exactly what this impl expects. The only in-workspace caller was
+  `EsdsBox::parse_body` (`esds` box path); no other crate, example, fuzz target or binding calls
+  `ESDescriptor::parse`. Feeding bare-body bytes now returns `InvalidValue { field:
+  "descriptor_tag" }` (or a silently misread result if the first body byte happens to be `0x03`).
+
 ### Fixed
 
-- `ESDescriptor::parse` now reads the bytes `Serialize` writes — `ES_DescrTag` + expandable-size varint + body — instead of the body alone, so the public `Parse` impl no longer misreads that framing as `ES_ID`/flags/`URLlength` and silently truncates the descriptor chain; an `esds` carrying a `URLstring` longer than ~100 bytes (up to the 255 its 8-bit `URLlength` allows, ISO/IEC 14496-1 §7.2.6.5) no longer fails parse with a spurious `BufferTooShort` (#1148).
 - `CencDecryptor` on a progressive protected MP4 now honours `co64` chunk offsets (the duplicated raw-byte stbl expander read only `stco`) (#1141).
 - Progressive sample layout (`ProgressiveDemux` and the protected-progressive path of `CencDecryptor`) follows one rule for uniform and per-sample `stsz`: `stsz.sample_count` is authoritative, surplus `stsc`/`stco` capacity (a short last chunk, extra chunks) is tolerated and clamped, and only a shortfall (chunk tables cover fewer samples than `stsz` declares) is an error. `stsc.first_chunk` must now be >= 1 and strictly ascending (ISO/IEC 14496-12 §8.7.4), else `Error::InvalidValue`; the expansion is one forward pass (#1141).
 - `frag_offsets`: a final `mdat` cut short by a truncated capture is now clamped
