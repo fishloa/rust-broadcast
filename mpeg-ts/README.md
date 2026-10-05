@@ -26,14 +26,14 @@ the full SI/descriptor stack.
 
 ```toml
 [dependencies]
-mpeg-ts = "0.4"
+mpeg-ts = "0.5"
 ```
 
 For embedded (`no_std + alloc`):
 
 ```toml
 [dependencies]
-mpeg-ts = { version = "0.4", default-features = false }
+mpeg-ts = { version = "0.5", default-features = false }
 ```
 
 ## Quickstart — feed TS packets into a `SectionReassembler`

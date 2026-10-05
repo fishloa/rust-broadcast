@@ -12,7 +12,7 @@ versioned.
 
 ```toml
 [dependencies]
-timed-metadata = "0.5"
+timed-metadata = "0.6"
 ```
 
 ## What is timed-metadata?

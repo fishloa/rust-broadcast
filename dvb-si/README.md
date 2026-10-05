@@ -436,7 +436,7 @@ let view: &PmtSection = pmt.get();                            // no re-parse, no
 
 ```toml
 [dependencies]
-dvb-si = { version = "7", default-features = false }  # tight build: no_std + alloc
+dvb-si = { version = "11", default-features = false }  # tight build: no_std + alloc
 ```
 
 | Feature | Default | Description |

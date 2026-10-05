@@ -95,7 +95,7 @@ cargo run -p playout-runtime --example emit_splice_from_real_cue
 
 ```toml
 [dependencies]
-playout-runtime = "0.1"
+playout-runtime = "0.2"
 ```
 
 ## Spec references
