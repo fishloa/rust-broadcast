@@ -1041,6 +1041,14 @@ impl RouteHandle {
         self.active_publisher.read().len()
     }
 
+    /// Test-only: whether a fresh publisher for `program` would be accepted
+    /// (i.e. the `active_publisher` slot is free) — the reconnect check I-E
+    /// asserts.
+    #[cfg(test)]
+    pub(crate) fn publish_program_is_free_for_test(&self, program: ProgramId) -> bool {
+        !self.active_publisher.read().contains_key(&program)
+    }
+
     /// Release `program`'s `active_publisher` slot, if (and only if)
     /// it still holds exactly `trunk` — the counterpart to
     /// [`Self::publish_program`]'s rejection of a second concurrent

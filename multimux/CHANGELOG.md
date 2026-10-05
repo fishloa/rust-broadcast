@@ -216,10 +216,10 @@
   resolves to `FileReaderError::Cancelled`.
 
 ### Fixed — W2b-1
-- **A stalled or failed dial-source session releases its publisher slot.** The
-  ingest scaffold's stall, write-failure and `StepOutcome::Failed` exit paths
-  now call `release_route`+`finish` like the cancel path (M1), so the
-  supervisor's reconnect is not rejected as a second concurrent publisher.
+- **Every dial-source session exit path releases its publisher slot.** The
+  ingest scaffold's stall, write-failure, `StepOutcome::Failed`, peer-EOF,
+  terminal-health and cancel exits all call `release_route` (M1/I-E), so the
+  supervisor's reconnect is never rejected as a second concurrent publisher.
   The bounded-write failure message now describes the per-write bound it
   enforces (M2).
 - **A push reconnect no longer ignores shutdown** (defect 5): cancelling during

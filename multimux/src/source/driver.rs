@@ -201,6 +201,13 @@ where
         }
     }
     advance_route(&driver, route_handle, progress).await;
+    // Release the publisher slot on EVERY exit path (I-E): the tail
+    // `advance_route` above may republish, so the release must come after it —
+    // otherwise a peer-ended or terminal-health session keeps
+    // `active_publisher` bound and a reconnect is rejected as a second
+    // publisher. Done once here for the break paths; the early-return paths
+    // above release before their own return.
+    release_route(&driver, route_handle);
     match driver.into_health() {
         HealthState::Failed(e) => map_failed(e),
         HealthState::Ended => MultimuxError::Connect {
@@ -270,6 +277,13 @@ mod tests {
                 tx_per_deadline: Bytes::from_static(b"OPTIONS"),
                 announce: false,
                 announced: false,
+            }
+        }
+        fn write_after_announce() -> Self {
+            Self {
+                announce: true,
+                tx: Some(Bytes::from(vec![0u8; 64])),
+                ..Self::silent()
             }
         }
         fn writing(tx: Bytes) -> Self {
@@ -374,6 +388,20 @@ mod tests {
         }
     }
 
+    /// Announces once (feeds so `NewProgram` binds), then never resolves — so
+    /// the scaffold reaches its buffered write and stalls on it (I-E).
+    struct AnnounceOnceThenPending;
+    impl IngestStep<QuietSession> for AnnounceOnceThenPending {
+        async fn step(
+            &mut self,
+            driver: &mut IngestDriver<QuietSession>,
+            _window: Duration,
+        ) -> StepOutcome {
+            driver.feed(&[], Timestamp::ZERO);
+            std::future::pending().await
+        }
+    }
+
     /// Feeds the driver once on its first call (so the session's queued
     /// `NewProgram` is consumed and a program is minted + bound), reports
     /// `Received`, then returns `Idle` forever (so the stall clock expires).
@@ -447,6 +475,32 @@ mod tests {
     /// Like `run`, but hands the caller the route so a test can inspect its
     /// registry afterwards (M1).
     async fn run_capturing_route<T: IngestStep<QuietSession>>(
+        session: QuietSession,
+        mut source: T,
+        read: Duration,
+        pipe: usize,
+    ) -> (MultimuxError, Arc<RouteHandle>) {
+        let (mut w, _peer) = tokio::io::duplex(pipe);
+        let route = route();
+        let mut progress = DriverProgress::new();
+        let err = run_ingest_scaffold(
+            driver(session),
+            &route,
+            &mut progress,
+            CancellationToken::new(),
+            timeouts(read),
+            Duration::from_secs(1),
+            &mut w,
+            &mut source,
+            MAP,
+        )
+        .await;
+        (err, route)
+    }
+
+    /// Like `run_capturing_route`, with a chosen write-pipe size so a write
+    /// can be made to stall (I-E).
+    async fn run_capturing_route_with_write<T: IngestStep<QuietSession>>(
         session: QuietSession,
         mut source: T,
         read: Duration,
@@ -645,5 +699,82 @@ mod tests {
             8,
             CancellationToken::new(),
         ));
+    }
+
+    /// Announces a program (feeds once so `NewProgram` is consumed), then
+    /// yields the given outcome forever — modelling an exit-path source.
+    struct AnnounceThen(fn() -> StepOutcome);
+    impl IngestStep<QuietSession> for AnnounceThen {
+        async fn step(
+            &mut self,
+            driver: &mut IngestDriver<QuietSession>,
+            window: Duration,
+        ) -> StepOutcome {
+            // Every call re-feeds to keep the program bound, then returns the
+            // scripted outcome (Eof/Failed end the loop immediately after).
+            driver.feed(&[], Timestamp::ZERO);
+            let _ = window;
+            (self.0)()
+        }
+    }
+
+    /// I-E: the peer-EOF exit path releases the publisher slot.
+    ///
+    /// Revert-check: remove the `release_route` from the `StepOutcome::Eof`
+    /// arm — this FAILS (`active_publisher_len` stays 1).
+    #[tokio::test(start_paused = true)]
+    async fn an_eof_exit_releases_the_publisher_slot() {
+        let (err, route) = run_capturing_route(
+            QuietSession::announcing(),
+            AnnounceThen(|| StepOutcome::Eof),
+            Duration::from_secs(30),
+            1024,
+        )
+        .await;
+        assert_eq!(route.active_publisher_len(), 0, "{err:?}");
+        // A second publisher for the same program is accepted afterwards.
+        assert!(route.publish_program_is_free_for_test(media_plane::ingress::ProgramId(0)));
+    }
+
+    /// I-E: the `StepOutcome::Failed` exit path releases the publisher slot.
+    #[tokio::test(start_paused = true)]
+    async fn a_failed_exit_releases_the_publisher_slot() {
+        let (err, route) = run_capturing_route(
+            QuietSession::announcing(),
+            AnnounceThen(|| {
+                StepOutcome::Failed(MultimuxError::Connect {
+                    reason: "boom".into(),
+                })
+            }),
+            Duration::from_secs(30),
+            1024,
+        )
+        .await;
+        assert!(matches!(err, MultimuxError::Connect { .. }), "{err:?}");
+        assert_eq!(route.active_publisher_len(), 0);
+        assert!(route.publish_program_is_free_for_test(media_plane::ingress::ProgramId(0)));
+    }
+
+    /// I-E: a stalled outbound write releases the publisher slot before
+    /// returning.
+    #[tokio::test(start_paused = true)]
+    async fn a_write_failure_releases_the_publisher_slot() {
+        // The session announces, then writes a request into a 16 B pipe nobody
+        // reads, so the bounded write fails.
+        // Announces once (feeding so `NewProgram` binds), then a pending step
+        // so the loop reaches the buffered write and stalls on it.
+        let (err, route) = tokio::time::timeout(
+            Duration::from_secs(5),
+            run_capturing_route_with_write(
+                QuietSession::write_after_announce(),
+                AnnounceOnceThenPending,
+                Duration::from_secs(30),
+                16,
+            ),
+        )
+        .await
+        .expect("the write bound must end the scaffold");
+        assert!(matches!(err, MultimuxError::Connect { .. }), "{err:?}");
+        assert_eq!(route.active_publisher_len(), 0);
     }
 }
