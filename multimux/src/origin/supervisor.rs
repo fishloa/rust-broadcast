@@ -391,21 +391,14 @@ mod tests {
     /// series repeated `next()` calls produce, and stays total on hostile
     /// parameters instead of panicking in `Duration` arithmetic.
     ///
-    /// SP1.5: the schedule is equal-jittered, so the two views are compared
-    /// through ONE seeded schedule and the assertions are bands within
-    /// `[min/2, cap)` rather than exact values — the exact series is
-    /// `multimux/tests/reconnect_policy.rs`'s job, on a seeded schedule.
+    /// SP1.5/m-1: the schedule is equal-jittered and its jitter state mutates
+    /// on each call (`Cell`), so the stateless and stepped views can no longer
+    /// be compared value-for-value — the exact series is
+    /// `multimux/tests/reconnect_policy.rs`'s job, on a seeded schedule. This
+    /// asserts the band and totality instead.
     #[test]
-    fn delay_for_attempt_matches_repeated_next_and_is_total() {
+    fn delay_for_attempt_stays_in_band_and_is_total() {
         let backoff = Backoff::new(Duration::from_millis(500), Duration::from_secs(30), 2.0);
-        let mut stepped = backoff.clone();
-        for attempt in 0..40u32 {
-            assert_eq!(
-                backoff.delay_for_attempt(attempt),
-                stepped.next(),
-                "attempt {attempt}"
-            );
-        }
         // Every attempt stays within the configured band `[min/2, cap)`.
         for attempt in 0..40u32 {
             let d = backoff.delay_for_attempt(attempt);
