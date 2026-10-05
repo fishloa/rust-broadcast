@@ -301,21 +301,25 @@ async fn a_response_longer_than_thirty_seconds_is_not_cut() {
     });
     // Advance the paused clock past 30 s. The handler's 31 s `sleep` is only
     // registered once the runtime has polled the body stream (after the real
-    // accept/parse/handler path), so advance-yield until the reader finishes,
-    // bounded by an outer hang guard. This never relies on virtual/real-I/O
-    // interleaving for correctness: any pending timer fires on advance, and a
-    // missing one is caught again on the next iteration.
-    let body = tokio::time::timeout(Duration::from_secs(120), async {
-        loop {
-            tokio::time::advance(Duration::from_secs(5)).await;
-            tokio::task::yield_now().await;
-            if read.is_finished() {
-                return read.await.expect("read task");
-            }
+    // accept/parse/handler path), so advance-yield until the reader finishes.
+    //
+    // The hang guard is a REAL wall-clock bound (`std::time::Instant`), NOT a
+    // `tokio::time::timeout`: under `start_paused` a virtual timeout is
+    // consumed the instant the runtime is idle, which is exactly the
+    // virtual-outruns-real-I/O failure the previous form had (it burned the
+    // 120 s VIRTUAL budget before the socket I/O completed under load). A real
+    // deadline cannot be outrun by advancing the virtual clock.
+    let real_deadline = std::time::Instant::now() + std::time::Duration::from_secs(120);
+    let mut body = None;
+    while std::time::Instant::now() < real_deadline {
+        tokio::time::advance(Duration::from_secs(1)).await;
+        tokio::task::yield_now().await;
+        if read.is_finished() {
+            body = Some(read.await.expect("read task"));
+            break;
         }
-    })
-    .await
-    .expect("a >30 s response must complete, not be cut by a total deadline");
+    }
+    let body = body.expect("a >30 s response must complete, not be cut by a total deadline");
     let body = String::from_utf8_lossy(&body);
     assert!(
         body.contains("first") && body.contains("second"),
