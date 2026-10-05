@@ -66,17 +66,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/whip.rs",
-        344,
+        349,
         "WHIP signalling server TaskTracker (WhipInfra)",
     ),
     (
         "source/whip.rs",
-        549,
+        554,
         "WHIP run task; owned by the route supervisor handle",
     ),
     (
         "source/whip.rs",
-        564,
+        569,
         "WHIP accept pump; owned by the route supervisor handle",
     ),
     (
@@ -91,12 +91,12 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        1502,
+        1508,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1523,
+        1529,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (
@@ -151,17 +151,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/mod.rs",
-        1548,
+        1578,
         "Ctrl-C/SIGTERM shutdown watcher; aborted/awaited at process shutdown",
     ),
     (
         "origin/mod.rs",
-        1724,
+        1754,
         "spawn_following -> follow_trunk; the returned JoinHandle is owned by the caller and dropped on route teardown (async drop cancels)",
     ),
     (
         "origin/mod.rs",
-        2142,
+        2180,
         "supervise_driver; spawned under the route cancellation token",
     ),
     (
