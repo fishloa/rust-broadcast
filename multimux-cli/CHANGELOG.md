@@ -9,8 +9,7 @@ All notable changes to `multimux-cli` will be documented in this file.
 
 ### Changed
 - Built on `multimux` 0.11.0, which carries WHIP/WHEP, push-output, RTP-input and route/output-
-  auth security fixes (GHSA-6cpc-jqv3-qcj3, GHSA-c5v7-p4jv-2fhc, GHSA-jwfh-m4vx-fhwx,
-  GHSA-2w4r-qf2x-pqm6, and GHSA-48qq-7p78-2jvj via webrtc-runtime 0.2.0) — including the
+  auth security fixes (some via webrtc-runtime 0.2.0) — including the
   single-publisher rule for concurrent RTMP/WHIP ingest, startup warnings for unauthenticated
   ingest routes, and stale (rather than silently re-prompted) Digest challenges; see its release
   note. No CLI changes.

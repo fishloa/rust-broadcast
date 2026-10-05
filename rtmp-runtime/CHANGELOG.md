@@ -9,7 +9,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [0.7.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-fjrp-rx2c-c9pw and GHSA-hgmf-qpx9-6gg2.
+Includes fixes for privately reported security issues; no public advisory is published.
 
 ### Fixed
 - `publish`'s stream-key check now compares in constant time instead of a

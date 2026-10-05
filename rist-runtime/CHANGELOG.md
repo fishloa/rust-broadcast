@@ -8,7 +8,7 @@ All notable changes to this crate will be documented in this file.
 ## [0.2.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-w4f3-953h-6jfm, GHSA-q5vp-jg67-2xp9.
+Includes fixes for privately reported security issues; no public advisory is published.
 
 ### Changed (breaking)
 - `arq::Sender::on_range_nack`/`on_generic_nack` now take an additional

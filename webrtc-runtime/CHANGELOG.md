@@ -8,9 +8,9 @@ All notable changes to this crate will be documented in this file.
 ## [0.2.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-48qq-7p78-2jvj (the DTLS peer certificate was never verified) and
-GHSA-89f2-5m24-r6m7 (the remote-ICE-candidate cap could be bypassed via STUN peer-reflexive
-candidates). Upgrade if you use the `media` feature.
+Fixes two security issues: the DTLS peer certificate was never verified, and
+the remote-ICE-candidate cap could be bypassed via STUN peer-reflexive
+candidates. Upgrade if you use the `media` feature.
 
 ### Changed (breaking)
 - `media::MediaTransportConfig` has a new required field `remote_fingerprint` (the remote SDP's

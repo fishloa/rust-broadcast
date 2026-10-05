@@ -10,10 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.25.0] - 2026-10-05
 
 ### Security
-Fixes for twelve advisories: GHSA-q6vr-4pp5-mcfv, GHSA-3554-x4jf-7frw, GHSA-2mg2-jj9h-c5vr,
-GHSA-6vc8-3c25-4c9w, GHSA-643q-pgwj-8v2h, GHSA-c722-96gr-hgq2, GHSA-gmmr-7cqm-5p32,
-GHSA-9m92-jr3c-4cq7, GHSA-j76h-pqjr-p54h, GHSA-mq46-69j5-7gqj, GHSA-59ph-4f24-q79x,
-GHSA-v965-v82c-2f8x. Upgrade if transmux parses or encrypts untrusted input.
+Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrusted input.
 
 ### Fixed
 - Reject malformed KLV BER lengths, `esds` descriptor sizes, `sinf` child boxes and `pssh` v1

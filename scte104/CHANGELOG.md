@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.5.0] - 2026-10-05
 
 ### Security
-Fixes GHSA-mgg2-9ggf-xq48.
+Includes fixes for privately reported security issues; no public advisory is published.
 
 ### Fixed
 - `SingleOperationMessage::parse` now rejects messages with `messageSize < 13` (HEADER_LEN, per ANSI/SCTE 104 2023 §8.2.2).

@@ -361,7 +361,7 @@
   were not affected. Oversized lengths now return `Error::SectionLengthOverflow`.
 
 ### Security
-Fixes GHSA-hxv4-gqm8-whw6 and GHSA-h6j8-r8j3-36xg.
+Includes fixes for privately reported security issues; no public advisory is published.
 
 ## [10.0.1] - 2026-08-30
 
