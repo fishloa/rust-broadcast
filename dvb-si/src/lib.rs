@@ -131,7 +131,7 @@
 //! | `yoke` | off | `yoke::Yokeable` on every zero-copy view type + the `owned::Owned` wrapper — own a parsed view past the input buffer's borrow (store/cache/send across threads) without re-parsing or a mirror type. |
 //!
 //! ```toml
-//! dvb-si = { version = "4.0", default-features = false }  # tight, no_std-ish build
+//! dvb-si = { version = "11", default-features = false }  # tight, no_std-ish build
 //! ```
 //!
 //! # Entry points
