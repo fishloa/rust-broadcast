@@ -125,16 +125,27 @@ where
             driver.on_deadline(now);
         }
         while let Some(bytes) = driver.poll_transmit() {
+            // Bound one write (SP6.1, defect 4). The message below is the
+            // per-WRITE bound: `bytes` is one protocol message, so a write
+            // that has not been accepted by the socket within `write_timeout`
+            // is a stalled peer, not a slow-but-live one (#M2: the bound and
+            // the wording agree).
             match tokio::time::timeout(write_timeout, writer.write_all(bytes.as_ref())).await {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
+                    release_route(&driver, route_handle);
+                    driver.finish();
                     return MultimuxError::Connect {
                         reason: format!("write: {e}"),
                     };
                 }
                 Err(_) => {
+                    release_route(&driver, route_handle);
+                    driver.finish();
                     return MultimuxError::Connect {
-                        reason: format!("write: no progress within {write_timeout:?}"),
+                        reason: format!(
+                            "write: one protocol message not accepted within {write_timeout:?}"
+                        ),
                     };
                 }
             }
@@ -143,6 +154,12 @@ where
             break;
         }
         if last_rx.elapsed() >= timeouts.read {
+            // Release the publisher slot on every exit path, not only cancel
+            // (M1) — otherwise a stalled route keeps `active_publisher` bound
+            // to its `Trunk` and a reconnect is rejected as a second
+            // publisher.
+            release_route(&driver, route_handle);
+            driver.finish();
             return source.stalled(timeouts.read);
         }
         let keepalive_wait = driver.next_deadline().map(|d| {
@@ -173,7 +190,14 @@ where
                 driver.finish();
                 break;
             }
-            StepOutcome::Failed(e) => return e,
+            StepOutcome::Failed(e) => {
+                // Release the publisher slot before returning a terminal
+                // error (M1), so the supervisor's reconnect is not rejected
+                // as a second concurrent publisher.
+                release_route(&driver, route_handle);
+                driver.finish();
+                return e;
+            }
         }
     }
     advance_route(&driver, route_handle, progress).await;
@@ -213,6 +237,11 @@ mod tests {
         every: u64,
         tx: Option<Bytes>,
         tx_per_deadline: Bytes,
+        /// When true, the first `feed` queues a `NewProgram`, so the driver
+        /// binds a program into the route's `active_publisher` (M1).
+        announce: bool,
+        /// Set once the program has been announced.
+        announced: bool,
     }
 
     impl QuietSession {
@@ -222,6 +251,14 @@ mod tests {
                 every: 0,
                 tx: None,
                 tx_per_deadline: Bytes::new(),
+                announce: false,
+                announced: false,
+            }
+        }
+        fn announcing() -> Self {
+            Self {
+                announce: true,
+                ..Self::silent()
             }
         }
         fn keepalive(every: Duration) -> Self {
@@ -231,6 +268,8 @@ mod tests {
                 every,
                 tx: None,
                 tx_per_deadline: Bytes::from_static(b"OPTIONS"),
+                announce: false,
+                announced: false,
             }
         }
         fn writing(tx: Bytes) -> Self {
@@ -239,6 +278,8 @@ mod tests {
                 every: 0,
                 tx: Some(tx),
                 tx_per_deadline: Bytes::new(),
+                announce: false,
+                announced: false,
             }
         }
     }
@@ -254,6 +295,13 @@ mod tests {
             Ok(())
         }
         fn poll(&mut self) -> Option<SessionEvent> {
+            if self.announce && !self.announced {
+                self.announced = true;
+                return Some(SessionEvent::NewProgram {
+                    program: media_plane::ingress::ProgramId(0),
+                    tracks: Vec::new(),
+                });
+            }
             None
         }
         fn next_deadline(&self) -> Option<Timestamp> {
@@ -326,6 +374,29 @@ mod tests {
         }
     }
 
+    /// Feeds the driver once on its first call (so the session's queued
+    /// `NewProgram` is consumed and a program is minted + bound), reports
+    /// `Received`, then returns `Idle` forever (so the stall clock expires).
+    struct AnnounceThenStall {
+        announced: bool,
+    }
+
+    impl IngestStep<QuietSession> for AnnounceThenStall {
+        async fn step(
+            &mut self,
+            driver: &mut IngestDriver<QuietSession>,
+            window: Duration,
+        ) -> StepOutcome {
+            if !self.announced {
+                self.announced = true;
+                driver.feed(&[], Timestamp::ZERO);
+                return StepOutcome::Received;
+            }
+            tokio::time::sleep(window).await;
+            StepOutcome::Idle
+        }
+    }
+
     struct Pending;
     impl IngestStep<QuietSession> for Pending {
         async fn step(
@@ -371,6 +442,61 @@ mod tests {
             MAP,
         )
         .await
+    }
+
+    /// Like `run`, but hands the caller the route so a test can inspect its
+    /// registry afterwards (M1).
+    async fn run_capturing_route<T: IngestStep<QuietSession>>(
+        session: QuietSession,
+        mut source: T,
+        read: Duration,
+        pipe: usize,
+    ) -> (MultimuxError, Arc<RouteHandle>) {
+        let (mut w, _peer) = tokio::io::duplex(pipe);
+        let route = route();
+        let mut progress = DriverProgress::new();
+        let err = run_ingest_scaffold(
+            driver(session),
+            &route,
+            &mut progress,
+            CancellationToken::new(),
+            timeouts(read),
+            Duration::from_secs(1),
+            &mut w,
+            &mut source,
+            MAP,
+        )
+        .await;
+        (err, route)
+    }
+
+    /// M1: a session that binds a program then stalls must RELEASE the route's
+    /// publisher slot on the stall exit path — as it does on cancel — so the
+    /// supervisor's reconnect is not rejected as a second concurrent
+    /// publisher.
+    ///
+    /// Revert-check: remove `release_route(&driver, route_handle);` from the
+    /// stall arm and this FAILS (the slot stays bound after the stall).
+    #[tokio::test(start_paused = true)]
+    async fn a_stall_releases_the_publisher_slot() {
+        // The source feeds the driver once (so the queued `NewProgram` is
+        // consumed and a program is bound), then idles until the stall.
+        let (err, route) = run_capturing_route(
+            QuietSession::announcing(),
+            AnnounceThenStall { announced: false },
+            Duration::from_secs(30),
+            1024,
+        )
+        .await;
+        assert!(
+            matches!(&err, MultimuxError::Protocol { phase: "recv", .. }),
+            "{err:?}"
+        );
+        assert_eq!(
+            route.active_publisher_len(),
+            0,
+            "a stalled session must release its active_publisher slot"
+        );
     }
 
     /// Issue #1083 item 1, preserved: a peer that holds the connection open
@@ -467,7 +593,7 @@ mod tests {
         .await
         .expect("the stalled write must fail at the write bound, not hang");
         assert!(
-            matches!(&err, MultimuxError::Connect { reason } if reason.contains("write: no progress")),
+            matches!(&err, MultimuxError::Connect { reason } if reason.contains("not accepted within")),
             "{err:?}"
         );
         assert_eq!(t0.elapsed(), Duration::from_secs(1));

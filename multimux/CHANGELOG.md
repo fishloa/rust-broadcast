@@ -57,7 +57,12 @@
   interleaved write honour `RtspTransportConfig::timeouts` (new, a
   `rtsp_runtime::RtspTimeouts`), where the old transport's `roundtrip` read
   and its `write_all` had no bound at all (defect 4). The ANNOUNCE SDP bytes
-  are unchanged, pinned by `tests/golden/rtsp_announce.sdp`.
+  are unchanged, pinned by `tests/golden/rtsp_announce.sdp`. `close()` now
+  sends a bounded best-effort `TEARDOWN` (RFC 2326 §10.10) on a spawned task
+  owned by the transport, so a server frees the publisher slot immediately
+  rather than at its own timeout; and a server `454 Session Not Found`
+  surfaces as a distinct `RtspPushError::SessionLost` (new variant) rather
+  than a generic protocol error, so the push reconnects.
 - **The RTMP push uses rtmp-runtime's `AsyncRtmpClient`.** `RtmpTransport`
   drives `connect`/`publish` and sends media with `send_video`/`send_audio`/
   `send_metadata` rather than hand-rolling the C0/C1/C2 handshake and a raw
@@ -190,6 +195,12 @@
   resolves to `FileReaderError::Cancelled`.
 
 ### Fixed — W2b-1
+- **A stalled or failed dial-source session releases its publisher slot.** The
+  ingest scaffold's stall, write-failure and `StepOutcome::Failed` exit paths
+  now call `release_route`+`finish` like the cancel path (M1), so the
+  supervisor's reconnect is not rejected as a second concurrent publisher.
+  The bounded-write failure message now describes the per-write bound it
+  enforces (M2).
 - **A push reconnect no longer ignores shutdown** (defect 5): cancelling during
   the connect or the backoff sleep returns promptly.
 - **A cancelled route abandons its in-flight ingest attempt** rather than
