@@ -54,6 +54,15 @@
   sans-IO `encode_media` path (for `PushTransportEgress`) uses the adapter's
   new `encode_video`/`encode_audio`/`encode_metadata` methods. The `tcUrl`
   bytes are unchanged.
+- **Locks use `parking_lot`; `src/lock.rs` is deleted.** Every
+  `std::sync::Mutex`/`RwLock` reached through `crate::lock::*` (route,
+  admin, smooth, catchup, srt) is now a `parking_lot` lock with infallible
+  `.lock()`/`.read()`/`.write()`, so a panicking holder can never poison a
+  lock and cascade a permanent panic. The poison-recovery wrappers and the
+  DVR fail-closed-on-poison path (`abandon_poisoned_recorder`, the
+  `multimux_dvr_failed_total` counter) are removed — with no poisoning they
+  were dead. `ProgramServing::route_name` existed only to label that counter
+  and is gone too.
 
 ### Changed (breaking) — W2b-1
 - **A single `CancellationToken` replaces the `watch<bool>` shutdown.** The

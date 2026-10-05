@@ -489,7 +489,7 @@ mod tests {
     use crate::source::ts_program::test_support::{build_ts_bytes, handshake, trunk_config};
     use media_plane::ingress::ProgramId;
     use media_plane::trunk::{SampleCursor, SampleCursorItem};
-    use std::sync::Mutex as StdMutex;
+    use parking_lot::Mutex as StdMutex;
 
     /// Counts every sample a cursor yields — the `Trunk`-side replacement
     /// for the pre-5a tests' `MediaStore::init_bytes()`/`window_segments()`
@@ -586,14 +586,14 @@ mod tests {
                 &route_handle,
                 move |driver| {
                     if let Some(t) = driver.trunk(ProgramId(0)) {
-                        *crate::lock::lock(&cursor_for_cb) = Some(t.subscribe());
+                        *cursor_for_cb.lock() = Some(t.subscribe());
                     }
                 },
             ),
         )
         .await;
 
-        let mut guard = crate::lock::lock(&cursor);
+        let mut guard = cursor.lock();
         let total = guard.as_mut().map(drain).unwrap_or(0);
         assert!(
             total > 0,
@@ -654,14 +654,14 @@ mod tests {
                 &route_handle,
                 move |driver| {
                     if let Some(t) = driver.trunk(ProgramId(0)) {
-                        *crate::lock::lock(&cursor_for_cb) = Some(t.subscribe());
+                        *cursor_for_cb.lock() = Some(t.subscribe());
                     }
                 },
             ),
         )
         .await;
 
-        let mut guard = crate::lock::lock(&cursor);
+        let mut guard = cursor.lock();
         let total = guard.as_mut().map(drain).unwrap_or(0);
         assert!(
             total > 0,

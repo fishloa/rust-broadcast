@@ -336,3 +336,6 @@ multimux         = { path = ".", features = ["test-seams"] }
 # internally but does not re-export it). Already a transitive dependency at
 # the same version, so this adds no new lock entry.
 socket2          = "0.6"
+# `parking_lot::Mutex` so `tests/lock_recovery.rs` can prove the no-poison
+# property directly (the library uses it internally but does not re-export it).
+parking_lot      = "0.12"

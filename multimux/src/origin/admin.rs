@@ -229,7 +229,7 @@ pub(crate) struct RouteRegistry {
     /// Only mutations take it; reads (`resolve`/`current_router`) stay
     /// lock-free against it, so admin traffic never blocks media serving.
     mutation_lock: tokio::sync::Mutex<()>,
-    inner: std::sync::RwLock<HashMap<String, RouteRuntime>>,
+    inner: parking_lot::RwLock<HashMap<String, RouteRuntime>>,
     /// The currently-active media [`Router`], rebuilt whole on every
     /// mutation (see this module's own docs) and read by
     /// [`DynamicMediaService`] once per accepted request. `ArcSwap` makes
@@ -252,7 +252,7 @@ impl RouteRegistry {
         let registry = Arc::new(RouteRegistry {
             ctx,
             mutation_lock: tokio::sync::Mutex::new(()),
-            inner: std::sync::RwLock::new(HashMap::new()),
+            inner: parking_lot::RwLock::new(HashMap::new()),
             router_slot: arc_swap::ArcSwap::from_pointee(Router::new()),
             config_path,
         });
@@ -261,7 +261,8 @@ impl RouteRegistry {
     }
 
     fn streams_snapshot(&self) -> HashMap<String, StreamRoute> {
-        crate::lock::read(&self.inner)
+        self.inner
+            .read()
             .iter()
             .map(|(name, rt)| (name.clone(), (Arc::clone(&rt.store), rt.outputs.clone())))
             .collect()
@@ -408,9 +409,8 @@ impl RouteRegistry {
         // them under distinct URL segments, which is confusing and wrong.
         {
             let key = route.name.to_lowercase();
-            let inner = crate::lock::read(&self.inner);
+            let inner = self.inner.read();
             if inner.contains_key(&route.name) || inner.keys().any(|k| k.to_lowercase() == key) {
-                drop(inner);
                 return Err(crate::MultimuxError::RouteExists { name: route.name });
             }
         }
@@ -466,7 +466,7 @@ impl RouteRegistry {
         let runtime = pending.into_installed();
         self.router_slot.store(std::sync::Arc::new(new_router));
         let displaced = {
-            let mut guard = crate::lock::write(&self.inner);
+            let mut guard = self.inner.write();
             guard.insert(route.name.clone(), runtime)
         };
         // A concurrent insert (or a reload) could not have raced us — the
@@ -491,7 +491,7 @@ impl RouteRegistry {
     pub(crate) async fn remove_route(&self, name: &str) -> crate::Result<()> {
         let _guard = self.mutation_lock.lock().await;
         let removed = {
-            let mut guard = crate::lock::write(&self.inner);
+            let mut guard = self.inner.write();
             guard.remove(name)
         };
         let Some(runtime) = removed else {
@@ -509,7 +509,8 @@ impl RouteRegistry {
 
     /// `GET /admin/routes`.
     pub(crate) fn list_routes(&self) -> Vec<RouteStatus> {
-        crate::lock::read(&self.inner)
+        self.inner
+            .read()
             .values()
             .map(RouteStatus::from_runtime)
             .collect()
@@ -517,9 +518,7 @@ impl RouteRegistry {
 
     /// `GET /admin/routes/{name}`.
     pub(crate) fn get_route(&self, name: &str) -> Option<RouteStatus> {
-        crate::lock::read(&self.inner)
-            .get(name)
-            .map(RouteStatus::from_runtime)
+        self.inner.read().get(name).map(RouteStatus::from_runtime)
     }
 
     /// `POST /admin/reload`: re-reads [`Self::config_path`] and converges the
@@ -564,7 +563,8 @@ impl RouteRegistry {
         let _guard = self.mutation_lock.lock().await;
 
         let current: HashMap<String, Route> = {
-            crate::lock::read(&self.inner)
+            self.inner
+                .read()
                 .iter()
                 .map(|(name, rt)| (name.clone(), rt.route.clone()))
                 .collect()
@@ -651,7 +651,7 @@ impl RouteRegistry {
         };
 
         let removed_runtimes: Vec<RouteRuntime> = {
-            let mut guard = crate::lock::write(&self.inner);
+            let mut guard = self.inner.write();
             let mut removed_runtimes = Vec::new();
             for name in removed_names
                 .iter()
@@ -689,7 +689,7 @@ impl RouteRegistry {
     async fn shutdown_all(&self) {
         let _guard = self.mutation_lock.lock().await;
         let all: Vec<RouteRuntime> = {
-            let mut guard = crate::lock::write(&self.inner);
+            let mut guard = self.inner.write();
             guard.drain().map(|(_, rt)| rt).collect()
         };
         futures_util::future::join_all(all.into_iter().map(drain_route)).await;

@@ -109,10 +109,11 @@
 //! minted — out of scope here, recorded so a future MPTS-addressing task
 //! does not have to rediscover it.
 
+use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroUsize;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, SystemTime};
 
 use broadcast_common::Timestamp;
@@ -311,19 +312,19 @@ impl DashState {
     }
 
     fn set_track_specs(&self, specs: Vec<TrackSpec>) {
-        *crate::lock::lock(&self.track_specs) = specs;
+        *self.track_specs.lock() = specs;
     }
 
     fn track_specs(&self) -> Vec<TrackSpec> {
-        crate::lock::lock(&self.track_specs).clone()
+        self.track_specs.lock().clone()
     }
 
     /// Absorb every segment this route's `SegmentCursor` has produced since
     /// the last call — the same non-blocking, called-at-the-top-of-render
     /// shape as [`HlsOrigin`]'s own `drain` (see that type's module doc).
     fn drain(&self) {
-        let mut cursor = crate::lock::lock(&self.cursor);
-        let mut window = crate::lock::lock(&self.window);
+        let mut cursor = self.cursor.lock();
+        let mut window = self.window.lock();
         while let Some(item) = cursor.poll() {
             if let SegmentCursorItem::Segment(entry) = item {
                 if window.len() == self.capacity {
@@ -340,7 +341,7 @@ impl DashState {
 
     fn window_segments(&self) -> Vec<DashWindowSegment> {
         self.drain();
-        crate::lock::lock(&self.window).iter().copied().collect()
+        self.window.lock().iter().copied().collect()
     }
 }
 
@@ -371,10 +372,6 @@ pub enum AddSegmentError {
 /// every egress call site resolves one of these from a `RouteHandle`) and by
 /// this crate's own tests; never named outside this crate.
 pub(crate) struct ProgramServing {
-    /// This program's route name — kept only so a metric recorded from a
-    /// `ProgramServing` method (the DVR-poison counter) can be labelled by
-    /// route without the caller.
-    route_name: String,
     trunk: Arc<Trunk>,
     ll_hls: Arc<HlsOrigin>,
     dash: Arc<DashState>,
@@ -465,7 +462,6 @@ impl ProgramServing {
         });
 
         Ok(Arc::new(ProgramServing {
-            route_name: route_name.to_string(),
             trunk,
             ll_hls,
             dash,
@@ -519,7 +515,7 @@ impl ProgramServing {
     /// mis-mixing both write paths on one `Trunk` is a test-construction bug,
     /// not something that should take the whole process down.
     fn with_segment_writer<R>(&self, f: impl FnOnce(&SegmentWriter) -> R) -> Option<R> {
-        let mut guard = crate::lock::lock(&self.segment_writer);
+        let mut guard = self.segment_writer.lock();
         if guard.is_none() {
             *guard = self.trunk.segment_writer();
         }
@@ -618,20 +614,12 @@ impl ProgramServing {
             // ingest task, and the lock may be held by `poll_dvr_blocking`
             // across a disk write. If it is, there is nothing useful to do
             // here anyway — the in-flight poll covers this segment.
-            let guard = match self.dvr.try_lock() {
-                Ok(guard) => guard,
-                // A poisoned recorder must fail closed HERE too (issue #1083,
-                // item 2): `try_lock` is the only path this production entry
-                // takes, so deferring the drop-and-count to
-                // `poll_dvr_blocking` (which the same poisoning could never
-                // let run) would leave recording silently stopped with no
-                // metric. `try_lock` hands the guard back inside the poison
-                // error.
-                Err(std::sync::TryLockError::Poisoned(p)) => {
-                    self.abandon_poisoned_recorder(&mut p.into_inner());
-                    return;
-                }
-                Err(std::sync::TryLockError::WouldBlock) => return,
+            // `parking_lot` has no poisoning (SP6.6), so `try_lock` is a
+            // plain `Option`: `None` means the lock is held (the in-flight
+            // poll covers this segment), and there is no poison arm to fail
+            // closed on any more.
+            let Some(guard) = self.dvr.try_lock() else {
+                return;
             };
             match guard.as_ref() {
                 None => return,
@@ -654,11 +642,11 @@ impl ProgramServing {
         // recorder would write an archive whose index does not match its data
         // (audit run 7, D3). Fail closed instead — stop recording and count
         // it, rather than emit a corrupt archive.
-        let (mut dvr_guard, recovered) = crate::lock::lock_or_recovered(&self.dvr);
-        if recovered {
-            self.abandon_poisoned_recorder(&mut dvr_guard);
-            return;
-        }
+        // `parking_lot` never poisons: a panic mid-`append_segment` simply
+        // releases the guard, and the next acquire sees whatever was written
+        // before the panic. There is no recovered flag and no fail-closed
+        // branch any more (SP6.6).
+        let mut dvr_guard = self.dvr.lock();
         if let Some(ref mut recorder) = *dvr_guard {
             let init_bytes = self.init_bytes();
             let init_slice = init_bytes.as_deref();
@@ -671,30 +659,6 @@ impl ProgramServing {
         }
     }
 
-    /// The one place a poisoned DVR recorder is abandoned: drop it so later
-    /// polls are cheap no-ops, log once, and count it (issue #1083, D3).
-    /// Shared by [`Self::poll_dvr`]'s pre-check (the production entry, which
-    /// `try_lock`s) and [`Self::poll_dvr_blocking`], so the metric is
-    /// recorded however the poison is first observed.
-    fn abandon_poisoned_recorder(
-        &self,
-        guard: &mut std::sync::MutexGuard<'_, Option<crate::dvr::DvrRecorder>>,
-    ) {
-        if guard.is_none() {
-            return;
-        }
-        tracing::error!(
-            route = %self.route_name,
-            "DVR recorder mutex was poisoned; stopping DVR persistence for this program rather than risk a corrupt archive"
-        );
-        metrics::counter!(
-            crate::prometheus::DVR_FAILED_TOTAL,
-            "route" => self.route_name.clone(),
-        )
-        .increment(1);
-        **guard = None;
-    }
-
     /// Feed raw TS bytes to this program's DVR recorder for EIT p/f
     /// tracking (issue #903) — a no-op when DVR is disabled, or when
     /// `DvrConfig::dvb_service_id` was never set. See
@@ -705,16 +669,10 @@ impl ProgramServing {
         // `poll_dvr_blocking` holds it across a disk write (audit run 7, I).
         // EIT feeding is best-effort: if the lock is held, skip this chunk —
         // the next one (a few packets later) will feed it.
-        let mut dvr_guard = match self.dvr.try_lock() {
-            Ok(guard) => guard,
-            // Poisoned: the recorder is dropped, not recovered (audit run 7,
-            // D3). `try_lock` hands the guard back inside the poison error.
-            Err(std::sync::TryLockError::Poisoned(p)) => {
-                *p.into_inner() = None;
-                return;
-            }
-            // Contended: skip this chunk (best-effort).
-            Err(std::sync::TryLockError::WouldBlock) => return,
+        // `parking_lot`: `try_lock` is a plain `Option` (`None` = contended,
+        // skip this chunk — best-effort) and there is no poison arm.
+        let Some(mut dvr_guard) = self.dvr.try_lock() else {
+            return;
         };
         if let Some(ref mut recorder) = *dvr_guard
             && let Err(e) = recorder.feed_si(ts_bytes)
@@ -954,7 +912,7 @@ impl RouteHandle {
     /// over the new `Trunk`, exactly like the plain, no-rival case.
     pub fn publish_program(&self, program: ProgramId, trunk: Arc<Trunk>) {
         {
-            let mut active = crate::lock::write(&self.active_publisher);
+            let mut active = self.active_publisher.write();
             match active.get(&program) {
                 Some(owner) if Arc::ptr_eq(owner, &trunk) => {}
                 Some(_) => {
@@ -971,7 +929,7 @@ impl RouteHandle {
                 }
             }
         }
-        let mut programs = crate::lock::write(&self.programs);
+        let mut programs = self.programs.write();
         let already_bound = programs
             .get(&program)
             .is_some_and(|existing| Arc::ptr_eq(&existing.trunk, &trunk));
@@ -1020,7 +978,7 @@ impl RouteHandle {
                     error = %e,
                     "cannot build this program's serving state; program not published"
                 );
-                let mut active = crate::lock::write(&self.active_publisher);
+                let mut active = self.active_publisher.write();
                 if active.get(&program).is_some_and(|o| Arc::ptr_eq(o, &trunk)) {
                     active.remove(&program);
                 }
@@ -1047,7 +1005,7 @@ impl RouteHandle {
     /// and so never held it) — so a caller may call this speculatively,
     /// exactly like [`Self::publish_program`].
     pub fn release_program(&self, program: ProgramId, trunk: &Arc<Trunk>) {
-        let mut active = crate::lock::write(&self.active_publisher);
+        let mut active = self.active_publisher.write();
         let still_owned = active
             .get(&program)
             .is_some_and(|owner| Arc::ptr_eq(owner, trunk));
@@ -1059,7 +1017,8 @@ impl RouteHandle {
     /// The `Trunk` of this route's lowest-numbered published program — the
     /// one push and WHEP egress follow — or `None` while nothing is published.
     fn first_trunk(&self) -> Option<Arc<Trunk>> {
-        crate::lock::read(&self.programs)
+        self.programs
+            .read()
             .iter()
             .min_by_key(|(id, _)| **id)
             .map(|(_, serving)| serving.trunk())
@@ -1126,7 +1085,7 @@ impl RouteHandle {
     /// registered. The shared implementation behind [`Self::resolve_program`]
     /// and every per-program convenience accessor below.
     pub(crate) fn serving(&self, program: ProgramId) -> Option<Arc<ProgramServing>> {
-        crate::lock::read(&self.programs).get(&program).cloned()
+        self.programs.read().get(&program).cloned()
     }
 
     /// Resolve `program` against this route's registry — the egress side's
@@ -1136,7 +1095,7 @@ impl RouteHandle {
     /// site resolves through `crate::http::resolve_route_program`, which
     /// wraps this.
     pub(crate) fn resolve_program(&self, program: ProgramId) -> ProgramResolution {
-        let programs = crate::lock::read(&self.programs);
+        let programs = self.programs.read();
         match programs.get(&program) {
             Some(serving) => ProgramResolution::Found(Arc::clone(serving)),
             None if programs.is_empty() => ProgramResolution::NotYetAnnounced,
@@ -1257,7 +1216,7 @@ impl RouteHandle {
     /// This route's current [`HealthState`] — route-wide ingest health, not
     /// per-program.
     pub fn health(&self) -> HealthState {
-        *crate::lock::lock(&self.health)
+        *self.health.lock()
     }
 
     /// Transition this route's [`HealthState`].
@@ -1268,7 +1227,7 @@ impl RouteHandle {
     /// its own, so the supervisor — the only other writer — never saw the
     /// transition and the gauge never read `1` (issue #1083).
     pub fn set_health(&self, state: HealthState) {
-        *crate::lock::lock(&self.health) = state;
+        *self.health.lock() = state;
         let up = if matches!(state, HealthState::Live) {
             1.0
         } else {
@@ -1286,10 +1245,7 @@ impl RouteHandle {
     /// pool rather than on the calling runtime worker. Programs are drained
     /// sequentially so their recordings stay in publish order.
     pub(crate) async fn drain_dvr(&self) {
-        let servings: Vec<Arc<ProgramServing>> = crate::lock::read(&self.programs)
-            .values()
-            .cloned()
-            .collect();
+        let servings: Vec<Arc<ProgramServing>> = self.programs.read().values().cloned().collect();
         for serving in servings {
             serving.poll_dvr().await;
         }
@@ -1309,7 +1265,7 @@ impl RouteHandle {
     /// the one tracking a matching `service_id` reacts — see the module
     /// doc on `dvr` for this limitation.
     pub(crate) fn feed_si_ts(&self, ts_bytes: &[u8]) {
-        let programs = crate::lock::read(&self.programs);
+        let programs = self.programs.read();
         for serving in programs.values() {
             serving.feed_si(ts_bytes);
         }
@@ -1327,17 +1283,6 @@ mod program_registry_tests {
 
     use super::*;
     use transmux::CodecConfig;
-
-    /// Read a Prometheus counter value by name+route label (0.0 if absent).
-    fn shed_metric(metric: &str, route_label: &str) -> f64 {
-        crate::prometheus::install()
-            .render()
-            .lines()
-            .find(|l| l.starts_with(metric) && l.contains(route_label))
-            .and_then(|l| l.rsplit(' ').next())
-            .and_then(|v| v.parse::<f64>().ok())
-            .unwrap_or(0.0)
-    }
 
     /// A minimal standalone `Trunk`, distinct in identity from any other
     /// call's — every ring capacity is `1` since these tests never publish
@@ -1488,7 +1433,7 @@ mod program_registry_tests {
             "an unservable route must not publish the program"
         );
         assert!(
-            crate::lock::read(&route.active_publisher).is_empty(),
+            &route.active_publisher.read().is_empty(),
             "the publish slot must be released so a retry can bind"
         );
     }
@@ -1882,14 +1827,12 @@ mod program_registry_tests {
         assert!(matches!(err, AddSegmentError::ProgramNotPublished));
     }
 
-    /// D3: a poisoned DVR recorder mutex must FAIL CLOSED — recording stops
-    /// and the recorder is dropped — rather than recover and risk persisting
-    /// an archive whose index disagrees with its data.
-    ///
-    /// Biting test: revert `poll_dvr_blocking` to `crate::lock::lock` and the
-    /// recorder survives the poison (the assertion on `is_none` fails).
+    /// SP6.6: `parking_lot` locks never poison, so the DVR recorder can no
+    /// longer be abandoned-on-poison. A panic while the lock is held simply
+    /// releases the guard and the recorder survives; `poll_dvr` then runs
+    /// normally. This replaces the removed fail-closed poison test.
     #[tokio::test]
-    async fn a_poisoned_dvr_recorder_is_abandoned_not_recovered() {
+    async fn a_panicking_dvr_holder_releases_the_lock_and_the_recorder_survives() {
         use std::panic::{AssertUnwindSafe, catch_unwind};
 
         let tmp = {
@@ -1897,7 +1840,7 @@ mod program_registry_tests {
             static COUNTER: AtomicU64 = AtomicU64::new(0);
             let n = COUNTER.fetch_add(1, Ordering::SeqCst);
             let dir = std::env::temp_dir().join(format!(
-                "multimux-route-dvr-{}-{}",
+                "multimux-parking-lot-dvr-{}-{}",
                 std::process::id(),
                 n
             ));
@@ -1914,51 +1857,27 @@ mod program_registry_tests {
             dvb_service_id: None,
         };
         let route = RouteHandle::new(1.0, 250, 8)
-            .with_name("poison-dvr")
+            .with_name("panicking-dvr")
             .with_dvr(dvr_cfg);
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
 
-        // Poison the DVR mutex by panicking while holding it.
+        // Panic while holding the DVR lock.
         let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
         let _ = catch_unwind(AssertUnwindSafe(|| {
-            let _guard = crate::lock::lock(&serving.dvr);
-            panic!("poison the DVR mutex on purpose");
+            let _guard = serving.dvr.lock();
+            panic!("panic while holding the DVR lock on purpose");
         }));
 
-        // The recorder must still be present immediately after the panic.
+        // The recorder survives and the lock is immediately re-acquirable.
         assert!(
-            crate::lock::lock(&serving.dvr).is_some(),
-            "the recorder itself survives the panic; only the lock is poisoned"
+            serving.dvr.lock().is_some(),
+            "a panic must not drop the recorder"
         );
-
-        // Go through the PRODUCTION entry (`poll_dvr`), not the blocking
-        // helper: its `try_lock` precheck is the only path a running origin
-        // takes, so it is what must fail closed and count (issue #1083, item
-        // 2). Assert the metric too — a silently-stopped recording with no
-        // counter is the bug.
-        crate::prometheus::install();
-        let route_name = "poison-dvr";
-        let before = shed_metric("multimux_dvr_failed_total", route_name);
-        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
         serving.poll_dvr().await;
-        let after = shed_metric("multimux_dvr_failed_total", route_name);
-        assert_eq!(
-            after,
-            before + 1.0,
-            "the poisoned recorder must be counted in multimux_dvr_failed_total"
-        );
         assert!(
-            crate::lock::lock(&serving.dvr).is_none(),
-            "a poisoned DVR recorder must be abandoned, not recovered"
-        );
-        // A second poll is a no-op (already dropped) — the counter does not
-        // climb again.
-        serving.poll_dvr().await;
-        assert_eq!(
-            shed_metric("multimux_dvr_failed_total", route_name),
-            after,
-            "an already-abandoned recorder must not be counted twice"
+            serving.dvr.lock().is_some(),
+            "poll_dvr must run normally after a panicking holder"
         );
         let _ = std::fs::remove_dir_all(&tmp);
     }

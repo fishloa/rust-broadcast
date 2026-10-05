@@ -28,8 +28,9 @@
 //! LL-HLS/DASH — the `Trunk` is the single copy; this module only maps
 //! Smooth time-addressed URLs to the same segments.
 
+use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::{OriginalUri, State};
@@ -129,11 +130,11 @@ async fn manifest(State(state): State<SmoothState>) -> Response {
     let built = tokio::task::spawn_blocking(move || {
         let layout = build_window_layout(&route, &serving)?;
         let signature = layout.signature();
-        if let Some(hit) = crate::lock::lock(&cache).get(&signature).map(Arc::clone) {
+        if let Some(hit) = cache.lock().get(&signature).map(Arc::clone) {
             return Some((*hit).clone());
         }
         let body = render_manifest(&layout);
-        let mut guard = crate::lock::lock(&cache);
+        let mut guard = cache.lock();
         if guard.len() >= LAYOUT_CACHE_MAX_ENTRIES {
             guard.clear();
         }
@@ -230,7 +231,7 @@ async fn fragment_fallback(State(state): State<SmoothState>, uri: OriginalUri) -
     let cache = Arc::clone(&state.fragment_cache);
     let key = FragmentCacheKey::new(start_ticks, &request);
     let built = tokio::task::spawn_blocking(move || {
-        if let Some(hit) = crate::lock::lock(&cache).get(&key) {
+        if let Some(hit) = &cache.lock().get(&key) {
             return Some(Arc::clone(hit));
         }
         let fragment = build_track_fragment(
@@ -242,7 +243,7 @@ async fn fragment_fallback(State(state): State<SmoothState>, uri: OriginalUri) -
             ordinal,
         )?;
         let fragment = Arc::new(fragment);
-        let mut guard = crate::lock::lock(&cache);
+        let mut guard = cache.lock();
         if guard.len() >= FRAGMENT_CACHE_MAX_ENTRIES {
             guard.clear();
         }

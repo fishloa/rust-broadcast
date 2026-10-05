@@ -29,7 +29,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "route.rs",
-        643,
+        631,
         "spawn_blocking DVR persist; awaited inline",
     ),
     ("dvr.rs", 595, "spawn_blocking DVR write; awaited inline"),
@@ -121,17 +121,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/smooth.rs",
-        129,
+        130,
         "spawn_blocking Smooth layout build; awaited inline",
     ),
     (
         "output/smooth.rs",
-        183,
+        184,
         "spawn_blocking Smooth layout locate; awaited inline",
     ),
     (
         "output/smooth.rs",
-        232,
+        233,
         "spawn_blocking Smooth fragment build; awaited inline",
     ),
     (

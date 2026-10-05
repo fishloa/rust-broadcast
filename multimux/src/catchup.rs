@@ -28,10 +28,11 @@
 //! gap-free, duplicate-free sequence — never two disjoint lists a client
 //! would have to stitch together itself.
 
+use parking_lot::Mutex;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::SystemTime;
 
 use bytes::Bytes;
@@ -165,7 +166,7 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
     let cache = index_cache();
     // Poison-recovering (the cache is only ever a memo: a lost or stale entry
     // is recomputed from the sidecar).
-    let mut guard = crate::lock::lock(cache);
+    let mut guard = cache.lock();
     if let Some(entry) = guard.entries.get(&path)
         && entry.stamp == stamp
     {
@@ -217,7 +218,7 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
 
     let segments = Arc::new(segments);
     {
-        let mut guard = crate::lock::lock(cache);
+        let mut guard = cache.lock();
         let tick = guard.tick;
         guard.tick = tick.wrapping_add(1);
         guard.entries.insert(
@@ -319,7 +320,8 @@ fn index_cache() -> &'static Mutex<IndexCache> {
 /// opportunistically so a deleted/rolled archive does not keep stale
 /// entries resident. Correctness never depends on this.
 fn prune_index_cache(dir: &Path) {
-    crate::lock::lock(index_cache())
+    index_cache()
+        .lock()
         .entries
         .retain(|path, _| path.parent() != Some(dir) || path.exists());
 }
