@@ -1762,6 +1762,176 @@ mod tests {
         }
     }
 
+    /// The minimal expandable-size varint width that fits `size`
+    /// (ISO/IEC 14496-1 §8.3.3: 1..=4 bytes, 7 bits each).
+    fn minimal_varint_width(size: usize) -> usize {
+        const W1_MAX: usize = 0x7F;
+        const W2_MAX: usize = 0x3FFF;
+        const W3_MAX: usize = 0x1F_FFFF;
+        if size <= W1_MAX {
+            1
+        } else if size <= W2_MAX {
+            2
+        } else if size <= W3_MAX {
+            3
+        } else {
+            4
+        }
+    }
+
+    /// Build an `ES_Descriptor` for the flag matrix: all three optional ES
+    /// fields as asked for, an unmodelled sub-descriptor chained directly
+    /// after the `URLstring` (wire: URL, unknown tag, decoder config, SL
+    /// config), and `pad` bytes of unmodelled payload to steer the total
+    /// body size. Authored with `size_width` = `minimal`, so the body size
+    /// itself decides the varint width.
+    fn matrix_descriptor(
+        stream_dependence_flag: bool,
+        url_flag: bool,
+        ocr_stream_flag: bool,
+        url_len: usize,
+        pad: usize,
+    ) -> ESDescriptor {
+        const TAG_PROFILE_LEVEL_INDEX: u8 = 0x14;
+        let mut es = ESDescriptor::new(
+            0x0102,
+            7,
+            Some(DecoderConfigDescriptor::new(
+                0x40,
+                5,
+                false,
+                0x0001_0000,
+                0x0001_807d,
+                0x0001_770d,
+                Some(DecoderSpecificInfo::new(vec![0x12, 0x08])),
+            )),
+            Some(SLConfigDescriptor::predefined_two()),
+        );
+        es.stream_dependence_flag = stream_dependence_flag;
+        es.depends_on_es_id = stream_dependence_flag.then_some(0x0AAA);
+        es.url_flag = url_flag;
+        es.url = url_flag.then(|| "u".repeat(url_len));
+        es.ocr_stream_flag = ocr_stream_flag;
+        es.ocr_es_id = ocr_stream_flag.then_some(0x0BBB);
+        es.unknown_descriptors.push(UnknownDescriptor {
+            tag: TAG_PROFILE_LEVEL_INDEX,
+            size_width: minimal_varint_width(pad),
+            data: vec![0x55; pad],
+            position: 0,
+        });
+        // Pick the minimal width once the body size is known (serialize with
+        // the default 4-byte width first, then trim).
+        es.size_width = VARINT_WIDTH_FIXED;
+        let wide_len = es.try_to_bytes().expect("matrix es serializes");
+        let body_size = wide_len.len() - 1 - VARINT_WIDTH_FIXED;
+        es.size_width = minimal_varint_width(body_size);
+        es
+    }
+
+    /// #1148/B coverage: all 8 combinations of streamDependenceFlag x
+    /// URL_Flag x OCRstreamFlag, each with a `URLstring` at
+    /// {0, 1, 100, 200, 255} bytes (only when `URL_Flag`), chained directly
+    /// by an unmodelled sub-descriptor *after* the URL. Each case:
+    /// parse -> serialize -> byte-identical -> parse equal, and the body
+    /// size forces the minimal 1/2-byte varint, plus two padded rows forcing
+    /// 3- and 4-byte widths (all four widths observed).
+    #[test]
+    fn es_descriptor_flag_matrix_round_trips() {
+        // Body padding large enough to cross the 2-byte (16384) and
+        // 3-byte (2097152) expandable-size widths.
+        const PAD_3BYTE: usize = 16_500;
+        const PAD_4BYTE: usize = 2_100_000;
+
+        let mut seen_width = [false; 5];
+        let mut cases = Vec::new();
+        for combo in 0..8u8 {
+            let sdf = combo & 0b100 != 0;
+            let url_flag = combo & 0b010 != 0;
+            let ocr = combo & 0b001 != 0;
+            let url_lens: &[usize] = if url_flag {
+                &[0, 1, 100, 200, 255]
+            } else {
+                &[0]
+            };
+            for &url_len in url_lens {
+                cases.push((sdf, url_flag, ocr, url_len, 3usize, "matrix"));
+            }
+        }
+        cases.push((true, true, true, 100, PAD_3BYTE, "3-byte varint"));
+        cases.push((false, true, false, 100, PAD_4BYTE, "4-byte varint"));
+
+        for (sdf, url_flag, ocr, url_len, pad, what) in cases {
+            let es = matrix_descriptor(sdf, url_flag, ocr, url_len, pad);
+            let bytes = es
+                .try_to_bytes()
+                .unwrap_or_else(|e| panic!("serialize {what} failed: {e:?}"));
+            let parsed = ESDescriptor::parse(&bytes)
+                .unwrap_or_else(|e| panic!("parse {what} failed: {e:?}"));
+            assert_eq!(
+                parsed, es,
+                "{what} (url {url_len}, pad {pad}) must round-trip"
+            );
+            assert_eq!(parsed.size_width, es.size_width);
+            seen_width[es.size_width] = true;
+            // The unmodelled sub-descriptor sits directly after the URL,
+            // before the modelled ones.
+            assert_eq!(parsed.unknown_descriptors.len(), 1, "{what}");
+            assert_eq!(parsed.unknown_descriptors[0].position, 0, "{what}");
+            // Actually exercise field values, not just struct equality.
+            assert_eq!(parsed.stream_dependence_flag, sdf);
+            assert_eq!(parsed.url_flag, url_flag);
+            assert_eq!(
+                parsed.url.as_deref(),
+                url_flag.then(|| "u".repeat(url_len)).as_deref()
+            );
+            assert_eq!(parsed.ocr_stream_flag, ocr);
+            // serialize -> byte-identical -> parse equal.
+            let mut out = vec![0u8; parsed.serialized_len()];
+            let n = parsed.serialize_into(&mut out).unwrap();
+            assert_eq!(&out[..n], &bytes[..], "{what} not byte-identical");
+            assert_eq!(ESDescriptor::parse(&out[..n]).unwrap(), parsed, "{what}");
+        }
+        for (width, produced) in seen_width.iter().enumerate().skip(1) {
+            assert!(*produced, "matrix never produced a {width}-byte varint");
+        }
+    }
+
+    /// #1148/B: over-range inputs are structured errors, never a wrap and
+    /// never a panic — both on serialize (URL over `URLlength`'s 8 bits) and
+    /// on parse (a hostile expandable-size varint larger than the buffer).
+    #[test]
+    fn es_descriptor_over_range_is_error_not_panic() {
+        // Serialize: URL longer than 255 bytes overflows URLlength (checked
+        // fit_u8, not `as u8` which would wrap 256 -> 0).
+        for &len in &[256usize, 300, 1000] {
+            let err = es_descriptor_with_url("x".repeat(len))
+                .try_to_bytes()
+                .unwrap_err();
+            assert!(
+                matches!(
+                    err,
+                    Error::FieldOverflow(broadcast_common::len::FieldOverflow {
+                        field: "URLstring length",
+                        ..
+                    })
+                ),
+                "len {len}: expected FieldOverflow, got {err:?}"
+            );
+        }
+
+        // Parse: tag + a 4-byte expandable size of 0x0FFF_FFFF with only a
+        // handful of body bytes — must be BufferTooShort (bounded before
+        // slicing), not a slice-out-of-range panic.
+        #[rustfmt::skip]
+        let hostile: &[u8] = &[
+            TAG_ES_DESCRIPTOR, 0xFF, 0xFF, 0xFF, 0x7F,
+            0x00, 0x01, 0x00,
+        ];
+        let err =
+            ESDescriptor::parse(hostile).expect_err("hostile size varint must fail, not panic");
+        assert!(matches!(err, Error::BufferTooShort { .. }), "got {err:?}");
+    }
+
     /// Regression guard (NOT the #1148 bite): a wire `esds` whose `ES_Descriptor` size varint is *minimal*
     /// width (2 bytes, as GPAC/Apple/Bento4 emit) and whose body exceeds the
     /// 127-byte single-byte varint range because of a >100-byte URL must
