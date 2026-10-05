@@ -232,6 +232,48 @@ pub async fn recv_and_feed(
     Ok(StreamStatus::Fed(chunk))
 }
 
+/// The ts/http source's [`IngestStep`](crate::source::driver::IngestStep):
+/// one bounded body-chunk read, feeding the driver and the route's DVR EIT
+/// tracker.
+pub(crate) struct TsHttpStep {
+    pub stream: TsHttpStream,
+    pub start: tokio::time::Instant,
+    pub route_handle: std::sync::Arc<crate::route::RouteHandle>,
+}
+
+impl crate::source::driver::IngestStep<TsIngestSession> for TsHttpStep {
+    async fn step(
+        &mut self,
+        driver: &mut IngestDriver<TsIngestSession>,
+        window: Duration,
+    ) -> crate::source::driver::StepOutcome {
+        use crate::source::driver::StepOutcome;
+        let chunk = match tokio::time::timeout(window, self.stream.next()).await {
+            Ok(Some(Ok(chunk))) => chunk,
+            Ok(Some(Err(e))) => {
+                return StepOutcome::Failed(MultimuxError::Connect {
+                    reason: format!("ts/http stream read: {e}"),
+                });
+            }
+            Ok(None) => return StepOutcome::Eof,
+            Err(_) => return StepOutcome::Idle,
+        };
+        let now = Timestamp::from_instant(
+            self.start.into_std(),
+            tokio::time::Instant::now().into_std(),
+        );
+        driver.feed(&chunk, now);
+        self.route_handle.feed_si_ts(&chunk);
+        StepOutcome::Received
+    }
+
+    fn stalled(&self, read: Duration) -> MultimuxError {
+        MultimuxError::Connect {
+            reason: format!("ts/http stream read: no data within {read:?}"),
+        }
+    }
+}
+
 /// Opens `route`'s GET and drives a fresh [`TsIngestSession`] through
 /// [`IngestDriver`] until the body ends or a read fails — the new drive
 /// loop, replacing the pre-5a `TsHttpSource`/`TsHttpSession` pair.
@@ -248,42 +290,43 @@ pub async fn run_ts_http(
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+    _cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
-    let mut stream = open_stream(route).await?;
+    let stream = open_stream(route).await?;
     let mut dialer = TsHttpDialer;
     let session = dialer
         .dial()
         .unwrap_or_else(|never: Infallible| match never {});
-    let mut driver = IngestDriver::new(
+    let driver = IngestDriver::new(
         session,
         trunk_config,
         handshake,
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
-    let read_timeout = route.timeouts.read;
-    let start = std::time::Instant::now();
+    let mut step = TsHttpStep {
+        stream,
+        start: tokio::time::Instant::now(),
+        route_handle: std::sync::Arc::clone(route_handle),
+    };
     let mut progress = crate::source::DriverProgress::new();
-    loop {
-        let now = Timestamp::from_instant(start, std::time::Instant::now());
-        let status = recv_and_feed(&mut stream, &mut driver, read_timeout, now).await?;
-        if let StreamStatus::Fed(ref chunk) = status {
-            // EIT p/f tracking (issue #903) — a no-op unless some program
-            // on this route has DVR enabled with `dvb_service_id` set.
-            route_handle.feed_si_ts(chunk);
-        }
-        crate::source::advance_route(&driver, route_handle, &mut progress).await;
-        match status {
-            StreamStatus::Fed(_) => {}
-            StreamStatus::Ended => {
-                driver.finish();
-                // Flush every program's trailing buffered partial segment
-                // now that the driver is terminal -- `advance_route` above
-                // ran while the driver was still `Live`; this call's own
-                // internal terminal-health check does the flush.
-                crate::source::advance_route(&driver, route_handle, &mut progress).await;
-                return Ok(());
-            }
-        }
+    let mut sink = tokio::io::sink();
+    let err = crate::source::driver::run_ingest_scaffold(
+        driver,
+        route_handle,
+        &mut progress,
+        _cancel,
+        route.timeouts,
+        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
+        &mut sink,
+        &mut step,
+        |never: Infallible| match never {},
+    )
+    .await;
+    // A clean end-of-body ends the session `Ended`; the scaffold reports it
+    // as a `Connect { "session ended .." }` error, so map it back to `Ok`.
+    match err {
+        MultimuxError::Connect { reason } if reason.starts_with("session ended") => Ok(()),
+        other => Err(other),
     }
 }
 
@@ -509,7 +552,13 @@ mod tests {
         // error, proving this bound discriminates.
         let result = tokio::time::timeout(
             Duration::from_secs(10),
-            run_ts_http(&route, trunk_config(), handshake(), &route_handle),
+            run_ts_http(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
         .await
         .expect(

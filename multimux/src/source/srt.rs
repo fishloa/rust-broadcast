@@ -320,6 +320,54 @@ pub async fn recv_and_feed(
     Ok(StreamStatus::Fed(bytes.to_vec()))
 }
 
+/// The SRT source's [`IngestStep`](crate::source::driver::IngestStep): one
+/// bounded payload receive, feeding the driver and the route's DVR EIT
+/// tracker. Fires the one-shot `on_driver` handoff after the first payload.
+pub(crate) struct SrtStep<F: FnOnce(&IngestDriver<TsIngestSession>)> {
+    pub sock: SrtSocket,
+    pub start: tokio::time::Instant,
+    pub route_handle: std::sync::Arc<crate::route::RouteHandle>,
+    pub handoff: Option<F>,
+}
+
+impl<F: FnOnce(&IngestDriver<TsIngestSession>) + Send>
+    crate::source::driver::IngestStep<TsIngestSession> for SrtStep<F>
+{
+    async fn step(
+        &mut self,
+        driver: &mut IngestDriver<TsIngestSession>,
+        window: Duration,
+    ) -> crate::source::driver::StepOutcome {
+        use crate::source::driver::StepOutcome;
+        let payload = match tokio::time::timeout(window, self.sock.recv()).await {
+            Ok(Ok(Some(payload))) => payload,
+            Ok(Ok(None)) => return StepOutcome::Eof,
+            Ok(Err(e)) => {
+                return StepOutcome::Failed(MultimuxError::Connect {
+                    reason: format!("srt recv: {e}"),
+                });
+            }
+            Err(_) => return StepOutcome::Idle,
+        };
+        let now = Timestamp::from_instant(
+            self.start.into_std(),
+            tokio::time::Instant::now().into_std(),
+        );
+        driver.feed(&payload, now);
+        self.route_handle.feed_si_ts(&payload);
+        if let Some(f) = self.handoff.take() {
+            f(driver);
+        }
+        StepOutcome::Received
+    }
+
+    fn stalled(&self, read: Duration) -> MultimuxError {
+        MultimuxError::Connect {
+            reason: format!("srt recv: no data within {read:?}"),
+        }
+    }
+}
+
 /// Drives an already-open `sock` through a fresh [`TsIngestSession`] until
 /// the peer shuts down or a read fails — shared by both modes, since once
 /// the socket exists caller and listener are identical.
@@ -339,45 +387,54 @@ pub async fn recv_and_feed(
 /// `crate::source::report_driver_progress` does with it each iteration
 /// (called alongside, not instead of, `on_driver`).
 pub async fn drive_socket(
-    mut sock: SrtSocket,
+    sock: SrtSocket,
     read_timeout: Duration,
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
-    on_driver: impl FnOnce(&IngestDriver<TsIngestSession>),
+    on_driver: impl FnOnce(&IngestDriver<TsIngestSession>) + Send,
 ) -> Result<()> {
     let mut dialer = SrtDialer;
     let session = dialer
         .dial()
         .unwrap_or_else(|never: Infallible| match never {});
-    let mut driver = IngestDriver::new(
+    let driver = IngestDriver::new(
         session,
         trunk_config,
         handshake,
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
-    let start = std::time::Instant::now();
-    let mut handoff = Some(on_driver);
+    let mut step = SrtStep {
+        sock,
+        start: tokio::time::Instant::now(),
+        route_handle: std::sync::Arc::clone(route_handle),
+        handoff: Some(on_driver),
+    };
     let mut progress = crate::source::DriverProgress::new();
-    loop {
-        let now = Timestamp::from_instant(start, std::time::Instant::now());
-        let status = recv_and_feed(&mut sock, &mut driver, read_timeout, now).await?;
-        if let StreamStatus::Fed(ref bytes) = status {
-            // EIT p/f tracking (issue #903) — a no-op unless some program
-            // on this route has DVR enabled with `dvb_service_id` set.
-            route_handle.feed_si_ts(bytes);
-        }
-        crate::source::advance_route(&driver, route_handle, &mut progress).await;
-        if let Some(f) = handoff.take() {
-            f(&driver);
-        }
-        if status == StreamStatus::Ended {
-            driver.finish();
-            // Flush every program's trailing buffered partial segment now
-            // that the driver is terminal -- see `segment`'s own doc.
-            crate::source::advance_route(&driver, route_handle, &mut progress).await;
-            return Ok(());
-        }
+    // SRT has no `poll_transmit`; the scaffold still bounds the (unused)
+    // write half (defect 4 discipline).
+    let mut sink = tokio::io::sink();
+    let err = crate::source::driver::run_ingest_scaffold(
+        driver,
+        route_handle,
+        &mut progress,
+        tokio_util::sync::CancellationToken::new(),
+        crate::source::IngestTimeouts {
+            connect: read_timeout,
+            read: read_timeout,
+        },
+        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
+        &mut sink,
+        &mut step,
+        |never: Infallible| match never {},
+    )
+    .await;
+    // A clean peer shutdown ends the session `Ended`; the scaffold reports
+    // that as a `Connect { "session ended .." }` error (there is no
+    // `Ok(())` return path), so map it back to the pre-migration `Ok(())`.
+    match err {
+        MultimuxError::Connect { reason } if reason.starts_with("session ended") => Ok(()),
+        other => Err(other),
     }
 }
 
@@ -389,6 +446,7 @@ pub async fn run_srt_caller(
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+    _cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
     let sock = connect_caller(route).await?;
     drive_socket(
@@ -411,6 +469,7 @@ pub async fn run_srt_listener_once(
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+    _cancel: tokio_util::sync::CancellationToken,
 ) -> Result<()> {
     let sock = accept_listener(route).await?;
     drive_socket(
@@ -654,7 +713,13 @@ mod tests {
         // `run_srt_caller`'s own error.
         let outcome = tokio::time::timeout(
             Duration::from_secs(15),
-            run_srt_caller(&route, trunk_config(), handshake(), &route_handle),
+            run_srt_caller(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
         .await
         .expect("run_srt_caller must not exceed the assertion window");

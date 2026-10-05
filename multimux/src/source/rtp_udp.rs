@@ -341,11 +341,51 @@ pub async fn recv_and_feed(
 /// `route_handle` is the driver-backed registry side of issue #805 task 2 —
 /// see `rtsp::run_rtsp`'s own doc for what
 /// `crate::source::report_driver_progress` does with it each iteration.
+/// The raw RTP-over-UDP source's
+/// [`IngestStep`](crate::source::driver::IngestStep): one bounded datagram
+/// receive, feeding the driver.
+pub(crate) struct RtpUdpStep {
+    pub socket: UdpSocket,
+    pub buf: Vec<u8>,
+    pub start: tokio::time::Instant,
+}
+
+impl crate::source::driver::IngestStep<RtpUdpIngestSession> for RtpUdpStep {
+    async fn step(
+        &mut self,
+        driver: &mut media_plane::ingress::IngestDriver<RtpUdpIngestSession>,
+        window: Duration,
+    ) -> crate::source::driver::StepOutcome {
+        use crate::source::driver::StepOutcome;
+        match tokio::time::timeout(window, self.socket.recv(&mut self.buf)).await {
+            Ok(Ok(n)) => {
+                let now = Timestamp::from_instant(
+                    self.start.into_std(),
+                    tokio::time::Instant::now().into_std(),
+                );
+                driver.feed(&self.buf[..n], now);
+                StepOutcome::Received
+            }
+            Ok(Err(e)) => StepOutcome::Failed(MultimuxError::Connect {
+                reason: format!("udp recv: {e}"),
+            }),
+            Err(_) => StepOutcome::Idle,
+        }
+    }
+
+    fn stalled(&self, read: Duration) -> MultimuxError {
+        MultimuxError::Connect {
+            reason: format!("rtp/udp recv: no data within {read:?}"),
+        }
+    }
+}
+
 pub async fn run_rtp_udp(
     route: &RtpUdpRoute,
     trunk_config: media_plane::trunk::TrunkConfig,
     handshake: media_plane::ingress::HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> MultimuxError {
     let socket = match bind(route).await {
         Ok(s) => s,
@@ -356,7 +396,7 @@ pub async fn run_rtp_udp(
         Ok(s) => s,
         Err(e) => return e,
     };
-    let mut driver = media_plane::ingress::IngestDriver::new(
+    let driver = media_plane::ingress::IngestDriver::new(
         session,
         trunk_config,
         handshake,
@@ -364,17 +404,25 @@ pub async fn run_rtp_udp(
         // carry a single programme today; the default ceiling covers an MPTS.
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
-    let mut buf = vec![0u8; MAX_UDP_DATAGRAM];
-    let read_timeout = route.timeouts.read;
-    let start = std::time::Instant::now();
+    let mut step = RtpUdpStep {
+        socket,
+        buf: vec![0u8; MAX_UDP_DATAGRAM],
+        start: tokio::time::Instant::now(),
+    };
     let mut progress = crate::source::DriverProgress::new();
-    loop {
-        let now = Timestamp::from_instant(start, std::time::Instant::now());
-        if let Err(e) = recv_and_feed(&socket, &mut buf, &mut driver, read_timeout, now).await {
-            return e;
-        }
-        crate::source::advance_route(&driver, route_handle, &mut progress).await;
-    }
+    let mut sink = tokio::io::sink();
+    crate::source::driver::run_ingest_scaffold(
+        driver,
+        route_handle,
+        &mut progress,
+        cancel,
+        route.timeouts,
+        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
+        &mut sink,
+        &mut step,
+        |e| e,
+    )
+    .await
 }
 
 #[cfg(test)]

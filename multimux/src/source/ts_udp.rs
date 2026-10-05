@@ -225,6 +225,49 @@ pub async fn recv_and_feed(
     Ok(n)
 }
 
+/// The ts/udp source's [`IngestStep`](crate::source::driver::IngestStep):
+/// one bounded datagram receive, feeding the driver and the route's DVR EIT
+/// tracker (`feed_si_ts`).
+pub(crate) struct TsUdpStep {
+    pub socket: UdpSocket,
+    pub buf: Vec<u8>,
+    pub start: tokio::time::Instant,
+    pub route_handle: std::sync::Arc<crate::route::RouteHandle>,
+}
+
+impl crate::source::driver::IngestStep<TsIngestSession> for TsUdpStep {
+    async fn step(
+        &mut self,
+        driver: &mut media_plane::ingress::IngestDriver<TsIngestSession>,
+        window: Duration,
+    ) -> crate::source::driver::StepOutcome {
+        use crate::source::driver::StepOutcome;
+        match tokio::time::timeout(window, self.socket.recv(&mut self.buf)).await {
+            Ok(Ok(n)) => {
+                let now = Timestamp::from_instant(
+                    self.start.into_std(),
+                    tokio::time::Instant::now().into_std(),
+                );
+                driver.feed(&self.buf[..n], now);
+                // EIT p/f tracking (issue #903) — a no-op unless some program
+                // on this route has DVR enabled with `dvb_service_id` set.
+                self.route_handle.feed_si_ts(&self.buf[..n]);
+                StepOutcome::Received
+            }
+            Ok(Err(e)) => StepOutcome::Failed(MultimuxError::Connect {
+                reason: format!("udp recv: {e}"),
+            }),
+            Err(_) => StepOutcome::Idle,
+        }
+    }
+
+    fn stalled(&self, read: Duration) -> MultimuxError {
+        MultimuxError::Connect {
+            reason: format!("ts/udp recv: no data within {read:?}"),
+        }
+    }
+}
+
 /// Binds `route`'s socket and drives a fresh [`TsIngestSession`] through
 /// [`media_plane::ingress::IngestDriver`] until a read stall (bounded by
 /// [`IngestTimeouts::read`]) — the new `connect()`+`next_samples()` loop,
@@ -240,6 +283,7 @@ pub async fn run_ts_udp(
     trunk_config: media_plane::trunk::TrunkConfig,
     handshake: media_plane::ingress::HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> MultimuxError {
     let socket = match bind(route).await {
         Ok(s) => s,
@@ -249,27 +293,34 @@ pub async fn run_ts_udp(
     let session = dialer
         .dial()
         .unwrap_or_else(|never: Infallible| match never {});
-    let mut driver = media_plane::ingress::IngestDriver::new(
+    let driver = media_plane::ingress::IngestDriver::new(
         session,
         trunk_config,
         handshake,
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
-    let mut buf = vec![0u8; MAX_TS_READ];
-    let read_timeout = route.timeouts.read;
-    let start = std::time::Instant::now();
+    let mut step = TsUdpStep {
+        socket,
+        buf: vec![0u8; MAX_TS_READ],
+        start: tokio::time::Instant::now(),
+        route_handle: std::sync::Arc::clone(route_handle),
+    };
     let mut progress = crate::source::DriverProgress::new();
-    loop {
-        let now = Timestamp::from_instant(start, std::time::Instant::now());
-        let n = match recv_and_feed(&socket, &mut buf, &mut driver, read_timeout, now).await {
-            Ok(n) => n,
-            Err(e) => return e,
-        };
-        // EIT p/f tracking (issue #903) — a no-op unless some program on
-        // this route has DVR enabled with `dvb_service_id` set.
-        route_handle.feed_si_ts(&buf[..n]);
-        crate::source::advance_route(&driver, route_handle, &mut progress).await;
-    }
+    // A connectionless datagram source has no `poll_transmit`, so the write
+    // half is a sink; the scaffold still bounds it (defect 4 discipline).
+    let mut sink = tokio::io::sink();
+    crate::source::driver::run_ingest_scaffold(
+        driver,
+        route_handle,
+        &mut progress,
+        cancel,
+        route.timeouts,
+        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
+        &mut sink,
+        &mut step,
+        |never: Infallible| match never {},
+    )
+    .await
 }
 
 #[cfg(test)]

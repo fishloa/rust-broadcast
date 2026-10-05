@@ -26,6 +26,16 @@
   and `multicast_interface` keys (SP1.6); `source::udp::bind_udp` is now
   public and takes a `source::udp::UdpBindOptions`, and a requested
   `SO_RCVBUF` is applied rather than left at the OS default.
+- **The five one-connection dial sources share one ingest scaffold.** The
+  `rtsp`/`rtp`/`ts_udp`/`ts_http`/`srt` drive loops become one
+  `source::driver::run_ingest_scaffold` (deadline, cancel, bounded write,
+  stall check, `advance_route`, terminal tail) with a small per-source
+  `IngestStep` (its read + `feed`). The **RTSP source's outbound write** is
+  now bounded by a 10 s timeout (defect 4: it was an unbounded
+  `write_all`). A session that goes `HandshakeTimedOut` now ends the route
+  promptly instead of reading until the stall. `run_rtsp`/`run_ts_udp`/
+  `run_rtp_udp`/`run_ts_http`/`run_srt_caller`/`run_srt_listener_once`/
+  `drive_socket` each take a `CancellationToken`.
 
 ### Changed (breaking) — W2b-1
 - **A single `CancellationToken` replaces the `watch<bool>` shutdown.** The

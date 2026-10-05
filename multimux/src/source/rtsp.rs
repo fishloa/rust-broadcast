@@ -65,13 +65,13 @@ use rtsp_runtime::auth::Credentials;
 use rtsp_runtime::client::{ClientEvent, ClientSession};
 use rtsp_runtime::transport::{Transport, TransportSpec};
 use rtsp_runtime::{Method, StatusCode};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite};
 use tokio::net::TcpStream;
 use url::Url;
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use media_plane::ingress::{
-    Dialer, HandshakePolicy, HealthState, IngestDriver, IngestSession, ProgramId, SessionEvent,
+    Dialer, HandshakePolicy, IngestDriver, IngestSession, ProgramId, SessionEvent,
 };
 use media_plane::trunk::{RetentionClass, TrunkConfig};
 
@@ -789,6 +789,40 @@ async fn connect_tls(addr: &str, _server_name: &str) -> Result<(BoxedRead, Boxed
     })
 }
 
+/// The RTSP source's [`IngestStep`](crate::source::driver::IngestStep): the
+/// bounded read off the connection, feeding the driver.
+pub(crate) struct RtspStep {
+    pub rd: BoxedRead,
+    pub buf: Vec<u8>,
+    pub start: tokio::time::Instant,
+}
+
+impl crate::source::driver::IngestStep<RtspIngestSession> for RtspStep {
+    async fn step(
+        &mut self,
+        driver: &mut media_plane::ingress::IngestDriver<RtspIngestSession>,
+        window: Duration,
+    ) -> crate::source::driver::StepOutcome {
+        use crate::source::driver::StepOutcome;
+        match tokio::time::timeout(window, self.rd.read(&mut self.buf)).await {
+            Ok(Ok(0)) => StepOutcome::Eof,
+            Ok(Ok(n)) => {
+                let now = Timestamp::from_instant(
+                    self.start.into_std(),
+                    tokio::time::Instant::now().into_std(),
+                );
+                driver.feed(&self.buf[..n], now);
+                StepOutcome::Received
+            }
+            Ok(Err(e)) => StepOutcome::Failed(MultimuxError::Protocol {
+                phase: "recv",
+                reason: e.to_string(),
+            }),
+            Err(_) => StepOutcome::Idle,
+        }
+    }
+}
+
 /// Binds a connection (TCP for `rtsp://`, TLS-over-TCP for `rtsps://`) to
 /// `route` and drives an [`RtspIngestSession`] through [`IngestDriver`] until
 /// the connection closes or fails — the new drive loop, replacing the pre-5a
@@ -804,6 +838,7 @@ pub async fn run_rtsp(
     trunk_config: TrunkConfig,
     handshake: HandshakePolicy,
     route_handle: &std::sync::Arc<crate::route::RouteHandle>,
+    cancel: tokio_util::sync::CancellationToken,
 ) -> MultimuxError {
     let mut dialer = RtspDialer::new(route.url.clone(), route.auth.clone());
     let addr = match dialer.connect_addr() {
@@ -824,7 +859,7 @@ pub async fn run_rtsp(
     } else {
         tokio::time::timeout(connect_timeout, connect_plain(&addr)).await
     };
-    let (mut rd, mut wr) = match connected {
+    let (rd, mut wr) = match connected {
         Ok(Ok(streams)) => streams,
         Ok(Err(e)) => return e,
         Err(_) => {
@@ -837,7 +872,7 @@ pub async fn run_rtsp(
         Ok(s) => s,
         Err(e) => return e,
     };
-    let mut driver = IngestDriver::new(
+    let driver = IngestDriver::new(
         session,
         trunk_config,
         handshake,
@@ -845,119 +880,28 @@ pub async fn run_rtsp(
         // carry a single programme today; the default ceiling covers an MPTS.
         media_plane::DEFAULT_MAX_PROGRAMS,
     );
-    let start = std::time::Instant::now();
-    let mut buf = vec![0u8; 64 * 1024];
-    let read_timeout = route.timeouts.read;
-    // When the last byte arrived from the peer — updated on ANY received
-    // bytes (interleaved RTP media *and* RTSP responses). A keepalive
-    // `OPTIONS` that is answered only proves the peer is alive at the RTSP
-    // layer; a camera that holds the socket open but sends no media must
-    // still be detected as stalled. Comparing `now - last_rx` against
-    // `read_timeout` directly (rather than relying on which thing bounded a
-    // single `timeout(..)` call) makes the stall independent of keepalive
-    // wakeups, which would otherwise keep resetting a would-be timeout
-    // (issue #1083, item 1).
-    let mut last_rx = std::time::Instant::now();
+    // The read half + scratch buffer, and the shared drive loop (SP6.1).
+    // `wr` is the write half the scaffold drains `poll_transmit` into, bounded
+    // by `DEFAULT_WRITE_TIMEOUT` (defect 4: the pre-migration loop's
+    // `wr.write_all` had no bound).
+    let mut step = RtspStep {
+        rd,
+        buf: vec![0u8; 64 * 1024],
+        start: tokio::time::Instant::now(),
+    };
     let mut progress = crate::source::DriverProgress::new();
-
-    loop {
-        // Keepalive (issue #1083 W8): if the session's next deadline has
-        // already passed, fire it now — this queues an `OPTIONS` onto
-        // `outbound`, which the `poll_transmit` drain below writes out.
-        // Without this, a server enforcing `Session;timeout=60` (Live555-based
-        // cameras) tears the session down every 60 s.
-        let now = Timestamp::from_instant(start, std::time::Instant::now());
-        if let Some(deadline) = driver.next_deadline()
-            && now >= deadline
-        {
-            driver.on_deadline(now);
-        }
-        while let Some(bytes) = driver.poll_transmit() {
-            if let Err(e) = wr.write_all(&bytes).await {
-                return MultimuxError::Connect {
-                    reason: format!("rtsp write: {e}"),
-                };
-            }
-        }
-        if !driver.health().is_running() {
-            break;
-        }
-        // A stall is a stall: if no byte has arrived for `read_timeout`,
-        // fail regardless of what woke us (issue #1083, item 1). Checked
-        // here, before the wait, so a keepalive wakeup that arrives after a
-        // genuine stall still fails the session rather than looping forever.
-        if last_rx.elapsed() >= read_timeout {
-            return MultimuxError::Protocol {
-                phase: "recv",
-                reason: format!("no data within {read_timeout:?}"),
-            };
-        }
-        // Bound the read by whichever comes first: what remains of the read
-        // deadline, or the session's own next keepalive deadline — so a quiet
-        // session that only ever needs an `OPTIONS` still wakes in time to
-        // send it.
-        let keepalive_wait = driver
-            .next_deadline()
-            .map(|d| {
-                let now = Timestamp::from_instant(start, std::time::Instant::now());
-                d.as_nanos().saturating_sub(now.as_nanos())
-            })
-            .map(Duration::from_nanos);
-        let remaining = read_timeout.saturating_sub(last_rx.elapsed());
-        let wait = keepalive_wait.map_or(remaining, |w| w.min(remaining));
-        let n = match tokio::time::timeout(wait, rd.read(&mut buf)).await {
-            Ok(Ok(0)) => {
-                driver.finish();
-                break;
-            }
-            Ok(Ok(n)) => n,
-            Ok(Err(e)) => {
-                return MultimuxError::Protocol {
-                    phase: "recv",
-                    reason: e.to_string(),
-                };
-            }
-            // Whatever bounded `wait` elapsed without a byte. If the whole
-            // read deadline has now passed, this is a stall; otherwise it was
-            // just the keepalive deadline, handled at the top of the next
-            // iteration. Either way the next iteration re-checks
-            // `last_rx.elapsed()` and fails once the deadline is truly up —
-            // there is no separate "continue" branch that could swallow it.
-            Err(_) => continue,
-        };
-        last_rx = std::time::Instant::now();
-        let now = Timestamp::from_instant(start, last_rx);
-        driver.feed(&buf[..n], now);
-        crate::source::advance_route(&driver, route_handle, &mut progress).await;
-    }
-    // Health is already terminal on every path that broke out of the loop
-    // above (handshake timeout, clean socket EOF via `driver.finish()`) —
-    // this call's internal terminal-health check flushes every program's
-    // trailing buffered partial segment.
-    crate::source::advance_route(&driver, route_handle, &mut progress).await;
-    // Issue #1083 W8: return the session's OWN typed error when it failed,
-    // rather than flattening every terminal state into a `Connect` with a
-    // `{:?}`-formatted reason. `RtspIngestSession::Error = MultimuxError`, so
-    // `into_health()`'s `Failed(e)` already carries the real
-    // `MultimuxError::Auth` (a `401`/`403` that persisted after credentials)
-    // or `MultimuxError::Protocol { phase: "DESCRIBE", reason: "non-success
-    // status Not Found" }` (a wrong URL path) — exactly the two shapes
-    // `origin::supervisor::is_auth_failure` / `is_permanent_describe_not_found`
-    // were written to match. Flattening them made that classification dead
-    // for RTSP, the one input it existed for, so a wrong password retried
-    // forever instead of failing the route.
-    match driver.into_health() {
-        HealthState::Failed(e) => e,
-        HealthState::Ended => MultimuxError::Connect {
-            reason: "rtsp: session ended (stream completed)".to_string(),
-        },
-        HealthState::HandshakeTimedOut { deadline } => MultimuxError::Connect {
-            reason: format!("rtsp: handshake timed out at {deadline:?}"),
-        },
-        other => MultimuxError::Connect {
-            reason: format!("rtsp: session ended: {other:?}"),
-        },
-    }
+    crate::source::driver::run_ingest_scaffold(
+        driver,
+        route_handle,
+        &mut progress,
+        cancel,
+        route.timeouts,
+        crate::source::driver::DEFAULT_WRITE_TIMEOUT,
+        &mut wr,
+        &mut step,
+        |e| e,
+    )
+    .await
 }
 
 #[cfg(test)]
@@ -965,6 +909,7 @@ mod tests {
     use super::*;
     use media_plane::ingress::HealthState;
     use std::num::NonZeroUsize;
+    use tokio::io::AsyncWriteExt as _;
     use transmux::avc_config_from_sprop;
     use transmux::pipeline::CodecConfig;
     use transmux::rtp::RtpMediaKind;
@@ -1484,7 +1429,13 @@ mod tests {
         // fail a deadlock rather than hang CI.
         let result = tokio::time::timeout(
             std::time::Duration::from_secs(60),
-            run_rtsp(&route, trunk_config(), handshake(), &route_handle),
+            run_rtsp(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
         .await
         .expect("run_rtsp must not hang against a non-TLS listener");
@@ -1605,7 +1556,13 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         let err = tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            run_rtsp(&route, trunk_config(), handshake(), &route_handle),
+            run_rtsp(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
         .await
         .expect("run_rtsp must not hang");
@@ -1645,7 +1602,13 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         let err = tokio::time::timeout(
             std::time::Duration::from_secs(30),
-            run_rtsp(&route, trunk_config(), handshake(), &route_handle),
+            run_rtsp(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
         .await
         .expect("run_rtsp must not hang");
@@ -1713,7 +1676,14 @@ mod tests {
         // The route only ends when the server closes; run it concurrently and
         // observe what the server saw.
         let run = tokio::spawn(async move {
-            run_rtsp(&route, trunk_config(), handshake(), &route_handle).await
+            run_rtsp(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            )
+            .await
         });
         let seen = tokio::time::timeout(std::time::Duration::from_secs(20), server)
             .await
@@ -2072,7 +2042,13 @@ mod tests {
         let route_handle = std::sync::Arc::new(crate::route::RouteHandle::new(1.0, 250, 8));
         let err = tokio::time::timeout(
             Duration::from_secs(10),
-            run_rtsp(&route, trunk_config(), handshake(), &route_handle),
+            run_rtsp(
+                &route,
+                trunk_config(),
+                handshake(),
+                &route_handle,
+                tokio_util::sync::CancellationToken::new(),
+            ),
         )
         .await
         .expect("run_rtsp must return (not hang) once the read timeout elapses");

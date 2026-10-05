@@ -1876,8 +1876,15 @@ fn spawn_ingest(
             spawn_supervised(
                 route_cfg,
                 ctx,
-                |cfg, trunk_config, handshake, handle| async move {
-                    Err(crate::source::rtsp::run_rtsp(&cfg, trunk_config, handshake, &handle).await)
+                |cfg, trunk_config, handshake, handle, cancel| async move {
+                    Err(crate::source::rtsp::run_rtsp(
+                        &cfg,
+                        trunk_config,
+                        handshake,
+                        &handle,
+                        cancel,
+                    )
+                    .await)
                 },
             )
         }
@@ -1898,11 +1905,15 @@ fn spawn_ingest(
             spawn_supervised(
                 route_cfg,
                 ctx,
-                |cfg, trunk_config, handshake, handle| async move {
-                    Err(
-                        crate::source::rtp_udp::run_rtp_udp(&cfg, trunk_config, handshake, &handle)
-                            .await,
+                |cfg, trunk_config, handshake, handle, cancel| async move {
+                    Err(crate::source::rtp_udp::run_rtp_udp(
+                        &cfg,
+                        trunk_config,
+                        handshake,
+                        &handle,
+                        cancel,
                     )
+                    .await)
                 },
             )
         }
@@ -1936,11 +1947,15 @@ fn spawn_ingest(
             spawn_supervised(
                 route_cfg,
                 ctx,
-                |cfg, trunk_config, handshake, handle| async move {
-                    Err(
-                        crate::source::ts_udp::run_ts_udp(&cfg, trunk_config, handshake, &handle)
-                            .await,
+                |cfg, trunk_config, handshake, handle, cancel| async move {
+                    Err(crate::source::ts_udp::run_ts_udp(
+                        &cfg,
+                        trunk_config,
+                        handshake,
+                        &handle,
+                        cancel,
                     )
+                    .await)
                 },
             )
         }
@@ -1951,9 +1966,15 @@ fn spawn_ingest(
             spawn_supervised(
                 route_cfg,
                 ctx,
-                |cfg, trunk_config, handshake, handle| async move {
-                    crate::source::ts_http::run_ts_http(&cfg, trunk_config, handshake, &handle)
-                        .await
+                |cfg, trunk_config, handshake, handle, cancel| async move {
+                    crate::source::ts_http::run_ts_http(
+                        &cfg,
+                        trunk_config,
+                        handshake,
+                        &handle,
+                        cancel,
+                    )
+                    .await
                 },
             )
         }
@@ -1990,18 +2011,25 @@ fn spawn_ingest(
             spawn_supervised(
                 srt_route,
                 ctx,
-                move |cfg, trunk_config, handshake, handle| async move {
+                move |cfg, trunk_config, handshake, handle, cancel| async move {
                     if is_listener {
                         crate::source::srt::run_srt_listener_once(
                             &cfg,
                             trunk_config,
                             handshake,
                             &handle,
+                            cancel,
                         )
                         .await
                     } else {
-                        crate::source::srt::run_srt_caller(&cfg, trunk_config, handshake, &handle)
-                            .await
+                        crate::source::srt::run_srt_caller(
+                            &cfg,
+                            trunk_config,
+                            handshake,
+                            &handle,
+                            cancel,
+                        )
+                        .await
                     }
                 },
             )
@@ -2013,7 +2041,7 @@ fn spawn_ingest(
             spawn_supervised(
                 route_cfg,
                 ctx,
-                |cfg, trunk_config, handshake, handle| async move {
+                |cfg, trunk_config, handshake, handle, _cancel| async move {
                     crate::source::hls_pull::run_hls_pull(&cfg, trunk_config, handshake, &handle)
                         .await
                 },
@@ -2026,7 +2054,7 @@ fn spawn_ingest(
             spawn_supervised(
                 route_cfg,
                 ctx,
-                |cfg, trunk_config, handshake, handle| async move {
+                |cfg, trunk_config, handshake, handle, _cancel| async move {
                     crate::source::dash_pull::run_dash_pull(&cfg, trunk_config, handshake, &handle)
                         .await
                 },
@@ -2039,7 +2067,7 @@ fn spawn_ingest(
             spawn_supervised(
                 route_cfg,
                 ctx,
-                |cfg, trunk_config, handshake, handle| async move {
+                |cfg, trunk_config, handshake, handle, _cancel| async move {
                     crate::source::smooth_pull::run_smooth_pull(
                         &cfg,
                         trunk_config,
@@ -2071,7 +2099,7 @@ fn spawn_ingest(
             spawn_supervised(
                 route_cfg,
                 ctx,
-                |cfg, trunk_config, handshake, handle| async move {
+                |cfg, trunk_config, handshake, handle, _cancel| async move {
                     Err(crate::source::rtmp::run_rtmp(&cfg, trunk_config, handshake, &handle).await)
                 },
             )
@@ -2098,7 +2126,7 @@ fn spawn_ingest(
             spawn_supervised(
                 route_cfg,
                 ctx,
-                |cfg, trunk_config, handshake, handle| async move {
+                |cfg, trunk_config, handshake, handle, _cancel| async move {
                     Err(crate::source::whip::run_whip(&cfg, trunk_config, handshake, &handle).await)
                 },
             )
@@ -2109,7 +2137,7 @@ fn spawn_ingest(
             spawn_supervised(
                 path.clone(),
                 ctx,
-                move |path, _trunk_config, handshake, handle| async move {
+                move |path, _trunk_config, handshake, handle, _cancel| async move {
                     Err(crate::source::file_reader::run_file_source(
                         &path,
                         loop_file,
@@ -2168,6 +2196,7 @@ where
             media_plane::trunk::TrunkConfig,
             media_plane::ingress::HandshakePolicy,
             Arc<RouteHandle>,
+            tokio_util::sync::CancellationToken,
         ) -> Fut
         + Send
         + 'static,
@@ -2181,8 +2210,10 @@ where
         timeouts,
     } = ctx;
     let route_cfg = Arc::new(route_cfg);
+    let cancel_for_run = cancel.clone();
     tokio::spawn(supervisor::supervise_driver(
         move |route_handle| {
+            let cancel_for_run = cancel_for_run.clone();
             let trunk_config = crate::source::driver_trunk_config(window_segments);
             let handshake = crate::source::handshake_policy(timeouts.connect);
             run(
@@ -2190,6 +2221,7 @@ where
                 trunk_config,
                 handshake,
                 route_handle,
+                cancel_for_run,
             )
         },
         store,
