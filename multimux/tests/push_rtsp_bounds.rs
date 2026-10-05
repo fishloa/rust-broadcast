@@ -340,3 +340,37 @@ async fn close_sends_a_teardown() {
     }
     assert!(saw_teardown, "close() must send a TEARDOWN");
 }
+
+/// I-D(2): calling `close()` twice sends exactly ONE TEARDOWN (the second is a
+/// no-op because the client is already taken).
+#[tokio::test]
+async fn close_twice_sends_exactly_one_teardown() {
+    use tokio::sync::mpsc;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("rtsp://{}/live/key", listener.local_addr().unwrap());
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    tokio::spawn(teardown_recording_peer(listener, tx));
+
+    let mut t = tokio::time::timeout(GUARD, RtspTransport::connect(&url, &config_with_bounds()))
+        .await
+        .expect("connect")
+        .expect("connect");
+    t.setup(&[]).await.expect("setup");
+    t.close();
+    t.close(); // no-op: exactly one TEARDOWN
+    drop(t);
+
+    let mut teardowns = 0usize;
+    let deadline = tokio::time::Instant::now() + GUARD;
+    loop {
+        match tokio::time::timeout_at(deadline, rx.recv()).await {
+            Ok(Some(m)) => {
+                if m == "TEARDOWN" {
+                    teardowns += 1;
+                }
+            }
+            Ok(None) | Err(_) => break,
+        }
+    }
+    assert_eq!(teardowns, 1, "close() twice must send exactly one TEARDOWN");
+}

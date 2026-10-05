@@ -77,10 +77,13 @@
   and its `write_all` had no bound at all (defect 4). The ANNOUNCE SDP bytes
   are unchanged, pinned by `tests/golden/rtsp_announce.sdp`. `close()` now
   sends a bounded best-effort `TEARDOWN` (RFC 2326 §10.10) on a spawned task
-  owned by the transport, so a server frees the publisher slot immediately
-  rather than at its own timeout; and a server `454 Session Not Found`
-  surfaces as a distinct `RtspPushError::SessionLost` (new variant) rather
-  than a generic protocol error, so the push reconnects.
+  owned by the transport (a second `close()` is a no-op, a superseded handle
+  is aborted, and outside a Tokio runtime the TEARDOWN is skipped, never
+  panicking), so a server frees the publisher slot immediately rather than at
+  its own timeout — best-effort at process shutdown, where a spawned TEARDOWN
+  may not run; and a server `454 Session Not Found` surfaces as a distinct
+  `RtspPushError::SessionLost` (new variant) rather than a generic protocol
+  error, so the push reconnects.
 - **The RTMP push uses rtmp-runtime's `AsyncRtmpClient`.** `RtmpTransport`
   drives `connect`/`publish` and sends media with `send_video`/`send_audio`/
   `send_metadata` rather than hand-rolling the C0/C1/C2 handshake and a raw

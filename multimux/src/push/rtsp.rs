@@ -244,20 +244,47 @@ impl PushTransport for RtspTransport {
     /// (RFC 2326 §10.10) so the server frees the publisher slot immediately
     /// rather than at its own session timeout — a quick reconnect to
     /// `mediamtx`/`gortsplib` would otherwise be rejected as "path already has
-    /// a publisher". `close` is synchronous (the trait is), so the TEARDOWN is
-    /// dispatched on a spawned task; the `JoinHandle` is kept on the transport
-    /// so it is neither leaked nor fire-and-forgotten, and is aborted if a
-    /// later `close` supersedes it.
+    /// a publisher".
+    ///
+    /// `close` is synchronous (the trait is), so the TEARDOWN is dispatched on
+    /// a spawned task. Three properties are guaranteed:
+    /// - a **second** `close()` on an already-closed transport is a no-op (the
+    ///   client is `None`), so exactly one TEARDOWN is sent per connection;
+    /// - a superseded handle is **aborted** before it is replaced, so no
+    ///   detached task outlives its use;
+    /// - outside a Tokio runtime (`Handle::try_current()` is `Err`, e.g. a
+    ///   `Drop` in a sync context) the best-effort TEARDOWN is **skipped** with
+    ///   a log, never a panic.
+    ///
+    /// It is best-effort at process shutdown: a TEARDOWN spawned as the process
+    /// exits may not run, which is acceptable (the server frees the slot at its
+    /// own timeout).
     fn close(&mut self) {
         if let Some(mut client) = self.client.take() {
+            let Some(handle) = teardown_runtime_handle() else {
+                tracing::debug!(
+                    "RTSP push closed outside a Tokio runtime; skipping the best-effort TEARDOWN"
+                );
+                return;
+            };
             let uri = self.url.clone();
-            let handle = tokio::spawn(async move {
+            let task = handle.spawn(async move {
                 let _ = tokio::time::timeout(TEARDOWN_TIMEOUT, client.teardown(&uri)).await;
             });
-            // Replace any prior still-running teardown (the abort drops it).
-            self.teardown = Some(handle);
+            // Abort a still-running superseded teardown before replacing it
+            // (the field is otherwise only nominally "owned").
+            if let Some(old) = self.teardown.replace(task) {
+                old.abort();
+            }
         }
     }
+}
+
+/// The runtime handle to spawn the best-effort `TEARDOWN` on, or `None`
+/// outside a Tokio runtime (where spawning would panic) — factored out so the
+/// no-runtime path is unit-testable (I-D).
+fn teardown_runtime_handle() -> Option<tokio::runtime::Handle> {
+    tokio::runtime::Handle::try_current().ok()
 }
 
 /// Map an rtsp-runtime error onto this transport's error, preserving the
@@ -581,5 +608,127 @@ mod tests {
         // A different rtsp error stays a plain protocol error.
         let other = map_rtsp_error(rtsp_runtime::Error::MessageParse("x".into()));
         assert!(matches!(other, RtspPushError::Protocol(_)), "{other:?}");
+    }
+
+    /// I-D(2): outside a Tokio runtime the best-effort TEARDOWN is skipped
+    /// (no handle), so `close()` never panics. The no-runtime helper is the
+    /// load-bearing predicate.
+    ///
+    /// Revert-check: make `teardown_runtime_handle` return `Some(..)`
+    /// unconditionally (or drop the guard) and the assertion fails.
+    #[test]
+    fn close_outside_a_runtime_does_not_panic() {
+        assert!(
+            teardown_runtime_handle().is_none(),
+            "outside a runtime there must be no spawn handle"
+        );
+        let mut transport = RtspTransport {
+            client: None,
+            channel: 0,
+            url: "rtsp://h/push".to_string(),
+            control_url: "rtsp://h/push/trackID=0".to_string(),
+            seq: 0,
+            ssrc: 1,
+            started: Instant::now(),
+            teardown: None,
+        };
+        // No runtime is active here; close() must not panic. (A `None` client
+        // still exercises the `Handle::try_current()` path when the guard is
+        // reached with a client, but the no-client form proves no panic.)
+        transport.close();
+    }
+
+    /// I-D(1): a real socket 454 reaches `SessionLost` — the wiring, not just
+    /// the pure `map_rtsp_error`. A loopback peer serves the record handshake,
+    /// then answers the push's next request (the keepalive `GET_PARAMETER`)
+    /// with 454; `send_interleaved`'s inbound drain surfaces
+    /// `Error::SessionNotFound`, which `map_rtsp_error` maps to `SessionLost`.
+    #[tokio::test]
+    async fn a_socket_454_surfaces_session_lost_through_map_rtsp_error() {
+        use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+        use tokio::net::TcpListener;
+
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut sock, _) = listener.accept().await.unwrap();
+            let mut buf = Vec::new();
+            let mut recorded = false;
+            loop {
+                // Read one request (headers end at CRLFCRLF).
+                let mut chunk = [0u8; 2048];
+                let n = match sock.read(&mut chunk).await {
+                    Ok(0) | Err(_) => return,
+                    Ok(n) => n,
+                };
+                buf.extend_from_slice(&chunk[..n]);
+                let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") else {
+                    continue;
+                };
+                let head = String::from_utf8_lossy(&buf[..end]).into_owned();
+                buf.drain(..end + 4);
+                let cseq = head
+                    .lines()
+                    .find_map(|l| l.strip_prefix("CSeq:").map(|v| v.trim().to_string()))
+                    .unwrap_or_else(|| "1".to_string());
+                let method = head.split_whitespace().next().unwrap_or("").to_string();
+                let resp = if recorded {
+                    // Every request after RECORD is answered 454.
+                    format!("RTSP/1.0 454 Session Not Found\r\nCSeq: {cseq}\r\n\r\n")
+                } else {
+                    let extra = if method == "SETUP" {
+                        "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\n\
+                         Session: 1;timeout=1\r\n"
+                    } else {
+                        "Session: 1;timeout=1\r\n"
+                    };
+                    format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n{extra}\r\n")
+                };
+                if sock.write_all(resp.as_bytes()).await.is_err() {
+                    return;
+                }
+                if method == "RECORD" {
+                    recorded = true;
+                }
+            }
+        });
+
+        let mut client = rtsp_runtime::AsyncRtspClient::connect_with_timeouts(
+            &addr,
+            ClientSession::new(),
+            rtsp_runtime::RtspTimeouts::default()
+                .with_read_idle(std::time::Duration::from_millis(100))
+                .with_write(std::time::Duration::from_millis(300)),
+        )
+        .await
+        .expect("connect");
+        let url = format!("rtsp://{addr}/live/key");
+        let sdp = build_sdp().expect("sdp");
+        let _ = client.announce(&url, &sdp).await;
+        let mut spec = TransportSpec::rtp_avp_tcp_interleaved(0, 1);
+        spec.mode = vec![rtsp_runtime::TransportMode::Record];
+        let _ = client.setup(&url, &Transport::single(spec)).await;
+        let _ = client.record(&url).await;
+
+        // Send media until the keepalive (session timeout=1 s) elicits the 454
+        // and the drain surfaces it.
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            match client.send_interleaved(0, &[0u8; 188]).await {
+                Ok(()) => {}
+                Err(e) => {
+                    assert!(
+                        matches!(map_rtsp_error(e), RtspPushError::SessionLost(_)),
+                        "a socket 454 must map to SessionLost"
+                    );
+                    return;
+                }
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "no 454 surfaced in time"
+            );
+            tokio::task::yield_now().await;
+        }
     }
 }
