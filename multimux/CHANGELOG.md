@@ -71,11 +71,12 @@
   `std::sync::Mutex`/`RwLock` reached through `crate::lock::*` (route,
   admin, smooth, catchup, srt) is now a `parking_lot` lock with infallible
   `.lock()`/`.read()`/`.write()`, so a panicking holder can never poison a
-  lock and cascade a permanent panic. The poison-recovery wrappers and the
-  DVR fail-closed-on-poison path (`abandon_poisoned_recorder`, the
-  `multimux_dvr_failed_total` counter) are removed — with no poisoning they
-  were dead. `ProgramServing::route_name` existed only to label that counter
-  and is gone too.
+  lock and cascade a permanent panic. The generic poison-recovery wrappers are
+  deleted. **The DVR fail-closed safety property is KEPT, not deleted**: a
+  panic while persisting a `DvrRecorder`'s multi-step state still stops
+  recording for that program (the recorder is dropped), logs, and increments
+  `multimux_dvr_failed_total` — now via `catch_unwind` around the persist in
+  `poll_dvr_blocking` rather than via poisoning.
 
 ### Changed (breaking) — W2b-1
 - **A single `CancellationToken` replaces the `watch<bool>` shutdown.** The

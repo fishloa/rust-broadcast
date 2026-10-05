@@ -375,6 +375,13 @@ pub(crate) struct ProgramServing {
     trunk: Arc<Trunk>,
     ll_hls: Arc<HlsOrigin>,
     dash: Arc<DashState>,
+    /// This program's route name — labels the DVR-failure metric recorded when
+    /// a panic during persist stops recording for this program (I1).
+    route_name: String,
+    /// Test-only (I1): when set, the next `poll_dvr_blocking` persist panics,
+    /// so the fail-closed path can be exercised without a real DVR bug.
+    #[cfg(test)]
+    panic_on_persist: std::sync::atomic::AtomicBool,
     /// DVR durable segment archive (issue #746) — `None` when this route
     /// does not have DVR enabled. Owns a pinning `SegmentCursor`, drained
     /// by [`Self::poll_dvr`].
@@ -465,6 +472,9 @@ impl ProgramServing {
             trunk,
             ll_hls,
             dash,
+            route_name: route_name.to_string(),
+            #[cfg(test)]
+            panic_on_persist: std::sync::atomic::AtomicBool::new(false),
             dvr: Mutex::new(dvr),
             segment_writer: Mutex::new(None),
             next_timeline_ns: AtomicU64::new(0),
@@ -634,27 +644,62 @@ impl ProgramServing {
     }
 
     /// The synchronous body of [`Self::poll_dvr`], run on the blocking pool.
+    ///
+    /// **Fail closed on a panic (I1).** `DvrRecorder` holds multi-step state
+    /// (`write_offset`/`index`/`periods`/`total_bytes`); a panic inside
+    /// `poll_and_persist` (mid-`append_segment`, between the file write and the
+    /// index push, say) can leave them disagreeing, so continuing to persist
+    /// would write an archive whose index does not match its data (audit run 7,
+    /// D3 / #1083). `parking_lot` guards release without poisoning, so without
+    /// this wrap the next poll would keep writing to the half-updated recorder.
+    /// The persist step is therefore caught with `catch_unwind`; on a panic the
+    /// recorder is dropped (recording stops for this program for good), the
+    /// `multimux_dvr_failed_total` counter is incremented and an error is
+    /// logged — the same safety property the deleted poison-recovery wrapper
+    /// provided, without relying on poisoning.
     fn poll_dvr_blocking(&self) {
-        // `DvrRecorder` holds multi-step state (`write_offset`/`index`/
-        // `periods`/`total_bytes`) that a panic mid-`append_segment` can leave
-        // disagreeing, so this is the one lock in the crate where blanket
-        // poison recovery is UNSOUND: continuing to persist a poisoned
-        // recorder would write an archive whose index does not match its data
-        // (audit run 7, D3). Fail closed instead — stop recording and count
-        // it, rather than emit a corrupt archive.
-        // `parking_lot` never poisons: a panic mid-`append_segment` simply
-        // releases the guard, and the next acquire sees whatever was written
-        // before the panic. There is no recovered flag and no fail-closed
-        // branch any more (SP6.6).
+        use std::panic::{AssertUnwindSafe, catch_unwind};
+
         let mut dvr_guard = self.dvr.lock();
-        if let Some(ref mut recorder) = *dvr_guard {
-            let init_bytes = self.init_bytes();
-            let init_slice = init_bytes.as_deref();
-            if let Err(e) = recorder.poll_and_persist(init_slice) {
+        let Some(recorder) = dvr_guard.as_mut() else {
+            return;
+        };
+        let init_bytes = self.init_bytes();
+        let init_slice = init_bytes.as_deref();
+        let outcome = catch_unwind(AssertUnwindSafe(|| {
+            #[cfg(test)]
+            if self
+                .panic_on_persist
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                panic!("injected DVR persist panic (test)");
+            }
+            recorder.poll_and_persist(init_slice)
+        }));
+        match outcome {
+            Ok(Ok(())) => {}
+            Ok(Err(e)) => {
                 tracing::error!(
                     "DVR poll_and_persist failed: {e}; \
                      recording may be incomplete"
                 );
+            }
+            Err(payload) => {
+                // A panic mid-persist: the recorder's multi-step state is
+                // suspect, so stop recording rather than persist a corrupt
+                // archive (fail closed).
+                let _ = payload;
+                *dvr_guard = None;
+                tracing::error!(
+                    route = %self.route_name,
+                    "DVR persist panicked; recording stopped for this program \
+                     rather than risk a corrupt archive"
+                );
+                metrics::counter!(
+                    crate::prometheus::DVR_FAILED_TOTAL,
+                    "route" => self.route_name.clone(),
+                )
+                .increment(1);
             }
         }
     }
@@ -1827,20 +1872,24 @@ mod program_registry_tests {
         assert!(matches!(err, AddSegmentError::ProgramNotPublished));
     }
 
-    /// SP6.6: `parking_lot` locks never poison, so the DVR recorder can no
-    /// longer be abandoned-on-poison. A panic while the lock is held simply
-    /// releases the guard and the recorder survives; `poll_dvr` then runs
-    /// normally. This replaces the removed fail-closed poison test.
+    /// I1: `DvrRecorder` holds multi-step state (`write_offset`/`index`/
+    /// `periods`/`total_bytes`); a panic during persist can leave it
+    /// disagreeing, so recording must FAIL CLOSED (stop, count it) rather than
+    /// keep writing a corrupt archive. `parking_lot` releases the guard without
+    /// poisoning, so the safety property is kept by `catch_unwind` in
+    /// `poll_dvr_blocking`, not by poisoning.
+    ///
+    /// Revert-check: remove the `catch_unwind` wrap (persist the recorder
+    /// directly) and the panic unwinds out of `poll_dvr`, so the recorder is
+    /// never dropped and no counter increments — both assertions fail.
     #[tokio::test]
-    async fn a_panicking_dvr_holder_releases_the_lock_and_the_recorder_survives() {
-        use std::panic::{AssertUnwindSafe, catch_unwind};
-
+    async fn a_panicking_dvr_persist_stops_recording_and_counts_it() {
         let tmp = {
             use std::sync::atomic::{AtomicU64, Ordering};
             static COUNTER: AtomicU64 = AtomicU64::new(0);
             let n = COUNTER.fetch_add(1, Ordering::SeqCst);
             let dir = std::env::temp_dir().join(format!(
-                "multimux-parking-lot-dvr-{}-{}",
+                "multimux-dvr-fail-closed-{}-{}",
                 std::process::id(),
                 n
             ));
@@ -1862,24 +1911,47 @@ mod program_registry_tests {
         route.publish_new_program(SPTS_PROGRAM_ID);
         route.set_init(SPTS_PROGRAM_ID, vec![0xAA; 4]);
 
-        // Panic while holding the DVR lock.
-        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
-        let _ = catch_unwind(AssertUnwindSafe(|| {
-            let _guard = serving.dvr.lock();
-            panic!("panic while holding the DVR lock on purpose");
-        }));
+        crate::prometheus::install();
+        let route_name = "panicking-dvr";
+        let before = dvr_failed_metric(route_name);
 
-        // The recorder survives and the lock is immediately re-acquirable.
-        assert!(
-            serving.dvr.lock().is_some(),
-            "a panic must not drop the recorder"
-        );
+        // Arm the injected panic and drive the production entry point.
+        let serving = route.serving(SPTS_PROGRAM_ID).expect("program published");
+        serving
+            .panic_on_persist
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         serving.poll_dvr().await;
+
         assert!(
-            serving.dvr.lock().is_some(),
-            "poll_dvr must run normally after a panicking holder"
+            serving.dvr.lock().is_none(),
+            "a panic during persist must abandon the recorder (fail closed)"
+        );
+        assert_eq!(
+            dvr_failed_metric(route_name),
+            before + 1.0,
+            "the abandoned recorder must be counted in multimux_dvr_failed_total"
+        );
+
+        // A second poll is a no-op (already dropped) — the counter does not
+        // climb again, and nothing is written.
+        serving.poll_dvr().await;
+        assert_eq!(
+            dvr_failed_metric(route_name),
+            before + 1.0,
+            "an already-abandoned recorder must not be counted twice"
         );
         let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    /// Read a Prometheus counter value by name+route label (0.0 if absent).
+    fn dvr_failed_metric(route_label: &str) -> f64 {
+        crate::prometheus::install()
+            .render()
+            .lines()
+            .find(|l| l.starts_with("multimux_dvr_failed_total") && l.contains(route_label))
+            .and_then(|l| l.rsplit(' ').next())
+            .and_then(|v| v.parse::<f64>().ok())
+            .unwrap_or(0.0)
     }
 
     /// Audit r07-C4 (#1083): `await_trunk_change` returns only once the first

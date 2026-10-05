@@ -110,6 +110,13 @@ pub(crate) const DVR_PIN_REARMED_TOTAL: &str = "multimux_dvr_pin_rearmed_total";
 /// reader moves on. Labels: `route`.
 pub(crate) const DVR_SI_ERRORS_TOTAL: &str = "multimux_dvr_si_errors_total";
 
+/// Counter: total times a route's DVR recorder was abandoned because a panic
+/// during persist left its multi-step state (offset, index, period records)
+/// suspect — continuing to persist could write an archive whose index does not
+/// match its data. Labels: `route`. Recording stops for that route; this
+/// counter is how an operator sees it (issue #1083, D3 / I1).
+pub(crate) const DVR_FAILED_TOTAL: &str = "multimux_dvr_failed_total";
+
 /// Counter: total live-edge segments/fragments a pull source abandoned after
 /// exhausting its bounded tolerated-`404` retries (audit W14a/W14b), so the
 /// downstream end has been notified the source is no longer at the live edge.
