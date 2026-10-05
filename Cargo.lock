@@ -2366,6 +2366,7 @@ dependencies = [
  "sdp-types",
  "serde",
  "serde_json",
+ "socket2",
  "srt-runtime",
  "thiserror 2.0.21",
  "timed-metadata",

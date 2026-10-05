@@ -226,6 +226,7 @@ async fn ts_udp_dispatch_serves_real_media_end_to_end() {
         InputSpec::TsUdp {
             addr: udp_addr.to_string(),
             multicast_group: None,
+            socket: Default::default(),
         },
     );
     config.prebound.with_udp(udp_addr.to_string(), udp_socket);
@@ -1036,6 +1037,7 @@ async fn dash_manifest_served_without_explicit_set_track_specs() {
         InputSpec::TsUdp {
             addr: udp_addr.to_string(),
             multicast_group: None,
+            socket: Default::default(),
         },
     );
     config.prebound.with_udp(udp_addr.to_string(), udp_socket);
@@ -1104,6 +1106,7 @@ async fn ll_dash_manifest_served_without_explicit_set_track_specs() {
         InputSpec::TsUdp {
             addr: udp_addr.to_string(),
             multicast_group: None,
+            socket: Default::default(),
         },
     );
     config.prebound.with_udp(udp_addr.to_string(), udp_socket);
@@ -1172,6 +1175,7 @@ async fn ts_udp_dash_manifest_returns_503_before_tracks_are_known() {
         InputSpec::TsUdp {
             addr: udp_addr.to_string(),
             multicast_group: None,
+            socket: Default::default(),
         },
     );
     config.prebound.with_udp(udp_addr.to_string(), udp_socket);

@@ -169,6 +169,7 @@ async fn serve_ts_hls_until_extinf() -> Served {
         InputSpec::TsUdp {
             addr: udp_addr.to_string(),
             multicast_group: None,
+            socket: Default::default(),
         },
     );
     config.prebound.with_udp(udp_addr.to_string(), udp_socket);

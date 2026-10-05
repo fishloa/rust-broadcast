@@ -45,6 +45,9 @@ pub struct TsUdpRoute {
     name: String,
     addr: String,
     multicast_group: Option<String>,
+    /// Socket options for the bind (SP1.6); the default (all unset except
+    /// `reuse_address: false`) reproduces the pre-SP1.6 bind.
+    socket: crate::source::udp::UdpBindOptions,
     timeouts: IngestTimeouts,
     /// A socket bound by the caller (SP7.1): a test binds `127.0.0.1:0`, reads
     /// the live address, and hands the socket in, so `bind` uses it directly
@@ -59,6 +62,7 @@ impl std::fmt::Debug for TsUdpRoute {
             .field("name", &self.name)
             .field("addr", &self.addr)
             .field("multicast_group", &self.multicast_group)
+            .field("socket", &self.socket)
             .finish()
     }
 }
@@ -74,6 +78,7 @@ impl TsUdpRoute {
             name: name.into(),
             addr: addr.into(),
             multicast_group,
+            socket: crate::source::udp::UdpBindOptions::default(),
             timeouts: IngestTimeouts::default(),
             prebound: std::sync::Arc::new(std::sync::Mutex::new(None)),
         }
@@ -96,6 +101,7 @@ impl TsUdpRoute {
             name: name.into(),
             addr,
             multicast_group: None,
+            socket: crate::source::udp::UdpBindOptions::default(),
             timeouts: IngestTimeouts::default(),
             prebound: std::sync::Arc::new(std::sync::Mutex::new(Some(socket))),
         }
@@ -108,6 +114,13 @@ impl TsUdpRoute {
     #[must_use]
     pub fn with_multicast_group(mut self, group: impl Into<String>) -> Self {
         self.multicast_group = Some(group.into());
+        self
+    }
+
+    /// Set the UDP socket options applied at bind (SP1.6).
+    #[must_use]
+    pub fn with_socket_options(mut self, socket: crate::source::udp::UdpBindOptions) -> Self {
+        self.socket = socket;
         self
     }
 
@@ -173,7 +186,12 @@ pub async fn bind(route: &TsUdpRoute) -> Result<UdpSocket> {
         }
         return Ok(socket);
     }
-    bind_udp(&route.addr, route.multicast_group.as_deref()).await
+    bind_udp(
+        &route.addr,
+        route.multicast_group.as_deref(),
+        route.socket.clone(),
+    )
+    .await
 }
 
 /// Reads one datagram from `socket` (bounded by `read_timeout`) and feeds it

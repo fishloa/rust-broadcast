@@ -128,6 +128,7 @@ async fn serve_smooth_until_fragment(min_chunks: usize) -> Served {
         InputSpec::TsUdp {
             addr: udp_addr.to_string(),
             multicast_group: None,
+            socket: Default::default(),
         },
     );
     config.prebound.with_udp(udp_addr.to_string(), udp_socket);

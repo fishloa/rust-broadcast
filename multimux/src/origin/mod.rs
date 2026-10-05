@@ -1885,6 +1885,7 @@ fn spawn_ingest(
             addr,
             sdp,
             multicast_group,
+            socket,
         } => {
             let route_cfg = crate::source::rtp_udp::RtpUdpRoute::new(
                 name,
@@ -1892,6 +1893,7 @@ fn spawn_ingest(
                 sdp.clone(),
                 multicast_group.clone(),
             )
+            .with_socket_options(socket.to_bind_options())
             .with_timeouts(timeouts);
             spawn_supervised(
                 route_cfg,
@@ -1907,6 +1909,7 @@ fn spawn_ingest(
         crate::config::InputSpec::TsUdp {
             addr,
             multicast_group,
+            socket,
         } => {
             // A `test-hooks` caller may have bound this exact `addr` itself and
             // handed the live socket in (`Config::prebound`), so the route
@@ -1927,6 +1930,7 @@ fn spawn_ingest(
                     addr.clone(),
                     multicast_group.clone(),
                 )
+                .with_socket_options(socket.to_bind_options())
                 .with_timeouts(timeouts),
             };
             spawn_supervised(
@@ -4121,6 +4125,7 @@ mod tests {
                 input: crate::config::InputSpec::TsUdp {
                     addr: addr.to_string(),
                     multicast_group: None,
+                    socket: Default::default(),
                 },
                 outputs: vec![crate::output::OutputKind::LlHls],
                 dvr: DvrConfig::default(),
@@ -4314,10 +4319,12 @@ mod tests {
                 addr: quiet_rtp_addr.to_string(),
                 sdp: minimal_rtp_sdp(),
                 multicast_group: None,
+                socket: Default::default(),
             },
             crate::config::InputSpec::TsUdp {
                 addr: quiet_ts_udp_addr.to_string(),
                 multicast_group: None,
+                socket: Default::default(),
             },
             crate::config::InputSpec::TsHttp {
                 url: format!("http://{refused_addr}/x"),

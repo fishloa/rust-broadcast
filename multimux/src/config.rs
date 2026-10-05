@@ -105,6 +105,10 @@ pub enum InputSpec {
         /// unicast (must be a multicast IP address of `addr`'s family).
         #[serde(default)]
         multicast_group: Option<String>,
+        /// Socket options for the UDP bind (SP1.6) — see
+        /// [`UdpSocketSpec`]'s fields.
+        #[serde(default, flatten)]
+        socket: UdpSocketSpec,
     },
     /// Receive an MPEG-2 Transport Stream over UDP (uni/multicast).
     TsUdp {
@@ -114,6 +118,10 @@ pub enum InputSpec {
         /// unicast (must be a multicast IP address of `addr`'s family).
         #[serde(default)]
         multicast_group: Option<String>,
+        /// Socket options for the UDP bind (SP1.6) — see
+        /// [`UdpSocketSpec`]'s fields.
+        #[serde(default, flatten)]
+        socket: UdpSocketSpec,
     },
     /// Receive an MPEG-2 Transport Stream over a streaming HTTP GET
     /// (chunked/progressive).
@@ -275,6 +283,58 @@ pub enum InputSpec {
 /// userinfo, but an explicit `auth` here always wins over that (see
 /// `crate::source::http_auth::resolve_credentials`).
 ///
+/// Socket options for a UDP ingest bind (SP1.6), flattened into
+/// [`InputSpec::Rtp`]/[`InputSpec::TsUdp`] so they are set as sibling keys on
+/// the input object. All optional; the defaults are the pre-SP1.6 behaviour
+/// except for the receive buffer, which is only requested when set.
+#[derive(Clone, Deserialize, PartialEq, Default)]
+pub struct UdpSocketSpec {
+    /// Requested `SO_RCVBUF` in bytes (a request: the kernel may clamp or
+    /// double it). `None` leaves the OS default.
+    #[serde(default)]
+    pub recv_buffer_bytes: Option<usize>,
+    /// Set `SO_REUSEADDR` before bind. Defaults to `false`.
+    #[serde(default)]
+    pub reuse_address: bool,
+    /// Interface to join a multicast group on: an IPv4 literal, or an IPv6
+    /// interface index as a decimal string. `None` joins on any interface.
+    #[serde(default)]
+    pub multicast_interface: Option<String>,
+}
+
+impl std::fmt::Debug for UdpSocketSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UdpSocketSpec")
+            .field("recv_buffer_bytes", &self.recv_buffer_bytes)
+            .field("reuse_address", &self.reuse_address)
+            .field("multicast_interface", &self.multicast_interface)
+            .finish()
+    }
+}
+
+impl UdpSocketSpec {
+    /// The bind options these settings describe.
+    pub(crate) fn to_bind_options(&self) -> crate::source::udp::UdpBindOptions {
+        crate::source::udp::UdpBindOptions {
+            recv_buffer_bytes: self.recv_buffer_bytes,
+            reuse_address: self.reuse_address,
+            multicast_interface: self.multicast_interface.clone(),
+        }
+    }
+
+    /// Reject a zero receive buffer (a request for a zero-length buffer is
+    /// never what an operator means).
+    fn validate(&self) -> Result<()> {
+        if self.recv_buffer_bytes == Some(0) {
+            return Err(MultimuxError::ConfigInvalid {
+                field: "routes.input.recv_buffer_bytes",
+                reason: "must be greater than zero".into(),
+            });
+        }
+        Ok(())
+    }
+}
+
 /// JSON shape is untagged — either
 /// `{ "username": "...", "password": "..." }` or
 /// `{ "bearer_token": "..." }`.
@@ -811,19 +871,23 @@ impl std::fmt::Debug for InputSpec {
                 addr,
                 sdp,
                 multicast_group,
+                socket,
             } => f
                 .debug_struct("Rtp")
                 .field("addr", addr)
                 .field("sdp_len", &sdp.len())
                 .field("multicast_group", multicast_group)
+                .field("socket", socket)
                 .finish(),
             InputSpec::TsUdp {
                 addr,
                 multicast_group,
+                socket,
             } => f
                 .debug_struct("TsUdp")
                 .field("addr", addr)
                 .field("multicast_group", multicast_group)
+                .field("socket", socket)
                 .finish(),
             InputSpec::TsHttp { url, auth } => f
                 .debug_struct("TsHttp")
@@ -902,9 +966,11 @@ impl InputSpec {
                 addr,
                 sdp,
                 multicast_group,
+                socket,
             } => {
                 validate_udp_addr(addr)?;
                 validate_sdp(sdp)?;
+                socket.validate()?;
                 if let Some(group) = multicast_group {
                     validate_multicast_group(group)?;
                 }
@@ -913,8 +979,10 @@ impl InputSpec {
             InputSpec::TsUdp {
                 addr,
                 multicast_group,
+                socket,
             } => {
                 validate_udp_addr(addr)?;
+                socket.validate()?;
                 if let Some(group) = multicast_group {
                     validate_multicast_group(group)?;
                 }
@@ -2960,6 +3028,7 @@ mod tests {
                 addr,
                 sdp: parsed_sdp,
                 multicast_group,
+                socket: _,
             } => {
                 assert_eq!(addr, "0.0.0.0:5004");
                 assert_eq!(parsed_sdp, sdp);
@@ -2986,6 +3055,7 @@ mod tests {
             InputSpec::TsUdp {
                 addr,
                 multicast_group,
+                socket: _,
             } => {
                 assert_eq!(addr, "0.0.0.0:5005");
                 assert_eq!(*multicast_group, None);
@@ -2993,6 +3063,61 @@ mod tests {
             other => panic!("expected InputSpec::TsUdp, got {other:?}"),
         }
         cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn parses_json_config_with_udp_socket_options() {
+        // SP1.6: the flattened socket options are sibling keys on the input.
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam-udp",
+                    "input": {
+                        "type": "ts_udp",
+                        "addr": "0.0.0.0:5005",
+                        "multicast_group": "239.1.1.1",
+                        "recv_buffer_bytes": 4194304,
+                        "reuse_address": true,
+                        "multicast_interface": "192.168.1.10"
+                    }
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        match &cfg.routes[0].input {
+            InputSpec::TsUdp {
+                addr,
+                multicast_group,
+                socket,
+            } => {
+                assert_eq!(addr, "0.0.0.0:5005");
+                assert_eq!(multicast_group.as_deref(), Some("239.1.1.1"));
+                assert_eq!(socket.recv_buffer_bytes, Some(4_194_304));
+                assert!(socket.reuse_address);
+                assert_eq!(socket.multicast_interface.as_deref(), Some("192.168.1.10"));
+                let opts = socket.to_bind_options();
+                assert_eq!(opts.recv_buffer_bytes, Some(4_194_304));
+            }
+            other => panic!("expected InputSpec::TsUdp, got {other:?}"),
+        }
+        cfg.validate().unwrap();
+    }
+
+    #[test]
+    fn a_zero_receive_buffer_is_rejected() {
+        let json = r#"{
+            "routes": [
+                {
+                    "name": "cam-udp",
+                    "input": { "type": "ts_udp", "addr": "0.0.0.0:5005", "recv_buffer_bytes": 0 }
+                }
+            ]
+        }"#;
+        let cfg: Config = serde_json::from_str(json).unwrap();
+        assert!(
+            cfg.validate().is_err(),
+            "a zero SO_RCVBUF request is rejected"
+        );
     }
 
     #[test]
@@ -3405,6 +3530,7 @@ mod tests {
                 input: InputSpec::TsUdp {
                     addr: "not-an-addr".into(),
                     multicast_group: None,
+                    socket: Default::default(),
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
@@ -3423,6 +3549,7 @@ mod tests {
                     addr: "0.0.0.0:5005".into(),
                     // A unicast address, not a valid multicast group.
                     multicast_group: Some("10.0.0.1".into()),
+                    socket: Default::default(),
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
@@ -3441,6 +3568,7 @@ mod tests {
                     addr: "0.0.0.0:5004".into(),
                     sdp: String::new(),
                     multicast_group: None,
+                    socket: Default::default(),
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
@@ -3459,6 +3587,7 @@ mod tests {
                     addr: "0.0.0.0:5004".into(),
                     sdp: "not an sdp body".into(),
                     multicast_group: None,
+                    socket: Default::default(),
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
@@ -3479,6 +3608,7 @@ mod tests {
                     addr: "0.0.0.0:5004".into(),
                     sdp: "@/no/such/file/does-not-exist.sdp".into(),
                     multicast_group: None,
+                    socket: Default::default(),
                 },
                 outputs: default_outputs(),
                 dvr: DvrConfig::default(),
@@ -3617,6 +3747,7 @@ mod tests {
                 addr: "0.0.0.0:5004".into(),
                 sdp: long_sdp.clone(),
                 multicast_group: None,
+                socket: Default::default(),
             },
             outputs: default_outputs(),
             dvr: DvrConfig::default(),

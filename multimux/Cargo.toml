@@ -126,6 +126,9 @@ backon            = { version = "1.6", default-features = false }
 # Locks without poisoning (SP6.6), replacing `src/lock.rs`'s recovery
 # wrappers: a panicking holder's guard drops and the next acquire succeeds.
 parking_lot       = "0.12"
+# UDP binds with real `SO_RCVBUF`/`SO_REUSEADDR`/multicast-interface options
+# (SP1.6) rather than `tokio::net::UdpSocket::bind`'s fixed defaults.
+socket2           = "0.6"
 metrics           = "0.24"
 metrics-exporter-prometheus = { version = "0.18", default-features = false }
 tokio-rustls      = { version = "0.26", optional = true }
@@ -328,3 +331,8 @@ wait-timeout     = "0.2"
 # feature). This is the standard self-dev-dependency pattern (Cargo allows a
 # crate to dev-depend on itself); it adds no new package to the lock.
 multimux         = { path = ".", features = ["test-seams"] }
+# `socket2::Socket::get_recv_buffer_size` so `tests/udp_bind.rs` can prove the
+# requested `SO_RCVBUF` was APPLIED (the library binds through `socket2`
+# internally but does not re-export it). Already a transitive dependency at
+# the same version, so this adds no new lock entry.
+socket2          = "0.6"

@@ -21,6 +21,11 @@
   completing 50 ms into a 1 s hint was not serviced for another 950 ms
   (defect 5). `source::may_spawn_fetch` is removed (the scheduler owns the
   bound).
+- **UDP binds go through `socket2` with configurable socket options.**
+  `ts_udp`/`rtp` inputs gain optional `recv_buffer_bytes`, `reuse_address`
+  and `multicast_interface` keys (SP1.6); `source::udp::bind_udp` is now
+  public and takes a `source::udp::UdpBindOptions`, and a requested
+  `SO_RCVBUF` is applied rather than left at the OS default.
 
 ### Changed (breaking) — W2b-1
 - **A single `CancellationToken` replaces the `watch<bool>` shutdown.** The

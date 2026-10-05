@@ -67,6 +67,9 @@ pub struct RtpUdpRoute {
     addr: String,
     sdp: String,
     multicast_group: Option<String>,
+    /// Socket options for the bind (SP1.6); the default reproduces the
+    /// pre-SP1.6 bind.
+    socket: crate::source::udp::UdpBindOptions,
     timeouts: IngestTimeouts,
 }
 
@@ -77,6 +80,7 @@ impl std::fmt::Debug for RtpUdpRoute {
             .field("addr", &self.addr)
             .field("sdp_len", &self.sdp.len())
             .field("multicast_group", &self.multicast_group)
+            .field("socket", &self.socket)
             .finish()
     }
 }
@@ -96,8 +100,16 @@ impl RtpUdpRoute {
             addr: addr.into(),
             sdp: sdp.into(),
             multicast_group,
+            socket: crate::source::udp::UdpBindOptions::default(),
             timeouts: IngestTimeouts::default(),
         }
+    }
+
+    /// Set the UDP socket options applied at bind (SP1.6).
+    #[must_use]
+    pub fn with_socket_options(mut self, socket: crate::source::udp::UdpBindOptions) -> Self {
+        self.socket = socket;
+        self
     }
 
     /// Overrides the default [`IngestTimeouts`].
@@ -267,7 +279,12 @@ impl Dialer for RtpUdpDialer {
 /// Binds `route`'s UDP socket — see `ts_udp::bind` for why this is split out
 /// of `dial()`/`run_rtp_udp`.
 pub async fn bind(route: &RtpUdpRoute) -> Result<UdpSocket> {
-    bind_udp(&route.addr, route.multicast_group.as_deref()).await
+    bind_udp(
+        &route.addr,
+        route.multicast_group.as_deref(),
+        route.socket.clone(),
+    )
+    .await
 }
 
 /// A driver no longer running (issue r07-C8) becomes a terminal error here,
