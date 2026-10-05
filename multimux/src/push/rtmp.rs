@@ -13,9 +13,7 @@
 
 use crate::push::{PushTransport, SendMediaError};
 use rtmp_runtime::amf0::Amf0Value;
-use rtmp_runtime::client::{ClientConfig, ClientSession};
 use rtmp_runtime::target::RtmpTarget;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use transmux::CodecConfig;
 use transmux::ir::{Media, Track, TrackSpec};
@@ -24,14 +22,6 @@ use transmux::ir::{Media, Track, TrackSpec};
 const META_VIDEOCODECID_AVC: f64 = 7.0;
 /// FLV `audiocodecid` metadata value for AAC (`SoundFormat` 10, Adobe FLV v10.1 §E.4.2).
 const META_AUDIOCODECID_AAC: f64 = 10.0;
-
-/// Bound on the whole RTMP connect + handshake (`TcpStream::connect` plus the
-/// C0/C1/C2 handshake and `connect`/`createStream`/`publish` command
-/// exchange) — audit run 7, W17. A server that accepts the TCP connection but
-/// never finishes the RTMP handshake would otherwise wedge the push forever,
-/// because `drive_push` only checks its cancel flag between iterations and
-/// the handshake loop here has no other bound.
-const RTMP_CONNECT_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(15);
 
 /// Whether `config` is a codec RTMP/FLV can carry (issue #934: FLV's
 /// mainstream is AVC video + AAC audio only — `transmux::flv`'s module doc).
@@ -91,6 +81,10 @@ pub struct RtmpTransportConfig {
     /// `RTMP_CONNECT_TIMEOUT` (15 s). Exposed so a test (or an operator with
     /// an unusually slow peer) can override it.
     pub connect_timeout: Option<std::time::Duration>,
+    /// Bound on one outbound write (SP6.1, defect 4); `None` uses
+    /// `rtmp_runtime::io::RtmpTimeouts::default().write` (10 s). Exposed so a
+    /// test can use a tighter bound against a peer that stopped reading.
+    pub write_timeout: Option<std::time::Duration>,
 }
 
 impl Default for RtmpTransportConfig {
@@ -99,14 +93,14 @@ impl Default for RtmpTransportConfig {
             app: "live".to_string(),
             stream_key: String::new(),
             connect_timeout: None,
+            write_timeout: None,
         }
     }
 }
 
-/// The RTMP push transport: an owned TCP connection + [`ClientSession`].
+/// The RTMP push transport: the rtmp-runtime async client adapter (SP6.1).
 pub struct RtmpTransport {
-    stream: Option<TcpStream>,
-    client: ClientSession,
+    client: Option<rtmp_runtime::io::AsyncRtmpClient<TcpStream>>,
     /// Whether a track-refusal warning has already been emitted. FLV carries
     /// only AVC video and AAC audio, so any other codec is dropped — but
     /// dropping it *silently*, once per batch, is both a data-loss hazard and
@@ -117,7 +111,7 @@ pub struct RtmpTransport {
 impl std::fmt::Debug for RtmpTransport {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RtmpTransport")
-            .field("connected", &self.stream.is_some())
+            .field("connected", &self.client.is_some())
             .finish()
     }
 }
@@ -128,40 +122,65 @@ impl PushTransport for RtmpTransport {
     type Error = RtmpPushError;
 
     async fn connect(url: &str, config: &Self::Config) -> Result<Self, Self::Error> {
-        let timeout = config.connect_timeout.unwrap_or(RTMP_CONNECT_TIMEOUT);
-        tokio::time::timeout(timeout, Self::connect_within(url, config))
+        // Host, port and the (IPv6-bracketed) `tcUrl` come from `RtmpTarget`,
+        // which builds tcUrl through the `url` crate — the hand-rolled
+        // `format!("rtmp://{host}:{port}/{app}")` produced
+        // `rtmp://::1:1935/live` for an IPv6 address (defect 8). The `app`/
+        // `stream_key` come from the config, not the URL path.
+        let target = RtmpTarget::from_parts(url, &config.app, &config.stream_key)
+            .map_err(|e| RtmpPushError::Connect(format!("bad rtmp URL: {e}")))?;
+
+        // Every IO the adapter performs is bounded (SP6.1, defect 4):
+        // connect/handshake by `connect_timeout` (audit run 7, W17) and each
+        // write by `write_timeout`.
+        let mut timeouts = rtmp_runtime::io::RtmpTimeouts::default();
+        if let Some(d) = config.connect_timeout {
+            timeouts = timeouts.with_connect(d).with_handshake(d);
+        }
+        if let Some(d) = config.write_timeout {
+            timeouts = timeouts.with_write(d);
+        }
+
+        let mut client = rtmp_runtime::io::AsyncRtmpClient::connect(&target, timeouts)
             .await
-            .unwrap_or_else(|_| {
-                Err(RtmpPushError::Connect(format!(
-                    "RTMP connect/handshake exceeded {timeout:?}"
-                )))
-            })
+            .map_err(|e| RtmpPushError::Connect(e.to_string()))?;
+        client
+            .publish()
+            .await
+            .map_err(|e| RtmpPushError::Connect(e.to_string()))?;
+
+        Ok(Self {
+            client: Some(client),
+            warned_refused_tracks: false,
+        })
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), Self::Error> {
-        let stream = self
-            .stream
+        let client = self
+            .client
             .as_mut()
             .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
-        let bytes = self
-            .client
+        client
             .send_video(0, data)
-            .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
-        stream.write_all(&bytes).await.map_err(RtmpPushError::Io)
+            .await
+            .map_err(|e| RtmpPushError::Io(e))
     }
 
     /// Writes `message` to the socket verbatim (issue #942) — unlike
     /// [`send`](Self::send) above, this does **not** call `send_video`:
     /// `message` is already a complete chunk-stream-framed RTMP message
     /// (produced by [`encode_media`](Self::encode_media)'s
-    /// `send_video`/`send_audio` calls), so framing it again here would
+    /// `encode_video`/`encode_audio` calls), so framing it again here would
     /// nest one RTMP message inside the body of another.
     async fn write_message(&mut self, message: &[u8]) -> Result<(), Self::Error> {
-        let stream = self
-            .stream
+        let client = self
+            .client
             .as_mut()
             .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
-        stream.write_all(message).await.map_err(RtmpPushError::Io)
+        client
+            .write_frame(message.to_vec())
+            .await
+            .map_err(RtmpPushError::Io)
     }
 
     /// FLV's mainstream is AVC video + AAC audio only (issue #942) — see
@@ -187,19 +206,17 @@ impl PushTransport for RtmpTransport {
             ));
         }
 
-        let RtmpTransport { stream, client, .. } = self;
-        let stream = stream
-            .as_mut()
-            .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
-
         let metadata = build_metadata(&flv_tracks);
-        let meta_bytes = client
-            .send_metadata(&metadata)
-            .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
-        stream
-            .write_all(&meta_bytes)
-            .await
-            .map_err(RtmpPushError::Io)?;
+        let meta_bytes = {
+            let client = self
+                .client
+                .as_mut()
+                .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
+            client
+                .encode_metadata(&metadata)
+                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?
+        };
+        self.write_message(&meta_bytes).await?;
 
         // A zero-sample `Media` is enough to build the sequence-header
         // payloads — they're derived only from `TrackSpec::config`.
@@ -216,14 +233,19 @@ impl PushTransport for RtmpTransport {
             // `FlvPayloadKind` is `#[non_exhaustive]`: only `Video`/`Audio`
             // exist today (transmux's FLV mainstream); a future kind is
             // silently skipped here rather than sent as neither.
-            let sent = match header.kind {
-                transmux::FlvPayloadKind::Video => Some(client.send_video(0, &header.body)),
-                transmux::FlvPayloadKind::Audio => Some(client.send_audio(0, &header.body)),
-                _ => None,
+            let bytes = {
+                let client = self
+                    .client
+                    .as_mut()
+                    .ok_or_else(|| RtmpPushError::Connect("not connected".into()))?;
+                match header.kind {
+                    transmux::FlvPayloadKind::Video => client.encode_video(0, &header.body),
+                    transmux::FlvPayloadKind::Audio => client.encode_audio(0, &header.body),
+                    _ => continue,
+                }
+                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?
             };
-            let Some(bytes) = sent else { continue };
-            let bytes = bytes.map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
-            stream.write_all(&bytes).await.map_err(RtmpPushError::Io)?;
+            self.write_message(&bytes).await?;
         }
         Ok(())
     }
@@ -232,14 +254,14 @@ impl PushTransport for RtmpTransport {
     /// I/O (issue #942: the sans-IO half of `send_media`, below — see
     /// `PushTransport::encode_media`'s own doc for why this split exists;
     /// `push::egress::PushTransportEgress::send` is the caller that actually
-    /// needs it, since its trait is synchronous). `rtmp_runtime::client::
-    /// ClientSession::send_video`/`send_audio` are themselves sans-IO
-    /// (RTMP chunk-stream framing is pure computation — only the socket
-    /// write that follows is I/O), so this is a real factoring, not a
-    /// workaround. Tracks this transport cannot carry over RTMP are
-    /// excluded (`is_flv_codec`); if that leaves nothing at all, returns
-    /// [`SendMediaError::Mux`] (excluding *some* tracks while carrying
-    /// others is not an error — see the warn-once note below).
+    /// needs it, since its trait is synchronous). `AsyncRtmpClient`'s
+    /// `encode_video`/`encode_audio` are themselves sans-IO (RTMP
+    /// chunk-stream framing is pure computation — only the socket write that
+    /// follows is I/O), so this is a real factoring, not a workaround. Tracks
+    /// this transport cannot carry over RTMP are excluded (`is_flv_codec`);
+    /// if that leaves nothing at all, returns [`SendMediaError::Mux`]
+    /// (excluding *some* tracks while carrying others is not an error — see
+    /// the warn-once note below).
     fn encode_media(&mut self, media: &Media) -> Result<Vec<bytes::Bytes>, SendMediaError> {
         let flv_tracks: Vec<Track> = media
             .tracks
@@ -249,14 +271,7 @@ impl PushTransport for RtmpTransport {
             .collect();
 
         // Refusing a track the wire format cannot carry is legitimate;
-        // refusing it *silently* is not. Report it once per connection — a
-        // per-batch log would spam, and no report at all is the same
-        // data-loss hazard as `transmux`'s FLV demux dropping non-AVC/AAC
-        // tracks with no event. `push::egress::PushTransportEgress::negotiate`
-        // reports this same fact structurally (via `NegotiationOutcome`) at
-        // connect time; this warn covers the direct-`PushTransport` caller
-        // that never negotiates at all (e.g. `drive_push`'s pre-#942 shape,
-        // or a test driving this transport by hand).
+        // refusing it *silently* is not. Report it once per connection.
         let refused = media.tracks.len() - flv_tracks.len();
         if refused > 0 && !self.warned_refused_tracks {
             self.warned_refused_tracks = true;
@@ -270,20 +285,17 @@ impl PushTransport for RtmpTransport {
                 refused,
                 carried = flv_tracks.len(),
                 ?refused_track_ids,
-                "RTMP push cannot carry these tracks — FLV carries only AVC video \
-                 and AAC audio; they are excluded from this push"
+                "RTMP push cannot carry these tracks — FLV carries only AVC video                  and AAC audio; they are excluded from this push"
             );
         }
 
         // Every track refused means this push transmits nothing, for as long
-        // as the track set stays this way. Reporting an empty batch would
-        // present a permanently useless push as a working one. `Mux` is the
-        // right class: it drops the batch without triggering a reconnect,
-        // because reconnecting cannot fix a codec mismatch.
+        // as the track set stays this way. `Mux` is the right class: it drops
+        // the batch without triggering a reconnect, because reconnecting
+        // cannot fix a codec mismatch.
         if flv_tracks.is_empty() {
             return Err(SendMediaError::Mux(format!(
-                "no RTMP-carriable track: FLV carries only AVC video and AAC audio, \
-                 but all {} track(s) in this program are other codecs",
+                "no RTMP-carriable track: FLV carries only AVC video and AAC audio,                  but all {} track(s) in this program are other codecs",
                 media.tracks.len()
             )));
         }
@@ -291,22 +303,26 @@ impl PushTransport for RtmpTransport {
         let payloads = transmux::flv_frame_payloads(&filtered)
             .map_err(|e| SendMediaError::Mux(e.to_string()))?;
 
+        let Some(client) = self.client.as_mut() else {
+            return Err(SendMediaError::Transport(Box::new(RtmpPushError::Connect(
+                "not connected".into(),
+            ))));
+        };
         let mut messages = Vec::with_capacity(payloads.len());
         for payload in &payloads {
             // `FlvPayloadKind` is `#[non_exhaustive]`: only `Video`/`Audio`
             // exist today; a future kind is silently skipped here rather
             // than sent as neither.
-            let sent = match payload.kind {
+            let bytes = match payload.kind {
                 transmux::FlvPayloadKind::Video => {
-                    Some(self.client.send_video(payload.timestamp_ms, &payload.body))
+                    client.encode_video(payload.timestamp_ms, &payload.body)
                 }
                 transmux::FlvPayloadKind::Audio => {
-                    Some(self.client.send_audio(payload.timestamp_ms, &payload.body))
+                    client.encode_audio(payload.timestamp_ms, &payload.body)
                 }
-                _ => None,
-            };
-            let Some(bytes) = sent else { continue };
-            let bytes = bytes.map_err(|e| {
+                _ => continue,
+            }
+            .map_err(|e| {
                 SendMediaError::Transport(Box::new(RtmpPushError::Protocol(e.to_string())))
             })?;
             messages.push(bytes::Bytes::from(bytes));
@@ -320,84 +336,18 @@ impl PushTransport for RtmpTransport {
     /// *new* video message) and the trait's default `TsMux` path entirely.
     async fn send_media(&mut self, media: &Media) -> Result<u64, SendMediaError> {
         let messages = self.encode_media(media)?;
-        let stream = self.stream.as_mut().ok_or_else(|| {
-            SendMediaError::Transport(Box::new(RtmpPushError::Connect("not connected".into())))
-        })?;
         let mut total = 0u64;
         for message in &messages {
-            stream
-                .write_all(message)
+            self.write_message(message)
                 .await
-                .map_err(|e| SendMediaError::Transport(Box::new(RtmpPushError::Io(e))))?;
+                .map_err(|e| SendMediaError::Transport(Box::new(e)))?;
             total += message.len() as u64;
         }
         Ok(total)
     }
 
     fn close(&mut self) {
-        self.stream = None;
-    }
-}
-
-impl RtmpTransport {
-    /// The connect + handshake body, wrapped by the `PushTransport::connect`
-    /// impl in [`RTMP_CONNECT_TIMEOUT`] (audit run 7, W17) so a server that
-    /// accepts the TCP connection but never finishes the RTMP handshake fails
-    /// instead of wedging the push forever.
-    async fn connect_within(
-        url: &str,
-        config: &RtmpTransportConfig,
-    ) -> Result<Self, RtmpPushError> {
-        // Host, port and the (IPv6-bracketed) `tcUrl` come from `RtmpTarget`,
-        // which builds tcUrl through the `url` crate — the hand-rolled
-        // `format!("rtmp://{host}:{port}/{app}")` produced
-        // `rtmp://::1:1935/live` for an IPv6 address (defect 8). The `app`/
-        // `stream_key` come from the config, not the URL path.
-        let target = RtmpTarget::from_parts(url, &config.app, &config.stream_key)
-            .map_err(|e| RtmpPushError::Connect(format!("bad rtmp URL: {e}")))?;
-        let addr = format!("{}:{}", target.host, target.port);
-
-        let mut stream = TcpStream::connect(&addr)
-            .await
-            .map_err(|e| RtmpPushError::Connect(e.to_string()))?;
-
-        let tc_url = target.tc_url;
-        let mut client_config = ClientConfig::default();
-        client_config.app = config.app.clone();
-        client_config.stream_key = config.stream_key.clone();
-        client_config.tc_url = Some(tc_url);
-        let mut client = ClientSession::new(client_config);
-        let c0_c1 = client.start();
-        stream.write_all(&c0_c1).await.map_err(RtmpPushError::Io)?;
-
-        let mut buf = vec![0u8; 8192];
-        loop {
-            let n = stream.read(&mut buf).await.map_err(RtmpPushError::Io)?;
-            if n == 0 {
-                return Err(RtmpPushError::Connect(
-                    "connection closed during handshake".into(),
-                ));
-            }
-            let (reply, events) = client
-                .handle_data(&buf[..n])
-                .map_err(|e| RtmpPushError::Protocol(e.to_string()))?;
-            if !reply.is_empty() {
-                stream.write_all(&reply).await.map_err(RtmpPushError::Io)?;
-            }
-            if client.is_publishing() {
-                return Ok(Self {
-                    stream: Some(stream),
-                    client,
-                    warned_refused_tracks: false,
-                });
-            }
-            if events
-                .iter()
-                .any(|e| matches!(e, rtmp_runtime::client::ClientEvent::Error { .. }))
-            {
-                return Err(RtmpPushError::Protocol("server rejected connection".into()));
-            }
-        }
+        self.client = None;
     }
 }
 
@@ -442,6 +392,7 @@ pub fn tc_url_for_test(url: &str) -> Result<String, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::io::AsyncReadExt;
 
     /// Audit run 7, W17: a server that accepts the TCP connection but never
     /// replies to the RTMP handshake must fail the connect within the
@@ -465,6 +416,7 @@ mod tests {
             app: "live".to_string(),
             stream_key: "test".to_string(),
             connect_timeout: Some(std::time::Duration::from_millis(200)),
+            write_timeout: None,
         };
         let url = format!("rtmp://{addr}/live/test");
         let started = std::time::Instant::now();
@@ -476,8 +428,9 @@ mod tests {
         .expect("connect must return, not hang");
         server.abort();
         let err = result.expect_err("black-hole handshake must fail");
+        let msg = err.to_string();
         assert!(
-            err.to_string().contains("exceeded"),
+            msg.contains("timed out") || msg.contains("exceeded"),
             "the failure must be the connect timeout: {err}"
         );
         assert!(
@@ -533,8 +486,7 @@ mod tests {
     #[test]
     fn supports_codec_matches_is_flv_codec() {
         let transport = RtmpTransport {
-            stream: None,
-            client: rtmp_runtime::client::ClientSession::new(ClientConfig::default()),
+            client: None,
             warned_refused_tracks: false,
         };
         assert!(

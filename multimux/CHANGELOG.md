@@ -45,6 +45,15 @@
   `rtsp_runtime::RtspTimeouts`), where the old transport's `roundtrip` read
   and its `write_all` had no bound at all (defect 4). The ANNOUNCE SDP bytes
   are unchanged, pinned by `tests/golden/rtsp_announce.sdp`.
+- **The RTMP push uses rtmp-runtime's `AsyncRtmpClient`.** `RtmpTransport`
+  drives `connect`/`publish` and sends media with `send_video`/`send_audio`/
+  `send_metadata` rather than hand-rolling the C0/C1/C2 handshake and a raw
+  `TcpStream` write loop. **Every write is now bounded** by
+  `RtmpTransportConfig::write_timeout` (new, `None` = a 10 s default), which
+  the old transport's bare `write_all` had no bound on (defect 4). The
+  sans-IO `encode_media` path (for `PushTransportEgress`) uses the adapter's
+  new `encode_video`/`encode_audio`/`encode_metadata` methods. The `tcUrl`
+  bytes are unchanged.
 
 ### Changed (breaking) — W2b-1
 - **A single `CancellationToken` replaces the `watch<bool>` shutdown.** The

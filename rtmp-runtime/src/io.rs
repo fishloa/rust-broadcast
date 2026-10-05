@@ -373,34 +373,58 @@ impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRtmpClient<S> {
     /// `next_events` (e.g. in a `select!`) or the server's acknowledgement window
     /// is never serviced.
     pub async fn send_audio(&mut self, timestamp: u32, data: &[u8]) -> io::Result<()> {
-        let bytes = self
-            .framed
-            .codec_mut()
-            .session_mut()
-            .send_audio(timestamp, data)
-            .map_err(io_err)?;
+        let bytes = self.encode_audio(timestamp, data)?;
         self.queue(bytes).await
     }
 
     /// Sends one video message (FLV video tag body) at `timestamp` ms.
     pub async fn send_video(&mut self, timestamp: u32, data: &[u8]) -> io::Result<()> {
-        let bytes = self
-            .framed
-            .codec_mut()
-            .session_mut()
-            .send_video(timestamp, data)
-            .map_err(io_err)?;
+        let bytes = self.encode_video(timestamp, data)?;
         self.queue(bytes).await
     }
 
     /// Sends `@setDataFrame`/`onMetaData` stream metadata.
     pub async fn send_metadata(&mut self, metadata: &[(String, Amf0Value)]) -> io::Result<()> {
-        let bytes = self
-            .framed
+        let bytes = self.encode_metadata(metadata)?;
+        self.queue(bytes).await
+    }
+
+    /// Sans-IO half of [`send_audio`](Self::send_audio): the chunk-stream-framed
+    /// message bytes for one audio tag, **without writing**. Lets a caller
+    /// driving its own egress (e.g. `multimux`'s `PushTransportEgress`) frame a
+    /// message now and write it verbatim later via
+    /// [`write_frame`](Self::write_frame).
+    pub fn encode_audio(&mut self, timestamp: u32, data: &[u8]) -> io::Result<Vec<u8>> {
+        self.framed
+            .codec_mut()
+            .session_mut()
+            .send_audio(timestamp, data)
+            .map_err(io_err)
+    }
+
+    /// Sans-IO half of [`send_video`](Self::send_video) — see
+    /// [`encode_audio`](Self::encode_audio).
+    pub fn encode_video(&mut self, timestamp: u32, data: &[u8]) -> io::Result<Vec<u8>> {
+        self.framed
+            .codec_mut()
+            .session_mut()
+            .send_video(timestamp, data)
+            .map_err(io_err)
+    }
+
+    /// Sans-IO half of [`send_metadata`](Self::send_metadata) — see
+    /// [`encode_audio`](Self::encode_audio).
+    pub fn encode_metadata(&mut self, metadata: &[(String, Amf0Value)]) -> io::Result<Vec<u8>> {
+        self.framed
             .codec_mut()
             .session_mut()
             .send_metadata(metadata)
-            .map_err(io_err)?;
+            .map_err(io_err)
+    }
+
+    /// Writes one already-framed message verbatim (the async half of the
+    /// `encode_*` methods above), bounded by [`RtmpTimeouts::write`].
+    pub async fn write_frame(&mut self, bytes: Vec<u8>) -> io::Result<()> {
         self.queue(bytes).await
     }
 

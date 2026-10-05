@@ -6,6 +6,13 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+- `AsyncRtmpClient` gains sans-IO `encode_video`/`encode_audio`/`encode_metadata`
+  (returning the chunk-stream-framed message bytes without writing) and
+  `write_frame` (writing one already-framed message under `RtmpTimeouts::write`),
+  so a caller driving its own egress can frame and write separately.
+  `send_video`/`send_audio`/`send_metadata` now delegate to the `encode_*` half.
+
 ### Changed (breaking)
 - `RtmpConnection` is now `RtmpConnection<S = TcpStream>` (a `tokio_util::codec::Framed` over the sans-IO session) with `RtmpConnection::from_stream(stream, session, RtmpTimeouts)`; `AsyncRtmpServer` gains `with_timeouts`. New `io::RtmpTimeouts` (connect / handshake / read_idle / write; defaults 10 s / 10 s / 30 s / 10 s): a deadline expiry from `next_events` is `io::ErrorKind::TimedOut` and closes the connection. The `pending_write` field is removed; `next_events` stays cancel-safe through the framed write buffer (pinned by a cancellation test).
 - `chunk::ChunkWriter::write` now returns `Result<Vec<u8>, RtmpError>` instead of `Vec<u8>`.
