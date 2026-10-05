@@ -8,8 +8,8 @@
 //! entry carries an `esds` box with a full ES_Descriptor chain (ES_Descriptor,
 //! DecoderConfigDescriptor, DecoderSpecificInfo for AAC, SLConfigDescriptor).
 
-use broadcast_common::Serialize;
-use transmux::{EsdsBox, ObjectTypeIndication, StreamType};
+use broadcast_common::{Parse, Serialize};
+use transmux::{ESDescriptor, EsdsBox, ObjectTypeIndication, StreamType};
 
 /// Find the first `esds` box in the byte stream by scanning for the four-CC.
 fn find_esds_box(data: &[u8]) -> &[u8] {
@@ -141,5 +141,71 @@ fn esds_oti_mutation_changes_bytes() {
     assert_ne!(
         mutated, original,
         "mutating OTI must change serialized bytes"
+    );
+}
+
+/// #1148 (finding C): byte-exact round trips must hold for `esds` boxes as
+/// they appear in committed real fixtures, not only hand-authored bytes —
+/// through `EsdsBox` *and* through the public `ESDescriptor::parse`, which
+/// reads the framed bytes (tag + expandable size + body) directly.
+///
+/// No committed fixture carries `URL_Flag` (real muxers essentially never
+/// emit a `URLstring`); no URL-carrying real `esds` is fabricated here.
+#[test]
+fn esds_real_fixtures_round_trip_box_and_public_parse() {
+    const BOX_HEADER: usize = 8;
+    const FULLBOX_EXTRA: usize = 4;
+    let fixtures = [
+        "transmux/h264_aac_frag.mp4",
+        "ts/demux-oracle/h264_aac.ref.mp4",
+        "mp4/aac_sgpd.mp4",
+        "mp4/progressive/av_prog.mp4",
+    ];
+    let mut seen: Vec<Vec<u8>> = Vec::new();
+
+    for rel in fixtures {
+        let path = format!("{}/../fixtures/{}", env!("CARGO_MANIFEST_DIR"), rel);
+        let data = std::fs::read(&path).unwrap_or_else(|e| panic!("fixture {path}: {e}"));
+        let box_bytes = find_esds_box(&data);
+
+        // Box path: parse_box -> serialize must be byte-identical.
+        let esds = EsdsBox::parse_box(box_bytes)
+            .unwrap_or_else(|e| panic!("{rel}: parse_box failed: {e:?}"));
+        let mut out = vec![0u8; esds.serialized_len()];
+        let n = esds.serialize_into(&mut out).expect("serialize");
+        assert_eq!(&out[..n], box_bytes, "{rel}: esds box not byte-identical");
+
+        // Public Parse path: same bytes after the box header + FullBox
+        // header (what ESDescriptor::serialize_into writes).
+        let payload = &box_bytes[BOX_HEADER + FULLBOX_EXTRA..];
+        let desc = ESDescriptor::parse(payload)
+            .unwrap_or_else(|e| panic!("{rel}: public ESDescriptor::parse failed: {e:?}"));
+        let mut desc_out = vec![0u8; desc.serialized_len()];
+        let dn = desc.serialize_into(&mut desc_out).expect("serialize");
+        assert_eq!(
+            &desc_out[..dn],
+            payload,
+            "{rel}: public ESDescriptor round trip not byte-identical"
+        );
+        assert_eq!(
+            desc, esds.es_descriptor,
+            "{rel}: public parse must agree with the box parse"
+        );
+        assert!(!desc.url_flag, "{rel}: unexpected URL_Flag in real fixture");
+
+        seen.push(payload.to_vec());
+    }
+
+    // At least two of the fixtures must carry genuinely different payloads
+    // (some committed files share an esds byte-for-byte).
+    let mut distinct = 0usize;
+    for i in 0..seen.len() {
+        if !seen[..i].contains(&seen[i]) {
+            distinct += 1;
+        }
+    }
+    assert!(
+        distinct >= 2,
+        "round-tripped {distinct} distinct esds payloads; want >= 2"
     );
 }
