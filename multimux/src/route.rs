@@ -1034,6 +1034,13 @@ impl RouteHandle {
         self.program_notify.notify_waiters();
     }
 
+    /// Test-only: how many programs currently hold an `active_publisher`
+    /// slot (M1's assertion that every scaffold exit path releases it).
+    #[cfg(test)]
+    pub(crate) fn active_publisher_len(&self) -> usize {
+        self.active_publisher.read().len()
+    }
+
     /// Release `program`'s `active_publisher` slot, if (and only if)
     /// it still holds exactly `trunk` — the counterpart to
     /// [`Self::publish_program`]'s rejection of a second concurrent
