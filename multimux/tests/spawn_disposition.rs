@@ -24,7 +24,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/file_reader.rs",
-        474,
+        483,
         "spawn_blocking for a blocking file read; awaited inline (owned by the caller)",
     ),
     (
@@ -34,24 +34,9 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     ("dvr.rs", 595, "spawn_blocking DVR write; awaited inline"),
     (
-        "source/dash_pull.rs",
-        1004,
-        "pull `inflight` JoinSet (drained on drop)",
-    ),
-    (
-        "source/hls_pull.rs",
-        142,
-        "pull `inflight` JoinSet (drained on drop)",
-    ),
-    (
-        "source/hls_pull.rs",
-        526,
-        "pull `inflight` JoinSet (drained on drop)",
-    ),
-    (
-        "source/smooth_pull.rs",
-        1070,
-        "pull `inflight` JoinSet (drained on drop)",
+        "source/pull.rs",
+        117,
+        "PullScheduler's `inflight` JoinSet (drained on drop); the shared engine for the three pull sources",
     ),
     ("source/rtmp.rs", 325, "RTMP accept pump TaskTracker"),
     (

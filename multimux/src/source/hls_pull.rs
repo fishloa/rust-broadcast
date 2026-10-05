@@ -72,7 +72,6 @@ use media_plane::ingress::{
 };
 use media_plane::trunk::{RetentionClass, TrunkConfig};
 use reqwest::Client as HttpClient;
-use tokio::task::JoinSet;
 use transmux::media::Fmp4Demux;
 use transmux::pipeline::TrackSpec;
 use url::Url;
@@ -81,7 +80,7 @@ use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{
     authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
 };
-use crate::source::{IngestTimeouts, Source, may_spawn_fetch};
+use crate::source::{IngestTimeouts, Source};
 
 /// How long a `run_*_pull` drive loop parks when its session has, momentarily,
 /// neither an outbound request queued nor a fetch in flight — and has not
@@ -128,33 +127,58 @@ fn retry_backoff(attempt: u32) -> Duration {
     .delay_for_attempt(attempt.saturating_sub(1))
 }
 
-/// Spawn one resource fetch into `inflight`, after `delay`. The single place
-/// a resource is spawned, so the first try and every retry share the exact
-/// same timeout/error handling.
-fn spawn_resource_fetch(
-    inflight: &mut JoinSet<(HlsFetchId, Result<Vec<u8>>)>,
+/// The `PendingFetch` for one resource fetch, after `delay`. The single
+/// place a resource is described, so the first try and every retry share the
+/// exact same timeout/error handling. The delay is applied by
+/// [`PullScheduler::pump`], not here.
+fn resource_fetch(
     http: HttpClient,
     creds: Option<Credentials>,
     fetch_id: HlsFetchId,
     url: String,
     read_timeout: Duration,
     delay: Duration,
-) {
-    inflight.spawn(async move {
-        if !delay.is_zero() {
-            tokio::time::sleep(delay).await;
-        }
-        let result = tokio::time::timeout(read_timeout, fetch_bytes(&http, &url, creds.as_ref()))
-            .await
-            .unwrap_or_else(|_| {
-                Err(MultimuxError::Connect {
-                    reason: format!(
-                        "hls-pull: resource {fetch_id:?} read exceeded {read_timeout:?}"
-                    ),
-                })
-            });
-        (fetch_id, result)
-    });
+) -> crate::source::pull::PendingFetch<HlsFetchId> {
+    crate::source::pull::PendingFetch {
+        delay,
+        fut: Box::pin(async move {
+            let result =
+                tokio::time::timeout(read_timeout, fetch_bytes(&http, &url, creds.as_ref()))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(MultimuxError::Connect {
+                            reason: format!(
+                                "hls-pull: resource {fetch_id:?} read exceeded {read_timeout:?}"
+                            ),
+                        })
+                    });
+            (fetch_id, result)
+        }),
+    }
+}
+
+/// The `PendingFetch` for the playlist fetch (never delayed — a manifest
+/// issue is not transient; see the W14 note below).
+fn playlist_fetch(
+    http: HttpClient,
+    creds: Option<Credentials>,
+    url: String,
+    read_timeout: Duration,
+) -> crate::source::pull::PendingFetch<HlsFetchId> {
+    crate::source::pull::PendingFetch {
+        delay: Duration::ZERO,
+        fut: Box::pin(async move {
+            let result =
+                tokio::time::timeout(read_timeout, fetch_bytes(&http, &url, creds.as_ref()))
+                    .await
+                    .unwrap_or_else(|_| {
+                        Err(MultimuxError::Connect {
+                            reason: format!("hls-pull: playlist read exceeded {read_timeout:?}"),
+                        })
+                    });
+            (HlsFetchId::Playlist, result)
+        }),
+    }
 }
 
 /// A remote (LL-)HLS Media Playlist to pull: its URL, which may carry
@@ -468,77 +492,45 @@ pub async fn run_hls_pull(
     .unwrap_or_else(|never: Infallible| match never {});
 
     let read_timeout = route.timeouts.read;
-    let mut backlog: VecDeque<Action> = VecDeque::new();
-    let mut inflight: JoinSet<(HlsFetchId, Result<Vec<u8>>)> = JoinSet::new();
+    // The fetch/retry/wait engine (SP6.2) owns the backlog, the in-flight
+    // bound, the retries and the waits; this loop owns only the `Action`
+    // translation and the `feed`.
+    let mut scheduler: crate::source::pull::PullScheduler<HlsFetchId> =
+        crate::source::pull::PullScheduler::new(crate::source::MAX_INFLIGHT_FETCHES);
     // Tracks resource fetches so a transient failure (a 404 from an eviction
     // race, a dropped connection) can be retried instead of ending the whole
     // session (audit run 7, W14): `HlsFetchId` + resolved URL + attempts so
     // far. A playlist fetch is not tracked — a broken manifest is a
     // route-level failure, not a transient one.
     let mut resource_retries: HashMap<HlsFetchId, (String, u32)> = HashMap::new();
-    // Resources awaiting a retry, drained only when an in-flight slot is free
-    // so a retry never bypasses `MAX_INFLIGHT_FETCHES` (audit W14d). Each
-    // entry carries the attempt count to apply the exponential backoff.
-    let mut retry_queue: VecDeque<(HlsFetchId, String, u32)> = VecDeque::new();
+    // The session's own reload-pacing hint (`Action::WaitMs`), consumed by
+    // the scheduler's first `next` call and cleared after it is bounded.
+    let mut wait_hint: Option<Duration> = None;
     let start = std::time::Instant::now();
     let mut progress = crate::source::DriverProgress::new();
 
     loop {
         while let Some(action) = driver.poll_transmit() {
-            backlog.push_back(action);
-        }
-
-        while may_spawn_fetch(inflight.len()) {
-            // A due retry takes precedence; it is spawned here (not inside the
-            // join arm) so it goes through the same in-flight bound as every
-            // other fetch.
-            if let Some((fetch_id, url, attempt)) = retry_queue.pop_front() {
-                spawn_resource_fetch(
-                    &mut inflight,
-                    http.clone(),
-                    credentials.clone(),
-                    fetch_id,
-                    url,
-                    read_timeout,
-                    retry_backoff(attempt),
-                );
-                continue;
-            }
-            let Some(action) = backlog.pop_front() else {
-                break;
-            };
             match action {
                 Action::WaitMs(ms) => {
-                    // The reload-pacing hint: a plain async sleep here is not
-                    // a sans-IO violation — `Action::WaitMs` is the session's
-                    // own *request* for how long to wait (drained via
-                    // `poll_transmit`, exactly like a fetch), so the decision
-                    // of how long, and the timing itself, live entirely on
-                    // the IO side. See the module doc's contrast with
-                    // `dash_pull`'s pre-port internal sleep.
-                    tokio::time::sleep(Duration::from_millis(ms)).await;
+                    // `Action::WaitMs` is the session's own *request* for how
+                    // long to wait (drained via `poll_transmit`, exactly like
+                    // a fetch), so the decision of how long, and the timing,
+                    // live entirely on the IO side. It bounds the wait for the
+                    // next fetch result; it must not delay a fetch that is
+                    // already ready (defect 5).
+                    wait_hint = Some(Duration::from_millis(ms));
                 }
                 Action::FetchPlaylist { .. } => {
                     let url = action
                         .playlist_request_url()
                         .expect("FetchPlaylist always has a request URL");
-                    let http = http.clone();
-                    let creds = credentials.clone();
-                    inflight.spawn(async move {
-                        let result = tokio::time::timeout(
-                            read_timeout,
-                            fetch_bytes(&http, &url, creds.as_ref()),
-                        )
-                        .await
-                        .unwrap_or_else(|_| {
-                            Err(MultimuxError::Connect {
-                                reason: format!(
-                                    "hls-pull: playlist read exceeded {read_timeout:?}"
-                                ),
-                            })
-                        });
-                        (HlsFetchId::Playlist, result)
-                    });
+                    scheduler.push(playlist_fetch(
+                        http.clone(),
+                        credentials.clone(),
+                        url,
+                        read_timeout,
+                    ));
                 }
                 Action::FetchResource { id, url, .. } => {
                     // Remember the URL so a transient failure can be retried
@@ -547,15 +539,14 @@ pub async fn run_hls_pull(
                     resource_retries
                         .entry(fetch_id)
                         .or_insert_with(|| (url.clone(), 1));
-                    spawn_resource_fetch(
-                        &mut inflight,
+                    scheduler.push(resource_fetch(
                         http.clone(),
                         credentials.clone(),
                         fetch_id,
                         url,
                         read_timeout,
                         Duration::ZERO,
-                    );
+                    ));
                 }
                 // `Action` is `#[non_exhaustive]`: a future variant is simply
                 // dropped from the backlog rather than failing the whole
@@ -565,28 +556,31 @@ pub async fn run_hls_pull(
             }
         }
 
-        if inflight.is_empty() {
+        scheduler.pump();
+
+        if scheduler.is_idle() {
             if driver.session().ended() {
                 driver.finish();
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 return terminal_result(driver, "hls-pull");
             }
-            // Nothing in flight and nothing queued: the client has genuinely
-            // nothing to do right now. Park briefly rather than spinning —
-            // see `IDLE_POLL_INTERVAL`.
-            tokio::time::sleep(IDLE_POLL_INTERVAL).await;
+            // Nothing running, queued or awaiting a retry: the client has
+            // genuinely nothing to do right now. Park briefly rather than
+            // spinning — see `IDLE_POLL_INTERVAL`.
+            wait_hint = None;
+            scheduler.next(None, IDLE_POLL_INTERVAL).await;
             continue;
         }
 
-        let joined = inflight.join_next().await;
+        let joined = scheduler.next(wait_hint.take(), IDLE_POLL_INTERVAL).await;
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         match joined {
-            Some(Ok((fetch_id, Ok(bytes)))) => {
+            Some(crate::source::pull::FetchOutcome::Ready(fetch_id, bytes)) => {
                 resource_retries.remove(&fetch_id);
                 driver.feed((fetch_id, bytes.as_slice()), now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(Ok((fetch_id, Err(e)))) => {
+            Some(crate::source::pull::FetchOutcome::Failed(fetch_id, e)) => {
                 // A failed **resource** fetch is retried (bounded) rather than
                 // ending the session (audit run 7, W14): a single part that
                 // 404s on an eviction race, or one dropped connection, must
@@ -628,7 +622,14 @@ pub async fn run_hls_pull(
                             }
                             // Queued, not spawned: the spawn loop applies
                             // the in-flight bound and the backoff delay.
-                            retry_queue.push_back((fetch_id, url, next_attempt));
+                            scheduler.push_retry(resource_fetch(
+                                http.clone(),
+                                credentials.clone(),
+                                fetch_id,
+                                url,
+                                read_timeout,
+                                retry_backoff(next_attempt),
+                            ));
                         } else {
                             tracing::error!(
                                 resource = ?id,
@@ -643,12 +644,14 @@ pub async fn run_hls_pull(
                     HlsFetchId::Playlist => return Err(e),
                 }
             }
-            Some(Err(join_err)) => {
+            Some(crate::source::pull::FetchOutcome::TaskPanic(detail)) => {
                 return Err(MultimuxError::Connect {
-                    reason: format!("hls-pull: fetch task failed: {join_err}"),
+                    reason: format!("hls-pull: fetch task failed: {detail}"),
                 });
             }
-            None => unreachable!("checked inflight.is_empty() above"),
+            // Nothing was in flight (the scheduler parked on the idle poll);
+            // check the session's own end condition below.
+            None => {}
         }
 
         if !driver.health().is_running() {
@@ -666,6 +669,31 @@ pub async fn run_hls_pull(
             return terminal_result(driver, "hls-pull");
         }
     }
+}
+
+/// Production-wiring TRIPWIRE (lexical, honestly labelled): once `hls_pull`
+/// is migrated, every wait in its non-test code lives in `PullScheduler`
+/// (the `WaitMs` hint, the idle park and the retry delay), so its production
+/// half contains no `tokio::time::` + `sleep(` call at all. Reintroducing
+/// the inline `Action::WaitMs` sleep arm anywhere in `run_hls_pull`
+/// trips this, independent of the engine tests. On main today the production
+/// half had THREE such sites (`:144`, `:518`, `:576`), so this FAILS
+/// pre-migration.
+#[test]
+fn hls_pull_has_no_inline_sleep_outside_the_scheduler() {
+    let src = include_str!("hls_pull.rs");
+    let production = src
+        .split("#[cfg(test)]")
+        .next()
+        .expect("split yields one part");
+    let hits: Vec<usize> = production
+        .match_indices(concat!("tokio::time::", "sleep("))
+        .map(|(at, _)| production[..at].matches('\n').count() + 1)
+        .collect();
+    assert!(
+        hits.is_empty(),
+        "inline sleep(s) in hls_pull.rs at lines {hits:?}: waits belong in PullScheduler"
+    );
 }
 
 #[cfg(test)]
@@ -1631,7 +1659,7 @@ Content-Length: {over}
     // Bounds concurrent fetches: the cap itself is unit-tested at its own
     // definition (`crate::source::inflight_tests`), which is where the
     // decision now lives -- these loops only call
-    // `crate::source::may_spawn_fetch`. What is *not* black-box observable
+    // the `PullScheduler`'s in-flight cap. What is *not* black-box observable
     // here is that a loop actually consults it: the committed fixtures never
     // reveal more than a handful of resources at once, so removing the gate
     // would still pass every other test in this module. Observing the cap

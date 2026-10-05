@@ -66,7 +66,6 @@ use media_plane::trunk::{RetentionClass, TrunkConfig};
 use quick_xml::Reader;
 use quick_xml::events::Event;
 use reqwest::{Client as HttpClient, StatusCode};
-use tokio::task::JoinSet;
 use transmux::box_types::parse_box;
 use transmux::media::Fmp4Demux;
 use transmux::movie_fragment::MovieFragmentBox;
@@ -80,7 +79,7 @@ use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{
     authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
 };
-use crate::source::{IngestTimeouts, Source, may_spawn_fetch};
+use crate::source::{IngestTimeouts, Source};
 
 /// The synthesized per-stream init segment's `mvhd` timescale — arbitrary
 /// (ISO/IEC 14496-12 §8.2.2). Reuses [`transmux::VIDEO_CLOCK_RATE`] purely so
@@ -997,30 +996,38 @@ fn status_error(what: &str, status: StatusCode) -> MultimuxError {
     }
 }
 
-enum FetchOutcome {
-    Bytes(Vec<u8>),
-    NotReady,
+/// Whether a fetch failure is a tolerated `404` (retry) rather than a real
+/// error — see [`NOT_READY_SENTINEL`].
+fn is_not_ready(e: &MultimuxError) -> bool {
+    matches!(e, MultimuxError::Connect { reason } if reason == NOT_READY_SENTINEL)
 }
 
-async fn fetch_one(
+/// Like [`fetch_one`], but returns the raw bytes and reports a tolerated
+/// `404` as a [`MultimuxError`] carrying [`NOT_READY_SENTINEL`] so the
+/// source's join loop can tell it from a real failure.
+async fn fetch_one_bytes(
     client: &HttpClient,
     url: &str,
     creds: Option<&Credentials>,
     what: &str,
     tolerate_404: bool,
-) -> Result<FetchOutcome> {
+) -> Result<Vec<u8>> {
     let response = authenticated_get(client, url, creds).await?;
     let status = response.status();
     if tolerate_404 && status == StatusCode::NOT_FOUND {
-        return Ok(FetchOutcome::NotReady);
+        return Err(MultimuxError::Connect {
+            reason: NOT_READY_SENTINEL.to_string(),
+        });
     }
     if !status.is_success() {
         return Err(status_error(what, status));
     }
-    crate::source::read_body_capped(response, crate::source::MAX_HTTP_BODY_BYTES, what)
-        .await
-        .map(FetchOutcome::Bytes)
+    crate::source::read_body_capped(response, crate::source::MAX_HTTP_BODY_BYTES, what).await
 }
+
+/// A `Connect` error whose reason is exactly this string is a tolerated `404`
+/// (retry), not a real failure.
+const NOT_READY_SENTINEL: &str = "smooth-pull: fragment not ready (tolerated 404)";
 
 fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<Credentials>)> {
     let parsed = Url::parse(&route.url).map_err(|e| MultimuxError::Connect {
@@ -1040,7 +1047,10 @@ fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<Cred
     Ok((http, clean_url, credentials))
 }
 
-struct JoinedFetch {
+/// The scheduler key for one Smooth fetch: everything the join loop needs to
+/// feed the result or retry the exact same fragment.
+#[derive(Debug, Clone)]
+struct SmoothFetch {
     id: SmoothResourceId,
     t: u64,
     d: u64,
@@ -1049,12 +1059,15 @@ struct JoinedFetch {
     /// How many times this fragment fetch has been attempted (1 on the first
     /// try) — bounds the tolerated-`404` retry loop (audit W14a).
     attempt: u32,
-    outcome: Result<FetchOutcome>,
 }
 
+/// The scheduler key type for `smooth_pull`'s fetches.
+type SmoothPendingFetch = crate::source::pull::PendingFetch<SmoothFetch>;
+
+/// Builds the [`PendingFetch`] for one fetch (after `delay`, for a retry).
+/// The delay is applied by [`PullScheduler::pump`], not here.
 #[allow(clippy::too_many_arguments)]
-fn spawn_fetch(
-    inflight: &mut JoinSet<JoinedFetch>,
+fn pending_fetch(
     http: HttpClient,
     creds: Option<Credentials>,
     id: SmoothResourceId,
@@ -1066,31 +1079,31 @@ fn spawn_fetch(
     read_timeout: Duration,
     delay: Duration,
     attempt: u32,
-) {
-    inflight.spawn(async move {
-        if !delay.is_zero() {
-            tokio::time::sleep(delay).await;
-        }
-        let outcome = tokio::time::timeout(
-            read_timeout,
-            fetch_one(&http, &url, creds.as_ref(), what, tolerate_404),
-        )
-        .await
-        .unwrap_or_else(|_| {
-            Err(MultimuxError::Connect {
-                reason: format!("smooth-pull {what} ({id:?}) read exceeded {read_timeout:?}"),
-            })
-        });
-        JoinedFetch {
-            id,
-            t,
-            d,
-            url,
-            tolerate_404,
-            attempt,
-            outcome,
-        }
-    });
+) -> SmoothPendingFetch {
+    crate::source::pull::PendingFetch {
+        delay,
+        fut: Box::pin(async move {
+            let outcome = tokio::time::timeout(
+                read_timeout,
+                fetch_one_bytes(&http, &url, creds.as_ref(), what, tolerate_404),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(MultimuxError::Connect {
+                    reason: format!("smooth-pull {what} ({id:?}) read exceeded {read_timeout:?}"),
+                })
+            });
+            let key = SmoothFetch {
+                id,
+                t,
+                d,
+                url,
+                tolerate_404,
+                attempt,
+            };
+            (key, outcome)
+        }),
+    }
 }
 
 /// Turns a driver that has reached a terminal [`HealthState`] into this
@@ -1146,23 +1159,18 @@ pub async fn run_smooth_pull(
     )?;
 
     let read_timeout = route.timeouts.read;
-    let mut backlog: VecDeque<SmoothAction> = VecDeque::new();
-    let mut inflight: JoinSet<JoinedFetch> = JoinSet::new();
+    // The fetch/retry/wait engine (SP6.2) owns the in-flight bound, the retry
+    // queue and the idle park; this loop owns only the `Action` translation,
+    // the tolerated-`404` retry policy and the `feed`.
+    let mut scheduler: crate::source::pull::PullScheduler<SmoothFetch> =
+        crate::source::pull::PullScheduler::new(crate::source::MAX_INFLIGHT_FETCHES);
     let start = std::time::Instant::now();
     let mut progress = crate::source::DriverProgress::new();
 
     loop {
         while let Some(action) = driver.poll_transmit() {
-            backlog.push_back(action);
-        }
-
-        while may_spawn_fetch(inflight.len()) {
-            let Some(action) = backlog.pop_front() else {
-                break;
-            };
-            match action {
-                SmoothAction::FetchManifest { url } => spawn_fetch(
-                    &mut inflight,
+            let fetch = match action {
+                SmoothAction::FetchManifest { url } => pending_fetch(
                     http.clone(),
                     credentials.clone(),
                     SmoothResourceId::Manifest,
@@ -1175,8 +1183,7 @@ pub async fn run_smooth_pull(
                     Duration::ZERO,
                     1,
                 ),
-                SmoothAction::FetchFirstFragment { stream, url } => spawn_fetch(
-                    &mut inflight,
+                SmoothAction::FetchFirstFragment { stream, url } => pending_fetch(
                     http.clone(),
                     credentials.clone(),
                     SmoothResourceId::FirstFragment(stream),
@@ -1195,8 +1202,7 @@ pub async fn run_smooth_pull(
                     d,
                     url,
                     tolerate_404,
-                } => spawn_fetch(
-                    &mut inflight,
+                } => pending_fetch(
                     http.clone(),
                     credentials.clone(),
                     SmoothResourceId::Fragment(stream, t),
@@ -1209,15 +1215,20 @@ pub async fn run_smooth_pull(
                     Duration::ZERO,
                     1,
                 ),
-            }
+            };
+            scheduler.push(fetch);
         }
 
-        if inflight.is_empty() {
+        scheduler.pump();
+
+        if scheduler.is_idle() {
             if driver.session().ended() {
                 driver.finish();
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 return terminal_result(driver, "smooth-pull");
             }
+            // A session deadline is the source's own (see `dash_pull`'s
+            // identical arm); with none, park briefly via the scheduler.
             match driver.next_deadline() {
                 Some(deadline) => {
                     let now = Timestamp::from_instant(start, std::time::Instant::now());
@@ -1228,80 +1239,69 @@ pub async fn run_smooth_pull(
                     driver.on_deadline(now);
                     crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 }
-                // See `dash_pull`'s identical arm.
-                None => tokio::time::sleep(IDLE_POLL_INTERVAL).await,
+                None => {
+                    scheduler.next(None, IDLE_POLL_INTERVAL).await;
+                }
             }
             continue;
         }
 
-        let joined = inflight.join_next().await;
+        let joined = scheduler.next(None, IDLE_POLL_INTERVAL).await;
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         match joined {
-            Some(Ok(JoinedFetch {
-                id,
-                outcome: Ok(FetchOutcome::Bytes(bytes)),
-                ..
-            })) => {
-                driver.feed((id, bytes.as_slice()), now);
+            Some(crate::source::pull::FetchOutcome::Ready(fetch, bytes)) => {
+                driver.feed((fetch.id, bytes.as_slice()), now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(Ok(JoinedFetch {
-                id: SmoothResourceId::Fragment(stream, _),
-                t,
-                d,
-                url,
-                tolerate_404,
-                attempt,
-                outcome: Ok(FetchOutcome::NotReady),
-            })) => {
-                if attempt >= MAX_TOLERATED_404_ATTEMPTS {
+            Some(crate::source::pull::FetchOutcome::Failed(fetch, e)) => {
+                // A tolerated `404` (a live-edge fragment not yet available)
+                // is retried directly, without touching the session.
+                if !fetch.tolerate_404 || !is_not_ready(&e) {
+                    return Err(e);
+                }
+                let SmoothResourceId::Fragment(stream, _) = fetch.id else {
+                    // Only fragment fetches are ever tolerant of 404.
+                    return Err(e);
+                };
+                if fetch.attempt >= MAX_TOLERATED_404_ATTEMPTS {
                     // Bound reached: abandon this fragment so the stream goes
                     // idle and the manifest can refresh, rather than retrying
                     // a 404 forever (audit W14a) — the explicit
                     // `AbandonFragment` signal, not an empty body.
                     tracing::warn!(
                         stream = stream.0,
-                        t,
-                        attempts = attempt,
-                        "smooth-pull: live-edge fragment never became available; \
-                         abandoning it and refreshing the manifest"
+                        t = fetch.t,
+                        attempts = fetch.attempt,
+                        "smooth-pull: live-edge fragment never became available; abandoning it and refreshing the manifest"
                     );
                     metrics::counter!(crate::prometheus::PULL_FRAGMENT_ABANDONED_TOTAL)
                         .increment(1);
                     driver.feed((SmoothResourceId::AbandonFragment(stream), &[][..]), now);
                     crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 } else {
-                    spawn_fetch(
-                        &mut inflight,
+                    scheduler.push_retry(pending_fetch(
                         http.clone(),
                         credentials.clone(),
-                        SmoothResourceId::Fragment(stream, t),
-                        t,
-                        d,
-                        url,
+                        SmoothResourceId::Fragment(stream, fetch.t),
+                        fetch.t,
+                        fetch.d,
+                        fetch.url,
                         "fragment",
-                        tolerate_404,
+                        fetch.tolerate_404,
                         read_timeout,
                         FRAGMENT_RETRY_DELAY,
-                        attempt.saturating_add(1),
-                    );
+                        fetch.attempt.saturating_add(1),
+                    ));
                 }
             }
-            Some(Ok(JoinedFetch {
-                outcome: Ok(FetchOutcome::NotReady),
-                ..
-            })) => {
-                // Only fragment fetches are ever tolerant of 404.
-            }
-            Some(Ok(JoinedFetch {
-                outcome: Err(e), ..
-            })) => return Err(e),
-            Some(Err(join_err)) => {
+            Some(crate::source::pull::FetchOutcome::TaskPanic(detail)) => {
                 return Err(MultimuxError::Connect {
-                    reason: format!("smooth-pull: fetch task failed: {join_err}"),
+                    reason: format!("smooth-pull: fetch task failed: {detail}"),
                 });
             }
-            None => unreachable!("checked inflight.is_empty() above"),
+            // Nothing was in flight (a bounded wait elapsed); check the
+            // session's health and end condition below.
+            None => {}
         }
 
         if !driver.health().is_running() {
@@ -1695,34 +1695,34 @@ mod tests {
             };
             let now = Timestamp::from_nanos(0);
             match action {
-                SmoothAction::FetchManifest { url }
-                    if let FetchOutcome::Bytes(b) =
-                        fetch_one(&http, &url, credentials.as_ref(), "manifest", false).await? =>
-                {
+                SmoothAction::FetchManifest { url } => {
+                    let b = fetch_one_bytes(&http, &url, credentials.as_ref(), "manifest", false)
+                        .await?;
                     session.feed((SmoothResourceId::Manifest, b.as_slice()), now)?;
                 }
-                SmoothAction::FetchManifest { .. } => {}
-                SmoothAction::FetchFirstFragment { stream, url }
-                    if let FetchOutcome::Bytes(b) =
-                        fetch_one(&http, &url, credentials.as_ref(), "first fragment", false)
-                            .await? =>
-                {
+                SmoothAction::FetchFirstFragment { stream, url } => {
+                    let b =
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "first fragment", false)
+                            .await?;
                     session.feed((SmoothResourceId::FirstFragment(stream), b.as_slice()), now)?;
                 }
-                SmoothAction::FetchFirstFragment { .. } => {}
                 SmoothAction::FetchFragment {
                     stream,
                     t,
                     url,
                     tolerate_404,
                     ..
-                } if let FetchOutcome::Bytes(b) =
-                    fetch_one(&http, &url, credentials.as_ref(), "fragment", tolerate_404)
-                        .await? =>
-                {
+                } => {
+                    let b = fetch_one_bytes(
+                        &http,
+                        &url,
+                        credentials.as_ref(),
+                        "fragment",
+                        tolerate_404,
+                    )
+                    .await?;
                     session.feed((SmoothResourceId::Fragment(stream, t), b.as_slice()), now)?;
                 }
-                SmoothAction::FetchFragment { .. } => {}
             }
         }
         Ok((specs, per_track))
@@ -1853,38 +1853,37 @@ mod tests {
             };
             let now = Timestamp::from_nanos(0);
             match action {
-                SmoothAction::FetchManifest { url }
-                    if let FetchOutcome::Bytes(b) =
-                        fetch_one(&http, &url, credentials.as_ref(), "manifest", false)
-                            .await
-                            .expect("fetch") =>
-                {
+                SmoothAction::FetchManifest { url } => {
+                    let b = fetch_one_bytes(&http, &url, credentials.as_ref(), "manifest", false)
+                        .await
+                        .expect("fetch");
                     driver.feed((SmoothResourceId::Manifest, b.as_slice()), now);
                 }
-                SmoothAction::FetchManifest { .. } => {}
-                SmoothAction::FetchFirstFragment { stream, url }
-                    if let FetchOutcome::Bytes(b) =
-                        fetch_one(&http, &url, credentials.as_ref(), "first fragment", false)
+                SmoothAction::FetchFirstFragment { stream, url } => {
+                    let b =
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "first fragment", false)
                             .await
-                            .expect("fetch") =>
-                {
+                            .expect("fetch");
                     driver.feed((SmoothResourceId::FirstFragment(stream), b.as_slice()), now);
                 }
-                SmoothAction::FetchFirstFragment { .. } => {}
                 SmoothAction::FetchFragment {
                     stream,
                     t,
                     url,
                     tolerate_404,
                     ..
-                } if let FetchOutcome::Bytes(b) =
-                    fetch_one(&http, &url, credentials.as_ref(), "fragment", tolerate_404)
-                        .await
-                        .expect("fetch") =>
-                {
+                } => {
+                    let b = fetch_one_bytes(
+                        &http,
+                        &url,
+                        credentials.as_ref(),
+                        "fragment",
+                        tolerate_404,
+                    )
+                    .await
+                    .expect("fetch");
                     driver.feed((SmoothResourceId::Fragment(stream, t), b.as_slice()), now);
                 }
-                SmoothAction::FetchFragment { .. } => {}
             }
             if cursor.is_none() {
                 cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());

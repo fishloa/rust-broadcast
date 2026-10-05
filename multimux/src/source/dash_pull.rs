@@ -95,7 +95,6 @@ use media_plane::ingress::{
 };
 use media_plane::trunk::{RetentionClass, TrunkConfig};
 use reqwest::{Client as HttpClient, StatusCode};
-use tokio::task::JoinSet;
 use transmux::dash_parse::{Mpd, MpdType, SegmentTemplate, SegmentTimeline};
 use transmux::media::Fmp4Demux;
 use transmux::pipeline::TrackSpec;
@@ -105,7 +104,7 @@ use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{
     authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
 };
-use crate::source::{IngestTimeouts, Source, may_spawn_fetch};
+use crate::source::{IngestTimeouts, Source};
 
 /// Default wait between exhausting a dynamic MPD's plan and its next refresh
 /// attempt when `MPD@minimumUpdatePeriod` is absent — unchanged from the
@@ -937,58 +936,38 @@ const MAX_PLAN_ENTRIES: usize = 100_000;
 /// that a normal segment cadence is always covered.
 const LIVE_NUMBER_LOOKAHEAD: usize = 3;
 
-/// Outcome of one fetch task, as seen by [`run_dash_pull`]'s join loop.
-enum FetchOutcome {
-    Bytes(Vec<u8>),
-    /// A tolerated `404` for a live-edge segment — retried by
-    /// [`run_dash_pull`] itself (re-spawning the same `FetchSegment`, after
-    /// [`SEGMENT_RETRY_DELAY`]) without ever touching the session: from
-    /// [`DashIngestSession`]'s point of view this Representation's fetch was
-    /// never *not* in flight, matching `RepState::in_flight`'s meaning.
-    NotReady,
+/// Whether a fetch failure is a tolerated `404` (retry) rather than a real
+/// error — see [`NOT_READY_SENTINEL`].
+fn is_not_ready(e: &MultimuxError) -> bool {
+    matches!(e, MultimuxError::Connect { reason } if reason == NOT_READY_SENTINEL)
 }
 
-async fn fetch_one(
-    client: &HttpClient,
-    url: &str,
-    creds: Option<&Credentials>,
-    what: &str,
-    tolerate_404: bool,
-) -> Result<FetchOutcome> {
-    let response = authenticated_get(client, url, creds).await?;
-    let status = response.status();
-    if tolerate_404 && status == StatusCode::NOT_FOUND {
-        return Ok(FetchOutcome::NotReady);
-    }
-    if !status.is_success() {
-        return Err(status_error(what, status));
-    }
-    crate::source::read_body_capped(response, crate::source::MAX_HTTP_BODY_BYTES, what)
-        .await
-        .map(FetchOutcome::Bytes)
-}
-
-/// One join result: the resource id, and (for a segment, so a tolerated
-/// `404` can be retried without the session's help) the number/time/url/
-/// tolerate_404 that produced it.
-struct JoinedFetch {
+/// The scheduler key for one DASH fetch: everything [`run_dash_pull`]'s join
+/// loop needs to either feed the result to the session or retry the exact
+/// same fetch. `id` alone is not enough — a tolerated-`404` retry of one
+/// segment needs its `number`/`time`/`url` and its attempt count back.
+#[derive(Debug, Clone)]
+struct DashFetch {
     id: DashResourceId,
     number: u64,
     time: Option<u64>,
     url: String,
     tolerate_404: bool,
-    /// How many times this exact segment fetch has been attempted (1 on the
-    /// first try) — bounds the tolerated-`404` retry loop (audit run 7, W14).
+    /// How many times this exact fetch has been attempted (1 on the first
+    /// try) — bounds the tolerated-`404` retry loop (audit run 7, W14).
     attempt: u32,
-    outcome: Result<FetchOutcome>,
 }
 
-/// Spawns one fetch (after `delay`, for a retry) into `inflight`, tagging the
-/// result with everything [`run_dash_pull`]'s join loop needs to either feed
-/// it to the session or retry it.
+/// The scheduler key type for `dash_pull`'s fetches.
+type DashPendingFetch = crate::source::pull::PendingFetch<DashFetch>;
+
+/// Builds the [`PendingFetch`] for one fetch (after `delay`, for a retry).
+/// The delay is applied by [`PullScheduler::pump`], not here. A tolerated
+/// `404` is reported by feeding the session a sentinel the join loop
+/// recognises: since [`FetchOutcome::Ready`] carries opaque bytes and this
+/// request is retried rather than fed, the sentinel never reaches `feed`.
 #[allow(clippy::too_many_arguments)]
-fn spawn_fetch(
-    inflight: &mut JoinSet<JoinedFetch>,
+fn pending_fetch(
     http: HttpClient,
     creds: Option<Credentials>,
     id: DashResourceId,
@@ -1000,32 +979,60 @@ fn spawn_fetch(
     read_timeout: Duration,
     delay: Duration,
     attempt: u32,
-) {
-    inflight.spawn(async move {
-        if !delay.is_zero() {
-            tokio::time::sleep(delay).await;
-        }
-        let outcome = tokio::time::timeout(
-            read_timeout,
-            fetch_one(&http, &url, creds.as_ref(), what, tolerate_404),
-        )
-        .await
-        .unwrap_or_else(|_| {
-            Err(MultimuxError::Connect {
-                reason: format!("dash-pull {what} ({id:?}) read exceeded {read_timeout:?}"),
-            })
-        });
-        JoinedFetch {
-            id,
-            number,
-            time,
-            url,
-            tolerate_404,
-            attempt,
-            outcome,
-        }
-    });
+) -> DashPendingFetch {
+    crate::source::pull::PendingFetch {
+        delay,
+        fut: Box::pin(async move {
+            let outcome = tokio::time::timeout(
+                read_timeout,
+                fetch_one_bytes(&http, &url, creds.as_ref(), what, tolerate_404),
+            )
+            .await
+            .unwrap_or_else(|_| {
+                Err(MultimuxError::Connect {
+                    reason: format!("dash-pull {what} ({id:?}) read exceeded {read_timeout:?}"),
+                })
+            });
+            let key = DashFetch {
+                id,
+                number,
+                time,
+                url,
+                tolerate_404,
+                attempt,
+            };
+            (key, outcome)
+        }),
+    }
 }
+
+/// Like [`fetch_one`], but returns the raw bytes and reports a tolerated
+/// `404` as a [`MultimuxError`] carrying [`NADA_NOT_READY`] so the source's
+/// join loop can tell it from a real failure.
+async fn fetch_one_bytes(
+    client: &HttpClient,
+    url: &str,
+    creds: Option<&Credentials>,
+    what: &str,
+    tolerate_404: bool,
+) -> Result<Vec<u8>> {
+    let response = authenticated_get(client, url, creds).await?;
+    let status = response.status();
+    if tolerate_404 && status == StatusCode::NOT_FOUND {
+        return Err(MultimuxError::Connect {
+            reason: NOT_READY_SENTINEL.to_string(),
+        });
+    }
+    if !status.is_success() {
+        return Err(status_error(what, status));
+    }
+    crate::source::read_body_capped(response, crate::source::MAX_HTTP_BODY_BYTES, what).await
+}
+
+/// A `Connect` error whose reason is exactly this string is a tolerated `404`
+/// (retry), not a real failure. A dedicated sentinel keeps the retry signal
+/// out of the scheduler's type (its `Failed` arm carries a plain error).
+const NOT_READY_SENTINEL: &str = "dash-pull: segment not ready (tolerated 404)";
 
 fn build_client(route: &DashPullRoute) -> Result<(HttpClient, Url, Option<Credentials>)> {
     let parsed = Url::parse(&route.url).map_err(|e| MultimuxError::Connect {
@@ -1099,23 +1106,18 @@ pub async fn run_dash_pull(
     )?;
 
     let read_timeout = route.timeouts.read;
-    let mut backlog: VecDeque<DashAction> = VecDeque::new();
-    let mut inflight: JoinSet<JoinedFetch> = JoinSet::new();
+    // The fetch/retry/wait engine (SP6.2) owns the in-flight bound, the retry
+    // queue and the idle park; this loop owns only the `Action` translation,
+    // the tolerated-`404` retry policy and the `feed`.
+    let mut scheduler: crate::source::pull::PullScheduler<DashFetch> =
+        crate::source::pull::PullScheduler::new(crate::source::MAX_INFLIGHT_FETCHES);
     let start = std::time::Instant::now();
     let mut progress = crate::source::DriverProgress::new();
 
     loop {
         while let Some(action) = driver.poll_transmit() {
-            backlog.push_back(action);
-        }
-
-        while may_spawn_fetch(inflight.len()) {
-            let Some(action) = backlog.pop_front() else {
-                break;
-            };
-            match action {
-                DashAction::FetchMpd { url } => spawn_fetch(
-                    &mut inflight,
+            let fetch = match action {
+                DashAction::FetchMpd { url } => pending_fetch(
                     http.clone(),
                     credentials.clone(),
                     DashResourceId::Mpd,
@@ -1128,8 +1130,7 @@ pub async fn run_dash_pull(
                     Duration::ZERO,
                     1,
                 ),
-                DashAction::FetchInit { rep, url } => spawn_fetch(
-                    &mut inflight,
+                DashAction::FetchInit { rep, url } => pending_fetch(
                     http.clone(),
                     credentials.clone(),
                     DashResourceId::Init(rep),
@@ -1148,8 +1149,7 @@ pub async fn run_dash_pull(
                     time,
                     url,
                     tolerate_404,
-                } => spawn_fetch(
-                    &mut inflight,
+                } => pending_fetch(
                     http.clone(),
                     credentials.clone(),
                     DashResourceId::Segment(rep, number),
@@ -1162,15 +1162,22 @@ pub async fn run_dash_pull(
                     Duration::ZERO,
                     1,
                 ),
-            }
+            };
+            scheduler.push(fetch);
         }
 
-        if inflight.is_empty() {
+        scheduler.pump();
+
+        if scheduler.is_idle() {
             if driver.session().ended() {
                 driver.finish();
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 return terminal_result(driver, "dash-pull");
             }
+            // A session deadline (a live MPD refresh, a segment's planned
+            // window) is the source's own, not a fetch wait, so it stays
+            // here: sleep to it, fire `on_deadline`, then continue. With no
+            // deadline either, park briefly via the scheduler's idle poll.
             match driver.next_deadline() {
                 Some(deadline) => {
                     let now = Timestamp::from_instant(start, std::time::Instant::now());
@@ -1181,83 +1188,70 @@ pub async fn run_dash_pull(
                     driver.on_deadline(now);
                     crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 }
-                // No scheduled work and nothing in flight: park briefly
-                // rather than spinning — see `IDLE_POLL_INTERVAL`.
-                None => tokio::time::sleep(IDLE_POLL_INTERVAL).await,
+                None => {
+                    scheduler.next(None, IDLE_POLL_INTERVAL).await;
+                }
             }
             continue;
         }
 
-        let joined = inflight.join_next().await;
+        let joined = scheduler.next(None, IDLE_POLL_INTERVAL).await;
         let now = Timestamp::from_instant(start, std::time::Instant::now());
         match joined {
-            Some(Ok(JoinedFetch {
-                id,
-                outcome: Ok(FetchOutcome::Bytes(bytes)),
-                ..
-            })) => {
-                driver.feed((id, bytes.as_slice()), now);
+            Some(crate::source::pull::FetchOutcome::Ready(fetch, bytes)) => {
+                driver.feed((fetch.id, bytes.as_slice()), now);
                 crate::source::advance_route(&driver, route_handle, &mut progress).await;
             }
-            Some(Ok(JoinedFetch {
-                id: DashResourceId::Segment(rep, _),
-                number,
-                time,
-                url,
-                tolerate_404,
-                attempt,
-                outcome: Ok(FetchOutcome::NotReady),
-            })) => {
-                if attempt >= MAX_TOLERATED_404_ATTEMPTS {
+            Some(crate::source::pull::FetchOutcome::Failed(fetch, e)) => {
+                // A tolerated `404` (a live-edge segment not yet available)
+                // is retried directly, without touching the session — see the
+                // module doc's `FetchOutcome::NotReady`.
+                if !fetch.tolerate_404 || !is_not_ready(&e) {
+                    return Err(e);
+                }
+                let DashResourceId::Segment(rep, number) = fetch.id else {
+                    // Only segment fetches are ever tolerant of 404 — see
+                    // `fetch_one`'s callers.
+                    return Err(e);
+                };
+                if fetch.attempt >= MAX_TOLERATED_404_ATTEMPTS {
                     // Bound reached: give up on this segment so the
                     // Representation goes idle and the MPD can refresh,
                     // rather than retrying a 404 forever (audit run 7, W14).
                     tracing::warn!(
                         rep = rep.0,
                         number,
-                        attempts = attempt,
-                        "dash-pull: live-edge segment never became available; \
-                         abandoning it and refreshing the MPD"
+                        attempts = fetch.attempt,
+                        "dash-pull: live-edge segment never became available; abandoning it and refreshing the MPD"
                     );
                     metrics::counter!(crate::prometheus::PULL_FRAGMENT_ABANDONED_TOTAL)
                         .increment(1);
                     driver.session_mut().abandon_segment(rep);
                     crate::source::advance_route(&driver, route_handle, &mut progress).await;
                 } else {
-                    // Retried directly, without touching the session — see
-                    // the module doc's `FetchOutcome::NotReady`.
-                    spawn_fetch(
-                        &mut inflight,
+                    scheduler.push_retry(pending_fetch(
                         http.clone(),
                         credentials.clone(),
                         DashResourceId::Segment(rep, number),
-                        number,
-                        time,
-                        url,
+                        fetch.number,
+                        fetch.time,
+                        fetch.url,
                         "segment",
-                        tolerate_404,
+                        fetch.tolerate_404,
                         read_timeout,
                         SEGMENT_RETRY_DELAY,
-                        attempt.saturating_add(1),
-                    );
+                        fetch.attempt.saturating_add(1),
+                    ));
                 }
             }
-            Some(Ok(JoinedFetch {
-                outcome: Ok(FetchOutcome::NotReady),
-                ..
-            })) => {
-                // Only segment fetches are ever tolerant of 404 -- see
-                // `fetch_one`'s callers.
-            }
-            Some(Ok(JoinedFetch {
-                outcome: Err(e), ..
-            })) => return Err(e),
-            Some(Err(join_err)) => {
+            Some(crate::source::pull::FetchOutcome::TaskPanic(detail)) => {
                 return Err(MultimuxError::Connect {
-                    reason: format!("dash-pull: fetch task failed: {join_err}"),
+                    reason: format!("dash-pull: fetch task failed: {detail}"),
                 });
             }
-            None => unreachable!("checked inflight.is_empty() above"),
+            // Nothing was in flight (a bounded wait elapsed); check the
+            // session's health and end condition below.
+            None => {}
         }
 
         if !driver.health().is_running() {
@@ -1512,28 +1506,26 @@ mod tests {
             let now = Timestamp::from_nanos(0);
             match action {
                 DashAction::FetchMpd { url } => {
-                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                    let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one(&http, &url, credentials.as_ref(), "mpd", false),
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "mpd", false),
                     )
                     .await
                     .map_err(|_| MultimuxError::Connect {
                         reason: "mpd fetch timed out".into(),
-                    })?? {
-                        session.feed((DashResourceId::Mpd, b.as_slice()), now)?;
-                    }
+                    })??;
+                    session.feed((DashResourceId::Mpd, b.as_slice()), now)?;
                 }
                 DashAction::FetchInit { rep, url } => {
-                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                    let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one(&http, &url, credentials.as_ref(), "init", false),
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "init", false),
                     )
                     .await
                     .map_err(|_| MultimuxError::Connect {
                         reason: "init fetch timed out".into(),
-                    })?? {
-                        session.feed((DashResourceId::Init(rep), b.as_slice()), now)?;
-                    }
+                    })??;
+                    session.feed((DashResourceId::Init(rep), b.as_slice()), now)?;
                 }
                 DashAction::FetchSegment {
                     rep,
@@ -1542,16 +1534,15 @@ mod tests {
                     tolerate_404,
                     ..
                 } => {
-                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                    let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one(&http, &url, credentials.as_ref(), "segment", tolerate_404),
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "segment", tolerate_404),
                     )
                     .await
                     .map_err(|_| MultimuxError::Connect {
                         reason: "segment fetch timed out".into(),
-                    })?? {
-                        session.feed((DashResourceId::Segment(rep, number), b.as_slice()), now)?;
-                    }
+                    })??;
+                    session.feed((DashResourceId::Segment(rep, number), b.as_slice()), now)?;
                 }
             }
         }
@@ -1601,50 +1592,45 @@ mod tests {
             };
             let now = Timestamp::from_nanos(0);
             match action {
-                DashAction::FetchMpd { url }
-                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                DashAction::FetchMpd { url } => {
+                    let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one(&http, &url, credentials.as_ref(), "mpd", false),
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "mpd", false),
                     )
                     .await
                     .map_err(|_| MultimuxError::Connect {
                         reason: "mpd fetch timed out".into(),
-                    })?? =>
-                {
+                    })??;
                     session.feed((DashResourceId::Mpd, b.as_slice()), now)?;
                 }
-                DashAction::FetchMpd { .. } => {}
-                DashAction::FetchInit { rep, url }
-                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                DashAction::FetchInit { rep, url } => {
+                    let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one(&http, &url, credentials.as_ref(), "init", false),
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "init", false),
                     )
                     .await
                     .map_err(|_| MultimuxError::Connect {
                         reason: "init fetch timed out".into(),
-                    })?? =>
-                {
+                    })??;
                     session.feed((DashResourceId::Init(rep), b.as_slice()), now)?;
                 }
-                DashAction::FetchInit { .. } => {}
                 DashAction::FetchSegment {
                     rep,
                     number,
                     url,
                     tolerate_404,
                     ..
-                } if let FetchOutcome::Bytes(b) = tokio::time::timeout(
-                    route.timeouts.read,
-                    fetch_one(&http, &url, credentials.as_ref(), "segment", tolerate_404),
-                )
-                .await
-                .map_err(|_| MultimuxError::Connect {
-                    reason: "segment fetch timed out".into(),
-                })?? =>
-                {
+                } => {
+                    let b = tokio::time::timeout(
+                        route.timeouts.read,
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "segment", tolerate_404),
+                    )
+                    .await
+                    .map_err(|_| MultimuxError::Connect {
+                        reason: "segment fetch timed out".into(),
+                    })??;
                     session.feed((DashResourceId::Segment(rep, number), b.as_slice()), now)?;
                 }
-                DashAction::FetchSegment { .. } => {}
             }
         }
         Ok((specs, per_track))
@@ -1792,32 +1778,28 @@ mod tests {
             };
             match action {
                 DashAction::FetchMpd { url } => {
-                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                    let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one(&http, &url, credentials.as_ref(), "mpd", false),
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "mpd", false),
                     )
                     .await
                     .unwrap()
-                    .unwrap()
-                    {
-                        session
-                            .feed((DashResourceId::Mpd, b.as_slice()), now)
-                            .unwrap();
-                    }
+                    .unwrap();
+                    session
+                        .feed((DashResourceId::Mpd, b.as_slice()), now)
+                        .unwrap();
                 }
                 DashAction::FetchInit { rep, url } => {
-                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                    let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one(&http, &url, credentials.as_ref(), "init", false),
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "init", false),
                     )
                     .await
                     .unwrap()
-                    .unwrap()
-                    {
-                        session
-                            .feed((DashResourceId::Init(rep), b.as_slice()), now)
-                            .unwrap();
-                    }
+                    .unwrap();
+                    session
+                        .feed((DashResourceId::Init(rep), b.as_slice()), now)
+                        .unwrap();
                 }
                 DashAction::FetchSegment { rep, .. } => {
                     // Abandon it (the explicit signal) instead of fetching.
@@ -1868,32 +1850,28 @@ mod tests {
             };
             match action {
                 DashAction::FetchMpd { url } => {
-                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                    let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one(&http, &url, credentials.as_ref(), "mpd", false),
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "mpd", false),
                     )
                     .await
                     .unwrap()
-                    .unwrap()
-                    {
-                        session
-                            .feed((DashResourceId::Mpd, b.as_slice()), now)
-                            .unwrap();
-                    }
+                    .unwrap();
+                    session
+                        .feed((DashResourceId::Mpd, b.as_slice()), now)
+                        .unwrap();
                 }
                 DashAction::FetchInit { rep, url } => {
-                    if let FetchOutcome::Bytes(b) = tokio::time::timeout(
+                    let b = tokio::time::timeout(
                         route.timeouts.read,
-                        fetch_one(&http, &url, credentials.as_ref(), "init", false),
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "init", false),
                     )
                     .await
                     .unwrap()
-                    .unwrap()
-                    {
-                        session
-                            .feed((DashResourceId::Init(rep), b.as_slice()), now)
-                            .unwrap();
-                    }
+                    .unwrap();
+                    session
+                        .feed((DashResourceId::Init(rep), b.as_slice()), now)
+                        .unwrap();
                 }
                 DashAction::FetchSegment { .. } => saw_segment = true,
             }
@@ -2160,38 +2138,31 @@ mod tests {
             };
             let now = Timestamp::from_nanos(0);
             match action {
-                DashAction::FetchMpd { url }
-                    if let FetchOutcome::Bytes(b) =
-                        fetch_one(&http, &url, credentials.as_ref(), "mpd", false)
-                            .await
-                            .expect("fetch") =>
-                {
+                DashAction::FetchMpd { url } => {
+                    let b = fetch_one_bytes(&http, &url, credentials.as_ref(), "mpd", false)
+                        .await
+                        .expect("fetch");
                     driver.feed((DashResourceId::Mpd, b.as_slice()), now);
                 }
-                DashAction::FetchMpd { .. } => {}
-                DashAction::FetchInit { rep, url }
-                    if let FetchOutcome::Bytes(b) =
-                        fetch_one(&http, &url, credentials.as_ref(), "init", false)
-                            .await
-                            .expect("fetch") =>
-                {
+                DashAction::FetchInit { rep, url } => {
+                    let b = fetch_one_bytes(&http, &url, credentials.as_ref(), "init", false)
+                        .await
+                        .expect("fetch");
                     driver.feed((DashResourceId::Init(rep), b.as_slice()), now);
                 }
-                DashAction::FetchInit { .. } => {}
                 DashAction::FetchSegment {
                     rep,
                     number,
                     url,
                     tolerate_404,
                     ..
-                } if let FetchOutcome::Bytes(b) =
-                    fetch_one(&http, &url, credentials.as_ref(), "segment", tolerate_404)
-                        .await
-                        .expect("fetch") =>
-                {
+                } => {
+                    let b =
+                        fetch_one_bytes(&http, &url, credentials.as_ref(), "segment", tolerate_404)
+                            .await
+                            .expect("fetch");
                     driver.feed((DashResourceId::Segment(rep, number), b.as_slice()), now);
                 }
-                DashAction::FetchSegment { .. } => {}
             }
             if cursor.is_none() {
                 cursor = driver.trunk(ProgramId(0)).map(|t| t.subscribe());

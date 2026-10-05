@@ -28,6 +28,7 @@ pub mod dash_pull;
 pub mod file_reader;
 pub mod hls_pull;
 pub mod http_auth;
+pub(crate) mod pull;
 pub mod rtmp;
 pub mod rtp_udp;
 pub mod rtsp;
@@ -183,43 +184,6 @@ fn redirect_decision(
 
 /// Maximum redirect hops a pull-source HTTP client follows.
 const MAX_REDIRECT_HOPS: usize = 3;
-
-/// `true` while a pull source's drive loop may launch one more concurrent
-/// fetch — i.e. `inflight` is still below [`MAX_INFLIGHT_FETCHES`].
-///
-/// A named predicate rather than an inline `<` in each of the three loops so
-/// the bound is one testable decision instead of three copies of a comparison
-/// (the shape that lets one of them silently drift). Every
-/// `source::{hls_pull, dash_pull, smooth_pull}` loop gates its
-/// `JoinSet::spawn` on this.
-pub fn may_spawn_fetch(inflight: usize) -> bool {
-    inflight < MAX_INFLIGHT_FETCHES
-}
-
-#[cfg(test)]
-mod inflight_tests {
-    use super::{MAX_INFLIGHT_FETCHES, may_spawn_fetch};
-
-    /// The in-flight cap actually caps. Bites on the two mutations that
-    /// matter: dropping the gate (making this always `true`) and inverting
-    /// the comparison.
-    #[test]
-    fn may_spawn_fetch_stops_exactly_at_the_cap() {
-        assert!(may_spawn_fetch(0), "an idle loop must be able to spawn");
-        assert!(
-            may_spawn_fetch(MAX_INFLIGHT_FETCHES - 1),
-            "one slot short of the cap must still spawn"
-        );
-        assert!(
-            !may_spawn_fetch(MAX_INFLIGHT_FETCHES),
-            "at the cap, no further fetch may be launched"
-        );
-        assert!(
-            !may_spawn_fetch(MAX_INFLIGHT_FETCHES + 1),
-            "past the cap (a caller that over-spawned) must not spawn more"
-        );
-    }
-}
 
 #[cfg(test)]
 mod redirect_tests {
