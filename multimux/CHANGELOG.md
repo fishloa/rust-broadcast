@@ -28,12 +28,16 @@
   playlist GET started one hint after the previous one — but that same inline
   sleep also starved a ready resource fetch (a segment completing 50 ms into
   a 1 s hint waited another 950 ms, defect 5). The scheduler keeps both: the
-  hint is a not-before floor on the *next* paced fetch's dispatch
-  (`PullScheduler::push_at`), while an already-running fetch's result is
-  returned the moment it completes. Without the floor a non-LL live source
-  reloads back-to-back at RTT rate (hundreds of GETs/s against a local or CDN
-  origin). `source::may_spawn_fetch` is removed (the scheduler owns the
-  bound).
+  hint arms a not-before floor on the *next* paced fetch's dispatch
+  (`PullScheduler::push_at`), and the floor is anchored to the **real dispatch
+  instant** of the previous playlist fetch (`max(now, floor)`, not the earlier
+  instant it was merely pushed), so N reload cycles with hint `h` and a small
+  RTT dispatch at exactly `0, h, 2h, 3h, …` — anchoring to the push instant
+  instead let a second GET slip through back-to-back, i.e. roughly 2× the
+  intended rate. An already-running fetch's result is returned the moment it
+  completes. Without the floor a non-LL live source reloads back-to-back at
+  RTT rate (hundreds of GETs/s against a local or CDN origin).
+  `source::may_spawn_fetch` is removed (the scheduler owns the bound).
 - **UDP binds go through `socket2` with configurable socket options.**
   `ts_udp`/`rtp` inputs gain optional `recv_buffer_bytes`, `reuse_address`
   and `multicast_interface` keys (SP1.6); `source::udp::bind_udp` is now

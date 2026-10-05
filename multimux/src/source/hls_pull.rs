@@ -418,6 +418,40 @@ async fn fetch_bytes(
 /// mirrors `ts_http::open_stream`'s split between "parse/strip the URL" and
 /// "drive the fetches" so a bad URL fails fast, before [`run_hls_pull`]'s
 /// drive loop ever starts.
+/// The playlist reload-pacing state: the *real dispatch instant* of the last
+/// playlist fetch and the flat `WaitMs` floor for the next one (I-A).
+///
+/// The engine (`hls-runtime`) emits `FetchPlaylist` then `WaitMs(hint)`
+/// (RFC 8216 §4.3.3.1). A paced fetch is not dispatched until its floor, so
+/// the floor for the *next* fetch must be anchored to the instant this one
+/// really started — `max(now, floor)` — not to the earlier `now` at which it
+/// was merely pushed. Anchoring to the push instant let a second GET slip
+/// through back-to-back (d2 = 1.02 s after d1 = 1.00 s in the trace the
+/// re-reviewer gives), i.e. ~2x the intended reload rate.
+#[derive(Default, Clone, Copy)]
+struct PlaylistPacing {
+    /// The last playlist fetch's real dispatch instant.
+    last_dispatch: Option<tokio::time::Instant>,
+    /// The floor the next playlist fetch must not precede.
+    floor: Option<tokio::time::Instant>,
+}
+
+impl PlaylistPacing {
+    /// Arm the floor for the next playlist fetch from a fresh `WaitMs` hint.
+    fn arm(&mut self, hint: Duration) {
+        self.floor = self.last_dispatch.map(|t| t + hint);
+    }
+
+    /// The floor to hand [`crate::source::pull::PullScheduler::push_at`] for a
+    /// playlist fetch being pushed now, recording the instant it will really
+    /// be dispatched (`max(now, floor)`) so the next floor is anchored there.
+    fn on_push(&mut self, now: tokio::time::Instant) -> Option<tokio::time::Instant> {
+        let floor = self.floor.take();
+        self.last_dispatch = Some(floor.map_or(now, |f| f.max(now)));
+        floor
+    }
+}
+
 fn build_client(route: &HlsPullRoute) -> Result<(HttpClient, Url, Option<Credentials>)> {
     let parsed = Url::parse(&route.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
@@ -515,11 +549,9 @@ pub async fn run_hls_pull(
     // `WaitMs` is seen, so non-LL live HLS reloads at the engine's cadence
     // (RFC 8216 §4.3.3.1), not back-to-back at RTT rate — while a ready
     // resource fetch is still serviced the moment it completes (defect 5).
-    let mut playlist_floor: Option<tokio::time::Instant> = None;
-    // When the previous playlist fetch was *dispatched* — the origin of the
-    // floor's `+ hint` (see `playlist_floor`).
-    let mut last_playlist_dispatch: Option<tokio::time::Instant> = None;
-    // The most recent `WaitMs` hint, applied to the next playlist dispatch.
+    let mut pacing = PlaylistPacing::default();
+    // The most recent `WaitMs` hint, bounding how long `next` waits for a
+    // result this iteration (not the pacing floor itself — see `pacing`).
     let mut reload_hint: Option<Duration> = None;
     let start = std::time::Instant::now();
     let mut progress = crate::source::DriverProgress::new();
@@ -533,7 +565,7 @@ pub async fn run_hls_pull(
                     // the *next* playlist dispatch, never a delay on an
                     // already-running fetch's result.
                     reload_hint = Some(Duration::from_millis(ms));
-                    playlist_floor = last_playlist_dispatch.map(|t| t + Duration::from_millis(ms));
+                    pacing.arm(Duration::from_millis(ms));
                 }
                 Action::FetchPlaylist { .. } => {
                     let url = action
@@ -541,13 +573,11 @@ pub async fn run_hls_pull(
                         .expect("FetchPlaylist always has a request URL");
                     // Dispatched at the pacing floor when one is pending, so a
                     // fast playlist response is not re-fetched immediately.
+                    let floor = pacing.on_push(tokio::time::Instant::now());
                     scheduler.push_at(
                         playlist_fetch(http.clone(), credentials.clone(), url, read_timeout),
-                        playlist_floor,
+                        floor,
                     );
-                    last_playlist_dispatch = Some(tokio::time::Instant::now());
-                    // The floor is one-shot: the next hint re-arms it.
-                    playlist_floor = None;
                 }
                 Action::FetchResource { id, url, .. } => {
                     // Remember the URL so a transient failure can be retried
@@ -1694,4 +1724,42 @@ Content-Length: {over}
     // would still pass every other test in this module. Observing the cap
     // end-to-end would need the fixture server to count concurrent
     // connections. Recorded rather than left implicit.
+
+    /// I-A: the pacing floor is anchored to the REAL dispatch instant, so N
+    /// reload cycles with a 1 s hint and a 20 ms playlist RTT dispatch at
+    /// exactly 0, 1, 2, 3, 4 s. The pre-fix arithmetic (anchoring to the push
+    /// instant) gives 0, 1.00, 1.02, 2.02, 2.04 — ~2x rate — and this FAILS.
+    ///
+    /// Revert-check: replace `floor.map_or(now, |f| f.max(now))` with `now`
+    /// in `PlaylistPacing::on_push` and the assertion fails.
+    #[test]
+    fn the_pacing_floor_is_anchored_to_the_real_dispatch_instant() {
+        let hint = Duration::from_millis(1000);
+        let rtt = Duration::from_millis(20);
+        let t0 = tokio::time::Instant::now();
+
+        // Model the engine's emit order per cycle: it feeds the playlist
+        // result, then queues `FetchPlaylist` THEN `WaitMs(hint)`. The next
+        // fetch is therefore pushed at (previous dispatch + rtt) with the
+        // floor already armed.
+        let mut pacing = PlaylistPacing::default();
+        let mut dispatches = Vec::new();
+        let mut push_at = t0; // first playlist is pushed immediately
+        for _ in 0..5 {
+            let floor = pacing.on_push(push_at);
+            let dispatched_at = floor.map_or(push_at, |f| f.max(push_at));
+            dispatches.push(dispatched_at - t0);
+            // The result arrives `rtt` later; the engine then arms the WaitMs
+            // hint and pushes the next FetchPlaylist.
+            pacing.arm(hint);
+            push_at = dispatched_at + rtt;
+        }
+
+        let secs: Vec<u128> = dispatches.iter().map(|d| d.as_millis()).collect();
+        assert_eq!(
+            secs,
+            vec![0, 1000, 2000, 3000, 4000],
+            "reload GETs must dispatch at 0,1,2,3,4 s (not ~2x rate)"
+        );
+    }
 }
