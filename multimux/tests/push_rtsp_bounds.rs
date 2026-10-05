@@ -267,3 +267,72 @@ async fn drive_push_reconnects_at_the_transport_write_bound_not_the_ten_second_f
         accepted.load(Ordering::SeqCst)
     );
 }
+
+/// A peer answering the record-mode handshake that then keeps reading and
+/// reports (over `seen`) the method of every request it receives after RECORD —
+/// so a test can prove the transport sent `TEARDOWN` on `close()`.
+async fn teardown_recording_peer(
+    listener: TcpListener,
+    seen: tokio::sync::mpsc::UnboundedSender<String>,
+) {
+    let Ok((mut sock, _)) = listener.accept().await else {
+        return;
+    };
+    let mut buf = Vec::new();
+    loop {
+        let Some((method, cseq)) = read_request(&mut sock, &mut buf).await else {
+            return;
+        };
+        let extra = if method == "SETUP" {
+            "Transport: RTP/AVP/TCP;unicast;interleaved=0-1;mode=record\r\nSession: 1\r\n"
+        } else {
+            "Session: 1\r\n"
+        };
+        let resp = format!("RTSP/1.0 200 OK\r\nCSeq: {cseq}\r\n{extra}\r\n");
+        if sock.write_all(resp.as_bytes()).await.is_err() {
+            return;
+        }
+        let _ = seen.send(method.clone());
+        if method == "TEARDOWN" {
+            return;
+        }
+        // No media is sent in this test, so just loop for the next request.
+    }
+}
+
+/// I5: `close()` sends a bounded best-effort `TEARDOWN` (RFC 2326 §10.10), so
+/// the server frees the publisher slot instead of waiting for its own timeout.
+///
+/// Revert-check: restore `fn close(&mut self) { self.client = None; }` and no
+/// TEARDOWN is received — the `seen` assertion times out.
+#[tokio::test]
+async fn close_sends_a_teardown() {
+    use tokio::sync::mpsc;
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let url = format!("rtsp://{}/live/key", listener.local_addr().unwrap());
+    let (tx, mut rx) = mpsc::unbounded_channel();
+    tokio::spawn(teardown_recording_peer(listener, tx));
+
+    let mut t = tokio::time::timeout(GUARD, RtspTransport::connect(&url, &config_with_bounds()))
+        .await
+        .expect("connect")
+        .expect("connect");
+    t.setup(&[]).await.expect("setup");
+    t.close();
+    // Drop so the transport's ownership of the teardown task ends cleanly.
+    drop(t);
+
+    let mut saw_teardown = false;
+    let deadline = tokio::time::Instant::now() + GUARD;
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout_at(deadline, rx.recv()).await {
+            Ok(Some(m)) if m == "TEARDOWN" => {
+                saw_teardown = true;
+                break;
+            }
+            Ok(Some(_)) => {}
+            Ok(None) | Err(_) => break,
+        }
+    }
+    assert!(saw_teardown, "close() must send a TEARDOWN");
+}

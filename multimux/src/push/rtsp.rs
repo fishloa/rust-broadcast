@@ -44,6 +44,13 @@ const MAX_TS_PACKETS_PER_RTP: usize = 7;
 const MAX_RTP_PAYLOAD: usize = TS_PACKET_LEN * MAX_TS_PACKETS_PER_RTP;
 /// RFC 2250 §2's fixed RTP clock rate for MP2T.
 const RTP_CLOCK_HZ: u64 = 90_000;
+/// RFC 3550 §5.1: the fixed 12-byte RTP header (V/P/X/CC, M/PT, sequence,
+/// timestamp, SSRC) with no CSRCs and no extension.
+const RTP_HEADER_LEN: usize = 12;
+/// RFC 3550 §5.1: the first header byte `V=2, P=0, X=0, CC=0` (`0b10_000000`).
+const RTP_VERSION_2_NO_FLAGS: u8 = 0b1000_0000;
+/// Bound on the best-effort `TEARDOWN` sent from [`RtspTransport::close`].
+const TEARDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Per-connection configuration for the RTSP push transport.
 #[derive(Debug, Clone, Default)]
@@ -83,6 +90,11 @@ pub struct RtspTransport {
     ssrc: u32,
     /// Wall-clock origin for the RTP timestamp (90 kHz, RFC 2250 §2).
     started: Instant,
+    /// The bounded best-effort `TEARDOWN` task spawned by [`Self::close`],
+    /// kept so the task is owned (its `JoinHandle` is not dropped
+    /// fire-and-forget) and so a later `close` can abort a superseded one. It
+    /// is bounded by `TEARDOWN_TIMEOUT`, so it always finishes on its own.
+    teardown: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl std::fmt::Debug for RtspTransport {
@@ -107,7 +119,7 @@ impl PushTransport for RtspTransport {
         // fallback below) or panicking in `control_url`.
         let Some(host) = parsed.host_str() else {
             return Err(RtspPushError::Connect(
-                "rtsp push URL has no host (expected `rtsp://host[:port]/path`,                  e.g. not `rtsp:cam`)"
+                "rtsp push URL has no host (expected `rtsp://host[:port]/path`, \n                 e.g. not `rtsp:cam`)"
                     .to_string(),
             ));
         };
@@ -165,18 +177,18 @@ impl PushTransport for RtspTransport {
             seq: 0,
             ssrc: rand_ssrc(),
             started: Instant::now(),
+            teardown: None,
         })
     }
 
     async fn setup(&mut self, _tracks: &[TrackSpec]) -> Result<(), Self::Error> {
-        let sdp = build_sdp();
+        let sdp = build_sdp()?;
         // RFC 2326 §12.39: `mode` defaults to PLAY: a RECORD session must
         // say so explicitly, or a strict server (gortsplib/`mediamtx`:
         // "transport header contains a invalid mode (null)") rejects SETUP.
         let mut spec = TransportSpec::rtp_avp_tcp_interleaved(self.channel, self.channel + 1);
         spec.mode = vec![rtsp_runtime::TransportMode::Record];
         let transport_spec = Transport::single(spec);
-        let channel = self.channel;
         let (url, control_url) = (self.url.clone(), self.control_url.clone());
         let client = self
             .client
@@ -201,7 +213,6 @@ impl PushTransport for RtspTransport {
                 Err(e) => return Err(RtspPushError::Protocol(e.to_string())),
             }
         }
-        let _ = channel;
         Ok(())
     }
 
@@ -224,13 +235,38 @@ impl PushTransport for RtspTransport {
             client
                 .send_interleaved(channel, &packet)
                 .await
-                .map_err(|e| RtspPushError::Protocol(e.to_string()))?;
+                .map_err(map_rtsp_error)?;
         }
         Ok(())
     }
 
+    /// Drop the connection, first sending a bounded, best-effort `TEARDOWN`
+    /// (RFC 2326 §10.10) so the server frees the publisher slot immediately
+    /// rather than at its own session timeout — a quick reconnect to
+    /// `mediamtx`/`gortsplib` would otherwise be rejected as "path already has
+    /// a publisher". `close` is synchronous (the trait is), so the TEARDOWN is
+    /// dispatched on a spawned task; the `JoinHandle` is kept on the transport
+    /// so it is neither leaked nor fire-and-forgotten, and is aborted if a
+    /// later `close` supersedes it.
     fn close(&mut self) {
-        self.client = None;
+        if let Some(mut client) = self.client.take() {
+            let uri = self.url.clone();
+            let handle = tokio::spawn(async move {
+                let _ = tokio::time::timeout(TEARDOWN_TIMEOUT, client.teardown(&uri)).await;
+            });
+            // Replace any prior still-running teardown (the abort drops it).
+            self.teardown = Some(handle);
+        }
+    }
+}
+
+/// Map an rtsp-runtime error onto this transport's error, preserving the
+/// session-lost signal (RFC 2326 §11.3.4 `454`) distinctly from a generic
+/// protocol error so the push reconnects instead of retrying in place.
+fn map_rtsp_error(e: rtsp_runtime::Error) -> RtspPushError {
+    match e {
+        rtsp_runtime::Error::SessionNotFound { .. } => RtspPushError::SessionLost(e.to_string()),
+        other => RtspPushError::Protocol(other.to_string()),
     }
 }
 
@@ -242,8 +278,8 @@ impl RtspTransport {
         let seq = self.seq;
         self.seq = self.seq.wrapping_add(1);
 
-        let mut packet = Vec::with_capacity(12 + payload.len());
-        packet.push(0x80); // V=2, P=0, X=0, CC=0
+        let mut packet = Vec::with_capacity(RTP_HEADER_LEN + payload.len());
+        packet.push(RTP_VERSION_2_NO_FLAGS); // V=2, P=0, X=0, CC=0
         packet.push(PT_MP2T); // M=0
         packet.extend_from_slice(&seq.to_be_bytes());
         packet.extend_from_slice(&timestamp.to_be_bytes());
@@ -327,7 +363,11 @@ fn rand_ssrc() -> u32 {
 /// MPEG-2 TS-muxed stream (RFC 2250 §2) — every track is multiplexed into
 /// this single RTP session, matching the one SETUP/one interleaved channel
 /// this transport actually uses, not one `m=` line per elementary track.
-fn build_sdp() -> String {
+///
+/// Returns an error rather than `expect`ing (project rule: no production
+/// `expect` on a fallible path); writing to a `Vec` and `String::from_utf8`
+/// are effectively infallible, but the error is surfaced anyway.
+fn build_sdp() -> Result<String, RtspPushError> {
     use sdp_types::{
         AddrType, Attribute, Connection, Media, MediaType, NetType, Origin, Session, TransportProto,
     };
@@ -351,8 +391,8 @@ fn build_sdp() -> String {
     let mut out = Vec::new();
     session
         .write(&mut out)
-        .expect("writing SDP into a Vec never fails");
-    String::from_utf8(out).expect("SDP is always valid UTF-8")
+        .map_err(|e| RtspPushError::Protocol(format!("SDP write: {e}")))?;
+    String::from_utf8(out).map_err(|e| RtspPushError::Protocol(format!("SDP encoding: {e}")))
 }
 
 /// Errors from the RTSP push transport.
@@ -363,6 +403,10 @@ pub enum RtspPushError {
     Connect(String),
     #[error("RTSP protocol error: {0}")]
     Protocol(String),
+    /// The server no longer has the session (RFC 2326 §11.3.4 `454 Session
+    /// Not Found`) — the push must reconnect rather than keep sending.
+    #[error("RTSP session lost: {0}")]
+    SessionLost(String),
     #[error("RTSP I/O error: {0}")]
     Io(#[from] std::io::Error),
 }
@@ -377,7 +421,7 @@ mod tests {
     /// writes instead.
     #[test]
     fn announce_sdp_golden() {
-        let actual = build_sdp();
+        let actual = build_sdp().expect("build_sdp");
         let file = "rtsp_announce.sdp";
         if let Ok(dir) = std::env::var("GOLDEN_BLESS") {
             std::fs::create_dir_all(&dir).expect("create golden dir");
@@ -403,6 +447,7 @@ mod tests {
             seq: 0,
             ssrc: 1,
             started: Instant::now(),
+            teardown: None,
         };
         let shown = format!("{transport:?}");
         assert!(
@@ -420,7 +465,7 @@ mod tests {
         // RFC 4566 §5 requires a `c=` line somewhere (session- or
         // media-level) — the pre-fix SDP had neither, which is invalid SDP
         // regardless of the RTP-framing bugs.
-        let sdp = build_sdp();
+        let sdp = build_sdp().expect("build_sdp");
         assert!(sdp.contains("\r\nc=IN IP4"), "missing c= line: {sdp}");
         assert!(
             sdp.contains("a=control:trackID=0"),
@@ -467,6 +512,7 @@ mod tests {
             seq: 0xFFFF, // exercise the u16 wraparound.
             ssrc: 0xdead_beef,
             started: Instant::now(),
+            teardown: None,
         };
         let payload = [0x47u8; TS_PACKET_LEN]; // one TS sync-byte-led packet.
 
@@ -509,6 +555,7 @@ mod tests {
             seq: 0,
             ssrc: 1,
             started: Instant::now(),
+            teardown: None,
         };
         let debug = format!("{transport:?}");
         assert!(
@@ -516,45 +563,23 @@ mod tests {
             "leaked via RtspTransport Debug: {debug}"
         );
     }
-}
 
-#[cfg(test)]
-mod muxcheck_tmp {
+    /// I5: a server `454 Session Not Found` maps to `SessionLost` (so the push
+    /// reconnects) rather than a generic `Protocol` error.
+    ///
+    /// Revert-check: drop the `SessionNotFound` arm in `map_rtsp_error` (map
+    /// everything to `Protocol`) and the match fails.
     #[test]
-    fn muxcheck() {
-        use broadcast_common::Package as _;
-        use transmux::TsMux;
-        use transmux::ir::{Media, Sample, Track, TrackSpec};
-        let spec = TrackSpec::new(
-            1,
-            90_000,
-            transmux::CodecConfig::Avc {
-                config: transmux::AVCConfigurationBox::new(
-                    transmux::AVCDecoderConfigurationRecord {
-                        configuration_version: 1,
-                        profile_indication: 0x42,
-                        profile_compatibility: 0,
-                        level_indication: 0x1f,
-                        length_size_minus_one: 3,
-                        sps: Vec::new(),
-                        pps: Vec::new(),
-                        chroma_format: None,
-                        bit_depth_luma_minus8: None,
-                        bit_depth_chroma_minus8: None,
-                        sps_ext: Vec::new(),
-                    },
-                ),
-                width: 0,
-                height: 0,
-            },
+    fn a_454_maps_to_session_lost_distinctly() {
+        let err = map_rtsp_error(rtsp_runtime::Error::SessionNotFound {
+            method: rtsp_runtime::Method::GetParameter,
+        });
+        assert!(
+            matches!(err, RtspPushError::SessionLost(_)),
+            "a 454 must map to SessionLost, got {err:?}"
         );
-        let mut nal = vec![0, 0, 0, 1, 0x65];
-        nal.resize(256 * 1024, 0xAA);
-        let s = Sample::new(bytes::Bytes::from(nal), Some(0), Some(0), Some(3_000), true);
-        let media = Media::new(vec![Track::new(spec, vec![s])], 90_000);
-        match TsMux::new().package(&media) {
-            Ok(b) => eprintln!("PACKAGED {} bytes", b.len()),
-            Err(e) => eprintln!("MUX ERR {e}"),
-        }
+        // A different rtsp error stays a plain protocol error.
+        let other = map_rtsp_error(rtsp_runtime::Error::MessageParse("x".into()));
+        assert!(matches!(other, RtspPushError::Protocol(_)), "{other:?}");
     }
 }

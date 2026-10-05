@@ -63,7 +63,7 @@ use transmux::TsMux;
 use transmux::ir::{Media, TrackSpec};
 
 pub use rtmp::{RtmpTransport, RtmpTransportConfig};
-pub use rtsp::{RtspTransport, RtspTransportConfig};
+pub use rtsp::{RtspPushError, RtspTransport, RtspTransportConfig};
 pub(crate) use srt::validate_srt_url;
 pub use srt::{SrtTransport, SrtTransportConfig};
 
