@@ -742,12 +742,12 @@ mod tests {
         fn close(&mut self) {}
     }
 
-    /// I3: encoded frames are written strictly in order, and a mid-flush
-    /// write failure stops the flush (returns `Failed`) rather than writing a
-    /// later frame on a connection whose chunk-header state the peer never
-    /// saw. After the failure, no further frames are attempted.
+    /// I3/m-4: with a FAILING writer (its second write errors), encoded frames
+    /// are attempted strictly in order and the flush stops at the failure
+    /// (returns `Failed`) rather than writing a later frame on a connection
+    /// whose chunk-header state the peer never saw.
     #[tokio::test]
-    async fn a_mid_flush_write_failure_stops_before_a_later_frame() {
+    async fn a_failing_writer_stops_the_flush_before_a_later_frame() {
         use media_plane::egress::PushEgress as _;
         let mut egress = PushTransportEgress::new(
             FailingTransport {
@@ -759,14 +759,12 @@ mod tests {
         let tracks = [avc_spec(1)];
         let _ = egress.negotiate(&tracks);
         // Queue two frames (encode_media yields f0, f1).
-        let media = Media::new(vec![Track::new(avc_spec(1), vec![sample()])], 90_000);
         egress
             .send(&SampleCursorItem::Timed {
                 track_id: 1,
                 sample: sample(),
             })
             .expect("send");
-        let _ = media;
 
         let outcome = egress
             .flush_transmit_bounded(

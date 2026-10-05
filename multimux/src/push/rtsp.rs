@@ -119,7 +119,7 @@ impl PushTransport for RtspTransport {
         // fallback below) or panicking in `control_url`.
         let Some(host) = parsed.host_str() else {
             return Err(RtspPushError::Connect(
-                "rtsp push URL has no host (expected `rtsp://host[:port]/path`, \n                 e.g. not `rtsp:cam`)"
+                "rtsp push URL has no host (expected `rtsp://host[:port]/path`, e.g. not `rtsp:cam`)"
                     .to_string(),
             ));
         };
@@ -730,5 +730,26 @@ mod tests {
             );
             tokio::task::yield_now().await;
         }
+    }
+
+    /// m-2: the "no host" error is a clean single-line literal (no embedded
+    /// newline or run of spaces from a bad line continuation).
+    ///
+    /// Revert-check: restore the wrapped `\n                 e.g.` literal and
+    /// this fails.
+    #[tokio::test]
+    async fn the_no_host_error_is_a_single_line() {
+        let err = RtspTransport::connect("rtsp:cam", &RtspTransportConfig::default())
+            .await
+            .expect_err("a cannot-be-a-base URL must fail");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains('\n'),
+            "error message must be single-line: {msg:?}"
+        );
+        assert!(
+            !msg.contains("  "),
+            "error message must have no run of spaces: {msg:?}"
+        );
     }
 }

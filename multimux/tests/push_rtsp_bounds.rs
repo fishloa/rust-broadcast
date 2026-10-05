@@ -69,6 +69,7 @@ async fn read_request(sock: &mut TcpStream, buf: &mut Vec<u8>) -> Option<(String
 async fn scripted_record_peer(
     listener: TcpListener,
     accepted: Arc<AtomicUsize>,
+    connected: Arc<tokio::sync::Notify>,
     after: AfterRecord,
 ) {
     loop {
@@ -76,6 +77,8 @@ async fn scripted_record_peer(
             return;
         };
         accepted.fetch_add(1, Ordering::SeqCst);
+        // Wake any waiter (the reconnect condition) without spinning (m-3).
+        connected.notify_waiters();
         tokio::spawn(async move {
             let mut buf = Vec::new();
             loop {
@@ -106,12 +109,18 @@ async fn scripted_record_peer(
     }
 }
 
-async fn peer(after: AfterRecord) -> (String, Arc<AtomicUsize>) {
+async fn peer(after: AfterRecord) -> (String, Arc<AtomicUsize>, Arc<tokio::sync::Notify>) {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("rtsp://{}/live/key", listener.local_addr().unwrap());
     let accepted = Arc::new(AtomicUsize::new(0));
-    tokio::spawn(scripted_record_peer(listener, Arc::clone(&accepted), after));
-    (url, accepted)
+    let connected = Arc::new(tokio::sync::Notify::new());
+    tokio::spawn(scripted_record_peer(
+        listener,
+        Arc::clone(&accepted),
+        Arc::clone(&connected),
+        after,
+    ));
+    (url, accepted, connected)
 }
 
 /// Whole TS packets, a multiple of the 7-packet RTP payload.
@@ -121,7 +130,7 @@ const CHUNK: usize = 188 * 7 * 50;
 /// (draining) peer accepts connect/setup/send.
 #[tokio::test]
 async fn control_a_healthy_peer_accepts_connect_setup_and_send() {
-    let (url, _) = peer(AfterRecord::Drain).await;
+    let (url, _, _) = peer(AfterRecord::Drain).await;
     let mut t = tokio::time::timeout(GUARD, RtspTransport::connect(&url, &config_with_bounds()))
         .await
         .expect("connect must not hang")
@@ -157,7 +166,7 @@ async fn a_peer_that_never_answers_options_fails_connect_at_the_bound() {
 /// bound instead of blocking forever.
 #[tokio::test]
 async fn a_stalled_interleaved_write_fails_send_at_the_write_bound() {
-    let (url, _) = peer(AfterRecord::StopReading).await;
+    let (url, _, _) = peer(AfterRecord::StopReading).await;
     let mut t = RtspTransport::connect(&url, &config_with_bounds())
         .await
         .expect("connect");
@@ -235,7 +244,7 @@ async fn drive_push_reconnects_at_the_transport_write_bound_not_the_ten_second_f
     let writer = trunk.writer().expect("writer is free");
     writer.set_tracks(vec![avc_spec(1)]);
 
-    let (url, accepted) = peer(AfterRecord::StopReading).await;
+    let (url, accepted, connected) = peer(AfterRecord::StopReading).await;
     let cancel = tokio_util::sync::CancellationToken::new();
     let task = tokio::spawn(drive_push::<RtspTransport>(
         Arc::clone(&trunk),
@@ -257,8 +266,16 @@ async fn drive_push_reconnects_at_the_transport_write_bound_not_the_ten_second_f
         writer.publish(1, RetentionClass::Timed, big_sample());
     }
     let reconnected = tokio::time::timeout(GUARD, async {
-        while accepted.load(Ordering::SeqCst) < 2 {
-            tokio::task::yield_now().await;
+        // Wait on the acceptor's `Notify` until a SECOND connection has been
+        // accepted (m-3: no yield spin). Register the `notified()` future
+        // BEFORE re-reading the counter so a notify between the check and the
+        // await is not lost.
+        loop {
+            let notified = connected.notified();
+            if accepted.load(Ordering::SeqCst) >= 2 {
+                break;
+            }
+            notified.await;
         }
     })
     .await;
