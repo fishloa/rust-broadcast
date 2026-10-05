@@ -12,6 +12,15 @@
   one server no longer reconnects in lockstep. `Backoff`'s public shape
   (`new`/`production_default`/`next`/`delay_for_attempt`/`reset`) is unchanged.
   A new public module `reconnect` exposes the schedule.
+- **The three pull sources share one fetch scheduler and one fixed
+  `WaitMs` bug fix.** `hls_pull`/`dash_pull`/`smooth_pull` drive a single
+  `source::pull::PullScheduler` (in-flight bound, retry queue, session
+  `WaitMs` hint, idle park) instead of three hand-rolled `JoinSet` loops.
+  A session `WaitMs` hint no longer delays a fetch that is already ready:
+  the pre-migration loop slept the hint inline before joining, so a fetch
+  completing 50 ms into a 1 s hint was not serviced for another 950 ms
+  (defect 5). `source::may_spawn_fetch` is removed (the scheduler owns the
+  bound).
 
 ### Changed (breaking) — W2b-1
 - **A single `CancellationToken` replaces the `watch<bool>` shutdown.** The
