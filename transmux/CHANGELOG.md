@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The Annex B start-code scan (`find_start_code_prefix`, behind every NAL and access-unit
+  splitter) finds each `01` byte with `memchr` instead of testing every offset. Same results,
+  `annexb_to_length_prefixed` 2.6–4.7× faster and `StreamingTsDemux` 13–39 % less time on the
+  H.264 fixtures (new `annexb_scan` bench). Adds a `memchr` dependency
+  (`default-features = false`, so the crate stays `no_std`).
+
 ### Added
 - `dash::xs_duration(Duration) -> String` is public: the workspace's one ISO 8601 / `xs:duration` spelling (jiff `SpanPrinter`); a duration beyond `i64::MAX` seconds saturates to the largest representable value. `multimux` now calls it instead of its own copy (#1216).
 
