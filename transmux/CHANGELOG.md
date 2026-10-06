@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The Annex B start-code scan (`find_start_code_prefix`, behind every NAL and access-unit
+  splitter) finds each `01` byte with `memchr` instead of testing every offset. Same results,
+  `annexb_to_length_prefixed` 2.6–4.7× faster and `StreamingTsDemux` 13–39 % less time on the
+  H.264 fixtures (new `annexb_scan` bench). Adds a `memchr` dependency
+  (`default-features = false`, so the crate stays `no_std`).
+
 ### Added (subtitles in manifests, #1243)
 - `DashPackager` writes a subtitle track as an `AdaptationSet` with `contentType="text"`, `mimeType="application/mp4"` and `Representation@codecs` `stpp` (TTML/IMSC) or `wvtt` (WebVTT), after the video and audio sets (ETSI TS 103 285 §7.1.1; bare `stpp` is the form that clause allows when no TTML profile is declared, and the `stpp` sample entry carries none). New `MediaKind::Text`. `rfc6381_codec_string` returns `stpp` / `wvtt` for such a track; a `Subtitle` track with no ISOBMFF sample entry (TS DVB / Teletext) is still `UnsupportedCodec`.
 - `SmoothPackager` writes a subtitle track as `StreamIndex Type="text" Subtype="SUBT"` with `QualityLevel FourCC="stpp"` / `"wvtt"` and the samples as ordinary Smooth fragments ([MS-SSTR] §2.2.2.3 / §2.2.2.5). New `SmoothStreamType::Text`, `FOURCC_STPP`, `FOURCC_WVTT`, `SUBTYPE_SUBT`. The error for any other unsupported codec now names subtitles as supported.
