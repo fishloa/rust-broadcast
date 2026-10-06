@@ -49,14 +49,23 @@ pub fn iter_annexb_nals(annexb: &[u8]) -> AnnexBNalIter<'_> {
 /// `au::first_nal_start`, the streaming splitter's resumable scan,
 /// `au::start_code_len` and `mpeg_legacy::find_start_code` all go through it
 /// (audit r04-O1 / #1141), so a fix here reaches every scanner.
+///
+/// A prefix at `q` has its `01` at `q + 2`, so this looks for each `01` byte
+/// with `memchr` and checks the two bytes before it, rather than testing every
+/// offset: coded video carries few `01` bytes, and every H.264/HEVC access unit
+/// is scanned more than once on the TS → CMAF path. When the two bytes before
+/// a `01` are not `00 00`, no prefix can start at or before that `01`, so the
+/// next search begins just past it. The result is the same as the
+/// byte-by-byte scan's (`find_start_code_prefix_matches_byte_by_byte_scan`).
 pub(crate) fn find_start_code_prefix(data: &[u8], from: usize) -> Option<usize> {
     let n = data.len();
     let mut p = from;
     while p + 3 <= n {
-        if data[p] == 0 && data[p + 1] == 0 && data[p + 2] == 1 {
-            return Some(p);
+        let i = p + 2 + memchr::memchr(1, &data[p + 2..])?;
+        if data[i - 1] == 0 && data[i - 2] == 0 {
+            return Some(i - 2);
         }
-        p += 1;
+        p = i - 1;
     }
     None
 }
@@ -259,6 +268,70 @@ mod tests {
         assert_eq!(find_start_code_prefix(&d, 7), None);
         assert_eq!(find_start_code_prefix(&d, 99), None);
         assert_eq!(start_code_positions(&d), vec![1, 6]);
+    }
+
+    /// The scan `find_start_code_prefix` replaced: test every offset.
+    fn find_start_code_prefix_byte_by_byte(data: &[u8], from: usize) -> Option<usize> {
+        let mut p = from;
+        while p + 3 <= data.len() {
+            if data[p] == 0 && data[p + 1] == 0 && data[p + 2] == 1 {
+                return Some(p);
+            }
+            p += 1;
+        }
+        None
+    }
+
+    fn assert_same_as_byte_by_byte(d: &[u8]) {
+        for from in 0..=d.len() + 1 {
+            assert_eq!(
+                find_start_code_prefix(d, from),
+                find_start_code_prefix_byte_by_byte(d, from),
+                "from {from} in {d:02x?}"
+            );
+        }
+    }
+
+    #[test]
+    fn find_start_code_prefix_matches_byte_by_byte_scan() {
+        let fixed: [&[u8]; 13] = [
+            b"",
+            b"\x01",
+            b"\x00\x00\x01",
+            b"\x00\x00\x01\x09",
+            b"\x00\x00\x00\x01\x67\x42\x00\x00\x01\x68",
+            b"\x01\x00\x00\x01\x41",
+            b"\x00\x01\x00\x00\x01\x00\x00\x01\x65",
+            b"\x00\x00\x01\x00\x00\x01",
+            b"\x00\x00\x00\x00\x00\x01\x06\x00\x00",
+            b"\x00\x00\x01\x01\x01\x00\x00\x01\x01",
+            b"\x00\x00\x02\x00\x00\x01\x09\x10\x00\x00\x00",
+            b"\x01\x01\x01\x00\x01\x00\x00",
+            b"\x09\x00\x00\x01\x00\x00\x00\x01\x00\x00\x01",
+        ];
+        for d in fixed {
+            assert_same_as_byte_by_byte(d);
+        }
+        // xorshift64 runs weighted towards the bytes a prefix is made of, so
+        // prefixes, near misses and overlapping runs are common.
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut rnd = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed
+        };
+        for _ in 0..5_000 {
+            let len = (rnd() % 96) as usize;
+            let d: Vec<u8> = (0..len)
+                .map(|_| match rnd() % 8 {
+                    0..=3 => 0,
+                    4 | 5 => 1,
+                    _ => rnd() as u8,
+                })
+                .collect();
+            assert_same_as_byte_by_byte(&d);
+        }
     }
 
     #[test]
