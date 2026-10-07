@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- The H.264 I-slice check behind `StreamingTsDemux`'s random-access-point detection unescapes
+  only the first 32 bytes of each slice NAL, enough for the two `ue(v)` slice-header fields it
+  reads, instead of copying the whole slice. Same results, 17–44 % less `StreamingTsDemux` time
+  on the H.264 fixtures on top of the `memchr` start-code scan.
+
 ## [0.25.0] - 2026-10-05
 
 ### Security

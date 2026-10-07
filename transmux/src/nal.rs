@@ -337,6 +337,10 @@ pub fn access_unit_is_rap(codec: NalCodec, au: &[u8], length_prefixed: bool) -> 
     }
 }
 
+/// Escaped bytes after the NAL header that [`avc_is_i_slice`] unescapes:
+/// enough for its two `ue(v)`s whatever they hold (see there).
+const SLICE_HEADER_PREFIX: usize = 32;
+
 /// Whether an AVC NAL is an I-slice (or SI-slice) — `slice_type` 2 or 7 modulo
 /// 5, ITU-T H.264 §7.4.3 Table 7-6.
 ///
@@ -350,7 +354,18 @@ fn avc_is_i_slice(nal: &[u8]) -> bool {
     // `with_unescape` both skips the 1-byte NAL header and strips
     // `emulation_prevention_three_byte` (§7.4.1), which is what the slice
     // header's `ue(v)`s are read from.
-    let Ok(mut r) = BitReader::with_unescape(&nal[1..], "AVC slice header") else {
+    //
+    // Only the first `SLICE_HEADER_PREFIX` bytes are unescaped, not the whole
+    // slice (a copy of every picture, per access unit). `read_ue` gives up
+    // after 33 zero bits and otherwise reads at most 65 bits, so the two
+    // `ue(v)`s never look past bit 130 (17 RBSP bytes). 32 escaped bytes
+    // unescape to at least 22 (at most one `emulation_prevention_three_byte`
+    // per three bytes), and the RBSP of a prefix is a prefix of the RBSP, so
+    // the answer is the same as unescaping all of it.
+    let Ok(mut r) = BitReader::with_unescape(
+        &nal[1..nal.len().min(1 + SLICE_HEADER_PREFIX)],
+        "AVC slice header",
+    ) else {
         return false;
     };
     // first_mb_in_slice(ue), then slice_type(ue).
@@ -780,6 +795,12 @@ mod tests {
             avc_is_i_slice(&[0x41, 0x88]),
             "slice_type 7 = I (7 % 5 = 2)"
         );
+        // Longest valid `first_mb_in_slice` (32 leading zeros, 65 bits) with
+        // emulation-prevention bytes, then `slice_type` 2, inside a slice far
+        // longer than the unescaped prefix. RBSP `00 00 00 00 80 00 00 00 30`.
+        let mut long = vec![0x41, 0, 0, 3, 0, 0, 0x80, 0, 0, 3, 0, 0x30];
+        long.extend([0xFF; 1000]);
+        assert!(avc_is_i_slice(&long), "long ue(v) + escapes, I-slice");
         // Non-VCL NAL types are never slices.
         assert!(!avc_is_i_slice(&[0x67, 0xB0]), "SPS is not a slice");
         // Too short / unparseable: false, never a panic.
