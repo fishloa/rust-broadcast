@@ -62,7 +62,7 @@ No `unsafe impl Send/Sync`, no raw-pointer dereference, no uninitialised memory 
 | P2 | `multimux/src/origin/admin.rs:153,160,177,441,442,631` | `expect("armed")` x6 and `expect("... called twice")`: a runtime state flag standing in for a type. Use a type-state (`Pending` -> `Armed`) so the invalid state is unrepresentable. | Medium |
 | P3 | `dvb-si/src/tables/*.rs` (76 sites; e.g. `bat.rs:123`, `ait.rs:328`, `compatibility.rs:277`, `demux.rs:449`) | `u16::from_be_bytes(*bytes[..].first_chunk::<2>().unwrap())` after `check_section_length`. Guarded today, but the guard is far from the use and the project parses untrusted broadcast data. Introduce one checked reader (`be_u16(bytes, off) -> Result`) and delete the unwraps. | Medium (robustness) |
 | P4 | `transmux/src/init_segment.rs:742-745, 910-913` | `bytes[a..b].try_into().unwrap()` guarded by `bytes.len() < need` at `:730`. Same pattern as P3. | Low |
-| P5 | `hls-runtime/src/server/engine.rs:1261,1367,1386,1448,1453,1455` | `expect` on `Duration::from_secs_f64` / finite-float invariants; use `Duration::try_from_secs_f64` and propagate. | Low |
+| P5 | `hls-runtime/src/server/engine.rs` | **Withdrawn (false positive).** Verified on fix: every `Duration::from_secs_f64` is inside `#[cfg(test)] mod tests` (line 1683+); production `expect`s are on `DecimalSeconds::new(as_secs_f64())` / `u32/1000.0`, finite and non-negative by type. | None |
 | P6 | `multimux/src/source/whip.rs:1314-1316` | std-mutex poison `expect` plus a take-once `expect("... already taken")`. See section 2. | Low |
 
 - **Lost error context.** `map_err(|_| ...)` appears 56x in `transmux`, 24x in `srt-runtime`, 20x in `st377-1`. Most are `TryFromIntError` -> a typed error carrying a field name (fine); I did not review each *(unverified)*. Ignored send/write results: `transmux` 3, `multimux` 1 (channel-closed `let _ = tx.send(..)` pattern, usually intended).
@@ -104,3 +104,7 @@ No `unsafe impl Send/Sync`, no raw-pointer dereference, no uninitialised memory 
 **Major / needs an owner decision**
 11. U1/U2: the Linux CA `ioctl` calls cannot be made safe by any crate swap. Decide: quarantine one documented `unsafe` module (policy exception), or remove the device back-end.
 12. `Pid`/`TrackId`/`Timescale` newtypes across public APIs (breaking: schedule with the next major-class release).
+
+## Remediation status (branch `audit/rust-audit-report-udp-bind`)
+
+Done: U3/U6 (dvb-csa uses the `zeroize` crate), U4 (`SockRef`), U5 (rustix mkfifoat/poll), U1/U2 quarantined in a private `ioctl` module with a layout test (Linux-gated tests cross-compiled and linted only, not executed on macOS), U7 (one `test-alloc` crate, bounds proven to bite), P1 (breaking: new `RtmpError::InvalidChunkStreamId`), P2, P3/P4 (0 production `first_chunk/try_into().unwrap()` left in dvb-si and transmux), P6. P5 withdrawn. Remaining: workspace lints/dependencies, patch bumps, `tower-http` alignment, newtypes (breaking, deferred).
