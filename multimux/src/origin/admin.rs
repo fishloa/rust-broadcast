@@ -131,35 +131,74 @@ impl std::fmt::Debug for RouteRuntime {
 /// one — because a later step in the same `add_route`/`reload` failed, or a
 /// panic unwound — cancels its push/WHEP tasks and aborts its supervisor, so
 /// a half-built route can never leave a dialer or a bound listen port behind
-/// (audit run 7, W6/A2). [`Self::into_installed`] disarms the guard and takes
-/// the runtime out, so an installed runtime is *not* torn down on drop; the
-/// registry owns it from then on and tears it down via [`drain_route`].
+/// (audit run 7, W6/A2). [`Self::into_installed`] disarms the rollback and
+/// hands the runtime over, so an installed runtime is *not* torn down on
+/// drop; the registry owns it from then on and tears it down via
+/// [`drain_route`].
+///
+/// The runtime is held unconditionally (never behind an `Option`) and the
+/// rollback lives in a separate [`RollbackGuard`] that owns only cancel/abort
+/// handles, so `PendingRuntime` itself has no `Drop` and
+/// [`Self::into_installed`] can consume it by value: "installed twice" and
+/// "accessed after install" are unrepresentable (audit P2).
 struct PendingRuntime {
-    runtime: Option<RouteRuntime>,
+    runtime: RouteRuntime,
+    rollback: RollbackGuard,
+}
+
+/// The teardown half of a [`PendingRuntime`]: cancels the route's token and
+/// aborts every task it spawned unless [`Self::disarm`]ed first.
+struct RollbackGuard {
+    cancel: tokio_util::sync::CancellationToken,
+    aborts: Vec<tokio::task::AbortHandle>,
     armed: bool,
+}
+
+impl RollbackGuard {
+    /// Consume the guard without tearing anything down.
+    fn disarm(mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for RollbackGuard {
+    fn drop(&mut self) {
+        if !self.armed {
+            return;
+        }
+        self.cancel.cancel();
+        for h in &self.aborts {
+            h.abort();
+        }
+    }
 }
 
 impl PendingRuntime {
     fn new(runtime: RouteRuntime) -> Self {
+        let mut aborts = vec![runtime.handle.abort_handle()];
+        aborts.extend(runtime.push_handles.iter().map(|h| h.abort_handle()));
         PendingRuntime {
-            runtime: Some(runtime),
-            armed: true,
+            rollback: RollbackGuard {
+                cancel: runtime.cancel.clone(),
+                aborts,
+                armed: true,
+            },
+            runtime,
         }
     }
 
     /// The guarded runtime's store — for spawning push/WHEP outputs against
     /// it *before* the runtime is fully assembled (item 7).
     fn store(&self) -> Arc<RouteHandle> {
-        Arc::clone(&self.runtime.as_ref().expect("armed").store)
+        Arc::clone(&self.runtime.store)
     }
 
     /// Attach the push/WHEP handles spawned against this guard's store.
     fn with_push_handles(mut self, handles: Vec<tokio::task::JoinHandle<()>>) -> Self {
-        self.runtime
-            .as_mut()
-            .expect("armed")
-            .push_handles
-            .extend(handles);
+        self.rollback
+            .aborts
+            .extend(handles.iter().map(|h| h.abort_handle()));
+        self.runtime.push_handles.extend(handles);
         self
     }
 
@@ -170,27 +209,10 @@ impl PendingRuntime {
     }
 
     /// Take the runtime out for installation, disarming the rollback.
-    fn into_installed(mut self) -> RouteRuntime {
-        self.armed = false;
-        self.runtime
-            .take()
-            .expect("PendingRuntime::into_installed called twice")
-    }
-}
-
-impl Drop for PendingRuntime {
-    fn drop(&mut self) {
-        if !self.armed {
-            return;
-        }
-        let Some(runtime) = self.runtime.take() else {
-            return;
-        };
-        runtime.cancel.cancel();
-        runtime.handle.abort();
-        for h in runtime.push_handles {
-            h.abort();
-        }
+    fn into_installed(self) -> RouteRuntime {
+        let PendingRuntime { runtime, rollback } = self;
+        rollback.disarm();
+        runtime
     }
 }
 
@@ -438,8 +460,8 @@ impl RouteRegistry {
             streams.insert(
                 route.name.clone(),
                 (
-                    Arc::clone(&pending.runtime.as_ref().expect("armed").store),
-                    pending.runtime.as_ref().expect("armed").outputs.clone(),
+                    Arc::clone(&pending.runtime.store),
+                    pending.runtime.outputs.clone(),
                 ),
             );
             std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.build_router(streams)))
@@ -628,7 +650,7 @@ impl RouteRegistry {
                 streams.remove(name);
             }
             for (route, pending) in &prepared {
-                let runtime = pending.runtime.as_ref().expect("armed");
+                let runtime = &pending.runtime;
                 streams.insert(
                     route.name.clone(),
                     (Arc::clone(&runtime.store), runtime.outputs.clone()),
