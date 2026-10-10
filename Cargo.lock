@@ -1069,6 +1069,7 @@ dependencies = [
  "dvb-si",
  "serde",
  "serde_json",
+ "test-alloc",
  "thiserror 2.0.21",
 ]
 
@@ -1082,6 +1083,7 @@ dependencies = [
  "dvb-si",
  "libc",
  "rustix",
+ "test-alloc",
  "thiserror 2.0.21",
 ]
 
@@ -1132,6 +1134,7 @@ dependencies = [
  "num_enum",
  "serde",
  "serde_json",
+ "test-alloc",
  "thiserror 2.0.21",
  "yoke 0.7.5",
 ]
@@ -3823,6 +3826,7 @@ dependencies = [
  "mp4-emsg",
  "scte35-splice",
  "serde",
+ "test-alloc",
  "thiserror 2.0.21",
 ]
 
@@ -3944,6 +3948,10 @@ dependencies = [
  "quote",
  "syn 2.0.119",
 ]
+
+[[package]]
+name = "test-alloc"
+version = "0.1.0"
 
 [[package]]
 name = "test-bounded"
@@ -4320,6 +4328,7 @@ dependencies = [
  "sdp-types",
  "serde",
  "serde_json",
+ "test-alloc",
  "thiserror 2.0.21",
  "timed-metadata",
  "url",
