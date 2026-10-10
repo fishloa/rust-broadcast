@@ -28,7 +28,7 @@ thiserror = { version = "2" }
 serde = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 # WHIP/WHEP state machines speak `http`/`headers` types (SP2.2): the core is `std`.
 http        = "1"
-headers     = "0.4"
+headers     = { workspace = true }
 
 # ---------------------------------------------------------------------------
 # `media` feature only (see src/media/mod.rs). All optional: the default
@@ -52,7 +52,7 @@ bytes       = { version = "1",    optional = true }
 # feasibility spike used.
 sha2        = { version = "0.11", optional = true }
 # SDP fingerprint via typed attributes (SP4) and `stun:` host formatting (SP3).
-sdp-types   = { version = "0.2", optional = true }
+sdp-types   = { workspace = true, optional = true }
 url         = { version = "2", optional = true }
 
 [features]
@@ -87,10 +87,10 @@ media = [
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 # The WHIP-lite example's signalling endpoint (Task 10).
-axum  = "0.8"
+axum  = { workspace = true }
 # The WHIP-lite example reads the offer and writes the answer with `sdp-types`
 # (also the `media` feature's optional dependency; examples resolve dev-deps).
-sdp-types = "0.2"
+sdp-types = { workspace = true }
 # Fixture-verification only (tests/srtp_rfc3711_vectors.rs): an independent,
 # from-spec-text AES-CM + HMAC-SHA1 implementation used to cross-check
 # rtc-srtp's own output against the RFC 3711 Appendix B test vectors. These

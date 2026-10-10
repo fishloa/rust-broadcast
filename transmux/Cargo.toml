@@ -24,7 +24,7 @@ jiff       = { version = "0.2", default-features = false, features = ["std"], op
 # BaseURL / URL-reference resolution (SP3, `base_url`): WHATWG `Url::join`. `std`-only.
 url        = { version = "2", optional = true }
 # RTP SDP generation (SP4): `Session::write`. `sdp-types` 0.2 is `std`-only, so SDP generation is `std`-only; tests/rtp.rs also uses its parser as an oracle.
-sdp-types  = { version = "0.2", optional = true }
+sdp-types  = { workspace = true, optional = true }
 serde      = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 # HLS (M3U8) playlist syntax (issue #878): the `ts_hls`/`ll_hls` segmenters
 # produce `broadcast_hls::MediaPlaylist`/`MediaSegment` values; the playlist
@@ -40,11 +40,11 @@ bytes      = { version = "1", default-features = false }
 # XML codec for the DASH MPD / Smooth Streaming / PlayReady WRMHEADER paths: the
 # only XML dependency of the crates that read or write XML (transmux,
 # dvb-mabr, ttml-subtitle, multimux). std-only (quick-xml needs std).
-quick-xml  = { version = "0.42", default-features = false, optional = true }
+quick-xml  = { workspace = true, optional = true }
 aes        = { version = "0.9", default-features = false, optional = true }
 ctr        = { version = "0.10", default-features = false, optional = true }
 cbc        = { version = "0.2", default-features = false, optional = true }
-clap       = { version = "4.5", features = ["derive"], optional = true }
+clap       = { workspace = true, optional = true, features = ["derive"] }
 # `cli` container detection (issue #960 / audit r05-W29): the CLI's
 # `detect_container` used a fixed-offset TS check that missed M2TS (192-byte
 # stride) and mid-packet captures; `container-probe` is the crate built to
@@ -84,7 +84,7 @@ test-alloc = { path = "../test-alloc" }
 # golden_gate.rs (issue #569) shells out to `ffprobe -of json` and parses the
 # result; already resolved workspace-wide at this version (see Cargo.lock), so
 # this adds no new dependency to the tree.
-serde_json   = "1.0"
+serde_json   = { workspace = true }
 # ssai_ad_stitch.rs (issue #664) wires transmux's splice/HLS/DASH machinery to
 # the SCTE-35 cue parser and the SCTE-35<->HLS-DATERANGE/DASH-emsg conversion
 # crate. Dev-dependency only: transmux itself stays free of a SCTE-35

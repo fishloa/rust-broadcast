@@ -29,7 +29,7 @@ thiserror     = { version = "2", default-features = false }
 jiff          = { version = "0.2", default-features = false, features = ["alloc"] }
 # Hex codec for DATERANGE `SCTE35-*` attributes (SP5); `alloc` only, so the crate stays no_std.
 hex           = { version = "0.4", default-features = false, features = ["alloc"] }
-chrono        = { version = "0.4", default-features = false, optional = true }
+chrono        = { workspace = true, optional = true }
 serde         = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [dev-dependencies]

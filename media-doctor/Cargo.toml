@@ -32,17 +32,17 @@ broadcast-hls    = { path = "../broadcast-hls", version = "0.3", default-feature
 # or uses the 192-byte M2TS / 204-byte RS framing, must still be routed to the
 # TS diagnostics. Only the binary needs it, so it is behind `cli`.
 container-probe  = { path = "../container-probe", version = "0.1", optional = true, default-features = false }
-clap             = { version = "4", features = ["derive"], optional = true }
+clap             = { workspace = true, optional = true, features = ["derive"] }
 serde            = { version = "1", features = ["derive", "alloc"], optional = true }
-serde_json       = { version = "1", optional = true }
+serde_json       = { workspace = true, optional = true }
 thiserror        = { version = "2", optional = true }
 # Prometheus exposition for `watch` (de-hand-roll W1-P, SP2.3): the exporter's
 # recorder + `PrometheusHandle::render()` do the text format (HELP/TYPE,
 # label escaping). `default-features = false`: no listener, no push gateway —
 # its built-in listener has no header-read timeout, no connection cap and no
 # way to learn a port-0 address, so serving is `metrics_server` (hyper).
-metrics                     = { version = "0.24", optional = true }
-metrics-exporter-prometheus = { version = "0.18", default-features = false, optional = true }
+metrics                     = { workspace = true, optional = true }
+metrics-exporter-prometheus = { workspace = true, optional = true }
 # `watch` metrics server (de-hand-roll W1-P, SP2.3 / SP1.6): hyper does the HTTP
 # framing; tokio-util owns the connection tasks and the shutdown token;
 # socket2 binds the UDP socket (`udp`).
@@ -51,7 +51,7 @@ tokio-util                  = { version = "0.7", default-features = false, featu
 hyper                       = { version = "1", default-features = false, features = ["server", "http1"], optional = true }
 hyper-util                  = { version = "0.1", default-features = false, features = ["tokio"], optional = true }
 http-body-util              = { version = "0.1", optional = true }
-socket2                     = { version = "0.6", features = ["all"], optional = true } # `all` is required for `Socket::set_reuse_port` (cfg(feature = "all") at socket2-0.6.5/src/sys/unix.rs:2237)
+socket2                     = { workspace = true, optional = true, features = ["all"] }
 
 [features]
 default = ["std", "serde", "cli"]

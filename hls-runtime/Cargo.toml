@@ -50,7 +50,7 @@ url               = { version = "2", default-features = false }
 jiff              = { version = "0.2", default-features = false, features = ["alloc"] }
 # `tokio` feature only: retries with jitter (SP1.5), typed Range (SP2), cancellation (SP1.4).
 backon            = { version = "1", optional = true, default-features = false, features = ["std"] }
-headers           = { version = "0.4", optional = true }
+headers           = { workspace = true, optional = true }
 tokio-util        = { version = "0.7", optional = true, default-features = false, features = ["rt"] }
 
 [features]
@@ -79,7 +79,7 @@ tokio             = { version = "1", features = ["net", "io-util", "rt", "macros
 # byte-identical `tests/support/bounded.rs` files it replaced); this is a
 # path-only dev-dep, so it never reaches a published manifest.
 test-bounded      = { path = "../test-bounded" }
-axum              = "0.8"
+axum              = { workspace = true }
 
 [lints]
 workspace = true

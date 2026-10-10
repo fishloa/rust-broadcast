@@ -37,7 +37,7 @@ getrandom     = { version = "0.2", optional = true }
 http-auth     = { version = "0.1", default-features = false }
 # Framed adapters (SP1.1). `codec` = Decoder/Encoder/Framed.
 tokio-util    = { version = "0.7", optional = true, default-features = false, features = ["codec"] }
-futures-util  = { version = "0.3", optional = true, default-features = false, features = ["sink", "std"] }
+futures-util  = { workspace = true, optional = true, features = ["sink", "std"] }
 bytes         = { version = "1", optional = true }
 
 [features]
@@ -51,7 +51,7 @@ tls   = ["tokio", "dep:tokio-rustls", "dep:rustls", "dep:webpki-roots"]
 
 [dev-dependencies]
 tokio     = { version = "1", features = ["full", "test-util"] }
-sdp-types = "0.2"
+sdp-types = { workspace = true }
 
 [lints]
 workspace = true

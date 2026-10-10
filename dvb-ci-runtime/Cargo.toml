@@ -27,7 +27,7 @@ broadcast-common = { path = "../broadcast-common", version = "9.4", default-feat
 thiserror  = { version = "2" }
 libc       = { version = "0.2.108", optional = true } # `libc::Ioctl` (used in linux.rs) first appears in 0.2.108
 rustix     = { version = "1", default-features = false, features = ["std", "event", "fs"], optional = true } # `rustix::event::poll` replaces `libc::poll` (de-hand-roll SP6.7)
-clap       = { version = "4.5", optional = true, features = ["derive"] }
+clap       = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]
 # Counting test allocator (path-only, publish = false; never published).

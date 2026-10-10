@@ -29,7 +29,7 @@ media-plane      = { path = "../media-plane",      version = "0.5",   default-fe
 # `#[cfg(feature = "std")]`-gated — see e.g. `src/lib.rs`'s `feed_ts_packet`.
 # A `--no-default-features` build still runs every check in this crate; it
 # just cannot report through the facade.
-metrics          = { version = "0.24", optional = true }
+metrics          = { workspace = true, optional = true }
 
 [features]
 default = ["std"]
@@ -53,7 +53,7 @@ std = [
 # text so tests can assert on it, exactly the pattern `multimux::prometheus`
 # uses for its own `install()` — see that module for why `build_recorder`
 # (no upkeep thread) rather than `install_recorder()`.
-metrics-exporter-prometheus = { version = "0.18", default-features = false }
+metrics-exporter-prometheus = { workspace = true }
 # Test-only: `media_plane::ByteTap::record`/`TapItem::Data` are typed on
 # `bytes::Bytes`; tests build these directly rather than going through a real
 # ingest session.
