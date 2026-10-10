@@ -28,11 +28,10 @@ trait RecvBufProbe {
 
 impl RecvBufProbe for tokio::net::UdpSocket {
     fn recv_buffer_size_for_test(&self) -> usize {
-        use std::os::fd::{AsRawFd, FromRawFd};
-        let sock = unsafe { socket2::Socket::from_raw_fd(self.as_raw_fd()) };
-        let got = sock.recv_buffer_size().expect("SO_RCVBUF readable");
-        std::mem::forget(sock); // do not close the borrowed fd
-        got
+        // `SockRef` borrows the fd: no ownership, no close on drop, no unsafe.
+        socket2::SockRef::from(self)
+            .recv_buffer_size()
+            .expect("SO_RCVBUF readable")
     }
 }
 
