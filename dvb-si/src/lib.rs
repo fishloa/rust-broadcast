@@ -192,6 +192,7 @@ pub mod table_id;
 pub mod tables;
 pub mod text;
 pub mod traits;
+pub(crate) mod wire;
 
 #[cfg(feature = "yoke")]
 pub mod owned;

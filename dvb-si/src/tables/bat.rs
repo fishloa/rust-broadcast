@@ -120,7 +120,7 @@ impl<'a> Parse<'a> for BatSection<'a> {
         // bytes[5]    = reserved(2) | version_number(5) | current_next_indicator(1)
         // bytes[6]    = section_number
         // bytes[7]    = last_section_number
-        let bouquet_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
+        let bouquet_id = crate::wire::be_u16(bytes, 3, "bat")?;
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
@@ -177,8 +177,8 @@ impl<'a> Parse<'a> for BatSection<'a> {
             }
 
             let hdr = &bytes[pos..pos + TS_HEADER_LEN];
-            let transport_stream_id = u16::from_be_bytes(*hdr[0..].first_chunk::<2>().unwrap());
-            let original_network_id = u16::from_be_bytes(*hdr[2..].first_chunk::<2>().unwrap());
+            let transport_stream_id = crate::wire::be_u16(hdr, 0, "bat")?;
+            let original_network_id = crate::wire::be_u16(hdr, 2, "bat")?;
             let transport_descriptors_length =
                 super::desc_loop_len_of(bytes[pos + 4], bytes[pos + 5]);
 
