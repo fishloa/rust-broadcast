@@ -29,6 +29,10 @@ libc       = { version = "0.2.108", optional = true } # `libc::Ioctl` (used in l
 rustix     = { version = "1", default-features = false, features = ["std", "event", "fs"], optional = true } # `rustix::event::poll` replaces `libc::poll` (de-hand-roll SP6.7)
 clap       = { version = "4.5", optional = true, features = ["derive"] }
 
+[dev-dependencies]
+# Counting test allocator (path-only, publish = false; never published).
+test-alloc = { path = "../test-alloc" }
+
 [features]
 default = []
 # `linux` adds the `/dev/dvb/adapterN/caM` CaDevice + the `ci-probe` CLI

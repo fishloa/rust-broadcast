@@ -22,10 +22,6 @@
 
 #![cfg(feature = "flate2")]
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
-use std::ptr::null_mut;
-
 use dvb_si::carousel::biop::message::{decompress_zlib, decompress_zlib_bounded};
 use flate2::{Compression, write::ZlibEncoder};
 use std::io::Write;
@@ -37,48 +33,8 @@ use std::io::Write;
 /// rather than exhausting the host.
 const BUDGET: usize = 256 << 20;
 
-thread_local! {
-    /// Bytes currently allocated by this thread (`alloc`/`realloc` add,
-    /// `dealloc` subtracts).
-    static LIVE_BYTES: Cell<usize> = const { Cell::new(0) };
-}
-
-struct CappedAlloc;
-
-unsafe impl GlobalAlloc for CappedAlloc {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let live = LIVE_BYTES.with(Cell::get);
-        if live.saturating_add(layout.size()) > BUDGET {
-            return null_mut();
-        }
-        let ptr = unsafe { System.alloc(layout) };
-        if !ptr.is_null() {
-            LIVE_BYTES.with(|c| c.set(live + layout.size()));
-        }
-        ptr
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        LIVE_BYTES.with(|c| c.set(c.get().saturating_sub(layout.size())));
-        unsafe { System.dealloc(ptr, layout) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let live = LIVE_BYTES.with(Cell::get);
-        let net_live = live.saturating_sub(layout.size()).saturating_add(new_size);
-        if net_live > BUDGET {
-            return null_mut();
-        }
-        let new_ptr = unsafe { System.realloc(ptr, layout, new_size) };
-        if !new_ptr.is_null() {
-            LIVE_BYTES.with(|c| c.set(net_live));
-        }
-        new_ptr
-    }
-}
-
 #[global_allocator]
-static GLOBAL: CappedAlloc = CappedAlloc;
+static GLOBAL: test_alloc::ThreadCapped<BUDGET> = test_alloc::ThreadCapped::new();
 
 /// Build a zlib stream that decompresses to `total_len` zero bytes, without
 /// ever materializing `total_len` bytes in memory at once (that would itself

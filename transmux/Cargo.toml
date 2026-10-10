@@ -79,6 +79,8 @@ sample-aes = ["cenc", "cbc/alloc", "cbc/block-padding"]
 cli    = ["dep:clap", "dep:container-probe", "std"]
 
 [dev-dependencies]
+# Counting/capping test allocator (path-only, publish = false; never published).
+test-alloc = { path = "../test-alloc" }
 # golden_gate.rs (issue #569) shells out to `ffprobe -of json` and parses the
 # result; already resolved workspace-wide at this version (see Cargo.lock), so
 # this adds no new dependency to the tree.
