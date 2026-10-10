@@ -41,3 +41,6 @@ serde = ["dep:serde"]
 # dvb-si's `yoke` feature) — retain a parsed view past the input buffer's
 # borrow without a re-parse.
 yoke  = ["dep:yoke"]
+
+[lints]
+workspace = true

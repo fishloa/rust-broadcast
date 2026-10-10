@@ -42,3 +42,6 @@ default = ["std"]
 std = ["broadcast-common/std", "broadcast-hls/std", "thiserror/std", "serde?/std"]
 # Derive serde on the public wire/decision types.
 serde = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde"]
+
+[lints]
+workspace = true

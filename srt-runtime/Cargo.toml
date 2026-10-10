@@ -72,3 +72,6 @@ crypto = ["dep:aes", "dep:ctr", "dep:aes-kw", "dep:pbkdf2", "dep:hmac", "dep:sha
 # engines (handshake, ARQ, TSBPD, LiveCC). Implies `std`. Only available on
 # hosted targets — the `no_std` packet-codec core stays clean without it.
 tokio = ["dep:tokio", "dep:getrandom", "dep:bytes", "dep:tokio-util", "std"]
+
+[lints]
+workspace = true

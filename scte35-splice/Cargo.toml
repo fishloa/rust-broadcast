@@ -36,3 +36,6 @@ std  = ["broadcast-common/std", "thiserror/std"]
 # JSON / generic serialization on parsed + owned variants (Serialize-only,
 # mirroring the workspace posture — there is no Deserialize).
 serde = ["dep:serde"]
+
+[lints]
+workspace = true

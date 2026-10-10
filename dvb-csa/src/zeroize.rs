@@ -56,11 +56,14 @@ mod tests {
     /// `u8` has no validity invariant, so reading plain bytes back from
     /// still-live (not yet reused) stack storage is sound.
     #[test]
+    #[allow(unsafe_code)]
     fn zeroizing_wrapper_clears_its_storage_on_drop() {
         // Run only `Drop` while keeping the storage owned, so reading it afterwards is sound.
         let mut slot = core::mem::ManuallyDrop::new(Zeroizing([
             0x11u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
         ]));
+        // SAFETY: `slot` is a live, aligned, exclusively-borrowed ManuallyDrop, so
+        // the pointee is valid; Drop runs exactly once (ManuallyDrop never re-drops).
         unsafe { core::ptr::drop_in_place(&mut *slot) };
         assert_eq!(slot.0, [0u8; 8]);
     }

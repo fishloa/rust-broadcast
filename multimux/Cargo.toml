@@ -344,3 +344,6 @@ socket2          = "0.6"
 # `parking_lot::Mutex` so `tests/lock_recovery.rs` can prove the no-poison
 # property directly (the library uses it internally but does not re-export it).
 parking_lot      = "0.12"
+
+[lints]
+workspace = true

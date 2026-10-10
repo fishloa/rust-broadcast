@@ -93,3 +93,6 @@ mpeg-ts = { path = "../mpeg-ts", version = "0.5", default-features = false }
 [package.metadata.docs.rs]
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
+
+[lints]
+workspace = true

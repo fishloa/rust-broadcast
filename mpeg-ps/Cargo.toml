@@ -31,3 +31,6 @@ default = ["std"]
 # needs only `alloc`.
 std = ["broadcast-common/std", "mpeg-pes/std", "thiserror/std"]
 serde = ["dep:serde"]
+
+[lints]
+workspace = true

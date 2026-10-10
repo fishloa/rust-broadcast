@@ -36,3 +36,6 @@ name = "parse_partition"
 
 [[example]]
 name = "build_preface"
+
+[lints]
+workspace = true

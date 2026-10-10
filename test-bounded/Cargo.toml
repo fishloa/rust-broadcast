@@ -10,3 +10,6 @@ description = "Deadline-bounded external-tool runner shared by workspace test su
 
 [dependencies]
 wait-timeout = "0.2"
+
+[lints]
+workspace = true

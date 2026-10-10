@@ -27,3 +27,6 @@ serde = ["dep:serde", "dvb-si/serde"]
 
 [dev-dependencies]
 broadcast-common = { path = "../broadcast-common", version = "9.3" }
+
+[lints]
+workspace = true

@@ -61,3 +61,6 @@ required-features = ["std"]
 name              = "trunk_contention"
 harness           = false
 required-features = ["std"]
+
+[lints]
+workspace = true

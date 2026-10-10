@@ -31,3 +31,6 @@ serde_json = "1.0"
 default = ["std"]
 std = ["broadcast-common/std", "dvb-si/std", "thiserror/std"]
 serde = ["dep:serde"]
+
+[lints]
+workspace = true

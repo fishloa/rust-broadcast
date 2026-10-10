@@ -136,3 +136,6 @@ required-features = ["media"]
 [[test]]
 name              = "dtls_fingerprint"
 required-features = ["media"]
+
+[lints]
+workspace = true

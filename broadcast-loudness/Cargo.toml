@@ -26,3 +26,6 @@ libm       = { version = "0.2", default-features = false }
 [features]
 default = ["std"]
 std = ["broadcast-common/std", "thiserror/std"]
+
+[lints]
+workspace = true

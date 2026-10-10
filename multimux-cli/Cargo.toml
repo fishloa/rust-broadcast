@@ -27,3 +27,6 @@ path = "src/main.rs"
 # both into target/doc/multimux and race (cargo #6313). The binary's CLI is
 # documented by `--help`; the library docs are the API reference.
 doc  = false
+
+[lints]
+workspace = true

@@ -9,3 +9,6 @@ publish = false
 description = "Counting/capping global allocators shared by workspace allocation-bound tests (unpublished)."
 
 [dependencies]
+
+[lints]
+workspace = true

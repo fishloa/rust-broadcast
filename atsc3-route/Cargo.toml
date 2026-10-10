@@ -37,3 +37,6 @@ name = "parse_route_fdt"
 
 [[example]]
 name = "build_route_media_fragment"
+
+[lints]
+workspace = true

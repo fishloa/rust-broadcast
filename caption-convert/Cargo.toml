@@ -48,3 +48,6 @@ required-features = ["cc-data"]
 
 [[example]]
 name = "webvtt_to_srt"
+
+[lints]
+workspace = true

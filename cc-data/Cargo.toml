@@ -42,3 +42,6 @@ required-features = ["decode"]
 [[example]]
 name = "decode_cea708"
 required-features = ["decode"]
+
+[lints]
+workspace = true

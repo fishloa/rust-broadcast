@@ -39,3 +39,6 @@ default = []
 # (Linux-only; pulls `libc` for the DVB CA ioctls, `rustix` for the readiness poll and `clap` for the CLI). The
 # portable sans-IO core needs none of it.
 linux = ["dep:libc", "dep:rustix", "dep:clap"]
+
+[lints]
+workspace = true

@@ -36,3 +36,6 @@ default = ["udp"]
 # tokio's "net" feature is always present in [dependencies]; this feature flag
 # just gates the convenience constructors themselves.
 udp = ["dep:socket2", "tokio-util/net"]
+
+[lints]
+workspace = true

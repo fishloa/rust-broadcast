@@ -44,3 +44,6 @@ name = "parse_packet"
 [[example]]
 name = "rfc8285_extensions"
 required-features = ["rfc8285"]
+
+[lints]
+workspace = true

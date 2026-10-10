@@ -64,3 +64,6 @@ name = "fixture_report"
 
 [[example]]
 name = "byte_tap_live"
+
+[lints]
+workspace = true

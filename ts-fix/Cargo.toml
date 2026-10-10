@@ -42,3 +42,6 @@ scte35-splice = { path = "../scte35-splice", version = "3.0", default-features =
 [package.metadata.docs.rs]
 all-features = true
 features = ["std"]
+
+[lints]
+workspace = true

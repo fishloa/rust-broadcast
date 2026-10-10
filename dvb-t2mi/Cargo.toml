@@ -53,3 +53,6 @@ chrono  = ["dep:chrono", "broadcast-common/chrono"]
 # yoke::Yokeable on the zero-copy payload view types (mirrors dvb-si's `yoke`
 # feature) — own a parsed T2-MI payload past the input buffer's borrow.
 yoke    = ["dep:yoke"]
+
+[lints]
+workspace = true

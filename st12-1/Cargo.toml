@@ -36,3 +36,6 @@ name = "build_frame"
 
 [[example]]
 name = "parse_frame"
+
+[lints]
+workspace = true

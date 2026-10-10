@@ -64,3 +64,6 @@ ts = []
 # content core (`AncContent`) is always compiled, gated behind neither.
 rtp = ["dep:rtp-packet"]
 serde = ["dep:serde"]
+
+[lints]
+workspace = true

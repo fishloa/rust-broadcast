@@ -70,3 +70,6 @@ flate2   = ["dep:flate2", "std"]
 [[example]]
 name              = "list_services"
 required-features = ["ts"]
+
+[lints]
+workspace = true

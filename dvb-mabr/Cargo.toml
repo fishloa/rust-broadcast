@@ -29,5 +29,5 @@ thiserror         = { version = "2", default-features = false }
 default = ["std"]
 std     = ["broadcast-common/std", "thiserror/std", "dep:quick-xml"]
 
-[lints.rust]
-unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+[lints]
+workspace = true

@@ -52,3 +52,6 @@ tls   = ["tokio", "dep:tokio-rustls", "dep:rustls", "dep:webpki-roots"]
 [dev-dependencies]
 tokio     = { version = "1", features = ["full", "test-util"] }
 sdp-types = "0.2"
+
+[lints]
+workspace = true

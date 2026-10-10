@@ -46,3 +46,6 @@ name = "scramble_file"
 
 [[example]]
 name = "descramble_file"
+
+[lints]
+workspace = true

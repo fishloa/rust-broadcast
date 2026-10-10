@@ -9,3 +9,7 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/fishloa/rust-broadcast"
 rust-version = "1.95.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
