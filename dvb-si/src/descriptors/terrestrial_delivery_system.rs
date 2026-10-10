@@ -439,7 +439,7 @@ impl<'a> Parse<'a> for TerrestrialDeliverySystemDescriptor {
             });
         }
 
-        let centre_frequency_10hz = u32::from_be_bytes(body[0..4].try_into().unwrap());
+        let centre_frequency_10hz = crate::wire::be_u32(body, 0, "terrestrial_delivery_system")?;
 
         let byte4 = body[4];
         let bw_raw = (byte4 & BW_MASK) >> BW_SHIFT;

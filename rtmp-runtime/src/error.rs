@@ -47,6 +47,15 @@ pub enum RtmpError {
         what: &'static str,
     },
 
+    /// A [`crate::chunk::Message`] was built with a `chunk_stream_id` outside
+    /// the basic header's encodable range (2..=65599, RTMP §5.3.1.1), so it
+    /// cannot be written.
+    #[error("chunk stream id {chunk_stream_id} is outside the encodable range 2..=65599")]
+    InvalidChunkStreamId {
+        /// The offending chunk stream id.
+        chunk_stream_id: u32,
+    },
+
     /// A length or count did not fit the wire field it is written to
     /// (#1129): a serializer that narrowed a `usize` with `as u32` (then
     /// packed it into a 24-bit field) would have silently wrapped and

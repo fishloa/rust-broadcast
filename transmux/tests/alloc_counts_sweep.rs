@@ -3,37 +3,15 @@
 //! `#[global_allocator]` (thread-local counters, see `alloc_measurement.rs` for
 //! why) measures the calling thread only. Counts, never timings.
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
-
-struct CountingAlloc;
-
-thread_local! {
-    static ALLOC_COUNT: Cell<usize> = const { Cell::new(0) };
-    static ALLOC_BYTES: Cell<usize> = const { Cell::new(0) };
-}
-
-unsafe impl GlobalAlloc for CountingAlloc {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOC_COUNT.with(|c| c.set(c.get() + 1));
-        ALLOC_BYTES.with(|c| c.set(c.get() + layout.size()));
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
+use test_alloc::ThreadCounting;
 
 #[global_allocator]
-static GLOBAL: CountingAlloc = CountingAlloc;
+static GLOBAL: ThreadCounting = ThreadCounting::new();
 
 /// Run `f`, returning `(result, allocation_count, allocated_bytes)` for this thread.
 fn measure<R>(f: impl FnOnce() -> R) -> (R, usize, usize) {
-    ALLOC_COUNT.with(|c| c.set(0));
-    ALLOC_BYTES.with(|c| c.set(0));
-    let r = f();
-    (r, ALLOC_COUNT.with(Cell::get), ALLOC_BYTES.with(Cell::get))
+    let (r, snap) = ThreadCounting::measure(f);
+    (r, snap.allocs, snap.bytes)
 }
 
 /// Run `f`, returning `(result, total_allocated_bytes)` for this thread — the

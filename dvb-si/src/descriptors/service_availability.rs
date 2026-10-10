@@ -61,8 +61,7 @@ impl<'a> Parse<'a> for ServiceAvailabilityDescriptor {
         let count = cell_data.len() / CELL_ID_LEN;
         let mut cell_ids = Vec::with_capacity(count);
         for chunk in cell_data.chunks_exact(CELL_ID_LEN) {
-            // chunks_exact(2) guarantees 2 bytes; unwrap is safe.
-            cell_ids.push(u16::from_be_bytes(*chunk.first_chunk::<2>().unwrap()));
+            cell_ids.push(crate::wire::be_u16(chunk, 0, "service_availability")?);
         }
         Ok(Self {
             availability_flag,

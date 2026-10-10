@@ -89,10 +89,10 @@ impl<'a> Parse<'a> for RstSection {
         while off + ENTRY_LEN <= total {
             let entry = &bytes[off..off + ENTRY_LEN];
             entries.push(RstEntry {
-                transport_stream_id: u16::from_be_bytes(*entry[0..].first_chunk::<2>().unwrap()),
-                original_network_id: u16::from_be_bytes(*entry[2..].first_chunk::<2>().unwrap()),
-                service_id: u16::from_be_bytes(*entry[4..].first_chunk::<2>().unwrap()),
-                event_id: u16::from_be_bytes(*entry[6..].first_chunk::<2>().unwrap()),
+                transport_stream_id: crate::wire::be_u16(entry, 0, "rst")?,
+                original_network_id: crate::wire::be_u16(entry, 2, "rst")?,
+                service_id: crate::wire::be_u16(entry, 4, "rst")?,
+                event_id: crate::wire::be_u16(entry, 6, "rst")?,
                 running_status: RunningStatus::from_u8(entry[8] & 0x07),
             });
             off += ENTRY_LEN;

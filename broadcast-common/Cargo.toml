@@ -33,7 +33,7 @@ serde = ["dep:serde"]
 # already paying for downstream. `chrono` is pulled only when the `chrono`
 # feature is enabled (e.g. by dvb-si's own `chrono` feature); it is configured
 # `no_std + alloc` so it composes with the crate's `no_std` build.
-chrono = { version = "0.4", optional = true, default-features = false, features = ["alloc"] }
+chrono = { workspace = true, optional = true, features = ["alloc"] }
 # Pure-Rust `floor` for the MJD↔calendar codec: `f64::floor` is a std-only
 # intrinsic, so the no_std build needs libm. `floor` is exact, so libm::floor is
 # bit-identical to `f64::floor` and is used uniformly in std and no_std.
@@ -45,8 +45,11 @@ hex = { version = "0.4", default-features = false, features = ["alloc"] }
 serde = { version = "1", optional = true, default-features = false, features = ["derive"] }
 
 [dev-dependencies]
-criterion = { version = "0.8", features = ["html_reports"] }
+criterion = { workspace = true, features = ["html_reports"] }
 
 [[bench]]
 name    = "crc32"
 harness = false
+
+[lints]
+workspace = true

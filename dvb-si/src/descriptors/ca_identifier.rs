@@ -42,8 +42,7 @@ impl<'a> Parse<'a> for CaIdentifierDescriptor {
         }
         let mut ca_system_ids = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
-            // chunks_exact(2) guarantees 2 bytes; unwrap is safe.
-            ca_system_ids.push(u16::from_be_bytes(*chunk.first_chunk::<2>().unwrap()));
+            ca_system_ids.push(crate::wire::be_u16(chunk, 0, "ca_identifier")?);
         }
         Ok(Self { ca_system_ids })
     }

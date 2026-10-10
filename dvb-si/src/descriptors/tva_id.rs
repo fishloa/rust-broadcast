@@ -129,9 +129,8 @@ impl<'a> Parse<'a> for TvaIdDescriptor {
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
-            let (id_bytes, rest) = chunk.split_first_chunk::<2>().unwrap();
-            let tva_id = u16::from_be_bytes(*id_bytes);
-            let running_status = TvaRunningStatus::from_u8(rest[0] & RUNNING_STATUS_MAX);
+            let tva_id = crate::wire::be_u16(chunk, 0, "tva_id")?;
+            let running_status = TvaRunningStatus::from_u8(chunk[2] & RUNNING_STATUS_MAX);
             entries.push(TvaIdEntry {
                 tva_id,
                 running_status,

@@ -1,15 +1,14 @@
 [package]
-name = "test-bounded"
+name = "test-alloc"
 version = "0.1.0"
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
 publish = false
-description = "Deadline-bounded external-tool runner shared by workspace test suites (unpublished)."
+description = "Counting/capping global allocators shared by workspace allocation-bound tests (unpublished)."
 
 [dependencies]
-wait-timeout = "0.2"
 
 [lints]
 workspace = true

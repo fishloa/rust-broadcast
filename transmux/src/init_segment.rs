@@ -739,10 +739,10 @@ impl<'a> Parse<'a> for TrackHeaderBox {
             // duration, so duration starts at byte 36, not 40 — every field
             // from `duration` on was previously read 4 bytes early
             // (issue #1016).
-            let ct = u64::from_be_bytes(bytes[12..20].try_into().unwrap());
-            let mt = u64::from_be_bytes(bytes[20..28].try_into().unwrap());
+            let ct = crate::wire_cursor::be_u64(bytes, 12, "tkhd v1")?;
+            let mt = crate::wire_cursor::be_u64(bytes, 20, "tkhd v1")?;
             let tid = u32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]);
-            let dur = u64::from_be_bytes(bytes[36..44].try_into().unwrap());
+            let dur = crate::wire_cursor::be_u64(bytes, 36, "tkhd v1")?;
             Ok(Self {
                 version: 1,
                 flags,
@@ -907,10 +907,10 @@ impl<'a> Parse<'a> for MediaHeaderBox {
             Ok(Self {
                 version: 1,
                 flags,
-                creation_time: u64::from_be_bytes(bytes[12..20].try_into().unwrap()),
-                modification_time: u64::from_be_bytes(bytes[20..28].try_into().unwrap()),
+                creation_time: crate::wire_cursor::be_u64(bytes, 12, "mdhd v1")?,
+                modification_time: crate::wire_cursor::be_u64(bytes, 20, "mdhd v1")?,
                 timescale: u32::from_be_bytes([bytes[28], bytes[29], bytes[30], bytes[31]]),
-                duration: u64::from_be_bytes(bytes[32..40].try_into().unwrap()),
+                duration: crate::wire_cursor::be_u64(bytes, 32, "mdhd v1")?,
                 language: u16::from_be_bytes([bytes[40], bytes[41]]),
             })
         }

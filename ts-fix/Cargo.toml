@@ -23,7 +23,7 @@ thiserror = { version = "2",        default-features = false }
 # `cfg_attr` but no build could ever satisfy it, because clap dragged in
 # `anstyle`/`std` regardless of features. Gated, the library is genuinely
 # bare-metal-buildable and the CI no_std lane proves it.
-clap      = { version = "4.5",      features = ["derive"], optional = true }
+clap      = { workspace = true, optional = true, features = ["derive"] }
 
 [features]
 default = ["std", "cli"]
@@ -42,3 +42,6 @@ scte35-splice = { path = "../scte35-splice", version = "3.0", default-features =
 [package.metadata.docs.rs]
 all-features = true
 features = ["std"]
+
+[lints]
+workspace = true

@@ -25,7 +25,7 @@ thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [dev-dependencies]
-serde_json = "1.0"
+serde_json = { workspace = true }
 
 [features]
 default = ["std", "cc-data", "teletext"]
@@ -48,3 +48,6 @@ required-features = ["cc-data"]
 
 [[example]]
 name = "webvtt_to_srt"
+
+[lints]
+workspace = true

@@ -208,17 +208,14 @@ impl<'a> Parse<'a> for LocalTimeOffsetDescriptor {
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
-            // chunks_exact(13) guarantees 13 bytes; all unwraps are safe.
             let country_code = LangCode([chunk[0], chunk[1], chunk[2]]);
             let flags = chunk[3];
             let country_region_id = (flags & REGION_ID_MASK) >> 2;
             let local_time_offset_negative = flags & POLARITY_MASK != 0;
-            let lto_bytes = chunk[4..6].first_chunk::<2>().unwrap();
-            let local_time_offset_bcd = u16::from_be_bytes(*lto_bytes);
+            let local_time_offset_bcd = crate::wire::be_u16(chunk, 4, "local_time_offset")?;
             let mut time_of_change_raw = [0u8; 5];
             time_of_change_raw.copy_from_slice(&chunk[6..11]);
-            let nto_bytes = chunk[11..13].first_chunk::<2>().unwrap();
-            let next_time_offset_bcd = u16::from_be_bytes(*nto_bytes);
+            let next_time_offset_bcd = crate::wire::be_u16(chunk, 11, "local_time_offset")?;
             entries.push(LocalTimeOffsetEntry {
                 country_code,
                 country_region_id,

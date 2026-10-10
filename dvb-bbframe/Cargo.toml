@@ -18,13 +18,13 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 thiserror = { version = "2", default-features = false }
-num_enum = { version = "0.7", default-features = false }
+num_enum = { workspace = true }
 serde      = { version = "1", optional = true, features = ["derive"] }
-yoke       = { version = "0.7", optional = true, features = ["derive"] }
+yoke       = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]
-serde_json = "1.0"
-criterion  = { version = "0.8", features = ["html_reports"] }
+serde_json = { workspace = true }
+criterion  = { workspace = true, features = ["html_reports"] }
 
 [[bench]]
 name    = "bbframe_hot_paths"
@@ -41,3 +41,6 @@ serde = ["dep:serde"]
 # dvb-si's `yoke` feature) — retain a parsed view past the input buffer's
 # borrow without a re-parse.
 yoke  = ["dep:yoke"]
+
+[lints]
+workspace = true

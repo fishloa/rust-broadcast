@@ -29,7 +29,7 @@ thiserror     = { version = "2", default-features = false }
 jiff          = { version = "0.2", default-features = false, features = ["alloc"] }
 # Hex codec for DATERANGE `SCTE35-*` attributes (SP5); `alloc` only, so the crate stays no_std.
 hex           = { version = "0.4", default-features = false, features = ["alloc"] }
-chrono        = { version = "0.4", default-features = false, optional = true }
+chrono        = { workspace = true, optional = true }
 serde         = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [dev-dependencies]
@@ -57,3 +57,6 @@ cc-data = ["dep:cc-data", "cc-data/decode"]
 # decode, national character subset table, and page composition live here.
 # Not in `default`: most SCTE-35/emsg/DATERANGE-only consumers don't need it.
 teletext = ["dep:dvb-vbi"]
+
+[lints]
+workspace = true

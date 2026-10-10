@@ -41,3 +41,6 @@ default = ["std"]
 std = ["broadcast-common/std", "ssai-runtime/std", "scte35-splice/std", "thiserror/std", "serde?/std"]
 # Derive serde on the public schedule/transition/decision types.
 serde = ["dep:serde", "broadcast-common/serde", "ssai-runtime/serde", "scte35-splice/serde"]
+
+[lints]
+workspace = true

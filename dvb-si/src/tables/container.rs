@@ -107,7 +107,7 @@ impl<'a> Parse<'a> for ContainerSection<'a> {
         let private_indicator = (bytes[1] & 0x40) != 0;
 
         // Extension header (bytes 3..8).
-        let container_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
+        let container_id = crate::wire::be_u16(bytes, 3, "container")?;
         // byte 5: reserved(2) | version_number(5) | current_next_indicator(1)
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);

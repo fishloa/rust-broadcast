@@ -17,10 +17,6 @@
 
 #![cfg(feature = "cenc")]
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
-use std::ptr::null_mut;
-
 use broadcast_common::{Parse, Unpackage};
 use transmux::ProgressiveDemux;
 use transmux::cenc_decrypt::CencDecryptor;
@@ -32,51 +28,8 @@ use transmux::sample_groups::{GROUPING_TYPE_SEIG, SampleGroupDescriptionBox, Sgp
 /// regression aborts here rather than swapping the machine.
 const BUDGET: usize = 64 << 20;
 
-thread_local! {
-    /// Bytes currently allocated by this thread (`alloc`/`realloc` add,
-    /// `dealloc` subtracts).
-    static LIVE_BYTES: Cell<usize> = const { Cell::new(0) };
-}
-
-struct CappedAlloc;
-
-unsafe impl GlobalAlloc for CappedAlloc {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        let live = LIVE_BYTES.with(Cell::get);
-        if live.saturating_add(layout.size()) > BUDGET {
-            return null_mut();
-        }
-        let ptr = unsafe { System.alloc(layout) };
-        if !ptr.is_null() {
-            LIVE_BYTES.with(|c| c.set(live + layout.size()));
-        }
-        ptr
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        // `saturating_sub`: the test harness moves results (e.g. a parsed
-        // `Media`) between pool threads, so a buffer allocated on one thread
-        // can be freed on another whose counter never saw those bytes.
-        LIVE_BYTES.with(|c| c.set(c.get().saturating_sub(layout.size())));
-        unsafe { System.dealloc(ptr, layout) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        let live = LIVE_BYTES.with(Cell::get);
-        let net_live = live.saturating_sub(layout.size()).saturating_add(new_size);
-        if net_live > BUDGET {
-            return null_mut();
-        }
-        let new_ptr = unsafe { System.realloc(ptr, layout, new_size) };
-        if !new_ptr.is_null() {
-            LIVE_BYTES.with(|c| c.set(net_live));
-        }
-        new_ptr
-    }
-}
-
 #[global_allocator]
-static GLOBAL: CappedAlloc = CappedAlloc;
+static GLOBAL: test_alloc::ThreadCapped<BUDGET> = test_alloc::ThreadCapped::new();
 
 // ---------------------------------------------------------------------------
 // Fixture patching helpers

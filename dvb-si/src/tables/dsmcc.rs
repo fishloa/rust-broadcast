@@ -104,7 +104,7 @@ impl<'a> Parse<'a> for DsmccSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let extension_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
+        let extension_id = crate::wire::be_u16(bytes, 3, "dsmcc")?;
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];

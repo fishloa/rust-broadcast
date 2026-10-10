@@ -35,7 +35,7 @@ parking_lot      = { version = "0.12", optional = true }
 # wrap-unroll across a genuine wrap boundary — see the event-log wrap test in
 # `src/trunk.rs`. Test-only: the library itself depends only on `timed-metadata`.
 scte35-splice = { path = "../scte35-splice", version = "3.0", default-features = false }
-criterion     = { version = "0.8", features = ["html_reports"] }
+criterion     = { workspace = true, features = ["html_reports"] }
 
 [features]
 default = ["std"]
@@ -61,3 +61,6 @@ required-features = ["std"]
 name              = "trunk_contention"
 harness           = false
 required-features = ["std"]
+
+[lints]
+workspace = true
