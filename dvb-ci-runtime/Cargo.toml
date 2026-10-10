@@ -26,7 +26,7 @@ dvb-si     = { path = "../dvb-si", version = "11.0", default-features = false }
 broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 thiserror  = { version = "2" }
 libc       = { version = "0.2.108", optional = true } # `libc::Ioctl` (used in linux.rs) first appears in 0.2.108
-rustix     = { version = "1", default-features = false, features = ["std", "event"], optional = true } # `rustix::event::poll` replaces `libc::poll` (de-hand-roll SP6.7)
+rustix     = { version = "1", default-features = false, features = ["std", "event", "fs"], optional = true } # `rustix::event::poll` replaces `libc::poll` (de-hand-roll SP6.7)
 clap       = { version = "4.5", optional = true, features = ["derive"] }
 
 [features]
