@@ -50,11 +50,11 @@ impl<'a> Parse<'a> for ExternalApplicationAuthorisationDescriptor {
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
-            let (org_bytes, rest) = chunk.split_first_chunk::<4>().unwrap();
-            let organisation_id = u32::from_be_bytes(*org_bytes);
-            let (app_bytes, priority_slice) = rest.split_first_chunk::<2>().unwrap();
-            let application_id = u16::from_be_bytes(*app_bytes);
-            let application_priority = priority_slice[0];
+            let organisation_id =
+                crate::wire::be_u32(chunk, 0, "external_application_authorisation")?;
+            let application_id =
+                crate::wire::be_u16(chunk, 4, "external_application_authorisation")?;
+            let application_priority = chunk[6];
             entries.push(ExternalAppEntry {
                 identifier: ApplicationIdentifier {
                     organisation_id,

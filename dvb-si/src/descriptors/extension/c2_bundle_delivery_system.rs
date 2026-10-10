@@ -47,13 +47,11 @@ impl<'a> Parse<'a> for C2BundleDeliverySystem {
         let mut entries = Vec::with_capacity(sel.len() / C2_BUNDLE_ENTRY_LEN);
         for chunk in sel.chunks_exact(C2_BUNDLE_ENTRY_LEN) {
             let packed = chunk[6];
-            let freq_bytes = chunk[2..]
-                .first_chunk::<4>()
-                .expect("chunks_exact guarantees length");
+            let freq = crate::wire::be_u32(chunk, 2, "c2_bundle_delivery_system")?;
             entries.push(C2BundleEntry {
                 plp_id: chunk[0],
                 data_slice_id: chunk[1],
-                c2_system_tuning_frequency: u32::from_be_bytes(*freq_bytes),
+                c2_system_tuning_frequency: freq,
                 c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(packed >> 6),
                 active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::from_u8(
                     (packed >> 3) & 0x07,

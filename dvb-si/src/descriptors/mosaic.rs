@@ -135,8 +135,8 @@ pub struct MosaicDescriptor {
     pub logical_cells: Vec<MosaicLogicalCell>,
 }
 
-fn read_u16(b: &[u8], at: usize) -> u16 {
-    u16::from_be_bytes(*b[at..].first_chunk::<2>().unwrap())
+fn read_u16(b: &[u8], at: usize) -> Result<u16> {
+    crate::wire::be_u16(b, at, "mosaic")
 }
 
 impl<'a> Parse<'a> for MosaicDescriptor {
@@ -203,7 +203,7 @@ impl<'a> Parse<'a> for MosaicDescriptor {
                         });
                     }
                     let l = CellLinkage::Bouquet {
-                        bouquet_id: read_u16(body, pos),
+                        bouquet_id: read_u16(body, pos)?,
                     };
                     pos += 2;
                     l
@@ -215,9 +215,9 @@ impl<'a> Parse<'a> for MosaicDescriptor {
                             reason: "truncated service/mosaic linkage payload",
                         });
                     }
-                    let original_network_id = read_u16(body, pos);
-                    let transport_stream_id = read_u16(body, pos + 2);
-                    let service_id = read_u16(body, pos + 4);
+                    let original_network_id = read_u16(body, pos)?;
+                    let transport_stream_id = read_u16(body, pos + 2)?;
+                    let service_id = read_u16(body, pos + 4)?;
                     pos += 6;
                     if info == 0x02 {
                         CellLinkage::Service {
@@ -241,10 +241,10 @@ impl<'a> Parse<'a> for MosaicDescriptor {
                         });
                     }
                     let l = CellLinkage::Event {
-                        original_network_id: read_u16(body, pos),
-                        transport_stream_id: read_u16(body, pos + 2),
-                        service_id: read_u16(body, pos + 4),
-                        event_id: read_u16(body, pos + 6),
+                        original_network_id: read_u16(body, pos)?,
+                        transport_stream_id: read_u16(body, pos + 2)?,
+                        service_id: read_u16(body, pos + 4)?,
+                        event_id: read_u16(body, pos + 6)?,
                     };
                     pos += 8;
                     l

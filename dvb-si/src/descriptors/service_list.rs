@@ -49,10 +49,8 @@ impl<'a> Parse<'a> for ServiceListDescriptor {
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
-            // chunks_exact(3) guarantees 3 bytes; unwrap is safe.
-            let (sid_bytes, rest) = chunk.split_first_chunk::<2>().unwrap();
-            let service_id = u16::from_be_bytes(*sid_bytes);
-            let service_type = ServiceType::from_u8(rest[0]);
+            let service_id = crate::wire::be_u16(chunk, 0, "service_list")?;
+            let service_type = ServiceType::from_u8(chunk[2]);
             entries.push(ServiceListEntry {
                 service_id,
                 service_type,

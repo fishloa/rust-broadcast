@@ -78,13 +78,12 @@ impl<'a> Parse<'a> for ApplicationSignallingDescriptor {
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
-            // chunks_exact(3) guarantees 3 bytes; unwrap is safe.
-            let (type_bytes, rest) = chunk.split_first_chunk::<2>().unwrap();
             // reserved_future_use(1) ignored on parse.
-            let application_type_raw = u16::from_be_bytes(*type_bytes) & APPLICATION_TYPE_MAX;
+            let application_type_raw =
+                crate::wire::be_u16(chunk, 0, "application_signalling")? & APPLICATION_TYPE_MAX;
             let application_type = ApplicationType::from_u16(application_type_raw);
             // reserved_future_use(3) ignored on parse.
-            let ait_version_number = rest[0] & AIT_VERSION_MAX;
+            let ait_version_number = chunk[2] & AIT_VERSION_MAX;
             entries.push(ApplicationSignallingEntry {
                 application_type,
                 ait_version_number,
