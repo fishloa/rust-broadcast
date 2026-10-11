@@ -6,12 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-### Changed
-- **BREAKING (major-class):** `chunk::ChunkWriter::write` returns the new
-  `RtmpError::InvalidChunkStreamId { chunk_stream_id }` for a
-  `Message::chunk_stream_id` outside `2..=65599` instead of panicking. The
-  signature is unchanged, but this adds an `RtmpError` variant and turns a
-  panic into an error for callers.
+## [0.7.1] - 2026-10-11
+### Fixed
+- `chunk::ChunkWriter::write` returns the new `RtmpError::InvalidChunkStreamId { chunk_stream_id }` for a `Message::chunk_stream_id` outside `2..=65599` instead of panicking. Not breaking: the signature is unchanged and `RtmpError` is `#[non_exhaustive]`.
 
 ## [0.7.0] - 2026-10-05
 
