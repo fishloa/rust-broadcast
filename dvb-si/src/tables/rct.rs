@@ -464,10 +464,9 @@ fn parse_locator(data: &[u8]) -> Result<(DvbBinaryLocator, usize)> {
                 what: "RctSection dvb_binary_locator full triplet",
             });
         }
-        let triplet = data[pos..pos + 6].first_chunk::<6>().unwrap();
-        let tsid = u16::from_be_bytes(*triplet[0..].first_chunk::<2>().unwrap());
-        let onid = u16::from_be_bytes(*triplet[2..].first_chunk::<2>().unwrap());
-        let sid = u16::from_be_bytes(*triplet[4..].first_chunk::<2>().unwrap());
+        let tsid = crate::wire::be_u16(data, pos, "rct")?;
+        let onid = crate::wire::be_u16(data, pos + 2, "rct")?;
+        let sid = crate::wire::be_u16(data, pos + 4, "rct")?;
         pos += 6;
         DvbLocatorService::Full {
             transport_stream_id: tsid,
@@ -903,12 +902,12 @@ impl<'a> Parse<'a> for RctSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let service_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
+        let service_id = crate::wire::be_u16(bytes, 3, "rct")?;
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
-        let year_offset = u16::from_be_bytes(*bytes[8..].first_chunk::<2>().unwrap());
+        let year_offset = crate::wire::be_u16(bytes, 8, "rct")?;
         let link_count = bytes[10];
 
         let payload_end = total - CRC_LEN;

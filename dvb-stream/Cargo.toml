@@ -23,12 +23,12 @@ futures-core = "0.3"
 tokio        = { version = "1", default-features = false, features = ["io-util", "net", "time"] }
 tokio-util   = { version = "0.7", default-features = false, features = ["codec"] }
 bytes        = "1"
-socket2      = { version = "0.6", optional = true, features = ["all"] }
+socket2      = { workspace = true, optional = true, features = ["all"] }
 
 [dev-dependencies]
 tokio         = { version = "1", default-features = false, features = ["rt", "macros", "time", "net", "io-util"] }
 broadcast-common    = { path = "../broadcast-common", version = "9.4" }
-futures-util  = { version = "0.3", default-features = false }
+futures-util  = { workspace = true }
 
 [features]
 default = ["udp"]
@@ -36,3 +36,6 @@ default = ["udp"]
 # tokio's "net" feature is always present in [dependencies]; this feature flag
 # just gates the convenience constructors themselves.
 udp = ["dep:socket2", "tokio-util/net"]
+
+[lints]
+workspace = true

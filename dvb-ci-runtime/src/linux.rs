@@ -2,18 +2,18 @@
 //! feature).
 //!
 //! This is the one place the crate uses `unsafe` — the DVB CA ioctls
-//! (`CA_RESET`, `CA_GET_SLOT_INFO`) via `libc`. The ioctl request numbers are
+//! (`CA_RESET`, `CA_GET_SLOT_INFO`) via `libc`, confined to the private
+//! `ioctl` submodule below, which exposes safe functions. The ioctl request
+//! numbers are
 //! computed from the standard Linux `_IOC` encoding (Documentation/userspace-api
 //! + `include/uapi/linux/dvb/ca.h`), not hard-coded magic.
 //!
 //! Runtime behaviour requires a real DVB card with a CI slot; it is
 //! compile-checked in CI but exercised only on hardware.
-#![allow(unsafe_code)]
-
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
 use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::io::{AsFd, AsRawFd};
+use std::os::unix::io::AsFd;
 use std::path::Path;
 use std::time::Duration;
 
@@ -79,11 +79,68 @@ const CA_CI_MODULE_PRESENT: u32 = 1;
 /// briefly after insertion.
 const CA_CI_MODULE_READY: u32 = 2;
 
+/// Mirror of the kernel's `struct ca_slot_info` (uapi `linux/dvb/ca.h`):
+/// `int num; int type; unsigned int flags;` — three 4-byte fields.
 #[repr(C)]
 struct CaSlotInfo {
     num: i32,
     typ: i32,
     flags: u32,
+}
+
+/// Size of the kernel's `struct ca_slot_info` (3 x 4 bytes).
+#[cfg(test)]
+const KERNEL_CA_SLOT_INFO_SIZE: usize = 12;
+/// Alignment of the kernel's `struct ca_slot_info` (4-byte `int`s).
+#[cfg(test)]
+const KERNEL_CA_SLOT_INFO_ALIGN: usize = 4;
+
+/// The only `unsafe` in the crate: the two DVB CA ioctls, behind safe fns.
+#[allow(unsafe_code)]
+mod ioctl {
+    use super::{CA_GET_SLOT_INFO, CA_RESET, CaSlotInfo};
+    use std::io;
+    use std::os::unix::io::{AsRawFd, BorrowedFd};
+
+    // r10-W-1: `libc::ioctl`'s request parameter is `libc::Ioctl`, which is
+    // `c_ulong` on glibc but `c_int` on musl/uclibc/Android — a hard-coded
+    // `as libc::c_ulong` fails to compile there. The encoded request always
+    // fits in 32 bits, so the narrowing cast on musl/Android is lossless.
+
+    /// `CA_RESET` on `fd`.
+    pub(super) fn ca_reset(fd: BorrowedFd<'_>) -> io::Result<()> {
+        // SAFETY: `fd` is a live borrowed descriptor for the whole call (the
+        // `BorrowedFd` lifetime guarantees it is open); `CA_RESET` is an
+        // `_IO` request that takes no argument, so no pointer is passed and
+        // there is no memory for the kernel to read or write.
+        let r = unsafe { libc::ioctl(fd.as_raw_fd(), CA_RESET as libc::Ioctl) };
+        if r < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+
+    /// `CA_GET_SLOT_INFO` on `fd`, filling `info` (its `num` selects the slot).
+    pub(super) fn ca_get_slot_info(fd: BorrowedFd<'_>, info: &mut CaSlotInfo) -> io::Result<()> {
+        // SAFETY: `fd` is live for the whole call (as above). The request is
+        // `_IOR('o', 130, CaSlotInfo)`: the kernel reads `num` and writes the
+        // whole `ca_slot_info`, whose size/alignment `CaSlotInfo` mirrors
+        // (`#[repr(C)]`, asserted by the `ca_slot_info_matches_kernel_layout`
+        // test). `info` is an exclusive `&mut` to a fully-initialised value that
+        // outlives the call, so the pointer is valid, aligned, and unaliased
+        // for the kernel's write.
+        let r = unsafe {
+            libc::ioctl(
+                fd.as_raw_fd(),
+                CA_GET_SLOT_INFO as libc::Ioctl,
+                info as *mut CaSlotInfo,
+            )
+        };
+        if r < 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
 }
 
 /// Settle time after `CA_RESET` before the module is usable. The DD/cxd2099
@@ -182,17 +239,7 @@ impl CaDevice for LinuxCaDevice {
     }
 
     fn reset(&mut self) -> io::Result<()> {
-        // r10-W-1: `libc::ioctl`'s request parameter is `libc::Ioctl`, which
-        // is `c_ulong` on glibc but `c_int` on musl/uclibc/Android — a
-        // hard-coded `as libc::c_ulong` fails to compile on those targets.
-        // `libc::Ioctl` picks the right width per target; the encoded
-        // request always fits in 32 bits, so the narrowing cast on
-        // musl/Android is lossless.
-        // SAFETY: CA_RESET takes no argument; fd is a valid open CA device.
-        let r = unsafe { libc::ioctl(self.file.as_raw_fd(), CA_RESET as libc::Ioctl) };
-        if r < 0 {
-            return Err(io::Error::last_os_error());
-        }
+        ioctl::ca_reset(self.file.as_fd())?;
         // The module needs a moment to re-initialise before Create_T_C.
         std::thread::sleep(RESET_SETTLE);
         Ok(())
@@ -204,17 +251,7 @@ impl CaDevice for LinuxCaDevice {
             typ: 0,
             flags: 0,
         };
-        // SAFETY: CA_GET_SLOT_INFO writes a ca_slot_info; `si` is exactly that
-        // struct and outlives the call; fd is a valid open CA device.
-        let r = unsafe {
-            libc::ioctl(
-                self.file.as_raw_fd(),
-                CA_GET_SLOT_INFO as libc::Ioctl,
-                &mut si as *mut CaSlotInfo,
-            )
-        };
-        if r < 0 {
-            let err = io::Error::last_os_error();
+        if let Err(err) = ioctl::ca_get_slot_info(self.file.as_fd(), &mut si) {
             // r10-W-3: only fall back for the specific errno the "doesn't
             // implement CA_GET_SLOT_INFO" drivers (DD/cxd2099) return —
             // EINVAL, or ENOTTY for a device node that doesn't support the
@@ -326,7 +363,6 @@ impl CiDataDevice for LinuxCiDataDevice {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::ffi::CString;
     use std::sync::mpsc;
 
     /// Create a fresh FIFO (named pipe) under the OS temp dir and return its
@@ -345,13 +381,12 @@ mod tests {
                 .expect("system clock before UNIX_EPOCH")
                 .as_nanos()
         ));
-        let c_path =
-            CString::new(path.to_string_lossy().into_owned()).expect("path has no interior NUL");
-        // SAFETY: `c_path` is a valid NUL-terminated C string for the
-        // duration of the call; `0o600` is a plain permission mode — no
-        // aliasing or lifetime hazard.
-        let r = unsafe { libc::mkfifo(c_path.as_ptr(), 0o600) };
-        assert_eq!(r, 0, "mkfifo failed: {}", io::Error::last_os_error());
+        rustix::fs::mkfifoat(
+            rustix::fs::CWD,
+            &path,
+            rustix::fs::Mode::RUSR | rustix::fs::Mode::WUSR,
+        )
+        .expect("mkfifoat failed");
         path
     }
 
@@ -607,7 +642,7 @@ mod tests {
     /// the old code tested `revents & POLLIN` only. The device itself opens
     /// the FIFO `O_RDWR` (it is its own writer, so no hang-up ever shows), so
     /// this drives `poll_readable` on a separate read-only descriptor, and
-    /// proves with a raw `libc::poll` that the kernel really reports POLLHUP
+    /// proves with a raw `rustix::event::poll` that the kernel really reports POLLHUP
     /// there (otherwise the assertion would be vacuous).
     #[test]
     fn poll_readable_ignores_hangup_without_data() {
@@ -620,21 +655,32 @@ mod tests {
         let writer = OpenOptions::new().write(true).open(&path).expect("writer");
         drop(writer); // POLLHUP on the read end, no POLLIN, no data
 
-        let mut raw = libc::pollfd {
-            fd: reader.as_raw_fd(),
-            events: libc::POLLIN,
-            revents: 0,
+        let mut raw = [PollFd::new(&reader, PollFlags::IN)];
+        let zero = Timespec {
+            tv_sec: 0,
+            tv_nsec: 0,
         };
-        // SAFETY: `raw` is one valid pollfd for the duration of the call.
-        let r = unsafe { libc::poll(&mut raw, 1, 0) };
+        let r = rustix::event::poll(&mut raw, Some(&zero)).expect("poll");
         assert_eq!(r, 1, "kernel must report an event");
+        let revents = raw[0].revents();
         assert!(
-            raw.revents & libc::POLLHUP != 0 && raw.revents & libc::POLLIN == 0,
-            "precondition: POLLHUP without POLLIN, got revents={:#x}",
-            raw.revents
+            revents.contains(PollFlags::HUP) && !revents.contains(PollFlags::IN),
+            "precondition: POLLHUP without POLLIN, got revents={revents:?}"
         );
 
         assert!(!poll_file(&reader, Duration::from_millis(50)).unwrap());
         let _ = std::fs::remove_file(&path);
+    }
+
+    /// Our `CaSlotInfo` must match the kernel's `struct ca_slot_info`
+    /// (`int num; int type; unsigned int flags;`) exactly, since the ioctl
+    /// writes it through a raw pointer and the request number encodes its size.
+    #[test]
+    fn ca_slot_info_matches_kernel_layout() {
+        assert_eq!(core::mem::size_of::<CaSlotInfo>(), KERNEL_CA_SLOT_INFO_SIZE);
+        assert_eq!(
+            core::mem::align_of::<CaSlotInfo>(),
+            KERNEL_CA_SLOT_INFO_ALIGN
+        );
     }
 }

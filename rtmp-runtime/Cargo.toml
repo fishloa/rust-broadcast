@@ -25,7 +25,7 @@ serde     = { version = "1", optional = true, features = ["derive"] }
 # `tokio` adapter (real sockets) — feature-gated; the sans-IO core needs none of it.
 tokio = { version = "1", optional = true, features = ["net", "io-util", "rt", "macros", "sync", "time"] }
 tokio-util   = { version = "0.7", optional = true, default-features = false, features = ["codec"] }
-futures-util = { version = "0.3", optional = true, default-features = false, features = ["sink", "std"] }
+futures-util = { workspace = true, optional = true, features = ["sink", "std"] }
 bytes        = { version = "1", optional = true }
 url          = { version = "2", optional = true }
 
@@ -42,5 +42,8 @@ required-features = ["tokio"]
 
 [dev-dependencies]
 transmux   = { path = "../transmux", version = "0.25", default-features = false, features = ["std"] }
-serde_json = "1"
+serde_json = { workspace = true }
 tokio      = { version = "1", features = ["full", "test-util"] }
+
+[lints]
+workspace = true

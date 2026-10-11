@@ -156,17 +156,17 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "origin/admin.rs",
-        1071,
+        1093,
         "external shutdown-signal watcher; aborted by hand at admin teardown",
     ),
     (
         "origin/admin.rs",
-        1083,
+        1105,
         "shutdown-watch task translating the signal channel into the token; aborted by hand at teardown",
     ),
     (
         "origin/admin.rs",
-        1089,
+        1111,
         "admin listener server task; joined/aborted at admin teardown",
     ),
 ];

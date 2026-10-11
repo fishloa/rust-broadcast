@@ -158,7 +158,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
         )?;
 
         // bytes[3..5] = font_id_extension(9) | font_id(7).
-        let id_word = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
+        let id_word = crate::wire::be_u16(bytes, 3, "downloadable_font_info")?;
         let font_id_extension = id_word >> 7;
         let font_id = (id_word & 0x7F) as u8;
         let version_number = super::version_number_of(bytes[5]);

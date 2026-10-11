@@ -6,38 +6,15 @@
 //! Single `#[test]` in this binary on purpose: the allocation counter is
 //! process-global, so a second concurrently-running test would pollute it.
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicUsize, Ordering};
-
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
 use ssai_runtime::playlist::{InterstitialDateRange, SessionPlaylistBase};
 use ssai_runtime::{AssetSource, render_session_playlist};
 
-struct Counting;
-static ALLOCS: AtomicUsize = AtomicUsize::new(0);
-
-// SAFETY: forwards every call unchanged to `System`; only counts.
-unsafe impl GlobalAlloc for Counting {
-    unsafe fn alloc(&self, l: Layout) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::SeqCst);
-        unsafe { System.alloc(l) }
-    }
-    unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
-        unsafe { System.dealloc(p, l) }
-    }
-    unsafe fn realloc(&self, p: *mut u8, l: Layout, n: usize) -> *mut u8 {
-        ALLOCS.fetch_add(1, Ordering::SeqCst);
-        unsafe { System.realloc(p, l, n) }
-    }
-}
-
 #[global_allocator]
-static A: Counting = Counting;
+static A: test_alloc::ProcessCounting = test_alloc::ProcessCounting::new();
 
 fn allocs_during<R>(f: impl FnOnce() -> R) -> (usize, R) {
-    let before = ALLOCS.load(Ordering::SeqCst);
-    let r = f();
-    (ALLOCS.load(Ordering::SeqCst) - before, r)
+    A.allocs_during(f)
 }
 
 const SEGMENTS: usize = 500;

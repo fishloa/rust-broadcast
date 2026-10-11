@@ -632,7 +632,7 @@ impl<'a> Parse<'a> for PmtSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let program_number = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
+        let program_number = crate::wire::be_u16(bytes, 3, "pmt")?;
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];

@@ -1,26 +1,19 @@
-//! Volatile zeroing for control-word–derived cipher state.
+//! Zeroing for control-word–derived cipher state.
 //!
 //! Every type that holds state derived from a [`crate::key::ControlWord`]
 //! (round-key schedules, LFSR registers, expanded stream seeds, ...) must
 //! clear that state on drop rather than leaving it to linger in freed
 //! memory. A plain assignment on drop is not enough: the optimizer is free
-//! to prove the write dead (the storage is about to be deallocated or
-//! reused) and elide it, so every zeroing `Drop` impl in this crate goes
-//! through [`zeroize`], which writes through `core::ptr::write_volatile` and
-//! follows with a `compiler_fence` so the writes cannot be reordered around
-//! or removed.
-use core::sync::atomic::{Ordering, compiler_fence};
+//! to prove the write dead and elide it, so every zeroing `Drop` impl in this
+//! crate goes through [`zeroize`], which delegates to the vetted `zeroize`
+//! crate (volatile writes + compiler fence) instead of a hand-rolled
+//! `unsafe` implementation.
+use ::zeroize::Zeroize;
 
-/// Overwrite every element of `buf` with `T::default()` (`0` for every
-/// integer type this crate uses it with), in a way the optimizer cannot
+/// Overwrite every element of `buf` with zero, in a way the optimizer cannot
 /// prove is dead and drop.
-pub(crate) fn zeroize<T: Copy + Default>(buf: &mut [T]) {
-    for slot in buf.iter_mut() {
-        // SAFETY: `slot` is a valid, aligned, initialized `&mut T` for the
-        // duration of the write; `write_volatile` never invalidates it.
-        unsafe { core::ptr::write_volatile(slot, T::default()) };
-    }
-    compiler_fence(Ordering::SeqCst);
+pub(crate) fn zeroize<T: ::zeroize::DefaultIsZeroes>(buf: &mut [T]) {
+    buf.zeroize();
 }
 
 /// Wraps a control-word–derived byte array for just long enough to hand it
@@ -63,11 +56,14 @@ mod tests {
     /// `u8` has no validity invariant, so reading plain bytes back from
     /// still-live (not yet reused) stack storage is sound.
     #[test]
+    #[allow(unsafe_code)]
     fn zeroizing_wrapper_clears_its_storage_on_drop() {
         // Run only `Drop` while keeping the storage owned, so reading it afterwards is sound.
         let mut slot = core::mem::ManuallyDrop::new(Zeroizing([
             0x11u8, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
         ]));
+        // SAFETY: `slot` is a live, aligned, exclusively-borrowed ManuallyDrop, so
+        // the pointee is valid; Drop runs exactly once (ManuallyDrop never re-drops).
         unsafe { core::ptr::drop_in_place(&mut *slot) };
         assert_eq!(slot.0, [0u8; 8]);
     }

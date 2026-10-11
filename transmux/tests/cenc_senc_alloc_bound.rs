@@ -22,41 +22,12 @@
 
 #![cfg(feature = "cenc")]
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-
 use transmux::{SENC_FLAG_USE_SUBSAMPLE_ENCRYPTION, SampleEncryptionBox};
 
-/// Largest single allocation size seen while [`ARMED`] is set.
-static MAX_ALLOC: AtomicUsize = AtomicUsize::new(0);
-/// Whether [`RecordingAlloc`] is recording. Off outside the measured window so
-/// the test harness's own allocations are not attributed to the parse.
-static ARMED: AtomicBool = AtomicBool::new(false);
-
-struct RecordingAlloc;
-
-unsafe impl GlobalAlloc for RecordingAlloc {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        if ARMED.load(Ordering::Relaxed) {
-            MAX_ALLOC.fetch_max(layout.size(), Ordering::Relaxed);
-        }
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        unsafe { System.dealloc(ptr, layout) }
-    }
-
-    unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, new_size: usize) -> *mut u8 {
-        if ARMED.load(Ordering::Relaxed) {
-            MAX_ALLOC.fetch_max(new_size, Ordering::Relaxed);
-        }
-        unsafe { System.realloc(ptr, layout, new_size) }
-    }
-}
-
+/// Recording is gated on [`ALLOC`]'s armed flag so the test harness's own
+/// allocations outside the measured window are not attributed to the parse.
 #[global_allocator]
-static ALLOC: RecordingAlloc = RecordingAlloc;
+static ALLOC: test_alloc::ProcessCounting = test_alloc::ProcessCounting::new();
 
 /// Ceiling on any single allocation the parse of a **20-byte** `senc` may make.
 /// Generous by four orders of magnitude over anything legitimate (a well-formed
@@ -83,11 +54,11 @@ fn hostile_senc_sample_count_allocates_nothing_large() {
         (0, 0),
     ] {
         let body = hostile_body();
-        MAX_ALLOC.store(0, Ordering::Relaxed);
-        ARMED.store(true, Ordering::Relaxed);
+        ALLOC.reset_largest();
+        ALLOC.set_armed(true);
         let result = SampleEncryptionBox::parse_body(&body, 0, flags, iv_size);
-        ARMED.store(false, Ordering::Relaxed);
-        let max_alloc = MAX_ALLOC.load(Ordering::Relaxed);
+        ALLOC.set_armed(false);
+        let max_alloc = ALLOC.largest();
 
         assert!(
             result.is_err(),
@@ -113,11 +84,11 @@ fn well_formed_senc_still_parses_within_the_bound() {
         body.extend_from_slice(&[i as u8; 8]);
     }
 
-    MAX_ALLOC.store(0, Ordering::Relaxed);
-    ARMED.store(true, Ordering::Relaxed);
+    ALLOC.reset_largest();
+    ALLOC.set_armed(true);
     let parsed = SampleEncryptionBox::parse_body(&body, 0, 0, 8);
-    ARMED.store(false, Ordering::Relaxed);
-    let max_alloc = MAX_ALLOC.load(Ordering::Relaxed);
+    ALLOC.set_armed(false);
+    let max_alloc = ALLOC.largest();
 
     let parsed = parsed.expect("a well-formed senc must still parse");
     assert_eq!(parsed.entries.len(), SAMPLES);

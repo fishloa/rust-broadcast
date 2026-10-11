@@ -274,7 +274,8 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
             });
         }
         let body = &bytes[COMPAT_DESC_LEN_FIELD..body_end];
-        let descriptor_count = u16::from_be_bytes(*body.first_chunk::<2>().unwrap()) as usize;
+        let descriptor_count =
+            crate::wire::be_u16(body, 0, "CompatibilityDescriptor descriptorCount")? as usize;
         let mut pos = DESC_COUNT_FIELD;
         let max_entries = (body.len() - DESC_COUNT_FIELD) / (DESC_HEADER_LEN + DESC_FIXED_LEN);
         let mut descriptors = Vec::with_capacity(descriptor_count.min(max_entries));
@@ -307,16 +308,16 @@ impl<'a> Parse<'a> for CompatibilityDescriptor<'a> {
                 body[pos + DESC_HEADER_LEN + 2],
                 body[pos + DESC_HEADER_LEN + 3],
             ];
-            let model = u16::from_be_bytes(
-                *body[pos + DESC_HEADER_LEN + 4..]
-                    .first_chunk::<2>()
-                    .unwrap(),
-            );
-            let version = u16::from_be_bytes(
-                *body[pos + DESC_HEADER_LEN + 6..]
-                    .first_chunk::<2>()
-                    .unwrap(),
-            );
+            let model = crate::wire::be_u16(
+                body,
+                pos + DESC_HEADER_LEN + 4,
+                "CompatibilityDescriptor model",
+            )?;
+            let version = crate::wire::be_u16(
+                body,
+                pos + DESC_HEADER_LEN + 6,
+                "CompatibilityDescriptor version",
+            )?;
             let sub_descriptor_count = body[pos + DESC_HEADER_LEN + 8] as usize;
             let sub_desc_start = pos + DESC_HEADER_LEN + DESC_FIXED_LEN;
             let sub_desc_end = entry_end;

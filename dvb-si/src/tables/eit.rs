@@ -155,14 +155,14 @@ impl<'a> Parse<'a> for EitSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let service_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
+        let service_id = crate::wire::be_u16(bytes, 3, "eit")?;
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
 
-        let transport_stream_id = u16::from_be_bytes(*bytes[8..].first_chunk::<2>().unwrap());
-        let original_network_id = u16::from_be_bytes(*bytes[10..].first_chunk::<2>().unwrap());
+        let transport_stream_id = crate::wire::be_u16(bytes, 8, "eit")?;
+        let original_network_id = crate::wire::be_u16(bytes, 10, "eit")?;
         let segment_last_section_number = bytes[12];
         let last_table_id = bytes[13];
 

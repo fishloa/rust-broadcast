@@ -325,7 +325,7 @@ impl<'a> Parse<'a> for AitSection<'a> {
                 | ((bytes[pos + 1] as u32) << 16)
                 | ((bytes[pos + 2] as u32) << 8)
                 | (bytes[pos + 3] as u32);
-            let application_id = u16::from_be_bytes(*bytes[pos + 4..].first_chunk::<2>().unwrap());
+            let application_id = crate::wire::be_u16(bytes, pos + 4, "ait")?;
             let control_code = ControlCode::from_u8(bytes[pos + 6]);
             let app_desc_length = super::desc_loop_len_of(bytes[pos + 7], bytes[pos + 8]);
             let app_desc_start = pos + APP_HEADER_LEN;

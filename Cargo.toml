@@ -1,5 +1,5 @@
 [workspace]
-members = ["broadcast-common", "broadcast-auth", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools", "media-doctor", "multimux", "multimux-cli", "scte35-splice", "dvb-stream", "mpeg-pes", "dvb-subtitle", "mpeg-ps", "scte104", "cc-data", "dvb-ci", "st291", "ule", "dvb-simulcrypt", "mp4-emsg", "dvb-vbi", "rmt-flute", "dvb-ci-runtime", "timed-metadata", "mpeg-ts", "ts-fix", "transmux", "rtsp-runtime", "rtmp-runtime", "srt-runtime", "rtp-packet", "rtcp-packet", "st12-1", "st337", "rdd29", "st377-1", "hls-runtime", "media-plane", "ttml-subtitle", "broadcast-hls", "broadcast-loudness", "dvb-csa", "dvb-mabr", "atsc3", "atsc3-route", "st2022", "rist-runtime", "webrtc-runtime", "caption-convert", "compliance-probe", "ssai-runtime", "playout-runtime", "container-probe", "test-bounded"]
+members = ["broadcast-common", "broadcast-auth", "dvb-si", "dvb-t2mi", "dvb-bbframe", "dvb-conformance", "dvb-tools", "media-doctor", "multimux", "multimux-cli", "scte35-splice", "dvb-stream", "mpeg-pes", "dvb-subtitle", "mpeg-ps", "scte104", "cc-data", "dvb-ci", "st291", "ule", "dvb-simulcrypt", "mp4-emsg", "dvb-vbi", "rmt-flute", "dvb-ci-runtime", "timed-metadata", "mpeg-ts", "ts-fix", "transmux", "rtsp-runtime", "rtmp-runtime", "srt-runtime", "rtp-packet", "rtcp-packet", "st12-1", "st337", "rdd29", "st377-1", "hls-runtime", "media-plane", "ttml-subtitle", "broadcast-hls", "broadcast-loudness", "dvb-csa", "dvb-mabr", "atsc3", "atsc3-route", "st2022", "rist-runtime", "webrtc-runtime", "caption-convert", "compliance-probe", "ssai-runtime", "playout-runtime", "container-probe", "test-bounded", "test-alloc"]
 exclude = ["fuzz", "demo", "bindings/python", "bindings/transmux-py", "spikes"]
 resolver = "2"
 
@@ -9,3 +9,23 @@ edition = "2024"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/fishloa/rust-broadcast"
 rust-version = "1.95.0"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+
+[workspace.dependencies]
+axum                        = "0.8"
+chrono                      = { version = "0.4", default-features = false }
+clap                        = "4.5"
+criterion                   = "0.8"
+futures-util                = { version = "0.3", default-features = false }
+headers                     = "0.4"
+metrics                     = "0.24"
+metrics-exporter-prometheus = { version = "0.18", default-features = false }
+num_enum                    = { version = "0.7", default-features = false }
+quick-xml                   = { version = "0.42", default-features = false }
+sdp-types                   = "0.2"
+serde_json                  = "1.0"
+socket2                     = "0.6"
+yoke                        = "0.7"

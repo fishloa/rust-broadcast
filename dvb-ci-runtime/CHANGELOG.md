@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Linux backend: the two `ioctl` calls (`CA_RESET`, `CA_GET_SLOT_INFO`) are isolated in one private `ioctl` module (the only `unsafe` in the crate) behind safe fns; tests use `rustix` (`mkfifoat`, `poll`) instead of `libc`.
+
 ## [0.17.0] - 2026-10-05
 ### Changed (breaking)
 - `resource::Resource::on_open`, `on_apdu` and `tick` now return

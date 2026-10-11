@@ -1362,14 +1362,19 @@ impl ChunkWriter {
     /// UI24 writer silently kept only the low 24 bits, misframing every
     /// later message on the chunk stream).
     ///
-    /// # Panics
-    /// If `msg.chunk_stream_id` is outside the basic header's encodable
-    /// range (2..=65599) — the same precondition [`BasicHeader::serialize_into`]
-    /// enforces. Every `chunk_stream_id` produced by [`ChunkAssembler::push`]
-    /// satisfies this (`BasicHeader::parse` never yields one outside the
-    /// range), so a `Message` round-tripped from the assembler never panics
-    /// here; callers building a `Message` from scratch must respect it.
+    /// Returns [`RtmpError::InvalidChunkStreamId`] if `msg.chunk_stream_id`
+    /// is outside the basic header's encodable range (2..=65599). Every
+    /// `chunk_stream_id` produced by [`ChunkAssembler::push`] satisfies this
+    /// (`BasicHeader::parse` never yields one outside the range); callers
+    /// building a `Message` from scratch must respect it.
     pub fn write(&mut self, msg: &Message) -> Result<Vec<u8>> {
+        if !(BASIC_HEADER_1BYTE_MIN_CSID..=BASIC_HEADER_3BYTE_MAX_CSID)
+            .contains(&msg.chunk_stream_id)
+        {
+            return Err(RtmpError::InvalidChunkStreamId {
+                chunk_stream_id: msg.chunk_stream_id,
+            });
+        }
         let chunk_size = (self.chunk_size as usize).max(1);
         let message_length = broadcast_common::len::fit_u24(msg.payload.len(), "message_length")?;
         let extended = needs_extended_timestamp(msg.timestamp);
@@ -1386,8 +1391,8 @@ impl ChunkWriter {
             message_type_id: msg.message_type_id,
             message_stream_id: msg.message_stream_id,
         };
-        write_serialized(&mut out, &bh0);
-        write_serialized(&mut out, &mh0);
+        write_serialized(&mut out, &bh0)?;
+        write_serialized(&mut out, &mh0)?;
 
         let mut offset = 0usize;
         let take0 = chunk_size.min(msg.payload.len());
@@ -1399,7 +1404,7 @@ impl ChunkWriter {
                 fmt: Fmt::Type3,
                 chunk_stream_id: msg.chunk_stream_id,
             };
-            write_serialized(&mut out, &bh);
+            write_serialized(&mut out, &bh)?;
             if extended {
                 out.extend_from_slice(&msg.timestamp.to_be_bytes());
             }
@@ -1414,18 +1419,29 @@ impl ChunkWriter {
 
 /// Serialize `item` and append the bytes to `out`.
 ///
-/// # Panics
-/// If `item.serialize_into` errors (only possible, for the [`BasicHeader`]s
-/// this is used with, when `chunk_stream_id` is outside the encodable
-/// range) — see [`ChunkWriter::write`]'s panics section.
-fn write_serialized<T: Serialize<Error = RtmpError>>(out: &mut Vec<u8>, item: &T) {
+/// # Errors
+/// Propagates `item.serialize_into`'s error (for the [`BasicHeader`]s this is
+/// used with, a `chunk_stream_id` outside the encodable range).
+fn write_serialized<T: Serialize<Error = RtmpError>>(out: &mut Vec<u8>, item: &T) -> Result<()> {
     let len = item.serialized_len();
     let start = out.len();
     out.resize(start + len, 0);
-    let n = item
-        .serialize_into(&mut out[start..])
-        .expect("valid chunk_stream_id (2..=65599) is a ChunkWriter::write precondition");
-    out.truncate(start + n);
+    match item.serialize_into(&mut out[start..]) {
+        Ok(n) => {
+            out.truncate(start + n);
+            Ok(())
+        }
+        Err(e) => {
+            out.truncate(start);
+            Err(e)
+        }
+    }
+}
+
+/// Test-only infallible wrapper over [`write_serialized`].
+#[cfg(test)]
+fn write_serialized_ok<T: Serialize<Error = RtmpError>>(out: &mut Vec<u8>, item: &T) {
+    write_serialized(out, item).expect("valid chunk_stream_id in test fixture");
 }
 
 #[cfg(test)]
@@ -2054,17 +2070,17 @@ mod tests {
             message_stream_id: 0,
         };
         let mut input = Vec::new();
-        write_serialized(&mut input, &bh0);
-        write_serialized(&mut input, &mh0);
+        write_serialized_ok(&mut input, &bh0);
+        write_serialized_ok(&mut input, &mh0);
         input.extend_from_slice(&[1, 2, 3, 4]);
 
         let bh3 = BasicHeader {
             fmt: Fmt::Type3,
             chunk_stream_id: 3,
         };
-        write_serialized(&mut input, &bh3);
+        write_serialized_ok(&mut input, &bh3);
         input.extend_from_slice(&[5, 6, 7, 8]);
-        write_serialized(&mut input, &bh3);
+        write_serialized_ok(&mut input, &bh3);
         input.extend_from_slice(&[9, 10]);
 
         let out = assembler.push(&input).unwrap();
@@ -2083,14 +2099,14 @@ mod tests {
         let csid = 5;
 
         let mut input = Vec::new();
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
                 chunk_stream_id: csid,
             },
         );
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
                 timestamp: 1000,
@@ -2101,14 +2117,14 @@ mod tests {
         );
         input.extend_from_slice(&[0; 5]);
 
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type1,
                 chunk_stream_id: csid,
             },
         );
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &MessageHeader::Type1 {
                 timestamp_delta: 20,
@@ -2118,14 +2134,14 @@ mod tests {
         );
         input.extend_from_slice(&[1; 5]);
 
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type2,
                 chunk_stream_id: csid,
             },
         );
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &MessageHeader::Type2 {
                 timestamp_delta: 30,
@@ -2133,7 +2149,7 @@ mod tests {
         );
         input.extend_from_slice(&[2; 5]);
 
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
@@ -2197,8 +2213,8 @@ mod tests {
             message_stream_id: 1,
         };
         let mut chunk1 = Vec::new();
-        write_serialized(&mut chunk1, &bh0);
-        write_serialized(&mut chunk1, &mh0);
+        write_serialized_ok(&mut chunk1, &bh0);
+        write_serialized_ok(&mut chunk1, &mh0);
         chunk1.extend_from_slice(&[1, 2, 3, 4]);
         let out = assembler.push(&chunk1).unwrap();
         assert!(
@@ -2211,13 +2227,13 @@ mod tests {
             chunk_stream_id: csid,
         };
         let mut chunk2 = Vec::new();
-        write_serialized(&mut chunk2, &bh3);
+        write_serialized_ok(&mut chunk2, &bh3);
         chunk2.extend_from_slice(&[5, 6, 7, 8]);
         let out = assembler.push(&chunk2).unwrap();
         assert!(out.is_empty(), "8 of 10 payload bytes, still incomplete");
 
         let mut chunk3 = Vec::new();
-        write_serialized(&mut chunk3, &bh3);
+        write_serialized_ok(&mut chunk3, &bh3);
         chunk3.extend_from_slice(&[9, 10]);
         let out = assembler.push(&chunk3).unwrap();
         assert_eq!(out.len(), 1);
@@ -2417,14 +2433,14 @@ mod tests {
     fn assembler_type1_on_unseen_csid_is_malformed() {
         let mut assembler = ChunkAssembler::new();
         let mut input = Vec::new();
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type1,
                 chunk_stream_id: 20,
             },
         );
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &MessageHeader::Type1 {
                 timestamp_delta: 5,
@@ -2443,7 +2459,7 @@ mod tests {
     fn assembler_type3_on_unseen_csid_is_malformed() {
         let mut assembler = ChunkAssembler::new();
         let mut input = Vec::new();
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
@@ -2497,14 +2513,14 @@ mod tests {
         let csid = 40;
 
         let mut input = Vec::new();
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
                 chunk_stream_id: csid,
             },
         );
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
                 timestamp: 1000,
@@ -2517,7 +2533,7 @@ mod tests {
 
         // Immediately (same csid, nothing between) a fmt3 chunk starting a
         // new message, inheriting message_length 5 from the Type 0 above.
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
@@ -2539,14 +2555,14 @@ mod tests {
     fn assembler_type2_on_unseen_csid_is_malformed() {
         let mut assembler = ChunkAssembler::new();
         let mut input = Vec::new();
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type2,
                 chunk_stream_id: 22,
             },
         );
-        write_serialized(&mut input, &MessageHeader::Type2 { timestamp_delta: 5 });
+        write_serialized_ok(&mut input, &MessageHeader::Type2 { timestamp_delta: 5 });
         assert!(matches!(
             assembler.push(&input),
             Err(RtmpError::Malformed { .. })
@@ -2573,14 +2589,14 @@ mod tests {
 
         let payload: Vec<u8> = (0u32..150).map(|i| (i % 251) as u8).collect();
         let mut input = Vec::new();
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
                 chunk_stream_id: 12,
             },
         );
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
                 timestamp: 0,
@@ -2590,7 +2606,7 @@ mod tests {
             },
         );
         input.extend_from_slice(&payload[0..64]);
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
@@ -2598,7 +2614,7 @@ mod tests {
             },
         );
         input.extend_from_slice(&payload[64..128]);
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
@@ -2623,14 +2639,14 @@ mod tests {
         // makes progress possible rather than wedging on every push.
         let csid = 41;
         let mut input = Vec::new();
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
                 chunk_stream_id: csid,
             },
         );
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
                 timestamp: 1,
@@ -2640,7 +2656,7 @@ mod tests {
             },
         );
         input.push(0xAA);
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
@@ -2648,7 +2664,7 @@ mod tests {
             },
         );
         input.push(0xBB);
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type3,
@@ -2670,14 +2686,14 @@ mod tests {
     /// completes in a single chunk).
     fn single_chunk(csid: u32, payload: &[u8]) -> Vec<u8> {
         let mut input = Vec::new();
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
                 chunk_stream_id: csid,
             },
         );
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
                 timestamp: 0,
@@ -2703,14 +2719,14 @@ mod tests {
         // asserts an `Err` instead.
         let mut assembler = ChunkAssembler::new();
         let mut input = Vec::new();
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
                 chunk_stream_id: 4,
             },
         );
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
                 timestamp: 0,
@@ -2734,14 +2750,14 @@ mod tests {
         // (only values strictly above the cap are rejected).
         let mut assembler = ChunkAssembler::new();
         let mut input = Vec::new();
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
                 chunk_stream_id: 4,
             },
         );
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
                 timestamp: 0,
@@ -2816,14 +2832,14 @@ mod tests {
         let sent_len = DEFAULT_CHUNK_SIZE as usize;
         assert!(sent_len < declared_len as usize);
         let mut input = Vec::new();
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &BasicHeader {
                 fmt: Fmt::Type0,
                 chunk_stream_id: csid,
             },
         );
-        write_serialized(
+        write_serialized_ok(
             &mut input,
             &MessageHeader::Type0 {
                 timestamp: 0,
@@ -2922,7 +2938,7 @@ mod tests {
         let mut assembler = ChunkAssembler::new().with_max_in_progress_bytes(DECL as usize);
         assembler.push(&open_partial_chunk(3, DECL)).unwrap();
         let mut tail = Vec::new();
-        write_serialized(
+        write_serialized_ok(
             &mut tail,
             &BasicHeader {
                 fmt: Fmt::Type3,
@@ -3001,5 +3017,36 @@ mod tests {
              size 1 — quadratic behaviour crept back in",
             payload.len()
         );
+    }
+}
+
+#[cfg(test)]
+mod invalid_csid_tests {
+    use super::*;
+
+    fn msg(csid: u32) -> Message {
+        Message {
+            chunk_stream_id: csid,
+            timestamp: 0,
+            message_type_id: 20,
+            message_stream_id: 1,
+            payload: vec![1, 2, 3],
+        }
+    }
+
+    #[test]
+    fn write_rejects_out_of_range_chunk_stream_id_without_panicking() {
+        let mut w = ChunkWriter::new();
+        for bad in [0u32, 1, 65600, u32::MAX] {
+            match w.write(&msg(bad)) {
+                Err(RtmpError::InvalidChunkStreamId { chunk_stream_id }) => {
+                    assert_eq!(chunk_stream_id, bad);
+                }
+                other => panic!("csid {bad}: expected InvalidChunkStreamId, got {other:?}"),
+            }
+        }
+        for ok in [2u32, 63, 64, 319, 320, 65599] {
+            assert!(w.write(&msg(ok)).is_ok(), "csid {ok} must be accepted");
+        }
     }
 }

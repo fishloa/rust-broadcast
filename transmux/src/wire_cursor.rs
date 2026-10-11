@@ -52,3 +52,32 @@ pub(crate) fn read_nalu_16(
     let len = usize::from(read_u16(bytes, cursor, what)?);
     Ok(take(bytes, cursor, len, what)?.to_vec())
 }
+
+/// A big-endian `u64` at absolute offset `off` (the ISOBMFF version-1 64-bit
+/// `creation_time`/`modification_time`/`duration` fields). `BufferTooShort`
+/// instead of a panic when fewer than 8 bytes remain at `off`.
+pub(crate) fn be_u64(bytes: &[u8], off: usize, what: &'static str) -> Result<u64> {
+    let mut cursor = off;
+    let b = take(bytes, &mut cursor, 8, what)?;
+    Ok(b.iter().fold(0u64, |acc, &x| (acc << 8) | u64::from(x)))
+}
+
+#[cfg(test)]
+mod be_u64_tests {
+    use super::*;
+
+    #[test]
+    fn exact_ok_short_err() {
+        let b = [0u8, 0, 1, 2, 3, 4, 5, 6, 7, 8];
+        assert_eq!(be_u64(&b, 2, "t").unwrap(), 0x0102_0304_0506_0708);
+        assert!(matches!(
+            be_u64(&b, 3, "t"),
+            Err(Error::BufferTooShort {
+                need: 11,
+                have: 10,
+                what: "t"
+            })
+        ));
+        assert!(be_u64(&b, usize::MAX, "t").is_err());
+    }
+}

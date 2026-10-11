@@ -42,9 +42,8 @@
 
 #![cfg(feature = "cenc")]
 
-use std::alloc::{GlobalAlloc, Layout, System};
-use std::cell::Cell;
 use std::path::PathBuf;
+use test_alloc::ThreadCounting;
 
 use broadcast_common::{Encrypt, Unpackage};
 use transmux::{
@@ -52,45 +51,19 @@ use transmux::{
     RtpPacketiser, Sample, SubsamplePolicy, TsDemux,
 };
 
-/// Counts every allocation/deallocation made **by the calling thread**.
-/// Thread-local (see the module doc for why) so parallel `#[test]` fns under
-/// plain `cargo test` cannot pollute each other's measurement window.
-struct CountingAlloc;
-
-thread_local! {
-    static ALLOC_COUNT: Cell<usize> = const { Cell::new(0) };
-    static ALLOC_BYTES: Cell<usize> = const { Cell::new(0) };
-    static DEALLOC_COUNT: Cell<usize> = const { Cell::new(0) };
-}
-
-unsafe impl GlobalAlloc for CountingAlloc {
-    unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
-        ALLOC_COUNT.with(|c| c.set(c.get() + 1));
-        ALLOC_BYTES.with(|c| c.set(c.get() + layout.size()));
-        unsafe { System.alloc(layout) }
-    }
-
-    unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
-        DEALLOC_COUNT.with(|c| c.set(c.get() + 1));
-        unsafe { System.dealloc(ptr, layout) }
-    }
-}
-
+// Counts every allocation/deallocation made **by the calling thread**; thread-local
+// (see the module doc for why) so parallel `#[test]` fns under plain `cargo test`
+// cannot pollute each other's measurement window.
 #[global_allocator]
-static GLOBAL: CountingAlloc = CountingAlloc;
+static GLOBAL: ThreadCounting = ThreadCounting::new();
 
 fn reset_counters() {
-    ALLOC_COUNT.with(|c| c.set(0));
-    ALLOC_BYTES.with(|c| c.set(0));
-    DEALLOC_COUNT.with(|c| c.set(0));
+    ThreadCounting::reset();
 }
 
 fn snapshot_counters() -> (usize, usize, usize) {
-    (
-        ALLOC_COUNT.with(Cell::get),
-        ALLOC_BYTES.with(Cell::get),
-        DEALLOC_COUNT.with(Cell::get),
-    )
+    let s = ThreadCounting::snapshot();
+    (s.allocs, s.bytes, s.deallocs)
 }
 
 fn fixture_path() -> PathBuf {

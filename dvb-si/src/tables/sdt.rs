@@ -112,12 +112,12 @@ impl<'a> Parse<'a> for SdtSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let transport_stream_id = u16::from_be_bytes(*bytes[3..].first_chunk::<2>().unwrap());
+        let transport_stream_id = crate::wire::be_u16(bytes, 3, "sdt")?;
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
         let last_section_number = bytes[7];
-        let original_network_id = u16::from_be_bytes(*bytes[8..].first_chunk::<2>().unwrap());
+        let original_network_id = crate::wire::be_u16(bytes, 8, "sdt")?;
 
         let services_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         let services_end = total - CRC_LEN;

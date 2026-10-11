@@ -19,20 +19,22 @@ rustdoc-args = ["--cfg", "docsrs"]
 broadcast-common  = { path = "../broadcast-common", version = "9.4", default-features = false }
 mpeg-ts     = { path = "../mpeg-ts",    version = "0.5", default-features = false }
 thiserror = { version = "2", default-features = false }
-num_enum = { version = "0.7", default-features = false }
+num_enum = { workspace = true }
 libm = "0.2"
-chrono      = { version = "0.4", optional = true, default-features = false, features = ["alloc"] }
+chrono      = { workspace = true, optional = true, features = ["alloc"] }
 serde         = { version = "1", optional = true, features = ["derive"] }
 erased-serde  = { version = "0.4", optional = true }
 bytes         = { version = "1", optional = true, default-features = false }
-yoke          = { version = "0.7", optional = true, features = ["derive"] }
+yoke          = { workspace = true, optional = true, features = ["derive"] }
 flate2        = { version = "1", optional = true }
 encoding_rs = { version = "0.8", optional = true }
 
 [dev-dependencies]
+# Counting/capping test allocator (path-only, publish = false; never published).
+test-alloc = { path = "../test-alloc" }
 hex       = "0.4"
-serde_json = "1.0"
-criterion  = { version = "0.8", features = ["html_reports"] }
+serde_json = { workspace = true }
+criterion  = { workspace = true, features = ["html_reports"] }
 
 [[bench]]
 name     = "si_hot_paths"
@@ -68,3 +70,6 @@ flate2   = ["dep:flate2", "std"]
 [[example]]
 name              = "list_services"
 required-features = ["ts"]
+
+[lints]
+workspace = true

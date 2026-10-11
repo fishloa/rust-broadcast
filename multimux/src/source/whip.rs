@@ -1232,7 +1232,7 @@ pub struct WhipIngestSession {
     /// so [`WhipIngestSession`] stays `Send + Sync` (a raw `Option<T>` would
     /// make it `!Sync`, since `MediaTransport` is `Send + !Sync`); the guard
     /// is taken within a single synchronous `take`, never across an await.
-    media: std::sync::Mutex<Option<MediaTransport>>,
+    media: parking_lot::Mutex<Option<MediaTransport>>,
     depacketiser: RtpStreamDepacketiser,
     pt_to_track: HashMap<u8, u32>,
     clock_rate_by_track: HashMap<u32, u32>,
@@ -1286,7 +1286,7 @@ impl WhipIngestSession {
         }
         WhipIngestSession {
             socket: admitted.socket,
-            media: std::sync::Mutex::new(Some(admitted.media)),
+            media: parking_lot::Mutex::new(Some(admitted.media)),
             depacketiser: RtpStreamDepacketiser::new(tracks),
             pt_to_track,
             clock_rate_by_track,
@@ -1307,13 +1307,12 @@ impl WhipIngestSession {
     /// Hands the owned [`MediaTransport`] to the read loop (SP6.3): the
     /// session task OWNS it outright, so the loop takes it by value and holds
     /// no lock across `send_to().await`. The `std::sync::Mutex` is held only
-    /// for the synchronous `take`, never across an await.
-    fn take_transport(&self) -> MediaTransport {
-        self.media
-            .lock()
-            .expect("media transport mutex")
-            .take()
-            .expect("media transport already taken")
+    /// for the synchronous `take`, never across an await. A
+    /// `parking_lot::Mutex` is used so a panic elsewhere cannot poison it.
+    /// Returns `None` if the transport was already taken (it is handed out
+    /// exactly once, to the session's read loop).
+    fn take_transport(&self) -> Option<MediaTransport> {
+        self.media.lock().take()
     }
 
     /// Scans `sample`'s length-prefixed NAL data (see [`NAL_LENGTH_PREFIX`])
@@ -1911,12 +1910,18 @@ pub(crate) async fn run_whip_with_clock(
                 AcceptOutcome::Error(e) => return e,
                 AcceptOutcome::Admitted(id) => {
                     #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
-                    let (socket, mut media) = {
+                    let (socket, taken) = {
                         let s = driver
                             .driver(id)
                             .expect("just admitted by poll_accept")
                             .session();
                         (s.socket_handle(), s.take_transport())
+                    };
+                    let Some(mut media) = taken else {
+                        tracing::error!(
+                            "whip: media transport of a just-admitted session was already taken; skipping its read loop"
+                        );
+                        continue;
                     };
                     // Test seam: a staged fatal timer error is applied to the
                     // freshly-admitted transport so its next `handle_timeout`

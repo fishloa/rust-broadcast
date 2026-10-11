@@ -23,7 +23,7 @@ thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 
 [dev-dependencies]
-serde_json = "1.0"
+serde_json = { workspace = true }
 
 [features]
 default = ["std"]
@@ -31,3 +31,6 @@ default = ["std"]
 # needs only `alloc`.
 std = ["broadcast-common/std", "mpeg-pes/std", "thiserror/std"]
 serde = ["dep:serde"]
+
+[lints]
+workspace = true

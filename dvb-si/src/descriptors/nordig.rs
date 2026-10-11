@@ -61,11 +61,10 @@ impl<'a> Parse<'a> for NordigLogicalChannelV1 {
         }
         let mut entries = Vec::with_capacity(body.len() / V1_ENTRY_LEN);
         for chunk in body.chunks_exact(V1_ENTRY_LEN) {
-            let (sid_bytes, rest) = chunk.split_first_chunk::<2>().unwrap();
-            let service_id = u16::from_be_bytes(*sid_bytes);
-            let flags = rest[0];
+            let service_id = crate::wire::be_u16(chunk, 0, "nordig")?;
+            let flags = chunk[2];
             let visible_service_flag = flags & V1_VISIBLE_MASK != 0;
-            let lcn = (u16::from(flags & V1_LCN_HI_MASK) << 8) | u16::from(rest[1]);
+            let lcn = (u16::from(flags & V1_LCN_HI_MASK) << 8) | u16::from(chunk[3]);
             entries.push(NordigLogicalChannelV1Entry {
                 service_id,
                 visible_service_flag,
@@ -213,11 +212,10 @@ impl<'a> Parse<'a> for NordigLogicalChannelV2 {
             let svc_body = &body[svc_start..svc_end];
             let mut services = Vec::with_capacity(svc_body.len() / V2_SERVICE_ENTRY_LEN);
             for chunk in svc_body.chunks_exact(V2_SERVICE_ENTRY_LEN) {
-                let (sid_bytes, rest) = chunk.split_first_chunk::<2>().unwrap();
-                let service_id = u16::from_be_bytes(*sid_bytes);
-                let flags = rest[0];
+                let service_id = crate::wire::be_u16(chunk, 0, "nordig")?;
+                let flags = chunk[2];
                 let visible_service_flag = flags & V2_VISIBLE_MASK != 0;
-                let lcn = (u16::from(flags & V2_LCN_HI_MASK) << 8) | u16::from(rest[1]);
+                let lcn = (u16::from(flags & V2_LCN_HI_MASK) << 8) | u16::from(chunk[3]);
                 services.push(NordigLogicalChannelV2Service {
                     service_id,
                     visible_service_flag,

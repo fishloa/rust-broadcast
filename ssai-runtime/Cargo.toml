@@ -25,6 +25,8 @@ thiserror         = { version = "2", default-features = false }
 serde             = { version = "1", optional = true, default-features = false, features = ["derive", "alloc"] }
 
 [dev-dependencies]
+# Counting/capping test allocator (path-only, publish = false; never published).
+test-alloc = { path = "../test-alloc" }
 # Real-fixture tests/examples only (issue #929 prep, `fixtures/scte35-ssai/`):
 # decode the real cue this crate's splice-point conditioning is verified
 # against. Neither is a runtime dependency of the sans-IO core itself — the
@@ -40,3 +42,6 @@ default = ["std"]
 std = ["broadcast-common/std", "broadcast-hls/std", "thiserror/std", "serde?/std"]
 # Derive serde on the public wire/decision types.
 serde = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde"]
+
+[lints]
+workspace = true

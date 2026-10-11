@@ -22,7 +22,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 transmux          = { path = "../transmux",     version = "0.25" }
 # Smooth manifest rendering (`output::smooth`) and the Smooth-pull encryption
 # probe: the single XML dependency of the crates that read or write XML.
-quick-xml         = { version = "0.42", default-features = false }
+quick-xml         = { workspace = true }
 container-probe   = { path = "../container-probe", version = "0.1" }
 # HLS (M3U8) playlist syntax (issue #878): `source::hls_pull` builds/parses
 # playlists via this crate directly rather than through `transmux`.
@@ -72,9 +72,9 @@ bytes             = "1"
 # fails to compile against a lock that pins 0.2.0 (hit for real while
 # bumping axis-origin, née acap-multimux).
 broadcast-auth    = { path = "../broadcast-auth", version = "0.4" }
-sdp-types         = "0.2"
+sdp-types         = { workspace = true }
 tokio             = { version = "1", features = ["rt-multi-thread", "net", "io-util", "macros", "time", "sync", "signal"] }
-axum              = "0.8"
+axum              = { workspace = true }
 # Every multimux HTTP listener is served through hyper-util's server builder
 # (`origin::serve_hyper_util`) rather than `axum::serve`, so it can set a
 # header-read timeout, a connection cap, and graceful drain on shutdown
@@ -95,12 +95,12 @@ tower             = { version = "0.5", default-features = false, features = ["li
 http-body        = "1"
 # Typed response headers (`CacheControl`, `AccessControlAllow*`, `Vary`) in
 # `origin::add_response_headers` (W2a Task 3) instead of hand-built constants.
-headers          = "0.4"
+headers          = { workspace = true }
 # `ArcSwap<Router>` for the admin media router (W2a Task 3) so a per-request
 # read never takes a write lock on the rebuild path.
 arc-swap         = "1"
 serde             = { version = "1", features = ["derive"] }
-serde_json        = "1"
+serde_json        = { workspace = true }
 thiserror         = "2"
 url               = "2"
 percent-encoding  = "2"
@@ -131,9 +131,9 @@ parking_lot       = "0.12"
 # `all` is socket2's non-default feature that gates `set_reuse_port` (SP1.6
 # I-C); tokio already enables it transitively, but declaring it here makes the
 # `SO_REUSEPORT` path explicit and cfg-visible.
-socket2           = { version = "0.6", features = ["all"] }
-metrics           = "0.24"
-metrics-exporter-prometheus = { version = "0.18", default-features = false }
+socket2           = { workspace = true, features = ["all"] }
+metrics           = { workspace = true }
+metrics-exporter-prometheus = { workspace = true }
 tokio-rustls      = { version = "0.26", optional = true }
 # `rustls::pki_types::ServerName` for SNI, plus the loopback TLS test server
 # (`source::rtsp`'s `rtsps://` connect, issue #804) — pinned to the same
@@ -148,7 +148,7 @@ rustls            = { version = "0.23", optional = true }
 reqwest           = { version = "0.13", default-features = false, features = ["rustls", "stream"] }
 # `.next()` on `reqwest::Response::bytes_stream()` (a bare `Stream`, no
 # extension methods of its own).
-futures-util      = { version = "0.3", default-features = false, features = ["std"] }
+futures-util      = { workspace = true, features = ["std"] }
 # WHIP input (`source::whip`, issue #740) / WHEP output (`output::whep`,
 # issue #743), `whip`/`whep` features only: the ICE + DTLS-SRTP media
 # transport this crate has no reason to reimplement.
@@ -340,7 +340,10 @@ multimux         = { path = ".", features = ["test-seams"] }
 # requested `SO_RCVBUF` was APPLIED (the library binds through `socket2`
 # internally but does not re-export it). Already a transitive dependency at
 # the same version, so this adds no new lock entry.
-socket2          = "0.6"
+socket2          = { workspace = true }
 # `parking_lot::Mutex` so `tests/lock_recovery.rs` can prove the no-poison
 # property directly (the library uses it internally but does not re-export it).
 parking_lot      = "0.12"
+
+[lints]
+workspace = true

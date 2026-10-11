@@ -115,6 +115,8 @@ fn key_permute(k: u64) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate alloc;
+    use alloc::format;
 
     #[test]
     fn nibble_swap_symmetry() {

@@ -56,12 +56,10 @@ impl<'a> Parse<'a> for LogicalChannelDescriptor {
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
-            // chunks_exact(4) guarantees 4 bytes; unwrap is safe.
-            let (sid_bytes, rest) = chunk.split_first_chunk::<2>().unwrap();
-            let service_id = u16::from_be_bytes(*sid_bytes);
-            let flags = rest[0];
+            let service_id = crate::wire::be_u16(chunk, 0, "logical_channel")?;
+            let flags = chunk[2];
             let visible_service = flags & VISIBLE_MASK != 0;
-            let lcn = (u16::from(flags & LCN_HI_MASK) << 8) | u16::from(rest[1]);
+            let lcn = (u16::from(flags & LCN_HI_MASK) << 8) | u16::from(chunk[3]);
             entries.push(LogicalChannelEntry {
                 service_id,
                 visible_service,
