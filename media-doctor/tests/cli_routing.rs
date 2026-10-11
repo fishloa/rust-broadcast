@@ -89,7 +89,14 @@ fn read_fixture(name: &str) -> Vec<u8> {
 fn scratch(name: &str, bytes: &[u8]) -> PathBuf {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../target/media-doctor-cli");
     fs::create_dir_all(&dir).expect("create scratch dir");
-    let path = dir.join(name);
+    // Tests run on parallel threads and several share a scratch `name` (the
+    // aligned baseline); namespace by test thread so one test's truncating
+    // write can never be read mid-write by another's `media-doctor` run.
+    let owner = std::thread::current()
+        .name()
+        .unwrap_or("main")
+        .replace("::", "-");
+    let path = dir.join(format!("{owner}-{name}"));
     fs::write(&path, bytes).unwrap_or_else(|e| panic!("write {}: {e}", path.display()));
     path
 }
