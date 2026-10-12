@@ -6,6 +6,13 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+
+- `TsMux::with_psi_interval_ms(Option<u32>)`, `TsMux::psi_interval_ms()` and `DEFAULT_PSI_INTERVAL_MS` (100): configure the PAT/PMT repetition interval (#1162 R7). `None`/`Some(0)` restores the old write-once-at-start layout.
+
+### Changed
+
+- `TsMux` now **repeats PAT and PMT periodically** (default every 100 ms of media time, between PES runs, continuity counters continuous on the PSI PIDs, PMT content/version unchanged), so a `TsDemux`->`TsMux` file can be joined at any packet-aligned offset (previously a cut such as 1128 bytes in yielded zero tracks) and meets ETSI TR 101 290 1.3/1.5. Elementary-stream packets are byte-identical to before; the only difference is the extra PSI packets. The classic-HLS segmenter (`ts_hls`) is unchanged (PSI at each segment start).
 
 ## [0.25.3] - 2026-10-12
 ### Fixed
