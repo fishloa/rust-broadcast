@@ -654,8 +654,10 @@ fn sync_probes() -> u64 {
 /// frame boundary (issue #638: a real DVB-S multiplexer routinely splits PES
 /// payloads without regard to the ~1253/1254-byte frame length) -- this
 /// resyncs instead of requiring the syncword at offset 0. Bytes before the
-/// returned offset are a partial frame tail from the previous payload and are
-/// discarded (no cross-PES carry).
+/// returned offset are garbage that no frame header could be found in; the
+/// tail of a frame that began in the previous PES payload is completed by the
+/// per-PID carry buffer ([`AudioAnchor::carry`], issue #1160) before this scan
+/// ever sees it.
 fn find_mpeg_audio_sync(data: &[u8]) -> Option<(usize, MpegAudioFrameHeader)> {
     let mut off = 0usize;
     while off + 4 <= data.len() {
@@ -668,35 +670,143 @@ fn find_mpeg_audio_sync(data: &[u8]) -> Option<(usize, MpegAudioFrameHeader)> {
     None
 }
 
-/// Split a concatenated MPEG audio payload into individual frames using the
-/// frame-header length field (ISO/IEC 11172-3 §2.4.1.3). Resyncs to the next
-/// frame boundary on a bad sync (see [`find_mpeg_audio_sync`]); stops once no
-/// further sync is found or a frame would run past the end of `payload`, so a
-/// partial tail does not lose earlier frames.
-fn split_mpeg_audio_frames(payload: &[u8]) -> Vec<&[u8]> {
+/// Upper bound, in bytes, on one per-PID audio carry buffer (issue #1160).
+///
+/// A carry only ever holds the *unfinished tail of one frame* — strictly fewer
+/// bytes than that frame's own `frame_length`, or a 1..=3 byte header prefix —
+/// so it is bounded by the largest frame the framings can declare: the 13-bit
+/// ADTS `aac_frame_length` (ISO/IEC 13818-7 §6.2, max 8191; the MPEG audio
+/// maximum, 1729 bytes for Layer II at 384 kbit/s / 32 kHz per ISO/IEC
+/// 11172-3 §2.4.2.3, is far below it). A tail that somehow exceeds it is
+/// discarded rather than held, so hostile input can never grow this buffer.
+const AUDIO_CARRY_MAX_BYTES: usize = 8191;
+
+/// One audio framing's header-walk rules, so [`split_frames_with_tail`] is a
+/// single implementation for MPEG audio and ADTS (the two splitters that cut
+/// each PES payload independently and so can see a frame straddle a PES
+/// boundary).
+trait FrameSync {
+    /// Parsed header.
+    type Hdr: Copy;
+    /// Bytes needed to parse one header.
+    const HEADER_LEN: usize;
+    /// Parse a header at the start of `data`, returning it with the whole
+    /// frame's length in bytes (header included). `None`: not a valid sync.
+    fn parse(data: &[u8]) -> Option<(Self::Hdr, usize)>;
+    /// Could `prefix` (fewer than [`Self::HEADER_LEN`] bytes) be the start of a
+    /// header whose remainder has not arrived yet?
+    fn is_partial_sync(prefix: &[u8]) -> bool;
+}
+
+/// MPEG-1/2 audio framing (ISO/IEC 11172-3 §2.4.1.3).
+struct MpegAudioSync;
+
+impl FrameSync for MpegAudioSync {
+    type Hdr = MpegAudioFrameHeader;
+    const HEADER_LEN: usize = 4;
+    fn parse(data: &[u8]) -> Option<(Self::Hdr, usize)> {
+        let hdr = MpegAudioFrameHeader::parse(data).ok()?;
+        Some((hdr, hdr.frame_length))
+    }
+    fn is_partial_sync(prefix: &[u8]) -> bool {
+        // 11-bit all-ones syncword: byte 0 is 0xFF, byte 1's top three bits set.
+        const SYNC_HI_BYTE: u8 = 0xFF;
+        const SYNC_LO_MASK: u8 = 0xE0;
+        prefix.first() == Some(&SYNC_HI_BYTE)
+            && prefix
+                .get(1)
+                .is_none_or(|b| b & SYNC_LO_MASK == SYNC_LO_MASK)
+    }
+}
+
+/// ADTS framing (ISO/IEC 13818-7 §6.2).
+struct AdtsSync;
+
+impl FrameSync for AdtsSync {
+    type Hdr = AdtsHeader;
+    const HEADER_LEN: usize = ADTS_HEADER_SIZE;
+    fn parse(data: &[u8]) -> Option<(Self::Hdr, usize)> {
+        let hdr = parse_adts_header(data).ok()?;
+        Some((hdr, hdr.frame_length as usize))
+    }
+    fn is_partial_sync(prefix: &[u8]) -> bool {
+        // 12-bit all-ones syncword.
+        const SYNC_HI_BYTE: u8 = 0xFF;
+        const SYNC_LO_MASK: u8 = 0xF0;
+        prefix.first() == Some(&SYNC_HI_BYTE)
+            && prefix
+                .get(1)
+                .is_none_or(|b| b & SYNC_LO_MASK == SYNC_LO_MASK)
+    }
+}
+
+/// The result of cutting one buffer into frames, see [`split_frames_with_tail`].
+struct FrameSplit<'a, H> {
+    /// Whole frames: `(start offset in the buffer, frame bytes, header)`.
+    frames: Vec<(usize, &'a [u8], H)>,
+    /// Offset where the unconsumed tail begins; `== buf.len()` when none. The
+    /// tail is a *possible* frame start (a valid header whose frame runs past
+    /// the buffer, or a 1..`HEADER_LEN` byte header prefix).
+    tail_start: usize,
+}
+
+/// Cut `buf` into whole frames using the header length field, resyncing past
+/// garbage, and report where the unconsumed tail starts so a caller can carry
+/// it into the next PES payload (issue #1160).
+///
+/// Behaviour on the whole-frame part is the historical (#638) one: a bad sync
+/// resyncs to the next valid header, a `frame_length` shorter than a header
+/// stops the split, and the scan stays linear in `buf`.
+fn split_frames_with_tail<F: FrameSync>(buf: &[u8]) -> FrameSplit<'_, F::Hdr> {
     let mut frames = Vec::new();
     let mut off = 0usize;
-    while off + 4 <= payload.len() {
-        let Some((sync_off, hdr)) = find_mpeg_audio_sync(&payload[off..]) else {
-            break;
-        };
-        off += sync_off;
-        let flen = hdr.frame_length;
-        if flen < 4 || off + flen > payload.len() {
-            break;
+    let mut tail_start = buf.len();
+    'scan: {
+        while off + F::HEADER_LEN <= buf.len() {
+            // Scan forward for the next valid header.
+            let mut at = off;
+            let found = loop {
+                if at + F::HEADER_LEN > buf.len() {
+                    break None;
+                }
+                record_sync_probe();
+                if let Some((hdr, flen)) = F::parse(&buf[at..]) {
+                    break Some((at, hdr, flen));
+                }
+                at += 1;
+            };
+            let Some((start, hdr, flen)) = found else {
+                off = at;
+                break;
+            };
+            if flen < F::HEADER_LEN {
+                // Degenerate header: historical behaviour, stop splitting.
+                break 'scan;
+            }
+            if start + flen > buf.len() {
+                // A real frame header whose frame runs past the buffer.
+                tail_start = start;
+                break 'scan;
+            }
+            frames.push((start, &buf[start..start + flen], hdr));
+            off = start + flen;
         }
-        frames.push(&payload[off..off + flen]);
-        off += flen;
+        // No further full header: the last `HEADER_LEN - 1` bytes may still be
+        // the front of one.
+        let from = off.max(buf.len().saturating_sub(F::HEADER_LEN - 1));
+        if let Some(p) = (from..buf.len()).find(|&p| F::is_partial_sync(&buf[p..])) {
+            tail_start = p;
+        }
     }
-    frames
+    FrameSplit { frames, tail_start }
 }
 
 /// Scan forward from the start of `data` for the first byte offset carrying a
 /// valid ADTS frame header, returning that offset and the parsed header --
 /// see [`find_mpeg_audio_sync`] for why a broadcast PES payload isn't
 /// guaranteed to start on a frame boundary (issue #638). Bytes before the
-/// returned offset are a partial frame tail from the previous payload and are
-/// discarded (no cross-PES carry).
+/// returned offset are skipped; a straddling tail is completed by the
+/// per-PID carry buffer ([`AudioAnchor::carry`], issue #1160) beforehand.
 fn find_adts_sync(data: &[u8]) -> Option<(usize, AdtsHeader)> {
     let mut off = 0usize;
     while off + ADTS_HEADER_SIZE <= data.len() {
@@ -713,27 +823,18 @@ fn find_adts_sync(data: &[u8]) -> Option<(usize, AdtsHeader)> {
 /// bytes — fixed+variable header, the CRC when present, and the raw data
 /// block(s) — plus that frame's parsed [`AdtsHeader`]). Resyncs to the next
 /// frame boundary on a bad sync (see [`find_adts_sync`]); stops once no
-/// further sync is found or a frame would run past the end of `payload`, so
-/// a partial tail does not lose earlier frames. `frame_length` (ISO/IEC
-/// 13818-7 §6.2) already spans the whole frame including any CRC, so this
-/// boundary-finding needs no change for C11 (#1012) — only the caller's
-/// fixed 7-byte strip did.
+/// further sync is found or a frame would run past the end of `payload` (the
+/// tail is carried into the next PES by [`emit_audio_au`], #1160).
+/// `frame_length` (ISO/IEC 13818-7 §6.2) already spans the whole frame
+/// including any CRC, so this boundary-finding needs no change for C11
+/// (#1012) — only the caller's fixed 7-byte strip did.
+#[cfg(test)]
 fn split_adts_frames(payload: &[u8]) -> Vec<(&[u8], AdtsHeader)> {
-    let mut frames = Vec::new();
-    let mut off = 0usize;
-    while off + ADTS_HEADER_SIZE <= payload.len() {
-        let Some((sync_off, hdr)) = find_adts_sync(&payload[off..]) else {
-            break;
-        };
-        off += sync_off;
-        let frame_len = hdr.frame_length as usize;
-        if frame_len < ADTS_HEADER_SIZE || off + frame_len > payload.len() {
-            break;
-        }
-        frames.push((&payload[off..off + frame_len], hdr));
-        off += frame_len;
-    }
-    frames
+    split_frames_with_tail::<AdtsSync>(payload)
+        .frames
+        .into_iter()
+        .map(|(_, f, h)| (f, h))
+        .collect()
 }
 
 /// `adts_error_check()`'s `crc_check` (ISO/IEC 13818-7 §6.2): a 16-bit CRC
@@ -1068,6 +1169,17 @@ enum AudioKind {
 #[derive(Default)]
 struct AudioAnchor {
     seed: Option<AudioAnchorSeed>,
+    /// Per-PID cross-PES carry (issue #1160): the unfinished tail of the last
+    /// frame of the previous PES payload — bytes that begin a valid frame
+    /// header (or a 1..`HEADER_LEN` byte prefix of one) but run past that
+    /// payload. Prepended to the next PES payload of the *same* PID by
+    /// [`emit_audio_au`]. Only the MPEG-audio and ADTS splitters use it (the
+    /// AC-3/E-AC-3/DTS splitters are stream-reassembling, see
+    /// [`emit_audio_au`]). Strictly bounded by [`AUDIO_CARRY_MAX_BYTES`]; empty
+    /// after a continuity gap, a dropped PES, a codec-config change or a
+    /// re-anchor ([`clear_audio_carry`]); a dangling tail at end of stream is
+    /// simply never emitted.
+    carry: Vec<u8>,
 }
 
 #[derive(Clone, Copy)]
@@ -1641,6 +1753,112 @@ fn video_sample_bytes(codec: VideoCodec, au_data: &[u8]) -> (Vec<u8>, bool) {
     }
 }
 
+/// One audio frame resolved by [`plan_audio_frames`].
+struct PlannedFrame<'a> {
+    /// Sample bytes to emit; `None` for a frame with no payload after its
+    /// header (still advances the cursor by its duration).
+    data: Option<&'a [u8]>,
+    /// Intrinsic duration in track-timescale ticks (= samples).
+    duration: u32,
+    /// The frame *began* in the carried bytes, i.e. in the previous PES.
+    from_carry: bool,
+}
+
+/// The frames cut from `carry ++ payload`, plus what to carry forward.
+struct AudioPlan<'a> {
+    frames: Vec<PlannedFrame<'a>>,
+    /// Unfinished tail to carry into the next PES payload.
+    tail: &'a [u8],
+    /// Some frame (or the start of the tail) *commenced* in this payload —
+    /// only then does this PES's wire PTS describe a frame boundary
+    /// (ISO/IEC 13818-1 §2.4.3.7: the PTS is of the first access unit that
+    /// *commences* in the PES packet).
+    commences: bool,
+    /// `false` when a non-empty carry did not join cleanly onto this payload
+    /// (the carried bytes were not really a frame start, or the frame they
+    /// began is not followed by another valid header): the caller drops the
+    /// carry and plans the payload alone.
+    carry_ok: bool,
+}
+
+fn plan_with<'a, F: FrameSync>(
+    data: &'a [u8],
+    carry_len: usize,
+    shape: impl Fn(&F::Hdr) -> (usize, u32),
+) -> AudioPlan<'a> {
+    let split = split_frames_with_tail::<F>(data);
+    let carry_ok = carry_len == 0
+        || match split.frames.first() {
+            // The carried frame must start at byte 0 and, when enough bytes
+            // follow to tell, be followed by another valid header — otherwise
+            // a false sync in the previous payload's last bytes would swallow
+            // real frames of this one.
+            Some(&(0, f, _)) => data.len() < f.len() + F::HEADER_LEN || F::parse(&data[f.len()..]).is_some(),
+            Some(_) => false,
+            None => split.tail_start == 0,
+        };
+    let frames: Vec<PlannedFrame<'a>> = split
+        .frames
+        .iter()
+        .map(|&(start, f, ref h)| {
+            let (header_len, duration) = shape(h);
+            PlannedFrame {
+                data: (f.len() > header_len).then(|| &f[header_len..]),
+                duration,
+                from_carry: start < carry_len,
+            }
+        })
+        .collect();
+    let tail = &data[split.tail_start..];
+    let commences = frames.iter().any(|f| !f.from_carry)
+        || (!tail.is_empty() && split.tail_start >= carry_len);
+    AudioPlan {
+        frames,
+        tail,
+        commences,
+        carry_ok,
+    }
+}
+
+/// Cut `data` (= carry ++ one PES payload; the first `carry_len` bytes are the
+/// carry) into frames for the two families whose frames can straddle a PES
+/// boundary. `None` for the other families.
+fn plan_audio_frames<'a>(
+    kind: &AudioKind,
+    data: &'a [u8],
+    carry_len: usize,
+) -> Option<AudioPlan<'a>> {
+    match kind {
+        AudioKind::Aac => Some(plan_with::<AdtsSync>(data, carry_len, |h| {
+            (
+                adts_header_len(h),
+                AAC_SAMPLES_PER_FRAME * (h.num_raw_data_blocks as u32 + 1),
+            )
+        })),
+        AudioKind::MpegAudio { samples_per_frame } => {
+            let spf = *samples_per_frame;
+            Some(plan_with::<MpegAudioSync>(data, carry_len, move |_| {
+                (0, spf)
+            }))
+        }
+        AudioKind::Ac3 | AudioKind::Eac3 | AudioKind::Dts => None,
+    }
+}
+
+/// Drop any held cross-PES carry on a live audio track (issue #1160): called
+/// when bytes were lost between two payloads (continuity gap, dropped or
+/// over-budget PES) or the codec config changed, so the held tail can no
+/// longer be joined to what follows.
+fn clear_audio_carry(stream: &mut StreamState) {
+    if let Some(TrackState::Live(LiveTrack {
+        kind: LiveKind::Audio { anchor, .. },
+        ..
+    })) = stream.track.as_mut()
+    {
+        anchor.carry.clear();
+    }
+}
+
 /// Split one access unit into its coded frames and emit each immediately
 /// (audio needs no lookahead: duration is intrinsic per split-frame family).
 ///
@@ -1672,16 +1890,57 @@ fn emit_audio_au(
     // cursor?" decision reads the same value without needing a second
     // borrow-and-`expect` of `anchor.seed` to restate an invariant the
     // compiler cannot see.
+    //
+    // Cross-PES carry (issue #1160). For the MPEG-audio and ADTS families the
+    // unfinished tail of the previous PES payload (`anchor.carry`) is joined in
+    // front of this payload, so a frame straddling the boundary is recovered
+    // whole. It takes the cursor position — which is exactly the time of the
+    // PES in which it *started* (the PES's PTS, plus the intrinsic durations
+    // of the frames before it) — and every later frame follows from it by the
+    // usual frame-exact accumulation. This PES's own wire stamp refers to the
+    // first frame that *commences* in it, i.e. one carried-frame duration
+    // past the cursor, so the drift check below compares against
+    // `cursor + lead`. When the wire stamp instead re-anchors the track, the
+    // carried frame is placed `lead` before it. A carry that does not really
+    // continue (a genuine splice: the new payload does not follow the held
+    // tail with a valid header) is rejected by `plan_with`, never emitted.
+    let carry = core::mem::take(&mut anchor.carry);
+    let joined: Vec<u8>;
+    let (data, carry_len): (&[u8], usize) = if carry.is_empty() {
+        (au_data, 0)
+    } else {
+        joined = [carry.as_slice(), au_data].concat();
+        (joined.as_slice(), carry.len())
+    };
+    let mut plan = plan_audio_frames(kind, data, carry_len);
+    if carry_len > 0 && plan.as_ref().is_none_or(|p| !p.carry_ok) {
+        // The carried bytes did not join cleanly (a false sync at the end of
+        // the previous payload): resync on this payload alone.
+        plan = plan_audio_frames(kind, au_data, 0);
+    }
+    let lead_ticks: i64 = plan.as_ref().map_or(0, |p| {
+        p.frames
+            .iter()
+            .filter(|f| f.from_carry)
+            .map(|f| f.duration as i64)
+            .sum()
+    });
     let seed = anchor.seed;
-    let fresh_anchor = match &seed {
+    let mut fresh_anchor = match &seed {
         None => true,
         Some(seed) => {
             let expected_dts_uw = seed.anchor_dts_uw
-                + (seed.ticks_since_anchor as i128 * VIDEO_TIMESCALE as i128)
+                + ((seed.ticks_since_anchor + lead_ticks) as i128 * VIDEO_TIMESCALE as i128)
                     / sample_rate.max(1) as i128;
             (dts_uw - expected_dts_uw).abs() > audio_discontinuity_threshold_90k(sample_rate)
         }
     };
+    // No frame commences in this payload (it only finishes the carried one):
+    // its wire stamp, if any, does not describe a frame boundary, so it is
+    // no evidence of a discontinuity.
+    if seed.is_some() && plan.as_ref().is_some_and(|p| !p.commences) {
+        fresh_anchor = false;
+    }
     // Only signal a discontinuity when re-anchoring an ALREADY-seeded track
     // (the very first access unit establishes the anchor, it doesn't
     // "discontinue" from anything).
@@ -1694,9 +1953,11 @@ fn emit_audio_au(
     }
     let (dts0, pts0) = match (fresh_anchor, &seed) {
         (false, Some(seed)) => (seed.next_dts, seed.next_pts),
+        // (Re-)anchoring on the wire stamp: it describes the first frame that
+        // commences in this PES, which is `lead_ticks` after a carried frame.
         _ => (
-            rescale_to_track(dts_uw, sample_rate),
-            rescale_to_track(pts_uw, sample_rate),
+            rescale_to_track(dts_uw, sample_rate) - lead_ticks,
+            rescale_to_track(pts_uw, sample_rate) - lead_ticks,
         ),
     };
 
@@ -1718,23 +1979,20 @@ fn emit_audio_au(
         Sample::from_raw(data, Some(dts), Some(pts), Some(duration)).with_provenance(au_provenance)
     };
     match kind {
-        AudioKind::Aac => {
-            for (frame, hdr) in split_adts_frames(au_data) {
-                // C11 (#1012): strip the CRC (if present) along with the
-                // header, and scale duration by the number of raw data
-                // blocks this one ADTS frame actually carries — a frame
-                // with `number_of_raw_data_blocks_in_frame == n` codes
-                // `n + 1` blocks of `AAC_SAMPLES_PER_FRAME` samples each,
-                // not one.
-                let header_len = adts_header_len(&hdr);
-                let duration = AAC_SAMPLES_PER_FRAME * (hdr.num_raw_data_blocks as u32 + 1);
-                if frame.len() > header_len {
-                    events.push_back(DemuxEvent::Sample {
-                        track_id,
-                        sample: audio_sample(frame[header_len..].to_vec(), duration, elapsed),
-                    });
+        // AAC (ISO/IEC 13818-7 §6.2): the CRC (if present) is stripped with the
+        // header (C11, #1012) and duration scales with the raw data blocks the
+        // frame carries — both folded into `plan_audio_frames`.
+        AudioKind::Aac | AudioKind::MpegAudio { .. } => {
+            if let Some(plan) = &plan {
+                for f in &plan.frames {
+                    if let Some(payload) = f.data {
+                        events.push_back(DemuxEvent::Sample {
+                            track_id,
+                            sample: audio_sample(payload.to_vec(), f.duration, elapsed),
+                        });
+                    }
+                    elapsed += f.duration as u64;
                 }
-                elapsed += duration as u64;
             }
         }
         AudioKind::Ac3 => {
@@ -1765,15 +2023,6 @@ fn emit_audio_au(
                 elapsed += frame.samples as u64;
             }
         }
-        AudioKind::MpegAudio { samples_per_frame } => {
-            for frame in split_mpeg_audio_frames(au_data) {
-                events.push_back(DemuxEvent::Sample {
-                    track_id,
-                    sample: audio_sample(frame.to_vec(), *samples_per_frame, elapsed),
-                });
-                elapsed += *samples_per_frame as u64;
-            }
-        }
     }
 
     // Advance the persistent anchor by this AU's total intrinsic duration so
@@ -1789,7 +2038,9 @@ fn emit_audio_au(
             seed.anchor_pts_uw,
             seed.ticks_since_anchor,
         ),
-        _ => (dts_uw, pts_uw, 0i64),
+        // The wire anchor sits `lead_ticks` past the cursor's start (the
+        // carried frame precedes it), so the cursor is already that far on.
+        _ => (dts_uw, pts_uw, -lead_ticks),
     };
     anchor.seed = Some(AudioAnchorSeed {
         next_dts: dts0 + elapsed as i64,
@@ -1798,6 +2049,13 @@ fn emit_audio_au(
         anchor_pts_uw,
         ticks_since_anchor: ticks_since_anchor + elapsed as i64,
     });
+    // Hold the unfinished tail for the next PES of this PID — never more than
+    // one frame's worth (see [`AUDIO_CARRY_MAX_BYTES`]).
+    if let Some(plan) = &plan
+        && plan.tail.len() <= AUDIO_CARRY_MAX_BYTES
+    {
+        anchor.carry = plan.tail.to_vec();
+    }
 }
 
 /// Apply one access unit to an already-live track, emitting whatever
@@ -2522,6 +2780,11 @@ fn advance_track(
             if let Some((config, timescale)) = reprobe_if_config_changed(stream, &mut live, data) {
                 live.config = config;
                 live.timescale = timescale;
+                // New codec config: a frame tail held under the old one
+                // cannot be completed by the new stream (issue #1160).
+                if let LiveKind::Audio { anchor, .. } = &mut live.kind {
+                    anchor.carry.clear();
+                }
                 events.push_back(DemuxEvent::TrackUpdated(
                     TrackSpec::new(live.track_id, live.timescale, live.config.clone())
                         .with_source(pid, stream.descriptors.clone()),
@@ -2638,6 +2901,7 @@ fn feed_pes_bounded(
         let dropped_bytes = stream.pes_bytes as u64;
         let _ = assembler.flush();
         stream.pes_bytes = 0;
+        clear_audio_carry(stream);
         let track = match stream.track.as_ref() {
             Some(TrackState::Live(live)) => Some(live.track_id),
             _ => None,
@@ -3322,8 +3586,21 @@ impl StreamingTsDemux {
                 None
             };
             // `completed_intact` false means dropped, not delivered (r04-W49).
+            if completed_pes.is_some() && !completed_intact {
+                // A dropped unit loses its bytes, so an audio frame tail held
+                // from the previous unit can no longer be joined to what
+                // follows (issue #1160).
+                clear_audio_carry(stream);
+            }
             if completed_intact && let Some(completed) = completed_pes {
                 on_completed_pes(stream, pid, &completed, &mut self.events);
+            }
+            if gap_here {
+                // Bytes were lost on this PID: whatever frame tail an audio
+                // track holds (including the one the unit just completed
+                // above may have left) is no longer contiguous with the next
+                // payload (issue #1160).
+                clear_audio_carry(stream);
             }
             if matches!(stream.carrier, Carrier::Pes(_)) {
                 if pusi {

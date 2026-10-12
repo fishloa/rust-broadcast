@@ -93,7 +93,12 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     ("ts/pts-wrap.ts", 0x446b6222520c1313),
     ("ts/aac-5_1-640k.ts", 0x0c69bd29aae724c7),
     ("ts/dts/dts_core.ts", 0x049622d2b28d2388),
-    ("ts/legacy/mpeg2_mp2_pes_misaligned.ts", 0x9cde22b83f9dd6f2),
+    // Re-captured for #1160 (cross-PES audio carry): this fixture re-chunks 39
+    // real MP2 frames at 2000-byte PES payloads, so the old per-PES splitter
+    // dropped every straddling frame; the carry now recovers all 39 (see
+    // `mpeg_audio_resyncs_across_pes_boundaries`). Every other fixture here
+    // is frame-aligned and is byte-identical to before.
+    ("ts/legacy/mpeg2_mp2_pes_misaligned.ts", 0x96664c0bef2b2298),
 ];
 
 #[test]
