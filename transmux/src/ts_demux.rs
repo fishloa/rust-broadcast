@@ -1776,6 +1776,12 @@ struct StreamState {
     /// `0` when the backlog is abandoned (see [`abandon_backlog`]); `0` and
     /// unused once `track` is `Live` or `Abandoned`.
     backlog_bytes: usize,
+    /// While an audio PID is still `Probing`: the last bytes (at most
+    /// [`audio_probe_window`]) of the access units already seen, joined in
+    /// front of the next one so a frame header (or, for E-AC-3, a whole frame)
+    /// that straddles a PES boundary can still resolve the track's config
+    /// (issue #1160). Empty otherwise.
+    probe_tail: Vec<u8>,
 }
 
 /// Advance a one-behind (video/data) pending slot with a newly-built sample,
@@ -2751,7 +2757,8 @@ fn finalize_probe(
             ))
         }
         ConfigProbe::Ac3 => {
-            let info = Ac3SyncframeInfo::from_es(latest).ok()?;
+            let start = first_sync_offset::<Ac3Sync>(latest)?;
+            let info = Ac3SyncframeInfo::from_es(&latest[start..]).ok()?;
             let sample_rate = info.sample_rate;
             let channel_count = info.channel_count() as u16;
             let config = info.into_dac3();
@@ -2777,8 +2784,9 @@ fn finalize_probe(
             // independent frame. Scanning the whole backlog would emit one
             // substream per repeated access unit (and re-scan it on every
             // access unit — see the O(n²) note above `finalize_probe`).
+            let start = first_sync_offset::<Eac3Sync>(latest)?;
             let frames: alloc::vec::Vec<Ec3SyncframeInfo> =
-                Ec3SyncframeInfo::from_es_first_au(latest);
+                Ec3SyncframeInfo::from_es_first_au(&latest[start..]);
             let info = *frames.first()?;
             let sample_rate = info.sample_rate;
             let channel_count = info.channel_count() as u16;
@@ -2976,7 +2984,26 @@ fn advance_track(
             let Some(latest) = backlog.last() else {
                 return;
             };
-            match finalize_probe(stream.codec, &stream.descriptors, &mut probe, &latest.data) {
+            let mut resolved =
+                finalize_probe(stream.codec, &stream.descriptors, &mut probe, &latest.data);
+            // Audio config recovery across PES boundaries (issue #1160): a PES
+            // may be shorter than a frame header, or a header may straddle two
+            // of them. When the newest access unit alone does not resolve, the
+            // probe is retried over a bounded window joining it to the held
+            // tail of the earlier ones. (Tried only after the plain probe
+            // fails, so a resolving stream pays nothing.)
+            if resolved.is_none()
+                && let Some(window) =
+                    audio_probe_window(stream.codec, &stream.probe_tail, &latest.data)
+            {
+                resolved = finalize_probe(stream.codec, &stream.descriptors, &mut probe, &window);
+            }
+            stream.probe_tail = if resolved.is_some() {
+                Vec::new()
+            } else {
+                audio_probe_next_tail(stream.codec, &stream.probe_tail, &latest.data)
+            };
+            match resolved {
                 Some((config, timescale, kind)) => TrackState::Parked {
                     config,
                     timescale,
@@ -2984,6 +3011,7 @@ fn advance_track(
                     backlog,
                 },
                 None if stream.backlog_bytes > MAX_PROBE_BACKLOG_BYTES => {
+                    stream.probe_tail = Vec::new();
                     abandon_backlog(stream, pid, events)
                 }
                 None => TrackState::Probing { probe, backlog },
@@ -2991,6 +3019,73 @@ fn advance_track(
         }
     };
     stream.track = Some(new_track);
+}
+
+/// Bytes of the earlier access units an audio probe keeps/joins at a PES
+/// boundary for the header-only framings (MPEG audio, ADTS, AC-3, DTS): a frame
+/// header is at most a dozen or so bytes (DTS core's 88-bit fixed fields are the
+/// longest), so a window this size across the boundary catches a header split
+/// there (issue #1160).
+const AUDIO_PROBE_BOUNDARY_BYTES: usize = 16;
+
+/// The most an E-AC-3 probe holds: its `dec3` is built from a whole independent
+/// syncframe, at most `2^11` 16-bit words (ETSI TS 102 366 Annex E `frmsiz`),
+/// plus a header's worth.
+const EAC3_PROBE_TAIL_MAX: usize = 2 * 2048 + AUDIO_PROBE_BOUNDARY_BYTES;
+
+/// The window to retry an audio config probe over when the newest access unit
+/// alone did not resolve (see [`StreamState::probe_tail`]); `None` when there is
+/// nothing held to join (or the codec is not an audio one).
+fn audio_probe_window(codec: Codec, tail: &[u8], latest: &[u8]) -> Option<Vec<u8>> {
+    if tail.is_empty() {
+        return None;
+    }
+    match codec {
+        // A header was found in the newest access unit alone (and still did not
+        // resolve, e.g. a reserved sampling-frequency index): joining more
+        // bytes cannot help.
+        Codec::MpegAudio(_) if first_sync_offset::<MpegAudioSync>(latest).is_some() => None,
+        Codec::Aac if first_sync_offset::<AdtsSync>(latest).is_some() => None,
+        Codec::Ac3 if first_sync_offset::<Ac3Sync>(latest).is_some() => None,
+        Codec::Dts if first_sync_offset::<DtsSync>(latest).is_some() => None,
+        Codec::MpegAudio(_) | Codec::Aac | Codec::Ac3 | Codec::Dts => {
+            let head = &latest[..latest.len().min(AUDIO_PROBE_BOUNDARY_BYTES)];
+            Some([tail, head].concat())
+        }
+        Codec::Eac3 => Some([tail, latest].concat()),
+        _ => None,
+    }
+}
+
+/// What to hold for the next access unit after an unresolved probe: the last
+/// [`AUDIO_PROBE_BOUNDARY_BYTES`] bytes (header-only framings), or for E-AC-3
+/// everything from the first valid syncframe header on (bounded by
+/// [`EAC3_PROBE_TAIL_MAX`]; a frame that has not completed by then never will).
+fn audio_probe_next_tail(codec: Codec, tail: &[u8], latest: &[u8]) -> Vec<u8> {
+    match codec {
+        Codec::MpegAudio(_) | Codec::Aac | Codec::Ac3 | Codec::Dts => {
+            let all = [tail, latest].concat();
+            all[all.len().saturating_sub(AUDIO_PROBE_BOUNDARY_BYTES)..].to_vec()
+        }
+        Codec::Eac3 => {
+            let all = [tail, latest].concat();
+            match first_sync_offset::<Eac3Sync>(&all) {
+                Some(start) if all.len() - start <= EAC3_PROBE_TAIL_MAX => all[start..].to_vec(),
+                _ => Vec::new(),
+            }
+        }
+        _ => Vec::new(),
+    }
+}
+
+/// Offset of the first *valid* frame header in `data` (a header that parses and
+/// declares a plausible length), for config recovery from a PES that starts
+/// mid-frame. Unlike a bare syncword scan it is not fooled by a `0x0B77` that
+/// merely occurs inside coded data.
+fn first_sync_offset<F: FrameSync>(data: &[u8]) -> Option<usize> {
+    (0..data.len()).find(
+        |&at| matches!(F::parse(&data[at..]), SyncParse::Frame(_, len) if len >= F::MIN_FRAME_LEN),
+    )
 }
 
 /// Feeds one TS payload to a PID's `Carrier::Pes` assembler with
@@ -4015,6 +4110,7 @@ impl StreamingTsDemux {
                 backlog: Vec::new(),
             }),
             backlog_bytes: 0,
+            probe_tail: Vec::new(),
         };
         // Replay any payloads that arrived on this PID before its PMT
         // registration completed (see `unattributed`'s doc).
@@ -5698,7 +5794,11 @@ mod tests {
                     "the H.264 probe must make exactly one pass per access                      unit, never a backlog rescan: {probes} probes over                      {ACCESS_UNITS} access units"
                 );
             } else {
-                let bound = ACCESS_UNITS as u64 * (1 + AU_BYTES as u64);
+                // Plus, for the audio probes, the bounded boundary window retried
+                // when the access unit holds no header at all (#1160): at most
+                // two boundary-widths of probes per access unit — still linear.
+                let bound = ACCESS_UNITS as u64
+                    * (1 + AU_BYTES as u64 + 2 * AUDIO_PROBE_BOUNDARY_BYTES as u64);
                 assert!(
                     probes <= bound,
                     "stream_type {stream_type:#04X}: {probes} probes over                      {ACCESS_UNITS} access units of {AU_BYTES} bytes — bound is                      {bound}; a quadratic rescan is ~{}",
