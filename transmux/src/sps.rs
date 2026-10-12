@@ -155,6 +155,24 @@ pub struct AvcSliceSps {
     pub delta_pic_order_always_zero: bool,
     /// `frame_mbs_only_flag` (gates `field_pic_flag`).
     pub frame_mbs_only: bool,
+    /// `mb_adaptive_frame_field_flag` (`false` when absent, i.e. when
+    /// `frame_mbs_only_flag` is 1 — H.264 §7.3.2.1.1).
+    pub mb_adaptive_frame_field: bool,
+    /// How to read `pic_struct` out of a picture timing SEI for this SPS, or
+    /// `None` when `pic_struct_present_flag` is 0, there is no VUI, the VUI was
+    /// truncated, or the NAL and VCL HRD delay lengths disagree (see
+    /// `docs/codec/h264-vui-pic-timing.md`).
+    pub pic_timing: Option<AvcPicTimingLayout>,
+}
+
+/// The part of the H.264 `pic_timing` SEI layout (§D.1.3) that depends on the
+/// SPS VUI, for an SPS whose `pic_struct_present_flag` is 1.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AvcPicTimingLayout {
+    /// `(cpb_removal_delay bits, dpb_output_delay bits)` that precede
+    /// `pic_struct` when `CpbDpbDelaysPresentFlag` is 1 (a NAL or VCL
+    /// `hrd_parameters()` is present), else `None`.
+    pub delay_bits: Option<(u8, u8)>,
 }
 
 /// Decode only the slice-header-relevant SPS fields ([`AvcSliceSps`]) from an
@@ -283,8 +301,9 @@ fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps)> {
     // frame_mbs_only_flag — 1 bit
     let frame_mbs_only = r.read_flag("frame_mbs_only_flag")?;
 
+    let mut mb_adaptive_frame_field = false;
     if !frame_mbs_only {
-        let _ = r.read_flag("mb_adaptive_frame_field_flag")?;
+        mb_adaptive_frame_field = r.read_flag("mb_adaptive_frame_field_flag")?;
     }
 
     // direct_8x8_inference_flag — 1 bit
@@ -315,7 +334,8 @@ fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps)> {
 
     // vui_parameters — ITU-T H.264 §E.1.1.  Walk in syntax order to reach
     // timing_info; stop reading after timing_info_present_flag.
-    let (num_units_in_tick, time_scale, fps) = parse_avc_vui_timing(&mut r);
+    let vui = parse_avc_vui(&mut r);
+    let (num_units_in_tick, time_scale, fps) = vui.timing;
 
     Ok((
         AvcSpsInfo {
@@ -341,28 +361,74 @@ fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps)> {
             log2_max_poc_lsb,
             delta_pic_order_always_zero,
             frame_mbs_only,
+            mb_adaptive_frame_field,
+            pic_timing: vui.pic_timing,
         },
     ))
 }
 
-/// Walk the H.264 VUI syntax (ITU-T H.264 §E.1.1) in order up to and including
-/// `timing_info_present_flag`.  Returns `(num_units_in_tick, time_scale, fps)`.
-///
-/// All three are `None` when VUI is absent, `timing_info_present_flag` is 0, or
-/// the bit-reader runs out of data before reaching timing_info (e.g. truncated
-/// SPS).  Errors are silently swallowed because VUI is optional and its absence
-/// must not prevent the caller from using the already-decoded mandatory fields.
-fn parse_avc_vui_timing(r: &mut BitReader) -> (Option<u32>, Option<u32>, Option<f32>) {
-    parse_avc_vui_timing_inner(r).unwrap_or((None, None, None))
+/// What the H.264 VUI walk yields (§E.1.1).
+#[derive(Default)]
+struct AvcVuiFacts {
+    /// `(num_units_in_tick, time_scale, fps)`.
+    timing: (Option<u32>, Option<u32>, Option<f32>),
+    pic_timing: Option<AvcPicTimingLayout>,
 }
 
-fn parse_avc_vui_timing_inner(
-    r: &mut BitReader,
-) -> crate::error::Result<(Option<u32>, Option<u32>, Option<f32>)> {
+/// Walk the H.264 VUI syntax (ITU-T H.264 §E.1.1) in order through
+/// `pic_struct_present_flag`, collecting the timing info and the `pic_timing`
+/// SEI layout.
+///
+/// Each result stays at its default when VUI is absent or the bit-reader runs
+/// out of data before reaching it (e.g. truncated SPS); a fact read before the
+/// truncation is kept. Errors are swallowed because VUI is optional and its
+/// absence must not prevent the caller from using the already-decoded
+/// mandatory fields.
+fn parse_avc_vui(r: &mut BitReader) -> AvcVuiFacts {
+    let mut facts = AvcVuiFacts::default();
+    let _ = parse_avc_vui_inner(r, &mut facts);
+    facts
+}
+
+/// Bits of `cpb_removal_delay_length_minus1` / `dpb_output_delay_length_minus1`
+/// (H.264 §E.1.2, `u(5)`), and of the other `u(5)` HRD fields.
+const HRD_LENGTH_FIELD_BITS: usize = 5;
+/// Largest `cpb_cnt_minus1` (H.264 §E.2.2: 0..=31).
+const HRD_MAX_CPB_CNT_MINUS1: u64 = 31;
+
+/// Walk one H.264 `hrd_parameters()` (§E.1.2); returns
+/// `(cpb_removal_delay_length, dpb_output_delay_length)` in bits.
+fn parse_avc_hrd(r: &mut BitReader) -> crate::error::Result<(u8, u8)> {
+    let cpb_cnt_minus1 = r.read_ue("cpb_cnt_minus1")?;
+    if cpb_cnt_minus1 > HRD_MAX_CPB_CNT_MINUS1 {
+        return Err(Error::InvalidValue {
+            field: "cpb_cnt_minus1",
+            value: cpb_cnt_minus1,
+            reason: "out of range 0..=31 (H.264 §E.2.2)",
+        });
+    }
+    let _ = r.read_bits(4, "bit_rate_scale")?;
+    let _ = r.read_bits(4, "cpb_size_scale")?;
+    for _ in 0..=cpb_cnt_minus1 {
+        let _ = r.read_ue("bit_rate_value_minus1")?;
+        let _ = r.read_ue("cpb_size_value_minus1")?;
+        let _ = r.read_flag("cbr_flag")?;
+    }
+    let _ = r.read_bits(
+        HRD_LENGTH_FIELD_BITS,
+        "initial_cpb_removal_delay_length_minus1",
+    )?;
+    let cpb = r.read_bits(HRD_LENGTH_FIELD_BITS, "cpb_removal_delay_length_minus1")? as u8 + 1;
+    let dpb = r.read_bits(HRD_LENGTH_FIELD_BITS, "dpb_output_delay_length_minus1")? as u8 + 1;
+    let _ = r.read_bits(HRD_LENGTH_FIELD_BITS, "time_offset_length")?;
+    Ok((cpb, dpb))
+}
+
+fn parse_avc_vui_inner(r: &mut BitReader, facts: &mut AvcVuiFacts) -> crate::error::Result<()> {
     // vui_parameters_present_flag  u(1)
     let vui_present = r.read_flag("vui_parameters_present_flag")?;
     if !vui_present {
-        return Ok((None, None, None));
+        return Ok(());
     }
 
     // aspect_ratio_info_present_flag  u(1) — §E.1.1
@@ -404,21 +470,45 @@ fn parse_avc_vui_timing_inner(
 
     // timing_info_present_flag  u(1)
     let timing_present = r.read_flag("timing_info_present_flag")?;
-    if !timing_present {
-        return Ok((None, None, None));
+    if timing_present {
+        let num_units = r.read_bits(32, "num_units_in_tick")? as u32;
+        let ts = r.read_bits(32, "time_scale")? as u32;
+        let _ = r.read_flag("fixed_frame_rate_flag")?;
+        let fps = if num_units > 0 {
+            Some(ts as f32 / (2.0 * num_units as f32))
+        } else {
+            None
+        };
+        facts.timing = (Some(num_units), Some(ts), fps);
     }
 
-    let num_units = r.read_bits(32, "num_units_in_tick")? as u32;
-    let ts = r.read_bits(32, "time_scale")? as u32;
-    let _ = r.read_flag("fixed_frame_rate_flag")?;
-
-    let fps = if num_units > 0 {
-        Some(ts as f32 / (2.0 * num_units as f32))
+    // nal_hrd_parameters_present_flag / vcl_hrd_parameters_present_flag
+    let nal_hrd = if r.read_flag("nal_hrd_parameters_present_flag")? {
+        Some(parse_avc_hrd(r)?)
     } else {
         None
     };
-
-    Ok((Some(num_units), Some(ts), fps))
+    let vcl_hrd = if r.read_flag("vcl_hrd_parameters_present_flag")? {
+        Some(parse_avc_hrd(r)?)
+    } else {
+        None
+    };
+    if nal_hrd.is_some() || vcl_hrd.is_some() {
+        let _ = r.read_flag("low_delay_hrd_flag")?;
+    }
+    let pic_struct_present = r.read_flag("pic_struct_present_flag")?;
+    if pic_struct_present {
+        // CpbDpbDelaysPresentFlag (§E.2.1) is 1 when either HRD is present.
+        // When both are, the spec does not say which one sizes the SEI fields;
+        // read pic_struct only if they agree.
+        let delay_bits = match (nal_hrd, vcl_hrd) {
+            (Some(a), Some(b)) if a != b => return Ok(()),
+            (Some(a), _) | (None, Some(a)) => Some(a),
+            (None, None) => None,
+        };
+        facts.pic_timing = Some(AvcPicTimingLayout { delay_bits });
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -503,6 +593,35 @@ pub struct HevcSpsInfo {
 ///            - SubHeightC * (conf_win_top_offset  + conf_win_bottom_offset)
 /// ```
 pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
+    decode_hevc_sps_inner(sps_bytes).map(|(info, _)| info)
+}
+
+/// The interlace-relevant facts of an H.265 SPS (ITU-T H.265 §E.3.1; see
+/// `docs/codec/h265-vui-pic-timing.md`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct HevcInterlaceSps {
+    /// `field_seq_flag`: the CVS conveys pictures that represent fields
+    /// (inferred `false` when the VUI is absent or truncated before it).
+    pub field_seq: bool,
+    /// `frame_field_info_present_flag`: picture timing SEIs carry
+    /// `pic_struct`. Read from the VUI, else inferred from
+    /// `general_progressive_source_flag && general_interlaced_source_flag`.
+    pub frame_field_info_present: bool,
+}
+
+/// Decode only the interlace facts ([`HevcInterlaceSps`]) from an H.265 SPS
+/// NAL unit (2-byte NAL header included).
+pub fn decode_hevc_interlace_sps(sps_bytes: &[u8]) -> Result<HevcInterlaceSps> {
+    decode_hevc_sps_inner(sps_bytes).map(|(_, i)| i)
+}
+
+/// `general_progressive_source_flag` — bit 47 of the 48-bit
+/// `general_constraint_indicator_flags` as read MSB-first (H.265 §7.3.3).
+const PTL_PROGRESSIVE_SOURCE_BIT: u64 = 1 << 47;
+/// `general_interlaced_source_flag` — bit 46 (H.265 §7.3.3).
+const PTL_INTERLACED_SOURCE_BIT: u64 = 1 << 46;
+
+fn decode_hevc_sps_inner(sps_bytes: &[u8]) -> Result<(HevcSpsInfo, HevcInterlaceSps)> {
     if sps_bytes.len() < 2 {
         return Err(Error::BufferTooShort {
             need: 2,
@@ -588,25 +707,36 @@ pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
 
     // Walk the remaining HEVC SPS syntax (§7.3.2.2.1) up to and including
     // vui_parameters() in order to reach vui_timing_info.
+    // frame_field_info_present_flag defaults to its §E.3.1 inference; the VUI
+    // overwrites it when present.
+    let mut interlace = HevcInterlaceSps {
+        field_seq: false,
+        frame_field_info_present: general_constraint_indicator_flags & PTL_PROGRESSIVE_SOURCE_BIT
+            != 0
+            && general_constraint_indicator_flags & PTL_INTERLACED_SOURCE_BIT != 0,
+    };
     let (num_units_in_tick, time_scale, fps) =
-        parse_hevc_sps_to_vui_timing(&mut r, sps_max_sub_layers_minus1);
+        parse_hevc_sps_to_vui_timing(&mut r, sps_max_sub_layers_minus1, &mut interlace);
 
-    Ok(HevcSpsInfo {
-        general_profile_space,
-        general_tier_flag,
-        general_profile_idc,
-        general_profile_compatibility_flags,
-        general_constraint_indicator_flags,
-        general_level_idc,
-        chroma_format_idc,
-        bit_depth_luma,
-        bit_depth_chroma,
-        width: width as u32,
-        height: height as u32,
-        num_units_in_tick,
-        time_scale,
-        fps,
-    })
+    Ok((
+        HevcSpsInfo {
+            general_profile_space,
+            general_tier_flag,
+            general_profile_idc,
+            general_profile_compatibility_flags,
+            general_constraint_indicator_flags,
+            general_level_idc,
+            chroma_format_idc,
+            bit_depth_luma,
+            bit_depth_chroma,
+            width: width as u32,
+            height: height as u32,
+            num_units_in_tick,
+            time_scale,
+            fps,
+        },
+        interlace,
+    ))
 }
 
 /// Walk the H.265 SPS syntax (ITU-T H.265 §7.3.2.2.1) from
@@ -621,13 +751,21 @@ pub fn decode_hevc_sps(sps_bytes: &[u8]) -> Result<HevcSpsInfo> {
 fn parse_hevc_sps_to_vui_timing(
     r: &mut BitReader,
     sps_max_sub_layers_minus1: u8,
+    interlace: &mut HevcInterlaceSps,
 ) -> (Option<u32>, Option<u32>, Option<f32>) {
-    parse_hevc_sps_to_vui_timing_inner(r, sps_max_sub_layers_minus1).unwrap_or((None, None, None))
+    parse_hevc_sps_to_vui_timing_inner(r, sps_max_sub_layers_minus1, interlace)
+        .unwrap_or((None, None, None))
 }
+
+/// Largest `num_negative_pics`/`num_positive_pics` (H.265 §7.4.8: at most
+/// `sps_max_dec_pic_buffering_minus1`, itself at most `MaxDpbSize - 1` = 15;
+/// 16 is a generous bound that still caps hostile input).
+const HEVC_MAX_RPS_PICS: u64 = 16;
 
 fn parse_hevc_sps_to_vui_timing_inner(
     r: &mut BitReader,
     sps_max_sub_layers_minus1: u8,
+    interlace: &mut HevcInterlaceSps,
 ) -> crate::error::Result<(Option<u32>, Option<u32>, Option<f32>)> {
     // log2_max_pic_order_cnt_lsb_minus4  ue(v)
     let log2_max_poc_lsb = r.read_ue("log2_max_pic_order_cnt_lsb_minus4")?;
@@ -712,35 +850,119 @@ fn parse_hevc_sps_to_vui_timing_inner(
             reason: "out of range 0..=64 (H.265 §7.4.3.2)",
         });
     }
-    // st_ref_pic_set() — §7.3.7.  Only supports the non-inter-predicted form; any
-    // SPS with inter_ref_pic_set_prediction_flag causes a conservative bail to None.
-    let mut prev_num_delta_pocs: u64 = 0;
+    // st_ref_pic_set() — §7.3.7, including inter-RPS prediction (7-61/7-62),
+    // so the walk can reach the VUI (`field_seq_flag`) on every stream.
+    let mut rps_sets: Vec<(Vec<i64>, Vec<i64>)> = Vec::new();
     for i in 0..num_short_term {
         let inter_ref = if i != 0 {
             r.read_flag("inter_ref_pic_set_prediction_flag")?
         } else {
             false
         };
-        if inter_ref {
-            // inter_ref_pic_set_prediction is complex (depends on NumDeltaPocs of the
-            // referenced set).  Bail conservatively rather than mis-decode.
-            return Ok((None, None, None));
+        let set = if inter_ref {
+            // delta_idx_minus1 is absent in the SPS (it is only coded in the
+            // slice header, stRpsIdx == num_short_term_ref_pic_sets), so
+            // RefRpsIdx = stRpsIdx - 1.
+            let (ref_s0, ref_s1) = &rps_sets[rps_sets.len() - 1];
+            let delta_rps_sign = r.read_flag("delta_rps_sign")?;
+            let abs_delta_rps_minus1 = r.read_ue("abs_delta_rps_minus1")?;
+            if abs_delta_rps_minus1 >= 1 << 15 {
+                return Err(Error::InvalidValue {
+                    field: "abs_delta_rps_minus1",
+                    value: abs_delta_rps_minus1,
+                    reason: "out of range 0..=2^15-1 (H.265 §7.4.8)",
+                });
+            }
+            let magnitude = abs_delta_rps_minus1 as i64 + 1;
+            let delta_rps = if delta_rps_sign {
+                -magnitude
+            } else {
+                magnitude
+            };
+            let num_delta_pocs = ref_s0.len() + ref_s1.len();
+            // use_delta_flag[j] for j in 0..=NumDeltaPocs[Ref] (inferred 1
+            // when used_by_curr_pic_flag[j] is 1).
+            let mut use_delta = Vec::with_capacity(num_delta_pocs + 1);
+            for _j in 0..=num_delta_pocs {
+                let used_by_curr = r.read_flag("used_by_curr_pic_flag")?;
+                use_delta.push(if used_by_curr {
+                    true
+                } else {
+                    r.read_flag("use_delta_flag")?
+                });
+            }
+            let (n0, n1) = (ref_s0.len(), ref_s1.len());
+            let mut s0: Vec<i64> = Vec::new();
+            let mut s1: Vec<i64> = Vec::new();
+            // (7-61)
+            for j in (0..n1).rev() {
+                let d = ref_s1[j] + delta_rps;
+                if d < 0 && use_delta[n0 + j] {
+                    s0.push(d);
+                }
+            }
+            if delta_rps < 0 && use_delta[num_delta_pocs] {
+                s0.push(delta_rps);
+            }
+            for j in 0..n0 {
+                let d = ref_s0[j] + delta_rps;
+                if d < 0 && use_delta[j] {
+                    s0.push(d);
+                }
+            }
+            // (7-62)
+            for j in (0..n0).rev() {
+                let d = ref_s0[j] + delta_rps;
+                if d > 0 && use_delta[j] {
+                    s1.push(d);
+                }
+            }
+            if delta_rps > 0 && use_delta[num_delta_pocs] {
+                s1.push(delta_rps);
+            }
+            for j in 0..n1 {
+                let d = ref_s1[j] + delta_rps;
+                if d > 0 && use_delta[n0 + j] {
+                    s1.push(d);
+                }
+            }
+            (s0, s1)
+        } else {
+            let num_negative = r.read_ue("num_negative_pics")?;
+            let num_positive = r.read_ue("num_positive_pics")?;
+            // §7.4.8: each is at most sps_max_dec_pic_buffering_minus1 (<= 15).
+            if num_negative > HEVC_MAX_RPS_PICS || num_positive > HEVC_MAX_RPS_PICS {
+                return Err(Error::InvalidValue {
+                    field: "num_negative_pics/num_positive_pics",
+                    value: num_negative.max(num_positive),
+                    reason: "out of range 0..=16 (H.265 §7.4.8)",
+                });
+            }
+            let mut s0 = Vec::new();
+            let mut acc = 0i64;
+            for _j in 0..num_negative {
+                acc -= r.read_ue("delta_poc_s0_minus1")? as i64 + 1;
+                let _ = r.read_flag("used_by_curr_pic_s0_flag")?;
+                s0.push(acc);
+            }
+            let mut s1 = Vec::new();
+            let mut acc = 0i64;
+            for _j in 0..num_positive {
+                acc += r.read_ue("delta_poc_s1_minus1")? as i64 + 1;
+                let _ = r.read_flag("used_by_curr_pic_s1_flag")?;
+                s1.push(acc);
+            }
+            (s0, s1)
+        };
+        if set.0.len() > HEVC_MAX_RPS_PICS as usize || set.1.len() > HEVC_MAX_RPS_PICS as usize {
+            return Err(Error::InvalidValue {
+                field: "NumNegativePics/NumPositivePics",
+                value: set.0.len().max(set.1.len()) as u64,
+                reason: "derived RPS larger than 16 entries (H.265 §7.4.8)",
+            });
         }
-        let num_negative = r.read_ue("num_negative_pics")?;
-        let num_positive = r.read_ue("num_positive_pics")?;
-        prev_num_delta_pocs = num_negative + num_positive;
-        for _j in 0..num_negative {
-            let _ = r.read_ue("delta_poc_s0_minus1")?;
-            let _ = r.read_flag("used_by_curr_pic_s0_flag")?;
-        }
-        for _j in 0..num_positive {
-            let _ = r.read_ue("delta_poc_s1_minus1")?;
-            let _ = r.read_flag("used_by_curr_pic_s1_flag")?;
-        }
+        rps_sets.push(set);
     }
-    // Suppress unused-variable warning for prev_num_delta_pocs (used only in the
-    // inter-prediction path which returns early above).
-    let _ = prev_num_delta_pocs;
 
     // long_term_ref_pics_present_flag  u(1)
     let ltrp_present = r.read_flag("long_term_ref_pics_present_flag")?;
@@ -809,9 +1031,9 @@ fn parse_hevc_sps_to_vui_timing_inner(
     // neutral_chroma_indication_flag  u(1)
     let _ = r.read_flag("neutral_chroma_indication_flag")?;
     // field_seq_flag  u(1)
-    let _ = r.read_flag("field_seq_flag")?;
+    interlace.field_seq = r.read_flag("field_seq_flag")?;
     // frame_field_info_present_flag  u(1)
-    let _ = r.read_flag("frame_field_info_present_flag")?;
+    interlace.frame_field_info_present = r.read_flag("frame_field_info_present_flag")?;
 
     // default_display_window_flag  u(1)
     let ddw_present = r.read_flag("default_display_window_flag")?;
