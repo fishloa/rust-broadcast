@@ -226,7 +226,14 @@ fn muxer_outputs_are_unchanged() {
     );
     let mkv = MkvMux::new().package(&media).unwrap();
     check(&mut bad, "mkv", fnv1a(&mkv), 0xf3db485ac205dbe1);
-    let ts = TsMux::new().package(&media).unwrap();
+    // The golden pins the once-only-PSI layout (PAT/PMT at the start only). The
+    // default `TsMux` now repeats PAT/PMT periodically (R7); that default is
+    // covered by tests/ts_mux_psi_repeat.rs, which proves the default output is
+    // exactly this once-only output plus the PSI repeats.
+    let ts = TsMux::new()
+        .with_psi_interval_ms(None)
+        .package(&media)
+        .unwrap();
     check(&mut bad, "ts", fnv1a(&ts), 0xe5b08f3fd235cf03);
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }
@@ -293,7 +300,11 @@ fn hevc_and_dolby_muxer_outputs_are_unchanged() {
                 hash_result(ProgressiveMux::new(true).package(&media)),
             ),
             ("mkv", hash_result(MkvMux::new().package(&media))),
-            ("ts", hash_result(TsMux::new().package(&media))),
+            // Once-only PSI: see muxer_outputs_are_unchanged.
+            (
+                "ts",
+                hash_result(TsMux::new().with_psi_interval_ms(None).package(&media)),
+            ),
             ("cmaf", hash_result(CmafMux::new(1).package(&media))),
         ];
         for (kind, got) in outs {

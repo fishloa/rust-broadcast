@@ -93,6 +93,10 @@ serde_json   = { workspace = true }
 # that follow-up wiring, not a library dependency.
 scte35-splice  = { path = "../scte35-splice", version = "3.0", default-features = false, features = ["std"] }
 timed-metadata = { path = "../timed-metadata", default-features = false, features = ["std"] }
+# ts_mux_psi_repeat.rs checks the muxer's output against the independent ETSI
+# TR 101 290 monitor (PAT/PMT repetition, continuity). Dev-dependency only;
+# dvb-conformance does not depend on transmux, so there is no cycle.
+dvb-conformance = { path = "../dvb-conformance", default-features = false, features = ["std"] }
 
 [package.metadata.docs.rs]
 all-features = true

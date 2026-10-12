@@ -4315,6 +4315,7 @@ dependencies = [
  "clap",
  "container-probe",
  "ctr 0.10.1",
+ "dvb-conformance",
  "hex",
  "jiff",
  "mp4-emsg",

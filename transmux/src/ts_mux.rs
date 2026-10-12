@@ -503,15 +503,55 @@ struct TaggedPacket {
 /// interleaved in ascending decode-time order.
 ///
 /// Construct with [`TsMux::new`] or [`TsMux::default`].
-#[derive(Debug, Default, Clone)]
+///
+/// The PAT and PMT are written at the start of the output and then repeated
+/// periodically, driven by media time (the PCR/DTS clock): by default at least
+/// every [`DEFAULT_PSI_INTERVAL_MS`] ms, so a receiver or a player joining the
+/// stream at an arbitrary packet-aligned offset finds the programme structure
+/// within one interval (ETSI TR 101 290 indicators 1.3/1.5 require PAT/PMT at
+/// least every 0.5 s). Repeats are always whole sections, placed between PES
+/// packets, with correct per-PID continuity counters; the PMT content (and its
+/// `version_number`) never changes. Use [`TsMux::with_psi_interval_ms`] to tune
+/// the interval, or `None` to write the PSI once only.
+#[derive(Debug, Clone)]
 pub struct TsMux {
-    _private: (),
+    psi_interval_ms: Option<u32>,
+}
+
+/// Default PAT/PMT repetition interval of [`TsMux`], in milliseconds of media
+/// time (well inside the 0.5 s bound of ETSI TR 101 290 indicators 1.3/1.5).
+pub const DEFAULT_PSI_INTERVAL_MS: u32 = 100;
+
+/// Milliseconds per second, for the interval -> 90 kHz tick conversion.
+const MS_PER_SECOND: u64 = 1000;
+
+impl Default for TsMux {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl TsMux {
-    /// Create a new TS muxer.
+    /// Create a new TS muxer repeating PAT/PMT every
+    /// [`DEFAULT_PSI_INTERVAL_MS`] ms of media time.
     pub fn new() -> Self {
-        Self { _private: () }
+        Self {
+            psi_interval_ms: Some(DEFAULT_PSI_INTERVAL_MS),
+        }
+    }
+
+    /// Set the PAT/PMT repetition interval in milliseconds of media time.
+    /// `None` (or `Some(0)`) disables repetition: the PSI is written once at the
+    /// start of the output only, which cannot be joined mid-stream.
+    #[must_use]
+    pub fn with_psi_interval_ms(mut self, interval_ms: Option<u32>) -> Self {
+        self.psi_interval_ms = interval_ms.filter(|&ms| ms > 0);
+        self
+    }
+
+    /// The configured PAT/PMT repetition interval (`None` = written once).
+    pub fn psi_interval_ms(&self) -> Option<u32> {
+        self.psi_interval_ms
     }
 }
 
@@ -527,7 +567,10 @@ impl Package for TsMux {
         // Mux every track over its full sample list — one PAT/PMT then the
         // DTS-interleaved PES for all samples.
         let samples: Vec<&[Sample]> = media.tracks.iter().map(|t| t.samples.as_slice()).collect();
-        mux_tracks(&media.tracks, &samples)
+        let interval_ticks = self
+            .psi_interval_ms
+            .map(|ms| u64::from(ms) * TS_CLOCK_HZ / MS_PER_SECOND);
+        mux_tracks(&media.tracks, &samples, interval_ticks)
     }
 }
 
@@ -767,14 +810,19 @@ fn hevc_parameter_sets(
 /// shifted by one origin common to every track (the earliest first-sample
 /// DTS), so inter-track offsets and gaps survive (issue #1020). `TsMux` calls
 /// it once over the whole input.
-pub(crate) fn mux_tracks(tracks: &[Track], samples: &[&[Sample]]) -> Result<Vec<u8>> {
+pub(crate) fn mux_tracks(
+    tracks: &[Track],
+    samples: &[&[Sample]],
+    psi_interval_ticks: Option<u64>,
+) -> Result<Vec<u8>> {
     let origin = TimelineOrigin::of(tracks);
     let times: Vec<Vec<i64>> = tracks
         .iter()
         .map(|t| relative_decode_times(t, &origin))
         .collect();
     let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
-    mux_tracks_timed(tracks, samples, &times)
+    let mut cc = TsContinuity::default();
+    mux_tracks_timed_with_cc(tracks, samples, &times, &mut cc, psi_interval_ticks)
 }
 
 /// Mux one more segment of a continuing stream: each track's first sample is
@@ -820,7 +868,7 @@ pub(crate) fn mux_tracks_at_continuing(
         })
         .collect();
     let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
-    mux_tracks_timed_with_cc(tracks, samples, &times, cc)
+    mux_tracks_timed_with_cc(tracks, samples, &times, cc, None)
 }
 
 /// Per-PID transport-stream continuity-counter state
@@ -872,18 +920,6 @@ impl TsContinuity {
     }
 }
 
-/// The whole-`Media` body of [`mux_tracks`]: `dts_ticks[i][j]` is the decode
-/// time of `samples[i][j]` in `tracks[i]`'s timescale, relative to the stream's
-/// origin (negative values clamp to the origin).
-fn mux_tracks_timed(
-    tracks: &[Track],
-    samples: &[&[Sample]],
-    dts_ticks: &[&[i64]],
-) -> Result<Vec<u8>> {
-    let mut cc = TsContinuity::default();
-    mux_tracks_timed_with_cc(tracks, samples, dts_ticks, &mut cc)
-}
-
 /// The shared body of [`mux_tracks`] and [`mux_tracks_at_continuing`], threading a
 /// [`TsContinuity`] across calls. `dts_ticks[i][j]` is the decode time of
 /// `samples[i][j]` in `tracks[i]`'s timescale, relative to the stream's origin
@@ -893,6 +929,7 @@ fn mux_tracks_timed_with_cc(
     samples: &[&[Sample]],
     dts_ticks: &[&[i64]],
     continuity: &mut TsContinuity,
+    psi_interval_ticks: Option<u64>,
 ) -> Result<Vec<u8>> {
     debug_assert_eq!(tracks.len(), samples.len());
     debug_assert_eq!(tracks.len(), dts_ticks.len());
@@ -1035,10 +1072,52 @@ fn mux_tracks_timed_with_cc(
 
     // ── 5. Interleave ES packets by decode order (stable) and append ──
     tagged.sort_by_key(|t| t.sort_key);
-    out.reserve_exact(tagged.len() * TS_PACKET_SIZE);
+    // Repeat PAT + PMT every `psi_interval_ticks` of media time (the sort key is
+    // the 90 kHz decode time) so the stream can be joined at any packet-aligned
+    // offset (TR 101 290 indicators 1.3/1.5). A repeat lands on a key change,
+    // i.e. between samples' packet runs, never inside a PES packet. The leading
+    // PSI above counts as the first occurrence. Each repeat re-packetises the
+    // same sections with the running per-PID continuity counter.
+    let mut pat_cc = continuity.next_for(PAT_PID);
+    let mut pmt_cc = continuity.next_for(PMT_PID);
+    let mut psi_due = match (psi_interval_ticks, tagged.first()) {
+        (Some(iv), Some(first)) => Some(first.sort_key.saturating_add(iv)),
+        _ => None,
+    };
+    let mut prev_key: Option<u64> = None;
+    // Room for the repeats too (a section needs its pointer_field byte, hence
+    // the +1), so they never trigger a double-and-copy regrowth of `out`.
+    let psi_repeats = match (psi_interval_ticks, tagged.first(), tagged.last()) {
+        (Some(iv), Some(first), Some(last)) => {
+            usize::try_from((last.sort_key - first.sort_key) / iv).unwrap_or(0) + 1
+        }
+        _ => 0,
+    };
+    let psi_repeat_bytes = (pat.len() + 1).div_ceil(TS_PAYLOAD_CAPACITY) * TS_PACKET_SIZE
+        + (pmt.len() + 1).div_ceil(TS_PAYLOAD_CAPACITY) * TS_PACKET_SIZE;
+    out.reserve_exact(tagged.len() * TS_PACKET_SIZE + psi_repeats * psi_repeat_bytes);
     for t in &tagged {
+        if let (Some(due), Some(iv)) = (psi_due, psi_interval_ticks)
+            && t.sort_key >= due
+            && prev_key != Some(t.sort_key)
+        {
+            for (pid, section, next_cc) in
+                [(PAT_PID, &pat, &mut pat_cc), (PMT_PID, &pmt, &mut pmt_cc)]
+            {
+                for pkt in packetise_section(pid, section, *next_cc) {
+                    *next_cc = ((pkt[3] & 0x0F) + 1) & 0x0F;
+                    out.extend_from_slice(&pkt);
+                }
+            }
+            // Next repeat one interval after this one (catching up if a long
+            // gap in the media skipped several).
+            psi_due = Some(t.sort_key.saturating_add(iv));
+        }
+        prev_key = Some(t.sort_key);
         out.extend_from_slice(&t.packet);
     }
+    continuity.set_next_for(PAT_PID, pat_cc);
+    continuity.set_next_for(PMT_PID, pmt_cc);
 
     debug_assert_eq!(out.len() % TS_PACKET_SIZE, 0);
     Ok(out)
