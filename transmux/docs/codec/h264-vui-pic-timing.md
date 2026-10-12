@@ -91,6 +91,30 @@ present) and reports no `pic_struct` otherwise.
 | 8 | frame tripling | field_pic_flag 0, fixed_frame_rate_flag 1, Top == Bottom |
 | 9..15 | reserved | |
 
+## D.1.8 / D.2.8 Recovery point SEI (payloadType 6; used by `live_join.rs`)
+
+PDF pages 363 (syntax) and 387-388 (semantics).
+
+```
+recovery_point( payloadSize ) {
+  recovery_frame_cnt        ue(v)
+  exact_match_flag          u(1)
+  broken_link_flag          u(1)
+  changing_slice_group_idc  u(2)
+}
+```
+
+Semantics (D.2.8): when decoding starts at the access unit of the SEI, "all decoded pictures at
+or subsequent to the recovery point in output order ... are indicated to be correct or
+approximately correct in content"; pictures before it "need not be correct", and "the operation
+of the decoding process starting at the picture associated with the recovery point SEI message may
+contain references to pictures not available in the decoded picture buffer" (unavailable
+references are inferred mid-grey intra). `recovery_frame_cnt` (0..MaxFrameNum-1) counts frame_num
+increments to the recovery point in output order. `exact_match_flag` 1: the output from the
+recovery point is an exact match to decoding from a previous IDR; 0: only approximate.
+`broken_link_flag` 1: pictures from here to the recovery point "should not be displayed".
+Hence a recovery point is NOT necessarily self-contained, unlike an IDR picture.
+
 NOTE 6 (D.2.3): when `pic_struct_present_flag` is 0 a decoder "should infer" pic_struct from
 `field_pic_flag`/`bottom_field_flag`/POC; transmux does NOT synthesise that. It reports `None`
 and exposes `field_pic_flag`/`bottom_field_flag` directly.

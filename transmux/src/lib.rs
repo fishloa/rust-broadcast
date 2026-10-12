@@ -164,6 +164,7 @@ pub mod init_segment;
 pub mod interlace;
 pub mod ir;
 pub mod klv;
+pub mod live_join;
 pub mod ll_dash;
 pub mod ll_hls;
 pub mod media;
@@ -290,6 +291,7 @@ pub use klv::{
     TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UNIVERSAL_LABEL_LEN, UasLocalSet, UniversalLabel,
     ber_length, ber_oid, checksum_bcc16, encode_ber_length, encode_ber_oid,
 };
+pub use live_join::{DropReason, JoinDecision, JoinPolicy, JoinState, LiveJoin, RapKind};
 #[cfg(feature = "std")]
 pub use ll_dash::LlDashPackager;
 pub use ll_dash::{Chunk, LlSegmenter};

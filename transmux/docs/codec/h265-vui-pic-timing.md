@@ -89,5 +89,16 @@ pic_timing( payloadSize ) {
 | 12 | bottom field paired with next top field in output order | field_seq_flag 1 |
 | 13..15 | reserved | |
 
+## RASL pictures (used by `live_join.rs`)
+
+H.265 §3.126 (PDF text line "random access skipped leading (RASL) picture") and Table 7-1:
+`nal_unit_type` 8 `RASL_N`, 9 `RASL_R`; RADL 6, 7; BLA 16..=18; IDR 19, 20; CRA 21; 22, 23 reserved
+IRAP. "All RASL pictures are leading pictures of an associated BLA or CRA picture. When the
+associated IRAP picture has NoRaslOutputFlag equal to 1, the RASL picture is not output and can be
+non-correctly-decodable, as the RASL picture can contain references to pictures that are not
+present in the bitstream ... When present, all RASL pictures precede, in decoding order, all
+trailing pictures of the same associated IRAP picture." A join makes the join point the first
+picture of the bitstream, so NoRaslOutputFlag = 1.
+
 When `frame_field_info_present_flag` is 0 a decoder "can infer" pic_struct 0 (NOTE 4); transmux
 reports `None` instead of synthesising.

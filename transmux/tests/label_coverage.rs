@@ -24,6 +24,12 @@ const SKIP: &[&str] = &[
     // `slice_header::AvcPicture` (issue #1161): a data-carrying classification
     // ADT (`Field(AvcFieldInfo)`), not a spec-token label.
     "AvcPicture",
+    // `live_join::JoinDecision`/`JoinState` (issue #1162 R4): data-carrying
+    // state ADTs (`Drop(DropReason)`, `JoinPoint(RapKind)`, `Joined { .. }`),
+    // not spec-token labels; their leaf enums `DropReason`/`RapKind` carry
+    // `name()` + `impl_spec_display!`.
+    "JoinDecision",
+    "JoinState",
     // errors (Display comes from `thiserror`'s derive or a hand-written
     // human-readable message, not a spec-token label)
     "Error",
