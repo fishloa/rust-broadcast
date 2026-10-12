@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.25.4] - 2026-10-13
 ### Added
 
 - `TsMux::with_psi_interval_ms(Option<u32>)`, `TsMux::psi_interval_ms()` and `DEFAULT_PSI_INTERVAL_MS` (100): configure the PAT/PMT repetition interval (#1162 R7). `None`/`Some(0)` restores the old write-once-at-start layout.
