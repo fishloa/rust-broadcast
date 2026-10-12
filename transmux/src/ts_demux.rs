@@ -61,6 +61,13 @@
 //! individual syncframes/core frames (rather than one zero-duration `Sample`
 //! per PES access unit — see [`crate::ac3`] / [`crate::dts`]) so real
 //! durations and exact PES-boundary timestamps survive into the IR.
+//! **Field-coded (PAFF) H.264 (issue #1161).** Broadcast PAFF carries one coded
+//! field per PES, but an ISO/IEC 14496-15 sample is a whole access unit; the
+//! video path parses each access unit's slice header ([`crate::slice_header`])
+//! and merges the second field of a complementary field pair (ITU-T H.264
+//! §3.35-3.37) into the first field's sample, which keeps the first field's
+//! PTS/DTS. Unpaired fields and fields across a timestamp jump are emitted
+//! alone; MBAFF and progressive pictures are never merged.
 //! **Cross-PES audio frames (issue #1160).** MPEG-1/2 audio (ISO/IEC 11172-3
 //! §2.4.1.3), ADTS AAC (ISO/IEC 13818-7 §6.2), AC-3 / E-AC-3 (ETSI TS 102 366
 //! §4.3 / Annex E) and DTS core (ETSI TS 102 114 §5.3) PES payloads need not start
@@ -1258,7 +1265,7 @@ fn initial_probe(codec: Codec) -> ConfigProbe {
 /// Video codec family for a [`LiveKind::Video`] track — selects the sample
 /// byte transform (Annex B → length-prefixed, or raw ES bytes for MPEG-2) and
 /// the keyframe classification.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 enum VideoCodec {
     H264,
     Hevc,
@@ -1385,6 +1392,26 @@ struct PendingOneBehind {
     dts_uw: i128,
 }
 
+/// H.264 PAFF (field-coded) pairing state of one video track (issue #1161).
+///
+/// Broadcast PAFF carries one coded *field* per PES, but an ISO/IEC 14496-15
+/// sample is a whole access unit — both fields of a complementary field pair
+/// (ITU-T H.264 §3.35-3.37). While a first field is the pending (one-behind)
+/// sample, `first_field` remembers its identity so the next access unit can be
+/// merged into it instead of becoming a sample of its own. The pair keeps the
+/// first field's PTS/DTS.
+#[derive(Default)]
+struct PaffPairing {
+    /// In-band SPS/PPS, for parsing slice headers.
+    params: crate::slice_header::AvcParamSets,
+    /// The pending sample is a first field still awaiting its second field.
+    first_field: Option<crate::slice_header::AvcFieldInfo>,
+}
+
+/// Largest first-field to second-field DTS distance accepted as one frame: a
+/// timestamp jump (discontinuity, rebase) between the two fields is not a pair.
+const MAX_FIELD_PAIR_DTS_TICKS: i128 = MAX_FRAME_PERIOD_TICKS as i128;
+
 /// Clamp an unwrapped 33-bit-derived `i128` timestamp into the `i64` range
 /// [`Sample::dts`]/[`Sample::pts`] carry. `i128` is only used internally for
 /// wrap arithmetic headroom; every real value here is a small non-negative
@@ -1415,6 +1442,8 @@ enum LiveKind {
         pending: Option<PendingOneBehind>,
         last_duration: u32,
         codec: VideoCodec,
+        /// H.264 PAFF field-pair state (issue #1161); inert for other codecs.
+        paff: PaffPairing,
     },
     /// AAC/AC-3/E-AC-3/MPEG audio: zero-lookahead, intrinsic-duration frames.
     Audio {
@@ -1860,6 +1889,21 @@ fn flush_one_behind(
     }
 }
 
+/// [`annexb_to_length_prefixed`] without access unit delimiters (NAL type 9):
+/// a second field merged into the first field's sample must not introduce a
+/// second AUD into the access unit.
+fn annexb_to_length_prefixed_no_aud(annexb: &[u8]) -> Vec<u8> {
+    let mut out = Vec::with_capacity(annexb.len());
+    for nal in iter_annexb_nals(annexb) {
+        if nal_unit_type(NalCodec::Avc, nal) == Some(crate::slice_header::NAL_AUD) {
+            continue;
+        }
+        out.extend_from_slice(&(nal.len() as u32).to_be_bytes());
+        out.extend_from_slice(nal);
+    }
+    out
+}
+
 /// Build a video sample's coded bytes + sync flag from one Annex B (or raw
 /// MPEG-2) access unit.
 fn video_sample_bytes(codec: VideoCodec, au_data: &[u8]) -> (Vec<u8>, bool) {
@@ -2223,8 +2267,29 @@ fn push_live_au(
             pending,
             last_duration,
             codec,
+            paff,
         } => {
             let (bytes, is_sync) = video_sample_bytes(*codec, data);
+            let mut this_field = None;
+            if *codec == VideoCodec::H264 {
+                use crate::slice_header::AvcPicture;
+                let picture = paff.params.classify_au(data);
+                if let AvcPicture::Field(second) = picture {
+                    if let (Some(first), Some(p)) = (paff.first_field, pending.as_mut())
+                        && first.pairs_with(&second)
+                        && (0..=MAX_FIELD_PAIR_DTS_TICKS).contains(&(dts_uw - p.dts_uw))
+                    {
+                        // Second field of a complementary pair: one sample, the
+                        // first field's timestamps; drop its AUD (one AU = one AUD).
+                        p.data
+                            .extend_from_slice(&annexb_to_length_prefixed_no_aud(data));
+                        paff.first_field = None;
+                        return;
+                    }
+                    this_field = Some(second);
+                }
+            }
+            paff.first_field = this_field;
             advance_one_behind(
                 pending,
                 last_duration,
@@ -2561,6 +2626,7 @@ fn finalize_probe(
                     pending: None,
                     last_duration: 0,
                     codec: VideoCodec::H264,
+                    paff: PaffPairing::default(),
                 },
             ))
         }
@@ -2639,6 +2705,7 @@ fn finalize_probe(
                     pending: None,
                     last_duration: 0,
                     codec: VideoCodec::Hevc,
+                    paff: PaffPairing::default(),
                 },
             ))
         }
@@ -2670,6 +2737,7 @@ fn finalize_probe(
                     pending: None,
                     last_duration: 0,
                     codec: VideoCodec::Mpeg2,
+                    paff: PaffPairing::default(),
                 },
             ))
         }

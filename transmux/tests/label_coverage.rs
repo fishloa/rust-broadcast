@@ -21,6 +21,9 @@ use std::path::Path;
 /// a data-carrying ADT whose variants hold arbitrary payloads (a static label
 /// would be lossy and add nothing — use the typed variant instead).
 const SKIP: &[&str] = &[
+    // `slice_header::AvcPicture` (issue #1161): a data-carrying classification
+    // ADT (`Field(AvcFieldInfo)`), not a spec-token label.
+    "AvcPicture",
     // errors (Display comes from `thiserror`'s derive or a hand-written
     // human-readable message, not a spec-token label)
     "Error",
