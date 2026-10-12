@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+
+- `StreamingTsDemux` no longer raises a `TrackUpdated` per step of a rotating PPS/SPS (or HEVC VPS/SPS/PPS) set (#1166). Parameter-set change detection compared each arriving NAL against a single "last seen" slot per type, so an encoder cycling several PPS ids (orf1: three, one per access unit) flipped it on every access unit and re-emitted an identical config 15-17 times per 10 s. A NAL now counts as a change only when its bytes were never seen before on the track (bounded to 64 per type); a genuinely new or replaced set, including same-length different-bytes, still raises exactly one update. Limitation: re-sending a previously seen, non-current set after another took over is not re-reported.
 
 ## [0.25.4] - 2026-10-13
 ### Added
