@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.25.3] - 2026-10-12
 ### Fixed
 
 - `TsDemux`/`StreamingTsDemux`: field-coded (PAFF) H.264 now yields **one sample per complementary field pair** instead of one per field (#1161). Broadcast PAFF (TF1, M6, Gulli, arte, ...) sends one PES per field; ISO/IEC 14496-15 samples are whole access units, and a per-field sample decodes to half-filled frames. The second field (opposite parity, same `frame_num`, both reference or both non-reference, not an IDR; ITU-T H.264 §3.35-3.37) is merged into the pending first field's sample, which keeps the first field's PTS/DTS (its AUD is dropped, so the sample holds one AUD). An unpaired field, or a second field arriving more than one second after the first (discontinuity), is emitted alone. MBAFF (`field_pic_flag = 0`), progressive and PAFF-free streams are unchanged. The only golden hash that moved is `ts/gulli-opengop.ts`, a real PAFF capture (293 fields -> 147 samples). Verified bit-exact against `ffmpeg` on spec-built TFF/BFF fixtures (`tests/fixtures/paff/`).
