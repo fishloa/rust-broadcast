@@ -6912,6 +6912,156 @@ mod tests {
         );
     }
 
+    /// Distinct PPS NALs (different ids / bytes) for the #1166 rotation tests.
+    fn rotating_pps_set(pps: &[u8]) -> Vec<Vec<u8>> {
+        (0u8..3)
+            .map(|i| {
+                let mut p = pps.to_vec();
+                let last = p.len() - 1;
+                p[last] ^= i * 0x11; // i = 0 is the original
+                p
+            })
+            .collect()
+    }
+
+    /// Updates + the whole event log (Debug lines) for `bytes` fed in `chunk`s.
+    fn events_chunked(bytes: &[u8], chunk: usize) -> (usize, Vec<String>) {
+        let mut demux = StreamingTsDemux::new();
+        let mut log = Vec::new();
+        let mut updates = 0;
+        for c in bytes.chunks(chunk) {
+            demux.feed(c);
+            while let Some(e) = demux.poll_event() {
+                if matches!(e, DemuxEvent::TrackUpdated(_)) {
+                    updates += 1;
+                }
+                log.push(format!("{e:?}"));
+            }
+        }
+        demux.finish();
+        while let Some(e) = demux.poll_event() {
+            if matches!(e, DemuxEvent::TrackUpdated(_)) {
+                updates += 1;
+            }
+            log.push(format!("{e:?}"));
+        }
+        (updates, log)
+    }
+
+    /// Issue #1166: an encoder carrying several PPS ids and re-sending them in a
+    /// rotating order (orf1 cycles three, one per access unit) must not raise a
+    /// `TrackUpdated` per rotation step. The old single "last seen PPS" slot
+    /// read every step as a change.
+    #[test]
+    fn rotating_pps_ids_emit_no_update_and_are_chunk_invariant() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let set = rotating_pps_set(&pps);
+        let mut aus = vec![annexb_au(&[&sps, &set[0], &[0x65, 0x88, 0x84, 0x01]])];
+        for i in 0..12usize {
+            aus.push(annexb_au(&[
+                &set[(i + 1) % 3],
+                &[0x65, 0x88, 0x84, 0x10 + i as u8],
+            ]));
+        }
+        let bytes = avc_ts_over(&aus);
+        let (baseline, base_log) = events_chunked(&bytes, bytes.len());
+        // First sight of PPS 1 and PPS 2 is two updates (their bytes are new);
+        // the 12 rotation steps after that add none (the old code gave ~13).
+        assert!(
+            baseline == 2,
+            "rotation must not flap: got {baseline} updates"
+        );
+        let all_in_first_unit: Vec<Vec<u8>> = vec![annexb_au(&[
+            &sps,
+            &set[0],
+            &set[1],
+            &set[2],
+            &[0x65, 0x88, 0x84, 0x01],
+        ])]
+        .into_iter()
+        .chain(
+            (0..12usize)
+                .map(|i| annexb_au(&[&set[(i + 1) % 3], &[0x65, 0x88, 0x84, 0x10 + i as u8]])),
+        )
+        .collect();
+        let bytes2 = avc_ts_over(&all_in_first_unit);
+        for chunk in [1usize, 7, 187, 188, 189, 1000] {
+            let (u, log) = events_chunked(&bytes2, chunk);
+            assert_eq!(u, 0, "chunk {chunk}: all ids announced up front, so none");
+            let (_, ref_log) = events_chunked(&bytes2, bytes2.len());
+            assert_eq!(log, ref_log, "chunk {chunk}: event sequence differs");
+            let (ub, lb) = events_chunked(&bytes, chunk);
+            assert_eq!(ub, baseline, "chunk {chunk}: update count differs");
+            assert_eq!(lb, base_log, "chunk {chunk}: event sequence differs");
+        }
+    }
+
+    /// A genuinely new PPS (same length, different bytes) after a rotation has
+    /// settled is still exactly one `TrackUpdated`.
+    #[test]
+    fn same_length_pps_change_after_rotation_raises_exactly_one_update() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let set = rotating_pps_set(&pps);
+        let mut changed = pps.clone();
+        let last = changed.len() - 1;
+        changed[last] ^= 0xA5;
+        assert!(!set.contains(&changed) && changed.len() == pps.len());
+        let mut aus = vec![annexb_au(&[
+            &sps,
+            &set[0],
+            &set[1],
+            &set[2],
+            &[0x65, 0x88, 0x84, 0x01],
+        ])];
+        for i in 0..6usize {
+            aus.push(annexb_au(&[
+                &set[i % 3],
+                &[0x65, 0x88, 0x84, 0x10 + i as u8],
+            ]));
+        }
+        aus.push(annexb_au(&[&changed, &[0x65, 0x88, 0x84, 0x40]]));
+        for i in 0..6usize {
+            aus.push(annexb_au(&[
+                &set[i % 3],
+                &[0x65, 0x88, 0x84, 0x50 + i as u8],
+            ]));
+            aus.push(annexb_au(&[&changed, &[0x65, 0x88, 0x84, 0x60 + i as u8]]));
+        }
+        let bytes = avc_ts_over(&aus);
+        let (updates, base) = events_chunked(&bytes, bytes.len());
+        assert_eq!(updates, 1, "exactly one update for the one real change");
+        for chunk in [1usize, 188, 1000] {
+            assert_eq!(events_chunked(&bytes, chunk).1, base, "chunk {chunk}");
+        }
+    }
+
+    /// The same remembering applies to HEVC (VPS/SPS/PPS share `ParamSlot`).
+    #[test]
+    fn hevc_rotating_parameter_sets_are_not_changes() {
+        let hdr = |t: u8| [t << 1, 0x01];
+        let nal = |t: u8, tag: u8| {
+            let mut n = hdr(t).to_vec();
+            n.push(tag);
+            n
+        };
+        let (v, s) = (nal(H265_NAL_VPS, 1), nal(H265_NAL_SPS, 2));
+        let ppss = [nal(H265_NAL_PPS, 3), nal(H265_NAL_PPS, 4)];
+        let mut sets = ParameterSets::default();
+        let au = |p: &Vec<u8>| annexb_au(&[&v, &s, p]);
+        assert!(sets.observe(Codec::Hevc, &au(&ppss[0])));
+        assert!(
+            sets.observe(Codec::Hevc, &au(&ppss[1])),
+            "first sight of PPS 2"
+        );
+        for i in 0..8 {
+            assert!(
+                !sets.observe(Codec::Hevc, &au(&ppss[i % 2])),
+                "rotation step {i} is a repeat"
+            );
+        }
+        assert!(sets.observe(Codec::Hevc, &au(&nal(H265_NAL_PPS, 9))));
+    }
+
     /// A PPS-only change is also a real config change and must raise one.
     #[test]
     fn a_changed_pps_raises_exactly_one_update() {
