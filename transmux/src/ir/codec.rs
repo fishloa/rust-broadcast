@@ -369,6 +369,84 @@ impl CodecConfig {
         )
     }
 
+    /// Sampling rate in Hz of an audio track, `None` for a non-audio variant
+    /// (issue #1162 R2). For AAC / AC-3 / E-AC-3 / MPEG audio this is the rate
+    /// the demuxer decoded from the stream's own header (ADTS
+    /// `sampling_frequency_index`, AC-3 `fscod`, MPEG audio
+    /// `sampling_frequency`).
+    pub fn audio_sample_rate(&self) -> Option<u32> {
+        match self {
+            CodecConfig::Aac { sample_rate, .. }
+            | CodecConfig::Ac3 { sample_rate, .. }
+            | CodecConfig::Eac3 { sample_rate, .. }
+            | CodecConfig::Opus { sample_rate, .. }
+            | CodecConfig::Flac { sample_rate, .. }
+            | CodecConfig::Ac4 { sample_rate, .. }
+            | CodecConfig::MpegH { sample_rate, .. }
+            | CodecConfig::Dts { sample_rate, .. }
+            | CodecConfig::MpegAudio { sample_rate, .. }
+            | CodecConfig::Vorbis { sample_rate, .. } => Some(*sample_rate),
+            _ => None,
+        }
+    }
+
+    /// Channel count of an audio track **including** the LFE channel (issue
+    /// #1162 R2), `None` for a non-audio variant or when the codec config does
+    /// not determine one.
+    ///
+    /// The `channel_count` field of [`CodecConfig::Ac3`]/[`CodecConfig::Eac3`]
+    /// is full-bandwidth only (a 5.1 AC-3 track reports 5, matching the
+    /// `AC3SampleEntry` `channelcount` convention); this accessor adds the LFE
+    /// from the `dac3`/`dec3` `lfeon` flag (and, for E-AC-3, the extra
+    /// locations of dependent substreams, ETSI TS 102 366 Table F.6.1). For the
+    /// other codecs the stored `channel_count` already counts every channel
+    /// (AAC: ISO/IEC 14496-3 Table 1.19, 5.1 = 6; DTS: `CHS` + LFE; MPEG audio:
+    /// 1 or 2; Opus/FLAC/Vorbis have no separate LFE concept); an AAC stream
+    /// whose mapping is carried in-band by a `program_config_element`, and an
+    /// MPEG-H/AC-4 track whose count is unspecified, return `None`.
+    pub fn channels_with_lfe(&self) -> Option<u16> {
+        let n = match self {
+            CodecConfig::Ac3 { config, .. } => u16::from(config.channels_with_lfe()),
+            CodecConfig::Eac3 { config, .. } => u16::from(config.channels_with_lfe()),
+            CodecConfig::Aac { channel_count, .. }
+            | CodecConfig::Opus { channel_count, .. }
+            | CodecConfig::Flac { channel_count, .. }
+            | CodecConfig::Ac4 { channel_count, .. }
+            | CodecConfig::MpegH { channel_count, .. }
+            | CodecConfig::Dts { channel_count, .. }
+            | CodecConfig::MpegAudio { channel_count, .. } => *channel_count,
+            CodecConfig::Vorbis { channels, .. } => *channels,
+            _ => return None,
+        };
+        (n != 0).then_some(n)
+    }
+
+    /// Nominal bit rate of an audio track in bits per second (issue #1162 R2),
+    /// `None` when the stream does not state one or for a non-audio variant.
+    ///
+    /// - AC-3: `bit_rate_code` (ETSI TS 102 366 Table F.4.1, from `frmsizecod`).
+    /// - E-AC-3: `dec3` `data_rate` (§F.6.2.2, whole bitstream).
+    /// - MPEG audio: the first frame header's `bitrate_index`, carried as the
+    ///   `esds` `avgBitrate` by the TS demuxer (constant-bitrate assumption).
+    /// - AAC: ADTS and `AudioSpecificConfig` carry no bit rate; the `esds`
+    ///   `avgBitrate` is reported when the source signalled a non-zero one
+    ///   (0 = VBR/unknown), else `None`.
+    /// - DTS: the core `ddts` `avgBitrate` (`None` for open/unspecified rate).
+    pub fn nominal_bitrate(&self) -> Option<u32> {
+        let bps = match self {
+            CodecConfig::Ac3 { config, .. } => config.nominal_bitrate_kbps()?.checked_mul(1000)?,
+            CodecConfig::Eac3 { config, .. } => config.nominal_bitrate_kbps().checked_mul(1000)?,
+            CodecConfig::Aac { esds, .. } | CodecConfig::MpegAudio { esds, .. } => esds
+                .es_descriptor
+                .decoder_config
+                .as_ref()
+                .map_or(0, |dc| dc.avg_bitrate),
+            CodecConfig::Dts { config, .. } => config.avg_bitrate,
+            _ => return None,
+        };
+        (bps != 0).then_some(bps)
+    }
+
     /// True for the opaque [`CodecConfig::Data`] variant (issue #557/#576): a
     /// PMT-carried elementary stream with no ISOBMFF sample entry in this
     /// crate. Every fMP4/CMAF mux entry point (init segment + every packager

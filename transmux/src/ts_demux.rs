@@ -2757,13 +2757,17 @@ fn finalize_probe(
             let esds = EsdsBox::new(ESDescriptor::new(
                 ESDS_ES_ID,
                 0,
+                // maxBitrate/avgBitrate (ISO/IEC 14496-1 §7.2.6.6.1) from the
+                // first frame header's `bitrate_index` (constant-bitrate MPEG
+                // audio: both equal the nominal rate), so
+                // `CodecConfig::nominal_bitrate` needs no re-parse (#1162 R2).
                 Some(DecoderConfigDescriptor::new(
                     oti,
                     STREAM_TYPE_AUDIO,
                     false,
                     0,
-                    0,
-                    0,
+                    first.bitrate_bps,
+                    first.bitrate_bps,
                     None,
                 )),
                 Some(SLConfigDescriptor::predefined_two()),

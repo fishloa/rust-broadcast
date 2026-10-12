@@ -582,7 +582,28 @@ impl Ac3SpecificBox {
     pub fn channel_count(&self) -> u8 {
         acmod_channels(self.acmod)
     }
+
+    /// Channel count including the LFE channel: [`Self::channel_count`] plus
+    /// one when `lfeon` is set (a 3/2 + LFE "5.1" stream is 6).
+    pub fn channels_with_lfe(&self) -> u8 {
+        self.channel_count() + u8::from(self.lfeon)
+    }
+
+    /// Nominal bit rate in kbit/s from `bit_rate_code` — ETSI TS 102 366
+    /// Table F.4.1. `None` for a code beyond the table (reserved).
+    pub fn nominal_bitrate_kbps(&self) -> Option<u32> {
+        AC3_BIT_RATE_KBPS
+            .get(self.bit_rate_code as usize)
+            .copied()
+            .map(u32::from)
+    }
 }
+
+/// `bit_rate_code` → nominal bit rate in kbit/s — ETSI TS 102 366 Table F.4.1
+/// (`docs/codec/ac3-eac3-mp4.md`).
+const AC3_BIT_RATE_KBPS: [u16; 19] = [
+    32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320, 384, 448, 512, 576, 640,
+];
 
 impl<'a> Parse<'a> for Ac3SpecificBox {
     type Error = Error;
@@ -691,6 +712,32 @@ impl Ec3SpecificBox {
             .first()
             .map(|s| acmod_channels(s.acmod))
             .unwrap_or(0)
+    }
+
+    /// Channel count of programme 0 including every LFE: independent
+    /// substream 0's `acmod` channels + `lfeon`, plus the extra locations its
+    /// dependent substreams declare in `chan_loc` (ETSI TS 102 366 Table
+    /// F.6.1: pairs count two, `Cs`/`Ts`/`Cvh` one, `LFE2` one). `0` when
+    /// there are no substreams.
+    pub fn channels_with_lfe(&self) -> u8 {
+        let Some(s) = self.substreams.first() else {
+            return 0;
+        };
+        let extra: u8 = s.chan_loc.map_or(0, |loc| {
+            EAC3_CHAN_LOC_CHANNELS
+                .iter()
+                .enumerate()
+                .filter(|(bit, _)| loc & (1 << bit) != 0)
+                .map(|(_, n)| *n)
+                .sum()
+        });
+        acmod_channels(s.acmod) + u8::from(s.lfeon) + extra
+    }
+
+    /// Data rate of the entire bitstream in kbit/s (`data_rate`, §F.6.2.2:
+    /// the sum over all substreams; the maximum for variable-rate streams).
+    pub fn nominal_bitrate_kbps(&self) -> u32 {
+        u32::from(self.data_rate)
     }
 
     /// Build a `dec3` from the E-AC-3 syncframes of one elementary stream, in
@@ -832,6 +879,21 @@ const EAC3_CHANMAP_TO_CHAN_LOC: [(u8, u8); 9] = [
     (11, 6), // Vhl/Vhr pair (chan_loc names it Lvh/Rvh)
     (12, 7), // Vhc (chan_loc names it Cvh)
     (14, 8), // LFE2
+];
+
+/// Channels contributed by each `chan_loc` bit — ETSI TS 102 366 Table F.6.1
+/// (`docs/codec/eac3-bsi-chanmap.md`), indexed by bit number (bit 0 = `Lc/Rc`
+/// pair … bit 8 = `LFE2`).
+const EAC3_CHAN_LOC_CHANNELS: [u8; 9] = [
+    2, // 0: Lc/Rc pair
+    2, // 1: Lrs/Rrs pair
+    1, // 2: Cs
+    1, // 3: Ts
+    2, // 4: Lsd/Rsd pair
+    2, // 5: Lw/Rw pair
+    2, // 6: Lvh/Rvh pair
+    1, // 7: Cvh
+    1, // 8: LFE2
 ];
 
 fn ec3_substream_serialized_len(sub: &Ec3Substream) -> usize {
