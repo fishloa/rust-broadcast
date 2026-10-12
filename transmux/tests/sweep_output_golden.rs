@@ -103,7 +103,10 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     // dropped every straddling frame; the carry now recovers all 39 (see
     // `mpeg_audio_resyncs_across_pes_boundaries`). Every other fixture here
     // is frame-aligned and is byte-identical to before.
-    ("ts/legacy/mpeg2_mp2_pes_misaligned.ts", 0x96664c0bef2b2298),
+    // Re-captured again for #1162 R2: the MPEG audio `esds` now carries
+    // `maxBitrate`/`avgBitrate` from the first frame header (was 0), so the
+    // IR `Debug` text changes; the samples are unchanged.
+    ("ts/legacy/mpeg2_mp2_pes_misaligned.ts", 0x3459220532f49676),
 ];
 
 #[test]

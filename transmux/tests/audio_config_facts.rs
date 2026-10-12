@@ -26,7 +26,7 @@ fn demux(rel: &str) -> Media {
 }
 
 /// The first audio track whose config matches `pick`.
-fn track<'a>(m: &'a Media, pick: impl Fn(&CodecConfig) -> bool) -> &'a CodecConfig {
+fn track(m: &Media, pick: impl Fn(&CodecConfig) -> bool) -> &CodecConfig {
     &m.tracks
         .iter()
         .find(|t| pick(&t.spec.config))

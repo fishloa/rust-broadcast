@@ -14,6 +14,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `TsMux` now **repeats PAT and PMT periodically** (default every 100 ms of media time, between PES runs, continuity counters continuous on the PSI PIDs, PMT content/version unchanged), so a `TsDemux`->`TsMux` file can be joined at any packet-aligned offset (previously a cut such as 1128 bytes in yielded zero tracks) and meets ETSI TR 101 290 1.3/1.5. Elementary-stream packets are byte-identical to before; the only difference is the extra PSI packets. The classic-HLS segmenter (`ts_hls`) is unchanged (PSI at each segment start).
 
+### Added
+
+- `TrackSpec::audio_metadata()` -> `AudioMetadata` (#1162 R1): typed audio-track metadata decoded from the PMT `ES_info` descriptors a TS demux already stores. Carries every `ISO_639_language_descriptor` entry (`AudioLanguage`: language + `AudioType` clean-effects / hearing-impaired / visual-impaired-commentary), the DVB `supplementary_audio_descriptor` (`SupplementaryAudio`: `MixType`, `EditorialClassification`, language; EN 300 468 §6.4.11 Tables 154/155), and a derived `AudioRole` (`Main`/`AudioDescription`/`HearingImpaired`/`Unknown`). Documented heuristic: audio description = `audio_type` 3, editorial 1 or language `qad` (France 2/TF1); hearing impaired = `audio_type` 2 (ORF) or editorial 2; `audio_type` 1 (clean effects) does **not** imply non-main (ServusTV). Reuses `dvb-si`'s descriptor parsers (new `dvb-si` 11.0 dependency, `no_std`+`alloc`); the DASH `@lang` extraction now goes through it instead of its own walker. Real-fixture test on `fixtures/ts/france2.ts` (`fre`/`qad`+editorial 1/`qaa`).
+- `CodecConfig::audio_sample_rate()`, `channels_with_lfe()` and `nominal_bitrate()` (#1162 R2). `channels_with_lfe()` adds the AC-3 `lfeon` / E-AC-3 `lfeon` + dependent-substream `chan_loc` channels (a 5.1 AC-3 track: `channel_count` 5, `channels_with_lfe()` 6; `channel_count` is unchanged). `nominal_bitrate()`: AC-3 `bit_rate_code` (Table F.4.1), E-AC-3 `dec3` `data_rate`, MPEG audio first-frame `bitrate_index`, DTS core `ddts` rate; AAC reports the `esds` `avgBitrate` only if the source signalled one (ADTS/ASC carry none). Also `Ac3SpecificBox`/`Ec3SpecificBox::channels_with_lfe`/`nominal_bitrate_kbps` and `MpegAudioFrameHeader::bitrate_bps`. Expected values verified against `ffprobe` on the committed fixtures.
+
+### Changed
+
+- `TsDemux`/`StreamingTsDemux`: an MPEG-1/2 audio track's `esds` now carries `maxBitrate`/`avgBitrate` taken from the first frame header (previously 0).
+
 ## [0.25.3] - 2026-10-12
 ### Fixed
 

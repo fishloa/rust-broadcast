@@ -1358,6 +1358,33 @@ mod tests {
     use super::*;
     use alloc::vec;
 
+    #[test]
+    fn ec3_channels_with_lfe_counts_chan_loc_dependents() {
+        // acmod 7 (3/2) + lfeon = 6; chan_loc bit 1 (Lrs/Rrs pair, Table
+        // F.6.1) adds 2 => 8 (7.1); bit 8 (LFE2) adds 1 more.
+        let mut b = Ec3SpecificBox {
+            data_rate: 0,
+            num_ind_sub: 0,
+            substreams: vec![Ec3Substream {
+                fscod: 0,
+                bsid: 16,
+                asvc: false,
+                bsmod: 0,
+                acmod: 7,
+                lfeon: true,
+                num_dep_sub: 1,
+                chan_loc: Some(1 << 1),
+            }],
+            reserved_tail: vec![],
+        };
+        assert_eq!(b.channel_count(), 5);
+        assert_eq!(b.channels_with_lfe(), 8);
+        b.substreams[0].chan_loc = Some((1 << 1) | (1 << 8));
+        assert_eq!(b.channels_with_lfe(), 9);
+        b.substreams[0].chan_loc = None;
+        assert_eq!(b.channels_with_lfe(), 6);
+    }
+
     // Oracle bytes from DOLBY-ORACLE.md (ffmpeg-generated)
     const DAC3_ORACLE: [u8; 3] = [0x50, 0x09, 0x40];
     const DEC3_ORACLE: [u8; 5] = [0x06, 0x00, 0x60, 0x02, 0x00];

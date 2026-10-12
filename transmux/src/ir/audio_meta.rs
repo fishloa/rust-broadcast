@@ -11,36 +11,6 @@
 //! - DVB `supplementary_audio_descriptor` (ETSI EN 300 468 §6.4.11, extension
 //!   descriptor tag `0x7F`, `descriptor_tag_extension` `0x06`): `mix_type`
 //!   (Table 154), `editorial_classification` (Table 155), optional language.
-//!
-//! # Derived [`AudioRole`]
-//!
-//! Broadcasters signal the same purpose in different places, so the role is a
-//! documented heuristic over both descriptors, **not** a spec-defined field.
-//! Rules, in priority order:
-//!
-//! 1. [`AudioRole::AudioDescription`] when any of: an `audio_type` of
-//!    `0x03` (visual impaired commentary); a supplementary
-//!    `editorial_classification` of `0x01` (audio description for the
-//!    visually impaired); or an ISO 639 language code `qad` (the
-//!    locally-assigned code France 2 / TF1 use for their AD track, alongside
-//!    `editorial_classification = 0x01`).
-//! 2. [`AudioRole::HearingImpaired`] when `audio_type = 0x02` (hearing
-//!    impaired, e.g. ORF) or `editorial_classification = 0x02` (clean audio
-//!    for the hearing impaired).
-//! 3. [`AudioRole::Main`] when the loop identifies the track (a language entry
-//!    and/or a supplementary descriptor) and nothing above matched, and the
-//!    supplementary descriptor (if any) is `editorial_classification = 0x00`
-//!    (main audio, ETSI EN 300 468 Annex J.4). Notably `audio_type = 0x01`
-//!    (clean effects) does **not** imply non-main: ServusTV tags its main mix
-//!    that way, and Annex J.4 lists "main audio" as `audio_type` `0x00` or
-//!    `0x01`.
-//! 4. [`AudioRole::Unknown`] otherwise: no descriptors, or a supplementary
-//!    classification that is none of the above (spoken subtitles, dependent
-//!    parametric data, general-audience supplementary audio, user-defined,
-//!    reserved).
-//!
-//! Audio description wins over hearing impaired if a (malformed) loop signals
-//! both.
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -185,8 +155,35 @@ impl EditorialClassification {
 }
 broadcast_common::impl_spec_display!(EditorialClassification, UserDefined, Reserved);
 
-/// What an audio track is for, derived from its PMT descriptors — see the
-/// [module docs](self) for the exact (heuristic) rules.
+/// What an audio track is for, derived from its PMT descriptors.
+///
+/// Broadcasters signal the same purpose in different places, so the role is a
+/// documented heuristic over both descriptors, **not** a spec-defined field.
+/// Rules, in priority order:
+///
+/// 1. [`AudioRole::AudioDescription`] when any of: an `audio_type` of
+///    `0x03` (visual impaired commentary); a supplementary
+///    `editorial_classification` of `0x01` (audio description for the
+///    visually impaired); or an ISO 639 language code `qad` (the
+///    locally-assigned code France 2 / TF1 use for their AD track, alongside
+///    `editorial_classification = 0x01`).
+/// 2. [`AudioRole::HearingImpaired`] when `audio_type = 0x02` (hearing
+///    impaired, e.g. ORF) or `editorial_classification = 0x02` (clean audio
+///    for the hearing impaired).
+/// 3. [`AudioRole::Main`] when the loop identifies the track (a language entry
+///    and/or a supplementary descriptor) and nothing above matched, and the
+///    supplementary descriptor (if any) is `editorial_classification = 0x00`
+///    (main audio, ETSI EN 300 468 Annex J.4). Notably `audio_type = 0x01`
+///    (clean effects) does **not** imply non-main: ServusTV tags its main mix
+///    that way, and Annex J.4 lists "main audio" as `audio_type` `0x00` or
+///    `0x01`.
+/// 4. [`AudioRole::Unknown`] otherwise: no descriptors, or a supplementary
+///    classification that is none of the above (spoken subtitles, dependent
+///    parametric data, general-audience supplementary audio, user-defined,
+///    reserved).
+///
+/// Audio description wins over hearing impaired if a (malformed) loop signals
+/// both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[non_exhaustive]
@@ -247,7 +244,7 @@ pub struct AudioMetadata {
     pub languages: Vec<AudioLanguage>,
     /// The first `supplementary_audio_descriptor`, if any.
     pub supplementary: Option<SupplementaryAudio>,
-    /// Derived role (heuristic, see the module docs).
+    /// Derived role (heuristic, see [`AudioRole`]).
     pub role: AudioRole,
 }
 
