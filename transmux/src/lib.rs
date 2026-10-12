@@ -196,6 +196,7 @@ pub mod smooth;
 #[cfg(feature = "std")]
 pub mod smooth_parse;
 pub mod splice;
+pub mod slice_header;
 pub mod sps;
 pub mod subtitle_entries;
 pub mod timing;

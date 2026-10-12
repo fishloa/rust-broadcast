@@ -133,6 +133,37 @@ pub struct AvcSpsInfo {
 /// (as returned by [`iter_annexb_nals`](crate::iter_annexb_nals)).
 /// The NAL header byte is skipped; decoding starts at the next byte.
 pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
+    decode_avc_sps_inner(sps_bytes).map(|(info, _)| info)
+}
+
+/// The SPS fields a slice-header parser needs (ITU-T H.264 §7.3.3 reads
+/// `frame_num`, `field_pic_flag`, `pic_order_cnt_lsb`, … with widths and
+/// presence conditions taken from the SPS).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct AvcSliceSps {
+    /// `seq_parameter_set_id`.
+    pub sps_id: u8,
+    /// `separate_colour_plane_flag` (gates `colour_plane_id`).
+    pub separate_colour_plane: bool,
+    /// `log2_max_frame_num_minus4 + 4` — the bit width of `frame_num`.
+    pub log2_max_frame_num: u8,
+    /// `pic_order_cnt_type`.
+    pub pic_order_cnt_type: u8,
+    /// `log2_max_pic_order_cnt_lsb_minus4 + 4` (POC type 0 only, else 0).
+    pub log2_max_poc_lsb: u8,
+    /// `delta_pic_order_always_zero_flag` (POC type 1 only, else `false`).
+    pub delta_pic_order_always_zero: bool,
+    /// `frame_mbs_only_flag` (gates `field_pic_flag`).
+    pub frame_mbs_only: bool,
+}
+
+/// Decode only the slice-header-relevant SPS fields ([`AvcSliceSps`]) from an
+/// H.264 SPS NAL unit (1-byte NAL header included).
+pub fn decode_avc_slice_sps(sps_bytes: &[u8]) -> Result<AvcSliceSps> {
+    decode_avc_sps_inner(sps_bytes).map(|(_, s)| s)
+}
+
+fn decode_avc_sps_inner(sps_bytes: &[u8]) -> Result<(AvcSpsInfo, AvcSliceSps)> {
     if sps_bytes.len() < 4 {
         return Err(Error::BufferTooShort {
             need: 4,
@@ -151,7 +182,8 @@ pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
     let mut r = BitReader::with_unescape(&sps_bytes[4..], "H.264 SPS")?;
 
     // seq_parameter_set_id — ue(v)
-    let _sps_id = r.read_ue("seq_parameter_set_id")?;
+    // Saturating (not validated): `decode_avc_sps` never rejected these.
+    let sps_id = r.read_ue("seq_parameter_set_id")?.min(u8::MAX as u64) as u8;
 
     // High-profile branch
     let (chroma_format_idc, separate_colour_plane, bit_depth_luma, bit_depth_chroma) =
@@ -211,13 +243,17 @@ pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
         };
 
     // log2_max_frame_num_minus4 — ue(v)
-    let _ = r.read_ue("log2_max_frame_num_minus4")?;
+    // §7.4.2.1.1: log2_max_frame_num_minus4 is 0..=12 (clamped, not rejected).
+    let log2_max_frame_num = r.read_ue("log2_max_frame_num_minus4")?.min(12) as u8 + 4;
     // pic_order_cnt_type — ue(v)
     let pic_order_cnt_type = r.read_ue("pic_order_cnt_type")?;
+    let mut log2_max_poc_lsb = 0u8;
+    let mut delta_pic_order_always_zero = false;
     if pic_order_cnt_type == 0 {
-        let _ = r.read_ue("log2_max_pic_order_cnt_lsb_minus4")?;
+        // §7.4.2.1.1: log2_max_pic_order_cnt_lsb_minus4 is 0..=12 (clamped).
+        log2_max_poc_lsb = r.read_ue("log2_max_pic_order_cnt_lsb_minus4")?.min(12) as u8 + 4;
     } else if pic_order_cnt_type == 1 {
-        let _ = r.read_flag("delta_pic_order_always_zero_flag")?;
+        delta_pic_order_always_zero = r.read_flag("delta_pic_order_always_zero_flag")?;
         let _ = r.read_se("offset_for_non_ref_pic")?;
         let _ = r.read_se("offset_for_top_to_bottom_field")?;
         let num_ref_frames = r.read_ue("num_ref_frames_in_pic_order_cnt_cycle")?;
@@ -281,21 +317,32 @@ pub fn decode_avc_sps(sps_bytes: &[u8]) -> Result<AvcSpsInfo> {
     // timing_info; stop reading after timing_info_present_flag.
     let (num_units_in_tick, time_scale, fps) = parse_avc_vui_timing(&mut r);
 
-    Ok(AvcSpsInfo {
-        profile_idc,
-        constraint_flags,
-        level_idc,
-        chroma_format_idc,
-        separate_colour_plane,
-        bit_depth_luma,
-        bit_depth_chroma,
-        frame_mbs_only,
-        width: width as u32,
-        height: height as u32,
-        num_units_in_tick,
-        time_scale,
-        fps,
-    })
+    Ok((
+        AvcSpsInfo {
+            profile_idc,
+            constraint_flags,
+            level_idc,
+            chroma_format_idc,
+            separate_colour_plane,
+            bit_depth_luma,
+            bit_depth_chroma,
+            frame_mbs_only,
+            width: width as u32,
+            height: height as u32,
+            num_units_in_tick,
+            time_scale,
+            fps,
+        },
+        AvcSliceSps {
+            sps_id,
+            separate_colour_plane,
+            log2_max_frame_num,
+            pic_order_cnt_type: pic_order_cnt_type.min(u8::MAX as u64) as u8,
+            log2_max_poc_lsb,
+            delta_pic_order_always_zero,
+            frame_mbs_only,
+        },
+    ))
 }
 
 /// Walk the H.264 VUI syntax (ITU-T H.264 §E.1.1) in order up to and including
