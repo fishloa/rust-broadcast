@@ -478,17 +478,17 @@ pub(crate) fn hevc_facts(sps_nal: &[u8], nals: &[&[u8]]) -> Option<PictureFacts>
             .filter(|n| hevc_type(n) == Some(HEVC_NAL_PREFIX_SEI) && n.len() > HEVC_NAL_HEADER_LEN)
             .flat_map(|n| sei_messages(&n[HEVC_NAL_HEADER_LEN..]))
             .find(|(t, _)| *t == SEI_PAYLOAD_PIC_TIMING);
-        if let Some((_, p)) = payload {
-            if let Ok(mut r) = BitReader::from_rbsp(&p, "H.265 pic_timing") {
-                pic_struct = r
-                    .read_bits(PIC_STRUCT_BITS, "pic_struct")
-                    .ok()
-                    .and_then(|c| PicStruct::from_code(c as u8, true));
-                source_scan_type = r
-                    .read_bits(SOURCE_SCAN_TYPE_BITS, "source_scan_type")
-                    .ok()
-                    .map(|c| SourceScanType::from_code(c as u8));
-            }
+        if let Some((_, p)) = payload
+            && let Ok(mut r) = BitReader::from_rbsp(&p, "H.265 pic_timing")
+        {
+            pic_struct = r
+                .read_bits(PIC_STRUCT_BITS, "pic_struct")
+                .ok()
+                .and_then(|c| PicStruct::from_code(c as u8, true));
+            source_scan_type = r
+                .read_bits(SOURCE_SCAN_TYPE_BITS, "source_scan_type")
+                .ok()
+                .map(|c| SourceScanType::from_code(c as u8));
         }
     }
     Some(PictureFacts {
