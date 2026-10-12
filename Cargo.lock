@@ -4316,6 +4316,7 @@ dependencies = [
  "container-probe",
  "ctr 0.10.1",
  "dvb-conformance",
+ "dvb-si",
  "hex",
  "jiff",
  "mp4-emsg",

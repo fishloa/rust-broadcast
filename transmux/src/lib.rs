@@ -311,6 +311,10 @@ pub use nal::{
 };
 pub use nalu_types::{AvcPps, AvcSps, AvcSpsExt, HevcNalArray, HevcNalUnit};
 pub use opus::{ChannelMappingTable, DOPS_FOURCC, OPUS_FOURCC, OpusSpecificBox};
+pub use ir::{
+    AudioLanguage, AudioMetadata, AudioRole, AudioType, EditorialClassification, MixType,
+    SupplementaryAudio,
+};
 pub use pipeline::{
     CodecConfig, EmsgBox, EmsgVersion, FragmentTrackData, PresentationTime, Provenance, Sample,
     SampleFlags, TrackSpec, build_init_segment, build_media_segment,
