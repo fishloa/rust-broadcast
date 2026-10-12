@@ -1,6 +1,6 @@
 [package]
 name         = "transmux"
-version      = "0.25.3"
+version      = "0.25.4"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -37,6 +37,11 @@ mpeg-ps    = { path = "../mpeg-ps",  version = "0.5", default-features = false }
 rtp-packet = { path = "../rtp-packet", version = "0.4", default-features = false }
 rtcp-packet = { path = "../rtcp-packet", version = "0.4", default-features = false }
 bytes      = { version = "1", default-features = false }
+# Typed PMT ES_info audio metadata (issue #1162 R1): `TrackSpec::audio_metadata`
+# reuses dvb-si's `iso_639_language_descriptor` + `supplementary_audio_descriptor`
+# parsers instead of re-parsing. dvb-si does not depend on transmux (no cycle);
+# `no_std`+`alloc` with default features off.
+dvb-si     = { path = "../dvb-si", version = "11.0", default-features = false }
 # XML codec for the DASH MPD / Smooth Streaming / PlayReady WRMHEADER paths: the
 # only XML dependency of the crates that read or write XML (transmux,
 # dvb-mabr, ttml-subtitle, multimux). std-only (quick-xml needs std).
@@ -65,7 +70,7 @@ required-features = ["std"]
 
 [features]
 default = ["std", "serde", "cenc"]
-std    = ["broadcast-common/std", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std", "dep:quick-xml", "dep:jiff", "dep:url", "dep:sdp-types"]
+std    = ["dvb-si/std", "broadcast-common/std", "thiserror/std", "serde?/std", "broadcast-hls/std", "mp4-emsg/std", "mpeg-ts/std", "mpeg-pes/std", "mpeg-ps/std", "rtp-packet/std", "rtcp-packet/std", "dep:quick-xml", "dep:jiff", "dep:url", "dep:sdp-types"]
 serde  = ["dep:serde", "broadcast-common/serde", "broadcast-hls/serde", "mpeg-ts/serde", "mpeg-pes/serde", "mpeg-ps/serde", "rtcp-packet/serde"]
 cenc   = ["dep:aes", "dep:ctr", "dep:cbc"]
 # `sample-aes` adds Apple HLS Sample-AES + full-segment AES-128 (AES-128-CBC)
@@ -93,6 +98,10 @@ serde_json   = { workspace = true }
 # that follow-up wiring, not a library dependency.
 scte35-splice  = { path = "../scte35-splice", version = "3.0", default-features = false, features = ["std"] }
 timed-metadata = { path = "../timed-metadata", default-features = false, features = ["std"] }
+# ts_mux_psi_repeat.rs checks the muxer's output against the independent ETSI
+# TR 101 290 monitor (PAT/PMT repetition, continuity). Dev-dependency only;
+# dvb-conformance does not depend on transmux, so there is no cycle.
+dvb-conformance = { path = "../dvb-conformance", default-features = false, features = ["std"] }
 
 [package.metadata.docs.rs]
 all-features = true

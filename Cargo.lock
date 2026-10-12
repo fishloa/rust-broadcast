@@ -4304,7 +4304,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.25.3"
+version = "0.25.4"
 dependencies = [
  "aes 0.9.3",
  "base64 0.23.1",
@@ -4315,6 +4315,8 @@ dependencies = [
  "clap",
  "container-probe",
  "ctr 0.10.1",
+ "dvb-conformance",
+ "dvb-si",
  "hex",
  "jiff",
  "mp4-emsg",

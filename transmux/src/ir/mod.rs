@@ -47,12 +47,17 @@
 //! [`crate::pipeline::build_media_segment`]) stay in their existing modules —
 //! only the data types moved.
 
+mod audio_meta;
 mod codec;
 mod event;
 mod media;
 mod sample;
 mod track;
 
+pub use audio_meta::{
+    AudioLanguage, AudioMetadata, AudioRole, AudioType, EditorialClassification, MixType,
+    SupplementaryAudio,
+};
 pub use codec::{CodecConfig, DataCarriage, SubtitleFormat};
 pub use event::{AbandonReason, DemuxEvent, DiscontinuityKind, EventProvenance, InputDegradation};
 pub use media::{Media, PcrSample, SkippedTrack};

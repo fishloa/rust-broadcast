@@ -271,6 +271,12 @@ test = false
 doc  = false
 
 [[bin]]
+name = "transmux_interlace_join"
+path = "fuzz_targets/transmux_interlace_join.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "transmux_flv_stream"
 path = "fuzz_targets/transmux_flv_stream.rs"
 test = false

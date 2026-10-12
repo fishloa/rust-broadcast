@@ -161,8 +161,10 @@ pub mod flv_stream;
 pub mod frag_offsets;
 pub mod hevc_config;
 pub mod init_segment;
+pub mod interlace;
 pub mod ir;
 pub mod klv;
+pub mod live_join;
 pub mod ll_dash;
 pub mod ll_hls;
 pub mod media;
@@ -277,11 +279,19 @@ pub use init_segment::{
     SoundMediaHeaderBox, StblChild, StscEntry, SyncSampleBox, TrackBox, TrackExtendsBox,
     TrackHeaderBox, VideoMediaHeaderBox,
 };
+pub use interlace::{
+    PicStruct, PictureFacts, SourceScanType, VideoScan, video_picture_facts, video_scan,
+};
+pub use ir::{
+    AudioLanguage, AudioMetadata, AudioRole, AudioType, EditorialClassification, MixType,
+    SupplementaryAudio,
+};
 pub use klv::{
     CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,
     TAG_PRECISION_TIMESTAMP, UAS_LS_KEY, UNIVERSAL_LABEL_LEN, UasLocalSet, UniversalLabel,
     ber_length, ber_oid, checksum_bcc16, encode_ber_length, encode_ber_oid,
 };
+pub use live_join::{DropReason, JoinDecision, JoinPolicy, JoinState, LiveJoin, RapKind};
 #[cfg(feature = "std")]
 pub use ll_dash::LlDashPackager;
 pub use ll_dash::{Chunk, LlSegmenter};
@@ -394,7 +404,7 @@ pub use ts_demux::{
     StreamingTsDemux, TsDemux,
 };
 pub use ts_hls::{StreamingTsHlsSegmenter, TsHlsOutput, TsHlsPackager, TsSegment};
-pub use ts_mux::{TsContinuity, TsMux};
+pub use ts_mux::{DEFAULT_PSI_INTERVAL_MS, TsContinuity, TsMux};
 pub use validate::{
     ConformanceIssue, Severity, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };

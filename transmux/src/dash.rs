@@ -133,9 +133,6 @@ const CENC_NAMESPACE: &str = "urn:mpeg:cenc:2013";
 /// auto-derived from [`crate::media::Track::encryption`] (issue #564).
 pub const MP4_PROTECTION_SCHEME_URI: &str = "urn:mpeg:dash:mp4protection:2011";
 
-/// `ISO_639_language_descriptor` tag — ETSI EN 300 468 §6.2.19.
-const ISO_639_LANGUAGE_DESCRIPTOR_TAG: u8 = 0x0A;
-
 /// Segment addressing mode for `SegmentTemplate` (ISO/IEC 23009-1 §5.3.9.4.4
 /// Table 16 / §5.3.9.6) — the two modes are mutually exclusive on one template
 /// (§5.3.9.4.4 L1628).
@@ -1130,36 +1127,17 @@ fn xs_duration(d: Duration) -> String {
     jiff::fmt::temporal::SpanPrinter::new().duration_to_string(&signed)
 }
 
-/// Extract the first `ISO_639_language_code` from a track's raw PMT ES_info
-/// descriptor loop (verbatim TLV bytes carried on
-/// [`crate::pipeline::TrackSpec::es_info_descriptors`], issue #582), by
-/// walking the descriptor loop for tag `0x0A`
-/// (`ISO_639_language_descriptor`, ETSI EN 300 468 §6.2.19: repeated
-/// `ISO_639_language_code` (3 bytes) + `audio_type` (1 byte)). Returns `None`
-/// for a non-TS source (empty descriptor bytes) or when no such descriptor is
-/// present — `transmux` does not otherwise decode SI descriptors (that's
-/// `dvb-si`'s job); this is the one field `@lang` needs.
+/// First `ISO_639_language_code` of a track's PMT ES_info loop (carried
+/// verbatim on [`crate::pipeline::TrackSpec::es_info_descriptors`], issue
+/// #582), decoded by [`crate::ir::AudioMetadata`] (which reuses `dvb-si`'s
+/// `ISO_639_language_descriptor` parser — ETSI EN 300 468 §6.2.19). `None` for
+/// a non-TS source or when no alphabetic code is present.
 fn lang_from_es_info(descriptors: &[u8]) -> Option<String> {
-    let mut i = 0usize;
-    while i + 2 <= descriptors.len() {
-        let tag = descriptors[i];
-        let len = descriptors[i + 1] as usize;
-        let body_start = i + 2;
-        let body_end = body_start + len;
-        if body_end > descriptors.len() {
-            break;
-        }
-        if tag == ISO_639_LANGUAGE_DESCRIPTOR_TAG && len >= 4 {
-            let code = &descriptors[body_start..body_start + 3];
-            if code.iter().all(u8::is_ascii_alphabetic)
-                && let Ok(s) = core::str::from_utf8(code)
-            {
-                return Some(s.to_ascii_lowercase());
-            }
-        }
-        i = body_end;
-    }
-    None
+    crate::ir::AudioMetadata::from_es_info(descriptors)
+        .languages
+        .into_iter()
+        .map(|l| l.language)
+        .find(|l| l.bytes().all(|b| b.is_ascii_alphabetic()))
 }
 
 /// Partition `reprs`' entries of `kind` into AdaptationSets, one per

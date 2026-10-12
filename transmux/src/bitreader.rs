@@ -12,7 +12,7 @@ use crate::error::{Error, Result};
 use alloc::vec::Vec;
 
 /// Unescape a NAL unit byte stream into an RBSP: remove every `00 00 03` → `00 00`.
-fn unescape(nal: &[u8]) -> Vec<u8> {
+pub(crate) fn unescape(nal: &[u8]) -> Vec<u8> {
     let n = nal.len();
     let mut out = Vec::with_capacity(n);
     let mut i = 0;

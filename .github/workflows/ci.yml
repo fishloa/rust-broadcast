@@ -320,3 +320,30 @@ jobs:
         run: cargo test -p multimux --test golden_gate --all-features --locked
       - name: HLS conformance oracle (media-doctor, all features)
         run: cargo test -p media-doctor --test mediastreamvalidator_oracle --all-features --locked
+
+  # Apple-platform cross-check (issue #1162 R6): transmux (std, default
+  # features) must keep compiling for tvOS / iOS / macOS so Apple-device
+  # consumers are not broken silently. `cargo check` only — nothing is linked,
+  # so no Apple SDK is needed and a Linux runner suffices (transmux's tree has
+  # no C build scripts: no cc/ring/cmake). rust-std for all five targets is
+  # available on the pinned 1.95.0 toolchain via rustup (verified locally); the
+  # tvOS targets need no nightly / build-std.
+  apple-targets:
+    name: apple targets (${{ matrix.target }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        target:
+          - aarch64-apple-tvos
+          - aarch64-apple-tvos-sim
+          - aarch64-apple-ios
+          - aarch64-apple-ios-sim
+          - aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v5
+      - uses: Swatinem/rust-cache@v2
+      - name: Add target
+        run: rustup target add ${{ matrix.target }}
+      - name: Check transmux (std, default features)
+        run: cargo check -p transmux --target ${{ matrix.target }} --locked

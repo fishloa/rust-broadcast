@@ -156,6 +156,10 @@ pub struct MpegAudioFrameHeader {
     pub sample_rate: u32,
     /// Channel count: 1 for `single_channel` mode, else 2.
     pub channels: u16,
+    /// Bitrate in bits per second from the header's `bitrate_index`
+    /// (ISO/IEC 11172-3 §2.4.2.3 bitrate table). Free-format and forbidden
+    /// indices are rejected at parse, so this is always non-zero.
+    pub bitrate_bps: u32,
     /// Total frame length in bytes (header + payload), for frame splitting.
     pub frame_length: usize,
     /// Decoded samples per frame (384 for Layer I; 1152 for Layer II; 1152 for
@@ -303,6 +307,7 @@ impl MpegAudioFrameHeader {
             layer,
             sample_rate,
             channels,
+            bitrate_bps: bitrate as u32,
             frame_length,
             samples_per_frame,
         })
