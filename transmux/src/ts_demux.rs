@@ -2443,7 +2443,8 @@ const MAX_SEEN_PARAMETER_SETS: usize = 64;
 ///
 /// Encoders routinely carry several parameter sets of one type at once —
 /// multiple PPS ids (issue #1166: orf1 cycles three), or several SPS ids — and
-/// re-send them in a rotating order. A single "last seen" slot compared against
+/// re-send them in a rotating order (PPS only; SPS/VPS use
+/// [`ParamSlot::record_current`]). A single "last seen" slot compared against
 /// each arrival reads every rotation step as a change (A, B, A, B, ...), so an
 /// arrival counts as a change only when its bytes were **never seen** before.
 #[derive(Default, Clone)]
@@ -2453,6 +2454,17 @@ struct ParamSlot {
 }
 
 impl ParamSlot {
+    /// Fold in one NAL of a type that does **not** rotate (SPS, VPS): any
+    /// difference from the current set is a change, so switching A -> B -> A
+    /// (a resolution change and back) is reported at every switch.
+    fn record_current(&mut self, bytes: &[u8]) -> bool {
+        if self.current.as_deref() == Some(bytes) {
+            return false;
+        }
+        self.current = Some(bytes.to_vec());
+        true
+    }
+
     /// Fold in one NAL; `true` if its bytes had not been seen before (it then
     /// becomes the `current` set the config is built from).
     fn record(&mut self, bytes: &[u8]) -> bool {
@@ -2481,7 +2493,7 @@ impl ParameterSets {
             Codec::H264 => {
                 for nal in iter_annexb_nals(data) {
                     match nal[0] & H264_NAL_TYPE_MASK {
-                        H264_NAL_SPS => changed |= self.sps.record(nal),
+                        H264_NAL_SPS => changed |= self.sps.record_current(nal),
                         H264_NAL_PPS => changed |= self.pps.record(nal),
                         _ => {}
                     }
@@ -2490,8 +2502,8 @@ impl ParameterSets {
             Codec::Hevc => {
                 for nal in iter_annexb_nals(data) {
                     match nal_unit_type(NalCodec::Hevc, nal) {
-                        Some(H265_NAL_VPS) => changed |= self.vps.record(nal),
-                        Some(H265_NAL_SPS) => changed |= self.sps.record(nal),
+                        Some(H265_NAL_VPS) => changed |= self.vps.record_current(nal),
+                        Some(H265_NAL_SPS) => changed |= self.sps.record_current(nal),
                         Some(H265_NAL_PPS) => changed |= self.pps.record(nal),
                         _ => {}
                     }
@@ -7035,7 +7047,7 @@ mod tests {
         }
     }
 
-    /// The same remembering applies to HEVC (VPS/SPS/PPS share `ParamSlot`).
+    /// The same PPS remembering applies to HEVC; VPS/SPS still compare to the current set.
     #[test]
     fn hevc_rotating_parameter_sets_are_not_changes() {
         let hdr = |t: u8| [t << 1, 0x01];
@@ -7060,6 +7072,72 @@ mod tests {
             );
         }
         assert!(sets.observe(Codec::Hevc, &au(&nal(H265_NAL_PPS, 9))));
+        let sps2 = nal(H265_NAL_SPS, 7);
+        assert!(sets.observe(Codec::Hevc, &annexb_au(&[&sps2])), "SPS B");
+        assert!(
+            sets.observe(Codec::Hevc, &annexb_au(&[&s])),
+            "SPS back to A"
+        );
+    }
+
+    /// The (SPS, PPS, width) of the fixture's first and second resolution.
+    fn two_resolution_sets() -> [(Vec<u8>, Vec<u8>, u16); 2] {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests/fixtures/ts/h264-two-resolutions.ts");
+        let bytes = std::fs::read(&path).unwrap();
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&bytes);
+        demux.finish();
+        let mut out = Vec::new();
+        while let Some(e) = demux.poll_event() {
+            let spec = match e {
+                DemuxEvent::TrackAdded(s) | DemuxEvent::TrackUpdated(s) => s,
+                _ => continue,
+            };
+            if let CodecConfig::Avc { config, width, .. } = spec.config {
+                let r = &config.config;
+                out.push((r.sps[0].0.clone(), r.pps[0].0.clone(), width));
+            }
+        }
+        assert!(out.len() >= 2 && out[0].2 != out[1].2, "two resolutions");
+        [out[0].clone(), out[1].clone()]
+    }
+
+    /// SPS A -> B -> A (a resolution change and back) is a real config change
+    /// at EVERY switch, even though A was seen before; PPS rotation tolerance
+    /// must not leak into the SPS.
+    #[test]
+    fn sps_switch_a_b_a_raises_an_update_per_switch() {
+        let [a, b] = two_resolution_sets();
+        let au =
+            |x: &(Vec<u8>, Vec<u8>, u16), t: u8| annexb_au(&[&x.0, &x.1, &[0x65, 0x88, 0x84, t]]);
+        let aus = vec![au(&a, 1), au(&b, 2), slice_only_au(3), au(&a, 4), au(&b, 5)];
+        let bytes = avc_ts_over(&aus);
+        let (n, base) = events_chunked(&bytes, bytes.len());
+        assert_eq!(n, 3, "one update for each of the three switches");
+        for chunk in [1usize, 7, 187, 188, 189, 1000] {
+            assert_eq!(events_chunked(&bytes, chunk).1, base, "chunk {chunk}");
+        }
+    }
+
+    /// A same-length, different-bytes SPS is exactly one update.
+    #[test]
+    fn same_length_sps_change_raises_exactly_one_update() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let mut other = sps.clone();
+        let last = other.len() - 1;
+        other[last] ^= 0x01;
+        let aus = vec![
+            annexb_au(&[&sps, &pps, &[0x65, 0x88, 0x84, 1]]),
+            annexb_au(&[&other, &pps, &[0x65, 0x88, 0x84, 2]]),
+            annexb_au(&[&other, &pps, &[0x65, 0x88, 0x84, 3]]),
+        ];
+        let bytes = avc_ts_over(&aus);
+        let (n, base) = events_chunked(&bytes, bytes.len());
+        assert_eq!(n, 1);
+        for chunk in [1usize, 7, 187, 188, 189, 1000] {
+            assert_eq!(events_chunked(&bytes, chunk).1, base, "chunk {chunk}");
+        }
     }
 
     /// A PPS-only change is also a real config change and must raise one.
