@@ -3485,6 +3485,54 @@ enum CcVerdict {
 /// demuxer's invariant, see `TrackState`), tracked via `codec_order` /
 /// `data_order` / `resolved`; these hold one `u16` PID per known ES, not
 /// per-sample data, so they stay tiny regardless of stream length.
+///
+/// # Chunk-size invariance
+///
+/// The event stream is a function of the input *bytes*, not of how they are
+/// split across [`feed`](Self::feed) calls: for any partition of the same
+/// input (1 byte at a time, 188-byte packets, 189, 64 KiB, random sizes) the
+/// complete sequence of [`DemuxEvent`]s — kinds, order, track ids,
+/// provenance, and every sample's `pts`/`dts`/`duration`/bytes — is identical,
+/// and so is the result of draining with [`poll_event`](Self::poll_event) after
+/// every `feed` versus only after [`finish`](Self::finish). Input need not
+/// start on a packet boundary (`TsResync` locks on `0x47`); an event is never
+/// withheld waiting for "the rest of a chunk". This is pinned by
+/// `tests/streaming_chunk_invariance.rs` (whole buffer vs 1, 7, 187, 188, 189,
+/// 1000, 65536 B and 32 fixed-seed random chunkings, over audio+video,
+/// multi-track, discontinuity and track-update captures). Only the *moment*
+/// (which `feed` call) an event becomes pollable depends on chunking, never
+/// its content or position in the sequence.
+///
+/// # Event semantics worth knowing
+///
+/// - **`TrackAdded`** fires once per track, once its codec config is
+///   recoverable (PMT order for codec tracks, then data tracks; see
+///   `TrackState`). The `track_id` is stable for the life of the PID.
+/// - **`TrackUpdated`** carries the track's full current [`TrackSpec`] on the
+///   *same* `track_id` and fires in two cases: (1) the PMT-derived metadata
+///   changed (its `es_info_descriptors`, e.g. a corrected language) with the
+///   codec config unchanged (#774); (2) the in-band AVC/HEVC parameter sets or
+///   the AAC ADTS header changed (SD↔HD switch, re-encode) so the config
+///   itself differs (r04-W51) — treat it as "rebuild the init segment /
+///   decoder". An unchanged repeat of a parameter set emits nothing.
+///   [`TsDemux`] folds these into the final track spec.
+/// - **`Discontinuity`** says the *timeline or data* is not continuous at this
+///   point, and carries a [`DiscontinuityKind`]: `Signalled` — an adaptation
+///   field `discontinuity_indicator` (§2.4.3.5) on any packet (`track` is the
+///   PID's track when already resolved, else `None`); when that packet's PID is
+///   a program's PCR_PID, that program's elementary streams are re-based so
+///   the first sample of the new time base continues one nominal frame period
+///   past the last emitted `dts` (sample timestamps stay monotonic across the
+///   seam; a forward step is left untouched). `TimelineReanchored` — a live
+///   audio track's frame-exact timeline was re-anchored to the wire clock after
+///   drifting past a threshold (splice, encoder restart): timestamps *do* jump
+///   at this point. `BudgetExceeded` — a PES (4 MiB) or probe backlog cap was
+///   hit and in-flight data was dropped. A consumer should flush/resync its
+///   decoder on `Discontinuity`; [`LiveJoin::rejoin`](crate::LiveJoin::rejoin) is
+///   the video-side helper. Transport errors (TEI) and continuity-counter gaps
+///   are **not** `Discontinuity`: they are [`DemuxEvent::InputDegraded`].
+/// - **`ClockReference`** is every PCR, with `discontinuous` set on the packet
+///   that carries the indicator.
 pub struct StreamingTsDemux {
     resync: TsResync,
     packet_index: u64,
