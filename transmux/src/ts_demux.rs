@@ -689,13 +689,15 @@ fn find_mpeg_audio_sync(data: &[u8]) -> Option<(usize, MpegAudioFrameHeader)> {
 /// Upper bound, in bytes, on one per-PID audio carry buffer (issue #1160).
 ///
 /// A carry only ever holds the *unfinished tail of one frame* — strictly fewer
-/// bytes than that frame's own `frame_length`, or a 1..=3 byte header prefix —
-/// so it is bounded by the largest frame the framings can declare: the 13-bit
-/// ADTS `aac_frame_length` (ISO/IEC 13818-7 §6.2, max 8191; the MPEG audio
-/// maximum, 1729 bytes for Layer II at 384 kbit/s / 32 kHz per ISO/IEC
-/// 11172-3 §2.4.2.3, is far below it). A tail that somehow exceeds it is
-/// discarded rather than held, so hostile input can never grow this buffer.
-const AUDIO_CARRY_MAX_BYTES: usize = 8191;
+/// bytes than that frame's own length, or a header prefix — so it is bounded by
+/// the largest frame any of the framings can declare: DTS core's 14-bit
+/// `FSIZE` (`FSIZE + 1` <= 16384, ETSI TS 102 114 Table 5-1), which exceeds the
+/// 13-bit ADTS `aac_frame_length` (max 8191, ISO/IEC 13818-7 §6.2), E-AC-3's
+/// 11-bit `frmsiz` of 16-bit words (4096) and AC-3's 3840 (Table 4.13), and the
+/// MPEG audio maximum (1729, Layer II at 384 kbit/s / 32 kHz, ISO/IEC 11172-3
+/// §2.4.2.3). A tail that somehow exceeds it is discarded rather than held, so
+/// hostile input can never grow this buffer.
+const AUDIO_CARRY_MAX_BYTES: usize = 16_384;
 
 /// Outcome of looking for one frame header at the start of a buffer.
 enum SyncParse<H> {
@@ -3069,7 +3071,13 @@ fn audio_probe_next_tail(codec: Codec, tail: &[u8], latest: &[u8]) -> Vec<u8> {
         }
         Codec::Eac3 => {
             let all = [tail, latest].concat();
-            match first_sync_offset::<Eac3Sync>(&all) {
+            // From the first valid header, or a header prefix not yet judgeable.
+            let start = (0..all.len()).find(|&at| match Eac3Sync::parse(&all[at..]) {
+                SyncParse::Frame(..) => true,
+                SyncParse::NeedMore => Eac3Sync::is_partial_sync(&all[at..]),
+                SyncParse::NotSync => false,
+            });
+            match start {
                 Some(start) if all.len() - start <= EAC3_PROBE_TAIL_MAX => all[start..].to_vec(),
                 _ => Vec::new(),
             }
@@ -9433,8 +9441,8 @@ mod tests {
             &[573],
             &[576],      // frame-aligned (regression: nothing to carry)
             &[1000, 13], // irregular
-            &[577, 3],   // PES shorter than a header (first PES holds one)
-            &[577, 1],   // one byte per PES
+            &[3],        // every PES, the first included, shorter than a header
+            &[1],        // one byte per PES
         ];
         assert!(
             splits_inside_a_header(&es, &[577], 4),
@@ -9460,11 +9468,11 @@ mod tests {
             &[301],
             &[299],
             &[7],
-            // PES shorter than a header after a first PES big enough for the
-            // codec-config probe (which needs one whole header in one PES):
-            &[301, 6],
-            &[301, 3],
-            &[301, 1],
+            // PES shorter than a header, first PES included (config recovery
+            // must join the header across PES boundaries):
+            &[6],
+            &[3],
+            &[1],
             &[900, 17],
         ];
         assert!(
@@ -9612,6 +9620,194 @@ mod tests {
         );
     }
 
+    /// Append `value` as `bits` bits MSB-first (ETSI TS 102 114 / 366 syntax
+    /// tables are all MSB-first bit fields).
+    fn put_bits(out: &mut Vec<u8>, nbits: &mut usize, value: u64, bits: usize) {
+        for i in (0..bits).rev() {
+            if *nbits % 8 == 0 {
+                out.push(0);
+            }
+            let bit = ((value >> i) & 1) as u8;
+            *out.last_mut().unwrap() |= bit << (7 - (*nbits % 8));
+            *nbits += 1;
+        }
+    }
+
+    /// AC-3 syncframe header + `body` filler bytes (ETSI TS 102 366 §4.3):
+    /// `syncword | crc1 | fscod(2) frmsizecod(6) | bsid=8 bsmod=0 acmod=2
+    /// dsurmod lfeon`. `fscod_frmsizecod` is the combined byte.
+    fn ac3_header(fscod_frmsizecod: u8, body: usize) -> Vec<u8> {
+        let mut h = alloc::vec![0x0B, 0x77, 0x00, 0x00, fscod_frmsizecod];
+        let mut n = h.len() * 8;
+        put_bits(&mut h, &mut n, 8, 5); // bsid
+        put_bits(&mut h, &mut n, 0, 3); // bsmod
+        put_bits(&mut h, &mut n, 2, 3); // acmod = 2/0
+        put_bits(&mut h, &mut n, 0, 2); // dsurmod
+        put_bits(&mut h, &mut n, 0, 1); // lfeon
+        h.extend_from_slice(&body_bytes(3, body));
+        h
+    }
+
+    /// A whole AC-3 syncframe: `fscod 0` (48 kHz), `frmsizecod 0` (32 kbit/s,
+    /// 64 words = 128 bytes, Table 4.13), body made distinct by `n`.
+    fn ac3_frame(n: usize) -> Vec<u8> {
+        let mut f = ac3_header(0x00, 0);
+        let hdr = f.len();
+        f.extend_from_slice(&body_bytes(n, 128 - hdr));
+        assert_eq!(f.len(), 128);
+        assert_eq!(
+            Ac3SyncframeInfo::parse_at(&f, 0).unwrap().frame_len_bytes(),
+            Some(128)
+        );
+        f
+    }
+
+    /// E-AC-3 independent-substream header (ETSI TS 102 366 Annex E §E.1.2.2):
+    /// `syncword | strmtyp=0 substreamid=0 frmsiz | fscod=0 numblkscod=3
+    /// acmod=2 lfeon=0 | bsid=16`, then `body` filler. Frame = `(frmsiz+1)*2` B.
+    fn eac3_header(frmsiz: u16, body: usize) -> Vec<u8> {
+        let mut h = alloc::vec![0x0B, 0x77];
+        let mut n = 16;
+        put_bits(&mut h, &mut n, 0, 2); // strmtyp
+        put_bits(&mut h, &mut n, 0, 3); // substreamid
+        put_bits(&mut h, &mut n, frmsiz as u64, 11);
+        put_bits(&mut h, &mut n, 0, 2); // fscod = 48 kHz
+        put_bits(&mut h, &mut n, 3, 2); // numblkscod = 6 blocks
+        put_bits(&mut h, &mut n, 2, 3); // acmod = 2/0
+        put_bits(&mut h, &mut n, 0, 1); // lfeon
+        put_bits(&mut h, &mut n, 16, 5); // bsid
+        h.extend_from_slice(&body_bytes(4, body));
+        h
+    }
+
+    /// A whole E-AC-3 syncframe of 128 bytes (`frmsiz = 63`), body varies by `n`.
+    fn eac3_frame(n: usize) -> Vec<u8> {
+        let mut f = eac3_header(63, 0);
+        let hdr = f.len();
+        f.extend_from_slice(&body_bytes(n, 128 - hdr));
+        assert_eq!(f.len(), 128);
+        let info = Ec3SyncframeInfo::parse_at(&f, 0).unwrap();
+        assert_eq!((info.frmsiz as usize + 1) * 2, 128);
+        assert_eq!(info.samples_per_frame(), 1536);
+        f
+    }
+
+    /// DTS core frame header (ETSI TS 102 114 Table 5-1; docs/codec/
+    /// dts-core-frame.md): `SYNC | FTYPE=1 SHORT=31 CPF=0 NBLKS=15 FSIZE |
+    /// AMODE=2 SFREQ=13 RATE=15 | FixedBit..HFLAG=0`, then `body` filler.
+    /// A frame is `FSIZE + 1` bytes and decodes `32 * (NBLKS + 1)` = 512 samples.
+    fn dts_header(fsize: u16, body: usize) -> Vec<u8> {
+        let mut h = DTS_CORE_SYNC_WORD.to_be_bytes().to_vec();
+        let mut n = 32;
+        put_bits(&mut h, &mut n, 1, 1); // FTYPE: normal frame
+        put_bits(&mut h, &mut n, 31, 5); // SHORT
+        put_bits(&mut h, &mut n, 0, 1); // CPF
+        put_bits(&mut h, &mut n, 15, 7); // NBLKS
+        put_bits(&mut h, &mut n, fsize as u64, 14);
+        put_bits(&mut h, &mut n, 2, 6); // AMODE: 2 channels (A + B)
+        put_bits(&mut h, &mut n, 13, 4); // SFREQ: 48 kHz
+        put_bits(&mut h, &mut n, 15, 5); // RATE
+        put_bits(&mut h, &mut n, 0, 1); // FixedBit
+        put_bits(&mut h, &mut n, 0, 1); // DYNF
+        put_bits(&mut h, &mut n, 0, 1); // TIMEF
+        put_bits(&mut h, &mut n, 0, 1); // AUXF
+        put_bits(&mut h, &mut n, 0, 1); // HDCD
+        put_bits(&mut h, &mut n, 0, 3); // EXT_AUDIO_ID
+        put_bits(&mut h, &mut n, 0, 1); // EXT_AUDIO
+        put_bits(&mut h, &mut n, 0, 1); // ASPF
+        put_bits(&mut h, &mut n, 0, 2); // LFF: no LFE
+        put_bits(&mut h, &mut n, 0, 1); // HFLAG
+        h.extend_from_slice(&body_bytes(5, body));
+        h
+    }
+
+    /// A whole DTS core frame of 512 bytes (`FSIZE = 511`).
+    fn dts_frame(n: usize) -> Vec<u8> {
+        let mut f = dts_header(511, 0);
+        let hdr = f.len();
+        f.extend_from_slice(&body_bytes(n, 512 - hdr));
+        assert_eq!(f.len(), 512);
+        let info = DtsCoreFrameInfo::parse_at(&f, 0).unwrap();
+        assert_eq!(
+            (info.frame_size, info.samples_per_frame, info.sample_rate),
+            (512, 512, 48_000)
+        );
+        f
+    }
+
+    #[test]
+    fn ac3_frames_straddling_pes_boundaries_are_all_recovered() {
+        let es = audio_es((0..CARRY_FRAMES).map(ac3_frame).collect());
+        for p in [
+            &[2000][..],
+            &[129],
+            &[127],
+            &[7],
+            &[4],
+            &[3],
+            &[1],
+            &[300, 13],
+        ] {
+            assert_carry_contract(
+                &alloc::format!("ac3 {p:?}"),
+                STREAM_TYPE_AC3,
+                &es,
+                0,
+                1536,
+                p,
+            );
+        }
+    }
+
+    #[test]
+    fn eac3_frames_straddling_pes_boundaries_are_all_recovered() {
+        let es = audio_es((0..CARRY_FRAMES).map(eac3_frame).collect());
+        for p in [
+            &[2000][..],
+            &[129],
+            &[127],
+            &[7],
+            &[4],
+            &[3],
+            &[1],
+            &[300, 13],
+        ] {
+            assert_carry_contract(
+                &alloc::format!("eac3 {p:?}"),
+                STREAM_TYPE_EAC3,
+                &es,
+                0,
+                1536,
+                p,
+            );
+        }
+    }
+
+    #[test]
+    fn dts_frames_straddling_pes_boundaries_are_all_recovered() {
+        let es = audio_es((0..CARRY_FRAMES).map(dts_frame).collect());
+        for p in [
+            &[3000][..],
+            &[513],
+            &[511],
+            &[11],
+            &[7],
+            &[4],
+            &[3],
+            &[1],
+            &[600, 13],
+        ] {
+            assert_carry_contract(
+                &alloc::format!("dts {p:?}"),
+                STREAM_TYPE_DTS_82,
+                &es,
+                0,
+                512,
+                p,
+            );
+        }
+    }
+
     /// Current carry length of the audio PID, if it is a live audio track.
     fn carry_len(d: &StreamingTsDemux) -> Option<usize> {
         match d.streams.get(&ES_PID_UNDER_TEST)?.track.as_ref()? {
@@ -9643,7 +9839,28 @@ mod tests {
             h
         };
         type HostileCase<'a> = (&'a str, u8, Vec<Vec<u8>>, Vec<u8>, usize);
-        let cases: [HostileCase; 2] = [
+        let cases: [HostileCase; 5] = [
+            (
+                "ac3",
+                STREAM_TYPE_AC3,
+                (0..4).map(ac3_frame).collect(),
+                ac3_header(0xA5, 40),
+                3840,
+            ),
+            (
+                "eac3",
+                STREAM_TYPE_EAC3,
+                (0..4).map(eac3_frame).collect(),
+                eac3_header(2047, 40),
+                4096,
+            ),
+            (
+                "dts",
+                STREAM_TYPE_DTS_82,
+                (0..4).map(dts_frame).collect(),
+                dts_header(16_383, 40),
+                16_384,
+            ),
             (
                 "adts",
                 STREAM_TYPE_AAC_ADTS,

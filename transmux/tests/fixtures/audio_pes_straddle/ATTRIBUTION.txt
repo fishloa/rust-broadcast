@@ -1,0 +1,5 @@
+All files in this directory are derived from the soundtrack of "Sintel".
+Sintel (c) copyright Blender Foundation | durian.blender.org
+Licensed under Creative Commons Attribution 3.0: https://creativecommons.org/licenses/by/3.0/
+Source masters: https://media.xiph.org/sintel/ (sintel-master-st.flac, sintel-master-51.flac),
+10 s from 60 s. Encoded/muxed with the ffmpeg command-line tool (scripts/make-audio-fixtures.sh).
