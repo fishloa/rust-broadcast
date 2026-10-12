@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+
+- `TsDemux`/`StreamingTsDemux`: MPEG-1/2 audio and ADTS AAC frames that straddle a PES boundary are no longer dropped (#1160). A bounded per-PID carry (at most one frame) holds the unfinished tail and joins it to the next PES of the same PID; the carried frame keeps the frame-exact cursor position (the PTS of the PES it started in). A carry is accepted only when a valid header follows the completed frame, is cleared on a continuity gap / dropped PES, and a dangling tail at end of stream emits nothing. The ADTS config re-probe now skips the mid-frame bytes that merely finish a carried frame. The committed `mpeg2_mp2_pes_misaligned.ts` now yields all 39 frames (was ~15), so its golden hash changed.
 
 ## [0.25.1] - 2026-10-11
 ### Fixed

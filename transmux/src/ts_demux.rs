@@ -61,6 +61,22 @@
 //! individual syncframes/core frames (rather than one zero-duration `Sample`
 //! per PES access unit — see [`crate::ac3`] / [`crate::dts`]) so real
 //! durations and exact PES-boundary timestamps survive into the IR.
+//! **Cross-PES audio frames (issue #1160).** MPEG-1/2 audio (ISO/IEC 11172-3
+//! §2.4.1.3) and ADTS AAC (ISO/IEC 13818-7 §6.2) PES payloads need not start
+//! or end on a frame boundary — ISO/IEC 13818-1 §2.4.3.7 only stamps the first
+//! access unit that *commences* in a PES. The unfinished tail of each payload
+//! (a valid header whose frame overruns it, or a 1..header-length byte prefix
+//! of one) is therefore held in a per-PID carry, strictly bounded by one frame
+//! (`AUDIO_CARRY_MAX_BYTES`), and prepended to the next payload of the same
+//! PID. The carried frame takes the frame-exact cursor position, i.e. the PTS
+//! of the PES in which it *started* plus the durations of the frames before it;
+//! the wire stamp of the completing PES is compared against `cursor + the
+//! carried frame's duration`. The carry is accepted only when a valid header
+//! follows the completed frame (a false sync cannot swallow real frames), and
+//! is dropped on a continuity gap, a dropped/over-budget PES or a re-anchor of
+//! an unrelated stream; a dangling partial frame at end of stream emits
+//! nothing. Resync-on-garbage (issue #638) is unchanged. AC-3/E-AC-3/DTS
+//! splitters are not carried (spec-aligned PES; see `emit_audio_au`).
 //! Video/data-track sample durations are resolved **one access unit
 //! behind**: the timestamp delta to the *next* access unit (unwrapped DTS
 //! for video, PTS for data — ISO/IEC 13818-1 §2.4.3.7) finalizes the
@@ -8988,7 +9004,7 @@ mod tests {
     /// MPEG-1 Layer II, 192 kbit/s, 48 kHz, stereo, no CRC; padded when
     /// `n % 3 == 0` (ISO/IEC 11172-3 §2.4.1.3: `144 * 192000 / 48000 + pad`).
     fn mp2_frame(n: usize) -> Vec<u8> {
-        let pad = n % 3 == 0;
+        let pad = n.is_multiple_of(3);
         let len = 576 + usize::from(pad);
         // sync(8) | sync(3) id=1 layer=II protection_bit=1 | bitrate_idx 10,
         // sampling_frequency 48k, padding | mode=stereo.
@@ -9435,7 +9451,8 @@ mod tests {
             h.extend_from_slice(&body_bytes(8, 40));
             h
         };
-        let cases: [(&str, u8, Vec<Vec<u8>>, Vec<u8>, usize); 2] = [
+        type HostileCase<'a> = (&'a str, u8, Vec<Vec<u8>>, Vec<u8>, usize);
+        let cases: [HostileCase; 2] = [
             (
                 "adts",
                 STREAM_TYPE_AAC_ADTS,
