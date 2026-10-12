@@ -62,7 +62,8 @@
 //! per PES access unit — see [`crate::ac3`] / [`crate::dts`]) so real
 //! durations and exact PES-boundary timestamps survive into the IR.
 //! **Cross-PES audio frames (issue #1160).** MPEG-1/2 audio (ISO/IEC 11172-3
-//! §2.4.1.3) and ADTS AAC (ISO/IEC 13818-7 §6.2) PES payloads need not start
+//! §2.4.1.3), ADTS AAC (ISO/IEC 13818-7 §6.2), AC-3 / E-AC-3 (ETSI TS 102 366
+//! §4.3 / Annex E) and DTS core (ETSI TS 102 114 §5.3) PES payloads need not start
 //! or end on a frame boundary — ISO/IEC 13818-1 §2.4.3.7 only stamps the first
 //! access unit that *commences* in a PES. The unfinished tail of each payload
 //! (a valid header whose frame overruns it, or a 1..header-length byte prefix
@@ -75,8 +76,11 @@
 //! follows the completed frame (a false sync cannot swallow real frames), and
 //! is dropped on a continuity gap, a dropped/over-budget PES or a re-anchor of
 //! an unrelated stream; a dangling partial frame at end of stream emits
-//! nothing. Resync-on-garbage (issue #638) is unchanged. AC-3/E-AC-3/DTS
-//! splitters are not carried (spec-aligned PES; see `emit_audio_au`).
+//! nothing. Resync-on-garbage (issue #638) is unchanged and now applies to
+//! every one of those codecs. Config recovery likewise works across PES
+//! boundaries: a PES shorter than a header, or a stream whose first PES starts
+//! mid-frame, still resolves the track (a bounded probe window joins the held
+//! tail of earlier access units to the newest one).
 //! Video/data-track sample durations are resolved **one access unit
 //! behind**: the timestamp delta to the *next* access unit (unwrapped DTS
 //! for video, PTS for data — ISO/IEC 13818-1 §2.4.3.7) finalizes the
@@ -1297,9 +1301,8 @@ struct AudioAnchor {
     /// frame of the previous PES payload — bytes that begin a valid frame
     /// header (or a 1..`HEADER_LEN` byte prefix of one) but run past that
     /// payload. Prepended to the next PES payload of the *same* PID by
-    /// [`emit_audio_au`]. Only the MPEG-audio and ADTS splitters use it (the
-    /// AC-3/E-AC-3/DTS splitters are stream-reassembling, see
-    /// [`emit_audio_au`]). Strictly bounded by [`AUDIO_CARRY_MAX_BYTES`]; empty
+    /// [`emit_audio_au`], for every audio family (MPEG audio, ADTS, AC-3,
+    /// E-AC-3, DTS core). Strictly bounded by [`AUDIO_CARRY_MAX_BYTES`]; empty
     /// after a continuity gap, a dropped PES, a codec-config change or a
     /// re-anchor ([`clear_audio_carry`]); a dangling tail at end of stream is
     /// simply never emitted.
@@ -9624,7 +9627,7 @@ mod tests {
     /// tables are all MSB-first bit fields).
     fn put_bits(out: &mut Vec<u8>, nbits: &mut usize, value: u64, bits: usize) {
         for i in (0..bits).rev() {
-            if *nbits % 8 == 0 {
+            if (*nbits).is_multiple_of(8) {
                 out.push(0);
             }
             let bit = ((value >> i) & 1) as u8;

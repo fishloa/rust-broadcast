@@ -320,7 +320,7 @@ fn sintel_ac3_and_eac3_straddling_pes_recover_every_syncframe() {
     assert_eq!(ac3_frames.len(), TRIMMED_FRAMES);
     assert_eq!(eac3_frames.len(), TRIMMED_FRAMES);
 
-    let mut by_len: Vec<(usize, &Vec<Sample>)> = tracks.iter().map(|(_, v)| (v.len(), v)).collect();
+    let mut by_len: Vec<(usize, &Vec<Sample>)> = tracks.values().map(|v| (v.len(), v)).collect();
     by_len.sort_by_key(|(n, _)| *n);
     for (n, samples) in by_len {
         assert_eq!(n, TRIMMED_FRAMES, "every syncframe of both tracks");
