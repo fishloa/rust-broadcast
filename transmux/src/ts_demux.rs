@@ -2428,31 +2428,61 @@ fn reprobe_if_config_changed(
 /// SPS/PPS split across access units still compares as a whole (r04-W51).
 #[derive(Default, Clone)]
 struct ParameterSets {
-    vps: Option<Vec<u8>>,
-    sps: Option<Vec<u8>>,
-    pps: Option<Vec<u8>>,
+    vps: ParamSlot,
+    sps: ParamSlot,
+    pps: ParamSlot,
+}
+
+/// Upper bound on distinct NALs remembered per parameter-set type. The id
+/// spaces are small (16 VPS, 16/32 SPS, 64/256 PPS), so a real stream never
+/// reaches it; it only bounds a hostile one.
+const MAX_SEEN_PARAMETER_SETS: usize = 64;
+
+/// One parameter-set type's state: the NAL the track's config is built from
+/// (`current`) and every distinct NAL seen so far (`seen`).
+///
+/// Encoders routinely carry several parameter sets of one type at once —
+/// multiple PPS ids (issue #1166: orf1 cycles three), or several SPS ids — and
+/// re-send them in a rotating order. A single "last seen" slot compared against
+/// each arrival reads every rotation step as a change (A, B, A, B, ...), so an
+/// arrival counts as a change only when its bytes were **never seen** before.
+#[derive(Default, Clone)]
+struct ParamSlot {
+    current: Option<Vec<u8>>,
+    seen: Vec<Vec<u8>>,
+}
+
+impl ParamSlot {
+    /// Fold in one NAL; `true` if its bytes had not been seen before (it then
+    /// becomes the `current` set the config is built from).
+    fn record(&mut self, bytes: &[u8]) -> bool {
+        if self.seen.iter().any(|s| s.as_slice() == bytes) {
+            return false;
+        }
+        if self.seen.len() >= MAX_SEEN_PARAMETER_SETS {
+            self.seen.remove(0);
+        }
+        self.seen.push(bytes.to_vec());
+        self.current = Some(bytes.to_vec());
+        true
+    }
 }
 
 impl ParameterSets {
     /// Fold in `data`'s parameter sets, reporting whether any of them
-    /// **changed**: a set that was absent and is now present, or present with
-    /// different bytes. A set that was already present identically — which is
-    /// what an encoder repeating its headers on every keyframe produces — is not
-    /// a change.
+    /// **changed**: a NAL whose bytes this track has never carried before
+    /// (a set that was absent and is now present, a new id, or a replaced
+    /// one). A NAL already seen — which is what an encoder repeating its
+    /// headers on every keyframe, in any rotation of its PPS/SPS ids, produces
+    /// — is not a change.
     fn observe(&mut self, codec: Codec, data: &[u8]) -> bool {
         let mut changed = false;
-        let mut record = |slot: &mut Option<Vec<u8>>, bytes: &[u8]| {
-            if slot.as_deref() != Some(bytes) {
-                *slot = Some(bytes.to_vec());
-                changed = true;
-            }
-        };
         match codec {
             Codec::H264 => {
                 for nal in iter_annexb_nals(data) {
                     match nal[0] & H264_NAL_TYPE_MASK {
-                        H264_NAL_SPS => record(&mut self.sps, nal),
-                        H264_NAL_PPS => record(&mut self.pps, nal),
+                        H264_NAL_SPS => changed |= self.sps.record(nal),
+                        H264_NAL_PPS => changed |= self.pps.record(nal),
                         _ => {}
                     }
                 }
@@ -2460,9 +2490,9 @@ impl ParameterSets {
             Codec::Hevc => {
                 for nal in iter_annexb_nals(data) {
                     match nal_unit_type(NalCodec::Hevc, nal) {
-                        Some(H265_NAL_VPS) => record(&mut self.vps, nal),
-                        Some(H265_NAL_SPS) => record(&mut self.sps, nal),
-                        Some(H265_NAL_PPS) => record(&mut self.pps, nal),
+                        Some(H265_NAL_VPS) => changed |= self.vps.record(nal),
+                        Some(H265_NAL_SPS) => changed |= self.sps.record(nal),
+                        Some(H265_NAL_PPS) => changed |= self.pps.record(nal),
                         _ => {}
                     }
                 }
@@ -2484,13 +2514,13 @@ fn observe_parameter_sets(codec: Codec, data: &[u8], sets: &mut ParameterSets) -
 fn seed_probe_parameter_sets(probe: &mut ConfigProbe, sets: &ParameterSets) {
     match probe {
         ConfigProbe::H264 { sps, pps } => {
-            sps.clone_from(&sets.sps);
-            pps.clone_from(&sets.pps);
+            sps.clone_from(&sets.sps.current);
+            pps.clone_from(&sets.pps.current);
         }
         ConfigProbe::Hevc { vps, sps, pps } => {
-            vps.clone_from(&sets.vps);
-            sps.clone_from(&sets.sps);
-            pps.clone_from(&sets.pps);
+            vps.clone_from(&sets.vps.current);
+            sps.clone_from(&sets.sps.current);
+            pps.clone_from(&sets.pps.current);
         }
         _ => {}
     }
