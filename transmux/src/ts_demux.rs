@@ -61,6 +61,13 @@
 //! individual syncframes/core frames (rather than one zero-duration `Sample`
 //! per PES access unit — see [`crate::ac3`] / [`crate::dts`]) so real
 //! durations and exact PES-boundary timestamps survive into the IR.
+//! **Field-coded (PAFF) H.264 (issue #1161).** Broadcast PAFF carries one coded
+//! field per PES, but an ISO/IEC 14496-15 sample is a whole access unit; the
+//! video path parses each access unit's slice header ([`crate::slice_header`])
+//! and merges the second field of a complementary field pair (ITU-T H.264
+//! §3.35-3.37) into the first field's sample, which keeps the first field's
+//! PTS/DTS. Unpaired fields and fields across a timestamp jump are emitted
+//! alone; MBAFF and progressive pictures are never merged.
 //! **Cross-PES audio frames (issue #1160).** MPEG-1/2 audio (ISO/IEC 11172-3
 //! §2.4.1.3), ADTS AAC (ISO/IEC 13818-7 §6.2), AC-3 / E-AC-3 (ETSI TS 102 366
 //! §4.3 / Annex E) and DTS core (ETSI TS 102 114 §5.3) PES payloads need not start

@@ -91,7 +91,10 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     // Re-captured for #1160: the real capture's three E-AC-3 tracks gain the
     // syncframes that straddled PES boundaries (4/5/1 -> 7/6/3 samples).
     ("ts/m6-single.ts", 0x3f5fdf623443b19f),
-    ("ts/gulli-opengop.ts", 0x322faa14c5c28795),
+    // 0x322faa14c5c28795 before #1161: the capture is field-coded (PAFF), and
+    // is now one sample per field pair (293 fields -> 147 samples) instead of
+    // one per field. Every other fixture is unchanged.
+    ("ts/gulli-opengop.ts", 0xb0b2ccb9bf3c83e7),
     ("ts/pts-wrap.ts", 0x446b6222520c1313),
     ("ts/aac-5_1-640k.ts", 0x0c69bd29aae724c7),
     ("ts/dts/dts_core.ts", 0x049622d2b28d2388),

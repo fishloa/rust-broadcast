@@ -101,7 +101,9 @@ pub fn decode_avc_slice_pps(pps_nal: &[u8]) -> Result<AvcSlicePps> {
             6 => {
                 let n = r.read_ue("pic_size_in_map_units_minus1")?;
                 // Ceil(Log2(num_slice_groups_minus1 + 1)) bits per id (§7.4.2.2).
-                let bits = (num_slice_groups_minus1 + 1).next_power_of_two().trailing_zeros();
+                let bits = (num_slice_groups_minus1 + 1)
+                    .next_power_of_two()
+                    .trailing_zeros();
                 for _ in 0..=n {
                     r.read_bits(bits as usize, "slice_group_id")?;
                 }
@@ -242,18 +244,25 @@ pub fn parse_avc_slice_header(
     let mut delta_pic_order_cnt_bottom = 0;
     let mut delta_pic_order_cnt = [0i32; 2];
     if sps.pic_order_cnt_type == 0 {
-        pic_order_cnt_lsb = Some(r.read_bits(sps.log2_max_poc_lsb as usize, "pic_order_cnt_lsb")? as u32);
+        pic_order_cnt_lsb =
+            Some(r.read_bits(sps.log2_max_poc_lsb as usize, "pic_order_cnt_lsb")? as u32);
         if bottom_poc_present {
-            delta_pic_order_cnt_bottom =
-                to_i32(r.read_se("delta_pic_order_cnt_bottom")?, "delta_pic_order_cnt_bottom")?;
+            delta_pic_order_cnt_bottom = to_i32(
+                r.read_se("delta_pic_order_cnt_bottom")?,
+                "delta_pic_order_cnt_bottom",
+            )?;
         }
     }
     if sps.pic_order_cnt_type == 1 && !sps.delta_pic_order_always_zero {
-        delta_pic_order_cnt[0] =
-            to_i32(r.read_se("delta_pic_order_cnt[0]")?, "delta_pic_order_cnt[0]")?;
+        delta_pic_order_cnt[0] = to_i32(
+            r.read_se("delta_pic_order_cnt[0]")?,
+            "delta_pic_order_cnt[0]",
+        )?;
         if bottom_poc_present {
-            delta_pic_order_cnt[1] =
-                to_i32(r.read_se("delta_pic_order_cnt[1]")?, "delta_pic_order_cnt[1]")?;
+            delta_pic_order_cnt[1] = to_i32(
+                r.read_se("delta_pic_order_cnt[1]")?,
+                "delta_pic_order_cnt[1]",
+            )?;
         }
     }
     let redundant_pic_cnt = if pps.redundant_pic_cnt_present {
@@ -281,6 +290,7 @@ pub fn parse_avc_slice_header(
 
 /// What an access unit's coded picture is, for field-pairing purposes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
 pub enum AvcPicture {
     /// A coded frame (progressive, or interlaced with `field_pic_flag == 0`,
     /// including MBAFF), or an AU holding more than one picture/parity — never
@@ -442,7 +452,11 @@ mod tests {
             self.u(len, x);
         }
         fn se(&mut self, v: i32) {
-            self.ue(if v > 0 { (2 * v - 1) as u32 } else { (-2 * v) as u32 });
+            self.ue(if v > 0 {
+                (2 * v - 1) as u32
+            } else {
+                (-2 * v) as u32
+            });
         }
         fn finish(mut self) -> Vec<u8> {
             self.u(1, 1);
@@ -638,7 +652,12 @@ mod tests {
         let au = annexb(&[s, p, f.clone()]);
         assert_eq!(
             ps.classify_au(&au),
-            AvcPicture::Field(AvcFieldInfo { bottom: false, frame_num: 2, is_reference: true, idr: false })
+            AvcPicture::Field(AvcFieldInfo {
+                bottom: false,
+                frame_num: 2,
+                is_reference: true,
+                idr: false
+            })
         );
         // ...and a frame picture (field_pic_flag = 0, MBAFF-like) is not a field.
         let fr = slice(1, false, 2, None, 4, &|_| {});
@@ -650,12 +669,25 @@ mod tests {
 
     #[test]
     fn pairing_rules() {
-        let a = AvcFieldInfo { bottom: false, frame_num: 3, is_reference: true, idr: true };
-        let b = AvcFieldInfo { bottom: true, frame_num: 3, is_reference: true, idr: false };
+        let a = AvcFieldInfo {
+            bottom: false,
+            frame_num: 3,
+            is_reference: true,
+            idr: true,
+        };
+        let b = AvcFieldInfo {
+            bottom: true,
+            frame_num: 3,
+            is_reference: true,
+            idr: false,
+        };
         assert!(a.pairs_with(&b)); // IDR first field + non-IDR second
         assert!(!a.pairs_with(&AvcFieldInfo { bottom: false, ..b })); // same parity
         assert!(!a.pairs_with(&AvcFieldInfo { frame_num: 4, ..b })); // frame_num
-        assert!(!a.pairs_with(&AvcFieldInfo { is_reference: false, ..b })); // ref/non-ref mix
+        assert!(!a.pairs_with(&AvcFieldInfo {
+            is_reference: false,
+            ..b
+        })); // ref/non-ref mix
         assert!(!a.pairs_with(&AvcFieldInfo { idr: true, ..b })); // second field IDR
     }
 }

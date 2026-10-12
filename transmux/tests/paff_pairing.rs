@@ -12,13 +12,11 @@ mod paff_gen;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
-use transmux::slice_header::{
-    AvcSliceHeader, decode_avc_slice_pps, parse_avc_slice_header,
-};
+use transmux::slice_header::{AvcSliceHeader, decode_avc_slice_pps, parse_avc_slice_header};
 use transmux::sps::decode_avc_slice_sps;
 use transmux::{
-    CmafMux, DemuxEvent, Fmp4Demux, Media, StreamingTsDemux, TsDemux, TsMux,
-    iter_annexb_nals, iter_length_prefixed_nals,
+    CmafMux, DemuxEvent, Fmp4Demux, Media, StreamingTsDemux, TsDemux, TsMux, iter_annexb_nals,
+    iter_length_prefixed_nals,
 };
 
 const FRAMES: usize = 12;
@@ -58,11 +56,25 @@ fn batch(ts: &[u8]) -> Vec<S> {
 }
 
 fn streaming(ts: &[u8], chunk: usize) -> Vec<S> {
+    // Only the AVC track (a capture may carry audio too).
+    let video_id = TsDemux::new()
+        .unpackage(ts)
+        .expect("batch demux")
+        .tracks
+        .iter()
+        .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
+        .expect("AVC track")
+        .spec
+        .track_id;
     let mut d = StreamingTsDemux::new();
     let mut out = Vec::new();
     let mut drain = |d: &mut StreamingTsDemux| {
         while let Some(e) = d.poll_event() {
-            if let DemuxEvent::Sample { sample, .. } = e {
+            if let DemuxEvent::Sample {
+                track_id, sample, ..
+            } = e
+                && track_id == video_id
+            {
                 out.push(S {
                     data: sample.data.to_vec(),
                     dts: sample.dts,
@@ -117,10 +129,18 @@ fn assert_paired(g: &paff_gen::Generated, samples: &[S], what: &str) {
 
 /// [`assert_paired`] for a stream whose clock was re-based (muxers add an offset).
 fn assert_paired_from(g: &paff_gen::Generated, samples: &[S], what: &str, base: i64) {
-    assert_eq!(samples.len(), FRAMES, "{what}: 12 frames -> 12 samples (was 24)");
+    assert_eq!(
+        samples.len(),
+        FRAMES,
+        "{what}: 12 frames -> 12 samples (was 24)"
+    );
     for (k, s) in samples.iter().enumerate() {
         let hs = slices(&g.es, &s.data);
-        assert_eq!(hs.len(), 2, "{what}: sample {k} holds exactly two slice NALs");
+        assert_eq!(
+            hs.len(),
+            2,
+            "{what}: sample {k} holds exactly two slice NALs"
+        );
         assert!(hs.iter().all(|h| h.field_pic_flag), "{what}: field slices");
         assert_ne!(
             hs[0].bottom_field_flag, hs[1].bottom_field_flag,
@@ -131,8 +151,16 @@ fn assert_paired_from(g: &paff_gen::Generated, samples: &[S], what: &str, base: 
         let want = base + FRAME_PERIOD * k as i64;
         assert_eq!(s.pts, Some(want), "{what}: PTS is the first field's");
         assert_eq!(s.dts, Some(want), "{what}: DTS is the first field's");
-        assert_eq!(s.duration, Some(FRAME_PERIOD as u32), "{what}: frame duration");
-        assert_eq!(s.sync, k == 0, "{what}: only the IDR frame is a sync sample");
+        assert_eq!(
+            s.duration,
+            Some(FRAME_PERIOD as u32),
+            "{what}: frame duration"
+        );
+        assert_eq!(
+            s.sync,
+            k == 0,
+            "{what}: only the IDR frame is a sync sample"
+        );
     }
 }
 
@@ -177,9 +205,7 @@ fn streaming_equals_batch_at_every_chunk_size() {
     for g in [gen_tff(), gen_bff()] {
         let b = batch(&g.ts);
         assert_paired(&g, &b, "batch");
-        let sizes = (1..=64usize).chain([
-            100, 187, 188, 189, 200, 376, 377, 500, 751, 997, 1000,
-        ]);
+        let sizes = (1..=64usize).chain([100, 187, 188, 189, 200, 376, 377, 500, 751, 997, 1000]);
         for chunk in sizes {
             let s = streaming(&g.ts, chunk);
             assert_eq!(s.len(), b.len(), "chunk {chunk}: sample count");
@@ -220,7 +246,10 @@ fn remux_through_ts_and_fmp4_stays_one_sample_per_frame() {
 #[test]
 fn committed_fixtures_match_the_generator_and_pair() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/paff");
-    for (name, g) in [("paff_tff_12f_64x64", gen_tff()), ("paff_bff_12f_64x64", gen_bff())] {
+    for (name, g) in [
+        ("paff_tff_12f_64x64", gen_tff()),
+        ("paff_bff_12f_64x64", gen_bff()),
+    ] {
         let ts = std::fs::read(dir.join(format!("{name}.ts"))).expect("committed fixture");
         assert_eq!(ts, g.ts, "{name}.ts is exactly what paff_gen produces");
         let yuv = std::fs::read(dir.join(format!("{name}.yuv"))).expect("committed yuv");
@@ -243,7 +272,11 @@ fn unpaired_fields_are_emitted_alone_not_held_or_merged() {
             let n = slices(&g.es, &x.data).len();
             let lone = k == 5 || k == 11;
             assert_eq!(n, if lone { 1 } else { 2 }, "sample {k} slice count");
-            assert_eq!(x.pts, Some(BASE_PTS + FRAME_PERIOD * k as i64), "sample {k} pts");
+            assert_eq!(
+                x.pts,
+                Some(BASE_PTS + FRAME_PERIOD * k as i64),
+                "sample {k} pts"
+            );
         }
     }
 }
@@ -261,16 +294,26 @@ fn second_field_after_a_timestamp_jump_is_not_merged() {
     let s = batch(&ts);
     let counts: Vec<usize> = s.iter().map(|x| slices(&g.es, &x.data).len()).collect();
     assert_eq!(counts.iter().sum::<usize>(), 2 * FRAMES, "no field lost");
-    assert_eq!(counts[5], 1, "frame 5's first field stays alone across the jump");
+    assert_eq!(
+        counts[5], 1,
+        "frame 5's first field stays alone across the jump"
+    );
     assert_eq!(counts[..5], [2; 5], "pairs before the jump are intact");
-    assert_eq!(counts.len(), FRAMES + 1, "the orphan second field is its own sample");
+    assert_eq!(
+        counts.len(),
+        FRAMES + 1,
+        "the orphan second field is its own sample"
+    );
 }
 
 #[test]
 fn ffmpeg_decodes_the_generated_and_demuxed_streams_to_the_expected_frames() {
     // Oracle: the generator's stream is valid (decodes to the woven yuv), and the
     // paired samples re-muxed to TS still decode to exactly the same frames.
-    let Ok(ver) = std::process::Command::new("ffmpeg").arg("-version").output() else {
+    let Ok(ver) = std::process::Command::new("ffmpeg")
+        .arg("-version")
+        .output()
+    else {
         eprintln!("ffmpeg not on PATH: SKIPPED");
         return;
     };
@@ -284,13 +327,28 @@ fn ffmpeg_decodes_the_generated_and_demuxed_streams_to_the_expected_frames() {
         let out = std::process::Command::new("ffmpeg")
             .args(["-v", "error", "-i"])
             .arg(&input)
-            .args(["-fps_mode", "passthrough", "-f", "rawvideo", "-pix_fmt", "yuv420p", "-"])
+            .args([
+                "-fps_mode",
+                "passthrough",
+                "-f",
+                "rawvideo",
+                "-pix_fmt",
+                "yuv420p",
+                "-",
+            ])
             .output()
             .unwrap();
-        assert!(out.status.success(), "ffmpeg: {}", String::from_utf8_lossy(&out.stderr));
+        assert!(
+            out.status.success(),
+            "ffmpeg: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
         out.stdout
     };
-    assert!(decode("gen.ts", &g.ts) == g.yuv, "generator stream decodes to the expected yuv");
+    assert!(
+        decode("gen.ts", &g.ts) == g.yuv,
+        "generator stream decodes to the expected yuv"
+    );
     let ir = TsDemux::new().unpackage(&g.ts).unwrap();
     let remuxed = TsMux::new().package(&ir).unwrap();
     assert!(
@@ -311,7 +369,10 @@ fn progressive_and_non_field_streams_are_unaffected() {
         return;
     };
     let mut checked = 0;
-    for e in rd.flatten().filter(|e| e.path().extension().is_some_and(|x| x == "ts")) {
+    for e in rd
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "ts"))
+    {
         let bytes = std::fs::read(e.path()).unwrap();
         let media = TsDemux::new().unpackage(&bytes).unwrap();
         let Some(t) = media
@@ -322,21 +383,33 @@ fn progressive_and_non_field_streams_are_unaffected() {
             continue;
         };
         let mut ps = AvcParamSets::new();
+        let mut frames = 0;
         for s in &t.samples {
             let mut annexb = Vec::new();
             for n in iter_length_prefixed_nals(&s.data).unwrap() {
                 annexb.extend([0, 0, 0, 1]);
                 annexb.extend_from_slice(n);
             }
+            let pic = ps.classify_au(&annexb);
             assert!(
-                !matches!(ps.classify_au(&annexb), AvcPicture::Field(_)),
+                !matches!(pic, AvcPicture::Field(_)),
                 "{:?}: non-PAFF fixture classified as field pictures",
                 e.path()
             );
+            frames += usize::from(pic == AvcPicture::Frame);
         }
+        // Guard against a vacuous pass (every AU `Unknown`): the slice headers parse.
+        assert!(
+            frames > 0,
+            "{:?}: no AU classified as a coded frame",
+            e.path()
+        );
         checked += 1;
     }
-    eprintln!("checked {checked} H.264 fixtures");
+    assert!(
+        checked >= 3,
+        "expected the committed H.264 fixtures, got {checked}"
+    );
 }
 
 /// Regenerates the committed fixtures: `cargo test -p transmux --test
@@ -345,8 +418,44 @@ fn progressive_and_non_field_streams_are_unaffected() {
 #[ignore]
 fn regenerate_fixtures() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/paff");
-    for (name, g) in [("paff_tff_12f_64x64", gen_tff()), ("paff_bff_12f_64x64", gen_bff())] {
+    for (name, g) in [
+        ("paff_tff_12f_64x64", gen_tff()),
+        ("paff_bff_12f_64x64", gen_bff()),
+    ] {
         std::fs::write(dir.join(format!("{name}.ts")), &g.ts).unwrap();
         std::fs::write(dir.join(format!("{name}.yuv")), &g.yuv).unwrap();
+    }
+}
+
+/// The committed real broadcast capture `fixtures/ts/gulli-opengop.ts` is field-coded
+/// (PAFF, one PES per field): 293 fields must demux to 147 samples (146 pairs plus
+/// the odd tail field), each pair two slice NALs of opposite parity.
+#[test]
+fn real_broadcast_paff_capture_pairs() {
+    use transmux::slice_header::{AvcParamSets, AvcPicture};
+    let path =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/gulli-opengop.ts");
+    let ts = std::fs::read(path).expect("gulli-opengop.ts fixture");
+    let samples = batch(&ts);
+    assert_eq!(samples.len(), 147, "293 fields -> 146 pairs + 1 lone field");
+    let mut ps = AvcParamSets::new();
+    let (mut pairs, mut lone) = (0, 0);
+    for s in &samples {
+        let mut annexb = Vec::new();
+        for n in iter_length_prefixed_nals(&s.data).unwrap() {
+            annexb.extend([0, 0, 0, 1]);
+            annexb.extend_from_slice(n);
+        }
+        // Two parities in one AU classify as a Frame; a lone field as Field.
+        match ps.classify_au(&annexb) {
+            AvcPicture::Frame => pairs += 1,
+            AvcPicture::Field(_) => lone += 1,
+            other => panic!("unexpected classification {other:?}"),
+        }
+        assert_eq!(aud_count(&s.data), 1, "one AUD per access unit");
+    }
+    assert_eq!((pairs, lone), (146, 1));
+    for chunk in [1usize, 7, 188, 999] {
+        assert_eq!(streaming(&ts, chunk).len(), 147, "streaming chunk {chunk}");
     }
 }

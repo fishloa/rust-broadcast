@@ -36,7 +36,11 @@ struct Bits {
 
 impl Bits {
     fn new() -> Self {
-        Bits { out: Vec::new(), cur: 0, n: 0 }
+        Bits {
+            out: Vec::new(),
+            cur: 0,
+            n: 0,
+        }
     }
     fn u(&mut self, bits: u32, v: u32) {
         for i in (0..bits).rev() {
@@ -58,7 +62,11 @@ impl Bits {
     }
     /// se(v), §9.1.1
     fn se(&mut self, v: i32) {
-        self.ue(if v > 0 { (2 * v - 1) as u32 } else { (-2 * v) as u32 });
+        self.ue(if v > 0 {
+            (2 * v - 1) as u32
+        } else {
+            (-2 * v) as u32
+        });
     }
     fn aligned(&self) -> bool {
         self.n == 0
@@ -243,7 +251,11 @@ fn crc32_mpeg2(d: &[u8]) -> u32 {
     for &b in d {
         crc ^= (b as u32) << 24;
         for _ in 0..8 {
-            crc = if crc & 0x8000_0000 != 0 { (crc << 1) ^ 0x04C1_1DB7 } else { crc << 1 };
+            crc = if crc & 0x8000_0000 != 0 {
+                (crc << 1) ^ 0x04C1_1DB7
+            } else {
+                crc << 1
+            };
         }
     }
     crc
@@ -282,7 +294,11 @@ fn section(table_id: u8, ext_id: u16, body: &[u8]) -> Vec<u8> {
 
 pub fn pat() -> Vec<u8> {
     // program_number 1 -> PMT PID
-    section(0x00, 1, &[0x00, 0x01, 0xE0 | (PID_PMT >> 8) as u8, PID_PMT as u8])
+    section(
+        0x00,
+        1,
+        &[0x00, 0x01, 0xE0 | (PID_PMT >> 8) as u8, PID_PMT as u8],
+    )
 }
 
 pub fn pmt() -> Vec<u8> {
@@ -290,11 +306,15 @@ pub fn pmt() -> Vec<u8> {
         0x02,
         1,
         &[
-            0xE0 | (PID_VIDEO >> 8) as u8, PID_VIDEO as u8, // PCR_PID
-            0xF0, 0x00, // program_info_length 0
+            0xE0 | (PID_VIDEO >> 8) as u8,
+            PID_VIDEO as u8, // PCR_PID
+            0xF0,
+            0x00, // program_info_length 0
             0x1B, // stream_type H.264
-            0xE0 | (PID_VIDEO >> 8) as u8, PID_VIDEO as u8,
-            0xF0, 0x00, // ES_info_length 0
+            0xE0 | (PID_VIDEO >> 8) as u8,
+            PID_VIDEO as u8,
+            0xF0,
+            0x00, // ES_info_length 0
         ],
     )
 }
@@ -379,7 +399,10 @@ pub struct Generated {
 
 /// `frames` frames of `w` x `h` (W % 16 == 0, H % 32 == 0), `bff` = bottom field first.
 pub fn generate(frames: usize, w: usize, h: usize, bff: bool) -> Generated {
-    assert!(w % 16 == 0 && h % 32 == 0 && frames >= 1, "W%16, H%32, frames>=1");
+    assert!(
+        w % 16 == 0 && h % 32 == 0 && frames >= 1,
+        "W%16, H%32, frames>=1"
+    );
     let fh = h / 2;
     let (sps, pps) = (sps(w, h), pps());
     let mut es = Vec::new();
@@ -397,7 +420,11 @@ pub fn generate(frames: usize, w: usize, h: usize, bff: bool) -> Generated {
         // field numbers in output order: first field 2k, second 2k+1
         let first = make_field(2 * k, w, fh);
         let second = make_field(2 * k + 1, w, fh);
-        let (top, bot) = if bff { (&second, &first) } else { (&first, &second) };
+        let (top, bot) = if bff {
+            (&second, &first)
+        } else {
+            (&first, &second)
+        };
         weave(top, bot, w, h, &mut yuv);
         let frame_num = (k as u32) % (1 << LOG2_MAX_FRAME_NUM);
         for (i, f) in [&first, &second].into_iter().enumerate() {
@@ -408,10 +435,19 @@ pub fn generate(frames: usize, w: usize, h: usize, bff: bool) -> Generated {
                 au.extend(nal(3, 7, &sps));
                 au.extend(nal(3, 8, &pps));
             }
-            au.extend(nal(1, if idr { 5 } else { 1 }, &slice(idr, frame_num, bottom, w, fh, f)));
+            au.extend(nal(
+                1,
+                if idr { 5 } else { 1 },
+                &slice(idr, frame_num, bottom, w, fh, f),
+            ));
             es.extend_from_slice(&au);
             aus.push((base_pts + 3600 * k as u64 + 1800 * i as u64, au.clone()));
-            pes_packets(base_pts + 3600 * k as u64 + 1800 * i as u64, &au, &mut cc_v, &mut ts);
+            pes_packets(
+                base_pts + 3600 * k as u64 + 1800 * i as u64,
+                &au,
+                &mut cc_v,
+                &mut ts,
+            );
         }
     }
     Generated { es, ts, yuv, aus }

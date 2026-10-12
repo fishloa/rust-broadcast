@@ -276,10 +276,14 @@ fn open_gop_gulli_fixture_anchors_and_segments() {
         .iter()
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("AVC video track present");
+    // This capture is field-coded (PAFF, one PES per field): our PES walk counts
+    // fields, and the demuxer emits one sample per complementary field pair
+    // (issue #1161; H.264 §3.35-3.37) -- ceil(fields / 2), the odd tail field
+    // standing alone.
     assert_eq!(
         video.samples.len(),
-        aus.len(),
-        "demuxed sample count must equal our own AU count"
+        aus.len().div_ceil(2),
+        "demuxed sample count must equal our own field count paired two-to-one"
     );
 
     let is_sync_indices: Vec<usize> = video
@@ -296,8 +300,12 @@ fn open_gop_gulli_fixture_anchors_and_segments() {
         "expected >=2 is_sync access units on an open-GOP fixture, got {}",
         is_sync_indices.len()
     );
+    // RAP positions were walked per field; a pair is a RAP when its first field is.
+    let mut independent_rap_samples: Vec<usize> =
+        independent_rap_indices.iter().map(|i| i / 2).collect();
+    independent_rap_samples.dedup();
     assert_eq!(
-        is_sync_indices, independent_rap_indices,
+        is_sync_indices, independent_rap_samples,
         "demuxer is_sync positions must match the independently-walked open-GOP RAP positions"
     );
 
