@@ -265,6 +265,12 @@ test = false
 doc  = false
 
 [[bin]]
+name = "transmux_slice_header"
+path = "fuzz_targets/transmux_slice_header.rs"
+test = false
+doc  = false
+
+[[bin]]
 name = "transmux_flv_stream"
 path = "fuzz_targets/transmux_flv_stream.rs"
 test = false

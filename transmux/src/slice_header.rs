@@ -647,7 +647,10 @@ mod tests {
         let mut ps = AvcParamSets::new();
         // No parameter sets seen yet: Unknown.
         let f = slice(1, false, 2, Some(false), 4, &|_| {});
-        assert_eq!(ps.classify_au(&annexb(&[f.clone()])), AvcPicture::Unknown);
+        assert_eq!(
+            ps.classify_au(&annexb(std::slice::from_ref(&f))),
+            AvcPicture::Unknown
+        );
         // With them: a field...
         let au = annexb(&[s, p, f.clone()]);
         assert_eq!(
