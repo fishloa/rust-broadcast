@@ -414,16 +414,22 @@ fn mpeg_audio_resyncs_across_pes_boundaries() {
             .unwrap_or_else(|e| panic!("sample[{i}] is not a valid MP2 frame header: {e}"));
     }
 
-    // Before the #638 fix, `split_mpeg_audio_frames` bails at the first byte
-    // that isn't a syncword and never resyncs, so only the one PES whose
-    // payload happens to start on a frame boundary by chance (the very first
-    // chunk, since the concatenated ES itself starts on a real frame) yields
-    // anything -- every other misaligned PES silently contributes zero
-    // samples. Resync must recover the large majority of the real frames.
-    assert!(
-        audio.samples.len() >= 30,
-        "resync must recover most of the real frames (got {} samples -- \
-         a resync regression looks like ~1)",
-        audio.samples.len()
+    // Before the #638 fix the splitter never resynced (only ~1 sample
+    // survived); between #638 and #1160 it resynced but discarded the partial
+    // frame tail of every PES, so each of the ~24 straddling frames was lost
+    // (~15 of 39 recovered). With the per-PID cross-PES carry (#1160) every
+    // one of the fixture's 39 real MP2 frames is recovered, byte-exactly
+    // accounting for the whole 48,901-byte source elementary stream.
+    const FIXTURE_FRAMES: usize = 39;
+    const FIXTURE_ES_BYTES: usize = 48_901;
+    assert_eq!(
+        audio.samples.len(),
+        FIXTURE_FRAMES,
+        "every real frame must be recovered across the PES boundaries"
+    );
+    let recovered_bytes: usize = audio.samples.iter().map(|s| s.data.len()).sum();
+    assert_eq!(
+        recovered_bytes, FIXTURE_ES_BYTES,
+        "no byte of the ES is lost"
     );
 }

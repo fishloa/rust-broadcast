@@ -29,7 +29,7 @@ use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 // AC-3 syncword (big-endian).
-const AC3_SYNCWORD: u16 = 0x0B77;
+pub(crate) const AC3_SYNCWORD: u16 = 0x0B77;
 
 /// Bytes per "word" in the AC-3 Table 4.13 frame-size table caption ("1 word
 /// = 16 bits") — ETSI TS 102 366 §4.4.1.4 / Table 4.13.
@@ -55,7 +55,7 @@ pub const AC3_SAMPLES_PER_SYNCFRAME: u32 = AC3_BLOCKS_PER_SYNCFRAME * SAMPLES_PE
 /// `strmtyp` value marking a dependent-substream E-AC-3 syncframe — ETSI TS
 /// 102 366 Annex E §E.1.2.2 `bsi()`: `if(strmtyp == 0x1) /* if dependent
 /// stream */`.
-const EAC3_STRMTYP_DEPENDENT: u8 = 1;
+pub(crate) const EAC3_STRMTYP_DEPENDENT: u8 = 1;
 /// `strmtyp` for an independent substream that is *not* converted from AC-3 —
 /// the only value that carries the programme-mixing block in `bsi()` (§E.1.2.2).
 /// `strmtyp == 0x2` is an independent substream converted from AC-3.
@@ -129,7 +129,7 @@ impl Ac3SyncframeInfo {
         Self::parse_at(data, off)
     }
 
-    fn parse_at(data: &[u8], off: usize) -> Result<Self> {
+    pub(crate) fn parse_at(data: &[u8], off: usize) -> Result<Self> {
         // syncword(16) + crc1(16) + fscod(2) + frmsizecod(6) = 40 bits = 5 bytes
         let need = off + 5;
         if data.len() < need {
@@ -311,7 +311,7 @@ impl Ec3SyncframeInfo {
         Self::parse_at(data, off)
     }
 
-    fn parse_at(data: &[u8], off: usize) -> Result<Self> {
+    pub(crate) fn parse_at(data: &[u8], off: usize) -> Result<Self> {
         // We need at least syncword(16) + strmtyp(2) + substreamid(3) +
         // frmsiz(11) + fscod(2) + [sr_code2(2) or numblkscod(2)] +
         // acmod(3) + lfeon(1) + bsid(5)
