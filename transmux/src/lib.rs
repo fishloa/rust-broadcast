@@ -161,6 +161,7 @@ pub mod flv_stream;
 pub mod frag_offsets;
 pub mod hevc_config;
 pub mod init_segment;
+pub mod interlace;
 pub mod ir;
 pub mod klv;
 pub mod ll_dash;
@@ -276,6 +277,9 @@ pub use init_segment::{
     SampleDescriptionBox, SampleEntryVariant, SampleSizeBox, SampleTableBox, SampleToChunkBox,
     SoundMediaHeaderBox, StblChild, StscEntry, SyncSampleBox, TrackBox, TrackExtendsBox,
     TrackHeaderBox, VideoMediaHeaderBox,
+};
+pub use interlace::{
+    PicStruct, PictureFacts, SourceScanType, VideoScan, video_picture_facts, video_scan,
 };
 pub use ir::{
     AudioLanguage, AudioMetadata, AudioRole, AudioType, EditorialClassification, MixType,

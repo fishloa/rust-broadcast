@@ -388,6 +388,17 @@ impl AvcParamSets {
         result.unwrap_or(AvcPicture::Unknown)
     }
 
+    /// Parse a slice NAL's header against the cached parameter sets, returning
+    /// it with its SPS, or `None` when a parameter set is missing or the header
+    /// is malformed.
+    pub(crate) fn parse_slice(&self, nal: &[u8]) -> Option<(AvcSliceHeader, AvcSliceSps)> {
+        let pps = self.pps.get(&peek_pps_id(nal)?)?;
+        let sps = self.sps.get(&pps.sps_id)?;
+        parse_avc_slice_header(nal, sps, pps)
+            .ok()
+            .map(|h| (h, *sps))
+    }
+
     fn classify_slice(&self, nal: &[u8]) -> AvcPicture {
         // pic_parameter_set_id is the third ue(v); peek it to select the PPS.
         let Some(pps_id) = peek_pps_id(nal) else {

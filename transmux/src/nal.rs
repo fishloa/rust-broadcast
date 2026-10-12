@@ -278,6 +278,49 @@ pub fn recovery_point_sei(nal: &[u8]) -> bool {
     }
 }
 
+/// `rbsp_trailing_bits()` as one byte when byte-aligned: stop bit then zeros
+/// (H.264 §7.3.2.11).
+const SEI_RBSP_TRAILING_BYTE: u8 = 0x80;
+
+/// Read one `payloadType`/`payloadSize` varint at `*pos` of `rbsp`.
+fn sei_varint(rbsp: &[u8], pos: &mut usize) -> Option<u32> {
+    let mut v: u32 = 0;
+    loop {
+        let b = *rbsp.get(*pos)?;
+        *pos += 1;
+        v = v.checked_add(u32::from(b))?;
+        if b != 0xFF {
+            return Some(v);
+        }
+    }
+}
+
+/// The `sei_message()`s of one SEI NAL body (the bytes after the NAL header),
+/// as `(payloadType, unescaped payload bytes)` — ITU-T H.264 §7.3.2.3.1 /
+/// H.265 §7.3.5 (identical `payloadType`/`payloadSize` coding). Stops at the
+/// first truncated message or at `rbsp_trailing_bits`, keeping what was read,
+/// so a malformed SEI yields fewer messages rather than an error.
+pub(crate) fn sei_messages(nal_body: &[u8]) -> Vec<(u32, Vec<u8>)> {
+    let rbsp = crate::bitreader::unescape(nal_body);
+    let mut out = Vec::new();
+    let mut pos = 0usize;
+    // `more_rbsp_data()`: anything left other than the single trailing byte.
+    while pos < rbsp.len() && !(pos + 1 == rbsp.len() && rbsp[pos] == SEI_RBSP_TRAILING_BYTE) {
+        let Some(payload_type) = sei_varint(&rbsp, &mut pos) else {
+            break;
+        };
+        let Some(size) = sei_varint(&rbsp, &mut pos) else {
+            break;
+        };
+        let Some(end) = pos.checked_add(size as usize).filter(|&e| e <= rbsp.len()) else {
+            break;
+        };
+        out.push((payload_type, rbsp[pos..end].to_vec()));
+        pos = end;
+    }
+    out
+}
+
 /// Whether an access unit is a random-access point (RAP) — the segmentation
 /// anchor signal — for `codec`.
 ///
