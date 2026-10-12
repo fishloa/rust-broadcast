@@ -428,5 +428,8 @@ fn mpeg_audio_resyncs_across_pes_boundaries() {
         "every real frame must be recovered across the PES boundaries"
     );
     let recovered_bytes: usize = audio.samples.iter().map(|s| s.data.len()).sum();
-    assert_eq!(recovered_bytes, FIXTURE_ES_BYTES, "no byte of the ES is lost");
+    assert_eq!(
+        recovered_bytes, FIXTURE_ES_BYTES,
+        "no byte of the ES is lost"
+    );
 }
