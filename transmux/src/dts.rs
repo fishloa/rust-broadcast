@@ -39,7 +39,7 @@ use broadcast_common::{Parse, Serialize};
 /// Core-substream synchronization word — ETSI TS 102 114 §5.3 (big-endian,
 /// 16-bit core; the extension-substream-embedded core sync `0x02B09261` is
 /// out of scope — TS carriage of a standalone core always uses this word).
-const DTS_CORE_SYNC_WORD: u32 = 0x7FFE_8001;
+pub(crate) const DTS_CORE_SYNC_WORD: u32 = 0x7FFE_8001;
 
 /// Samples per PCM sample block (`NBLKS` unit) — ETSI TS 102 114 Table 5-1:
 /// "samples per channel = 32 × (NBLKS + 1)".
@@ -204,7 +204,7 @@ impl DtsCoreFrameInfo {
         Self::parse_at(data, off)
     }
 
-    fn parse_at(data: &[u8], off: usize) -> Result<Self> {
+    pub(crate) fn parse_at(data: &[u8], off: usize) -> Result<Self> {
         let es = &data[off..];
         let mut bit_pos = 0usize;
 

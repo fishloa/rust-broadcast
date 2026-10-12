@@ -140,12 +140,12 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 use crate::aac_asc::{AdtsHeader, AudioSpecificConfig, SamplingFrequencyIndex, parse_adts_header};
 use crate::ac3::{
-    AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo, Ec3SpecificBox, Ec3SyncframeInfo,
-    split_ac3_syncframes, split_eac3_syncframes,
+    AC3_SAMPLES_PER_SYNCFRAME, AC3_SYNCWORD, Ac3SyncframeInfo, EAC3_STRMTYP_DEPENDENT,
+    Ec3SpecificBox, Ec3SyncframeInfo,
 };
 use crate::annexb::{annexb_to_length_prefixed, iter_annexb_nals};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
-use crate::dts::{DtsCoreFrameInfo, split_dts_core_frames};
+use crate::dts::{DTS_CORE_SYNC_WORD, DtsCoreFrameInfo};
 use crate::error::{Error, Result};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
 use crate::media::{Media, PcrSample, Track};
@@ -697,21 +697,38 @@ fn find_mpeg_audio_sync(data: &[u8]) -> Option<(usize, MpegAudioFrameHeader)> {
 /// discarded rather than held, so hostile input can never grow this buffer.
 const AUDIO_CARRY_MAX_BYTES: usize = 8191;
 
+/// Outcome of looking for one frame header at the start of a buffer.
+enum SyncParse<H> {
+    /// A valid header, and the whole frame's length in bytes (header included).
+    Frame(H, usize),
+    /// Too few bytes to decide (the buffer may be the front of a header).
+    NeedMore,
+    /// Not a frame start.
+    NotSync,
+}
+
 /// One audio framing's header-walk rules, so [`split_frames_with_tail`] is a
-/// single implementation for MPEG audio and ADTS (the two splitters that cut
-/// each PES payload independently and so can see a frame straddle a PES
-/// boundary).
+/// single implementation for every codec whose frames can straddle a PES
+/// boundary (MPEG audio, ADTS, AC-3, E-AC-3, DTS core).
 trait FrameSync {
     /// Parsed header.
     type Hdr: Copy;
-    /// Bytes needed to parse one header.
-    const HEADER_LEN: usize;
-    /// Parse a header at the start of `data`, returning it with the whole
-    /// frame's length in bytes (header included). `None`: not a valid sync.
-    fn parse(data: &[u8]) -> Option<(Self::Hdr, usize)>;
-    /// Could `prefix` (fewer than [`Self::HEADER_LEN`] bytes) be the start of a
-    /// header whose remainder has not arrived yet?
+    /// Smallest legitimate frame length: a header claiming less is degenerate.
+    const MIN_FRAME_LEN: usize;
+    /// Look for a header at the start of `data`.
+    fn parse(data: &[u8]) -> SyncParse<Self::Hdr>;
+    /// Could `prefix` be the front of a header whose remainder has not arrived?
     fn is_partial_sync(prefix: &[u8]) -> bool;
+    /// Does a frame with this header belong to the access unit of the frame
+    /// before it (E-AC-3 dependent substreams)?
+    fn folds_into_previous(_hdr: &Self::Hdr) -> bool {
+        false
+    }
+}
+
+/// Is `prefix` a leading part of (or equal to) `sync`?
+fn is_sync_prefix(prefix: &[u8], sync: &[u8]) -> bool {
+    prefix.iter().zip(sync).all(|(a, b)| a == b)
 }
 
 /// MPEG-1/2 audio framing (ISO/IEC 11172-3 §2.4.1.3).
@@ -719,10 +736,15 @@ struct MpegAudioSync;
 
 impl FrameSync for MpegAudioSync {
     type Hdr = MpegAudioFrameHeader;
-    const HEADER_LEN: usize = 4;
-    fn parse(data: &[u8]) -> Option<(Self::Hdr, usize)> {
-        let hdr = MpegAudioFrameHeader::parse(data).ok()?;
-        Some((hdr, hdr.frame_length))
+    const MIN_FRAME_LEN: usize = 4;
+    fn parse(data: &[u8]) -> SyncParse<Self::Hdr> {
+        if data.len() < Self::MIN_FRAME_LEN {
+            return SyncParse::NeedMore;
+        }
+        match MpegAudioFrameHeader::parse(data) {
+            Ok(hdr) => SyncParse::Frame(hdr, hdr.frame_length),
+            Err(_) => SyncParse::NotSync,
+        }
     }
     fn is_partial_sync(prefix: &[u8]) -> bool {
         // 11-bit all-ones syncword: byte 0 is 0xFF, byte 1's top three bits set.
@@ -740,10 +762,15 @@ struct AdtsSync;
 
 impl FrameSync for AdtsSync {
     type Hdr = AdtsHeader;
-    const HEADER_LEN: usize = ADTS_HEADER_SIZE;
-    fn parse(data: &[u8]) -> Option<(Self::Hdr, usize)> {
-        let hdr = parse_adts_header(data).ok()?;
-        Some((hdr, hdr.frame_length as usize))
+    const MIN_FRAME_LEN: usize = ADTS_HEADER_SIZE;
+    fn parse(data: &[u8]) -> SyncParse<Self::Hdr> {
+        if data.len() < ADTS_HEADER_SIZE {
+            return SyncParse::NeedMore;
+        }
+        match parse_adts_header(data) {
+            Ok(hdr) => SyncParse::Frame(hdr, hdr.frame_length as usize),
+            Err(_) => SyncParse::NotSync,
+        }
     }
     fn is_partial_sync(prefix: &[u8]) -> bool {
         // 12-bit all-ones syncword.
@@ -756,13 +783,101 @@ impl FrameSync for AdtsSync {
     }
 }
 
+/// Map a header-parse result to a [`SyncParse`]: running out of bytes is
+/// "need more", any other error is "not a frame".
+fn sync_from_parse<H>(r: Result<H>, frame_len: impl FnOnce(&H) -> Option<usize>) -> SyncParse<H> {
+    match r {
+        Ok(h) => match frame_len(&h) {
+            Some(len) if len != 0 => SyncParse::Frame(h, len),
+            _ => SyncParse::NotSync,
+        },
+        Err(Error::BufferTooShort { .. }) => SyncParse::NeedMore,
+        Err(_) => SyncParse::NotSync,
+    }
+}
+
+/// `syncword` of AC-3 / E-AC-3 as bytes (ETSI TS 102 366 §4.3.1).
+const AC3_SYNC_BYTES: [u8; 2] = AC3_SYNCWORD.to_be_bytes();
+
+/// AC-3 framing (ETSI TS 102 366 §4.3 syncinfo, Table 4.13 frame sizes).
+struct Ac3Sync;
+
+impl FrameSync for Ac3Sync {
+    type Hdr = Ac3SyncframeInfo;
+    const MIN_FRAME_LEN: usize = 8;
+    fn parse(data: &[u8]) -> SyncParse<Self::Hdr> {
+        if data.len() < AC3_SYNC_BYTES.len() {
+            return SyncParse::NeedMore;
+        }
+        if data[..AC3_SYNC_BYTES.len()] != AC3_SYNC_BYTES {
+            return SyncParse::NotSync;
+        }
+        sync_from_parse(Ac3SyncframeInfo::parse_at(data, 0), |i| i.frame_len_bytes())
+    }
+    fn is_partial_sync(prefix: &[u8]) -> bool {
+        is_sync_prefix(prefix, &AC3_SYNC_BYTES)
+    }
+}
+
+/// E-AC-3 framing (ETSI TS 102 366 Annex E §E.1.2.2); a dependent substream
+/// (`strmtyp == 1`) folds into the access unit of the frame before it.
+struct Eac3Sync;
+
+impl FrameSync for Eac3Sync {
+    type Hdr = Ec3SyncframeInfo;
+    const MIN_FRAME_LEN: usize = 8;
+    fn parse(data: &[u8]) -> SyncParse<Self::Hdr> {
+        if data.len() < AC3_SYNC_BYTES.len() {
+            return SyncParse::NeedMore;
+        }
+        if data[..AC3_SYNC_BYTES.len()] != AC3_SYNC_BYTES {
+            return SyncParse::NotSync;
+        }
+        // `frmsiz` = "number of 16-bit words in the syncframe, minus 1".
+        sync_from_parse(Ec3SyncframeInfo::parse_at(data, 0), |i| {
+            Some((i.frmsiz as usize + 1) * 2)
+        })
+    }
+    fn is_partial_sync(prefix: &[u8]) -> bool {
+        is_sync_prefix(prefix, &AC3_SYNC_BYTES)
+    }
+    fn folds_into_previous(hdr: &Self::Hdr) -> bool {
+        hdr.strmtyp == EAC3_STRMTYP_DEPENDENT
+    }
+}
+
+/// `SYNC` of a DTS core frame as bytes (ETSI TS 102 114 Table 5-1).
+const DTS_SYNC_BYTES: [u8; 4] = DTS_CORE_SYNC_WORD.to_be_bytes();
+
+/// DTS core-substream framing (ETSI TS 102 114 §5.3, Table 5-1).
+struct DtsSync;
+
+impl FrameSync for DtsSync {
+    type Hdr = DtsCoreFrameInfo;
+    const MIN_FRAME_LEN: usize = 8;
+    fn parse(data: &[u8]) -> SyncParse<Self::Hdr> {
+        let n = data.len().min(DTS_SYNC_BYTES.len());
+        if !is_sync_prefix(&data[..n], &DTS_SYNC_BYTES) {
+            return SyncParse::NotSync;
+        }
+        if n < DTS_SYNC_BYTES.len() {
+            return SyncParse::NeedMore;
+        }
+        sync_from_parse(DtsCoreFrameInfo::parse_at(data, 0), |i| Some(i.frame_size))
+    }
+    fn is_partial_sync(prefix: &[u8]) -> bool {
+        is_sync_prefix(prefix, &DTS_SYNC_BYTES)
+    }
+}
+
 /// The result of cutting one buffer into frames, see [`split_frames_with_tail`].
 struct FrameSplit<'a, H> {
-    /// Whole frames: `(start offset in the buffer, frame bytes, header)`.
+    /// Whole frames: `(start offset in the buffer, frame bytes, header)`. An
+    /// E-AC-3 dependent substream is folded into the frame before it.
     frames: Vec<(usize, &'a [u8], H)>,
     /// Offset where the unconsumed tail begins; `== buf.len()` when none. The
     /// tail is a *possible* frame start (a valid header whose frame runs past
-    /// the buffer, or a 1..`HEADER_LEN` byte header prefix).
+    /// the buffer, or a header prefix that cannot be judged yet).
     tail_start: usize,
 }
 
@@ -771,47 +886,38 @@ struct FrameSplit<'a, H> {
 /// it into the next PES payload (issue #1160).
 ///
 /// Behaviour on the whole-frame part is the historical (#638) one: a bad sync
-/// resyncs to the next valid header, a `frame_length` shorter than a header
-/// stops the split, and the scan stays linear in `buf`.
+/// resyncs to the next valid header, a `frame_length` below the minimum stops
+/// the split, and the scan stays linear in `buf`.
 fn split_frames_with_tail<F: FrameSync>(buf: &[u8]) -> FrameSplit<'_, F::Hdr> {
-    let mut frames = Vec::new();
-    let mut off = 0usize;
+    let mut frames: Vec<(usize, &[u8], F::Hdr)> = Vec::new();
+    let mut at = 0usize;
     let mut tail_start = buf.len();
-    'scan: {
-        while off + F::HEADER_LEN <= buf.len() {
-            // Scan forward for the next valid header.
-            let mut at = off;
-            let found = loop {
-                if at + F::HEADER_LEN > buf.len() {
-                    break None;
+    while at < buf.len() {
+        record_sync_probe();
+        match F::parse(&buf[at..]) {
+            SyncParse::Frame(hdr, flen) => {
+                if flen < F::MIN_FRAME_LEN {
+                    // Degenerate header: historical behaviour, stop splitting.
+                    break;
                 }
-                record_sync_probe();
-                if let Some((hdr, flen)) = F::parse(&buf[at..]) {
-                    break Some((at, hdr, flen));
+                if at + flen > buf.len() {
+                    // A real frame header whose frame runs past the buffer.
+                    tail_start = at;
+                    break;
                 }
-                at += 1;
-            };
-            let Some((start, hdr, flen)) = found else {
-                off = at;
+                match frames.last_mut() {
+                    Some(prev) if F::folds_into_previous(&hdr) && prev.0 + prev.1.len() == at => {
+                        prev.1 = &buf[prev.0..at + flen];
+                    }
+                    _ => frames.push((at, &buf[at..at + flen], hdr)),
+                }
+                at += flen;
+            }
+            SyncParse::NeedMore if F::is_partial_sync(&buf[at..]) => {
+                tail_start = at;
                 break;
-            };
-            if flen < F::HEADER_LEN {
-                // Degenerate header: historical behaviour, stop splitting.
-                break 'scan;
             }
-            if start + flen > buf.len() {
-                // A real frame header whose frame runs past the buffer.
-                tail_start = start;
-                break 'scan;
-            }
-            frames.push((start, &buf[start..start + flen], hdr));
-            off = start + flen;
-        }
-        // No further full header: the last `HEADER_LEN - 1` bytes may still be
-        // the front of one.
-        let from = off.max(buf.len().saturating_sub(F::HEADER_LEN - 1));
-        if let Some(p) = (from..buf.len()).find(|&p| F::is_partial_sync(&buf[p..])) {
-            tail_start = p;
+            SyncParse::NeedMore | SyncParse::NotSync => at += 1,
         }
     }
     FrameSplit { frames, tail_start }
@@ -1808,9 +1914,10 @@ fn plan_with<'a, F: FrameSync>(
             // The carried frame must start at byte 0 and, when enough bytes
             // follow to tell, be followed by another valid header — otherwise
             // a false sync in the previous payload's last bytes would swallow
-            // real frames of this one.
+            // real frames of this one. (An E-AC-3 access unit's dependent
+            // substreams are folded in, so what follows is the next AU.)
             Some(&(0, f, _)) => {
-                data.len() < f.len() + F::HEADER_LEN || F::parse(&data[f.len()..]).is_some()
+                data.len() == f.len() || !matches!(F::parse(&data[f.len()..]), SyncParse::NotSync)
             }
             Some(_) => false,
             None => split.tail_start == 0,
@@ -1859,7 +1966,15 @@ fn plan_audio_frames<'a>(
                 (0, spf)
             }))
         }
-        AudioKind::Ac3 | AudioKind::Eac3 | AudioKind::Dts => None,
+        AudioKind::Ac3 => Some(plan_with::<Ac3Sync>(data, carry_len, |_| {
+            (0, AC3_SAMPLES_PER_SYNCFRAME)
+        })),
+        AudioKind::Eac3 => Some(plan_with::<Eac3Sync>(data, carry_len, |h| {
+            (0, h.samples_per_frame())
+        })),
+        AudioKind::Dts => Some(plan_with::<DtsSync>(data, carry_len, |h| {
+            (0, h.samples_per_frame)
+        })),
     }
 }
 
@@ -1888,8 +2003,8 @@ fn carried_frame_remainder(live: &LiveTrack, data: &[u8]) -> usize {
     }
     head[have..].copy_from_slice(&data[..need]);
     match AdtsSync::parse(&head) {
-        Some((_, flen)) => flen.saturating_sub(anchor.carry.len()).min(data.len()),
-        None => 0,
+        SyncParse::Frame(_, flen) => flen.saturating_sub(anchor.carry.len()).min(data.len()),
+        _ => 0,
     }
 }
 
@@ -2030,7 +2145,11 @@ fn emit_audio_au(
         // AAC (ISO/IEC 13818-7 §6.2): the CRC (if present) is stripped with the
         // header (C11, #1012) and duration scales with the raw data blocks the
         // frame carries — both folded into `plan_audio_frames`.
-        AudioKind::Aac | AudioKind::MpegAudio { .. } => {
+        AudioKind::Aac
+        | AudioKind::MpegAudio { .. }
+        | AudioKind::Ac3
+        | AudioKind::Eac3
+        | AudioKind::Dts => {
             if let Some(plan) = &plan {
                 for f in &plan.frames {
                     if let Some(payload) = f.data {
@@ -2041,34 +2160,6 @@ fn emit_audio_au(
                     }
                     elapsed += f.duration as u64;
                 }
-            }
-        }
-        AudioKind::Ac3 => {
-            for frame in split_ac3_syncframes(au_data) {
-                events.push_back(DemuxEvent::Sample {
-                    track_id,
-                    sample: audio_sample(frame.to_vec(), AC3_SAMPLES_PER_SYNCFRAME, elapsed),
-                });
-                elapsed += AC3_SAMPLES_PER_SYNCFRAME as u64;
-            }
-        }
-        AudioKind::Eac3 => {
-            for split in split_eac3_syncframes(au_data) {
-                let duration = split.info.samples_per_frame();
-                events.push_back(DemuxEvent::Sample {
-                    track_id,
-                    sample: audio_sample(split.data, duration, elapsed),
-                });
-                elapsed += duration as u64;
-            }
-        }
-        AudioKind::Dts => {
-            for frame in split_dts_core_frames(au_data) {
-                events.push_back(DemuxEvent::Sample {
-                    track_id,
-                    sample: audio_sample(frame.data.to_vec(), frame.samples, elapsed),
-                });
-                elapsed += frame.samples as u64;
             }
         }
     }

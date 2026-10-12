@@ -88,7 +88,9 @@ fn webm_demux_output_is_unchanged() {
 const TS_FIXTURES: &[(&str, u64)] = &[
     ("ts/h264/main.ts", 0xe8a04393ee137ee8),
     ("ts/h264_aac.ts", 0x51871212618d1ded),
-    ("ts/m6-single.ts", 0x826d70c4fe6996f2),
+    // Re-captured for #1160: the real capture's three E-AC-3 tracks gain the
+    // syncframes that straddled PES boundaries (4/5/1 -> 7/6/3 samples).
+    ("ts/m6-single.ts", 0x3f5fdf623443b19f),
     ("ts/gulli-opengop.ts", 0x322faa14c5c28795),
     ("ts/pts-wrap.ts", 0x446b6222520c1313),
     ("ts/aac-5_1-640k.ts", 0x0c69bd29aae724c7),
