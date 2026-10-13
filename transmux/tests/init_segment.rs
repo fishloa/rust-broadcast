@@ -111,7 +111,7 @@ fn moov_real_fixture_round_trip() {
     assert_eq!(moov.tracks.len(), 2, "moov track count");
 
     // Re-serialize and compare byte-for-byte
-    let serialized = moov.to_bytes();
+    let serialized = moov.try_to_bytes().unwrap();
     assert_eq!(
         serialized.len(),
         moov_bytes.len(),
@@ -151,7 +151,7 @@ fn moov_frag_fixture_round_trip() {
     // udta and any other non-mvex children stay preserved (round-trip proves it).
     assert!(!moov.opaque.is_empty(), "udta preserved in opaque");
 
-    let serialized = moov.to_bytes();
+    let serialized = moov.try_to_bytes().unwrap();
     assert_eq!(
         &serialized[..],
         moov_bytes,
@@ -264,12 +264,12 @@ fn tkhd_mutation_changes_bytes() {
     let moov_bytes = find_top_box(&data, b"moov");
     let moov = MovieBox::parse(moov_bytes).expect("should parse moov");
 
-    let original = moov.tracks[0].tkhd.to_bytes();
+    let original = moov.tracks[0].tkhd.try_to_bytes().unwrap();
 
     // Clone and mutate
     let mut moov2 = moov.clone();
     moov2.tracks[0].tkhd.track_id = TrackId::new(99);
-    let mutated = moov2.tracks[0].tkhd.to_bytes();
+    let mutated = moov2.tracks[0].tkhd.try_to_bytes().unwrap();
 
     assert_ne!(
         original, mutated,

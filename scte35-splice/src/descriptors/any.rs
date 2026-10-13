@@ -220,7 +220,8 @@ mod tests {
             identifier: CUEI,
             provider_avail_id: 0x1111_2222,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let unknown = [0xEE, 0x02, 0xAB, 0xCD];
         let mut loop_bytes = avail.clone();
         loop_bytes.extend_from_slice(&unknown);

@@ -270,18 +270,18 @@ mod tests {
     #[test]
     fn construct_serialize_parse_round_trip() {
         let id = sample();
-        let bytes = id.to_bytes();
+        let bytes = id.try_to_bytes().unwrap();
         let parsed = Identification::parse(&bytes).unwrap();
         assert_eq!(parsed, id);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn mutation_changes_serialized_bytes() {
         let mut id = sample();
-        let before = id.to_bytes();
+        let before = id.try_to_bytes().unwrap();
         id.company_name = String::from("Changed Inc.");
-        let after = id.to_bytes();
+        let after = id.try_to_bytes().unwrap();
         assert_ne!(before, after);
         assert_eq!(
             Identification::parse(&after).unwrap().company_name,

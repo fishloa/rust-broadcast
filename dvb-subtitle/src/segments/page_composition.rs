@@ -247,13 +247,13 @@ mod tests {
         assert_eq!(seg.regions[0].region_id, 1);
         assert_eq!(seg.regions[0].region_horizontal_address, 100);
         assert_eq!(seg.regions[0].region_vertical_address, 50);
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test: mutate page_time_out changes output
         let mut seg2 = seg.clone();
         seg2.page_time_out = 20;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = PageCompositionSegment::parse(&out2).unwrap();
         assert_eq!(reparse.page_time_out, 20);

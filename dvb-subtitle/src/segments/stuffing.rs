@@ -92,13 +92,13 @@ mod tests {
         let bytes = [0x0F, 0xFF, 0x00, 0x00, 0x00, 0x03, 0xAA, 0xBB, 0xCC];
         let seg = StuffingSegment::parse(&bytes).unwrap();
         assert_eq!(seg.data, &[0xAA, 0xBB, 0xCC]);
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test: page_id changes output
         let mut seg2 = seg.clone();
         seg2.page_id = 9;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = StuffingSegment::parse(&out2).unwrap();
         assert_eq!(reparse.page_id, 9);

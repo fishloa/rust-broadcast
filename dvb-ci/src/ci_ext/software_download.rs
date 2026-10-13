@@ -989,14 +989,14 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             dsmcc_message: &[0x11, 0x03, 0x10, 0x01],
         };
-        let bytes = enq.to_bytes();
+        let bytes = enq.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x00, 0x04, 0x11, 0x03, 0x10, 0x01]);
         assert_eq!(DownloadEnquiry::parse(&bytes).unwrap(), enq);
         let other = DownloadEnquiry {
             length_form: crate::length::LengthForm::Minimal,
             dsmcc_message: &[0x11, 0x03, 0x10, 0x02],
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1005,7 +1005,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             dsmcc_message: &[0xAA],
         };
-        let bytes = rep.to_bytes();
+        let bytes = rep.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x01, 0x01, 0xAA]);
         assert_eq!(DownloadReply::parse(&bytes).unwrap(), rep);
     }
@@ -1039,7 +1039,7 @@ mod tests {
             },
             data: &[0xCA, 0xFE],
         };
-        let bytes = uai.to_bytes();
+        let bytes = uai.try_to_bytes().unwrap();
         // tag(3) + len(1=9) + specifier(3) model(2) version(2) data(2).
         assert_eq!(
             bytes,
@@ -1050,7 +1050,7 @@ mod tests {
         assert_eq!(UserAuthInitiate::parse(&bytes).unwrap(), uai);
         let mut other = uai.clone();
         other.binary_id.version = 0x0006;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1064,7 +1064,7 @@ mod tests {
             },
             result: &[0x01],
         };
-        let bytes = uar.to_bytes();
+        let bytes = uar.try_to_bytes().unwrap();
         assert_eq!(
             bytes,
             [
@@ -1089,7 +1089,7 @@ mod tests {
             compatibility_descriptor: &compat,
             private_data: &[],
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         assert_eq!(DownloadInfoRequest::parse(&bytes).unwrap(), req);
         // Verify header is well-formed.
         assert_eq!(bytes[0], 0x11);
@@ -1097,7 +1097,7 @@ mod tests {
         assert_eq!(&bytes[2..4], &[0x10, 0x01]);
         let mut other = req.clone();
         other.buffer_size = 0x0002_0000;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     /// r10-W-13: `parse_dsmcc_header`/`parse_dsmcc_data_header` must check
@@ -1119,7 +1119,7 @@ mod tests {
             download_cancel_reason: 5,
             private_data: &[],
         };
-        let cancel_bytes = cancel.to_bytes();
+        let cancel_bytes = cancel.try_to_bytes().unwrap();
         // Same header shape (parse_dsmcc_header), wrong messageId.
         assert!(matches!(
             DownloadInfoRequest::parse(&cancel_bytes),
@@ -1133,7 +1133,7 @@ mod tests {
             block_number: 3,
             download_reason: 4,
         };
-        let data_req_bytes = data_req.to_bytes();
+        let data_req_bytes = data_req.try_to_bytes().unwrap();
         // Same header shape (parse_dsmcc_data_header), wrong messageId.
         assert!(matches!(
             DownloadDataBlock::parse(&data_req_bytes),
@@ -1151,14 +1151,14 @@ mod tests {
             compatibility_descriptor: &[0x00, 0x00],
             private_data: &[0x00, 0x00],
         };
-        let mut bytes = req.to_bytes();
+        let mut bytes = req.try_to_bytes().unwrap();
         bytes[0] = 0x12; // wrong protocolDiscriminator
         assert!(matches!(
             DownloadInfoRequest::parse(&bytes),
             Err(Error::InvalidObject { .. })
         ));
 
-        let mut bytes = req.to_bytes();
+        let mut bytes = req.try_to_bytes().unwrap();
         bytes[1] = 0x04; // wrong dsmccType
         assert!(matches!(
             DownloadInfoRequest::parse(&bytes),
@@ -1176,7 +1176,7 @@ mod tests {
             compatibility_descriptor: &[0x00, 0x00],
             private_data: &[0x00, 0x00],
         };
-        let mut bytes = req.to_bytes();
+        let mut bytes = req.try_to_bytes().unwrap();
         // messageLength is bytes[10..12]; corrupt it without changing the
         // buffer's actual length.
         bytes[11] ^= 0xFF;
@@ -1197,7 +1197,7 @@ mod tests {
             compatibility_descriptor: &compat,
             private_data: &[],
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         assert_eq!(bytes[9], 0x03); // adaptationLength
         assert_eq!(DownloadInfoRequest::parse(&bytes).unwrap(), req);
     }
@@ -1226,11 +1226,11 @@ mod tests {
             modules: &modules,
             private_data: &[],
         };
-        let bytes = resp.to_bytes();
+        let bytes = resp.try_to_bytes().unwrap();
         assert_eq!(DownloadInfoResponse::parse(&bytes).unwrap(), resp);
         let mut other = resp.clone();
         other.window_size = 5;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1244,7 +1244,7 @@ mod tests {
             download_cancel_reason: 0x05,
             private_data: &[],
         };
-        let bytes = cancel.to_bytes();
+        let bytes = cancel.try_to_bytes().unwrap();
         assert_eq!(DownloadCancel::parse(&bytes).unwrap(), cancel);
         assert_eq!(&bytes[2..4], &[0x10, 0x05]); // messageId DownloadCancel
     }
@@ -1258,7 +1258,7 @@ mod tests {
             block_number: 0x0002,
             download_reason: 0x00,
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         assert_eq!(DownloadDataRequest::parse(&bytes).unwrap(), req);
         // messageId DownloadDataRequest, then DownloadId (the data header puts it
         // at offset 4, before reserved/adaptation/messageLength).
@@ -1266,7 +1266,7 @@ mod tests {
         assert_eq!(&bytes[4..8], &0xDEAD_BEEFu32.to_be_bytes());
         let mut other = req.clone();
         other.block_number = 0x0003;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1279,12 +1279,12 @@ mod tests {
             block_number: 0x0003,
             block_data: &[0xFE, 0xED, 0xFA, 0xCE],
         };
-        let bytes = block.to_bytes();
+        let bytes = block.try_to_bytes().unwrap();
         assert_eq!(DownloadDataBlock::parse(&bytes).unwrap(), block);
         assert_eq!(&bytes[2..4], &[0x10, 0x03]); // messageId DownloadDataBlock
         let mut other = block.clone();
         other.block_data = &[0xFE, 0xED, 0xFA, 0xCF];
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1297,12 +1297,12 @@ mod tests {
             block_number: 1,
             download_reason: 0,
         };
-        let inner_bytes = inner.to_bytes();
+        let inner_bytes = inner.try_to_bytes().unwrap();
         let enq = DownloadEnquiry {
             length_form: crate::length::LengthForm::Minimal,
             dsmcc_message: &inner_bytes,
         };
-        let outer = enq.to_bytes();
+        let outer = enq.try_to_bytes().unwrap();
         let parsed = DownloadEnquiry::parse(&outer).unwrap();
         assert_eq!(parsed, enq);
         // And the encapsulated message parses back.
@@ -1318,7 +1318,8 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             dsmcc_message: &[0x11],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert!(matches!(
             DownloadApdu::parse(&enq).unwrap(),
             DownloadApdu::DownloadEnquiry(_)
@@ -1328,10 +1329,11 @@ mod tests {
             binary_id: BinaryId::default(),
             result: &[0x01],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = DownloadApdu::parse(&uar).unwrap();
         assert!(matches!(parsed, DownloadApdu::UserAuthResult(_)));
-        assert_eq!(parsed.to_bytes(), uar);
+        assert_eq!(parsed.try_to_bytes().unwrap(), uar);
     }
 
     #[test]
@@ -1367,7 +1369,7 @@ mod tests {
             block_number: 0,
             block_data: &data,
         };
-        let bytes = block.to_bytes();
+        let bytes = block.try_to_bytes().unwrap();
         assert_eq!(DownloadDataBlock::parse(&bytes).unwrap(), block);
     }
 

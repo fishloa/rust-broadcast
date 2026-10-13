@@ -141,7 +141,7 @@ mod tests {
     fn round_trips() {
         let payload = [0xDEu8, 0xAD, 0xBE, 0xEF, 0x00, 0x01];
         let dlc = AudioDataDlc::new(9, &payload).unwrap();
-        let bytes = dlc.to_bytes();
+        let bytes = dlc.try_to_bytes().unwrap();
         let parsed = AudioDataDlc::parse(&bytes).unwrap();
         assert_eq!(parsed, dlc);
         assert_eq!(parsed.payload, &payload);
@@ -150,7 +150,7 @@ mod tests {
     #[test]
     fn empty_payload_round_trips() {
         let dlc = AudioDataDlc::new(0, &[]).unwrap();
-        let bytes = dlc.to_bytes();
+        let bytes = dlc.try_to_bytes().unwrap();
         let parsed = AudioDataDlc::parse(&bytes).unwrap();
         assert_eq!(parsed, dlc);
     }
@@ -169,7 +169,7 @@ mod tests {
     fn dlc_size_mismatch_is_rejected() {
         let payload = [1u8, 2, 3];
         let dlc = AudioDataDlc::new(1, &payload).unwrap();
-        let mut bytes = dlc.to_bytes();
+        let mut bytes = dlc.try_to_bytes().unwrap();
         // Truncate: now the element body is shorter than DLCSize claims.
         let short = bytes.len() - 1;
         bytes.truncate(short);
@@ -181,9 +181,9 @@ mod tests {
     fn mutating_audio_data_id_changes_only_header() {
         let payload = [1u8, 2, 3];
         let mut dlc = AudioDataDlc::new(5, &payload).unwrap();
-        let original = dlc.to_bytes();
+        let original = dlc.try_to_bytes().unwrap();
         dlc.audio_data_id = 6; // still Plex(8)-direct
-        let mutated = dlc.to_bytes();
+        let mutated = dlc.try_to_bytes().unwrap();
         assert_ne!(original[0], mutated[0]);
         assert_eq!(&original[1..], &mutated[1..]);
     }

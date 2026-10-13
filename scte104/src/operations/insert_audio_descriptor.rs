@@ -137,7 +137,7 @@ mod tests {
     /// Table 9-33 laid out byte by byte.
     #[test]
     fn wire_layout_matches_table_9_33() {
-        let bytes = sample().to_bytes();
+        let bytes = sample().try_to_bytes().unwrap();
         assert_eq!(
             bytes,
             [
@@ -151,7 +151,7 @@ mod tests {
 
     #[test]
     fn truncated_entries_are_rejected() {
-        let bytes = sample().to_bytes();
+        let bytes = sample().try_to_bytes().unwrap();
         assert!(InsertAudioDescriptor::parse(&bytes[..bytes.len() - 1]).is_err());
         assert!(InsertAudioDescriptor::parse(&[]).is_err());
     }
@@ -161,6 +161,6 @@ mod tests {
         let a = sample();
         let mut b = a.clone();
         b.entries[1].num_channels = 8;
-        assert_ne!(a.to_bytes(), b.to_bytes());
+        assert_ne!(a.try_to_bytes().unwrap(), b.try_to_bytes().unwrap());
     }
 }

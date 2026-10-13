@@ -233,7 +233,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(&bytes[..3], &[0x9F, 0x80, 0x33]);
         let parsed = CaPmtReply::parse(&bytes).unwrap();
         assert_eq!(parsed, r);
@@ -254,7 +254,7 @@ mod tests {
                 ca_enable: None,
             }],
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         let parsed = CaPmtReply::parse(&bytes).unwrap();
         assert_eq!(parsed, r);
         assert!(parsed.ca_enable.is_none());
@@ -296,7 +296,7 @@ mod tests {
             ca_enable: None,
             streams: Vec::new(),
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(CaPmtReply::parse(&bytes).unwrap(), r);
     }
 
@@ -310,9 +310,9 @@ mod tests {
             ca_enable: Some(CaEnable::Possible),
             streams: Vec::new(),
         };
-        let a = r.to_bytes();
+        let a = r.try_to_bytes().unwrap();
         let mut other = r.clone();
         other.ca_enable = Some(CaEnable::NotPossibleNoEntitlement);
-        assert_ne!(a, other.to_bytes());
+        assert_ne!(a, other.try_to_bytes().unwrap());
     }
 }

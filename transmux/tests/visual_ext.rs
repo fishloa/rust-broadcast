@@ -134,7 +134,7 @@ fn pasp_from_fixture_round_trip() {
     assert_eq!(pasp.h_spacing, 1);
     assert_eq!(pasp.v_spacing, 1);
 
-    let bytes = pasp.to_bytes();
+    let bytes = pasp.try_to_bytes().unwrap();
     assert_eq!(
         &bytes, &PASP_BODY_ORACLE,
         "pasp round-trip must be byte-exact"
@@ -169,7 +169,7 @@ fn colr_nclx_from_fixture_round_trip() {
     );
     assert!(!nclx.full_range_flag, "full_range_flag must be false");
 
-    let bytes = colr.to_bytes();
+    let bytes = colr.try_to_bytes().unwrap();
     assert_eq!(
         &bytes, &COLR_BODY_ORACLE,
         "colr round-trip must be byte-exact"
@@ -185,8 +185,8 @@ fn colr_mutate_field_changes_bytes() {
     let mut colr2 = colr.clone();
     colr2.nclx.as_mut().unwrap().matrix_coefficients = 1;
     assert_ne!(
-        colr.to_bytes(),
-        colr2.to_bytes(),
+        colr.try_to_bytes().unwrap(),
+        colr2.try_to_bytes().unwrap(),
         "mutating matrix_coefficients must change serialized bytes"
     );
 }
@@ -198,8 +198,8 @@ fn pasp_mutate_field_changes_bytes() {
     let mut pasp2 = pasp;
     pasp2.h_spacing = 2;
     assert_ne!(
-        pasp.to_bytes(),
-        pasp2.to_bytes(),
+        pasp.try_to_bytes().unwrap(),
+        pasp2.try_to_bytes().unwrap(),
         "mutating h_spacing must change serialized bytes"
     );
 }
@@ -223,7 +223,7 @@ fn clap_spec_vector_round_trip() {
     assert_eq!(clap.clean_aperture_width_n, 1920);
     assert_eq!(clap.clean_aperture_height_n, 1080);
 
-    let bytes = clap.to_bytes();
+    let bytes = clap.try_to_bytes().unwrap();
     assert_eq!(bytes.len(), 32);
 
     // Re-parse
@@ -234,12 +234,16 @@ fn clap_spec_vector_round_trip() {
     assert_eq!(clap2.vert_off_n, 0);
 
     // Byte-identical round-trip
-    assert_eq!(clap2.to_bytes(), bytes);
+    assert_eq!(clap2.try_to_bytes().unwrap(), bytes);
 
     // Mutate → bytes change
     let clap3 = CleanApertureBox {
         clean_aperture_width_n: 1280,
         ..clap
     };
-    assert_ne!(clap3.to_bytes(), bytes, "mutation must change bytes");
+    assert_ne!(
+        clap3.try_to_bytes().unwrap(),
+        bytes,
+        "mutation must change bytes"
+    );
 }

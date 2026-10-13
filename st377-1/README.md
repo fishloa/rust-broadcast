@@ -107,7 +107,7 @@ let pack = PartitionPack {
     operational_pattern: [0u8; 16],
     essence_containers: Vec::new(),
 };
-let bytes = pack.to_bytes();
+let bytes = pack.try_to_bytes().unwrap();
 assert_eq!(PartitionPack::parse(&bytes).unwrap(), pack);
 ```
 

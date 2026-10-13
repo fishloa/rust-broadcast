@@ -1436,7 +1436,7 @@ mod largesize_tests {
         let forced = {
             let _g = ForceLargesize::on();
             let len = moov.serialized_len();
-            let bytes = moov.to_bytes();
+            let bytes = moov.try_to_bytes().unwrap();
             assert_eq!(bytes.len(), len, "serialized_len agrees with the writer");
             bytes
         };
@@ -1467,7 +1467,7 @@ mod largesize_tests {
         let reparsed = MovieBox::parse(&forced).expect("largesize moov parses");
         assert_eq!(reparsed, moov, "typed tree identical after largesize trip");
         assert_eq!(
-            reparsed.to_bytes(),
+            reparsed.try_to_bytes().unwrap(),
             orig,
             "compact re-serialize is byte-identical"
         );
@@ -1481,7 +1481,7 @@ mod largesize_tests {
         let moof = MovieFragmentBox::parse_body(&orig[box_header_len(orig).unwrap()..]).unwrap();
         let forced = {
             let _g = ForceLargesize::on();
-            moof.to_bytes()
+            moof.try_to_bytes().unwrap()
         };
         assert_eq!(&forced[..4], &[0, 0, 0, 1]);
         for cc in [b"traf", b"trun"] {
@@ -1491,7 +1491,7 @@ mod largesize_tests {
         let reparsed = MovieFragmentBox::parse_body(&forced[box_header_len(&forced).unwrap()..])
             .expect("largesize moof parses");
         assert_eq!(reparsed, moof);
-        assert_eq!(reparsed.to_bytes(), orig);
+        assert_eq!(reparsed.try_to_bytes().unwrap(), orig);
     }
 
     fn read_path(rel: &str) -> Vec<u8> {
@@ -1527,13 +1527,17 @@ mod largesize_tests {
             let moov = MovieBox::parse(orig).unwrap_or_else(|e| panic!("{rel}: {e}"));
             let forced = {
                 let _g = ForceLargesize::on();
-                moov.to_bytes()
+                moov.try_to_bytes().unwrap()
             };
             assert_eq!(&forced[..4], &[0, 0, 0, 1], "{rel}");
             let reparsed =
                 MovieBox::parse(&forced).unwrap_or_else(|e| panic!("{rel}: largesize: {e}"));
             assert_eq!(reparsed, moov, "{rel}: tree changed through largesize");
-            assert_eq!(reparsed.to_bytes(), orig, "{rel}: not byte-identical");
+            assert_eq!(
+                reparsed.try_to_bytes().unwrap(),
+                orig,
+                "{rel}: not byte-identical"
+            );
         }
         assert!(
             checked >= 8,
@@ -1563,13 +1567,13 @@ mod largesize_tests {
             let moof = MovieFragmentBox::parse_body(&orig[hdr..]).unwrap();
             let forced = {
                 let _g = ForceLargesize::on();
-                moof.to_bytes()
+                moof.try_to_bytes().unwrap()
             };
             let body = &forced[box_header_len(&forced).unwrap()..];
             let reparsed = MovieFragmentBox::parse_body(body)
                 .unwrap_or_else(|e| panic!("{rel}: largesize: {e}"));
             assert_eq!(reparsed, moof, "{rel}");
-            assert_eq!(reparsed.to_bytes(), orig, "{rel}");
+            assert_eq!(reparsed.try_to_bytes().unwrap(), orig, "{rel}");
         }
         assert!(
             checked >= 4,

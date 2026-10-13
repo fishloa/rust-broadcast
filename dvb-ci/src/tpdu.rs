@@ -621,7 +621,7 @@ mod tests {
     #[test]
     fn tc_object_round_trip() {
         let o = create_t_c(0x01);
-        let bytes = o.to_bytes();
+        let bytes = o.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x82, 0x01, 0x01]);
         assert_eq!(TcObject::parse(&bytes).unwrap(), o);
     }
@@ -633,7 +633,7 @@ mod tests {
             t_c_id: 1,
             new_t_c_id: 2,
         };
-        let bytes = n.to_bytes();
+        let bytes = n.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x87, 0x02, 0x01, 0x02]);
         assert_eq!(NewTc::parse(&bytes).unwrap(), n);
     }
@@ -645,7 +645,7 @@ mod tests {
             t_c_id: 3,
             error_code: 1,
         };
-        let bytes = e.to_bytes();
+        let bytes = e.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x88, 0x02, 0x03, 0x01]);
         assert_eq!(TcError::parse(&bytes).unwrap(), e);
     }
@@ -658,7 +658,7 @@ mod tests {
             t_c_id: 1,
             data: &[0xAA, 0xBB, 0xCC],
         };
-        let bytes = c.to_bytes();
+        let bytes = c.try_to_bytes().unwrap();
         // tag A0, length 4 (t_c_id + 3 data), t_c_id, data.
         assert_eq!(bytes, [0xA0, 0x04, 0x01, 0xAA, 0xBB, 0xCC]);
         assert_eq!(CommandTpdu::parse(&bytes).unwrap(), c);
@@ -672,7 +672,7 @@ mod tests {
             t_c_id: 1,
             data: &[],
         };
-        let bytes = c.to_bytes();
+        let bytes = c.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x81, 0x01, 0x01]);
         assert_eq!(CommandTpdu::parse(&bytes).unwrap(), c);
     }
@@ -688,7 +688,7 @@ mod tests {
             sb_value: SbValue::new(true),
             block: Some(DataBlock::Last),
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         // header: A0 05 01 + 4 data ; status: 80 02 01 80.
         assert_eq!(
             bytes,
@@ -717,7 +717,7 @@ mod tests {
             sb_value: SbValue::new(true),
             block: Some(DataBlock::Last),
         };
-        let mut bytes = r.to_bytes();
+        let mut bytes = r.try_to_bytes().unwrap();
         let status_t_c_id_idx = bytes.len() - 2;
         assert_eq!(bytes[status_t_c_id_idx], 1);
         bytes[status_t_c_id_idx] = 2; // status now claims a different t_c_id
@@ -735,14 +735,15 @@ mod tests {
             t_c_id: 1,
             data: &[0xAA],
         };
-        let a = c.to_bytes();
+        let a = c.try_to_bytes().unwrap();
         let b = CommandTpdu {
             length_form: crate::length::LengthForm::Minimal,
             tag: tags::DATA_LAST,
             t_c_id: 1,
             data: &[0xBB],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert_ne!(a, b);
     }
 
@@ -779,7 +780,7 @@ mod tests {
         assert_eq!(r.status_length_form, LengthForm::Minimal);
         assert_eq!(r.t_c_id, 1);
         assert_eq!(r.data, &frame[5..13]);
-        assert_eq!(r.to_bytes(), frame);
+        assert_eq!(r.try_to_bytes().unwrap(), frame);
     }
 
     /// r10-W-4: each TPDU object round-trips every length form byte-for-byte,
@@ -789,11 +790,16 @@ mod tests {
         macro_rules! forms {
             ($ty:ty, $wire:expr) => {{
                 let wire: &[u8] = &$wire;
-                assert_eq!(<$ty>::parse(wire).unwrap().to_bytes(), wire);
+                assert_eq!(<$ty>::parse(wire).unwrap().try_to_bytes().unwrap(), wire);
                 for octets in 1..=4 {
                     let wide = widen(wire, octets);
                     let parsed = <$ty>::parse(&wide).unwrap();
-                    assert_eq!(parsed.to_bytes(), wide, "{} {octets}", stringify!($ty));
+                    assert_eq!(
+                        parsed.try_to_bytes().unwrap(),
+                        wide,
+                        "{} {octets}",
+                        stringify!($ty)
+                    );
                     assert_ne!(parsed, <$ty>::parse(wire).unwrap());
                 }
             }};
@@ -832,6 +838,6 @@ mod tests {
         ];
         let r = ResponseTpdu::parse(&wire).unwrap();
         assert_eq!(r.status_length_form, LengthForm::Long { octets: 2 });
-        assert_eq!(r.to_bytes(), wire);
+        assert_eq!(r.try_to_bytes().unwrap(), wire);
     }
 }

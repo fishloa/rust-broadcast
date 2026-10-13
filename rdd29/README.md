@@ -60,7 +60,7 @@ let frame = AtmosFrame::new(
     vec![rdd29::AnyElement::BedDefinition1(bed), rdd29::AnyElement::AudioDataDlc(dlc)],
 );
 
-let bytes = frame.to_bytes();
+let bytes = frame.try_to_bytes().unwrap();
 assert_eq!(AtmosFrame::parse(&bytes).unwrap(), frame);
 ```
 

@@ -12,7 +12,7 @@ fn main() {
         length_form: dvb_ci::length::LengthForm::Minimal,
         ca_system_ids: vec![0x0500, 0x0B00],
     };
-    let wire = info.to_bytes();
+    let wire = info.try_to_bytes().unwrap();
     println!("ca_info APDU   : {wire:02X?}");
 
     // Route it through the tag dispatcher without knowing the type in advance.
@@ -24,7 +24,7 @@ fn main() {
     }
 
     // Symmetric serialize: AnyApdu round-trips byte-for-byte.
-    let back = any.to_bytes();
+    let back = any.try_to_bytes().unwrap();
     assert_eq!(back, wire);
     println!("round-trip     : OK ({} bytes)", back.len());
 
@@ -35,6 +35,6 @@ fn main() {
     println!(
         "unknown tag    : {} -> preserved, round-trips: {}",
         unknown.name(),
-        unknown.to_bytes() == unknown_wire
+        unknown.try_to_bytes().unwrap() == unknown_wire
     );
 }

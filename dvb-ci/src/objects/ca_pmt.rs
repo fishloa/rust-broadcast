@@ -443,7 +443,7 @@ mod tests {
             program_ca_descriptors: &[],
             streams: Vec::new(),
         };
-        let bytes = pmt.to_bytes();
+        let bytes = pmt.try_to_bytes().unwrap();
         assert_eq!(&bytes[..4], &[0x9F, 0x80, 0x32, 0x06]);
         assert_eq!(CaPmt::parse(&bytes).unwrap(), pmt);
     }
@@ -476,7 +476,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = pmt.to_bytes();
+        let bytes = pmt.try_to_bytes().unwrap();
         let parsed = CaPmt::parse(&bytes).unwrap();
         assert_eq!(parsed, pmt);
         assert_eq!(parsed.streams.len(), 2);
@@ -485,12 +485,12 @@ mod tests {
         // bite: mutate the program_number.
         let mut other = pmt.clone();
         other.program_number = 0x0002;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
 
         // bite: mutate a stream's pid.
         let mut other2 = pmt.clone();
         other2.streams[0].elementary_pid = Pid::new(0x0300);
-        assert_ne!(bytes, other2.to_bytes());
+        assert_ne!(bytes, other2.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -510,7 +510,7 @@ mod tests {
                 ca_descriptors: &[],
             }],
         };
-        let bytes = pmt.to_bytes();
+        let bytes = pmt.try_to_bytes().unwrap();
         let parsed = CaPmt::parse(&bytes).unwrap();
         assert_eq!(parsed, pmt);
         assert!(parsed.streams[0].cmd_id.is_none());
@@ -542,7 +542,7 @@ mod tests {
                 ca_descriptors: &[],
             }],
         };
-        let bytes = pmt.to_bytes();
+        let bytes = pmt.try_to_bytes().unwrap();
         assert_eq!(CaPmt::parse(&bytes).unwrap(), pmt);
     }
 

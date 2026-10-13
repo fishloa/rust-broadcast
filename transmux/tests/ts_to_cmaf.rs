@@ -233,7 +233,7 @@ fn ts_to_cmaf_end_to_end() {
     let adts_header = transmux::aac_asc::parse_adts_header(first_aud_payload)
         .expect("first audio payload should start with ADTS header");
     let asc = transmux::aac_asc::AudioSpecificConfig::from_adts_header(&adts_header);
-    let asc_bytes = asc.to_bytes();
+    let asc_bytes = asc.try_to_bytes().unwrap();
 
     let esds = EsdsBox::new(ESDescriptor::new(
         1,

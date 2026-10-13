@@ -107,7 +107,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 10);
         let back = ScheduleComponentMode::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -121,9 +121,9 @@ mod tests {
                 time: SpliceScheduleTime { seconds: 100 },
             }],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op.clone();
         op2.components[0].time.seconds = 999;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 }

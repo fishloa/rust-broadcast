@@ -337,7 +337,10 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0x00FF_FFFF,
         };
-        assert_eq!(max.to_bytes(), [0x9F, 0x80, 0x00, 0x03, 0xFF, 0xFF, 0xFF]);
+        assert_eq!(
+            max.try_to_bytes().unwrap(),
+            [0x9F, 0x80, 0x00, 0x03, 0xFF, 0xFF, 0xFF]
+        );
     }
 
     #[test]
@@ -346,14 +349,14 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0xAABBCC,
         };
-        let bytes = q.to_bytes();
+        let bytes = q.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x00, 0x03, 0xAA, 0xBB, 0xCC]);
         assert_eq!(CpQuery::parse(&bytes).unwrap(), q);
         let other = CpQuery {
             length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0xAABBCD,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -363,14 +366,14 @@ mod tests {
             copy_protection_id: 0x010203,
             status: CpStatus::Active,
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x01, 0x04, 0x01, 0x02, 0x03, 0x02]);
         assert_eq!(CpReply::parse(&bytes).unwrap(), r);
         assert_eq!(r.status.name(), "Copy Protection Active");
         let mut other = r;
         other.status = CpStatus::IdMismatch;
-        assert_ne!(bytes, other.to_bytes());
-        assert_eq!(other.to_bytes()[7], 0xFF);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
+        assert_eq!(other.try_to_bytes().unwrap()[7], 0xFF);
     }
 
     #[test]
@@ -380,7 +383,7 @@ mod tests {
             copy_protection_id: 0x112233,
             command_bytes: &[0xDE, 0xAD, 0xBE, 0xEF],
         };
-        let bytes = c.to_bytes();
+        let bytes = c.try_to_bytes().unwrap();
         // tag(3) + len(1) + id(3) + 4 = 11; body len = 7 = 0x07.
         assert_eq!(
             bytes,
@@ -394,7 +397,7 @@ mod tests {
             copy_protection_id: 0x112233,
             command_bytes: &[0xDE, 0xAD, 0xBE, 0x00],
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -404,7 +407,7 @@ mod tests {
             copy_protection_id: 0x445566,
             response_bytes: &[0x01, 0x02],
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(
             bytes,
             [0x9F, 0x80, 0x03, 0x05, 0x44, 0x55, 0x66, 0x01, 0x02]
@@ -418,7 +421,8 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert!(matches!(
             CopyProtectionApdu::parse(&q).unwrap(),
             CopyProtectionApdu::CpQuery(_)
@@ -428,9 +432,10 @@ mod tests {
             copy_protection_id: 0x1,
             response_bytes: &[0xFF],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = CopyProtectionApdu::parse(&resp).unwrap();
         assert!(matches!(parsed, CopyProtectionApdu::CpResponse(_)));
-        assert_eq!(parsed.to_bytes(), resp);
+        assert_eq!(parsed.try_to_bytes().unwrap(), resp);
     }
 }

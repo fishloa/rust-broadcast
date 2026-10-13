@@ -758,7 +758,7 @@ mod tests {
                 timeout: 30,
             },
         };
-        let bytes = cmd.to_bytes();
+        let bytes = cmd.try_to_bytes().unwrap();
         // 9F8C00, body: id(01) + CD[9F8C01 len2 type02 chan07] + retry03 + to1E
         assert_eq!(
             bytes,
@@ -778,7 +778,7 @@ mod tests {
             retry_count: 3,
             timeout: 30,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -791,7 +791,7 @@ mod tests {
                 timeout: 10,
             },
         };
-        let bytes = sp.to_bytes();
+        let bytes = sp.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x8C, 0x00, 0x03, 0x03, 0xFE, 0x0A]);
         assert_eq!(CommsCmd::parse(&bytes).unwrap(), sp);
         assert_eq!(sp.command_id.name(), "Set_Params");
@@ -801,7 +801,7 @@ mod tests {
             command_id: CommsCommandId::GetNextBuffer,
             params: CommsCmdParams::GetNextBuffer { comms_phase_id: 1 },
         };
-        let gb = gnb.to_bytes();
+        let gb = gnb.try_to_bytes().unwrap();
         assert_eq!(gb, [0x9F, 0x8C, 0x00, 0x02, 0x05, 0x01]);
         assert_eq!(CommsCmd::parse(&gb).unwrap(), gnb);
     }
@@ -813,7 +813,7 @@ mod tests {
             command_id: CommsCommandId::DisconnectOnChannel,
             params: CommsCmdParams::None,
         };
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x8C, 0x00, 0x01, 0x02]);
         assert_eq!(CommsCmd::parse(&bytes).unwrap(), d);
     }
@@ -855,12 +855,12 @@ mod tests {
             descriptor_type: ConnectionDescriptorType::SiTelephoneDescriptor,
             payload: &[0xAA, 0xBB, 0xCC],
         };
-        let bytes = cd.to_bytes();
+        let bytes = cd.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x8C, 0x01, 0x04, 0x01, 0xAA, 0xBB, 0xCC]);
         assert_eq!(ConnectionDescriptor::parse(&bytes).unwrap(), cd);
         let mut other = cd.clone();
         other.descriptor_type = ConnectionDescriptorType::CableReturnChannelDescriptor;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -870,13 +870,13 @@ mod tests {
             reply_id: CommsReplyId::StatusReply,
             return_value: 0x01, // Connected
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x8C, 0x02, 0x02, 0x04, 0x01]);
         assert_eq!(CommsReply::parse(&bytes).unwrap(), r);
         assert_eq!(r.reply_id.name(), "Status_Reply");
         let mut other = r;
         other.return_value = 0x00;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -887,7 +887,7 @@ mod tests {
             comms_phase_id: 0,
             message: b"AT&F\r",
         };
-        let bytes = s.to_bytes();
+        let bytes = s.try_to_bytes().unwrap();
         assert_eq!(
             bytes,
             [0x9F, 0x8C, 0x03, 0x06, 0x00, b'A', b'T', b'&', b'F', b'\r']
@@ -897,7 +897,7 @@ mod tests {
         // more bite: flipping `more` flips the tag.
         let mut more = s.clone();
         more.more = true;
-        let mb = more.to_bytes();
+        let mb = more.try_to_bytes().unwrap();
         assert_eq!(mb[2], 0x04);
         assert_ne!(bytes, mb);
         assert_eq!(CommsSend::parse(&mb).unwrap(), more);
@@ -905,7 +905,7 @@ mod tests {
         // field bite.
         let mut other = s.clone();
         other.comms_phase_id = 1;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -916,13 +916,13 @@ mod tests {
             comms_phase_id: 1,
             message: b"OK\r\n",
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes[2], 0x06); // rcv_more
         assert_eq!(CommsRcv::parse(&bytes).unwrap(), r);
 
         let mut last = r.clone();
         last.more = false;
-        let lb = last.to_bytes();
+        let lb = last.try_to_bytes().unwrap();
         assert_eq!(lb[2], 0x05); // rcv_last
         assert_ne!(bytes, lb);
         assert_eq!(CommsRcv::parse(&lb).unwrap(), last);

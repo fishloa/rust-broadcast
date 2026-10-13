@@ -16,12 +16,12 @@ fn roundtrip_pat_section(data: &[u8]) {
         Ok(p) => p,
         Err(_) => return,
     };
-    let serialized = parsed.to_bytes();
+    let serialized = parsed.try_to_bytes().unwrap();
     let reparsed = match PatSection::parse(&serialized) {
         Ok(r) => r,
         Err(_) => return,
     };
-    let reserialized = reparsed.to_bytes();
+    let reserialized = reparsed.try_to_bytes().unwrap();
     assert_eq!(
         serialized, reserialized,
         "pat section roundtrip: serialized bytes differ"

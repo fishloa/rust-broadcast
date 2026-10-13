@@ -280,9 +280,9 @@ mod tests {
     #[test]
     fn mutation_changes_serialized_bytes() {
         let mut preface = sample();
-        let original = preface.to_bytes();
+        let original = preface.try_to_bytes().unwrap();
         preface.version = 0x0200;
-        let mutated = preface.to_bytes();
+        let mutated = preface.try_to_bytes().unwrap();
         assert_ne!(original, mutated);
         assert_eq!(Preface::parse(&mutated).unwrap().version, 0x0200);
     }
@@ -291,7 +291,7 @@ mod tests {
     fn dark_tags_preserved_round_trip() {
         let mut preface = sample();
         preface.dark = alloc::vec![(0x8001, alloc::vec![9, 9, 9])];
-        let bytes = preface.to_bytes();
+        let bytes = preface.try_to_bytes().unwrap();
         let parsed = Preface::parse(&bytes).unwrap();
         assert_eq!(parsed.dark, preface.dark);
     }
@@ -337,7 +337,7 @@ mod tests {
             items: Vec::new(),
             ..Default::default()
         };
-        let bytes = set.to_bytes();
+        let bytes = set.try_to_bytes().unwrap();
         assert!(matches!(
             Preface::parse(&bytes),
             Err(Error::KeyPrefixMismatch { .. })

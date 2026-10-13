@@ -402,11 +402,17 @@ mod tests {
     #[test]
     fn header_only_objects_round_trip() {
         assert_eq!(
-            DeliverySystemInfoReq::default().to_bytes(),
+            DeliverySystemInfoReq::default().try_to_bytes().unwrap(),
             [0x9F, 0x80, 0x00, 0x00]
         );
-        assert_eq!(ScanStartReq::default().to_bytes(), [0x9F, 0x80, 0x02, 0x00]);
-        assert_eq!(ScanNextReq::default().to_bytes(), [0x9F, 0x80, 0x03, 0x00]);
+        assert_eq!(
+            ScanStartReq::default().try_to_bytes().unwrap(),
+            [0x9F, 0x80, 0x02, 0x00]
+        );
+        assert_eq!(
+            ScanNextReq::default().try_to_bytes().unwrap(),
+            [0x9F, 0x80, 0x03, 0x00]
+        );
         assert_eq!(
             DeliverySystemInfoReq::parse(&[0x9F, 0x80, 0x00, 0x00]).unwrap(),
             DeliverySystemInfoReq::default()
@@ -427,14 +433,14 @@ mod tests {
                 SystemIdentifier::DvbT,
             ],
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         // tag(3) + len(1) + 3 = 7; body len = 3 = 0x03.
         assert_eq!(bytes, [0x9F, 0x80, 0x01, 0x03, 0x01, 0x02, 0x03]);
         assert_eq!(DeliverySystemInfoAck::parse(&bytes).unwrap(), ack);
         assert_eq!(ack.systems[0].name(), "DVB-C");
         let mut other = ack.clone();
         other.systems[2] = SystemIdentifier::Abstract;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -444,7 +450,7 @@ mod tests {
             systems: alloc::vec![SystemIdentifier::from_u8(0x7F)],
         };
         assert_eq!(ack.systems[0], SystemIdentifier::Reserved(0x7F));
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x01, 0x01, 0x7F]);
         assert_eq!(DeliverySystemInfoAck::parse(&bytes).unwrap(), ack);
     }
@@ -460,7 +466,7 @@ mod tests {
             tuning_information_message: &tim,
             scan_progress: 0x40,
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         // tag(3) + len(1) + state(1) + tim(11) + progress(1) = 17; body = 13 = 0x0D.
         assert_eq!(
             bytes,
@@ -472,7 +478,7 @@ mod tests {
         assert_eq!(ScanAck::parse(&bytes).unwrap(), ack);
         let mut other = ack.clone();
         other.scan_progress = 0x41;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -484,7 +490,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             tuning_information_message: &tim,
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         assert_eq!(
             bytes,
             [
@@ -499,7 +505,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             tuning_information_message: &tim2,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -508,7 +514,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             tuning_information_message: &[],
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x05, 0x00]);
         assert_eq!(TuneTSReq::parse(&bytes).unwrap(), req);
     }
@@ -529,19 +535,19 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             ts_state: 0xFF,
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x06, 0x01, 0xFF]);
         assert_eq!(TuneTSAck::parse(&bytes).unwrap(), ack);
         let other = TuneTSAck {
             length_form: crate::length::LengthForm::Minimal,
             ts_state: 0x00,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
     fn dispatch_routes_each_tag() {
-        let req = DeliverySystemInfoReq::default().to_bytes();
+        let req = DeliverySystemInfoReq::default().try_to_bytes().unwrap();
         assert!(matches!(
             StreamInputApdu::parse(&req).unwrap(),
             StreamInputApdu::DeliverySystemInfoReq(_)
@@ -550,12 +556,13 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             ts_state: 1,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = StreamInputApdu::parse(&ack).unwrap();
         assert!(matches!(parsed, StreamInputApdu::TuneTSAck(_)));
-        assert_eq!(parsed.to_bytes(), ack);
+        assert_eq!(parsed.try_to_bytes().unwrap(), ack);
         // ScanNextReq is 9F8003 (Table 17) — distinct from ScanStartReq 9F8002.
-        let next = ScanNextReq::default().to_bytes();
+        let next = ScanNextReq::default().try_to_bytes().unwrap();
         assert!(matches!(
             StreamInputApdu::parse(&next).unwrap(),
             StreamInputApdu::ScanNextReq(_)

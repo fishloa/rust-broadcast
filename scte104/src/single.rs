@@ -199,7 +199,7 @@ mod tests {
             0,
             AnySingleOperation::GeneralResponse(GeneralResponse),
         );
-        let bytes = msg.to_bytes();
+        let bytes = msg.try_to_bytes().unwrap();
         let back = SingleOperationMessage::parse(&bytes).unwrap();
         assert_eq!(msg, back);
         assert!(matches!(back.data, AnySingleOperation::GeneralResponse(_)));
@@ -229,7 +229,7 @@ mod tests {
             0,
             AnySingleOperation::InitRequest(crate::operations::InitRequest),
         );
-        let bytes = msg.to_bytes();
+        let bytes = msg.try_to_bytes().unwrap();
 
         // Verify the message round-trips.
         let back = SingleOperationMessage::parse(&bytes).unwrap();
@@ -253,7 +253,7 @@ mod tests {
             0,
             AnySingleOperation::InitRequest(crate::operations::InitRequest),
         );
-        let bytes = msg.to_bytes();
+        let bytes = msg.try_to_bytes().unwrap();
         let back = SingleOperationMessage::parse(&bytes).unwrap();
         assert_eq!(msg, back);
     }
@@ -273,7 +273,7 @@ mod tests {
                 body: &raw_body,
             },
         );
-        let bytes = msg.to_bytes();
+        let bytes = msg.try_to_bytes().unwrap();
         let back = SingleOperationMessage::parse(&bytes).unwrap();
         assert_eq!(msg, back);
     }
@@ -290,9 +290,9 @@ mod tests {
             0,
             AnySingleOperation::GeneralResponse(GeneralResponse),
         );
-        let bytes = msg.to_bytes();
+        let bytes = msg.try_to_bytes().unwrap();
         let mut msg2 = msg.clone();
         msg2.message_number = 99;
-        assert_ne!(msg2.to_bytes(), bytes);
+        assert_ne!(msg2.try_to_bytes().unwrap(), bytes);
     }
 }

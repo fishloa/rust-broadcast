@@ -8,11 +8,11 @@ fuzz_target!(|data: &[u8]| {
     // SMPTE ST 12-1:2014 §9.2 80-bit LTC codeword: parse + byte-identical
     // round trip.
     if let Ok(frame) = LtcFrame::parse(data) {
-        let serialized = frame.to_bytes();
+        let serialized = frame.try_to_bytes().unwrap();
         if let Ok(reparsed) = LtcFrame::parse(&serialized) {
             assert_eq!(
                 serialized,
-                reparsed.to_bytes(),
+                reparsed.try_to_bytes().unwrap(),
                 "LTC frame roundtrip mismatch"
             );
         }

@@ -88,12 +88,12 @@ mod tests {
             identifier: CUEI,
             provider_avail_id: 0xABCD_1234,
         };
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes[0], TAG);
         assert_eq!(bytes[1], 0x08);
         let back = AvailDescriptor::parse(&bytes).unwrap();
         assert_eq!(d, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]

@@ -74,7 +74,11 @@ fn assert_codec_config_equal(a: &CodecConfig, b: &CodecConfig) {
             },
         ) => {
             use broadcast_common::Serialize;
-            assert_eq!(ca.config.to_bytes(), cb.config.to_bytes(), "avcC bytes");
+            assert_eq!(
+                ca.config.try_to_bytes().unwrap(),
+                cb.config.try_to_bytes().unwrap(),
+                "avcC bytes"
+            );
             assert_eq!((wa, ha), (wb, hb), "AVC dimensions");
         }
         (
@@ -90,7 +94,11 @@ fn assert_codec_config_equal(a: &CodecConfig, b: &CodecConfig) {
             },
         ) => {
             use broadcast_common::Serialize;
-            assert_eq!(ca.config.to_bytes(), cb.config.to_bytes(), "hvcC bytes");
+            assert_eq!(
+                ca.config.try_to_bytes().unwrap(),
+                cb.config.try_to_bytes().unwrap(),
+                "hvcC bytes"
+            );
             assert_eq!((wa, ha), (wb, hb), "HEVC dimensions");
         }
         (

@@ -152,11 +152,16 @@ jobs:
       # above builds with NO features, so a break behind one of these is
       # invisible to it (issue #1181: `transmux --features cenc` failed to
       # build here on missing alloc imports while the plain build passed).
-      # `serde` features are deliberately absent: they depend on `serde` with
-      # its default `std` feature, so they cannot build for bare metal today.
+      # Every no_std crate's `serde` feature is built here too (issue #1183): the
+      # `serde` dependency is `default-features = false, features = ["derive",
+      # "alloc"]` and each crate's own `std` feature forwards `serde?/std`.
+      # Deliberately NOT here (genuinely std-only, they pull std-only deps):
+      # `media-doctor` `metrics`/`net`/`cli`, `ts-fix` `cli`, `transmux` `cli`,
+      # `hls-runtime` `tokio`, `srt-runtime`/`rtsp-runtime`/`rtmp-runtime`
+      # tokio adapters, and the XML paths (`quick-xml`, behind each crate's `std`).
       - name: Build no_std-capable optional features for bare-metal
         run: |
-          for cf in transmux:cenc transmux:sample-aes dvb-si:chrono dvb-si:ts dvb-si:yoke dvb-bbframe:yoke dvb-t2mi:chrono dvb-t2mi:yoke cc-data:decode st291:ts st291:rtp rtp-packet:rfc8285 timed-metadata:chrono timed-metadata:cc-data timed-metadata:teletext caption-convert:cc-data caption-convert:teletext dvb-csa:bitsliced srt-runtime:crypto; do
+          for cf in transmux:cenc transmux:sample-aes dvb-si:chrono dvb-si:ts dvb-si:yoke dvb-bbframe:yoke dvb-t2mi:chrono dvb-t2mi:yoke cc-data:decode st291:ts st291:rtp rtp-packet:rfc8285 timed-metadata:chrono timed-metadata:cc-data timed-metadata:teletext caption-convert:cc-data caption-convert:teletext dvb-csa:bitsliced srt-runtime:crypto dvb-si:serde,chrono,ts dvb-t2mi:serde,chrono,ts timed-metadata:serde,chrono transmux:serde,cenc,sample-aes caption-convert:serde,cc-data,teletext st291:serde,ts,rtp broadcast-common:serde,chrono broadcast-common:serde dvb-bbframe:serde scte35-splice:serde dvb-t2mi:serde dvb-si:serde dvb-conformance:serde mpeg-pes:serde dvb-subtitle:serde mpeg-ps:serde scte104:serde cc-data:serde st291:serde ule:serde dvb-ci:serde dvb-simulcrypt:serde mp4-emsg:serde dvb-vbi:serde rmt-flute:serde rtp-packet:serde rtcp-packet:serde st12-1:serde st337:serde rdd29:serde st377-1:serde mpeg-ts:serde broadcast-hls:serde transmux:serde timed-metadata:serde hls-runtime:serde srt-runtime:serde media-doctor:serde ttml-subtitle:serde atsc3-route:serde caption-convert:serde atsc3:serde st2022:serde ssai-runtime:serde playout-runtime:serde; do
             c="${cf%%:*}"
             f="${cf##*:}"
             echo "::group::$c --features $f (no_std)"

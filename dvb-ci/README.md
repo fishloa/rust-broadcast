@@ -28,12 +28,12 @@ use broadcast_common::Serialize;
 
 // A ca_info() APDU advertising two CA_system_ids.
 let info = CaInfo { ca_system_ids: vec![0x0500, 0x0B00] };
-let wire = info.to_bytes();                // 9F 80 31 04 05 00 0B 00
+let wire = info.try_to_bytes().unwrap();                // 9F 80 31 04 05 00 0B 00
 
 // Route any APDU by its 3-byte tag without knowing the type up front.
 let any = AnyApdu::parse(&wire).unwrap();
 assert_eq!(any.name(), "CA_INFO");
-assert_eq!(any.to_bytes(), wire);          // round-trips byte-for-byte
+assert_eq!(any.try_to_bytes().unwrap(), wire);          // round-trips byte-for-byte
 ```
 
 ## What's implemented (v0.1.0)

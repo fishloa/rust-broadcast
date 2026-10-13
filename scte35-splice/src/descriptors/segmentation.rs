@@ -521,14 +521,14 @@ mod tests {
     use super::*;
 
     fn rt(d: &SegmentationDescriptor) {
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), d.serialized_len());
         assert_eq!(bytes[0], TAG);
         // descriptor_length counts the bytes after it: identifier (4) + body.
         assert_eq!(bytes[1] as usize, 4 + d.body_len());
         let back = SegmentationDescriptor::parse(&bytes).unwrap();
         assert_eq!(*d, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]

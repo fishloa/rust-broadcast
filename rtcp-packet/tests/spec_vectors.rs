@@ -282,11 +282,11 @@ fn sr_rr_vectors_with_profile_extensions_round_trip() {
         if is_sr {
             let sr = SenderReport::parse(&bytes).unwrap();
             assert_eq!(sr.profile_extensions, ext);
-            assert_eq!(sr.to_bytes(), bytes);
+            assert_eq!(sr.try_to_bytes().unwrap(), bytes);
         } else {
             let rr = ReceiverReport::parse(&bytes).unwrap();
             assert_eq!(rr.profile_extensions, ext);
-            assert_eq!(rr.to_bytes(), bytes);
+            assert_eq!(rr.try_to_bytes().unwrap(), bytes);
         }
     }
     // Without extensions the vectors still round-trip with an empty field.

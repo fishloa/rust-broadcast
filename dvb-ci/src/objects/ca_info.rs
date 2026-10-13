@@ -103,7 +103,7 @@ mod tests {
 
     #[test]
     fn enq_round_trip() {
-        let bytes = CaInfoEnq::default().to_bytes();
+        let bytes = CaInfoEnq::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x30, 0x00]);
         assert_eq!(CaInfoEnq::parse(&bytes).unwrap(), CaInfoEnq::default());
     }
@@ -114,7 +114,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             ca_system_ids: alloc::vec![0x0500, 0x0B00, 0x1801],
         };
-        let bytes = info.to_bytes();
+        let bytes = info.try_to_bytes().unwrap();
         assert_eq!(&bytes[..4], &[0x9F, 0x80, 0x31, 0x06]); // len 6
         let parsed = CaInfo::parse(&bytes).unwrap();
         assert_eq!(parsed, info);
@@ -127,9 +127,9 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             ca_system_ids: alloc::vec![0x0500],
         };
-        let a = info.to_bytes();
+        let a = info.try_to_bytes().unwrap();
         let mut other = info.clone();
         other.ca_system_ids[0] = 0x0B00;
-        assert_ne!(a, other.to_bytes());
+        assert_ne!(a, other.try_to_bytes().unwrap());
     }
 }

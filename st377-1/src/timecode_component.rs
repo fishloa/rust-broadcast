@@ -180,10 +180,10 @@ mod tests {
     #[test]
     fn round_trip() {
         let tc = sample();
-        let bytes = tc.to_bytes();
+        let bytes = tc.try_to_bytes().unwrap();
         let parsed = TimecodeComponent::parse(&bytes).unwrap();
         assert_eq!(parsed, tc);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -191,28 +191,28 @@ mod tests {
         let mut tc = sample();
         tc.drop_frame = true;
         tc.rounded_timecode_base = 30;
-        let bytes = tc.to_bytes();
+        let bytes = tc.try_to_bytes().unwrap();
         let parsed = TimecodeComponent::parse(&bytes).unwrap();
         assert!(parsed.drop_frame);
         assert_eq!(parsed.rounded_timecode_base, 30);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn no_duration_round_trip() {
         let mut tc = sample();
         tc.duration = None;
-        let bytes = tc.to_bytes();
+        let bytes = tc.try_to_bytes().unwrap();
         let parsed = TimecodeComponent::parse(&bytes).unwrap();
         assert_eq!(parsed.duration, None);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn dark_preserved() {
         let mut tc = sample();
         tc.dark = alloc::vec![(0x9004, alloc::vec![0xCA, 0xFE])];
-        let bytes = tc.to_bytes();
+        let bytes = tc.try_to_bytes().unwrap();
         let parsed = TimecodeComponent::parse(&bytes).unwrap();
         assert_eq!(parsed.dark, tc.dark);
     }
@@ -228,7 +228,7 @@ mod tests {
             items: Vec::new(),
             ..Default::default()
         };
-        let bytes = set.to_bytes();
+        let bytes = set.try_to_bytes().unwrap();
         assert!(matches!(
             TimecodeComponent::parse(&bytes),
             Err(Error::KeyPrefixMismatch { .. })
@@ -238,9 +238,9 @@ mod tests {
     #[test]
     fn mutation_changes_serialized_bytes() {
         let mut tc = sample();
-        let before = tc.to_bytes();
+        let before = tc.try_to_bytes().unwrap();
         tc.start_timecode = 1800000;
-        let after = tc.to_bytes();
+        let after = tc.try_to_bytes().unwrap();
         assert_ne!(before, after);
         assert_eq!(
             TimecodeComponent::parse(&after).unwrap().start_timecode,

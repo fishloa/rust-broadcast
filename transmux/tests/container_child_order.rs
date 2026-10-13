@@ -110,7 +110,7 @@ fn subtitle_minf_keeps_media_header_before_stbl() {
         "sthd is preserved as an opaque minf child"
     );
 
-    let bytes = moov.to_bytes();
+    let bytes = moov.try_to_bytes().unwrap();
     assert_eq!(
         bytes.as_slice(),
         moov_bytes,
@@ -177,7 +177,7 @@ fn moov_keeps_pssh_before_trak() {
         parsed.opaque.iter().any(|o| &o.box_type == b"pssh"),
         "pssh preserved"
     );
-    let out = parsed.to_bytes();
+    let out = parsed.try_to_bytes().unwrap();
     assert_eq!(out, moov, "moov round-trip must be byte-identical");
 
     let pssh_at = find_subslice(&out, b"pssh").expect("pssh present");
@@ -275,7 +275,7 @@ fn moov_round_trip_is_mp4box_readable() {
     let moov_bytes = find_top_box(&data, b"moov");
     let offset = moov_bytes.as_ptr() as usize - data.as_ptr() as usize;
     let moov = MovieBox::parse(moov_bytes).expect("parses");
-    let out = moov.to_bytes();
+    let out = moov.try_to_bytes().unwrap();
     assert_eq!(out.as_slice(), moov_bytes, "moov round-trip");
 
     let mut rebuilt = data.clone();
@@ -436,7 +436,7 @@ fn size_zero_child_extends_to_the_container_end() {
         12,
         "the payload ends at the enclosing container's end (8 header + 12 body)"
     );
-    assert_eq!(parsed.to_bytes(), container, "round-trip");
+    assert_eq!(parsed.try_to_bytes().unwrap(), container, "round-trip");
 }
 
 // ---------------------------------------------------------------------------
@@ -458,7 +458,11 @@ fn size_zero_child_written_explicitly_once_a_sibling_follows() {
     let container = moov_of(&moov);
 
     let mut parsed = MovieBox::parse(&container).expect("a size-0 child parses");
-    assert_eq!(parsed.to_bytes(), container, "as parsed it round-trips");
+    assert_eq!(
+        parsed.try_to_bytes().unwrap(),
+        container,
+        "as parsed it round-trips"
+    );
 
     // Append a `pssh` after the size-0 child (the protect_init_segment shape).
     // Its payload is the 4 body bytes a `pssh` with no `system_id`/data would
@@ -466,7 +470,7 @@ fn size_zero_child_written_explicitly_once_a_sibling_follows() {
     parsed.opaque.push(OpaqueBox::new(*b"pssh", vec![0u8; 4]));
     parsed.order.append_opaque(*b"pssh");
 
-    let out = parsed.to_bytes();
+    let out = parsed.try_to_bytes().unwrap();
     // The `free` box must now state its own length: 8 header + 12 body.
     let free_at = find_subslice(&out, b"free").expect("free present");
     assert_eq!(
@@ -515,7 +519,11 @@ fn size_zero_last_child_round_trips_byte_exact() {
         .find(|o| &o.box_type == b"free")
         .expect("preserved");
     assert!(free.to_end, "the form is recorded");
-    assert_eq!(parsed.to_bytes(), container, "byte-exact round trip");
+    assert_eq!(
+        parsed.try_to_bytes().unwrap(),
+        container,
+        "byte-exact round trip"
+    );
 }
 
 /// The same `size == 0` rule on the fragment side: a `traf` whose last child

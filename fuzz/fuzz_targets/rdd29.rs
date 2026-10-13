@@ -8,7 +8,7 @@ fuzz_target!(|data: &[u8]| {
     let Ok(frame) = AtmosFrame::parse(data) else {
         return;
     };
-    let serialized = frame.to_bytes();
+    let serialized = frame.try_to_bytes().unwrap();
 
     // The serialized form must parse back to the same value.
     let reparsed = AtmosFrame::parse(&serialized).expect("serialized frame must reparse");

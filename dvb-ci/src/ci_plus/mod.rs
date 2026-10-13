@@ -296,7 +296,7 @@ mod tests {
                 multistream_host_control::MultistreamHostControlApdu::TuneLcnReq(_)
             )
         ));
-        assert_eq!(hc.to_bytes(), lcn);
+        assert_eq!(hc.try_to_bytes().unwrap(), lcn);
 
         // The same tune tag arrives on the base-v3 resource id and still routes.
         let hc_v3 = CiPlusApdu::parse(HOST_CONTROL_V3, &lcn).unwrap();
@@ -309,7 +309,7 @@ mod tests {
             parsed,
             CiPlusApdu::SampleDecryption(sample_decryption::SampleDecryptionApdu::SdUpdateReply(_))
         ));
-        assert_eq!(parsed.to_bytes(), sd);
+        assert_eq!(parsed.try_to_bytes().unwrap(), sd);
     }
 
     #[test]
@@ -350,7 +350,7 @@ mod tests {
             ms,
             CiPlusApdu::Multistream(multistream::MultistreamApdu::PidSelectReply(_))
         ));
-        assert_eq!(ms.to_bytes(), ms_body);
+        assert_eq!(ms.try_to_bytes().unwrap(), ms_body);
 
         // Content Control cc_PIN_reply (unbound).
         let cc_body = [0x9F, 0x90, 0x14, 0x03, 0x00, 0x00, 0x42];
@@ -359,7 +359,7 @@ mod tests {
             cc,
             CiPlusApdu::ContentControl(content_control::ContentControlApdu::CcPinReply(_))
         ));
-        assert_eq!(cc.to_bytes(), cc_body);
+        assert_eq!(cc.try_to_bytes().unwrap(), cc_body);
     }
 
     #[test]
@@ -371,7 +371,7 @@ mod tests {
             p,
             CiPlusApdu::CicamPlayer(cicam_player::CicamPlayerApdu::UpdateReply(_))
         ));
-        assert_eq!(p.to_bytes(), upd);
+        assert_eq!(p.try_to_bytes().unwrap(), upd);
 
         // A 9FA0xx player tag is NOT a member of any other resource — it routes
         // only under the player resource (resource-scoped invariant).
@@ -391,7 +391,7 @@ mod tests {
             f,
             CiPlusApdu::FileRetrieval(file_retrieval::FileRetrievalApdu::FileSystemAck(_))
         ));
-        assert_eq!(f.to_bytes(), ack);
+        assert_eq!(f.try_to_bytes().unwrap(), ack);
         // The file-retrieval tag is not a player tag and vice-versa.
         assert!(matches!(
             CiPlusApdu::parse(CICAM_PLAYER, &ack),

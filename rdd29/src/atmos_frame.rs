@@ -388,10 +388,10 @@ mod tests {
     #[test]
     fn round_trips() {
         let frame = sample_frame();
-        let bytes = frame.to_bytes();
+        let bytes = frame.try_to_bytes().unwrap();
         let parsed = AtmosFrame::parse(&bytes).unwrap();
         assert_eq!(parsed, frame);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -403,7 +403,7 @@ mod tests {
             0,
             Vec::new(),
         );
-        let bytes = frame.to_bytes();
+        let bytes = frame.try_to_bytes().unwrap();
         let parsed = AtmosFrame::parse(&bytes).unwrap();
         assert_eq!(parsed, frame);
     }
@@ -448,16 +448,16 @@ mod tests {
         let mut frame = sample_frame();
         frame.elements.clear();
         frame.frame_rate = FrameRate::Reserved(13);
-        let bytes = frame.to_bytes();
+        let bytes = frame.try_to_bytes().unwrap();
         assert_eq!(AtmosFrame::parse(&bytes).unwrap(), frame);
     }
 
     #[test]
     fn mutating_max_rendered_changes_only_that_field_and_after() {
         let mut frame = sample_frame();
-        let original = frame.to_bytes();
+        let original = frame.try_to_bytes().unwrap();
         frame.max_rendered = 1; // still Plex(8)-direct, same width as 128
-        let mutated = frame.to_bytes();
+        let mutated = frame.try_to_bytes().unwrap();
         assert_ne!(original, mutated);
         // The fixed 16-bit prefix (ATMOSVersion/SampleRate/BitDepth/FrameRate)
         // is unaffected by changing MaxRendered.

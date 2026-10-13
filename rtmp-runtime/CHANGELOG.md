@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143). `UserControl::to_message` / `ProtocolControl::to_message` keep their documented panic via an explicit `expect` message (use `try_to_message` for untrusted values).
+
 ### Security (secrets and identity handling, #1142)
 
 - `Debug` of `ServerConfig`, `ClientConfig`, `RtmpTarget`, `ServerEvent` (and therefore `ServerSession`) no longer prints the stream key; `Media` prints its length, not its bytes.

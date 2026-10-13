@@ -68,7 +68,7 @@ fn ber_length_indefinite_form_rejected() {
 #[test]
 fn klv_item_round_trip() {
     let item = KlvItem::new(UAS_LS_KEY, b"hello KLV value".to_vec());
-    let bytes = item.to_bytes();
+    let bytes = item.try_to_bytes().unwrap();
     let parsed = KlvItem::parse(&bytes).unwrap();
     assert_eq!(parsed, item);
     // serialize -> parse -> equal, and the byte length is exactly serialized_len.
@@ -81,15 +81,15 @@ fn klv_item_length_is_computed_not_stored() {
     // length and the on-wire length field must track it.
     let short = KlvItem::new(UAS_LS_KEY, vec![0xAB; 5]);
     let long = KlvItem::new(UAS_LS_KEY, vec![0xAB; 6]);
-    let sb = short.to_bytes();
-    let lb = long.to_bytes();
+    let sb = short.try_to_bytes().unwrap();
+    let lb = long.try_to_bytes().unwrap();
     // Byte at index 16 is the (short-form) BER length.
     assert_eq!(sb[UNIVERSAL_LABEL_LEN], 5);
     assert_eq!(lb[UNIVERSAL_LABEL_LEN], 6);
 
     // A value that forces a 2-byte BER length (>= 128).
     let big = KlvItem::new(UAS_LS_KEY, vec![0xCD; 300]);
-    let bb = big.to_bytes();
+    let bb = big.try_to_bytes().unwrap();
     assert_eq!(
         &bb[UNIVERSAL_LABEL_LEN..UNIVERSAL_LABEL_LEN + 3],
         &[0x82, 0x01, 0x2C]

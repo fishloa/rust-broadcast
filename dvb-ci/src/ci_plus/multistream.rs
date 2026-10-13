@@ -339,13 +339,13 @@ mod tests {
             max_local_ts: 0x04,
             max_descramblers: 0x0102,
         };
-        let bytes = cap.to_bytes();
+        let bytes = cap.try_to_bytes().unwrap();
         // tag(3) + len(0x03) + max_local_TS(0x04) + max_descramblers(01 02).
         assert_eq!(bytes, [0x9F, 0x92, 0x00, 0x03, 0x04, 0x01, 0x02]);
         assert_eq!(CicamMultistreamCapability::parse(&bytes).unwrap(), cap);
         let mut other = cap;
         other.max_descramblers = 0x0103;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -364,7 +364,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         // tag(3) + len(0x06) + LTS_id(07) + num_PID(02)
         //   entry0: critical=1 -> 0x20 | (0x0123>>8=0x01) = 0x21, lo=0x23
         //   entry1: critical=0 -> (0x1FFE>>8=0x1F), lo=0xFE
@@ -376,8 +376,8 @@ mod tests {
         // Field-mutation: flip critical flag changes the wire.
         let mut other = req.clone();
         other.pids[0].critical_for_descrambling = false;
-        assert_ne!(bytes, other.to_bytes());
-        assert_eq!(other.to_bytes()[6], 0x01);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
+        assert_eq!(other.try_to_bytes().unwrap()[6], 0x01);
     }
 
     #[test]
@@ -387,7 +387,7 @@ mod tests {
             lts_id: 0x00,
             pids: Vec::new(),
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x92, 0x01, 0x02, 0x00, 0x00]);
         assert_eq!(PidSelectReq::parse(&bytes).unwrap(), req);
     }
@@ -409,7 +409,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = reply.to_bytes();
+        let bytes = reply.try_to_bytes().unwrap();
         // tag(3) + len(0x07) + LTS_id(05) + flag-byte(0x01) + num_PID(02)
         //   entry0: selected=1 -> 0x20 | 0x00 = 0x20, lo=0x64
         //   entry1: selected=0 -> 0x00, lo=0xC8
@@ -423,8 +423,8 @@ mod tests {
         // Field-mutation: clear selection flag changes the wire byte.
         let mut other = reply.clone();
         other.pid_selection = false;
-        assert_eq!(other.to_bytes()[5], 0x00);
-        assert_ne!(bytes, other.to_bytes());
+        assert_eq!(other.try_to_bytes().unwrap()[5], 0x00);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -435,7 +435,7 @@ mod tests {
             pid_selection: false,
             pids: Vec::new(),
         };
-        let bytes = reply.to_bytes();
+        let bytes = reply.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x92, 0x02, 0x03, 0x01, 0x00, 0x00]);
         assert_eq!(PidSelectReply::parse(&bytes).unwrap(), reply);
     }
@@ -447,7 +447,8 @@ mod tests {
             max_local_ts: 1,
             max_descramblers: 1,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert!(matches!(
             MultistreamApdu::parse(&cap).unwrap(),
             MultistreamApdu::CicamMultistreamCapability(_)
@@ -458,10 +459,11 @@ mod tests {
             pid_selection: false,
             pids: Vec::new(),
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = MultistreamApdu::parse(&reply).unwrap();
         assert!(matches!(parsed, MultistreamApdu::PidSelectReply(_)));
-        assert_eq!(parsed.to_bytes(), reply);
+        assert_eq!(parsed.try_to_bytes().unwrap(), reply);
     }
 
     #[test]
@@ -474,7 +476,7 @@ mod tests {
                 pid: Pid::new(0x1FFF),
             }],
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         assert_eq!(PidSelectReq::parse(&bytes).unwrap(), req);
     }
 

@@ -1551,11 +1551,11 @@ mod tests {
     #[test]
     fn report_block_round_trip() {
         let b = sample_block(0xDEAD_BEEF, 4242, -5);
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), REPORT_BLOCK_LEN);
         let parsed = ReportBlock::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     /// #1129: an out-of-range `cumulative_lost` is rejected, not wrapped.
@@ -1576,7 +1576,7 @@ mod tests {
         // Negative cumulative lost must survive the 24-bit signed field.
         for v in [-1_i32, -2, -100, -0x80_0000, 0, 5, 0x7F_FFFF] {
             let b = sample_block(1, 0, v);
-            let parsed = ReportBlock::parse(&b.to_bytes()).unwrap();
+            let parsed = ReportBlock::parse(&b.try_to_bytes().unwrap()).unwrap();
             assert_eq!(parsed.cumulative_lost, v, "cumulative_lost {v} round-trip");
         }
     }
@@ -1584,7 +1584,7 @@ mod tests {
     #[test]
     fn sr_round_trip_and_header_layout() {
         let sr = sample_sr();
-        let bytes = sr.to_bytes();
+        let bytes = sr.try_to_bytes().unwrap();
         // V=2 in top 2 bits, RC=2 in low 5 bits.
         assert_eq!(bytes[0] >> 6, 2);
         assert_eq!(bytes[0] & 0x1F, 2);
@@ -1598,14 +1598,14 @@ mod tests {
         );
         let parsed = SenderReport::parse(&bytes).unwrap();
         assert_eq!(parsed, sr);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn sr_two_report_blocks_boundary() {
         let sr = sample_sr();
         assert_eq!(sr.report_blocks.len(), 2);
-        let bytes = sr.to_bytes();
+        let bytes = sr.try_to_bytes().unwrap();
         // 4 (hdr) + 24 (sender info incl ssrc) + 2*24 = 76 bytes = 19 words.
         assert_eq!(bytes.len(), 4 + 24 + 2 * REPORT_BLOCK_LEN);
         assert_eq!(bytes.len() % 4, 0);
@@ -1622,7 +1622,7 @@ mod tests {
     fn sr_rr_profile_extensions_round_trip() {
         let ext = vec![0xDE, 0xAD, 0xBE, 0xEF, 1, 2, 3, 4];
         let sr = sample_sr().with_profile_extensions(ext.clone());
-        let bytes = sr.to_bytes();
+        let bytes = sr.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 4 + 24 + 2 * REPORT_BLOCK_LEN + 8);
         assert_eq!(&bytes[bytes.len() - 8..], &ext[..]);
         assert_eq!(
@@ -1632,18 +1632,18 @@ mod tests {
         let parsed = SenderReport::parse(&bytes).unwrap();
         assert_eq!(parsed.profile_extensions, ext);
         assert_eq!(parsed, sr);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 
         let rr = ReceiverReport::new(0x0102_0304, vec![sample_block(1, 2, 3)])
             .with_profile_extensions(ext.clone());
-        let bytes = rr.to_bytes();
+        let bytes = rr.try_to_bytes().unwrap();
         let parsed = ReceiverReport::parse(&bytes).unwrap();
         assert_eq!(parsed.profile_extensions, ext);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 
         // RR with zero blocks and only extensions (count 0).
         let rr = ReceiverReport::new(9, vec![]).with_profile_extensions(vec![7; 4]);
-        let bytes = rr.to_bytes();
+        let bytes = rr.try_to_bytes().unwrap();
         assert_eq!(ReceiverReport::parse(&bytes).unwrap(), rr);
     }
 
@@ -1664,7 +1664,7 @@ mod tests {
         // Parse side: a well-formed packet whose trailing bytes are not a
         // multiple of 4 after padding strip (P=1, 4 trailing bytes with the
         // last = pad count 3 leaves 1 byte).
-        let mut bytes = ReceiverReport::new(1, vec![]).to_bytes();
+        let mut bytes = ReceiverReport::new(1, vec![]).try_to_bytes().unwrap();
         bytes.extend_from_slice(&[0xAA, 0, 0, 3]);
         bytes[0] |= 0x20; // P bit
         bytes[3] += 1; // length in words
@@ -1680,12 +1680,12 @@ mod tests {
     #[test]
     fn trailing_bytes_after_blocks_are_kept_not_dropped() {
         // RC=0 RR with 4 trailing "garbage" bytes: preserved verbatim.
-        let mut bytes = ReceiverReport::new(1, vec![]).to_bytes();
+        let mut bytes = ReceiverReport::new(1, vec![]).try_to_bytes().unwrap();
         bytes.extend_from_slice(&[0x13, 0x37, 0xC0, 0xDE]);
         bytes[3] += 1;
         let rr = ReceiverReport::parse(&bytes).unwrap();
         assert_eq!(rr.profile_extensions, [0x13, 0x37, 0xC0, 0xDE]);
-        assert_eq!(rr.to_bytes(), bytes);
+        assert_eq!(rr.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -1695,11 +1695,11 @@ mod tests {
             report_blocks: vec![sample_block(0xCAFE_BABE, 33, -7)],
             profile_extensions: Vec::new(),
         };
-        let bytes = rr.to_bytes();
+        let bytes = rr.try_to_bytes().unwrap();
         assert_eq!(bytes[1], PT_RECEIVER_REPORT);
         let parsed = ReceiverReport::parse(&bytes).unwrap();
         assert_eq!(parsed, rr);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -1719,12 +1719,12 @@ mod tests {
                 ],
             }],
         };
-        let bytes = sdes.to_bytes();
+        let bytes = sdes.try_to_bytes().unwrap();
         assert_eq!(bytes[1], PT_SOURCE_DESCRIPTION);
         assert_eq!(bytes.len() % 4, 0);
         let parsed = SourceDescription::parse(&bytes).unwrap();
         assert_eq!(parsed, sdes);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -1733,13 +1733,13 @@ mod tests {
             sources: vec![0x1111_1111, 0x2222_2222],
             reason: Some("teardown".to_string()),
         };
-        let bytes = bye.to_bytes();
+        let bytes = bye.try_to_bytes().unwrap();
         assert_eq!(bytes[1], PT_BYE);
         assert_eq!(bytes[0] & 0x1F, 2); // SC = 2
         assert_eq!(bytes.len() % 4, 0);
         let parsed = Bye::parse(&bytes).unwrap();
         assert_eq!(parsed, bye);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -1748,7 +1748,7 @@ mod tests {
             sources: vec![0xABCD_0000],
             reason: None,
         };
-        let parsed = Bye::parse(&bye.to_bytes()).unwrap();
+        let parsed = Bye::parse(&bye.try_to_bytes().unwrap()).unwrap();
         assert_eq!(parsed, bye);
     }
 
@@ -1828,18 +1828,18 @@ mod tests {
             name: *b"TMUX",
             data: vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01, 0x02, 0x03, 0x04],
         };
-        let bytes = app.to_bytes();
+        let bytes = app.try_to_bytes().unwrap();
         assert_eq!(bytes[1], PT_APP);
         assert_eq!(bytes[0] & 0x1F, 3); // subtype in RC field
         let parsed = App::parse(&bytes).unwrap();
         assert_eq!(parsed, app);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn sr_mutation_bites_packet_count() {
         let sr = sample_sr();
-        let mut bytes = sr.to_bytes();
+        let mut bytes = sr.try_to_bytes().unwrap();
         let orig = SenderReport::parse(&bytes).unwrap();
         // packet_count lives at offset 4(hdr)+16 = 20.
         let pc_off = RTCP_HEADER_LEN + 16;
@@ -1847,16 +1847,16 @@ mod tests {
         let mutated = SenderReport::parse(&bytes).unwrap();
         assert_ne!(mutated.packet_count, orig.packet_count);
         // The mutated value re-serializes to the mutated bytes.
-        assert_eq!(mutated.to_bytes(), bytes);
+        assert_eq!(mutated.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn report_block_mutation_bites_jitter() {
         let mut sr = sample_sr();
         sr.report_blocks[0].jitter = 500;
-        let before = sr.to_bytes();
+        let before = sr.try_to_bytes().unwrap();
         sr.report_blocks[0].jitter = 999;
-        let after = sr.to_bytes();
+        let after = sr.try_to_bytes().unwrap();
         assert_ne!(before, after);
         let parsed = SenderReport::parse(&after).unwrap();
         assert_eq!(parsed.report_blocks[0].jitter, 999);
@@ -1878,11 +1878,11 @@ mod tests {
             RtcpPacket::SourceDescription(sdes),
         ])
         .unwrap();
-        let bytes = cp.to_bytes();
+        let bytes = cp.try_to_bytes().unwrap();
         let parsed = CompoundPacket::parse(&bytes).unwrap();
         assert_eq!(parsed.packets.len(), 2);
         assert_eq!(parsed, cp);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -1898,17 +1898,17 @@ mod tests {
             sources: vec![1],
             reason: None,
         };
-        let bytes = bye.to_bytes();
+        let bytes = bye.try_to_bytes().unwrap();
         assert!(CompoundPacket::parse(&bytes).is_err());
     }
 
     #[test]
     fn any_packet_dispatch() {
-        let bytes = sample_sr().to_bytes();
+        let bytes = sample_sr().try_to_bytes().unwrap();
         let any = RtcpPacket::parse(&bytes).unwrap();
         assert_eq!(any.packet_type(), RtcpPacketType::SenderReport);
         assert_eq!(any.name(), "SR");
-        assert_eq!(any.to_bytes(), bytes);
+        assert_eq!(any.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -1943,7 +1943,7 @@ mod tests {
 
     #[test]
     fn rejects_bad_version() {
-        let mut bytes = sample_sr().to_bytes();
+        let mut bytes = sample_sr().try_to_bytes().unwrap();
         bytes[0] = 0x40; // V=1
         assert!(SenderReport::parse(&bytes).is_err());
     }
@@ -1969,8 +1969,8 @@ mod tests {
             }
             other => panic!("expected Unknown, got {other:?}"),
         }
-        assert_eq!(p.to_bytes(), bytes);
-        assert_eq!(RtcpPacket::parse(&p.to_bytes()).unwrap(), p);
+        assert_eq!(p.try_to_bytes().unwrap(), bytes);
+        assert_eq!(RtcpPacket::parse(&p.try_to_bytes().unwrap()).unwrap(), p);
     }
 
     /// Release audit: PT 200-204 cannot be carried as `Unknown` (they would

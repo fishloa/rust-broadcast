@@ -316,7 +316,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
         avails_expected: 1,
     };
     let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(splice_insert_cmd), &[]);
-    let cue_bytes = section.to_bytes();
+    let cue_bytes = section.try_to_bytes().unwrap();
 
     let mut combined_ts = base_ts_bytes;
     combined_ts.extend_from_slice(&scte35_ts_packet(&cue_bytes, SCTE35_PID));

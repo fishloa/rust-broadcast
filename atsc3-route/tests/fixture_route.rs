@@ -89,7 +89,7 @@ fn fdt_instance_parses_and_byte_exact_round_trips() {
 
     // Byte-exact round trip: re-serializing the parsed packet must reproduce
     // the ORIGINAL captured bytes exactly, not merely an equivalent decode.
-    let out = pkt.to_bytes();
+    let out = pkt.try_to_bytes().unwrap();
     assert_eq!(out, bytes, "byte-exact round trip against the real capture");
 }
 
@@ -156,7 +156,7 @@ fn media_fragments_parse_and_byte_exact_round_trip() {
         );
         assert_eq!(pkt.payload.len(), 1408, "{}", expect.fixture);
 
-        let out = pkt.to_bytes();
+        let out = pkt.try_to_bytes().unwrap();
         assert_eq!(out, bytes, "byte-exact round trip: {}", expect.fixture);
     }
 }
@@ -243,7 +243,7 @@ fn corrupting_hdr_len_breaks_the_route_decode() {
     assert_eq!(restored[2], 9);
     let pkt =
         RoutePacket::parse(&restored).expect("pristine fixture must still parse after restore");
-    assert_eq!(pkt.to_bytes(), restored);
+    assert_eq!(pkt.try_to_bytes().unwrap(), restored);
 }
 
 #[test]
@@ -280,8 +280,8 @@ fn mutating_payload_breaks_byte_identity_but_not_field_decode() {
         payload: &mutated_payload,
     };
 
-    let original_out = pkt.to_bytes();
-    let mutated_out = mutated_pkt.to_bytes();
+    let original_out = pkt.try_to_bytes().unwrap();
+    let mutated_out = mutated_pkt.try_to_bytes().unwrap();
     assert_ne!(original_out, mutated_out);
     assert_eq!(original_out.len(), mutated_out.len());
     // Everything except the payload is unaffected.

@@ -95,7 +95,7 @@ fn parses_real_subtitle_pes_from_m6() {
         // Byte-exact round-trip on real captured bytes — this is the gate that
         // bites: serialize must reconstruct the field from the parsed segments.
         assert_eq!(
-            field.to_bytes(),
+            field.try_to_bytes().unwrap(),
             pkt.payload,
             "subtitle PES_data_field must round-trip byte-identically"
         );

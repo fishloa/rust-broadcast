@@ -243,7 +243,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             activation_state: ActivationState::StandbyPassive,
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x00, 0x01, 0x00]);
         assert_eq!(ActivationStateChangeRequest::parse(&bytes).unwrap(), r);
         assert_eq!(r.activation_state.name(), "Standby-passive");
@@ -251,8 +251,8 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             activation_state: ActivationState::Reserved(5),
         };
-        assert_ne!(bytes, other.to_bytes());
-        assert_eq!(other.to_bytes()[4], 0x05);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
+        assert_eq!(other.try_to_bytes().unwrap()[4], 0x05);
     }
 
     #[test]
@@ -261,7 +261,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             reply_code: ReplyCode::Busy,
         };
-        let bytes = a.to_bytes();
+        let bytes = a.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x01, 0x01, 0x01]);
         assert_eq!(ActivationStateChangeAck::parse(&bytes).unwrap(), a);
         assert_eq!(a.reply_code.name(), "Module busy, don't change state");
@@ -269,7 +269,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             reply_code: ReplyCode::Ok,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     /// `declare_resource_apdus!` surface: the declared tag list, and the
@@ -308,7 +308,8 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             activation_state: ActivationState::StandbyPassive,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert!(matches!(
             PowerManagerApdu::parse(&req).unwrap(),
             PowerManagerApdu::Request(_)
@@ -317,9 +318,10 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             reply_code: ReplyCode::Ok,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = PowerManagerApdu::parse(&ack).unwrap();
         assert!(matches!(parsed, PowerManagerApdu::Ack(_)));
-        assert_eq!(parsed.to_bytes(), ack);
+        assert_eq!(parsed.try_to_bytes().unwrap(), ack);
     }
 }

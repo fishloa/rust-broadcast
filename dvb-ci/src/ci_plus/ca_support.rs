@@ -422,7 +422,7 @@ mod tests {
                 ca_descriptors: &es_desc,
             }],
         };
-        let bytes = pmt.to_bytes();
+        let bytes = pmt.try_to_bytes().unwrap();
         // Hand-computed body:
         //   LTS_id 02 | list_mgmt 03 | prog_num 00 01 | reserved+PMT_PID E0 64
         //   reserved+ver1+cni1 = 0xC0|0x02|0x01 = 0xC3
@@ -452,7 +452,7 @@ mod tests {
         // Field-mutation: change PMT_PID.
         let mut other = pmt.clone();
         other.pmt_pid = Pid::new(0x0065);
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -469,7 +469,7 @@ mod tests {
             program_ca_descriptors: &[],
             streams: Vec::new(),
         };
-        let bytes = pmt.to_bytes();
+        let bytes = pmt.try_to_bytes().unwrap();
         // PMT_PID 0x1FFF -> hi 0xE0|0x1F=0xFF, lo 0xFF; prog_info_len 0 -> F0 00.
         assert_eq!(
             bytes,
@@ -500,7 +500,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = reply.to_bytes();
+        let bytes = reply.try_to_bytes().unwrap();
         let expected = [
             0x9F, 0x80, 0x33, // tag
             0x0B, // length (11 body bytes)
@@ -516,8 +516,8 @@ mod tests {
         // Field-mutation: change LTS_id.
         let mut other = reply.clone();
         other.lts_id = 0x04;
-        assert_ne!(bytes, other.to_bytes());
-        assert_eq!(other.to_bytes()[4], 0x04);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
+        assert_eq!(other.try_to_bytes().unwrap()[4], 0x04);
     }
 
     #[test]
@@ -534,10 +534,10 @@ mod tests {
             program_ca_descriptors: &[],
             streams: Vec::new(),
         };
-        let bytes = pmt.to_bytes();
+        let bytes = pmt.try_to_bytes().unwrap();
         let parsed = CaSupportApdu::parse(&bytes).unwrap();
         assert!(matches!(parsed, CaSupportApdu::CaPmt(_)));
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 
         let reply = MsCaPmtReply {
             length_form: crate::length::LengthForm::Minimal,
@@ -548,7 +548,7 @@ mod tests {
             ca_enable: None,
             streams: Vec::new(),
         };
-        let rb = reply.to_bytes();
+        let rb = reply.try_to_bytes().unwrap();
         assert!(matches!(
             CaSupportApdu::parse(&rb).unwrap(),
             CaSupportApdu::CaPmtReply(_)
@@ -569,7 +569,7 @@ mod tests {
             program_ca_descriptors: &[],
             streams: Vec::new(),
         };
-        let bytes = pmt.to_bytes();
+        let bytes = pmt.try_to_bytes().unwrap();
         assert_eq!(MsCaPmt::parse(&bytes).unwrap(), pmt);
     }
 

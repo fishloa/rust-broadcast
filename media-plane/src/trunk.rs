@@ -4222,7 +4222,7 @@ mod tests {
             ..SpliceInsert::default()
         };
         let section = SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(si), &[]);
-        section.to_bytes()
+        section.try_to_bytes().unwrap()
     }
 
     // --- E1. events_between: half-open [from, to), boundaries exact -------

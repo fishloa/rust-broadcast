@@ -379,7 +379,9 @@ mod tests {
         let ts = TimeSignal {
             splice_time: SpliceTime::with_pts(0x0012_3456),
         };
-        SpliceInfoSection::new_clear(AnyCommand::TimeSignal(ts), &[]).to_bytes()
+        SpliceInfoSection::new_clear(AnyCommand::TimeSignal(ts), &[])
+            .try_to_bytes()
+            .unwrap()
     }
 
     #[test]
@@ -392,7 +394,7 @@ mod tests {
             private_data: None,
             carriage: Scte35Carriage::Inline(section),
         };
-        let bytes = payload.to_bytes();
+        let bytes = payload.try_to_bytes().unwrap();
         // DVB_data_length = 1 (just the flags byte, no temi).
         assert_eq!(bytes[0], 1);
         // flags: reserved 0xE0 | event_type 0 | timeline 0x1 = 0xE1.
@@ -403,7 +405,7 @@ mod tests {
         assert_eq!(bytes[3], 0xFC);
         let back = StreamEventPayload::parse(&bytes).unwrap();
         assert_eq!(payload, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -420,7 +422,7 @@ mod tests {
             }),
             carriage: Scte35Carriage::Inline(section),
         };
-        let bytes = payload.to_bytes();
+        let bytes = payload.try_to_bytes().unwrap();
         // DVB_data_length = 1 + 2 (temi) = 3.
         assert_eq!(bytes[0], 3);
         // flags: 0xE0 | timeline 0x2 = 0xE2.
@@ -433,7 +435,7 @@ mod tests {
         assert_eq!(&bytes[9..11], &pd);
         let back = StreamEventPayload::parse(&bytes).unwrap();
         assert_eq!(payload, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -445,7 +447,7 @@ mod tests {
             private_data: None,
             carriage: Scte35Carriage::CarouselObject(name),
         };
-        let bytes = payload.to_bytes();
+        let bytes = payload.try_to_bytes().unwrap();
         // flags: event_type 1 -> 0xE0 | 0x10 = 0xF0.
         assert_eq!(bytes[1], 0xF0);
         // private_data_length = 0; then name_len, then name.
@@ -454,7 +456,7 @@ mod tests {
         assert_eq!(&bytes[4..], &name[..]);
         let back = StreamEventPayload::parse(&bytes).unwrap();
         assert_eq!(payload, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -470,7 +472,7 @@ mod tests {
             timeline_type: TimelineType::VideoPts,
             ..a.clone()
         };
-        assert_ne!(a.to_bytes(), b.to_bytes());
+        assert_ne!(a.try_to_bytes().unwrap(), b.try_to_bytes().unwrap());
     }
 
     #[test]

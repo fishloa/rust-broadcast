@@ -12,11 +12,11 @@ fuzz_target!(|data: &[u8]| {
 
     // Test 1: SourceFecPayloadId (Compact No-Code FEC scheme, §A.3.5.1)
     if let Ok(id) = atsc3_route::fec::SourceFecPayloadId::parse(data) {
-        let reserialized = id.to_bytes();
+        let reserialized = id.try_to_bytes().unwrap();
         if let Ok(reparsed) = atsc3_route::fec::SourceFecPayloadId::parse(&reserialized) {
             assert_eq!(
                 reserialized,
-                reparsed.to_bytes(),
+                reparsed.try_to_bytes().unwrap(),
                 "SourceFecPayloadId roundtrip mismatch"
             );
         }
@@ -24,11 +24,11 @@ fuzz_target!(|data: &[u8]| {
 
     // Test 2: RepairFecPayloadId (RaptorQ FEC scheme, §A.3.5.2)
     if let Ok(id) = atsc3_route::fec::RepairFecPayloadId::parse(data) {
-        let reserialized = id.to_bytes();
+        let reserialized = id.try_to_bytes().unwrap();
         if let Ok(reparsed) = atsc3_route::fec::RepairFecPayloadId::parse(&reserialized) {
             assert_eq!(
                 reserialized,
-                reparsed.to_bytes(),
+                reparsed.try_to_bytes().unwrap(),
                 "RepairFecPayloadId roundtrip mismatch"
             );
         }
@@ -36,11 +36,11 @@ fuzz_target!(|data: &[u8]| {
 
     // Test 3: RoutePacket (composed ALC/LCT packet, §A.3.4/§A.3.6)
     if let Ok(pkt) = atsc3_route::RoutePacket::parse(data) {
-        let reserialized = pkt.to_bytes();
+        let reserialized = pkt.try_to_bytes().unwrap();
         if let Ok(reparsed) = atsc3_route::RoutePacket::parse(&reserialized) {
             assert_eq!(
                 reserialized,
-                reparsed.to_bytes(),
+                reparsed.try_to_bytes().unwrap(),
                 "RoutePacket roundtrip mismatch"
             );
         }

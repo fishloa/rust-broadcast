@@ -28,7 +28,7 @@ fn main() {
     println!("{n} splice descriptor(s) in the loop");
 
     // Round-trip: re-serialize and require byte-identical output (CRC included).
-    let bytes = s.to_bytes();
+    let bytes = s.try_to_bytes().unwrap();
     assert_eq!(bytes.len(), s.serialized_len());
     assert_eq!(
         bytes, SPLICE_INSERT,

@@ -134,7 +134,7 @@ mod tests {
             cmd_id: CloseMmiCmdId::Immediate,
             delay: None,
         };
-        let bytes = c.to_bytes();
+        let bytes = c.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x88, 0x00, 0x01, 0x00]);
         assert_eq!(CloseMmi::parse(&bytes).unwrap(), c);
     }
@@ -146,7 +146,7 @@ mod tests {
             cmd_id: CloseMmiCmdId::Delay,
             delay: Some(5),
         };
-        let bytes = c.to_bytes();
+        let bytes = c.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x88, 0x00, 0x02, 0x01, 0x05]);
         let parsed = CloseMmi::parse(&bytes).unwrap();
         assert_eq!(parsed, c);
@@ -160,9 +160,9 @@ mod tests {
             cmd_id: CloseMmiCmdId::Delay,
             delay: Some(5),
         };
-        let a = c.to_bytes();
+        let a = c.try_to_bytes().unwrap();
         let mut other = c;
         other.delay = Some(10);
-        assert_ne!(a, other.to_bytes());
+        assert_ne!(a, other.try_to_bytes().unwrap());
     }
 }

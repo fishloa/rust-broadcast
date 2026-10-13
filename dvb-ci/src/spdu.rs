@@ -506,7 +506,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             resource: CONDITIONAL_ACCESS_SUPPORT,
         };
-        let bytes = o.to_bytes();
+        let bytes = o.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x91, 0x04, 0x00, 0x03, 0x00, 0x41]);
         assert_eq!(OpenSessionRequest::parse(&bytes).unwrap(), o);
     }
@@ -519,7 +519,7 @@ mod tests {
             resource: CONDITIONAL_ACCESS_SUPPORT,
             session_nb: 0x0102,
         };
-        let bytes = o.to_bytes();
+        let bytes = o.try_to_bytes().unwrap();
         assert_eq!(bytes[0], tags::OPEN_SESSION_RESPONSE);
         assert_eq!(bytes[1], 0x07);
         let parsed = OpenSessionResponse::parse(&bytes).unwrap();
@@ -534,7 +534,7 @@ mod tests {
             resource: CONDITIONAL_ACCESS_SUPPORT,
             session_nb: 5,
         };
-        let bytes = c.to_bytes();
+        let bytes = c.try_to_bytes().unwrap();
         assert_eq!(bytes[1], 0x06);
         assert_eq!(CreateSession::parse(&bytes).unwrap(), c);
     }
@@ -547,7 +547,7 @@ mod tests {
             resource: CONDITIONAL_ACCESS_SUPPORT,
             session_nb: 5,
         };
-        let bytes = c.to_bytes();
+        let bytes = c.try_to_bytes().unwrap();
         let parsed = CreateSessionResponse::parse(&bytes).unwrap();
         assert_eq!(parsed, c);
         assert_eq!(parsed.status.name(), "resource_busy");
@@ -559,16 +559,22 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             session_nb: 0x00FF,
         };
-        assert_eq!(req.to_bytes(), [0x95, 0x02, 0x00, 0xFF]);
-        assert_eq!(CloseSessionRequest::parse(&req.to_bytes()).unwrap(), req);
+        assert_eq!(req.try_to_bytes().unwrap(), [0x95, 0x02, 0x00, 0xFF]);
+        assert_eq!(
+            CloseSessionRequest::parse(&req.try_to_bytes().unwrap()).unwrap(),
+            req
+        );
 
         let resp = CloseSessionResponse {
             length_form: crate::length::LengthForm::Minimal,
             status: SessionStatus::Ok,
             session_nb: 0x00FF,
         };
-        assert_eq!(resp.to_bytes(), [0x96, 0x03, 0x00, 0x00, 0xFF]);
-        assert_eq!(CloseSessionResponse::parse(&resp.to_bytes()).unwrap(), resp);
+        assert_eq!(resp.try_to_bytes().unwrap(), [0x96, 0x03, 0x00, 0x00, 0xFF]);
+        assert_eq!(
+            CloseSessionResponse::parse(&resp.try_to_bytes().unwrap()).unwrap(),
+            resp
+        );
     }
 
     #[test]
@@ -577,7 +583,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             session_nb: 0x1234,
         };
-        let bytes = sn.to_bytes();
+        let bytes = sn.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x90, 0x02, 0x12, 0x34]);
         assert_eq!(bytes.len(), SessionNumber::HEADER_LEN);
         // Parses fine even with a trailing APDU body.
@@ -592,12 +598,13 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             session_nb: 1,
         };
-        let a = req.to_bytes();
+        let a = req.try_to_bytes().unwrap();
         let b = CloseSessionRequest {
             length_form: crate::length::LengthForm::Minimal,
             session_nb: 2,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert_ne!(a, b);
     }
 
@@ -629,12 +636,12 @@ mod tests {
         macro_rules! spdu_forms {
             ($ty:ty, $wire:expr) => {{
                 let wire: &[u8] = &$wire;
-                assert_eq!(<$ty>::parse(wire).unwrap().to_bytes(), wire);
+                assert_eq!(<$ty>::parse(wire).unwrap().try_to_bytes().unwrap(), wire);
                 for octets in 1..=4 {
                     let wide = widen(wire, octets);
                     let parsed = <$ty>::parse(&wide).unwrap();
                     assert_eq!(
-                        parsed.to_bytes(),
+                        parsed.try_to_bytes().unwrap(),
                         wide,
                         "{} {octets}-octet form",
                         stringify!($ty)

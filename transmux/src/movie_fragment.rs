@@ -1784,10 +1784,10 @@ mod tests {
     #[test]
     fn mfhd_round_trip() {
         let m = MovieFragmentHeaderBox::new(42);
-        let b = m.to_bytes();
+        let b = m.try_to_bytes().unwrap();
         let p = MovieFragmentHeaderBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.sequence_number, 42);
-        assert_eq!(b, p.to_bytes());
+        assert_eq!(b, p.try_to_bytes().unwrap());
     }
     #[test]
     fn mfhd_len() {
@@ -1805,10 +1805,10 @@ mod tests {
             default_sample_size: None,
             default_sample_flags: None,
         };
-        let b = t.to_bytes();
+        let b = t.try_to_bytes().unwrap();
         let p = TrackFragmentHeaderBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.track_id, TrackId::new(1));
-        assert_eq!(b, p.to_bytes());
+        assert_eq!(b, p.try_to_bytes().unwrap());
     }
     #[test]
     fn tfhd_subset() {
@@ -1821,11 +1821,11 @@ mod tests {
             default_sample_size: Some(3933),
             default_sample_flags: None,
         };
-        let b = t.to_bytes();
+        let b = t.try_to_bytes().unwrap();
         let p = TrackFragmentHeaderBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.default_sample_duration, Some(512));
         assert_eq!(p.default_sample_size, Some(3933));
-        assert_eq!(b, p.to_bytes());
+        assert_eq!(b, p.try_to_bytes().unwrap());
     }
     #[test]
     fn tfhd_full_flags() {
@@ -1845,11 +1845,11 @@ mod tests {
             default_sample_size: Some(256),
             default_sample_flags: Some(0x01010000),
         };
-        let b = t.to_bytes();
+        let b = t.try_to_bytes().unwrap();
         let p = TrackFragmentHeaderBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.base_data_offset, t.base_data_offset);
         assert_eq!(p.flags, flags);
-        assert_eq!(b, p.to_bytes());
+        assert_eq!(b, p.try_to_bytes().unwrap());
     }
 
     /// r05-W16: `tfhd` field presence is flag-driven (§8.8.7.1) while the
@@ -1872,7 +1872,7 @@ mod tests {
             default_sample_size: Some(99),
             default_sample_flags: Some(0x01010000),
         };
-        let b = t.to_bytes();
+        let b = t.try_to_bytes().unwrap();
         let p = TrackFragmentHeaderBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.base_data_offset, Some(0x1000), "base must not become 0");
         assert_eq!(p.sample_description_index, Some(1));
@@ -1898,7 +1898,7 @@ mod tests {
             default_sample_size: None,
             default_sample_flags: None,
         };
-        let b = t.to_bytes();
+        let b = t.try_to_bytes().unwrap();
         assert_eq!(b.len(), 16, "no value means no field on the wire");
         let p = TrackFragmentHeaderBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.flags, 0, "the unmatched presence bit is not written");
@@ -1932,7 +1932,7 @@ mod tests {
                 },
             ],
         };
-        let b = trun.to_bytes();
+        let b = trun.try_to_bytes().unwrap();
         let p = TrackFragmentRunBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.data_offset, Some(716), "data_offset must survive");
         assert_eq!(
@@ -1941,7 +1941,7 @@ mod tests {
             "only sample_duration"
         );
         assert_eq!(p.samples[0].sample_duration, Some(512));
-        assert_eq!(b, p.to_bytes());
+        assert_eq!(b, p.try_to_bytes().unwrap());
 
         // A gap in a per-sample field cannot be represented — a `trun` record
         // is fixed-width with no per-record presence bit.
@@ -2142,22 +2142,22 @@ mod tests {
     #[test]
     fn tfdt_v0() {
         let t = TrackFragmentBaseMediaDecodeTimeBox::new_v0(12345);
-        let b = t.to_bytes();
+        let b = t.try_to_bytes().unwrap();
         assert_eq!(b.len(), 16);
         let p = TrackFragmentBaseMediaDecodeTimeBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.base_media_decode_time(), 12345);
         assert!(p.version() == 0);
-        assert_eq!(b, p.to_bytes());
+        assert_eq!(b, p.try_to_bytes().unwrap());
     }
     #[test]
     fn tfdt_v1() {
         let t = TrackFragmentBaseMediaDecodeTimeBox::new_v1(0x123456789AB);
-        let b = t.to_bytes();
+        let b = t.try_to_bytes().unwrap();
         assert_eq!(b.len(), 20);
         let p = TrackFragmentBaseMediaDecodeTimeBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.base_media_decode_time(), 0x123456789AB);
         assert!(p.version() == 1);
-        assert_eq!(b, p.to_bytes());
+        assert_eq!(b, p.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -2185,12 +2185,12 @@ mod tests {
                 },
             ],
         };
-        let b = tr.to_bytes();
+        let b = tr.try_to_bytes().unwrap();
         let p = TrackFragmentRunBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.samples.len(), 2);
         assert_eq!(p.samples[0].sample_size, Some(3933));
         assert_eq!(p.samples[0].sample_composition_time_offset, Some(1024));
-        assert_eq!(b, p.to_bytes());
+        assert_eq!(b, p.try_to_bytes().unwrap());
     }
     #[test]
     fn trun_record_stride() {
@@ -2224,7 +2224,7 @@ mod tests {
                 sample_composition_time_offset: None,
             }],
         };
-        let orig = t.to_bytes();
+        let orig = t.try_to_bytes().unwrap();
         let m = TrackFragmentRunBox {
             version: 0,
             tr_flags: TRUN_SAMPLE_DURATION_PRESENT
@@ -2239,7 +2239,7 @@ mod tests {
                 sample_composition_time_offset: None,
             }],
         };
-        let mb = m.to_bytes();
+        let mb = m.try_to_bytes().unwrap();
         assert_ne!(mb, orig);
         // flags byte at position 10 (0-based: 0-3 size, 4-7 type, 8 ver, 9-11 flags)
         assert_eq!(mb[10] & 0x04, 0x04);
@@ -2250,7 +2250,7 @@ mod tests {
             samples: t.samples.clone(),
             ..m
         };
-        assert_eq!(m2.to_bytes(), orig);
+        assert_eq!(m2.try_to_bytes().unwrap(), orig);
     }
 
     #[test]
@@ -2284,12 +2284,12 @@ mod tests {
             }],
         };
         let traf = TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]);
-        let b = traf.to_bytes();
+        let b = traf.try_to_bytes().unwrap();
         let p = TrackFragmentBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.tfhd.track_id, TrackId::new(1));
         assert!(p.tfdt.is_some());
         assert_eq!(p.trun.len(), 1);
-        assert_eq!(b, p.to_bytes());
+        assert_eq!(b, p.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -2325,11 +2325,11 @@ mod tests {
         };
         let traf = TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]);
         let moof = MovieFragmentBox::new(mfhd, vec![traf]);
-        let b = moof.to_bytes();
+        let b = moof.try_to_bytes().unwrap();
         let p = MovieFragmentBox::parse_body(&b[8..]).unwrap();
         assert_eq!(p.mfhd.sequence_number, 1);
         assert_eq!(p.traf.len(), 1);
-        assert_eq!(b, p.to_bytes());
+        assert_eq!(b, p.try_to_bytes().unwrap());
     }
 
     // ── r05-W11: a traf with no trun, and unknown children preserved ──────
@@ -2353,7 +2353,7 @@ mod tests {
         assert_eq!(traf.tfhd.track_id, TrackId::new(7));
         assert_eq!(traf.tfhd.flags, TFHD_DURATION_IS_EMPTY);
         assert!(traf.trun.is_empty());
-        let out = traf.to_bytes();
+        let out = traf.try_to_bytes().unwrap();
         assert_eq!(&out[8..], body, "traf body round-trip");
         assert_eq!(&out[..8], &[0, 0, 0, 24, b't', b'r', b'a', b'f']);
     }
@@ -2376,7 +2376,7 @@ mod tests {
         assert_eq!(traf.tfhd.track_id, TrackId::new(1));
         assert_eq!(traf.trun.len(), 1);
         assert_eq!(traf.order.len(), 3);
-        let out = traf.to_bytes();
+        let out = traf.try_to_bytes().unwrap();
         assert_eq!(&out[8..], body, "children must round-trip in order");
     }
 
@@ -2394,7 +2394,7 @@ mod tests {
         assert_eq!(moof.mfhd.sequence_number, 3);
         assert_eq!(moof.traf.len(), 1);
         assert_eq!(moof.order.len(), 3);
-        let out = moof.to_bytes();
+        let out = moof.try_to_bytes().unwrap();
         assert_eq!(&out[8..], body, "moof must round-trip byte-identically");
     }
 
@@ -2420,7 +2420,7 @@ mod tests {
                 assert_eq!(parsed.traf[0].tfdt.unwrap().base_media_decode_time(), 0);
                 assert_eq!(parsed.traf[0].trun.len(), 1);
                 assert_eq!(parsed.traf[0].trun[0].samples.len(), 25);
-                let serialized = parsed.to_bytes();
+                let serialized = parsed.try_to_bytes().unwrap();
                 assert_eq!(serialized.len(), moof_bytes.len());
                 assert_eq!(
                     serialized, moof_bytes,
@@ -2531,7 +2531,7 @@ mod tests {
         };
         let traf = TrackFragmentBox::new(tfhd, None, vec![trun]);
         let moof = MovieFragmentBox::new(MovieFragmentHeaderBox::new(1), vec![traf]);
-        let unprotected = moof.to_bytes();
+        let unprotected = moof.try_to_bytes().unwrap();
 
         let entries = alloc::vec![
             crate::cenc::SampleEncryptionEntry {

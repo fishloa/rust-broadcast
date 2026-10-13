@@ -192,13 +192,13 @@ mod tests {
         assert!(!seg.display_window_flag);
         assert_eq!(seg.display_width, 719);
         assert_eq!(seg.display_height, 287);
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test: mutation changes output
         let mut seg2 = seg.clone();
         seg2.display_width = 100;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = DisplayDefinitionSegment::parse(&out2).unwrap();
         assert_eq!(reparse.display_width, 100);
@@ -227,13 +227,13 @@ mod tests {
         assert!(seg.display_window_flag);
         assert_eq!(seg.display_window_horizontal_position_minimum, Some(50));
         assert_eq!(seg.display_window_horizontal_position_maximum, Some(670));
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test: clearing the flag drops window
         let mut seg2 = seg.clone();
         seg2.display_window_flag = false;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2.len(), out.len());
         let reparse = DisplayDefinitionSegment::parse(&out2).unwrap();
         assert!(!reparse.display_window_flag);

@@ -116,18 +116,18 @@ mod tests {
             preroll: 40,
             dtmf_chars: vec![b'1', b'2', b'3', b'*'],
         };
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes[0], TAG);
         let back = DtmfDescriptor::parse(&bytes).unwrap();
         assert_eq!(d, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
         assert_eq!(back.preroll_duration(), core::time::Duration::from_secs(4));
     }
 
     #[test]
     fn round_trip_empty_chars() {
         let d = DtmfDescriptor::default();
-        let back = DtmfDescriptor::parse(&d.to_bytes()).unwrap();
+        let back = DtmfDescriptor::parse(&d.try_to_bytes().unwrap()).unwrap();
         assert_eq!(d, back);
     }
 }

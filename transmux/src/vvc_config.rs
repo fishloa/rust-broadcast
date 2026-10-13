@@ -975,7 +975,7 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         let body = fixture_vvcc_body();
         // Parse the record (skip the 4-byte FullBox header) and re-serialize it.
         let record = VvcDecoderConfigurationRecord::parse(&body[4..]).unwrap();
-        let serialized = record.to_bytes();
+        let serialized = record.try_to_bytes().unwrap();
         assert_eq!(
             serialized,
             &body[4..],
@@ -988,7 +988,7 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         // Whole vvcC box (header + FullBox + record) round-trips byte-exactly.
         let body = fixture_vvcc_body();
         let boxed = VvcConfigurationBox::parse_body(&body).unwrap();
-        let full = boxed.to_bytes();
+        let full = boxed.try_to_bytes().unwrap();
         // The re-serialized box has the 8-byte box header + FullBox + record;
         // its body (bytes 8..) must equal the parsed body.
         assert_eq!(&full[8..], &body[..]);
@@ -1000,9 +1000,9 @@ f56a4bc97a89422c81168412421c43425c8e54330463c50000003001000000300c1\
         // Not a raw passthrough: mutating a decoded field changes the output.
         let body = fixture_vvcc_body();
         let mut record = VvcDecoderConfigurationRecord::parse(&body[4..]).unwrap();
-        let before = record.to_bytes();
+        let before = record.try_to_bytes().unwrap();
         record.max_picture_width = 640;
-        let after = record.to_bytes();
+        let after = record.try_to_bytes().unwrap();
         assert_ne!(
             before, after,
             "mutating max_picture_width must change bytes"

@@ -156,14 +156,14 @@ mod tests {
     #[test]
     fn round_trip() {
         let r = DATE_TIME;
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x00, 0x24, 0x00, 0x41]);
         assert_eq!(ResourceId::parse(&bytes).unwrap(), r);
     }
 
     #[test]
     fn mutating_changes_bytes() {
-        let mut bytes = MMI.to_bytes();
+        let mut bytes = MMI.try_to_bytes().unwrap();
         let a = ResourceId::parse(&bytes).unwrap();
         bytes[0] ^= 0xFF;
         let b = ResourceId::parse(&bytes).unwrap();

@@ -425,7 +425,7 @@ fn real_fixture_remux_is_lossless_and_parseable() {
             0,
             0,
             0,
-            Some(DecoderSpecificInfo::new(asc.to_bytes())),
+            Some(DecoderSpecificInfo::new(asc.try_to_bytes().unwrap())),
         )),
         Some(SLConfigDescriptor::predefined_two()),
     ));

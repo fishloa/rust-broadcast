@@ -33,7 +33,7 @@ fn main() {
         dark: Vec::new(),
     };
 
-    let bytes = preface.to_bytes();
+    let bytes = preface.try_to_bytes().unwrap();
     println!("serialized Preface: {} bytes", bytes.len());
 
     let parsed = Preface::parse(&bytes).expect("parse Preface");

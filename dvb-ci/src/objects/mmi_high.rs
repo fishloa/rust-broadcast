@@ -613,7 +613,7 @@ mod tests {
     #[test]
     fn text_round_trips_and_more_bites() {
         let t = text(false, b"HELLO");
-        let bytes = t.to_bytes();
+        let bytes = t.try_to_bytes().unwrap();
         assert_eq!(
             bytes,
             [0x9F, 0x88, 0x03, 0x05, b'H', b'E', b'L', b'L', b'O']
@@ -622,7 +622,7 @@ mod tests {
         // flipping `more` flips the tag byte.
         let mut other = t.clone();
         other.more = true;
-        let ob = other.to_bytes();
+        let ob = other.try_to_bytes().unwrap();
         assert_eq!(ob[2], 0x04);
         assert_ne!(bytes, ob);
     }
@@ -630,7 +630,7 @@ mod tests {
     #[test]
     fn text_empty_is_null_object() {
         let t = text(false, b"");
-        let bytes = t.to_bytes();
+        let bytes = t.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x88, 0x03, 0x00]);
         assert_eq!(Text::parse(&bytes).unwrap(), t);
     }
@@ -645,7 +645,7 @@ mod tests {
             answer_text_length: 4,
             text_chars: prompt,
         };
-        let bytes = e.to_bytes();
+        let bytes = e.try_to_bytes().unwrap();
         // tag 9F8807, body = reserved|blind(0xFF) + answer_text_length(0x04) + prompt
         assert_eq!(&bytes[..3], &[0x9F, 0x88, 0x07]);
         assert_eq!(bytes[4], 0xFF); // reserved(7)=1 + blind_answer=1
@@ -656,7 +656,7 @@ mod tests {
         // bite: clear blind_answer changes the byte.
         let mut other = e.clone();
         other.blind_answer = false;
-        let ob = other.to_bytes();
+        let ob = other.try_to_bytes().unwrap();
         assert_eq!(ob[4], 0xFE);
         assert_ne!(bytes, ob);
     }
@@ -668,7 +668,7 @@ mod tests {
             answ_id: AnswId::Answer,
             text_chars: b"1234",
         };
-        let bytes = a.to_bytes();
+        let bytes = a.try_to_bytes().unwrap();
         assert_eq!(
             bytes,
             [0x9F, 0x88, 0x08, 0x05, 0x01, b'1', b'2', b'3', b'4']
@@ -681,7 +681,7 @@ mod tests {
             answ_id: AnswId::Cancel,
             text_chars: &[],
         };
-        let cb = c.to_bytes();
+        let cb = c.try_to_bytes().unwrap();
         assert_eq!(cb, [0x9F, 0x88, 0x08, 0x01, 0x00]);
         assert_eq!(Answ::parse(&cb).unwrap(), c);
         assert_eq!(c.answ_id.name(), "cancel");
@@ -689,7 +689,7 @@ mod tests {
         // bite
         let mut other = a.clone();
         other.text_chars = b"9999";
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -705,7 +705,7 @@ mod tests {
             bottom: text(false, b""),
             choices: alloc::vec![text(false, b"YES"), text(false, b"NO")],
         };
-        let bytes = m.to_bytes();
+        let bytes = m.try_to_bytes().unwrap();
         assert_eq!(&bytes[..3], &[0x9F, 0x88, 0x09]);
         let parsed = Menu::parse(&bytes).unwrap();
         assert_eq!(parsed, m);
@@ -719,12 +719,12 @@ mod tests {
         // bite: mutate choice_nb.
         let mut other = m.clone();
         other.choice_nb = 0xFF;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
 
         // more bite: flipping `more` flips the tag.
         let mut more = m.clone();
         more.more = true;
-        let mb = more.to_bytes();
+        let mb = more.try_to_bytes().unwrap();
         assert_eq!(mb[2], 0x0A);
         assert_ne!(bytes, mb);
     }
@@ -740,7 +740,7 @@ mod tests {
             bottom: text(false, b""),
             choices: alloc::vec![text(false, b"A"), text(false, b"B"), text(false, b"C")],
         });
-        let bytes = l.to_bytes();
+        let bytes = l.try_to_bytes().unwrap();
         assert_eq!(&bytes[..3], &[0x9F, 0x88, 0x0C]);
         let parsed = List::parse(&bytes).unwrap();
         assert_eq!(parsed, l);
@@ -749,7 +749,7 @@ mod tests {
         // list more tag flips.
         let mut more = l.clone();
         more.0.more = true;
-        let mb = more.to_bytes();
+        let mb = more.try_to_bytes().unwrap();
         assert_eq!(mb[2], 0x0D);
         assert_eq!(List::parse(&mb).unwrap(), more);
         assert_ne!(bytes, mb);
@@ -761,13 +761,13 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             choice_ref: 0x02,
         };
-        let bytes = a.to_bytes();
+        let bytes = a.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x88, 0x0B, 0x01, 0x02]);
         assert_eq!(MenuAnsw::parse(&bytes).unwrap(), a);
         let other = MenuAnsw {
             length_form: crate::length::LengthForm::Minimal,
             choice_ref: 0x00,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 }

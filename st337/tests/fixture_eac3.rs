@@ -53,7 +53,7 @@ fn wraps_real_eac3_frame_and_parses_back() {
     // PROVENANCE doc for why this differs from ffmpeg's own byte-count Pd).
     assert_eq!(burst.preamble.length_code, 834 * 8);
 
-    let bytes = burst.to_bytes();
+    let bytes = burst.try_to_bytes().unwrap();
     // Pa/Pb are the real, independently-confirmed 16-bit-mode sync words.
     assert_eq!(&bytes[0..2], &st337::SYNC_WORD_PA.to_le_bytes());
     assert_eq!(&bytes[2..4], &st337::SYNC_WORD_PB.to_le_bytes());
@@ -97,10 +97,10 @@ fn mutating_error_flag_changes_only_pc_bytes() {
     // echoing a stored raw buffer (guards against a `self.raw` passthrough).
     let payload = real_eac3_frame();
     let mut burst = build_burst(&payload);
-    let original = burst.to_bytes();
+    let original = burst.try_to_bytes().unwrap();
 
     burst.preamble.error_flag = true;
-    let mutated = burst.to_bytes();
+    let mutated = burst.try_to_bytes().unwrap();
 
     assert_ne!(
         original, mutated,

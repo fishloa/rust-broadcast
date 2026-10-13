@@ -402,7 +402,7 @@ mod tests {
             original_network_id: 0x0001,
             ok_to_disrupt_service: true,
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         // body 8; tag(3)+len(1)+8 = 12; byte7 = 0x01 (OKToDisrupt).
         assert_eq!(
             bytes,
@@ -413,8 +413,8 @@ mod tests {
         assert_eq!(EitSectionReq::parse(&bytes).unwrap(), req);
         let mut other = req;
         other.ok_to_disrupt_service = false;
-        assert_ne!(bytes, other.to_bytes());
-        assert_eq!(other.to_bytes()[11], 0x00);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
+        assert_eq!(other.try_to_bytes().unwrap()[11], 0x00);
     }
 
     #[test]
@@ -442,7 +442,7 @@ mod tests {
             response_code: EitResponseCode::SectionFound,
             events: alloc::vec![e0, e1],
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         // event0 = 12 fixed + 2 desc = 14; event1 = 12; Length = 26 = 0x1A.
         // byte4(prefix0) = (0b10<<4) | (26>>8) = 0x20 ; byte5 = 26 = 0x1A.
         assert_eq!(bytes[0..6], [0x9F, 0x80, 0x11, 0x1C, 0x20, 0x1A]);
@@ -456,7 +456,7 @@ mod tests {
         assert!(parsed.events[1].free_ca_mode);
         let mut other = ack.clone();
         other.events[0].event_id = 0x1003;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -466,7 +466,7 @@ mod tests {
             response_code: EitResponseCode::NotAvailable,
             events: alloc::vec![],
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         // byte4 = (0b01<<4)|0 = 0x10 ; Length = 0.
         assert_eq!(bytes, [0x9F, 0x80, 0x11, 0x02, 0x10, 0x00]);
         assert_eq!(EitSectionAck::parse(&bytes).unwrap(), ack);
@@ -483,7 +483,8 @@ mod tests {
             original_network_id: 1,
             ok_to_disrupt_service: false,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert!(matches!(
             BroadcastServiceGatewayApdu::parse(&req).unwrap(),
             BroadcastServiceGatewayApdu::EitSectionReq(_)
@@ -493,13 +494,13 @@ mod tests {
     #[test]
     fn bsg_delegates_generic_gateway_tags() {
         // 9F8000 (ServiceListReq) is inherited from the Generic Service Gateway.
-        let req = ServiceListReq::default().to_bytes();
+        let req = ServiceListReq::default().try_to_bytes().unwrap();
         let parsed = BroadcastServiceGatewayApdu::parse(&req).unwrap();
         assert!(matches!(
             parsed,
             BroadcastServiceGatewayApdu::ServiceGateway(ServiceGatewayApdu::ServiceListReq(_))
         ));
-        assert_eq!(parsed.to_bytes(), req);
+        assert_eq!(parsed.try_to_bytes().unwrap(), req);
 
         // 9F8006 ServiceDescAck inherited too.
         use super::super::service_gateway::ServiceDescAck;
@@ -515,13 +516,14 @@ mod tests {
             free_ca_mode: false,
             descriptors: &[0x48, 0x01, 0x01],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = BroadcastServiceGatewayApdu::parse(&sda).unwrap();
         assert!(matches!(
             parsed,
             BroadcastServiceGatewayApdu::ServiceGateway(ServiceGatewayApdu::ServiceDescAck(_))
         ));
-        assert_eq!(parsed.to_bytes(), sda);
+        assert_eq!(parsed.try_to_bytes().unwrap(), sda);
     }
 
     #[test]
@@ -563,7 +565,7 @@ mod tests {
             response_code: EitResponseCode::SectionFound,
             events: alloc::vec![e],
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         assert_eq!(EitSectionAck::parse(&bytes).unwrap(), ack);
     }
 }

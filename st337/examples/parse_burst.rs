@@ -29,7 +29,7 @@ fn main() {
         &payload,
     )
     .expect("build burst");
-    let bytes = burst.to_bytes();
+    let bytes = burst.try_to_bytes().unwrap();
 
     let parsed = Burst::parse(&bytes).expect("parse burst");
     println!("data_type: {}", parsed.preamble.data_type);

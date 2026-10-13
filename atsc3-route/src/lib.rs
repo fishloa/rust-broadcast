@@ -103,7 +103,7 @@
 //!     payload: &payload,
 //! };
 //!
-//! let bytes = pkt.to_bytes();
+//! let bytes = pkt.try_to_bytes().unwrap();
 //! let re = RoutePacket::parse(&bytes).unwrap();
 //! assert_eq!(re, pkt);
 //! assert!(matches!(re.codepoint(), Codepoint::Indirect(128)));

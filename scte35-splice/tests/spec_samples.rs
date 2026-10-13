@@ -60,7 +60,7 @@ fn all_section14_samples_parse_and_round_trip() {
         assert_eq!(bytes[0], 0xFC, "{label}: table_id");
         // serialize must reproduce the wire bytes exactly (recomputes CRC).
         assert_eq!(
-            section.to_bytes(),
+            section.try_to_bytes().unwrap(),
             bytes,
             "{label}: round-trip is not byte-identical"
         );
@@ -73,7 +73,7 @@ fn all_section14_samples_reparse_equal() {
     for (label, b64) in SAMPLES {
         let bytes = STANDARD.decode(b64).unwrap();
         let a = SpliceInfoSection::parse(&bytes).unwrap_or_else(|e| panic!("{label}: {e:?}"));
-        let reser = a.to_bytes();
+        let reser = a.try_to_bytes().unwrap();
         let b =
             SpliceInfoSection::parse(&reser).unwrap_or_else(|e| panic!("{label}: reparse {e:?}"));
         assert_eq!(a, b, "{label}: serialize → parse not equal");

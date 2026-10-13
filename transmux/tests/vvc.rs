@@ -88,7 +88,7 @@ fn vvc_demux_yields_vvc_config_byte_exact() {
     // The reconstructed vvcC box serialized back must equal the source box body
     // (FullBox header + record). `config` is the VvcConfigurationBox; its full
     // serialization is `[box header][FullBox+record]`, so bytes 8.. == oracle.
-    let full = config.to_bytes();
+    let full = config.try_to_bytes().unwrap();
     assert_eq!(&full[4..8], b"vvcC");
     assert_eq!(
         &full[8..],
@@ -207,12 +207,12 @@ fn vvc_record_round_trip_and_mutation() {
     // Parse the vvcC box body (FullBox header + record) then re-serialize.
     let boxed = VvcConfigurationBox::parse_body(&oracle).expect("parse vvcC body");
     // The whole box (header + FullBox + record) re-serializes with body == oracle.
-    let full = boxed.to_bytes();
+    let full = boxed.try_to_bytes().unwrap();
     assert_eq!(&full[8..], &oracle[..], "vvcC box body round-trip");
 
     // The record alone (skip the 4-byte FullBox header) also round-trips exactly.
     let record = VvcDecoderConfigurationRecord::parse(&oracle[4..]).expect("parse record");
-    let reser = record.to_bytes();
+    let reser = record.try_to_bytes().unwrap();
     assert_eq!(&reser[..], &oracle[4..], "record round-trip byte-identical");
 
     // Sanity: the arrays decoded to typed SPS/PPS NAL types.
@@ -233,7 +233,7 @@ fn vvc_record_round_trip_and_mutation() {
     // and the change is exactly at the max_picture_width field (parses back).
     let mut mutated = record.clone();
     mutated.max_picture_width = 1920;
-    let mutated_bytes = mutated.to_bytes();
+    let mutated_bytes = mutated.try_to_bytes().unwrap();
     assert_ne!(
         mutated_bytes, reser,
         "mutating a decoded field must change the serialized record"

@@ -19,7 +19,7 @@ fn main() {
     println!("  Processing delay: {} us", rtt_echo.processing_delay_us);
     println!("  Padding: {} bytes", rtt_echo.padding.len());
 
-    let bytes = rtt_echo.to_bytes();
+    let bytes = rtt_echo.try_to_bytes().unwrap();
     println!("Serialized to {} bytes", bytes.len());
 
     match RttEcho::parse(&bytes) {

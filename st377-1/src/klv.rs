@@ -234,8 +234,8 @@ mod tests {
         let a = KlvItem::new([1u8; 16], &[10, 20]);
         let b = KlvItem::new([2u8; 16], &[30, 40, 50]);
         let mut buf = Vec::new();
-        buf.extend(a.to_bytes());
-        buf.extend(b.to_bytes());
+        buf.extend(a.try_to_bytes().unwrap());
+        buf.extend(b.try_to_bytes().unwrap());
 
         let items = collect_klv_items(&buf).unwrap();
         assert_eq!(items.len(), 2);
@@ -303,7 +303,7 @@ mod tests {
     fn freshly_built_item_uses_minimal_form() {
         let item = KlvItem::new([0xAAu8; 16], &[1, 2, 3, 4]);
         assert_eq!(item.len_size, BerLength::Minimal);
-        let bytes = item.to_bytes();
+        let bytes = item.try_to_bytes().unwrap();
         assert_eq!(&bytes[16..17], &[0x04], "value 4 must use short form");
     }
 }

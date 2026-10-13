@@ -356,27 +356,27 @@ mod tests {
     #[test]
     fn material_package_round_trip() {
         let mp = sample_material_package();
-        let bytes = mp.to_bytes();
+        let bytes = mp.try_to_bytes().unwrap();
         let parsed = MaterialPackage::parse(&bytes).unwrap();
         assert_eq!(parsed, mp);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn material_package_no_name_round_trip() {
         let mut mp = sample_material_package();
         mp.name = None;
-        let bytes = mp.to_bytes();
+        let bytes = mp.try_to_bytes().unwrap();
         let parsed = MaterialPackage::parse(&bytes).unwrap();
         assert_eq!(parsed.name, None);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn material_package_dark_preserved() {
         let mut mp = sample_material_package();
         mp.dark = alloc::vec![(0x9001, alloc::vec![1, 2, 3])];
-        let bytes = mp.to_bytes();
+        let bytes = mp.try_to_bytes().unwrap();
         let parsed = MaterialPackage::parse(&bytes).unwrap();
         assert_eq!(parsed.dark, mp.dark);
     }
@@ -384,7 +384,7 @@ mod tests {
     #[test]
     fn material_package_wrong_kind_rejected() {
         let sp = sample_source_package();
-        let bytes = sp.to_bytes();
+        let bytes = sp.try_to_bytes().unwrap();
         assert!(matches!(
             MaterialPackage::parse(&bytes),
             Err(Error::KeyPrefixMismatch { .. })
@@ -394,26 +394,26 @@ mod tests {
     #[test]
     fn source_package_round_trip() {
         let sp = sample_source_package();
-        let bytes = sp.to_bytes();
+        let bytes = sp.try_to_bytes().unwrap();
         let parsed = SourcePackage::parse(&bytes).unwrap();
         assert_eq!(parsed, sp);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn source_package_with_name_round_trip() {
         let mut sp = sample_source_package();
         sp.name = Some(String::from("File Source"));
-        let bytes = sp.to_bytes();
+        let bytes = sp.try_to_bytes().unwrap();
         let parsed = SourcePackage::parse(&bytes).unwrap();
         assert_eq!(parsed.name.as_deref(), Some("File Source"));
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn source_package_wrong_kind_rejected() {
         let mp = sample_material_package();
-        let bytes = mp.to_bytes();
+        let bytes = mp.try_to_bytes().unwrap();
         assert!(matches!(
             SourcePackage::parse(&bytes),
             Err(Error::KeyPrefixMismatch { .. })
@@ -423,9 +423,9 @@ mod tests {
     #[test]
     fn mutation_changes_serialized_bytes() {
         let mut mp = sample_material_package();
-        let before = mp.to_bytes();
+        let before = mp.try_to_bytes().unwrap();
         mp.tracks.push([0x66; 16]);
-        let after = mp.to_bytes();
+        let after = mp.try_to_bytes().unwrap();
         assert_ne!(before, after);
         assert_eq!(MaterialPackage::parse(&after).unwrap().tracks.len(), 3);
     }

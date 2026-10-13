@@ -8,11 +8,11 @@ use rtp_packet::rfc8285::{ExtensionElements, OneByteElements, TwoByteElements, p
 fuzz_target!(|data: &[u8]| {
     // RFC 3550 §5.1 fixed header + round trip.
     if let Ok(pkt) = RtpPacket::parse(data) {
-        let serialized = pkt.to_bytes();
+        let serialized = pkt.try_to_bytes().unwrap();
         if let Ok(reparsed) = RtpPacket::parse(&serialized) {
             assert_eq!(
                 serialized,
-                reparsed.to_bytes(),
+                reparsed.try_to_bytes().unwrap(),
                 "rtp packet roundtrip mismatch"
             );
         }
@@ -23,10 +23,10 @@ fuzz_target!(|data: &[u8]| {
             if let Ok(elements) = parse_extensions(ext) {
                 match &elements {
                     ExtensionElements::OneByte(e) => {
-                        let _ = e.to_bytes();
+                        let _ = e.try_to_bytes().unwrap();
                     }
                     ExtensionElements::TwoByte(e) => {
-                        let _ = e.to_bytes();
+                        let _ = e.try_to_bytes().unwrap();
                     }
                     _ => {}
                 }
@@ -38,21 +38,21 @@ fuzz_target!(|data: &[u8]| {
     // bytes, independent of RtpPacket framing, for much better coverage of
     // the padding/stop-marker/malformed-ID-0 scan logic (§4.1.2/§4.2/§4.3).
     if let Ok(one_byte) = OneByteElements::parse(data) {
-        let serialized = one_byte.to_bytes();
+        let serialized = one_byte.try_to_bytes().unwrap();
         if let Ok(reparsed) = OneByteElements::parse(&serialized) {
             assert_eq!(
                 serialized,
-                reparsed.to_bytes(),
+                reparsed.try_to_bytes().unwrap(),
                 "one-byte extension elements roundtrip mismatch"
             );
         }
     }
     if let Ok(two_byte) = TwoByteElements::parse(data) {
-        let serialized = two_byte.to_bytes();
+        let serialized = two_byte.try_to_bytes().unwrap();
         if let Ok(reparsed) = TwoByteElements::parse(&serialized) {
             assert_eq!(
                 serialized,
-                reparsed.to_bytes(),
+                reparsed.try_to_bytes().unwrap(),
                 "two-byte extension elements roundtrip mismatch"
             );
         }

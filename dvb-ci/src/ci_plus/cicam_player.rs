@@ -1483,7 +1483,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             service_location: &[0x3C, 0x53, 0x4C, 0x3E], // "<SL>"
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         // tag(9F A0 00) len(06) svc_len(00 04) 3C 53 4C 3E.
         assert_eq!(
             bytes,
@@ -1494,7 +1494,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             service_location: &[0x3C, 0x53, 0x4C, 0x00],
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1503,14 +1503,14 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             player_verify_status: PlayerVerifyStatus::Error,
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0xA0, 0x01, 0x01, 0x01]);
         assert_eq!(PlayerVerifyReply::parse(&bytes).unwrap(), r);
     }
 
     #[test]
     fn capabilities_req_round_trips() {
-        let bytes = PlayerCapabilitiesReq::default().to_bytes();
+        let bytes = PlayerCapabilitiesReq::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0xA0, 0x02, 0x00]);
         assert_eq!(
             PlayerCapabilitiesReq::parse(&bytes).unwrap(),
@@ -1533,7 +1533,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         // len = 2 + 2*2 = 6. count(00 02) then 0x1F 03 / 0x2F 05.
         assert_eq!(bytes[0..4], [0x9F, 0xA0, 0x03, 0x06]);
         assert_eq!(&bytes[4..6], &[0x00, 0x02]);
@@ -1541,7 +1541,7 @@ mod tests {
         assert_eq!(PlayerCapabilitiesReply::parse(&bytes).unwrap(), r);
         let mut other = r.clone();
         other.component_types[0].component_type = 0x04;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1554,7 +1554,7 @@ mod tests {
             linear_channel: true,
             pmt: &[0x02, 0xB0, 0x12],
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         // body = 7 + 3 = 10 = 0x0A.
         assert_eq!(bytes[0..4], [0x9F, 0xA0, 0x04, 0x0A]);
         assert_eq!(&bytes[4..6], &[0x00, 0x34]); // input_max_bitrate
@@ -1565,8 +1565,8 @@ mod tests {
         assert_eq!(PlayerStartReq::parse(&bytes).unwrap(), req);
         let mut other = req.clone();
         other.linear_channel = false;
-        assert_eq!(other.to_bytes()[8], 0x00);
-        assert_ne!(bytes, other.to_bytes());
+        assert_eq!(other.try_to_bytes().unwrap()[8], 0x00);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1576,7 +1576,7 @@ mod tests {
             lts_id: 0x07,
             input_status: InputStatus::InsufficientBitrate,
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0xA0, 0x05, 0x02, 0x07, 0x02]);
         assert_eq!(PlayerStartReply::parse(&bytes).unwrap(), r);
     }
@@ -1587,7 +1587,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             service_location: &[0xAA, 0xBB],
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0xA0, 0x06, 0x04, 0x00, 0x02, 0xAA, 0xBB]);
         assert_eq!(PlayerPlayReq::parse(&bytes).unwrap(), req);
     }
@@ -1600,14 +1600,14 @@ mod tests {
             lts_id: 0x09,
             player_status: PlayStatus::ContentBlocked,
         };
-        let bytes = e.to_bytes();
+        let bytes = e.try_to_bytes().unwrap();
         // body=3: reserved+valid(01) LTS_id(09) play_status(03).
         assert_eq!(bytes, [0x9F, 0xA0, 0x07, 0x03, 0x01, 0x09, 0x03]);
         assert_eq!(PlayerStatusError::parse(&bytes).unwrap(), e);
         let mut other = e;
         other.valid_lts_id = false;
-        assert_eq!(other.to_bytes()[4], 0x00);
-        assert_ne!(bytes, other.to_bytes());
+        assert_eq!(other.try_to_bytes().unwrap()[4], 0x00);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1620,7 +1620,7 @@ mod tests {
                 seek_position: -1000,
             },
         };
-        let bytes = c.to_bytes();
+        let bytes = c.try_to_bytes().unwrap();
         // body = LTS_id(03) cmd(01) seek_mode(01) seek_position(-1000 = FF FF FC 18).
         assert_eq!(bytes[0..4], [0x9F, 0xA0, 0x08, 0x07]);
         assert_eq!(bytes[4], 0x03);
@@ -1633,7 +1633,7 @@ mod tests {
             seek_mode: SeekMode::Absolute,
             seek_position: -1000,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1643,7 +1643,7 @@ mod tests {
             lts_id: 0x01,
             command: ControlCommand::SetSpeed { speed: -100 },
         };
-        let bytes = c.to_bytes();
+        let bytes = c.try_to_bytes().unwrap();
         // body = LTS_id(01) cmd(02) speed(-100 = FF 9C).
         assert_eq!(bytes[0..4], [0x9F, 0xA0, 0x08, 0x04]);
         assert_eq!(bytes[4], 0x01);
@@ -1672,7 +1672,10 @@ mod tests {
             lts_id: 1,
             command: ControlCommand::Reserved(0x00),
         };
-        assert_eq!(ok.to_bytes(), [0x9F, 0xA0, 0x08, 0x02, 0x01, 0x00]);
+        assert_eq!(
+            ok.try_to_bytes().unwrap(),
+            [0x9F, 0xA0, 0x08, 0x02, 0x01, 0x00]
+        );
         // ...but one that arrives with a payload is rejected, not truncated.
         let with_payload = [0x9F, 0xA0, 0x08, 0x03, 0x01, 0x00, 0xEE];
         assert!(PlayerControlReq::parse(&with_payload).is_err());
@@ -1687,7 +1690,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x05,
         };
-        let rb = req.to_bytes();
+        let rb = req.try_to_bytes().unwrap();
         assert_eq!(rb, [0x9F, 0xA0, 0x09, 0x01, 0x05]);
         assert_eq!(PlayerInfoReq::parse(&rb).unwrap(), req);
 
@@ -1698,7 +1701,7 @@ mod tests {
             position: 0x0000_003C,
             speed: 100,
         };
-        let bytes = reply.to_bytes();
+        let bytes = reply.try_to_bytes().unwrap();
         // body = 11 = 0x0B.
         assert_eq!(bytes[0..4], [0x9F, 0xA0, 0x0A, 0x0B]);
         assert_eq!(bytes[4], 0x05);
@@ -1714,15 +1717,18 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x02,
         };
-        assert_eq!(stop.to_bytes(), [0x9F, 0xA0, 0x0B, 0x01, 0x02]);
-        assert_eq!(PlayerStop::parse(&stop.to_bytes()).unwrap(), stop);
+        assert_eq!(stop.try_to_bytes().unwrap(), [0x9F, 0xA0, 0x0B, 0x01, 0x02]);
+        assert_eq!(
+            PlayerStop::parse(&stop.try_to_bytes().unwrap()).unwrap(),
+            stop
+        );
 
         let end = PlayerEnd {
             length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x02,
         };
-        assert_eq!(end.to_bytes(), [0x9F, 0xA0, 0x0C, 0x01, 0x02]);
-        assert_eq!(PlayerEnd::parse(&end.to_bytes()).unwrap(), end);
+        assert_eq!(end.try_to_bytes().unwrap(), [0x9F, 0xA0, 0x0C, 0x01, 0x02]);
+        assert_eq!(PlayerEnd::parse(&end.try_to_bytes().unwrap()).unwrap(), end);
     }
 
     #[test]
@@ -1732,7 +1738,7 @@ mod tests {
             lts_id: 0x04,
             beginning: true,
         };
-        let bytes = e.to_bytes();
+        let bytes = e.try_to_bytes().unwrap();
         // reserved(7)=0x7F, beginning=1 -> 0xFE | 0x01 = 0xFF.
         assert_eq!(bytes, [0x9F, 0xA0, 0x0D, 0x02, 0x04, 0xFF]);
         assert_eq!(PlayerAssetEnd::parse(&bytes).unwrap(), e);
@@ -1742,7 +1748,10 @@ mod tests {
             beginning: false,
         };
         // reserved still 0x7F<<1 = 0xFE, beginning=0.
-        assert_eq!(other.to_bytes(), [0x9F, 0xA0, 0x0D, 0x02, 0x04, 0xFE]);
+        assert_eq!(
+            other.try_to_bytes().unwrap(),
+            [0x9F, 0xA0, 0x0D, 0x02, 0x04, 0xFE]
+        );
     }
 
     #[test]
@@ -1752,7 +1761,7 @@ mod tests {
             lts_id: 0x08,
             pmt: &[0x02, 0xB0],
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         // body = 3 + 2 = 5. LTS_id(08) PMT_length(00 02) 02 B0.
         assert_eq!(
             bytes,
@@ -1768,7 +1777,7 @@ mod tests {
             lts_id: 0x06,
             update_status: UpdateStatus::RequestRefused,
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         // The authoritative tag is 0x9FA00F, NOT the Table-69 0x9FA005 slip.
         assert_eq!(&bytes[0..3], &[0x9F, 0xA0, 0x0F]);
         assert_ne!(&bytes[0..3], &[0x9F, 0xA0, 0x05]); // not the start_reply slip tag
@@ -1784,18 +1793,21 @@ mod tests {
                 length_form: crate::length::LengthForm::Minimal,
                 service_location: &[]
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerVerifyReply {
                 length_form: crate::length::LengthForm::Minimal,
                 player_verify_status: PlayerVerifyStatus::Ok
             }
-            .to_bytes(),
-            PlayerCapabilitiesReq::default().to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
+            PlayerCapabilitiesReq::default().try_to_bytes().unwrap(),
             PlayerCapabilitiesReply {
                 length_form: crate::length::LengthForm::Minimal,
                 component_types: alloc::vec![]
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerStartReq {
                 length_form: crate::length::LengthForm::Minimal,
                 input_max_bitrate: 0,
@@ -1803,36 +1815,42 @@ mod tests {
                 linear_channel: false,
                 pmt: &[]
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerStartReply {
                 length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
                 input_status: InputStatus::Ok
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerPlayReq {
                 length_form: crate::length::LengthForm::Minimal,
                 service_location: &[]
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerStatusError {
                 length_form: crate::length::LengthForm::Minimal,
                 valid_lts_id: false,
                 lts_id: 0,
                 player_status: PlayStatus::Unrecoverable
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerControlReq {
                 length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
                 command: ControlCommand::SetSpeed { speed: 0 }
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerInfoReq {
                 length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerInfoReply {
                 length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
@@ -1840,39 +1858,45 @@ mod tests {
                 position: 0,
                 speed: 0
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerStop {
                 length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerEnd {
                 length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerAssetEnd {
                 length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
                 beginning: false
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerUpdateReq {
                 length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
                 pmt: &[0x00]
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             PlayerUpdateReply {
                 length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
                 update_status: UpdateStatus::Ok
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
         ];
         for c in &cases {
             let parsed = CicamPlayerApdu::parse(c).unwrap();
-            assert_eq!(&parsed.to_bytes(), c);
+            assert_eq!(&parsed.try_to_bytes().unwrap(), c);
         }
         // Unknown tag in the 0x9FA0xx space.
         assert!(matches!(

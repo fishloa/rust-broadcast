@@ -43,7 +43,7 @@ use broadcast_common::{Parse, Serialize};
 // Build a time_signal() section and emit it.
 let ts = TimeSignal { splice_time: SpliceTime::with_pts(0x0_0012_3456) };
 let section = SpliceInfoSection::new_clear(AnyCommand::TimeSignal(ts), &[]);
-let bytes = section.to_bytes();
+let bytes = section.try_to_bytes().unwrap();
 assert_eq!(bytes[0], 0xFC); // table_id
 
 // ...and parse it straight back (CRC verified on parse).

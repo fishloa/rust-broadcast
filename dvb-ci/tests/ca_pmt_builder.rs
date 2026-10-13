@@ -33,7 +33,7 @@ fn builds_ca_pmt_from_real_broadcast_pmt() {
     // Re-parse the produced ca_pmt and confirm it round-trips byte-for-byte.
     let parsed = CaPmt::parse(&wire).expect("produced ca_pmt parses");
     assert_eq!(parsed, built.as_ca_pmt());
-    assert_eq!(parsed.to_bytes(), wire);
+    assert_eq!(parsed.try_to_bytes().unwrap(), wire);
 
     // Programme number/version carried verbatim from the PMT.
     assert_eq!(parsed.program_number, pmt.program_number);

@@ -91,7 +91,7 @@ fn stts_real_fixture_round_trip() {
     assert_eq!(parsed.entries[0].sample_delta, 512, "stts sample_delta");
 
     // Round-trip: serialized bytes must match original box
-    let serialized = parsed.to_bytes();
+    let serialized = parsed.try_to_bytes().unwrap();
     assert_eq!(
         serialized.len(),
         stts_box.len(),
@@ -129,7 +129,7 @@ fn ctts_real_fixture_round_trip() {
     assert_eq!(parsed.entries[33].sample_offset, 1024, "ctts[33] offset");
 
     // Round-trip: serialized bytes must match original box
-    let serialized = parsed.to_bytes();
+    let serialized = parsed.try_to_bytes().unwrap();
     assert_eq!(
         serialized.len(),
         ctts_box.len(),
@@ -175,7 +175,7 @@ fn elst_real_fixture_round_trip() {
     );
 
     // Round-trip: serialized bytes must match original box
-    let serialized = parsed.to_bytes();
+    let serialized = parsed.try_to_bytes().unwrap();
     assert_eq!(
         serialized.len(),
         elst_box.len(),
@@ -200,9 +200,9 @@ fn elst_mutation_changes_bytes() {
     let elst_box = find_full_box(&edts[8..], b"elst");
 
     let mut parsed = EditListBox::parse(elst_box).expect("should parse elst");
-    let original = parsed.to_bytes();
+    let original = parsed.try_to_bytes().unwrap();
     parsed.entries[0].media_time = 512; // was 1024
-    let mutated = parsed.to_bytes();
+    let mutated = parsed.try_to_bytes().unwrap();
     assert_ne!(
         mutated, original,
         "mutating media_time must change serialized bytes"
@@ -259,7 +259,7 @@ fn sidx_real_fixture_round_trip() {
             assert_eq!(parsed.references[1].referenced_size, 1200);
 
             // Round-trip
-            let serialized = parsed.to_bytes();
+            let serialized = parsed.try_to_bytes().unwrap();
             assert_eq!(
                 serialized.len(),
                 full_box.len(),
@@ -298,11 +298,11 @@ fn sidx_mutation_changes_bytes() {
         }
     }
     let mut sidx = parsed.expect("sidx must exist");
-    let original = sidx.to_bytes();
+    let original = sidx.try_to_bytes().unwrap();
 
     // Mutate referenced_size of first reference
     sidx.references[0].referenced_size = 999;
-    let mutated = sidx.to_bytes();
+    let mutated = sidx.try_to_bytes().unwrap();
     assert_ne!(
         mutated, original,
         "mutating referenced_size must change serialized bytes"

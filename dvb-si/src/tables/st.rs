@@ -257,7 +257,7 @@ mod tests {
     #[test]
     fn to_bytes_produces_valid_section() {
         let st = StSection::new(vec![0x00, 0x00]);
-        let bytes = st.to_bytes();
+        let bytes = st.try_to_bytes().unwrap();
         assert_eq!(bytes[0], TABLE_ID);
         assert_eq!(bytes.len(), st.serialized_len());
     }

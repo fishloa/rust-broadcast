@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn round_trip_constructed() {
         let cc = sample();
-        let bytes = cc.to_bytes();
+        let bytes = cc.try_to_bytes().unwrap();
         // construct → serialize → re-parse → equal (no raw stash to lean on)
         assert_eq!(CcData::parse(&bytes).unwrap(), cc);
         // header sanity: reserved=1, pcdf=1, zero=0, cc_count=3
@@ -262,10 +262,10 @@ mod tests {
 
     #[test]
     fn mutate_field_changes_output() {
-        let a = sample().to_bytes();
+        let a = sample().try_to_bytes().unwrap();
         let mut cc = sample();
         cc.triplets[0].cc_data_1 = 0x42;
-        let b = cc.to_bytes();
+        let b = cc.try_to_bytes().unwrap();
         assert_ne!(a, b, "mutating a field must change serialized bytes");
     }
 
@@ -283,7 +283,7 @@ mod tests {
             reserved_byte1: FF,
             triplets: alloc::vec![],
         };
-        let bytes = cc.to_bytes();
+        let bytes = cc.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x80, 0xFF, 0xFF]); // reserved=1, pcdf=0, count=0; 0xFF; marker
         assert_eq!(CcData::parse(&bytes).unwrap(), cc);
     }
@@ -295,7 +295,7 @@ mod tests {
         // so this round-trip was NOT byte-exact (bytes[1] silently changed).
         let mut cc = sample();
         cc.reserved_byte1 = 0x3A;
-        let bytes = cc.to_bytes();
+        let bytes = cc.try_to_bytes().unwrap();
         assert_eq!(bytes[1], 0x3A);
         let reparsed = CcData::parse(&bytes).unwrap();
         assert_eq!(reparsed.reserved_byte1, 0x3A);
@@ -304,7 +304,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_bad_header_fixed_bits() {
-        let mut bytes = sample().to_bytes();
+        let mut bytes = sample().try_to_bytes().unwrap();
         bytes[0] &= !0x80; // clear the "reserved=1" bit
         assert!(matches!(
             CcData::parse(&bytes),
@@ -317,7 +317,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_bad_triplet_fixed_bits() {
-        let mut bytes = sample().to_bytes();
+        let mut bytes = sample().try_to_bytes().unwrap();
         bytes[2] &= !0x80; // clear the triplet's "one_bit=1"
         assert!(matches!(
             CcData::parse(&bytes),
@@ -330,7 +330,7 @@ mod tests {
 
     #[test]
     fn parse_rejects_bad_marker_bits() {
-        let mut bytes = sample().to_bytes();
+        let mut bytes = sample().try_to_bytes().unwrap();
         let last = bytes.len() - 1;
         bytes[last] = 0x00;
         assert!(matches!(

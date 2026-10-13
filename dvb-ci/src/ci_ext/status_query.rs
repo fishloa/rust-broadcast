@@ -827,7 +827,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             status_item: StatusItem::PortProfile,
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         // tag(3) + len(1=4) + StatusItem(4 = 0x00000002).
         assert_eq!(bytes, [0x9F, 0x80, 0x00, 0x04, 0x00, 0x00, 0x00, 0x02]);
         assert_eq!(StatusQueryReq::parse(&bytes).unwrap(), req);
@@ -835,7 +835,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             status_item: StatusItem::ViewedService,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -844,22 +844,37 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             status_item: StatusItem::ActivationStatus,
         };
-        assert_eq!(trap.to_bytes(), [0x9F, 0x80, 0x01, 0x04, 0, 0, 0, 4]);
-        assert_eq!(TrapReq::parse(&trap.to_bytes()).unwrap(), trap);
+        assert_eq!(
+            trap.try_to_bytes().unwrap(),
+            [0x9F, 0x80, 0x01, 0x04, 0, 0, 0, 4]
+        );
+        assert_eq!(TrapReq::parse(&trap.try_to_bytes().unwrap()).unwrap(), trap);
 
         let gnr = GetNextItemReq {
             length_form: crate::length::LengthForm::Minimal,
             start_status_item: 0x0000_0007,
         };
-        assert_eq!(gnr.to_bytes(), [0x9F, 0x80, 0x02, 0x04, 0, 0, 0, 7]);
-        assert_eq!(GetNextItemReq::parse(&gnr.to_bytes()).unwrap(), gnr);
+        assert_eq!(
+            gnr.try_to_bytes().unwrap(),
+            [0x9F, 0x80, 0x02, 0x04, 0, 0, 0, 7]
+        );
+        assert_eq!(
+            GetNextItemReq::parse(&gnr.try_to_bytes().unwrap()).unwrap(),
+            gnr
+        );
 
         let gna = GetNextItemAck {
             length_form: crate::length::LengthForm::Minimal,
             next_status_item: 0x0000_0002,
         };
-        assert_eq!(gna.to_bytes(), [0x9F, 0x80, 0x03, 0x04, 0, 0, 0, 2]);
-        assert_eq!(GetNextItemAck::parse(&gna.to_bytes()).unwrap(), gna);
+        assert_eq!(
+            gna.try_to_bytes().unwrap(),
+            [0x9F, 0x80, 0x03, 0x04, 0, 0, 0, 2]
+        );
+        assert_eq!(
+            GetNextItemAck::parse(&gna.try_to_bytes().unwrap()).unwrap(),
+            gna
+        );
     }
 
     #[test]
@@ -870,7 +885,10 @@ mod tests {
         };
         assert_eq!(req.status_item, StatusItem::Reserved(0));
         assert_eq!(req.status_item.name(), "reserved");
-        assert_eq!(StatusQueryReq::parse(&req.to_bytes()).unwrap(), req);
+        assert_eq!(
+            StatusQueryReq::parse(&req.try_to_bytes().unwrap()).unwrap(),
+            req
+        );
     }
 
     #[test]
@@ -880,7 +898,7 @@ mod tests {
             status_item: StatusItem::ViewedService,
             status_bytes: &[0x01, 0x23, 0x00],
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         // tag(3) + len(1=7) + item(4) + 3 status bytes.
         assert_eq!(
             bytes,
@@ -889,7 +907,7 @@ mod tests {
         assert_eq!(StatusAck::parse(&bytes).unwrap(), ack);
         let mut other = ack.clone();
         other.status_bytes = &[0x01, 0x23, 0x01];
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -899,7 +917,7 @@ mod tests {
             status_item: StatusItem::PortProfile,
             status_bytes: &[],
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x04, 0x04, 0, 0, 0, 2]);
         assert_eq!(StatusAck::parse(&bytes).unwrap(), ack);
     }
@@ -931,12 +949,12 @@ mod tests {
                 },
             ],
         };
-        let bytes = si.to_bytes();
+        let bytes = si.try_to_bytes().unwrap();
         assert_eq!(SelectionInformation::parse(&bytes).unwrap(), si);
         // Mutate one out_port_id -> different bytes.
         let mut other = si.clone();
         other.ports[0].outputs[1].out_port_id = 0x02;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
         // Verify a precise byte layout for the first port's output block.
         // time(5) | in_port(0x01) in_len(0x02) [AA BB] | reserved/len_out(0x00 0x06)
         //   out0: 00 01 02 | out1: 01 01 01 | in_port(0x18) in_len(0x00) len_out(0x00 0x00)
@@ -973,11 +991,11 @@ mod tests {
                 },
             ],
         };
-        let bytes = pp.to_bytes();
+        let bytes = pp.try_to_bytes().unwrap();
         assert_eq!(PortProfile::parse(&bytes).unwrap(), pp);
         let mut other = pp.clone();
         other.ports[1].out_port_id = 0x11;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -986,12 +1004,12 @@ mod tests {
             service_id: 0x1234,
             component_tags: alloc::vec![0x10, 0x20, 0x30],
         };
-        let bytes = vs.to_bytes();
+        let bytes = vs.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x12, 0x34, 0x03, 0x10, 0x20, 0x30]);
         assert_eq!(ViewedService::parse(&bytes).unwrap(), vs);
         let mut other = vs.clone();
         other.component_tags[2] = 0x31;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1001,7 +1019,7 @@ mod tests {
             activation_state: ActivationState::On,
             reserved: 0,
         };
-        let bytes = a.to_bytes();
+        let bytes = a.try_to_bytes().unwrap();
         // event_activated(1<<3) | activation_state(2) = 0x0A.
         assert_eq!(bytes, [0x0A]);
         assert_eq!(ActivationStatus::parse(&bytes).unwrap(), a);
@@ -1011,13 +1029,13 @@ mod tests {
             activation_state: ActivationState::StandbyActive,
             reserved: 0,
         };
-        assert_eq!(b.to_bytes(), [0x01]);
+        assert_eq!(b.try_to_bytes().unwrap(), [0x01]);
         assert_eq!(ActivationStatus::parse(&[0x01]).unwrap(), b);
         // Every one of the 256 byte values (reserved states and reserved bits included) now
         // round-trips: the old `Option` state could not.
         for byte in 0x00u8..=0xFF {
             let parsed = ActivationStatus::parse(&[byte]).unwrap();
-            assert_eq!(parsed.to_bytes(), [byte], "byte {byte:#04X}");
+            assert_eq!(parsed.try_to_bytes().unwrap(), [byte], "byte {byte:#04X}");
         }
     }
 
@@ -1027,7 +1045,8 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             status_item: StatusItem::SelectionInformation,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert!(matches!(
             StatusQueryApdu::parse(&q).unwrap(),
             StatusQueryApdu::StatusQueryReq(_)
@@ -1037,9 +1056,10 @@ mod tests {
             status_item: StatusItem::ActivationStatus,
             status_bytes: &[0x0A],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = StatusQueryApdu::parse(&ack).unwrap();
         assert!(matches!(parsed, StatusQueryApdu::StatusAck(_)));
-        assert_eq!(parsed.to_bytes(), ack);
+        assert_eq!(parsed.try_to_bytes().unwrap(), ack);
     }
 }

@@ -17,11 +17,11 @@ rustdoc-args = ["--cfg", "docsrs"]
 broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 dvb-si      = { path = "../dvb-si", version = "11.1", default-features = false, features = ["ts"] }
 mpeg-ts     = { path = "../mpeg-ts", version = "0.5", default-features = false }
-serde       = { version = "1", optional = true, features = ["derive"] }
+serde       = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 
 [features]
 default = ["std", "serde"]
-std     = ["broadcast-common/std", "dvb-si/std", "mpeg-ts/std"]
+std     = ["broadcast-common/std", "dvb-si/std", "mpeg-ts/std", "serde?/std"]
 
 serde = ["dep:serde", "dvb-si/serde"]
 

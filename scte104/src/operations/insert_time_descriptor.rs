@@ -99,7 +99,7 @@ mod tests {
             tai_ns: 500_000_000,
             utc_offset: 37,
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), LEN);
         let back = InsertTimeDescriptor::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -108,10 +108,10 @@ mod tests {
     #[test]
     fn mutate_field_changes_output() {
         let op = InsertTimeDescriptor::default();
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op;
         op2.utc_offset = 99;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 
     /// A `TAI_seconds` above 48 bits is rejected, not silently masked.

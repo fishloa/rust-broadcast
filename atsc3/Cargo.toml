@@ -21,13 +21,16 @@ optional = true
 
 [features]
 default = ["std"]
-std     = ["broadcast-common/std", "thiserror/std", "roxmltree/std", "dep:flate2"]
+# `std` is REQUIRED for LLS payload decompression (`flate2`) and XML (`roxmltree/std`);
+# the binary envelope parsing itself is no_std+alloc.
+std     = ["broadcast-common/std", "thiserror/std", "roxmltree/std", "dep:flate2", "serde?/std"]
 serde   = ["dep:serde", "broadcast-common/serde"]
 
 [dependencies.serde]
-version  = "1"
-features = ["derive"]
-optional = true
+version          = "1"
+default-features = false
+features         = ["derive", "alloc"]
+optional         = true
 
 [package.metadata.docs.rs]
 all-features = true

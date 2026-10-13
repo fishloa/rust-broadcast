@@ -1324,7 +1324,7 @@ mod tests {
         pmt.serialize_into(&mut pmt_bytes).unwrap();
 
         let splice = SpliceInfoSection::new_clear(AnyCommand::SpliceNull(Default::default()), &[]);
-        let splice_bytes = splice.to_bytes();
+        let splice_bytes = splice.try_to_bytes().unwrap();
 
         let mut ts = Vec::new();
         ts.extend_from_slice(&ts_packet(wk::PAT, &pat_bytes));

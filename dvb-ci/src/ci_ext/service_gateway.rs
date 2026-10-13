@@ -612,11 +612,11 @@ mod tests {
     #[test]
     fn header_only_objects_round_trip() {
         assert_eq!(
-            ServiceListReq::default().to_bytes(),
+            ServiceListReq::default().try_to_bytes().unwrap(),
             [0x9F, 0x80, 0x00, 0x00]
         );
         assert_eq!(
-            ServiceListVersionReq::default().to_bytes(),
+            ServiceListVersionReq::default().try_to_bytes().unwrap(),
             [0x9F, 0x80, 0x02, 0x00]
         );
         assert_eq!(
@@ -641,7 +641,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         // tag(3) + len(1) + ver(1) + count(2) + 2*4 = 15; body = 11 = 0x0B.
         assert_eq!(
             bytes,
@@ -653,7 +653,7 @@ mod tests {
         assert_eq!(ServiceListAck::parse(&bytes).unwrap(), ack);
         let mut other = ack.clone();
         other.services[1].service_id = 0x0066;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -663,7 +663,7 @@ mod tests {
             version_number: 0x02,
             services: alloc::vec![],
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x01, 0x03, 0x02, 0x00, 0x00]);
         assert_eq!(ServiceListAck::parse(&bytes).unwrap(), ack);
     }
@@ -674,7 +674,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             version_number: 9,
         };
-        let bytes = v.to_bytes();
+        let bytes = v.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x03, 0x01, 0x09]);
         assert_eq!(ServiceListVersionAck::parse(&bytes).unwrap(), v);
         assert_ne!(
@@ -683,14 +683,15 @@ mod tests {
                 length_form: crate::length::LengthForm::Minimal,
                 version_number: 10
             }
-            .to_bytes()
+            .try_to_bytes()
+            .unwrap()
         );
 
         let c = ServiceListChanged {
             length_form: crate::length::LengthForm::Minimal,
             version_number: 3,
         };
-        let cbytes = c.to_bytes();
+        let cbytes = c.try_to_bytes().unwrap();
         assert_eq!(cbytes, [0x9F, 0x80, 0x04, 0x01, 0x03]);
         assert_eq!(ServiceListChanged::parse(&cbytes).unwrap(), c);
     }
@@ -704,12 +705,12 @@ mod tests {
                 service_id: 0x5678,
             },
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x05, 0x04, 0x12, 0x34, 0x56, 0x78]);
         assert_eq!(ServiceDescReq::parse(&bytes).unwrap(), r);
         let mut other = r;
         other.service.service_id = 0x5679;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -728,7 +729,7 @@ mod tests {
             free_ca_mode: true,
             descriptors: &desc,
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         // prefix(7) + 7 desc = 14 body; tag(3)+len(1)+14 = 18.
         // byte4 = 0xFC | (1<<1) | 0 = 0xFE
         // byte5 = (4<<5) | (1<<4) | (loop_len>>8) = 0x80 | 0x10 | 0x00 = 0x90
@@ -748,7 +749,7 @@ mod tests {
         assert!(parsed.free_ca_mode);
         let mut other = ack.clone();
         other.running_status = 1;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -765,7 +766,7 @@ mod tests {
             free_ca_mode: false,
             descriptors: &[],
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         // byte4 = 0xFC | 0 | 1 = 0xFD ; byte5 = 0 ; byte6 = 0
         assert_eq!(
             bytes,
@@ -785,7 +786,7 @@ mod tests {
                 service_id: 0x0064,
             }),
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x07, 0x04, 0x00, 0x01, 0x00, 0x64]);
         assert_eq!(GetServiceReq::parse(&bytes).unwrap(), r);
 
@@ -793,7 +794,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             service: None,
         };
-        let dbytes = disconnect.to_bytes();
+        let dbytes = disconnect.try_to_bytes().unwrap();
         assert_eq!(dbytes, [0x9F, 0x80, 0x07, 0x00]);
         assert_eq!(GetServiceReq::parse(&dbytes).unwrap(), disconnect);
         assert_ne!(bytes, dbytes);
@@ -812,7 +813,7 @@ mod tests {
             ca_service_flag: true,
             actual_service: 0x0064,
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         // byte4 = CAServiceFlag = 0x01 ; ActualService = 0x0064
         assert_eq!(
             bytes,
@@ -826,13 +827,13 @@ mod tests {
         other.ca_service_flag = false;
         other.service_not_available = true;
         other.actual_service = 0;
-        assert_ne!(bytes, other.to_bytes());
-        assert_eq!(other.to_bytes()[8], 0x02);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
+        assert_eq!(other.try_to_bytes().unwrap()[8], 0x02);
     }
 
     #[test]
     fn dispatch_routes_each_tag() {
-        let req = ServiceListReq::default().to_bytes();
+        let req = ServiceListReq::default().try_to_bytes().unwrap();
         assert!(matches!(
             ServiceGatewayApdu::parse(&req).unwrap(),
             ServiceGatewayApdu::ServiceListReq(_)
@@ -845,10 +846,11 @@ mod tests {
             ca_service_flag: false,
             actual_service: 0,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = ServiceGatewayApdu::parse(&gs).unwrap();
         assert!(matches!(parsed, ServiceGatewayApdu::GetServiceAck(_)));
-        assert_eq!(parsed.to_bytes(), gs);
+        assert_eq!(parsed.try_to_bytes().unwrap(), gs);
     }
 
     #[test]
@@ -888,7 +890,7 @@ mod tests {
             free_ca_mode: false,
             descriptors: &[],
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         assert_eq!(ServiceDescAck::parse(&bytes).unwrap(), ack);
     }
 }

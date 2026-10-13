@@ -376,7 +376,7 @@ mod tests {
         assert_eq!(pasp.h_spacing, 1);
         assert_eq!(pasp.v_spacing, 1);
 
-        let bytes = pasp.to_bytes();
+        let bytes = pasp.try_to_bytes().unwrap();
         assert_eq!(&bytes, &body);
     }
 
@@ -389,7 +389,7 @@ mod tests {
             h_spacing: 4,
             v_spacing: 3,
         };
-        assert_ne!(pasp.to_bytes(), pasp2.to_bytes());
+        assert_ne!(pasp.try_to_bytes().unwrap(), pasp2.try_to_bytes().unwrap());
     }
 
     // ---- clap ------------------------------------------------------------
@@ -410,7 +410,7 @@ mod tests {
         assert_eq!(clap.clean_aperture_width_n, 1920);
         assert_eq!(clap.clean_aperture_height_n, 1080);
 
-        let bytes = clap.to_bytes();
+        let bytes = clap.try_to_bytes().unwrap();
         assert_eq!(&bytes, &body);
     }
 
@@ -427,7 +427,7 @@ mod tests {
             clean_aperture_width_n: 1280,
             ..clap
         };
-        assert_ne!(clap.to_bytes(), clap2.to_bytes());
+        assert_ne!(clap.try_to_bytes().unwrap(), clap2.try_to_bytes().unwrap());
     }
 
     // ---- colr (nclx) -----------------------------------------------------
@@ -452,7 +452,7 @@ mod tests {
         assert_eq!(nclx.matrix_coefficients, 9);
         assert!(!nclx.full_range_flag);
 
-        let bytes = colr.to_bytes();
+        let bytes = colr.try_to_bytes().unwrap();
         assert_eq!(&bytes, &COLR_NCLX_ORACLE);
     }
 
@@ -461,7 +461,7 @@ mod tests {
         let colr = ColourInformationBox::parse(&COLR_NCLX_ORACLE).unwrap();
         let mut colr2 = colr.clone();
         colr2.nclx.as_mut().unwrap().matrix_coefficients = 1;
-        assert_ne!(colr.to_bytes(), colr2.to_bytes());
+        assert_ne!(colr.try_to_bytes().unwrap(), colr2.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -475,7 +475,7 @@ mod tests {
         ];
         let colr = ColourInformationBox::parse(&body).unwrap();
         assert!(colr.nclx.as_ref().unwrap().full_range_flag);
-        assert_eq!(colr.to_bytes(), &body);
+        assert_eq!(colr.try_to_bytes().unwrap(), &body);
     }
 
     // ---- colr (opaque profiles) ------------------------------------------
@@ -485,7 +485,7 @@ mod tests {
         let body = [b'r', b'I', b'C', b'C', 1, 2, 3, 4, 5];
         let colr = ColourInformationBox::parse(&body).unwrap();
         assert_eq!(colr.icc_profile, &[1, 2, 3, 4, 5]);
-        assert_eq!(colr.to_bytes(), &body);
+        assert_eq!(colr.try_to_bytes().unwrap(), &body);
     }
 
     #[test]
@@ -493,7 +493,7 @@ mod tests {
         let body = [b'p', b'r', b'o', b'f', 0xAA, 0xBB];
         let colr = ColourInformationBox::parse(&body).unwrap();
         assert_eq!(colr.icc_profile, &[0xAA, 0xBB]);
-        assert_eq!(colr.to_bytes(), &body);
+        assert_eq!(colr.try_to_bytes().unwrap(), &body);
     }
 
     /// r04-W39: the 7 `reserved` bits of the `nclx` flag byte are preserved, so
@@ -512,7 +512,11 @@ mod tests {
         let nclx = colr.nclx.as_ref().unwrap();
         assert!(nclx.full_range_flag);
         assert_eq!(nclx.reserved, 0x3F, "reserved bits kept, not zeroed");
-        assert_eq!(colr.to_bytes(), body, "reserved bits must round-trip");
+        assert_eq!(
+            colr.try_to_bytes().unwrap(),
+            body,
+            "reserved bits must round-trip"
+        );
 
         // The spec's zero form still writes zero.
         let zero = [
@@ -520,7 +524,7 @@ mod tests {
         ];
         let z = ColourInformationBox::parse(&zero).unwrap();
         assert_eq!(z.nclx.as_ref().unwrap().reserved, 0);
-        assert_eq!(z.to_bytes(), zero);
+        assert_eq!(z.try_to_bytes().unwrap(), zero);
     }
 
     /// r04-W39: a `nclx` body with trailing pad bytes must keep them, so the
@@ -538,7 +542,7 @@ mod tests {
             "trailing pad kept"
         );
         assert_eq!(colr.serialized_len(), body.len());
-        assert_eq!(colr.to_bytes(), body);
+        assert_eq!(colr.try_to_bytes().unwrap(), body);
     }
 
     /// r04-W39: `serialized_len` always budgets the 7 `nclx` bytes for a `nclx`
@@ -571,6 +575,6 @@ mod tests {
             icc_profile: vec![1, 2, 3],
         };
         assert_eq!(prof.serialized_len(), 7);
-        assert_eq!(prof.to_bytes().len(), 7);
+        assert_eq!(prof.try_to_bytes().unwrap().len(), 7);
     }
 }

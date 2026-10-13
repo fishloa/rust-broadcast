@@ -486,7 +486,7 @@ mod tests {
                 blp: 0x000F,
             }],
         };
-        let bytes = nack.to_bytes();
+        let bytes = nack.try_to_bytes().unwrap();
         // V=2, P=0, FMT=1 -> 0x81
         assert_eq!(bytes[0], 0x81);
         // PT=205
@@ -504,7 +504,7 @@ mod tests {
                 additional: 0,
             }],
         };
-        let bytes = rn.to_bytes();
+        let bytes = rn.try_to_bytes().unwrap();
         // V=2, P=0, Subtype=0 -> 0x80
         assert_eq!(bytes[0], 0x80);
         // PT=204
@@ -524,7 +524,7 @@ mod tests {
                 additional: 0,
             }],
         };
-        let mut bytes = rn.to_bytes();
+        let mut bytes = rn.try_to_bytes().unwrap();
         // Corrupt the name field.
         bytes[8] = b'X';
         let err = RangeNack::parse(&bytes).unwrap_err();
@@ -538,7 +538,7 @@ mod tests {
             ssrc_media: 2,
             nacks: alloc::vec![NackFci { pid: 1, blp: 0 }],
         };
-        let mut bytes = nack.to_bytes();
+        let mut bytes = nack.try_to_bytes().unwrap();
         // Change FMT from 1 to 2 (keep V=2, P=0).
         bytes[0] = (RTCP_VERSION << 6) | 2;
         let err = GenericNack::parse(&bytes).unwrap_err();

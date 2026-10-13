@@ -16,11 +16,11 @@ use scte35_splice::time::{BreakDuration, SpliceTime};
 
 /// Serialize a section, parse it back, assert equality and byte-identity.
 fn section_round_trip(section: &SpliceInfoSection) {
-    let bytes = section.to_bytes();
+    let bytes = section.try_to_bytes().unwrap();
     assert_eq!(bytes[0], 0xFC, "table_id");
     let parsed = SpliceInfoSection::parse(&bytes).expect("re-parse");
     assert_eq!(*section, parsed, "struct equality");
-    assert_eq!(parsed.to_bytes(), bytes, "byte identity");
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes, "byte identity");
 }
 
 fn clear(command: AnyCommand<'static>) -> SpliceInfoSection<'static> {
@@ -119,7 +119,8 @@ fn section_with_full_descriptor_loop() {
             identifier: CUEI,
             provider_avail_id: 0x99,
         }
-        .to_bytes(),
+        .try_to_bytes()
+        .unwrap(),
     );
     loop_bytes.extend(
         DtmfDescriptor {
@@ -127,7 +128,8 @@ fn section_with_full_descriptor_loop() {
             preroll: 50,
             dtmf_chars: vec![b'1', b'2', b'#'],
         }
-        .to_bytes(),
+        .try_to_bytes()
+        .unwrap(),
     );
     loop_bytes.extend(
         SegmentationDescriptor {
@@ -140,7 +142,8 @@ fn section_with_full_descriptor_loop() {
             sub_segments: Some((1, 4)),
             ..Default::default()
         }
-        .to_bytes(),
+        .try_to_bytes()
+        .unwrap(),
     );
     loop_bytes.extend(
         TimeDescriptor {
@@ -149,7 +152,8 @@ fn section_with_full_descriptor_loop() {
             tai_ns: 0xAABB_CCDD,
             utc_offset: 37,
         }
-        .to_bytes(),
+        .try_to_bytes()
+        .unwrap(),
     );
     loop_bytes.extend(
         AudioDescriptor {
@@ -162,7 +166,8 @@ fn section_with_full_descriptor_loop() {
                 full_srvc_audio: true,
             }],
         }
-        .to_bytes(),
+        .try_to_bytes()
+        .unwrap(),
     );
     // An unknown splice_descriptor_tag 0xC0 with a raw body.
     loop_bytes.extend_from_slice(&[0xC0, 0x02, 0xCA, 0xFE]);
@@ -203,14 +208,14 @@ fn encrypted_section_round_trips_raw() {
         // round-trip through the wire bytes, not just the Rust struct.
         encrypted_splice_command_length: Some(3),
     };
-    let bytes = section.to_bytes();
+    let bytes = section.try_to_bytes().unwrap();
     let parsed = SpliceInfoSection::parse(&bytes).unwrap();
     assert!(parsed.encrypted_packet);
     assert_eq!(parsed.encryption_algorithm, 1);
     assert_eq!(parsed.encrypted_payload, Some(&encrypted[..]));
     assert_eq!(parsed.encrypted_splice_command_length, Some(3));
     assert!(parsed.clear.is_none());
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 /// W1 (#1102): the real `splice_command_length` must appear on the wire
@@ -231,7 +236,7 @@ fn encrypted_splice_command_length_written_verbatim_not_sentinel() {
         encrypted_payload: Some(&encrypted),
         encrypted_splice_command_length: Some(0x0AB),
     };
-    let bytes = section.to_bytes();
+    let bytes = section.try_to_bytes().unwrap();
     let scl = (u16::from(bytes[11] & 0x0F) << 8) | u16::from(bytes[12]);
     assert_eq!(scl, 0x0AB, "the real value must be on the wire, not 0xFFF");
 }

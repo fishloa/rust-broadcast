@@ -41,7 +41,7 @@ fn main() {
             AnyElement::AudioDataDlc(dlc),
         ],
     );
-    let bytes = frame.to_bytes();
+    let bytes = frame.try_to_bytes().unwrap();
 
     let parsed = AtmosFrame::parse(&bytes).expect("parse ATMOSFrame");
     println!("version: {}", parsed.version);

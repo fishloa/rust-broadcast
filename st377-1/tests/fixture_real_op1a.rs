@@ -275,7 +275,7 @@ fn real_fixture_op1a_qualifier_matches_actual_essence_layout() {
         .iter()
         .find_map(|(_offset, item)| {
             if PartitionPack::is_partition_key(&item.key) {
-                PartitionPack::parse(&item.to_bytes()).ok()
+                PartitionPack::parse(&item.try_to_bytes().unwrap()).ok()
             } else {
                 None
             }
@@ -357,7 +357,7 @@ fn real_fixture_non_minimal_ber_lengths_round_trip_byte_identically() {
         }
 
         assert_eq!(
-            item.to_bytes(),
+            item.try_to_bytes().unwrap(),
             original,
             "item at offset {offset}: KlvItem must reproduce its exact original bytes \
              (len_size = {:?})",

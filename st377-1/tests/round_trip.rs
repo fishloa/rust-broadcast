@@ -51,11 +51,11 @@ where
         + PartialEq
         + core::fmt::Debug,
 {
-    let bytes = original.to_bytes();
+    let bytes = original.try_to_bytes().unwrap();
     let parsed = T::parse(&bytes).expect("parse round-trip");
     assert_eq!(&parsed, original, "parsed != original");
 
-    let reserialized = parsed.to_bytes();
+    let reserialized = parsed.try_to_bytes().unwrap();
     assert_eq!(reserialized, bytes, "reserialize not byte-identical");
 }
 

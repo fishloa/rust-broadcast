@@ -433,7 +433,10 @@ impl AudioSpecificConfig {
         if need <= STACK_ASC_MAX && self.serialize_into(&mut stack[..need]).is_ok() {
             return f(&stack[..need]);
         }
-        f(&self.to_bytes())
+        // Serialization only fails for a value violating a wire constraint; an
+        // empty input then yields the parsers' "no config" result rather than a panic.
+        let bytes = self.try_to_bytes().unwrap_or_default();
+        f(&bytes)
     }
 }
 
@@ -804,7 +807,10 @@ mod tests {
     }
     #[test]
     fn serialize_byte_identical() {
-        let out = AudioSpecificConfig::parse(&KNOWN).unwrap().to_bytes();
+        let out = AudioSpecificConfig::parse(&KNOWN)
+            .unwrap()
+            .try_to_bytes()
+            .unwrap();
         assert_eq!(out.as_slice(), KNOWN.as_slice());
     }
 
@@ -849,7 +855,7 @@ mod tests {
             back.serialize_into(&mut alloc::vec![0u8; need]).unwrap(),
             need
         );
-        assert_eq!(back.to_bytes(), buf[..need]);
+        assert_eq!(back.try_to_bytes().unwrap(), buf[..need]);
     }
     #[test]
     fn adts_round_trip() {
@@ -879,7 +885,7 @@ mod tests {
         a.sampling_frequency_index = SamplingFrequencyIndex::Escape;
         a.sampling_frequency = Some(48000);
         a.channel_configuration = ChannelConfiguration::Stereo;
-        let bytes = a.to_bytes();
+        let bytes = a.try_to_bytes().unwrap();
         assert!(bytes.len() >= 5);
         let a2 = AudioSpecificConfig::parse(&bytes).unwrap();
         assert_eq!(a2.sampling_frequency_index, SamplingFrequencyIndex::Escape);
@@ -888,9 +894,12 @@ mod tests {
     }
     #[test]
     fn mutate_config_changes_bytes() {
-        let o = AudioSpecificConfig::parse(&KNOWN).unwrap().to_bytes();
+        let o = AudioSpecificConfig::parse(&KNOWN)
+            .unwrap()
+            .try_to_bytes()
+            .unwrap();
         let mut b = AudioSpecificConfig::parse(&KNOWN).unwrap();
         b.channel_configuration = ChannelConfiguration::Stereo;
-        assert_ne!(o, b.to_bytes());
+        assert_ne!(o, b.try_to_bytes().unwrap());
     }
 }

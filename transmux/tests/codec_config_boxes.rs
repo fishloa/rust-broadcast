@@ -57,7 +57,7 @@ fn avcc_h264_high_round_trip() {
     assert_eq!(record.bit_depth_chroma_minus8, Some(0), "8-bit chroma");
 
     // --- Byte-exact round-trip ---
-    let serialized = record.to_bytes();
+    let serialized = record.try_to_bytes().unwrap();
     assert_eq!(
         serialized.len(),
         avcc_body.len(),
@@ -78,9 +78,9 @@ fn avcc_h264_high_mutation_changes_bytes() {
 
     let mut record = AVCDecoderConfigurationRecord::parse(avcc_body).expect("should parse avcC");
 
-    let original = record.to_bytes();
+    let original = record.try_to_bytes().unwrap();
     record.level_indication = 50;
-    let mutated = record.to_bytes();
+    let mutated = record.try_to_bytes().unwrap();
 
     assert_ne!(
         mutated, original,
@@ -115,7 +115,7 @@ fn hvcc_hevc_main_round_trip() {
     assert_eq!(record.arrays.len(), 3, "VPS/SPS/PPS = 3 arrays");
 
     // --- Byte-exact round-trip ---
-    let serialized = record.to_bytes();
+    let serialized = record.try_to_bytes().unwrap();
     assert_eq!(
         serialized.len(),
         hvcc_body.len(),
@@ -142,9 +142,9 @@ fn hvcc_hevc_main_mutation_changes_bytes() {
 
     let mut record = HEVCDecoderConfigurationRecord::parse(hvcc_body).expect("should parse hvcC");
 
-    let original = record.to_bytes();
+    let original = record.try_to_bytes().unwrap();
     record.general_level_idc = 80;
-    let mutated = record.to_bytes();
+    let mutated = record.try_to_bytes().unwrap();
 
     assert_ne!(
         mutated, original,

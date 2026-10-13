@@ -127,11 +127,11 @@ mod tests {
             tai_ns: 0x0102_0304,
             utc_offset: 37,
         };
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes[0], TAG);
         assert_eq!(bytes[1], 0x10);
         let back = TimeDescriptor::parse(&bytes).unwrap();
         assert_eq!(d, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 }

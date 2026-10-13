@@ -25,7 +25,7 @@ fn main() {
         ],
     };
 
-    let bytes = cc.to_bytes();
+    let bytes = cc.try_to_bytes().unwrap();
     println!("serialized {} bytes: {:02X?}", bytes.len(), bytes);
 
     let back = CcData::parse(&bytes).expect("round-trip parse");

@@ -63,7 +63,7 @@ fn main() {
     let toy = Toy::parse(&wire).expect("parse");
     println!("parsed: {toy:?}");
 
-    let back = toy.to_bytes();
+    let back = toy.try_to_bytes().unwrap();
     println!("re-serialized: {back:02X?}");
 
     // The hard project invariant: parse → serialize is byte-identical.

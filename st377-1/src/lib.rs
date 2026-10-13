@@ -142,7 +142,7 @@
 //!     essence_containers: Vec::new(),
 //!     len_size: BerLength::Minimal,
 //! };
-//! let bytes = pack.to_bytes();
+//! let bytes = pack.try_to_bytes().unwrap();
 //! assert_eq!(PartitionPack::parse(&bytes).unwrap(), pack);
 //! ```
 #![cfg_attr(not(feature = "std"), no_std)]

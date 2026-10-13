@@ -264,7 +264,7 @@ impl serde::Serialize for AitDescriptorLoop<'_> {
                     Err(e) => {
                         use serde::ser::SerializeMap;
                         let mut m = s.serialize_map(Some(1))?;
-                        m.serialize_entry("parseError", &e.to_string())?;
+                        m.serialize_entry("parseError", &alloc::string::ToString::to_string(e))?;
                         m.end()
                     }
                 }

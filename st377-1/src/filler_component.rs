@@ -121,27 +121,27 @@ mod tests {
     #[test]
     fn round_trip() {
         let filler = sample();
-        let bytes = filler.to_bytes();
+        let bytes = filler.try_to_bytes().unwrap();
         let parsed = FillerComponent::parse(&bytes).unwrap();
         assert_eq!(parsed, filler);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn no_duration_round_trip() {
         let mut filler = sample();
         filler.duration = None;
-        let bytes = filler.to_bytes();
+        let bytes = filler.try_to_bytes().unwrap();
         let parsed = FillerComponent::parse(&bytes).unwrap();
         assert_eq!(parsed.duration, None);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn dark_preserved() {
         let mut filler = sample();
         filler.dark = alloc::vec![(0x9005, alloc::vec![0x42])];
-        let bytes = filler.to_bytes();
+        let bytes = filler.try_to_bytes().unwrap();
         let parsed = FillerComponent::parse(&bytes).unwrap();
         assert_eq!(parsed.dark, filler.dark);
     }
@@ -157,7 +157,7 @@ mod tests {
             items: Vec::new(),
             ..Default::default()
         };
-        let bytes = set.to_bytes();
+        let bytes = set.try_to_bytes().unwrap();
         assert!(matches!(
             FillerComponent::parse(&bytes),
             Err(Error::KeyPrefixMismatch { .. })
@@ -167,9 +167,9 @@ mod tests {
     #[test]
     fn mutation_changes_serialized_bytes() {
         let mut filler = sample();
-        let before = filler.to_bytes();
+        let before = filler.try_to_bytes().unwrap();
         filler.duration = Some(100);
-        let after = filler.to_bytes();
+        let after = filler.try_to_bytes().unwrap();
         assert_ne!(before, after);
         assert_eq!(FillerComponent::parse(&after).unwrap().duration, Some(100));
     }

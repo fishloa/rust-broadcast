@@ -21,7 +21,7 @@ fn main() {
     );
 
     // Serialize.
-    let bytes = msg.to_bytes();
+    let bytes = msg.try_to_bytes().unwrap();
     println!("Serialized {} bytes: {:02x?}", bytes.len(), bytes);
 
     // Round-trip: parse back.
@@ -44,7 +44,7 @@ fn main() {
             body: &raw_body,
         },
     );
-    let bytes2 = msg2.to_bytes();
+    let bytes2 = msg2.try_to_bytes().unwrap();
     let parsed2 = SingleOperationMessage::parse(&bytes2).unwrap();
     assert_eq!(msg2, parsed2);
     println!("Unknown opID round-trip OK");

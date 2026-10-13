@@ -54,7 +54,7 @@ fn appendix_a_bitmask_nack() {
         ],
     };
 
-    let bytes = nack.to_bytes();
+    let bytes = nack.try_to_bytes().unwrap();
 
     // --- header checks ---
     // V=2, P=0, FMT=1 -> byte 0 = 0b10_0_00001 = 0x81
@@ -87,7 +87,7 @@ fn appendix_a_bitmask_nack() {
     // --- round-trip ---
     let parsed = GenericNack::parse(&bytes).unwrap();
     assert_eq!(parsed, nack);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 /// Verify the bitmask NACK covers exactly the right lost sequence numbers.
@@ -151,7 +151,7 @@ fn appendix_a_range_nack() {
         ],
     };
 
-    let bytes = rn.to_bytes();
+    let bytes = rn.try_to_bytes().unwrap();
 
     // --- header checks ---
     // V=2, P=0, Subtype=0 -> byte 0 = 0b10_0_00000 = 0x80
@@ -187,7 +187,7 @@ fn appendix_a_range_nack() {
     // --- round-trip ---
     let parsed = RangeNack::parse(&bytes).unwrap();
     assert_eq!(parsed, rn);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
 }
 
 /// Verify the range NACK covers exactly the same loss set as the bitmask NACK.
@@ -307,7 +307,7 @@ fn parse_handcrafted_generic_nack() {
     assert_eq!(nack.nacks[0].pid, 100);
     assert_eq!(nack.nacks[0].blp, 0xFFFC);
     // Byte-exact round-trip.
-    assert_eq!(nack.to_bytes(), bytes);
+    assert_eq!(nack.try_to_bytes().unwrap(), bytes);
 }
 
 /// Parse a hand-crafted Range NACK from known bytes.
@@ -328,7 +328,7 @@ fn parse_handcrafted_range_nack() {
     assert_eq!(rn.ranges.len(), 1);
     assert_eq!(rn.ranges[0].start, 103);
     assert_eq!(rn.ranges[0].additional, 19);
-    assert_eq!(rn.to_bytes(), bytes);
+    assert_eq!(rn.try_to_bytes().unwrap(), bytes);
 }
 
 /// Parse a hand-crafted RTT Echo Request from known bytes.
@@ -351,7 +351,7 @@ fn parse_handcrafted_rtt_echo_request() {
     assert_eq!(echo.timestamp, 0x0000_0001_0000_0002);
     assert_eq!(echo.processing_delay_us, 0);
     assert!(echo.padding.is_empty());
-    assert_eq!(echo.to_bytes(), bytes);
+    assert_eq!(echo.try_to_bytes().unwrap(), bytes);
 }
 
 // ---------------------------------------------------------------------------
@@ -365,7 +365,7 @@ fn generic_nack_rejects_wrong_version() {
         ssrc_media: 2,
         nacks: vec![NackFci { pid: 1, blp: 0 }],
     };
-    let mut bytes = nack.to_bytes();
+    let mut bytes = nack.try_to_bytes().unwrap();
     // Set V=1 instead of V=2.
     bytes[0] = 0x41; // V=1, FMT=1
     assert!(GenericNack::parse(&bytes).is_err());
@@ -380,7 +380,7 @@ fn range_nack_rejects_wrong_subtype() {
             additional: 0,
         }],
     };
-    let mut bytes = rn.to_bytes();
+    let mut bytes = rn.try_to_bytes().unwrap();
     // Change subtype from 0 to 5.
     bytes[0] = (2 << 6) | 5;
     assert!(RangeNack::parse(&bytes).is_err());

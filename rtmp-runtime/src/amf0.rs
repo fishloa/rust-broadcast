@@ -543,12 +543,12 @@ mod tests {
     use super::*;
 
     fn round_trip(v: &Amf0Value) {
-        let bytes = v.to_bytes();
+        let bytes = v.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), v.serialized_len());
         let parsed = Amf0Value::parse(&bytes).expect("parse");
         assert_eq!(&parsed, v);
         // parse -> serialize -> byte-identical
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -707,7 +707,9 @@ mod tests {
     fn dropping_object_end_marker_is_rejected() {
         // Mutation check: an Object with its `00 00 09` terminator dropped
         // must fail to parse (BufferTooShort), not silently succeed.
-        let full = Amf0Value::Object(vec![("k".to_string(), Amf0Value::Null)]).to_bytes();
+        let full = Amf0Value::Object(vec![("k".to_string(), Amf0Value::Null)])
+            .try_to_bytes()
+            .unwrap();
         let truncated = &full[..full.len() - 3];
         assert!(Amf0Value::parse(truncated).is_err());
     }
@@ -824,7 +826,7 @@ mod tests {
 
     #[test]
     fn command_name_must_be_string() {
-        let bytes = Amf0Value::Number(1.0).to_bytes();
+        let bytes = Amf0Value::Number(1.0).try_to_bytes().unwrap();
         assert!(matches!(
             Command::parse(&bytes),
             Err(RtmpError::Malformed { .. })
@@ -833,8 +835,14 @@ mod tests {
 
     #[test]
     fn command_transaction_id_must_be_number() {
-        let mut bytes = Amf0Value::String("connect".to_string()).to_bytes();
-        bytes.extend(Amf0Value::String("not a number".to_string()).to_bytes());
+        let mut bytes = Amf0Value::String("connect".to_string())
+            .try_to_bytes()
+            .unwrap();
+        bytes.extend(
+            Amf0Value::String("not a number".to_string())
+                .try_to_bytes()
+                .unwrap(),
+        );
         assert!(matches!(
             Command::parse(&bytes),
             Err(RtmpError::Malformed { .. })

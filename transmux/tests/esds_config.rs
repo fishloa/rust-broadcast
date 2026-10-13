@@ -137,7 +137,7 @@ fn esds_oti_mutation_changes_bytes() {
         .expect("should have DecoderConfigDescriptor");
     dc.object_type_indication = ObjectTypeIndication(0x21); // AVC
 
-    let mutated = esds.to_bytes();
+    let mutated = esds.try_to_bytes().unwrap();
     assert_ne!(
         mutated, original,
         "mutating OTI must change serialized bytes"

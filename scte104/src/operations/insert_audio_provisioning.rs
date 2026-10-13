@@ -185,7 +185,7 @@ mod tests {
     /// Tables 9-34 / 9-35 byte by byte.
     #[test]
     fn wire_layout_matches_table_9_34() {
-        let bytes = sample().to_bytes();
+        let bytes = sample().try_to_bytes().unwrap();
         assert_eq!(bytes, [2, 1, 1, 2, 6]);
         assert_eq!(InsertAudioProvisioning::parse(&bytes).unwrap(), sample());
     }
@@ -207,7 +207,7 @@ mod tests {
         assert_eq!(CodecIndex::from_u8(4), CodecIndex::Unknown(4));
         let bytes = [1, 9, 4];
         let op = InsertAudioProvisioning::parse(&bytes).unwrap();
-        assert_eq!(op.to_bytes(), bytes);
+        assert_eq!(op.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]

@@ -102,7 +102,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 6);
         let back = ComponentModeDpi::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -116,16 +116,16 @@ mod tests {
                 component_preroll: 1000,
             }],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op.clone();
         op2.components[0].component_preroll = 999;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn empty_round_trip() {
         let op = ComponentModeDpi::default();
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert!(bytes.is_empty());
         assert_eq!(ComponentModeDpi::parse(&bytes).unwrap(), op);
     }

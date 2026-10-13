@@ -378,7 +378,7 @@ fn avcc_round_trip_from_sps_decode() {
         sps_ext: vec![],
     };
 
-    let serialized = record.to_bytes();
+    let serialized = record.try_to_bytes().unwrap();
 
     // Bytes 1/2/3 of avcC are profile_indication, profile_compatibility, level_indication
     assert_eq!(

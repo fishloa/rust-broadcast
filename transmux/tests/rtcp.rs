@@ -41,16 +41,25 @@ fn sr_two_blocks() -> SenderReport {
 fn round_trip_sr_rr_sdes_bye_app() {
     // SR with 2 report blocks.
     let sr = sr_two_blocks();
-    let sr_bytes = sr.to_bytes();
+    let sr_bytes = sr.try_to_bytes().unwrap();
     assert_eq!(SenderReport::parse(&sr_bytes).unwrap(), sr);
-    assert_eq!(SenderReport::parse(&sr_bytes).unwrap().to_bytes(), sr_bytes);
+    assert_eq!(
+        SenderReport::parse(&sr_bytes)
+            .unwrap()
+            .try_to_bytes()
+            .unwrap(),
+        sr_bytes
+    );
 
     // RR.
     let rr = ReceiverReport::new(0x0A0B_0C0D, vec![block(0xCCCC_0003, 33, -1)]);
-    let rr_bytes = rr.to_bytes();
+    let rr_bytes = rr.try_to_bytes().unwrap();
     assert_eq!(ReceiverReport::parse(&rr_bytes).unwrap(), rr);
     assert_eq!(
-        ReceiverReport::parse(&rr_bytes).unwrap().to_bytes(),
+        ReceiverReport::parse(&rr_bytes)
+            .unwrap()
+            .try_to_bytes()
+            .unwrap(),
         rr_bytes
     );
 
@@ -70,10 +79,13 @@ fn round_trip_sr_rr_sdes_bye_app() {
             ],
         }],
     };
-    let sdes_bytes = sdes.to_bytes();
+    let sdes_bytes = sdes.try_to_bytes().unwrap();
     assert_eq!(SourceDescription::parse(&sdes_bytes).unwrap(), sdes);
     assert_eq!(
-        SourceDescription::parse(&sdes_bytes).unwrap().to_bytes(),
+        SourceDescription::parse(&sdes_bytes)
+            .unwrap()
+            .try_to_bytes()
+            .unwrap(),
         sdes_bytes
     );
 
@@ -82,9 +94,12 @@ fn round_trip_sr_rr_sdes_bye_app() {
         sources: vec![0x1111_2222, 0x3333_4444],
         reason: Some("session over".to_string()),
     };
-    let bye_bytes = bye.to_bytes();
+    let bye_bytes = bye.try_to_bytes().unwrap();
     assert_eq!(Bye::parse(&bye_bytes).unwrap(), bye);
-    assert_eq!(Bye::parse(&bye_bytes).unwrap().to_bytes(), bye_bytes);
+    assert_eq!(
+        Bye::parse(&bye_bytes).unwrap().try_to_bytes().unwrap(),
+        bye_bytes
+    );
 
     // APP.
     let app = App {
@@ -93,9 +108,12 @@ fn round_trip_sr_rr_sdes_bye_app() {
         name: *b"TEST",
         data: vec![1, 2, 3, 4, 5, 6, 7, 8],
     };
-    let app_bytes = app.to_bytes();
+    let app_bytes = app.try_to_bytes().unwrap();
     assert_eq!(App::parse(&app_bytes).unwrap(), app);
-    assert_eq!(App::parse(&app_bytes).unwrap().to_bytes(), app_bytes);
+    assert_eq!(
+        App::parse(&app_bytes).unwrap().try_to_bytes().unwrap(),
+        app_bytes
+    );
 }
 
 // --- Gate 2: wire-layout correctness + negative cumulative_lost. -----------
@@ -103,7 +121,7 @@ fn round_trip_sr_rr_sdes_bye_app() {
 #[test]
 fn sr_wire_layout() {
     let sr = sr_two_blocks();
-    let bytes = sr.to_bytes();
+    let bytes = sr.try_to_bytes().unwrap();
     // V=2 in the top 2 bits.
     assert_eq!(bytes[0] >> 6, 2, "version must be 2");
     // RC=2 in the low 5 bits.
@@ -124,7 +142,7 @@ fn sr_wire_layout() {
 fn report_block_negative_cumulative_lost() {
     for v in [-1_i32, -100, -0x80_0000, 0, 1, 0x7F_FFFF] {
         let b = block(0x1, 0, v);
-        let parsed = ReportBlock::parse(&b.to_bytes()).unwrap();
+        let parsed = ReportBlock::parse(&b.try_to_bytes().unwrap()).unwrap();
         assert_eq!(
             parsed.cumulative_lost, v,
             "24-bit signed round-trip for {v}"
@@ -150,11 +168,11 @@ fn compound_sr_then_sdes() {
         RtcpPacket::SourceDescription(sdes),
     ])
     .unwrap();
-    let bytes = cp.to_bytes();
+    let bytes = cp.try_to_bytes().unwrap();
     let parsed = CompoundPacket::parse(&bytes).unwrap();
     assert_eq!(parsed.packets.len(), 2);
     assert_eq!(parsed, cp);
-    assert_eq!(parsed.to_bytes(), bytes);
+    assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     assert_eq!(
         parsed.packets[0].packet_type(),
         RtcpPacketType::SenderReport
@@ -183,7 +201,8 @@ fn compound_not_starting_with_report_rejected() {
         sources: vec![0xDEAD_BEEF],
         reason: None,
     }
-    .to_bytes();
+    .try_to_bytes()
+    .unwrap();
     assert!(CompoundPacket::parse(&bye_bytes).is_err());
 }
 
@@ -192,22 +211,22 @@ fn compound_not_starting_with_report_rejected() {
 #[test]
 fn mutating_packet_count_bites() {
     let sr = sr_two_blocks();
-    let mut bytes = sr.to_bytes();
+    let mut bytes = sr.try_to_bytes().unwrap();
     let orig = SenderReport::parse(&bytes).unwrap().packet_count;
     // packet_count is at 4 (header) + 16 = offset 20.
     bytes[20] ^= 0xFF;
     let mutated = SenderReport::parse(&bytes).unwrap();
     assert_ne!(mutated.packet_count, orig);
     // The decoded (mutated) value re-serializes to exactly the mutated bytes.
-    assert_eq!(mutated.to_bytes(), bytes);
+    assert_eq!(mutated.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
 fn mutating_jitter_bites() {
     let mut sr = sr_two_blocks();
-    let before = sr.to_bytes();
+    let before = sr.try_to_bytes().unwrap();
     sr.report_blocks[0].jitter = sr.report_blocks[0].jitter.wrapping_add(0x0100_0000);
-    let after = sr.to_bytes();
+    let after = sr.try_to_bytes().unwrap();
     assert_ne!(before, after, "changing jitter changes the bytes");
     let parsed = SenderReport::parse(&after).unwrap();
     assert_eq!(parsed.report_blocks[0].jitter, sr.report_blocks[0].jitter);
@@ -219,7 +238,7 @@ fn mutating_jitter_bites() {
 fn sr_rc_two_boundary() {
     let sr = sr_two_blocks();
     assert_eq!(sr.report_blocks.len(), 2);
-    let bytes = sr.to_bytes();
+    let bytes = sr.try_to_bytes().unwrap();
     // header(4) + ssrc+sender-info(24) + 2 report blocks(48) = 76 bytes.
     assert_eq!(bytes.len(), 4 + 24 + 2 * REPORT_BLOCK_LEN);
     // RC field is 2.

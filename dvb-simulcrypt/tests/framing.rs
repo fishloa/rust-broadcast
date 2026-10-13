@@ -29,7 +29,7 @@ fn ecmg_channel_setup_exact_wire_bytes() {
         ],
     );
 
-    let bytes = msg.to_bytes();
+    let bytes = msg.try_to_bytes().unwrap();
     // header: 03 | 0001 | message_length
     // body  : 000E 0002 002A | 0001 0004 00010002
     // body_len = 6 + 8 = 14 = 0x000E
@@ -64,7 +64,7 @@ fn cw_provision_exact_wire_bytes() {
             ),
         ],
     );
-    let bytes = msg.to_bytes();
+    let bytes = msg.try_to_bytes().unwrap();
     #[rustfmt::skip]
     let expected: &[u8] = &[
         0x03, 0x02, 0x01, 0x00, 0x10,            // hdr, body_len = 6+10 = 0x10
@@ -93,8 +93,8 @@ fn field_mutation_changes_wire() {
     let mut mutated = base.clone();
     mutated.message_type = MessageType::EcmgScs(EcmgScsMessageType::ChannelClose);
     assert_ne!(
-        base.to_bytes(),
-        mutated.to_bytes(),
+        base.try_to_bytes().unwrap(),
+        mutated.try_to_bytes().unwrap(),
         "message_type is rebuilt"
     );
 
@@ -107,7 +107,11 @@ fn field_mutation_changes_wire() {
             &v2,
         )],
     );
-    assert_ne!(base.to_bytes(), mutated2.to_bytes(), "value is rebuilt");
+    assert_ne!(
+        base.try_to_bytes().unwrap(),
+        mutated2.try_to_bytes().unwrap(),
+        "value is rebuilt"
+    );
 }
 
 /// Adding a parameter must change message_length and add a TLV — proves the
@@ -140,8 +144,8 @@ fn message_length_recomputed() {
     );
     assert_eq!(one.body_len(), 6);
     assert_eq!(two.body_len(), 12);
-    assert_eq!(one.to_bytes()[3..5], [0x00, 0x06]);
-    assert_eq!(two.to_bytes()[3..5], [0x00, 0x0C]);
+    assert_eq!(one.try_to_bytes().unwrap()[3..5], [0x00, 0x06]);
+    assert_eq!(two.try_to_bytes().unwrap()[3..5], [0x00, 0x0C]);
 }
 
 /// ≥2-parameter boundary: a stream_setup with four TLVs round-trips with order
@@ -171,7 +175,7 @@ fn multi_parameter_order_preserved() {
             ),
         ],
     );
-    let bytes = msg.to_bytes();
+    let bytes = msg.try_to_bytes().unwrap();
     let parsed = SimulcryptMessage::parse_on(Interface::EcmgScs, &bytes).unwrap();
     assert_eq!(parsed.parameters.len(), 4);
     // Order preserved.
@@ -205,7 +209,7 @@ fn emmg_data_provision_round_trip_and_scoping() {
             ),
         ],
     );
-    let bytes = msg.to_bytes();
+    let bytes = msg.try_to_bytes().unwrap();
     assert_eq!(
         SimulcryptMessage::parse_on(Interface::EmmgPdgMux, &bytes).unwrap(),
         msg
@@ -243,7 +247,7 @@ fn emmg_data_provision_round_trip_and_scoping() {
 ///     MessageType::EmmgPdgMux(EmmgMuxMessageType::DataProvision),
 ///     vec![],
 /// );
-/// let bytes = msg.to_bytes();
+/// let bytes = msg.try_to_bytes().unwrap();
 /// assert_eq!(
 ///     SimulcryptMessage::parse(&bytes).unwrap().message_type,
 ///     MessageType::EcmgScs(EcmgScsMessageType::Reserved(0x0211)), // WRONG
@@ -260,7 +264,7 @@ fn parse_on_requires_and_honours_the_real_interface() {
         MessageType::EmmgPdgMux(EmmgMuxMessageType::DataProvision),
         vec![],
     );
-    let bytes = msg.to_bytes();
+    let bytes = msg.try_to_bytes().unwrap();
     let decoded = SimulcryptMessage::parse_on(Interface::EmmgPdgMux, &bytes).unwrap();
     assert_eq!(
         decoded.message_type,
@@ -282,7 +286,7 @@ fn frame_len_distinguishes_incomplete_from_complete() {
             &v,
         )],
     );
-    let bytes = msg.to_bytes();
+    let bytes = msg.try_to_bytes().unwrap();
     let total = bytes.len();
 
     // Fewer bytes than the header itself: cannot even read message_length.
@@ -680,7 +684,7 @@ fn cpsig_channel_setup_round_trip() {
             ),
         ],
     );
-    let bytes = msg.to_bytes();
+    let bytes = msg.try_to_bytes().unwrap();
     let parsed = SimulcryptMessage::parse_on(Interface::CpSigPSig, &bytes).unwrap();
     assert_eq!(parsed, msg, "byte-exact round-trip");
     assert_eq!(parsed.parameters.len(), 2);
@@ -693,8 +697,8 @@ fn cpsig_channel_setup_round_trip() {
         &other_bouquet,
     );
     assert_ne!(
-        msg.to_bytes(),
-        mutated.to_bytes(),
+        msg.try_to_bytes().unwrap(),
+        mutated.try_to_bytes().unwrap(),
         "mutating a parameter changes the wire bytes"
     );
 }

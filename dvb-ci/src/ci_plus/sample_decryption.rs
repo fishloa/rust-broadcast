@@ -822,7 +822,7 @@ mod tests {
 
     #[test]
     fn sd_info_req_round_trips() {
-        let bytes = SdInfoReq::default().to_bytes();
+        let bytes = SdInfoReq::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x98, 0x00, 0x00]);
         assert_eq!(SdInfoReq::parse(&bytes).unwrap(), SdInfoReq::default());
     }
@@ -834,7 +834,7 @@ mod tests {
             drm_system_ids: alloc::vec![0x4AD4, 0x1234],
             drm_uuids: alloc::vec![UUID_A, UUID_B],
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         // body: n_sys(02) 4A D4 12 34, n_uuid(02), 16+16 uuid bytes.
         // body_len = 1 + 4 + 1 + 32 = 38 = 0x26.
         assert_eq!(bytes[0..4], [0x9F, 0x98, 0x01, 0x26]);
@@ -846,7 +846,7 @@ mod tests {
         assert_eq!(SdInfoReply::parse(&bytes).unwrap(), r);
         let mut other = r.clone();
         other.drm_system_ids[0] = 0x0000;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -856,7 +856,7 @@ mod tests {
             drm_system_ids: Vec::new(),
             drm_uuids: Vec::new(),
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x98, 0x01, 0x02, 0x00, 0x00]);
         assert_eq!(SdInfoReply::parse(&bytes).unwrap(), r);
     }
@@ -874,7 +874,7 @@ mod tests {
                 drm_metadata: &[0xDE, 0xAD, 0xBE, 0xEF],
             }]),
         };
-        let bytes = s.to_bytes();
+        let bytes = s.try_to_bytes().unwrap();
         // LTS_id(07) prog(00 42) ts_flag-byte(01) n_records(01)
         //   source(03) sysid(FF FF) uuid(16) len(00 04) data(DE AD BE EF)
         // body_len = 1+2+1 + 1 + (1+2+16+2+4) = 5 + 26 = 30... let's just check head.
@@ -897,7 +897,7 @@ mod tests {
             drm_uuid: UUID_A,
             drm_metadata: &[0xDE, 0xAD, 0xBE, 0x00],
         }]);
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -922,7 +922,7 @@ mod tests {
                 },
             ]),
         };
-        let bytes = s.to_bytes();
+        let bytes = s.try_to_bytes().unwrap();
         assert_eq!(bytes[7], 0x00); // ts_flag == 0
         assert_eq!(bytes[8], 0x02); // number_of_Sample_Tracks
         // track0: reserved(3)+PID 0x0100 => 0x01 0x00, n_records=01.
@@ -952,7 +952,7 @@ mod tests {
             buffer_size: 5000,
             data_block_size: 0,
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         // body_len = 1+1+1+2+16+2+2 = 25 = 0x19.
         assert_eq!(bytes[0..4], [0x9F, 0x98, 0x03, 0x19]);
         assert_eq!(bytes[4], 0x05); // LTS_id
@@ -965,8 +965,8 @@ mod tests {
         assert_eq!(SdStartReply::parse(&bytes).unwrap(), r);
         let mut other = r;
         other.drm_status = DrmStatus::NoEntitlement;
-        assert_eq!(other.to_bytes()[6], 0x02);
-        assert_ne!(bytes, other.to_bytes());
+        assert_eq!(other.try_to_bytes().unwrap()[6], 0x02);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -990,7 +990,7 @@ mod tests {
                 },
             ]),
         };
-        let bytes = u.to_bytes();
+        let bytes = u.try_to_bytes().unwrap();
         assert_eq!(bytes[0..3], [0x9F, 0x98, 0x04]);
         assert_eq!(bytes[4], 0x09); // LTS_id
         assert_eq!(bytes[5], 0x00); // ts_flag
@@ -1005,7 +1005,7 @@ mod tests {
             lts_id: 0x03,
             drm_status: DrmStatus::Undetermined,
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x98, 0x05, 0x02, 0x03, 0x01]);
         assert_eq!(SdUpdateReply::parse(&bytes).unwrap(), r);
         let other = SdUpdateReply {
@@ -1013,12 +1013,12 @@ mod tests {
             lts_id: 0x03,
             drm_status: DrmStatus::DecryptionPossible,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
     fn dispatch_routes_each_tag() {
-        let req = SdInfoReq::default().to_bytes();
+        let req = SdInfoReq::default().try_to_bytes().unwrap();
         assert!(matches!(
             SampleDecryptionApdu::parse(&req).unwrap(),
             SampleDecryptionApdu::SdInfoReq(_)
@@ -1028,10 +1028,11 @@ mod tests {
             lts_id: 0,
             drm_status: DrmStatus::DecryptionPossible,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = SampleDecryptionApdu::parse(&reply).unwrap();
         assert!(matches!(parsed, SampleDecryptionApdu::SdUpdateReply(_)));
-        assert_eq!(parsed.to_bytes(), reply);
+        assert_eq!(parsed.try_to_bytes().unwrap(), reply);
         assert!(matches!(
             SampleDecryptionApdu::parse(&[0x9F, 0x98, 0x7E, 0x00]),
             Err(Error::UnexpectedApduTag { .. })
@@ -1049,7 +1050,7 @@ mod tests {
                 records: Vec::new(),
             }]),
         };
-        let bytes = s.to_bytes();
+        let bytes = s.try_to_bytes().unwrap();
         assert_eq!(SdStart::parse(&bytes).unwrap(), s);
     }
 

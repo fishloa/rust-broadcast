@@ -76,13 +76,13 @@ mod tests {
         let bytes = [0x0F, 0x80, 0x00, 0x01, 0x00, 0x00];
         let seg = EndOfDisplaySetSegment::parse(&bytes).unwrap();
         assert_eq!(seg.page_id, 1);
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test: mutation changes output
         let mut seg2 = seg.clone();
         seg2.page_id = 5;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = EndOfDisplaySetSegment::parse(&out2).unwrap();
         assert_eq!(reparse.page_id, 5);

@@ -43,7 +43,7 @@ fn main() {
         payload: &payload,
     };
 
-    let bytes = pkt.to_bytes();
+    let bytes = pkt.try_to_bytes().unwrap();
     println!("serialized {} bytes", bytes.len());
     println!("first 32 bytes (LCT header): {:02x?}", &bytes[..32]);
 

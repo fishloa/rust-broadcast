@@ -64,7 +64,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let op = TransmitSchedule { cancel: 0 };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes, [0]);
         let back = TransmitSchedule::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -73,7 +73,7 @@ mod tests {
     #[test]
     fn cancel_round_trip() {
         let op = TransmitSchedule { cancel: 1 };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes, [1]);
         let back = TransmitSchedule::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -82,9 +82,9 @@ mod tests {
     #[test]
     fn mutate_field_changes_output() {
         let op = TransmitSchedule { cancel: 0 };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op;
         op2.cancel = 1;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 }

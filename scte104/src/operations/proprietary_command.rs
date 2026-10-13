@@ -80,7 +80,7 @@ mod tests {
             proprietary_command: 0x01,
             proprietary_data: &[0xAA, 0xBB, 0xCC],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let back = ProprietaryCommand::parse(&bytes).unwrap();
         assert_eq!(op, back);
     }
@@ -92,7 +92,7 @@ mod tests {
             proprietary_command: 0xFF,
             proprietary_data: &[],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), FIXED_LEN);
         let back = ProprietaryCommand::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -105,9 +105,9 @@ mod tests {
             proprietary_command: 0,
             proprietary_data: &[0x01],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op.clone();
         op2.proprietary_id = 999;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 }

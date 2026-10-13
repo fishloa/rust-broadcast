@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed
+- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 
 - **BREAKING (#1159):** `TrackSelection::track_ids`, `TrunkWriter::publish(track_id, ..)`, `SampleCursorItem::Timed { track_id }` and `SessionEvent::Sample { track_id }` use `transmux::TrackId` instead of `u32`.
 

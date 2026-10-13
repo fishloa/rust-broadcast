@@ -132,7 +132,7 @@ fn prft_real_fixture_byte_exact_round_trip() {
     let prft_box = find_full_box(&data, b"prft");
     let parsed = ProducerReferenceTimeBox::parse(prft_box).expect("should parse prft");
 
-    let serialized = parsed.to_bytes();
+    let serialized = parsed.try_to_bytes().unwrap();
     assert_eq!(
         serialized.len(),
         prft_box.len(),
@@ -168,9 +168,9 @@ fn prft_mutation_changes_bytes() {
     let prft_box = find_full_box(&data, b"prft");
     let mut parsed = ProducerReferenceTimeBox::parse(prft_box).expect("parse");
 
-    let original = parsed.to_bytes();
+    let original = parsed.try_to_bytes().unwrap();
     parsed.media_time = 0xDEAD_BEEF_1234_5678;
-    let mutated = parsed.to_bytes();
+    let mutated = parsed.try_to_bytes().unwrap();
     assert_ne!(
         mutated, original,
         "mutating media_time must change serialized bytes"
@@ -216,7 +216,7 @@ fn sgpd_roll_real_fixture_byte_exact_round_trip() {
     let sgpd_box = find_full_box(stbl, b"sgpd");
 
     let parsed = SampleGroupDescriptionBox::parse(sgpd_box).expect("parse sgpd");
-    let serialized = parsed.to_bytes();
+    let serialized = parsed.try_to_bytes().unwrap();
     assert_eq!(
         serialized.len(),
         sgpd_box.len(),
@@ -275,7 +275,7 @@ fn sbgp_real_fixture_byte_exact_round_trip() {
     let sbgp_box = find_full_box(stbl, b"sbgp");
 
     let parsed = SampleToGroupBox::parse(sbgp_box).expect("parse sbgp");
-    let serialized = parsed.to_bytes();
+    let serialized = parsed.try_to_bytes().unwrap();
     assert_eq!(
         serialized.len(),
         sbgp_box.len(),
@@ -300,11 +300,11 @@ fn sgpd_mutation_changes_bytes() {
     let sgpd_box = find_full_box(stbl, b"sgpd");
 
     let mut parsed = SampleGroupDescriptionBox::parse(sgpd_box).expect("parse sgpd");
-    let original = parsed.to_bytes();
+    let original = parsed.try_to_bytes().unwrap();
 
     // Change roll_distance from -1 to -4
     parsed.entries[0] = SgpdEntry::Roll { roll_distance: -4 };
-    let mutated = parsed.to_bytes();
+    let mutated = parsed.try_to_bytes().unwrap();
     assert_ne!(
         mutated, original,
         "mutating roll_distance must change serialized bytes"
@@ -319,13 +319,13 @@ fn sbgp_mutation_changes_bytes() {
     let sbgp_box = find_full_box(stbl, b"sbgp");
 
     let mut parsed = SampleToGroupBox::parse(sbgp_box).expect("parse sbgp");
-    let original = parsed.to_bytes();
+    let original = parsed.try_to_bytes().unwrap();
 
     parsed.entries.push(SbgpEntry {
         sample_count: 999,
         group_description_index: 1,
     });
-    let mutated = parsed.to_bytes();
+    let mutated = parsed.try_to_bytes().unwrap();
     assert_ne!(
         mutated, original,
         "adding a sbgp entry must change serialized bytes"
@@ -363,7 +363,7 @@ fn subs_spec_vector_round_trip_v0() {
         }],
     };
 
-    let bytes = b.to_bytes();
+    let bytes = b.try_to_bytes().unwrap();
     let parsed = SubSampleInformationBox::parse(&bytes).expect("parse subs v0");
 
     assert_eq!(parsed.version, 0);
@@ -379,7 +379,7 @@ fn subs_spec_vector_round_trip_v0() {
 
     // Byte-exact round-trip
     assert_eq!(
-        parsed.to_bytes(),
+        parsed.try_to_bytes().unwrap(),
         bytes,
         "subs round-trip must be byte-identical"
     );
@@ -401,11 +401,11 @@ fn subs_spec_vector_round_trip_v1() {
             }],
         }],
     };
-    let bytes = b.to_bytes();
+    let bytes = b.try_to_bytes().unwrap();
     let parsed = SubSampleInformationBox::parse(&bytes).expect("parse subs v1");
     assert_eq!(parsed, b);
     assert_eq!(
-        parsed.to_bytes(),
+        parsed.try_to_bytes().unwrap(),
         bytes,
         "subs v1 round-trip byte-identical"
     );
@@ -426,10 +426,10 @@ fn subs_mutation_changes_bytes() {
             }],
         }],
     };
-    let original = b.to_bytes();
+    let original = b.try_to_bytes().unwrap();
     let mut b2 = b;
     b2.entries[0].subsamples[0].subsample_size = 999;
-    let mutated = b2.to_bytes();
+    let mutated = b2.try_to_bytes().unwrap();
     assert_ne!(
         mutated, original,
         "mutating subsample_size must change serialized bytes"

@@ -68,7 +68,7 @@ mod tests {
         let op = TimeSignalRequest {
             pre_roll_time: 2000,
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), LEN);
         let back = TimeSignalRequest::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -79,9 +79,9 @@ mod tests {
         let op = TimeSignalRequest {
             pre_roll_time: 1000,
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op;
         op2.pre_roll_time = 2000;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 }
