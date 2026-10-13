@@ -84,6 +84,18 @@ impl core::fmt::Debug for Pid {
     }
 }
 
+impl core::fmt::UpperHex for Pid {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::UpperHex::fmt(&self.0, f)
+    }
+}
+
+impl core::fmt::LowerHex for Pid {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::LowerHex::fmt(&self.0, f)
+    }
+}
+
 impl core::fmt::Display for Pid {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "0x{:04X}", self.0)
