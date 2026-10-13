@@ -6,6 +6,7 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.1] - 2026-10-13
 ### Fixed
 - `AsyncRtspClient::send_interleaved` no longer parks ~1.5 ms per frame. Its
   per-frame inbound probe was `timeout(Duration::ZERO, ..)`, which tokio
