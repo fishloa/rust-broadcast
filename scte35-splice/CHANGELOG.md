@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed
+
+- `PTS_MODULUS`/`pts_add_wrapping` and the DVB-TA 33-bit mask now delegate to `broadcast_common::clock33` (no behaviour change for valid input); added `tests/clock33_guard.rs`.
+
 ## [3.0.0] - 2026-10-05
 ### Changed (breaking)
 - Serializers now return an error, instead of silently truncating, when a

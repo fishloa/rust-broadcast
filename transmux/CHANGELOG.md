@@ -10,6 +10,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Smooth fragment build and Matroska `CodecPrivate` (avcC/hvcC/av1C) propagate serialize errors instead of panicking via `to_bytes`.
 
+### Changed
+
+- PS demux and TS mux 33-bit wrap arithmetic now delegates to `broadcast_common::clock33` (no behaviour change); added `tests/clock33_guard.rs` lexical tripwire and a PS wrap-straddle test.
+
 ## [0.25.6] - 2026-10-13
 ### Fixed
 
