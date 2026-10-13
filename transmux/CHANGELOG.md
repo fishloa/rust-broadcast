@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed (no_std builds, #1181)
+
+- `--features cenc` and `--features sample-aes` now build for bare-metal (`thumbv7em-none-eabi`): `cenc_decrypt` and `sample_aes` were missing `alloc` imports (`ToString`, `format!`) that only the `std` prelude supplied. CI now builds these optional features on the no_std target.
+
+### Changed (#982)
+
+- `cenc_decrypt`'s private box-navigation copies (`find_box`, `iter_child_boxes`, `iter_top_boxes`, `descend`) are replaced by shared `box_types` helpers (`child_boxes`, `find_child_box`, `descend_boxes`) built on `box_slices`. Behaviour is identical on every real fixture (pinned by an agreement test); the shared helpers also read the true container header length, so a `largesize`-form container's children are found where the old hardcoded 8-byte skip missed them.
+
 ### Security (secrets and identity handling, #1142)
 
 - `KeyMap` and `CencEncryptor` wipe their content keys when dropped (`zeroize`), and `KeyMap` equality compares keys in constant time (`subtle`). Both dependencies are pulled in by the `cenc` feature only. New `tests/key_hygiene.rs` and `tests/secret_debug_guard.rs`.

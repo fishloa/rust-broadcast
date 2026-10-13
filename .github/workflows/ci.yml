@@ -148,6 +148,21 @@ jobs:
             cargo build -p "$c" --no-default-features --target thumbv7em-none-eabi --locked
             echo "::endgroup::"
           done
+      # Non-`std` optional features that must also stay no_std-clean. The loop
+      # above builds with NO features, so a break behind one of these is
+      # invisible to it (issue #1181: `transmux --features cenc` failed to
+      # build here on missing alloc imports while the plain build passed).
+      # `serde` features are deliberately absent: they depend on `serde` with
+      # its default `std` feature, so they cannot build for bare metal today.
+      - name: Build no_std-capable optional features for bare-metal
+        run: |
+          for cf in transmux:cenc transmux:sample-aes dvb-si:chrono dvb-si:ts dvb-si:yoke dvb-bbframe:yoke dvb-t2mi:chrono dvb-t2mi:yoke cc-data:decode st291:ts st291:rtp rtp-packet:rfc8285 timed-metadata:chrono timed-metadata:cc-data timed-metadata:teletext caption-convert:cc-data caption-convert:teletext dvb-csa:bitsliced srt-runtime:crypto; do
+            c="${cf%%:*}"
+            f="${cf##*:}"
+            echo "::group::$c --features $f (no_std)"
+            cargo build -p "$c" --no-default-features --features "$f" --target thumbv7em-none-eabi --locked
+            echo "::endgroup::"
+          done
 
   # Fuzz targets are not part of the workspace (own sub-workspace under fuzz/)
   # and so are never built by the jobs above — they rot silently when a crate's
