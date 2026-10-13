@@ -186,6 +186,9 @@ pub struct RtspIngestSession {
     /// timeout, so a keepalive always lands well before expiry even with
     /// jitter (RFC 2326 §12.37 leaves the interval to the client).
     keepalive_interval: Option<Duration>,
+    /// Interleaved media frames skipped because their RTP payload did not
+    /// parse (audit T16, #1144) — see [`Self::malformed_media_frames`].
+    malformed_media_frames: u64,
 }
 
 /// Default RTSP keepalive interval when a server declares a session timeout
@@ -212,6 +215,14 @@ fn keepalive_interval_for(declared_secs: u64) -> Duration {
 }
 
 impl RtspIngestSession {
+    /// How many interleaved media frames were skipped because their RTP
+    /// payload did not parse. A corrupt frame inside an otherwise valid `$`
+    /// frame costs only itself: it is counted here (and logged), never ends
+    /// the session.
+    pub fn malformed_media_frames(&self) -> u64 {
+        self.malformed_media_frames
+    }
+
     fn begin_setup(&mut self, index: usize) -> Result<()> {
         let track = &self.tracks[index];
         let uri = resolve_control(&self.base_url, track.control.as_deref())?;
@@ -366,11 +377,23 @@ impl RtspIngestSession {
                 let Some(depa) = self.depacketiser.as_mut() else {
                     return Ok(());
                 };
-                let samples = depa
-                    .push(track_id, &data)
-                    .map_err(|e| MultimuxError::Depay {
-                        reason: e.to_string(),
-                    })?;
+                // A frame that does not depayload is skipped and counted: the
+                // `$` framing was intact, so the next frame is still readable
+                // and one corrupt RTP packet must not end the session (audit
+                // T16, #1144).
+                let samples = match depa.push(track_id, &data) {
+                    Ok(samples) => samples,
+                    Err(e) => {
+                        self.malformed_media_frames += 1;
+                        tracing::warn!(
+                            error = %e,
+                            channel,
+                            total = self.malformed_media_frames,
+                            "rtsp: skipped a malformed interleaved RTP frame"
+                        );
+                        return Ok(());
+                    }
+                };
                 for sample in samples {
                     self.pending.push_back(SessionEvent::Sample {
                         program: ProgramId(0),
@@ -394,14 +417,16 @@ impl Stage for RtspIngestSession {
     type Error = MultimuxError;
 
     fn feed(&mut self, input: &[u8], _now: Timestamp) -> Result<()> {
-        let events = self
-            .session
-            .handle_data(input)
-            .map_err(protocol_err("recv"))?;
-        for event in events {
+        // Everything decoded before a terminal protocol error is still handled
+        // (audit T16, #1144); only then does the error end the session.
+        let outcome = self.session.handle_data(input);
+        for event in outcome.events {
             self.handle_event(event)?;
         }
-        Ok(())
+        match outcome.error {
+            Some(e) => Err(protocol_err("recv")(e)),
+            None => Ok(()),
+        }
     }
 
     fn poll(&mut self) -> Option<SessionEvent> {
@@ -548,6 +573,7 @@ impl Dialer for RtspDialer {
             next_keepalive: None,
             started: std::time::Instant::now(),
             keepalive_interval: None,
+            malformed_media_frames: 0,
         })
     }
 }

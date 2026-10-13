@@ -229,7 +229,14 @@ async fn drive_and_collect(
 /// (interleaved TCP transport) -> PLAY -> three interleaved RTP access units
 /// (IDR, then two non-IDR, at distinct 90 kHz timestamps with the marker bit
 /// set on each so the streaming depayloader can close every access unit).
-async fn serve_one_session(mut sock: TcpStream) {
+async fn serve_one_session(sock: TcpStream) {
+    serve_session_with_frames(sock, false).await;
+}
+
+/// [`serve_one_session`], optionally with a corrupt interleaved frame (a valid
+/// `$` frame whose RTP payload is 5 bytes, shorter than any RTP header) in the
+/// middle of the media, and a fourth access unit after it.
+async fn serve_session_with_frames(mut sock: TcpStream, corrupt_middle: bool) {
     let (req, cseq) = read_request(&mut sock).await;
     assert!(req.starts_with("DESCRIBE"), "expected DESCRIBE, got: {req}");
     let sdp = sdp_body();
@@ -263,8 +270,16 @@ async fn serve_one_session(mut sock: TcpStream) {
     let idr = [0x65u8, 0xAA, 0xBB]; // nal_ref_idc=3, type=5 (IDR slice)
     let non1 = [0x41u8, 0xAA, 0xBB]; // nal_ref_idc=2, type=1 (non-IDR slice)
     let non2 = [0x41u8, 0xCC, 0xDD];
-    let aus: [(u32, &[u8]); 3] = [(1000, &idr), (4000, &non1), (7000, &non2)];
-    for (i, (ts, nal)) in aus.into_iter().enumerate() {
+    let non3 = [0x41u8, 0xEE, 0xFF];
+    let aus: [(u32, &[u8]); 4] = [(1000, &idr), (4000, &non1), (7000, &non2), (10_000, &non3)];
+    let n_aus = if corrupt_middle { 4 } else { 3 };
+    for (i, (ts, nal)) in aus.into_iter().take(n_aus).enumerate() {
+        if corrupt_middle && i == 2 {
+            let junk = InterleavedFrame::new(RTP_CHANNEL, vec![0xDE, 0xAD, 0xBE, 0xEF, 0x01])
+                .to_bytes()
+                .expect("frame fits the u16 length field");
+            write_all(&mut sock, &junk).await;
+        }
         let pkt = rtp_packet(1 + i as u16, ts, true, nal);
         let frame = InterleavedFrame::new(RTP_CHANNEL, pkt)
             .to_bytes()
@@ -360,6 +375,40 @@ async fn run() {
     assert!(!sample1.flags.is_sync, "the second access unit was non-IDR");
 
     server.await.expect("server task");
+}
+
+#[tokio::test]
+async fn corrupt_interleaved_rtp_frame_is_skipped_and_the_session_continues() {
+    tokio::time::timeout(TEST_TIMEOUT, async {
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            let (sock, _) = listener.accept().await.expect("accept");
+            serve_session_with_frames(sock, true).await;
+        });
+        let mut dialer = RtspDialer::new(format!("rtsp://{addr}/test"), None);
+        let mut session = dialer.dial().expect("dial");
+        let mut stream = TcpStream::connect(addr).await.expect("connect");
+
+        // 4 access units + 1 corrupt frame between AU1 and AU2: the three
+        // completed samples are the same as an undamaged 4-AU stream yields.
+        let events = drive_and_collect(&mut session, &mut stream, |evs| sample_count(evs) >= 3)
+            .await
+            .expect("a corrupt RTP frame must not end the session");
+        assert_eq!(sample_count(&events), 3);
+        assert_eq!(session.malformed_media_frames(), 1, "the damage is counted");
+        let sync: Vec<bool> = events
+            .iter()
+            .filter_map(|e| match e {
+                SessionEvent::Sample { sample, .. } => Some(sample.flags.is_sync),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sync, vec![true, false, false], "IDR then two non-IDR");
+        server.await.expect("server task");
+    })
+    .await
+    .expect("timed out");
 }
 
 /// Runs a hand-rolled RTSP server that requires Basic auth on DESCRIBE (RFC

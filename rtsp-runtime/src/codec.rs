@@ -32,6 +32,9 @@ pub(crate) async fn bounded<T>(
 pub(crate) struct ClientCodec {
     pub(crate) session: ClientSession,
     queue: VecDeque<ClientEvent>,
+    /// A terminal decode error, held back until every event decoded before it
+    /// has been handed out (audit T16, #1144).
+    deferred_error: Option<Error>,
 }
 
 impl ClientCodec {
@@ -39,6 +42,7 @@ impl ClientCodec {
         Self {
             session,
             queue: VecDeque::new(),
+            deferred_error: None,
         }
     }
 }
@@ -51,13 +55,21 @@ impl Decoder for ClientCodec {
         if let Some(ev) = self.queue.pop_front() {
             return Ok(Some(ev));
         }
+        if let Some(e) = self.deferred_error.take() {
+            return Err(e);
+        }
         if src.is_empty() {
             return Ok(None);
         }
         // The session buffers partial messages itself; hand it everything.
         let chunk = src.split();
-        self.queue.extend(self.session.handle_data(&chunk)?);
-        Ok(self.queue.pop_front())
+        let outcome = self.session.handle_data(&chunk);
+        self.queue.extend(outcome.events);
+        self.deferred_error = outcome.error;
+        match self.queue.pop_front() {
+            Some(ev) => Ok(Some(ev)),
+            None => self.deferred_error.take().map_or(Ok(None), Err),
+        }
     }
 }
 
@@ -172,6 +184,23 @@ mod tests {
         )
         .await;
         assert!(matches!(r, Err(Error::Timeout { what: "connect" })));
+    }
+
+    /// Audit T16 (#1144): the events decoded before a terminal error are handed
+    /// out first; the error follows on the next `decode`.
+    #[test]
+    fn client_codec_delivers_events_before_a_deferred_terminal_error() {
+        let mut c = ClientSession::new();
+        let _ = c.options("rtsp://h/s").unwrap();
+        let mut codec = ClientCodec::new(c);
+        let mut buf = BytesMut::new();
+        buf.extend_from_slice(RESPONSE);
+        buf.extend_from_slice(b"\x01\x02 not rtsp\r\n\r\n");
+        assert!(matches!(
+            codec.decode(&mut buf),
+            Ok(Some(ClientEvent::Response { cseq: 1, .. }))
+        ));
+        assert!(codec.decode(&mut buf).is_err(), "then the terminal error");
     }
 
     #[test]

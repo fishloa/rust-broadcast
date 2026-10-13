@@ -105,6 +105,31 @@ pub enum ClientEvent {
     },
 }
 
+/// What [`ClientSession::handle_data`] decoded from one chunk of inbound
+/// bytes: every event produced, and the terminal error that stopped decoding,
+/// if any. The events are valid even when `error` is `Some` — they were
+/// decoded before the failure and are never discarded with it.
+#[must_use = "an unchecked outcome silently ignores a terminal protocol error"]
+#[derive(Debug)]
+pub struct HandleOutcome {
+    /// Events decoded from the input, in wire order.
+    pub events: Vec<ClientEvent>,
+    /// The terminal error that ended decoding (framing lost), if any.
+    pub error: Option<Error>,
+}
+
+impl HandleOutcome {
+    /// All-or-nothing view: `Ok(events)` when decoding ran clean, else the
+    /// error (dropping the events - prefer reading the fields when they
+    /// matter).
+    pub fn into_result(self) -> Result<Vec<ClientEvent>> {
+        match self.error {
+            Some(e) => Err(e),
+            None => Ok(self.events),
+        }
+    }
+}
+
 /// A driveable RTSP client session (RFC 2326 §A.1).
 #[derive(Debug)]
 pub struct ClientSession {
@@ -407,9 +432,35 @@ impl ClientSession {
 
     // --- Inbound handling -------------------------------------------------
 
-    /// Feeds inbound bytes and returns the events produced. Retains any partial
-    /// trailing message or frame internally for the next call.
-    pub fn handle_data(&mut self, data: &[u8]) -> Result<Vec<ClientEvent>> {
+    /// Feeds inbound bytes and returns everything decoded from them.
+    ///
+    /// Retains any partial trailing message or frame internally for the next
+    /// call. A failure never discards what was already decoded in the same
+    /// call (audit T16, #1144): the [`HandleOutcome`] carries the events
+    /// produced *before* the failure together with the terminal
+    /// [`HandleOutcome::error`], if any. A terminal error means the TCP
+    /// framing is lost (an unparseable message head, an over-long header, an
+    /// unfulfillable `Content-Length`) and the session cannot continue; an
+    /// interleaved `$` frame is opaque at this layer (it is handed up whole as
+    /// [`ClientEvent::MediaData`]), so a malformed RTP/RTCP payload inside one
+    /// is the consumer's to skip without ending the session.
+    pub fn handle_data(&mut self, data: &[u8]) -> HandleOutcome {
+        let mut events = Vec::new();
+        let error = self.handle_data_into(data, &mut events).err();
+        HandleOutcome { events, error }
+    }
+
+    /// All-or-nothing form of [`handle_data`](Self::handle_data): `Ok(events)`
+    /// when decoding ran clean, `Err` (discarding any events decoded before
+    /// it) otherwise. For callers - simple scripts, tests - that treat any
+    /// protocol error as fatal; a long-lived session should use
+    /// [`handle_data`](Self::handle_data) so events decoded before a failure
+    /// are not lost.
+    pub fn handle_data_strict(&mut self, data: &[u8]) -> Result<Vec<ClientEvent>> {
+        self.handle_data(data).into_result()
+    }
+
+    fn handle_data_into(&mut self, data: &[u8], events: &mut Vec<ClientEvent>) -> Result<()> {
         self.inbound.extend_from_slice(data);
         if self.inbound.len() > MAX_INBOUND_BYTES {
             return Err(Error::MessageParse(format!(
@@ -418,7 +469,6 @@ impl ClientSession {
                 self.inbound.len()
             )));
         }
-        let mut events = Vec::new();
 
         loop {
             if self.inbound.is_empty() {
@@ -453,7 +503,7 @@ impl ClientSession {
                     self.inbound.drain(..consumed);
                     self.scanned = 0;
                     self.skip_until = 0;
-                    self.process_message(message, &mut events)?;
+                    self.process_message(message, events)?;
                 }
                 Err(rtsp_types::ParseError::Incomplete(needed)) => {
                     if let Some(more) = needed {
@@ -466,7 +516,7 @@ impl ClientSession {
                 }
             }
         }
-        Ok(events)
+        Ok(())
     }
 
     fn process_message(
@@ -736,7 +786,7 @@ mod tests {
         batch.extend(wire("RTSP/1.0 200 OK\nCSeq: 2\n\n"));
 
         let events = c
-            .handle_data(&batch)
+            .handle_data_strict(&batch)
             .expect("an unmatched CSeq must not fail the whole batch");
         let cseqs: Vec<u32> = events
             .into_iter()
@@ -762,7 +812,7 @@ mod tests {
         let chunk = vec![b'A'; 64 * 1024];
         let mut last = Ok(Vec::new());
         for _ in 0..(MAX_INBOUND_BYTES / chunk.len() + 2) {
-            last = c.handle_data(&chunk);
+            last = c.handle_data_strict(&chunk);
             if last.is_err() {
                 break;
             }
@@ -791,7 +841,7 @@ mod tests {
             0, 1,
         ));
         c.setup("rtsp://h/s", &t).unwrap();
-        c.handle_data(&wire(
+        c.handle_data_strict(&wire(
             "RTSP/1.0 200 OK\nCSeq: 1\nSession: 42\nTransport: RTP/AVP/TCP;interleaved=0-1\n\n",
         ))
         .unwrap();
@@ -801,7 +851,7 @@ mod tests {
         c.record("rtsp://h/s").unwrap();
         assert_eq!(c.state(), SessionState::Ready);
         // A 2xx response advances Ready -> Recording.
-        c.handle_data(&wire("RTSP/1.0 200 OK\nCSeq: 2\nSession: 42\n\n"))
+        c.handle_data_strict(&wire("RTSP/1.0 200 OK\nCSeq: 2\nSession: 42\n\n"))
             .unwrap();
         assert_eq!(c.state(), SessionState::Recording);
     }
@@ -821,7 +871,7 @@ mod tests {
         assert!(String::from_utf8_lossy(&first).contains("CSeq: 1"));
 
         let events = c
-            .handle_data(&wire(
+            .handle_data_strict(&wire(
                 "RTSP/1.0 401 Unauthorized\nCSeq: 1\nWWW-Authenticate: Digest realm=\"cam\",nonce=\"abc123\",qop=\"auth\"\n\n",
             ))
             .unwrap();
@@ -869,7 +919,7 @@ mod tests {
         // Establish the authenticator via an ordinary first challenge.
         c.options("rtsp://h/s").unwrap(); // CSeq 1
         let events = c
-            .handle_data(&wire(
+            .handle_data_strict(&wire(
                 "RTSP/1.0 401 Unauthorized\nCSeq: 1\nWWW-Authenticate: Digest realm=\"cam\",nonce=\"nonce-1\",qop=\"auth\"\n\n",
             ))
             .unwrap();
@@ -879,14 +929,14 @@ mod tests {
                 .any(|e| matches!(e, ClientEvent::AuthRetry { cseq: 2, .. })),
             "{events:?}"
         );
-        c.handle_data(&wire("RTSP/1.0 200 OK\nCSeq: 2\n\n"))
+        c.handle_data_strict(&wire("RTSP/1.0 200 OK\nCSeq: 2\n\n"))
             .unwrap();
 
         // A later, unrelated request (e.g. a GET_PARAMETER keepalive) hits a
         // rotated nonce with no `stale=true`.
         c.options("rtsp://h/s").unwrap(); // CSeq 3
         let events = c
-            .handle_data(&wire(
+            .handle_data_strict(&wire(
                 "RTSP/1.0 401 Unauthorized\nCSeq: 3\nWWW-Authenticate: Digest realm=\"cam\",nonce=\"nonce-2\",qop=\"auth\"\n\n",
             ))
             .unwrap();
@@ -923,7 +973,7 @@ mod tests {
         let resp = format!(
             "RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: {sess}\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
         );
-        c.handle_data(resp.as_bytes()).unwrap();
+        c.handle_data_strict(resp.as_bytes()).unwrap();
         c
     }
 
@@ -962,7 +1012,7 @@ mod tests {
                 )),
             )
             .unwrap();
-        c.handle_data(
+        c.handle_data_strict(
             b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: abc;timeout=0\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n",
         )
         .unwrap();
@@ -994,7 +1044,7 @@ mod tests {
             let resp = format!(
                 "RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: {hdr}\r\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\r\n\r\n"
             );
-            c.handle_data(resp.as_bytes()).unwrap();
+            c.handle_data_strict(resp.as_bytes()).unwrap();
             assert_eq!(c.session_id(), Some(id), "{hdr}");
             let play = String::from_utf8(c.play("rtsp://h/s").unwrap()).unwrap();
             assert!(
@@ -1009,7 +1059,7 @@ mod tests {
         let mut c = ClientSession::new();
         for i in 1..=(MAX_SESSION_WARNINGS as u32 + 10) {
             let _ = c.options("rtsp://h/s").unwrap();
-            c.handle_data(
+            c.handle_data_strict(
                 format!("RTSP/1.0 200 OK\r\nCSeq: {i}\r\nSession: abc;timeout=x\r\n\r\n")
                     .as_bytes(),
             )
@@ -1023,7 +1073,7 @@ mod tests {
     fn an_unusable_session_header_is_observable_not_silent() {
         let mut c = ClientSession::new();
         let _ = c.options("rtsp://h/s").unwrap();
-        c.handle_data(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: ;timeout=5\r\n\r\n")
+        c.handle_data_strict(b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nSession: ;timeout=5\r\n\r\n")
             .unwrap();
         assert!(c.session_id().is_none());
         assert_eq!(c.session_warnings().len(), 1);
@@ -1083,13 +1133,16 @@ mod tests {
     fn head_cap_holds_for_a_70_kib_run_of_a_and_for_9000_header_lines() {
         let mut c = ClientSession::new();
         assert!(matches!(
-            c.handle_data(&vec![b'A'; 70 * 1024]),
+            c.handle_data_strict(&vec![b'A'; 70 * 1024]),
             Err(Error::MessageParse(_))
         ));
         let mut c = ClientSession::new();
         let mut junk = b"RTSP/1.0 200 OK\r\n".to_vec();
         junk.extend(b"X-A: b\r\n".repeat(9000));
-        assert!(matches!(c.handle_data(&junk), Err(Error::MessageParse(_))));
+        assert!(matches!(
+            c.handle_data_strict(&junk),
+            Err(Error::MessageParse(_))
+        ));
     }
 
     #[test]
@@ -1099,7 +1152,7 @@ mod tests {
         let resp = b"RTSP/1.0 200 OK\r\nCSeq: 1\r\nPublic: OPTIONS\r\n\r\n";
         let mut got = 0;
         for b in resp {
-            got += c.handle_data(&[*b]).unwrap().len();
+            got += c.handle_data_strict(&[*b]).unwrap().len();
         }
         assert_eq!(got, 1);
     }
@@ -1110,7 +1163,7 @@ mod tests {
         let mut junk = b"RTSP/1.0 200 OK\r\nX-Pad: ".to_vec();
         junk.extend(std::iter::repeat_n(b'a', 70 * 1024)); // no terminator, ever
         let err = c
-            .handle_data(&junk)
+            .handle_data_strict(&junk)
             .expect_err("header phase is capped at 64 KiB");
         assert!(matches!(err, Error::MessageParse(_)), "{err:?}");
     }
@@ -1124,14 +1177,14 @@ mod tests {
         c.options("rtsp://h/s").unwrap(); // CSeq 1
 
         // First 401 (no stale) -> normal retry at CSeq 2, marked retried.
-        c.handle_data(&wire(
+        c.handle_data_strict(&wire(
             "RTSP/1.0 401 Unauthorized\nCSeq: 1\nWWW-Authenticate: Digest realm=\"cam\",nonce=\"nonce-1\",qop=\"auth\"\n\n",
         )).unwrap();
 
         // Re-challenge with a quoted `stale="True"` and a fresh nonce: the
         // retried request must be re-signed with the NEW nonce, not given up.
         let events = c
-            .handle_data(&wire(
+            .handle_data_strict(&wire(
                 "RTSP/1.0 401 Unauthorized\nCSeq: 2\nWWW-Authenticate: Digest realm=\"cam\",nonce=\"nonce-2\",qop=\"auth\",stale=\"True\"\n\n",
             ))
             .unwrap();
