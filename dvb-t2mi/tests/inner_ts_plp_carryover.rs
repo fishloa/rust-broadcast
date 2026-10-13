@@ -121,6 +121,13 @@ fn outer_ts(pid: Pid, data: &[u8]) -> Vec<[u8; TS_LEN]> {
     out
 }
 
+/// Committed copy of the two-PLP outer TS this test builds (T2-MI PID
+/// 0x1000), consumed by `dvb-tools`'s `t2mi --inner` multi-PLP CLI test.
+const FIXTURE: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../fixtures/dvb-t2mi/two-plp-synthetic.ts"
+);
+
 #[test]
 fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
     let pid = 0x1000;
@@ -176,7 +183,23 @@ fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
     t2mi_stream.extend_from_slice(&t2mi_packet_for_plp(&bb_a2, 0));
     t2mi_stream.extend_from_slice(&t2mi_packet_for_plp(&bb_b2, 1));
 
-    let outer = outer_ts(Pid::new(pid), &t2mi_stream);
+    let mut outer = outer_ts(Pid::new(pid), &t2mi_stream);
+    // Trailing null packets (PID 0x1FFF): a TS byte-stream reader needs
+    // `LOCK_CONFIRMATIONS` (5) consecutive sync bytes to lock, and the
+    // T2-MI data above is only three packets long.
+    let mut null = [0xFFu8; TS_LEN];
+    null[..4].copy_from_slice(&[0x47, 0x1F, 0xFF, 0x10]);
+    outer.extend(core::iter::repeat_n(null, 5));
+
+    let flat: Vec<u8> = outer.iter().flatten().copied().collect();
+    if std::env::var_os("UPDATE_T2MI_FIXTURE").is_some() {
+        fs::write(FIXTURE, &flat).unwrap();
+    }
+    assert_eq!(
+        fs::read(FIXTURE).expect("committed two-plp-synthetic.ts"),
+        flat,
+        "fixtures/dvb-t2mi/two-plp-synthetic.ts out of sync (UPDATE_T2MI_FIXTURE=1 regenerates)"
+    );
 
     let mut rec = InnerTsRecovery::new(Pid::new(pid)); // no --plp filter: the buggy shared path
     let mut recovered: Vec<[u8; TS_LEN]> = Vec::new();
@@ -197,4 +220,17 @@ fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
         recovered.contains(&inner_b),
         "PLP 1's real packet must come back byte-identical"
     );
+    // #1034: the unfiltered path interleaves independent TSes, so the
+    // driver must report that two PLPs were seen (the CLI refuses on this).
+    assert_eq!(rec.plps_seen().collect::<Vec<_>>(), vec![0u8, 1u8]);
+
+    // A PLP-selected driver still reports every PLP it saw, but recovers
+    // only the selected one's packet.
+    let mut only_b = InnerTsRecovery::new_for_plp(Pid::new(pid), 1);
+    let mut got = Vec::new();
+    for pkt in &outer {
+        got.extend_from_slice(only_b.feed(pkt));
+    }
+    assert_eq!(got, vec![inner_b], "PLP 1 alone, no PLP 0 data mixed in");
+    assert_eq!(only_b.plps_seen().collect::<Vec<_>>(), vec![0u8, 1u8]);
 }

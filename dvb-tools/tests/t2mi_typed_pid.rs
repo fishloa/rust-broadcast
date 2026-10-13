@@ -51,3 +51,34 @@ fn the_captures_t2mi_pid_decodes_and_another_pid_yields_nothing() {
         "a PID that is not the T2-MI PID must yield no packets"
     );
 }
+
+/// #1034: each T2 PLP carries an independent TS, so `--inner` on a multi-PLP
+/// feed must not merge them into one output. The fixture is two PLPs (0 and
+/// 1) on T2-MI PID 0x1000, each carrying one real TS packet split across two
+/// BBFrames (built from `fixtures/ts/scte35-real.ts` and
+/// `fixtures/mpeg-ts/af-pcr-stuffing.ts` by `dvb-t2mi`'s
+/// `inner_ts_plp_carryover` test, which pins this file byte-for-byte).
+#[test]
+fn inner_on_multi_plp_feed_requires_plp_selection() {
+    let path = format!(
+        "{}/../fixtures/dvb-t2mi/two-plp-synthetic.ts",
+        env!("CARGO_MANIFEST_DIR")
+    );
+
+    let (ok, stdout, stderr) = run(&["t2mi", &path, "--pid", "0x1000", "--inner"]);
+    assert!(!ok, "multi-PLP --inner without --plp must fail");
+    assert!(stdout.is_empty(), "no merged TS written: {} bytes", stdout.len());
+    assert!(stderr.contains("2 PLPs found (0, 1)"), "{stderr}");
+    assert!(stderr.contains("--plp"), "{stderr}");
+
+    // Binary stdout: read raw bytes (the lossy-String helper above would
+    // inflate non-UTF-8 bytes).
+    for plp in ["0", "1"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_dvb-tools"))
+            .args(["t2mi", &path, "--pid", "0x1000", "--inner", "--plp", plp])
+            .output()
+            .expect("spawn dvb-tools");
+        assert!(out.status.success(), "--plp {plp} must succeed");
+        assert_eq!(out.stdout.len(), 188, "exactly PLP {plp}'s one packet");
+    }
+}

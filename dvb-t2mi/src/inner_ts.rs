@@ -36,6 +36,8 @@ use crate::pump::{Stats, T2miPump};
 /// Every DVB-T2 PLP id fits in a byte (EN 302 755 MATYPE-2 / TS 102 773
 /// `plp_id`); one [`CarryOverExtractor`] slot per possible id.
 const MAX_PLPS: usize = 256;
+/// `u64` words in the seen-PLP bitmap (`MAX_PLPS / 64`).
+const PLP_BITMAP_WORDS: usize = MAX_PLPS / 64;
 
 /// Recovers the inner MPEG-TS carried inside a T2-MI stream.
 ///
@@ -52,6 +54,12 @@ const MAX_PLPS: usize = 256;
 /// by any other PLP's frame arriving before the split completes (issue
 /// #1034).
 ///
+/// **Multi-PLP feeds**: each PLP is an independent transport stream, so with
+/// no PLP selected ([`new`](Self::new)) a feed carrying more than one PLP
+/// yields their packets interleaved into one stream. Check
+/// [`plps_seen`](Self::plps_seen) and recover one PLP at a time with
+/// [`new_for_plp`](Self::new_for_plp).
+///
 /// Normal Mode and High-Efficiency Mode (without Null-Packet-Deletion) frames
 /// are recovered; HEM frames with `MATYPE.NPD` set are skipped (DNP-byte
 /// reinsertion is not modelled by the extractor) rather than mis-decoded.
@@ -64,6 +72,9 @@ pub struct InnerTsRecovery {
     up_buf: Vec<[u8; NM_UP_SIZE]>,
     target_plp: Option<u8>,
     filtered_out: u64,
+    /// Bitmap of every `plp_id` a BBFrame has been seen for (filtered or
+    /// not), so a caller can tell a single-TS PLP from a multi-PLP feed.
+    seen_plps: [u64; PLP_BITMAP_WORDS],
 }
 
 impl InnerTsRecovery {
@@ -90,6 +101,7 @@ impl InnerTsRecovery {
             up_buf: Vec::new(),
             target_plp,
             filtered_out: 0,
+            seen_plps: [0; PLP_BITMAP_WORDS],
         }
     }
 
@@ -106,6 +118,7 @@ impl InnerTsRecovery {
             let Ok(AnyPayload::Bbframe(bb)) = event.payload() else {
                 continue;
             };
+            self.seen_plps[(bb.plp_id / 64) as usize] |= 1u64 << (bb.plp_id % 64);
             if self.target_plp.is_some_and(|t| bb.plp_id != t) {
                 self.filtered_out += 1;
                 continue;
@@ -143,6 +156,19 @@ impl InnerTsRecovery {
     #[must_use]
     pub fn stats(&self) -> Stats {
         self.pump.stats()
+    }
+
+    /// Every `plp_id` a BBFrame has been seen for so far, ascending —
+    /// including PLPs [`new_for_plp`](Self::new_for_plp) filtered out.
+    ///
+    /// Each PLP carries an independent transport stream (own PAT/PIDs), so
+    /// when this lists more than one id the unfiltered output of
+    /// [`feed`](Self::feed) interleaves unrelated TSes into one garbled mux
+    /// (issue #1034): select one with [`new_for_plp`](Self::new_for_plp)
+    /// instead. `dvb-tools t2mi --inner` uses this to refuse a multi-PLP feed
+    /// unless `--plp` is given.
+    pub fn plps_seen(&self) -> impl Iterator<Item = u8> + '_ {
+        (0..=u8::MAX).filter(|id| self.seen_plps[(id / 64) as usize] & (1u64 << (id % 64)) != 0)
     }
 
     /// Number of BBFrames filtered out because their PLP did not match the
