@@ -196,10 +196,7 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<Str
     // fixed `availabilityStartTime` a sliding startNumber makes the client
     // derive a live edge of segments that do not exist -- issue #1058).
     let window = route.window_segments(crate::route::SPTS_PROGRAM_ID);
-    let start_number = route
-        .first_segment_seq(crate::route::SPTS_PROGRAM_ID)
-        .or_else(|| window.first().map(|s| s.segment_seq))
-        .map_or(1, u64::from);
+    let start_number = crate::output::dash::FIRST_SEGMENT_NUMBER;
 
     let target_duration_secs = route.target_duration_secs();
     let nominal_duration_ticks =
