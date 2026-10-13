@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Docs only: crate-level "Reserved-bit and trailing-byte policy" section stating the workspace rule (tolerant parse, spec-value serialize, preserve-on-parse exceptions, explicit reserved writes) (#1139).
 - Docs only: `Serialize::to_bytes` no longer claims it can fail only for hand-constructed values; it can also fail for values a lenient decoder assembled from damaged wire data (transmux #1171). Use `try_to_bytes` for anything derived from untrusted input.
 
 ## [9.4.0] - 2026-10-05

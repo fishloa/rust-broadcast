@@ -11,6 +11,34 @@
 //! the [`ts_dup`] ITU-T H.222.0 §2.4.3.3 legal-duplicate-packet check shared
 //! by `dvb-conformance`, `media-doctor` and `ts-fix`.
 //!
+//! # Reserved-bit and trailing-byte policy
+//!
+//! One workspace-wide rule for every wire crate (issue #1139):
+//!
+//! - **Parse is tolerant.** A non-conformant reserved bit, or trailing data
+//!   that real senders emit, is accepted rather than rejected (a crate may
+//!   choose stricter validation, as `dvb-t2mi` does for RFU bits, but must
+//!   document it).
+//! - **Serialize emits the spec value** for reserved bits: `1` for
+//!   `reserved_future_use` and H.222.0 "reserved", `0` for
+//!   `reserved_zero_future_use`. Re-serializing therefore **normalizes**
+//!   non-standard reserved bits and is deliberately not byte-identical
+//!   (`dvb-si`, `mpeg-pes`, `transmux`).
+//! - **Exception: preserve-on-parse.** Crates whose structs carry the
+//!   reserved/trailing bytes as explicit fields re-emit them verbatim
+//!   (`mpeg-ps`, `rmt-flute`, `cc-data` fixed bits, `rtcp-packet`
+//!   `profile_extensions`, `mp4-emsg` flags).
+//! - A caller that needs byte-for-byte preservation of arbitrary reserved
+//!   bits **keeps the original bytes** rather than re-serializing.
+//! - Trailing bytes inside a descriptor or section body are never silently
+//!   dropped without a documented decision: hold them in a typed field, or
+//!   document the field as "ignored".
+//! - Reserved bytes are always **written explicitly** by `serialize_into`;
+//!   never rely on a pre-zeroed output buffer.
+//!
+//! The round-trip gate is byte-exact against the original fixture slice
+//! (see `docs/CRATE-ACCEPTANCE.md`).
+//!
 //! # Container-mux traits ([`mux`])
 //!
 //! The [`mux`] module defines the codec-agnostic vocabulary for the any-to-any

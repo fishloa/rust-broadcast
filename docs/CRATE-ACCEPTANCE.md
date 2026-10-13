@@ -22,6 +22,15 @@ Byte-identical round-trip for text formats **requires** storing and re-emitting 
 - **Mutating any field must change the output** — this is what kills a passthrough serializer, since an echo cannot reflect a mutation.
 - **The crate's README must enumerate every way its output may differ from its input** (comments, attribute ordering, prefix spelling, whitespace, empty-element form). Byte-identity is not required, and a crate must not fake it by storing raw spans.
 
+### Reserved-bit / trailing-byte policy (workspace-wide; issue #1139)
+One rule for every wire crate; the authoritative statement is the `broadcast-common` crate-level docs ("Reserved-bit and trailing-byte policy").
+- **Parse is tolerant.** A non-conformant reserved bit or a trailing byte that real senders emit is accepted, never an error (stricter validation is a documented per-crate choice, e.g. `dvb-t2mi` rejects non-zero RFU).
+- **Serialize writes the spec value** for reserved bits: `1` for `reserved_future_use` / H.222.0 "reserved", `0` for `reserved_zero_future_use`. So re-serializing a stream with non-standard reserved bits **normalizes** them and is deliberately not byte-identical (`dvb-si`, `mpeg-pes`, `transmux`).
+- **Exception: preserve-on-parse.** A crate whose structs carry the reserved/trailing bytes as explicit typed fields re-emits them verbatim (`mpeg-ps`, `rmt-flute`, `cc-data` fixed bits, `rtcp-packet` `profile_extensions`, `mp4-emsg` flags). Such a crate's real-fixture round-trip must be byte-exact including those bits.
+- A caller that needs byte-for-byte preservation of arbitrary reserved bits **keeps the original bytes**.
+- **Trailing bytes inside a descriptor/section body are never silently dropped without a documented decision**: keep them in a typed field, or document the field/struct as "ignored".
+- **Reserved bytes are always written explicitly** by `serialize_into`, never skipped on the assumption of a pre-zeroed buffer.
+
 ### Shared (both format classes)
 - **No raw-byte public API** for structured data: fully typed (typed `Vec`/enums). Only genuinely-opaque blobs (compressed/private/unknown) stay `&[u8]`, documented as such.
 - **No magic numbers** outside `#[cfg(test)]`: every hex literal is a named const or enum.
@@ -42,6 +51,14 @@ Byte-identical round-trip for text formats **requires** storing and re-emitting 
 - **Tests must BITE**: stub the impl to a no-op and the test must FAIL. A green suite that a wrong impl also passes is not a gate.
 - **Fixtures must be genuine**: unscrambled, structurally valid for the field under test. (Session lesson: scrambled packets misparse as plausible typed fields under loose assertions — byte-identical + provenance checks catch it.)
 - Fixtures read at runtime via `concat!(env!("CARGO_MANIFEST_DIR"), …)` + `std::fs` — NEVER a bare relative path (silently skips under cargo's CWD), NEVER `include_bytes!` for example fixtures (breaks publish/docs.rs), NEVER a skip-on-missing branch (a missing fixture must panic, or the gate vacuously passes).
+
+### Test-integrity hard gates (issue #1131 -- "tests that cannot fail")
+Each of these is a gate, not advice; a crate or new wire type that misses one is not accepted.
+- **Byte-exact against the ORIGINAL fixture slice.** The round-trip gate compares the serializer output to the bytes sliced from the committed real fixture. Never compare parsed ASTs to each other, and never compare against re-canonicalised bytes (both pass when parse and serialize are wrong in the same way; #1045, #1047). A parse failure that degrades to a raw `Unknown` passthrough must fail the gate, not satisfy it.
+- **An independent oracle per protocol/format.** Expected values must come from something that is not this crate's own encoder/serializer: libsrt (SRT), ffmpeg / GPAC `MP4Box` (ISO BMFF, CMAF, TS), Apple `mediastreamvalidator` (HLS), libebur128 / the EBU Tech 3341 + 3342 files (loudness), libzvbi (teletext/VBI), TSDuck (TS/SI), spec worked examples. A test whose only expected values are produced by the crate's own serializer (self-vs-self, a mock that returns 0, a synthetic fixture made by the crate's encoder) does **not** count toward the gate. State the oracle in the crate README/test module doc; if none exists, record the gap.
+- **One real or oracle-produced fixture per spec branch**: each box/section version (v0 and v1), each flag combination, each length-form (e.g. BER short/long), count 0 and count >= 2. A branch with no real fixture is untested.
+- **>= 2 entities wherever a uniqueness or cross-entity invariant exists** (two PLPs, two services, two tracks, two PIDs, two sessions). Single-entity fixtures hide cross-entity bugs.
+- **Sibling-grep on every fix.** A fix PR greps the whole workspace for sibling copies of the same bug class, fixes them or files issues, and adds a regression test per sibling; the PR states the grep used. Record the class in the "Bug classes seen" table in [`RELEASE-AUDIT.md`](RELEASE-AUDIT.md) section 3.6.
 
 ## 4. The 6-gate CI suite (run by the orchestrator, not on a delegate's say-so)
 `cargo build --workspace --all-features --locked` · `cargo test --workspace --all-features --locked` ·
@@ -68,6 +85,8 @@ Independent crates version on their own cadence; lockstep crates move together. 
 - [ ] Symmetric parse/serialize + round-trip test (**byte-identical** for binary; **equal re-parse + mutation-bites** for text/markup)
 - [ ] No `self.raw` passthrough · no raw-byte public API · no magic numbers · `#[non_exhaustive]`
 - [ ] Spec-cited modules; sources verified (no fabrication; pdf2md exit 0 / cross-checked)
+- [ ] Round-trip is **byte-exact against the original fixture slice**; an **independent oracle** is named; a fixture per spec branch and >= 2 entities for uniqueness invariants (section 3 test-integrity gates)
+- [ ] Reserved-bit / trailing-byte policy followed (section 1): tolerant parse, spec-value serialize or documented preserve-on-parse, explicit reserved writes
 - [ ] Committed **real fixture**; per-op **biting** test (fault-inject→assert-known-good for transforms)
 - [ ] 6-gate CI suite + MSRV 1.95.0 (+ thumbv7em if no_std) — run by the orchestrator
 - [ ] #204 labels + label_coverage · fuzz target · ≥2 examples · CLI-STANDARD (if CLI)
