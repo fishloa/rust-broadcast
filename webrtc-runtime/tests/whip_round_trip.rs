@@ -17,9 +17,19 @@ const SDP_ANSWER: &[u8] = b"v=0\r\no=- 1 1 IN IP4 127.0.0.1\r\n";
 const ICE_FRAG: &[u8] = b"a=ice-ufrag:test\r\na=ice-pwd:test\r\n";
 
 /// Headers of a PATCH request carrying `If-Match: <value>`.
+/// PATCH headers: the RFC 9725 §4 trickle-ICE media type, plus `If-Match`.
 fn if_match(value: &str) -> HeaderMap {
-    let mut m = HeaderMap::new();
+    let mut m = trickle_ct();
     m.insert(header::IF_MATCH, HeaderValue::from_str(value).unwrap());
+    m
+}
+
+fn trickle_ct() -> HeaderMap {
+    let mut m = HeaderMap::new();
+    m.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/trickle-ice-sdpfrag"),
+    );
     m
 }
 
@@ -479,11 +489,7 @@ fn whip_server_wrong_state_errors() {
     // Close and try everything -> errors
     let _ = session.on_delete().unwrap();
     assert!(session.on_post(SDP_OFFER.to_vec()).is_err());
-    assert!(
-        session
-            .on_patch(ICE_FRAG.to_vec(), &HeaderMap::new())
-            .is_err()
-    );
+    assert!(session.on_patch(ICE_FRAG.to_vec(), &trickle_ct()).is_err());
     assert!(session.on_delete().is_err());
 }
 
@@ -494,9 +500,7 @@ fn whip_server_trickle_no_if_match() {
     let _ = session.accept(SDP_ANSWER.to_vec(), "e".into());
 
     // PATCH without If-Match is valid for trickle ICE
-    let event = session
-        .on_patch(ICE_FRAG.to_vec(), &HeaderMap::new())
-        .unwrap();
+    let event = session.on_patch(ICE_FRAG.to_vec(), &trickle_ct()).unwrap();
     match event {
         server::Event::TrickleIce {
             sdp_fragment,
