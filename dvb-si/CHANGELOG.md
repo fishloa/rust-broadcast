@@ -40,6 +40,7 @@
 - **BREAKING (#1159):** `TsHeader::pid` (re-exported via `mpeg-ts`) is now `Pid`; `collect::*::pid` / `epg::EpgStore::feed_with_pid` take `Option<Pid>` instead of `Option<u16>`.
 ### Fixed
 
+- **`S2Xv2_satellite_delivery_system` `satellite_id` over 24 bits is rejected (#1129).** It was written as three bytes of `value >> 16 / >> 8 / as u8`, silently dropping the top byte; it now returns `Error::FieldOverflow`. `CompatibilityDescriptor` length/count narrowing now goes through `broadcast_common::len::fit_*`, and `tests/serializer_length_truncation.rs` scans all of `src/` (it covered only `descriptors/`, `tables/` and `carousel/`).
 - `hevc_video`: byte 12's `reserved(2)` (bits `[3:2]`) and the temporal sub-block's two `reserved(5)` fields are now all ones per H.222.0 Table 2-113. Real captures (9 HEVC_video_descriptors in the local TSDuck archive carry `0x9F` + `1F 1F`) contradicted the earlier r03-W7 reading that cleared bit 3 and the sub-block reserved bits, so they did not re-serialize byte-identically. Parse unaffected.
 
 ### Added

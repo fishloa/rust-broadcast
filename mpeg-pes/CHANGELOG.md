@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- **`P-STD_buffer_size` over 13 bits is rejected (#1129)** instead of being masked with `& 0x1F`; `PesExtension::serialize_into` returns `Error::FieldOverflow`.
+
 ### Changed
 - ESCR field encoding uses named marker/mask constants (no behaviour change; audit r01-W15 residue).
 
