@@ -102,10 +102,10 @@ fn survey_real_reserved_bits() {
     let mut bins = Vec::new();
     walk(Path::new(&root), "bin", &mut bins);
     for p in bins {
-        if let Ok(data) = std::fs::read(&p) {
-            if let Ok(pmt) = PmtSection::parse(&data) {
-                survey_pmt(&pmt, &p.display().to_string(), &mut seen);
-            }
+        if let Ok(data) = std::fs::read(&p)
+            && let Ok(pmt) = PmtSection::parse(&data)
+        {
+            survey_pmt(&pmt, &p.display().to_string(), &mut seen);
         }
     }
     let mut tss = Vec::new();

@@ -1,6 +1,11 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+
+- Presence flags stored next to an `Option` no longer drive the serializer, so a mismatch cannot write a misframed descriptor (r03-W5, #1138): `metadata` (`dsmcc_flag`), `content_labeling` (`content_reference_id_record_flag`, and an indicator/Option mismatch now returns `ValueOutOfRange`), `j2k_video` (`extended_capability_flag`, the stripe/block/mdm flags, and a missing `color_specification` now returns `ValueOutOfRange` instead of leaving a stale byte), `supplementary_audio` (`language_code_present`). The flag fields are kept (informational, set by parse); serialize derives the wire bit from the `Option`.
+- ISO/IEC 13818-1 `reserved` bits are now emitted as 1 for `video_stream`, `system_clock`, `maximum_bitrate`, `smoothing_buffer`, `STD`, `AVC_timing_and_HRD`, `SVC_extension` and `MVC_extension`, only where the committed TSDuck-compiled oracle (and, for `video_stream`, the real `shared/real-pmt.bin` capture) carries 1s; `tests/reserved_bits_real_streams.rs` asserts byte-exact re-serialization of those real bytes. `multiplex_buffer_utilization`, `metadata_pointer`, `metadata` are left at 0: no fixture carries them, so the change is unverified (r03-W7). Observable: serialized bytes differ from 0.x/11.0 output in those reserved bits (lockstep minor).
+- `video_depth_range`: a `production_disparity_hint` with `range_length > 3` or a multi-region-SEI entry with a body is preserved verbatim as `DepthRangeBody::Other` instead of dropping its tail; `protection_message` ignores (does not reject) bytes after the component-tag loop (r03-W9).
 
 ## [11.0.1] - 2026-10-11
 ### Fixed
