@@ -145,7 +145,7 @@ struct TrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(1, 90_000, CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), 90_000, CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -161,8 +161,8 @@ struct TrackState {
 /// let mut seg = LlSegmenter::new(vec![spec()], 1000, 2.0, 1).unwrap();
 /// let init = seg.init_segment().unwrap();       // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
-/// seg.push(1, au(true)).unwrap();               // keyframe
-/// seg.push(1, au(false)).unwrap();
+/// seg.push(transmux::TrackId::new(1), au(true)).unwrap();               // keyframe
+/// seg.push(transmux::TrackId::new(1), au(false)).unwrap();
 /// let chunks = seg.take_ready();                // write chunk.data over HTTP
 /// assert_eq!(chunks.len(), 2);                  // one chunk per pushed frame
 /// assert!(chunks[0].is_segment_start);

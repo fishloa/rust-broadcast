@@ -628,7 +628,7 @@ struct StreamTrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(1, 90_000, CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), 90_000, CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -642,7 +642,7 @@ struct StreamTrackState {
 /// # }
 /// // 2 s target segments, keep the last 3 in the rolling playlist.
 /// let mut seg = StreamingTsHlsSegmenter::new(vec![spec()], 2, 3).unwrap();
-/// seg.push(1, au(true)).unwrap();
+/// seg.push(transmux::TrackId::new(1), au(true)).unwrap();
 /// seg.finish().unwrap();
 /// let segments = seg.take_ready();          // write s.bytes for each
 /// assert_eq!(segments.len(), 1);

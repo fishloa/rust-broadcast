@@ -312,7 +312,7 @@ struct TrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(1, 90_000, CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), 90_000, CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -327,8 +327,8 @@ struct TrackState {
 /// let mut seg = Segmenter::new(vec![spec()], 1000, 2.0).unwrap();
 /// let init = seg.init_segment().unwrap();      // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
-/// seg.push(1, au(true)).unwrap();              // keyframe
-/// seg.push(1, au(false)).unwrap();
+/// seg.push(transmux::TrackId::new(1), au(true)).unwrap();              // keyframe
+/// seg.push(transmux::TrackId::new(1), au(false)).unwrap();
 /// assert!(seg.take_ready().is_empty());        // still buffering: no cut yet
 /// seg.flush().unwrap();                        // trailing segment
 /// assert_eq!(seg.take_ready().len(), 1);
