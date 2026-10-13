@@ -281,11 +281,32 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
             // exactly like `crate::push::drive_push`'s own `_ => {}` arm.
             _ => return Ok(()),
         };
-        let Some(spec) = self.specs.iter().find(|s| s.track_id == track_id).cloned() else {
+        if !self.specs.iter().any(|s| s.track_id == track_id) {
             return Ok(());
-        };
-        let timescale = spec.timescale;
-        let media = Media::new(vec![Track::new(spec, vec![sample])], timescale);
+        }
+        // Every carried track rides in EVERY `Media`, the sample only in its
+        // own track (the others empty): the TS muxer derives the PIDs, the
+        // PMT and the PCR PID from the track set, so a one-track `Media` per
+        // sample would map every track onto the first ES PID and flip the
+        // PMT frame to frame (#1024).
+        let timescale = self
+            .specs
+            .iter()
+            .find(|s| s.track_id == track_id)
+            .map_or(1, |s| s.timescale);
+        let tracks = self
+            .specs
+            .iter()
+            .map(|s| {
+                let samples = if s.track_id == track_id {
+                    vec![sample.clone()]
+                } else {
+                    Vec::new()
+                };
+                Track::new(s.clone(), samples)
+            })
+            .collect();
+        let media = Media::new(tracks, timescale);
         let messages = self.transport.encode_media(&media)?;
         self.outbound.extend(messages);
         Ok(())
