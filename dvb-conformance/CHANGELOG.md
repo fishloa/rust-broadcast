@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+- The per-PID continuity-counter state reuses its `last_packet` buffer instead
+  of allocating a fresh `Vec` on every payload-bearing packet (~9% less time
+  per packet on the 2.4 MB T2-MI fixture, release build; r11-O-CONF-1, #1096).
+
 ### Changed (BREAKING)
 
 - **BREAKING (#1159):** `ConformanceEvent::pid` is `Option<mpeg_ts::pid::Pid>` instead of `Option<u16>` (serde output unchanged: `Pid` is transparent).

@@ -1220,7 +1220,8 @@ impl ConformanceMonitor {
                 state.had_payload = has_payload;
                 state.dup_used = false;
                 state.initialised = true;
-                state.last_packet = raw.to_vec();
+                state.last_packet.clear();
+                state.last_packet.extend_from_slice(raw);
                 return;
             }
 
@@ -1301,7 +1302,8 @@ impl ConformanceMonitor {
             state.last_cc = cc;
             state.had_payload = has_payload;
             state.dup_used = false;
-            state.last_packet = raw.to_vec();
+            state.last_packet.clear();
+            state.last_packet.extend_from_slice(raw);
         } else if is_duplicate {
             // A duplicate (legal or an illegal third-plus repeat) is, by
             // construction, byte-identical (PCR excepted) to what's already
@@ -1313,7 +1315,8 @@ impl ConformanceMonitor {
             state.dup_used = false;
             state.last_cc = cc;
             state.had_payload = has_payload;
-            state.last_packet = raw.to_vec();
+            state.last_packet.clear();
+            state.last_packet.extend_from_slice(raw);
         }
     }
 
