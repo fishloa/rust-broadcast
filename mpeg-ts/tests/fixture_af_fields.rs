@@ -3,7 +3,7 @@
 //!
 //! Every adaptation field — including its `0xFF` stuffing — must round-trip
 //! parse → serialize → byte-identical, the workspace's hard wire-codec
-//! invariant. `AdaptationField::stuffing_len` captures the trailing stuffing so
+//! invariant. `AdaptationField::stuffing` captures the trailing stuffing so
 //! the serializer reproduces the body exactly.
 //!
 //! ## Fixtures (all genuine, unscrambled, byte-identical)
@@ -81,7 +81,7 @@ fn assert_all_byte_identical(buf: &[u8]) -> (usize, usize) {
             continue;
         };
         total += 1;
-        if af.stuffing_len > 0 {
+        if af.stuffing.len() > 0 {
             stuffed += 1;
         }
         let orig = af_body(pkt);
@@ -149,8 +149,8 @@ fn pcr_and_stuffing_byte_identical() {
         let Some(Ok(af)) = TsPacket::parse(pkt).unwrap().adaptation_field() else {
             continue;
         };
-        max_stuffing = max_stuffing.max(af.stuffing_len);
-        if af.pcr.is_some() && af.stuffing_len > 0 {
+        max_stuffing = max_stuffing.max(af.stuffing.len());
+        if af.pcr.is_some() && af.stuffing.len() > 0 {
             pcr_stuffed += 1;
         }
     }

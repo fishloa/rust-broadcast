@@ -437,8 +437,6 @@ pub(crate) const AF_OPCR_FLAG: u8 = 0x08;
 pub(crate) const AF_SPLICING_FLAG: u8 = 0x04;
 pub(crate) const AF_TRANSPORT_PRIVATE_DATA_FLAG: u8 = 0x02;
 pub(crate) const AF_EXTENSION_FLAG: u8 = 0x01;
-/// Adaptation-field stuffing byte (ISO/IEC 13818-1:2007 §2.4.3.4 — `0xFF`).
-pub(crate) const AF_STUFFING_BYTE: u8 = 0xFF;
 /// PCR field byte 4 bits 6-1: six reserved bits, all set to `1`
 /// (ISO/IEC 13818-1 §2.4.3.5).
 const PCR_RESERVED_BITS: u8 = 0x7E;
@@ -567,28 +565,86 @@ const AFE_SEAMLESS_SPLICE_FLAG: u8 = 0x20;
 const LTW_OFFSET_HI_MASK: u8 = 0x7F;
 /// 2 reserved bits (set to `1` on serialize) + `piecewise_rate` high 6 bits.
 const PIECEWISE_RATE_HI_MASK: u8 = 0x3F;
-const PIECEWISE_RATE_RESERVED_BITS: u8 = 0xC0;
+/// `af_descriptor_not_present_flag` (Table 2-6; a reserved bit pre-2012).
+const AFE_AF_DESCRIPTOR_NOT_PRESENT_FLAG: u8 = 0x10;
+/// The 4 `reserved` bits of the extension flags byte.
+const AFE_RESERVED_FLAGS_MASK: u8 = 0x0F;
+/// Spec-convention value of those reserved bits (all `1`).
+const AFE_RESERVED_FLAGS_VALUE: u8 = 0x0F;
+/// The 2 `reserved` bits sit in the top of the first `piecewise_rate` byte.
+const PIECEWISE_RATE_RESERVED_SHIFT: u32 = 6;
+/// Spec-convention value of the 2 `reserved` bits (`'11'`).
+const PIECEWISE_RATE_RESERVED_VALUE: u8 = 0x03;
 
-/// Adaptation-field extension (ISO/IEC 13818-1:2007 §2.4.3.5,
+/// Adaptation-field extension (ISO/IEC 13818-1 Table 2-6 / §2.4.3.5,
 /// `adaptation_field_extension_flag == 1`).
 ///
-/// Contains optional sub-fields gated by `ltw_flag`,
-/// `piecewise_rate_flag`, and `seamless_splice_flag`.
+/// Wire layout after `adaptation_field_extension_length`: `ltw_flag(1) |
+/// piecewise_rate_flag(1) | seamless_splice_flag(1) |
+/// af_descriptor_not_present_flag(1) | reserved(4)`, then the gated `ltw`,
+/// `piecewise_rate` (`reserved(2) | rate(22)`) and `seamless_splice` fields,
+/// then the remainder of the extension: `af_descriptor()` loop when
+/// `af_descriptor_not_present_flag == 0`, otherwise `reserved` bytes.
+///
+/// Every bit the wire carries is kept in a typed field so parse -> serialize
+/// is byte-exact; the only bits not preserved are the spec-mandated `1`
+/// `marker_bit`s inside `DTS_next_AU`. The reserved nibble plus
+/// `af_descriptor_not_present_flag` were one 5-bit `reserved` field in the
+/// 1995/2000 editions, so a legacy stream (all five bits `1`) reads as
+/// `af_descriptor_not_present_flag == true`.
+///
+/// `#[non_exhaustive]`: build with [`AdaptationFieldExtension::new`] and set
+/// fields, so further additions are not a breaking change again.
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct AdaptationFieldExtension {
+pub struct AdaptationFieldExtension<'a> {
     /// LTW (legal time window), if `ltw_flag` is set.
     pub ltw: Option<Ltw>,
     /// 22-bit piecewise rate, if `piecewise_rate_flag` is set.
     pub piecewise_rate: Option<u32>,
+    /// The 2 `reserved` bits preceding `piecewise_rate` (spec convention
+    /// `0b11`); only written when `piecewise_rate` is `Some`.
+    pub piecewise_rate_reserved: u8,
     /// Seamless splice info, if `seamless_splice_flag` is set.
     pub seamless_splice: Option<SeamlessSplice>,
+    /// `af_descriptor_not_present_flag`: `true` means the bytes in
+    /// [`trailing`](Self::trailing) are `reserved`, `false` means they are an
+    /// `af_descriptor()` loop (ISO/IEC 13818-1 Table 2-6).
+    pub af_descriptor_not_present_flag: bool,
+    /// The 4 `reserved` bits of the flags byte (spec convention `0b1111`).
+    pub reserved_flags: u8,
+    /// Bytes after the optional fields up to the end of
+    /// `adaptation_field_extension_length`: an opaque `af_descriptor()` loop
+    /// (flag `false`) or `reserved` bytes (flag `true`) per Table 2-6.
+    pub trailing: &'a [u8],
 }
 
-impl AdaptationFieldExtension {
+impl Default for AdaptationFieldExtension<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl<'a> AdaptationFieldExtension<'a> {
+    /// An extension with no optional fields, spec-convention reserved bits
+    /// (all `1`), `af_descriptor_not_present_flag` set and no trailing bytes.
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            ltw: None,
+            piecewise_rate: None,
+            piecewise_rate_reserved: PIECEWISE_RATE_RESERVED_VALUE,
+            seamless_splice: None,
+            af_descriptor_not_present_flag: true,
+            reserved_flags: AFE_RESERVED_FLAGS_VALUE,
+            trailing: &[],
+        }
+    }
+
     /// Parse the adaptation-field extension starting at `data[0]`
     /// (the `adaptation_field_extension_length` byte).
-    fn parse(data: &[u8]) -> Result<Self> {
+    fn parse(data: &'a [u8]) -> Result<Self> {
         if data.is_empty() {
             return Err(Error::BufferTooShort {
                 need: 1,
@@ -628,6 +684,7 @@ impl AdaptationFieldExtension {
             None
         };
 
+        let mut piecewise_rate_reserved = PIECEWISE_RATE_RESERVED_VALUE;
         let piecewise_rate = if flags & AFE_PIECEWISE_RATE_FLAG != 0 {
             if ext.len() < cursor + 3 {
                 return Err(Error::BufferTooShort {
@@ -636,6 +693,7 @@ impl AdaptationFieldExtension {
                     what: "piecewise_rate",
                 });
             }
+            piecewise_rate_reserved = ext[cursor] >> PIECEWISE_RATE_RESERVED_SHIFT;
             let r = (((ext[cursor] & PIECEWISE_RATE_HI_MASK) as u32) << 16)
                 | ((ext[cursor + 1] as u32) << 8)
                 | (ext[cursor + 2] as u32);
@@ -669,12 +727,15 @@ impl AdaptationFieldExtension {
         } else {
             None
         };
-        let _ = cursor; // remaining extension bytes (reserved) are skipped
 
         Ok(AdaptationFieldExtension {
             ltw,
             piecewise_rate,
+            piecewise_rate_reserved,
             seamless_splice,
+            af_descriptor_not_present_flag: flags & AFE_AF_DESCRIPTOR_NOT_PRESENT_FLAG != 0,
+            reserved_flags: flags & AFE_RESERVED_FLAGS_MASK,
+            trailing: &ext[cursor..],
         })
     }
 
@@ -685,7 +746,8 @@ impl AdaptationFieldExtension {
         let body = 1 // flags byte
             + self.ltw.map_or(0, |_| 2)
             + self.piecewise_rate.map_or(0, |_| 3)
-            + self.seamless_splice.map_or(0, |_| 5);
+            + self.seamless_splice.map_or(0, |_| 5)
+            + self.trailing.len();
         1 + body // + length byte itself
     }
 
@@ -698,10 +760,9 @@ impl AdaptationFieldExtension {
                 have: buf.len(),
             });
         }
-        let body_len = need - 1;
-        buf[0] = body_len as u8;
+        buf[0] = broadcast_common::len::fit_u8(need - 1, "adaptation_field_extension_length")?;
 
-        let mut flags = 0u8;
+        let mut flags = self.reserved_flags & AFE_RESERVED_FLAGS_MASK;
         if self.ltw.is_some() {
             flags |= AFE_LTW_FLAG;
         }
@@ -710,6 +771,9 @@ impl AdaptationFieldExtension {
         }
         if self.seamless_splice.is_some() {
             flags |= AFE_SEAMLESS_SPLICE_FLAG;
+        }
+        if self.af_descriptor_not_present_flag {
+            flags |= AFE_AF_DESCRIPTOR_NOT_PRESENT_FLAG;
         }
         buf[1] = flags;
         let mut cursor = 2usize;
@@ -725,9 +789,10 @@ impl AdaptationFieldExtension {
             cursor += 2;
         }
         if let Some(rate) = self.piecewise_rate {
-            // 2 reserved bits (set to 1) | 22-bit rate (ISO/IEC 13818-1 §2.4.3.5).
-            buf[cursor] =
-                PIECEWISE_RATE_RESERVED_BITS | ((rate >> 16) as u8 & PIECEWISE_RATE_HI_MASK);
+            // reserved(2) | 22-bit rate (ISO/IEC 13818-1 Table 2-6).
+            buf[cursor] = ((self.piecewise_rate_reserved & PIECEWISE_RATE_RESERVED_VALUE)
+                << PIECEWISE_RATE_RESERVED_SHIFT)
+                | ((rate >> 16) as u8 & PIECEWISE_RATE_HI_MASK);
             buf[cursor + 1] = (rate >> 8) as u8;
             buf[cursor + 2] = rate as u8;
             cursor += 3;
@@ -743,6 +808,8 @@ impl AdaptationFieldExtension {
             buf[cursor + 4] = (((ts & 0x7F) as u8) << 1) | 0x01;
             cursor += 5;
         }
+        buf[cursor..cursor + self.trailing.len()].copy_from_slice(self.trailing);
+        cursor += self.trailing.len();
         Ok(cursor)
     }
 }
@@ -777,17 +844,17 @@ pub struct AdaptationField<'a> {
     /// (ISO/IEC 13818-1:2007 §2.4.3.4).
     pub transport_private_data: Option<&'a [u8]>,
     /// Typed adaptation-field extension sub-structure, if the flag is set.
-    pub extension: Option<AdaptationFieldExtension>,
-    /// Number of trailing `0xFF` stuffing bytes that pad the adaptation-field
-    /// body out to its declared `adaptation_field_length` (ISO/IEC 13818-1:2007
-    /// §2.4.3.4 — "stuffing_byte: fixed 8-bit value `0xFF`").
+    pub extension: Option<AdaptationFieldExtension<'a>>,
+    /// The stuffing bytes that pad the adaptation-field body out to its
+    /// declared `adaptation_field_length` (ISO/IEC 13818-1 Table 2-6 —
+    /// "stuffing_byte: fixed 8-bit value `0xFF`").
     ///
     /// Real encoders pad the adaptation field so the packet payload begins at a
-    /// fixed offset; these bytes are part of the wire image. Capturing the count
-    /// lets [`serialize_into`](Self::serialize_into) reproduce the packet
-    /// byte-for-byte. Set to `0` when constructing an adaptation field with no
-    /// stuffing.
-    pub stuffing_len: usize,
+    /// fixed offset; these bytes are part of the wire image. They are kept
+    /// verbatim (not just counted) so a non-`0xFF` filler from a
+    /// non-conforming encoder also round-trips byte-for-byte. Use `&[]` when
+    /// constructing an adaptation field with no stuffing.
+    pub stuffing: &'a [u8],
 }
 
 impl<'a> AdaptationField<'a> {
@@ -873,7 +940,7 @@ impl<'a> AdaptationField<'a> {
         // Any bytes after the last present field, up to `adaptation_field_length`
         // (= `af.len()`), are `0xFF` stuffing (ISO/IEC 13818-1:2007 §2.4.3.4).
         // Record the count so serialization reproduces the body byte-for-byte.
-        let stuffing_len = af.len().saturating_sub(cursor);
+        let stuffing = af.get(cursor..).unwrap_or(&[]);
 
         Ok(AdaptationField {
             discontinuity_indicator: flags & AF_DISCONTINUITY != 0,
@@ -884,7 +951,7 @@ impl<'a> AdaptationField<'a> {
             splice_countdown,
             transport_private_data,
             extension,
-            stuffing_len,
+            stuffing,
         })
     }
 
@@ -911,7 +978,7 @@ impl<'a> AdaptationField<'a> {
         if let Some(ref ext) = self.extension {
             n += ext.serialized_len();
         }
-        n += self.stuffing_len;
+        n += self.stuffing.len();
         n
     }
 
@@ -991,10 +1058,8 @@ impl<'a> AdaptationField<'a> {
 
         // Trailing `0xFF` stuffing (ISO/IEC 13818-1:2007 §2.4.3.4), reproducing
         // the padding the encoder used to fill `adaptation_field_length`.
-        for b in buf[cursor..cursor + self.stuffing_len].iter_mut() {
-            *b = AF_STUFFING_BYTE;
-        }
-        cursor += self.stuffing_len;
+        buf[cursor..cursor + self.stuffing.len()].copy_from_slice(self.stuffing);
+        cursor += self.stuffing.len();
 
         Ok(cursor)
     }
@@ -2030,7 +2095,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: None,
             extension: None,
-            stuffing_len: 0,
+            stuffing: &[],
         };
         let len = original.serialized_len();
         assert_eq!(len, 7); // 1 flags + 6 PCR
@@ -2056,7 +2121,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: Some(&data),
             extension: None,
-            stuffing_len: 0,
+            stuffing: &[],
         };
         let mut buf = vec![0u8; af.serialized_len()];
         assert!(af.serialize_into(&mut buf).is_err());
@@ -2080,7 +2145,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: None,
             extension: None,
-            stuffing_len: 0,
+            stuffing: &[],
         };
         let mut buf = [0u8; 7];
         af.serialize_into(&mut buf).unwrap();
@@ -2106,7 +2171,7 @@ mod tests {
             splice_countdown: Some(-3),
             transport_private_data: None,
             extension: None,
-            stuffing_len: 0,
+            stuffing: &[],
         };
         let len = original.serialized_len();
         assert_eq!(len, 1 + 6 + 6 + 1); // flags + PCR + OPCR + splice
@@ -2128,7 +2193,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: None,
             extension: None,
-            stuffing_len: 0,
+            stuffing: &[],
         };
         assert_eq!(af.serialized_len(), 1);
         let mut buf = [0u8; 1];
@@ -2153,7 +2218,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: None,
             extension: None,
-            stuffing_len: 0,
+            stuffing: &[],
         };
         let mut buf = [0u8; 3]; // need 7
         assert!(matches!(
@@ -2174,6 +2239,7 @@ mod tests {
             }),
             piecewise_rate: None,
             seamless_splice: None,
+            ..AdaptationFieldExtension::new()
         };
         let mut buf = vec![0u8; ext.serialized_len()];
         ext.serialize_into(&mut buf).unwrap();
@@ -2188,7 +2254,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: None,
             extension: Some(ext),
-            stuffing_len: 0,
+            stuffing: &[],
         };
         let len = af.serialized_len();
         let mut abuf = vec![0u8; len];
@@ -2212,8 +2278,9 @@ mod tests {
                 ltw: None,
                 piecewise_rate: Some(0x3FFFFF), // max 22-bit
                 seamless_splice: None,
+                ..AdaptationFieldExtension::new()
             }),
-            stuffing_len: 0,
+            stuffing: &[],
         };
         let mut buf = vec![0u8; af.serialized_len()];
         af.serialize_into(&mut buf).unwrap();
@@ -2239,8 +2306,9 @@ mod tests {
                     splice_type: 0xA,
                     dts_next_au: 0x1_2345_6789,
                 }),
+                ..AdaptationFieldExtension::new()
             }),
-            stuffing_len: 0,
+            stuffing: &[],
         };
         let mut buf = vec![0u8; af.serialized_len()];
         af.serialize_into(&mut buf).unwrap();
@@ -2263,7 +2331,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: Some(&tpd),
             extension: None,
-            stuffing_len: 0,
+            stuffing: &[],
         };
         let mut buf = vec![0u8; af.serialized_len()];
         af.serialize_into(&mut buf).unwrap();
@@ -2287,16 +2355,16 @@ mod tests {
             splice_countdown: None,
             transport_private_data: None,
             extension: None,
-            stuffing_len: 20,
+            stuffing: &[0xFF; 20],
         };
         // 1 flags + 6 PCR + 20 stuffing.
         assert_eq!(af.serialized_len(), 27);
         let mut buf = vec![0u8; af.serialized_len()];
         af.serialize_into(&mut buf).unwrap();
         // Trailing bytes are 0xFF stuffing.
-        assert!(buf[7..27].iter().all(|&b| b == AF_STUFFING_BYTE));
+        assert!(buf[7..27].iter().all(|&b| b == 0xFF));
         let decoded = AdaptationField::parse(&buf).unwrap();
-        assert_eq!(decoded.stuffing_len, 20);
+        assert_eq!(decoded.stuffing.len(), 20);
         assert_eq!(decoded, af);
         // Pure stuffing (flags-only body padded out) also round-trips.
         let pure = AdaptationField {
@@ -2308,7 +2376,7 @@ mod tests {
             splice_countdown: None,
             transport_private_data: None,
             extension: None,
-            stuffing_len: 5,
+            stuffing: &[0xFF; 5],
         };
         let mut pbuf = vec![0u8; pure.serialized_len()];
         pure.serialize_into(&mut pbuf).unwrap();
@@ -2338,8 +2406,9 @@ mod tests {
                 }),
                 piecewise_rate: Some(12345),
                 seamless_splice: None,
+                ..AdaptationFieldExtension::new()
             }),
-            stuffing_len: 0,
+            stuffing: &[],
         };
         let len = af.serialized_len();
         let mut buf = vec![0u8; len];
