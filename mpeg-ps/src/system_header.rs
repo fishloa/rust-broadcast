@@ -63,6 +63,11 @@ pub struct SystemHeader {
     pub reserved_bits: u8,
     /// Per-stream P-STD buffer bounds (the `while (nextbits() == '1')` loop).
     pub std_buffer_bounds: Vec<StdBufferBound>,
+    /// Bytes of `header_length` that follow the stream-bound loop. Table
+    /// 2-40 defines none, but a real encoder can pad the header; they are
+    /// preserved verbatim so the header re-serializes byte-identically
+    /// (audit r14-MPS-W8, #1119). Empty for a conformant header.
+    pub trailing_reserved: Vec<u8>,
 }
 
 /// Bytes the stream loop occupies. Accumulated in `usize` (#1129): the
@@ -81,7 +86,7 @@ fn stream_loop_len(system_header: &SystemHeader) -> usize {
             len += 3;
         }
     }
-    len
+    len + system_header.trailing_reserved.len()
 }
 
 impl<'a> Parse<'a> for SystemHeader {
@@ -241,6 +246,7 @@ impl<'a> Parse<'a> for SystemHeader {
             packet_rate_restriction_flag,
             reserved_bits,
             std_buffer_bounds,
+            trailing_reserved: body[pos..].to_vec(),
         })
     }
 }
@@ -314,6 +320,7 @@ impl Serialize for SystemHeader {
                 pos += 3;
             }
         }
+        buf[pos..pos + self.trailing_reserved.len()].copy_from_slice(&self.trailing_reserved);
 
         Ok(total)
     }
@@ -423,6 +430,26 @@ mod tests {
         assert_ne!(&out[..], &out2[..]);
     }
 
+    /// r14-MPS-W8 (#1119): padding that `header_length` declares after the
+    /// stream-bound loop is preserved, not dropped (which shrank
+    /// `header_length` on re-serialize).
+    #[test]
+    fn trailing_bytes_after_stream_loop_round_trip() {
+        let bytes = vec![
+            0x00, 0x00, 0x01, 0xBB, // start_code
+            0x00, 0x0C, // header_length = 12: 6 fixed + 3 stream entry + 3 trailing
+            0x80, 0x00, 0x01, 0x04, 0x20 | 0x01, 0xFF, // fixed body
+            0xE0, 0xE0, 0x80, // one stream entry: stream_id 0xE0, bound
+            0x00, 0x7F, 0xAB, // trailing, not a stream entry (MSB clear)
+        ];
+        let h = SystemHeader::parse(&bytes).unwrap();
+        assert_eq!(h.std_buffer_bounds.len(), 1);
+        assert_eq!(h.trailing_reserved, vec![0x00, 0x7F, 0xAB]);
+        let mut out = vec![0u8; h.serialized_len()];
+        h.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
+
     /// r14-MPS-W8: an encoder that wrote `reserved_bits` other than the
     /// conventional `0x7F` must re-serialize byte-identically.
     #[test]
@@ -475,6 +502,7 @@ mod tests {
             packet_rate_restriction_flag: false,
             reserved_bits: RESERVED_BITS_MASK,
             std_buffer_bounds,
+            trailing_reserved: Vec::new(),
         };
         // Must not panic building the (correctly-sized-in-usize) buffer or
         // writing into it; the real total exceeds u16::MAX so this is a
@@ -506,6 +534,7 @@ mod tests {
             packet_rate_restriction_flag: false,
             reserved_bits: RESERVED_BITS_MASK,
             std_buffer_bounds,
+            trailing_reserved: Vec::new(),
         };
         let mut buf = vec![0u8; h.serialized_len()];
         assert!(h.serialize_into(&mut buf).is_err());
@@ -534,6 +563,7 @@ mod tests {
             packet_rate_restriction_flag: false,
             reserved_bits: RESERVED_BITS_MASK,
             std_buffer_bounds,
+            trailing_reserved: Vec::new(),
         };
         let mut buf = vec![0u8; h.serialized_len()];
         h.serialize_into(&mut buf).unwrap();

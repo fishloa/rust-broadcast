@@ -127,7 +127,8 @@ impl<'a> AnyElement<'a> {
     /// Total wire length (header + body) this element will occupy.
     #[must_use]
     pub fn serialized_len(&self) -> usize {
-        element_header_len(self.element_id_wire(), self.body_len()) + self.body_len()
+        let body_len = self.body_len();
+        element_header_len(self.element_id_wire(), body_len) + body_len
     }
 
     /// Serialize this element (header + body) into `buf`.
@@ -138,7 +139,10 @@ impl<'a> AnyElement<'a> {
     /// type's own `serialize_into` can return.
     pub fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         use broadcast_common::Serialize;
-        let need = self.serialized_len();
+        // Body length computed once (audit RD-O1, #1114): it recurses into
+        // the element's own `serialized_len`, so it is not free.
+        let body_len = self.body_len();
+        let need = element_header_len(self.element_id_wire(), body_len) + body_len;
         if buf.len() < need {
             return Err(Error::BufferTooShort {
                 need,
@@ -146,7 +150,6 @@ impl<'a> AnyElement<'a> {
                 what: "AnyElement",
             });
         }
-        let body_len = self.body_len();
         write_element_header(&mut buf[..need], self.element_id_wire(), body_len)?;
         let header_len = need - body_len;
         match self {

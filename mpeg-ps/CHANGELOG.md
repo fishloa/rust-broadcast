@@ -6,6 +6,8 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Changed (breaking)
+- `SystemHeader` gains `trailing_reserved: Vec<u8>`: bytes `header_length` declares after the stream-bound loop are preserved and re-serialized (previously dropped, shrinking `header_length`) (audit r14-MPS-W8, #1119).
 
 ## [0.5.0] - 2026-10-05
 ### Changed
