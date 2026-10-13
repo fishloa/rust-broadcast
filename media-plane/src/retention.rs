@@ -569,11 +569,17 @@ mod tests {
 
         // Strictly before the window elapses: still Cold.
         let before_expiry = handed_off_at.saturating_add(Duration::from_secs(9));
-        assert_eq!(driver.locate(SegmentSeq::new(1), before_expiry), SegmentLocation::Cold);
+        assert_eq!(
+            driver.locate(SegmentSeq::new(1), before_expiry),
+            SegmentLocation::Cold
+        );
 
         // At/after the window elapses: released.
         let at_expiry = handed_off_at.saturating_add(Duration::from_secs(10));
-        assert_eq!(driver.locate(SegmentSeq::new(1), at_expiry), SegmentLocation::Evicted);
+        assert_eq!(
+            driver.locate(SegmentSeq::new(1), at_expiry),
+            SegmentLocation::Evicted
+        );
     }
 
     // --- 2. A failing sink does not stall `publish_segment` ---------------
@@ -666,7 +672,11 @@ mod tests {
         driver.drive(Timestamp::from_nanos(2));
         assert_eq!(driver.pending_len(), 1);
         assert!(
-            driver.sink.offered.iter().all(|&seq| seq == SegmentSeq::new(1)),
+            driver
+                .sink
+                .offered
+                .iter()
+                .all(|&seq| seq == SegmentSeq::new(1)),
             "only ever retries the single stuck entry, never advances to \
              the next queued segment while it is stuck: {:?}",
             driver.sink.offered

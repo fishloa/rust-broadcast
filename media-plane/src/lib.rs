@@ -140,10 +140,10 @@ extern crate alloc;
 pub mod byte_merge;
 pub mod byte_stage;
 pub mod byte_tap;
-pub mod ids;
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod egress;
+pub mod ids;
 #[cfg(feature = "std")]
 #[cfg_attr(docsrs, doc(cfg(feature = "std")))]
 pub mod ingress;

@@ -318,7 +318,7 @@ fn to_smooth_ticks(ticks: u64, timescale: u32) -> u64 {
 fn track_chunks(
     init: Option<&[u8]>,
     window: &[DashWindowSegment],
-    segments: &std::collections::HashMap<u32, bytes::Bytes>,
+    segments: &std::collections::HashMap<media_plane::ids::SegmentSeq, bytes::Bytes>,
     stream_type: SmoothStreamType,
     quality_index: u32,
 ) -> Option<TrackChunks> {
@@ -359,11 +359,11 @@ fn track_chunks(
         let duration_ticks = SmoothPackager {
             target_duration_secs: SINGLE_SEGMENT_FRAGMENT_TARGET_SECS,
         }
-        .package_track_fragment(track, seg.segment_seq, chain_start)
+        .package_track_fragment(track, seg.segment_seq.value(), chain_start)
         .map(|f| f.duration)
         .unwrap_or(0);
         chunks.push(ChunkTiming {
-            segment_seq: seg.segment_seq,
+            segment_seq: seg.segment_seq.value(),
             start_ticks: chain_start,
             duration_ticks,
         });
@@ -402,7 +402,7 @@ fn build_window_layout(route: &RouteHandle, serving: &ProgramServing) -> Option<
     let init = route.init_bytes(crate::route::SPTS_PROGRAM_ID)?;
     let ll_hls = serving.ll_hls();
     // Resolve each window segment's muxed bytes once.
-    let mut segments: std::collections::HashMap<u32, bytes::Bytes> =
+    let mut segments: std::collections::HashMap<media_plane::ids::SegmentSeq, bytes::Bytes> =
         std::collections::HashMap::with_capacity(window.len());
     for seg in &window {
         let name = format!("seg-{DEFAULT_TRACK_ID}-{}.m4s", seg.segment_seq);

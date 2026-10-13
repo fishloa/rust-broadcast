@@ -276,7 +276,7 @@ pub(crate) enum ProgramResolution {
 #[derive(Debug, Clone, Copy)]
 pub struct DashWindowSegment {
     /// Matches [`media_plane::trunk::SegmentEntry::sequence_number`].
-    pub segment_seq: u32,
+    pub segment_seq: media_plane::ids::SegmentSeq,
     /// Matches [`media_plane::trunk::SegmentEntry::duration`], as seconds.
     pub duration_secs: f64,
     /// This segment's **absolute** start on this program's own monotonic
@@ -551,8 +551,8 @@ impl ProgramServing {
         let published = self.with_segment_writer(|writer| {
             writer.publish_part(PartEntry::new(
                 info.bytes,
-                info.segment_seq,
-                info.part_index,
+                media_plane::ids::SegmentSeq::new(info.segment_seq),
+                media_plane::ids::PartIndex::new(info.part_index),
                 Duration::from_secs_f64(info.duration),
                 info.independent,
             ));
@@ -587,7 +587,7 @@ impl ProgramServing {
         let published = self.with_segment_writer(|writer| {
             writer.try_publish_segment(SegmentEntry::new(
                 info.bytes,
-                info.segment_seq,
+                media_plane::ids::SegmentSeq::new(info.segment_seq),
                 duration,
                 Timestamp::from_nanos(start_ns),
                 transmux::SegmentMeta {
@@ -608,9 +608,12 @@ impl ProgramServing {
     /// directly against the `Trunk` (no cache): the abuse-bound check
     /// `crate::origin::resource`'s chunked-transfer whole-segment route
     /// (issue #721) needs.
-    pub(crate) fn latest_progress(&self) -> (u32, usize) {
-        let last_closed = self.trunk.last_closed_segment().unwrap_or(0);
-        let candidate = last_closed + 1;
+    pub(crate) fn latest_progress(&self) -> (media_plane::ids::SegmentSeq, usize) {
+        let last_closed = self
+            .trunk
+            .last_closed_segment()
+            .unwrap_or(media_plane::ids::SegmentSeq::new(0));
+        let candidate = last_closed.saturating_next();
         let parts = self.trunk.parts_in_segment(candidate);
         if parts.is_empty() {
             (last_closed, 0)

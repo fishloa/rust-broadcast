@@ -296,7 +296,7 @@ fn inject_segment_events(trunk: &Trunk, file: &str, body: HlsBody) -> HlsBody {
         return body;
     };
 
-    let events = trunk.events_in_segment(seq);
+    let events = trunk.events_in_segment(media_plane::ids::SegmentSeq::new(seq));
     if events.is_empty() {
         return body;
     }
@@ -408,7 +408,10 @@ async fn stream_in_progress_segment(
     // Abuse/malformed-request bound (see `SEGMENT_ABUSE_FUTURE_BOUND`) --
     // checked before ever registering a blocking wait.
     let (in_progress_seg_seq, _) = serving.latest_progress();
-    if seq > in_progress_seg_seq.saturating_add(SEGMENT_ABUSE_FUTURE_BOUND) {
+    if in_progress_seg_seq
+        .checked_add(SEGMENT_ABUSE_FUTURE_BOUND)
+        .is_some_and(|limit| media_plane::ids::SegmentSeq::new(seq) > limit)
+    {
         return None;
     }
 

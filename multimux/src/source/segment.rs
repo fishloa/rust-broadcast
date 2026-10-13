@@ -82,6 +82,7 @@ use transmux::TrackId;
 
 use broadcast_common::Timestamp;
 use hls_runtime::server::Container;
+use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::ingress::{IngestDriver, IngestSession, ProgramId};
 use media_plane::trunk::{
     PartEntry, SampleCursor, SampleCursorItem, SegmentEntry, SegmentWriter, Trunk,
@@ -107,7 +108,7 @@ struct ReadySegment {
     /// [`transmux::ll_hls::SegmentInfo::segment_seq`]) — a
     /// [`transmux::ts_hls::TsSegment::sequence`] is 0-based, so
     /// [`AnySegmenter::take_ready_segments`] adds one when normalising it.
-    segment_seq: u32,
+    segment_seq: SegmentSeq,
     duration: f64,
     discontinuous: bool,
 }
@@ -116,7 +117,7 @@ impl From<transmux::ll_hls::SegmentInfo> for ReadySegment {
     fn from(info: transmux::ll_hls::SegmentInfo) -> Self {
         ReadySegment {
             bytes: info.bytes,
-            segment_seq: info.segment_seq,
+            segment_seq: SegmentSeq::new(info.segment_seq),
             duration: info.duration,
             // The fMP4 segmenter never itself flags a discontinuity (see
             // `ProgramSegmenter::publish_ready`'s pre-#887 hardcoded `false` —
@@ -130,9 +131,11 @@ impl From<transmux::ts_hls::TsSegment> for ReadySegment {
     fn from(seg: transmux::ts_hls::TsSegment) -> Self {
         ReadySegment {
             bytes: seg.bytes,
-            segment_seq: u32::try_from(seg.sequence)
-                .unwrap_or(u32::MAX)
-                .saturating_add(1),
+            segment_seq: SegmentSeq::new(
+                u32::try_from(seg.sequence)
+                    .unwrap_or(u32::MAX)
+                    .saturating_add(1),
+            ),
             duration: seg.duration,
             discontinuous: seg.discontinuous,
         }
@@ -453,8 +456,8 @@ impl ProgramSegmenter {
                     transmux::VIDEO_CLOCK_RATE,
                     target_duration_secs,
                     part_target_ms,
-                    next_seq,
-                    next_seq,
+                    next_seq.value(),
+                    next_seq.value(),
                 ) {
                     Ok(seg) => AnySegmenter::Fmp4(seg),
                     Err(e) => {
@@ -485,7 +488,7 @@ impl ProgramSegmenter {
                     tracks.to_vec(),
                     target_secs,
                     ts_segmenter_window(route_handle),
-                    u64::from(next_seq.saturating_sub(1)),
+                    u64::from(next_seq.value().saturating_sub(1)),
                 ) {
                     Ok(seg) => AnySegmenter::Ts(seg),
                     Err(e) => {
@@ -886,7 +889,7 @@ impl ProgramSegmenter {
                         new_tracks.to_vec(),
                         route_handle.target_duration_secs().round().max(1.0) as u32,
                         ts_segmenter_window(route_handle),
-                        u64::from(next_seq.saturating_sub(1)),
+                        u64::from(next_seq.value().saturating_sub(1)),
                     ) {
                         Ok(seg) => {
                             let replaced = std::mem::replace(&mut self.seg, AnySegmenter::Ts(seg));
@@ -955,8 +958,8 @@ impl ProgramSegmenter {
     fn queue_part(&mut self, part: PartInfo) {
         self.publish_without_blocking(PendingPublish::Part(PartEntry::new(
             part.bytes,
-            part.segment_seq,
-            part.part_index,
+            SegmentSeq::new(part.segment_seq),
+            PartIndex::new(part.part_index),
             Duration::from_secs_f64(part.duration),
             part.independent,
         )));
@@ -1043,7 +1046,7 @@ impl ProgramSegmenter {
         let mut segments_published = 0usize;
         loop {
             let take_part = match (parts.peek(), segments.peek()) {
-                (Some(part), Some(segment)) => part.segment_seq <= segment.segment_seq,
+                (Some(part), Some(segment)) => part.segment_seq <= segment.segment_seq.value(),
                 (Some(_), None) => true,
                 (None, Some(_)) => false,
                 (None, None) => break,

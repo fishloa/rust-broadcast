@@ -195,9 +195,10 @@ async fn catchup_playlist(
         .closed_segments()
         .into_iter()
         .filter_map(|s| {
-            let public = u32::try_from(offset.checked_add(u64::from(s.sequence_number))?).ok()?;
+            let public =
+                u32::try_from(offset.checked_add(u64::from(s.sequence_number.value()))?).ok()?;
             Some(hls_runtime::server::ClosedSegment::new(
-                public,
+                media_plane::ids::SegmentSeq::new(public),
                 s.start_ns,
                 s.duration_secs,
                 s.discontinuous,
@@ -352,16 +353,17 @@ async fn catchup_resource(
     // same scan semaphore (item 4).
     let _permit = scan_permit().acquire().await;
     let find_dir = dir.clone();
-    let found =
-        match tokio::task::spawn_blocking(move || catchup::find_archived_segment(&find_dir, seq))
-            .await
-        {
-            Ok(v) => v,
-            Err(e) => {
-                tracing::error!(error = %e, seq, "catch-up: archive lookup task failed");
-                return StatusCode::INTERNAL_SERVER_ERROR.into_response();
-            }
-        };
+    let found = match tokio::task::spawn_blocking(move || {
+        catchup::find_archived_segment(&find_dir, media_plane::ids::SegmentSeq::new(seq))
+    })
+    .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            tracing::error!(error = %e, seq, "catch-up: archive lookup task failed");
+            return StatusCode::INTERNAL_SERVER_ERROR.into_response();
+        }
+    };
     if let Some(seg) = found {
         let read_dir = dir.clone();
         let read = tokio::task::spawn_blocking(move || {

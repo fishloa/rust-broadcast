@@ -3158,14 +3158,14 @@ mod tests {
     fn segment_sequence_at_u32_max_saturates_and_rejects_the_next() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.segment_writer().unwrap();
-        writer
-            .publish_segment(segment_entry(1, u32::MAX))
-            .unwrap();
+        writer.publish_segment(segment_entry(1, u32::MAX)).unwrap();
         let max = SegmentSeq::new(u32::MAX);
         assert_eq!(writer.next_sequence_number(), max);
         assert_eq!(max.checked_next(), None);
         assert_eq!(
-            writer.publish_segment(segment_entry(2, u32::MAX)).unwrap_err(),
+            writer
+                .publish_segment(segment_entry(2, u32::MAX))
+                .unwrap_err(),
             NonMonotonicSequenceNumber {
                 attempted: max,
                 last_published: Some(max),
@@ -3290,11 +3290,19 @@ mod tests {
         segment_writer.publish_segment(segment_entry(9, 1)).unwrap();
         assert_eq!(trunk.last_closed_segment(), Some(SegmentSeq::new(1)));
         match segments.poll() {
-            Some(SegmentCursorItem::Segment(e)) => assert_eq!(e.sequence_number, SegmentSeq::new(1)),
+            Some(SegmentCursorItem::Segment(e)) => {
+                assert_eq!(e.sequence_number, SegmentSeq::new(1))
+            }
             other => panic!("expected segment 1, got {other:?}"),
         }
         segment_writer.publish_part(part_entry(3, 2, 0));
-        assert_eq!(trunk.part_bytes(SegmentSeq::new(2), PartIndex::new(0)).unwrap().as_ref(), &[3u8; 8]);
+        assert_eq!(
+            trunk
+                .part_bytes(SegmentSeq::new(2), PartIndex::new(0))
+                .unwrap()
+                .as_ref(),
+            &[3u8; 8]
+        );
         writer.publish_event(basic_event(4), EventAnchor::Media(MediaTime(10)));
         assert!(matches!(events.poll(), Some(EventCursorItem::Event(_))));
         assert_eq!(trunk.events_between(MediaTime(0), MediaTime(20)).len(), 1);
@@ -3775,7 +3783,10 @@ mod tests {
         let got = seg_cursor
             .poll()
             .expect("the segmenter's published segment must be visible");
-        assert_eq!(segment_data(&got).unwrap().sequence_number, SegmentSeq::new(1));
+        assert_eq!(
+            segment_data(&got).unwrap().sequence_number,
+            SegmentSeq::new(1)
+        );
         assert_eq!(
             trunk.part_bytes(SegmentSeq::new(1), PartIndex::new(0)),
             Some(Bytes::from(vec![0xAB; 8])),
@@ -3832,7 +3843,11 @@ mod tests {
                 .iter()
                 .map(|item| segment_data(item).unwrap().sequence_number)
                 .collect();
-            assert_eq!(seqs, [1, 2, 3, 4, 5].map(SegmentSeq::new), "must be in playlist order");
+            assert_eq!(
+                seqs,
+                [1, 2, 3, 4, 5].map(SegmentSeq::new),
+                "must be in playlist order"
+            );
             assert!(cursor.poll().is_none(), "no extra/duplicated items");
         }
     }
@@ -3918,7 +3933,10 @@ mod tests {
         // `archive` catches up: consuming seq 1 releases its pin on it,
         // which must wake and unblock the writer thread.
         let first = archive.poll().unwrap();
-        assert_eq!(segment_data(&first).unwrap().sequence_number, SegmentSeq::new(1));
+        assert_eq!(
+            segment_data(&first).unwrap().sequence_number,
+            SegmentSeq::new(1)
+        );
 
         // HANG GUARD (issue #807): generous on purpose, same reasoning as
         // `retention.rs`'s `archive_overrun_stall_ingest_blocks_writer_until_driver_advances`
@@ -3935,9 +3953,15 @@ mod tests {
         // `Gap`, no `Lagged` — proving the DVR property: pinning protected
         // it from the eviction that just happened.
         let second = archive.poll().unwrap();
-        assert_eq!(segment_data(&second).unwrap().sequence_number, SegmentSeq::new(2));
+        assert_eq!(
+            segment_data(&second).unwrap().sequence_number,
+            SegmentSeq::new(2)
+        );
         let third = archive.poll().unwrap();
-        assert_eq!(segment_data(&third).unwrap().sequence_number, SegmentSeq::new(3));
+        assert_eq!(
+            segment_data(&third).unwrap().sequence_number,
+            SegmentSeq::new(3)
+        );
         assert!(archive.poll().is_none());
 
         // Meanwhile `slow` (non-pinning, never polled) DID lag: exactly one
@@ -4054,7 +4078,10 @@ mod tests {
         );
 
         let first = archive.poll().unwrap();
-        assert_eq!(segment_data(&first).unwrap().sequence_number, SegmentSeq::new(1));
+        assert_eq!(
+            segment_data(&first).unwrap().sequence_number,
+            SegmentSeq::new(1)
+        );
 
         // HANG GUARD (issue #807): generous on purpose, same reasoning as the
         // sibling test above (`pinning_reader_receives_every_segment_while_non_pinning_reader_lags`)
@@ -4920,13 +4947,18 @@ mod tests {
         let newest = SEGMENTS - 1;
         let parts = trunk.parts_in_segment(SegmentSeq::new(newest));
         assert_eq!(
-            parts.iter().map(|p| p.part_index.value()).collect::<Vec<_>>(),
+            parts
+                .iter()
+                .map(|p| p.part_index.value())
+                .collect::<Vec<_>>(),
             vec![0, 1, 2, 3]
         );
         assert_eq!(visits() - before, 4, "parts_in_segment work units");
 
         let before = visits();
-        let bytes = trunk.part_bytes(SegmentSeq::new(newest), PartIndex::new(3)).expect("newest part resident");
+        let bytes = trunk
+            .part_bytes(SegmentSeq::new(newest), PartIndex::new(3))
+            .expect("newest part resident");
         assert_eq!(
             bytes.as_ref(),
             &[u8::try_from((newest + 3) % 251).unwrap(); 8]
@@ -4938,8 +4970,16 @@ mod tests {
         );
         // A segment that was never published touches nothing.
         let before = visits();
-        assert!(trunk.part_bytes(SegmentSeq::new(SEGMENTS + 5), PartIndex::new(0)).is_none());
-        assert!(trunk.parts_in_segment(SegmentSeq::new(SEGMENTS + 5)).is_empty());
+        assert!(
+            trunk
+                .part_bytes(SegmentSeq::new(SEGMENTS + 5), PartIndex::new(0))
+                .is_none()
+        );
+        assert!(
+            trunk
+                .parts_in_segment(SegmentSeq::new(SEGMENTS + 5))
+                .is_empty()
+        );
         assert_eq!(visits() - before, 0);
         // Index keys are bounded by the resident segments: a 4_000-part
         // ring of 4-part segments holds exactly 1_000 distinct keys.
@@ -4969,8 +5009,16 @@ mod tests {
         // ... two more evict (7,0) and (7,1); then segment 7 is REUSED.
         writer.publish_part(part_entry(22, 8, 2));
         writer.publish_part(part_entry(99, 7, 2));
-        assert_eq!(trunk.part_bytes(SegmentSeq::new(7), PartIndex::new(0)), None, "evicted");
-        assert_eq!(trunk.part_bytes(SegmentSeq::new(7), PartIndex::new(1)), None, "evicted");
+        assert_eq!(
+            trunk.part_bytes(SegmentSeq::new(7), PartIndex::new(0)),
+            None,
+            "evicted"
+        );
+        assert_eq!(
+            trunk.part_bytes(SegmentSeq::new(7), PartIndex::new(1)),
+            None,
+            "evicted"
+        );
         let seven: Vec<(PartIndex, u8)> = trunk
             .parts_in_segment(SegmentSeq::new(7))
             .iter()
@@ -4982,7 +5030,10 @@ mod tests {
             "survivor then the reused run"
         );
         assert_eq!(
-            trunk.part_bytes(SegmentSeq::new(7), PartIndex::new(2)).unwrap().as_ref(),
+            trunk
+                .part_bytes(SegmentSeq::new(7), PartIndex::new(2))
+                .unwrap()
+                .as_ref(),
             &[99u8; 8],
             "newest publish of the pair wins"
         );
@@ -5056,7 +5107,12 @@ mod tests {
         // Register BEFORE re-checking/waiting — the documented no-missed-
         // wakeup ordering.
         let listener = trunk.listen().expect("first registration must succeed");
-        assert!(trunk.part_bytes(SegmentSeq::new(9), PartIndex::new(0)).is_none(), "not published yet");
+        assert!(
+            trunk
+                .part_bytes(SegmentSeq::new(9), PartIndex::new(0))
+                .is_none(),
+            "not published yet"
+        );
 
         let bg_writer = Arc::clone(&writer);
         let handle = thread::spawn(move || {
@@ -5390,7 +5446,9 @@ mod tests {
         }
 
         assert!(
-            trunk.part_bytes(SegmentSeq::new(1), PartIndex::new(0)).is_none(),
+            trunk
+                .part_bytes(SegmentSeq::new(1), PartIndex::new(0))
+                .is_none(),
             "the part is gone once ordinary part_capacity eviction reclaims \
              it — NOT because its segment closed, but because the ring's own \
              bound was exceeded, exactly like every other ring in this module"
@@ -5994,7 +6052,13 @@ mod tests {
             Duration::from_millis(200),
             true,
         ));
-        assert_eq!(trunk.part_bytes(SegmentSeq::new(1), PartIndex::new(0)).unwrap().as_ref(), b"new");
+        assert_eq!(
+            trunk
+                .part_bytes(SegmentSeq::new(1), PartIndex::new(0))
+                .unwrap()
+                .as_ref(),
+            b"new"
+        );
     }
 
     /// `Trunk::events_in_segment` for a currently-OPEN reused segment number

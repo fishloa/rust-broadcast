@@ -850,7 +850,9 @@ mod tests {
 
         fn on_segment(&mut self, item: &SegmentCursorItem) -> Result<(), Self::Error> {
             match item {
-                SegmentCursorItem::Segment(entry) => self.written.push(entry.sequence_number.value()),
+                SegmentCursorItem::Segment(entry) => {
+                    self.written.push(entry.sequence_number.value())
+                }
                 // MUTATION TARGET: dropping this arm (not recording `Gap`)
                 // is exactly the "DVR silently has a hole nobody is told
                 // about" bug this test's mutation proves is caught.

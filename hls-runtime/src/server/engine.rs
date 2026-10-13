@@ -547,7 +547,11 @@ impl InitStore {
         }
         self.generation = Generation::new(self.generation.value().saturating_add(1));
         // The very first init covers every segment ever seen.
-        let first_seq = if self.current.is_none() { SegmentSeq::new(0) } else { next_seq };
+        let first_seq = if self.current.is_none() {
+            SegmentSeq::new(0)
+        } else {
+            next_seq
+        };
         self.current = Some(bytes.clone());
         self.history.push_back((self.generation, bytes));
         self.starts.push_back((first_seq, self.generation));
@@ -1099,7 +1103,8 @@ impl HlsOrigin {
     /// The Media Sequence Number shown for origin sequence number `seq`.
     fn public_msn(&self, seq: SegmentSeq) -> u64 {
         // `media_sequence_offset + u32::MAX` fits a `u64` (checked in `build`).
-        self.media_sequence_offset.saturating_add(u64::from(seq.value()))
+        self.media_sequence_offset
+            .saturating_add(u64::from(seq.value()))
     }
 
     /// The origin sequence number a shown Media Sequence Number refers to, or
@@ -1224,7 +1229,10 @@ impl HlsOrigin {
     /// list — exactly the degenerate state `MediaStore::latest_progress`
     /// also returned right after `add_segment` cleared `live_parts`.
     fn live_edge(&self) -> (SegmentSeq, Vec<PartEntry>) {
-        let last_closed = self.trunk.last_closed_segment().unwrap_or(SegmentSeq::new(0));
+        let last_closed = self
+            .trunk
+            .last_closed_segment()
+            .unwrap_or(SegmentSeq::new(0));
         let candidate = last_closed.saturating_next();
         let parts = self.trunk.parts_in_segment(candidate);
         if parts.is_empty() {
@@ -1260,12 +1268,7 @@ impl HlsOrigin {
         by_index
             .values()
             .map(|p| PartSpec {
-                uri: self.part_name(
-                    track_id,
-                    p.segment_number,
-                    p.part_index,
-                    ext,
-                ),
+                uri: self.part_name(track_id, p.segment_number, p.part_index, ext),
                 // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
                 duration: DecimalSeconds::new(p.duration.as_secs_f64())
                     .expect("Duration::as_secs_f64 is finite, >= 0"),
@@ -1389,12 +1392,7 @@ impl HlsOrigin {
                 open_parts
                     .iter()
                     .map(|p| PartSpec {
-                        uri: self.part_name(
-                            track_id,
-                            p.segment_number,
-                            p.part_index,
-                            ext,
-                        ),
+                        uri: self.part_name(track_id, p.segment_number, p.part_index, ext),
                         // `p.duration` is a `std::time::Duration`: always
                         // finite and non-negative (issue #1140).
                         duration: DecimalSeconds::new(p.duration.as_secs_f64())
@@ -1416,12 +1414,7 @@ impl HlsOrigin {
                 .max()
                 .map(PartIndex::saturating_next)
                 .unwrap_or(PartIndex::new(0));
-            self.part_name(
-                track_id,
-                open_seq,
-                next_idx,
-                ext,
-            )
+            self.part_name(track_id, open_seq, next_idx, ext)
         });
         // `#EXT-X-MAP`: unconditional under Fmp4 (RFC 8216bis §3.1.2 MUST);
         // omitted under MpegTs by default (§3.1.1's PAT/PMT-or-MAP
@@ -1550,7 +1543,13 @@ impl HlsOrigin {
                             && u64::try_from(live_parts.len()).unwrap_or(u64::MAX)
                                 > u64::from(part))
                 }
-                None => self.public_msn(self.trunk.last_closed_segment().unwrap_or(SegmentSeq::new(0))) >= msn,
+                None => {
+                    self.public_msn(
+                        self.trunk
+                            .last_closed_segment()
+                            .unwrap_or(SegmentSeq::new(0)),
+                    ) >= msn
+                }
             };
             if !satisfied {
                 return EgressResponse::pending(await_policy, now, now);
@@ -1622,7 +1621,10 @@ impl HlsOrigin {
             // in the open segment or the one after it. Anything else is not
             // found at once rather than parked for the whole blocking
             // timeout.
-            let last_closed = self.trunk.last_closed_segment().unwrap_or(SegmentSeq::new(0));
+            let last_closed = self
+                .trunk
+                .last_closed_segment()
+                .unwrap_or(SegmentSeq::new(0));
             if last_closed
                 .checked_add(FUTURE_PART_SEGMENT_BOUND)
                 .is_some_and(|limit| seq > limit)
@@ -3009,14 +3011,20 @@ mod tests {
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         // The discontinuous 6 rolled off the front.
         assert_eq!(w.discontinuity_sequence, 1);
-        assert_eq!(w.bytes_of(SegmentSeq::new(3)), Some(Bytes::from(vec![0xB3; 4])));
+        assert_eq!(
+            w.bytes_of(SegmentSeq::new(3)),
+            Some(Bytes::from(vec![0xB3; 4]))
+        );
         assert_eq!(w.bytes_of(SegmentSeq::new(5)), None);
         assert_eq!(w.bytes_of(SegmentSeq::new(6)), None);
 
         // Repeat: 3 again with different bytes replaces, never duplicates.
         w.push(window_entry(3, 0xC3, false), Generation::new(1));
         assert_eq!(window_seqs(&w), vec![(3, true)]);
-        assert_eq!(w.bytes_of(SegmentSeq::new(3)), Some(Bytes::from(vec![0xC3; 4])));
+        assert_eq!(
+            w.bytes_of(SegmentSeq::new(3)),
+            Some(Bytes::from(vec![0xC3; 4]))
+        );
     }
 
     // Hostile edge: the largest sequence number has no successor; a repeat of
@@ -3032,7 +3040,10 @@ mod tests {
         );
         w.push(window_entry(u32::MAX, 3, false), Generation::new(1));
         assert_eq!(window_seqs(&w), vec![(u32::MAX, true)]);
-        assert_eq!(w.bytes_of(SegmentSeq::new(u32::MAX)), Some(Bytes::from(vec![3; 4])));
+        assert_eq!(
+            w.bytes_of(SegmentSeq::new(u32::MAX)),
+            Some(Bytes::from(vec![3; 4]))
+        );
     }
 
     #[test]
@@ -3096,9 +3107,18 @@ mod tests {
         for (seq, tag) in [(5u32, 0x15u8), (6, 0x16), (7, 0x17)] {
             w.push(window_entry(seq, tag, false), Generation::new(1));
         }
-        assert_eq!(w.bytes_of(SegmentSeq::new(5)), Some(Bytes::from(vec![0x15; 4])));
-        assert_eq!(w.bytes_of(SegmentSeq::new(6)), Some(Bytes::from(vec![0x16; 4])));
-        assert_eq!(w.bytes_of(SegmentSeq::new(7)), Some(Bytes::from(vec![0x17; 4])));
+        assert_eq!(
+            w.bytes_of(SegmentSeq::new(5)),
+            Some(Bytes::from(vec![0x15; 4]))
+        );
+        assert_eq!(
+            w.bytes_of(SegmentSeq::new(6)),
+            Some(Bytes::from(vec![0x16; 4]))
+        );
+        assert_eq!(
+            w.bytes_of(SegmentSeq::new(7)),
+            Some(Bytes::from(vec![0x17; 4]))
+        );
         assert_eq!(w.bytes_of(SegmentSeq::new(4)), None);
         assert_eq!(w.bytes_of(SegmentSeq::new(8)), None);
         assert_eq!(w.bytes_of(SegmentSeq::new(u32::MAX)), None);

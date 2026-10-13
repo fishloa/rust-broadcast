@@ -1160,7 +1160,9 @@ pub(crate) async fn serve_with_admin(
 /// when DVR is off (see `crate::dvr::archive_seq_floor`).
 pub(super) async fn archive_floor_of(route: &Route) -> u32 {
     if route.dvr.enabled {
-        crate::dvr::archive_seq_floor(&route.dvr, &route.name).await
+        crate::dvr::archive_seq_floor(&route.dvr, &route.name)
+            .await
+            .value()
     } else {
         0
     }

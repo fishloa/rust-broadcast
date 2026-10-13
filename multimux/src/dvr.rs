@@ -192,6 +192,7 @@ use dvb_si::demux::{SectionEvent, SiDemux};
 use dvb_si::tables::eit::{EitKind, PID as EIT_PID};
 use dvb_si::tables::{AnyTableSection, RunningStatus};
 use media_plane::egress::SegmentEgress;
+use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{ArchiveOverrun, SegmentCursor, SegmentCursorItem, Trunk};
 use serde::{Deserialize, Serialize};
 use tracing;
@@ -534,7 +535,7 @@ pub struct DvrRecorder {
     /// between this value and the `Trunk`'s current
     /// [`Trunk::last_closed_segment`] at re-arm time is lost to this
     /// recording.
-    last_appended_seq: Option<u32>,
+    last_appended_seq: Option<SegmentSeq>,
     /// EIT p/f section reassembler for [`Self::feed_si`] (issue #903).
     /// `Some` only when `config.dvb_service_id` is set — `None` disables
     /// EIT-aligned rolling entirely (pure time-based periods, unchanged).
@@ -591,17 +592,17 @@ pub struct DvrRecorder {
 /// blocking pool.
 ///
 /// Returns `0` if the blocking task could not run (runtime shutting down).
-pub(crate) async fn archive_seq_floor(config: &DvrConfig, route_name: &str) -> u32 {
+pub(crate) async fn archive_seq_floor(config: &DvrConfig, route_name: &str) -> SegmentSeq {
     let dir = crate::catchup::archive_dir(config, route_name);
     tokio::task::spawn_blocking(move || {
         crate::catchup::scan_archive(&dir)
             .iter()
             .map(|s| s.seq)
             .max()
-            .unwrap_or(0)
+            .unwrap_or(SegmentSeq::new(0))
     })
     .await
-    .unwrap_or(0)
+    .unwrap_or(SegmentSeq::new(0))
 }
 
 /// Reject a route name that is not a safe single directory component: one
@@ -929,7 +930,7 @@ impl DvrRecorder {
     /// persisted, or a known init to write. When this is `false`, the caller
     /// can skip the whole `spawn_blocking` round-trip (the UDP ingest path
     /// calls `advance_route` once per datagram, so this matters).
-    pub fn needs_poll(&self, latest_closed_segment: Option<u32>) -> bool {
+    pub fn needs_poll(&self, latest_closed_segment: Option<SegmentSeq>) -> bool {
         // The first poll must always run (it opens period 0 and writes the
         // init prelude).
         if self.current_file.is_none() {
@@ -1079,7 +1080,7 @@ impl DvrRecorder {
         if self.ext == ".m4s" && self.last_init.is_none() {
             tracing::debug!(
                 route = %self.route_name,
-                seq = entry.sequence_number,
+                seq = entry.sequence_number.value(),
                 "skipping segment — fMP4 init not yet available"
             );
             return Ok(());
@@ -1090,12 +1091,13 @@ impl DvrRecorder {
         // does not fit the index's `u32`.
         let seq = self
             .seq_offset
-            .checked_add(u64::from(entry.sequence_number))
+            .checked_add(u64::from(entry.sequence_number.value()))
             .and_then(|public| u32::try_from(public).ok())
             .ok_or_else(|| {
                 format!(
                     "segment {} + offset {} overflows the archive's u32 sequence range",
-                    entry.sequence_number, self.seq_offset
+                    entry.sequence_number.value(),
+                    self.seq_offset
                 )
             })?;
 
@@ -1203,7 +1205,7 @@ impl DvrRecorder {
         tracing::debug!(
             route = %self.route_name,
             period = self.period,
-            seq = entry.sequence_number,
+            seq = entry.sequence_number.value(),
             bytes = byte_len,
             offset = byte_offset,
             "appended segment"
@@ -1562,8 +1564,10 @@ impl DvrRecorder {
             ArchiveOverrunSerde::Stall => {
                 let latest = self.trunk.last_closed_segment();
                 let skipped = match (self.last_appended_seq, latest) {
-                    (Some(last), Some(newest)) => u64::from(newest.saturating_sub(last)),
-                    (None, Some(newest)) => u64::from(newest),
+                    (Some(last), Some(newest)) => {
+                        u64::from(newest.checked_distance_from(last).unwrap_or(0))
+                    }
+                    (None, Some(newest)) => u64::from(newest.value()),
                     _ => 0,
                 };
                 self.gaps += skipped;
@@ -1624,7 +1628,7 @@ impl SegmentEgress for DvrRecorder {
             SegmentCursorItem::Segment(entry) if let Err(e) = self.append_segment(entry) => {
                 tracing::error!(
                     route = %self.route_name,
-                    seq = entry.sequence_number,
+                    seq = entry.sequence_number.value(),
                     error = %e,
                     "DVR append failed"
                 );
@@ -1633,7 +1637,7 @@ impl SegmentEgress for DvrRecorder {
             SegmentCursorItem::Segment(entry) => {
                 tracing::debug!(
                     route = %self.route_name,
-                    seq = entry.sequence_number,
+                    seq = entry.sequence_number.value(),
                     bytes = entry.bytes.len(),
                     "appended segment"
                 );

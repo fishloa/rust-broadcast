@@ -37,6 +37,7 @@ use std::time::SystemTime;
 
 use bytes::Bytes;
 use hls_runtime::server::ClosedSegment;
+use media_plane::ids::SegmentSeq;
 
 use crate::dvr::{DvrConfig, IndexEntry};
 
@@ -52,7 +53,7 @@ const NANOS_PER_SEC: f64 = NANOS_PER_SEC_U64 as f64;
 /// ([`read_archived_bytes`]).
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct ArchivedSegment {
-    pub seq: u32,
+    pub seq: SegmentSeq,
     pub start_pts_ns: u64,
     pub duration_secs: f64,
     pub discontinuous: bool,
@@ -69,7 +70,7 @@ pub(crate) struct ArchivedSegment {
 /// render an `#EXTINF` entry.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct CatchupSegment {
-    pub seq: u32,
+    pub seq: SegmentSeq,
     pub start_pts_ns: u64,
     pub duration_secs: f64,
     pub discontinuous: bool,
@@ -206,7 +207,7 @@ pub(crate) fn read_period_segments(dir: &Path, period_num: u32) -> Arc<Vec<Archi
     let segments: Vec<ArchivedSegment> = entries
         .into_iter()
         .map(|e| ArchivedSegment {
-            seq: e.seq,
+            seq: SegmentSeq::new(e.seq),
             start_pts_ns: e.start_pts_ns,
             duration_secs: e.duration_ns as f64 / NANOS_PER_SEC,
             discontinuous: e.discontinuous,
@@ -350,7 +351,7 @@ pub(crate) fn scan_archive(dir: &Path) -> Vec<ArchivedSegment> {
 /// a rendered playlist referenced. `O(periods)` — reads every period's
 /// index until found; acceptable for an occasional catch-up resource
 /// fetch (unlike the live hot path, which never touches this module).
-pub(crate) fn find_archived_segment(dir: &Path, seq: u32) -> Option<ArchivedSegment> {
+pub(crate) fn find_archived_segment(dir: &Path, seq: SegmentSeq) -> Option<ArchivedSegment> {
     list_period_nums(dir).into_iter().find_map(|n| {
         read_period_segments(dir, n)
             .iter()
@@ -572,7 +573,7 @@ pub(crate) fn render_playlist(
     // the unrelated `#EXT-X-TARGETDURATION` floor.
     let media_sequence = segments
         .first()
-        .map(|s| u64::from(s.seq))
+        .map(|s| u64::from(s.seq.value()))
         .unwrap_or(DEFAULT_MEDIA_SEQUENCE);
     let mut hls_segments: Vec<broadcast_hls::MediaSegment> = segments
         .iter()
