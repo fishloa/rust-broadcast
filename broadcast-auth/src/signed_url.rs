@@ -169,6 +169,16 @@ impl SignedUrlKeySet {
     }
 }
 
+/// Wipe every HMAC secret on drop (issue #1142).
+impl Drop for SignedUrlKeySet {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        for (_, secret) in &mut self.keys {
+            secret.zeroize();
+        }
+    }
+}
+
 /// Manual `Debug` (rather than `#[derive(Debug)]`): every entry carries a
 /// secret that must never render verbatim — only the configured `kid`s are
 /// shown, which is exactly what's useful for diagnosing a rotation.

@@ -415,6 +415,7 @@ dependencies = [
  "subtle",
  "thiserror 2.0.21",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -1108,6 +1109,7 @@ dependencies = [
  "criterion",
  "mpeg-ts",
  "rand 0.9.5",
+ "subtle",
  "thiserror 2.0.21",
  "zeroize",
 ]
@@ -2354,6 +2356,7 @@ dependencies = [
  "dvb-conformance",
  "dvb-si",
  "futures-util",
+ "getrandom 0.2.17",
  "headers",
  "hls-runtime",
  "http-body",
@@ -3344,6 +3347,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "subtle",
  "test-alloc",
  "thiserror 2.0.21",
  "tokio",
@@ -3377,6 +3381,7 @@ dependencies = [
  "rustls",
  "sdp-types",
  "serde",
+ "subtle",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
@@ -4343,10 +4348,12 @@ dependencies = [
  "sdp-types",
  "serde",
  "serde_json",
+ "subtle",
  "test-alloc",
  "thiserror 2.0.21",
  "timed-metadata",
  "url",
+ "zeroize",
 ]
 
 [[package]]
@@ -4645,6 +4652,7 @@ dependencies = [
  "serde",
  "sha1 0.11.0",
  "sha2 0.11.0",
+ "subtle",
  "thiserror 2.0.21",
  "tokio",
  "url",

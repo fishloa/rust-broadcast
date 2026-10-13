@@ -45,6 +45,11 @@ impl DisparityShiftUpdateSequence {
     fn serialize_into(&self, buf: &mut [u8]) -> Result<()> {
         let body_len = 3 + 1 + self.intervals.len() * 2;
         buf[0] = broadcast_common::len::fit_u8(body_len, "disparity_shift_update_sequence_length")?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.interval_duration),
+            24,
+            "interval_duration",
+        )?;
         buf[1] = (self.interval_duration >> 16) as u8;
         buf[2] = (self.interval_duration >> 8) as u8;
         buf[3] = self.interval_duration as u8;
@@ -439,6 +444,23 @@ mod tests {
         assert_ne!(out2, bytes);
         let reparse = DisparitySignallingSegment::parse(&out2).unwrap();
         assert_eq!(reparse.regions[0].region_id, 5);
+    }
+
+    /// #1129: `interval_duration` is 24 bits; a wider value must error.
+    #[test]
+    fn interval_duration_over_24_bits_is_rejected() {
+        let mut seq = DisparityShiftUpdateSequence {
+            interval_duration: 0x0100_0000,
+            intervals: alloc::vec![],
+        };
+        let mut buf = [0u8; 16];
+        assert!(matches!(
+            seq.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+        seq.interval_duration = 0x00FF_FFFF;
+        assert!(seq.serialize_into(&mut buf).is_ok());
+        assert_eq!(&buf[1..4], &[0xFF, 0xFF, 0xFF]);
     }
 
     /// DS-W2 (#1108): sync_byte wasn't checked by any typed segment parser.

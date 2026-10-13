@@ -289,7 +289,7 @@ impl ServerSession {
 /// Equality that does not stop at the first differing byte; lengths are not
 /// secret.
 fn ids_equal(a: &[u8], b: &[u8]) -> bool {
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+    a.len() == b.len() && bool::from(subtle::ConstantTimeEq::ct_eq(a, b))
 }
 
 fn header_value(h: Option<&headers::HeaderValue>) -> Option<&str> {

@@ -71,6 +71,49 @@ pub(crate) fn resolve_credentials(
     config_auth.or(url_credentials)
 }
 
+/// A credential bound to the origin it was configured for (RFC 6454 §4:
+/// scheme, host, port).
+///
+/// Pull sources fetch many URLs — playlist entries, segment URIs, manifest
+/// `BaseURL`s — and any of them may be absolute and name another host. The
+/// credential belongs to the configured source only, so it is attached to a
+/// request only when the request's origin is exactly the source's origin
+/// (issue #1142): a different host, port or scheme gets an anonymous request.
+#[derive(Clone)]
+pub(crate) struct ScopedCredentials {
+    credentials: Credentials,
+    origin: url::Origin,
+}
+
+impl ScopedCredentials {
+    /// Whether `url` addresses the origin these credentials are bound to.
+    fn applies_to(&self, url: &str) -> bool {
+        Url::parse(url).is_ok_and(|u| u.origin() == self.origin)
+    }
+}
+
+/// Manual `Debug`: only the origin renders, never the credential.
+impl std::fmt::Debug for ScopedCredentials {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ScopedCredentials")
+            .field("origin", &self.origin.ascii_serialization())
+            .field("credentials", &"<redacted>")
+            .finish()
+    }
+}
+
+/// Binds `credentials` (if any) to the origin of `source_url` — the
+/// configured source URL, userinfo already stripped.
+pub(crate) fn scope_credentials(
+    credentials: Option<Credentials>,
+    source_url: &Url,
+) -> Option<ScopedCredentials> {
+    credentials.map(|credentials| ScopedCredentials {
+        credentials,
+        origin: source_url.origin(),
+    })
+}
+
 /// Returns a copy of `url` with its userinfo (username/password) removed, so
 /// it is safe to use in the actual request line and in any error/log
 /// message. Mirrors [`crate::source::rtsp`]'s `strip_userinfo`.
@@ -112,8 +155,12 @@ pub(crate) fn strip_userinfo(url: &Url) -> Result<Url> {
 pub(crate) async fn authenticated_get(
     client: &Client,
     url: &str,
-    credentials: Option<&Credentials>,
+    credentials: Option<&ScopedCredentials>,
 ) -> Result<Response> {
+    // Credentials never leave the origin they were configured for.
+    let credentials = credentials
+        .filter(|scoped| scoped.applies_to(url))
+        .map(|scoped| &scoped.credentials);
     let build = |c: &Client| {
         let mut req = c.get(url);
         req = match credentials {
@@ -137,6 +184,11 @@ pub(crate) async fn authenticated_get(
         return Ok(response);
     };
     if response.status() != StatusCode::UNAUTHORIZED {
+        return Ok(response);
+    }
+    // A challenge from a host a redirect led to is not answered with this
+    // source's credentials.
+    if !scoped_origin_matches(url, response.url()) {
         return Ok(response);
     }
     let Some(challenge) = response
@@ -163,9 +215,188 @@ pub(crate) async fn authenticated_get(
         })
 }
 
+/// Whether the response's final URL is on the same origin as the request URL
+/// (i.e. no cross-origin redirect was followed).
+fn scoped_origin_matches(request_url: &str, final_url: &Url) -> bool {
+    Url::parse(request_url).is_ok_and(|u| u.origin() == final_url.origin())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use axum::Router;
+    use axum::http::{HeaderMap, StatusCode as AxumStatus, header};
+    use axum::response::{IntoResponse, Redirect};
+    use axum::routing::get;
+    use std::sync::{Arc, Mutex};
+
+    /// What a loopback origin saw: one entry per request, the `Authorization`
+    /// header value (or `None`).
+    type Seen = Arc<Mutex<Vec<Option<String>>>>;
+
+    fn note(seen: &Seen, headers: &HeaderMap) {
+        seen.lock().unwrap().push(
+            headers
+                .get(header::AUTHORIZATION)
+                .map(|v| v.to_str().unwrap().to_string()),
+        );
+    }
+
+    /// Starts a loopback origin: `/start` redirects to `redirect_to` (if any),
+    /// `/seg` answers 200, `/challenge` answers `401` with a Digest
+    /// challenge. Returns its base URL and the record of what it saw.
+    async fn origin(redirect_to: Option<String>) -> (String, Seen) {
+        let seen: Seen = Arc::default();
+        let (s1, s2, s3) = (seen.clone(), seen.clone(), seen.clone());
+        let app = Router::new()
+            .route(
+                "/start",
+                get(move |h: HeaderMap| async move {
+                    note(&s1, &h);
+                    match redirect_to {
+                        Some(to) => Redirect::to(&to).into_response(),
+                        None => AxumStatus::OK.into_response(),
+                    }
+                }),
+            )
+            .route(
+                "/seg",
+                get(move |h: HeaderMap| async move {
+                    note(&s2, &h);
+                    AxumStatus::OK
+                }),
+            )
+            .route(
+                "/challenge",
+                get(move |h: HeaderMap| async move {
+                    note(&s3, &h);
+                    (
+                        AxumStatus::UNAUTHORIZED,
+                        [(
+                            header::WWW_AUTHENTICATE,
+                            r#"Digest realm="r", nonce="abc", qop="auth", algorithm=MD5"#,
+                        )],
+                    )
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        (format!("http://{addr}"), seen)
+    }
+
+    fn client() -> Client {
+        Client::builder()
+            .redirect(crate::source::redirect_policy())
+            .build()
+            .unwrap()
+    }
+
+    fn scoped(creds: Credentials, source_url: &str) -> Option<ScopedCredentials> {
+        scope_credentials(Some(creds), &Url::parse(source_url).unwrap())
+    }
+
+    /// The configured credential reaches its own origin (positive control) but
+    /// never a different host/port, whether that origin is reached by a
+    /// redirect or named directly by an absolute URL in a playlist/manifest
+    /// (#1142).
+    ///
+    /// Biting test: drop the `applies_to` filter in `authenticated_get` and
+    /// the second origin records the `Authorization` header.
+    #[tokio::test]
+    async fn credentials_never_leave_the_configured_origin() {
+        let (b_url, b_seen) = origin(None).await;
+        let (a_url, a_seen) = origin(Some(format!("{b_url}/seg"))).await;
+        let creds = scoped(Credentials::bearer("tok-secret"), &a_url);
+        let c = client();
+
+        // Same origin: the token is sent.
+        authenticated_get(&c, &format!("{a_url}/seg"), creds.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(
+            a_seen.lock().unwrap().as_slice(),
+            [Some("Bearer tok-secret".to_string())]
+        );
+
+        // An absolute URL naming another origin: an anonymous request.
+        authenticated_get(&c, &format!("{b_url}/seg"), creds.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(b_seen.lock().unwrap().as_slice(), [None]);
+
+        // A redirect from the configured origin to another origin: the first
+        // hop carries the token, the redirected hop does not.
+        a_seen.lock().unwrap().clear();
+        b_seen.lock().unwrap().clear();
+        authenticated_get(&c, &format!("{a_url}/start"), creds.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(
+            a_seen.lock().unwrap().as_slice(),
+            [Some("Bearer tok-secret".to_string())]
+        );
+        assert_eq!(b_seen.lock().unwrap().as_slice(), [None]);
+    }
+
+    /// Basic credentials are scoped the same way.
+    #[tokio::test]
+    async fn basic_credentials_are_scoped_to_their_origin() {
+        let (b_url, b_seen) = origin(None).await;
+        let (a_url, _a_seen) = origin(None).await;
+        let creds = scoped(Credentials::new("user", "hunter2-password"), &a_url);
+        // `Credentials::new` is Digest-flavoured, so use an explicit Basic.
+        let creds = creds.map(|mut s| {
+            s.credentials = Credentials::Basic {
+                username: "user".into(),
+                password: "hunter2-password".into(),
+            };
+            s
+        });
+        authenticated_get(&client(), &format!("{b_url}/seg"), creds.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(b_seen.lock().unwrap().as_slice(), [None]);
+    }
+
+    /// A Digest challenge from an origin a redirect led to is not answered:
+    /// the credential is never used against it, and nothing is resent.
+    ///
+    /// Biting test: drop the `scoped_origin_matches` check and the original
+    /// origin receives a second, `Authorization`-bearing request.
+    #[tokio::test]
+    async fn a_digest_challenge_from_a_redirect_target_is_not_answered() {
+        let (b_url, b_seen) = origin(None).await;
+        let (a_url, a_seen) = origin(Some(format!("{b_url}/challenge"))).await;
+        let creds = scoped(Credentials::new("user", "hunter2-password"), &a_url);
+        let response = authenticated_get(&client(), &format!("{a_url}/start"), creds.as_ref())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(a_seen.lock().unwrap().as_slice(), [None]);
+        assert_eq!(b_seen.lock().unwrap().as_slice(), [None]);
+    }
+
+    /// A Digest challenge from the configured origin itself is still answered
+    /// (positive control for the test above).
+    #[tokio::test]
+    async fn a_digest_challenge_from_the_configured_origin_is_answered() {
+        let (a_url, a_seen) = origin(None).await;
+        let creds = scoped(Credentials::new("user", "hunter2-password"), &a_url);
+        authenticated_get(&client(), &format!("{a_url}/challenge"), creds.as_ref())
+            .await
+            .unwrap();
+        let seen = a_seen.lock().unwrap();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert_eq!(seen[0], None);
+        assert!(
+            seen[1].as_deref().is_some_and(|v| v.starts_with("Digest ")),
+            "{seen:?}"
+        );
+    }
 
     #[test]
     fn credentials_from_url_extracts_userinfo() {

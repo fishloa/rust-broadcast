@@ -259,6 +259,14 @@ impl fmt::Debug for CencEncryptor {
     }
 }
 
+/// Wipe the bound content key on drop (issue #1142).
+impl Drop for CencEncryptor {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.key.zeroize();
+    }
+}
+
 impl CencEncryptor {
     /// Construct a fresh encryptor bound to `key`, with its
     /// [`IvGen::Counter`] index starting at `0`.

@@ -6,6 +6,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security (secrets and identity handling, #1142)
+
+- The `Session` id comparison uses `subtle::ConstantTimeEq` (new `subtle` dependency) instead of a hand-written fold; new `tests/secret_debug_guard.rs`.
+
 ### Changed
 - `ClientSession::handle_data` decodes with a cursor and drains the consumed prefix once per call instead of memmoving the remainder per frame/message (audit r09-O3): 600 interleaved frames in one read decode ~17x faster (4.2 ms -> 0.24 ms, debug build).
 - **BREAKING:** `ClientSession::handle_data` now returns `HandleOutcome { events, error }` instead of `Result<Vec<ClientEvent>>` (audit T16, #1144). A terminal protocol error (an unparseable message head, an over-long header, an unfulfillable `Content-Length`: TCP framing is lost) used to discard every event already decoded in the same call, including media frames and responses that preceded the damage; they are now returned alongside the error. Migrate: `session.handle_data(b)?` becomes `session.handle_data(b).into_result()?` (identical all-or-nothing behaviour; also available as the new `handle_data_strict`), or read `outcome.events` first and then act on `outcome.error`. The tokio `ClientCodec` delivers the events decoded before the error and raises the error on the next `decode`.

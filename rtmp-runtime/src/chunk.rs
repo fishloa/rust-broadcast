@@ -134,15 +134,16 @@ fn read_u24_be(b: &[u8]) -> u32 {
     (u32::from(b[0]) << 16) | (u32::from(b[1]) << 8) | u32::from(b[2])
 }
 
-/// Write `v`'s low 24 bits as big-endian into `buf`. `buf` must have at
-/// least [`U24_LEN`] bytes (caller-checked). Bits above the low 24 are
-/// silently dropped — every wire user of this helper (`message length`, and
-/// `timestamp`/`timestamp delta` after the extended-timestamp check) is
-/// only ever asked to write a value already known to fit.
-fn write_u24_be(v: u32, buf: &mut [u8]) {
+/// Write `v` as a big-endian 24-bit field into `buf`. `buf` must have at
+/// least [`U24_LEN`] bytes (caller-checked). A value that does not fit 24
+/// bits is [`RtmpError::FieldOverflow`], never silently masked (#1129):
+/// `message length` is a caller-supplied `u32`, so it really can overflow.
+fn write_u24_be(v: u32, buf: &mut [u8], field: &'static str) -> Result<()> {
+    let v = broadcast_common::len::fit_bits(u64::from(v), 24, field)? as u32;
     buf[0] = (v >> 16) as u8;
     buf[1] = (v >> 8) as u8;
     buf[2] = v as u8;
+    Ok(())
 }
 
 // ── fmt (chunk type) ────────────────────────────────────────────────────
@@ -556,8 +557,12 @@ impl Serialize for MessageHeader {
                 } else {
                     timestamp
                 };
-                write_u24_be(field, &mut buf[0..U24_LEN]);
-                write_u24_be(message_length, &mut buf[U24_LEN..2 * U24_LEN]);
+                write_u24_be(field, &mut buf[0..U24_LEN], "timestamp")?;
+                write_u24_be(
+                    message_length,
+                    &mut buf[U24_LEN..2 * U24_LEN],
+                    "message length",
+                )?;
                 buf[2 * U24_LEN] = message_type_id;
                 buf[7..11].copy_from_slice(&message_stream_id.to_le_bytes());
                 if extended {
@@ -584,8 +589,12 @@ impl Serialize for MessageHeader {
                 } else {
                     timestamp_delta
                 };
-                write_u24_be(field, &mut buf[0..U24_LEN]);
-                write_u24_be(message_length, &mut buf[U24_LEN..2 * U24_LEN]);
+                write_u24_be(field, &mut buf[0..U24_LEN], "timestamp")?;
+                write_u24_be(
+                    message_length,
+                    &mut buf[U24_LEN..2 * U24_LEN],
+                    "message length",
+                )?;
                 buf[2 * U24_LEN] = message_type_id;
                 if extended {
                     buf[7..11].copy_from_slice(&timestamp_delta.to_be_bytes());
@@ -607,7 +616,7 @@ impl Serialize for MessageHeader {
                 } else {
                     timestamp_delta
                 };
-                write_u24_be(field, &mut buf[0..U24_LEN]);
+                write_u24_be(field, &mut buf[0..U24_LEN], "timestamp")?;
                 if extended {
                     buf[3..7].copy_from_slice(&timestamp_delta.to_be_bytes());
                 }
@@ -1479,7 +1488,7 @@ mod tests {
     #[test]
     fn u24_round_trip_zero() {
         let mut buf = [0xFFu8; U24_LEN];
-        write_u24_be(0, &mut buf);
+        write_u24_be(0, &mut buf, "t").unwrap();
         assert_eq!(buf, [0, 0, 0]);
         assert_eq!(read_u24_be(&buf), 0);
     }
@@ -1487,15 +1496,45 @@ mod tests {
     #[test]
     fn u24_round_trip_max() {
         let mut buf = [0u8; U24_LEN];
-        write_u24_be(0x00FF_FFFF, &mut buf);
+        write_u24_be(0x00FF_FFFF, &mut buf, "t").unwrap();
         assert_eq!(buf, [0xFF, 0xFF, 0xFF]);
         assert_eq!(read_u24_be(&buf), 0x00FF_FFFF);
+    }
+
+    /// #1129: a `message_length` above 24 bits is an error, not masked.
+    #[test]
+    fn message_length_over_24_bits_is_rejected_not_masked() {
+        let mut buf = [0u8; 16];
+        for hdr in [
+            MessageHeader::Type0 {
+                timestamp: 0,
+                message_length: 0x0100_0000,
+                message_type_id: 9,
+                message_stream_id: 1,
+            },
+            MessageHeader::Type1 {
+                timestamp_delta: 0,
+                message_length: 0x0100_0000,
+                message_type_id: 9,
+            },
+        ] {
+            assert!(matches!(
+                hdr.serialize_into(&mut buf),
+                Err(RtmpError::FieldOverflow(_))
+            ));
+        }
+        let ok = MessageHeader::Type1 {
+            timestamp_delta: 0,
+            message_length: 0x00FF_FFFF,
+            message_type_id: 9,
+        };
+        assert!(ok.serialize_into(&mut buf).is_ok());
     }
 
     #[test]
     fn u24_round_trip_mid_value() {
         let mut buf = [0u8; U24_LEN];
-        write_u24_be(0x0012_3456, &mut buf);
+        write_u24_be(0x0012_3456, &mut buf, "t").unwrap();
         assert_eq!(buf, [0x12, 0x34, 0x56]);
         assert_eq!(read_u24_be(&buf), 0x0012_3456);
     }

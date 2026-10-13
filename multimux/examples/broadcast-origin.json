@@ -1,5 +1,6 @@
 {
   "bind": "0.0.0.0:8080",
+  "allow_open_ingest": true,
   "target_duration_secs": 4.0,
   "part_target_ms": 500,
   "window_segments": 12,
@@ -68,7 +69,8 @@
       "input": {
         "type": "rtmp",
         "listen": "0.0.0.0:1935",
-        "app": "live"
+        "app": "live",
+        "stream_key": "replace-with-a-long-random-key"
       },
       "outputs": [
         "llhls"

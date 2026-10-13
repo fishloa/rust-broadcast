@@ -34,6 +34,7 @@
 
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
+use broadcast_common::len::{fit_u8, fit_u16};
 use broadcast_common::{Parse, Serialize};
 
 pub(crate) const COMPAT_DESC_LEN_FIELD: usize = 2;
@@ -400,33 +401,26 @@ impl Serialize for CompatibilityDescriptor<'_> {
             buf[1] = 0x00;
             return Ok(COMPAT_DESC_LEN_FIELD);
         }
-        let body_len = len - COMPAT_DESC_LEN_FIELD;
-        if body_len > u16::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: body_len,
-                available: u16::MAX as usize,
-            });
-        }
-        if self.descriptors.len() > u16::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: self.descriptors.len(),
-                available: u16::MAX as usize,
-            });
-        }
-        buf[..COMPAT_DESC_LEN_FIELD].copy_from_slice(&(body_len as u16).to_be_bytes());
+        let overflow = |declared: usize, available: usize| Error::SectionLengthOverflow {
+            declared,
+            available,
+        };
+        let body_len = fit_u16(len - COMPAT_DESC_LEN_FIELD, "compatibilityDescriptorLength")
+            .map_err(|e| overflow(e.value as usize, e.max as usize))?;
+        let descriptor_count = fit_u16(self.descriptors.len(), "descriptorCount")
+            .map_err(|e| overflow(e.value as usize, e.max as usize))?;
+        buf[..COMPAT_DESC_LEN_FIELD].copy_from_slice(&body_len.to_be_bytes());
         buf[COMPAT_DESC_LEN_FIELD..COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD]
-            .copy_from_slice(&(self.descriptors.len() as u16).to_be_bytes());
+            .copy_from_slice(&descriptor_count.to_be_bytes());
         let mut pos = COMPAT_DESC_LEN_FIELD + DESC_COUNT_FIELD;
         for entry in &self.descriptors {
-            let entry_body_len = entry_serialized_len(entry) - DESC_HEADER_LEN;
-            if entry_body_len > u8::MAX as usize {
-                return Err(Error::SectionLengthOverflow {
-                    declared: entry_body_len,
-                    available: u8::MAX as usize,
-                });
-            }
+            let entry_body_len = fit_u8(
+                entry_serialized_len(entry) - DESC_HEADER_LEN,
+                "descriptorLength",
+            )
+            .map_err(|e| overflow(e.value as usize, e.max as usize))?;
             buf[pos] = entry.descriptor_type.to_u8();
-            buf[pos + 1] = entry_body_len as u8;
+            buf[pos + 1] = entry_body_len;
             buf[pos + DESC_HEADER_LEN] = entry.specifier_type.to_u8();
             buf[pos + DESC_HEADER_LEN + 1..pos + DESC_HEADER_LEN + 4]
                 .copy_from_slice(&entry.specifier_data);
@@ -434,23 +428,14 @@ impl Serialize for CompatibilityDescriptor<'_> {
                 .copy_from_slice(&entry.model.to_be_bytes());
             buf[pos + DESC_HEADER_LEN + 6..pos + DESC_HEADER_LEN + 8]
                 .copy_from_slice(&entry.version.to_be_bytes());
-            if entry.sub_descriptors.len() > u8::MAX as usize {
-                return Err(Error::SectionLengthOverflow {
-                    declared: entry.sub_descriptors.len(),
-                    available: u8::MAX as usize,
-                });
-            }
-            buf[pos + DESC_HEADER_LEN + 8] = entry.sub_descriptors.len() as u8;
+            buf[pos + DESC_HEADER_LEN + 8] =
+                fit_u8(entry.sub_descriptors.len(), "subDescriptorCount")
+                    .map_err(|e| overflow(e.value as usize, e.max as usize))?;
             pos += DESC_HEADER_LEN + DESC_FIXED_LEN;
             for sd in &entry.sub_descriptors {
                 buf[pos] = sd.sub_descriptor_type.to_u8();
-                if sd.data.len() > u8::MAX as usize {
-                    return Err(Error::SectionLengthOverflow {
-                        declared: sd.data.len(),
-                        available: u8::MAX as usize,
-                    });
-                }
-                buf[pos + 1] = sd.data.len() as u8;
+                buf[pos + 1] = fit_u8(sd.data.len(), "subDescriptorLength")
+                    .map_err(|e| overflow(e.value as usize, e.max as usize))?;
                 pos += SUB_DESC_HEADER_LEN;
                 buf[pos..pos + sd.data.len()].copy_from_slice(sd.data);
                 pos += sd.data.len();
@@ -623,6 +608,60 @@ mod tests {
         cd.serialize_into(&mut buf).unwrap();
         let re = CompatibilityDescriptor::parse(&buf).unwrap();
         assert_eq!(re, cd);
+    }
+
+    fn entry<'a>(subs: Vec<SubDescriptor<'a>>) -> CompatibilityDescriptorEntry<'a> {
+        CompatibilityDescriptorEntry {
+            descriptor_type: DescriptorType::UserDefined(0x80),
+            specifier_type: SpecifierType::IeeeOui,
+            specifier_data: [0, 0, 0],
+            model: 0,
+            version: 0,
+            sub_descriptors: subs,
+        }
+    }
+
+    /// #1129: over-range lengths/counts error instead of wrapping.
+    #[test]
+    fn serialize_rejects_over_range_lengths_and_counts() {
+        let big = vec![0u8; 256];
+        // sub_descriptor_length 256 > 255.
+        let cd = CompatibilityDescriptor {
+            descriptors: vec![entry(vec![SubDescriptor {
+                sub_descriptor_type: SubDescriptorType::Unallocated(0x80),
+                data: &big,
+            }])],
+        };
+        let mut buf = vec![0u8; cd.serialized_len()];
+        assert!(matches!(
+            cd.serialize_into(&mut buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
+        // 256 sub-descriptors: subDescriptorCount > 255.
+        let cd = CompatibilityDescriptor {
+            descriptors: vec![entry(
+                (0..256)
+                    .map(|_| SubDescriptor {
+                        sub_descriptor_type: SubDescriptorType::Unallocated(0x80),
+                        data: &[],
+                    })
+                    .collect(),
+            )],
+        };
+        let mut buf = vec![0u8; cd.serialized_len()];
+        assert!(matches!(
+            cd.serialize_into(&mut buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
+        // 65 536 entries: descriptorCount > 65 535.
+        let cd = CompatibilityDescriptor {
+            descriptors: (0..65_536).map(|_| entry(vec![])).collect(),
+        };
+        let mut buf = vec![0u8; cd.serialized_len()];
+        assert!(matches!(
+            cd.serialize_into(&mut buf).unwrap_err(),
+            Error::SectionLengthOverflow { .. }
+        ));
     }
 
     #[test]

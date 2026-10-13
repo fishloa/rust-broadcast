@@ -1085,6 +1085,17 @@ fn ms_from_ticks(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvErr
     Ok(ms as u32)
 }
 
+/// [`ticks_to_ms`] for the RTMP/FLV payload path: a negative value (a DTS
+/// before the clock origin) clamps to 0 as before, but a value past the 32-bit
+/// millisecond clock is an error rather than a silent `as u32` wrap (#1129).
+fn clamped_ms(ticks: i64, timescale: u32) -> core::result::Result<u32, FlvError> {
+    u32::try_from(ticks_to_ms(ticks, timescale).max(0)).map_err(|_| {
+        FlvError::Codec(Error::InvalidInput(
+            "FLV tag timestamp does not fit the 32-bit millisecond clock",
+        ))
+    })
+}
+
 /// The `CompositionTime` field of an `AVCVIDEOPACKET` (§E.4.3.2) is a signed
 /// 24-bit value in FLV's millisecond clock. `offset` is in `timescale` ticks,
 /// so it is rescaled first; a value that does not fit SI24 is an error rather
@@ -1200,8 +1211,8 @@ pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>
         let timescale = vt.spec.timescale;
         for s in &vt.samples {
             let Some(dts) = s.dts else { continue };
-            let ts_ms = ticks_to_ms(dts, timescale).max(0) as u32;
-            let comp_ms = ticks_to_ms(s.composition_offset() as i64, timescale) as i32;
+            let ts_ms = clamped_ms(dts, timescale)?;
+            let comp_ms = composition_time_ms(s.composition_offset() as i64, timescale)?;
             let body = video_frame_body(s.flags.is_sync, comp_ms, &s.data);
             items.push((
                 ts_ms,
@@ -1220,7 +1231,7 @@ pub fn flv_frame_payloads(media: &Media) -> core::result::Result<Vec<FlvPayload>
         let sound_type = audio_sound_type(at);
         for s in &at.samples {
             let Some(dts) = s.dts else { continue };
-            let ts_ms = ticks_to_ms(dts, timescale).max(0) as u32;
+            let ts_ms = clamped_ms(dts, timescale)?;
             let body = audio_frame_body(sound_type, &s.data);
             items.push((
                 ts_ms,

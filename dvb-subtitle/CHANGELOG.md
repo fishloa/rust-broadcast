@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **`disparity_shift_update_sequence` `interval_duration` over 24 bits is rejected (#1129)** (was `as u8` of its three bytes, silently dropping the top byte); returns `Error::FieldOverflow`.
+
 ### Changed (BREAKING)
 - The CamelCase constant re-exports are now SCREAMING_SNAKE: `DataIdentifier`
   -> `DATA_IDENTIFIER`, `EndOfPesMarker` -> `END_OF_PES_MARKER`,

@@ -68,7 +68,7 @@ use broadcast_auth::Credentials;
 
 use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{
-    authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
+    authenticated_get, credentials_from_url, resolve_credentials, scope_credentials, strip_userinfo,
 };
 use crate::source::ts_program::TsIngestSession;
 use crate::source::{IngestTimeouts, Source};
@@ -168,8 +168,10 @@ pub async fn open_stream(route: &TsHttpRoute) -> Result<TsHttpStream> {
     })?;
     let credentials = resolve_credentials(route.auth.clone(), credentials_from_url(&parsed)?);
     let clean_url = strip_userinfo(&parsed)?;
+    let credentials = scope_credentials(credentials, &clean_url);
 
     let client = Client::builder()
+        .redirect(crate::source::redirect_policy())
         .build()
         .map_err(|e| MultimuxError::Connect {
             reason: format!("reqwest client: {e}"),

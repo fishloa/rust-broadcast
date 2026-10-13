@@ -10,7 +10,7 @@
 /// common password case; construct `Basic`/`Digest` directly only when the
 /// caller must pin one scheme.
 #[non_exhaustive]
-#[derive(Clone, PartialEq, Eq)]
+#[derive(Clone)]
 pub enum Credentials {
     /// Username/password for HTTP Basic auth (RFC 7617) — or RTSP's reuse of
     /// it (RFC 2326 §14/§16).
@@ -34,6 +34,58 @@ pub enum Credentials {
         /// The opaque bearer token.
         token: String,
     },
+}
+
+/// Constant-time in the secret (`password`/`token`) bytes via
+/// `subtle::ConstantTimeEq`, so comparing two credentials does not leak the
+/// length of a matching prefix (issue #1142). Usernames are not secret. Two
+/// different variants are never equal.
+impl PartialEq for Credentials {
+    fn eq(&self, other: &Self) -> bool {
+        use subtle::ConstantTimeEq;
+        let ct =
+            |a: &str, b: &str| a.len() == b.len() && bool::from(a.as_bytes().ct_eq(b.as_bytes()));
+        match (self, other) {
+            (
+                Credentials::Basic {
+                    username: ua,
+                    password: pa,
+                },
+                Credentials::Basic {
+                    username: ub,
+                    password: pb,
+                },
+            )
+            | (
+                Credentials::Digest {
+                    username: ua,
+                    password: pa,
+                },
+                Credentials::Digest {
+                    username: ub,
+                    password: pb,
+                },
+            ) => ua == ub && ct(pa, pb),
+            (Credentials::Bearer { token: a }, Credentials::Bearer { token: b }) => ct(a, b),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Credentials {}
+
+/// Wipe the password/token on drop (issue #1142) so it does not linger in
+/// freed memory.
+impl Drop for Credentials {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        match self {
+            Credentials::Basic { password, .. } | Credentials::Digest { password, .. } => {
+                password.zeroize();
+            }
+            Credentials::Bearer { token } => token.zeroize(),
+        }
+    }
 }
 
 impl Credentials {
@@ -98,6 +150,28 @@ impl core::fmt::Debug for Credentials {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Equality is constant-time in the secret (#1142) but must stay exact: a
+    // difference in the last byte, in length, in username, or in variant is
+    // never equal.
+    #[test]
+    fn equality_is_exact_across_secret_username_and_variant() {
+        let base = Credentials::new("admin", "s3cr3t-password");
+        assert_eq!(base, Credentials::new("admin", "s3cr3t-password"));
+        assert_ne!(base, Credentials::new("admin", "s3cr3t-passworD"));
+        assert_ne!(base, Credentials::new("admin", "s3cr3t-passwor"));
+        assert_ne!(base, Credentials::new("admin2", "s3cr3t-password"));
+        assert_ne!(
+            base,
+            Credentials::Basic {
+                username: "admin".into(),
+                password: "s3cr3t-password".into(),
+            }
+        );
+        assert_eq!(Credentials::bearer("tok"), Credentials::bearer("tok"));
+        assert_ne!(Credentials::bearer("tok"), Credentials::bearer("tol"));
+        assert_ne!(Credentials::bearer("tok"), base);
+    }
 
     // Security-blocker regression (pre-release audit): `Credentials` must
     // never render a secret via `{:?}`. Must FAIL if `Debug` reverts to a

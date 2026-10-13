@@ -39,10 +39,17 @@ const FULL_HDR: usize = 4;
 /// allocation is allowed to be.
 pub(crate) fn bounded_entry_count(remaining: usize, entry_len: usize, count: usize) -> usize {
     if entry_len == 0 {
-        return count;
+        // Zero-width entries: the buffer length bounds nothing, so never size
+        // an up-front allocation from the wire count (#1130). The `Vec` still
+        // grows normally if the entries really are that many.
+        return count.min(ZERO_WIDTH_PREALLOC);
     }
     count.min(remaining / entry_len)
 }
+
+/// Largest up-front allocation (in entries) for a table whose entries are zero
+/// bytes wide; see [`bounded_entry_count`].
+const ZERO_WIDTH_PREALLOC: usize = 1024;
 
 /// Reject a declared `count` that the body cannot hold, before its loop runs.
 ///
@@ -634,20 +641,30 @@ impl Serialize for MovieHeaderBox {
         } else {
             (8u8, 8u8, 8u8)
         };
-        let write_u64 = |buf: &mut [u8], off: usize, sz: u8, v: u64| {
+        // Version 0 stores these as 32-bit: an over-range value is an error,
+        // never a silent wrap (#1129).
+        let write_u64 = |buf: &mut [u8], off: usize, sz: u8, v: u64, field: &'static str| {
             if sz == 4 {
-                buf[off..off + 4].copy_from_slice(&(v as u32).to_be_bytes());
+                let v32 = broadcast_common::len::fit_bits(v, 32, field)? as u32;
+                buf[off..off + 4].copy_from_slice(&v32.to_be_bytes());
             } else {
                 buf[off..off + 8].copy_from_slice(&v.to_be_bytes());
             }
+            Ok::<(), Error>(())
         };
-        write_u64(buf, c, ct_sz, self.creation_time);
+        write_u64(buf, c, ct_sz, self.creation_time, "mvhd creation_time")?;
         c += ct_sz as usize;
-        write_u64(buf, c, mt_sz, self.modification_time);
+        write_u64(
+            buf,
+            c,
+            mt_sz,
+            self.modification_time,
+            "mvhd modification_time",
+        )?;
         c += mt_sz as usize;
         buf[c..c + 4].copy_from_slice(&self.timescale.to_be_bytes());
         c += 4;
-        write_u64(buf, c, dur_sz, self.duration);
+        write_u64(buf, c, dur_sz, self.duration, "mvhd duration")?;
         c += dur_sz as usize;
         buf[c..c + 4].copy_from_slice(&self.rate.to_be_bytes());
         c += 4;
@@ -795,15 +812,29 @@ impl Serialize for TrackHeaderBox {
         buf[c..c + 3].copy_from_slice(&fb[1..]);
         c += 3;
         if self.version == 0 {
-            buf[c..c + 4].copy_from_slice(&(self.creation_time as u32).to_be_bytes());
+            buf[c..c + 4].copy_from_slice(
+                &(broadcast_common::len::fit_bits(self.creation_time, 32, "tkhd creation_time")?
+                    as u32)
+                    .to_be_bytes(),
+            );
             c += 4;
-            buf[c..c + 4].copy_from_slice(&(self.modification_time as u32).to_be_bytes());
+            buf[c..c + 4].copy_from_slice(
+                &(broadcast_common::len::fit_bits(
+                    self.modification_time,
+                    32,
+                    "tkhd modification_time",
+                )? as u32)
+                    .to_be_bytes(),
+            );
             c += 4;
             buf[c..c + 4].copy_from_slice(&self.track_id.value().to_be_bytes());
             c += 4;
             buf[c..c + 4].fill(0);
             c += 4; // reserved
-            buf[c..c + 4].copy_from_slice(&(self.duration as u32).to_be_bytes());
+            buf[c..c + 4].copy_from_slice(
+                &(broadcast_common::len::fit_bits(self.duration, 32, "tkhd duration")? as u32)
+                    .to_be_bytes(),
+            );
             c += 4;
             buf[c..c + 8].fill(0);
             c += 8; // reserved * 2
@@ -940,13 +971,27 @@ impl Serialize for MediaHeaderBox {
         buf[c..c + 3].copy_from_slice(&fb[1..]);
         c += 3;
         if self.version == 0 {
-            buf[c..c + 4].copy_from_slice(&(self.creation_time as u32).to_be_bytes());
+            buf[c..c + 4].copy_from_slice(
+                &(broadcast_common::len::fit_bits(self.creation_time, 32, "mdhd creation_time")?
+                    as u32)
+                    .to_be_bytes(),
+            );
             c += 4;
-            buf[c..c + 4].copy_from_slice(&(self.modification_time as u32).to_be_bytes());
+            buf[c..c + 4].copy_from_slice(
+                &(broadcast_common::len::fit_bits(
+                    self.modification_time,
+                    32,
+                    "mdhd modification_time",
+                )? as u32)
+                    .to_be_bytes(),
+            );
             c += 4;
             buf[c..c + 4].copy_from_slice(&self.timescale.to_be_bytes());
             c += 4;
-            buf[c..c + 4].copy_from_slice(&(self.duration as u32).to_be_bytes());
+            buf[c..c + 4].copy_from_slice(
+                &(broadcast_common::len::fit_bits(self.duration, 32, "mdhd duration")? as u32)
+                    .to_be_bytes(),
+            );
             c += 4;
             buf[c..c + 2].copy_from_slice(&self.language.to_be_bytes());
             c += 2;
@@ -4705,6 +4750,12 @@ mod tests {
     /// legitimately-sized body: exactly as many entries fit as the remaining
     /// bytes can hold, and a genuinely smaller count is passed through
     /// untouched.
+    #[test]
+    fn bounded_entry_count_never_preallocates_a_zero_width_count() {
+        assert_eq!(bounded_entry_count(0, 0, 0xFFFF_FFFF), ZERO_WIDTH_PREALLOC);
+        assert_eq!(bounded_entry_count(0, 0, 7), 7);
+    }
+
     #[test]
     fn bounded_entry_count_allows_exactly_what_fits() {
         assert_eq!(bounded_entry_count(40, 8, 0xFFFF_FFFF), 5);

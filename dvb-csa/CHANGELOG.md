@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security (secrets and identity handling, #1142)
+
+- `ControlWord` equality now uses `subtle::ConstantTimeEq` instead of a hand-written XOR fold (new `subtle` dependency); new `tests/secret_debug_guard.rs`.
+
 ## [0.3.1] - 2026-10-11
 ### Changed
 - Zeroing of control-word-derived state now delegates to the `zeroize` crate (no_std) instead of a hand-rolled `write_volatile` loop; behaviour and public API unchanged.

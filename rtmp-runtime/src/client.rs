@@ -33,7 +33,7 @@ const CMD_FC_PUBLISH: &str = "FCPublish";
 
 /// Configuration for a [`ClientSession`].
 #[non_exhaustive]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct ClientConfig {
     /// Outbound chunk size (§5.4.1).
     pub chunk_size: u32,
@@ -50,6 +50,21 @@ pub struct ClientConfig {
     /// at once (#1108/RTMP-W1); see
     /// [`crate::chunk::DEFAULT_MAX_IN_PROGRESS_BYTES`] for the default.
     pub max_in_progress_bytes: usize,
+}
+
+/// Manual `Debug`: the stream key is a publish secret and never renders
+/// (issue #1142).
+impl core::fmt::Debug for ClientConfig {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ClientConfig")
+            .field("chunk_size", &self.chunk_size)
+            .field("window_ack_size", &self.window_ack_size)
+            .field("app", &self.app)
+            .field("stream_key", &"<redacted>")
+            .field("tc_url", &self.tc_url)
+            .field("max_in_progress_bytes", &self.max_in_progress_bytes)
+            .finish()
+    }
 }
 
 impl Default for ClientConfig {

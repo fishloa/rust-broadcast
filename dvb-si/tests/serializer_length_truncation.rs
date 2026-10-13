@@ -67,12 +67,13 @@ fn test_module_start(body: &str) -> Option<usize> {
 #[test]
 fn no_unchecked_len_narrowing_in_descriptor_serializers() {
     let mut files = Vec::new();
-    for dir in ["src/descriptors", "src/tables", "src/carousel"] {
-        let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
-        let before = files.len();
-        read_rs(&root, &mut files);
-        assert!(files.len() > before, "scan found no files under {dir}");
-    }
+    // The whole crate source, not just descriptors/tables/carousel:
+    // `compatibility.rs` and any other top-level module are in scope too.
+    read_rs(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("src"),
+        &mut files,
+    );
+    assert!(!files.is_empty(), "scan found no files under src");
 
     let mut problems: Vec<String> = Vec::new();
     let mut scanned = 0usize;

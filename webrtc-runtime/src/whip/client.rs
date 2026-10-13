@@ -71,7 +71,6 @@ enum PendingRequest {
 /// 1. Calling methods to get `HttpRequest`s to send
 /// 2. Feeding HTTP responses back via `on_response`
 /// 3. Handling emitted `Event`s
-#[derive(Debug)]
 pub struct WhipClient {
     /// WHIP endpoint URL the initial offer is POSTed to.
     endpoint_url: String,
@@ -82,6 +81,21 @@ pub struct WhipClient {
     /// The request awaiting a response while [`State::Established`], if any
     /// — see [`PendingRequest`].
     pending: Option<PendingRequest>,
+}
+
+/// Manual `Debug`: the bearer token never renders (issue #1142).
+impl core::fmt::Debug for WhipClient {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("WhipClient")
+            .field("endpoint_url", &self.endpoint_url)
+            .field(
+                "bearer_token",
+                &self.bearer_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("state", &self.state)
+            .field("pending", &self.pending)
+            .finish()
+    }
 }
 
 impl WhipClient {
@@ -257,7 +271,11 @@ impl WhipClient {
         body: Vec<u8>,
     ) -> Result<HttpRequest, Error> {
         let mut headers = HeaderMap::new();
-        if let Some(token) = &self.bearer_token {
+        // The token is bound to the endpoint it was configured for: a
+        // session URL (`Location`) on another origin never receives it.
+        if let Some(token) = &self.bearer_token
+            && http_util::same_origin(&self.endpoint_url, &url)
+        {
             headers.typed_insert(http_util::bearer(token)?);
         }
         if let Some(ct) = content_type {

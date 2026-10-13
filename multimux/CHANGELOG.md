@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Security (secrets and identity handling, #1142)
+
+- **BREAKING:** `Config::allow_open_ingest` (default `false`). `Config::validate` now refuses an ingest listener that admits a publisher with no authentication (an RTMP route without `stream_key`, a WHIP route, a listener-mode SRT route) on a non-loopback address unless the config opts in with `"allow_open_ingest": true`. Loopback listeners, RTMP routes with a `stream_key` and caller-mode SRT are unaffected. `Config` struct literals must add the field (or use `..Default::default()`).
+- **BREAKING (behaviour):** HLS/DASH/Smooth pull and TS-over-HTTP credentials are bound to the origin (scheme, host, port) of the configured source URL. A request to any other origin (an absolute playlist/manifest URL on another host, a redirect target) is sent without `Authorization`, and a Digest challenge from a redirect target is not answered.
+- ICE `ufrag`/`pwd`, WHIP/WHEP session resource ids, `ETag` tokens and RTP SSRCs are drawn from the OS CSPRNG (`getrandom`) instead of `RandomState` hashing.
+- `Debug` of `RtmpTransportConfig` (stream key), `RtspTransportConfig` (credentials) and the internal ICE restart/fragment types no longer prints the secret. New `tests/secret_debug_guard.rs` and `tests/secret_hygiene.rs`.
+
 ### Changed
 
 - **BREAKING (#1159):** follows `transmux::TrackId` (`route_channel` returns `Option<TrackId>`, `TrackInit::track_id`, the per-source track maps) and `hls_runtime::server::Generation`; `TsProgramTracker` keys programs by `ProgramNumber`.

@@ -483,31 +483,6 @@ fn render_whep_answer(
     String::from_utf8(buf).expect("SDP answer is UTF-8")
 }
 
-/// A short pseudo-random token — see `crate::source::whip::rand_token`'s
-/// identical technique (OS-random `RandomState`, no `rand` dependency).
-fn rand_token(len: usize) -> String {
-    use std::collections::hash_map::RandomState;
-    use std::hash::BuildHasher;
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let state = RandomState::new();
-    (0..len)
-        .map(|i| {
-            let idx = (state.hash_one(i) as usize) % CHARS.len();
-            CHARS[idx] as char
-        })
-        .collect()
-}
-
-/// A pseudo-random 32-bit SSRC for one session's outbound video stream —
-/// same `RandomState` technique as [`rand_token`], just hashed to a `u32`
-/// instead of rendered to a token alphabet.
-fn rand_ssrc() -> u32 {
-    use std::collections::hash_map::RandomState;
-    use std::hash::BuildHasher;
-    let state = RandomState::new();
-    (state.hash_one(Instant::now()) as u32) | 1
-}
-
 /// Verifies one request against `output_auth`, exactly mirroring
 /// `crate::origin::output_auth_gate`'s own decision: `None` when
 /// `output_auth` isn't configured or the method is `OPTIONS` (a CORS
@@ -798,8 +773,8 @@ async fn whep_post_inner(
     })?;
 
     let setup_role = choose_setup_role(parsed.setup.as_deref());
-    let local_ice_ufrag = rand_token(8);
-    let local_ice_pwd = rand_token(24);
+    let local_ice_ufrag = crate::secure_random::token(8);
+    let local_ice_pwd = crate::secure_random::token(24);
     let mut media = MediaTransport::new(
         MediaTransportConfig {
             local_addr,
@@ -840,7 +815,7 @@ async fn whep_post_inner(
     let resource_id = crate::webrtc_session::new_resource_id();
     let mut machine = WhepSession::new(format!("/whep/session/{resource_id}"));
     let _ = machine.on_post(Vec::new());
-    let response = machine.accept(answer.into_bytes(), rand_token(16));
+    let response = machine.accept(answer.into_bytes(), crate::secure_random::token(16));
     if response.status != axum::http::StatusCode::CREATED {
         // The state machine could not build the 201 (an unsendable header):
         // nothing was admitted, `slot` releases on drop.
@@ -866,7 +841,7 @@ async fn whep_post_inner(
         media,
         spec,
         pt: parsed.payload_type,
-        ssrc: rand_ssrc(),
+        ssrc: crate::secure_random::ssrc(),
         control,
         resource,
     };
@@ -923,7 +898,7 @@ async fn whep_patch(
                 &sdp_fragment,
                 &resource.remote_ufrag.lock(),
                 &resource.local_candidates,
-                rand_token,
+                crate::secure_random::token,
             ) {
                 Ok(plan) => plan,
                 Err(reason) => {
@@ -2176,10 +2151,10 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         let media = MediaTransport::new(
             MediaTransportConfig {
                 local_addr: "127.0.0.1:0".parse().unwrap(),
-                local_ice_ufrag: rand_token(8),
-                local_ice_pwd: rand_token(24),
-                remote_ice_ufrag: rand_token(8),
-                remote_ice_pwd: rand_token(24),
+                local_ice_ufrag: crate::secure_random::token(8),
+                local_ice_pwd: crate::secure_random::token(24),
+                remote_ice_ufrag: crate::secure_random::token(8),
+                remote_ice_pwd: crate::secure_random::token(24),
                 is_controlling: false,
                 local_setup: SetupRole::Passive,
                 stun_server: None,
@@ -2195,7 +2170,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             media,
             spec: test_track_spec(),
             pt: 96,
-            ssrc: rand_ssrc(),
+            ssrc: crate::secure_random::ssrc(),
             control: Arc::clone(&control),
             resource: ResourceTable::new().insert(
                 "test".to_string(),

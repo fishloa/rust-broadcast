@@ -1153,8 +1153,8 @@ async fn whip_post_inner(
         reason: format!("whip: media socket local_addr: {e}"),
     })?;
 
-    let local_ice_ufrag = rand_token(8);
-    let local_ice_pwd = rand_token(24);
+    let local_ice_ufrag = crate::secure_random::token(8);
+    let local_ice_pwd = crate::secure_random::token(24);
     let mut media = MediaTransport::new(
         MediaTransportConfig {
             local_addr,
@@ -1196,7 +1196,7 @@ async fn whip_post_inner(
     let resource_id = crate::webrtc_session::new_resource_id();
     let mut session = WhipSession::new(format!("/whip/session/{resource_id}"));
     let _ = session.on_post(Vec::new());
-    let etag = rand_token(16);
+    let etag = crate::secure_random::token(16);
     let response = session.accept(answer.into_bytes(), etag);
     if response.status != axum::http::StatusCode::CREATED {
         // The state machine could not build the 201 (an unsendable header):
@@ -1289,7 +1289,7 @@ async fn whip_patch(
                 &sdp_fragment,
                 &resource.remote_ufrag.lock(),
                 &resource.local_candidates,
-                rand_token,
+                crate::secure_random::token,
             ) {
                 Ok(plan) => plan,
                 Err(reason) => {
@@ -1327,23 +1327,6 @@ async fn whip_delete(
     drop(machine);
     resource.control.terminate();
     crate::webrtc_session::to_axum(response)
-}
-
-/// A short pseudo-random token for ICE ufrag/pwd — see
-/// `webrtc_runtime`'s `whip_media_smoke` example for the identical
-/// technique (OS-random `RandomState`, no `rand` dependency for one call
-/// site).
-fn rand_token(len: usize) -> String {
-    use std::collections::hash_map::RandomState;
-    use std::hash::BuildHasher;
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let state = RandomState::new();
-    (0..len)
-        .map(|i| {
-            let idx = (state.hash_one(i) as usize) % CHARS.len();
-            CHARS[idx] as char
-        })
-        .collect()
 }
 
 /// The non-blocking [`Listener`] bridge over the accept-pump's channel — see
@@ -2443,10 +2426,10 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         let mut media = MediaTransport::new(
             MediaTransportConfig {
                 local_addr: "127.0.0.1:0".parse().unwrap(),
-                local_ice_ufrag: rand_token(8),
-                local_ice_pwd: rand_token(24),
-                remote_ice_ufrag: rand_token(8),
-                remote_ice_pwd: rand_token(24),
+                local_ice_ufrag: crate::secure_random::token(8),
+                local_ice_pwd: crate::secure_random::token(24),
+                remote_ice_ufrag: crate::secure_random::token(8),
+                remote_ice_pwd: crate::secure_random::token(24),
                 remote_fingerprint: OFFER_FINGERPRINT.into(),
                 is_controlling: false,
                 local_setup: SetupRole::Passive,
@@ -2537,10 +2520,10 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         let mut media = MediaTransport::new(
             MediaTransportConfig {
                 local_addr: "127.0.0.1:0".parse().unwrap(),
-                local_ice_ufrag: rand_token(8),
-                local_ice_pwd: rand_token(24),
-                remote_ice_ufrag: rand_token(8),
-                remote_ice_pwd: rand_token(24),
+                local_ice_ufrag: crate::secure_random::token(8),
+                local_ice_pwd: crate::secure_random::token(24),
+                remote_ice_ufrag: crate::secure_random::token(8),
+                remote_ice_pwd: crate::secure_random::token(24),
                 remote_fingerprint: OFFER_FINGERPRINT.into(),
                 is_controlling: false,
                 local_setup: SetupRole::Passive,
@@ -2791,10 +2774,10 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             media: MediaTransport::new(
                 MediaTransportConfig {
                     local_addr: "127.0.0.1:0".parse().unwrap(),
-                    local_ice_ufrag: rand_token(8),
-                    local_ice_pwd: rand_token(24),
-                    remote_ice_ufrag: rand_token(8),
-                    remote_ice_pwd: rand_token(24),
+                    local_ice_ufrag: crate::secure_random::token(8),
+                    local_ice_pwd: crate::secure_random::token(24),
+                    remote_ice_ufrag: crate::secure_random::token(8),
+                    remote_ice_pwd: crate::secure_random::token(24),
                     is_controlling: false,
                     local_setup: SetupRole::Passive,
                     stun_server: None,

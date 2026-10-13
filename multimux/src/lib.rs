@@ -40,6 +40,7 @@ pub mod reconnect;
 pub mod redact;
 pub mod registry;
 pub mod route;
+mod secure_random;
 pub mod source;
 #[cfg(test)]
 pub(crate) mod testutil;

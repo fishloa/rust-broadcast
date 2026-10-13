@@ -26,6 +26,8 @@ mpeg-ts          = { path = "../mpeg-ts", version = "0.5", default-features = fa
 # Vetted volatile zeroing of control-word-derived state (replaces a hand-rolled
 # `write_volatile` loop). `no_std`; no `alloc`/`derive` features needed.
 zeroize          = { version = "1", default-features = false }
+# Constant-time control-word comparison (issue #1142).
+subtle           = { version = "2", default-features = false }
 
 [dev-dependencies]
 criterion = { workspace = true, features = ["html_reports"] }

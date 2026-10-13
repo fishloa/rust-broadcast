@@ -72,7 +72,7 @@ fn build_metadata(tracks: &[TrackSpec]) -> Vec<(String, Amf0Value)> {
 }
 
 /// Per-connection configuration for the RTMP push transport.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct RtmpTransportConfig {
     /// RTMP `app` name.
     pub app: String,
@@ -86,6 +86,19 @@ pub struct RtmpTransportConfig {
     /// `rtmp_runtime::io::RtmpTimeouts::default().write` (10 s). Exposed so a
     /// test can use a tighter bound against a peer that stopped reading.
     pub write_timeout: Option<std::time::Duration>,
+}
+
+/// Manual `Debug`: the stream key is a publish secret and never renders
+/// (issue #1142).
+impl std::fmt::Debug for RtmpTransportConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RtmpTransportConfig")
+            .field("app", &self.app)
+            .field("stream_key", &"<redacted>")
+            .field("connect_timeout", &self.connect_timeout)
+            .field("write_timeout", &self.write_timeout)
+            .finish()
+    }
 }
 
 impl Default for RtmpTransportConfig {

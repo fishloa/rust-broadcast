@@ -11,7 +11,7 @@ pub const RTMP_DEFAULT_PORT: u16 = 1935;
 const SCHEME: &str = "rtmp";
 
 /// A parsed RTMP publish target.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[non_exhaustive]
 pub struct RtmpTarget {
     /// Host, never a pre-formatted string. `rtmp` is a non-special URL scheme, so
@@ -27,6 +27,20 @@ pub struct RtmpTarget {
     pub stream_key: String,
     /// `rtmp://host[:port]/app`, IPv6 bracketed, userinfo/query/fragment removed.
     pub tc_url: String,
+}
+
+/// Manual `Debug`: the stream key (path remainder plus query) is the publish
+/// secret and never renders (issue #1142).
+impl core::fmt::Debug for RtmpTarget {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("RtmpTarget")
+            .field("host", &self.host)
+            .field("port", &self.port)
+            .field("app", &self.app)
+            .field("stream_key", &"<redacted>")
+            .field("tc_url", &self.tc_url)
+            .finish()
+    }
 }
 
 /// Why an RTMP URL was rejected.

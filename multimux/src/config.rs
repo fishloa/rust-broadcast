@@ -176,7 +176,9 @@ pub enum InputSpec {
     /// `crate::route::RouteHandle::publish_program` — the first connection to
     /// publish wins the route). A startup log line warns when a route is
     /// wired up this way; set `stream_key` for any listener reachable outside
-    /// a trusted network.
+    /// a trusted network. [`Config::validate`] refuses such a route on a
+    /// non-loopback `listen` address unless [`Config::allow_open_ingest`] is
+    /// set.
     Rtmp {
         /// `host:port` to bind the RTMP listen socket to (e.g.
         /// `"0.0.0.0:1935"`, the IANA-assigned RTMP port).
@@ -209,6 +211,8 @@ pub enum InputSpec {
     /// warns every time this input kind is wired up, unconditionally; only
     /// run it behind a trusted network or a fronting proxy that adds auth
     /// until this crate grows a WHIP Bearer-token config knob.
+    /// [`Config::validate`] refuses this input on a non-loopback `listen`
+    /// address unless [`Config::allow_open_ingest`] is set.
     #[cfg(feature = "whip")]
     Whip {
         /// `host:port` to bind the WHIP publish HTTP endpoint to (e.g.
@@ -229,6 +233,8 @@ pub enum InputSpec {
     /// [`crate::source::srt`]'s module doc. In listener mode this means
     /// **any Caller may publish** (only the first, per-route); a startup log
     /// line warns every time a listener-mode SRT route is wired up.
+    /// [`Config::validate`] refuses a listener-mode route on a non-loopback
+    /// address unless [`Config::allow_open_ingest`] is set.
     Srt {
         /// Listener bind address (e.g. `"0.0.0.0:9000"`) — mutually
         /// exclusive with `remote`.
@@ -1047,6 +1053,37 @@ impl InputSpec {
     }
 }
 
+impl InputSpec {
+    /// The `listen` address of an ingest listener that admits a publisher
+    /// with no authentication: an RTMP route without a `stream_key`, a WHIP
+    /// route (no ingest auth), or a listener-mode SRT route (no passphrase).
+    /// `None` for every other input.
+    pub(crate) fn open_ingest_listen(&self) -> Option<&str> {
+        match self {
+            InputSpec::Rtmp {
+                listen,
+                stream_key: None,
+                ..
+            } => Some(listen),
+            #[cfg(feature = "whip")]
+            InputSpec::Whip { listen } => Some(listen),
+            InputSpec::Srt {
+                listen: Some(listen),
+                ..
+            } => Some(listen),
+            _ => None,
+        }
+    }
+}
+
+/// Whether `listen` (a `host:port` socket address) is a loopback address. An
+/// unparseable address is not loopback (validation reports it separately).
+fn listen_is_loopback(listen: &str) -> bool {
+    listen
+        .parse::<SocketAddr>()
+        .is_ok_and(|addr| addr.ip().is_loopback())
+}
+
 /// An RTSP URL must parse and use the `rtsp`/`rtsps` scheme (RFC 2326 §1 /
 /// IANA).
 fn validate_rtsp_url(url: &str) -> Result<()> {
@@ -1690,6 +1727,16 @@ pub struct Config {
     /// admin routes, at all.
     #[serde(default)]
     pub admin: Option<AdminSpec>,
+    /// Permit ingest listeners that accept a publisher with no authentication
+    /// (an [`InputSpec::Rtmp`] without `stream_key`, an [`InputSpec::Whip`], a
+    /// listener-mode [`InputSpec::Srt`]) on a **non-loopback** address.
+    /// `false` (the default): [`Config::validate`] rejects such a route, so a
+    /// config never exposes an open publish point by accident (issue #1142).
+    /// A listener bound to a loopback address is always allowed. Set `true`
+    /// only for a trusted network or behind a proxy that authenticates
+    /// publishers.
+    #[serde(default)]
+    pub allow_open_ingest: bool,
     /// Caller-bound sockets for a config-driven route's own listen address
     /// (`test-seams` only, never serialized): an integration test binds
     /// `127.0.0.1:0`, reads the live port, writes it into the route's own
@@ -1793,6 +1840,7 @@ impl Default for Config {
             playlist_name: default_playlist_name(),
             output_auth: None,
             admin: None,
+            allow_open_ingest: false,
             #[cfg(feature = "test-seams")]
             prebound: PreboundBinds::default(),
         }
@@ -1999,6 +2047,24 @@ impl Config {
             r.validate_standalone(&self.playlist_name)?;
             r.validate_dvr()?;
         }
+        if !self.allow_open_ingest {
+            for r in &self.routes {
+                if let Some(listen) = r.input.open_ingest_listen()
+                    && !listen_is_loopback(listen)
+                {
+                    return Err(MultimuxError::ConfigInvalid {
+                        field: "routes.input",
+                        reason: format!(
+                            "route {:?} accepts publishers with no authentication on the \
+                             non-loopback address {listen:?}; bind a loopback address, set \
+                             an authentication knob (e.g. an RTMP stream_key), or set \
+                             allow_open_ingest to true to accept the risk",
+                            r.name
+                        ),
+                    });
+                }
+            }
+        }
         if let Some(admin) = &self.admin {
             if admin.bind.is_empty() {
                 return Err(MultimuxError::ConfigInvalid {
@@ -2025,6 +2091,71 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn config_with_input(input: &str, allow_open_ingest: bool) -> Config {
+        let json = format!(
+            r#"{{
+                "allow_open_ingest": {allow_open_ingest},
+                "routes": [
+                    {{ "name": "cam", "input": {input}, "outputs": [ "llhls" ] }}
+                ]
+            }}"#
+        );
+        serde_json::from_str(&json).unwrap()
+    }
+
+    /// Secure-by-default ingest (#1142): a listener that admits a publisher
+    /// with no authentication is refused on a non-loopback address unless the
+    /// config opts in with `allow_open_ingest`.
+    ///
+    /// Biting test: drop the check in `Config::validate` and the "refused"
+    /// half fails; make the check ignore the flag and the opt-in half fails.
+    #[test]
+    fn open_ingest_on_a_public_address_needs_an_explicit_opt_in() {
+        let open = [
+            r#"{ "type": "rtmp", "listen": "0.0.0.0:1935" }"#,
+            r#"{ "type": "rtmp", "listen": "[::]:1935", "app": "live" }"#,
+            r#"{ "type": "srt", "listen": "192.0.2.10:9000" }"#,
+        ];
+        for input in open {
+            let err = config_with_input(input, false)
+                .validate()
+                .expect_err(&format!("{input} must be refused"));
+            assert!(
+                matches!(&err, MultimuxError::ConfigInvalid { field: "routes.input", reason }
+                    if reason.contains("allow_open_ingest")),
+                "{input}: {err:?}"
+            );
+            config_with_input(input, true)
+                .validate()
+                .unwrap_or_else(|e| panic!("{input} with the opt-in: {e:?}"));
+        }
+    }
+
+    /// An authenticated RTMP listener, a loopback listener and a caller-mode
+    /// SRT input are not open ingest and need no opt-in.
+    #[test]
+    fn authenticated_loopback_and_caller_inputs_need_no_opt_in() {
+        for input in [
+            r#"{ "type": "rtmp", "listen": "0.0.0.0:1935", "stream_key": "k" }"#,
+            r#"{ "type": "rtmp", "listen": "127.0.0.1:1935" }"#,
+            r#"{ "type": "rtmp", "listen": "[::1]:1935" }"#,
+            r#"{ "type": "srt", "listen": "127.0.0.1:9000" }"#,
+            r#"{ "type": "srt", "remote": "origin.example.com:9000" }"#,
+        ] {
+            config_with_input(input, false)
+                .validate()
+                .unwrap_or_else(|e| panic!("{input}: {e:?}"));
+        }
+    }
+
+    /// `allow_open_ingest` defaults to `false`.
+    #[test]
+    fn allow_open_ingest_defaults_to_false() {
+        assert!(!Config::default().allow_open_ingest);
+        let cfg: Config = serde_json::from_str(r#"{ "routes": [] }"#).unwrap();
+        assert!(!cfg.allow_open_ingest);
+    }
 
     /// `PreboundBinds`' accessors must recover from a poisoned mutex rather
     /// than panic a route's egress: the slots hold no invariant a panic could
