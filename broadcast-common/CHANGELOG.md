@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+- `time::encode_mjd_bcd` rejects calendar-impossible days (31 Feb, 31 Apr, 29 Feb in a non-leap year): they used to encode silently as a later day that decode would not return (audit r01-W16, #1073).
+### Added
+- `Timestamp::saturating_add_nanos`; `checked_add_nanos` (which always saturated, never checked) is deprecated in its favour (audit r01-O8).
+
 ### Changed
 - Docs only: crate-level "Reserved-bit and trailing-byte policy" section stating the workspace rule (tolerant parse, spec-value serialize, preserve-on-parse exceptions, explicit reserved writes) (#1139).
 - Docs only: `Serialize::to_bytes` no longer claims it can fail only for hand-constructed values; it can also fail for values a lenient decoder assembled from damaged wire data (transmux #1171). Use `try_to_bytes` for anything derived from untrusted input.

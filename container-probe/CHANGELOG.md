@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- A prefix too short for a literal magic that already contradicts it (`XY` for `OggS`, `FLV`, ASF GUID, MXF key, PS start code, EBML magic, `RIFF`..`WAVE`) is now `None` ("stop") for that prober instead of `Insufficient` ("read more"); a genuine truncated prefix of the same magic stays `Insufficient`. Consequence: eight zero bytes now ask for the TS lattice's structural need (1504) instead of the geometric floor (13) (audit r01-O6, #1076).
+- The ADTS and MP3 chain walkers are one generic `chain::longest_chain` (r01-O5); the crate docs' allocation claim is now accurate and pinned by `tests/alloc_bound.rs` (r01-O7).
+
 ## [0.1.1] - 2026-10-05
 ### Fixed
 
