@@ -1,6 +1,15 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- **BREAKING:** `PayloadHeader::extension` is now `Option<HeaderExtension<'a>>`
+  (typed TLV view: `HeaderExtension::new`, `items()`, `ExtensionItem::{Pad, Tlv}`,
+  `PayloadHeader::extension_items()`), not a raw `&[u8]`; a malformed TLV chain
+  still round-trips byte-identically and is reported by the item walk (r13-S22-W1, #1115).
+### Fixed
+- `PayloadHeader::validate` rejects a `Reserved(code)` variant that holds a
+  defined code (it serialized as the defined code and parsed back as the named
+  variant, breaking the value round-trip) (r13-S22-W2, #1115).
 
 ## [0.1.0] - 2026-10-05
 ### Changed

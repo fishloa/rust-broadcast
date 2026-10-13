@@ -84,6 +84,19 @@ impl FrameRate {
 
 broadcast_common::impl_spec_display!(FrameRate);
 
+impl FrameRate {
+    /// The highest frame number this counting mode uses: `29` (30-frame,
+    /// §5.2), `24` (25-frame, §6.2), `23` (24-frame, §7.2).
+    #[must_use]
+    pub fn max_frame(&self) -> u8 {
+        match self {
+            Self::Fps30 => MAX_FRAMES,
+            Self::Fps25 => 24,
+            Self::Fps24 => 23,
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // BinaryGroupUsage — ST 12-1 Table 1
 // ---------------------------------------------------------------------------
@@ -229,6 +242,25 @@ pub struct LtcFrame {
 }
 
 impl LtcFrame {
+    /// Rate-aware check (r13-S12-W1 / #1117): the codeword carries no
+    /// frame-rate field, so `parse` validates against the widest bound
+    /// ([`MAX_FRAMES`]); a caller that knows its stream's rate uses this to
+    /// reject a frame number its counting mode never produces (e.g. `29` in
+    /// a 25-frame stream).
+    ///
+    /// # Errors
+    /// [`Error::InvalidValue`] when `frames` exceeds `rate.max_frame()`.
+    pub fn validate_for_rate(&self, rate: FrameRate) -> Result<()> {
+        if self.frames > rate.max_frame() {
+            return Err(Error::InvalidValue {
+                field: "frames",
+                value: self.frames,
+                reason: "exceeds the maximum frame number of this frame rate",
+            });
+        }
+        Ok(())
+    }
+
     /// Resolve the §9.2.3 biphase-mark polarity-correction bit for `rate`
     /// (Table 3: bit 27 for 30-frame/24-frame, bit 59 for 25-frame).
     #[must_use]
@@ -437,6 +469,21 @@ mod tests {
             flag_bit_59: true,
             user_bits: [1, 2, 3, 4, 5, 6, 7, 8],
         }
+    }
+
+    /// #1117 rate-aware bound: frame 24 is legal at 30/25 fps but not 24 fps;
+    /// frame 29 only at 30 fps.
+    #[test]
+    fn validate_for_rate_applies_per_rate_frame_maximum() {
+        let mut f = sample_frame();
+        f.frames = 29;
+        assert!(f.validate_for_rate(FrameRate::Fps30).is_ok());
+        assert!(f.validate_for_rate(FrameRate::Fps25).is_err());
+        f.frames = 24;
+        assert!(f.validate_for_rate(FrameRate::Fps25).is_ok());
+        assert!(f.validate_for_rate(FrameRate::Fps24).is_err());
+        f.frames = 23;
+        assert!(f.validate_for_rate(FrameRate::Fps24).is_ok());
     }
 
     #[test]
