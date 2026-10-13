@@ -1113,7 +1113,7 @@ mod tests {
         let init = route
             .ll_hls(SPTS_PROGRAM_ID)
             .expect("origin")
-            .init_name(TrackId::new(1), 1);
+            .init_name(TrackId::new(1), hls_runtime::server::Generation::new(1));
         assert_eq!(live_init, init);
 
         // And the tail bytes are the live ones, under the playlist's numbers.

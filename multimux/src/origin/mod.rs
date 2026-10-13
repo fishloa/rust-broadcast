@@ -3014,7 +3014,7 @@ mod tests {
             .ll_hls(crate::route::SPTS_PROGRAM_ID)
             .expect("program published");
         let instance = ll_hls.instance().to_string();
-        let init_uri = format!("/cam1/{}", ll_hls.init_name(TrackId::new(1), 1));
+        let init_uri = format!("/cam1/{}", ll_hls.init_name(TrackId::new(1), hls_runtime::server::Generation::new(1)));
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),

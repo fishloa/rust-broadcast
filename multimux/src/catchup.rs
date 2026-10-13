@@ -89,7 +89,7 @@ pub(crate) enum InitRef {
     /// The init at the head of archive period `N` (`catchup/init-p{N}.mp4`).
     Archived(u32),
     /// The live origin's init generation `G`.
-    Live(u32),
+    Live(hls_runtime::server::Generation),
 }
 
 /// The archive directory for one route: `<archive_root>/<route_name>/` —
@@ -993,14 +993,14 @@ mod tests {
                 start_pts_ns: 0,
                 duration_secs: 3.4,
                 discontinuous: false,
-                init: Some(InitRef::Live(1)),
+                init: Some(InitRef::Live(hls_runtime::server::Generation::new(1))),
             },
             CatchupSegment {
                 seq: 6,
                 start_pts_ns: 3_400_000_000,
                 duration_secs: 3.4,
                 discontinuous: true,
-                init: Some(InitRef::Live(1)),
+                init: Some(InitRef::Live(hls_runtime::server::Generation::new(1))),
             },
         ];
         let body = render_playlist(
