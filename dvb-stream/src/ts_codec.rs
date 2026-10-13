@@ -19,6 +19,32 @@ use crate::resync::{TS_PACKET_SIZE, TS_SYNC_BYTE, resync};
 /// byte stays bounded however large `FramedRead`'s buffer grows).
 const DESYNC_DROP_MAX: usize = TS_PACKET_SIZE * 7;
 
+/// If `datagram` is an RTP packet (RFC 3550 §5.1) whose payload is a whole
+/// number of 188-byte TS packets starting on a sync byte (RFC 2250 §2: an
+/// RTP-encapsulated MPEG-2 transport stream), the `(offset, len)` of that
+/// payload within `datagram` — past the fixed header, CSRC list and header
+/// extension, and short of any padding.
+///
+/// A bare TS datagram never matches: its first byte is the TS sync byte
+/// `0x47`, whose top two bits (`01`) are not RTP version 2. The payload type
+/// is deliberately not constrained — it may be static (RFC 3551) or dynamic —
+/// the structural check on the payload is what decides.
+fn rtp_ts_payload(datagram: &[u8]) -> Option<(usize, usize)> {
+    use broadcast_common::Parse;
+    // RTP version is the top two bits of byte 0 (RFC 3550 §5.1).
+    const VERSION_SHIFT: u32 = 6;
+    if datagram.first()? >> VERSION_SHIFT != rtp_packet::RTP_VERSION {
+        return None;
+    }
+    let rtp = rtp_packet::RtpPacket::parse(datagram).ok()?;
+    let payload = rtp.payload;
+    if payload.is_empty() || payload.len() % TS_PACKET_SIZE != 0 || payload[0] != TS_SYNC_BYTE {
+        return None;
+    }
+    let off = payload.as_ptr() as usize - datagram.as_ptr() as usize;
+    Some((off, payload.len()))
+}
+
 /// Frames a byte stream (or a stream of datagrams) into aligned 188-byte TS
 /// packets. `Item` is exactly one packet.
 #[derive(Debug, Clone, Default)]
@@ -62,6 +88,17 @@ impl Decoder for TsDecoder {
             if !self.synced {
                 if src.is_empty() {
                     return Ok(None);
+                }
+                // A fresh datagram (`!synced` is only ever true here at a
+                // datagram boundary: a mid-datagram desync drops the rest
+                // whole): peel an RTP header off first so the TS lattice
+                // starts at the payload instead of being hunted for through
+                // the header bytes (#1099 / W-DS-2).
+                if self.datagram
+                    && let Some((off, len)) = rtp_ts_payload(src)
+                {
+                    src.advance(off);
+                    src.truncate(len);
                 }
                 // On first use (or after a loss of alignment), resync to the nearest 0x47.
                 match resync(src) {

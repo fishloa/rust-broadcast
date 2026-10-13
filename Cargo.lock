@@ -1163,6 +1163,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "mpeg-ts",
+ "rtp-packet",
  "socket2",
  "tokio",
  "tokio-util",

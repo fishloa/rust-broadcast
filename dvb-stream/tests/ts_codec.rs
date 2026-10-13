@@ -170,3 +170,106 @@ fn a_mid_stream_desync_drops_at_most_one_old_read_not_the_whole_buffer() {
     );
     assert!(got.len() >= 2 + 85, "recovered only {} packets", got.len());
 }
+
+// ── RTP-encapsulated TS datagrams (#1099 / W-DS-2) ──────────────────────────
+
+fn real_packets() -> Vec<[u8; 188]> {
+    let bytes = std::fs::read(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/../fixtures/ts/m6-single.ts"
+    ))
+    .expect("committed fixture");
+    bytes
+        .chunks_exact(188)
+        .map(|c| <[u8; 188]>::try_from(c).unwrap())
+        .collect()
+}
+
+fn decode_datagram(d: &mut TsDecoder, datagram: &[u8]) -> Vec<Bytes> {
+    let mut buf = BytesMut::from(datagram);
+    let mut got = Vec::new();
+    while let Some(p) = d.decode_eof(&mut buf).unwrap() {
+        got.push(p);
+    }
+    got
+}
+
+/// A 12-byte RTP header (RFC 3550 §5.1: V=2, PT 33, no padding/ext/CSRC).
+fn rtp_header() -> [u8; 12] {
+    [
+        0x80, 33, 0x12, 0x34, 0xAA, 0xBB, 0xCC, 0xDD, 0x01, 0x02, 0x03, 0x04,
+    ]
+}
+
+/// Real packets, RTP-wrapped, where the RTP header carries a `0x47` exactly
+/// 188 bytes before a `0x47` inside the first TS packet — a false two-packet
+/// sync lattice for the stateless resync. Pre-fix the decoder latched onto
+/// that header byte and emitted misaligned garbage instead of the 7 packets.
+#[test]
+fn rtp_wrapped_datagram_is_unwrapped_not_misframed_by_a_0x47_in_the_header() {
+    let pkts = real_packets();
+    // First packet with a 0x47 in bytes 178..=187 (header byte k = j - 176).
+    let start = pkts
+        .windows(7)
+        .position(|w| w[0][178..188].contains(&0x47))
+        .expect("a real packet with 0x47 near its end");
+    let j = 178
+        + pkts[start][178..188]
+            .iter()
+            .position(|&b| b == 0x47)
+            .unwrap();
+    let mut hdr = rtp_header();
+    hdr[j - 176] = 0x47;
+    let mut datagram = hdr.to_vec();
+    for p in &pkts[start..start + 7] {
+        datagram.extend_from_slice(p);
+    }
+    let mut d = TsDecoder::datagram();
+    let got = decode_datagram(&mut d, &datagram);
+    assert_eq!(got.len(), 7);
+    for (g, want) in got.iter().zip(&pkts[start..start + 7]) {
+        assert_eq!(&g[..], &want[..]);
+    }
+    assert_eq!(
+        d.resync_stats().bytes_discarded,
+        0,
+        "nothing hunted/dropped"
+    );
+}
+
+/// CSRC list + header extension + trailing padding are all skipped.
+#[test]
+fn rtp_csrc_extension_and_padding_are_skipped() {
+    let pkts = real_packets();
+    let mut datagram = vec![0xB2, 33, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3]; // V=2, P=1, X=1, CC=2
+    datagram.extend_from_slice(&[0, 0, 0, 1, 0, 0, 0, 2]); // two CSRCs
+    datagram.extend_from_slice(&[0xBE, 0xDE, 0x00, 0x01, 0xDE, 0xAD, 0xBE, 0xEF]); // ext, 1 word
+    for p in &pkts[..3] {
+        datagram.extend_from_slice(p);
+    }
+    datagram.extend_from_slice(&[0, 0, 3]); // 3 bytes padding (last byte = count)
+    let mut d = TsDecoder::datagram();
+    let got = decode_datagram(&mut d, &datagram);
+    assert_eq!(got.len(), 3);
+    for (g, want) in got.iter().zip(&pkts) {
+        assert_eq!(&g[..], &want[..]);
+    }
+}
+
+/// A bare TS datagram (first byte `0x47`, RTP version bits `01`) is never
+/// mistaken for RTP, and an RTP-looking header with a non-TS payload is left
+/// to the ordinary resync/discard path.
+#[test]
+fn bare_ts_and_non_ts_rtp_payloads_are_not_unwrapped() {
+    let pkts = real_packets();
+    let mut d = TsDecoder::datagram();
+    let mut bare = Vec::new();
+    for p in &pkts[..5] {
+        bare.extend_from_slice(p);
+    }
+    assert_eq!(decode_datagram(&mut d, &bare).len(), 5);
+
+    let mut junk = rtp_header().to_vec();
+    junk.extend_from_slice(&[0x55u8; 200]); // not a whole number of TS packets
+    assert!(decode_datagram(&mut d, &junk).is_empty());
+}
