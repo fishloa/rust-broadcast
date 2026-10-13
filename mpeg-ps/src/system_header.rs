@@ -436,11 +436,24 @@ mod tests {
     #[test]
     fn trailing_bytes_after_stream_loop_round_trip() {
         let bytes = vec![
-            0x00, 0x00, 0x01, 0xBB, // start_code
-            0x00, 0x0C, // header_length = 12: 6 fixed + 3 stream entry + 3 trailing
-            0x80, 0x00, 0x01, 0x04, 0x20 | 0x01, 0xFF, // fixed body
-            0xE0, 0xE0, 0x80, // one stream entry: stream_id 0xE0, bound
-            0x00, 0x7F, 0xAB, // trailing, not a stream entry (MSB clear)
+            0x00,
+            0x00,
+            0x01,
+            0xBB, // start_code
+            0x00,
+            0x0C, // header_length = 12: 6 fixed + 3 stream entry + 3 trailing
+            0x80,
+            0x00,
+            0x01,
+            0x04,
+            0x20 | 0x01,
+            0xFF, // fixed body
+            0xE0,
+            0xE0,
+            0x80, // one stream entry: stream_id 0xE0, bound
+            0x00,
+            0x7F,
+            0xAB, // trailing, not a stream entry (MSB clear)
         ];
         let h = SystemHeader::parse(&bytes).unwrap();
         assert_eq!(h.std_buffer_bounds.len(), 1);

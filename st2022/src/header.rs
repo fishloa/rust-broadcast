@@ -97,7 +97,7 @@ impl<'a> HeaderExtension<'a> {
     /// [`Error::InvalidValue`] if `bytes` is empty, not a multiple of
     /// [`EXTENSION_UNIT_LEN`], or longer than [`MAX_EXTENSION_UNITS`] units.
     pub fn new(bytes: &'a [u8]) -> Result<Self> {
-        if bytes.is_empty() || bytes.len() % EXTENSION_UNIT_LEN != 0 {
+        if bytes.is_empty() || !bytes.len().is_multiple_of(EXTENSION_UNIT_LEN) {
             return Err(Error::InvalidValue {
                 field: "extension",
                 value: bytes.len() as u64,

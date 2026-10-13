@@ -4417,7 +4417,11 @@ mod tests {
             open_segment: Some(open),
             ..Default::default()
         };
-        assert_eq!(pl.computed_version(), None, "map not rendered, no version row");
+        assert_eq!(
+            pl.computed_version(),
+            None,
+            "map not rendered, no version row"
+        );
         pl.low_latency = Some(ll_config());
         assert!(pl.computed_version() >= Some(6));
     }
