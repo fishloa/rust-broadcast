@@ -33,9 +33,9 @@
 //! <port> RTP/AVP <pt>`, captured as [`crate::source::TrackInit::payload_type`]).
 //! A packet whose PT does not match any configured track is silently dropped.
 
-use transmux::TrackId;
 use std::collections::HashMap;
 use std::time::Duration;
+use transmux::TrackId;
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use media_plane::ingress::{Dialer, IngestSession, ProgramId, SessionEvent};
@@ -201,7 +201,10 @@ impl Stage for RtpUdpIngestSession {
         else {
             return Ok(());
         };
-        let samples = match self.depacketiser.push(TrackId::new(track_id.value()), input) {
+        let samples = match self
+            .depacketiser
+            .push(TrackId::new(track_id.value()), input)
+        {
             Ok(samples) => samples,
             Err(e) => {
                 self.depay_dropped += 1;

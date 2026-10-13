@@ -54,9 +54,9 @@
 //! Unchanged: one `QualityLevel` per `StreamIndex` (the first);
 //! `StreamType::Text` `StreamIndex`es are skipped.
 
-use transmux::TrackId;
 use std::collections::VecDeque;
 use std::time::Duration;
+use transmux::TrackId;
 
 use broadcast_auth::Credentials;
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
@@ -1759,7 +1759,12 @@ mod tests {
             TrackId::new(video_track_id(&media).value()),
             transmux::VIDEO_CLOCK_RATE,
         );
-        let want_audio = oracle_sample_count(&media, &out, TrackId::new(audio_track_id(&media).value()), audio_timescale);
+        let want_audio = oracle_sample_count(
+            &media,
+            &out,
+            TrackId::new(audio_track_id(&media).value()),
+            audio_timescale,
+        );
         assert!(
             want_video > 0 && want_audio > 0,
             "sanity: fixture must carry real samples for both streams"
@@ -2191,14 +2196,20 @@ mod tests {
             .iter()
             .find(|f| f.track_id == TrackId::new(video_id.value()))
             .unwrap();
-        assert_eq!(discover_moof_track_id(&video_frag.data).unwrap(), video_id.value());
+        assert_eq!(
+            discover_moof_track_id(&video_frag.data).unwrap(),
+            video_id.value()
+        );
 
         let audio_frag = out
             .fragments
             .iter()
             .find(|f| f.track_id == TrackId::new(audio_id.value()))
             .unwrap();
-        assert_eq!(discover_moof_track_id(&audio_frag.data).unwrap(), audio_id.value());
+        assert_eq!(
+            discover_moof_track_id(&audio_frag.data).unwrap(),
+            audio_id.value()
+        );
     }
 
     #[test]

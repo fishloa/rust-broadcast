@@ -553,7 +553,9 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                     i32::from_be_bytes([bytes[72], bytes[73], bytes[74], bytes[75]]),
                     i32::from_be_bytes([bytes[76], bytes[77], bytes[78], bytes[79]]),
                 ],
-                next_track_id: TrackId::new(u32::from_be_bytes([bytes[104], bytes[105], bytes[106], bytes[107]])),
+                next_track_id: TrackId::new(u32::from_be_bytes([
+                    bytes[104], bytes[105], bytes[106], bytes[107],
+                ])),
             })
         } else {
             // v1 body (ISO/IEC 14496-12 §8.2.2.2): the 8-byte creation/
@@ -598,7 +600,9 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                     i32::from_be_bytes([bytes[84], bytes[85], bytes[86], bytes[87]]),
                     i32::from_be_bytes([bytes[88], bytes[89], bytes[90], bytes[91]]),
                 ],
-                next_track_id: TrackId::new(u32::from_be_bytes([bytes[116], bytes[117], bytes[118], bytes[119]])),
+                next_track_id: TrackId::new(u32::from_be_bytes([
+                    bytes[116], bytes[117], bytes[118], bytes[119],
+                ])),
             })
         }
     }

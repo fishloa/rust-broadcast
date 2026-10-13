@@ -352,10 +352,10 @@
 //! so a permanently-failing dialer cannot spin the attempt count or allocate
 //! per call, however many times it is polled.
 
-use transmux::TrackId;
 use std::collections::HashMap;
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::sync::Arc;
+use transmux::TrackId;
 
 use broadcast_common::{Stage, Timestamp};
 // Only the test-only `Bytes`-`Request` sessions below reference this type
@@ -2753,7 +2753,9 @@ mod tests {
         let mut cursor = trunk.subscribe();
         driver.feed(b"media", Timestamp::from_nanos(now + 1));
         match cursor.poll().expect("post-handshake sample on the ring") {
-            crate::SampleCursorItem::Timed { track_id, .. } => assert_eq!(track_id, TrackId::new(7)),
+            crate::SampleCursorItem::Timed { track_id, .. } => {
+                assert_eq!(track_id, TrackId::new(7))
+            }
             other => panic!("expected Timed, got {other:?}"),
         }
     }

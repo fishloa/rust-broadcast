@@ -124,7 +124,6 @@
 //!   preserved, only the "reads don't hang forever" property), freeing its
 //!   `max_sessions` slot for the next publisher.
 
-use transmux::TrackId;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::convert::Infallible;
 use std::future::Future;
@@ -132,6 +131,7 @@ use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
+use transmux::TrackId;
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
@@ -1177,7 +1177,11 @@ mod tests {
         }
         // An update for a track never announced is ignored.
         early.pending.clear();
-        early.ingest(vec![DemuxEvent::TrackUpdated(flv_spec(TrackId::new(7), 1, 1))]);
+        early.ingest(vec![DemuxEvent::TrackUpdated(flv_spec(
+            TrackId::new(7),
+            1,
+            1,
+        ))]);
         assert!(early.pending.is_empty());
     }
 

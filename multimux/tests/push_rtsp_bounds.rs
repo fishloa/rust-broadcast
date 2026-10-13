@@ -1,8 +1,8 @@
 //! RTSP push: every awaited IO is bounded (SP6.1, defect 4).
-use transmux::TrackId;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
+use transmux::TrackId;
 
 use multimux::config::{PushFormat, ReconnectPolicy};
 use multimux::push::{PushTransport, RtspTransport, RtspTransportConfig, drive_push};

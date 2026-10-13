@@ -7,8 +7,8 @@
 //! When a real DTS-in-MP4 fixture becomes available, add a byte-exact
 //! `real_fixture_round_trip` test here and remove this note.
 
-use transmux::TrackId;
 use broadcast_common::{Parse, Serialize};
+use transmux::TrackId;
 use transmux::{
     CodecConfig, DDTS_BODY_LEN, DTSC_FOURCC, DtsSpecificBox, SampleEntryVariant, TrackSpec,
     box_iter, build_init_segment,

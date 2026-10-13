@@ -10,8 +10,8 @@
 //! Pipeline: `ir = TsDemux(h264_aac.ts)` → `ts2 = TsMux(ir)` →
 //! `ir2 = TsDemux(ts2)`.
 
-use transmux::TrackId;
 use broadcast_common::{Package, Serialize, Unpackage};
+use transmux::TrackId;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
 use transmux::{TsDemux, TsMux};

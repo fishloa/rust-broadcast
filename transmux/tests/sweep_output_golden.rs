@@ -6,8 +6,8 @@
 //! fails here.
 #![cfg(feature = "std")]
 
-use transmux::TrackId;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use transmux::{PsDemux, TsDemux, WebmDemux};

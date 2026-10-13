@@ -9,8 +9,8 @@
 //!    non-low-latency playlist is asserted to carry NONE of them (opt-in);
 //!  - a part's sample set is reconstructed and compared to `build_media_segment`.
 
-use transmux::TrackId;
 use broadcast_hls::{DecimalSeconds, LowLatencyConfig, MediaPlaylist, MediaSegment, PartSpec};
+use transmux::TrackId;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, DecoderConfigDescriptor,
@@ -846,7 +846,8 @@ fn long_segment_parts_stay_within_part_target() {
     for (_, is_video, i) in items {
         if is_video {
             // Keyframe only at the segment start: one 6 s segment.
-            seg.push(TrackId::new(1), vsample(i == 0, (i % 251) as u8)).unwrap();
+            seg.push(TrackId::new(1), vsample(i == 0, (i % 251) as u8))
+                .unwrap();
         } else {
             seg.push(
                 TrackId::new(2),

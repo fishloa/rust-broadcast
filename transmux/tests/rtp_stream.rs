@@ -18,9 +18,9 @@
 //! numbers no real short fixture naturally produces.
 #![cfg(feature = "std")]
 
-use transmux::TrackId;
 use broadcast_common::{Package, Unpackage};
 use std::collections::HashSet;
+use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::{aac_config_from_asc_hex, avc_config_from_sprop};
@@ -219,8 +219,11 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
         .iter()
         .map(|s| u64::from(s.duration.unwrap_or(0)))
         .sum();
-    let seg2 = build_media_segment(2, &[FragmentTrackData::new(TrackId::new(1), part1_total, part2)])
-        .expect("build_media_segment (part 2) must succeed");
+    let seg2 = build_media_segment(
+        2,
+        &[FragmentTrackData::new(TrackId::new(1), part1_total, part2)],
+    )
+    .expect("build_media_segment (part 2) must succeed");
 
     for (label, seg) in [("part 1", &seg1), ("part 2", &seg2)] {
         assert!(!seg.is_empty(), "{label} segment non-empty");
@@ -559,7 +562,10 @@ fn sequence_wrap_is_not_treated_as_a_gap() {
     let mut recovered = Vec::new();
     for (i, seq) in seqs.iter().enumerate() {
         let ts = 1000 + i as u32 * 3000;
-        recovered.extend(d.push(TrackId::new(1), &wrap_vpkt(*seq, ts, &nals[i])).unwrap());
+        recovered.extend(
+            d.push(TrackId::new(1), &wrap_vpkt(*seq, ts, &nals[i]))
+                .unwrap(),
+        );
     }
     recovered.extend(d.flush(TrackId::new(1)).unwrap());
 
@@ -590,15 +596,18 @@ fn reorder_buffer_is_bounded_under_a_flood_of_out_of_order_packets() {
 
     let config = tiny_avc_config();
     let mut d = RtpStreamDepacketiser::new(vec![
-        RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, config, 90_000).with_reorder_depth(DEPTH),
+        RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, config, 90_000)
+            .with_reorder_depth(DEPTH),
     ]);
 
     // Establish `expected` with one in-order packet (seq 0).
-    d.push(TrackId::new(1), &wrap_vpkt(0, 1000, &[0x65, 0xAA])).unwrap();
+    d.push(TrackId::new(1), &wrap_vpkt(0, 1000, &[0x65, 0xAA]))
+        .unwrap();
 
     for k in 1..=FLOOD_LEN {
         let seq = 1000u16.wrapping_add(k.wrapping_mul(50));
-        d.push(TrackId::new(1), &wrap_vpkt(seq, 1000, &[0x41, 0xBB])).unwrap();
+        d.push(TrackId::new(1), &wrap_vpkt(seq, 1000, &[0x41, 0xBB]))
+            .unwrap();
     }
 
     let mut gap_events = 0usize;

@@ -453,8 +453,8 @@ impl RepackageOutput {
 
 #[cfg(test)]
 mod tests {
-    use crate::TrackId;
     use super::*;
+    use crate::TrackId;
     use crate::ir::CodecConfig;
     use crate::pipeline::Sample;
     use alloc::vec;

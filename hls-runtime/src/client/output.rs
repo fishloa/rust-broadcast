@@ -1,7 +1,7 @@
 //! Output events — [`Output`] out of [`crate::client::HlsClient::next_output`].
 
-use transmux::TrackId;
 use alloc::vec::Vec;
+use transmux::TrackId;
 
 use transmux::Sample;
 

@@ -344,7 +344,12 @@ pub struct RtpStreamTrack {
 impl RtpStreamTrack {
     /// Build a track config from its fields, with the default reorder-buffer
     /// depth ([`DEFAULT_REORDER_DEPTH`]).
-    pub fn new(track_id: TrackId, kind: RtpMediaKind, config: CodecConfig, clock_rate: u32) -> Self {
+    pub fn new(
+        track_id: TrackId,
+        kind: RtpMediaKind,
+        config: CodecConfig,
+        clock_rate: u32,
+    ) -> Self {
         Self {
             track_id,
             kind,
@@ -1398,7 +1403,11 @@ mod tests {
         let idr = [0x65u8, 0xAA];
         let non = [0x41u8, 0xBB];
         // AU0: emits nothing yet (duration needs AU1).
-        assert!(d.push(TrackId::new(1), &vpkt(1, 1000, true, &idr)).unwrap().is_empty());
+        assert!(
+            d.push(TrackId::new(1), &vpkt(1, 1000, true, &idr))
+                .unwrap()
+                .is_empty()
+        );
         // AU1 arrives → AU0 emitted with duration 3000, is_sync=true.
         let s0 = d.push(TrackId::new(1), &vpkt(2, 4000, true, &non)).unwrap();
         assert_eq!(s0.len(), 1);
@@ -1571,7 +1580,10 @@ mod tests {
                 .is_empty()
         );
         let s = d
-            .push(TrackId::new(1), &vpkt(resume_seq.wrapping_add(1), 7000, true, &non))
+            .push(
+                TrackId::new(1),
+                &vpkt(resume_seq.wrapping_add(1), 7000, true, &non),
+            )
             .unwrap();
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].duration, Some(3000));

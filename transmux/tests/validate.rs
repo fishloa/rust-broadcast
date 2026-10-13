@@ -6,8 +6,8 @@
 //! codec configs + real coded samples of `h264_aac_frag.mp4` via the crate's own
 //! `build_init_segment` / `build_media_segment`.
 
-use transmux::TrackId;
 use broadcast_common::Parse;
+use transmux::TrackId;
 use transmux::{
     CodecConfig, FragmentTrackData, MovieBox, MovieFragmentBox, Sample, SampleEntryVariant,
     Severity, StblChild, TrackSpec, build_init_segment, build_media_segment, validate_cmaf_track,
@@ -132,7 +132,11 @@ fn clean_init() -> Vec<u8> {
 /// A clean media segment with the given sequence_number + base decode time,
 /// carrying the real video samples.
 fn clean_media(seq: u32, base_time: u64, samples: &[Sample]) -> Vec<u8> {
-    build_media_segment(seq, &[FragmentTrackData::new(TrackId::new(1), base_time, samples)]).expect("build media")
+    build_media_segment(
+        seq,
+        &[FragmentTrackData::new(TrackId::new(1), base_time, samples)],
+    )
+    .expect("build media")
 }
 
 // ---------------------------------------------------------------------------

@@ -10,8 +10,8 @@
 //! raw-passthrough implementation, since it requires correct keyframe-aligned
 //! cutting *and* correct non-anchor (audio) time-partitioning at each cut.
 
-use transmux::TrackId;
 use broadcast_common::{Package, Unpackage};
+use transmux::TrackId;
 use transmux::media::Media;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, Sample,
@@ -290,7 +290,8 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
         "opening sync sample must not cut"
     );
     // non-sync -> 90_000 ticks buffered (>= target)
-    seg.push(TrackId::new(1), nal_sample(false, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(false, 45_000))
+        .unwrap();
     assert!(
         seg.take_ready().is_empty(),
         "buffering non-sync sample must not cut"
@@ -299,7 +300,8 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
     // sync -> cuts s0 (continuous); opens s1
     seg.push(TrackId::new(1), nal_sample(true, 45_000)).unwrap();
     assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s0");
-    seg.push(TrackId::new(1), nal_sample(false, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(false, 45_000))
+        .unwrap();
     assert!(
         seg.take_ready().is_empty(),
         "buffering non-sync sample must not cut"
@@ -311,7 +313,8 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
     snapshots.push(seg.playlist().unwrap());
     // Mark s2 (currently buffering) as the next segment to be cut discontinuous.
     seg.mark_discontinuity();
-    seg.push(TrackId::new(1), nal_sample(false, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(false, 45_000))
+        .unwrap();
     assert!(
         seg.take_ready().is_empty(),
         "buffering non-sync sample must not cut"
@@ -323,7 +326,8 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
     assert_eq!(s2.len(), 1, "sync sample must cut s2 singly");
     assert!(s2[0].discontinuous, "s2 must be discontinuous");
     snapshots.push(seg.playlist().unwrap());
-    seg.push(TrackId::new(1), nal_sample(false, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(false, 45_000))
+        .unwrap();
     assert!(
         seg.take_ready().is_empty(),
         "buffering non-sync sample must not cut"
@@ -333,7 +337,8 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
     seg.push(TrackId::new(1), nal_sample(true, 45_000)).unwrap();
     assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s3");
     snapshots.push(seg.playlist().unwrap());
-    seg.push(TrackId::new(1), nal_sample(false, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(false, 45_000))
+        .unwrap();
     assert!(
         seg.take_ready().is_empty(),
         "buffering non-sync sample must not cut"

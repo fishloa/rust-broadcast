@@ -32,10 +32,10 @@
 //! every sample the client emits; the assertion is on the **max** observed
 //! across the whole run.
 
-use transmux::TrackId;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use transmux::TrackId;
 
 use axum::Router;
 use axum::response::IntoResponse;

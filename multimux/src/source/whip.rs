@@ -72,13 +72,13 @@
 //! split RTMP draws between `RtmpConnection::next_events` (I/O) and
 //! `RtmpIngestSession::feed` (sans-IO translation).
 
-use transmux::TrackId;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex as StdMutex};
 use std::time::{Duration, Instant};
+use transmux::TrackId;
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use futures_util::StreamExt;
@@ -1605,12 +1605,12 @@ impl Stage for WhipIngestSession {
         else {
             return Ok(());
         };
-        let samples =
-            self.depacketiser
-                .push(TrackId::new(track_id.value()), input)
-                .map_err(|e| MultimuxError::Depay {
-                    reason: e.to_string(),
-                })?;
+        let samples = self
+            .depacketiser
+            .push(TrackId::new(track_id.value()), input)
+            .map_err(|e| MultimuxError::Depay {
+                reason: e.to_string(),
+            })?;
         for sample in samples {
             self.observe_sample(TrackId::new(track_id.value()), sample);
         }
@@ -2833,7 +2833,12 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         );
         session.try_capture_config(TrackId::new(1), &sample);
         assert!(
-            session.captured.get(&TrackId::new(1)).cloned().flatten().is_none(),
+            session
+                .captured
+                .get(&TrackId::new(1))
+                .cloned()
+                .flatten()
+                .is_none(),
             "SPS alone must not capture a config"
         );
 
@@ -2846,7 +2851,12 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         let sample = Sample::new(bytes::Bytes::copy_from_slice(&both), None, None, None, true);
         session.try_capture_config(TrackId::new(1), &sample);
         assert!(
-            session.captured.get(&TrackId::new(1)).cloned().flatten().is_some(),
+            session
+                .captured
+                .get(&TrackId::new(1))
+                .cloned()
+                .flatten()
+                .is_some(),
             "SPS+PPS must capture a config"
         );
     }

@@ -19,9 +19,9 @@
 //! one) and would buffer every segment forever — zero `Output::Samples` ever
 //! emitted — so the non-zero/oracle-matching assertions below would fail.
 
-use transmux::TrackId;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use hls_runtime::client::{Action, HlsClient, Output};
@@ -410,7 +410,9 @@ fn pts_wrap_between_segments_is_unrolled_across_the_boundary() {
         outputs
             .iter()
             .filter_map(|o| match o {
-                Output::Samples { track_id, samples } if *track_id == TrackId::new(track) => Some(samples),
+                Output::Samples { track_id, samples } if *track_id == TrackId::new(track) => {
+                    Some(samples)
+                }
                 _ => None,
             })
             .flatten()

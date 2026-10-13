@@ -11,9 +11,9 @@
 //!   proving shared Trunk.
 //! Test 5: Config round-trip — `"smooth"` deserialises and validates.
 
-use transmux::TrackId;
 use std::collections::HashMap;
 use std::sync::Arc;
+use transmux::TrackId;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -95,7 +95,8 @@ fn feed_via_segmenter(
 
     for batch in batches {
         for (track_id, sample) in batch {
-            seg.push(TrackId::new(track_id), sample).expect("push succeeds");
+            seg.push(TrackId::new(track_id), sample)
+                .expect("push succeeds");
         }
         for part in seg.take_ready_parts() {
             store.add_part(program, part);
@@ -649,7 +650,11 @@ async fn w13_real_multitrack_per_chunk_timeline_is_exact() {
     for track in &media.tracks {
         if specs.iter().any(|s| s.track_id == track.spec.track_id) {
             for sample in &track.samples {
-                events.push((sample.dts.unwrap_or(0), track.spec.track_id.value(), sample.clone()));
+                events.push((
+                    sample.dts.unwrap_or(0),
+                    track.spec.track_id.value(),
+                    sample.clone(),
+                ));
             }
         }
     }

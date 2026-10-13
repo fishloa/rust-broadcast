@@ -27,8 +27,8 @@
 //! that the pre-fix behaviour (no output at all / unbounded growth /
 //! everything in segment 0) trips them.
 
-use transmux::TrackId;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Stage, Unpackage};
 use transmux::ll_dash::LlSegmenter;
@@ -640,11 +640,13 @@ fn section_sample_lands_in_the_same_segment_batch_and_streaming() {
     // (which is what `section_segment_index` reads a segment *index* out of).
     for s in &video {
         if !pushed_cue && s.dts.unwrap_or(0) >= CUE_DTS {
-            seg.push(TrackId::new(SCTE_ID), section.clone()).expect("push cue");
+            seg.push(TrackId::new(SCTE_ID), section.clone())
+                .expect("push cue");
             streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));
             pushed_cue = true;
         }
-        seg.push(TrackId::new(VIDEO_ID), s.clone()).expect("push video");
+        seg.push(TrackId::new(VIDEO_ID), s.clone())
+            .expect("push video");
         streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));
     }
     assert!(pushed_cue, "the test stream must reach the cue's timestamp");

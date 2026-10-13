@@ -47,8 +47,8 @@ pub mod udp;
 #[cfg(feature = "whip")]
 pub mod whip;
 
-use transmux::TrackId;
 use std::time::Duration;
+use transmux::TrackId;
 
 /// Read-size hint every MPEG-2 TS transport reports via
 /// [`broadcast_common::Stage::demand`], and the read-buffer size the
@@ -914,7 +914,9 @@ mod driver_progress_tests {
                 if self.feed_count == 2 {
                     self.pending.push_back(SessionEvent::NewProgram {
                         program: ProgramId(0),
-                        tracks: vec![crate::source::ts_program::test_support::track_spec(TrackId::new(1))],
+                        tracks: vec![crate::source::ts_program::test_support::track_spec(
+                            TrackId::new(1),
+                        )],
                     });
                 } else if self.feed_count == 3 {
                     self.pending.push_back(SessionEvent::TracksChanged {

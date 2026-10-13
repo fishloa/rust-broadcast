@@ -12,8 +12,8 @@
 //! (`frag_offsets`), so this proves the demuxer's side of the same rule set.
 #![cfg(feature = "std")]
 
-use transmux::TrackId;
 use broadcast_common::Unpackage;
+use transmux::TrackId;
 use transmux::{CodecConfig, Fmp4Demux, Media};
 
 const DIR: &str = concat!(

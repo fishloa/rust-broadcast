@@ -25,9 +25,9 @@
 
 #![cfg(feature = "std")]
 
-use transmux::TrackId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use transmux::{DemuxEvent, StreamingTsDemux, TsDemux};
@@ -214,12 +214,14 @@ fn observe(ts: &[u8], chunk: usize) -> BTreeMap<TrackId, Vec<Sample>> {
                 track_id, sample, ..
             } = e
             {
-                out.entry(TrackId::new(track_id.value())).or_default().push((
-                    sample.data.to_vec(),
-                    sample.dts,
-                    sample.pts,
-                    sample.duration,
-                ));
+                out.entry(TrackId::new(track_id.value()))
+                    .or_default()
+                    .push((
+                        sample.data.to_vec(),
+                        sample.dts,
+                        sample.pts,
+                        sample.duration,
+                    ));
             }
         }
     };

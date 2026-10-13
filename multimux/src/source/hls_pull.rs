@@ -60,11 +60,11 @@
 //! one initial program" case for this source; a pulled origin that changes
 //! codec parameters mid-stream is not yet supported.
 
-#[cfg(test)]
-use transmux::TrackId;
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::time::Duration;
+#[cfg(test)]
+use transmux::TrackId;
 
 use broadcast_auth::Credentials;
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};

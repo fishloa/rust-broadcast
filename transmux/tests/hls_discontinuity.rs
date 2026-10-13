@@ -14,8 +14,8 @@
 //! 4. **Placement** — the tag immediately precedes `#EXTINF` (and any
 //!    `EXT-X-MAP`-like prefix), never appears after it.
 
-use transmux::TrackId;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment, mark_init_discontinuities};
+use transmux::TrackId;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, Sample, SegmentMeta,
     Segmenter, TrackSpec,

@@ -1,10 +1,10 @@
 //! Parse an RTSP DESCRIBE SDP body into per-track init (codec config + clock
 //! rate + control URL + assigned interleaved channel).
 
-use transmux::TrackId;
 use crate::error::{MultimuxError, Result};
 use crate::source::TrackInit;
 use sdp_types::Session;
+use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::rtpmap_clock_rate;

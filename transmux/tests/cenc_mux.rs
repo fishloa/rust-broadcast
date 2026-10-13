@@ -16,8 +16,8 @@
 
 #![cfg(feature = "cenc")]
 
-use transmux::TrackId;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Decrypt, Encrypt, Package, Parse, Serialize, Unpackage};
 use transmux::cenc::{
@@ -557,7 +557,8 @@ fn protect_media_segment_keeps_a_moof_level_opaque_child() {
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let enc = media.tracks[0].encryption.as_ref().expect("encryption");
 
-    let with_protected_init = protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
+    let with_protected_init =
+        protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
     // A real moof-level opaque child: a `pssh` (ISO/IEC 23001-7 §8.1.1) —
     // 8-byte header + FullBox(4) + system_id(16) + data_size(4) + no data.
     let mut pssh = Vec::new();
@@ -641,7 +642,8 @@ fn protect_media_segment_rejects_a_traf_that_already_carries_senc() {
         .expect("encrypt");
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let enc = media.tracks[0].encryption.as_ref().expect("encryption");
-    let with_protected_init = protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
+    let with_protected_init =
+        protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
 
     // A 16-byte `senc` FullBox declaring zero samples.
     let mut senc = Vec::new();
@@ -677,7 +679,8 @@ fn protect_media_segment_rejects_a_data_offset_that_would_overflow() {
         .expect("encrypt");
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let enc = media.tracks[0].encryption.as_ref().expect("encryption");
-    let with_protected_init = protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
+    let with_protected_init =
+        protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
 
     // Push the `data_offset` to `i32::MAX` so the added `delta` overflows.
     // The `trun` is nested (`moof` → `traf` → `trun`), so scan every level.
@@ -745,7 +748,8 @@ fn protected_segment_with_an_opaque_moof_child_decrypts_to_the_clear_samples() {
         .expect("encrypt");
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let enc = media.tracks[0].encryption.as_ref().expect("encryption");
-    let with_protected_init = protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
+    let with_protected_init =
+        protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
 
     // A `pssh` as a moof-level opaque child.
     let mut pssh = Vec::new();
@@ -811,7 +815,8 @@ fn protected_segment_with_an_opaque_moof_child_matches_mp4decrypt() {
         .expect("encrypt");
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let enc = media.tracks[0].encryption.as_ref().expect("encryption");
-    let with_protected_init = protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
+    let with_protected_init =
+        protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
 
     let mut pssh = Vec::new();
     pssh.extend_from_slice(&32u32.to_be_bytes());

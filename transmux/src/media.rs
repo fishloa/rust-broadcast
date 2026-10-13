@@ -1042,8 +1042,8 @@ fn config_box_body<'b>(boxes: &'b [OpaqueBox], fourcc: &[u8; 4]) -> Result<&'b [
 
 #[cfg(test)]
 mod tests {
-    use crate::TrackId;
     use super::*;
+    use crate::TrackId;
     use crate::subtitle_entries::WvttSampleEntry;
 
     /// ffmpeg's `mov` muxer cannot produce a `wvtt` sample entry (only
@@ -1161,10 +1161,20 @@ mod tests {
 
         let f1 = frames(first_base as i64);
         let f2 = frames(gapped_second_base as i64);
-        let seg1 = build_media_segment(1, &[FragmentTrackData::new(TrackId::new(1), first_base, &f1)])
-            .expect("fragment 1 builds");
-        let seg2 = build_media_segment(2, &[FragmentTrackData::new(TrackId::new(1), gapped_second_base, &f2)])
-            .expect("fragment 2 builds");
+        let seg1 = build_media_segment(
+            1,
+            &[FragmentTrackData::new(TrackId::new(1), first_base, &f1)],
+        )
+        .expect("fragment 1 builds");
+        let seg2 = build_media_segment(
+            2,
+            &[FragmentTrackData::new(
+                TrackId::new(1),
+                gapped_second_base,
+                &f2,
+            )],
+        )
+        .expect("fragment 2 builds");
 
         let mut file = init;
         file.extend_from_slice(&seg1);
@@ -1244,7 +1254,11 @@ mod tests {
             &build_media_segment(1, &[FragmentTrackData::new(TrackId::new(7), 0, &f1)]).unwrap(),
         );
         file.extend_from_slice(
-            &build_media_segment(2, &[FragmentTrackData::new(TrackId::new(7), second_base, &f2)]).unwrap(),
+            &build_media_segment(
+                2,
+                &[FragmentTrackData::new(TrackId::new(7), second_base, &f2)],
+            )
+            .unwrap(),
         );
 
         let media = Fmp4Demux::new().unpackage(&file).unwrap();
@@ -1399,7 +1413,11 @@ mod tests {
         );
         let frag = build_media_segment(
             1,
-            &[FragmentTrackData::new(TrackId::new(1), 0, std::slice::from_ref(&sample))],
+            &[FragmentTrackData::new(
+                TrackId::new(1),
+                0,
+                std::slice::from_ref(&sample),
+            )],
         )
         .expect("media segment");
         let mut file = init;

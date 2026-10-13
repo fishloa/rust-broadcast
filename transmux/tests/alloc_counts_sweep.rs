@@ -119,9 +119,9 @@ mod rtmp_read_chunks {
 }
 
 mod rtp_stream_copies {
-use transmux::TrackId;
     use super::bytes_allocated;
     use broadcast_common::{Package, Unpackage};
+    use transmux::TrackId;
     use transmux::pipeline::CodecConfig;
     use transmux::rtp::RtpMediaKind;
     use transmux::{RtpPacketiser, RtpStreamDepacketiser, RtpStreamTrack, TsDemux};
@@ -270,8 +270,8 @@ mod muxer_buffering {
 }
 
 mod segmenter_cuts {
-use transmux::TrackId;
     use super::measure;
+    use transmux::TrackId;
     use transmux::{
         AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Sample,
         Segmenter, TrackSpec,

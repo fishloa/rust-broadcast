@@ -43,8 +43,8 @@
 //!    [`generic_drive_helper_also_spans_segmenter_stages`] additionally now
 //!    covers `LlHlsSegmenter` too (previously zero `Stage` coverage at all).
 
-use transmux::TrackId;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Stage, Timestamp};
 use transmux::media::Media;
@@ -422,7 +422,12 @@ fn audio_track_spec() -> TrackSpec {
 /// accumulated duration against the segmenter's target.
 fn audio_samples(n: usize) -> Vec<(TrackId, Sample)> {
     (0..n)
-        .map(|_| (TrackId::new(1), Sample::from_raw(vec![0u8; 4], None, None, Some(1024))))
+        .map(|_| {
+            (
+                TrackId::new(1),
+                Sample::from_raw(vec![0u8; 4], None, None, Some(1024)),
+            )
+        })
         .collect()
 }
 
@@ -443,7 +448,9 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
     let mut oracle_seg = Segmenter::new(vec![track.clone()], 1000, 0.1).unwrap();
     let mut oracle_seg_out: Vec<(Vec<u8>, SegmentMeta)> = Vec::new();
     for (track_id, sample) in samples.clone() {
-        oracle_seg.push(TrackId::new(track_id.value()), sample).unwrap();
+        oracle_seg
+            .push(TrackId::new(track_id.value()), sample)
+            .unwrap();
         oracle_seg_out.extend(oracle_seg.take_ready_with_meta());
     }
     oracle_seg.flush().unwrap();
@@ -464,7 +471,9 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
     let mut oracle_ll = LlSegmenter::new(vec![track.clone()], 1000, 0.1, 4).unwrap();
     let mut oracle_ll_out: Vec<transmux::Chunk> = Vec::new();
     for (track_id, sample) in samples.clone() {
-        oracle_ll.push(TrackId::new(track_id.value()), sample).unwrap();
+        oracle_ll
+            .push(TrackId::new(track_id.value()), sample)
+            .unwrap();
         oracle_ll_out.extend(oracle_ll.take_ready());
     }
     oracle_ll.flush().unwrap();
@@ -499,7 +508,9 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
     let mut oracle_hls_parts: Vec<PartInfo> = Vec::new();
     let mut oracle_hls_segments: Vec<SegmentInfo> = Vec::new();
     for (track_id, sample) in samples.clone() {
-        oracle_hls.push(TrackId::new(track_id.value()), sample).unwrap();
+        oracle_hls
+            .push(TrackId::new(track_id.value()), sample)
+            .unwrap();
         oracle_hls_parts.extend(oracle_hls.take_ready_parts());
         oracle_hls_segments.extend(oracle_hls.take_ready_segments());
     }
@@ -573,7 +584,9 @@ fn ts_hls_segmenter_stage_matches_inline_push() {
     let mut inline_seg = StreamingTsHlsSegmenter::new(vec![track.clone()], 1, 10).unwrap();
     let mut inline_out = Vec::new();
     for (track_id, sample) in samples.clone() {
-        inline_seg.push(TrackId::new(track_id.value()), sample).unwrap();
+        inline_seg
+            .push(TrackId::new(track_id.value()), sample)
+            .unwrap();
         inline_out.extend(inline_seg.take_ready());
     }
     inline_seg.finish().unwrap();
@@ -650,7 +663,10 @@ fn segmenter_mixed_api_delivers_each_output_exactly_once() {
     let batch = 30;
     for (i, (track_id, sample)) in samples.by_ref().take(batch).enumerate() {
         mixed
-            .feed((TrackId::new(track_id.value()), sample), Timestamp::from_nanos(i as u64))
+            .feed(
+                (TrackId::new(track_id.value()), sample),
+                Timestamp::from_nanos(i as u64),
+            )
             .unwrap();
     }
     for _ in 0..2 {
@@ -707,7 +723,10 @@ fn ll_segmenter_mixed_api_delivers_each_output_exactly_once() {
     let batch = 30;
     for (i, (track_id, sample)) in samples.by_ref().take(batch).enumerate() {
         mixed
-            .feed((TrackId::new(track_id.value()), sample), Timestamp::from_nanos(i as u64))
+            .feed(
+                (TrackId::new(track_id.value()), sample),
+                Timestamp::from_nanos(i as u64),
+            )
             .unwrap();
     }
     for _ in 0..2 {
@@ -782,7 +801,10 @@ fn ll_hls_segmenter_mixed_api_delivers_each_output_exactly_once() {
     let batch = 30;
     for (i, (track_id, sample)) in samples.by_ref().take(batch).enumerate() {
         mixed
-            .feed((TrackId::new(track_id.value()), sample), Timestamp::from_nanos(i as u64))
+            .feed(
+                (TrackId::new(track_id.value()), sample),
+                Timestamp::from_nanos(i as u64),
+            )
             .unwrap();
     }
     for _ in 0..2 {

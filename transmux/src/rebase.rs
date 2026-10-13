@@ -120,8 +120,8 @@ pub fn insert_discontinuity_gap(track: &mut Track, at_sample_index: usize, gap_t
 
 #[cfg(test)]
 mod tests {
-    use crate::TrackId;
     use super::*;
+    use crate::TrackId;
     use crate::ir::SampleFlags;
     use crate::media::Track;
     use crate::pipeline::{Sample, TrackSpec};

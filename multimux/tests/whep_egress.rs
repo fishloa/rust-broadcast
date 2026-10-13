@@ -403,10 +403,10 @@ async fn admin_added_route_starts_its_whep_listener() {
 /// `Trunk` (which every egress, WHEP included, awaits before binding) with no
 /// real network I/O. Mirrors `tests/admin_api.rs`'s identically-named scheme.
 mod instant {
-    use transmux::TrackId;
     use std::collections::VecDeque;
     use std::convert::Infallible;
     use std::sync::Arc;
+    use transmux::TrackId;
 
     use broadcast_common::{Demand, Stage, Timestamp};
     use media_plane::ingress::{

@@ -22,10 +22,10 @@
 //! (`docs/superpowers/plans/2026-07-26-media-plane-implementation.md` step 5)
 //! says tokio belongs.
 
-#[cfg(test)]
-use transmux::TrackId;
 use std::convert::Infallible;
 use std::time::Duration;
+#[cfg(test)]
+use transmux::TrackId;
 
 use broadcast_common::Timestamp;
 use media_plane::ingress::Dialer;

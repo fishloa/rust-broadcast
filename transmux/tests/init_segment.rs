@@ -6,8 +6,8 @@
 //!   mp4a sample entry (assert both found).
 //! EXIT CRITERION 3: A leaf-box unit test (mvhd v0) round-trips (in `init_segment` module).
 
-use transmux::TrackId;
 use broadcast_common::{Parse, Serialize};
+use transmux::TrackId;
 use transmux::{MovieBox, SampleDescriptionBox, SampleEntryVariant};
 
 /// Find a top-level box by type and return its full bytes (header + body).
@@ -101,7 +101,11 @@ fn moov_real_fixture_round_trip() {
     assert_eq!(moov.mvhd.version, 0, "mvhd version");
     assert_eq!(moov.mvhd.timescale, 1000, "mvhd timescale");
     assert_eq!(moov.mvhd.duration, 2000, "mvhd duration");
-    assert_eq!(moov.mvhd.next_track_id, TrackId::new(3), "mvhd next_track_id");
+    assert_eq!(
+        moov.mvhd.next_track_id,
+        TrackId::new(3),
+        "mvhd next_track_id"
+    );
 
     // Verify we have two tracks
     assert_eq!(moov.tracks.len(), 2, "moov track count");

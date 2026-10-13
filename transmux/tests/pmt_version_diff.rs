@@ -19,10 +19,10 @@
 //! exercising the real PMT-declaration-order promotion path
 //! (`StreamingTsDemux::try_promote_ready`), not a shortcut around it.
 
-use transmux::TrackId;
 use broadcast_common::{Unpackage, crc32_mpeg2};
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
+use transmux::TrackId;
 use transmux::pipeline::TrackSpec;
 use transmux::{AbandonReason, CodecConfig, DemuxEvent, StreamingTsDemux, TsDemux};
 

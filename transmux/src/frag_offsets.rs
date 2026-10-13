@@ -520,7 +520,8 @@ mod tests {
                 end: cut.len()
             }]
         );
-        let r = sample_ranges(cut, moof_off, &moof, TrackId::new(1)).expect("early samples resolve");
+        let r =
+            sample_ranges(cut, moof_off, &moof, TrackId::new(1)).expect("early samples resolve");
         assert_eq!((r[0].start, r[0].end), (payload, payload + 2));
         assert_eq!((r[1].start, r[1].end), (payload + 2, payload + 4));
         // A sample past the cut is still rejected.

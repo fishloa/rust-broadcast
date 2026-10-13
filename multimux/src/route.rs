@@ -109,14 +109,14 @@
 //! minted — out of scope here, recorded so a future MPTS-addressing task
 //! does not have to rediscover it.
 
-#[cfg(test)]
-use transmux::TrackId;
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
+#[cfg(test)]
+use transmux::TrackId;
 
 use broadcast_common::Timestamp;
 use bytes::Bytes;

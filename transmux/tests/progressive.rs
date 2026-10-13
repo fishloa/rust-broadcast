@@ -12,8 +12,8 @@
 //! (below) — no hardcoded offsets — so the tables must be internally consistent
 //! with the real mdat layout for the assertions to hold.
 
-use transmux::TrackId;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use transmux::media::Media;

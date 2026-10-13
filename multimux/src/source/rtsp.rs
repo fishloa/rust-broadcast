@@ -57,9 +57,9 @@
 //! with a clear runtime error naming the missing feature, never falling back
 //! to an unencrypted socket (issue #804).
 
-use transmux::TrackId;
 use std::collections::VecDeque;
 use std::time::Duration;
+use transmux::TrackId;
 
 use bytes::Bytes;
 use rtsp_runtime::auth::Credentials;

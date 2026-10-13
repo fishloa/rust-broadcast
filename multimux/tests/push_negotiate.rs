@@ -11,9 +11,9 @@
 //! (b) never even attempt to carry a track FLV cannot hold, rather than
 //! either refusing the whole push or crashing trying to frame it?
 
-use transmux::TrackId;
 use std::sync::Arc;
 use std::time::Duration;
+use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use media_plane::trunk::{RetentionClass, Trunk, TrunkConfig};

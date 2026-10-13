@@ -80,11 +80,11 @@
 //!
 //! [`draft-sharabayko-srt-01`]: https://datatracker.ietf.org/doc/html/draft-sharabayko-srt-01
 
-#[cfg(test)]
-use transmux::TrackId;
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(test)]
+use transmux::TrackId;
 
 use broadcast_common::Timestamp;
 use media_plane::ingress::{Dialer, HandshakePolicy, IngestDriver};

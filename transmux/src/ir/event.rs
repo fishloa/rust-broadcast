@@ -15,9 +15,9 @@
 //! which packet) moves into [`EventProvenance`] — `None`/absent for a
 //! container that has no such identity (FLV has no PID concept at all).
 
-use crate::TrackId;
 use super::sample::Sample;
 use super::track::TrackSpec;
+use crate::TrackId;
 use mpeg_ts::pid::Pid;
 
 /// Container-native identity for a [`DemuxEvent`] that is not itself part of

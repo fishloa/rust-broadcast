@@ -12,8 +12,8 @@
 //! 4. Sample round-trip: first video sample re-parsed from mdat matches
 //!    annexb_to_length_prefixed(first_video_au).
 
-use transmux::TrackId;
 use std::vec::Vec;
+use transmux::TrackId;
 
 use broadcast_common::{Parse, Serialize};
 use mpeg_pes::PesAssembler;
@@ -487,7 +487,11 @@ fn ts_to_cmaf_end_to_end() {
         75,
         "video trun must have 75 samples"
     );
-    assert_eq!(vid_traf.tfhd.track_id, TrackId::new(1), "video traf tfhd track_id = 1");
+    assert_eq!(
+        vid_traf.tfhd.track_id,
+        TrackId::new(1),
+        "video traf tfhd track_id = 1"
+    );
 
     // Audio trun: sample_count == total ADTS frames
     let aud_traf = &moof.traf[1];
@@ -497,7 +501,11 @@ fn ts_to_cmaf_end_to_end() {
         total_adts_frames,
         "audio trun sample count must equal total ADTS frame count"
     );
-    assert_eq!(aud_traf.tfhd.track_id, TrackId::new(2), "audio traf tfhd track_id = 2");
+    assert_eq!(
+        aud_traf.tfhd.track_id,
+        TrackId::new(2),
+        "audio traf tfhd track_id = 2"
+    );
 
     // ---- Phase 9: First video sample round-trip -----------------------------
     // Find mdat

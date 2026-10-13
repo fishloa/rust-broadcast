@@ -75,8 +75,8 @@
 //!   than silently carrying an uninitialised new track or dropping a
 //!   previously-carried one.
 
-use transmux::TrackId;
 use std::collections::VecDeque;
+use transmux::TrackId;
 
 use bytes::Bytes;
 use media_plane::egress::{NegotiationOutcome, PushEgress, TrackSelection};
@@ -680,7 +680,11 @@ mod tests {
             tokio::time::advance(std::time::Duration::from_millis(100)).await;
             tokio::task::yield_now().await;
         }
-        writer.publish(TrackId::new(1), media_plane::trunk::RetentionClass::Timed, sample());
+        writer.publish(
+            TrackId::new(1),
+            media_plane::trunk::RetentionClass::Timed,
+            sample(),
+        );
         for _ in 0..20 {
             tokio::time::advance(std::time::Duration::from_millis(100)).await;
             tokio::task::yield_now().await;
@@ -709,7 +713,11 @@ mod tests {
         // Well past the flush timeout, feeding one sample per step so every
         // fresh connection has something to block on.
         for _ in 0..300 {
-            writer.publish(TrackId::new(1), media_plane::trunk::RetentionClass::Timed, sample());
+            writer.publish(
+                TrackId::new(1),
+                media_plane::trunk::RetentionClass::Timed,
+                sample(),
+            );
             tokio::time::advance(std::time::Duration::from_millis(100)).await;
             tokio::task::yield_now().await;
         }

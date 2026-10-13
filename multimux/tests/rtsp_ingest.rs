@@ -51,8 +51,8 @@
 //! Cargo feature (only `rtsps://` TLS support is, and this test uses plain
 //! `rtsp://`).
 
-use transmux::TrackId;
 use std::time::{Duration, Instant};
+use transmux::TrackId;
 
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use broadcast_common::{Stage, Timestamp};
@@ -366,7 +366,11 @@ async fn run() {
         "3 access units over interleaved RTP yield exactly 2 completed samples"
     );
     let (track_id0, sample0) = samples[0];
-    assert_eq!(track_id0, TrackId::new(1), "the sole video track routes to track id 1");
+    assert_eq!(
+        track_id0,
+        TrackId::new(1),
+        "the sole video track routes to track id 1"
+    );
     // The same `transmux::Sample` a `Trunk`'s `SampleCursorItem::Timed` would
     // hand back — see this module's doc for why this test reads it here
     // instead.

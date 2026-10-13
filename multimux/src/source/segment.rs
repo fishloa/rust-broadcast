@@ -75,10 +75,10 @@
 //! all) is the addressing question `crate::route`'s own module doc records
 //! options for.
 
-use transmux::TrackId;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
+use transmux::TrackId;
 
 use broadcast_common::Timestamp;
 use hls_runtime::server::Container;
@@ -1407,7 +1407,11 @@ mod tests {
         // Write enough frames into the trunk to cut a few real segments (a
         // sync frame every 45 frames == 0.5 s, target 1.0 s).
         for i in 0..200u32 {
-            writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, i.is_multiple_of(45)));
+            writer.publish(
+                TrackId::new(1),
+                RetentionClass::Timed,
+                sample_at(i, i.is_multiple_of(45)),
+            );
         }
 
         let route = RouteHandle::new(1.0, 250, 8);
@@ -2787,7 +2791,10 @@ mod tests {
         let before = trunk.last_closed_segment().expect("a segment closed");
 
         // A routine PMT version bump adds a Data PID.
-        writer.set_tracks(vec![track_spec(TrackId::new(1)), data_track_spec(TrackId::new(2))]);
+        writer.set_tracks(vec![
+            track_spec(TrackId::new(1)),
+            data_track_spec(TrackId::new(2)),
+        ]);
         segmenter.apply_track_change(ProgramId(0), &trunk, &route);
         let AnySegmenter::Fmp4(rebuilt) = &segmenter.seg else {
             panic!("an fMP4 route must keep producing fMP4 after a track change");

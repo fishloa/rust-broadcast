@@ -14,9 +14,9 @@
 //! internal `parse_pmt` — it re-implements the byte-level walk from scratch so
 //! the comparison is a real oracle, not a tautology.
 
-use transmux::TrackId;
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;

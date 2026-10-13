@@ -98,7 +98,11 @@ mod tests {
         assert_eq!(format!("{:?}", Some(TrackId::new(3))), "Some(3)");
         assert_eq!(format!("{:04}", TrackId::new(5)), "0005");
         assert_eq!(
-            format!("{} {:?}", ProgramNumber::new(0x401), ProgramNumber::new(0x401)),
+            format!(
+                "{} {:?}",
+                ProgramNumber::new(0x401),
+                ProgramNumber::new(0x401)
+            ),
             "1025 1025"
         );
         assert_eq!(TrackId::new(9).value(), 9);

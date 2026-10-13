@@ -1660,8 +1660,9 @@ mod tests {
             // Ciphertext samples for track 2, resolved by the shared
             // §8.8.7/§8.8.8 walker (the same code the decryptor and Fmp4Demux
             // use).
-            let cipher = collect_fragment_samples(&bytes::Bytes::from(bytes.clone()), TrackId::new(2))
-                .unwrap_or_else(|e| panic!("{f}: collect audio: {e}"));
+            let cipher =
+                collect_fragment_samples(&bytes::Bytes::from(bytes.clone()), TrackId::new(2))
+                    .unwrap_or_else(|e| panic!("{f}: collect audio: {e}"));
             assert_eq!(
                 cipher.len(),
                 clear_audio.len(),

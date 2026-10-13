@@ -1925,8 +1925,11 @@ mod tests {
         // avcC declares 4-byte lengths and the sample's NALs are unchanged.
         let init = build_init_segment(core::slice::from_ref(&track.spec), IR_TIMESCALE)
             .expect("init segment");
-        let frag = build_media_segment(1, &[FragmentTrackData::new(TrackId::new(1), 0, &track.samples)])
-            .expect("media segment");
+        let frag = build_media_segment(
+            1,
+            &[FragmentTrackData::new(TrackId::new(1), 0, &track.samples)],
+        )
+        .expect("media segment");
         let mut both = init;
         both.extend_from_slice(&frag);
         let reparsed = crate::media::Fmp4Demux::new()
@@ -2024,8 +2027,11 @@ mod tests {
         let expected: [u8; 8] = [0x00, 0x00, 0x00, 0x04, 0x26, 0x01, 0xAF, 0x09];
         let init =
             build_init_segment(core::slice::from_ref(&track.spec), IR_TIMESCALE).expect("init");
-        let frag = build_media_segment(1, &[FragmentTrackData::new(TrackId::new(1), 0, &track.samples)])
-            .expect("media segment");
+        let frag = build_media_segment(
+            1,
+            &[FragmentTrackData::new(TrackId::new(1), 0, &track.samples)],
+        )
+        .expect("media segment");
         let mut both = init;
         both.extend_from_slice(&frag);
         let reparsed = crate::media::Fmp4Demux::new()

@@ -12,9 +12,9 @@
 #[cfg(feature = "cli")]
 mod common;
 
-use transmux::TrackId;
 use std::path::PathBuf;
 use std::process::Command;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::media::Media;

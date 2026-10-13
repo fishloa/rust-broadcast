@@ -48,9 +48,9 @@
 //! PMT resolving is a per-*program* one that `NewProgram` already carries
 //! (see `SessionEvent::Established`'s "Why not called `TracksResolved`").
 
-use transmux::{ProgramNumber, TrackId};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
+use transmux::{ProgramNumber, TrackId};
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use media_plane::ingress::{IngestSession, ProgramId, SessionEvent};
@@ -350,9 +350,9 @@ impl IngestSession for TsIngestSession {
 /// one-copy reason the session itself does.
 #[cfg(test)]
 pub(crate) mod test_support {
-    use transmux::TrackId;
     use media_plane::ingress::HandshakePolicy;
     use media_plane::trunk::TrunkConfig;
+    use transmux::TrackId;
 
     use broadcast_common::Timestamp;
     use std::num::NonZeroUsize;
@@ -723,13 +723,25 @@ mod tests {
     #[test]
     fn track_updated_announces_the_new_config() {
         let mut tracker = ProgramTracker::new();
-        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(TrackId::new(1), 640, 360)));
-        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(TrackId::new(2), 0, 0)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(
+            TrackId::new(1),
+            640,
+            360,
+        )));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(
+            TrackId::new(2),
+            0,
+            0,
+        )));
         tracker.handle(DemuxEvent::tracks_resolved(0));
         let _established = tracker.poll();
         let _new_program = tracker.poll();
 
-        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(TrackId::new(1), 1920, 1080)));
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(
+            TrackId::new(1),
+            1920,
+            1080,
+        )));
         match tracker.poll() {
             Some(SessionEvent::TracksChanged { program, tracks }) => {
                 assert_eq!(program, ProgramId(0));
@@ -750,7 +762,11 @@ mod tests {
         assert!(tracker.poll().is_none());
 
         // An update for a track nothing announced is ignored.
-        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(TrackId::new(9), 1, 1)));
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(
+            TrackId::new(9),
+            1,
+            1,
+        )));
         assert!(tracker.poll().is_none());
     }
 
@@ -759,8 +775,16 @@ mod tests {
     #[test]
     fn track_updated_before_resolution_replaces_the_buffered_spec() {
         let mut tracker = ProgramTracker::new();
-        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(TrackId::new(1), 640, 360)));
-        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(TrackId::new(1), 1280, 720)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(
+            TrackId::new(1),
+            640,
+            360,
+        )));
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(
+            TrackId::new(1),
+            1280,
+            720,
+        )));
         tracker.handle(DemuxEvent::tracks_resolved(0));
         let _established = tracker.poll();
         match tracker.poll() {
@@ -790,7 +814,10 @@ mod tests {
         tracker.handle(DemuxEvent::sample(TrackId::new(1), sample_at(0xAA)));
         assert!(matches!(tracker.poll(), Some(SessionEvent::Sample { .. })));
 
-        tracker.handle(DemuxEvent::track_removed(TrackId::new(1), Default::default()));
+        tracker.handle(DemuxEvent::track_removed(
+            TrackId::new(1),
+            Default::default(),
+        ));
         tracker.handle(DemuxEvent::sample(TrackId::new(1), sample_at(0xBB)));
         assert!(
             tracker.poll().is_none(),

@@ -16,10 +16,10 @@
 //! every one must be served; the MPD must also pass `media-doctor`'s DASH
 //! validator and keep `startNumber`/`@duration` constant as it refreshes.
 
-use transmux::TrackId;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use transmux::TrackId;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};

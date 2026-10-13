@@ -27,8 +27,8 @@
 //! chain with non-exact-dividing rescales, or an untimed section-carried
 //! track — each needs values chosen to make the property observable.
 
-use transmux::TrackId;
 use broadcast_common::Unpackage;
+use transmux::TrackId;
 use transmux::pipeline::DataCarriage;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Media,
@@ -847,8 +847,16 @@ fn concat_repeated_does_not_accumulate_rounding_drift() {
 
         media = concat(&media, &increment).unwrap().media;
 
-        let video_out = media.tracks.iter().find(|t| t.spec.track_id == TrackId::new(1)).unwrap();
-        let audio_out = media.tracks.iter().find(|t| t.spec.track_id == TrackId::new(2)).unwrap();
+        let video_out = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.track_id == TrackId::new(1))
+            .unwrap();
+        let audio_out = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.track_id == TrackId::new(2))
+            .unwrap();
 
         let video_join_dts = video_out.samples[video_before_len].dts.unwrap();
         assert_eq!(

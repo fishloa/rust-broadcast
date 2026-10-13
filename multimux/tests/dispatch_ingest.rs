@@ -64,12 +64,12 @@
 //! every built-in source's own loopback tests.
 #![cfg(feature = "test-seams")]
 
-use transmux::TrackId;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
+use transmux::TrackId;
 
 use multimux::config::{Config, InputSpec, Route};
 use multimux::dvr::DvrConfig;

@@ -15,8 +15,8 @@
 //! The fixture is real, tool-generated media — see
 //! `tests/fixtures/mp4/cmaf/PROVENANCE.md`.
 
-use transmux::TrackId;
 use broadcast_common::{Parse, Serialize};
+use transmux::TrackId;
 use transmux::{Error, MovieBox, OpaqueBox};
 
 /// Find a top-level box by type and return its full bytes (header + body).

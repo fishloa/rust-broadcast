@@ -15,9 +15,9 @@
 //! 3. **No-sync error**: a track with no sync samples returns
 //!    [`Error::InvalidInput`] rather than producing an empty track.
 
-use transmux::TrackId;
 use std::fs;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};

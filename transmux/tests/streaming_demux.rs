@@ -11,10 +11,10 @@
 //! `dvb-si/tests/fixtures/`) in this checkout — `transmux/tests/ir_timing.rs`
 //! already reads it from that path.
 
-use transmux::TrackId;
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use transmux::TsDemux;

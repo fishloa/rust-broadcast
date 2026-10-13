@@ -10,8 +10,8 @@
 //! Fixtures: `fixtures/mp4/{av1,opus,flac,vp9}.mp4`, `fixtures/ts/heaac/heaac_v{1,2}.mp4`.
 //! Oracle refs: `fixtures/mp4/FMP4-GAPS-ORACLE.md`, `fixtures/ts/ac4/DAC4-ORACLE.md`.
 
-use transmux::TrackId;
 use broadcast_common::{Parse, Serialize};
+use transmux::TrackId;
 use transmux::{
     Ac4SpecificBox, AudioSpecificConfig, Av1ConfigurationBox, EsdsBox, FlacSpecificBox,
     OpusSpecificBox, Vp9ConfigurationBox,

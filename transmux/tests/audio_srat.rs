@@ -17,9 +17,9 @@
 //! external tool parsing our builder's bytes, not our parser agreeing with our
 //! writer.
 
-use transmux::TrackId;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use transmux::init_segment::{

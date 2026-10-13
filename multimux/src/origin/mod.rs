@@ -45,12 +45,12 @@ pub mod limit;
 pub(crate) mod resource;
 pub mod supervisor;
 
-#[cfg(test)]
-use transmux::TrackId;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(test)]
+use transmux::TrackId;
 
 use axum::Router;
 use axum::body::Body;
@@ -3014,7 +3014,10 @@ mod tests {
             .ll_hls(crate::route::SPTS_PROGRAM_ID)
             .expect("program published");
         let instance = ll_hls.instance().to_string();
-        let init_uri = format!("/cam1/{}", ll_hls.init_name(TrackId::new(1), hls_runtime::server::Generation::new(1)));
+        let init_uri = format!(
+            "/cam1/{}",
+            ll_hls.init_name(TrackId::new(1), hls_runtime::server::Generation::new(1))
+        );
         let mut streams = HashMap::new();
         streams.insert(
             "cam1".to_string(),
@@ -4182,7 +4185,8 @@ mod tests {
         // loopback test uses), sent repeatedly so the supervisor's own
         // (asynchronous) socket bind has ample time to land before the first
         // datagram that matters arrives.
-        let ts_bytes = crate::source::ts_program::test_support::build_ts_bytes(TrackId::new(1), 0xAB, 60);
+        let ts_bytes =
+            crate::source::ts_program::test_support::build_ts_bytes(TrackId::new(1), 0xAB, 60);
         let sender = tokio::net::UdpSocket::bind("127.0.0.1:0")
             .await
             .expect("bind sender");

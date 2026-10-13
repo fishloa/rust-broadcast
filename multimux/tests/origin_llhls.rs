@@ -17,9 +17,9 @@
 //! `RouteHandle`'s own doc), and this test exists precisely to drive it
 //! directly and publish it.
 
-use transmux::TrackId;
 use std::collections::HashMap;
 use std::sync::Arc;
+use transmux::TrackId;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -140,7 +140,8 @@ fn feed_via_segmenter(
 
     for batch in batches {
         for (track_id, sample) in batch {
-            seg.push(TrackId::new(track_id), sample).expect("push succeeds");
+            seg.push(TrackId::new(track_id), sample)
+                .expect("push succeeds");
         }
         for part in seg.take_ready_parts() {
             store.add_part(program, part);

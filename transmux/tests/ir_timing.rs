@@ -6,10 +6,10 @@
 //! PMT section parsing, or an adaptation-field scan) — never against the
 //! `TsDemux` internals under test.
 
-use transmux::TrackId;
 use mpeg_ts::pid::Pid;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use mpeg_pes::PesAssembler;

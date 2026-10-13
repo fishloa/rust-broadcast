@@ -58,12 +58,12 @@
 //! and inspect the printed summary plus the manifest/segment files written to
 //! the temp directory it reports.
 
-use transmux::TrackId;
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Serialize, Unpackage};
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};

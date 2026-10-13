@@ -92,11 +92,11 @@
 //! 5-tuple once connectivity checks pick it, so one learned address is
 //! sufficient (no candidate-pair migration handling in this cut).
 
-use transmux::TrackId;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
+use transmux::TrackId;
 
 use broadcast_auth::Verifier;
 use broadcast_common::Parse;

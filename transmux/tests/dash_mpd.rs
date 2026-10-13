@@ -22,9 +22,9 @@
 //! compile this test rather than skipping it.
 #![cfg(feature = "cenc")]
 
-use transmux::TrackId;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
@@ -112,7 +112,8 @@ fn segment_via_segmenter(media: &Media, target_secs: f64) -> (Vec<u8>, Vec<Vec<u
             c.idx += 1;
             (c.track_id, s)
         };
-        seg.push(TrackId::new(track_id), sample).expect("push sample");
+        seg.push(TrackId::new(track_id), sample)
+            .expect("push sample");
     }
     seg.flush().expect("flush trailing segment");
     (init, seg.take_ready())

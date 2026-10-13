@@ -71,12 +71,12 @@
 //! channel for it — not a duplicate of anything `Trunk` holds.
 
 use super::ids::{Generation, PartIndex, SegmentSeq};
-use transmux::TrackId;
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
+use transmux::TrackId;
 
 use broadcast_common::{Timestamp, Unpackage};
 use broadcast_hls::{
@@ -1257,7 +1257,12 @@ impl HlsOrigin {
         by_index
             .values()
             .map(|p| PartSpec {
-                uri: self.part_name(track_id, SegmentSeq::new(p.segment_number), PartIndex::new(p.part_index), ext),
+                uri: self.part_name(
+                    track_id,
+                    SegmentSeq::new(p.segment_number),
+                    PartIndex::new(p.part_index),
+                    ext,
+                ),
                 // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
                 duration: DecimalSeconds::new(p.duration.as_secs_f64())
                     .expect("Duration::as_secs_f64 is finite, >= 0"),
@@ -1381,7 +1386,12 @@ impl HlsOrigin {
                 open_parts
                     .iter()
                     .map(|p| PartSpec {
-                        uri: self.part_name(track_id, SegmentSeq::new(p.segment_number), PartIndex::new(p.part_index), ext),
+                        uri: self.part_name(
+                            track_id,
+                            SegmentSeq::new(p.segment_number),
+                            PartIndex::new(p.part_index),
+                            ext,
+                        ),
                         // `p.duration` is a `std::time::Duration`: always
                         // finite and non-negative (issue #1140).
                         duration: DecimalSeconds::new(p.duration.as_secs_f64())
@@ -1403,7 +1413,12 @@ impl HlsOrigin {
                 .max()
                 .map(|idx| idx.saturating_add(1))
                 .unwrap_or(0);
-            self.part_name(track_id, SegmentSeq::new(open_seq), PartIndex::new(next_idx), ext)
+            self.part_name(
+                track_id,
+                SegmentSeq::new(open_seq),
+                PartIndex::new(next_idx),
+                ext,
+            )
         });
         // `#EXT-X-MAP`: unconditional under Fmp4 (RFC 8216bis §3.1.2 MUST);
         // omitted under MpegTs by default (§3.1.1's PAT/PMT-or-MAP
@@ -1720,7 +1735,10 @@ mod tests {
         let (_trunk, origin, _writer) = make_origin();
         let track = TrackId::new(3);
         assert_eq!(origin.instance(), 7);
-        assert_eq!(origin.init_name(track, Generation::new(4)), "init-3-7-4.mp4");
+        assert_eq!(
+            origin.init_name(track, Generation::new(4)),
+            "init-3-7-4.mp4"
+        );
         assert_eq!(
             origin.segment_name(track, SegmentSeq::new(5), "m4s"),
             "seg-3-7-5.m4s"

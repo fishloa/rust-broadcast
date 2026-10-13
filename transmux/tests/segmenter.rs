@@ -9,10 +9,10 @@
 //!  2. A **real-fixture** test remuxes `fixtures/ts/h264_aac.ts` through the
 //!     segmenter and checks every emitted segment parses and preserves the stream.
 
-use transmux::TrackId;
 use broadcast_common::Serialize;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
+use transmux::TrackId;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, DecoderConfigDescriptor,
     DecoderSpecificInfo, ESDescriptor, EsdsBox, FragmentTrackData, MovieFragmentBox,
@@ -287,8 +287,11 @@ fn rejects_bad_construction() {
     );
     let mut seg = Segmenter::new(vec![video_track()], 1000, 2.0).unwrap();
     assert!(
-        seg.push(TrackId::new(99), Sample::from_raw(vec![0], None, None, Some(1)))
-            .is_err(),
+        seg.push(
+            TrackId::new(99),
+            Sample::from_raw(vec![0], None, None, Some(1))
+        )
+        .is_err(),
         "unknown track_id"
     );
 }
@@ -481,8 +484,11 @@ fn real_fixture_remux_is_lossless_and_parseable() {
     for p in &aud {
         for f in split_adts_frames(p) {
             if f.len() > 7 {
-                seg.push(TrackId::new(2), Sample::from_raw(f[7..].to_vec(), None, None, Some(1024)))
-                    .unwrap();
+                seg.push(
+                    TrackId::new(2),
+                    Sample::from_raw(f[7..].to_vec(), None, None, Some(1024)),
+                )
+                .unwrap();
             }
         }
     }

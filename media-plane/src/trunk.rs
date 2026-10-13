@@ -590,7 +590,6 @@
 //! executor timeout around the `Future` impl) — see
 //! [`ProgressListener::wait_deadline`]'s own doc.
 
-use transmux::TrackId;
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -599,6 +598,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
+use transmux::TrackId;
 
 use parking_lot::{Condvar, Mutex, MutexGuard};
 
@@ -3415,13 +3415,21 @@ mod tests {
         let writer = trunk.writer().unwrap();
 
         for i in 0u32..50_000 {
-            writer.publish(TrackId::new(5), RetentionClass::Timed, sample((i % 256) as u8, 2));
+            writer.publish(
+                TrackId::new(5),
+                RetentionClass::Timed,
+                sample((i % 256) as u8, 2),
+            );
             assert!(
                 trunk.timed_len() <= 4,
                 "Timed ring exceeded its cap mid-flood"
             );
             if i % 7 == 0 {
-                writer.publish(TrackId::new(6), RetentionClass::Sparse, sample((i % 256) as u8, 2));
+                writer.publish(
+                    TrackId::new(6),
+                    RetentionClass::Sparse,
+                    sample((i % 256) as u8, 2),
+                );
                 assert!(
                     trunk.sparse_len() <= 3,
                     "Sparse ring exceeded its cap mid-flood"
@@ -5409,7 +5417,10 @@ mod tests {
         // A completely different, larger set: if this were a merge/append
         // rather than a replacement, the old track_id 1 would still be
         // present alongside the two new ones.
-        writer.set_tracks(vec![opaque_track(TrackId::new(7)), opaque_track(TrackId::new(9))]);
+        writer.set_tracks(vec![
+            opaque_track(TrackId::new(7)),
+            opaque_track(TrackId::new(9)),
+        ]);
         assert_eq!(
             trunk
                 .tracks()
@@ -5539,7 +5550,11 @@ mod tests {
 
         let ingest = thread::spawn(move || {
             for i in 0..ROUNDS {
-                writer.publish(TrackId::new(1), RetentionClass::Timed, sample((i % 251) as u8, 4));
+                writer.publish(
+                    TrackId::new(1),
+                    RetentionClass::Timed,
+                    sample((i % 251) as u8, 4),
+                );
             }
         });
         // The "segmenter": publishes segment k only after polling k samples.

@@ -25,9 +25,9 @@
 //! reused here to get a real `avcC` config for the single-track skip test
 //! without hand-fabricating one).
 
-use transmux::TrackId;
 use std::fs;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, build_init_segment};

@@ -13,7 +13,7 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
 use broadcast_common::Unpackage;
-use transmux::{Fmp4Demux, FlvDemux, Media, PsDemux, TsDemux, WebmDemux};
+use transmux::{FlvDemux, Fmp4Demux, Media, PsDemux, TsDemux, WebmDemux};
 
 const MAX_BYTES: u64 = 40 * 1024 * 1024;
 
@@ -78,7 +78,10 @@ fn golden_path() -> PathBuf {
 
 fn lines(s: &str) -> BTreeMap<String, String> {
     s.lines()
-        .filter_map(|l| l.split_once(':').map(|(k, v)| (k.to_string(), v.to_string())))
+        .filter_map(|l| {
+            l.split_once(':')
+                .map(|(k, v)| (k.to_string(), v.to_string()))
+        })
         .collect()
 }
 

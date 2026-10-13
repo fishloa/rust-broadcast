@@ -20,9 +20,9 @@
 //! `poll_event` in a loop — the uniform pull idiom shared with
 //! [`transmux::StreamingTsDemux`].
 
-use transmux::TrackId;
 use broadcast_common::Unpackage;
 use bytes::Bytes;
+use transmux::TrackId;
 use transmux::{CodecConfig, DemuxEvent, FlvDemux, FlvError, StreamingFlvDemux};
 
 const FLV: &[u8] = include_bytes!("../../fixtures/flv/av.flv");

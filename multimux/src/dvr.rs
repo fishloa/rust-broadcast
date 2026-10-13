@@ -180,13 +180,13 @@
 //! is unaffected: the recorder never holds a lock the live path needs,
 //! and it never mutates `Trunk` state.
 
-#[cfg(test)]
-use transmux::TrackId;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime};
+#[cfg(test)]
+use transmux::TrackId;
 
 use dvb_si::demux::{SectionEvent, SiDemux};
 use dvb_si::tables::eit::{EitKind, PID as EIT_PID};

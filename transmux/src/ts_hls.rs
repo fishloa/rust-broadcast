@@ -1367,7 +1367,10 @@ mod tests {
         // Section track first, no video — the exact routine DVB/ad-insertion
         // shape that used to stall forever.
         let mut seg = StreamingTsHlsSegmenter::new(
-            vec![scte35_track(TrackId::new(SCTE_ID)), aac_track(TrackId::new(AUDIO_ID), TIMESCALE)],
+            vec![
+                scte35_track(TrackId::new(SCTE_ID)),
+                aac_track(TrackId::new(AUDIO_ID), TIMESCALE),
+            ],
             TARGET_SECS,
             usize::MAX,
         )
@@ -1375,14 +1378,17 @@ mod tests {
 
         // A couple of section samples up front (duration: None) must not
         // prevent the audio anchor from advancing.
-        seg.push(TrackId::new(SCTE_ID), section_sample()).expect("push section");
-        seg.push(TrackId::new(SCTE_ID), section_sample()).expect("push section");
+        seg.push(TrackId::new(SCTE_ID), section_sample())
+            .expect("push section");
+        seg.push(TrackId::new(SCTE_ID), section_sample())
+            .expect("push section");
 
         // 12 audio samples of 200 ticks each: a cut fires once buffered
         // reaches the 1000-tick target on the 6th and 11th pushes. Cuts are
         // queued, not returned inline (issue R2) — drained via `take_ready`.
         for _ in 0..12 {
-            seg.push(TrackId::new(AUDIO_ID), audio_sample(200)).expect("push audio");
+            seg.push(TrackId::new(AUDIO_ID), audio_sample(200))
+                .expect("push audio");
         }
         let cuts = seg.take_ready();
 
@@ -1436,8 +1442,14 @@ mod tests {
         // Only section/opaque tracks, no video/audio: there is no track
         // whose duration can ever advance a cut boundary. Prefer a loud
         // construction error over a segmenter that silently never cuts.
-        let result =
-            StreamingTsHlsSegmenter::new(vec![scte35_track(TrackId::new(10)), scte35_track(TrackId::new(11))], 1, usize::MAX);
+        let result = StreamingTsHlsSegmenter::new(
+            vec![
+                scte35_track(TrackId::new(10)),
+                scte35_track(TrackId::new(11)),
+            ],
+            1,
+            usize::MAX,
+        );
         match result {
             Err(Error::InvalidInput(_)) => {}
             Err(other) => panic!("expected InvalidInput, got a different error: {other:?}"),
@@ -1465,15 +1477,22 @@ mod tests {
         const AUDIO_ID: u32 = 1;
         const TIMESCALE: u32 = 1000;
 
-        let mut seg =
-            StreamingTsHlsSegmenter::new(vec![aac_track(TrackId::new(AUDIO_ID), TIMESCALE)], 1000, usize::MAX)
-                .expect("construct");
+        let mut seg = StreamingTsHlsSegmenter::new(
+            vec![aac_track(TrackId::new(AUDIO_ID), TIMESCALE)],
+            1000,
+            usize::MAX,
+        )
+        .expect("construct");
 
         // One sample only: not enough to cross the (huge) cut target, so
         // nothing is cut yet and the only segment `Stage::poll` will ever see
         // is the trailing one `finish` cuts below.
-        Stage::feed(&mut seg, (TrackId::new(AUDIO_ID), audio_sample(200)), Timestamp::ZERO)
-            .expect("feed via Stage");
+        Stage::feed(
+            &mut seg,
+            (TrackId::new(AUDIO_ID), audio_sample(200)),
+            Timestamp::ZERO,
+        )
+        .expect("feed via Stage");
         assert!(
             Stage::poll(&mut seg).is_none(),
             "no cut yet: nothing should be ready before finish"
@@ -1514,8 +1533,10 @@ mod tests {
         .expect("construct");
 
         // Two 1000-tick (1s) samples cross the 1s target on the second push.
-        seg.push(TrackId::new(AUDIO_ID), audio_sample(1000)).expect("push 1");
-        seg.push(TrackId::new(AUDIO_ID), audio_sample(1000)).expect("push 2");
+        seg.push(TrackId::new(AUDIO_ID), audio_sample(1000))
+            .expect("push 1");
+        seg.push(TrackId::new(AUDIO_ID), audio_sample(1000))
+            .expect("push 2");
         seg.finish().expect("finish");
 
         let cut: Vec<TsSegment> = seg.take_ready().into_iter().collect();

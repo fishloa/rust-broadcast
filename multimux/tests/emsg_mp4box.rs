@@ -11,10 +11,10 @@
 //!
 //! Skips cleanly when `mp4dump` is not on `PATH`.
 
-use transmux::TrackId;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use transmux::TrackId;
 
 use broadcast_common::Parse;
 use media_plane::ProgramId;

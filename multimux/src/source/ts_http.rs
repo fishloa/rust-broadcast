@@ -51,10 +51,10 @@
 //! `HealthState` fix plan step 3c made producible, and this is the first
 //! ported source that can actually produce both.
 
-#[cfg(test)]
-use transmux::TrackId;
 use std::convert::Infallible;
 use std::time::Duration;
+#[cfg(test)]
+use transmux::TrackId;
 
 use broadcast_common::Timestamp;
 use futures_util::StreamExt;

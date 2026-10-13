@@ -213,9 +213,9 @@
 //! `on_manifest` (or four protocol-specific equivalents) is Step 5's problem,
 //! once a real FLUTE/MABR/DVR-index writer exists to shape it.
 
-use transmux::TrackId;
 use broadcast_common::Timestamp;
 use bytes::Bytes;
+use transmux::TrackId;
 use transmux::TrackSpec;
 
 use crate::trunk::{SampleCursorItem, SegmentCursorItem};
@@ -723,7 +723,11 @@ mod tests {
         ));
 
         for i in 0u8..5 {
-            writer.publish(TrackId::new(1), crate::trunk::RetentionClass::Timed, sample(i));
+            writer.publish(
+                TrackId::new(1),
+                crate::trunk::RetentionClass::Timed,
+                sample(i),
+            );
         }
 
         // No executor anywhere: draining a cursor and calling `send` is

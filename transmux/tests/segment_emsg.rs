@@ -18,8 +18,8 @@
 //! - ANSI/SCTE 214-3 §8.3.3: SCTE 35 binary scheme for the inband `emsg`
 //!   `urn:scte:scte35:2013:bin`.
 
-use transmux::TrackId;
 use mp4_emsg::{EMSG_BOX_TYPE, EmsgBox, EmsgVersion, PresentationTime};
+use transmux::TrackId;
 use transmux::{FragmentTrackData, Sample, build_media_segment, build_media_segment_with_events};
 
 /// The SCTE 35 scheme URI for binary `splice_info_section` delivery

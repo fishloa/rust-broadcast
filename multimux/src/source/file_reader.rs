@@ -61,10 +61,10 @@
 //! ([`FileReaderConfig::max_retries`]) and the final failure is surfaced rather
 //! than spinning forever at growing intervals.
 
-use transmux::TrackId;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use container_probe::{Format, IsobmffLayout, Probe};

@@ -8439,7 +8439,16 @@ mod tests {
         let mut anchor = AudioAnchor::default();
         let mut events: VecDeque<DemuxEvent> = VecDeque::new();
         let emit = |ts: i128, anchor: &mut AudioAnchor, events: &mut VecDeque<DemuxEvent>| {
-            emit_audio_au(&AudioKind::Aac, SAMPLE_RATE, anchor, &au, ts, ts, TrackId::new(1), events);
+            emit_audio_au(
+                &AudioKind::Aac,
+                SAMPLE_RATE,
+                anchor,
+                &au,
+                ts,
+                ts,
+                TrackId::new(1),
+                events,
+            );
         };
         for n in 0..FRAMES_BEFORE {
             emit(n * PES_INCREMENT_TICKS, &mut anchor, &mut events);

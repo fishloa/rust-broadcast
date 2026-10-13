@@ -4,11 +4,11 @@
 //! the worst case; real readers park on `listen()`. Decision rule and
 //! recorded numbers: `benches/RESULTS.md`.
 
-use transmux::TrackId;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+use transmux::TrackId;
 
 use bytes::Bytes;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};

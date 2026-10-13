@@ -23,9 +23,9 @@
 //!    track, not hardcoded.
 #![cfg(feature = "std")]
 
-use transmux::TrackId;
 use std::fs;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use broadcast_hls::{

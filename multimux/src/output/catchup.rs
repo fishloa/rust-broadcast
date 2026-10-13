@@ -45,10 +45,10 @@
 //! deeper instead of teaching the shared resource route a new filename
 //! grammar.
 
-#[cfg(test)]
-use transmux::TrackId;
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(test)]
+use transmux::TrackId;
 
 use axum::Router;
 use axum::extract::{Path, Query, State};

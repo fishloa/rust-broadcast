@@ -8,8 +8,8 @@
 //! `quick-xml` and asserted against real elements/attributes.
 #![cfg(feature = "std")]
 
-use transmux::TrackId;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::ll_dash::{Chunk, LlDashPackager, LlSegmenter};

@@ -6,8 +6,8 @@
 //! crate's own [`Fmp4Demux`] and compares coded sample bytes against that oracle
 //! — no hardcoded offsets, no raw-passthrough shortcuts.
 
-use transmux::TrackId;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use bytes::Bytes;
@@ -603,7 +603,10 @@ fn one_second_track(
             Sample::new(vec![tag; 8], Some(dts), Some(dts), Some(timescale), true)
         })
         .collect();
-    Track::new(TrackSpec::new(TrackId::new(track_id), timescale, config), samples)
+    Track::new(
+        TrackSpec::new(TrackId::new(track_id), timescale, config),
+        samples,
+    )
 }
 
 /// The resegmenter interleaves the three tracks' samples by decode time. With

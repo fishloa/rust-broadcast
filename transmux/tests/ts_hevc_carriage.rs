@@ -26,8 +26,8 @@
 //! (audio's own keyframe cadence would produce a different count than
 //! HEVC's).
 
-use transmux::TrackId;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;

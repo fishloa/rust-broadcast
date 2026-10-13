@@ -1,9 +1,9 @@
 //! [`HlsClient`] — the sans-IO caller-driven engine.
 
-use transmux::TrackId;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use broadcast_hls::{ByteRange, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PreloadHintType};

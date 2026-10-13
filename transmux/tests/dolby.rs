@@ -4,8 +4,8 @@
 //! The test demuxes real TS fixtures, parses the syncframe BSI, builds the
 //! config box, and asserts byte-exact match with ffmpeg's output.
 
-use transmux::TrackId;
 use broadcast_common::{Parse, Serialize};
+use transmux::TrackId;
 
 use transmux::{
     Ac3SpecificBox, Ac3SyncframeInfo, CodecConfig, Ec3SpecificBox, Ec3SyncframeInfo, TrackSpec,

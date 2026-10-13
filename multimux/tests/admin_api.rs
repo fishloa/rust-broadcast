@@ -20,13 +20,13 @@
 //! exactly the ones the issue calls out as "what distinguishes this from
 //! restart with extra steps".
 
-use transmux::TrackId;
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
+use transmux::TrackId;
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use media_plane::ingress::{

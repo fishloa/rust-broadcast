@@ -12,9 +12,9 @@
 //! 3. `CmafMux::package` bytes == `build_init_segment ++ build_media_segment`
 //!    for the equivalent input (the wrapper is byte-transparent).
 
-use transmux::TrackId;
 use std::fs;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Unpackage};
 use transmux::init_segment::MovieBox;
@@ -77,8 +77,16 @@ fn fmp4_demux_unpackage_two_tracks_correct_counts() {
     // Track order follows the moov: track 1 = AVC video, track 2 = AAC audio.
     let vid = &media.tracks[0];
     let aud = &media.tracks[1];
-    assert_eq!(vid.track_id(), TrackId::new(1), "first track is video track_id=1");
-    assert_eq!(aud.track_id(), TrackId::new(2), "second track is audio track_id=2");
+    assert_eq!(
+        vid.track_id(),
+        TrackId::new(1),
+        "first track is video track_id=1"
+    );
+    assert_eq!(
+        aud.track_id(),
+        TrackId::new(2),
+        "second track is audio track_id=2"
+    );
     assert!(
         matches!(vid.config(), CodecConfig::Avc { .. }),
         "track 1 must be AVC"

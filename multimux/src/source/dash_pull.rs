@@ -84,10 +84,10 @@
 //! tolerated (retried) on a dynamic MPD; a static MPD treats the same `404`
 //! as a hard error.
 
-use transmux::TrackId;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
+use transmux::TrackId;
 
 use broadcast_auth::Credentials;
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};

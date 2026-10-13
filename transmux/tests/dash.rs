@@ -11,8 +11,8 @@
 //! the crate itself computes, not hardcoded literals.
 #![cfg(feature = "std")]
 
-use transmux::TrackId;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Unpackage};
 use transmux::aac_asc::AudioSpecificConfig;

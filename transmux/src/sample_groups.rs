@@ -113,7 +113,12 @@ impl ProducerReferenceTimeBox {
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let mut c = FULLBOX_EXTRA_SIZE;
-        let reference_track_id = TrackId::new(u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]));
+        let reference_track_id = TrackId::new(u32::from_be_bytes([
+            body[c],
+            body[c + 1],
+            body[c + 2],
+            body[c + 3],
+        ]));
         c += 4;
         let ntp_timestamp = u64::from_be_bytes([
             body[c],

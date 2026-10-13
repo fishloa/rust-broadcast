@@ -13,10 +13,10 @@
 //! section: exact demuxer selection, the timeline and loop invariants
 //! (including a recorded mutation proof), pacing, and the robustness cases.
 
-use transmux::TrackId;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use transmux::TrackId;
 
 use container_probe::{Probe, probe_with_budget};
 use media_plane::trunk::{SampleCursorItem, Trunk, TrunkConfig};
