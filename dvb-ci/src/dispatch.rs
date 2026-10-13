@@ -113,17 +113,17 @@ macro_rules! declare_empty_apdu {
         impl<'a> ::broadcast_common::Parse<'a> for $ty {
             type Error = $crate::error::Error;
             fn parse(bytes: &'a [u8]) -> $crate::error::Result<Self> {
-                $crate::objects::parse_empty_apdu(bytes, $tag, $what)?;
-                Ok(Self)
+                let length_form = $crate::objects::parse_empty_apdu(bytes, $tag, $what)?;
+                Ok(Self { length_form })
             }
         }
         impl ::broadcast_common::Serialize for $ty {
             type Error = $crate::error::Error;
             fn serialized_len(&self) -> usize {
-                $crate::objects::empty_apdu_len()
+                $crate::objects::empty_apdu_len(self.length_form)
             }
             fn serialize_into(&self, buf: &mut [u8]) -> $crate::error::Result<usize> {
-                $crate::objects::serialize_empty_apdu($tag, buf)
+                $crate::objects::serialize_empty_apdu($tag, self.length_form, buf)
             }
         }
     };
@@ -138,18 +138,22 @@ macro_rules! declare_opaque_apdu {
         impl<'a> ::broadcast_common::Parse<'a> for $ty<'a> {
             type Error = $crate::error::Error;
             fn parse(bytes: &'a [u8]) -> $crate::error::Result<Self> {
-                let body = $crate::objects::parse_apdu_header(bytes, $tag, $what)?;
-                Ok(Self { $field: body })
+                let (length_form, body) = $crate::objects::parse_apdu_header(bytes, $tag, $what)?;
+                Ok(Self {
+                    length_form,
+                    $field: body,
+                })
             }
         }
         impl ::broadcast_common::Serialize for $ty<'_> {
             type Error = $crate::error::Error;
             fn serialized_len(&self) -> usize {
-                $crate::objects::apdu_len(self.$field.len())
+                $crate::objects::apdu_len(self.$field.len(), self.length_form)
             }
             fn serialize_into(&self, buf: &mut [u8]) -> $crate::error::Result<usize> {
                 let body_len = self.$field.len();
-                let pos = $crate::objects::write_apdu_header($tag, body_len, buf)?;
+                let pos =
+                    $crate::objects::write_apdu_header($tag, body_len, self.length_form, buf)?;
                 buf[pos..pos + body_len].copy_from_slice(self.$field);
                 Ok(pos + body_len)
             }

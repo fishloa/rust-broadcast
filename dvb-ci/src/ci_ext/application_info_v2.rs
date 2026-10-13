@@ -102,12 +102,24 @@ broadcast_common::impl_spec_display!(ApplicationTypeV2, Reserved);
 /// `application_info_enq()` — header-only enquiry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct ApplicationInfoEnq;
+pub struct ApplicationInfoEnq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `enter_menu()` — header-only command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct EnterMenu;
+pub struct EnterMenu {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `application_info()` reply (EN 50221 Table 21, with the v2 type set). The
 /// `menu_string` is the raw top-level menu title text (EN 300 468 Annex A),
@@ -115,6 +127,12 @@ pub struct EnterMenu;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ApplicationInfo<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `application_type`.
     pub application_type: ApplicationTypeV2,
     /// `application_manufacturer` (16-bit).
@@ -136,34 +154,50 @@ use crate::objects::application_info as v1;
 impl<'a> Parse<'a> for ApplicationInfoEnq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        v1::ApplicationInfoEnq::parse(bytes)?;
-        Ok(Self)
+        let v = v1::ApplicationInfoEnq::parse(bytes)?;
+        Ok(Self {
+            length_form: v.length_form,
+        })
     }
 }
 impl Serialize for ApplicationInfoEnq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        v1::ApplicationInfoEnq.serialized_len()
+        v1::ApplicationInfoEnq {
+            length_form: self.length_form,
+        }
+        .serialized_len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        v1::ApplicationInfoEnq.serialize_into(buf)
+        v1::ApplicationInfoEnq {
+            length_form: self.length_form,
+        }
+        .serialize_into(buf)
     }
 }
 
 impl<'a> Parse<'a> for EnterMenu {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        v1::EnterMenu::parse(bytes)?;
-        Ok(Self)
+        let v = v1::EnterMenu::parse(bytes)?;
+        Ok(Self {
+            length_form: v.length_form,
+        })
     }
 }
 impl Serialize for EnterMenu {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        v1::EnterMenu.serialized_len()
+        v1::EnterMenu {
+            length_form: self.length_form,
+        }
+        .serialized_len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        v1::EnterMenu.serialize_into(buf)
+        v1::EnterMenu {
+            length_form: self.length_form,
+        }
+        .serialize_into(buf)
     }
 }
 
@@ -174,6 +208,7 @@ impl<'a> Parse<'a> for ApplicationInfo<'a> {
     fn parse(bytes: &'a [u8]) -> Result<Self> {
         let v = v1::ApplicationInfo::parse(bytes)?;
         Ok(Self {
+            length_form: v.length_form,
             application_type: ApplicationTypeV2::from_u8(v.application_type.to_u8()),
             application_manufacturer: v.application_manufacturer,
             manufacturer_code: v.manufacturer_code,
@@ -184,6 +219,7 @@ impl<'a> Parse<'a> for ApplicationInfo<'a> {
 impl ApplicationInfo<'_> {
     fn as_v1(&self) -> v1::ApplicationInfo<'_> {
         v1::ApplicationInfo {
+            length_form: self.length_form,
             application_type: v1::ApplicationType::from_u8(self.application_type.to_u8()),
             application_manufacturer: self.application_manufacturer,
             manufacturer_code: self.manufacturer_code,
@@ -222,17 +258,21 @@ mod tests {
 
     #[test]
     fn enq_and_enter_menu_round_trip() {
-        assert_eq!(ApplicationInfoEnq.to_bytes(), [0x9F, 0x80, 0x20, 0x00]);
-        assert_eq!(EnterMenu.to_bytes(), [0x9F, 0x80, 0x22, 0x00]);
+        assert_eq!(
+            ApplicationInfoEnq::default().to_bytes(),
+            [0x9F, 0x80, 0x20, 0x00]
+        );
+        assert_eq!(EnterMenu::default().to_bytes(), [0x9F, 0x80, 0x22, 0x00]);
         assert_eq!(
             ApplicationInfoEnq::parse(&[0x9F, 0x80, 0x20, 0x00]).unwrap(),
-            ApplicationInfoEnq
+            ApplicationInfoEnq::default()
         );
     }
 
     #[test]
     fn application_info_round_trips_and_bites() {
         let info = ApplicationInfo {
+            length_form: crate::length::LengthForm::Minimal,
             application_type: ApplicationTypeV2::AccessibilityAids,
             application_manufacturer: 0x1234,
             manufacturer_code: 0x5678,
@@ -266,6 +306,7 @@ mod tests {
     #[test]
     fn dispatch_routes_each_tag() {
         let info = ApplicationInfo {
+            length_form: crate::length::LengthForm::Minimal,
             application_type: ApplicationTypeV2::SoftwareUpgrade,
             application_manufacturer: 0,
             manufacturer_code: 0,

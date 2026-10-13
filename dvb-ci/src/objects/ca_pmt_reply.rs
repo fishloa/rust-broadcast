@@ -86,6 +86,12 @@ pub struct CaPmtReplyStream {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CaPmtReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `program_number`.
     pub program_number: u16,
     /// 5-bit `version_number`.
@@ -105,7 +111,8 @@ const ES_LEN: usize = 3; // reserved/elem_pid(2) + flag/enable(1)
 impl<'a> Parse<'a> for CaPmtReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::CA_PMT_REPLY, "ca_pmt_reply")?;
+        let (length_form, body) =
+            super::parse_apdu_header(bytes, tag::CA_PMT_REPLY, "ca_pmt_reply")?;
         if body.len() < REPLY_PREFIX {
             return Err(Error::BufferTooShort {
                 need: REPLY_PREFIX,
@@ -149,6 +156,7 @@ impl<'a> Parse<'a> for CaPmtReply {
         }
 
         Ok(Self {
+            length_form,
             program_number,
             version_number,
             current_next_indicator,
@@ -161,7 +169,7 @@ impl<'a> Parse<'a> for CaPmtReply {
 impl Serialize for CaPmtReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(REPLY_PREFIX + self.streams.len() * ES_LEN)
+        super::apdu_len(REPLY_PREFIX + self.streams.len() * ES_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         super::fit_bits(
@@ -170,7 +178,7 @@ impl Serialize for CaPmtReply {
             "ca_pmt_reply version_number",
         )?;
         let body = REPLY_PREFIX + self.streams.len() * ES_LEN;
-        let mut pos = super::write_apdu_header(tag::CA_PMT_REPLY, body, buf)?;
+        let mut pos = super::write_apdu_header(tag::CA_PMT_REPLY, body, self.length_form, buf)?;
         buf[pos..pos + 2].copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(2)='11', version(5), current_next(1). Range-checked above.
         buf[pos + 2] = 0xC0 | (self.version_number << 1) | u8::from(self.current_next_indicator);
@@ -209,6 +217,7 @@ mod tests {
     #[test]
     fn reply_with_prog_and_es_enable_round_trips() {
         let r = CaPmtReply {
+            length_form: crate::length::LengthForm::Minimal,
             program_number: 0x0001,
             version_number: 1,
             current_next_indicator: true,
@@ -235,6 +244,7 @@ mod tests {
     #[test]
     fn reply_without_enable_flags() {
         let r = CaPmtReply {
+            length_form: crate::length::LengthForm::Minimal,
             program_number: 9,
             version_number: 0,
             current_next_indicator: true,
@@ -262,6 +272,7 @@ mod tests {
         // Before the fix, 0x20 (exceeds 5 bits) silently wrapped to 0x00 in
         // the version_number field and returned Ok.
         let r = CaPmtReply {
+            length_form: crate::length::LengthForm::Minimal,
             program_number: 1,
             version_number: 0x20,
             current_next_indicator: true,
@@ -278,6 +289,7 @@ mod tests {
     #[test]
     fn max_version_number_still_serializes_and_round_trips() {
         let r = CaPmtReply {
+            length_form: crate::length::LengthForm::Minimal,
             program_number: 1,
             version_number: 0x1F, // the 5-bit maximum
             current_next_indicator: true,
@@ -291,6 +303,7 @@ mod tests {
     #[test]
     fn mutating_enable_changes_bytes() {
         let r = CaPmtReply {
+            length_form: crate::length::LengthForm::Minimal,
             program_number: 1,
             version_number: 1,
             current_next_indicator: true,

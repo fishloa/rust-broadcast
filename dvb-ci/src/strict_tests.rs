@@ -24,6 +24,42 @@ fn apdu(tag: ApduTag, body: &[u8]) -> Vec<u8> {
     v
 }
 
+/// Rewrite the `length_field` of `wire` (which starts with a `tag_len`-byte
+/// tag and a minimal length) into the long form with `octets` length octets.
+fn widen(wire: &[u8], tag_len: usize, octets: usize) -> Vec<u8> {
+    let (value, hdr) = crate::length::decode(&wire[tag_len..]).unwrap();
+    let mut out = wire[..tag_len].to_vec();
+    out.push(0x80 | u8::try_from(octets).unwrap());
+    for i in (0..octets).rev() {
+        out.push(u8::try_from((value >> (8 * i)) & 0xFF).unwrap());
+    }
+    out.extend_from_slice(&wire[tag_len + hdr..]);
+    out
+}
+
+/// r10-W-4: a non-minimal `length_field` (`81 NN`, `82 00 NN`, `83 00 00 NN`,
+/// `84 00 00 00 NN`) must parse and re-serialize byte-for-byte — the real CAM
+/// traffic form (`82 00 09`, dvb-ci-runtime #337) is not rewritten minimally.
+fn assert_forms_round_trip(
+    name: &str,
+    wire: &[u8],
+    tag_len: usize,
+    rt: &dyn Fn(&[u8]) -> Result<Vec<u8>>,
+) {
+    for octets in 1..=crate::length::MAX_LENGTH_OCTETS as usize {
+        let wide = widen(wire, tag_len, octets);
+        if octets == 1 && wide == wire {
+            continue; // value >= 0x80: the 1-octet long form IS the minimal one
+        }
+        let out = rt(&wide).unwrap_or_else(|e| panic!("{name}: {octets}-octet form: {e:?}"));
+        assert_eq!(
+            out, wide,
+            "{name}: {octets}-octet length form not preserved"
+        );
+        assert_ne!(out, wire, "{name}: re-encoded minimally");
+    }
+}
+
 fn check(name: &str, tag: ApduTag, explicit: Option<&[u8]>, rt: &dyn Fn(&[u8]) -> Result<Vec<u8>>) {
     let candidates: Vec<Vec<u8>> = match explicit {
         Some(b) => alloc::vec![b.to_vec()],
@@ -38,6 +74,7 @@ fn check(name: &str, tag: ApduTag, explicit: Option<&[u8]>, rt: &dyn Fn(&[u8]) -
             rt(&wire).is_ok_and(|out| out == wire)
         })
         .unwrap_or_else(|| panic!("{name}: no valid body found"));
+    assert_forms_round_trip(name, &apdu(tag, &valid), tag.to_bytes().len(), rt);
     let mut padded = valid.clone();
     padded.push(0xEE);
     let err = rt(&apdu(tag, &padded)).expect_err(name);
@@ -255,4 +292,100 @@ fn generated_dispatch_enums_agree_with_their_tag_lists() {
     drift!(LscV4Apdu);
     drift!(MultistreamApdu);
     drift!(SampleDecryptionApdu);
+}
+
+/// Every resource-scoped dispatch enum: for each declared tag that some probe
+/// body round-trips through, the same APDU in every non-minimal length form
+/// re-serializes byte-for-byte (r10-W-4).
+macro_rules! forms {
+    ($covered:ident, $ty:ty) => {
+        for &tag in <$ty>::TAGS {
+            let rt = |b: &[u8]| -> Result<Vec<u8>> { <$ty>::parse(b)?.try_to_bytes() };
+            let hit = (0..=MAX_PROBE_BODY)
+                .flat_map(|n| FILLS.iter().map(move |&f| alloc::vec![f; n]))
+                .map(|b| apdu(tag, &b))
+                .find(|wire| rt(wire).is_ok_and(|out| &out == wire));
+            if let Some(wire) = hit {
+                assert_forms_round_trip(stringify!($ty), &wire, 3, &rt);
+                $covered += 1;
+            }
+        }
+    };
+}
+
+#[test]
+fn non_minimal_length_forms_round_trip_across_the_dispatch_enums() {
+    use crate::ci_ext::{
+        application_info_v2::ApplicationInfoV2Apdu, application_mmi::ApplicationMmiApdu,
+        ca_pipeline::CaPipelineApdu, copy_protection::CopyProtectionApdu,
+        event_manager::EventManagerApdu, power_manager::PowerManagerApdu,
+        resource_manager_v2::ResourceManagerV2Apdu, service_gateway::ServiceGatewayApdu,
+        software_download::DownloadApdu, status_query::StatusQueryApdu,
+        stream_input::StreamInputApdu,
+    };
+    use crate::ci_plus::{
+        ca_support::CaSupportApdu, cicam_player::CicamPlayerApdu,
+        content_control::ContentControlApdu, file_retrieval::FileRetrievalApdu,
+        low_speed_comms_v4::LscV4Apdu, multistream::MultistreamApdu,
+        sample_decryption::SampleDecryptionApdu,
+    };
+    let mut covered = 0usize;
+    forms!(covered, ApplicationInfoV2Apdu);
+    forms!(covered, ApplicationMmiApdu);
+    forms!(covered, CaPipelineApdu);
+    forms!(covered, CopyProtectionApdu);
+    forms!(covered, EventManagerApdu);
+    forms!(covered, PowerManagerApdu);
+    forms!(covered, ResourceManagerV2Apdu);
+    forms!(covered, ServiceGatewayApdu);
+    forms!(covered, DownloadApdu);
+    forms!(covered, StatusQueryApdu);
+    forms!(covered, StreamInputApdu);
+    forms!(covered, CaSupportApdu);
+    forms!(covered, CicamPlayerApdu);
+    forms!(covered, ContentControlApdu);
+    forms!(covered, FileRetrievalApdu);
+    forms!(covered, LscV4Apdu);
+    forms!(covered, MultistreamApdu);
+    forms!(covered, SampleDecryptionApdu);
+    assert!(covered >= 40, "only {covered} APDU tags were probed");
+}
+
+/// The EN 50221 `objects/` APDUs (no dispatch enum): explicit wires, each
+/// parsed and re-serialized in every non-minimal length form.
+#[test]
+fn non_minimal_length_forms_round_trip_across_the_en50221_objects() {
+    use crate::objects::{
+        application_info::{ApplicationInfo, ApplicationInfoEnq, EnterMenu},
+        ca_info::{CaInfo, CaInfoEnq},
+        date_time::DateTimeEnq,
+        resource_manager::{Profile, ProfileChange, ProfileEnq},
+    };
+    macro_rules! obj {
+        ($ty:ty, $wire:expr) => {{
+            let wire: &[u8] = &$wire;
+            let rt = |b: &[u8]| -> Result<Vec<u8>> { <$ty>::parse(b)?.try_to_bytes() };
+            assert_eq!(rt(wire).unwrap(), wire, "{}: baseline", stringify!($ty));
+            assert_forms_round_trip(stringify!($ty), wire, 3, &rt);
+        }};
+    }
+    obj!(ApplicationInfoEnq, [0x9F, 0x80, 0x20, 0x00]);
+    obj!(EnterMenu, [0x9F, 0x80, 0x22, 0x00]);
+    obj!(
+        ApplicationInfo<'_>,
+        [
+            0x9F, 0x80, 0x21, 0x08, 0x01, 0x12, 0x34, 0x56, 0x78, 0x02, 0x41, 0x42
+        ]
+    );
+    obj!(CaInfoEnq, [0x9F, 0x80, 0x30, 0x00]);
+    obj!(CaInfo, [0x9F, 0x80, 0x31, 0x04, 0x01, 0x00, 0x09, 0x63]);
+    obj!(ProfileEnq, [0x9F, 0x80, 0x10, 0x00]);
+    obj!(ProfileChange, [0x9F, 0x80, 0x12, 0x00]);
+    obj!(
+        Profile,
+        [
+            0x9F, 0x80, 0x11, 0x08, 0x00, 0x01, 0x00, 0x41, 0x00, 0x02, 0x00, 0x41
+        ]
+    );
+    obj!(DateTimeEnq, [0x9F, 0x84, 0x40, 0x01, 0x05]);
 }

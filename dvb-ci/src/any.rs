@@ -45,6 +45,10 @@ macro_rules! declare_apdus {
                 /// The raw body bytes.
                 #[cfg_attr(feature = "serde", serde(with = "crate::objects::bytes_serde"))]
                 body: &$lt [u8],
+                /// How the `length_field` was coded (preserved so the
+                /// unit re-serializes byte-for-byte).
+                #[cfg_attr(feature = "serde", serde(skip))]
+                length_form: crate::length::LengthForm,
             },
         }
 
@@ -98,8 +102,8 @@ macro_rules! declare_apdus {
                         $( || $( t == $alt )||+ )? =>
                         <$($path)::+>::parse(bytes).map(Self::$variant), )+
                     _ => {
-                        let body = crate::objects::parse_apdu_header(bytes, tag, "unknown apdu")?;
-                        Ok(Self::Unknown { tag, body })
+                        let (length_form, body) = crate::objects::parse_apdu_header(bytes, tag, "unknown apdu")?;
+                        Ok(Self::Unknown { tag, body, length_form })
                     }
                 }
             }
@@ -110,14 +114,14 @@ macro_rules! declare_apdus {
             fn serialized_len(&self) -> usize {
                 match self {
                     $( Self::$variant(v) => v.serialized_len(), )+
-                    Self::Unknown { body, .. } => crate::objects::apdu_len(body.len()),
+                    Self::Unknown { body, length_form, .. } => crate::objects::apdu_len(body.len(), *length_form),
                 }
             }
             fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
                 match self {
                     $( Self::$variant(v) => v.serialize_into(buf), )+
-                    Self::Unknown { tag, body } => {
-                        let mut pos = crate::objects::write_apdu_header(*tag, body.len(), buf)?;
+                    Self::Unknown { tag, body, length_form } => {
+                        let mut pos = crate::objects::write_apdu_header(*tag, body.len(), *length_form, buf)?;
                         buf[pos..pos + body.len()].copy_from_slice(body);
                         pos += body.len();
                         Ok(pos)
@@ -205,6 +209,7 @@ mod tests {
     #[test]
     fn dispatch_ca_pmt() {
         let pmt = CaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 1,
             version_number: 0,
@@ -236,6 +241,7 @@ mod tests {
         use crate::objects::mmi_high::Text;
         // text_more (9F8804) must dispatch to the Text variant, not Unknown.
         let t = Text {
+            length_form: crate::length::LengthForm::Minimal,
             more: true,
             text_chars: b"HI",
         };

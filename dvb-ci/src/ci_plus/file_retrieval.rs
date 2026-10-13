@@ -91,6 +91,12 @@ broadcast_common::impl_spec_display!(AckCode, Reserved);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FileSystemOffer<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `DomainIdentifier` body (`DomainIdentifierLength` bytes) — opaque
     /// middleware-defined identifier (URL / UUID / DVB-registered id).
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
@@ -103,7 +109,8 @@ const OFFER_PREFIX: usize = 1;
 impl<'a> Parse<'a> for FileSystemOffer<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::FILE_SYSTEM_OFFER, "FileSystemOffer")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::FILE_SYSTEM_OFFER, "FileSystemOffer")?;
         if body.len() < OFFER_PREFIX {
             return Err(Error::BufferTooShort {
                 need: OFFER_PREFIX,
@@ -121,6 +128,7 @@ impl<'a> Parse<'a> for FileSystemOffer<'a> {
             });
         }
         Ok(Self {
+            length_form,
             domain_identifier: &body[OFFER_PREFIX..end],
         })
     }
@@ -128,7 +136,10 @@ impl<'a> Parse<'a> for FileSystemOffer<'a> {
 impl Serialize for FileSystemOffer<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(OFFER_PREFIX + self.domain_identifier.len())
+        objects::apdu_len(
+            OFFER_PREFIX + self.domain_identifier.len(),
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         objects::fit_bits(
@@ -137,7 +148,8 @@ impl Serialize for FileSystemOffer<'_> {
             "FileSystemOffer DomainIdentifierLength",
         )?;
         let body_len = OFFER_PREFIX + self.domain_identifier.len();
-        let pos = objects::write_apdu_header(tag::FILE_SYSTEM_OFFER, body_len, buf)?;
+        let pos =
+            objects::write_apdu_header(tag::FILE_SYSTEM_OFFER, body_len, self.length_form, buf)?;
         buf[pos] = self.domain_identifier.len() as u8;
         buf[pos + OFFER_PREFIX..pos + body_len].copy_from_slice(self.domain_identifier);
         Ok(pos + body_len)
@@ -152,6 +164,12 @@ impl Serialize for FileSystemOffer<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FileSystemAck {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `AckCode` (8) — Table 74.
     pub ack_code: AckCode,
 }
@@ -161,7 +179,8 @@ const ACK_BODY: usize = 1;
 impl<'a> Parse<'a> for FileSystemAck {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::FILE_SYSTEM_ACK, "FileSystemAck")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::FILE_SYSTEM_ACK, "FileSystemAck")?;
         if body.len() < ACK_BODY {
             return Err(Error::BufferTooShort {
                 need: ACK_BODY,
@@ -171,6 +190,7 @@ impl<'a> Parse<'a> for FileSystemAck {
         }
         crate::objects::reject_trailing_body(body, ACK_BODY, "FileSystemAck")?;
         Ok(Self {
+            length_form,
             ack_code: AckCode::from_u8(body[0]),
         })
     }
@@ -178,10 +198,11 @@ impl<'a> Parse<'a> for FileSystemAck {
 impl Serialize for FileSystemAck {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(ACK_BODY)
+        objects::apdu_len(ACK_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::FILE_SYSTEM_ACK, ACK_BODY, buf)?;
+        let pos =
+            objects::write_apdu_header(tag::FILE_SYSTEM_ACK, ACK_BODY, self.length_form, buf)?;
         buf[pos] = self.ack_code.to_u8();
         Ok(pos + ACK_BODY)
     }
@@ -198,6 +219,12 @@ impl Serialize for FileSystemAck {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FileRequest<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// Opaque CI Plus V1.3 §14.5.1 body (whole `length_field()` body, verbatim).
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub body: &'a [u8],
@@ -206,17 +233,19 @@ pub struct FileRequest<'a> {
 impl<'a> Parse<'a> for FileRequest<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::FILE_REQUEST, "FileRequest")?;
-        Ok(Self { body })
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::FILE_REQUEST, "FileRequest")?;
+        Ok(Self { length_form, body })
     }
 }
 impl Serialize for FileRequest<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(self.body.len())
+        objects::apdu_len(self.body.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::FILE_REQUEST, self.body.len(), buf)?;
+        let pos =
+            objects::write_apdu_header(tag::FILE_REQUEST, self.body.len(), self.length_form, buf)?;
         buf[pos..pos + self.body.len()].copy_from_slice(self.body);
         Ok(pos + self.body.len())
     }
@@ -229,6 +258,12 @@ impl Serialize for FileRequest<'_> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FileAcknowledge<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// Opaque CI Plus V1.3 §14.5.2 body (whole `length_field()` body, verbatim).
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub body: &'a [u8],
@@ -237,17 +272,23 @@ pub struct FileAcknowledge<'a> {
 impl<'a> Parse<'a> for FileAcknowledge<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::FILE_ACKNOWLEDGE, "FileAcknowledge")?;
-        Ok(Self { body })
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::FILE_ACKNOWLEDGE, "FileAcknowledge")?;
+        Ok(Self { length_form, body })
     }
 }
 impl Serialize for FileAcknowledge<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(self.body.len())
+        objects::apdu_len(self.body.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::FILE_ACKNOWLEDGE, self.body.len(), buf)?;
+        let pos = objects::write_apdu_header(
+            tag::FILE_ACKNOWLEDGE,
+            self.body.len(),
+            self.length_form,
+            buf,
+        )?;
         buf[pos..pos + self.body.len()].copy_from_slice(self.body);
         Ok(pos + self.body.len())
     }
@@ -282,6 +323,7 @@ mod tests {
     fn offer_round_trips_and_bites() {
         // DomainIdentifier "ab".
         let o = FileSystemOffer {
+            length_form: crate::length::LengthForm::Minimal,
             domain_identifier: &[0x61, 0x62],
         };
         let bytes = o.to_bytes();
@@ -289,6 +331,7 @@ mod tests {
         assert_eq!(bytes, [0x9F, 0x94, 0x00, 0x03, 0x02, 0x61, 0x62]);
         assert_eq!(FileSystemOffer::parse(&bytes).unwrap(), o);
         let other = FileSystemOffer {
+            length_form: crate::length::LengthForm::Minimal,
             domain_identifier: &[0x61, 0x63],
         };
         assert_ne!(bytes, other.to_bytes());
@@ -297,6 +340,7 @@ mod tests {
     #[test]
     fn offer_empty_domain() {
         let o = FileSystemOffer {
+            length_form: crate::length::LengthForm::Minimal,
             domain_identifier: &[],
         };
         let bytes = o.to_bytes();
@@ -307,12 +351,14 @@ mod tests {
     #[test]
     fn ack_round_trips() {
         let a = FileSystemAck {
+            length_form: crate::length::LengthForm::Minimal,
             ack_code: AckCode::UnknownDomainIdentifier,
         };
         let bytes = a.to_bytes();
         assert_eq!(bytes, [0x9F, 0x94, 0x01, 0x01, 0x02]);
         assert_eq!(FileSystemAck::parse(&bytes).unwrap(), a);
         let ok = FileSystemAck {
+            length_form: crate::length::LengthForm::Minimal,
             ack_code: AckCode::Ok,
         };
         assert_eq!(ok.to_bytes()[4], 0x01);
@@ -321,6 +367,7 @@ mod tests {
     #[test]
     fn file_request_opaque_body_round_trips() {
         let r = FileRequest {
+            length_form: crate::length::LengthForm::Minimal,
             body: &[0x01, 0x02, 0x03],
         };
         let bytes = r.to_bytes();
@@ -331,6 +378,7 @@ mod tests {
     #[test]
     fn file_acknowledge_opaque_body_round_trips() {
         let a = FileAcknowledge {
+            length_form: crate::length::LengthForm::Minimal,
             body: &[0xAA, 0xBB],
         };
         let bytes = a.to_bytes();
@@ -342,15 +390,25 @@ mod tests {
     fn dispatch_routes_each_tag() {
         let cases: alloc::vec::Vec<alloc::vec::Vec<u8>> = alloc::vec![
             FileSystemOffer {
+                length_form: crate::length::LengthForm::Minimal,
                 domain_identifier: &[0x61]
             }
             .to_bytes(),
             FileSystemAck {
+                length_form: crate::length::LengthForm::Minimal,
                 ack_code: AckCode::Ok
             }
             .to_bytes(),
-            FileRequest { body: &[0x00] }.to_bytes(),
-            FileAcknowledge { body: &[0x00] }.to_bytes(),
+            FileRequest {
+                length_form: crate::length::LengthForm::Minimal,
+                body: &[0x00]
+            }
+            .to_bytes(),
+            FileAcknowledge {
+                length_form: crate::length::LengthForm::Minimal,
+                body: &[0x00]
+            }
+            .to_bytes(),
         ];
         for c in &cases {
             assert_eq!(&FileRetrievalApdu::parse(c).unwrap().to_bytes(), c);
@@ -367,6 +425,7 @@ mod tests {
         // the fix.
         let big = alloc::vec![0x61u8; 256];
         let offer = FileSystemOffer {
+            length_form: crate::length::LengthForm::Minimal,
             domain_identifier: &big,
         };
         let mut buf = alloc::vec![0u8; 300];
@@ -380,6 +439,7 @@ mod tests {
     fn max_domain_identifier_still_serializes_and_round_trips() {
         let data = alloc::vec![0x61u8; 255];
         let offer = FileSystemOffer {
+            length_form: crate::length::LengthForm::Minimal,
             domain_identifier: &data,
         };
         let bytes = offer.to_bytes();

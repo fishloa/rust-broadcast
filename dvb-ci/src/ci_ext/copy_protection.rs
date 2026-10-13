@@ -79,6 +79,12 @@ broadcast_common::impl_spec_display!(CpStatus, Reserved);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CpQuery {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// 24-bit `CopyProtectionID` (an IEEE `company_id`).
     pub copy_protection_id: u32,
 }
@@ -87,6 +93,12 @@ pub struct CpQuery {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CpReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// 24-bit `CopyProtectionID`.
     pub copy_protection_id: u32,
     /// `Status`.
@@ -98,6 +110,12 @@ pub struct CpReply {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CpCommand<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// 24-bit `CopyProtectionID`.
     pub copy_protection_id: u32,
     /// Opaque command bytes.
@@ -110,6 +128,12 @@ pub struct CpCommand<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CpResponse<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// 24-bit `CopyProtectionID`.
     pub copy_protection_id: u32,
     /// Opaque response bytes.
@@ -140,7 +164,7 @@ fn write_cp_id(id: u32, buf: &mut [u8]) -> Result<()> {
 impl<'a> Parse<'a> for CpQuery {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::CP_QUERY, "cp_query")?;
+        let (length_form, body) = objects::parse_apdu_header(bytes, tag::CP_QUERY, "cp_query")?;
         if body.len() < CP_ID_LEN {
             return Err(Error::BufferTooShort {
                 need: CP_ID_LEN,
@@ -149,6 +173,7 @@ impl<'a> Parse<'a> for CpQuery {
             });
         }
         Ok(Self {
+            length_form,
             copy_protection_id: read_cp_id(body),
         })
     }
@@ -156,10 +181,10 @@ impl<'a> Parse<'a> for CpQuery {
 impl Serialize for CpQuery {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(CP_ID_LEN)
+        objects::apdu_len(CP_ID_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::CP_QUERY, CP_ID_LEN, buf)?;
+        let pos = objects::write_apdu_header(tag::CP_QUERY, CP_ID_LEN, self.length_form, buf)?;
         write_cp_id(self.copy_protection_id, &mut buf[pos..])?;
         Ok(pos + CP_ID_LEN)
     }
@@ -173,7 +198,7 @@ const CP_REPLY_BODY: usize = CP_ID_LEN + 1;
 impl<'a> Parse<'a> for CpReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::CP_REPLY, "cp_reply")?;
+        let (length_form, body) = objects::parse_apdu_header(bytes, tag::CP_REPLY, "cp_reply")?;
         if body.len() < CP_REPLY_BODY {
             return Err(Error::BufferTooShort {
                 need: CP_REPLY_BODY,
@@ -183,6 +208,7 @@ impl<'a> Parse<'a> for CpReply {
         }
         crate::objects::reject_trailing_body(body, CP_REPLY_BODY, "cp_reply")?;
         Ok(Self {
+            length_form,
             copy_protection_id: read_cp_id(body),
             status: CpStatus::from_u8(body[CP_ID_LEN]),
         })
@@ -191,10 +217,10 @@ impl<'a> Parse<'a> for CpReply {
 impl Serialize for CpReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(CP_REPLY_BODY)
+        objects::apdu_len(CP_REPLY_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::CP_REPLY, CP_REPLY_BODY, buf)?;
+        let pos = objects::write_apdu_header(tag::CP_REPLY, CP_REPLY_BODY, self.length_form, buf)?;
         write_cp_id(self.copy_protection_id, &mut buf[pos..])?;
         buf[pos + CP_ID_LEN] = self.status.to_u8();
         Ok(pos + CP_REPLY_BODY)
@@ -206,7 +232,7 @@ impl Serialize for CpReply {
 impl<'a> Parse<'a> for CpCommand<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::CP_COMMAND, "cp_command")?;
+        let (length_form, body) = objects::parse_apdu_header(bytes, tag::CP_COMMAND, "cp_command")?;
         if body.len() < CP_ID_LEN {
             return Err(Error::BufferTooShort {
                 need: CP_ID_LEN,
@@ -215,6 +241,7 @@ impl<'a> Parse<'a> for CpCommand<'a> {
             });
         }
         Ok(Self {
+            length_form,
             copy_protection_id: read_cp_id(body),
             command_bytes: &body[CP_ID_LEN..],
         })
@@ -223,11 +250,11 @@ impl<'a> Parse<'a> for CpCommand<'a> {
 impl Serialize for CpCommand<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(CP_ID_LEN + self.command_bytes.len())
+        objects::apdu_len(CP_ID_LEN + self.command_bytes.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = CP_ID_LEN + self.command_bytes.len();
-        let mut pos = objects::write_apdu_header(tag::CP_COMMAND, body_len, buf)?;
+        let mut pos = objects::write_apdu_header(tag::CP_COMMAND, body_len, self.length_form, buf)?;
         write_cp_id(self.copy_protection_id, &mut buf[pos..])?;
         pos += CP_ID_LEN;
         buf[pos..pos + self.command_bytes.len()].copy_from_slice(self.command_bytes);
@@ -240,7 +267,8 @@ impl Serialize for CpCommand<'_> {
 impl<'a> Parse<'a> for CpResponse<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::CP_RESPONSE, "cp_response")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::CP_RESPONSE, "cp_response")?;
         if body.len() < CP_ID_LEN {
             return Err(Error::BufferTooShort {
                 need: CP_ID_LEN,
@@ -249,6 +277,7 @@ impl<'a> Parse<'a> for CpResponse<'a> {
             });
         }
         Ok(Self {
+            length_form,
             copy_protection_id: read_cp_id(body),
             response_bytes: &body[CP_ID_LEN..],
         })
@@ -257,11 +286,12 @@ impl<'a> Parse<'a> for CpResponse<'a> {
 impl Serialize for CpResponse<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(CP_ID_LEN + self.response_bytes.len())
+        objects::apdu_len(CP_ID_LEN + self.response_bytes.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = CP_ID_LEN + self.response_bytes.len();
-        let mut pos = objects::write_apdu_header(tag::CP_RESPONSE, body_len, buf)?;
+        let mut pos =
+            objects::write_apdu_header(tag::CP_RESPONSE, body_len, self.length_form, buf)?;
         write_cp_id(self.copy_protection_id, &mut buf[pos..])?;
         pos += CP_ID_LEN;
         buf[pos..pos + self.response_bytes.len()].copy_from_slice(self.response_bytes);
@@ -294,6 +324,7 @@ mod tests {
     fn copy_protection_id_over_24_bits_is_rejected_not_truncated() {
         // 0x01AABBCC used to serialize as AA BB CC (top byte silently lost).
         let q = CpQuery {
+            length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0x01AA_BBCC,
         };
         let mut buf = [0u8; 16];
@@ -303,6 +334,7 @@ mod tests {
         ));
         // The 24-bit maximum still round-trips.
         let max = CpQuery {
+            length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0x00FF_FFFF,
         };
         assert_eq!(max.to_bytes(), [0x9F, 0x80, 0x00, 0x03, 0xFF, 0xFF, 0xFF]);
@@ -311,12 +343,14 @@ mod tests {
     #[test]
     fn cp_query_round_trips_and_bites() {
         let q = CpQuery {
+            length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0xAABBCC,
         };
         let bytes = q.to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x00, 0x03, 0xAA, 0xBB, 0xCC]);
         assert_eq!(CpQuery::parse(&bytes).unwrap(), q);
         let other = CpQuery {
+            length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0xAABBCD,
         };
         assert_ne!(bytes, other.to_bytes());
@@ -325,6 +359,7 @@ mod tests {
     #[test]
     fn cp_reply_round_trips_and_bites() {
         let r = CpReply {
+            length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0x010203,
             status: CpStatus::Active,
         };
@@ -341,6 +376,7 @@ mod tests {
     #[test]
     fn cp_command_round_trips_and_bites() {
         let c = CpCommand {
+            length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0x112233,
             command_bytes: &[0xDE, 0xAD, 0xBE, 0xEF],
         };
@@ -354,6 +390,7 @@ mod tests {
         );
         assert_eq!(CpCommand::parse(&bytes).unwrap(), c);
         let other = CpCommand {
+            length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0x112233,
             command_bytes: &[0xDE, 0xAD, 0xBE, 0x00],
         };
@@ -363,6 +400,7 @@ mod tests {
     #[test]
     fn cp_response_round_trips() {
         let r = CpResponse {
+            length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0x445566,
             response_bytes: &[0x01, 0x02],
         };
@@ -377,6 +415,7 @@ mod tests {
     #[test]
     fn dispatch_routes_each_tag() {
         let q = CpQuery {
+            length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0,
         }
         .to_bytes();
@@ -385,6 +424,7 @@ mod tests {
             CopyProtectionApdu::CpQuery(_)
         ));
         let resp = CpResponse {
+            length_form: crate::length::LengthForm::Minimal,
             copy_protection_id: 0x1,
             response_bytes: &[0xFF],
         }

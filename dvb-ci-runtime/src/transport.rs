@@ -21,16 +21,22 @@ use std::time::Duration;
 use broadcast_common::{Parse, Serialize};
 use dvb_ci::tpdu::{CommandTpdu, DataBlock, ResponseTpdu, SbValue, TcObject, create_t_c, tags};
 
-/// Length of a standalone/appended `T_SB` object: `tag · 0x02 · t_c_id · SB`.
-const SB_OBJECT_LEN: usize = 4;
+/// `length_field` value of a `T_SB` object (`t_c_id` + `SB_value`).
+const SB_LENGTH_VALUE: usize = 2;
 
-/// Parse a `T_SB` object (`0x80 0x02 t_c_id sb_value`) at the start of `bytes`.
+/// Parse a `T_SB` object (`0x80 · length_field(=2) · t_c_id · sb_value`) at the
+/// start of `bytes`. The `length_field` is decoded, not assumed to be the
+/// single byte `0x02`: a CAM may code it in a long form (`80 82 00 02 ..`).
 fn parse_sb(bytes: &[u8]) -> Option<(u8, SbValue)> {
-    if bytes.len() >= SB_OBJECT_LEN && bytes[0] == tags::SB && bytes[1] == 0x02 {
-        Some((bytes[2], SbValue(bytes[3])))
-    } else {
-        None
+    if bytes.first() != Some(&tags::SB) {
+        return None;
     }
+    let (len, hdr) = dvb_ci::length::decode(&bytes[1..]).ok()?;
+    if len != SB_LENGTH_VALUE {
+        return None;
+    }
+    let body = bytes.get(1 + hdr..1 + hdr + SB_LENGTH_VALUE)?;
+    Some((body[0], SbValue(body[1])))
 }
 
 /// Conventional host poll interval (implementation-chosen; §A.4 mandates only
@@ -203,6 +209,7 @@ impl Transport {
     /// panic on caller-controlled data that reached here unchecked).
     fn cmd(&self, tag: u8, data: &[u8]) -> Vec<u8> {
         let c = CommandTpdu {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             tag,
             t_c_id: self.tcid,
             data,
@@ -369,7 +376,12 @@ impl Transport {
                 Ok(o) if o.t_c_id == self.tcid => {
                     self.state = TcState::Active;
                     self.since_poll = Duration::ZERO;
-                    let da = parse_sb(&frame[3..]).is_some_and(|(_, sb)| sb.data_available());
+                    // The appended T_SB follows the object, whatever form its
+                    // own length_field was coded in.
+                    let da = frame
+                        .get(o.serialized_len()..)
+                        .and_then(parse_sb)
+                        .is_some_and(|(_, sb)| sb.data_available());
                     self.after_status(da)
                 }
                 Ok(o) => self.wrong_tcid(o.t_c_id),
@@ -718,6 +730,8 @@ mod tests {
         // helper, whose length byte can't represent more than 127 bytes).
         let chunk = vec![0xAAu8; 65_534];
         let frame = ResponseTpdu {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            status_length_form: dvb_ci::length::LengthForm::Minimal,
             tag: tags::DATA_MORE,
             t_c_id: 1,
             data: &chunk,
@@ -791,5 +805,51 @@ mod tests {
             t.outbound.is_empty(),
             "stale queued SPDUs must not survive into the next connection"
         );
+    }
+
+    /// r10-W-4 / #337: the module's `profile_reply` frame as captured raw on
+    /// hardware — the R_TPDU `length_field` is the long form `82 00 09`. The
+    /// SPDU must come out intact (`90 02 00 01 9F 80 11 00`), not offset by the
+    /// two extra length bytes.
+    #[test]
+    fn captured_long_form_r_tpdu_yields_the_spdu_intact() {
+        let mut t = Transport::new(1);
+        t.init();
+        t.on_frame(&[tags::C_T_C_REPLY, 0x01, 0x01]);
+        let frame = [
+            0xA0, 0x82, 0x00, 0x09, 0x01, 0x90, 0x02, 0x00, 0x01, 0x9F, 0x80, 0x11, 0x00, 0x80,
+            0x02, 0x01, 0x00,
+        ];
+        let out = t.on_frame(&frame);
+        assert!(out.error.is_none(), "{:?}", out.error);
+        assert_eq!(
+            out.spdus,
+            vec![vec![0x90, 0x02, 0x00, 0x01, 0x9F, 0x80, 0x11, 0x00]]
+        );
+    }
+
+    /// A `C_T_C_Reply` coded in a long form with the appended `T_SB` (data
+    /// available) also coded in a long form: the connection becomes Active and
+    /// the DA bit is still honoured (the host answers with `T_RCV`). The old
+    /// fixed `frame[3..]` offset read the length octets as the status.
+    #[test]
+    fn long_form_c_t_c_reply_and_status_still_drive_the_link() {
+        let mut t = Transport::new(1);
+        t.init();
+        let out = t.on_frame(&[
+            tags::C_T_C_REPLY,
+            0x82,
+            0x00,
+            0x01,
+            0x01,
+            tags::SB,
+            0x82,
+            0x00,
+            0x02,
+            0x01,
+            SbValue::new(true).0,
+        ]);
+        assert_eq!(t.state(), TcState::Active);
+        assert_eq!(out.writes, vec![vec![tags::RCV, 0x01, 0x01]]);
     }
 }

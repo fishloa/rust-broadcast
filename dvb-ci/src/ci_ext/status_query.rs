@@ -106,6 +106,12 @@ broadcast_common::impl_spec_display!(StatusItem, Reserved);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct StatusQueryReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `StatusItem` queried.
     pub status_item: StatusItem,
 }
@@ -114,6 +120,12 @@ pub struct StatusQueryReq {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TrapReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `StatusItem` to monitor for changes.
     pub status_item: StatusItem,
 }
@@ -122,6 +134,12 @@ pub struct TrapReq {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct GetNextItemReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `StartStatusItem` — search start point (raw 32-bit; not necessarily a
     /// supported item).
     pub start_status_item: u32,
@@ -131,6 +149,12 @@ pub struct GetNextItemReq {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct GetNextItemAck {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `NextStatusItem` — first supported item greater than `StartStatusItem`
     /// (raw 32-bit; `0` = no higher item).
     pub next_status_item: u32,
@@ -142,6 +166,12 @@ pub struct GetNextItemAck {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct StatusAck<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `StatusItem` this reply answers.
     pub status_item: StatusItem,
     /// `StatusBytes` — item-dependent payload.
@@ -154,7 +184,7 @@ macro_rules! status_item_object {
         impl<'a> Parse<'a> for $ty {
             type Error = Error;
             fn parse(bytes: &'a [u8]) -> Result<Self> {
-                let body = objects::parse_apdu_header(bytes, $tag, $what)?;
+                let (length_form, body) = objects::parse_apdu_header(bytes, $tag, $what)?;
                 if body.len() < STATUS_ITEM_LEN {
                     return Err(Error::BufferTooShort {
                         need: STATUS_ITEM_LEN,
@@ -164,6 +194,7 @@ macro_rules! status_item_object {
                 }
                 let raw = read_u32(body);
                 Ok(Self {
+                    length_form,
                     $field: $decode(raw),
                 })
             }
@@ -171,10 +202,10 @@ macro_rules! status_item_object {
         impl Serialize for $ty {
             type Error = Error;
             fn serialized_len(&self) -> usize {
-                objects::apdu_len(STATUS_ITEM_LEN)
+                objects::apdu_len(STATUS_ITEM_LEN, self.length_form)
             }
             fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-                let pos = objects::write_apdu_header($tag, STATUS_ITEM_LEN, buf)?;
+                let pos = objects::write_apdu_header($tag, STATUS_ITEM_LEN, self.length_form, buf)?;
                 let raw: u32 = $encode(self.$field);
                 buf[pos..pos + STATUS_ITEM_LEN].copy_from_slice(&raw.to_be_bytes());
                 Ok(pos + STATUS_ITEM_LEN)
@@ -219,7 +250,7 @@ status_item_object!(
 impl<'a> Parse<'a> for StatusAck<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::STATUS_ACK, "StatusAck")?;
+        let (length_form, body) = objects::parse_apdu_header(bytes, tag::STATUS_ACK, "StatusAck")?;
         if body.len() < STATUS_ITEM_LEN {
             return Err(Error::BufferTooShort {
                 need: STATUS_ITEM_LEN,
@@ -228,6 +259,7 @@ impl<'a> Parse<'a> for StatusAck<'a> {
             });
         }
         Ok(Self {
+            length_form,
             status_item: StatusItem::from_u32(read_u32(body)),
             status_bytes: &body[STATUS_ITEM_LEN..],
         })
@@ -236,11 +268,11 @@ impl<'a> Parse<'a> for StatusAck<'a> {
 impl Serialize for StatusAck<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(STATUS_ITEM_LEN + self.status_bytes.len())
+        objects::apdu_len(STATUS_ITEM_LEN + self.status_bytes.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = STATUS_ITEM_LEN + self.status_bytes.len();
-        let mut pos = objects::write_apdu_header(tag::STATUS_ACK, body_len, buf)?;
+        let mut pos = objects::write_apdu_header(tag::STATUS_ACK, body_len, self.length_form, buf)?;
         buf[pos..pos + STATUS_ITEM_LEN].copy_from_slice(&self.status_item.to_u32().to_be_bytes());
         pos += STATUS_ITEM_LEN;
         buf[pos..pos + self.status_bytes.len()].copy_from_slice(self.status_bytes);
@@ -792,6 +824,7 @@ mod tests {
     #[test]
     fn status_query_req_round_trips_and_bites() {
         let req = StatusQueryReq {
+            length_form: crate::length::LengthForm::Minimal,
             status_item: StatusItem::PortProfile,
         };
         let bytes = req.to_bytes();
@@ -799,6 +832,7 @@ mod tests {
         assert_eq!(bytes, [0x9F, 0x80, 0x00, 0x04, 0x00, 0x00, 0x00, 0x02]);
         assert_eq!(StatusQueryReq::parse(&bytes).unwrap(), req);
         let other = StatusQueryReq {
+            length_form: crate::length::LengthForm::Minimal,
             status_item: StatusItem::ViewedService,
         };
         assert_ne!(bytes, other.to_bytes());
@@ -807,18 +841,21 @@ mod tests {
     #[test]
     fn trap_and_getnext_round_trip() {
         let trap = TrapReq {
+            length_form: crate::length::LengthForm::Minimal,
             status_item: StatusItem::ActivationStatus,
         };
         assert_eq!(trap.to_bytes(), [0x9F, 0x80, 0x01, 0x04, 0, 0, 0, 4]);
         assert_eq!(TrapReq::parse(&trap.to_bytes()).unwrap(), trap);
 
         let gnr = GetNextItemReq {
+            length_form: crate::length::LengthForm::Minimal,
             start_status_item: 0x0000_0007,
         };
         assert_eq!(gnr.to_bytes(), [0x9F, 0x80, 0x02, 0x04, 0, 0, 0, 7]);
         assert_eq!(GetNextItemReq::parse(&gnr.to_bytes()).unwrap(), gnr);
 
         let gna = GetNextItemAck {
+            length_form: crate::length::LengthForm::Minimal,
             next_status_item: 0x0000_0002,
         };
         assert_eq!(gna.to_bytes(), [0x9F, 0x80, 0x03, 0x04, 0, 0, 0, 2]);
@@ -828,6 +865,7 @@ mod tests {
     #[test]
     fn status_item_reserved_round_trips() {
         let req = StatusQueryReq {
+            length_form: crate::length::LengthForm::Minimal,
             status_item: StatusItem::from_u32(0),
         };
         assert_eq!(req.status_item, StatusItem::Reserved(0));
@@ -838,6 +876,7 @@ mod tests {
     #[test]
     fn status_ack_with_status_bytes_round_trips_and_bites() {
         let ack = StatusAck {
+            length_form: crate::length::LengthForm::Minimal,
             status_item: StatusItem::ViewedService,
             status_bytes: &[0x01, 0x23, 0x00],
         };
@@ -856,6 +895,7 @@ mod tests {
     #[test]
     fn status_ack_empty_status_bytes_means_unsupported() {
         let ack = StatusAck {
+            length_form: crate::length::LengthForm::Minimal,
             status_item: StatusItem::PortProfile,
             status_bytes: &[],
         };
@@ -984,6 +1024,7 @@ mod tests {
     #[test]
     fn dispatch_routes_each_tag() {
         let q = StatusQueryReq {
+            length_form: crate::length::LengthForm::Minimal,
             status_item: StatusItem::SelectionInformation,
         }
         .to_bytes();
@@ -992,6 +1033,7 @@ mod tests {
             StatusQueryApdu::StatusQueryReq(_)
         ));
         let ack = StatusAck {
+            length_form: crate::length::LengthForm::Minimal,
             status_item: StatusItem::ActivationStatus,
             status_bytes: &[0x0A],
         }

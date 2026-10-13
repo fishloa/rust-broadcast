@@ -100,23 +100,47 @@ broadcast_common::impl_spec_display!(SystemIdentifier, Reserved);
 /// `DeliverySystemInfoReq()` (Table 13) — host → module: header-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct DeliverySystemInfoReq;
+pub struct DeliverySystemInfoReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `ScanStartReq()` (Table 16) — host → module: header-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct ScanStartReq;
+pub struct ScanStartReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `ScanNextReq()` (Table 17) — host → module: header-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct ScanNextReq;
+pub struct ScanNextReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `DeliverySystemInfoAck()` (Table 14) — module → host: the delivery systems the
 /// module is connected to (one `SystemIdentifier` per byte).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DeliverySystemInfoAck {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `SystemIdentifier`s in wire order (`length_field = N`).
     pub systems: Vec<SystemIdentifier>,
 }
@@ -125,6 +149,12 @@ pub struct DeliverySystemInfoAck {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ScanAck<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `TSState` — `0` = no signal (or, when auto-scanning, all frequencies
     /// searched); `1`-`255` = normalized signal-quality (bigger is better).
     pub ts_state: u8,
@@ -141,6 +171,12 @@ pub struct ScanAck<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TuneTSReq<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `TuningInformationMessage` — 11 bytes, or empty (= disconnect from network).
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub tuning_information_message: &'a [u8],
@@ -150,6 +186,12 @@ pub struct TuneTSReq<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TuneTSAck {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `TSState` — identical coding to the [`ScanAck`] `TSState`; `0` after a
     /// disconnect request.
     pub ts_state: u8,
@@ -170,7 +212,7 @@ crate::dispatch::declare_empty_apdu!(ScanNextReq, tag::SCAN_NEXT_REQ, "ScanNextR
 impl<'a> Parse<'a> for DeliverySystemInfoAck {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(
+        let (length_form, body) = objects::parse_apdu_header(
             bytes,
             tag::DELIVERY_SYSTEM_INFO_ACK,
             "DeliverySystemInfoAck",
@@ -179,17 +221,25 @@ impl<'a> Parse<'a> for DeliverySystemInfoAck {
         for &b in body {
             systems.push(SystemIdentifier::from_u8(b));
         }
-        Ok(Self { systems })
+        Ok(Self {
+            length_form,
+            systems,
+        })
     }
 }
 impl Serialize for DeliverySystemInfoAck {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(self.systems.len())
+        objects::apdu_len(self.systems.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = self.systems.len();
-        let mut pos = objects::write_apdu_header(tag::DELIVERY_SYSTEM_INFO_ACK, body_len, buf)?;
+        let mut pos = objects::write_apdu_header(
+            tag::DELIVERY_SYSTEM_INFO_ACK,
+            body_len,
+            self.length_form,
+            buf,
+        )?;
         for s in &self.systems {
             buf[pos] = s.to_u8();
             pos += 1;
@@ -206,7 +256,7 @@ const SCAN_ACK_BODY: usize = 1 + TUNING_INFO_MESSAGE_LEN + 1;
 impl<'a> Parse<'a> for ScanAck<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::SCAN_ACK, "ScanAck")?;
+        let (length_form, body) = objects::parse_apdu_header(bytes, tag::SCAN_ACK, "ScanAck")?;
         if body.len() < SCAN_ACK_BODY {
             return Err(Error::BufferTooShort {
                 need: SCAN_ACK_BODY,
@@ -216,6 +266,7 @@ impl<'a> Parse<'a> for ScanAck<'a> {
         }
         crate::objects::reject_trailing_body(body, SCAN_ACK_BODY, "ScanAck")?;
         Ok(Self {
+            length_form,
             ts_state: body[0],
             tuning_information_message: &body[1..1 + TUNING_INFO_MESSAGE_LEN],
             scan_progress: body[1 + TUNING_INFO_MESSAGE_LEN],
@@ -225,7 +276,7 @@ impl<'a> Parse<'a> for ScanAck<'a> {
 impl Serialize for ScanAck<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(SCAN_ACK_BODY)
+        objects::apdu_len(SCAN_ACK_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if self.tuning_information_message.len() != TUNING_INFO_MESSAGE_LEN {
@@ -234,7 +285,8 @@ impl Serialize for ScanAck<'_> {
                 reason: "TuningInformationMessage must be exactly 11 bytes",
             });
         }
-        let mut pos = objects::write_apdu_header(tag::SCAN_ACK, SCAN_ACK_BODY, buf)?;
+        let mut pos =
+            objects::write_apdu_header(tag::SCAN_ACK, SCAN_ACK_BODY, self.length_form, buf)?;
         buf[pos] = self.ts_state;
         pos += 1;
         buf[pos..pos + TUNING_INFO_MESSAGE_LEN].copy_from_slice(self.tuning_information_message);
@@ -249,7 +301,7 @@ impl Serialize for ScanAck<'_> {
 impl<'a> Parse<'a> for TuneTSReq<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::TUNE_TS_REQ, "TuneTSReq")?;
+        let (length_form, body) = objects::parse_apdu_header(bytes, tag::TUNE_TS_REQ, "TuneTSReq")?;
         // The TuningInformationMessage is either absent (disconnect) or 11 bytes.
         if !body.is_empty() && body.len() != TUNING_INFO_MESSAGE_LEN {
             return Err(Error::InvalidObject {
@@ -258,6 +310,7 @@ impl<'a> Parse<'a> for TuneTSReq<'a> {
             });
         }
         Ok(Self {
+            length_form,
             tuning_information_message: body,
         })
     }
@@ -265,7 +318,7 @@ impl<'a> Parse<'a> for TuneTSReq<'a> {
 impl Serialize for TuneTSReq<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(self.tuning_information_message.len())
+        objects::apdu_len(self.tuning_information_message.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if !self.tuning_information_message.is_empty()
@@ -277,7 +330,7 @@ impl Serialize for TuneTSReq<'_> {
             });
         }
         let body_len = self.tuning_information_message.len();
-        let pos = objects::write_apdu_header(tag::TUNE_TS_REQ, body_len, buf)?;
+        let pos = objects::write_apdu_header(tag::TUNE_TS_REQ, body_len, self.length_form, buf)?;
         buf[pos..pos + body_len].copy_from_slice(self.tuning_information_message);
         Ok(pos + body_len)
     }
@@ -291,7 +344,7 @@ const TUNE_TS_ACK_BODY: usize = 1;
 impl<'a> Parse<'a> for TuneTSAck {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::TUNE_TS_ACK, "TuneTSAck")?;
+        let (length_form, body) = objects::parse_apdu_header(bytes, tag::TUNE_TS_ACK, "TuneTSAck")?;
         if body.len() < TUNE_TS_ACK_BODY {
             return Err(Error::BufferTooShort {
                 need: TUNE_TS_ACK_BODY,
@@ -300,16 +353,20 @@ impl<'a> Parse<'a> for TuneTSAck {
             });
         }
         crate::objects::reject_trailing_body(body, TUNE_TS_ACK_BODY, "TuneTSAck")?;
-        Ok(Self { ts_state: body[0] })
+        Ok(Self {
+            length_form,
+            ts_state: body[0],
+        })
     }
 }
 impl Serialize for TuneTSAck {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(TUNE_TS_ACK_BODY)
+        objects::apdu_len(TUNE_TS_ACK_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::TUNE_TS_ACK, TUNE_TS_ACK_BODY, buf)?;
+        let pos =
+            objects::write_apdu_header(tag::TUNE_TS_ACK, TUNE_TS_ACK_BODY, self.length_form, buf)?;
         buf[pos] = self.ts_state;
         Ok(pos + TUNE_TS_ACK_BODY)
     }
@@ -344,22 +401,26 @@ mod tests {
 
     #[test]
     fn header_only_objects_round_trip() {
-        assert_eq!(DeliverySystemInfoReq.to_bytes(), [0x9F, 0x80, 0x00, 0x00]);
-        assert_eq!(ScanStartReq.to_bytes(), [0x9F, 0x80, 0x02, 0x00]);
-        assert_eq!(ScanNextReq.to_bytes(), [0x9F, 0x80, 0x03, 0x00]);
+        assert_eq!(
+            DeliverySystemInfoReq::default().to_bytes(),
+            [0x9F, 0x80, 0x00, 0x00]
+        );
+        assert_eq!(ScanStartReq::default().to_bytes(), [0x9F, 0x80, 0x02, 0x00]);
+        assert_eq!(ScanNextReq::default().to_bytes(), [0x9F, 0x80, 0x03, 0x00]);
         assert_eq!(
             DeliverySystemInfoReq::parse(&[0x9F, 0x80, 0x00, 0x00]).unwrap(),
-            DeliverySystemInfoReq
+            DeliverySystemInfoReq::default()
         );
         assert_eq!(
             ScanNextReq::parse(&[0x9F, 0x80, 0x03, 0x00]).unwrap(),
-            ScanNextReq
+            ScanNextReq::default()
         );
     }
 
     #[test]
     fn delivery_system_info_ack_multi_round_trips_and_bites() {
         let ack = DeliverySystemInfoAck {
+            length_form: crate::length::LengthForm::Minimal,
             systems: alloc::vec![
                 SystemIdentifier::DvbC,
                 SystemIdentifier::DvbS,
@@ -379,6 +440,7 @@ mod tests {
     #[test]
     fn delivery_system_info_ack_reserved_value() {
         let ack = DeliverySystemInfoAck {
+            length_form: crate::length::LengthForm::Minimal,
             systems: alloc::vec![SystemIdentifier::from_u8(0x7F)],
         };
         assert_eq!(ack.systems[0], SystemIdentifier::Reserved(0x7F));
@@ -393,6 +455,7 @@ mod tests {
             0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xAA, 0xBB,
         ];
         let ack = ScanAck {
+            length_form: crate::length::LengthForm::Minimal,
             ts_state: 0xC8,
             tuning_information_message: &tim,
             scan_progress: 0x40,
@@ -418,6 +481,7 @@ mod tests {
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0A, 0x0B,
         ];
         let req = TuneTSReq {
+            length_form: crate::length::LengthForm::Minimal,
             tuning_information_message: &tim,
         };
         let bytes = req.to_bytes();
@@ -432,6 +496,7 @@ mod tests {
         let mut tim2 = tim;
         tim2[10] = 0xFF;
         let other = TuneTSReq {
+            length_form: crate::length::LengthForm::Minimal,
             tuning_information_message: &tim2,
         };
         assert_ne!(bytes, other.to_bytes());
@@ -440,6 +505,7 @@ mod tests {
     #[test]
     fn tune_ts_req_disconnect_empty_message() {
         let req = TuneTSReq {
+            length_form: crate::length::LengthForm::Minimal,
             tuning_information_message: &[],
         };
         let bytes = req.to_bytes();
@@ -459,27 +525,37 @@ mod tests {
 
     #[test]
     fn tune_ts_ack_round_trips_and_bites() {
-        let ack = TuneTSAck { ts_state: 0xFF };
+        let ack = TuneTSAck {
+            length_form: crate::length::LengthForm::Minimal,
+            ts_state: 0xFF,
+        };
         let bytes = ack.to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x06, 0x01, 0xFF]);
         assert_eq!(TuneTSAck::parse(&bytes).unwrap(), ack);
-        let other = TuneTSAck { ts_state: 0x00 };
+        let other = TuneTSAck {
+            length_form: crate::length::LengthForm::Minimal,
+            ts_state: 0x00,
+        };
         assert_ne!(bytes, other.to_bytes());
     }
 
     #[test]
     fn dispatch_routes_each_tag() {
-        let req = DeliverySystemInfoReq.to_bytes();
+        let req = DeliverySystemInfoReq::default().to_bytes();
         assert!(matches!(
             StreamInputApdu::parse(&req).unwrap(),
             StreamInputApdu::DeliverySystemInfoReq(_)
         ));
-        let ack = TuneTSAck { ts_state: 1 }.to_bytes();
+        let ack = TuneTSAck {
+            length_form: crate::length::LengthForm::Minimal,
+            ts_state: 1,
+        }
+        .to_bytes();
         let parsed = StreamInputApdu::parse(&ack).unwrap();
         assert!(matches!(parsed, StreamInputApdu::TuneTSAck(_)));
         assert_eq!(parsed.to_bytes(), ack);
         // ScanNextReq is 9F8003 (Table 17) — distinct from ScanStartReq 9F8002.
-        let next = ScanNextReq.to_bytes();
+        let next = ScanNextReq::default().to_bytes();
         assert!(matches!(
             StreamInputApdu::parse(&next).unwrap(),
             StreamInputApdu::ScanNextReq(_)

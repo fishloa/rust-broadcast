@@ -42,6 +42,12 @@ pub mod tag {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CcPinReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8) when `LTS_bound_flag == 1`; `None` (the `else` reserved(8)
     /// branch) when the reply is not associated with a Local TS.
     pub lts_id: Option<u8>,
@@ -58,7 +64,8 @@ const LTS_BOUND_FLAG_BIT: u8 = 0x01;
 impl<'a> Parse<'a> for CcPinReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::CC_PIN_REPLY, "cc_PIN_reply")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::CC_PIN_REPLY, "cc_PIN_reply")?;
         if body.len() < CC_PIN_REPLY_BODY {
             return Err(Error::BufferTooShort {
                 need: CC_PIN_REPLY_BODY,
@@ -70,6 +77,7 @@ impl<'a> Parse<'a> for CcPinReply {
         let lts_bound = body[0] & LTS_BOUND_FLAG_BIT != 0;
         let lts_id = if lts_bound { Some(body[1]) } else { None };
         Ok(Self {
+            length_form,
             lts_id,
             pincode_status: body[2],
         })
@@ -78,10 +86,15 @@ impl<'a> Parse<'a> for CcPinReply {
 impl Serialize for CcPinReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(CC_PIN_REPLY_BODY)
+        objects::apdu_len(CC_PIN_REPLY_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::CC_PIN_REPLY, CC_PIN_REPLY_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::CC_PIN_REPLY,
+            CC_PIN_REPLY_BODY,
+            self.length_form,
+            buf,
+        )?;
         match self.lts_id {
             Some(id) => {
                 buf[pos] = LTS_BOUND_FLAG_BIT;
@@ -109,6 +122,12 @@ pub const PIN_EVENT_PRIVATE_DATA_LEN: usize = 15;
 #[derive(Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CcPinEvent {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8) — Local TS identifier.
     pub lts_id: u8,
     /// `program_number` (16).
@@ -150,7 +169,8 @@ const CC_PIN_EVENT_BODY: usize = 1 + 2 + 1 + 1 + 5 + 1 + PIN_EVENT_PRIVATE_DATA_
 impl<'a> Parse<'a> for CcPinEvent {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::CC_PIN_EVENT, "cc_PIN_event")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::CC_PIN_EVENT, "cc_PIN_event")?;
         if body.len() < CC_PIN_EVENT_BODY {
             return Err(Error::BufferTooShort {
                 need: CC_PIN_EVENT_BODY,
@@ -169,6 +189,7 @@ impl<'a> Parse<'a> for CcPinEvent {
         let mut private_data = [0u8; PIN_EVENT_PRIVATE_DATA_LEN];
         private_data.copy_from_slice(&body[11..11 + PIN_EVENT_PRIVATE_DATA_LEN]);
         Ok(Self {
+            length_form,
             lts_id: body[0],
             program_number: u16::from_be_bytes([body[1], body[2]]),
             pincode_status: body[3],
@@ -182,10 +203,15 @@ impl<'a> Parse<'a> for CcPinEvent {
 impl Serialize for CcPinEvent {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(CC_PIN_EVENT_BODY)
+        objects::apdu_len(CC_PIN_EVENT_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::CC_PIN_EVENT, CC_PIN_EVENT_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::CC_PIN_EVENT,
+            CC_PIN_EVENT_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.lts_id;
         buf[pos + 1..pos + 3].copy_from_slice(&self.program_number.to_be_bytes());
         buf[pos + 3] = self.pincode_status;
@@ -550,6 +576,7 @@ mod tests {
         );
 
         let ev = CcPinEvent {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 1,
             program_number: 2,
             pincode_status: 3,
@@ -581,6 +608,7 @@ mod tests {
     #[test]
     fn cc_pin_reply_bound_round_trips_and_bites() {
         let r = CcPinReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: Some(0x07),
             pincode_status: 0x42,
         };
@@ -590,6 +618,7 @@ mod tests {
         assert_eq!(CcPinReply::parse(&bytes).unwrap(), r);
         // Field-mutation: dropping the LTS binding changes the wire.
         let other = CcPinReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: None,
             pincode_status: 0x42,
         };
@@ -602,6 +631,7 @@ mod tests {
     #[test]
     fn cc_pin_event_round_trips_and_bites() {
         let e = CcPinEvent {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x03,
             program_number: 0x1234,
             pincode_status: 0x05,
@@ -697,6 +727,7 @@ mod tests {
     #[test]
     fn dispatch_routes_each_tag() {
         let r = CcPinReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: None,
             pincode_status: 0,
         }

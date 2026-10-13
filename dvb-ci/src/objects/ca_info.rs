@@ -12,12 +12,24 @@ use broadcast_common::{Parse, Serialize};
 /// `ca_info_enq()` — header-only enquiry (Table 23).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct CaInfoEnq;
+pub struct CaInfoEnq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `ca_info()` reply — the `CA_system_id`s this application supports (Table 24).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CaInfo {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// Supported `CA_system_id` values (ETSI TS 101 162), in wire order.
     pub ca_system_ids: Vec<u16>,
 }
@@ -25,17 +37,17 @@ pub struct CaInfo {
 impl<'a> Parse<'a> for CaInfoEnq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        super::parse_empty_apdu(bytes, tag::CA_INFO_ENQ, "ca_info_enq")?;
-        Ok(Self)
+        let length_form = super::parse_empty_apdu(bytes, tag::CA_INFO_ENQ, "ca_info_enq")?;
+        Ok(Self { length_form })
     }
 }
 impl Serialize for CaInfoEnq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::empty_apdu_len()
+        super::empty_apdu_len(self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        super::serialize_empty_apdu(tag::CA_INFO_ENQ, buf)
+        super::serialize_empty_apdu(tag::CA_INFO_ENQ, self.length_form, buf)
     }
 }
 impl ApduDef<'_> for CaInfoEnq {
@@ -46,7 +58,7 @@ impl ApduDef<'_> for CaInfoEnq {
 impl<'a> Parse<'a> for CaInfo {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::CA_INFO, "ca_info")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::CA_INFO, "ca_info")?;
         if body.len() % 2 != 0 {
             return Err(Error::InvalidObject {
                 what: "ca_info",
@@ -57,18 +69,21 @@ impl<'a> Parse<'a> for CaInfo {
             .chunks_exact(2)
             .map(|c| u16::from_be_bytes([c[0], c[1]]))
             .collect();
-        Ok(Self { ca_system_ids })
+        Ok(Self {
+            length_form,
+            ca_system_ids,
+        })
     }
 }
 
 impl Serialize for CaInfo {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(self.ca_system_ids.len() * 2)
+        super::apdu_len(self.ca_system_ids.len() * 2, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = self.ca_system_ids.len() * 2;
-        let mut pos = super::write_apdu_header(tag::CA_INFO, body_len, buf)?;
+        let mut pos = super::write_apdu_header(tag::CA_INFO, body_len, self.length_form, buf)?;
         for id in &self.ca_system_ids {
             buf[pos..pos + 2].copy_from_slice(&id.to_be_bytes());
             pos += 2;
@@ -88,14 +103,15 @@ mod tests {
 
     #[test]
     fn enq_round_trip() {
-        let bytes = CaInfoEnq.to_bytes();
+        let bytes = CaInfoEnq::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x30, 0x00]);
-        assert_eq!(CaInfoEnq::parse(&bytes).unwrap(), CaInfoEnq);
+        assert_eq!(CaInfoEnq::parse(&bytes).unwrap(), CaInfoEnq::default());
     }
 
     #[test]
     fn ca_info_multi_round_trips() {
         let info = CaInfo {
+            length_form: crate::length::LengthForm::Minimal,
             ca_system_ids: alloc::vec![0x0500, 0x0B00, 0x1801],
         };
         let bytes = info.to_bytes();
@@ -108,6 +124,7 @@ mod tests {
     #[test]
     fn mutating_id_changes_bytes() {
         let info = CaInfo {
+            length_form: crate::length::LengthForm::Minimal,
             ca_system_ids: alloc::vec![0x0500],
         };
         let a = info.to_bytes();

@@ -158,22 +158,28 @@ broadcast_common::impl_spec_display!(IpProtocolVersion, Reserved);
 /// fields, so the on-wire body length is 0.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct CommsInfoReq;
+pub struct CommsInfoReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 impl<'a> Parse<'a> for CommsInfoReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        objects::parse_empty_apdu(bytes, tag::COMMS_INFO_REQ, "comms_info_req")?;
-        Ok(Self)
+        let length_form = objects::parse_empty_apdu(bytes, tag::COMMS_INFO_REQ, "comms_info_req")?;
+        Ok(Self { length_form })
     }
 }
 impl Serialize for CommsInfoReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::empty_apdu_len()
+        objects::empty_apdu_len(self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::serialize_empty_apdu(tag::COMMS_INFO_REQ, buf)
+        objects::serialize_empty_apdu(tag::COMMS_INFO_REQ, self.length_form, buf)
     }
 }
 
@@ -185,6 +191,12 @@ impl Serialize for CommsInfoReq {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CommsInfoReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8) — identifier of the Local TS.
     pub lts_id: u8,
     /// `status` (1) — `true` = a connection has been established.
@@ -207,7 +219,8 @@ const INPUT_DELIVERY_PID_MASK: u16 = 0x1FFF;
 impl<'a> Parse<'a> for CommsInfoReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::COMMS_INFO_REPLY, "comms_info_reply")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::COMMS_INFO_REPLY, "comms_info_reply")?;
         if body.len() < INFO_REPLY_BODY {
             return Err(Error::BufferTooShort {
                 need: INFO_REPLY_BODY,
@@ -225,6 +238,7 @@ impl<'a> Parse<'a> for CommsInfoReply {
         let input_delivery_pid =
             Pid::new(u16::from_be_bytes([body[p + 2], body[p + 3]]) & INPUT_DELIVERY_PID_MASK);
         Ok(Self {
+            length_form,
             lts_id,
             status,
             source_ip_address,
@@ -236,10 +250,15 @@ impl<'a> Parse<'a> for CommsInfoReply {
 impl Serialize for CommsInfoReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(INFO_REPLY_BODY)
+        objects::apdu_len(INFO_REPLY_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::COMMS_INFO_REPLY, INFO_REPLY_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::COMMS_INFO_REPLY,
+            INFO_REPLY_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.lts_id;
         // reserved(7)='0000000' + status(1).
         buf[pos + 1] = u8::from(self.status);
@@ -259,22 +278,29 @@ impl Serialize for CommsInfoReply {
 /// `comms_IP_config_req()` (Table 78): CICAM → Host. Header-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct CommsIpConfigReq;
+pub struct CommsIpConfigReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 impl<'a> Parse<'a> for CommsIpConfigReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        objects::parse_empty_apdu(bytes, tag::COMMS_IP_CONFIG_REQ, "comms_IP_config_req")?;
-        Ok(Self)
+        let length_form =
+            objects::parse_empty_apdu(bytes, tag::COMMS_IP_CONFIG_REQ, "comms_IP_config_req")?;
+        Ok(Self { length_form })
     }
 }
 impl Serialize for CommsIpConfigReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::empty_apdu_len()
+        objects::empty_apdu_len(self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::serialize_empty_apdu(tag::COMMS_IP_CONFIG_REQ, buf)
+        objects::serialize_empty_apdu(tag::COMMS_IP_CONFIG_REQ, self.length_form, buf)
     }
 }
 
@@ -303,6 +329,12 @@ pub struct IpConfig {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CommsIpConfigReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `connection_state` (2) — Table 80.
     pub connection_state: ConnectionState,
     /// `physical_address` (48) — MAC of this IP network adapter.
@@ -336,7 +368,7 @@ fn read_addr(body: &[u8], pos: usize) -> [u8; IP_ADDR_LEN] {
 impl<'a> Parse<'a> for CommsIpConfigReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body =
+        let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::COMMS_IP_CONFIG_REPLY, "comms_IP_config_reply")?;
         if body.len() < IP_CONFIG_PREFIX {
             return Err(Error::BufferTooShort {
@@ -391,6 +423,7 @@ impl<'a> Parse<'a> for CommsIpConfigReply {
             None
         };
         Ok(Self {
+            length_form,
             connection_state,
             physical_address,
             ip_config,
@@ -400,7 +433,7 @@ impl<'a> Parse<'a> for CommsIpConfigReply {
 impl Serialize for CommsIpConfigReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(self.body_len())
+        objects::apdu_len(self.body_len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         // r10-W-15: `parse` only reads `ip_config` back out when
@@ -424,7 +457,12 @@ impl Serialize for CommsIpConfigReply {
             )?;
         }
         let body_len = self.body_len();
-        let mut pos = objects::write_apdu_header(tag::COMMS_IP_CONFIG_REPLY, body_len, buf)?;
+        let mut pos = objects::write_apdu_header(
+            tag::COMMS_IP_CONFIG_REPLY,
+            body_len,
+            self.length_form,
+            buf,
+        )?;
         // connection_state(2) << 6 + reserved(6)='000000'.
         buf[pos] = self.connection_state.to_u8() << 6;
         buf[pos + 1..pos + 1 + MAC_LEN].copy_from_slice(&self.physical_address);
@@ -757,14 +795,18 @@ mod tests {
 
     #[test]
     fn info_req_round_trips() {
-        let bytes = CommsInfoReq.to_bytes();
+        let bytes = CommsInfoReq::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x8C, 0x07, 0x00]);
-        assert_eq!(CommsInfoReq::parse(&bytes).unwrap(), CommsInfoReq);
+        assert_eq!(
+            CommsInfoReq::parse(&bytes).unwrap(),
+            CommsInfoReq::default()
+        );
     }
 
     #[test]
     fn info_reply_round_trips_and_bites() {
         let r = CommsInfoReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x07,
             status: true,
             source_ip_address: IP_A,
@@ -799,14 +841,18 @@ mod tests {
 
     #[test]
     fn ip_config_req_round_trips() {
-        let bytes = CommsIpConfigReq.to_bytes();
+        let bytes = CommsIpConfigReq::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x8C, 0x09, 0x00]);
-        assert_eq!(CommsIpConfigReq::parse(&bytes).unwrap(), CommsIpConfigReq);
+        assert_eq!(
+            CommsIpConfigReq::parse(&bytes).unwrap(),
+            CommsIpConfigReq::default()
+        );
     }
 
     #[test]
     fn ip_config_reply_disconnected_round_trips() {
         let r = CommsIpConfigReply {
+            length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Disconnected,
             physical_address: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
             ip_config: None,
@@ -825,6 +871,7 @@ mod tests {
     #[test]
     fn ip_config_reply_connected_two_dns_round_trips_and_bites() {
         let r = CommsIpConfigReply {
+            length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Connected,
             physical_address: [0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F],
             ip_config: Some(IpConfig {
@@ -859,6 +906,7 @@ mod tests {
     fn ip_config_reply_rejects_state_ip_config_mismatch() {
         // Disconnected but claims an ip_config.
         let r = CommsIpConfigReply {
+            length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Disconnected,
             physical_address: [0; MAC_LEN],
             ip_config: Some(IpConfig {
@@ -876,6 +924,7 @@ mod tests {
 
         // Connected but has no ip_config.
         let r = CommsIpConfigReply {
+            length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Connected,
             physical_address: [0; MAC_LEN],
             ip_config: None,
@@ -944,10 +993,11 @@ mod tests {
     #[test]
     fn dispatch_routes_fixed_tags() {
         assert!(matches!(
-            LscV4Apdu::parse(&CommsInfoReq.to_bytes()).unwrap(),
+            LscV4Apdu::parse(&CommsInfoReq::default().to_bytes()).unwrap(),
             LscV4Apdu::CommsInfoReq(_)
         ));
         let reply = CommsInfoReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             status: false,
             source_ip_address: [0; IP_ADDR_LEN],
@@ -959,11 +1009,12 @@ mod tests {
             LscV4Apdu::CommsInfoReply(_)
         ));
         assert!(matches!(
-            LscV4Apdu::parse(&CommsIpConfigReq.to_bytes()).unwrap(),
+            LscV4Apdu::parse(&CommsIpConfigReq::default().to_bytes()).unwrap(),
             LscV4Apdu::CommsIpConfigReq(_)
         ));
         // comms_IP_config_reply is dispatched by the same enum (r10-O-7).
         let cfg = CommsIpConfigReply {
+            length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Disconnected,
             physical_address: [0; MAC_LEN],
             ip_config: None,
@@ -984,6 +1035,7 @@ mod tests {
     #[test]
     fn max_input_delivery_pid_still_serializes_and_round_trips() {
         let reply = CommsInfoReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             status: false,
             source_ip_address: [0; IP_ADDR_LEN],
@@ -998,6 +1050,7 @@ mod tests {
     fn oversized_num_dns_servers_is_rejected_not_wrapped() {
         // 256 entries silently wrapped num_DNS_servers (u8) to 0 before the fix.
         let r = CommsIpConfigReply {
+            length_form: crate::length::LengthForm::Minimal,
             connection_state: ConnectionState::Connected,
             physical_address: [0; MAC_LEN],
             ip_config: Some(IpConfig {

@@ -66,6 +66,12 @@ pub struct MsCaPmtStream<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MsCaPmt<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8) — Local TS identifier.
     pub lts_id: u8,
     /// `ca_pmt_list_management` (Table 15 narrows to `{Only, Update}`).
@@ -97,7 +103,7 @@ const MS_ES_PREFIX: usize = 5;
 impl<'a> Parse<'a> for MsCaPmt<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = crate::objects::parse_apdu_header(bytes, CA_PMT, "ms ca_pmt")?;
+        let (length_form, body) = crate::objects::parse_apdu_header(bytes, CA_PMT, "ms ca_pmt")?;
         if body.len() < MS_CA_PMT_PREFIX {
             return Err(Error::BufferTooShort {
                 need: MS_CA_PMT_PREFIX,
@@ -149,6 +155,7 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
         }
 
         Ok(Self {
+            length_form,
             lts_id,
             list_management,
             program_number,
@@ -169,7 +176,7 @@ impl Serialize for MsCaPmt<'_> {
         for s in &self.streams {
             body += MS_ES_PREFIX + info_block_len(s.cmd_id, s.ca_descriptors);
         }
-        crate::objects::apdu_len(body)
+        crate::objects::apdu_len(body, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         objects::fit_bits(
@@ -189,7 +196,7 @@ impl Serialize for MsCaPmt<'_> {
             objects::fit_bits(es_info_length as u64, 12, "ms ca_pmt ES_info_length")?;
             body += MS_ES_PREFIX + es_info_length;
         }
-        let mut pos = crate::objects::write_apdu_header(CA_PMT, body, buf)?;
+        let mut pos = crate::objects::write_apdu_header(CA_PMT, body, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1] = self.list_management.to_u8();
         buf[pos + 2..pos + 4].copy_from_slice(&self.program_number.to_be_bytes());
@@ -238,6 +245,12 @@ pub struct MsCaPmtReplyStream {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MsCaPmtReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8) — Local TS identifier.
     pub lts_id: u8,
     /// `program_number` (16).
@@ -260,7 +273,8 @@ const MS_REPLY_ES_LEN: usize = 3; // reserved/elem_pid(2) + flag/enable(1)
 impl<'a> Parse<'a> for MsCaPmtReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = crate::objects::parse_apdu_header(bytes, CA_PMT_REPLY, "ms ca_pmt_reply")?;
+        let (length_form, body) =
+            crate::objects::parse_apdu_header(bytes, CA_PMT_REPLY, "ms ca_pmt_reply")?;
         if body.len() < MS_REPLY_PREFIX {
             return Err(Error::BufferTooShort {
                 need: MS_REPLY_PREFIX,
@@ -305,6 +319,7 @@ impl<'a> Parse<'a> for MsCaPmtReply {
         }
 
         Ok(Self {
+            length_form,
             lts_id,
             program_number,
             version_number,
@@ -318,7 +333,10 @@ impl<'a> Parse<'a> for MsCaPmtReply {
 impl Serialize for MsCaPmtReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::objects::apdu_len(MS_REPLY_PREFIX + self.streams.len() * MS_REPLY_ES_LEN)
+        crate::objects::apdu_len(
+            MS_REPLY_PREFIX + self.streams.len() * MS_REPLY_ES_LEN,
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         objects::fit_bits(
@@ -327,7 +345,7 @@ impl Serialize for MsCaPmtReply {
             "ms ca_pmt_reply version_number",
         )?;
         let body = MS_REPLY_PREFIX + self.streams.len() * MS_REPLY_ES_LEN;
-        let mut pos = crate::objects::write_apdu_header(CA_PMT_REPLY, body, buf)?;
+        let mut pos = crate::objects::write_apdu_header(CA_PMT_REPLY, body, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1..pos + 3].copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(2)='11', version(5), current_next(1). Range-checked above.
@@ -388,6 +406,7 @@ mod tests {
         let prog = sample_ca_descriptor(0x1234, 0x0100);
         let es_desc = sample_ca_descriptor(0x1234, 0x0101);
         let pmt = MsCaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x02,
             list_management: CaPmtListManagement::Only,
             program_number: 0x0001,
@@ -439,6 +458,7 @@ mod tests {
     #[test]
     fn ms_ca_pmt_no_descriptors() {
         let pmt = MsCaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x00,
             list_management: CaPmtListManagement::Update,
             program_number: 0x0009,
@@ -463,6 +483,7 @@ mod tests {
     #[test]
     fn ms_ca_pmt_reply_round_trips_and_bites() {
         let reply = MsCaPmtReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x03,
             program_number: 0x0001,
             version_number: 1,
@@ -502,6 +523,7 @@ mod tests {
     #[test]
     fn dispatch_helper_routes_by_tag() {
         let pmt = MsCaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             list_management: CaPmtListManagement::Only,
             program_number: 1,
@@ -518,6 +540,7 @@ mod tests {
         assert_eq!(parsed.to_bytes(), bytes);
 
         let reply = MsCaPmtReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 1,
             program_number: 1,
             version_number: 0,
@@ -535,6 +558,7 @@ mod tests {
     #[test]
     fn max_pmt_pid_still_serializes_and_round_trips() {
         let pmt = MsCaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             list_management: CaPmtListManagement::Only,
             program_number: 1,

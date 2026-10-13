@@ -36,17 +36,35 @@ pub mod tag {
 /// `profile_enq()` — Profile Enquiry, empty body (Table 3).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct ProfileEnq;
+pub struct ProfileEnq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `profile_changed()` — Profile Changed, empty body (Table 5).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct ProfileChanged;
+pub struct ProfileChanged {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `profile_reply()` — the list of resources the sender provides (Table 4).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ProfileReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// Advertised `resource_identifier()`s, in wire order (`length_field = N*4`).
     pub resources: Vec<ResourceId>,
 }
@@ -55,6 +73,12 @@ pub struct ProfileReply {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ModuleIdSend {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// The 6-bit Module ID (`0` if the host has not allocated one). Only the low
     /// 6 bits are significant; the top 2 bits are reserved.
     pub module_id: u8,
@@ -108,6 +132,12 @@ broadcast_common::impl_spec_display!(ModuleIdCommandKind, Reserved);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ModuleIdCommand {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `command`.
     pub command: ModuleIdCommandKind,
     /// The 6-bit Module ID (significant only for `Set_ModuleID`).
@@ -125,53 +155,72 @@ use crate::objects::resource_manager as v1;
 impl<'a> Parse<'a> for ProfileEnq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        v1::ProfileEnq::parse(bytes)?;
-        Ok(Self)
+        let v = v1::ProfileEnq::parse(bytes)?;
+        Ok(Self {
+            length_form: v.length_form,
+        })
     }
 }
 impl Serialize for ProfileEnq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        v1::ProfileEnq.serialized_len()
+        v1::ProfileEnq {
+            length_form: self.length_form,
+        }
+        .serialized_len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        v1::ProfileEnq.serialize_into(buf)
+        v1::ProfileEnq {
+            length_form: self.length_form,
+        }
+        .serialize_into(buf)
     }
 }
 
 impl<'a> Parse<'a> for ProfileChanged {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        v1::ProfileChange::parse(bytes)?;
-        Ok(Self)
+        let v = v1::ProfileChange::parse(bytes)?;
+        Ok(Self {
+            length_form: v.length_form,
+        })
     }
 }
 impl Serialize for ProfileChanged {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        v1::ProfileChange.serialized_len()
+        v1::ProfileChange {
+            length_form: self.length_form,
+        }
+        .serialized_len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        v1::ProfileChange.serialize_into(buf)
+        v1::ProfileChange {
+            length_form: self.length_form,
+        }
+        .serialize_into(buf)
     }
 }
 
 impl<'a> Parse<'a> for ProfileReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let v = v1::Profile::parse(bytes)?;
         Ok(Self {
-            resources: v1::Profile::parse(bytes)?.resources,
+            length_form: v.length_form,
+            resources: v.resources,
         })
     }
 }
 impl Serialize for ProfileReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(self.resources.len() * ResourceId::LEN)
+        objects::apdu_len(self.resources.len() * ResourceId::LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         // `Profile` owns its list, so this clones the (4-byte) ids once.
         v1::Profile {
+            length_form: self.length_form,
             resources: self.resources.clone(),
         }
         .serialize_into(buf)
@@ -186,7 +235,8 @@ const MODULE_ID_SEND_BODY: usize = 1;
 impl<'a> Parse<'a> for ModuleIdSend {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::MODULE_ID_SEND, "module_id_send")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::MODULE_ID_SEND, "module_id_send")?;
         if body.len() < MODULE_ID_SEND_BODY {
             return Err(Error::BufferTooShort {
                 need: MODULE_ID_SEND_BODY,
@@ -196,6 +246,7 @@ impl<'a> Parse<'a> for ModuleIdSend {
         }
         crate::objects::reject_trailing_body(body, MODULE_ID_SEND_BODY, "module_id_send")?;
         Ok(Self {
+            length_form,
             module_id: body[0] & 0x3F,
         })
     }
@@ -203,11 +254,16 @@ impl<'a> Parse<'a> for ModuleIdSend {
 impl Serialize for ModuleIdSend {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(MODULE_ID_SEND_BODY)
+        objects::apdu_len(MODULE_ID_SEND_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         objects::fit_bits(u64::from(self.module_id), 6, "module_id_send module_id")?;
-        let pos = objects::write_apdu_header(tag::MODULE_ID_SEND, MODULE_ID_SEND_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::MODULE_ID_SEND,
+            MODULE_ID_SEND_BODY,
+            self.length_form,
+            buf,
+        )?;
         // reserved(2)='00', module_id(6). Range-checked above.
         buf[pos] = self.module_id;
         Ok(pos + MODULE_ID_SEND_BODY)
@@ -222,7 +278,8 @@ const MODULE_ID_COMMAND_BODY: usize = 2;
 impl<'a> Parse<'a> for ModuleIdCommand {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::MODULE_ID_COMMAND, "module_id_command")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::MODULE_ID_COMMAND, "module_id_command")?;
         if body.len() < MODULE_ID_COMMAND_BODY {
             return Err(Error::BufferTooShort {
                 need: MODULE_ID_COMMAND_BODY,
@@ -232,6 +289,7 @@ impl<'a> Parse<'a> for ModuleIdCommand {
         }
         crate::objects::reject_trailing_body(body, MODULE_ID_COMMAND_BODY, "module_id_command")?;
         Ok(Self {
+            length_form,
             command: ModuleIdCommandKind::from_u8(body[0]),
             module_id: body[1] & 0x3F,
         })
@@ -240,11 +298,16 @@ impl<'a> Parse<'a> for ModuleIdCommand {
 impl Serialize for ModuleIdCommand {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(MODULE_ID_COMMAND_BODY)
+        objects::apdu_len(MODULE_ID_COMMAND_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         objects::fit_bits(u64::from(self.module_id), 6, "module_id_command module_id")?;
-        let pos = objects::write_apdu_header(tag::MODULE_ID_COMMAND, MODULE_ID_COMMAND_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::MODULE_ID_COMMAND,
+            MODULE_ID_COMMAND_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.command.to_u8();
         // reserved(2)='00', module_id(6). Range-checked above.
         buf[pos + 1] = self.module_id;
@@ -277,21 +340,25 @@ mod tests {
 
     #[test]
     fn profile_enq_round_trips() {
-        let bytes = ProfileEnq.to_bytes();
+        let bytes = ProfileEnq::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x10, 0x00]);
-        assert_eq!(ProfileEnq::parse(&bytes).unwrap(), ProfileEnq);
+        assert_eq!(ProfileEnq::parse(&bytes).unwrap(), ProfileEnq::default());
     }
 
     #[test]
     fn profile_changed_round_trips() {
-        let bytes = ProfileChanged.to_bytes();
+        let bytes = ProfileChanged::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x12, 0x00]);
-        assert_eq!(ProfileChanged::parse(&bytes).unwrap(), ProfileChanged);
+        assert_eq!(
+            ProfileChanged::parse(&bytes).unwrap(),
+            ProfileChanged::default()
+        );
     }
 
     #[test]
     fn profile_reply_multi_round_trips_and_bites() {
         let p = ProfileReply {
+            length_form: crate::length::LengthForm::Minimal,
             resources: alloc::vec![ResourceId(0x0001_0042), ResourceId(0x0002_0042)],
         };
         let bytes = p.to_bytes();
@@ -310,20 +377,27 @@ mod tests {
 
     #[test]
     fn module_id_send_round_trips_and_bites() {
-        let m = ModuleIdSend { module_id: 0x03 };
+        let m = ModuleIdSend {
+            length_form: crate::length::LengthForm::Minimal,
+            module_id: 0x03,
+        };
         let bytes = m.to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x13, 0x01, 0x03]);
         assert_eq!(ModuleIdSend::parse(&bytes).unwrap(), m);
         // top 2 bits ignored on read.
         let parsed = ModuleIdSend::parse(&[0x9F, 0x80, 0x13, 0x01, 0xC3]).unwrap();
         assert_eq!(parsed.module_id, 0x03);
-        let other = ModuleIdSend { module_id: 0x04 };
+        let other = ModuleIdSend {
+            length_form: crate::length::LengthForm::Minimal,
+            module_id: 0x04,
+        };
         assert_ne!(bytes, other.to_bytes());
     }
 
     #[test]
     fn module_id_command_round_trips_and_bites() {
         let m = ModuleIdCommand {
+            length_form: crate::length::LengthForm::Minimal,
             command: ModuleIdCommandKind::SetModuleId,
             module_id: 0x05,
         };
@@ -338,12 +412,13 @@ mod tests {
 
     #[test]
     fn dispatch_routes_each_tag() {
-        let enq = ProfileEnq.to_bytes();
+        let enq = ProfileEnq::default().to_bytes();
         assert!(matches!(
             ResourceManagerV2Apdu::parse(&enq).unwrap(),
             ResourceManagerV2Apdu::ProfileEnq(_)
         ));
         let mic = ModuleIdCommand {
+            length_form: crate::length::LengthForm::Minimal,
             command: ModuleIdCommandKind::Acknowledgement,
             module_id: 1,
         }
@@ -358,7 +433,10 @@ mod tests {
     fn oversized_module_id_send_is_rejected_not_wrapped() {
         // Before the fix, 0x43 (exceeds 6 bits) silently wrapped to 0x03 in
         // the module_id field and returned Ok.
-        let m = ModuleIdSend { module_id: 0x43 };
+        let m = ModuleIdSend {
+            length_form: crate::length::LengthForm::Minimal,
+            module_id: 0x43,
+        };
         let mut buf = [0u8; 16];
         assert!(matches!(
             m.serialize_into(&mut buf),
@@ -368,7 +446,10 @@ mod tests {
 
     #[test]
     fn max_module_id_send_still_serializes_and_round_trips() {
-        let m = ModuleIdSend { module_id: 0x3F }; // the 6-bit maximum
+        let m = ModuleIdSend {
+            length_form: crate::length::LengthForm::Minimal,
+            module_id: 0x3F,
+        }; // the 6-bit maximum
         let bytes = m.to_bytes();
         assert_eq!(ModuleIdSend::parse(&bytes).unwrap(), m);
     }
@@ -376,6 +457,7 @@ mod tests {
     #[test]
     fn oversized_module_id_command_is_rejected_not_wrapped() {
         let m = ModuleIdCommand {
+            length_form: crate::length::LengthForm::Minimal,
             command: ModuleIdCommandKind::SetModuleId,
             module_id: 0x43,
         };

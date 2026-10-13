@@ -47,22 +47,28 @@ pub const DRM_UUID_LEN: usize = 16;
 /// `sd_info_req()` (Table 31): Host → CICAM, header-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct SdInfoReq;
+pub struct SdInfoReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 impl<'a> Parse<'a> for SdInfoReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        objects::parse_empty_apdu(bytes, tag::SD_INFO_REQ, "sd_info_req")?;
-        Ok(Self)
+        let length_form = objects::parse_empty_apdu(bytes, tag::SD_INFO_REQ, "sd_info_req")?;
+        Ok(Self { length_form })
     }
 }
 impl Serialize for SdInfoReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::empty_apdu_len()
+        objects::empty_apdu_len(self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::serialize_empty_apdu(tag::SD_INFO_REQ, buf)
+        objects::serialize_empty_apdu(tag::SD_INFO_REQ, self.length_form, buf)
     }
 }
 
@@ -73,6 +79,12 @@ impl Serialize for SdInfoReq {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SdInfoReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `drm_system_id` list (loop count `number_of_drm_system_id`). Values are the
     /// same as `ca_system_id` per the DVB allocation \[11\].
     pub drm_system_ids: Vec<u16>,
@@ -83,7 +95,8 @@ pub struct SdInfoReply {
 impl<'a> Parse<'a> for SdInfoReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::SD_INFO_REPLY, "sd_info_reply")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::SD_INFO_REPLY, "sd_info_reply")?;
         let mut r = Reader::new(body, "sd_info_reply");
         let n_sys = r.u8()? as usize;
         let mut drm_system_ids = Vec::with_capacity(n_sys);
@@ -96,6 +109,7 @@ impl<'a> Parse<'a> for SdInfoReply {
             drm_uuids.push(r.uuid()?);
         }
         Ok(Self {
+            length_form,
             drm_system_ids,
             drm_uuids,
         })
@@ -106,6 +120,7 @@ impl Serialize for SdInfoReply {
     fn serialized_len(&self) -> usize {
         objects::apdu_len(
             1 + self.drm_system_ids.len() * 2 + 1 + self.drm_uuids.len() * DRM_UUID_LEN,
+            self.length_form,
         )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -120,7 +135,7 @@ impl Serialize for SdInfoReply {
             "sd_info_reply number_of_DRM_UUIDs",
         )?;
         let body_len = 1 + self.drm_system_ids.len() * 2 + 1 + self.drm_uuids.len() * DRM_UUID_LEN;
-        let pos = objects::write_apdu_header(tag::SD_INFO_REPLY, body_len, buf)?;
+        let pos = objects::write_apdu_header(tag::SD_INFO_REPLY, body_len, self.length_form, buf)?;
         let mut w = Writer::new(&mut buf[pos..]);
         w.u8(self.drm_system_ids.len() as u8);
         for id in &self.drm_system_ids {
@@ -355,6 +370,12 @@ impl<'a> SamplePayload<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SdStart<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8) — identifier of the Local TS.
     pub lts_id: u8,
     /// `program_number` (16) — used by the CICAM in URI messages.
@@ -372,13 +393,14 @@ const TS_FLAG_BIT: u8 = 0x01;
 impl<'a> Parse<'a> for SdStart<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::SD_START, "sd_start")?;
+        let (length_form, body) = objects::parse_apdu_header(bytes, tag::SD_START, "sd_start")?;
         let mut r = Reader::new(body, "sd_start");
         let lts_id = r.u8()?;
         let program_number = r.u16()?;
         let ts_flag = r.u8()? & TS_FLAG_BIT != 0;
         let payload = SamplePayload::parse_from(&mut r, ts_flag)?;
         Ok(Self {
+            length_form,
             lts_id,
             program_number,
             payload,
@@ -388,12 +410,12 @@ impl<'a> Parse<'a> for SdStart<'a> {
 impl Serialize for SdStart<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(SD_START_FIXED + self.payload.body_len())
+        objects::apdu_len(SD_START_FIXED + self.payload.body_len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         self.payload.validate()?;
         let body_len = SD_START_FIXED + self.payload.body_len();
-        let pos = objects::write_apdu_header(tag::SD_START, body_len, buf)?;
+        let pos = objects::write_apdu_header(tag::SD_START, body_len, self.length_form, buf)?;
         let mut w = Writer::new(&mut buf[pos..]);
         w.u8(self.lts_id);
         w.u16(self.program_number);
@@ -509,6 +531,12 @@ broadcast_common::impl_spec_display!(DrmStatus, Reserved);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SdStartReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8).
     pub lts_id: u8,
     /// `transmission_status` (8) — Table 36.
@@ -532,7 +560,8 @@ const SD_START_REPLY_BODY: usize = 1 + 1 + 1 + 2 + DRM_UUID_LEN + 2 + 2;
 impl<'a> Parse<'a> for SdStartReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::SD_START_REPLY, "sd_start_reply")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::SD_START_REPLY, "sd_start_reply")?;
         if body.len() < SD_START_REPLY_BODY {
             return Err(Error::BufferTooShort {
                 need: SD_START_REPLY_BODY,
@@ -543,6 +572,7 @@ impl<'a> Parse<'a> for SdStartReply {
         crate::objects::reject_trailing_body(body, SD_START_REPLY_BODY, "sd_start_reply")?;
         let mut r = Reader::new(body, "sd_start_reply");
         Ok(Self {
+            length_form,
             lts_id: r.u8()?,
             transmission_status: TransmissionStatus::from_u8(r.u8()?),
             drm_status: DrmStatus::from_u8(r.u8()?),
@@ -556,10 +586,15 @@ impl<'a> Parse<'a> for SdStartReply {
 impl Serialize for SdStartReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(SD_START_REPLY_BODY)
+        objects::apdu_len(SD_START_REPLY_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::SD_START_REPLY, SD_START_REPLY_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::SD_START_REPLY,
+            SD_START_REPLY_BODY,
+            self.length_form,
+            buf,
+        )?;
         let mut w = Writer::new(&mut buf[pos..]);
         w.u8(self.lts_id);
         w.u8(self.transmission_status.to_u8());
@@ -579,6 +614,12 @@ impl Serialize for SdStartReply {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SdUpdate<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8) — Local TS for which the update applies.
     pub lts_id: u8,
     /// The `ts_flag`-selected payload (shall match the `sd_start` `ts_flag`).
@@ -592,23 +633,27 @@ const SD_UPDATE_FIXED: usize = 1 + 1;
 impl<'a> Parse<'a> for SdUpdate<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::SD_UPDATE, "sd_update")?;
+        let (length_form, body) = objects::parse_apdu_header(bytes, tag::SD_UPDATE, "sd_update")?;
         let mut r = Reader::new(body, "sd_update");
         let lts_id = r.u8()?;
         let ts_flag = r.u8()? & TS_FLAG_BIT != 0;
         let payload = SamplePayload::parse_from(&mut r, ts_flag)?;
-        Ok(Self { lts_id, payload })
+        Ok(Self {
+            length_form,
+            lts_id,
+            payload,
+        })
     }
 }
 impl Serialize for SdUpdate<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(SD_UPDATE_FIXED + self.payload.body_len())
+        objects::apdu_len(SD_UPDATE_FIXED + self.payload.body_len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         self.payload.validate()?;
         let body_len = SD_UPDATE_FIXED + self.payload.body_len();
-        let pos = objects::write_apdu_header(tag::SD_UPDATE, body_len, buf)?;
+        let pos = objects::write_apdu_header(tag::SD_UPDATE, body_len, self.length_form, buf)?;
         let mut w = Writer::new(&mut buf[pos..]);
         w.u8(self.lts_id);
         w.u8(if self.payload.ts_flag() {
@@ -627,6 +672,12 @@ impl Serialize for SdUpdate<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SdUpdateReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8).
     pub lts_id: u8,
     /// `drm_status` (8) — Table 37.
@@ -639,7 +690,8 @@ const SD_UPDATE_REPLY_BODY: usize = 2;
 impl<'a> Parse<'a> for SdUpdateReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::SD_UPDATE_REPLY, "sd_update_reply")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::SD_UPDATE_REPLY, "sd_update_reply")?;
         if body.len() < SD_UPDATE_REPLY_BODY {
             return Err(Error::BufferTooShort {
                 need: SD_UPDATE_REPLY_BODY,
@@ -649,6 +701,7 @@ impl<'a> Parse<'a> for SdUpdateReply {
         }
         crate::objects::reject_trailing_body(body, SD_UPDATE_REPLY_BODY, "sd_update_reply")?;
         Ok(Self {
+            length_form,
             lts_id: body[0],
             drm_status: DrmStatus::from_u8(body[1]),
         })
@@ -657,10 +710,15 @@ impl<'a> Parse<'a> for SdUpdateReply {
 impl Serialize for SdUpdateReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(SD_UPDATE_REPLY_BODY)
+        objects::apdu_len(SD_UPDATE_REPLY_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::SD_UPDATE_REPLY, SD_UPDATE_REPLY_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::SD_UPDATE_REPLY,
+            SD_UPDATE_REPLY_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.lts_id;
         buf[pos + 1] = self.drm_status.to_u8();
         Ok(pos + SD_UPDATE_REPLY_BODY)
@@ -764,14 +822,15 @@ mod tests {
 
     #[test]
     fn sd_info_req_round_trips() {
-        let bytes = SdInfoReq.to_bytes();
+        let bytes = SdInfoReq::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x98, 0x00, 0x00]);
-        assert_eq!(SdInfoReq::parse(&bytes).unwrap(), SdInfoReq);
+        assert_eq!(SdInfoReq::parse(&bytes).unwrap(), SdInfoReq::default());
     }
 
     #[test]
     fn sd_info_reply_round_trips_and_bites() {
         let r = SdInfoReply {
+            length_form: crate::length::LengthForm::Minimal,
             drm_system_ids: alloc::vec![0x4AD4, 0x1234],
             drm_uuids: alloc::vec![UUID_A, UUID_B],
         };
@@ -793,6 +852,7 @@ mod tests {
     #[test]
     fn sd_info_reply_empty_loops() {
         let r = SdInfoReply {
+            length_form: crate::length::LengthForm::Minimal,
             drm_system_ids: Vec::new(),
             drm_uuids: Vec::new(),
         };
@@ -804,6 +864,7 @@ mod tests {
     #[test]
     fn sd_start_ts_flag_round_trips_and_bites() {
         let s = SdStart {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x07,
             program_number: 0x0042,
             payload: SamplePayload::Ts(alloc::vec![DrmMetadataRecord {
@@ -842,6 +903,7 @@ mod tests {
     #[test]
     fn sd_start_tracks_two_tracks() {
         let s = SdStart {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x01,
             program_number: 0x1000,
             payload: SamplePayload::Tracks(alloc::vec![
@@ -881,6 +943,7 @@ mod tests {
     #[test]
     fn sd_start_reply_round_trips_and_bites() {
         let r = SdStartReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x05,
             transmission_status: TransmissionStatus::ReadyToReceive,
             drm_status: DrmStatus::DecryptionPossible,
@@ -909,6 +972,7 @@ mod tests {
     #[test]
     fn sd_update_round_trips() {
         let u = SdUpdate {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x09,
             payload: SamplePayload::Tracks(alloc::vec![
                 SampleTrack {
@@ -937,6 +1001,7 @@ mod tests {
     #[test]
     fn sd_update_reply_round_trips_and_bites() {
         let r = SdUpdateReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x03,
             drm_status: DrmStatus::Undetermined,
         };
@@ -944,6 +1009,7 @@ mod tests {
         assert_eq!(bytes, [0x9F, 0x98, 0x05, 0x02, 0x03, 0x01]);
         assert_eq!(SdUpdateReply::parse(&bytes).unwrap(), r);
         let other = SdUpdateReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x03,
             drm_status: DrmStatus::DecryptionPossible,
         };
@@ -952,12 +1018,13 @@ mod tests {
 
     #[test]
     fn dispatch_routes_each_tag() {
-        let req = SdInfoReq.to_bytes();
+        let req = SdInfoReq::default().to_bytes();
         assert!(matches!(
             SampleDecryptionApdu::parse(&req).unwrap(),
             SampleDecryptionApdu::SdInfoReq(_)
         ));
         let reply = SdUpdateReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             drm_status: DrmStatus::DecryptionPossible,
         }
@@ -974,6 +1041,7 @@ mod tests {
     #[test]
     fn max_track_pid_still_serializes_and_round_trips() {
         let s = SdStart {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             program_number: 0,
             payload: SamplePayload::Tracks(alloc::vec![SampleTrack {
@@ -991,6 +1059,7 @@ mod tests {
         // drm_metadata_length field.
         let big = alloc::vec![0u8; 65_536];
         let s = SdStart {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             program_number: 0,
             payload: SamplePayload::Ts(alloc::vec![DrmMetadataRecord {
@@ -1012,6 +1081,7 @@ mod tests {
         // 256 entries silently wrapped number_of_DRM_system_ids (u8) to 0
         // before the fix.
         let r = SdInfoReply {
+            length_form: crate::length::LengthForm::Minimal,
             drm_system_ids: (0..256).map(|i| i as u16).collect(),
             drm_uuids: Vec::new(),
         };

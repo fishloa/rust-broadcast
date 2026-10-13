@@ -57,12 +57,24 @@ broadcast_common::impl_spec_display!(ApplicationType, Reserved);
 /// `application_info_enq()` — header-only enquiry (Table 20).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct ApplicationInfoEnq;
+pub struct ApplicationInfoEnq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `enter_menu()` — header-only command (Table 22).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct EnterMenu;
+pub struct EnterMenu {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `application_info()` reply (Table 21). The `menu_string` is the raw text
 /// bytes of the top-level menu title (EN 300 468 Annex A coding); carried
@@ -70,6 +82,12 @@ pub struct EnterMenu;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ApplicationInfo<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `application_type`.
     pub application_type: ApplicationType,
     /// `application_manufacturer` (16-bit).
@@ -87,17 +105,18 @@ pub struct ApplicationInfo<'a> {
 impl<'a> Parse<'a> for ApplicationInfoEnq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        super::parse_empty_apdu(bytes, tag::APPLICATION_INFO_ENQ, "application_info_enq")?;
-        Ok(Self)
+        let length_form =
+            super::parse_empty_apdu(bytes, tag::APPLICATION_INFO_ENQ, "application_info_enq")?;
+        Ok(Self { length_form })
     }
 }
 impl Serialize for ApplicationInfoEnq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::empty_apdu_len()
+        super::empty_apdu_len(self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        super::serialize_empty_apdu(tag::APPLICATION_INFO_ENQ, buf)
+        super::serialize_empty_apdu(tag::APPLICATION_INFO_ENQ, self.length_form, buf)
     }
 }
 impl ApduDef<'_> for ApplicationInfoEnq {
@@ -110,17 +129,17 @@ impl ApduDef<'_> for ApplicationInfoEnq {
 impl<'a> Parse<'a> for EnterMenu {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        super::parse_empty_apdu(bytes, tag::ENTER_MENU, "enter_menu")?;
-        Ok(Self)
+        let length_form = super::parse_empty_apdu(bytes, tag::ENTER_MENU, "enter_menu")?;
+        Ok(Self { length_form })
     }
 }
 impl Serialize for EnterMenu {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::empty_apdu_len()
+        super::empty_apdu_len(self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        super::serialize_empty_apdu(tag::ENTER_MENU, buf)
+        super::serialize_empty_apdu(tag::ENTER_MENU, self.length_form, buf)
     }
 }
 impl ApduDef<'_> for EnterMenu {
@@ -137,7 +156,8 @@ const APP_INFO_PREFIX: usize = 6;
 impl<'a> Parse<'a> for ApplicationInfo<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::APPLICATION_INFO, "application_info")?;
+        let (length_form, body) =
+            super::parse_apdu_header(bytes, tag::APPLICATION_INFO, "application_info")?;
         if body.len() < APP_INFO_PREFIX {
             return Err(Error::BufferTooShort {
                 need: APP_INFO_PREFIX,
@@ -158,6 +178,7 @@ impl<'a> Parse<'a> for ApplicationInfo<'a> {
             });
         }
         Ok(Self {
+            length_form,
             application_type,
             application_manufacturer,
             manufacturer_code,
@@ -169,7 +190,7 @@ impl<'a> Parse<'a> for ApplicationInfo<'a> {
 impl Serialize for ApplicationInfo<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(APP_INFO_PREFIX + self.menu_string.len())
+        super::apdu_len(APP_INFO_PREFIX + self.menu_string.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if self.menu_string.len() > u8::MAX as usize {
@@ -179,7 +200,8 @@ impl Serialize for ApplicationInfo<'_> {
             });
         }
         let body_len = APP_INFO_PREFIX + self.menu_string.len();
-        let mut pos = super::write_apdu_header(tag::APPLICATION_INFO, body_len, buf)?;
+        let mut pos =
+            super::write_apdu_header(tag::APPLICATION_INFO, body_len, self.length_form, buf)?;
         buf[pos] = self.application_type.to_u8();
         buf[pos + 1..pos + 3].copy_from_slice(&self.application_manufacturer.to_be_bytes());
         buf[pos + 3..pos + 5].copy_from_slice(&self.manufacturer_code.to_be_bytes());
@@ -201,24 +223,25 @@ mod tests {
 
     #[test]
     fn enq_round_trip() {
-        let bytes = ApplicationInfoEnq.to_bytes();
+        let bytes = ApplicationInfoEnq::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x20, 0x00]);
         assert_eq!(
             ApplicationInfoEnq::parse(&bytes).unwrap(),
-            ApplicationInfoEnq
+            ApplicationInfoEnq::default()
         );
     }
 
     #[test]
     fn enter_menu_round_trip() {
-        let bytes = EnterMenu.to_bytes();
+        let bytes = EnterMenu::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x22, 0x00]);
-        assert_eq!(EnterMenu::parse(&bytes).unwrap(), EnterMenu);
+        assert_eq!(EnterMenu::parse(&bytes).unwrap(), EnterMenu::default());
     }
 
     #[test]
     fn application_info_round_trip() {
         let info = ApplicationInfo {
+            length_form: crate::length::LengthForm::Minimal,
             application_type: ApplicationType::ConditionalAccess,
             application_manufacturer: 0x1234,
             manufacturer_code: 0x5678,
@@ -236,6 +259,7 @@ mod tests {
     #[test]
     fn mutating_field_changes_bytes() {
         let info = ApplicationInfo {
+            length_form: crate::length::LengthForm::Minimal,
             application_type: ApplicationType::ConditionalAccess,
             application_manufacturer: 0x1234,
             manufacturer_code: 0x5678,
@@ -250,6 +274,7 @@ mod tests {
     #[test]
     fn empty_menu_string() {
         let info = ApplicationInfo {
+            length_form: crate::length::LengthForm::Minimal,
             application_type: ApplicationType::ElectronicProgrammeGuide,
             application_manufacturer: 0,
             manufacturer_code: 0,

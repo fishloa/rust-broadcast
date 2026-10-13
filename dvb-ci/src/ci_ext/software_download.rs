@@ -91,6 +91,12 @@ impl BinaryId {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DownloadEnquiry<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// The encapsulated DSM-CC message bytes (the `DSMCC_descriptor()` loop).
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub dsmcc_message: &'a [u8],
@@ -101,6 +107,12 @@ pub struct DownloadEnquiry<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DownloadReply<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// The encapsulated DSM-CC message bytes (the `DSMCC_descriptor()` loop).
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub dsmcc_message: &'a [u8],
@@ -110,6 +122,12 @@ pub struct DownloadReply<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct UserAuthInitiate<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// The 7-byte [`BinaryId`].
     pub binary_id: BinaryId,
     /// `data_byte`s — optional, meaning defined by the specifier.
@@ -121,6 +139,12 @@ pub struct UserAuthInitiate<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct UserAuthResult<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// The 7-byte [`BinaryId`].
     pub binary_id: BinaryId,
     /// `result_byte`s — conveys the user response; meaning defined by the specifier.
@@ -146,7 +170,7 @@ macro_rules! user_auth_object {
         impl<'a> Parse<'a> for $ty<'a> {
             type Error = Error;
             fn parse(bytes: &'a [u8]) -> Result<Self> {
-                let body = objects::parse_apdu_header(bytes, $tag, $what)?;
+                let (length_form, body) = objects::parse_apdu_header(bytes, $tag, $what)?;
                 if body.len() < BINARY_ID_LEN {
                     return Err(Error::BufferTooShort {
                         need: BINARY_ID_LEN,
@@ -155,6 +179,7 @@ macro_rules! user_auth_object {
                     });
                 }
                 Ok(Self {
+                    length_form,
                     binary_id: BinaryId::read(body),
                     $field: &body[BINARY_ID_LEN..],
                 })
@@ -163,11 +188,11 @@ macro_rules! user_auth_object {
         impl Serialize for $ty<'_> {
             type Error = Error;
             fn serialized_len(&self) -> usize {
-                objects::apdu_len(BINARY_ID_LEN + self.$field.len())
+                objects::apdu_len(BINARY_ID_LEN + self.$field.len(), self.length_form)
             }
             fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
                 let body_len = BINARY_ID_LEN + self.$field.len();
-                let mut pos = objects::write_apdu_header($tag, body_len, buf)?;
+                let mut pos = objects::write_apdu_header($tag, body_len, self.length_form, buf)?;
                 self.binary_id.write(&mut buf[pos..])?;
                 pos += BINARY_ID_LEN;
                 buf[pos..pos + self.$field.len()].copy_from_slice(self.$field);
@@ -961,12 +986,14 @@ mod tests {
     #[test]
     fn download_enquiry_round_trips_and_bites() {
         let enq = DownloadEnquiry {
+            length_form: crate::length::LengthForm::Minimal,
             dsmcc_message: &[0x11, 0x03, 0x10, 0x01],
         };
         let bytes = enq.to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x00, 0x04, 0x11, 0x03, 0x10, 0x01]);
         assert_eq!(DownloadEnquiry::parse(&bytes).unwrap(), enq);
         let other = DownloadEnquiry {
+            length_form: crate::length::LengthForm::Minimal,
             dsmcc_message: &[0x11, 0x03, 0x10, 0x02],
         };
         assert_ne!(bytes, other.to_bytes());
@@ -975,6 +1002,7 @@ mod tests {
     #[test]
     fn download_reply_round_trips() {
         let rep = DownloadReply {
+            length_form: crate::length::LengthForm::Minimal,
             dsmcc_message: &[0xAA],
         };
         let bytes = rep.to_bytes();
@@ -985,6 +1013,7 @@ mod tests {
     #[test]
     fn binary_id_specifier_over_24_bits_is_rejected_not_truncated() {
         let uai = UserAuthInitiate {
+            length_form: crate::length::LengthForm::Minimal,
             binary_id: BinaryId {
                 specifier: 0x01_00_1B_67, // 25 bits: the top byte used to vanish
                 model: 0,
@@ -1002,6 +1031,7 @@ mod tests {
     #[test]
     fn user_auth_initiate_round_trips_and_bites() {
         let uai = UserAuthInitiate {
+            length_form: crate::length::LengthForm::Minimal,
             binary_id: BinaryId {
                 specifier: 0x00_1B_67,
                 model: 0x1234,
@@ -1026,6 +1056,7 @@ mod tests {
     #[test]
     fn user_auth_result_round_trips() {
         let uar = UserAuthResult {
+            length_form: crate::length::LengthForm::Minimal,
             binary_id: BinaryId {
                 specifier: 0xAABBCC & 0x00FF_FFFF,
                 model: 1,
@@ -1268,6 +1299,7 @@ mod tests {
         };
         let inner_bytes = inner.to_bytes();
         let enq = DownloadEnquiry {
+            length_form: crate::length::LengthForm::Minimal,
             dsmcc_message: &inner_bytes,
         };
         let outer = enq.to_bytes();
@@ -1283,6 +1315,7 @@ mod tests {
     #[test]
     fn dispatch_routes_each_tag() {
         let enq = DownloadEnquiry {
+            length_form: crate::length::LengthForm::Minimal,
             dsmcc_message: &[0x11],
         }
         .to_bytes();
@@ -1291,6 +1324,7 @@ mod tests {
             DownloadApdu::DownloadEnquiry(_)
         ));
         let uar = UserAuthResult {
+            length_form: crate::length::LengthForm::Minimal,
             binary_id: BinaryId::default(),
             result: &[0x01],
         }

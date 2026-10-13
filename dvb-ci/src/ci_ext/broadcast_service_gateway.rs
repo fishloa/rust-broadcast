@@ -85,6 +85,12 @@ broadcast_common::impl_spec_display!(EitResponseCode);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EitSectionReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `TableID` — 16-bit (wider than the 8-bit EIT table_id); EIT values
     /// `0x4E`-`0x6F` (ETS 300 468).
     pub table_id: u16,
@@ -123,6 +129,12 @@ pub struct EitEvent<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EitSectionAck<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `ResponseCode` (Table 34).
     pub response_code: EitResponseCode,
     /// The events (`Length` is the byte count of the event loop, may be 0).
@@ -139,7 +151,8 @@ const EIT_SECTION_REQ_BODY: usize = 2 + 2 + 1 + 2 + 1;
 impl<'a> Parse<'a> for EitSectionReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::EIT_SECTION_REQ, "EITSectionReq")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::EIT_SECTION_REQ, "EITSectionReq")?;
         if body.len() < EIT_SECTION_REQ_BODY {
             return Err(Error::BufferTooShort {
                 need: EIT_SECTION_REQ_BODY,
@@ -149,6 +162,7 @@ impl<'a> Parse<'a> for EitSectionReq {
         }
         crate::objects::reject_trailing_body(body, EIT_SECTION_REQ_BODY, "EITSectionReq")?;
         Ok(Self {
+            length_form,
             table_id: u16::from_be_bytes([body[0], body[1]]),
             service_id: u16::from_be_bytes([body[2], body[3]]),
             section_number: body[4],
@@ -160,10 +174,15 @@ impl<'a> Parse<'a> for EitSectionReq {
 impl Serialize for EitSectionReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(EIT_SECTION_REQ_BODY)
+        objects::apdu_len(EIT_SECTION_REQ_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::EIT_SECTION_REQ, EIT_SECTION_REQ_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::EIT_SECTION_REQ,
+            EIT_SECTION_REQ_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos..pos + 2].copy_from_slice(&self.table_id.to_be_bytes());
         buf[pos + 2..pos + 4].copy_from_slice(&self.service_id.to_be_bytes());
         buf[pos + 4] = self.section_number;
@@ -184,7 +203,8 @@ const EIT_EVENT_FIXED: usize = 2 + 5 + 3 + 2;
 impl<'a> Parse<'a> for EitSectionAck<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::EIT_SECTION_ACK, "EITSectionAck")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::EIT_SECTION_ACK, "EITSectionAck")?;
         if body.len() < EIT_SECTION_ACK_PREFIX {
             return Err(Error::BufferTooShort {
                 need: EIT_SECTION_ACK_PREFIX,
@@ -243,6 +263,7 @@ impl<'a> Parse<'a> for EitSectionAck<'a> {
             p = desc_end;
         }
         Ok(Self {
+            length_form,
             response_code,
             events,
         })
@@ -262,7 +283,7 @@ impl EitSectionAck<'_> {
 impl Serialize for EitSectionAck<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(EIT_SECTION_ACK_PREFIX + self.loop_len())
+        objects::apdu_len(EIT_SECTION_ACK_PREFIX + self.loop_len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let length = self.loop_len();
@@ -273,7 +294,8 @@ impl Serialize for EitSectionAck<'_> {
             });
         }
         let body_len = EIT_SECTION_ACK_PREFIX + length;
-        let mut pos = objects::write_apdu_header(tag::EIT_SECTION_ACK, body_len, buf)?;
+        let mut pos =
+            objects::write_apdu_header(tag::EIT_SECTION_ACK, body_len, self.length_form, buf)?;
         let len16 = length as u16;
         // Reserved(2)=0, ResponseCode(2), Length(12).
         buf[pos] = (self.response_code.to_u8() << 4) | ((len16 >> 8) as u8 & 0x0F);
@@ -373,6 +395,7 @@ mod tests {
     #[test]
     fn eit_section_req_round_trips_and_bites() {
         let req = EitSectionReq {
+            length_form: crate::length::LengthForm::Minimal,
             table_id: 0x004E,
             service_id: 0x0064,
             section_number: 0x00,
@@ -415,6 +438,7 @@ mod tests {
             descriptors: &[],
         };
         let ack = EitSectionAck {
+            length_form: crate::length::LengthForm::Minimal,
             response_code: EitResponseCode::SectionFound,
             events: alloc::vec![e0, e1],
         };
@@ -438,6 +462,7 @@ mod tests {
     #[test]
     fn eit_section_ack_empty_loop() {
         let ack = EitSectionAck {
+            length_form: crate::length::LengthForm::Minimal,
             response_code: EitResponseCode::NotAvailable,
             events: alloc::vec![],
         };
@@ -451,6 +476,7 @@ mod tests {
     #[test]
     fn bsg_routes_eit_tags() {
         let req = EitSectionReq {
+            length_form: crate::length::LengthForm::Minimal,
             table_id: 0x4E,
             service_id: 1,
             section_number: 0,
@@ -467,7 +493,7 @@ mod tests {
     #[test]
     fn bsg_delegates_generic_gateway_tags() {
         // 9F8000 (ServiceListReq) is inherited from the Generic Service Gateway.
-        let req = ServiceListReq.to_bytes();
+        let req = ServiceListReq::default().to_bytes();
         let parsed = BroadcastServiceGatewayApdu::parse(&req).unwrap();
         assert!(matches!(
             parsed,
@@ -478,6 +504,7 @@ mod tests {
         // 9F8006 ServiceDescAck inherited too.
         use super::super::service_gateway::ServiceDescAck;
         let sda = ServiceDescAck {
+            length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 1,
                 service_id: 0x64,
@@ -510,6 +537,7 @@ mod tests {
             descriptors: &[],
         };
         let ack = EitSectionAck {
+            length_form: crate::length::LengthForm::Minimal,
             response_code: EitResponseCode::SectionFound,
             events: alloc::vec![e],
         };
@@ -531,6 +559,7 @@ mod tests {
             descriptors: &[],
         };
         let ack = EitSectionAck {
+            length_form: crate::length::LengthForm::Minimal,
             response_code: EitResponseCode::SectionFound,
             events: alloc::vec![e],
         };
