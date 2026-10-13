@@ -1096,6 +1096,7 @@ mod tests {
     fn unsupported_codec_has_no_smooth_params() {
         let cfg = CodecConfig::Subtitle {
             format: transmux::ir::SubtitleFormat::WebVtt,
+            sample_entry: None,
         };
         assert!(
             smooth_codec_params(&cfg).is_none(),
@@ -1114,6 +1115,7 @@ mod tests {
         assert_eq!(
             track_stream_type(&CodecConfig::Subtitle {
                 format: transmux::ir::SubtitleFormat::WebVtt,
+                sample_entry: None,
             }),
             None
         );
