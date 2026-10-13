@@ -530,39 +530,45 @@ impl<'a> Parse<'a> for J2kVideoDescriptor<'a> {
         let num_frame_rate = u16::from_be_bytes([body[20], body[21]]);
         let pos = 22;
 
-        let (extended_capability, color_specification, still_mode, interlaced_video, reserved_6, pos) =
-            if extended_capability_flag {
-                let (ext, still_mode, interlaced_video, reserved_6, new_pos) =
-                    parse_extended_capability(body, pos)?;
-                (
-                    Some(ext),
-                    None,
-                    still_mode,
-                    interlaced_video,
-                    reserved_6,
-                    new_pos,
-                )
-            } else {
-                // color_specification(1) then still_mode(1) | interlaced_video(1) | reserved(6)
-                if body.len() < pos + 2 {
-                    return Err(Error::InvalidDescriptor {
-                        tag: TAG,
-                        reason: "J2K_video_descriptor too short for color_specification/still_mode",
-                    });
-                }
-                let cs = body[pos];
-                let sm_iv = body[pos + 1];
-                let still_mode = (sm_iv & 0x80) != 0;
-                let interlaced_video = (sm_iv & 0x40) != 0;
-                (
-                    None,
-                    Some(cs),
-                    still_mode,
-                    interlaced_video,
-                    sm_iv & RESERVED_6_MASK,
-                    pos + 2,
-                )
-            };
+        let (
+            extended_capability,
+            color_specification,
+            still_mode,
+            interlaced_video,
+            reserved_6,
+            pos,
+        ) = if extended_capability_flag {
+            let (ext, still_mode, interlaced_video, reserved_6, new_pos) =
+                parse_extended_capability(body, pos)?;
+            (
+                Some(ext),
+                None,
+                still_mode,
+                interlaced_video,
+                reserved_6,
+                new_pos,
+            )
+        } else {
+            // color_specification(1) then still_mode(1) | interlaced_video(1) | reserved(6)
+            if body.len() < pos + 2 {
+                return Err(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "J2K_video_descriptor too short for color_specification/still_mode",
+                });
+            }
+            let cs = body[pos];
+            let sm_iv = body[pos + 1];
+            let still_mode = (sm_iv & 0x80) != 0;
+            let interlaced_video = (sm_iv & 0x40) != 0;
+            (
+                None,
+                Some(cs),
+                still_mode,
+                interlaced_video,
+                sm_iv & RESERVED_6_MASK,
+                pos + 2,
+            )
+        };
 
         let private_data = &body[pos..];
 

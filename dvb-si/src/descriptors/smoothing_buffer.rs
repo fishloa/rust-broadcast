@@ -96,11 +96,13 @@ impl Serialize for SmoothingBufferDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         let slr = self.sb_leak_rate;
-        buf[HEADER_LEN] = ((self.reserved_leak_rate & RESERVED_MASK) << 6) | ((slr >> 16) & 0x3F) as u8;
+        buf[HEADER_LEN] =
+            ((self.reserved_leak_rate & RESERVED_MASK) << 6) | ((slr >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 1] = ((slr >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 2] = (slr & 0xFF) as u8;
         let ss = self.sb_size;
-        buf[HEADER_LEN + 3] = ((self.reserved_size & RESERVED_MASK) << 6) | ((ss >> 16) & 0x3F) as u8;
+        buf[HEADER_LEN + 3] =
+            ((self.reserved_size & RESERVED_MASK) << 6) | ((ss >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 4] = ((ss >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 5] = (ss & 0xFF) as u8;
         Ok(len)
@@ -167,7 +169,16 @@ mod tests {
     fn smoothing_buffer_reserved_preserved() {
         for r1 in 0u8..=3 {
             for r2 in 0u8..=3 {
-                let bytes = [TAG, 6, (r1 << 6) | 0x3F, 0xAB, 0xCD, (r2 << 6) | 0x02, 0x34, 0x56];
+                let bytes = [
+                    TAG,
+                    6,
+                    (r1 << 6) | 0x3F,
+                    0xAB,
+                    0xCD,
+                    (r2 << 6) | 0x02,
+                    0x34,
+                    0x56,
+                ];
                 let d = SmoothingBufferDescriptor::parse(&bytes).unwrap();
                 assert_eq!((d.reserved_leak_rate, d.reserved_size), (r1, r2));
                 let mut out = vec![0u8; d.serialized_len()];

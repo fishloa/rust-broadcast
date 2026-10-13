@@ -392,7 +392,8 @@ impl Serialize for MetadataDescriptor<'_> {
 
         // `DSM-CC_flag` is derived from the Option (never the stored
         // `dsmcc_flag`) so flag and record can never disagree (r03-W5).
-        let mut flags = ((self.decoder_config_flags.to_u8() & 0x07) << 5) | (self.reserved & RESERVED_MASK);
+        let mut flags =
+            ((self.decoder_config_flags.to_u8() & 0x07) << 5) | (self.reserved & RESERVED_MASK);
         if self.service_identification.is_some() {
             flags |= DSMCC_FLAG_BIT;
         }
@@ -668,7 +669,19 @@ mod tests {
     #[test]
     fn metadata_reserved_preserved() {
         for r in 0u8..=15 {
-            let bytes = [TAG, 9, 0x01, 0x00, 0x3F, 0x01, 0x10 | r, 0x02, 0xAA, 0xBB, 0xEE];
+            let bytes = [
+                TAG,
+                9,
+                0x01,
+                0x00,
+                0x3F,
+                0x01,
+                0x10 | r,
+                0x02,
+                0xAA,
+                0xBB,
+                0xEE,
+            ];
             let d = MetadataDescriptor::parse(&bytes).unwrap();
             assert_eq!(d.reserved, r);
             let mut out = vec![0u8; d.serialized_len()];
@@ -684,6 +697,9 @@ mod tests {
         d.private_data = &[0xEE];
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, [TAG, 9, 0x01, 0x00, 0x3F, 0x01, 0x1F, 0x02, 0xAA, 0xBB, 0xEE]);
+        assert_eq!(
+            out,
+            [TAG, 9, 0x01, 0x00, 0x3F, 0x01, 0x1F, 0x02, 0xAA, 0xBB, 0xEE]
+        );
     }
 }

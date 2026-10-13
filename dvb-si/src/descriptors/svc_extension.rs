@@ -158,7 +158,8 @@ impl Serialize for SvcExtensionDescriptor {
         buf[HEADER_LEN + 4..HEADER_LEN + 6].copy_from_slice(&self.frame_rate.to_be_bytes());
         buf[HEADER_LEN + 6..HEADER_LEN + 8].copy_from_slice(&self.average_bitrate.to_be_bytes());
         buf[HEADER_LEN + 8..HEADER_LEN + 10].copy_from_slice(&self.maximum_bitrate.to_be_bytes());
-        buf[HEADER_LEN + 10] = ((self.dependency_id & 0x07) << 5) | (self.reserved_5 & RESERVED_5_MASK);
+        buf[HEADER_LEN + 10] =
+            ((self.dependency_id & 0x07) << 5) | (self.reserved_5 & RESERVED_5_MASK);
         buf[HEADER_LEN + 11] = ((self.quality_id_start & 0x0F) << 4) | (self.quality_id_end & 0x0F);
         buf[HEADER_LEN + 12] = ((self.temporal_id_start & 0x07) << 5)
             | ((self.temporal_id_end & 0x07) << 2)
@@ -300,7 +301,10 @@ mod tests {
         d.serialize_into(&mut out).unwrap();
         assert_eq!(
             out,
-            [TAG, 13, 0x07, 0x80, 0x04, 0x38, 0x00, 0x3C, 0x00, 0x64, 0x00, 0xC8, 0x3F, 0x01, 0x05]
+            [
+                TAG, 13, 0x07, 0x80, 0x04, 0x38, 0x00, 0x3C, 0x00, 0x64, 0x00, 0xC8, 0x3F, 0x01,
+                0x05
+            ]
         );
     }
 }

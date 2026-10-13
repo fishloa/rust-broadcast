@@ -301,6 +301,9 @@ mod tests {
         let d = PartialTransportStreamDescriptor::new(0x01_2345, 0x0A_BCDE, 0x1234);
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, [TAG, 8, 0xC1, 0x23, 0x45, 0xCA, 0xBC, 0xDE, 0xD2, 0x34]);
+        assert_eq!(
+            out,
+            [TAG, 8, 0xC1, 0x23, 0x45, 0xCA, 0xBC, 0xDE, 0xD2, 0x34]
+        );
     }
 }

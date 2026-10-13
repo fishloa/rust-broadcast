@@ -277,8 +277,8 @@ impl Serialize for HierarchyDescriptor {
             | ((self.no_spatial_scalability_flag as u8) << 5)
             | ((self.no_quality_scalability_flag as u8) << 4)
             | (self.hierarchy_type.to_u8() & HIERARCHY_TYPE_MASK);
-        buf[HEADER_LEN + 1] =
-            ((self.reserved_layer_index & RESERVED_2_MASK) << 6) | (self.hierarchy_layer_index & 0x3F);
+        buf[HEADER_LEN + 1] = ((self.reserved_layer_index & RESERVED_2_MASK) << 6)
+            | (self.hierarchy_layer_index & 0x3F);
         buf[HEADER_LEN + 2] = ((self.tref_present_flag as u8) << 7)
             | ((self.reserved_embedded & RESERVED_1_MASK) << 6)
             | (self.hierarchy_embedded_layer_index & 0x3F);
@@ -398,7 +398,11 @@ mod tests {
                     ];
                     let d = HierarchyDescriptor::parse(&bytes).unwrap();
                     assert_eq!(
-                        (d.reserved_layer_index, d.reserved_embedded, d.reserved_channel),
+                        (
+                            d.reserved_layer_index,
+                            d.reserved_embedded,
+                            d.reserved_channel
+                        ),
                         (r_layer, r_emb, r_chan)
                     );
                     let mut out = vec![0u8; d.serialized_len()];

@@ -277,6 +277,9 @@ mod tests {
         let d = MetadataStdDescriptor::new(1, 2, 3);
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, [TAG, 9, 0xC0, 0x00, 0x01, 0xC0, 0x00, 0x02, 0xC0, 0x00, 0x03]);
+        assert_eq!(
+            out,
+            [TAG, 9, 0xC0, 0x00, 0x01, 0xC0, 0x00, 0x02, 0xC0, 0x00, 0x03]
+        );
     }
 }

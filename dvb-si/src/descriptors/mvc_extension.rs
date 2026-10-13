@@ -254,7 +254,18 @@ mod tests {
     #[test]
     fn mvc_extension_reserved_preserved() {
         for r in 0u8..=3 {
-            let bytes = [TAG, 8, 0x00, 0x64, 0x00, 0xC8, (r << 4) | 0x0F, 0xFC, 0xE8, 0x4A];
+            let bytes = [
+                TAG,
+                8,
+                0x00,
+                0x64,
+                0x00,
+                0xC8,
+                (r << 4) | 0x0F,
+                0xFC,
+                0xE8,
+                0x4A,
+            ];
             let d = MvcExtensionDescriptor::parse(&bytes).unwrap();
             assert_eq!(d.reserved, r);
             let mut out = vec![0u8; d.serialized_len()];
@@ -273,6 +284,9 @@ mod tests {
         d.no_sei_nal_unit_present = true;
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, [TAG, 8, 0x00, 0x64, 0x00, 0xC8, 0x3F, 0xFC, 0xE8, 0x4A]);
+        assert_eq!(
+            out,
+            [TAG, 8, 0x00, 0x64, 0x00, 0xC8, 0x3F, 0xFC, 0xE8, 0x4A]
+        );
     }
 }

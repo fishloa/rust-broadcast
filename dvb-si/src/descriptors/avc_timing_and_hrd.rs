@@ -49,7 +49,12 @@ pub struct AvcPictureTiming {
 impl AvcPictureTiming {
     /// Build with the spec-default reserved bits.
     #[must_use]
-    pub const fn new(_90khz_flag: bool, n: Option<u32>, k: Option<u32>, num_units_in_tick: u32) -> Self {
+    pub const fn new(
+        _90khz_flag: bool,
+        n: Option<u32>,
+        k: Option<u32>,
+        num_units_in_tick: u32,
+    ) -> Self {
         Self {
             _90khz_flag,
             n,
@@ -420,7 +425,9 @@ mod tests {
         d.serialize_into(&mut out).unwrap();
         assert_eq!(
             out,
-            [TAG, 15, 0xFF, 0x7F, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0xBF]
+            [
+                TAG, 15, 0xFF, 0x7F, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0xBF
+            ]
         );
     }
 }

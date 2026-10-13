@@ -308,8 +308,7 @@ impl Serialize for VideoStreamDescriptor {
                     reason: "required when mpeg_1_only_flag is false",
                 })? as u8;
             buf[HEADER_LEN + 1] = pal;
-            buf[HEADER_LEN + 2] =
-                (chroma << 6) | (fre << 5) | (self.reserved_5 & RESERVED_5_MASK);
+            buf[HEADER_LEN + 2] = (chroma << 6) | (fre << 5) | (self.reserved_5 & RESERVED_5_MASK);
         }
         let fixed = if self.mpeg_1_only_flag {
             BODY_MPEG1_LEN as usize
@@ -483,7 +482,15 @@ mod tests {
 
     #[test]
     fn video_stream_default_is_spec_value() {
-        let d = VideoStreamDescriptor::mpeg2(true, FrameRateCode::Frame29_97, true, true, 0xDE, 3, true);
+        let d = VideoStreamDescriptor::mpeg2(
+            true,
+            FrameRateCode::Frame29_97,
+            true,
+            true,
+            0xDE,
+            3,
+            true,
+        );
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         assert_eq!(out, [TAG, 3, 0b1010_0011, 0xDE, 0xFF]);

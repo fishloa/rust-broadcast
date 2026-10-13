@@ -110,7 +110,8 @@ impl Serialize for SystemClockDescriptor {
         buf[HEADER_LEN] = ((self.external_clock_reference_indicator as u8) << 7)
             | ((self.reserved_1 & RESERVED_1_MASK) << 6)
             | (self.clock_accuracy_integer & 0x3F);
-        buf[HEADER_LEN + 1] = ((self.clock_accuracy_exponent & 0x07) << 5) | (self.reserved_5 & RESERVED_5_MASK);
+        buf[HEADER_LEN + 1] =
+            ((self.clock_accuracy_exponent & 0x07) << 5) | (self.reserved_5 & RESERVED_5_MASK);
         Ok(len)
     }
 }

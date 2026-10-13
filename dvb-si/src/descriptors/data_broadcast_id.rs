@@ -696,7 +696,13 @@ mod tests {
     #[test]
     fn ssu_selector_no_versioning_flag() {
         let s = SsuIdSelector {
-            oui_entries: vec![SsuOuiEntry::new([0x00, 0x00, 0x00], UpdateType::StandardUpdateCarousel, false, 0x00, &[])],
+            oui_entries: vec![SsuOuiEntry::new(
+                [0x00, 0x00, 0x00],
+                UpdateType::StandardUpdateCarousel,
+                false,
+                0x00,
+                &[],
+            )],
             private_data: &[],
         };
         let mut buf = vec![0u8; s.serialized_len()];
@@ -861,6 +867,9 @@ mod tests {
         let s = sample_ssu_selector();
         let mut out = vec![0u8; s.serialized_len()];
         s.serialize_into(&mut out).unwrap();
-        assert_eq!(out, [0x09, 0x00, 0x15, 0x0A, 0xF2, 0xE1, 0x03, 0xAA, 0xBB, 0xCC]);
+        assert_eq!(
+            out,
+            [0x09, 0x00, 0x15, 0x0A, 0xF2, 0xE1, 0x03, 0xAA, 0xBB, 0xCC]
+        );
     }
 }

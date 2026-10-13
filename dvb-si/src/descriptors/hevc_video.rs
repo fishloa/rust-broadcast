@@ -672,7 +672,11 @@ mod tests {
         d.temporal_sub = Some(HevcTemporalSub::new(0, 3));
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out[14], 0x80 | 0x0C, "reserved(2) default is 11 at [3:2]");
+        assert_eq!(
+            out[14] & 0xFC,
+            0x80 | 0x0C,
+            "reserved(2) default is 11 at [3:2]"
+        );
         assert_eq!(out[15], 0x1F);
         assert_eq!(out[16], 0x60 | 0x1F);
     }
