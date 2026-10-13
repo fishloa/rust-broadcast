@@ -262,7 +262,9 @@ impl Serialize for SitSection<'_> {
         buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
-        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -435,26 +437,26 @@ mod tests {
     #[test]
     fn serialize_round_trip_two_services() {
         let ti = [0x4D, 0x02, 0x01, 0x02];
-        let sit = SitSection {
-            table_id_extension: 0xCAFE,
-            version_number: 3,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transmission_info_descriptors: DescriptorLoop::new(&ti),
-            services: vec![
-                SitService {
-                    service_id: 0x0001,
-                    running_status: RunningStatus::Running,
-                    descriptors: DescriptorLoop::new(&[0x48, 0x02, 0xAA, 0xBB]),
-                },
-                SitService {
-                    service_id: 0x0002,
-                    running_status: RunningStatus::StartsInAFewSeconds,
-                    descriptors: DescriptorLoop::new(&[]),
-                },
+        let sit = SitSection::new(
+            0xCAFE,
+            3,
+            true,
+            0,
+            0,
+            DescriptorLoop::new(&ti),
+            vec![
+                SitService::new(
+                    0x0001,
+                    RunningStatus::Running,
+                    DescriptorLoop::new(&[0x48, 0x02, 0xAA, 0xBB]),
+                ),
+                SitService::new(
+                    0x0002,
+                    RunningStatus::StartsInAFewSeconds,
+                    DescriptorLoop::new(&[]),
+                ),
             ],
-        };
+        );
         let mut buf = vec![0u8; sit.serialized_len()];
         sit.serialize_into(&mut buf).unwrap();
         // Byte-exact: re-parse must equal the original.
@@ -474,19 +476,19 @@ mod tests {
     fn serialize_rejects_over_range_service_desc_len() {
         // A service descriptor loop longer than the 12-bit field can hold.
         let big = vec![0u8; MAX_SERVICE_DESC_LEN + 1];
-        let sit = SitSection {
-            table_id_extension: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transmission_info_descriptors: DescriptorLoop::new(&[]),
-            services: vec![SitService {
-                service_id: 0x0001,
-                running_status: RunningStatus::Running,
-                descriptors: DescriptorLoop::new(&big),
-            }],
-        };
+        let sit = SitSection::new(
+            0x0001,
+            0,
+            true,
+            0,
+            0,
+            DescriptorLoop::new(&[]),
+            vec![SitService::new(
+                0x0001,
+                RunningStatus::Running,
+                DescriptorLoop::new(&big),
+            )],
+        );
         let mut buf = vec![0u8; sit.serialized_len()];
         assert!(matches!(
             sit.serialize_into(&mut buf).unwrap_err(),
@@ -521,15 +523,7 @@ mod tests {
     #[test]
     fn serialize_rejects_transmission_info_exceeding_section_length() {
         let desc = vec![0xAAu8; 4085];
-        let sit = SitSection {
-            table_id_extension: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transmission_info_descriptors: DescriptorLoop::new(&desc),
-            services: vec![],
-        };
+        let sit = SitSection::new(1, 0, true, 0, 0, DescriptorLoop::new(&desc), vec![]);
         let mut buf = vec![0u8; sit.serialized_len()];
         assert!(matches!(
             sit.serialize_into(&mut buf).unwrap_err(),
@@ -540,15 +534,7 @@ mod tests {
     #[test]
     fn serialize_accepts_transmission_info_at_section_length_boundary() {
         let desc = vec![0xAAu8; 4084];
-        let sit = SitSection {
-            table_id_extension: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transmission_info_descriptors: DescriptorLoop::new(&desc),
-            services: vec![],
-        };
+        let sit = SitSection::new(1, 0, true, 0, 0, DescriptorLoop::new(&desc), vec![]);
         let mut buf = vec![0u8; sit.serialized_len()];
         sit.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = SitSection::parse(&buf).expect("reparse");

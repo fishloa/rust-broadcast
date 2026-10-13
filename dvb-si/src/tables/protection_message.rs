@@ -175,6 +175,18 @@ pub enum ProtectionMessageBody<'a> {
     Raw(&'a [u8]),
 }
 
+impl<'a> ProtectionMessageBody<'a> {
+    /// A certificate-collection body with the spec `reserved` fill.
+    #[must_use]
+    pub fn certificate_collection(certificates: Vec<&'a [u8]>) -> Self {
+        Self::CertificateCollection {
+            certificates,
+            reserved_certificate_count: super::RESERVED_4,
+            reserved_certificate_lengths: Vec::new(),
+        }
+    }
+}
+
 /// Protection message section (TS 102 809 §9; Tables 42 / 51).
 ///
 /// Typed fields cover the common section header; [`ProtectionMessageSection::body`]
@@ -614,7 +626,9 @@ impl Serialize for ProtectionMessageSection<'_> {
         super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
-        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         let body_written = self.body.write_into(&mut buf[HEADER_LEN..])?;
@@ -709,6 +723,7 @@ mod tests {
                 extension_bytes,
                 signature_key_identifier,
                 signature,
+                ..
             } => {
                 assert_eq!(section_hash_algorithm_identifier, 0x00);
                 assert_eq!(section_hash_length, 4);
@@ -731,7 +746,7 @@ mod tests {
         let sec = ProtectionMessageSection::parse(&bytes).unwrap();
         assert_eq!(sec.table_id_extension, 0x0100);
         match sec.body {
-            ProtectionMessageBody::CertificateCollection { certificates } => {
+            ProtectionMessageBody::CertificateCollection { certificates, .. } => {
                 assert_eq!(certificates.len(), 2);
                 assert_eq!(certificates[0], &[0x30, 0x82, 0x01, 0x02]);
                 assert_eq!(certificates[1], &[0xAB, 0xCD]);
@@ -892,14 +907,8 @@ mod tests {
     #[test]
     fn serialize_rejects_raw_body_exceeding_section_length() {
         let raw = vec![0xAAu8; 4087];
-        let sec = ProtectionMessageSection {
-            table_id_extension: 0x0200, // outside AUTH and CERTIFICATE_COLLECTION ranges
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            body: ProtectionMessageBody::Raw(&raw),
-        };
+        let sec =
+            ProtectionMessageSection::new(0x0200, 0, true, 0, 0, ProtectionMessageBody::Raw(&raw));
         let mut buf = vec![0u8; sec.serialized_len()];
         assert!(matches!(
             sec.serialize_into(&mut buf).unwrap_err(),
@@ -910,14 +919,8 @@ mod tests {
     #[test]
     fn serialize_accepts_raw_body_at_section_length_boundary() {
         let raw = vec![0xAAu8; 4086];
-        let sec = ProtectionMessageSection {
-            table_id_extension: 0x0200,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            body: ProtectionMessageBody::Raw(&raw),
-        };
+        let sec =
+            ProtectionMessageSection::new(0x0200, 0, true, 0, 0, ProtectionMessageBody::Raw(&raw));
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = ProtectionMessageSection::parse(&buf).expect("reparse");

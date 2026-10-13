@@ -348,17 +348,12 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_empty() {
-        let sec = DsmccSection {
-            table_id: 0x3B,
-            section_syntax_indicator: true,
-            private_indicator: false,
-            extension_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &[],
-            checksum: [0; 4],
+        let sec = {
+            let mut __v = DsmccSection::new(0x3B, 0x0001, 0, true, 0, 0, &[]);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.checksum = [0; 4];
+            __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).unwrap();
@@ -369,17 +364,12 @@ mod tests {
     #[test]
     fn serialize_round_trip_with_payload() {
         let payload: [u8; 5] = [0xDE, 0xAD, 0xBE, 0xEF, 0x00];
-        let sec = DsmccSection {
-            table_id: 0x3C,
-            section_syntax_indicator: true,
-            private_indicator: false,
-            extension_id: 0xABCD,
-            version_number: 3,
-            current_next_indicator: true,
-            section_number: 1,
-            last_section_number: 2,
-            payload: &payload,
-            checksum: [0; 4],
+        let sec = {
+            let mut __v = DsmccSection::new(0x3C, 0xABCD, 3, true, 1, 2, &payload);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.checksum = [0; 4];
+            __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).unwrap();
@@ -391,17 +381,12 @@ mod tests {
     fn serialize_round_trip_ssi_clear_preserves_checksum() {
         let payload: [u8; 3] = [0x01, 0x02, 0x03];
         let checksum: [u8; 4] = [0xAA, 0xBB, 0xCC, 0xDD];
-        let sec = DsmccSection {
-            table_id: 0x3B,
-            section_syntax_indicator: false,
-            private_indicator: true,
-            extension_id: 0x5678,
-            version_number: 1,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &payload,
-            checksum,
+        let sec = {
+            let mut __v = DsmccSection::new(0x3B, 0x5678, 1, true, 0, 0, &payload);
+            __v.section_syntax_indicator = false;
+            __v.private_indicator = true;
+            __v.checksum = checksum;
+            __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).unwrap();
@@ -431,17 +416,12 @@ mod tests {
     #[test]
     fn serialize_rejects_payload_exceeding_section_length() {
         let payload = vec![0xAAu8; 4087];
-        let sec = DsmccSection {
-            table_id: 0x3B,
-            section_syntax_indicator: true,
-            private_indicator: false,
-            extension_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &payload,
-            checksum: [0; 4],
+        let sec = {
+            let mut __v = DsmccSection::new(0x3B, 1, 0, true, 0, 0, &payload);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.checksum = [0; 4];
+            __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         assert!(matches!(
@@ -453,17 +433,12 @@ mod tests {
     #[test]
     fn serialize_accepts_payload_at_section_length_boundary() {
         let payload = vec![0xAAu8; 4086];
-        let sec = DsmccSection {
-            table_id: 0x3B,
-            section_syntax_indicator: true,
-            private_indicator: false,
-            extension_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &payload,
-            checksum: [0; 4],
+        let sec = {
+            let mut __v = DsmccSection::new(0x3B, 1, 0, true, 0, 0, &payload);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.checksum = [0; 4];
+            __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).expect("boundary fits");

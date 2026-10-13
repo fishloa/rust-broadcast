@@ -202,7 +202,9 @@ impl Serialize for CatSection<'_> {
         buf[1] = self.bits.b1(true);
         super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.reserved_extension.to_be_bytes());
-        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
@@ -373,13 +375,7 @@ mod tests {
     #[test]
     fn serialize_rejects_descriptor_loop_exceeding_section_length() {
         let raw = vec![0xAAu8; 4091]; // + 9 header/crc bytes > 4095
-        let cat = CatSection {
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            descriptors: DescriptorLoop::from(raw.as_slice()),
-        };
+        let cat = CatSection::new(0, true, 0, 0, DescriptorLoop::from(raw.as_slice()));
         let mut buf = vec![0u8; cat.serialized_len()];
         assert!(matches!(
             cat.serialize_into(&mut buf).unwrap_err(),
@@ -392,13 +388,7 @@ mod tests {
         // section_length = EXTENSION_HEADER_LEN(5) + loop_len + CRC_LEN(4);
         // 4086 is the largest loop that keeps it at the 12-bit max, 4095.
         let raw = vec![0xAAu8; 4086];
-        let cat = CatSection {
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            descriptors: DescriptorLoop::from(raw.as_slice()),
-        };
+        let cat = CatSection::new(0, true, 0, 0, DescriptorLoop::from(raw.as_slice()));
         let mut buf = vec![0u8; cat.serialized_len()];
         cat.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = CatSection::parse(&buf).expect("reparse");

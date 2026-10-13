@@ -1832,32 +1832,14 @@ mod tests {
     use super::*;
 
     fn build_sat(stid: u8, table_count: u16, body: &SatBody) -> Vec<u8> {
-        let sat = SatSection {
-            satellite_table_id: stid,
-            private_indicator: true,
-            table_count,
-            version_number: 5,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            body: body.clone(),
-        };
+        let sat = SatSection::new(stid, true, table_count, 5, true, 0, 0, body.clone());
         let mut buf = vec![0u8; sat.serialized_len()];
         sat.serialize_into(&mut buf).unwrap();
         buf
     }
 
     fn build_sat_private_indicator_false(stid: u8, body: &SatBody) -> Vec<u8> {
-        let sat = SatSection {
-            satellite_table_id: stid,
-            private_indicator: false,
-            table_count: 0,
-            version_number: 5,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            body: body.clone(),
-        };
+        let sat = SatSection::new(stid, false, 0, 5, true, 0, 0, body.clone());
         let mut buf = vec![0u8; sat.serialized_len()];
         sat.serialize_into(&mut buf).unwrap();
         buf
@@ -2101,16 +2083,16 @@ mod tests {
     #[test]
     fn serialize_round_trip_raw() {
         let body_data = vec![0x01, 0x02, 0x03, 0x04, 0x05];
-        let sat = SatSection {
-            satellite_table_id: 10,
-            private_indicator: true,
-            table_count: 0x2FF,
-            version_number: 5,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            body: SatBody::Raw(body_data.clone()),
-        };
+        let sat = SatSection::new(
+            10,
+            true,
+            0x2FF,
+            5,
+            true,
+            0,
+            0,
+            SatBody::Raw(body_data.clone()),
+        );
         let mut buf = vec![0u8; sat.serialized_len()];
         sat.serialize_into(&mut buf).unwrap();
         let re = SatSection::parse(&buf).unwrap();
@@ -2440,15 +2422,15 @@ mod tests {
         sat.serialize_into(&mut buf2).unwrap();
         assert_eq!(bytes, buf2);
 
-        let corrupt_sat = SatSection {
-            satellite_table_id: 1,
-            private_indicator: true,
-            table_count: 0,
-            version_number: 5,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            body: SatBody::CellFragment(CellFragmentBody {
+        let corrupt_sat = SatSection::new(
+            1,
+            true,
+            0,
+            5,
+            true,
+            0,
+            0,
+            SatBody::CellFragment(CellFragmentBody {
                 fragments: vec![CellFragment {
                     cell_fragment_id: 1,
                     first_occurrence: false,
@@ -2459,7 +2441,7 @@ mod tests {
                     obsolescent_delivery_systems: Vec::new(),
                 }],
             }),
-        };
+        );
         let mut corrupt_buf = vec![0u8; corrupt_sat.serialized_len()];
         corrupt_sat.serialize_into(&mut corrupt_buf).unwrap();
         let section_length = (corrupt_buf.len() - SECTION_LENGTH_PREFIX) as u16;
@@ -2481,15 +2463,15 @@ mod tests {
 
     #[test]
     fn beamhopping_mode1_truncated_bit_map_size() {
-        let corrupt_sat = SatSection {
-            satellite_table_id: 3,
-            private_indicator: true,
-            table_count: 0,
-            version_number: 5,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            body: SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
+        let corrupt_sat = SatSection::new(
+            3,
+            true,
+            0,
+            5,
+            true,
+            0,
+            0,
+            SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
                 plans: vec![BeamhoppingPlan {
                     beamhopping_time_plan_id: 1,
                     time_plan_mode: TimePlanMode::Bitmap,
@@ -2504,7 +2486,7 @@ mod tests {
                     },
                 }],
             }),
-        };
+        );
         let mut corrupt_buf = vec![0u8; corrupt_sat.serialized_len()];
         corrupt_sat.serialize_into(&mut corrupt_buf).unwrap();
         let original_len = corrupt_buf.len();
@@ -2527,15 +2509,15 @@ mod tests {
 
     #[test]
     fn position_v3_truncated_ephemeris_data_count() {
-        let corrupt_sat = SatSection {
-            satellite_table_id: 4,
-            private_indicator: true,
-            table_count: 0,
-            version_number: 5,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            body: SatBody::PositionV3(PositionV3Body {
+        let corrupt_sat = SatSection::new(
+            4,
+            true,
+            0,
+            5,
+            true,
+            0,
+            0,
+            SatBody::PositionV3(PositionV3Body {
                 oem_version_major: 1,
                 oem_version_minor: 0,
                 creation_date_year: 25,
@@ -2566,7 +2548,7 @@ mod tests {
                     covariance: None,
                 }],
             }),
-        };
+        );
         let mut corrupt_buf = vec![0u8; corrupt_sat.serialized_len()];
         corrupt_sat.serialize_into(&mut corrupt_buf).unwrap();
         let original_len = corrupt_buf.len();

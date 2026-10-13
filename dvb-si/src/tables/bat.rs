@@ -315,7 +315,9 @@ impl Serialize for BatSection<'_> {
 
         // Extension header.
         buf[3..5].copy_from_slice(&self.bouquet_id.to_be_bytes());
-        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -396,21 +398,17 @@ mod tests {
     ) -> Vec<u8> {
         let ts_streams: Vec<BatTransportStream> = transport_streams
             .iter()
-            .map(|(tsid, onid, d)| BatTransportStream {
-                transport_stream_id: *tsid,
-                original_network_id: *onid,
-                descriptors: DescriptorLoop::new(d),
-            })
+            .map(|(tsid, onid, d)| BatTransportStream::new(*tsid, *onid, DescriptorLoop::new(d)))
             .collect();
-        let bat = BatSection {
+        let bat = BatSection::new(
             bouquet_id,
-            version_number: version,
-            current_next_indicator: true,
+            version,
+            true,
             section_number,
             last_section_number,
-            bouquet_descriptors: DescriptorLoop::new(bouquet_desc),
-            transport_streams: ts_streams,
-        };
+            DescriptorLoop::new(bouquet_desc),
+            ts_streams,
+        );
         let mut buf = vec![0u8; bat.serialized_len()];
         bat.serialize_into(&mut buf).unwrap();
         buf
@@ -513,26 +511,18 @@ mod tests {
     fn serialize_round_trip() {
         let name_desc: Vec<u8> = vec![DESCRIPTOR_TAG_BOUQUET_NAME, 0x04, b'T', b'E', b'S', b'T'];
         let ts_desc: [u8; 3] = [0x43, 0x01, 0x01];
-        let bat = BatSection {
-            bouquet_id: 0x4242,
-            version_number: 5,
-            current_next_indicator: true,
-            section_number: 1,
-            last_section_number: 2,
-            bouquet_descriptors: DescriptorLoop::new(&name_desc),
-            transport_streams: vec![
-                BatTransportStream {
-                    transport_stream_id: 0x1234,
-                    original_network_id: 0x0020,
-                    descriptors: DescriptorLoop::new(&ts_desc),
-                },
-                BatTransportStream {
-                    transport_stream_id: 0x5678,
-                    original_network_id: 0x0020,
-                    descriptors: DescriptorLoop::new(&[]),
-                },
+        let bat = BatSection::new(
+            0x4242,
+            5,
+            true,
+            1,
+            2,
+            DescriptorLoop::new(&name_desc),
+            vec![
+                BatTransportStream::new(0x1234, 0x0020, DescriptorLoop::new(&ts_desc)),
+                BatTransportStream::new(0x5678, 0x0020, DescriptorLoop::new(&[])),
             ],
-        };
+        );
         let mut buf = vec![0u8; bat.serialized_len()];
         bat.serialize_into(&mut buf).unwrap();
         let parsed = BatSection::parse(&buf).unwrap();
@@ -569,15 +559,7 @@ mod tests {
 
     #[test]
     fn serialize_too_small_buffer_returns_error() {
-        let bat = BatSection {
-            bouquet_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            bouquet_descriptors: DescriptorLoop::new(&[]),
-            transport_streams: vec![],
-        };
+        let bat = BatSection::new(0x0001, 0, true, 0, 0, DescriptorLoop::new(&[]), vec![]);
         let mut buf = vec![0u8; 2];
         let err = bat.serialize_into(&mut buf).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
@@ -605,15 +587,7 @@ mod tests {
     #[test]
     fn serialize_rejects_bouquet_descriptors_exceeding_section_length() {
         let desc = vec![0xAAu8; 4083];
-        let bat = BatSection {
-            bouquet_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            bouquet_descriptors: DescriptorLoop::new(&desc),
-            transport_streams: vec![],
-        };
+        let bat = BatSection::new(1, 0, true, 0, 0, DescriptorLoop::new(&desc), vec![]);
         let mut buf = vec![0u8; bat.serialized_len()];
         assert!(matches!(
             bat.serialize_into(&mut buf).unwrap_err(),
@@ -624,15 +598,7 @@ mod tests {
     #[test]
     fn serialize_accepts_bouquet_descriptors_at_section_length_boundary() {
         let desc = vec![0xAAu8; 4082];
-        let bat = BatSection {
-            bouquet_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            bouquet_descriptors: DescriptorLoop::new(&desc),
-            transport_streams: vec![],
-        };
+        let bat = BatSection::new(1, 0, true, 0, 0, DescriptorLoop::new(&desc), vec![]);
         let mut buf = vec![0u8; bat.serialized_len()];
         bat.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = BatSection::parse(&buf).expect("reparse");

@@ -32,23 +32,14 @@ fn descriptors_truncated_is_err() {
 
 #[test]
 fn pat_truncated_is_err() {
-    let pat = PatSection {
-        transport_stream_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        entries: vec![
-            PatEntry {
-                program_number: 1,
-                pid: 0x100,
-            },
-            PatEntry {
-                program_number: 2,
-                pid: 0x101,
-            },
-        ],
-    };
+    let pat = PatSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        vec![PatEntry::new(1, 0x100), PatEntry::new(2, 0x101)],
+    );
     let mut buf = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut buf).unwrap();
     all_prefixes_err::<PatSection>(&buf);

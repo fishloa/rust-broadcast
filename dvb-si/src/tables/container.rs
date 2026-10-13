@@ -231,15 +231,15 @@ mod tests {
         last_section_number: u8,
         container_data: &[u8],
     ) -> Vec<u8> {
-        let c = ContainerSection {
-            private_indicator: true,
+        let c = ContainerSection::new(
+            true,
             container_id,
-            version_number: version,
-            current_next_indicator: current_next,
+            version,
+            current_next,
             section_number,
             last_section_number,
             container_data,
-        };
+        );
         let mut buf = vec![0u8; c.serialized_len()];
         c.serialize_into(&mut buf).unwrap();
         buf
@@ -302,15 +302,7 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let data = [0x01u8, 0x02, 0x03];
-        let original = ContainerSection {
-            private_indicator: false,
-            container_id: 0xABCD,
-            version_number: 15,
-            current_next_indicator: false,
-            section_number: 2,
-            last_section_number: 4,
-            container_data: &data,
-        };
+        let original = ContainerSection::new(false, 0xABCD, 15, false, 2, 4, &data);
         let mut buf = vec![0u8; original.serialized_len()];
         original.serialize_into(&mut buf).unwrap();
         assert_eq!(ContainerSection::parse(&buf).unwrap(), original);
@@ -318,15 +310,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_output_buffer_too_small() {
-        let c = ContainerSection {
-            private_indicator: false,
-            container_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            container_data: &[],
-        };
+        let c = ContainerSection::new(false, 0x0001, 0, true, 0, 0, &[]);
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             c.serialize_into(&mut buf).unwrap_err(),
@@ -361,15 +345,7 @@ mod tests {
     #[test]
     fn serialize_rejects_container_data_exceeding_section_length() {
         let data = vec![0xAAu8; 4087];
-        let c = ContainerSection {
-            private_indicator: false,
-            container_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            container_data: &data,
-        };
+        let c = ContainerSection::new(false, 1, 0, true, 0, 0, &data);
         let mut buf = vec![0u8; c.serialized_len()];
         assert!(matches!(
             c.serialize_into(&mut buf).unwrap_err(),
@@ -380,15 +356,7 @@ mod tests {
     #[test]
     fn serialize_accepts_container_data_at_section_length_boundary() {
         let data = vec![0xAAu8; 4086];
-        let c = ContainerSection {
-            private_indicator: false,
-            container_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            container_data: &data,
-        };
+        let c = ContainerSection::new(false, 1, 0, true, 0, 0, &data);
         let mut buf = vec![0u8; c.serialized_len()];
         c.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = ContainerSection::parse(&buf).expect("reparse");

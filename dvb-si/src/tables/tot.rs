@@ -283,10 +283,7 @@ mod tests {
     #[test]
     fn serialize_rejects_descriptors_exceeding_section_length() {
         let desc = vec![0xAAu8; 4085];
-        let tot = TotSection {
-            utc_time_raw: [0xE4, 0x09, 0x12, 0x34, 0x56],
-            descriptors: DescriptorLoop::new(&desc),
-        };
+        let tot = TotSection::new([0xE4, 0x09, 0x12, 0x34, 0x56], DescriptorLoop::new(&desc));
         let mut buf = vec![0u8; tot.serialized_len()];
         assert!(matches!(
             tot.serialize_into(&mut buf).unwrap_err(),
@@ -297,10 +294,7 @@ mod tests {
     #[test]
     fn serialize_accepts_descriptors_at_section_length_boundary() {
         let desc = vec![0xAAu8; 4084];
-        let tot = TotSection {
-            utc_time_raw: [0xE4, 0x09, 0x12, 0x34, 0x56],
-            descriptors: DescriptorLoop::new(&desc),
-        };
+        let tot = TotSection::new([0xE4, 0x09, 0x12, 0x34, 0x56], DescriptorLoop::new(&desc));
         let mut buf = vec![0u8; tot.serialized_len()];
         tot.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = TotSection::parse(&buf).expect("reparse");

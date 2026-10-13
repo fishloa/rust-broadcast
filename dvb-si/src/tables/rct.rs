@@ -985,7 +985,8 @@ fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
         pos += n;
     }
     let item_count = broadcast_common::len::fit_bits(li.items.len() as u64, 6, "number_items")?;
-    buf[pos] = ((li.reserved_number_items & super::RESERVED_2) << ITEM_RFU_SHIFT) | item_count as u8;
+    buf[pos] =
+        ((li.reserved_number_items & super::RESERVED_2) << ITEM_RFU_SHIFT) | item_count as u8;
     pos += 1;
     for item in &li.items {
         let text_len =
@@ -1209,17 +1210,17 @@ mod tests {
 
     #[test]
     fn parse_no_links_no_descriptors() {
-        let rct = RctSection {
-            table_id_extension_flag: false,
-            service_id: 0x0064,
-            version_number: 3,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            year_offset: 0x07D3,
-            links: Vec::new(),
-            descriptors: DescriptorLoop::new(&[]),
-        };
+        let rct = RctSection::new(
+            false,
+            0x0064,
+            3,
+            true,
+            0,
+            0,
+            0x07D3,
+            Vec::new(),
+            DescriptorLoop::new(&[]),
+        );
         let mut buf = vec![0u8; rct.serialized_len()];
         rct.serialize_into(&mut buf).unwrap();
         let p = RctSection::parse(&buf).unwrap();
@@ -1233,17 +1234,17 @@ mod tests {
     /// descriptor loop and the CRC must be rejected, not silently dropped.
     #[test]
     fn parse_rejects_trailing_bytes_after_descriptor_loop() {
-        let rct = RctSection {
-            table_id_extension_flag: false,
-            service_id: 0x0064,
-            version_number: 3,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            year_offset: 0x07D3,
-            links: Vec::new(),
-            descriptors: DescriptorLoop::new(&[]),
-        };
+        let rct = RctSection::new(
+            false,
+            0x0064,
+            3,
+            true,
+            0,
+            0,
+            0x07D3,
+            Vec::new(),
+            DescriptorLoop::new(&[]),
+        );
         let mut buf = vec![0u8; rct.serialized_len()];
         rct.serialize_into(&mut buf).unwrap();
 
@@ -1272,30 +1273,30 @@ mod tests {
 
     #[test]
     fn parse_one_link_uri_only() {
-        let li = LinkInfo {
-            link_type: LinkType::UriString,
-            how_related: HowRelated::Cs2005,
-            term_id: 0x123,
-            group_id: 0x5,
-            precedence: 0x9,
-            media_uri: Some(b"http://example.com"),
-            dvb_binary_locator: None,
-            items: Vec::new(),
-            default_icon_flag: false,
-            icon_id: 0,
-            descriptors: DescriptorLoop::new(&[]),
-        };
-        let rct = RctSection {
-            table_id_extension_flag: false,
-            service_id: 0x1234,
-            version_number: 7,
-            current_next_indicator: true,
-            section_number: 1,
-            last_section_number: 3,
-            year_offset: 2003,
-            links: vec![li],
-            descriptors: DescriptorLoop::new(&[]),
-        };
+        let li = LinkInfo::new(
+            LinkType::UriString,
+            HowRelated::Cs2005,
+            0x123,
+            0x5,
+            0x9,
+            Some(b"http://example.com"),
+            None,
+            Vec::new(),
+            false,
+            0,
+            DescriptorLoop::new(&[]),
+        );
+        let rct = RctSection::new(
+            false,
+            0x1234,
+            7,
+            true,
+            1,
+            3,
+            2003,
+            vec![li],
+            DescriptorLoop::new(&[]),
+        );
         let mut buf = vec![0u8; rct.serialized_len()];
         rct.serialize_into(&mut buf).unwrap();
         let p = RctSection::parse(&buf).unwrap();
@@ -1313,30 +1314,30 @@ mod tests {
     /// dropped.
     #[test]
     fn parse_rejects_trailing_bytes_inside_link_info() {
-        let li = LinkInfo {
-            link_type: LinkType::UriString,
-            how_related: HowRelated::Cs2005,
-            term_id: 0x123,
-            group_id: 0x5,
-            precedence: 0x9,
-            media_uri: Some(b"http://example.com"),
-            dvb_binary_locator: None,
-            items: Vec::new(),
-            default_icon_flag: false,
-            icon_id: 0,
-            descriptors: DescriptorLoop::new(&[]),
-        };
-        let rct = RctSection {
-            table_id_extension_flag: false,
-            service_id: 0x1234,
-            version_number: 7,
-            current_next_indicator: true,
-            section_number: 1,
-            last_section_number: 3,
-            year_offset: 2003,
-            links: vec![li],
-            descriptors: DescriptorLoop::new(&[]),
-        };
+        let li = LinkInfo::new(
+            LinkType::UriString,
+            HowRelated::Cs2005,
+            0x123,
+            0x5,
+            0x9,
+            Some(b"http://example.com"),
+            None,
+            Vec::new(),
+            false,
+            0,
+            DescriptorLoop::new(&[]),
+        );
+        let rct = RctSection::new(
+            false,
+            0x1234,
+            7,
+            true,
+            1,
+            3,
+            2003,
+            vec![li],
+            DescriptorLoop::new(&[]),
+        );
         let mut buf = vec![0u8; rct.serialized_len()];
         rct.serialize_into(&mut buf).unwrap();
 
@@ -1376,46 +1377,46 @@ mod tests {
 
     #[test]
     fn parse_one_link_with_locator_and_items() {
-        let loc = DvbBinaryLocator {
-            scheduled_time_reliability: false,
-            start_date: 0x0FF,
-            service: DvbLocatorService::Full {
+        let loc = DvbBinaryLocator::new(
+            false,
+            0x0FF,
+            DvbLocatorService::Full {
                 transport_stream_id: 0x1000,
                 original_network_id: 0x2000,
                 service_id: 0x3000,
             },
-            start_time: 0x8000,
-            duration: 0x4000,
-            identifier: DvbLocatorIdentifier::EventId { event_id: 0xBEEF },
-            windows: None,
-        };
-        let li = LinkInfo {
-            link_type: LinkType::BinaryLocator,
-            how_related: HowRelated::Cs2007,
-            term_id: 0x456,
-            group_id: 0x1,
-            precedence: 0x2,
-            media_uri: None,
-            dvb_binary_locator: Some(loc),
-            items: vec![LinkItem {
+            0x8000,
+            0x4000,
+            DvbLocatorIdentifier::EventId { event_id: 0xBEEF },
+            None,
+        );
+        let li = LinkInfo::new(
+            LinkType::BinaryLocator,
+            HowRelated::Cs2007,
+            0x456,
+            0x1,
+            0x2,
+            None,
+            Some(loc),
+            vec![LinkItem {
                 language_code: LangCode(*b"eng"),
                 promotional_text: DvbText::new(b"Promo"),
             }],
-            default_icon_flag: true,
-            icon_id: 3,
-            descriptors: DescriptorLoop::new(&[0x80, 0x00]),
-        };
-        let rct = RctSection {
-            table_id_extension_flag: true,
-            service_id: 0xABCD,
-            version_number: 15,
-            current_next_indicator: false,
-            section_number: 2,
-            last_section_number: 5,
-            year_offset: 2024,
-            links: vec![li],
-            descriptors: DescriptorLoop::new(&[]),
-        };
+            true,
+            3,
+            DescriptorLoop::new(&[0x80, 0x00]),
+        );
+        let rct = RctSection::new(
+            true,
+            0xABCD,
+            15,
+            false,
+            2,
+            5,
+            2024,
+            vec![li],
+            DescriptorLoop::new(&[]),
+        );
         let mut buf = vec![0u8; rct.serialized_len()];
         rct.serialize_into(&mut buf).unwrap();
         let mut buf2 = vec![0u8; rct.serialized_len()];
@@ -1443,44 +1444,44 @@ mod tests {
     /// field).
     #[test]
     fn locator_serialize_rejects_windows_identifier_mismatch() {
-        let loc = DvbBinaryLocator {
-            scheduled_time_reliability: true,
-            start_date: 0,
-            service: DvbLocatorService::Triplet {
+        let loc = DvbBinaryLocator::new(
+            true,
+            0,
+            DvbLocatorService::Triplet {
                 dvb_service_triplet_id: 0,
             },
-            start_time: 0,
-            duration: 0,
-            identifier: DvbLocatorIdentifier::EventId { event_id: 1 },
-            windows: Some(DvbLocatorWindows {
+            0,
+            0,
+            DvbLocatorIdentifier::EventId { event_id: 1 },
+            Some(DvbLocatorWindows {
                 early_start_window: 0,
                 late_end_window: 0,
             }),
-        };
-        let li = LinkInfo {
-            link_type: LinkType::BinaryLocator,
-            how_related: HowRelated::Cs2007,
-            term_id: 0,
-            group_id: 0,
-            precedence: 0,
-            media_uri: None,
-            dvb_binary_locator: Some(loc),
-            items: Vec::new(),
-            default_icon_flag: false,
-            icon_id: 0,
-            descriptors: DescriptorLoop::new(&[]),
-        };
-        let rct = RctSection {
-            table_id_extension_flag: false,
-            service_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            year_offset: 0,
-            links: vec![li],
-            descriptors: DescriptorLoop::new(&[]),
-        };
+        );
+        let li = LinkInfo::new(
+            LinkType::BinaryLocator,
+            HowRelated::Cs2007,
+            0,
+            0,
+            0,
+            None,
+            Some(loc),
+            Vec::new(),
+            false,
+            0,
+            DescriptorLoop::new(&[]),
+        );
+        let rct = RctSection::new(
+            false,
+            1,
+            0,
+            true,
+            0,
+            0,
+            0,
+            vec![li],
+            DescriptorLoop::new(&[]),
+        );
         let mut buf = vec![0u8; rct.serialized_len()];
         assert!(matches!(
             rct.serialize_into(&mut buf).unwrap_err(),
@@ -1490,30 +1491,30 @@ mod tests {
 
     #[test]
     fn byte_exact_round_trip_simple() {
-        let li = LinkInfo {
-            link_type: LinkType::UriString,
-            how_related: HowRelated::Cs2004,
-            term_id: 0,
-            group_id: 0,
-            precedence: 0,
-            media_uri: Some(b"uri"),
-            dvb_binary_locator: None,
-            items: Vec::new(),
-            default_icon_flag: false,
-            icon_id: 0,
-            descriptors: DescriptorLoop::new(&[]),
-        };
-        let rct = RctSection {
-            table_id_extension_flag: false,
-            service_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            year_offset: 0x07D3,
-            links: vec![li],
-            descriptors: DescriptorLoop::new(&[]),
-        };
+        let li = LinkInfo::new(
+            LinkType::UriString,
+            HowRelated::Cs2004,
+            0,
+            0,
+            0,
+            Some(b"uri"),
+            None,
+            Vec::new(),
+            false,
+            0,
+            DescriptorLoop::new(&[]),
+        );
+        let rct = RctSection::new(
+            false,
+            0x0001,
+            0,
+            true,
+            0,
+            0,
+            0x07D3,
+            vec![li],
+            DescriptorLoop::new(&[]),
+        );
         let mut buf = vec![0u8; rct.serialized_len()];
         rct.serialize_into(&mut buf).unwrap();
         let parsed = RctSection::parse(&buf).unwrap();
@@ -1524,17 +1525,17 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_table_id() {
-        let rct = RctSection {
-            table_id_extension_flag: false,
-            service_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            year_offset: 2024,
-            links: Vec::new(),
-            descriptors: DescriptorLoop::new(&[]),
-        };
+        let rct = RctSection::new(
+            false,
+            0x0001,
+            0,
+            true,
+            0,
+            0,
+            2024,
+            Vec::new(),
+            DescriptorLoop::new(&[]),
+        );
         let mut buf = vec![0u8; rct.serialized_len()];
         rct.serialize_into(&mut buf).unwrap();
         buf[0] = 0x4A;
@@ -1554,17 +1555,17 @@ mod tests {
 
     #[test]
     fn serialize_rejects_output_buffer_too_small() {
-        let rct = RctSection {
-            table_id_extension_flag: false,
-            service_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            year_offset: 0,
-            links: Vec::new(),
-            descriptors: DescriptorLoop::new(&[]),
-        };
+        let rct = RctSection::new(
+            false,
+            0x0001,
+            0,
+            true,
+            0,
+            0,
+            0,
+            Vec::new(),
+            DescriptorLoop::new(&[]),
+        );
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             rct.serialize_into(&mut buf).unwrap_err(),
@@ -1594,17 +1595,17 @@ mod tests {
     #[test]
     fn serialize_rejects_trailing_descriptors_exceeding_section_length() {
         let desc = vec![0xAAu8; 4082];
-        let rct = RctSection {
-            table_id_extension_flag: false,
-            service_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            year_offset: 2000,
-            links: vec![],
-            descriptors: DescriptorLoop::new(&desc),
-        };
+        let rct = RctSection::new(
+            false,
+            1,
+            0,
+            true,
+            0,
+            0,
+            2000,
+            vec![],
+            DescriptorLoop::new(&desc),
+        );
         let mut buf = vec![0u8; rct.serialized_len()];
         assert!(matches!(
             rct.serialize_into(&mut buf).unwrap_err(),
@@ -1615,17 +1616,17 @@ mod tests {
     #[test]
     fn serialize_accepts_trailing_descriptors_at_section_length_boundary() {
         let desc = vec![0xAAu8; 4081];
-        let rct = RctSection {
-            table_id_extension_flag: false,
-            service_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            year_offset: 2000,
-            links: vec![],
-            descriptors: DescriptorLoop::new(&desc),
-        };
+        let rct = RctSection::new(
+            false,
+            1,
+            0,
+            true,
+            0,
+            0,
+            2000,
+            vec![],
+            DescriptorLoop::new(&desc),
+        );
         let mut buf = vec![0u8; rct.serialized_len()];
         rct.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = RctSection::parse(&buf).expect("reparse");
@@ -1637,32 +1638,32 @@ mod tests {
     #[test]
     fn serialize_rejects_promotional_text_exceeding_8_bit_length() {
         let text = vec![b'a'; 256];
-        let rct = RctSection {
-            table_id_extension_flag: false,
-            service_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            year_offset: 2000,
-            links: vec![LinkInfo {
-                link_type: LinkType::from_u8(0x03),
-                how_related: HowRelated::from_u8(0),
-                term_id: 0,
-                group_id: 0,
-                precedence: 0,
-                media_uri: None,
-                dvb_binary_locator: None,
-                items: vec![LinkItem {
+        let rct = RctSection::new(
+            false,
+            1,
+            0,
+            true,
+            0,
+            0,
+            2000,
+            vec![LinkInfo::new(
+                LinkType::from_u8(0x03),
+                HowRelated::from_u8(0),
+                0,
+                0,
+                0,
+                None,
+                None,
+                vec![LinkItem {
                     language_code: LangCode(*b"eng"),
                     promotional_text: DvbText::new(&text),
                 }],
-                default_icon_flag: false,
-                icon_id: 0,
-                descriptors: DescriptorLoop::new(&[]),
-            }],
-            descriptors: DescriptorLoop::new(&[]),
-        };
+                false,
+                0,
+                DescriptorLoop::new(&[]),
+            )],
+            DescriptorLoop::new(&[]),
+        );
         let mut buf = vec![0u8; rct.serialized_len()];
         assert!(matches!(
             rct.serialize_into(&mut buf).unwrap_err(),
@@ -1674,30 +1675,30 @@ mod tests {
     /// wrapped to 0.
     #[test]
     fn serialize_rejects_link_count_exceeding_8_bit_length() {
-        let link = LinkInfo {
-            link_type: LinkType::from_u8(0x03),
-            how_related: HowRelated::from_u8(0),
-            term_id: 0,
-            group_id: 0,
-            precedence: 0,
-            media_uri: None,
-            dvb_binary_locator: None,
-            items: vec![],
-            default_icon_flag: false,
-            icon_id: 0,
-            descriptors: DescriptorLoop::new(&[]),
-        };
-        let rct = RctSection {
-            table_id_extension_flag: false,
-            service_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            year_offset: 2000,
-            links: core::iter::repeat_with(|| link.clone()).take(256).collect(),
-            descriptors: DescriptorLoop::new(&[]),
-        };
+        let link = LinkInfo::new(
+            LinkType::from_u8(0x03),
+            HowRelated::from_u8(0),
+            0,
+            0,
+            0,
+            None,
+            None,
+            vec![],
+            false,
+            0,
+            DescriptorLoop::new(&[]),
+        );
+        let rct = RctSection::new(
+            false,
+            1,
+            0,
+            true,
+            0,
+            0,
+            2000,
+            core::iter::repeat_with(|| link.clone()).take(256).collect(),
+            DescriptorLoop::new(&[]),
+        );
         let mut buf = vec![0u8; rct.serialized_len()];
         assert!(matches!(
             rct.serialize_into(&mut buf).unwrap_err(),

@@ -9,23 +9,14 @@ use broadcast_common::{Parse, Serialize};
 use dvb_si::tables::pat::{PatEntry, PatSection};
 
 fn main() {
-    let pat = PatSection {
-        transport_stream_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        entries: vec![
-            PatEntry {
-                program_number: 1,
-                pid: 0x0100,
-            },
-            PatEntry {
-                program_number: 2,
-                pid: 0x0200,
-            },
-        ],
-    };
+    let pat = PatSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        vec![PatEntry::new(1, 0x0100), PatEntry::new(2, 0x0200)],
+    );
 
     // Serialize to the on-wire section bytes (CRC-32 appended automatically).
     let mut bytes = vec![0u8; pat.serialized_len()];

@@ -14,16 +14,16 @@ fn nit_section(
     network_descriptors: &[u8],
     transport_streams: Vec<NitTransportStream<'_>>,
 ) -> Vec<u8> {
-    let nit = NitSection {
-        kind: NitKind::Actual,
-        network_id: 0x0001,
-        version_number: 3,
-        current_next_indicator: true,
+    let nit = NitSection::new(
+        NitKind::Actual,
+        0x0001,
+        3,
+        true,
         section_number,
         last_section_number,
-        network_descriptors: DescriptorLoop::new(network_descriptors),
+        DescriptorLoop::new(network_descriptors),
         transport_streams,
-    };
+    );
     let mut bytes = vec![0u8; nit.serialized_len()];
     nit.serialize_into(&mut bytes).unwrap();
     bytes
@@ -32,20 +32,20 @@ fn nit_section(
 /// One present/following EIT section for `service_id`, parameterized so a
 /// test can push distinct-key sections for many services.
 fn eit_pf_section(service_id: u16) -> Vec<u8> {
-    let eit = EitSection {
-        kind: EitKind::PresentFollowingActual,
-        table_id: TABLE_ID_PF_ACTUAL,
+    let eit = EitSection::new(
+        EitKind::PresentFollowingActual,
+        TABLE_ID_PF_ACTUAL,
         service_id,
-        version_number: 1,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        transport_stream_id: 0x2000,
-        original_network_id: 0x0001,
-        segment_last_section_number: 0,
-        last_table_id: TABLE_ID_PF_ACTUAL,
-        events: vec![],
-    };
+        1,
+        true,
+        0,
+        0,
+        0x2000,
+        0x0001,
+        0,
+        TABLE_ID_PF_ACTUAL,
+        vec![],
+    );
     let mut bytes = vec![0u8; eit.serialized_len()];
     eit.serialize_into(&mut bytes).unwrap();
     bytes
@@ -60,20 +60,20 @@ fn eit_schedule_section_with_version(
     last_table_id: u8,
     version_number: u8,
 ) -> Vec<u8> {
-    let eit = EitSection {
-        kind: EitKind::ScheduleActual,
+    let eit = EitSection::new(
+        EitKind::ScheduleActual,
         table_id,
-        service_id: 0x0100,
+        0x0100,
         version_number,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        transport_stream_id: 0x2000,
-        original_network_id: 0x0001,
-        segment_last_section_number: 0,
+        true,
+        0,
+        0,
+        0x2000,
+        0x0001,
+        0,
         last_table_id,
-        events: vec![],
-    };
+        vec![],
+    );
     let mut bytes = vec![0u8; eit.serialized_len()];
     eit.serialize_into(&mut bytes).unwrap();
     bytes
@@ -90,20 +90,20 @@ fn eit_schedule_section_sparse(
     last_section_number: u8,
     segment_last_section_number: u8,
 ) -> Vec<u8> {
-    let eit = EitSection {
-        kind: EitKind::ScheduleActual,
+    let eit = EitSection::new(
+        EitKind::ScheduleActual,
         table_id,
-        service_id: 0x0100,
-        version_number: 4,
-        current_next_indicator: true,
+        0x0100,
+        4,
+        true,
         section_number,
         last_section_number,
-        transport_stream_id: 0x2000,
-        original_network_id: 0x0001,
+        0x2000,
+        0x0001,
         segment_last_section_number,
         last_table_id,
-        events: vec![],
-    };
+        vec![],
+    );
     let mut bytes = vec![0u8; eit.serialized_len()];
     eit.serialize_into(&mut bytes).unwrap();
     bytes
@@ -119,17 +119,14 @@ fn pat_section_versioned(
     last_section_number: u8,
     pid: u16,
 ) -> Vec<u8> {
-    let pat = PatSection {
-        transport_stream_id: 0x1111,
+    let pat = PatSection::new(
+        0x1111,
         version_number,
-        current_next_indicator: true,
+        true,
         section_number,
         last_section_number,
-        entries: vec![PatEntry {
-            program_number: section_number as u16 + 1,
-            pid,
-        }],
-    };
+        vec![PatEntry::new(section_number as u16 + 1, pid)],
+    );
     let mut bytes = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut bytes).unwrap();
     bytes
@@ -142,21 +139,21 @@ fn nit_collector_emits_only_when_all_sections_are_present() {
         0,
         1,
         &network_name,
-        vec![NitTransportStream {
-            transport_stream_id: 0x1000,
-            original_network_id: 0x0001,
-            descriptors: DescriptorLoop::new(&[]),
-        }],
+        vec![NitTransportStream::new(
+            0x1000,
+            0x0001,
+            DescriptorLoop::new(&[]),
+        )],
     );
     let section1 = nit_section(
         1,
         1,
         &network_name,
-        vec![NitTransportStream {
-            transport_stream_id: 0x1001,
-            original_network_id: 0x0001,
-            descriptors: DescriptorLoop::new(&[]),
-        }],
+        vec![NitTransportStream::new(
+            0x1001,
+            0x0001,
+            DescriptorLoop::new(&[]),
+        )],
     );
 
     let mut collector = SectionSetCollector::new();

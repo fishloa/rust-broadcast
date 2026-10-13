@@ -253,7 +253,11 @@ impl SectionBits {
 /// parts, for tables that keep `private_indicator` / `reserved_b1` as their
 /// own fields.
 #[must_use]
-pub(crate) fn b1_of(section_syntax_indicator: bool, private_indicator: bool, reserved_b1: u8) -> u8 {
+pub(crate) fn b1_of(
+    section_syntax_indicator: bool,
+    private_indicator: bool,
+    reserved_b1: u8,
+) -> u8 {
     (u8::from(section_syntax_indicator) * SECTION_B1_SSI)
         | (u8::from(private_indicator) * B1_PRIVATE_INDICATOR)
         | ((reserved_b1 & RESERVED_2) << B1_RESERVED_SHIFT)
@@ -488,10 +492,6 @@ pub(crate) fn desc_loop_len_of(hi: u8, lo: u8) -> usize {
 
 /// Write a 12-bit descriptor-loop length carrying the four
 /// `reserved='1111'` bits; errors instead of silently wrapping (cf. #1129).
-#[cfg(test)]
-pub(crate) fn write_desc_loop_len(buf: &mut [u8], len: usize) -> crate::Result<()> {
-    write_desc_loop_len_r(buf, len, RESERVED_4)
-}
 
 /// Mask of the low nibble of a byte: a sub-byte field's width when the byte
 /// also carries reserved bits above it (r02-W16).
@@ -507,7 +507,7 @@ pub(crate) fn push_section_header(v: &mut Vec<u8>, flags: u8, len: usize) {
 
 /// Push the two `reserved(4) | descriptors_loop_length(12)` bytes of a
 /// descriptor loop length; test/fixture helper counterpart of
-/// [`write_desc_loop_len`].
+/// [`write_desc_loop_len_r`].
 #[cfg(test)]
 pub(crate) fn push_desc_loop_len(v: &mut Vec<u8>, len: usize) {
     v.push(DESC_LOOP_LEN_HI_RESERVED_BITS | ((len >> 8) as u8 & SECTION_LENGTH_HI_MASK));

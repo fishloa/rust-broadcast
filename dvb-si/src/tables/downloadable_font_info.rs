@@ -121,6 +121,28 @@ pub enum FontInfo<'a> {
     },
 }
 
+impl<'a> FontInfo<'a> {
+    /// A `font_info_type == 0x00` entry with the spec `reserved_zero_future_use` fill.
+    #[must_use]
+    pub fn style_weight(style: u8, weight: u8) -> Self {
+        Self::StyleWeight {
+            style,
+            weight,
+            reserved_zero_future_use: 0,
+        }
+    }
+
+    /// A `font_info_type == 0x01` entry with the spec `reserved_zero_future_use` fill.
+    #[must_use]
+    pub fn file_uri(format: u8, uri: &'a [u8]) -> Self {
+        Self::FileUri {
+            format,
+            uri,
+            reserved_zero_future_use: 0,
+        }
+    }
+}
+
 /// Downloadable Font Information Section (EN 303 560 §5.3.2.3.1, Table 22).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -355,7 +377,9 @@ impl Serialize for DownloadableFontInfoSection<'_> {
         let id_word = ((self.font_id_extension & 0x01FF) << 7) | (self.font_id as u16 & 0x7F);
         buf[3..5].copy_from_slice(&id_word.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
-        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -394,7 +418,8 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     guard_u8(uri.len())?;
                     buf[pos] = FONT_INFO_TYPE_FILE_URI;
                     // reserved_zero_future_use(4) | font_file_format(4).
-                    buf[pos + 1] = ((reserved_zero_future_use & FORMAT_MASK) << RESERVED_ZERO_4_SHIFT)
+                    buf[pos + 1] = ((reserved_zero_future_use & FORMAT_MASK)
+                        << RESERVED_ZERO_4_SHIFT)
                         | (format & FORMAT_MASK);
                     buf[pos + 2] = broadcast_common::len::fit_u8(uri.len(), "uri")?;
                     let s = pos + 3;
@@ -513,15 +538,9 @@ mod tests {
         let bytes = build_section(1, 0, &mixed_loop());
         let sec = DownloadableFontInfoSection::parse(&bytes).unwrap();
         assert_eq!(sec.font_info.len(), 4);
-        assert_eq!(
-            sec.font_info[0],
-            FontInfo::StyleWeight {
-                style: 2,
-                weight: 2
-            }
-        );
+        assert_eq!(sec.font_info[0], FontInfo::style_weight(2, 2));
         match &sec.font_info[1] {
-            FontInfo::FileUri { format, uri } => {
+            FontInfo::FileUri { format, uri, .. } => {
                 assert_eq!(*format, 1);
                 assert_eq!(*uri, b"https://f.example/Droid.otf");
             }
@@ -653,18 +672,18 @@ mod tests {
             FONT_INFO_TYPE_FILE_URI,
             FONT_INFO_TYPE_FONT_SIZE,
         ] {
-            let section = DownloadableFontInfoSection {
-                font_id_extension: 0,
-                font_id: 1,
-                version_number: 0,
-                current_next_indicator: true,
-                section_number: 0,
-                last_section_number: 0,
-                font_info: vec![FontInfo::LengthDelimited {
+            let section = DownloadableFontInfoSection::new(
+                0,
+                1,
+                0,
+                true,
+                0,
+                0,
+                vec![FontInfo::LengthDelimited {
                     font_info_type: bad_type,
                     info: b"x",
                 }],
-            };
+            );
             let mut buf = vec![0u8; section.serialized_len()];
             assert!(
                 matches!(
@@ -682,20 +701,15 @@ mod tests {
     /// (4088 bytes) must be rejected.
     #[test]
     fn serialize_rejects_font_info_loop_exceeding_section_length() {
-        let section = DownloadableFontInfoSection {
-            font_id_extension: 0,
-            font_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            font_info: (0..2044)
-                .map(|_| FontInfo::StyleWeight {
-                    style: 1,
-                    weight: 1,
-                })
-                .collect(),
-        };
+        let section = DownloadableFontInfoSection::new(
+            0,
+            1,
+            0,
+            true,
+            0,
+            0,
+            (0..2044).map(|_| FontInfo::style_weight(1, 1)).collect(),
+        );
         let mut buf = vec![0u8; section.serialized_len()];
         assert!(matches!(
             section.serialize_into(&mut buf).unwrap_err(),
@@ -705,20 +719,15 @@ mod tests {
 
     #[test]
     fn serialize_accepts_font_info_loop_at_section_length_boundary() {
-        let section = DownloadableFontInfoSection {
-            font_id_extension: 0,
-            font_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            font_info: (0..2043)
-                .map(|_| FontInfo::StyleWeight {
-                    style: 1,
-                    weight: 1,
-                })
-                .collect(),
-        };
+        let section = DownloadableFontInfoSection::new(
+            0,
+            1,
+            0,
+            true,
+            0,
+            0,
+            (0..2043).map(|_| FontInfo::style_weight(1, 1)).collect(),
+        );
         let mut buf = vec![0u8; section.serialized_len()];
         section.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = DownloadableFontInfoSection::parse(&buf).expect("reparse");

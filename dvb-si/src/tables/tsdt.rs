@@ -138,7 +138,9 @@ impl Serialize for TsdtSection<'_> {
         buf[1] = self.bits.b1(true);
         super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
-        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -277,14 +279,7 @@ mod tests {
     #[test]
     fn serialize_rejects_descriptor_loop_exceeding_section_length() {
         let raw = vec![0xAAu8; 4087];
-        let tsdt = TsdtSection {
-            table_id_extension: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            descriptors: DescriptorLoop::from(raw.as_slice()),
-        };
+        let tsdt = TsdtSection::new(1, 0, true, 0, 0, DescriptorLoop::from(raw.as_slice()));
         let mut buf = vec![0u8; tsdt.serialized_len()];
         assert!(matches!(
             tsdt.serialize_into(&mut buf).unwrap_err(),
@@ -295,14 +290,7 @@ mod tests {
     #[test]
     fn serialize_accepts_descriptor_loop_at_section_length_boundary() {
         let raw = vec![0xAAu8; 4086];
-        let tsdt = TsdtSection {
-            table_id_extension: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            descriptors: DescriptorLoop::from(raw.as_slice()),
-        };
+        let tsdt = TsdtSection::new(1, 0, true, 0, 0, DescriptorLoop::from(raw.as_slice()));
         let mut buf = vec![0u8; tsdt.serialized_len()];
         tsdt.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = TsdtSection::parse(&buf).expect("reparse");

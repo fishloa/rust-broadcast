@@ -321,7 +321,9 @@ impl Serialize for NitSection<'_> {
         //   bytes[5]    = reserved | version | current_next
         //   bytes[6..8] = section_number + last_section_number
         buf[3..5].copy_from_slice(&self.network_id.to_be_bytes());
-        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -506,27 +508,19 @@ mod tests {
     fn serialize_round_trip() {
         let net_desc: [u8; 4] = [0x40, 0x02, 0x4E, 0x65];
         let ts_desc: [u8; 3] = [0x43, 0x01, 0x01];
-        let nit = NitSection {
-            kind: NitKind::Actual,
-            network_id: 0x0020,
-            version_number: 3,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            network_descriptors: DescriptorLoop::new(&net_desc),
-            transport_streams: vec![
-                NitTransportStream {
-                    transport_stream_id: 0x1234,
-                    original_network_id: 0x0020,
-                    descriptors: DescriptorLoop::new(&ts_desc),
-                },
-                NitTransportStream {
-                    transport_stream_id: 0x5678,
-                    original_network_id: 0x0020,
-                    descriptors: DescriptorLoop::new(&[]),
-                },
+        let nit = NitSection::new(
+            NitKind::Actual,
+            0x0020,
+            3,
+            true,
+            0,
+            0,
+            DescriptorLoop::new(&net_desc),
+            vec![
+                NitTransportStream::new(0x1234, 0x0020, DescriptorLoop::new(&ts_desc)),
+                NitTransportStream::new(0x5678, 0x0020, DescriptorLoop::new(&[])),
             ],
-        };
+        );
         let mut buf = vec![0u8; nit.serialized_len()];
         nit.serialize_into(&mut buf).unwrap();
         let re = NitSection::parse(&buf).unwrap();
@@ -559,16 +553,16 @@ mod tests {
 
     #[test]
     fn serialize_too_small_buffer_returns_error() {
-        let nit = NitSection {
-            kind: NitKind::Actual,
-            network_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            network_descriptors: DescriptorLoop::new(&[]),
-            transport_streams: vec![],
-        };
+        let nit = NitSection::new(
+            NitKind::Actual,
+            0x0001,
+            0,
+            true,
+            0,
+            0,
+            DescriptorLoop::new(&[]),
+            vec![],
+        );
         let mut buf = vec![0u8; 2];
         let err = nit.serialize_into(&mut buf).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
@@ -596,16 +590,16 @@ mod tests {
     #[test]
     fn serialize_rejects_network_descriptors_exceeding_section_length() {
         let net_desc = vec![0xAAu8; 4083];
-        let nit = NitSection {
-            kind: NitKind::Actual,
-            network_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            network_descriptors: DescriptorLoop::new(&net_desc),
-            transport_streams: vec![],
-        };
+        let nit = NitSection::new(
+            NitKind::Actual,
+            1,
+            0,
+            true,
+            0,
+            0,
+            DescriptorLoop::new(&net_desc),
+            vec![],
+        );
         let mut buf = vec![0u8; nit.serialized_len()];
         assert!(matches!(
             nit.serialize_into(&mut buf).unwrap_err(),
@@ -616,16 +610,16 @@ mod tests {
     #[test]
     fn serialize_accepts_network_descriptors_at_section_length_boundary() {
         let net_desc = vec![0xAAu8; 4082];
-        let nit = NitSection {
-            kind: NitKind::Actual,
-            network_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            network_descriptors: DescriptorLoop::new(&net_desc),
-            transport_streams: vec![],
-        };
+        let nit = NitSection::new(
+            NitKind::Actual,
+            1,
+            0,
+            true,
+            0,
+            0,
+            DescriptorLoop::new(&net_desc),
+            vec![],
+        );
         let mut buf = vec![0u8; nit.serialized_len()];
         nit.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = NitSection::parse(&buf).expect("reparse");

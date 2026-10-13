@@ -330,18 +330,18 @@ mod tests {
     #[test]
     fn parse_happy_path_no_crid_entries() {
         let prepend = DvbText::new(b"CRID://example.com\x00");
-        let cit = CitSection {
-            private_indicator: false,
-            service_id: 0x1234,
-            version_number: 3,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: 0x0064,
-            original_network_id: 0x0002,
-            prepend_strings: prepend,
-            crid_entries: Vec::new(),
-        };
+        let cit = CitSection::new(
+            false,
+            0x1234,
+            3,
+            true,
+            0,
+            0,
+            0x0064,
+            0x0002,
+            prepend,
+            Vec::new(),
+        );
         let mut buf = vec![0u8; cit.serialized_len()];
         cit.serialize_into(&mut buf).unwrap();
         let parsed = CitSection::parse(&buf).unwrap();
@@ -367,18 +367,9 @@ mod tests {
                 unique_string: DvbText::new(b"crid://bbc.co.uk/EV-1"),
             },
         ];
-        let cit = CitSection {
-            private_indicator: false,
-            service_id: 0xABCD,
-            version_number: 7,
-            current_next_indicator: true,
-            section_number: 1,
-            last_section_number: 3,
-            transport_stream_id: 0x01F4,
-            original_network_id: 0x0028,
-            prepend_strings: prepend,
-            crid_entries: entries,
-        };
+        let cit = CitSection::new(
+            false, 0xABCD, 7, true, 1, 3, 0x01F4, 0x0028, prepend, entries,
+        );
         let mut buf = vec![0u8; cit.serialized_len()];
         cit.serialize_into(&mut buf).unwrap();
         let parsed = CitSection::parse(&buf).unwrap();
@@ -403,18 +394,9 @@ mod tests {
             prepend_string_index: 0x00,
             unique_string: DvbText::new(b"episode42"),
         }];
-        let original = CitSection {
-            private_indicator: true,
-            service_id: 0x4321,
-            version_number: 15,
-            current_next_indicator: false,
-            section_number: 2,
-            last_section_number: 4,
-            transport_stream_id: 0x03E8,
-            original_network_id: 0x0050,
-            prepend_strings: prepend,
-            crid_entries: entries,
-        };
+        let original = CitSection::new(
+            true, 0x4321, 15, false, 2, 4, 0x03E8, 0x0050, prepend, entries,
+        );
         let mut buf = vec![0u8; original.serialized_len()];
         original.serialize_into(&mut buf).unwrap();
         let parsed = CitSection::parse(&buf).unwrap();
@@ -431,18 +413,18 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_table_id() {
-        let cit = CitSection {
-            private_indicator: false,
-            service_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: 0x0001,
-            original_network_id: 0x0001,
-            prepend_strings: DvbText::new(&[]),
-            crid_entries: Vec::new(),
-        };
+        let cit = CitSection::new(
+            false,
+            0x0001,
+            0,
+            true,
+            0,
+            0,
+            0x0001,
+            0x0001,
+            DvbText::new(&[]),
+            Vec::new(),
+        );
         let mut buf = vec![0u8; cit.serialized_len()];
         cit.serialize_into(&mut buf).unwrap();
         buf[0] = 0x40;
@@ -463,18 +445,18 @@ mod tests {
     #[test]
     fn parse_rejects_truncated_crid_entry() {
         let prepend = DvbText::new(&[]);
-        let cit = CitSection {
-            private_indicator: false,
-            service_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: 0x0001,
-            original_network_id: 0x0001,
-            prepend_strings: prepend,
-            crid_entries: Vec::new(),
-        };
+        let cit = CitSection::new(
+            false,
+            0x0001,
+            0,
+            true,
+            0,
+            0,
+            0x0001,
+            0x0001,
+            prepend,
+            Vec::new(),
+        );
         let mut buf = vec![0u8; cit.serialized_len()];
         cit.serialize_into(&mut buf).unwrap();
         let mut truncated = buf.clone();
@@ -487,18 +469,18 @@ mod tests {
 
     #[test]
     fn serialize_rejects_output_buffer_too_small() {
-        let cit = CitSection {
-            private_indicator: false,
-            service_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: 0x0001,
-            original_network_id: 0x0001,
-            prepend_strings: DvbText::new(&[]),
-            crid_entries: Vec::new(),
-        };
+        let cit = CitSection::new(
+            false,
+            0x0001,
+            0,
+            true,
+            0,
+            0,
+            0x0001,
+            0x0001,
+            DvbText::new(&[]),
+            Vec::new(),
+        );
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             cit.serialize_into(&mut buf).unwrap_err(),
@@ -534,18 +516,18 @@ mod tests {
                 unique_string: DvbText::new(&[]),
             })
             .collect();
-        let cit = CitSection {
-            private_indicator: false,
-            service_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: 1,
-            original_network_id: 1,
-            prepend_strings: DvbText::new(&[]),
+        let cit = CitSection::new(
+            false,
+            1,
+            0,
+            true,
+            0,
+            0,
+            1,
+            1,
+            DvbText::new(&[]),
             crid_entries,
-        };
+        );
         let mut buf = vec![0u8; cit.serialized_len()];
         assert!(matches!(
             cit.serialize_into(&mut buf).unwrap_err(),
@@ -558,22 +540,22 @@ mod tests {
     #[test]
     fn serialize_rejects_unique_string_exceeding_8_bit_length() {
         let long = vec![b'a'; 256];
-        let cit = CitSection {
-            private_indicator: false,
-            service_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: 1,
-            original_network_id: 1,
-            prepend_strings: DvbText::new(&[]),
-            crid_entries: vec![CridEntry {
+        let cit = CitSection::new(
+            false,
+            1,
+            0,
+            true,
+            0,
+            0,
+            1,
+            1,
+            DvbText::new(&[]),
+            vec![CridEntry {
                 crid_ref: 1,
                 prepend_string_index: 0xFF,
                 unique_string: DvbText::new(&long),
             }],
-        };
+        );
         let mut buf = vec![0u8; cit.serialized_len()];
         assert!(matches!(
             cit.serialize_into(&mut buf).unwrap_err(),
@@ -584,22 +566,22 @@ mod tests {
     #[test]
     fn serialize_accepts_unique_string_at_8_bit_boundary() {
         let s = vec![b'a'; 255];
-        let cit = CitSection {
-            private_indicator: false,
-            service_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: 1,
-            original_network_id: 1,
-            prepend_strings: DvbText::new(&[]),
-            crid_entries: vec![CridEntry {
+        let cit = CitSection::new(
+            false,
+            1,
+            0,
+            true,
+            0,
+            0,
+            1,
+            1,
+            DvbText::new(&[]),
+            vec![CridEntry {
                 crid_ref: 1,
                 prepend_string_index: 0xFF,
                 unique_string: DvbText::new(&s),
             }],
-        };
+        );
         let mut buf = vec![0u8; cit.serialized_len()];
         cit.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = CitSection::parse(&buf).expect("reparse");
@@ -621,18 +603,18 @@ mod tests {
 
     #[test]
     fn prepend_string_resolver() {
-        let cit = CitSection {
-            private_indicator: false,
-            service_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: 0x0001,
-            original_network_id: 0x0001,
-            prepend_strings: DvbText::new(b"crid://example.com/\x00crid://other.com/\x00"),
-            crid_entries: Vec::new(),
-        };
+        let cit = CitSection::new(
+            false,
+            0x0001,
+            0,
+            true,
+            0,
+            0,
+            0x0001,
+            0x0001,
+            DvbText::new(b"crid://example.com/\x00crid://other.com/\x00"),
+            Vec::new(),
+        );
         assert_eq!(cit.prepend_string(0), Some(&b"crid://example.com/"[..]));
         assert_eq!(cit.prepend_string(1), Some(&b"crid://other.com/"[..]));
         assert_eq!(cit.prepend_string(2), None);

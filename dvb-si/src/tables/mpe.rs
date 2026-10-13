@@ -550,18 +550,16 @@ mod tests {
         // we set it correctly to assert full struct equality).
         let mac = [0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF];
         let payload = [0x45, 0x00, 0x00, 0x1C, 0x00, 0x01];
-        let original = MpeDatagramSection {
-            section_syntax_indicator: true,
-            private_indicator: false,
-            mac_address: MacAddress(mac),
-            payload_scrambling_control: 0,
-            address_scrambling_control: 0,
-            llc_snap_flag: false,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &payload,
-            checksum: Checksum([0; 4]),
+        let original = {
+            let mut __v = MpeDatagramSection::new(MacAddress(mac), 0, 0, &payload);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.payload_scrambling_control = 0;
+            __v.address_scrambling_control = 0;
+            __v.llc_snap_flag = false;
+            __v.current_next_indicator = true;
+            __v.checksum = Checksum([0; 4]);
+            __v
         };
         let mut buf = vec![0u8; original.serialized_len()];
         original.serialize_into(&mut buf).unwrap();
@@ -605,18 +603,16 @@ mod tests {
 
     #[test]
     fn serialize_rejects_output_buffer_too_small() {
-        let sec = MpeDatagramSection {
-            section_syntax_indicator: true,
-            private_indicator: false,
-            mac_address: MacAddress([0; 6]),
-            payload_scrambling_control: 0,
-            address_scrambling_control: 0,
-            llc_snap_flag: false,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &[],
-            checksum: Checksum([0; 4]),
+        let sec = {
+            let mut __v = MpeDatagramSection::new(MacAddress([0; 6]), 0, 0, &[]);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.payload_scrambling_control = 0;
+            __v.address_scrambling_control = 0;
+            __v.llc_snap_flag = false;
+            __v.current_next_indicator = true;
+            __v.checksum = Checksum([0; 4]);
+            __v
         };
         let mut buf = [0u8; 2];
         assert!(matches!(
@@ -627,18 +623,16 @@ mod tests {
 
     #[test]
     fn serialize_rejects_over_range_scrambling_control() {
-        let sec = MpeDatagramSection {
-            section_syntax_indicator: true,
-            private_indicator: false,
-            mac_address: MacAddress([0; 6]),
-            payload_scrambling_control: 0x04, // > 2-bit field
-            address_scrambling_control: 0,
-            llc_snap_flag: false,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &[],
-            checksum: Checksum([0; 4]),
+        let sec = {
+            let mut __v = MpeDatagramSection::new(MacAddress([0; 6]), 0, 0, &[]);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.payload_scrambling_control = 0x04;
+            __v.address_scrambling_control = 0;
+            __v.llc_snap_flag = false;
+            __v.current_next_indicator = true;
+            __v.checksum = Checksum([0; 4]);
+            __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         assert!(matches!(
@@ -713,18 +707,16 @@ mod tests {
     #[test]
     fn serialize_rejects_payload_exceeding_section_length() {
         let payload = vec![0xAAu8; 4083];
-        let mpe = MpeDatagramSection {
-            section_syntax_indicator: true,
-            private_indicator: false,
-            mac_address: MacAddress([0; 6]),
-            payload_scrambling_control: 0,
-            address_scrambling_control: 0,
-            llc_snap_flag: false,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &payload,
-            checksum: Checksum([0; 4]),
+        let mpe = {
+            let mut __v = MpeDatagramSection::new(MacAddress([0; 6]), 0, 0, &payload);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.payload_scrambling_control = 0;
+            __v.address_scrambling_control = 0;
+            __v.llc_snap_flag = false;
+            __v.current_next_indicator = true;
+            __v.checksum = Checksum([0; 4]);
+            __v
         };
         let mut buf = vec![0u8; mpe.serialized_len()];
         assert!(matches!(
@@ -736,18 +728,16 @@ mod tests {
     #[test]
     fn serialize_accepts_payload_at_section_length_boundary() {
         let payload = vec![0xAAu8; 4082];
-        let mpe = MpeDatagramSection {
-            section_syntax_indicator: true,
-            private_indicator: false,
-            mac_address: MacAddress([0; 6]),
-            payload_scrambling_control: 0,
-            address_scrambling_control: 0,
-            llc_snap_flag: false,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &payload,
-            checksum: Checksum([0; 4]),
+        let mpe = {
+            let mut __v = MpeDatagramSection::new(MacAddress([0; 6]), 0, 0, &payload);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.payload_scrambling_control = 0;
+            __v.address_scrambling_control = 0;
+            __v.llc_snap_flag = false;
+            __v.current_next_indicator = true;
+            __v.checksum = Checksum([0; 4]);
+            __v
         };
         let mut buf = vec![0u8; mpe.serialized_len()];
         mpe.serialize_into(&mut buf).expect("boundary fits");

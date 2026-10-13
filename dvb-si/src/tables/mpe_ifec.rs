@@ -298,17 +298,17 @@ mod tests {
         rtp: RealTimeParameters,
         ifec_data: &[u8],
     ) -> Vec<u8> {
-        let s = MpeIfecSection {
-            private_indicator: true,
+        let s = MpeIfecSection::new(
+            true,
             burst_number,
             ifec_burst_size,
             version,
-            current_next_indicator: current_next,
+            current_next,
             section_number,
             last_section_number,
-            real_time_parameters: rtp,
+            rtp,
             ifec_data,
-        };
+        );
         let mut buf = vec![0u8; s.serialized_len()];
         s.serialize_into(&mut buf).unwrap();
         buf
@@ -394,17 +394,7 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let ifec = [0xDEu8, 0xAD, 0xBE, 0xEF, 0x00];
-        let original = MpeIfecSection {
-            private_indicator: false,
-            burst_number: 200,
-            ifec_burst_size: 32,
-            version: 31,
-            current_next_indicator: false,
-            section_number: 2,
-            last_section_number: 4,
-            real_time_parameters: sample_rtp(),
-            ifec_data: &ifec,
-        };
+        let original = MpeIfecSection::new(false, 200, 32, 31, false, 2, 4, sample_rtp(), &ifec);
         let mut buf = vec![0u8; original.serialized_len()];
         original.serialize_into(&mut buf).unwrap();
         assert_eq!(MpeIfecSection::parse(&buf).unwrap(), original);
@@ -412,17 +402,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_output_buffer_too_small() {
-        let s = MpeIfecSection {
-            private_indicator: false,
-            burst_number: 0,
-            ifec_burst_size: 0,
-            version: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            real_time_parameters: sample_rtp(),
-            ifec_data: &[],
-        };
+        let s = MpeIfecSection::new(false, 0, 0, 0, true, 0, 0, sample_rtp(), &[]);
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             s.serialize_into(&mut buf).unwrap_err(),
@@ -434,17 +414,7 @@ mod tests {
     fn serialize_rejects_over_wide_real_time_parameters() {
         let mut rtp = sample_rtp();
         rtp.delta_t = 0x1000; // 13 bits
-        let mut s = MpeIfecSection {
-            private_indicator: false,
-            burst_number: 0,
-            ifec_burst_size: 0,
-            version: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            real_time_parameters: rtp,
-            ifec_data: &[],
-        };
+        let mut s = MpeIfecSection::new(false, 0, 0, 0, true, 0, 0, rtp, &[]);
         let mut buf = vec![0u8; s.serialized_len()];
         assert!(matches!(
             s.serialize_into(&mut buf).unwrap_err(),
@@ -485,22 +455,22 @@ mod tests {
     #[test]
     fn serialize_rejects_ifec_data_exceeding_section_length() {
         let ifec_data = vec![0xAAu8; 4083];
-        let mpe_ifec = MpeIfecSection {
-            private_indicator: false,
-            burst_number: 0,
-            ifec_burst_size: 0,
-            version: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            real_time_parameters: RealTimeParameters {
+        let mpe_ifec = MpeIfecSection::new(
+            false,
+            0,
+            0,
+            0,
+            true,
+            0,
+            0,
+            RealTimeParameters {
                 delta_t: 0,
                 mpe_boundary: false,
                 frame_boundary: false,
                 prev_burst_size: 0,
             },
-            ifec_data: &ifec_data,
-        };
+            &ifec_data,
+        );
         let mut buf = vec![0u8; mpe_ifec.serialized_len()];
         assert!(matches!(
             mpe_ifec.serialize_into(&mut buf).unwrap_err(),
@@ -511,22 +481,22 @@ mod tests {
     #[test]
     fn serialize_accepts_ifec_data_at_section_length_boundary() {
         let ifec_data = vec![0xAAu8; 4082];
-        let mpe_ifec = MpeIfecSection {
-            private_indicator: false,
-            burst_number: 0,
-            ifec_burst_size: 0,
-            version: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            real_time_parameters: RealTimeParameters {
+        let mpe_ifec = MpeIfecSection::new(
+            false,
+            0,
+            0,
+            0,
+            true,
+            0,
+            0,
+            RealTimeParameters {
                 delta_t: 0,
                 mpe_boundary: false,
                 frame_boundary: false,
                 prev_burst_size: 0,
             },
-            ifec_data: &ifec_data,
-        };
+            &ifec_data,
+        );
         let mut buf = vec![0u8; mpe_ifec.serialized_len()];
         mpe_ifec.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = MpeIfecSection::parse(&buf).expect("reparse");

@@ -296,15 +296,15 @@ mod tests {
         rtp: RealTimeParameters,
         rs_data: &[u8],
     ) -> Vec<u8> {
-        let s = MpeFecSection {
-            private_indicator: true,
+        let s = MpeFecSection::new(
+            true,
             padding_columns,
-            current_next_indicator: current_next,
+            current_next,
             section_number,
             last_section_number,
-            real_time_parameters: rtp,
+            rtp,
             rs_data,
-        };
+        );
         let mut buf = vec![0u8; s.serialized_len()];
         s.serialize_into(&mut buf).unwrap();
         buf
@@ -388,15 +388,7 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let rs = [0xDEu8, 0xAD, 0xBE, 0xEF, 0x00];
-        let original = MpeFecSection {
-            private_indicator: false,
-            padding_columns: 191,
-            current_next_indicator: false,
-            section_number: 2,
-            last_section_number: 4,
-            real_time_parameters: sample_rtp(),
-            rs_data: &rs,
-        };
+        let original = MpeFecSection::new(false, 191, false, 2, 4, sample_rtp(), &rs);
         let mut buf = vec![0u8; original.serialized_len()];
         original.serialize_into(&mut buf).unwrap();
         assert_eq!(MpeFecSection::parse(&buf).unwrap(), original);
@@ -404,15 +396,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_output_buffer_too_small() {
-        let s = MpeFecSection {
-            private_indicator: false,
-            padding_columns: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            real_time_parameters: sample_rtp(),
-            rs_data: &[],
-        };
+        let s = MpeFecSection::new(false, 0, true, 0, 0, sample_rtp(), &[]);
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             s.serialize_into(&mut buf).unwrap_err(),
@@ -424,15 +408,7 @@ mod tests {
     fn serialize_rejects_over_wide_real_time_parameters() {
         let mut rtp = sample_rtp();
         rtp.delta_t = 0x1000; // 13 bits
-        let mut s = MpeFecSection {
-            private_indicator: false,
-            padding_columns: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            real_time_parameters: rtp,
-            rs_data: &[],
-        };
+        let mut s = MpeFecSection::new(false, 0, true, 0, 0, rtp, &[]);
         let mut buf = vec![0u8; s.serialized_len()];
         assert!(matches!(
             s.serialize_into(&mut buf).unwrap_err(),
@@ -473,20 +449,20 @@ mod tests {
     #[test]
     fn serialize_rejects_rs_data_exceeding_section_length() {
         let rs_data = vec![0xAAu8; 4083];
-        let mpe_fec = MpeFecSection {
-            private_indicator: false,
-            padding_columns: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            real_time_parameters: RealTimeParameters {
+        let mpe_fec = MpeFecSection::new(
+            false,
+            0,
+            true,
+            0,
+            0,
+            RealTimeParameters {
                 delta_t: 0,
                 table_boundary: false,
                 frame_boundary: false,
                 address: 0,
             },
-            rs_data: &rs_data,
-        };
+            &rs_data,
+        );
         let mut buf = vec![0u8; mpe_fec.serialized_len()];
         assert!(matches!(
             mpe_fec.serialize_into(&mut buf).unwrap_err(),
@@ -497,20 +473,20 @@ mod tests {
     #[test]
     fn serialize_accepts_rs_data_at_section_length_boundary() {
         let rs_data = vec![0xAAu8; 4082];
-        let mpe_fec = MpeFecSection {
-            private_indicator: false,
-            padding_columns: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            real_time_parameters: RealTimeParameters {
+        let mpe_fec = MpeFecSection::new(
+            false,
+            0,
+            true,
+            0,
+            0,
+            RealTimeParameters {
                 delta_t: 0,
                 table_boundary: false,
                 frame_boundary: false,
                 address: 0,
             },
-            rs_data: &rs_data,
-        };
+            &rs_data,
+        );
         let mut buf = vec![0u8; mpe_fec.serialized_len()];
         mpe_fec.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = MpeFecSection::parse(&buf).expect("reparse");

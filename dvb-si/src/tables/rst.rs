@@ -214,13 +214,7 @@ mod tests {
     }
 
     fn entry(tsid: u16, onid: u16, sid: u16, evid: u16, rs: RunningStatus) -> RstEntry {
-        RstEntry {
-            transport_stream_id: tsid,
-            original_network_id: onid,
-            service_id: sid,
-            event_id: evid,
-            running_status: rs,
-        }
+        RstEntry::new(tsid, onid, sid, evid, rs)
     }
 
     #[test]
@@ -294,7 +288,7 @@ mod tests {
 
     #[test]
     fn serialize_empty_round_trip() {
-        let rst = RstSection { entries: vec![] };
+        let rst = RstSection::new(vec![]);
         let mut buf = vec![0u8; rst.serialized_len()];
         rst.serialize_into(&mut buf).unwrap();
         assert_eq!(RstSection::parse(&buf).unwrap(), rst);
@@ -313,7 +307,7 @@ mod tests {
         let entries: Vec<RstEntry> = (0..456u32)
             .map(|i| entry((i % 65536) as u16, 0, 0, 0, RunningStatus::Undefined))
             .collect();
-        let rst = RstSection { entries };
+        let rst = RstSection::new(entries);
         let mut buf = vec![0u8; rst.serialized_len()];
         assert!(matches!(
             rst.serialize_into(&mut buf).unwrap_err(),
@@ -326,7 +320,7 @@ mod tests {
         let entries: Vec<RstEntry> = (0..455u32)
             .map(|i| entry((i % 65536) as u16, 0, 0, 0, RunningStatus::Undefined))
             .collect();
-        let rst = RstSection { entries };
+        let rst = RstSection::new(entries);
         let mut buf = vec![0u8; rst.serialized_len()];
         rst.serialize_into(&mut buf).expect("boundary fits");
         let re = RstSection::parse(&buf).expect("reparse");

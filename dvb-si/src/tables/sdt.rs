@@ -281,7 +281,9 @@ impl Serialize for SdtSection<'_> {
         buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.original_network_id.to_be_bytes());
@@ -464,33 +466,33 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let desc1: [u8; 4] = [0x48, 0x02, 0xAA, 0xBB];
-        let sdt = SdtSection {
-            kind: SdtKind::Actual,
-            transport_stream_id: 0x1234,
-            version_number: 5,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            original_network_id: 0x0020,
-            services: vec![
-                SdtService {
-                    service_id: 100,
-                    eit_schedule_flag: true,
-                    eit_present_following_flag: false,
-                    running_status: RunningStatus::Running,
-                    free_ca_mode: false,
-                    descriptors: DescriptorLoop::new(&desc1),
-                },
-                SdtService {
-                    service_id: 101,
-                    eit_schedule_flag: false,
-                    eit_present_following_flag: true,
-                    running_status: RunningStatus::StartsInAFewSeconds,
-                    free_ca_mode: true,
-                    descriptors: DescriptorLoop::new(&[]),
-                },
+        let sdt = SdtSection::new(
+            SdtKind::Actual,
+            0x1234,
+            5,
+            true,
+            0,
+            0,
+            0x0020,
+            vec![
+                SdtService::new(
+                    100,
+                    true,
+                    false,
+                    RunningStatus::Running,
+                    false,
+                    DescriptorLoop::new(&desc1),
+                ),
+                SdtService::new(
+                    101,
+                    false,
+                    true,
+                    RunningStatus::StartsInAFewSeconds,
+                    true,
+                    DescriptorLoop::new(&[]),
+                ),
             ],
-        };
+        );
         let mut buf = vec![0u8; sdt.serialized_len()];
         sdt.serialize_into(&mut buf).unwrap();
         let re = SdtSection::parse(&buf).unwrap();
@@ -526,23 +528,23 @@ mod tests {
     #[test]
     fn serialize_rejects_service_descriptors_exceeding_section_length() {
         let desc = vec![0xAAu8; 4079];
-        let sdt = SdtSection {
-            kind: SdtKind::Actual,
-            transport_stream_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            original_network_id: 0x20,
-            services: vec![SdtService {
-                service_id: 1,
-                eit_schedule_flag: false,
-                eit_present_following_flag: false,
-                running_status: RunningStatus::Undefined,
-                free_ca_mode: false,
-                descriptors: DescriptorLoop::new(&desc),
-            }],
-        };
+        let sdt = SdtSection::new(
+            SdtKind::Actual,
+            1,
+            0,
+            true,
+            0,
+            0,
+            0x20,
+            vec![SdtService::new(
+                1,
+                false,
+                false,
+                RunningStatus::Undefined,
+                false,
+                DescriptorLoop::new(&desc),
+            )],
+        );
         let mut buf = vec![0u8; sdt.serialized_len()];
         assert!(matches!(
             sdt.serialize_into(&mut buf).unwrap_err(),
@@ -553,23 +555,23 @@ mod tests {
     #[test]
     fn serialize_accepts_service_descriptors_at_section_length_boundary() {
         let desc = vec![0xAAu8; 4078];
-        let sdt = SdtSection {
-            kind: SdtKind::Actual,
-            transport_stream_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            original_network_id: 0x20,
-            services: vec![SdtService {
-                service_id: 1,
-                eit_schedule_flag: false,
-                eit_present_following_flag: false,
-                running_status: RunningStatus::Undefined,
-                free_ca_mode: false,
-                descriptors: DescriptorLoop::new(&desc),
-            }],
-        };
+        let sdt = SdtSection::new(
+            SdtKind::Actual,
+            1,
+            0,
+            true,
+            0,
+            0,
+            0x20,
+            vec![SdtService::new(
+                1,
+                false,
+                false,
+                RunningStatus::Undefined,
+                false,
+                DescriptorLoop::new(&desc),
+            )],
+        );
         let mut buf = vec![0u8; sdt.serialized_len()];
         sdt.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = SdtSection::parse(&buf).expect("reparse");

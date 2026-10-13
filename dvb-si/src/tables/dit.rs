@@ -166,9 +166,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_set() {
-        let dit = DitSection {
-            transition_flag: true,
-        };
+        let dit = DitSection::new(true);
         let mut buf = vec![0u8; dit.serialized_len()];
         dit.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [TABLE_ID, 0x70, 0x01, 0xFF]);
@@ -177,9 +175,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_clear() {
-        let dit = DitSection {
-            transition_flag: false,
-        };
+        let dit = DitSection::new(false);
         let mut buf = vec![0u8; dit.serialized_len()];
         dit.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [TABLE_ID, 0x70, 0x01, 0x7F]);
@@ -188,9 +184,7 @@ mod tests {
 
     #[test]
     fn serialize_into_too_small_buffer() {
-        let dit = DitSection {
-            transition_flag: false,
-        };
+        let dit = DitSection::new(false);
         let mut buf = [0u8; 3];
         assert!(matches!(
             dit.serialize_into(&mut buf).unwrap_err(),
@@ -200,22 +194,14 @@ mod tests {
 
     #[test]
     fn serialized_len_is_four() {
-        assert_eq!(
-            DitSection {
-                transition_flag: false
-            }
-            .serialized_len(),
-            4
-        );
+        assert_eq!(DitSection::new(false).serialized_len(), 4);
     }
 
     #[cfg(feature = "serde")]
     #[test]
     fn serde_json_serializes_fields() {
         // Serialize-only: assert the emitted JSON carries the field.
-        let dit = DitSection {
-            transition_flag: true,
-        };
+        let dit = DitSection::new(true);
         let v = serde_json::to_value(dit).unwrap();
         assert_eq!(v["transition_flag"], true);
     }

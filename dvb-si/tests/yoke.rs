@@ -13,33 +13,33 @@ use dvb_si::tables::sdt::{SdtKind, SdtSection, SdtService};
 
 /// Build a minimal two-service SDT section through the serializer.
 fn sdt_section() -> Vec<u8> {
-    let sdt = SdtSection {
-        kind: SdtKind::Actual,
-        transport_stream_id: 0x1234,
-        version_number: 3,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        original_network_id: 0x5678,
-        services: vec![
-            SdtService {
-                service_id: 0x0A,
-                eit_schedule_flag: true,
-                eit_present_following_flag: true,
-                running_status: RunningStatus::Running,
-                free_ca_mode: false,
-                descriptors: DescriptorLoop::new(&[]),
-            },
-            SdtService {
-                service_id: 0x0B,
-                eit_schedule_flag: false,
-                eit_present_following_flag: false,
-                running_status: RunningStatus::NotRunning,
-                free_ca_mode: true,
-                descriptors: DescriptorLoop::new(&[]),
-            },
+    let sdt = SdtSection::new(
+        SdtKind::Actual,
+        0x1234,
+        3,
+        true,
+        0,
+        0,
+        0x5678,
+        vec![
+            SdtService::new(
+                0x0A,
+                true,
+                true,
+                RunningStatus::Running,
+                false,
+                DescriptorLoop::new(&[]),
+            ),
+            SdtService::new(
+                0x0B,
+                false,
+                false,
+                RunningStatus::NotRunning,
+                true,
+                DescriptorLoop::new(&[]),
+            ),
         ],
-    };
+    );
     let mut buf = vec![0u8; sdt.serialized_len()];
     sdt.serialize_into(&mut buf).unwrap();
     buf
