@@ -96,7 +96,7 @@ use media_plane::ingress::{
 };
 use media_plane::trunk::{RetentionClass, TrunkConfig};
 use reqwest::{Client as HttpClient, StatusCode};
-use transmux::dash_parse::{Mpd, MpdType, SegmentTemplate, SegmentTimeline};
+use transmux::dash_parse::{Mpd, MpdType, Period, SegmentTemplate};
 use transmux::media::Fmp4Demux;
 use transmux::pipeline::TrackSpec;
 use url::Url;
@@ -224,6 +224,10 @@ struct PendingRep {
     bandwidth: u64,
     plan: VecDeque<(u64, Option<u64>)>,
     last_number: u64,
+    /// `SegmentTimeline` high-water mark: the end (`t + d`, ticks) of the last
+    /// planned segment, `None` for non-timeline addressing. Timeline refresh
+    /// dedups on this, never on `last_number` (issue #1187).
+    timeline_end: Option<u64>,
     init_bytes: Option<Vec<u8>>,
     /// Local (init-segment-relative) track specs, once fetched.
     local_tracks: Option<Vec<TrackSpec>>,
@@ -239,6 +243,8 @@ struct RepState {
     local_to_global: HashMap<TrackId, TrackId>,
     plan: VecDeque<(u64, Option<u64>)>,
     last_number: u64,
+    /// See [`PendingRep::timeline_end`].
+    timeline_end: Option<u64>,
     /// At most one outstanding segment fetch per Representation at a time —
     /// see the module doc's "Bounded in-flight fetches".
     in_flight: bool,
@@ -349,7 +355,7 @@ impl DashIngestSession {
                 // The live Period is the last one (ISO/IEC 23009-1: a dynamic
                 // MPD appends Periods; the presentation is in the final one).
                 if let Some(period) = mpd.periods.last() {
-                    let total_duration = period.duration.or(mpd.media_presentation_duration);
+                    let total_duration = period_length(period, &mpd);
                     for rep in &mut live.reps {
                         let found = period
                             .adaptation_sets
@@ -360,6 +366,24 @@ impl DashIngestSession {
                             continue;
                         };
                         let dynamic_lookahead = live.is_dynamic.then_some(LIVE_NUMBER_LOOKAHEAD);
+                        if st.timeline.is_some() {
+                            // `$Time$`/timeline addressing: a refreshed live
+                            // MPD slides its window (old `S` entries drop, so
+                            // the enumerated numbers restart) while `S@t` stays
+                            // absolute — dedup on time, not on number (#1187).
+                            let (plan, end) = plan_timeline(
+                                st,
+                                total_duration,
+                                rep.timeline_end,
+                                dynamic_lookahead,
+                            )?;
+                            for (number, time) in plan {
+                                rep.last_number = rep.last_number.max(number);
+                                rep.plan.push_back((number, time));
+                            }
+                            rep.timeline_end = end.or(rep.timeline_end);
+                            continue;
+                        }
                         let from_number = rep.last_number.saturating_add(1);
                         let plan = build_plan(st, total_duration, from_number, dynamic_lookahead)?;
                         for (number, time) in plan {
@@ -383,7 +407,7 @@ impl DashIngestSession {
         let period = mpd.periods.last().ok_or_else(|| MultimuxError::Connect {
             reason: "dash-pull: mpd has no Period".into(),
         })?;
-        let total_duration = period.duration.or(mpd.media_presentation_duration);
+        let total_duration = period_length(period, &mpd);
 
         let mut reps = Vec::new();
         for aset in &period.adaptation_sets {
@@ -438,7 +462,14 @@ impl DashIngestSession {
             } else {
                 st.start_number
             };
-            let plan = build_plan(st, total_duration, from_number, dynamic_lookahead)?;
+            let (plan, timeline_end) = if st.timeline.is_some() {
+                plan_timeline(st, total_duration, None, dynamic_lookahead)?
+            } else {
+                (
+                    build_plan(st, total_duration, from_number, dynamic_lookahead)?,
+                    None,
+                )
+            };
             let last_number = plan
                 .last()
                 .map(|(n, _)| *n)
@@ -455,6 +486,7 @@ impl DashIngestSession {
                 bandwidth: rep.bandwidth,
                 plan: plan.into(),
                 last_number,
+                timeline_end,
                 init_bytes: None,
                 local_tracks: None,
             });
@@ -538,6 +570,7 @@ impl DashIngestSession {
                 local_to_global,
                 plan: p.plan,
                 last_number: p.last_number,
+                timeline_end: p.timeline_end,
                 in_flight: false,
             });
         }
@@ -737,14 +770,61 @@ impl Dialer for DashPullDialer {
     }
 }
 
-/// Adapter around [`SegmentTimeline::enumerate`] — see the pre-port module's
-/// own doc for why this is isolated to one call site.
-fn enumerate_timeline(timeline: &SegmentTimeline, start_number: u64) -> Result<Vec<(u64, u64)>> {
-    timeline
-        .enumerate(start_number)
+/// The Period length (`PEwc - PSwc`, DASH-IF IOP v4.3 §3.10.2.2.3): the
+/// Period's own `@duration`, else the Media Presentation Duration measured
+/// from the Period start.
+fn period_length(period: &Period, mpd: &Mpd) -> Option<Duration> {
+    period.duration.or_else(|| {
+        mpd.media_presentation_duration
+            .map(|m| m.saturating_sub(period.start.unwrap_or(Duration::ZERO)))
+    })
+}
+
+/// Resolve a `SegmentTimeline` template's `(number, time)` plan (ISO/IEC
+/// 23009-1 §5.3.9.6 via `SegmentTimeline::resolve`: absolute `@t`, explicit
+/// `@t` jumps, negative `@r` bounded by the next `@t` / the Period end).
+///
+/// `after_end` is the previous plan's high-water mark (end tick of its last
+/// segment): only segments starting at or after it are returned (a live
+/// refresh). With `None` and a dynamic MPD, only the last `lookahead` segments
+/// (the live edge) are kept, not the whole backlog (audit W14b). The second
+/// element is the new high-water mark (`None` if nothing was returned).
+#[allow(clippy::type_complexity)]
+fn plan_timeline(
+    st: &SegmentTemplate,
+    period_len: Option<Duration>,
+    after_end: Option<u64>,
+    dynamic_lookahead: Option<usize>,
+) -> Result<(Vec<(u64, Option<u64>)>, Option<u64>)> {
+    let Some(timeline) = &st.timeline else {
+        return Ok((Vec::new(), None));
+    };
+    let period_end_ticks = period_len
+        .map(|d| (d.as_secs_f64() * st.timescale as f64).ceil() as u64)
+        .filter(|t| *t > 0);
+    let mut segs = timeline
+        .resolve(st.start_number, period_end_ticks)
         .map_err(|e| MultimuxError::Connect {
             reason: format!("dash-pull: segment timeline: {e}"),
-        })
+        })?;
+    match after_end {
+        Some(end) => segs.retain(|seg| seg.time >= end),
+        None => {
+            if dynamic_lookahead.is_some() {
+                let keep = dynamic_lookahead.unwrap_or(0).max(1);
+                if segs.len() > keep {
+                    segs.drain(0..segs.len() - keep);
+                }
+            }
+        }
+    }
+    let end = segs.last().map(|seg| seg.time.saturating_add(seg.duration));
+    Ok((
+        segs.into_iter()
+            .map(|seg| (seg.number, Some(seg.time)))
+            .collect(),
+        end,
+    ))
 }
 
 /// Builds a Representation's `(number, time)` segment plan from its
@@ -764,21 +844,8 @@ fn build_plan(
     from_number: u64,
     dynamic_lookahead: Option<usize>,
 ) -> Result<Vec<(u64, Option<u64>)>> {
-    if let Some(timeline) = &st.timeline {
-        let mut entries: Vec<(u64, Option<u64>)> = enumerate_timeline(timeline, st.start_number)?
-            .into_iter()
-            .map(|(n, t)| (n, Some(t)))
-            .collect();
-        // A **dynamic** `$Time$` MPD's `SegmentTimeline` lists its whole
-        // history oldest-first; a live client wants only the last few entries
-        // (the live edge), not the whole backlog (audit W14b).
-        if dynamic_lookahead.is_some() {
-            let keep = dynamic_lookahead.unwrap_or(0).max(1);
-            if entries.len() > keep {
-                entries.drain(0..entries.len() - keep);
-            }
-        }
-        return Ok(entries);
+    if st.timeline.is_some() {
+        return plan_timeline(st, total_duration, None, dynamic_lookahead).map(|(plan, _)| plan);
     }
     let Some(duration) = st.duration else {
         return Ok(Vec::new());
