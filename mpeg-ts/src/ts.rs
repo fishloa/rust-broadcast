@@ -1,6 +1,7 @@
 //! MPEG-TS packet parser and section reassembler — ITU-T H.222.0 §2.4 (= ISO/IEC 13818-1).
 
 use crate::error::{Error, Result};
+use crate::pid::Pid;
 
 /// Size of one MPEG-TS packet (ETSI EN 300 468 §3.2, ISO/IEC 13818-1 §2.4.3.2).
 pub const TS_PACKET_SIZE: usize = 188;
@@ -192,7 +193,7 @@ pub struct TsHeader {
     /// PES packet or PSI section header when set.
     pub pusi: bool,
     /// 13-bit Packet Identifier.
-    pub pid: u16,
+    pub pid: Pid,
     /// 2-bit transport_scrambling_control (0 = not scrambled).
     pub scrambling: u8,
     /// Adaptation field present flag (adaptation_field_control bit 1).
@@ -241,7 +242,7 @@ impl TsHeader {
 
         let tei = (b1 & TEI_MASK) != 0;
         let pusi = (b1 & PUSI_MASK) != 0;
-        let pid = (((b1 & PID_MASK_HI) as u16) << 8) | (b2 as u16);
+        let pid = Pid::new((((b1 & PID_MASK_HI) as u16) << 8) | (b2 as u16));
         let scrambling = (b3 & SCRAMBLING_MASK) >> 6;
         let has_adaptation = (b3 & ADAPTATION_FLAG) != 0;
         let has_payload = (b3 & PAYLOAD_FLAG) != 0;
@@ -279,8 +280,9 @@ impl TsHeader {
         if self.pusi {
             buf[1] |= PUSI_MASK;
         }
-        buf[1] |= ((self.pid >> 8) as u8) & PID_MASK_HI;
-        buf[2] = self.pid.to_be_bytes()[1];
+        let pid = self.pid.value();
+        buf[1] |= ((pid >> 8) as u8) & PID_MASK_HI;
+        buf[2] = pid.to_be_bytes()[1];
         buf[3] = (self.scrambling << 6) & SCRAMBLING_MASK;
         if self.has_adaptation {
             buf[3] |= ADAPTATION_FLAG;
@@ -1367,7 +1369,7 @@ mod tests {
             TsHeader {
                 tei: false,
                 pusi: true,
-                pid: 0x0000,
+                pid: Pid::new(0x0000),
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1376,7 +1378,7 @@ mod tests {
             TsHeader {
                 tei: true,
                 pusi: false,
-                pid: 0x1FFF,
+                pid: Pid::new(0x1FFF),
                 scrambling: 0b11,
                 has_adaptation: true,
                 has_payload: true,
@@ -1385,7 +1387,7 @@ mod tests {
             TsHeader {
                 tei: false,
                 pusi: false,
-                pid: 0x0100,
+                pid: Pid::new(0x0100),
                 scrambling: 0b10,
                 has_adaptation: true,
                 has_payload: false,
@@ -1408,7 +1410,7 @@ mod tests {
         // b1 = 0b00_010010 = 0x12 (no tei, no pusi)
         let pkt = make_packet(0x12, 0x34, 0x05, &[]);
         let pkt = TsPacket::parse(&pkt).unwrap();
-        assert_eq!(pkt.header.pid, 0x1234);
+        assert_eq!(pkt.header.pid, Pid::new(0x1234));
         assert_eq!(pkt.header.continuity_counter, 5);
     }
 
@@ -1996,7 +1998,7 @@ mod tests {
         let hdr = TsHeader {
             tei: false,
             pusi: false,
-            pid: 0x0100,
+            pid: Pid::new(0x0100),
             scrambling: 0b10,
             has_adaptation: false,
             has_payload: true,
@@ -2010,7 +2012,7 @@ mod tests {
         let hdr_payload_only = TsHeader {
             tei: false,
             pusi: false,
-            pid: 0x0100,
+            pid: Pid::new(0x0100),
             scrambling: 0,
             has_adaptation: false,
             has_payload: true,
@@ -2024,7 +2026,7 @@ mod tests {
         let hdr_both = TsHeader {
             tei: false,
             pusi: false,
-            pid: 0x0100,
+            pid: Pid::new(0x0100),
             scrambling: 0,
             has_adaptation: true,
             has_payload: true,
@@ -2053,8 +2055,8 @@ mod tests {
 
         let pkts: Vec<_> = super::iter_packets(&buf).collect();
         assert_eq!(pkts.len(), 2, "bad sync packet must be skipped");
-        assert_eq!(pkts[0].header.pid, 0x0000);
-        assert_eq!(pkts[1].header.pid, 0x0064);
+        assert_eq!(pkts[0].header.pid, Pid::new(0x0000));
+        assert_eq!(pkts[1].header.pid, Pid::new(0x0064));
     }
 
     #[test]

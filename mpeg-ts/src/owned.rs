@@ -8,6 +8,7 @@
 //! Header parsing delegates to [`crate::ts::TsHeader::parse`]; no bit-twiddling
 //! is duplicated here.
 
+use crate::pid::Pid;
 use crate::error::{Error, Result};
 use crate::ts::{
     ADAPTATION_FLAG, AF_PCR_FLAG, AdaptationField, AdaptationFieldControl, CC_MASK, PCR_FIELD_LEN,
@@ -16,7 +17,7 @@ use crate::ts::{
 
 /// The 13-bit PID value used for null packets — `0x1FFF`
 /// (ISO/IEC 13818-1 §2.4.3.3, Table 2-3).
-const NULL_PID: u16 = 0x1FFF;
+const NULL_PID: Pid = crate::pid::well_known::NULL;
 
 /// Owned 188-byte TS packet with pre-parsed header fields.
 ///
@@ -45,7 +46,7 @@ pub struct OwnedTsPacket {
     #[cfg_attr(feature = "serde", serde(serialize_with = "serialize_raw_bytes"))]
     raw: [u8; TS_PACKET_SIZE],
     /// 13-bit PID extracted from bytes 1–2.
-    pid: u16,
+    pid: Pid,
     /// Payload Unit Start Indicator (byte 1 bit 6).
     pusi: bool,
     /// Adaptation field present flag (byte 3 bit 5).
@@ -91,7 +92,7 @@ impl OwnedTsPacket {
     }
 
     /// 13-bit PID (bytes 1–2).
-    pub fn pid(&self) -> u16 {
+    pub fn pid(&self) -> Pid {
         self.pid
     }
 
@@ -233,7 +234,7 @@ impl OwnedTsPacket {
     /// Never panics — serializing a 4-byte header into a 188-byte buffer cannot
     /// fail.
     pub fn serialize_with_payload(
-        pid: u16,
+        pid: Pid,
         pusi: bool,
         cc: u8,
         payload: &[u8],
@@ -415,7 +416,7 @@ mod tests {
         let pkt = OwnedTsPacket::parse(raw).unwrap();
         assert!(pkt.tei());
         assert!(pkt.pusi());
-        assert_eq!(pkt.pid(), 0x1ABC);
+        assert_eq!(pkt.pid(), Pid::new(0x1ABC));
         assert_eq!(pkt.scrambling(), 0b10);
         assert!(!pkt.has_adaptation());
         assert!(pkt.has_payload());
@@ -428,10 +429,10 @@ mod tests {
     fn owned_round_trip_and_payload_mut() {
         let payload = [0xAAu8; 184];
         let mut pkt = OwnedTsPacket::parse(
-            OwnedTsPacket::serialize_with_payload(0x0100, true, 7, &payload).unwrap(),
+            OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 7, &payload).unwrap(),
         )
         .unwrap();
-        assert_eq!(pkt.pid(), 0x0100);
+        assert_eq!(pkt.pid(), Pid::new(0x0100));
         assert!(pkt.pusi);
         assert_eq!(pkt.continuity_counter, 7);
         assert_eq!(pkt.payload().unwrap()[..184], payload[..]);
@@ -447,7 +448,7 @@ mod tests {
     #[test]
     fn oversized_payload_is_rejected_not_truncated() {
         let payload = [0xAAu8; 185];
-        assert!(OwnedTsPacket::serialize_with_payload(0x0100, true, 0, &payload).is_err());
+        assert!(OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 0, &payload).is_err());
     }
 
     /// The boundary: exactly 184 bytes (the fixed payload capacity) still
@@ -455,7 +456,7 @@ mod tests {
     #[test]
     fn max_payload_len_round_trips() {
         let payload = [0xBBu8; OwnedTsPacket::MAX_PAYLOAD_LEN];
-        let raw = OwnedTsPacket::serialize_with_payload(0x0100, true, 0, &payload).unwrap();
+        let raw = OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 0, &payload).unwrap();
         let pkt = OwnedTsPacket::parse(raw).unwrap();
         assert_eq!(pkt.payload().unwrap(), &payload[..]);
     }
@@ -463,7 +464,7 @@ mod tests {
     #[test]
     fn owned_scrambling_control_accessor() {
         let make = |scrambling_bits: u8| -> OwnedTsPacket {
-            let mut raw = OwnedTsPacket::serialize_with_payload(0x0100, false, 0, &[]).unwrap();
+            let mut raw = OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), false, 0, &[]).unwrap();
             // byte 3 bits [7:6] = scrambling
             raw[3] = (raw[3] & 0x3F) | (scrambling_bits << 6);
             OwnedTsPacket::parse(raw).unwrap()
