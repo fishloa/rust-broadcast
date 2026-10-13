@@ -12,7 +12,8 @@
 //! ```no_run
 //! # #[cfg(feature = "ts")] {
 //! use dvb_t2mi::inner_ts::InnerTsRecovery;
-//! let mut rec = InnerTsRecovery::new(0x1000); // the T2-MI PID
+//! use mpeg_ts::pid::Pid;
+//! let mut rec = InnerTsRecovery::new(Pid::new(0x1000)); // the T2-MI PID
 //! for ts_packet in outer_stream() {            // 188-byte outer TS packets
 //!     for inner in rec.feed(&ts_packet) {       // recovered inner TS packets
 //!         feed_to_si_demux(inner);

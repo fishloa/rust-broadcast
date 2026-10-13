@@ -8,9 +8,10 @@
 //!
 //! ```no_run
 //! use dvb_t2mi::pump::T2miPump;
+//! use mpeg_ts::pid::Pid;
 //! use dvb_t2mi::payload::AnyPayload;
 //!
-//! let mut pump = T2miPump::new(0x0006); // T2-MI PID from the PMT
+//! let mut pump = T2miPump::new(Pid::new(0x0006)); // T2-MI PID from the PMT
 //! let ts_packet = [0u8; 188]; // a real TS packet from your source
 //! for event in pump.feed_ts(&ts_packet) {
 //!     if let Ok(AnyPayload::Bbframe(bb)) = event.payload() {

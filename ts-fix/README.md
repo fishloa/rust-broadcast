@@ -25,11 +25,12 @@ future minor release is purely additive and never breaks callers.
 ## Quick start
 
 ```rust
+use mpeg_ts::pid::Pid;
 use ts_fix::{TsFix, PidFilter, Stuffing};
 
 let mut engine = TsFix::builder()
     .repair_continuity()
-    .filter_pids(PidFilter::keep([0x0100, 0x0101]))
+    .filter_pids(PidFilter::keep([Pid::new(0x0100), Pid::new(0x0101)]))
     .regen_psi()
     .stuffing(Stuffing::drop_nulls())
     .build()

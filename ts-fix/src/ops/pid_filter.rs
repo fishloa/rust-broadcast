@@ -80,8 +80,9 @@ impl PidFilter {
     ///
     /// # Example
     /// ```
+    /// use mpeg_ts::pid::Pid;
     /// use ts_fix::PidFilter;
-    /// let cfg = PidFilter::keep([0x0101, 0x0102]);
+    /// let cfg = PidFilter::keep([Pid::new(0x0101), Pid::new(0x0102)]);
     /// ```
     pub fn keep(pids: impl IntoIterator<Item = Pid>) -> Self {
         let mut set: BTreeSet<Pid> = pids.into_iter().collect();

@@ -276,7 +276,7 @@ impl OwnedTsPacket {
     /// let raw = OwnedTsPacket::null_packet(3);
     /// assert_eq!(raw.len(), TS_PACKET_SIZE);
     /// let pkt = TsPacket::parse(&raw).unwrap();
-    /// assert_eq!(pkt.header.pid, 0x1FFF);
+    /// assert_eq!(pkt.header.pid, mpeg_ts::pid::well_known::NULL);
     /// assert_eq!(pkt.header.continuity_counter, 3);
     /// ```
     #[must_use]
@@ -295,8 +295,9 @@ impl OwnedTsPacket {
     ///
     /// ```
     /// use mpeg_ts::OwnedTsPacket;
+    /// use mpeg_ts::pid::Pid;
     /// use mpeg_ts::ts::TsPacket;
-    /// let mut raw = OwnedTsPacket::serialize_with_payload(0x0100, false, 0, &[]).unwrap();
+    /// let mut raw = OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), false, 0, &[]).unwrap();
     /// OwnedTsPacket::set_continuity_counter(&mut raw, 7);
     /// let pkt = TsPacket::parse(&raw).unwrap();
     /// assert_eq!(pkt.header.continuity_counter, 7);

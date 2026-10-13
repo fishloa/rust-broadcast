@@ -29,11 +29,12 @@
 //! # Quick start
 //!
 //! ```rust,no_run
+//! use mpeg_ts::pid::Pid;
 //! use ts_fix::{PcrRestamp, PidFilter, Stuffing, TsFix};
 //!
 //! let mut engine = TsFix::builder()
 //!     .repair_continuity()
-//!     .filter_pids(PidFilter::keep([0x0100, 0x0101]))
+//!     .filter_pids(PidFilter::keep([Pid::new(0x0100), Pid::new(0x0101)]))
 //!     .regen_psi()
 //!     .restamp_pcr(PcrRestamp::interpolate())
 //!     .stuffing(Stuffing::drop_nulls())
