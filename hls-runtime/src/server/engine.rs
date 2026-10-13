@@ -1711,6 +1711,49 @@ mod tests {
         (trunk, origin, writer)
     }
 
+    /// #1159: the resource-naming functions take distinct id types, and every
+    /// argument lands in its own slot of the wire name. All six numbers differ
+    /// (track 3, instance 7, generation 4, sequence 5, part 2, offset 100), so
+    /// a swapped or misrouted argument changes the exact string.
+    #[test]
+    fn resource_names_place_every_distinct_id_in_its_own_slot() {
+        let (_trunk, origin, _writer) = make_origin();
+        let track = TrackId::new(3);
+        assert_eq!(origin.instance(), 7);
+        assert_eq!(origin.init_name(track, Generation::new(4)), "init-3-7-4.mp4");
+        assert_eq!(
+            origin.segment_name(track, SegmentSeq::new(5), "m4s"),
+            "seg-3-7-5.m4s"
+        );
+        assert_eq!(
+            origin.part_name(track, SegmentSeq::new(5), PartIndex::new(2), "m4s"),
+            "part-3-7-5.2.m4s"
+        );
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let offset = HlsOrigin::builder(trunk)
+            .target_duration_secs(4.0)
+            .window_segments(nz(4))
+            .instance(7)
+            .media_sequence_offset(100)
+            .build()
+            .expect("both required fields set");
+        assert_eq!(
+            offset.segment_name(track, SegmentSeq::new(5), "m4s"),
+            "seg-3-7-105.m4s",
+            "the Media Sequence Number offset applies to the sequence slot only"
+        );
+        assert_eq!(
+            offset.part_name(track, SegmentSeq::new(5), PartIndex::new(2), "m4s"),
+            "part-3-7-105.2.m4s"
+        );
+        assert_eq!(
+            offset.init_name(track, Generation::new(4)),
+            "init-3-7-4.mp4",
+            "the offset never touches the generation"
+        );
+    }
+
     fn seg(
         writer: &media_plane::trunk::SegmentWriter,
         seq: u32,
