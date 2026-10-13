@@ -22,18 +22,39 @@ const MIN_BODY_LEN: usize = FLAG_LEN;
 const MAX_BODY_LEN: usize = u8::MAX as usize;
 /// country_availability_flag occupies bit 7 (MSB) of the flag byte.
 const AVAILABILITY_FLAG_MASK: u8 = 0x80;
-/// Lower 7 bits are reserved_future_use — emitted as 1s on serialize.
+/// Lower 7 bits of the flag byte are `reserved_future_use`.
 const RESERVED_MASK: u8 = 0x7F;
+/// Spec default of `reserved_future_use`(7): all ones (EN 300 468 V1.3.1-V1.20.1,
+/// audit `dvb-si/docs/reserved-bits-edition-audit.md` §6.1, class A: stable in
+/// every edition).
+pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0x7F;
 
 /// Country Availability Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct CountryAvailabilityDescriptor {
+    /// `reserved_future_use`(7) after the flag (7 bits, right-aligned).
+    /// Captured on parse and re-emitted verbatim; [`Self::new`] defaults to
+    /// [`RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_future_use: u8,
     /// true = available in the listed countries; false = available everywhere
     /// EXCEPT the listed countries.
     pub country_availability_flag: bool,
     /// ISO 3166 alpha-3 country codes in wire order.
     pub country_codes: Vec<LangCode>,
+}
+
+impl CountryAvailabilityDescriptor {
+    /// Build a descriptor with the spec-default reserved bits (all ones).
+    #[must_use]
+    pub const fn new(country_availability_flag: bool, country_codes: Vec<LangCode>) -> Self {
+        Self {
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
+            country_availability_flag,
+            country_codes,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for CountryAvailabilityDescriptor {
@@ -65,6 +86,7 @@ impl<'a> Parse<'a> for CountryAvailabilityDescriptor {
             country_codes.push(LangCode([chunk[0], chunk[1], chunk[2]]));
         }
         Ok(Self {
+            reserved_future_use: flags & RESERVED_MASK,
             country_availability_flag,
             country_codes,
         })
@@ -94,13 +116,13 @@ impl Serialize for CountryAvailabilityDescriptor {
             });
         }
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
-        // reserved_future_use bits emitted as 1s (EN 300 468 §5.1).
+        // reserved_future_use preserved from parse (default all ones).
         let flag_bit = if self.country_availability_flag {
             AVAILABILITY_FLAG_MASK
         } else {
             0
         };
-        buf[HEADER_LEN] = flag_bit | RESERVED_MASK;
+        buf[HEADER_LEN] = flag_bit | (self.reserved_future_use & RESERVED_MASK);
         let mut pos = HEADER_LEN + FLAG_LEN;
         for code in &self.country_codes {
             buf[pos..pos + COUNTRY_CODE_LEN].copy_from_slice(&code.0);
@@ -182,21 +204,40 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = CountryAvailabilityDescriptor {
-            country_availability_flag: true,
-            country_codes: vec![LangCode(*b"GBR"), LangCode(*b"IRL")],
-        };
+        let d =
+            CountryAvailabilityDescriptor::new(true, vec![LangCode(*b"GBR"), LangCode(*b"IRL")]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(CountryAvailabilityDescriptor::parse(&buf).unwrap(), d);
     }
 
+    /// Every reserved_future_use(7) value (0..=0x7F) re-serializes verbatim;
+    /// parsed values are preserved, only hand-built ones carry the default.
+    #[test]
+    fn reserved_preserved_for_every_value() {
+        for r in 0u8..=0x7F {
+            for flag in [0u8, 0x80] {
+                let bytes = [TAG, 4, flag | r, b'G', b'B', b'R'];
+                let d = CountryAvailabilityDescriptor::parse(&bytes).unwrap();
+                assert_eq!(d.reserved_future_use, r);
+                let mut buf = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut buf).unwrap();
+                assert_eq!(buf, bytes);
+            }
+        }
+    }
+
+    #[test]
+    fn default_is_spec_value() {
+        let d = CountryAvailabilityDescriptor::new(true, vec![]);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 1, 0xFF]);
+    }
+
     #[test]
     fn serialize_emits_reserved_ones() {
-        let d = CountryAvailabilityDescriptor {
-            country_availability_flag: false,
-            country_codes: vec![],
-        };
+        let d = CountryAvailabilityDescriptor::new(false, vec![]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         // flag clear, reserved bits all 1 -> 0x7F
@@ -206,10 +247,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_round_trip() {
-        let d = CountryAvailabilityDescriptor {
-            country_availability_flag: true,
-            country_codes: vec![LangCode(*b"FRA")],
-        };
+        let d = CountryAvailabilityDescriptor::new(true, vec![LangCode(*b"FRA")]);
         let json = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&json).unwrap();

@@ -122,9 +122,7 @@ fn terrestrial_delivery_centre_frequency_hz() {
 #[test]
 fn pdc_label_components_round_trip() {
     use dvb_si::descriptors::pdc::PdcDescriptor;
-    let mut d = PdcDescriptor {
-        programme_identification_label: 0,
-    };
+    let mut d = PdcDescriptor::new(0);
     d.set_pil(15, 6, 20, 30).unwrap();
     assert_eq!(
         (d.pil_day(), d.pil_month(), d.pil_hour(), d.pil_minute()),

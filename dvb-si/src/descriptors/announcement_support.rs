@@ -42,6 +42,11 @@ pub const REFERENCE_LEN: usize = 7;
 const ANNOUNCEMENT_TYPE_MASK: u8 = 0xF0;
 const ANNOUNCEMENT_TYPE_SHIFT: u8 = 4;
 const RESERVED_BIT_MASK: u8 = 0x08;
+const RESERVED_BIT_SHIFT: u8 = 3;
+/// Spec default of the entry's 1-bit `reserved_future_use`: `1` (EN 300 468
+/// V1.4.1-V1.20.1 Table 17, global convention; audit
+/// `dvb-si/docs/reserved-bits-edition-audit.md` §6.1, class A, stable).
+pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 1;
 const REFERENCE_TYPE_MASK: u8 = 0x07;
 /// Max value of the 4-bit announcement_type field.
 pub const ANNOUNCEMENT_TYPE_MAX: u8 = 0x0F;
@@ -207,13 +212,35 @@ pub struct AnnouncementReference {
 /// One announcement entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct AnnouncementEntry {
+    /// `reserved_future_use`(1) between announcement_type and reference_type
+    /// (1 bit, right-aligned). Captured on parse and re-emitted verbatim;
+    /// [`AnnouncementEntry::new`] defaults to [`RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_future_use: u8,
     /// 4-bit announcement_type (Table 19).
     pub announcement_type: AnnouncementType,
     /// 3-bit reference_type (Table 20).
     pub reference_type: ReferenceType,
     /// Reference block, present iff reference_type ∈ {1,2,3}.
     pub reference: Option<AnnouncementReference>,
+}
+
+impl AnnouncementEntry {
+    /// Build an entry with the spec-default reserved bit.
+    #[must_use]
+    pub const fn new(
+        announcement_type: AnnouncementType,
+        reference_type: ReferenceType,
+        reference: Option<AnnouncementReference>,
+    ) -> Self {
+        Self {
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
+            announcement_type,
+            reference_type,
+            reference,
+        }
+    }
 }
 
 /// Announcement Support Descriptor.
@@ -256,7 +283,7 @@ impl<'a> Parse<'a> for AnnouncementSupportDescriptor {
                         reason: "announcement reference block truncated",
                     })?;
             let flags = type_byte[0];
-            // reserved_future_use bit ignored on parse (§5.1).
+            // reserved_future_use captured below (preserved on serialize).
             let announcement_type = AnnouncementType::from_u8(
                 (flags & ANNOUNCEMENT_TYPE_MASK) >> ANNOUNCEMENT_TYPE_SHIFT,
             );
@@ -280,6 +307,7 @@ impl<'a> Parse<'a> for AnnouncementSupportDescriptor {
             };
             rest = after_ref;
             entries.push(AnnouncementEntry {
+                reserved_future_use: (flags & RESERVED_BIT_MASK) >> RESERVED_BIT_SHIFT,
                 announcement_type,
                 reference_type,
                 reference,
@@ -357,10 +385,10 @@ impl Serialize for AnnouncementSupportDescriptor {
             .copy_from_slice(&self.announcement_support_indicator.to_be_bytes());
         let mut pos = HEADER_LEN + INDICATOR_LEN;
         for e in &self.entries {
-            // reserved_future_use bit emitted as 1 (§5.1).
+            // reserved_future_use preserved from parse (default 1).
             let flags = ((e.announcement_type.to_u8() << ANNOUNCEMENT_TYPE_SHIFT)
                 & ANNOUNCEMENT_TYPE_MASK)
-                | RESERVED_BIT_MASK
+                | ((e.reserved_future_use << RESERVED_BIT_SHIFT) & RESERVED_BIT_MASK)
                 | (e.reference_type.to_u8() & REFERENCE_TYPE_MASK);
             buf[pos] = flags;
             pos += TYPE_BYTE_LEN;
@@ -457,6 +485,42 @@ mod tests {
         assert_eq!(d.entries[0].reference_type, ReferenceType::UsualAudioStream);
     }
 
+    /// reserved_future_use(1) of every entry round-trips for both values;
+    /// parsed values are preserved, only hand-built ones carry the default.
+    #[test]
+    fn reserved_preserved() {
+        for r in 0u8..=1 {
+            // type=6, ref_type=0 / type=1, ref_type=2 + 7-byte reference
+            let e0 = 0x60 | (r << 3);
+            let e1 = 0x12 | (r << 3);
+            let bytes = [
+                TAG, 11, 0x00, 0x40, e0, e1, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x09,
+            ];
+            let d = AnnouncementSupportDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.entries[0].reserved_future_use, r);
+            assert_eq!(d.entries[1].reserved_future_use, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes);
+        }
+    }
+
+    #[test]
+    fn default_is_spec_value() {
+        let e = AnnouncementEntry::new(
+            AnnouncementType::EventAnnouncement,
+            ReferenceType::UsualAudioStream,
+            None,
+        );
+        let d = AnnouncementSupportDescriptor {
+            announcement_support_indicator: 0,
+            entries: vec![e],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 3, 0x00, 0x00, 0x68]);
+    }
+
     #[test]
     fn parse_rejects_wrong_tag() {
         assert!(matches!(
@@ -497,21 +561,21 @@ mod tests {
         let d = AnnouncementSupportDescriptor {
             announcement_support_indicator: 0xBEEF,
             entries: vec![
-                AnnouncementEntry {
-                    announcement_type: AnnouncementType::NewsFlash,
-                    reference_type: ReferenceType::UsualAudioStream,
-                    reference: None,
-                },
-                AnnouncementEntry {
-                    announcement_type: AnnouncementType::RoadTrafficFlash,
-                    reference_type: ReferenceType::DifferentServiceSameTs,
-                    reference: Some(AnnouncementReference {
+                AnnouncementEntry::new(
+                    AnnouncementType::NewsFlash,
+                    ReferenceType::UsualAudioStream,
+                    None,
+                ),
+                AnnouncementEntry::new(
+                    AnnouncementType::RoadTrafficFlash,
+                    ReferenceType::DifferentServiceSameTs,
+                    Some(AnnouncementReference {
                         original_network_id: 0xAABB,
                         transport_stream_id: 0xCCDD,
                         service_id: 0xEEFF,
                         component_tag: 0x09,
                     }),
-                },
+                ),
             ],
         };
         let mut buf = vec![0u8; d.serialized_len()];
@@ -536,11 +600,11 @@ mod tests {
     fn serialize_rejects_over_range_announcement_type() {
         let d = AnnouncementSupportDescriptor {
             announcement_support_indicator: 0,
-            entries: vec![AnnouncementEntry {
-                announcement_type: AnnouncementType::Reserved(0x10), // 5 bits
-                reference_type: ReferenceType::UsualAudioStream,
-                reference: None,
-            }],
+            entries: vec![AnnouncementEntry::new(
+                AnnouncementType::Reserved(0x10),
+                ReferenceType::UsualAudioStream,
+                None,
+            )],
         };
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
@@ -554,11 +618,11 @@ mod tests {
         // ref_type=2 demands a reference, but None supplied.
         let d = AnnouncementSupportDescriptor {
             announcement_support_indicator: 0,
-            entries: vec![AnnouncementEntry {
-                announcement_type: AnnouncementType::Reserved(0),
-                reference_type: ReferenceType::DifferentServiceSameTs,
-                reference: None,
-            }],
+            entries: vec![AnnouncementEntry::new(
+                AnnouncementType::Reserved(0),
+                ReferenceType::DifferentServiceSameTs,
+                None,
+            )],
         };
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
@@ -572,16 +636,16 @@ mod tests {
     fn serde_round_trip() {
         let d = AnnouncementSupportDescriptor {
             announcement_support_indicator: 0xBEEF,
-            entries: vec![AnnouncementEntry {
-                announcement_type: AnnouncementType::RoadTrafficFlash,
-                reference_type: ReferenceType::DifferentServiceSameTs,
-                reference: Some(AnnouncementReference {
+            entries: vec![AnnouncementEntry::new(
+                AnnouncementType::RoadTrafficFlash,
+                ReferenceType::DifferentServiceSameTs,
+                Some(AnnouncementReference {
                     original_network_id: 0xAABB,
                     transport_stream_id: 0xCCDD,
                     service_id: 0xEEFF,
                     component_tag: 0x09,
                 }),
-            }],
+            )],
         };
         let json = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).

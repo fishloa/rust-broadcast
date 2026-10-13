@@ -28,15 +28,40 @@ const FIXED_LEN: usize = 3;
 
 const FOREIGN_AVAIL_MASK: u8 = 0x20;
 const CONNECTION_TYPE_MASK: u8 = 0x1F;
-const BYTE0_RESERVED: u8 = 0xC0;
-const BYTE1_RESERVED: u8 = 0x80;
-const BYTE2_RESERVED: u8 = 0x80;
+const BYTE0_RESERVED_MASK: u8 = 0xC0;
+const BYTE0_RESERVED_SHIFT: u8 = 6;
+const BYTE1_RESERVED_MASK: u8 = 0x80;
+const BYTE1_RESERVED_SHIFT: u8 = 7;
+const BYTE2_RESERVED_MASK: u8 = 0x80;
+const BYTE2_RESERVED_SHIFT: u8 = 7;
+/// Spec default of the 2-bit `reserved_future_use` in byte 0: all ones
+/// (EN 300 468 V1.3.1-V1.20.1 Table 100, TS 102 006 V1.2.1-V1.4.1, EN 301 192
+/// V1.3.1-V1.8.1; audit `dvb-si/docs/reserved-bits-edition-audit.md` §6.1,
+/// class A. The V1.17.1 erratum that prints a 5-bit reserved is corrected in
+/// V1.18.1).
+pub const RESERVED_FUTURE_USE_BYTE0_DEFAULT: u8 = 0b11;
+/// Spec default of the 1-bit `reserved_future_use` in byte 1: `1`.
+pub const RESERVED_FUTURE_USE_BYTE1_DEFAULT: u8 = 1;
+/// Spec default of the 1-bit `reserved_future_use` in byte 2: `1`.
+pub const RESERVED_FUTURE_USE_BYTE2_DEFAULT: u8 = 1;
 
 /// Telephone Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct TelephoneDescriptor<'a> {
+    /// `reserved_future_use`(2) at the top of the first body byte (2 bits,
+    /// right-aligned). Captured on parse, re-emitted verbatim;
+    /// [`TelephoneDescriptor::new`] defaults to
+    /// [`RESERVED_FUTURE_USE_BYTE0_DEFAULT`].
+    pub reserved_future_use_before_foreign_availability: u8,
+    /// `reserved_future_use`(1) ahead of `country_prefix_length` (1 bit).
+    /// Default [`RESERVED_FUTURE_USE_BYTE1_DEFAULT`].
+    pub reserved_future_use_before_country_prefix_length: u8,
+    /// `reserved_future_use`(1) ahead of `national_area_code_length` (1 bit).
+    /// Default [`RESERVED_FUTURE_USE_BYTE2_DEFAULT`].
+    pub reserved_future_use_before_national_area_code_length: u8,
     /// When true, the number may be dialled from outside the prefix's country.
     pub foreign_availability: bool,
     /// 5-bit connection_type (meaning out of scope of EN 300 468).
@@ -51,6 +76,33 @@ pub struct TelephoneDescriptor<'a> {
     pub national_area_code: DvbText<'a>,
     /// core_number_char bytes (≤ 15).
     pub core_number: DvbText<'a>,
+}
+
+impl<'a> TelephoneDescriptor<'a> {
+    /// Build a descriptor with the spec-default reserved bits (all ones).
+    #[must_use]
+    pub const fn new(
+        foreign_availability: bool,
+        connection_type: u8,
+        country_prefix: DvbText<'a>,
+        international_area_code: DvbText<'a>,
+        operator_code: DvbText<'a>,
+        national_area_code: DvbText<'a>,
+        core_number: DvbText<'a>,
+    ) -> Self {
+        Self {
+            reserved_future_use_before_foreign_availability: RESERVED_FUTURE_USE_BYTE0_DEFAULT,
+            reserved_future_use_before_country_prefix_length: RESERVED_FUTURE_USE_BYTE1_DEFAULT,
+            reserved_future_use_before_national_area_code_length: RESERVED_FUTURE_USE_BYTE2_DEFAULT,
+            foreign_availability,
+            connection_type,
+            country_prefix,
+            international_area_code,
+            operator_code,
+            national_area_code,
+            core_number,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for TelephoneDescriptor<'a> {
@@ -98,6 +150,12 @@ impl<'a> Parse<'a> for TelephoneDescriptor<'a> {
         let national_area_code = take(national_area_code_length);
         let core_number = take(core_number_length);
         Ok(Self {
+            reserved_future_use_before_foreign_availability: (body[0] & BYTE0_RESERVED_MASK)
+                >> BYTE0_RESERVED_SHIFT,
+            reserved_future_use_before_country_prefix_length: (body[1] & BYTE1_RESERVED_MASK)
+                >> BYTE1_RESERVED_SHIFT,
+            reserved_future_use_before_national_area_code_length: (body[2] & BYTE2_RESERVED_MASK)
+                >> BYTE2_RESERVED_SHIFT,
             foreign_availability,
             connection_type,
             country_prefix: DvbText::new(country_prefix),
@@ -153,16 +211,24 @@ impl Serialize for TelephoneDescriptor<'_> {
         let core_number_len =
             broadcast_common::len::fit_bits(self.core_number.raw().len() as u64, 4, "core_number")?
                 as u8;
-        buf[2] = BYTE0_RESERVED
+        buf[2] = ((self.reserved_future_use_before_foreign_availability << BYTE0_RESERVED_SHIFT)
+            & BYTE0_RESERVED_MASK)
             | if self.foreign_availability {
                 FOREIGN_AVAIL_MASK
             } else {
                 0
             }
             | (self.connection_type & CONNECTION_TYPE_MASK);
-        buf[3] =
-            BYTE1_RESERVED | (country_prefix_len << 5) | (intl_area_len << 2) | operator_code_len;
-        buf[4] = BYTE2_RESERVED | (national_area_len << 4) | core_number_len;
+        buf[3] = ((self.reserved_future_use_before_country_prefix_length << BYTE1_RESERVED_SHIFT)
+            & BYTE1_RESERVED_MASK)
+            | (country_prefix_len << 5)
+            | (intl_area_len << 2)
+            | operator_code_len;
+        buf[4] = ((self.reserved_future_use_before_national_area_code_length
+            << BYTE2_RESERVED_SHIFT)
+            & BYTE2_RESERVED_MASK)
+            | (national_area_len << 4)
+            | core_number_len;
         let mut pos = HEADER_LEN + FIXED_LEN;
         for field in [
             self.country_prefix.raw(),
@@ -187,15 +253,15 @@ mod tests {
     use super::*;
 
     fn sample() -> TelephoneDescriptor<'static> {
-        TelephoneDescriptor {
-            foreign_availability: true,
-            connection_type: 0x05,
-            country_prefix: DvbText::new(b"44"),
-            international_area_code: DvbText::new(b"171"),
-            operator_code: DvbText::new(b"01"),
-            national_area_code: DvbText::new(b"207"),
-            core_number: DvbText::new(b"123456"),
-        }
+        TelephoneDescriptor::new(
+            true,
+            0x05,
+            DvbText::new(b"44"),
+            DvbText::new(b"171"),
+            DvbText::new(b"01"),
+            DvbText::new(b"207"),
+            DvbText::new(b"123456"),
+        )
     }
 
     #[test]
@@ -267,33 +333,76 @@ mod tests {
 
     #[test]
     fn serialize_emits_reserved_ones() {
-        let d = TelephoneDescriptor {
-            foreign_availability: false,
-            connection_type: 0,
-            country_prefix: DvbText::new(b""),
-            international_area_code: DvbText::new(b""),
-            operator_code: DvbText::new(b""),
-            national_area_code: DvbText::new(b""),
-            core_number: DvbText::new(b""),
-        };
+        let d = TelephoneDescriptor::new(
+            false,
+            0,
+            DvbText::new(b""),
+            DvbText::new(b""),
+            DvbText::new(b""),
+            DvbText::new(b""),
+            DvbText::new(b""),
+        );
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
-        assert_eq!(buf[2] & BYTE0_RESERVED, BYTE0_RESERVED);
-        assert_eq!(buf[3] & BYTE1_RESERVED, BYTE1_RESERVED);
-        assert_eq!(buf[4] & BYTE2_RESERVED, BYTE2_RESERVED);
+        assert_eq!(buf[2] & BYTE0_RESERVED_MASK, BYTE0_RESERVED_MASK);
+        assert_eq!(buf[3] & BYTE1_RESERVED_MASK, BYTE1_RESERVED_MASK);
+        assert_eq!(buf[4] & BYTE2_RESERVED_MASK, BYTE2_RESERVED_MASK);
+    }
+
+    /// Every combination of the three reserved regions (2+1+1 bits) re-serializes
+    /// byte-identically; hand-built values carry the default.
+    #[test]
+    fn reserved_preserved_for_every_combination() {
+        for r0 in 0u8..=3 {
+            for r1 in 0u8..=1 {
+                for r2 in 0u8..=1 {
+                    let bytes = [
+                        TAG,
+                        10,
+                        (r0 << 6) | 0x05,
+                        (r1 << 7) | 0x14,
+                        (r2 << 7) | 0x11,
+                        b'1',
+                        b'7',
+                        b'1',
+                        b'2',
+                        b'3',
+                        b'9',
+                        b'8',
+                    ];
+                    let d = TelephoneDescriptor::parse(&bytes).unwrap();
+                    assert_eq!(d.reserved_future_use_before_foreign_availability, r0);
+                    assert_eq!(d.reserved_future_use_before_country_prefix_length, r1);
+                    assert_eq!(d.reserved_future_use_before_national_area_code_length, r2);
+                    let mut buf = vec![0u8; d.serialized_len()];
+                    d.serialize_into(&mut buf).unwrap();
+                    assert_eq!(buf, bytes);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn default_is_spec_value() {
+        let d = sample();
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[2] >> 6, 0b11);
+        assert_eq!(buf[3] >> 7, 1);
+        assert_eq!(buf[4] >> 7, 1);
     }
 
     #[test]
     fn serialize_rejects_over_range_field() {
-        let d = TelephoneDescriptor {
-            foreign_availability: false,
-            connection_type: 0,
-            country_prefix: DvbText::new(b""),
-            international_area_code: DvbText::new(b""),
-            operator_code: DvbText::new(b"1234"),
-            national_area_code: DvbText::new(b""),
-            core_number: DvbText::new(b""),
-        };
+        let d = TelephoneDescriptor::new(
+            false,
+            0,
+            DvbText::new(b""),
+            DvbText::new(b""),
+            DvbText::new(b"1234"),
+            DvbText::new(b""),
+            DvbText::new(b""),
+        );
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),

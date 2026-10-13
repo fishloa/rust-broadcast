@@ -22,15 +22,37 @@ pub const CELL_ID_LEN: usize = 2;
 
 const AVAILABILITY_FLAG_MASK: u8 = 0b1000_0000;
 const RESERVED_MASK: u8 = 0b0111_1111;
+/// Spec default of `reserved_future_use`(7): all ones (EN 300 468 V1.5.1-V1.20.1
+/// Table 90 (`reserved` before V1.17.1); audit
+/// `dvb-si/docs/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
+pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0x7F;
 
 /// Service Availability Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct ServiceAvailabilityDescriptor {
+    /// `reserved_future_use`(7) after `availability_flag` (7 bits,
+    /// right-aligned). Captured on parse and re-emitted verbatim;
+    /// [`ServiceAvailabilityDescriptor::new`] defaults to
+    /// [`RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_future_use: u8,
     /// `availability_flag`: true = available in listed cells, false = unavailable.
     pub availability_flag: bool,
     /// cell_id entries in wire order.
     pub cell_ids: Vec<u16>,
+}
+
+impl ServiceAvailabilityDescriptor {
+    /// Build a descriptor with the spec-default reserved bits (all ones).
+    #[must_use]
+    pub const fn new(availability_flag: bool, cell_ids: Vec<u16>) -> Self {
+        Self {
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
+            availability_flag,
+            cell_ids,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for ServiceAvailabilityDescriptor {
@@ -55,7 +77,6 @@ impl<'a> Parse<'a> for ServiceAvailabilityDescriptor {
             });
         }
         let flags = body[0];
-        // reserved_future_use (7 bits) ignored on parse (§5.1).
         let availability_flag = flags & AVAILABILITY_FLAG_MASK != 0;
         let cell_data = &body[FLAGS_LEN..];
         let count = cell_data.len() / CELL_ID_LEN;
@@ -64,6 +85,7 @@ impl<'a> Parse<'a> for ServiceAvailabilityDescriptor {
             cell_ids.push(crate::wire::be_u16(chunk, 0, "service_availability")?);
         }
         Ok(Self {
+            reserved_future_use: flags & RESERVED_MASK,
             availability_flag,
             cell_ids,
         })
@@ -92,8 +114,8 @@ impl Serialize for ServiceAvailabilityDescriptor {
             });
         }
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
-        // reserved 7 bits emitted as 1s (§5.1).
-        let mut flags = RESERVED_MASK;
+        // reserved_future_use(7) preserved from parse (default all ones).
+        let mut flags = self.reserved_future_use & RESERVED_MASK;
         if self.availability_flag {
             flags |= AVAILABILITY_FLAG_MASK;
         }
@@ -130,6 +152,29 @@ mod tests {
         let d = ServiceAvailabilityDescriptor::parse(&bytes).unwrap();
         assert!(!d.availability_flag);
         assert!(d.cell_ids.is_empty());
+    }
+
+    /// Every reserved_future_use(7) value re-serializes verbatim.
+    #[test]
+    fn reserved_preserved_for_every_value() {
+        for r in 0u8..=0x7F {
+            for flag in [0u8, 0x80] {
+                let bytes = [TAG, 3, flag | r, 0x00, 0x01];
+                let d = ServiceAvailabilityDescriptor::parse(&bytes).unwrap();
+                assert_eq!(d.reserved_future_use, r);
+                let mut buf = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut buf).unwrap();
+                assert_eq!(buf, bytes);
+            }
+        }
+    }
+
+    #[test]
+    fn default_is_spec_value() {
+        let d = ServiceAvailabilityDescriptor::new(false, vec![]);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 1, 0x7F]);
     }
 
     #[test]
@@ -177,10 +222,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = ServiceAvailabilityDescriptor {
-            availability_flag: true,
-            cell_ids: vec![0x00AB, 0x00CD, 0x00EF],
-        };
+        let d = ServiceAvailabilityDescriptor::new(true, vec![0x00AB, 0x00CD, 0x00EF]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(ServiceAvailabilityDescriptor::parse(&buf).unwrap(), d);
@@ -188,10 +230,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_too_small_buffer() {
-        let d = ServiceAvailabilityDescriptor {
-            availability_flag: false,
-            cell_ids: vec![0x0001],
-        };
+        let d = ServiceAvailabilityDescriptor::new(false, vec![0x0001]);
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -202,10 +241,7 @@ mod tests {
     #[test]
     fn serialize_rejects_over_range_count() {
         // 128 cell_ids = 256 body bytes + flags = 257 > 255.
-        let d = ServiceAvailabilityDescriptor {
-            availability_flag: true,
-            cell_ids: vec![0u16; 128],
-        };
+        let d = ServiceAvailabilityDescriptor::new(true, vec![0u16; 128]);
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -216,10 +252,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_round_trip() {
-        let d = ServiceAvailabilityDescriptor {
-            availability_flag: true,
-            cell_ids: vec![0x0001, 0x0002],
-        };
+        let d = ServiceAvailabilityDescriptor::new(true, vec![0x0001, 0x0002]);
         let json = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&json).unwrap();
