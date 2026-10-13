@@ -819,6 +819,18 @@ impl Ec3SpecificBox {
         // does not fit is a real (if improbable) stream this box cannot
         // describe, so fail rather than wrap.
         let num_ind_sub = broadcast_common::len::fit_bits(last_ind as u64, 3, "num_ind_sub")? as u8;
+        // §F.6.1: the box carries exactly `num_ind_sub + 1` independent
+        // substreams, and `serialize_into` refuses any other count. Damaged
+        // input can present independent frames whose `substreamid`s are not
+        // contiguous from 0 (e.g. 0 then 5); describing that would build a box
+        // that cannot be serialized (issue #1171), so reject it here.
+        if substreams.len() != usize::from(num_ind_sub) + 1 {
+            return Err(Error::InvalidValue {
+                field: "dec3 num_ind_sub",
+                value: u64::from(num_ind_sub),
+                reason: "independent substreams must be numbered contiguously from 0",
+            });
+        }
         let data_rate =
             broadcast_common::len::fit_bits(data_rate as u64, 13, "dec3 data_rate")? as u16;
         Ok(Self {
