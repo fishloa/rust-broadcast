@@ -7,7 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- `InlineContent` gains an `Unknown(Box<UnknownElement>)` variant: an unmodeled
+  element inside `<p>`/`<span>` is kept at its original position among the text
+  and spans instead of being hoisted to the end of `unknown_children` (which a
+  parsed `<p>`/`<span>` no longer fills; it remains for struct-built trees and is
+  written after the content). Exhaustive matches on `InlineContent` (the enum is
+  `#[non_exhaustive]`) gain an arm (#1110 TT-W1/TT-W2).
+- `UnknownElement::prefix` is now the prefix the element name was actually
+  written with (`None` for an unprefixed, default-namespace name), instead of a
+  guess from the scope that gave an unprefixed element the `tt` prefix.
+
 ### Fixed
+- `to_xml` no longer drops an attribute the crate does not model on an element,
+  even in a namespace it does model (`tts:`/`ttp:`/`ttm:`/`xml:`/unprefixed):
+  such attributes are read-tracked and preserved as `ForeignAttribute`s
+  (#1110 TT-W1). Pinned by `tests/unknown_attributes.rs`.
+- `to_xml` inserted newline/indent text nodes inside `<p>` when it held a hoisted
+  `<metadata>`/`<set>` (e.g. the committed `imsc1-animation-001` fixture), changing
+  the paragraph's text; layout whitespace is now suppressed inside mixed content,
+  and mixed foreign-element content is written verbatim (#1110 TT-W1). Goldens
+  for `imsc1-animation-001` and `edge-foreign` re-blessed: the old files encoded
+  the bug.
+- A `<span>`'s `<metadata>`, `<set>` and unmodeled children were silently dropped
+  by `to_xml` (#1110 TT-W2).
+- An unprefixed foreign element carrying its own `xmlns="..."` was written
+  without it and so changed namespace; the declaration is now emitted, and an
+  unknown `xml:`-namespace attribute no longer gets a (forbidden) second prefix
+  binding for the XML namespace.
 
 - **BREAKING (minor)**: dropping a deeply nested, hand-built `Document` no longer overflows the stack (#1146). `SpanElement`, `MetadataElement`, `EbuttmElement` and `UnknownElement` now implement `Drop` iteratively (children are moved onto an explicit work stack), so a tree a million levels deep drops on a 256 KiB stack. A type that implements `Drop` can no longer have fields moved out of it or be used as the base of a `..base` struct update by value; clone or `mem::take` the fields instead. Parsed documents were never affected (depth is capped at 64).
 
