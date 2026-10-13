@@ -924,6 +924,88 @@ mod tests {
         serialize_round_trip(&d);
     }
 
+    /// Issue #1003: hand-assembled from H.222.0 Table 2-101 (NOT produced by
+    /// this crate's serializer): after the stripe/block/mdm flags byte comes
+    /// `still_mode | interlaced_video | reserved(6)`, THEN the colour
+    /// parameters, then the stripe/block/mdm sub-blocks. Every field is
+    /// asserted individually; the pre-fix reader took the still/interlaced
+    /// byte as colour_primaries and shifted everything after it.
+    #[test]
+    fn extended_capability_spec_vector_field_by_field() {
+        #[rustfmt::skip]
+        let body: &[u8] = &[
+            0x83, 0x07,                   // extended_capability_flag=1 | profile_and_level=0x0307
+            0x00, 0x00, 0x1E, 0x00,       // horizontal_size = 7680
+            0x00, 0x00, 0x10, 0xE0,       // vertical_size = 4320
+            0x05, 0xF5, 0xE1, 0x00,       // max_bit_rate = 100_000_000
+            0x02, 0xFA, 0xF0, 0x80,       // max_buffer_size = 50_000_000
+            0x03, 0xE9,                   // DEN_frame_rate = 1001
+            0xEA, 0x60,                   // NUM_frame_rate = 60000
+            0xE0,                         // stripe|block|mdm = 1,1,1 | reserved(5)=0
+            0xC1,                         // still_mode=1, interlaced=1, reserved(6)=1
+            0x09, 0x10, 0x09, 0xFF,       // colour_primaries, transfer, matrix, full_range=1|rsv 0x7F
+            0x07, 0x02, 0x1C,             // strp_max_idx=7, strp_height=540
+            0x00, 0x00, 0x3C, 0x00,       // full_horizontal_size = 15360
+            0x00, 0x00, 0x21, 0xC0,       // full_vertical_size = 8640
+            0x1E, 0x00, 0x10, 0xE0,       // blk_width=7680, blk_height=4320
+            0x01, 0x02, 0x03, 0x04,       // max_blk_idx_h/v, blk_idx_h/v
+            0x1A, 0x90, 0x0C, 0x80,       // X_c0=6800 Y_c0=3200
+            0x0A, 0x5A, 0x1A, 0xF4,       // X_c1=2650 Y_c1=6900
+            0x05, 0xDC, 0x02, 0x58,       // X_c2=1500 Y_c2=600
+            0x0C, 0x37, 0x0C, 0xDA,       // X_wp=3127 Y_wp=3290
+            0x00, 0x3D, 0x09, 0x00,       // L_max = 4_000_000
+            0x00, 0x00, 0x00, 0x32,       // L_min = 50
+            0x27, 0x10, 0x13, 0x88,       // MaxCLL=10000 MaxFALL=5000
+            0xDD, 0xEE,                   // private_data_byte x2
+        ];
+        let mut bytes = vec![TAG, body.len() as u8];
+        bytes.extend_from_slice(body);
+        let d = J2kVideoDescriptor::parse(&bytes).unwrap();
+        assert!(d.extended_capability_flag);
+        assert_eq!(d.profile_and_level, 0x0307);
+        assert_eq!((d.horizontal_size, d.vertical_size), (7680, 4320));
+        assert_eq!(
+            (d.max_bit_rate, d.max_buffer_size),
+            (100_000_000, 50_000_000)
+        );
+        assert_eq!((d.den_frame_rate, d.num_frame_rate), (1001, 60000));
+        assert!(d.still_mode);
+        assert!(d.interlaced_video);
+        assert_eq!(d.reserved_6, 1);
+        assert_eq!(d.color_specification, None);
+        let ext = d.extended_capability.as_ref().unwrap();
+        assert!(ext.stripe_flag && ext.block_flag && ext.mdm_flag);
+        assert_eq!(
+            (
+                ext.colour_primaries,
+                ext.transfer_characteristics,
+                ext.matrix_coefficients
+            ),
+            (9, 16, 9)
+        );
+        assert!(ext.video_full_range_flag);
+        assert_eq!(ext.reserved_7, 0x7F);
+        let s = ext.stripe.as_ref().unwrap();
+        assert_eq!((s.strp_max_idx, s.strp_height), (7, 540));
+        let b = ext.block.as_ref().unwrap();
+        assert_eq!(b.full_horizontal_size, 15360);
+        assert_eq!(b.full_vertical_size, 8640);
+        assert_eq!((b.blk_width, b.blk_height), (7680, 4320));
+        assert_eq!(
+            (b.max_blk_idx_h, b.max_blk_idx_v, b.blk_idx_h, b.blk_idx_v),
+            (1, 2, 3, 4)
+        );
+        let m = ext.mdm.as_ref().unwrap();
+        assert_eq!((m.x_c0, m.y_c0, m.x_c1, m.y_c1), (6800, 3200, 2650, 6900));
+        assert_eq!((m.x_c2, m.y_c2, m.x_wp, m.y_wp), (1500, 600, 3127, 3290));
+        assert_eq!((m.l_max, m.l_min), (4_000_000, 50));
+        assert_eq!((m.max_cll, m.max_fall), (10_000, 5_000));
+        assert_eq!(d.private_data, &[0xDD, 0xEE]);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
+
     #[test]
     fn parse_rejects_wrong_tag() {
         let buf = [

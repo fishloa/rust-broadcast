@@ -1810,6 +1810,65 @@ fn buffer_error_absent_when_large_section_paced_realistically() {
     );
 }
 
+/// #1035: a DVB SI section (EIT here, PID 0x0012) is not PSI, so its packets
+/// never enter TBsys (H.222.0 §2.4.2.1). A real multiplex bursts EIT packets
+/// back-to-back; the same >512-byte burst on the PAT PID overflows (the test
+/// above), on EIT it must not. Real-capture counterpart:
+/// `tests/tbsys_real_capture.rs`.
+#[test]
+fn buffer_error_absent_for_eit_burst_not_psi() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    // table_id 0x4E long-form header, section_length 900, zero body; TBsys
+    // accounting is per packet and does not depend on the CRC or content.
+    let mut section = vec![0u8; 3 + 900];
+    section[0] = 0x4E;
+    section[1] = 0xB0 | 0x03;
+    section[2] = 0x84;
+    let packets = packetise_section(0x0012, &section);
+    assert!(packets.len() >= 5, "precondition: a multi-packet burst");
+    let events = feed_all(&mut monitor, &packets, ms(1), ms(1));
+    assert!(
+        !has_indicator(&events, Indicator::BufferError),
+        "EIT is DVB SI, not PSI: it must not feed TBsys"
+    );
+}
+
+/// #1035: one overflow episode raises one `Buffer_error`, not one per packet
+/// while the buffer stays full (latched like 3.9/3.10).
+#[test]
+fn buffer_error_is_latched_per_overflow_episode() {
+    let mut monitor = ConformanceMonitor::new();
+    acquire_sync(&mut monitor);
+
+    let section = build_large_pat_section();
+    let packets = packetise_section(PID_PAT, &section);
+    assert!(
+        packets.len() >= 5,
+        "precondition: enough packets to overflow repeatedly"
+    );
+    let events = feed_all(&mut monitor, &packets, ms(1), ms(1));
+    let n = events
+        .iter()
+        .filter(|e| e.indicator == Indicator::BufferError)
+        .count();
+    assert_eq!(n, 1, "one episode, one event; got {n}");
+
+    // After TBsys drains empty a second, separate overflow is reported again.
+    let events2 = feed_all(&mut monitor, &packets, ms(2000), Duration::from_micros(100));
+    let n2 = events2
+        .iter()
+        .filter(|e| e.indicator == Indicator::BufferError)
+        .count();
+    assert_eq!(
+        n2,
+        1,
+        "a new episode after a drain is reported once; got {n2}; {:?}",
+        events2.iter().map(|e| e.indicator).collect::<Vec<_>>()
+    );
+}
+
 #[test]
 fn buffer_error_absent_on_small_sections() {
     let mut monitor = ConformanceMonitor::new();

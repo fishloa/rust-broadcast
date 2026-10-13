@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `InnerTsRecovery::plps_seen()` — every `plp_id` a BBFrame was seen for (#1034); with more than one the unfiltered output interleaves independent TSes, so select one with `new_for_plp`. Docs on the type say so. Per-PLP carry-over (the other half of #1034) was already in place.
+
 ### Changed
 - `T2miPump` decodes the TS header/payload through `mpeg_ts::ts::TsPacket` instead of a second hand-rolled bit-mask decode (r11-W-T2-2, #1095); behaviour (TEI drop, duplicate skip) unchanged.
 - `InnerTsRecovery` keeps its 256-slot per-PLP extractor table on the heap: the struct was 66 KB, now under 4 KB (the same stack hazard `BbframePump` boxed away). Pinned by a size test.

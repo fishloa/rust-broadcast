@@ -9,6 +9,7 @@
 
 ### Changed
 
+- **BREAKING (#1034):** `t2mi --inner` without `--plp` now scans the capture first and, when it carries more than one PLP, exits non-zero listing the PLPs and asking for `--plp N` — each PLP is an independent transport stream, and the old behaviour interleaved them into one garbled mux on stdout. A single-PLP capture needs no `--plp`.
 - `t2mi --pid` rejects a PID above `0x1FFF` as a usage error (was accepted and matched nothing). All other text/JSON output is byte-identical.
 
 ## [11.0.1] - 2026-10-11

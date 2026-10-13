@@ -541,3 +541,30 @@ fn empty_media_rejected() {
     let mut pkg = SmoothPackager::default();
     assert!(pkg.package(&media).is_err(), "empty Media must not package");
 }
+
+/// #1022: two same-type tracks (two audio languages) must get distinct
+/// StreamIndex `Name`s and fragment `Url` templates, or a client cannot tell
+/// the streams' fragment requests apart ([MS-SSTR] §2.2.2.3: the template
+/// names the stream by `Name`).
+#[test]
+fn same_type_tracks_get_distinct_stream_names_and_urls() {
+    let mut media = demux_media();
+    let mut second = audio_track(&media).clone();
+    second.spec.track_id = transmux::TrackId::new(99);
+    media.tracks.push(second);
+    let out = SmoothPackager::default()
+        .package(&media)
+        .expect("package Smooth");
+    let manifest = SmoothManifest::parse(&out.manifest).expect("parse manifest");
+    assert_eq!(manifest.streams.len(), 3);
+    let urls: Vec<&str> = manifest.streams.iter().map(|s| s.url.as_str()).collect();
+    for i in 0..urls.len() {
+        for j in i + 1..urls.len() {
+            assert_ne!(urls[i], urls[j], "fragment Url templates must be unique");
+        }
+    }
+    // The 2nd audio stream carries an explicit Name its Url is keyed by.
+    let second = &manifest.streams[2];
+    assert_eq!(second.name.as_deref(), Some("audio_2"));
+    assert!(second.url.contains("Fragments(audio_2="), "{}", second.url);
+}

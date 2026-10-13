@@ -87,3 +87,26 @@ fn real_chrome_compound_round_trips_byte_identical() {
         "byte-identical to the real captured Chromium datagram"
     );
 }
+
+/// Reduced-Size RTCP (RFC 5506 §3.4.2/§4.1): a datagram that is *only* the
+/// real Chromium PLI (the capture's second packet, RR = 32 bytes, PLI = 12)
+/// with no leading SR/RR must parse and round-trip byte-exactly (#1071).
+#[test]
+fn real_chrome_lone_pli_reduced_size_parses_and_round_trips() {
+    let pli = &FIXTURE[32..44];
+    assert_eq!(&pli[..2], &[0x81, 206], "V=2 FMT=1 PT=206 (PSFB PLI)");
+
+    let compound = CompoundPacket::parse(pli).expect("reduced-size lone PLI must parse");
+    assert_eq!(compound.packets.len(), 1);
+    assert!(matches!(
+        compound.packets[0],
+        RtcpPacket::Unknown {
+            packet_type: 206,
+            count: 1,
+            ..
+        }
+    ));
+    let mut out = vec![0u8; compound.serialized_len()];
+    compound.serialize_into(&mut out).unwrap();
+    assert_eq!(out, pli);
+}

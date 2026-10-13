@@ -40,6 +40,33 @@ fn parse_pid(s: &str) -> Option<PidArg> {
     Pid::try_new(value).ok().map(PidArg::Ts)
 }
 
+/// Scan `path` for the PLPs carried on `t2mi_pid`. `Ok(Some(id))` for exactly
+/// one PLP, `Ok(None)` for none (nothing to recover; the caller proceeds and
+/// writes nothing), `Err` (after printing the PLP list) for more than one.
+fn discover_single_plp(path: &str, t2mi_pid: Pid) -> Result<Option<u8>, ExitCode> {
+    let mut packets = PacketReader::open(path, "dvb-tools t2mi")?;
+    let mut rec = InnerTsRecovery::new(t2mi_pid);
+    for packet in packets.by_ref() {
+        let _ = rec.feed(&packet);
+    }
+    packets.finish()?;
+    let plps: Vec<u8> = rec.plps_seen().collect();
+    match plps.as_slice() {
+        [] => Ok(None),
+        [only] => Ok(Some(*only)),
+        many => {
+            let list: Vec<String> = many.iter().map(u8::to_string).collect();
+            eprintln!(
+                "dvb-tools t2mi: --inner: {} PLPs found ({}); each carries an independent \
+                 transport stream, so pick one with --plp N",
+                many.len(),
+                list.join(", "),
+            );
+            Err(ExitCode::FAILURE)
+        }
+    }
+}
+
 pub fn run(path: &str, pid_arg: Option<&str>, inner: bool, plp: Option<u8>) -> ExitCode {
     let pid = match pid_arg {
         None => PidArg::Ts(DEFAULT_T2MI_PID),
@@ -66,6 +93,17 @@ pub fn run(path: &str, pid_arg: Option<&str>, inner: bool, plp: Option<u8>) -> E
         let PidArg::Ts(t2mi_pid) = pid else {
             // Unreachable — guarded above.
             return ExitCode::FAILURE;
+        };
+        // Each PLP carries an independent transport stream (own PAT/PIDs):
+        // writing several into one output would interleave them into one
+        // garbled mux (#1034). Without `--plp`, scan the capture first and
+        // refuse a multi-PLP feed, listing the PLPs to pick from.
+        let plp = match plp {
+            Some(p) => Some(p),
+            None => match discover_single_plp(path, t2mi_pid) {
+                Ok(only) => only,
+                Err(code) => return code,
+            },
         };
         let mut packets = match PacketReader::open(path, "dvb-tools t2mi") {
             Ok(p) => p,

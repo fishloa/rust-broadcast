@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **ADTS multi-block frames with CRC (#1012).** A frame with `protection_absent == 0` and `number_of_raw_data_blocks_in_frame > 0` now has its `raw_data_block_position[]` table and every `crc_check` word (header-level and per-block, ISO/IEC 13818-7:2004 §6.2 Tables 5-7) stripped; the AAC sample is the concatenated `raw_data_block()` payloads. A self-inconsistent position table degrades to stripping only the header CRC and table instead of rejecting the frame. CRC values are not validated. Layout transcribed in `docs/codec/adts-error-check.md`. Single-block and unprotected frames are byte-identical to before.
+
 ### Changed
 
 - **BREAKING (#1159): typed track and program ids.** New `TrackId(u32)` and `ProgramNumber(u16)` newtypes (re-exported at the crate root and from `ir`; `new`/`value`, no silent `From`, `Debug`/`Display` render the bare number and serde is `transparent`, so every golden, JSON and manifest is byte-identical). Every public `track_id: u32` is now `TrackId`: `TrackSpec::{track_id, new}`, `Track::track_id()`, `FragmentTrackData`, `DemuxEvent` track fields (`Sample`, `TrackRemoved`, `TrackAbandoned`, `Discontinuity`, `InputDegraded`), the `push(track_id, ..)` of the segmenters, `RtpInputStream`/`RtpTrackInit`, the ISOBMFF box structs (`tkhd`/`tfhd`/`trex`/`mvhd.next_track_id`/`prft.reference_track_id`), `Error::UnmuxableDataTrack`, the Smooth/DASH track descriptors, and `TrackSpec::program_number` (now `Option<ProgramNumber>`, `with_program(ProgramNumber)`). `TrackId::next()` hands out consecutive ids. Migrate with `TrackId::new(n)` / `.value()`.
@@ -1074,6 +1078,8 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   `tfdt`, so audio no longer plays early by the keyframe snap distance (#1021).
 - `SmoothPackager` writes `trun` sample durations and composition offsets, and the `c@t`/`tfxd`
   times, in the 10 MHz manifest `TimeScale` instead of the track's media timescale (#1022).
+  The 2nd and later `StreamIndex` of a type now carry a unique `Name` (`audio_2`, ...) and a `Url` template
+  keyed by it, so two same-type tracks no longer share one fragment URL (#1022).
 - `HlsPackager` emits one `#EXTINF` covering the presentation span of all tracks instead of one
   sequential entry per track, and the CLI's `-f hls` writes the single segment it names (#1023).
 - `ProgressiveMux` (and the Smooth fragment builder) derive the `mdat` header length from the

@@ -1179,3 +1179,35 @@ fn tsanalyze_pid_stats(path: &std::path::Path, pid: Pid) -> (i64, i64) {
     };
     (field("discontinuities"), field("duplicated"))
 }
+
+/// #1037, real capture + independent oracle: `--regen-psi` on the committed
+/// real fixture must not make the PAT PID (0x0000) violate TR 101 290
+/// indicator 1.4 (Continuity_count_error), judged by `dvb-conformance`'s own
+/// monitor rather than by ts-fix's CC bookkeeping. With a fresh packetiser
+/// per PAT every regenerated PAT has CC=0, so any two consecutive PATs trip it.
+#[test]
+fn regen_psi_on_real_capture_keeps_pat_pid_continuity_clean() {
+    use dvb_conformance::{ConformanceMonitor, Indicator};
+
+    let input = load_m6_single();
+    let output = run(&input, |b| b.regen_psi());
+    assert!(
+        find_all_pat_packets(&output).len() >= 2,
+        "precondition: several regenerated PAT packets on the real fixture"
+    );
+
+    let mut monitor = ConformanceMonitor::new();
+    let mut pat_cc_errors = Vec::new();
+    for (i, pkt) in output.chunks_exact(188).enumerate() {
+        let t = std::time::Duration::from_micros(40 * i as u64);
+        for event in monitor.feed(pkt, t) {
+            if event.indicator == Indicator::ContinuityCountError && event.pid == Some(PAT_PID) {
+                pat_cc_errors.push((i, event.detail.clone()));
+            }
+        }
+    }
+    assert!(
+        pat_cc_errors.is_empty(),
+        "regenerated PATs raised Continuity_count_error on PID 0: {pat_cc_errors:?}"
+    );
+}
