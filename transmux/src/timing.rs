@@ -414,7 +414,7 @@ impl Serialize for CompositionToDecodeBox {
             });
         }
         let mut c = 0;
-        c += crate::box_types::write_box_header(buf, b"cslg", need)?;
+        c += crate::box_types::write_compact_box_header(buf, b"cslg", need)?;
         buf[c] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[c + 1] = fb[1];
@@ -835,7 +835,7 @@ impl Serialize for SegmentIndexBox {
             });
         }
         let mut c = 0;
-        c += crate::box_types::write_box_header(buf, b"sidx", need)?;
+        c += crate::box_types::write_compact_box_header(buf, b"sidx", need)?;
         buf[c] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[c + 1] = fb[1];

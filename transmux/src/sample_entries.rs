@@ -212,15 +212,12 @@ impl OpaqueBox {
 pub(crate) fn find_config_box<'a>(region: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
     let mut off = 0usize;
     while off + 8 <= region.len() {
-        let size = u32::from_be_bytes([
-            region[off],
-            region[off + 1],
-            region[off + 2],
-            region[off + 3],
-        ]) as usize;
-        if size < 8 {
+        // §4.2: `size`, the 64-bit `largesize` when `size == 1`, or to the end
+        // of the region when `size == 0`; shorter than its own header ends
+        // the walk.
+        let Some(size) = crate::box_types::child_extent(&region[off..]) else {
             break;
-        }
+        };
         let ty = &region[off + 4..off + 8];
         let clamped = size.min(region.len() - off);
         if ty == fourcc {
@@ -465,6 +462,8 @@ impl Mp4vSampleEntry {
 
     /// Parse an `mp4v` sample entry from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         let visual = VisualSampleEntryFields::parse_body(bytes, "mp4v")?;
         // Child boxes start after the 8-byte box header + visual fixed fields.
         let region = &bytes[8 + VISUAL_SAMPLE_ENTRY_SIZE..];
@@ -526,16 +525,14 @@ fn capture_extra_boxes(region: &[u8], skip: &[&[u8; 4]]) -> Vec<OpaqueBox> {
     let mut out = Vec::new();
     let mut off = 0usize;
     while off + 8 <= region.len() {
-        let sz = u32::from_be_bytes([
-            region[off],
-            region[off + 1],
-            region[off + 2],
-            region[off + 3],
-        ]) as usize;
         // A malformed length ends the walk rather than losing earlier boxes.
-        if sz < 8 || off + sz > region.len() {
+        let Some(sz) = crate::box_types::child_extent(&region[off..]) else {
+            break;
+        };
+        if sz > region.len() - off {
             break;
         }
+        let hdr = crate::box_types::box_header_len(&region[off..]).unwrap_or(8);
         let bt = [
             region[off + 4],
             region[off + 5],
@@ -545,7 +542,7 @@ fn capture_extra_boxes(region: &[u8], skip: &[&[u8; 4]]) -> Vec<OpaqueBox> {
         if !skip.iter().any(|k| **k == bt) {
             out.push(OpaqueBox {
                 box_type: bt,
-                data: region[off + 8..off + sz].to_vec(),
+                data: region[off + hdr..off + sz].to_vec(),
             });
         }
         off += sz;
@@ -561,25 +558,25 @@ fn parse_trailing_boxes(region: &[u8]) -> Vec<crate::init_segment::OpaqueBox> {
     let mut out = Vec::new();
     let mut off = 0usize;
     while off + 8 <= region.len() {
-        let sz = u32::from_be_bytes([
-            region[off],
-            region[off + 1],
-            region[off + 2],
-            region[off + 3],
-        ]) as usize;
-        if sz < 8 || off + sz > region.len() {
+        let Some(sz) = crate::box_types::child_extent(&region[off..]) else {
+            break;
+        };
+        if sz > region.len() - off {
             break;
         }
+        let hdr = crate::box_types::box_header_len(&region[off..]).unwrap_or(8);
         let bt = [
             region[off + 4],
             region[off + 5],
             region[off + 6],
             region[off + 7],
         ];
-        out.push(crate::init_segment::OpaqueBox::new(
-            bt,
-            region[off + 8..off + sz].to_vec(),
-        ));
+        let mut child =
+            crate::init_segment::OpaqueBox::new(bt, region[off + hdr..off + sz].to_vec());
+        // Keep the `size = 1` + `largesize` form so a parse -> serialize trip
+        // re-emits the header it read (§4.2).
+        child.largesize = hdr != 8;
+        out.push(child);
         off += sz;
     }
     out
@@ -728,6 +725,8 @@ pub struct VVCSampleEntry {
 impl VVCSampleEntry {
     /// Parse a VVC sample entry from full box bytes (including 8-byte header).
     pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         use crate::vvc_config::VvcConfigurationBox;
         if bytes.len() < 8 + 78 + 8 {
             return Err(Error::BufferTooShort {

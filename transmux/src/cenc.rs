@@ -172,7 +172,7 @@ impl Serialize for TrackEncryptionBox {
             });
         }
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"tenc", need)?;
+        c += crate::box_types::write_compact_box_header(buf, b"tenc", need)?;
         buf[c] = self.version;
         c += 1;
         buf[c] = 0;
@@ -479,6 +479,8 @@ impl ProtectionSystemSpecificHeaderBox {
     /// Parse a `pssh` box from full box bytes (8-byte box header + FullBox
     /// version/flags + body).
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < BOX_HDR + FULL_HDR {
             return Err(Error::BufferTooShort {
                 need: BOX_HDR + FULL_HDR,
@@ -661,6 +663,8 @@ pub struct SampleAuxInfoSizesBox {
 impl SampleAuxInfoSizesBox {
     /// Parse a `saiz` box from full box bytes (including 8-byte box header + FullBox).
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < BOX_HDR + FULL_HDR {
             return Err(Error::BufferTooShort {
                 need: BOX_HDR + FULL_HDR,
@@ -807,6 +811,8 @@ pub struct SampleAuxInfoOffsetsBox {
 impl SampleAuxInfoOffsetsBox {
     /// Parse a `saio` box from full box bytes (including 8-byte box header + FullBox).
     pub fn parse_box(bytes: &[u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < BOX_HDR + FULL_HDR {
             return Err(Error::BufferTooShort {
                 need: BOX_HDR + FULL_HDR,

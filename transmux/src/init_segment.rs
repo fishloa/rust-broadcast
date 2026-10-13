@@ -189,7 +189,7 @@ fn is_four_cc(four_cc: &[u8; 4], expected: &[u8; 4]) -> bool {
 /// The body bytes of a whole box (`size` + `type` + optional largesize/usertype
 /// + body).
 ///
-/// A container's own `Parse` impl used to slice `bytes[crate::box_types::box_header_len(bytes)?..]` — correct only
+/// A container's own `Parse` impl used to slice `bytes[8..]` — correct only
 /// for the 8-byte header form. A container written with 64-bit `largesize`
 /// (`size == 1`, §4.2) has a 16-byte header, so the hardcoded slice swallowed
 /// its first 8 body bytes and the child walk started mid-box (audit r05-W13).
@@ -618,7 +618,7 @@ impl Serialize for MovieHeaderBox {
             });
         }
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"mvhd", need)?;
+        c += crate::box_types::write_compact_box_header(buf, b"mvhd", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -783,7 +783,7 @@ impl Serialize for TrackHeaderBox {
             });
         }
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"tkhd", need)?;
+        c += crate::box_types::write_compact_box_header(buf, b"tkhd", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -928,7 +928,7 @@ impl Serialize for MediaHeaderBox {
             });
         }
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"mdhd", need)?;
+        c += crate::box_types::write_compact_box_header(buf, b"mdhd", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -982,6 +982,8 @@ pub struct HandlerBox {
 impl<'a> Parse<'a> for HandlerBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < 24 {
             return Err(Error::BufferTooShort {
                 need: 24,
@@ -1094,7 +1096,7 @@ impl Serialize for VideoMediaHeaderBox {
             });
         }
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"vmhd", need)?;
+        c += crate::box_types::write_compact_box_header(buf, b"vmhd", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1158,7 +1160,7 @@ impl Serialize for SoundMediaHeaderBox {
             });
         }
         let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"smhd", need)?;
+        c += crate::box_types::write_compact_box_header(buf, b"smhd", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1190,6 +1192,8 @@ pub struct DataReferenceBox {
 impl<'a> Parse<'a> for DataReferenceBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < 16 {
             return Err(Error::BufferTooShort {
                 need: 16,
@@ -1211,12 +1215,9 @@ impl<'a> Parse<'a> for DataReferenceBox {
             if off + 8 > bytes.len() {
                 break;
             }
-            let sz =
-                u32::from_be_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]])
-                    as usize;
-            if sz < 8 {
+            let Some(sz) = crate::box_types::child_extent(&bytes[off..]) else {
                 break;
-            }
+            };
             let end = (off + sz).min(bytes.len());
             entries.push(DataEntryUrlBox::parse(&bytes[off..end])?);
             off += sz;
@@ -1280,6 +1281,8 @@ pub struct DataEntryUrlBox {
 impl<'a> Parse<'a> for DataEntryUrlBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < 12 {
             return Err(Error::BufferTooShort {
                 need: 12,
@@ -1355,6 +1358,8 @@ pub struct SampleToChunkBox {
 impl<'a> Parse<'a> for SampleToChunkBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < 16 {
             return Err(Error::BufferTooShort {
                 need: 16,
@@ -1470,6 +1475,8 @@ pub struct SampleSizeBox {
 impl<'a> Parse<'a> for SampleSizeBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < 20 {
             return Err(Error::BufferTooShort {
                 need: 20,
@@ -1540,12 +1547,7 @@ impl Serialize for SampleSizeBox {
                 "stsz: entries.len() must equal sample_count when sample_size == 0",
             ));
         }
-        let count = if self.sample_size == 0 {
-            self.entries.len()
-        } else {
-            0
-        };
-        let need = BOX_HDR + FULL_HDR + 8 + count * 4;
+        let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
                 need,
@@ -1588,6 +1590,8 @@ pub struct ChunkOffsetBox {
 impl<'a> Parse<'a> for ChunkOffsetBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < 16 {
             return Err(Error::BufferTooShort {
                 need: 16,
@@ -1681,6 +1685,8 @@ pub struct ChunkLargeOffsetBox {
 impl<'a> Parse<'a> for ChunkLargeOffsetBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < 16 {
             return Err(Error::BufferTooShort {
                 need: 16,
@@ -1779,6 +1785,8 @@ pub struct SyncSampleBox {
 impl<'a> Parse<'a> for SyncSampleBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < 16 {
             return Err(Error::BufferTooShort {
                 need: 16,
@@ -2457,6 +2465,8 @@ impl Serialize for DtsSampleEntry {
 impl<'a> Parse<'a> for DtsSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < 8 {
             return Err(Error::BufferTooShort {
                 need: 8,
@@ -2523,7 +2533,7 @@ pub struct MhaSampleEntry {
 impl Serialize for MhaSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(audio_sample_entry_serialized_len(&self.config_boxes))
+        audio_sample_entry_serialized_len(&self.config_boxes)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
@@ -2546,6 +2556,8 @@ impl Serialize for MhaSampleEntry {
 impl<'a> Parse<'a> for MhaSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < 8 {
             return Err(Error::BufferTooShort {
                 need: 8,
@@ -2686,7 +2698,7 @@ fn audio_sample_entry_serialized_len(config_boxes: &[OpaqueBox]) -> usize {
     for c in config_boxes {
         n += c.serialized_len();
     }
-    n
+    crate::box_types::box_len(n)
 }
 
 /// The shared fixed fields of an audio sample entry, grouped so the writer
@@ -2752,6 +2764,8 @@ fn serialize_audio_sample_entry(buf: &mut [u8], f: AudioSampleEntryFields<'_>) -
 impl<'a> Parse<'a> for Mp4aSampleEntry {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         // bytes is a full box with 8-byte header; fields start at bytes[8]
         if bytes.len() < 8 + 28 {
             return Err(Error::BufferTooShort {
@@ -2780,11 +2794,7 @@ impl<'a> Parse<'a> for Mp4aSampleEntry {
 impl Serialize for Mp4aSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = BOX_HDR + 28; // box header + AudioSampleEntry fixed fields
-        for c in &self.config_boxes {
-            n += c.serialized_len();
-        }
-        n
+        audio_sample_entry_serialized_len(&self.config_boxes)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -2932,6 +2942,8 @@ pub struct SampleDescriptionBox {
 impl<'a> Parse<'a> for SampleDescriptionBox {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let compact = crate::box_types::compact_form(bytes)?;
+        let bytes: &[u8] = &compact;
         if bytes.len() < 16 {
             return Err(Error::BufferTooShort {
                 need: 16,
@@ -2958,12 +2970,9 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
             if off + 8 > bytes.len() {
                 break;
             }
-            let sz =
-                u32::from_be_bytes([bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]])
-                    as usize;
-            if sz < 8 {
+            let Some(sz) = crate::box_types::child_extent(&bytes[off..]) else {
                 break;
-            }
+            };
             let end = (off + sz).min(bytes.len());
             let box_bytes = &bytes[off..end];
             let codec = &box_bytes[4..8];

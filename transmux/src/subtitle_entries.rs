@@ -708,7 +708,7 @@ impl WvttSampleEntry {
         let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let data_reference_index = u16::from_be_bytes([body[6], body[7]]);
 
-        // Walk child boxes in body[crate::box_types::box_header_len(body)?..]
+        // Walk child boxes in body[8..]
         let mut pos = 8usize;
         let mut config: Option<WebVttConfigurationBox> = None;
         let mut extra_boxes: Vec<crate::init_segment::OpaqueBox> = Vec::new();

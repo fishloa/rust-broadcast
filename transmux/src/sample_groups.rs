@@ -201,7 +201,7 @@ impl Serialize for ProducerReferenceTimeBox {
             });
         }
         let mut c = 0;
-        c += crate::box_types::write_box_header(buf, b"prft", need)?;
+        c += crate::box_types::write_compact_box_header(buf, b"prft", need)?;
         buf[c] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[c + 1] = fb[1];

@@ -187,7 +187,7 @@ impl Serialize for MovieFragmentHeaderBox {
             });
         }
         let mut c = 0;
-        c += crate::box_types::write_box_header(buf, b"mfhd", need)?;
+        c += crate::box_types::write_compact_box_header(buf, b"mfhd", need)?;
         buf[c..c + 4].copy_from_slice(&[0, 0, 0, 0]);
         c += 4;
         buf[c..c + 4].copy_from_slice(&self.sequence_number.to_be_bytes());
@@ -509,7 +509,7 @@ impl Serialize for TrackFragmentBaseMediaDecodeTimeBox {
             });
         }
         let mut c = 0;
-        c += crate::box_types::write_box_header(buf, b"tfdt", need)?;
+        c += crate::box_types::write_compact_box_header(buf, b"tfdt", need)?;
         buf[c] = self.version;
         buf[c + 1] = 0;
         buf[c + 2] = 0;
