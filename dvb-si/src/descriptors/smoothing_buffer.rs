@@ -11,6 +11,9 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for smoothing_buffer_descriptor.
 pub const TAG: u8 = 0x10;
 const HEADER_LEN: usize = 2;
+/// `reserved(2)` ahead of each 22-bit field (Table 2-69), emitted as `11`
+/// (r03-W7; confirmed by the TSDuck oracle PMT).
+const RESERVED_2: u8 = 0xC0;
 const BODY_LEN: u8 = 6;
 
 /// Smoothing Buffer Descriptor.
@@ -69,11 +72,11 @@ impl Serialize for SmoothingBufferDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         let slr = self.sb_leak_rate;
-        buf[HEADER_LEN] = ((slr >> 16) & 0x3F) as u8;
+        buf[HEADER_LEN] = RESERVED_2 | ((slr >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 1] = ((slr >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 2] = (slr & 0xFF) as u8;
         let ss = self.sb_size;
-        buf[HEADER_LEN + 3] = ((ss >> 16) & 0x3F) as u8;
+        buf[HEADER_LEN + 3] = RESERVED_2 | ((ss >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 4] = ((ss >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 5] = (ss & 0xFF) as u8;
         Ok(len)

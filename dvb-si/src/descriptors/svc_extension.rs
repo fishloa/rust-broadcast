@@ -10,6 +10,11 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for SVC_extension_descriptor.
 pub const TAG: u8 = 0x30;
 const HEADER_LEN: usize = 2;
+/// Trailing `reserved(5)` after `dependency_id` (Table 2-99), emitted as ones
+/// (r03-W7; confirmed by the TSDuck oracle PMT).
+const RESERVED_5_BITS: u8 = 0x1F;
+/// Trailing `reserved(1)` after `no_sei_nal_unit_present`, emitted as 1.
+const RESERVED_1_BIT: u8 = 0x01;
 const BODY_LEN: u8 = 13;
 
 /// SVC Extension Descriptor.
@@ -110,11 +115,12 @@ impl Serialize for SvcExtensionDescriptor {
         buf[HEADER_LEN + 4..HEADER_LEN + 6].copy_from_slice(&self.frame_rate.to_be_bytes());
         buf[HEADER_LEN + 6..HEADER_LEN + 8].copy_from_slice(&self.average_bitrate.to_be_bytes());
         buf[HEADER_LEN + 8..HEADER_LEN + 10].copy_from_slice(&self.maximum_bitrate.to_be_bytes());
-        buf[HEADER_LEN + 10] = (self.dependency_id & 0x07) << 5;
+        buf[HEADER_LEN + 10] = ((self.dependency_id & 0x07) << 5) | RESERVED_5_BITS;
         buf[HEADER_LEN + 11] = ((self.quality_id_start & 0x0F) << 4) | (self.quality_id_end & 0x0F);
         buf[HEADER_LEN + 12] = ((self.temporal_id_start & 0x07) << 5)
             | ((self.temporal_id_end & 0x07) << 2)
-            | ((self.no_sei_nal_unit_present as u8) << 1);
+            | ((self.no_sei_nal_unit_present as u8) << 1)
+            | RESERVED_1_BIT;
         Ok(len)
     }
 }

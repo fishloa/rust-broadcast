@@ -10,6 +10,9 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for MVC_extension_descriptor.
 pub const TAG: u8 = 0x31;
 const HEADER_LEN: usize = 2;
+/// `reserved(2)` before `view_order_index_min` (Table 2-100), bits `[5:4]` of
+/// byte 4, emitted as `11` (r03-W7; confirmed by the TSDuck oracle PMT).
+const RESERVED_2_BITS: u8 = 0x30;
 const BODY_LEN: u8 = 8;
 
 /// MVC Extension Descriptor.
@@ -107,6 +110,7 @@ impl Serialize for MvcExtensionDescriptor {
         let vmax = self.view_order_index_max & 0x03FF;
         buf[HEADER_LEN + 4] = ((self.view_association_not_present as u8) << 7)
             | ((self.base_view_is_left_eyeview as u8) << 6)
+            | RESERVED_2_BITS
             | ((vmin >> 6) as u8 & 0x0F);
         buf[HEADER_LEN + 5] = (((vmin & 0x3F) << 2) as u8) | ((vmax >> 8) as u8 & 0x03);
         buf[HEADER_LEN + 6] = (vmax & 0xFF) as u8;

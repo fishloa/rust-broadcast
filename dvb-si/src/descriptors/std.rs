@@ -9,6 +9,9 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for STD_descriptor.
 pub const TAG: u8 = 0x11;
 const HEADER_LEN: usize = 2;
+/// `reserved(7)` ahead of `leak_valid_flag` (Table 2-70), emitted as ones
+/// (r03-W7; confirmed by the TSDuck oracle PMT).
+const RESERVED_7_BITS: u8 = 0xFE;
 const BODY_LEN: u8 = 1;
 
 /// STD Descriptor.
@@ -58,7 +61,7 @@ impl Serialize for StdDescriptor {
         }
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] = self.leak_valid_flag as u8;
+        buf[HEADER_LEN] = RESERVED_7_BITS | self.leak_valid_flag as u8;
         Ok(len)
     }
 }

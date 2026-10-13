@@ -12,6 +12,9 @@ pub const TAG: u8 = 0x02;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 3;
 const BODY_MPEG1_LEN: u8 = 1;
+/// Trailing `reserved(5)` (Table 2-46), emitted as ones (r03-W7; confirmed by
+/// the TSDuck oracle PMT and the real `shared/real-pmt.bin` capture).
+const RESERVED_5_BITS: u8 = 0x1F;
 
 /// `frame_rate_code(4)` field mask inside byte 0: bits `[6:3]`; masks the
 /// `Reserved(v)` payload so it cannot bleed into `multiple_frame_rate_flag`
@@ -239,7 +242,7 @@ impl Serialize for VideoStreamDescriptor {
                     reason: "required when mpeg_1_only_flag is false",
                 })? as u8;
             buf[HEADER_LEN + 1] = pal;
-            buf[HEADER_LEN + 2] = (chroma << 6) | (fre << 5);
+            buf[HEADER_LEN + 2] = (chroma << 6) | (fre << 5) | RESERVED_5_BITS;
         }
         Ok(len)
     }

@@ -14,7 +14,12 @@ pub struct SupplementaryAudio<'a> {
     pub mix_type: bool,
     /// editorial_classification(5) — Table 155.
     pub editorial_classification: u8,
-    /// language_code_present(1).
+    /// language_code_present(1), as parsed from the wire.
+    ///
+    /// Informational only: [`Serialize`] derives the wire bit from
+    /// `iso_639_language_code.is_some()`, so a stale value can never make the
+    /// serializer emit the bit without the code (or the code without the
+    /// bit) — r03-W5.
     pub language_code_present: bool,
     /// ISO_639_language_code(24), present iff `language_code_present`.
     pub iso_639_language_code: Option<LangCode>,
@@ -78,7 +83,7 @@ impl Serialize for SupplementaryAudio<'_> {
         buf[0] = (u8::from(self.mix_type) << 7)
             | ((self.editorial_classification & 0x1F) << 2)
             | 0x02
-            | u8::from(self.language_code_present);
+            | u8::from(self.iso_639_language_code.is_some());
         let mut p = 1;
         if let Some(lc) = self.iso_639_language_code {
             buf[p..p + ISO_639_LEN].copy_from_slice(&lc.0);
@@ -115,6 +120,33 @@ mod tests {
             other => panic!("expected SupplementaryAudio, got {other:?}"),
         }
         round_trip(&d);
+    }
+
+    /// r03-W5: `language_code_present` follows the Option in both mismatch
+    /// directions, so the output always re-parses to the same framing.
+    #[test]
+    fn serialize_derives_language_flag_from_option() {
+        let mut d = SupplementaryAudio {
+            mix_type: false,
+            editorial_classification: 1,
+            language_code_present: true, // lies: no code
+            iso_639_language_code: None,
+            private_data: &[0x55],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        let re = SupplementaryAudio::parse(&buf).unwrap();
+        assert!(!re.language_code_present);
+        assert_eq!(re.private_data, &[0x55]);
+
+        d.language_code_present = false; // lies: code present
+        d.iso_639_language_code = Some(LangCode(*b"fre"));
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        let re = SupplementaryAudio::parse(&buf).unwrap();
+        assert!(re.language_code_present);
+        assert_eq!(re.iso_639_language_code, Some(LangCode(*b"fre")));
+        assert_eq!(re.private_data, &[0x55]);
     }
 
     #[test]

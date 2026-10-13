@@ -136,22 +136,30 @@ impl<'a> Parse<'a> for VideoDepthRange<'a> {
             }
             let body = match range_type {
                 // Table 161: production_disparity_hint_info() — Table 162.
-                RangeType::ProductionDisparityHint => {
-                    if range_length < VD_DISPARITY_LEN {
-                        return Err(invalid(
-                            "video_depth_range: production_disparity_hint requires 3+ bytes",
-                        ));
-                    }
+                RangeType::ProductionDisparityHint if range_length >= VD_DISPARITY_LEN => {
                     // Two 12-bit tcimsbf values packed into 3 bytes (b0..b2):
                     let b0 = sel[pos];
                     let b1 = sel[pos + 1];
                     let b2 = sel[pos + 2];
                     let max = sext12((u16::from(b0) << 4) | (u16::from(b1) >> 4));
                     let min = sext12(((u16::from(b1) & 0x0F) << 8) | u16::from(b2));
-                    DepthRangeBody::ProductionDisparityHint { max, min }
+                    if range_length == VD_DISPARITY_LEN {
+                        DepthRangeBody::ProductionDisparityHint { max, min }
+                    } else {
+                        // Longer than the 3-byte hint: keep the whole
+                        // range_selector verbatim as `Other` so the tail is
+                        // neither dropped nor an error (r03-W9).
+                        DepthRangeBody::Other(&sel[pos..pos + range_length])
+                    }
                 }
-                // Table 161: multi-region SEI present (no body).
-                RangeType::MultiRegionSei => DepthRangeBody::MultiRegionSei,
+                RangeType::ProductionDisparityHint => {
+                    return Err(invalid(
+                        "video_depth_range: production_disparity_hint requires 3+ bytes",
+                    ));
+                }
+                // Table 160: `/* empty */`. A non-empty body (slack seen in
+                // the wild) is preserved verbatim as `Other` (r03-W9).
+                RangeType::MultiRegionSei if range_length == 0 => DepthRangeBody::MultiRegionSei,
                 // Any other range_type: raw range_selector bytes.
                 _ => DepthRangeBody::Other(&sel[pos..pos + range_length]),
             };
@@ -333,6 +341,35 @@ mod tests {
             other => panic!("expected VideoDepthRange, got {other:?}"),
         }
         round_trip(&d);
+    }
+
+    /// r03-W9: a hint with range_length > 3 and a multi-region-SEI entry
+    /// with a body used to be accepted with the tail dropped; they are now
+    /// kept verbatim (`Other`) and round-trip byte-exact, never an error.
+    #[test]
+    fn parse_video_depth_range_preserves_oversize_range_bytes() {
+        for sel in [
+            &[0x00u8, 0x04, 0x06, 0x40, 0xFC, 0xEE][..],
+            &[0x01, 0x02, 0xAA, 0xBB][..],
+        ] {
+            let bytes = wrap(0x10, sel);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            match &d.body {
+                ExtensionBody::VideoDepthRange(b) => {
+                    assert!(matches!(b.ranges[0].body, DepthRangeBody::Other(_)));
+                }
+                other => panic!("expected VideoDepthRange, got {other:?}"),
+            }
+            round_trip(&d);
+        }
+    }
+
+    /// A too-short hint (range_length < 3) remains an error: it cannot hold
+    /// the two 12-bit values (pre-existing behaviour).
+    #[test]
+    fn parse_video_depth_range_rejects_short_hint() {
+        let short = wrap(0x10, &[0x00, 0x02, 0x06, 0x40]);
+        assert!(ExtensionDescriptor::parse(&short).is_err());
     }
 
     #[test]

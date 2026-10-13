@@ -10,6 +10,11 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x0B;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 2;
+/// `reserved(1)` after `external_clock_reference_indicator` (Table 2-64),
+/// emitted as 1 (r03-W7; confirmed by the TSDuck oracle PMT).
+const RESERVED_1_BIT: u8 = 0x40;
+/// Trailing `reserved(5)`, emitted as `11111`.
+const RESERVED_5_BITS: u8 = 0x1F;
 
 /// System Clock Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -71,8 +76,9 @@ impl Serialize for SystemClockDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         buf[HEADER_LEN] = ((self.external_clock_reference_indicator as u8) << 7)
+            | RESERVED_1_BIT
             | (self.clock_accuracy_integer & 0x3F);
-        buf[HEADER_LEN + 1] = (self.clock_accuracy_exponent & 0x07) << 5;
+        buf[HEADER_LEN + 1] = ((self.clock_accuracy_exponent & 0x07) << 5) | RESERVED_5_BITS;
         Ok(len)
     }
 }

@@ -13,6 +13,8 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for metadata_descriptor.
 pub const TAG: u8 = 0x26;
 const HEADER_LEN: usize = 2;
+/// `DSM-CC_flag` bit of the `decoder_config_flags` byte (Table 2-89).
+const DSMCC_FLAG_BIT: u8 = 0x10;
 
 /// Decoder configuration carried in this descriptor (decoder_config_flags == 0b001).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,7 +89,12 @@ pub struct MetadataDescriptor<'a> {
     pub metadata_service_id: u8,
     /// Decoder config flags (Table 2-90, 3-bit).
     pub decoder_config_flags: DecoderConfigFlags,
-    /// DSM-CC service identification flag.
+    /// DSM-CC service identification flag, as parsed from the wire.
+    ///
+    /// Informational only: [`Serialize`] derives `DSM-CC_flag` from
+    /// `service_identification.is_some()`, so this field can never make
+    /// the serializer emit a flag without its record (or a record without
+    /// its flag) — r03-W5. Parse sets it equal to that derivation.
     pub dsmcc_flag: bool,
     /// DSM-CC service identification — present when `dsmcc_flag` is true.
     #[cfg_attr(feature = "serde", serde(borrow))]
@@ -346,9 +353,11 @@ impl Serialize for MetadataDescriptor<'_> {
         buf[pos] = self.metadata_service_id;
         pos += 1;
 
+        // `DSM-CC_flag` is derived from the Option (never the stored
+        // `dsmcc_flag`) so flag and record can never disagree (r03-W5).
         let mut flags = (self.decoder_config_flags.to_u8() & 0x07) << 5;
-        if self.dsmcc_flag {
-            flags |= 0x10;
+        if self.service_identification.is_some() {
+            flags |= DSMCC_FLAG_BIT;
         }
         buf[pos] = flags;
         pos += 1;
@@ -555,6 +564,45 @@ mod tests {
             private_data: &[],
         };
         serialize_round_trip(&d);
+    }
+
+    fn base<'a>() -> MetadataDescriptor<'a> {
+        MetadataDescriptor {
+            metadata_application_format: 0x0100,
+            metadata_application_format_identifier: None,
+            metadata_format: MetadataFormat::AppFormat,
+            metadata_format_identifier: None,
+            metadata_service_id: 1,
+            decoder_config_flags: DecoderConfigFlags::None,
+            dsmcc_flag: false,
+            service_identification: None,
+            decoder_config: DecoderConfig::None,
+            private_data: &[],
+        }
+    }
+
+    /// r03-W5: a stored `dsmcc_flag` that disagrees with
+    /// `service_identification` must never misframe the descriptor — the
+    /// wire flag is derived from the Option.
+    #[test]
+    fn serialize_derives_dsmcc_flag_from_option() {
+        // flag=true, no record: previously wrote the flag with no length byte.
+        let mut d = base();
+        d.dsmcc_flag = true;
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        let re = MetadataDescriptor::parse(&buf).unwrap();
+        assert!(!re.dsmcc_flag);
+        assert!(re.service_identification.is_none());
+        assert_eq!(buf[buf.len() - 1] & DSMCC_FLAG_BIT, 0);
+        // flag=false, record present: previously wrote bytes with no flag.
+        let mut d = base();
+        d.service_identification = Some(&[0xAA, 0xBB]);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        let re = MetadataDescriptor::parse(&buf).unwrap();
+        assert!(re.dsmcc_flag);
+        assert_eq!(re.service_identification, Some(&[0xAA, 0xBB][..]));
     }
 
     #[test]
