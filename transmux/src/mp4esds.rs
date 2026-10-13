@@ -1231,7 +1231,9 @@ impl Serialize for EsdsBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        BOX_HEADER_SIZE + FULLBOX_EXTRA + self.es_descriptor.serialized_len()
+        crate::box_types::box_len(
+            BOX_HEADER_SIZE + FULLBOX_EXTRA + self.es_descriptor.serialized_len(),
+        )
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -1244,11 +1246,7 @@ impl Serialize for EsdsBox {
         }
         let mut cursor = 0usize;
         // Box header
-        let size32 = need as u32;
-        buf[cursor..cursor + 4].copy_from_slice(&size32.to_be_bytes());
-        cursor += 4;
-        buf[cursor..cursor + 4].copy_from_slice(b"esds");
-        cursor += 4;
+        cursor += crate::box_types::write_box_header(buf, b"esds", need)?;
         // FullBox: version=0, flags=0
         buf[cursor..cursor + 4].copy_from_slice(&[0, 0, 0, 0]);
         cursor += 4;

@@ -172,10 +172,7 @@ impl Serialize for TrackEncryptionBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"tenc");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"tenc", need)?;
         buf[c] = self.version;
         c += 1;
         buf[c] = 0;
@@ -423,7 +420,7 @@ impl Serialize for SampleEncryptionBox {
                 n += e.subsamples.len() * 6;
             }
         }
-        n
+        crate::box_types::box_len(n)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -435,10 +432,7 @@ impl Serialize for SampleEncryptionBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"senc");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"senc", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -599,7 +593,7 @@ impl Serialize for ProtectionSystemSpecificHeaderBox {
         if self.version > 0 {
             n += 4 + self.kids.len() * 16;
         }
-        n
+        crate::box_types::box_len(n)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -611,10 +605,7 @@ impl Serialize for ProtectionSystemSpecificHeaderBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"pssh");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"pssh", need)?;
         buf[c] = self.version;
         c += 1;
         buf[c] = 0;
@@ -753,7 +744,7 @@ impl Serialize for SampleAuxInfoSizesBox {
         if self.default_sample_info_size == 0 {
             n += self.sample_info_sizes.len();
         }
-        n
+        crate::box_types::box_len(n)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -765,10 +756,7 @@ impl Serialize for SampleAuxInfoSizesBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"saiz");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"saiz", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -920,7 +908,7 @@ impl Serialize for SampleAuxInfoOffsetsBox {
         }
         n += 4;
         n += self.offsets.len() * if self.version == 0 { 4 } else { 8 };
-        n
+        crate::box_types::box_len(n)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -932,10 +920,7 @@ impl Serialize for SampleAuxInfoOffsetsBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"saio");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"saio", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1049,7 +1034,7 @@ impl SchemeTypeBox {
         scheme_type.copy_from_slice(&bytes[0..4]);
         let scheme_version = u32::from_be_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
         let scheme_uri = if (flags & 0x000001) != 0 {
-            Some(bytes[8..].to_vec())
+            Some(bytes[crate::box_types::box_header_len(bytes)?..].to_vec())
         } else {
             None
         };
@@ -1070,7 +1055,7 @@ impl Serialize for SchemeTypeBox {
         if let Some(ref uri) = self.scheme_uri {
             n += uri.len();
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1081,10 +1066,7 @@ impl Serialize for SchemeTypeBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"schm");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"schm", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1126,7 +1108,7 @@ impl<'a> Parse<'a> for SchemeInformationBox {
                 what: "schi",
             });
         }
-        let body = &bytes[BOX_HDR..];
+        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let mut tenc = None;
         let mut extra_boxes = Vec::new();
         let mut off = 0usize;
@@ -1164,7 +1146,7 @@ impl Serialize for SchemeInformationBox {
         for b in &self.extra_boxes {
             n += b.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1175,10 +1157,7 @@ impl Serialize for SchemeInformationBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"schi");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"schi", need)?;
         if let Some(ref t) = self.tenc {
             c += t.serialize_into(&mut buf[c..])?;
         }
@@ -1213,7 +1192,7 @@ impl<'a> Parse<'a> for ProtectionSchemeInfoBox {
                 what: "sinf",
             });
         }
-        let body = &bytes[BOX_HDR..];
+        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         if body.len() < 8 + 4 {
             return Err(Error::BufferTooShort {
                 need: 8 + 4,
@@ -1305,7 +1284,7 @@ impl Serialize for ProtectionSchemeInfoBox {
         for b in &self.extra_boxes {
             n += b.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1316,10 +1295,7 @@ impl Serialize for ProtectionSchemeInfoBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"sinf");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"sinf", need)?;
         c += self.original_format.serialize_into(&mut buf[c..])?;
         if let Some(ref st) = self.scheme_type {
             c += st.serialize_into(&mut buf[c..])?;

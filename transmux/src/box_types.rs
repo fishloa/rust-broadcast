@@ -264,6 +264,86 @@ impl BoxHeader {
     }
 }
 
+/// Total on-wire length of a box whose compact-form (8-byte header) length is
+/// `compact_len` (ISO/IEC 14496-12:2015 §4.2): `compact_len` itself while it
+/// fits the 32-bit `size` field, else `compact_len` plus the 8-byte
+/// `largesize` the `size = 1` form adds. Every variable-size box writer's
+/// `serialized_len` ends with this, so it agrees with
+/// [`write_box_header`]'s choice of form (#1147).
+pub(crate) fn box_len(compact_len: usize) -> usize {
+    if compact_len as u64 > u32::MAX as u64 {
+        compact_len.saturating_add(LARGESIZE_SIZE)
+    } else {
+        compact_len
+    }
+}
+
+/// Encode a box header for a box of `total` bytes (header included) and
+/// return its length: the compact 8-byte `size`+`type` when `total` fits
+/// `u32`, else the 16-byte `size = 1` + `type` + 64-bit `largesize` form
+/// (ISO/IEC 14496-12:2015 §4.2). `total` must come from [`box_len`] (it
+/// counts the 8 `largesize` bytes). Pure: touches no payload, so tests can
+/// exercise a multi-GiB `total` without allocating it.
+pub(crate) fn encode_box_header(fourcc: &[u8; 4], total: u64) -> ([u8; 16], usize) {
+    let mut out = [0u8; 16];
+    out[4..8].copy_from_slice(fourcc);
+    if total > u32::MAX as u64 {
+        out[0..4].copy_from_slice(&SIZE_INDICATES_LARGESIZE.to_be_bytes());
+        out[8..16].copy_from_slice(&total.to_be_bytes());
+        (out, BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE)
+    } else {
+        // `total <= u32::MAX` was just checked.
+        out[0..4].copy_from_slice(&(total as u32).to_be_bytes());
+        (out, BOX_HEADER_MIN_SIZE)
+    }
+}
+
+/// Write a box header for a box of `need` total bytes at the front of `buf`
+/// via [`encode_box_header`], returning the header length (8, or 16 for the
+/// `largesize` form). The single place a box writer's `size` is derived —
+/// replaces the per-box `need as u32` that silently wrapped a >4 GiB box
+/// (#1147).
+pub(crate) fn write_box_header(buf: &mut [u8], fourcc: &[u8; 4], need: usize) -> Result<usize> {
+    let (hdr, len) = encode_box_header(fourcc, need as u64);
+    if buf.len() < len {
+        return Err(Error::OutputBufferTooSmall {
+            need: len,
+            have: buf.len(),
+        });
+    }
+    buf[..len].copy_from_slice(&hdr[..len]);
+    Ok(len)
+}
+
+/// Length of the `size`+`type` (+ `largesize`) header at the front of the
+/// whole box `bytes`: 8, or 16 when `size == 1` announces the 64-bit
+/// `largesize` (ISO/IEC 14496-12:2015 §4.2). Typed box readers slice their
+/// body at this offset instead of a hardcoded 8, so a box written in the
+/// `largesize` form (see [`write_box_header`]) parses back (#1147). The usual
+/// `uuid` `usertype` is left to the callers that handle `uuid` boxes.
+pub(crate) fn box_header_len(bytes: &[u8]) -> Result<usize> {
+    if bytes.len() < BOX_HEADER_MIN_SIZE {
+        return Err(Error::BufferTooShort {
+            need: BOX_HEADER_MIN_SIZE,
+            have: bytes.len(),
+            what: "box header",
+        });
+    }
+    let size = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+    if size == SIZE_INDICATES_LARGESIZE {
+        let need = BOX_HEADER_MIN_SIZE + LARGESIZE_SIZE;
+        if bytes.len() < need {
+            return Err(Error::LargesizeBufferTooShort {
+                need,
+                have: bytes.len(),
+            });
+        }
+        Ok(need)
+    } else {
+        Ok(BOX_HEADER_MIN_SIZE)
+    }
+}
+
 impl<'a> Parse<'a> for BoxHeader {
     type Error = Error;
 

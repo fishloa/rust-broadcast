@@ -189,7 +189,7 @@ fn is_four_cc(four_cc: &[u8; 4], expected: &[u8; 4]) -> bool {
 /// The body bytes of a whole box (`size` + `type` + optional largesize/usertype
 /// + body).
 ///
-/// A container's own `Parse` impl used to slice `bytes[8..]` — correct only
+/// A container's own `Parse` impl used to slice `bytes[crate::box_types::box_header_len(bytes)?..]` — correct only
 /// for the 8-byte header form. A container written with 64-bit `largesize`
 /// (`size == 1`, §4.2) has a 16-byte header, so the hardcoded slice swallowed
 /// its first 8 body bytes and the child walk started mid-box (audit r05-W13).
@@ -415,7 +415,14 @@ impl OpaqueBox {
     /// The header this box writes. 8 bytes, or 16 under
     /// [`OpaqueBox::largesize`] (§4.2).
     fn header_len(&self) -> usize {
-        BOX_HDR + if self.largesize { LARGESIZE_LEN } else { 0 }
+        BOX_HDR + if self.wide() { LARGESIZE_LEN } else { 0 }
+    }
+
+    /// Whether the header uses the 64-bit `largesize` form: either the wire
+    /// had it ([`OpaqueBox::largesize`]) or the box is too big for the 32-bit
+    /// `size` field (§4.2, #1147) — never a silently wrapped size.
+    fn wide(&self) -> bool {
+        self.largesize || (BOX_HDR as u64 + self.data.len() as u64) > u64::from(u32::MAX)
     }
 
     /// The size this box declares.
@@ -429,10 +436,6 @@ impl OpaqueBox {
             return Ok(0);
         }
         let need = self.header_len() as u64 + self.data.len() as u64;
-        if !self.largesize {
-            // The compact form's 32-bit field must be able to hold it.
-            broadcast_common::len::fit_u32(need as usize, "opaque box size")?;
-        }
         Ok(need)
     }
 }
@@ -465,7 +468,7 @@ impl OpaqueBox {
         // puts it after `size`/`type`/`largesize`) — carrying it twice would
         // duplicate it.
         let mut c = 0usize;
-        if self.largesize {
+        if self.wide() {
             buf[c..c + 4].copy_from_slice(&1u32.to_be_bytes());
             c += 4;
             buf[c..c + 4].copy_from_slice(&self.box_type);
@@ -615,10 +618,7 @@ impl Serialize for MovieHeaderBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"mvhd");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"mvhd", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -783,10 +783,7 @@ impl Serialize for TrackHeaderBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"tkhd");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"tkhd", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -931,10 +928,7 @@ impl Serialize for MediaHeaderBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"mdhd");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"mdhd", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1015,7 +1009,7 @@ impl<'a> Parse<'a> for HandlerBox {
 impl Serialize for HandlerBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HDR + FULL_HDR + 20 + self.name.len()
+        crate::box_types::box_len(BOX_HDR + FULL_HDR + 20 + self.name.len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1026,10 +1020,7 @@ impl Serialize for HandlerBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"hdlr");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"hdlr", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1103,10 +1094,7 @@ impl Serialize for VideoMediaHeaderBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"vmhd");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"vmhd", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1170,10 +1158,7 @@ impl Serialize for SoundMediaHeaderBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"smhd");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"smhd", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1251,7 +1236,7 @@ impl Serialize for DataReferenceBox {
         for e in &self.entries {
             n += e.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1262,10 +1247,7 @@ impl Serialize for DataReferenceBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"dref");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"dref", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1323,7 +1305,7 @@ impl<'a> Parse<'a> for DataEntryUrlBox {
 impl Serialize for DataEntryUrlBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HDR + FULL_HDR + self.location.len()
+        crate::box_types::box_len(BOX_HDR + FULL_HDR + self.location.len())
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1334,10 +1316,7 @@ impl Serialize for DataEntryUrlBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"url ");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"url ", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1435,7 +1414,7 @@ impl<'a> Parse<'a> for SampleToChunkBox {
 impl Serialize for SampleToChunkBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HDR + FULL_HDR + 4 + self.entries.len() * 12
+        crate::box_types::box_len(BOX_HDR + FULL_HDR + 4 + self.entries.len() * 12)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1446,10 +1425,7 @@ impl Serialize for SampleToChunkBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"stsc");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"stsc", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1556,7 +1532,7 @@ impl Serialize for SampleSizeBox {
         } else {
             0
         };
-        BOX_HDR + FULL_HDR + 8 + count * 4
+        crate::box_types::box_len(BOX_HDR + FULL_HDR + 8 + count * 4)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if self.sample_size == 0 && self.entries.len() != self.sample_count as usize {
@@ -1577,10 +1553,7 @@ impl Serialize for SampleSizeBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"stsz");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"stsz", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1660,7 +1633,7 @@ impl<'a> Parse<'a> for ChunkOffsetBox {
 impl Serialize for ChunkOffsetBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HDR + FULL_HDR + 4 + self.entries.len() * 4
+        crate::box_types::box_len(BOX_HDR + FULL_HDR + 4 + self.entries.len() * 4)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1671,10 +1644,7 @@ impl Serialize for ChunkOffsetBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"stco");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"stco", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1760,7 +1730,7 @@ impl<'a> Parse<'a> for ChunkLargeOffsetBox {
 impl Serialize for ChunkLargeOffsetBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HDR + FULL_HDR + 4 + self.entries.len() * 8
+        crate::box_types::box_len(BOX_HDR + FULL_HDR + 4 + self.entries.len() * 8)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1771,10 +1741,7 @@ impl Serialize for ChunkLargeOffsetBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"co64");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"co64", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -1857,7 +1824,7 @@ impl<'a> Parse<'a> for SyncSampleBox {
 impl Serialize for SyncSampleBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HDR + FULL_HDR + 4 + self.entries.len() * 4
+        crate::box_types::box_len(BOX_HDR + FULL_HDR + 4 + self.entries.len() * 4)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1868,10 +1835,7 @@ impl Serialize for SyncSampleBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"stss");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"stss", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -2559,7 +2523,7 @@ pub struct MhaSampleEntry {
 impl Serialize for MhaSampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        audio_sample_entry_serialized_len(&self.config_boxes)
+        crate::box_types::box_len(audio_sample_entry_serialized_len(&self.config_boxes))
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         serialize_audio_sample_entry(
@@ -2641,7 +2605,7 @@ fn parse_audio_sample_entry(bytes: &[u8], what: &'static str) -> Result<ParsedAu
             what,
         });
     }
-    let body = &bytes[8..];
+    let body = &bytes[crate::box_types::box_header_len(bytes)?..];
     let entry_version = u16::from_be_bytes([body[8], body[9]]);
     let mut reserved_1 = [0u8; 6];
     reserved_1.copy_from_slice(&body[10..16]);
@@ -2749,10 +2713,7 @@ fn serialize_audio_sample_entry(buf: &mut [u8], f: AudioSampleEntryFields<'_>) -
         });
     }
     let mut c = 0usize;
-    buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-    c += 4;
-    buf[c..c + 4].copy_from_slice(f.fourcc);
-    c += 4;
+    c += crate::box_types::write_box_header(buf, f.fourcc, need)?;
     // SampleEntry: reserved(6) zeros + data_reference_index(2). Written, not
     // skipped, so a reused caller buffer cannot keep garbage (r04-W45).
     buf[c..c + 6].fill(0);
@@ -3048,7 +3009,10 @@ impl<'a> Parse<'a> for SampleDescriptionBox {
                 _ => {
                     let mut c4 = [0u8; 4];
                     c4.copy_from_slice(&codec[..4.min(codec.len())]);
-                    SampleEntryVariant::Unknown(OpaqueBox::new(c4, box_bytes[8..].to_vec()))
+                    SampleEntryVariant::Unknown(OpaqueBox::new(
+                        c4,
+                        box_bytes[crate::box_types::box_header_len(box_bytes)?..].to_vec(),
+                    ))
                 }
             };
             entries.push(entry);
@@ -3069,7 +3033,7 @@ impl Serialize for SampleDescriptionBox {
         for e in &self.entries {
             n += e.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -3080,10 +3044,7 @@ impl Serialize for SampleDescriptionBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"stsd");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"stsd", need)?;
         buf[c] = self.version;
         c += 1;
         let fb = self.flags.to_be_bytes();
@@ -3261,7 +3222,7 @@ impl<'a> Parse<'a> for SampleTableBox {
 impl Serialize for SampleTableBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HDR + stbl_children_len(&self.children)
+        crate::box_types::box_len(BOX_HDR + stbl_children_len(&self.children))
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -3272,10 +3233,7 @@ impl Serialize for SampleTableBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"stbl");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"stbl", need)?;
         serialize_stbl_children(&self.children, buf, &mut c)?;
         Ok(c)
     }
@@ -3369,7 +3327,7 @@ impl Serialize for DataInformationBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -3379,11 +3337,9 @@ impl Serialize for DataInformationBox {
                 have: buf.len(),
             });
         }
-        let len = broadcast_common::len::fit_u32(need, "dinf size")?;
-        buf[..4].copy_from_slice(&len.to_be_bytes());
-        buf[4..8].copy_from_slice(b"dinf");
+        let hdr_len = crate::box_types::write_box_header(buf, b"dinf", need)?;
         let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = BOX_HDR;
+        let mut c = hdr_len;
         serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
         if c != need {
             return Err(Error::InvalidInput(
@@ -3540,7 +3496,7 @@ impl Serialize for MediaInformationBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -3550,11 +3506,9 @@ impl Serialize for MediaInformationBox {
                 have: buf.len(),
             });
         }
-        let len = broadcast_common::len::fit_u32(need, "minf size")?;
-        buf[..4].copy_from_slice(&len.to_be_bytes());
-        buf[4..8].copy_from_slice(b"minf");
+        let hdr_len = crate::box_types::write_box_header(buf, b"minf", need)?;
         let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = BOX_HDR;
+        let mut c = hdr_len;
         serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
         if c != need {
             return Err(Error::InvalidInput(
@@ -3691,7 +3645,7 @@ impl Serialize for MediaBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -3701,11 +3655,9 @@ impl Serialize for MediaBox {
                 have: buf.len(),
             });
         }
-        let len = broadcast_common::len::fit_u32(need, "mdia size")?;
-        buf[..4].copy_from_slice(&len.to_be_bytes());
-        buf[4..8].copy_from_slice(b"mdia");
+        let hdr_len = crate::box_types::write_box_header(buf, b"mdia", need)?;
         let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = BOX_HDR;
+        let mut c = hdr_len;
         serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
         if c != need {
             return Err(Error::InvalidInput(
@@ -3803,7 +3755,7 @@ impl Serialize for EditBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -3813,11 +3765,9 @@ impl Serialize for EditBox {
                 have: buf.len(),
             });
         }
-        let len = broadcast_common::len::fit_u32(need, "edts size")?;
-        buf[..4].copy_from_slice(&len.to_be_bytes());
-        buf[4..8].copy_from_slice(b"edts");
+        let hdr_len = crate::box_types::write_box_header(buf, b"edts", need)?;
         let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = BOX_HDR;
+        let mut c = hdr_len;
         serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
         if c != need {
             return Err(Error::InvalidInput(
@@ -3952,7 +3902,7 @@ impl Serialize for TrackBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -3962,11 +3912,9 @@ impl Serialize for TrackBox {
                 have: buf.len(),
             });
         }
-        let len = broadcast_common::len::fit_u32(need, "trak size")?;
-        buf[..4].copy_from_slice(&len.to_be_bytes());
-        buf[4..8].copy_from_slice(b"trak");
+        let hdr_len = crate::box_types::write_box_header(buf, b"trak", need)?;
         let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = BOX_HDR;
+        let mut c = hdr_len;
         serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
         if c != need {
             return Err(Error::InvalidInput(
@@ -4014,7 +3962,7 @@ impl<'a> Parse<'a> for TrackExtendsBox {
                 what: "trex",
             });
         }
-        let body = &bytes[8..];
+        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         Ok(Self {
@@ -4144,7 +4092,7 @@ impl Serialize for MovieExtendsBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -4154,11 +4102,9 @@ impl Serialize for MovieExtendsBox {
                 have: buf.len(),
             });
         }
-        let len = broadcast_common::len::fit_u32(need, "mvex size")?;
-        buf[..4].copy_from_slice(&len.to_be_bytes());
-        buf[4..8].copy_from_slice(b"mvex");
+        let hdr_len = crate::box_types::write_box_header(buf, b"mvex", need)?;
         let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = BOX_HDR;
+        let mut c = hdr_len;
         serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
         if c != need {
             return Err(Error::InvalidInput(
@@ -4293,7 +4239,7 @@ impl Serialize for MovieBox {
         for o in &self.opaque {
             n += o.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -4303,11 +4249,9 @@ impl Serialize for MovieBox {
                 have: buf.len(),
             });
         }
-        let len = broadcast_common::len::fit_u32(need, "moov size")?;
-        buf[..4].copy_from_slice(&len.to_be_bytes());
-        buf[4..8].copy_from_slice(b"moov");
+        let hdr_len = crate::box_types::write_box_header(buf, b"moov", need)?;
         let typed = typed_child_bytes(&self.typed_children())?;
-        let mut c = BOX_HDR;
+        let mut c = hdr_len;
         serialize_children(&self.child_order(), &typed, &self.opaque, buf, &mut c)?;
         if c != need {
             return Err(Error::InvalidInput(
@@ -4437,7 +4381,7 @@ pub fn protect_sample_entry(
     sinf_bytes.truncate(n);
 
     let mut body = Vec::with_capacity(original_bytes.len() - BOX_HDR + sinf_bytes.len());
-    body.extend_from_slice(&original_bytes[BOX_HDR..]);
+    body.extend_from_slice(&original_bytes[crate::box_types::box_header_len(&original_bytes)?..]);
     body.extend_from_slice(&sinf_bytes);
 
     Ok(SampleEntryVariant::Unknown(OpaqueBox::new(

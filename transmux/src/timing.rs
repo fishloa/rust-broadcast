@@ -120,14 +120,14 @@ impl<'a> Parse<'a> for TimeToSampleBox {
                 reason: "expected stts",
             });
         }
-        Self::parse_body(&bytes[BOX_HEADER_SIZE..])
+        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
 }
 
 impl Serialize for TimeToSampleBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + self.entries.len() * 8
+        crate::box_types::box_len(BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + self.entries.len() * 8)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -138,10 +138,7 @@ impl Serialize for TimeToSampleBox {
             });
         }
         let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"stts");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"stts", need)?;
         buf[c] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[c + 1] = fb[1];
@@ -259,14 +256,14 @@ impl<'a> Parse<'a> for CompositionOffsetBox {
                 reason: "expected ctts",
             });
         }
-        Self::parse_body(&bytes[BOX_HEADER_SIZE..])
+        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
 }
 
 impl Serialize for CompositionOffsetBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + self.entries.len() * 8
+        crate::box_types::box_len(BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + self.entries.len() * 8)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -277,10 +274,7 @@ impl Serialize for CompositionOffsetBox {
             });
         }
         let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"ctts");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"ctts", need)?;
         buf[c] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[c + 1] = fb[1];
@@ -401,7 +395,7 @@ impl<'a> Parse<'a> for CompositionToDecodeBox {
                 reason: "expected cslg",
             });
         }
-        Self::parse_body(&bytes[BOX_HEADER_SIZE..])
+        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
 }
 
@@ -420,10 +414,7 @@ impl Serialize for CompositionToDecodeBox {
             });
         }
         let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"cslg");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"cslg", need)?;
         buf[c] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[c + 1] = fb[1];
@@ -579,7 +570,7 @@ impl<'a> Parse<'a> for EditListBox {
                 reason: "expected elst",
             });
         }
-        Self::parse_body(&bytes[BOX_HEADER_SIZE..])
+        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
 }
 
@@ -587,7 +578,9 @@ impl Serialize for EditListBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let entry_wire = if self.version == 0 { 12 } else { 20 };
-        BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + self.entries.len() * entry_wire
+        crate::box_types::box_len(
+            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + self.entries.len() * entry_wire,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -598,10 +591,7 @@ impl Serialize for EditListBox {
             });
         }
         let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"elst");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"elst", need)?;
         buf[c] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[c + 1] = fb[1];
@@ -819,7 +809,7 @@ impl<'a> Parse<'a> for SegmentIndexBox {
                 reason: "expected sidx",
             });
         }
-        Self::parse_body(&bytes[BOX_HEADER_SIZE..])
+        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
 }
 
@@ -845,10 +835,7 @@ impl Serialize for SegmentIndexBox {
             });
         }
         let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"sidx");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"sidx", need)?;
         buf[c] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[c + 1] = fb[1];

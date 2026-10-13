@@ -70,7 +70,11 @@ impl BrandBox {
                 have: buf.len(),
             });
         }
-        buf[0..4].copy_from_slice(&(need as u32).to_be_bytes());
+        // `ftyp`/`styp` are brand lists and their reader takes the compact
+        // form only; a size past 32 bits is a typed error, never a wrap
+        // (#1147).
+        let size = broadcast_common::len::fit_u32(need, "ftyp/styp size")?;
+        buf[0..4].copy_from_slice(&size.to_be_bytes());
         buf[4..8].copy_from_slice(four_cc);
         buf[8..12].copy_from_slice(&self.major_brand);
         buf[12..16].copy_from_slice(&self.minor_version.to_be_bytes());
@@ -213,10 +217,13 @@ impl MediaDataBox {
                 });
             }
             (
-                u64::from_be_bytes([
+                // A `largesize` beyond `usize` can never fit `bytes`: saturate so
+                // the size check below rejects it instead of truncating.
+                usize::try_from(u64::from_be_bytes([
                     bytes[8], bytes[9], bytes[10], bytes[11], bytes[12], bytes[13], bytes[14],
                     bytes[15],
-                ]) as usize,
+                ]))
+                .unwrap_or(usize::MAX),
                 16usize,
             )
         } else if size32 == 0 {
