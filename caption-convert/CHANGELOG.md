@@ -4,6 +4,19 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Fixed
+- Timestamps are digits-only: a `+` sign in any field (accepted by
+  `str::parse`) is now rejected (#1109 CV-O1).
+- `parse_webvtt` / `parse_srt` reject a cue whose end time precedes its start
+  time (#1109 CV-O2).
+- Timestamp parsing splits on the millisecond separator in place instead of
+  allocating a normalised `String` per timestamp (#1109 CV-O3).
+
+### Changed
+- The conversion matrix no longer claims CEA-608/708/Teletext cue timing
+  "carries over exactly": cue times are the carrying frame/packet PTS (#1109
+  CV-W2).
+
 ## [0.2.0] - 2026-10-05
 ### Fixed
 - **#1109** (reopens #974): `parse_webvtt` failed the *whole document* when

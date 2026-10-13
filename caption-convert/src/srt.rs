@@ -17,7 +17,7 @@
 //! [`crate::webvtt_to_srt`] forwards.
 
 use crate::error::Error;
-use crate::time::{normalize_comma_separator, normalize_line_endings, parse_timestamp, to_hms_ms};
+use crate::time::{normalize_line_endings, parse_timestamp, to_hms_ms};
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -128,8 +128,13 @@ pub fn parse_srt(input: &str) -> Result<Vec<Cue>, Error> {
         // discarded the same way the WebVTT parser discards cue settings.
         let end_str = after_arrow.split_whitespace().next().unwrap_or("");
 
-        let start = parse_timestamp(&normalize_comma_separator(start_str.trim()))?;
-        let end = parse_timestamp(&normalize_comma_separator(end_str.trim()))?;
+        let start = parse_timestamp(start_str.trim(), ',')?;
+        let end = parse_timestamp(end_str.trim(), ',')?;
+        if end < start {
+            return Err(Error::InvalidSrt(
+                "cue end time is before its start time".to_string(),
+            ));
+        }
 
         let text = lines.collect::<Vec<_>>().join("\n");
 
@@ -188,6 +193,15 @@ mod tests {
         let doc = "1\r\n00:00:00,000 --> 00:00:01,000\r\nhi\r\n";
         let cues = parse_srt(doc).unwrap();
         assert_eq!(cues, alloc::vec![cue(0, 90_000, "hi")]);
+    }
+
+    /// CV-O2 (#1109): a cue whose end precedes its start is rejected.
+    #[test]
+    fn parse_rejects_end_before_start() {
+        let bad = "1\n00:00:02,000 --> 00:00:01,000\nhi\n";
+        assert!(matches!(parse_srt(bad), Err(Error::InvalidSrt(_))));
+        let ok = "1\n00:00:01,000 --> 00:00:01,000\nhi\n";
+        assert!(parse_srt(ok).is_ok());
     }
 
     #[test]
