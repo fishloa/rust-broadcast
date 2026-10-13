@@ -440,6 +440,10 @@ pub(crate) const AF_EXTENSION_FLAG: u8 = 0x01;
 /// PCR field byte 4 bits 6-1: six reserved bits, all set to `1`
 /// (ISO/IEC 13818-1 §2.4.3.5).
 const PCR_RESERVED_BITS: u8 = 0x7E;
+/// The 6 reserved bits sit at bits 6-1 of PCR byte 4.
+const PCR_RESERVED_SHIFT: u32 = 1;
+/// 6-bit value of those reserved bits per the spec convention (all `1`).
+const PCR_RESERVED_VALUE: u8 = 0x3F;
 /// Encoded PCR / OPCR field width: 33-bit base + 6 reserved + 9-bit extension.
 pub(crate) const PCR_FIELD_LEN: usize = 6;
 
@@ -547,6 +551,9 @@ pub struct Ltw {
 /// Wire layout: 5 bytes — `splice_type(4) | DTS_next_AU[32:30](3) | marker(1) |
 /// DTS_next_AU[29:15](15) | marker(1) | DTS_next_AU[14:0](15) | marker(1)`.
 /// The DTS field uses the same marker-bit encoding as PTS/DTS in PES headers.
+///
+/// `#[non_exhaustive]`: build with [`SeamlessSplice::new`].
+#[non_exhaustive]
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SeamlessSplice {
@@ -554,10 +561,29 @@ pub struct SeamlessSplice {
     pub splice_type: u8,
     /// 33-bit `DTS_next_AU` (90 kHz decoding time of the next splice unit).
     pub dts_next_au: u64,
+    /// The three `marker_bit`s of `DTS_next_AU` (Table 2-6), packed as
+    /// `0b<byte0><byte2><byte4>`; the spec fixes them to `1` (`0b111`), but a
+    /// real stream (TSDuck `test-147.ts`) carries `0`, so they are kept for a
+    /// byte-exact round trip.
+    pub marker_bits: u8,
+}
+
+impl SeamlessSplice {
+    /// A seamless-splice field with spec-conformant marker bits (all `1`).
+    #[must_use]
+    pub const fn new(splice_type: u8, dts_next_au: u64) -> Self {
+        Self {
+            splice_type,
+            dts_next_au,
+            marker_bits: SPLICE_MARKERS_VALUE,
+        }
+    }
 }
 
 // W15 (#1074): named flag/mask bits for the adaptation-field extension's
 // flags byte and its LTW/piecewise-rate sub-fields (ISO/IEC 13818-1 §2.4.3.5).
+/// All three `DTS_next_AU` `marker_bit`s set (`0b111`).
+const SPLICE_MARKERS_VALUE: u8 = 0x07;
 const AFE_LTW_FLAG: u8 = 0x80;
 const AFE_PIECEWISE_RATE_FLAG: u8 = 0x40;
 const AFE_SEAMLESS_SPLICE_FLAG: u8 = 0x20;
@@ -723,6 +749,7 @@ impl<'a> AdaptationFieldExtension<'a> {
             Some(SeamlessSplice {
                 splice_type,
                 dts_next_au,
+                marker_bits: ((b[0] & 1) << 2) | ((b[2] & 1) << 1) | (b[4] & 1),
             })
         } else {
             None
@@ -801,11 +828,12 @@ impl<'a> AdaptationFieldExtension<'a> {
             let ts = ss.dts_next_au & 0x1_FFFF_FFFF;
             let st = ss.splice_type & 0x0F;
             // byte 0: splice_type(4) | DTS[32:30](3) | marker(1)
-            buf[cursor] = (st << 4) | ((((ts >> 30) & 0x07) as u8) << 1) | 0x01;
+            buf[cursor] =
+                (st << 4) | ((((ts >> 30) & 0x07) as u8) << 1) | ((ss.marker_bits >> 2) & 1);
             buf[cursor + 1] = ((ts >> 22) & 0xFF) as u8;
-            buf[cursor + 2] = ((((ts >> 15) & 0x7F) as u8) << 1) | 0x01;
+            buf[cursor + 2] = ((((ts >> 15) & 0x7F) as u8) << 1) | ((ss.marker_bits >> 1) & 1);
             buf[cursor + 3] = ((ts >> 7) & 0xFF) as u8;
-            buf[cursor + 4] = (((ts & 0x7F) as u8) << 1) | 0x01;
+            buf[cursor + 4] = (((ts & 0x7F) as u8) << 1) | (ss.marker_bits & 1);
             cursor += 5;
         }
         buf[cursor..cursor + self.trailing.len()].copy_from_slice(self.trailing);
@@ -845,6 +873,14 @@ pub struct AdaptationField<'a> {
     pub transport_private_data: Option<&'a [u8]>,
     /// Typed adaptation-field extension sub-structure, if the flag is set.
     pub extension: Option<AdaptationFieldExtension<'a>>,
+    /// The 6 `reserved` bits between `program_clock_reference_base` and
+    /// `program_clock_reference_extension` of the PCR (Table 2-6; spec
+    /// convention `0b111111`). Real streams (e.g. TSDuck's `test-002.ts`)
+    /// carry `0`, so the value is kept for a byte-exact round trip. Only
+    /// meaningful when `pcr` is `Some`.
+    pub pcr_reserved: u8,
+    /// The 6 `reserved` bits of the OPCR (same layout as `pcr_reserved`).
+    pub opcr_reserved: u8,
     /// The stuffing bytes that pad the adaptation-field body out to its
     /// declared `adaptation_field_length` (ISO/IEC 13818-1 Table 2-6 —
     /// "stuffing_byte: fixed 8-bit value `0xFF`").
@@ -857,7 +893,33 @@ pub struct AdaptationField<'a> {
     pub stuffing: &'a [u8],
 }
 
+/// Overwrite the 6 reserved bits of an encoded PCR/OPCR field.
+fn set_pcr_reserved(field: &mut [u8], reserved: u8) {
+    field[4] =
+        (field[4] & !PCR_RESERVED_BITS) | ((reserved << PCR_RESERVED_SHIFT) & PCR_RESERVED_BITS);
+}
+
 impl<'a> AdaptationField<'a> {
+    /// An adaptation field with every flag clear, no optional fields, no
+    /// stuffing and spec-convention reserved bits (all `1`). Set fields on the
+    /// result (the struct is `#[non_exhaustive]`).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            discontinuity_indicator: false,
+            random_access_indicator: false,
+            elementary_stream_priority_indicator: false,
+            pcr: None,
+            opcr: None,
+            splice_countdown: None,
+            transport_private_data: None,
+            extension: None,
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
+            stuffing: &[],
+        }
+    }
+
     /// Parse the adaptation-field bytes (those following the length byte).
     ///
     /// `af` must be exactly the adaptation-field body bytes: the slice starts
@@ -872,8 +934,11 @@ impl<'a> AdaptationField<'a> {
         })?;
         let mut cursor = 1usize;
 
+        let mut pcr_reserved = PCR_RESERVED_VALUE;
+        let mut opcr_reserved = PCR_RESERVED_VALUE;
         let pcr = if flags & AF_PCR_FLAG != 0 {
             let p = Pcr::parse(af, cursor)?;
+            pcr_reserved = (af[cursor + 4] & PCR_RESERVED_BITS) >> PCR_RESERVED_SHIFT;
             cursor += PCR_FIELD_LEN;
             Some(p)
         } else {
@@ -881,6 +946,7 @@ impl<'a> AdaptationField<'a> {
         };
         let opcr = if flags & AF_OPCR_FLAG != 0 {
             let p = Pcr::parse(af, cursor)?;
+            opcr_reserved = (af[cursor + 4] & PCR_RESERVED_BITS) >> PCR_RESERVED_SHIFT;
             cursor += PCR_FIELD_LEN;
             Some(p)
         } else {
@@ -951,6 +1017,8 @@ impl<'a> AdaptationField<'a> {
             splice_countdown,
             transport_private_data,
             extension,
+            pcr_reserved,
+            opcr_reserved,
             stuffing,
         })
     }
@@ -1032,10 +1100,12 @@ impl<'a> AdaptationField<'a> {
         let mut cursor = 1usize;
         if let Some(pcr) = self.pcr {
             buf[cursor..cursor + PCR_FIELD_LEN].copy_from_slice(&pcr.to_field_bytes());
+            set_pcr_reserved(&mut buf[cursor..cursor + PCR_FIELD_LEN], self.pcr_reserved);
             cursor += PCR_FIELD_LEN;
         }
         if let Some(opcr) = self.opcr {
             buf[cursor..cursor + PCR_FIELD_LEN].copy_from_slice(&opcr.to_field_bytes());
+            set_pcr_reserved(&mut buf[cursor..cursor + PCR_FIELD_LEN], self.opcr_reserved);
             cursor += PCR_FIELD_LEN;
         }
         if let Some(sc) = self.splice_countdown {
@@ -2096,6 +2166,8 @@ mod tests {
             transport_private_data: None,
             extension: None,
             stuffing: &[],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         let len = original.serialized_len();
         assert_eq!(len, 7); // 1 flags + 6 PCR
@@ -2122,6 +2194,8 @@ mod tests {
             transport_private_data: Some(&data),
             extension: None,
             stuffing: &[],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         let mut buf = vec![0u8; af.serialized_len()];
         assert!(af.serialize_into(&mut buf).is_err());
@@ -2146,6 +2220,8 @@ mod tests {
             transport_private_data: None,
             extension: None,
             stuffing: &[],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         let mut buf = [0u8; 7];
         af.serialize_into(&mut buf).unwrap();
@@ -2172,6 +2248,8 @@ mod tests {
             transport_private_data: None,
             extension: None,
             stuffing: &[],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         let len = original.serialized_len();
         assert_eq!(len, 1 + 6 + 6 + 1); // flags + PCR + OPCR + splice
@@ -2194,6 +2272,8 @@ mod tests {
             transport_private_data: None,
             extension: None,
             stuffing: &[],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         assert_eq!(af.serialized_len(), 1);
         let mut buf = [0u8; 1];
@@ -2219,6 +2299,8 @@ mod tests {
             transport_private_data: None,
             extension: None,
             stuffing: &[],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         let mut buf = [0u8; 3]; // need 7
         assert!(matches!(
@@ -2255,6 +2337,8 @@ mod tests {
             transport_private_data: None,
             extension: Some(ext),
             stuffing: &[],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         let len = af.serialized_len();
         let mut abuf = vec![0u8; len];
@@ -2281,6 +2365,8 @@ mod tests {
                 ..AdaptationFieldExtension::new()
             }),
             stuffing: &[],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         let mut buf = vec![0u8; af.serialized_len()];
         af.serialize_into(&mut buf).unwrap();
@@ -2302,13 +2388,12 @@ mod tests {
             extension: Some(AdaptationFieldExtension {
                 ltw: None,
                 piecewise_rate: None,
-                seamless_splice: Some(SeamlessSplice {
-                    splice_type: 0xA,
-                    dts_next_au: 0x1_2345_6789,
-                }),
+                seamless_splice: Some(SeamlessSplice::new(0xA, 0x1_2345_6789)),
                 ..AdaptationFieldExtension::new()
             }),
             stuffing: &[],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         let mut buf = vec![0u8; af.serialized_len()];
         af.serialize_into(&mut buf).unwrap();
@@ -2332,6 +2417,8 @@ mod tests {
             transport_private_data: Some(&tpd),
             extension: None,
             stuffing: &[],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         let mut buf = vec![0u8; af.serialized_len()];
         af.serialize_into(&mut buf).unwrap();
@@ -2356,6 +2443,8 @@ mod tests {
             transport_private_data: None,
             extension: None,
             stuffing: &[0xFF; 20],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         // 1 flags + 6 PCR + 20 stuffing.
         assert_eq!(af.serialized_len(), 27);
@@ -2377,6 +2466,8 @@ mod tests {
             transport_private_data: None,
             extension: None,
             stuffing: &[0xFF; 5],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         let mut pbuf = vec![0u8; pure.serialized_len()];
         pure.serialize_into(&mut pbuf).unwrap();
@@ -2409,6 +2500,8 @@ mod tests {
                 ..AdaptationFieldExtension::new()
             }),
             stuffing: &[],
+            pcr_reserved: PCR_RESERVED_VALUE,
+            opcr_reserved: PCR_RESERVED_VALUE,
         };
         let len = af.serialized_len();
         let mut buf = vec![0u8; len];

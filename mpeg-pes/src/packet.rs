@@ -40,6 +40,15 @@ const EXT_RESERVED_VALUE: u8 = 0x07;
 /// Table 2-21: `marker_bit` / `stream_id_extension_flag` is the MSB of the
 /// byte; the remaining 7 bits carry the length / extension value.
 const MSB_FLAG: u8 = 0x80;
+/// The two fixed `'10'` marker bits at the top of the first PES header flag
+/// byte (Table 2-21).
+const F1_MARKER_MASK: u8 = 0xC0;
+const F1_MARKER_VALUE: u8 = 0x80;
+/// `ES_rate` is `marker_bit(1) | ES_rate(22) | marker_bit(1)`; both markers
+/// are `1` per Table 2-21.
+const ES_RATE_MARKERS_VALUE: u8 = 0b11;
+const ES_RATE_LEADING_MARKER: u8 = 0x80;
+const ES_RATE_TRAILING_MARKER: u8 = 0x01;
 /// Mask of those low 7 bits (`PES_extension_field_length`, `stream_id_extension`).
 const LOW7_MASK: u8 = 0x7F;
 
@@ -579,6 +588,12 @@ pub struct PesHeader<'a> {
     pub escr: Option<Escr>,
     /// 22-bit ES rate (bytes/second × 50), if `ES_rate_flag` is set.
     pub es_rate: Option<u32>,
+    /// The two `marker_bit`s around `ES_rate` (Table 2-21), packed as
+    /// `0b<leading><trailing>`; the spec fixes both to `1` (`0b11`) but a real
+    /// stream (TSDuck `test-002.ts`) carries a `0` leading marker, so they are
+    /// kept for a byte-exact round trip. Only meaningful when `es_rate` is
+    /// `Some`.
+    pub es_rate_marker_bits: u8,
     /// DSM trick-mode control byte (typed), if `DSM_trick_mode_flag` is set.
     pub dsm_trick_mode: Option<TrickMode>,
     /// 7-bit `additional_copy_info`, if `additional_copy_info_flag` is set.
@@ -597,6 +612,38 @@ pub struct PesHeader<'a> {
     /// non-conforming encoder round-trips byte-for-byte too. Use `&[]` for a
     /// header with no stuffing.
     pub header_stuffing: &'a [u8],
+}
+
+impl<'a> PesHeader<'a> {
+    /// A header with `PES_scrambling_control = 0`, every flag clear, no
+    /// optional fields, no stuffing and spec-conformant marker bits. Set
+    /// fields on the result (the struct is `#[non_exhaustive]`).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            scrambling_control: 0,
+            pes_priority: false,
+            data_alignment_indicator: false,
+            copyright: false,
+            original_or_copy: false,
+            pts: None,
+            dts: None,
+            escr: None,
+            es_rate: None,
+            es_rate_marker_bits: ES_RATE_MARKERS_VALUE,
+            dsm_trick_mode: None,
+            additional_copy_info: None,
+            pes_crc: None,
+            pes_extension: None,
+            header_stuffing: &[],
+        }
+    }
+}
+
+impl Default for PesHeader<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PesHeader<'_> {
@@ -690,6 +737,12 @@ impl<'a> PesPacket<'a> {
         }
         let f1 = b[6];
         let f2 = b[7];
+        // Table 2-21: the first two bits are the fixed `'10'`. Anything else
+        // is not an MPEG-2 PES header (MPEG-1 PES, or damage) and would be
+        // misparsed as one.
+        if f1 & F1_MARKER_MASK != F1_MARKER_VALUE {
+            return Err(Error::BadHeaderMarker);
+        }
         let hdl = usize::from(b[8]);
         let hdr_start = MIN_LEN + HEADER_FIXED; // = 9
         let hdr_end = hdr_start + hdl;
@@ -698,6 +751,16 @@ impl<'a> PesPacket<'a> {
                 need: hdr_end,
                 have: b.len(),
                 what: "PES_header_data_length",
+            });
+        }
+        // The header lies inside a bounded packet: a `PES_packet_length` too
+        // small to hold `PES_header_data_length` is malformed (and would make
+        // serialize write header bytes beyond the declared length).
+        if pes_packet_length != 0 && hdr_end > payload_end {
+            return Err(Error::BufferTooShort {
+                need: hdr_end,
+                have: payload_end,
+                what: "PES_header_data_length exceeds PES_packet_length",
             });
         }
         let opt = &b[hdr_start..hdr_end];
@@ -759,6 +822,7 @@ impl<'a> PesPacket<'a> {
         };
 
         // ES_rate (3 bytes: 1 marker + 22-bit rate + 1 marker).
+        let mut es_rate_marker_bits = ES_RATE_MARKERS_VALUE;
         let es_rate = if f2 & F2_ES_RATE != 0 {
             if opt.len() < cursor + 3 {
                 return Err(Error::BufferTooShort {
@@ -767,6 +831,7 @@ impl<'a> PesPacket<'a> {
                     what: "ES_rate",
                 });
             }
+            es_rate_marker_bits = ((opt[cursor] >> 7) << 1) | (opt[cursor + 2] & 1);
             let rate = (((opt[cursor] & 0x7F) as u32) << 15)
                 | ((opt[cursor + 1] as u32) << 7)
                 | ((opt[cursor + 2] >> 1) as u32);
@@ -848,6 +913,7 @@ impl<'a> PesPacket<'a> {
             dts,
             escr,
             es_rate,
+            es_rate_marker_bits,
             dsm_trick_mode,
             additional_copy_info,
             pes_crc,
@@ -950,9 +1016,15 @@ impl<'a> PesPacket<'a> {
                 }
                 // ES_rate: marker(1) | rate(22) | marker(1) = 3 bytes.
                 if let Some(rate) = h.es_rate {
-                    buf[cursor] = 0x80 | ((rate >> 15) as u8 & 0x7F);
+                    let leading = if h.es_rate_marker_bits & 0b10 != 0 {
+                        ES_RATE_LEADING_MARKER
+                    } else {
+                        0
+                    };
+                    buf[cursor] = leading | ((rate >> 15) as u8 & 0x7F);
                     buf[cursor + 1] = ((rate >> 7) & 0xFF) as u8;
-                    buf[cursor + 2] = (((rate & 0x7F) as u8) << 1) | 0x01;
+                    buf[cursor + 2] = (((rate & 0x7F) as u8) << 1)
+                        | (h.es_rate_marker_bits & ES_RATE_TRAILING_MARKER);
                     cursor += 3;
                 }
                 // DSM trick mode.
@@ -1072,6 +1144,7 @@ mod tests {
             dts: Some(Dts(0)),
             escr: None,
             es_rate: None,
+            es_rate_marker_bits: 0b11,
             dsm_trick_mode: None,
             additional_copy_info: None,
             pes_crc: None,
@@ -1184,6 +1257,7 @@ mod tests {
             dts: None,
             escr: None,
             es_rate: None,
+            es_rate_marker_bits: 0b11,
             dsm_trick_mode: None,
             additional_copy_info: None,
             pes_crc: None,
@@ -1241,6 +1315,7 @@ mod tests {
     fn pes_header_es_rate_round_trip() {
         let h = PesHeader {
             es_rate: Some(0x3FFFFF),
+            es_rate_marker_bits: 0b11,
             ..empty_header()
         };
         let bytes = build_pes(h, &[]);
@@ -1477,6 +1552,7 @@ mod tests {
                 extension: 0,
             }),
             es_rate: Some(50_000),
+            es_rate_marker_bits: 0b11,
             dsm_trick_mode: Some(TrickMode::SlowMotion { rep_cntrl: 3 }),
             additional_copy_info: Some(5),
             pes_crc: Some(0xCAFE),

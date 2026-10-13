@@ -151,9 +151,12 @@ fn constructed_extension_uses_convention_reserved_bits() {
     assert_eq!(af.extension.as_ref().unwrap(), &ext);
 }
 
-// ── exhaustive real-data gate ────────────────────────────────────────────────
+// ── exhaustive real-data gates ───────────────────────────────────────────────
 
-fn collect_ts_files(dir: &Path, out: &mut Vec<PathBuf>) {
+/// Name of the gitignored local archive of real captures (repo root).
+const ARCHIVE_DIR: &str = ".test-streams";
+
+fn collect_ts_files(dir: &Path, include_archive: bool, out: &mut Vec<PathBuf>) {
     let Ok(rd) = fs::read_dir(dir) else { return };
     for e in rd.flatten() {
         let p = e.path();
@@ -163,95 +166,231 @@ fn collect_ts_files(dir: &Path, out: &mut Vec<PathBuf>) {
             if matches!(
                 name.as_ref(),
                 "target" | ".git" | ".claude" | "node_modules" | ".delegate"
-            ) {
+            ) || (name == ARCHIVE_DIR && !include_archive)
+            {
                 continue;
             }
-            collect_ts_files(&p, out);
+            collect_ts_files(&p, include_archive, out);
         } else if name.ends_with(".ts") {
             out.push(p);
         }
     }
 }
 
-/// Every committed `.ts` fixture that is a clean 188-byte-stride stream.
-fn committed_ts_fixtures() -> Vec<(PathBuf, Vec<u8>)> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let mut files = Vec::new();
-    collect_ts_files(&root, &mut files);
-    files.sort();
-    files
-        .into_iter()
-        .filter_map(|p| {
-            let b = fs::read(&p).ok()?;
-            // Skip non-TS / non-188-stride files (e.g. the 204-stride probe fixture).
-            let ok = b.len() >= TS_PACKET_SIZE * 3
-                && b.len() % TS_PACKET_SIZE == 0
-                && b.chunks_exact(TS_PACKET_SIZE).all(|c| c[0] == 0x47);
-            ok.then_some((p, b))
-        })
-        .collect()
+#[derive(Default)]
+struct Report {
+    checked: usize,
+    stuffed: usize,
+    files_with_af: usize,
+    /// Parsed Ok but did not re-serialize byte-exactly (always a failure).
+    mismatches: Vec<String>,
+    /// Packets with a real adaptation-field extension that round-tripped.
+    ext_ok: Vec<String>,
+    /// Skipped: `transport_error_indicator == 1` (corrupted by definition).
+    skipped_tei: usize,
+    /// Skipped: `adaptation_field_length > 183` (invalid, Table 2-6 / §2.4.3.4).
+    skipped_len: usize,
+    /// Skipped: sync byte missing (capture glitch).
+    skipped_sync: usize,
+    /// Parse errors on otherwise clean (TEI = 0, length <= 183) packets.
+    parse_errors: Vec<String>,
 }
 
-#[test]
-fn every_committed_ts_adaptation_field_round_trips() {
-    let fixtures = committed_ts_fixtures();
-    assert!(
-        fixtures.len() >= 20,
-        "expected the committed fixture corpus, found {} files",
-        fixtures.len()
-    );
-    let (mut checked, mut stuffed, mut files_with_af) = (0usize, 0usize, 0usize);
-    for (path, buf) in &fixtures {
+fn scan(include_archive: bool) -> Report {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut files = Vec::new();
+    collect_ts_files(&root, include_archive, &mut files);
+    files.sort();
+    let mut r = Report::default();
+    for path in files {
+        let Ok(buf) = fs::read(&path) else { continue };
+        // A 188-stride TS file: the first three sync bytes must line up.
+        if buf.len() < TS_PACKET_SIZE * 3
+            || (0..3).any(|k| buf[k * TS_PACKET_SIZE] != mpeg_ts::ts::TS_SYNC_BYTE)
+        {
+            continue;
+        }
         let mut file_had_af = false;
         for (i, raw) in buf.chunks_exact(TS_PACKET_SIZE).enumerate() {
+            if raw[0] != mpeg_ts::ts::TS_SYNC_BYTE {
+                r.skipped_sync += 1;
+                continue;
+            }
             let pkt = TsPacket::parse(raw).unwrap();
             let Some(res) = pkt.adaptation_field() else {
                 continue;
             };
-            // A zero-length AF has no body to compare.
             if raw[4] == 0 {
                 continue;
             }
-            let af = res.unwrap_or_else(|e| panic!("{}: pkt {i}: AF parse: {e}", path.display()));
+            if pkt.header.tei {
+                r.skipped_tei += 1;
+                continue;
+            }
+            if usize::from(raw[4]) > TS_PACKET_SIZE - 5 {
+                r.skipped_len += 1;
+                continue;
+            }
+            let af = match res {
+                Ok(af) => af,
+                Err(e) => {
+                    r.parse_errors
+                        .push(format!("{}: pkt {i}: {e}", path.display()));
+                    continue;
+                }
+            };
             let want = &raw[5..5 + usize::from(raw[4])];
-            assert_eq!(
-                body_of(&af),
-                want,
-                "{}: pkt {i}: adaptation field did not re-serialize byte-exactly",
-                path.display()
-            );
-            checked += 1;
+            if body_of(&af) != want {
+                r.mismatches.push(format!(
+                    "{}: pkt {i} sc={} want={} got={}",
+                    path.display(),
+                    pkt.header.scrambling,
+                    hex(want),
+                    hex(&body_of(&af))
+                ));
+                continue;
+            }
+            r.checked += 1;
             file_had_af = true;
-            if !af.stuffing.is_empty() {
-                stuffed += 1;
+            r.stuffed += usize::from(!af.stuffing.is_empty());
+            if af.extension.is_some() {
+                r.ext_ok.push(format!("{}: pkt {i}", path.display()));
             }
         }
-        files_with_af += usize::from(file_had_af);
+        r.files_with_af += usize::from(file_had_af);
     }
-    // Non-vacuity: the corpus must actually exercise stuffed AFs.
-    assert!(checked > 5_000, "only {checked} adaptation fields checked");
-    assert!(stuffed > 500, "only {stuffed} stuffed adaptation fields");
-    assert!(files_with_af >= 20, "only {files_with_af} files had an AF");
+    r
 }
 
-/// Documents (and bites if it ever stops being true) that the committed
-/// corpus holds no real `adaptation_field_extension_flag == 1` packet, which
-/// is why the extension vectors above are spec-built.
+/// Fast gate over the files committed to git (no `.test-streams` archive):
+/// every adaptation field must re-serialize byte-exactly.
 #[test]
-fn no_committed_fixture_carries_an_adaptation_field_extension() {
-    let mut with_ext = Vec::new();
-    for (path, buf) in committed_ts_fixtures() {
-        for raw in buf.chunks_exact(TS_PACKET_SIZE) {
-            if let Some(Ok(af)) = TsPacket::parse(raw).unwrap().adaptation_field()
-                && af.extension.is_some()
-            {
-                with_ext.push(path.clone());
-                break;
-            }
+fn every_committed_ts_adaptation_field_round_trips() {
+    let r = scan(false);
+    assert!(r.mismatches.is_empty(), "{:#?}", r.mismatches);
+    assert!(r.parse_errors.is_empty(), "{:#?}", r.parse_errors);
+    // Non-vacuity: the corpus must actually exercise stuffed AFs.
+    assert!(r.checked > 5_000, "only {} AFs checked", r.checked);
+    assert!(r.stuffed > 500, "only {} stuffed AFs", r.stuffed);
+    assert!(r.files_with_af >= 20, "only {} files", r.files_with_af);
+    // The committed corpus has no real AF extension (hence the spec-built
+    // vectors above); the real evidence lives in the local archive and is
+    // exercised by the ignored full-archive test below.
+    assert!(
+        r.ext_ok.is_empty(),
+        "committed real AF-extension now exists"
+    );
+}
+
+/// Full-archive gate (slow; local only, needs the gitignored `.test-streams`):
+/// `cargo test -p mpeg-ts --test af_extension_roundtrip -- --ignored`.
+///
+/// Real evidence for `adaptation_field_extension_flag == 1` (TEI = 0, parses):
+/// `tsduck-test/input/test-143.ts` pkts 451 and 3994 and
+/// `tsduck-test/reference/test-147/test-147.ts` pkt 8098 (`test-002.ts` and its
+/// `reference/test-045/*` copies carry more, but all TEI-flagged).
+///
+/// Skip policy (parse stays strict; the gate skips, with counts):
+/// * `transport_error_indicator == 1` — corrupted by definition;
+/// * `adaptation_field_length > 183` — invalid per §2.4.3.4;
+/// * a parse error on any other packet is listed and must be a *genuinely
+///   damaged / non-adaptation-field* packet. TSDuck's `test-143.ts` /
+///   `test-147.ts` are scrambling-test streams whose adaptation-field bytes are
+///   pseudo-random (non-DVB `transport_scrambling_control` values, AF-only
+///   packets with random flags), so a private-data length overruns the AF;
+///   likewise e.g. `hotbird-mhp.ts` pkt 391355: PID 0x1125, scrambled,
+///   whose bytes 4.. are `47 03 B8 1F ..` — a duplicated header of the *next*
+///   packet spliced in (capture glitch), so `transport_private_data_length`
+///   overruns the AF. That is stream damage, not a sender convention, so the
+///   parser keeps rejecting it rather than guess.
+#[test]
+#[ignore = "slow: scans the whole local .test-streams archive"]
+fn full_archive_adaptation_fields_round_trip() {
+    let t = std::time::Instant::now();
+    let r = scan(true);
+    eprintln!(
+        "checked={} stuffed={} files={} ext_ok={} skipped(tei={}, len>183={}, sync={}) parse_errors={} in {:?}",
+        r.checked,
+        r.stuffed,
+        r.files_with_af,
+        r.ext_ok.len(),
+        r.skipped_tei,
+        r.skipped_len,
+        r.skipped_sync,
+        r.parse_errors.len(),
+        t.elapsed()
+    );
+    for e in &r.parse_errors {
+        eprintln!("parse error: {e}");
+    }
+    for e in &r.ext_ok {
+        eprintln!("real AF extension round-tripped: {e}");
+    }
+    assert!(r.mismatches.is_empty(), "{:#?}", r.mismatches);
+    // Only the documented damaged packets may fail to parse.
+    for e in &r.parse_errors {
+        assert!(
+            e.contains("hotbird-mhp.ts: pkt 391355")
+                || e.contains("tsduck-test/input/test-143.ts")
+                || e.contains("tsduck-test/reference/test-147/"),
+            "undocumented AF parse error: {e}"
+        );
+    }
+    if Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(ARCHIVE_DIR)
+        .exists()
+    {
+        assert!(
+            r.ext_ok
+                .iter()
+                .any(|e| e.contains("test-143.ts") || e.contains("test-147.ts")),
+            "expected real AF-extension packets in the archive"
+        );
+    }
+}
+
+fn hex(b: &[u8]) -> String {
+    b.iter().map(|x| format!("{x:02x}")).collect()
+}
+
+/// Primary real-data evidence for the adaptation-field extension: three
+/// specific packets of TSDuck's BSD-2 test streams in the local, gitignored
+/// `.test-streams` archive (skips loudly when absent, e.g. in CI / a worktree
+/// without the symlink). Each must re-serialize byte-exactly.
+///
+/// * `tsduck-test/reference/test-147/test-147.ts` pkt 8098: flags `0x87`
+///   (discontinuity + splice countdown + private data + extension) with a
+///   `seamless_splice` whose three `marker_bit`s are `0` on the wire.
+/// * `tsduck-test/input/test-143.ts` pkts 451 and 3994.
+#[test]
+fn real_archive_af_extension_packets_round_trip() {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join(ARCHIVE_DIR);
+    let cases = [
+        ("tsduck-test/reference/test-147/test-147.ts", 8098usize),
+        ("tsduck-test/input/test-143.ts", 451),
+        ("tsduck-test/input/test-143.ts", 3994),
+    ];
+    for (file, idx) in cases {
+        let Ok(buf) = fs::read(root.join(file)) else {
+            eprintln!("SKIP: {ARCHIVE_DIR}/{file} not available");
+            continue;
+        };
+        let raw: &[u8; TS_PACKET_SIZE] = buf[idx * TS_PACKET_SIZE..(idx + 1) * TS_PACKET_SIZE]
+            .try_into()
+            .unwrap();
+        let af = parse_af(raw);
+        let ext = af.extension.as_ref().expect("real packet has an extension");
+        assert_eq!(
+            body_of(&af),
+            &raw[5..5 + usize::from(raw[4])],
+            "{file} pkt {idx}"
+        );
+        if file.ends_with("test-147.ts") {
+            let ss = ext.seamless_splice.expect("seamless_splice present");
+            assert_eq!(ss.marker_bits, 0, "real marker bits are 0, not the spec 1");
         }
     }
-    assert!(
-        with_ext.is_empty(),
-        "real AF-extension evidence now exists, switch the extension tests to it: {with_ext:?}"
-    );
 }
