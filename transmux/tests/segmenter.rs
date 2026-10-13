@@ -9,6 +9,7 @@
 //!  2. A **real-fixture** test remuxes `fixtures/ts/h264_aac.ts` through the
 //!     segmenter and checks every emitted segment parses and preserves the stream.
 
+use mpeg_ts::pid::Pid;
 use broadcast_common::Serialize;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;

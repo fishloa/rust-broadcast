@@ -8,6 +8,7 @@
 //! 5. avcC round-trip: SPS decode → build AVCDecoderConfigurationRecord → verify
 //!    profile/compat/level bytes match SPS bytes exactly.
 
+use mpeg_ts::pid::Pid;
 use broadcast_common::Serialize;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;

@@ -12,6 +12,7 @@
 //! 4. Sample round-trip: first video sample re-parsed from mdat matches
 //!    annexb_to_length_prefixed(first_video_au).
 
+use mpeg_ts::pid::Pid;
 use std::vec::Vec;
 
 use broadcast_common::{Parse, Serialize};

@@ -6,6 +6,7 @@
 //! PMT section parsing, or an adaptation-field scan) — never against the
 //! `TsDemux` internals under test.
 
+use mpeg_ts::pid::Pid;
 use std::collections::HashMap;
 use std::path::PathBuf;
 

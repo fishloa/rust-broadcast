@@ -3216,7 +3216,7 @@ mod tests {
         WireSerialize::serialize_into(&transitioned, &mut section_buf)
             .expect("serialize transitioned section");
 
-        let mut packetiser = mpeg_ts::mux::SectionPacketiser::new(EIT_PID);
+        let mut packetiser = mpeg_ts::mux::SectionPacketiser::new(Pid::new(EIT_PID));
         let packets = packetiser.packetise(&[&section_buf]);
         let mut packet_bytes = Vec::new();
         for p in &packets {
@@ -3346,7 +3346,7 @@ mod tests {
         let mut section_buf = vec![0u8; WireSerialize::serialized_len(&transitioned)];
         WireSerialize::serialize_into(&transitioned, &mut section_buf).expect("serialize");
         let mut packet_bytes = Vec::new();
-        for p in &mpeg_ts::mux::SectionPacketiser::new(EIT_PID).packetise(&[&section_buf]) {
+        for p in &mpeg_ts::mux::SectionPacketiser::new(Pid::new(EIT_PID)).packetise(&[&section_buf]) {
             packet_bytes.extend_from_slice(p);
         }
 

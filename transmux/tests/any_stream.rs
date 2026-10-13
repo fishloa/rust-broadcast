@@ -42,6 +42,7 @@
 //! plus a hand-rolled PMT-body walk) — never the crate's own PMT parser
 //! under test (mirrors `tests/ir_timing.rs`'s `collect_pmt_es`).
 
+use mpeg_ts::pid::Pid;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 

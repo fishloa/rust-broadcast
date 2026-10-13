@@ -48,6 +48,7 @@
 //!
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.4.3 (PAT) / §2.4.4.8 (PMT).
 
+use mpeg_ts::pid::Pid;
 use alloc::collections::BTreeMap;
 use alloc::vec;
 use alloc::vec::Vec;

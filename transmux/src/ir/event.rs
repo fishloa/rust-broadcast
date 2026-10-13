@@ -15,6 +15,7 @@
 //! which packet) moves into [`EventProvenance`] — `None`/absent for a
 //! container that has no such identity (FLV has no PID concept at all).
 
+use mpeg_ts::pid::Pid;
 use super::sample::Sample;
 use super::track::TrackSpec;
 
@@ -29,7 +30,7 @@ use super::track::TrackSpec;
 pub struct EventProvenance {
     /// The MPEG-2 TS PID this event was observed on (ISO/IEC 13818-1
     /// §2.4.3.2), when the source container is TS.
-    pub pid: Option<u16>,
+    pub pid: Option<Pid>,
     /// 0-based index of the source packet the event was observed at, in
     /// whatever unit the container demuxes in (e.g. the 188-byte TS packet
     /// index), when the container has one.

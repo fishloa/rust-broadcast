@@ -1910,7 +1910,7 @@ mod tests {
             let Some(payload) = packet.payload else {
                 continue;
             };
-            let reassembler = reassemblers.entry(packet.header.pid).or_default();
+            let reassembler = reassemblers.entry(packet.header.pid.value()).or_default();
             reassembler.feed(payload, packet.header.pusi);
             while let Some(section_bytes) = reassembler.pop_section() {
                 if let Ok(section) = Section::parse(section_bytes.as_ref())
