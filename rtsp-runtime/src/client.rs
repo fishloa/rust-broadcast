@@ -469,20 +469,33 @@ impl ClientSession {
                 self.inbound.len()
             )));
         }
+        // Parse with a cursor and drop the consumed prefix ONCE, whatever the
+        // outcome: a per-message `drain(..n)` memmoves the whole remainder for
+        // every frame, O(n^2) over a buffer of many small frames (audit
+        // run-09 O3).
+        let mut pos = 0;
+        let result = self.decode_from(&mut pos, events);
+        self.inbound.drain(..pos);
+        result
+    }
 
+    /// Decodes messages/frames from `self.inbound[*pos..]`, advancing `*pos`
+    /// past each one fully consumed (the caller drains `..*pos` afterwards).
+    fn decode_from(&mut self, pos: &mut usize, events: &mut Vec<ClientEvent>) -> Result<()> {
         loop {
-            if self.inbound.is_empty() {
+            let rest = &self.inbound[*pos..];
+            if rest.is_empty() {
                 break;
             }
-            if self.inbound[0] == MAGIC {
+            if rest[0] == MAGIC {
                 // Interleaved frame path.
-                match interleaved::InterleavedFrame::parse(&self.inbound)? {
+                match interleaved::InterleavedFrame::parse(rest)? {
                     Some((frame, consumed)) => {
                         events.push(ClientEvent::MediaData {
                             channel: frame.channel,
                             data: frame.payload,
                         });
-                        self.inbound.drain(..consumed);
+                        *pos += consumed;
                     }
                     None => break, // need more bytes
                 }
@@ -491,23 +504,23 @@ impl ClientSession {
 
             // RTSP message path. `framing::head_end` is a bounded framing check
             // (header cap, parse once per message), not protocol parsing.
-            if self.inbound.len() < self.skip_until {
+            if rest.len() < self.skip_until {
                 break;
             }
-            if crate::framing::head_end(&self.inbound, self.scanned)?.is_none() {
-                self.scanned = self.inbound.len();
+            if crate::framing::head_end(rest, self.scanned)?.is_none() {
+                self.scanned = rest.len();
                 break;
             }
-            match Message::<Body>::parse(&self.inbound) {
+            match Message::<Body>::parse(rest) {
                 Ok((message, consumed)) => {
-                    self.inbound.drain(..consumed);
+                    *pos += consumed;
                     self.scanned = 0;
                     self.skip_until = 0;
                     self.process_message(message, events)?;
                 }
                 Err(rtsp_types::ParseError::Incomplete(needed)) => {
                     if let Some(more) = needed {
-                        self.skip_until = self.inbound.len().saturating_add(more.get());
+                        self.skip_until = rest.len().saturating_add(more.get());
                     }
                     break;
                 }
@@ -800,6 +813,41 @@ mod tests {
             vec![1, 2],
             "expected both real responses despite the unmatched CSeq 99"
         );
+    }
+
+    // Audit run-09 O3: many frames in one read are decoded with a cursor (one
+    // drain per call, not one memmove of the remainder per frame), and a
+    // partial trailing frame is retained for the next call.
+    #[test]
+    fn many_interleaved_frames_in_one_read_decode_in_order_and_keep_the_tail() {
+        const FRAMES: usize = 600;
+        const PAYLOAD: usize = 800;
+        let mut wire = Vec::new();
+        for i in 0..FRAMES {
+            let payload = vec![(i % 251) as u8; PAYLOAD];
+            wire.extend(
+                interleaved::InterleavedFrame::slice_to_bytes((i % 2) as u8, &payload).unwrap(),
+            );
+        }
+        let split = wire.len() - 100; // last frame arrives in two pieces
+        let mut c = ClientSession::new();
+        let first = c.handle_data(&wire[..split]);
+        assert!(first.error.is_none());
+        assert_eq!(first.events.len(), FRAMES - 1);
+        let second = c.handle_data(&wire[split..]);
+        assert!(second.error.is_none());
+        assert_eq!(second.events.len(), 1);
+        for (i, e) in first.events.iter().chain(second.events.iter()).enumerate() {
+            match e {
+                ClientEvent::MediaData { channel, data } => {
+                    assert_eq!(*channel as usize, i % 2);
+                    assert_eq!(data.len(), PAYLOAD);
+                    assert!(data.iter().all(|b| *b == (i % 251) as u8));
+                }
+                other => panic!("unexpected {other:?}"),
+            }
+        }
+        assert!(!c.has_buffered_input());
     }
 
     // Regression (audit run-09 W6): an unterminated header (or a peer that
