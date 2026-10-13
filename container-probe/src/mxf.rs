@@ -69,6 +69,9 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         // Shorter than the 16-byte Partition Pack Key (the fixture's key runs
         // through byte 15): a truncated .mxf read a few bytes at a time is
         // undecided (`Insufficient`), not `Unknown`.
+        if !crate::prefix_agrees(region, 0, &MXF_KEY_PREFIX) {
+            return Outcome::None;
+        }
         return Outcome::Insufficient(UL_KEY_LEN);
     }
     if region[..MXF_KEY_PREFIX.len()] != MXF_KEY_PREFIX {

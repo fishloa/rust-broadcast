@@ -47,6 +47,26 @@ pub mod transmit_schedule;
 
 pub use any::AnyOperation;
 
+/// Reject an operation body whose length is not exactly what the parsed typed
+/// structure re-serializes to (#1103 W4). The typed parsers read what they
+/// need and ignore the rest, so without this check a body with trailing bytes
+/// parses "successfully" and then silently loses those bytes on re-serialize.
+pub(crate) fn require_exact_len(
+    body_len: usize,
+    typed_len: usize,
+    what: &'static str,
+) -> Result<()> {
+    if body_len == typed_len {
+        Ok(())
+    } else {
+        Err(Error::LengthOverflow {
+            declared: body_len,
+            available: typed_len,
+            what,
+        })
+    }
+}
+
 /// A single operation entry within a `multiple_operation_message` data loop,
 /// pairing the wire `opID` with the parsed structure.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -571,6 +591,13 @@ pub enum AnySingleOperation<'a> {
 impl<'a> AnySingleOperation<'a> {
     /// Parse an operation body by its `op_id`.
     pub fn dispatch(op_id: u16, body: &'a [u8]) -> Result<Self> {
+        let parsed = Self::dispatch_unchecked(op_id, body)?;
+        // Exact length (#1103 W4): trailing bytes would be lost on re-serialize.
+        require_exact_len(body.len(), parsed.body_len(), "single operation body")?;
+        Ok(parsed)
+    }
+
+    fn dispatch_unchecked(op_id: u16, body: &'a [u8]) -> Result<Self> {
         match op_id {
             0x0000 => Ok(Self::GeneralResponse(GeneralResponse::parse(body)?)),
             0x0001 => Ok(Self::InitRequest(InitRequest::parse(body)?)),

@@ -25,7 +25,7 @@ pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0012);
 
 const HEADER_LEN: usize = 3;
 const EXTENSION_LEN: usize = 10;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
 
 const CRID_REF_LEN: usize = 2;
@@ -179,7 +179,7 @@ impl<'a> Parse<'a> for CitSection<'a> {
         let total =
             super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
 
-        let private_indicator = (bytes[1] & 0x40) != 0;
+        let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
         let service_id = crate::wire::be_u16(bytes, 3, "cit")?;
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);
@@ -313,8 +313,7 @@ impl Serialize for CitSection<'_> {
             pos += entry.unique_string.len();
         }
 
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..pos]);
-        buf[pos..pos + CRC_LEN].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, pos);
         Ok(len)
     }
 }

@@ -42,7 +42,7 @@ fn trickle_headers(if_match: Option<&str>) -> HeaderMap {
 fn if_match_star_means_ice_restart() {
     let mut s = established_whip();
     let ev = s
-        .on_patch(b"f".to_vec(), &h(header::IF_MATCH, "*"))
+        .on_patch(b"f".to_vec(), &trickle_headers(Some("*")))
         .unwrap();
     assert!(matches!(ev, Event::IceRestart { .. }));
 }
@@ -51,7 +51,7 @@ fn if_match_star_means_ice_restart() {
 fn if_match_with_the_current_strong_etag_is_trickle_ice() {
     let mut s = established_whip();
     let ev = s
-        .on_patch(b"f".to_vec(), &h(header::IF_MATCH, "\"etag1\""))
+        .on_patch(b"f".to_vec(), &trickle_headers(Some("\"etag1\"")))
         .unwrap();
     assert!(matches!(ev, Event::TrickleIce { if_match: Some(ref e), .. } if e == "etag1"));
 }
@@ -60,7 +60,7 @@ fn if_match_with_the_current_strong_etag_is_trickle_ice() {
 fn if_match_with_a_stale_etag_is_a_mismatch_carrying_both_values() {
     let mut s = established_whip();
     let err = s
-        .on_patch(b"f".to_vec(), &h(header::IF_MATCH, "\"old\""))
+        .on_patch(b"f".to_vec(), &trickle_headers(Some("\"old\"")))
         .unwrap_err();
     assert!(
         matches!(err, Error::ETagMismatch { ref expected, ref got } if expected == "etag1" && got == "\"old\""),
@@ -75,7 +75,7 @@ fn if_match_with_a_stale_etag_is_a_mismatch_carrying_both_values() {
 fn a_weak_etag_never_satisfies_if_match_strong_comparison() {
     let mut s = established_whip();
     assert!(matches!(
-        s.on_patch(b"f".to_vec(), &h(header::IF_MATCH, "W/\"etag1\"")),
+        s.on_patch(b"f".to_vec(), &trickle_headers(Some("W/\"etag1\""))),
         Err(Error::ETagMismatch { .. })
     ));
 }
@@ -89,11 +89,11 @@ fn a_weak_etag_never_satisfies_if_match_strong_comparison() {
 fn an_unquoted_etag_and_a_quoted_star_are_malformed() {
     let mut s = established_whip();
     assert!(matches!(
-        s.on_patch(b"f".to_vec(), &h(header::IF_MATCH, "etag1")),
+        s.on_patch(b"f".to_vec(), &trickle_headers(Some("etag1"))),
         Err(Error::ETagMismatch { ref got, .. }) if got == "etag1"
     ));
     assert!(matches!(
-        s.on_patch(b"f".to_vec(), &h(header::IF_MATCH, "\"*\"")),
+        s.on_patch(b"f".to_vec(), &trickle_headers(Some("\"*\""))),
         Err(Error::ETagMismatch { .. })
     ));
 }
@@ -102,7 +102,7 @@ fn an_unquoted_etag_and_a_quoted_star_are_malformed() {
 fn a_patch_without_if_match_is_a_plain_trickle() {
     let mut s = established_whip();
     assert!(matches!(
-        s.on_patch(b"f".to_vec(), &HeaderMap::new()).unwrap(),
+        s.on_patch(b"f".to_vec(), &trickle_headers(None)).unwrap(),
         Event::TrickleIce { if_match: None, .. }
     ));
 }
@@ -115,7 +115,7 @@ fn if_match_lists_and_repeated_field_lines_are_honoured() {
     let ev = s
         .on_patch(
             b"f".to_vec(),
-            &h(header::IF_MATCH, "\"old\", \"etag1\", \"older\""),
+            &trickle_headers(Some("\"old\", \"etag1\", \"older\"")),
         )
         .unwrap();
     assert!(matches!(
@@ -126,7 +126,7 @@ fn if_match_lists_and_repeated_field_lines_are_honoured() {
         }
     ));
 
-    let mut twice = HeaderMap::new();
+    let mut twice = trickle_headers(None);
     twice.append(header::IF_MATCH, HeaderValue::from_static("\"old\""));
     twice.append(header::IF_MATCH, HeaderValue::from_static("\"etag1\""));
     let ev = s.on_patch(b"f".to_vec(), &twice).unwrap();
@@ -143,7 +143,7 @@ fn if_match_lists_and_repeated_field_lines_are_honoured() {
 #[test]
 fn a_non_utf8_if_match_is_rejected() {
     let mut s = established_whip();
-    let mut m = HeaderMap::new();
+    let mut m = trickle_headers(None);
     m.insert(
         header::IF_MATCH,
         HeaderValue::from_bytes(b"\"et\xFFag1\"").unwrap(),
@@ -271,4 +271,35 @@ fn accept_with_an_unsendable_url_or_etag_is_a_500_not_a_panic() {
         s.accept(b"a".to_vec(), "e".into()).status,
         StatusCode::INTERNAL_SERVER_ERROR
     );
+}
+
+/// Audit run-09 W21: a WHIP PATCH whose `Content-Type` is not
+/// `application/trickle-ice-sdpfrag` (RFC 9725 §4) is not an SDP fragment: a
+/// missing or foreign type is rejected, and parameters (`charset`) on the
+/// right type are ignored (RFC 9110 §8.3.1).
+#[test]
+fn whip_patch_requires_the_trickle_ice_media_type() {
+    for bad in [None, Some("application/sdp"), Some("text/plain")] {
+        let mut s = established_whip();
+        let mut headers = HeaderMap::new();
+        if let Some(ct) = bad {
+            headers.insert(header::CONTENT_TYPE, HeaderValue::from_static(ct));
+        }
+        let err = s.on_patch(b"f".to_vec(), &headers).unwrap_err();
+        assert!(
+            matches!(err, Error::InvalidSdpFragment { .. }),
+            "{bad:?}: {err:?}"
+        );
+    }
+    let mut s = established_whip();
+    let ev = s
+        .on_patch(
+            b"f".to_vec(),
+            &h(
+                header::CONTENT_TYPE,
+                "Application/Trickle-ICE-SDPFrag; charset=utf-8",
+            ),
+        )
+        .unwrap();
+    assert!(matches!(ev, Event::TrickleIce { .. }));
 }

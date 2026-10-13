@@ -48,10 +48,7 @@
 //!     header: LineHeader::new(true, 16),
 //!     vps_data_block: [0u8; 13],
 //! });
-//! let wss = DataUnit::wss(WssDataField {
-//!     header: LineHeader::new(true, 23),
-//!     wss_data_block: 0x1234,
-//! });
+//! let wss = DataUnit::wss(WssDataField::new(LineHeader::new(true, 23), 0x1234));
 //! let field = DataField::new(0x10, vec![vps, wss]);
 //!
 //! let mut buf = vec![0u8; field.serialized_len()];

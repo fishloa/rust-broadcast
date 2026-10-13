@@ -2,6 +2,17 @@
 
 ## [Unreleased]
 ### Changed (BREAKING)
+- **BREAKING:** the ten `PID = 0x0000` placeholder constants that aliased the PAT PID are removed from the `ait`, `container`, `downloadable_font_info`, `int`, `mpe`, `mpe_fec`, `mpe_ifec`, `protection_message`, `rct` and `unt` table modules (a caller filtering on one picked up PAT traffic); these tables have no fixed PID (audit r02-W15 / r02-O12, #1077). The hidden `owned::doc` doctest helper module is removed too (r02-O7).
+- **BREAKING (behavioural):** serializers reject a value wider than its wire field instead of masking it into a different valid-looking value (audit r03-W3 class, #1077): `ibp_descriptor.max_gop_length` (14 bits), NorDig LCN V1 (14) / V2 (10), `smoothing_buffer` (22), `metadata_std` (22), `multiplex_buffer_utilization` (15), `mvc_extension` (10 / 3), `target_background_grid` and `video_window` (14 / 14 / 4), INT `platform_id` (24), UNT `OUI` (24), RCT `dvb_service_triplet_id` (10), `content_labeling` time base (33), S2Xv2 scrambling indices (20). Parse stays tolerant; legal values round-trip byte-identically.
+### Fixed
+- DTS descriptor `sample_rate_hz()` for SFREQ `0b1001` is 88200 Hz (the table prints the digit transposition "88,02 kHz"; EN 300 468's own DTS-HD table lists 88,2 kHz) (r03-W11).
+- BIOP directory / stream / stream-event serializers use the checked `fit_*` helpers like the file message (r02-W13).
+### Performance
+- Section collectors copy a section into an `Arc` only when it is retained: a duplicate carousel repeat allocates nothing (r02-O1, `tests/collect_alloc.rs`).
+- Annex A text decode: no intermediate `Vec<u16>` for UCS-2 and no second `String` when no control code is present (r02-O4: 8 -> 1 and 15 -> 2 allocations for 200-character strings, `tests/text_alloc.rs`).
+- SAT body sizing trial-encodes on the stack: a `serialized_len` + `serialize_into` pair no longer heap-allocates 16 KiB (r02-O2, `tests/sat_alloc.rs`).
+- One `tables::write_crc` helper and one `CRC_LEN` replace ~25 copies of the CRC trailer code (r02-W10); residual bare section-header masks are named (r02-W16).
+### Changed (BREAKING)
 
 - **PID fields are the typed `mpeg_ts::pid::Pid`** (typed-ids wave 1b): `PatEntry::pid`, `PmtStream::elementary_pid`, `PmtSection::pcr_pid`, `CatCaEntry::ca_pid`, `CaDescriptor::ca_pid`, `Cp::cp_pid`, `PatSection::nit_pid()` (now `Option<Pid>`), and every per-table `PID` const (`pat::PID`, `eit::PID`, ...). The matching constructors (`PatEntry::new`, `PmtStream::new`, `PmtSection::new`, `CaDescriptor::new`, `Cp::new`) take `Pid`, so an over-13-bit value is unrepresentable (use `Pid::try_new` at a user boundary); the old serialize-time `FieldOverflow` for `ca_pid`/`cp_pid` is gone with it. Parse masks the 13 wire bits into the `Pid` (the 3 reserved bits stay in their typed reserved fields); serde and `dvb-tools` output are byte-identical (`Pid` serializes transparently as the number). `CatCaEntry` no longer derives `Default` (`Pid` has none). `XaitPid::xait_pid` stays a raw `u16`: TS 102 727 Table 95 defines one 16-bit field with no reserved split and the crate round-trips it verbatim. Migration: drop `Pid::new(entry.pid)` / `.value()` adaptors at call sites; pass `Pid::new(..)`/`Pid::try_new(..)` where a literal was used. Gate: `real_capture_byte_identity` now compares every PAT/PMT/CA PID against an independent 13-bit wire extraction over all real captures; `tests/typed_pid.rs` pins the boundary.
 ### Changed (breaking)

@@ -9,14 +9,14 @@
 //!
 //! ```
 //! use broadcast_common::Parse;
-//! use dvb_subtitle::{PesDataField, DataIdentifier, SyncByte, EndOfPesMarker};
+//! use dvb_subtitle::{PesDataField, DATA_IDENTIFIER, SYNC_BYTE, END_OF_PES_MARKER};
 //!
 //! let bytes = [
-//!     DataIdentifier,               // 0x20
+//!     DATA_IDENTIFIER,               // 0x20
 //!     0x00,                         // subtitle_stream_id
-//!     SyncByte,                     // 0x0F
+//!     SYNC_BYTE,                     // 0x0F
 //!     0x80, 0x00, 0x01, 0x00, 0x00, // end_of_display_set
-//!     EndOfPesMarker,               // 0xFF
+//!     END_OF_PES_MARKER,               // 0xFF
 //! ];
 //! let field = PesDataField::parse(&bytes).unwrap();
 //! assert_eq!(field.segments.len(), 1);
@@ -48,13 +48,13 @@ pub use pes_data_field::PesDataField;
 pub use traits::SegmentDef;
 
 /// The `data_identifier` for DVB subtitle streams (0x20).
-pub use pes_data_field::DATA_IDENTIFIER as DataIdentifier;
+pub use pes_data_field::DATA_IDENTIFIER;
 /// The `end_of_PES_data_field_marker` (0xFF).
-pub use pes_data_field::END_OF_PES_MARKER as EndOfPesMarker;
+pub use pes_data_field::END_OF_PES_MARKER;
 /// The `subtitle_stream_id` identifying a DVB subtitle stream (0x00).
-pub use pes_data_field::SUBTITLE_STREAM_ID as SubtitleStreamId;
+pub use pes_data_field::SUBTITLE_STREAM_ID;
 /// The sync_byte prefixing each subtitling segmentation (0x0F).
-pub use pes_data_field::SYNC_BYTE as SyncByte;
+pub use pes_data_field::SYNC_BYTE;
 
 // Re-export segment types and enums for convenience.
 pub use segments::alternative_clut::{

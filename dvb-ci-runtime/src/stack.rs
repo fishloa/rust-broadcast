@@ -158,19 +158,24 @@ impl CiStack {
             Event::Host(HostRequest::AddProgram(pmt)) => self.add_program(pmt),
             Event::Host(HostRequest::RemoveProgram(pmt)) => self.remove_program(pmt),
             Event::Host(HostRequest::EnterMenu) => {
-                match crate::resource::ser(&dvb_ci::objects::application_info::EnterMenu) {
+                match crate::resource::ser(&dvb_ci::objects::application_info::EnterMenu::default())
+                {
                     Ok(apdu) => self.send_to_resource(APPLICATION_INFORMATION, &apdu),
                     Err(e) => vec![err_action(e)],
                 }
             }
             Event::Host(HostRequest::MmiMenuAnswer(choice_ref)) => {
-                match crate::resource::ser(&MenuAnsw { choice_ref }) {
+                match crate::resource::ser(&MenuAnsw {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
+                    choice_ref,
+                }) {
                     Ok(apdu) => self.send_to_resource(MMI, &apdu),
                     Err(e) => vec![err_action(e)],
                 }
             }
             Event::Host(HostRequest::MmiEnquiryAnswer(text)) => {
                 match crate::resource::ser(&Answ {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     answ_id: AnswId::Answer,
                     text_chars: text,
                 }) {
@@ -179,6 +184,7 @@ impl CiStack {
                 }
             }
             Event::Host(HostRequest::MmiCancel) => match crate::resource::ser(&Answ {
+                length_form: dvb_ci::length::LengthForm::Minimal,
                 answ_id: AnswId::Cancel,
                 text_chars: &[],
             }) {
@@ -473,6 +479,7 @@ mod tests {
         s.handle(Event::Host(HostRequest::Init));
         s.handle(Event::Readable(&[tpdu_tags::C_T_C_REPLY, 0x01, 0x01]));
         let osr = ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             resource: RESOURCE_MANAGER,
         });
         s.handle(Event::Readable(&r_data(1, &osr)));
@@ -503,6 +510,7 @@ mod tests {
         s.handle(Event::Host(HostRequest::Init));
         s.handle(Event::Readable(&[tpdu_tags::C_T_C_REPLY, 0x01, 0x01]));
         let osr = ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             resource: RESOURCE_MANAGER,
         });
         s.handle(Event::Readable(&r_data(1, &osr)));
@@ -532,12 +540,16 @@ mod tests {
         s.handle(Event::Host(HostRequest::Init));
         s.handle(Event::Readable(&[tpdu_tags::C_T_C_REPLY, 0x01, 0x01]));
         let osr = ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             resource: RESOURCE_MANAGER,
         });
         s.handle(Event::Readable(&r_data(1, &osr)));
         let first = s.handle(Event::Readable(&r_apdu(
             1,
-            &ser(&dvb_ci::objects::resource_manager::Profile { resources: vec![] }),
+            &ser(&dvb_ci::objects::resource_manager::Profile {
+                length_form: dvb_ci::length::LengthForm::Minimal,
+                resources: vec![],
+            }),
         )));
         assert!(
             first
@@ -552,12 +564,16 @@ mod tests {
         s.handle(Event::Host(HostRequest::Init));
         s.handle(Event::Readable(&[tpdu_tags::C_T_C_REPLY, 0x01, 0x01]));
         let osr2 = ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             resource: RESOURCE_MANAGER,
         });
         s.handle(Event::Readable(&r_data(1, &osr2)));
         let second = s.handle(Event::Readable(&r_apdu(
             1,
-            &ser(&dvb_ci::objects::resource_manager::Profile { resources: vec![] }),
+            &ser(&dvb_ci::objects::resource_manager::Profile {
+                length_form: dvb_ci::length::LengthForm::Minimal,
+                resources: vec![],
+            }),
         )));
         assert!(
             second
@@ -578,6 +594,7 @@ mod tests {
         // module opens a session to the host's resource_manager (carried in an
         // R_TPDU data block)
         let osr = ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             resource: RESOURCE_MANAGER,
         });
         let actions = s.handle(Event::Readable(&r_data(1, &osr)));
@@ -644,7 +661,10 @@ mod tests {
     /// a module→host R_TPDU.
     fn r_apdu(session_nb: u16, apdu: &[u8]) -> Vec<u8> {
         use dvb_ci::spdu::SessionNumber;
-        let mut spdu = ser(&SessionNumber { session_nb });
+        let mut spdu = ser(&SessionNumber {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            session_nb,
+        });
         spdu.extend_from_slice(apdu);
         r_data(1, &spdu)
     }
@@ -706,6 +726,7 @@ mod tests {
         s.handle(Event::Readable(&r_data(
             1,
             &ser(&OpenSessionRequest {
+                length_form: dvb_ci::length::LengthForm::Minimal,
                 resource: RESOURCE_MANAGER,
             }),
         )));
@@ -714,6 +735,7 @@ mod tests {
         s.handle(Event::Readable(&r_apdu(
             1,
             &ser(&Profile {
+                length_form: dvb_ci::length::LengthForm::Minimal,
                 resources: vec![APPLICATION_INFORMATION, CONDITIONAL_ACCESS_SUPPORT, MMI],
             }),
         )));
@@ -728,6 +750,7 @@ mod tests {
             s.handle(Event::Readable(&r_data(
                 1,
                 &ser(&CreateSessionResponse {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     status: SessionStatus::Ok,
                     resource: res,
                     session_nb: nb,
@@ -746,6 +769,7 @@ mod tests {
         s.handle(Event::Readable(&r_apdu(
             ca_nb,
             &ser(&CaInfo {
+                length_form: dvb_ci::length::LengthForm::Minimal,
                 ca_system_ids: vec![0x0B00, 0x1800],
             }),
         )));
@@ -815,6 +839,7 @@ mod tests {
         let reply = s.handle(Event::Readable(&r_apdu(
             ca_nb,
             &ser(&CaPmtReply {
+                length_form: dvb_ci::length::LengthForm::Minimal,
                 program_number: 1,
                 version_number: 1,
                 current_next_indicator: true,

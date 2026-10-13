@@ -156,7 +156,7 @@ impl Document {
     /// re-parses with exactly the namespaces the original resolved to
     /// (#1110/TT-W1). The document remains parseable/serializable afterwards.
     pub fn to_xml(&mut self) -> String {
-        let mut w: W = Writer::new(Vec::new());
+        let mut w = W::new();
         emit(
             &mut w,
             Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)),
@@ -730,6 +730,10 @@ pub enum InlineContent {
     Image(Box<ImageElement>),
     /// An `<audio>` element (Embedded.class — TTML2 §9.1.1, legal in `<p>`/`<span>`).
     Audio(Box<AudioElement>),
+    /// An unmodeled child element (foreign namespace, or a TT-namespace
+    /// element the crate does not model), kept at its original position among
+    /// the surrounding text and spans (TTML2 §7.2/§7.3, #1110/TT-W1/TT-W2).
+    Unknown(Box<UnknownElement>),
 }
 
 /// Animation children (in body, div, p, span, region).
@@ -1647,10 +1651,21 @@ fn foreign_attributes(node: &StartTag) -> Vec<ForeignAttribute> {
     let scoped = capture_scoped_namespaces(node);
     node.attributes()
         .iter()
-        .filter(|attr| {
+        .enumerate()
+        .filter(|(idx, attr)| {
+            // An attribute in a namespace the crate does not model is always
+            // foreign. One in a modeled namespace (or no namespace) is foreign
+            // too when no parser read it for this element: it is a name the
+            // crate does not model there (a newer TTML attribute, a typo, a
+            // vendor extension in `tts:`/`ttp:`/...), and is preserved instead
+            // of being dropped (#1110/TT-W1). This relies on every field read
+            // of an element happening before it asks for its foreign
+            // attributes -- `foreign_attributes` is the last attribute-touching
+            // field of every parse site (pinned by a test).
             !MODELED_ATTRIBUTE_NAMESPACES.contains(&attr.namespace.as_deref().unwrap_or(""))
+                || !node.is_consumed(*idx)
         })
-        .map(|attr| {
+        .map(|(_, attr)| {
             let mut foreign = ForeignAttribute::new(
                 prefix_for_uri(node, attr.namespace.as_deref()),
                 attr.namespace.as_deref(),
@@ -1661,6 +1676,15 @@ fn foreign_attributes(node: &StartTag) -> Vec<ForeignAttribute> {
             foreign
         })
         .collect()
+}
+
+/// Whether `node` carries an attribute in a namespace the crate does not model.
+/// Used where a typed-vs-unknown decision is made *before* the typed builder
+/// has read its own attributes, so read-tracking cannot be consulted yet.
+fn has_foreign_namespace_attributes(node: &StartTag) -> bool {
+    node.attributes()
+        .iter()
+        .any(|a| !MODELED_ATTRIBUTE_NAMESPACES.contains(&a.namespace.as_deref().unwrap_or("")))
 }
 
 /// The namespaced declarations on `node` that the crate does not already
@@ -1806,7 +1830,12 @@ fn unknown_from(node: &StartTag, children: Vec<UnknownNode>) -> UnknownElement {
     // non-default prefix bound to the element's namespace in scope,
     // innermost-first, which is the prefix the author must have written for a
     // foreign element (a local `xmlns:v` override beats an ancestor's binding).
-    let prefix = prefix_for_uri(node, node.namespace()).map(String::from);
+    //
+    // Exact: the prefix the element name was written with, `None` when it was
+    // unprefixed (default namespace). Guessing it from the scope gave an
+    // unprefixed `<chunk/>` the `tt` prefix that `to_xml` declares, so a
+    // re-parse of the output differed from the original tree.
+    let prefix = node.prefix().map(String::from);
     UnknownElement {
         prefix,
         namespace: node.namespace().map(String::from),
@@ -2137,9 +2166,9 @@ fn parse_div_element(p: &mut Pull<'_>, node: &StartTag) -> Result<DivElement> {
         animate: node.attribute("animate").map(|s| s.to_string()),
         condition: node.attribute("condition").map(|s| s.to_string()),
         style_attributes: style_attrs,
-        foreign_attributes: foreign_attributes(node),
         smpte_background_image: attribute_value(node, NS_SMPTE, "backgroundImage")
             .map(|s| s.to_string()),
+        foreign_attributes: foreign_attributes(node),
         paragraphs,
         images,
         audio,
@@ -2153,7 +2182,7 @@ fn parse_p_element(p: &mut Pull<'_>, node: &StartTag) -> Result<PElement> {
     let mut content: Vec<InlineContent> = Vec::new();
     let mut metadata = Vec::new();
     let mut animations = Vec::new();
-    let mut unknown_children = Vec::new();
+    let unknown_children = Vec::new();
 
     loop {
         match p.next(node)? {
@@ -2186,7 +2215,7 @@ fn parse_p_element(p: &mut Pull<'_>, node: &StartTag) -> Result<PElement> {
                     animations.push(AnimationChild::Set(*parse_set_element(p, &child)?));
                 }
                 _ => {
-                    unknown_children.push(*parse_unknown_element(p, &child, 0)?);
+                    content.push(InlineContent::Unknown(parse_unknown_element(p, &child, 0)?));
                 }
             },
             Item::Other => {}
@@ -2332,11 +2361,11 @@ fn parse_span_element_impl(
                         frame.animations.push(set);
                     }
                     _ => {
-                        let unknown = *parse_unknown_element(p, &child, 0)?;
+                        let unknown = parse_unknown_element(p, &child, 0)?;
                         let Some(frame) = open.last_mut() else {
-                            return Err(span_walk_invariant("meta child inside an open span"));
+                            return Err(span_walk_invariant("inline child inside an open span"));
                         };
-                        frame.unknown_children.push(unknown);
+                        frame.content.push(InlineContent::Unknown(unknown));
                     }
                 }
             }
@@ -2517,7 +2546,7 @@ fn parse_pure_text_child(
     typed: impl FnOnce(&StartTag, String) -> MetadataChild,
 ) -> Result<MetaOutcome> {
     let scanned = scan_children(p, node, 1)?;
-    if foreign_attributes(node).is_empty() && !scanned.has_element {
+    if !has_foreign_namespace_attributes(node) && !scanned.has_element {
         Ok(MetaOutcome::Child(typed(node, scanned.first_text)))
     } else {
         Ok(MetaOutcome::Unknown(unknown_from(node, scanned.children)))
@@ -2538,7 +2567,7 @@ fn parse_document_metadata_child(p: &mut Pull<'_>, node: &StartTag) -> Result<Me
             Item::Start(child) => {
                 if child.local() == "conformsToStandard" && child.namespace() == Some(NS_EBUTTM) {
                     let scanned = scan_children(p, &child, 2)?;
-                    if foreign_attributes(&child).is_empty() && !scanned.has_element {
+                    if !has_foreign_namespace_attributes(&child) && !scanned.has_element {
                         typed.push(MetadataChild::EbuttmConformsToStandard(build_ebuttm_text(
                             &child,
                             scanned.first_text,
@@ -2559,7 +2588,7 @@ fn parse_document_metadata_child(p: &mut Pull<'_>, node: &StartTag) -> Result<Me
             Item::End => break,
         }
     }
-    if foreign_attributes(node).is_empty() && all_modeled {
+    if !has_foreign_namespace_attributes(node) && all_modeled {
         Ok(MetaOutcome::Child(MetadataChild::EbuttmDocumentMetadata(
             EbuttmElement {
                 foreign_attributes: Vec::new(),
@@ -3314,6 +3343,10 @@ fn parse_xml_space(value: Option<&str>) -> Option<XmlSpace> {
 struct NamespaceMap {
     /// `(prefix, uri)` pairs in declaration order (core bindings first).
     bindings: Vec<(String, String)>,
+    /// The default namespace currently in scope during serialization (`""` =
+    /// none): the TT namespace from `<tt>`, temporarily replaced while writing
+    /// an unprefixed unmodeled element that carries its own `xmlns`.
+    default_ns: String,
     /// `xmlns:` declarations that were scoped below `<tt>` (foreign
     /// attributes or unknown elements carrying their own declarations).
     /// Re-emitted on `<tt>` so the document stays namespace-equivalent
@@ -3360,6 +3393,7 @@ impl NamespaceMap {
                 .iter()
                 .map(|(p, u)| (String::from(*p), String::from(*u)))
                 .collect(),
+            default_ns: String::from(NS_TT),
             scoped: Vec::new(),
             last_wins: Vec::new(),
         }
@@ -3502,6 +3536,11 @@ impl NamespaceMap {
             Some(uri) => uri,
             None => return String::new(),
         };
+        // The `xml` prefix is bound to the XML namespace by definition and no
+        // other prefix may be (Namespaces in XML 1.0 §3): never declare one.
+        if uri == NS_XML {
+            return String::from("xml");
+        }
         // A scoped override of this prefix (recorded by `add_scoped`) wins
         // for the prefix spelling the attribute originally used, so an
         // inner-scope `xmlns:v` re-binding is reproduced verbatim.
@@ -3532,15 +3571,39 @@ impl NamespaceMap {
 // event and every attribute value and text node is escaped by quick-xml.
 // Writing to the in-memory `Vec` cannot fail, so write results are discarded.
 
-/// The writer every serializer appends to.
-type W = Writer<Vec<u8>>;
-
-fn emit(w: &mut W, event: Event<'_>) {
-    let _ = w.write_event(event);
+/// The writer every serializer appends to: a `quick_xml::Writer` plus a
+/// "compact" depth. While it is non-zero (inside `<p>`/`<span>`, whose content
+/// is whitespace-significant mixed content) layout whitespace is suppressed, so
+/// serializing metadata/animation/foreign children there inserts no text node
+/// (#1110/TT-W1).
+struct W {
+    inner: Writer<Vec<u8>>,
+    compact: usize,
 }
 
-/// Layout whitespace (spaces/newlines) between block elements.
+impl W {
+    fn new() -> Self {
+        W {
+            inner: Writer::new(Vec::new()),
+            compact: 0,
+        }
+    }
+
+    fn into_inner(self) -> Vec<u8> {
+        self.inner.into_inner()
+    }
+}
+
+fn emit(w: &mut W, event: Event<'_>) {
+    let _ = w.inner.write_event(event);
+}
+
+/// Layout whitespace (spaces/newlines) between block elements; dropped inside
+/// mixed content (see [`W`]).
 fn layout(w: &mut W, whitespace: &str) {
+    if w.compact > 0 {
+        return;
+    }
     emit(w, Event::Text(BytesText::from_escaped(whitespace)));
 }
 
@@ -4264,6 +4327,7 @@ fn heal_last_wins(tt: &mut TtElement, prefix: &str, uri: &str) {
                 InlineContent::Span(span) => stack.push(Mut::Span(span)),
                 InlineContent::Image(img) => stack.push(Mut::Image(img)),
                 InlineContent::Audio(audio) => stack.push(Mut::Audio(audio)),
+                InlineContent::Unknown(u) => stack.push(Mut::Unknown(u)),
                 _ => {}
             },
             Mut::Meta(meta) => match meta {
@@ -4444,6 +4508,7 @@ fn push_inlines<'a>(
             }
             InlineContent::Image(img) => stack.push(WalkNode::Image(img)),
             InlineContent::Audio(audio) => stack.push(WalkNode::Audio(audio)),
+            InlineContent::Unknown(u) => stack.push(WalkNode::Unknown(u)),
             InlineContent::Br(br) => {
                 push_attrs(ns, &br.foreign_attributes);
                 style_attrs_namespaces(&br.style_attributes, ns);
@@ -4595,15 +4660,48 @@ fn serialize_unknown_element(
 
     put_indent(w, indent);
     let mut t = BytesStart::new(name.as_str());
+    // An unprefixed element is in the *default* namespace; if that is not the
+    // one currently in scope (`<tt>` declares the TT namespace) it needs its
+    // own `xmlns`, or it would silently change namespace on output.
+    let saved_default = ns.default_ns.clone();
+    if elem.prefix.as_deref().is_none_or(str::is_empty) {
+        let want = elem.namespace.as_deref().unwrap_or("");
+        if ns.default_ns != want {
+            push_attr(&mut t, "xmlns", want);
+            ns.default_ns = String::from(want);
+        }
+    }
     serialize_ns_attrs(&mut t, &elem.attributes, ns);
     if elem.children.is_empty() {
         empty_line(w, t);
+        ns.default_ns = saved_default;
         return;
     }
     let has_element_child = elem
         .children
         .iter()
         .any(|c| matches!(c, UnknownNode::Element(_)));
+    let has_text = elem
+        .children
+        .iter()
+        .any(|c| matches!(c, UnknownNode::Text(t) if !t.trim().is_empty()));
+    if has_element_child && has_text {
+        // Mixed content: character data is significant, so write the children
+        // verbatim with no layout whitespace around or between them (the
+        // trimming/indenting form below would alter the text).
+        start_inline(w, t);
+        w.compact += 1;
+        for child in &elem.children {
+            match child {
+                UnknownNode::Element(e) => serialize_unknown_element(e, w, 0, ns),
+                UnknownNode::Text(text) => put_text(w, text),
+            }
+        }
+        w.compact -= 1;
+        end_inline_line(w, &name);
+        ns.default_ns = saved_default;
+        return;
+    }
     if !has_element_child {
         // Text-only subtree: keep it on one line so no spurious whitespace
         // text node is introduced.
@@ -4614,6 +4712,7 @@ fn serialize_unknown_element(
             }
         }
         end_inline_line(w, &name);
+        ns.default_ns = saved_default;
         return;
     }
     start_line(w, t);
@@ -4632,6 +4731,7 @@ fn serialize_unknown_element(
         }
     }
     end_line(w, indent, &name);
+    ns.default_ns = saved_default;
 }
 
 /// Serialize `<head>` — TTML2 §8.1.2.
@@ -4802,6 +4902,10 @@ fn serialize_p_element(p: &PElement, w: &mut W, indent: usize, ns: &mut Namespac
         return;
     }
     start_inline(w, t);
+    // Inside `<p>` no layout whitespace may be written: the text nodes there
+    // are significant (`xml:space`), so a hoisted `<metadata>` must not gain a
+    // newline/indent text node (#1110/TT-W1).
+    w.compact += 1;
     for meta in &p.metadata {
         serialize_metadata_child(meta, w, indent + 1, ns);
     }
@@ -4814,6 +4918,7 @@ fn serialize_p_element(p: &PElement, w: &mut W, indent: usize, ns: &mut Namespac
     for unknown in &p.unknown_children {
         serialize_unknown_element(unknown, w, indent + 1, ns);
     }
+    w.compact -= 1;
     end_inline_line(w, "p");
 }
 
@@ -4825,6 +4930,7 @@ fn serialize_p_element(p: &PElement, w: &mut W, indent: usize, ns: &mut Namespac
 fn serialize_inline_content(content: &InlineContent, w: &mut W, ns: &mut NamespaceMap) {
     enum Frame<'a> {
         Node(&'a InlineContent),
+        Unknown(&'a UnknownElement),
         Close(&'static str),
     }
 
@@ -4863,8 +4969,22 @@ fn serialize_inline_content(content: &InlineContent, w: &mut W, ns: &mut Namespa
                 } else {
                     start_inline(w, t);
                     stack.push(Frame::Close("span"));
+                    // `unknown_children` (struct-built trees; a parsed span keeps
+                    // unmodeled children in `content`) follow the content.
+                    for u in span.unknown_children.iter().rev() {
+                        stack.push(Frame::Unknown(u));
+                    }
                     for item in span.content.iter().rev() {
                         stack.push(Frame::Node(item));
+                    }
+                    // Metadata and animation children are hoisted before the
+                    // inline content, like `<p>`'s, and were previously dropped
+                    // on serialize (#1110/TT-W2).
+                    for meta in &span.metadata {
+                        serialize_metadata_child(meta, w, 0, ns);
+                    }
+                    for anim in &span.animations {
+                        serialize_animation_child(anim, w, 0, ns);
                     }
                 }
             }
@@ -4887,6 +5007,12 @@ fn serialize_inline_content(content: &InlineContent, w: &mut W, ns: &mut Namespa
             }
             Frame::Node(InlineContent::Audio(audio)) => {
                 serialize_inline_audio(audio, w, ns);
+            }
+            Frame::Node(InlineContent::Unknown(unknown)) => {
+                serialize_unknown_element(unknown, w, 0, ns);
+            }
+            Frame::Unknown(unknown) => {
+                serialize_unknown_element(unknown, w, 0, ns);
             }
             Frame::Close(tag) => {
                 end_inline(w, tag);

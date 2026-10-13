@@ -19,25 +19,41 @@ const MS_PER_HOUR: u64 = 3_600_000;
 const MS_PER_MIN: u64 = 60_000;
 const MS_PER_SEC: u64 = 1_000;
 
-/// Parse a `(hh:)?mm:ss.ttt` timestamp (the separator before the
-/// milliseconds field must already be normalised to `.` by the caller — SRT
-/// callers pass the `,`-separated string through
-/// [`normalize_comma_separator`] first) into 90 kHz ticks.
-pub(crate) fn parse_timestamp(s: &str) -> Result<u64, Error> {
+/// ASCII digits only (and non-empty). `str::parse::<u64>` also accepts a
+/// leading `+`, which no timestamp grammar here allows (#1109 CV-O1).
+fn all_digits(s: &str) -> bool {
+    !s.is_empty() && s.bytes().all(|b| b.is_ascii_digit())
+}
+
+/// Parse a `(hh:)?mm:ss<sep>ttt` timestamp into 90 kHz ticks, where `sep` is
+/// the millisecond separator: `.` for WebVTT (W3C WebVTT §4.3.1), `,` for
+/// SRT's de facto form. Splitting on `sep` in place avoids the per-timestamp
+/// `String` the earlier "normalise `,` to `.` then parse" step allocated
+/// (#1109 CV-O3).
+pub(crate) fn parse_timestamp(s: &str, sep: char) -> Result<u64, Error> {
     let invalid = || Error::InvalidTimestamp(s.to_string());
-    let (rest, ms_str) = s.split_once('.').ok_or_else(invalid)?;
-    if ms_str.len() != 3 || !ms_str.bytes().all(|b| b.is_ascii_digit()) {
+    let (rest, ms_str) = s.split_once(sep).ok_or_else(invalid)?;
+    if ms_str.len() != 3 || !all_digits(ms_str) {
         return Err(invalid());
     }
     let ms: u64 = ms_str.parse().map_err(|_| invalid())?;
 
-    let fields: alloc::vec::Vec<&str> = rest.split(':').collect();
-    let (h, m, sec): (u64, &str, &str) = match fields.as_slice() {
-        [m, s] => (0, m, s),
-        [h, m, s] => (h.parse().map_err(|_| invalid())?, m, s),
+    let mut fields = rest.split(':');
+    let (first, second, third) = (fields.next(), fields.next(), fields.next());
+    if fields.next().is_some() {
+        return Err(invalid());
+    }
+    let (h_str, m, sec) = match (first, second, third) {
+        (Some(m), Some(s), None) => (None, m, s),
+        (Some(h), Some(m), Some(s)) => (Some(h), m, s),
         _ => return Err(invalid()),
     };
-    if m.len() != 2 || sec.len() != 2 {
+    let h: u64 = match h_str {
+        Some(h) if all_digits(h) => h.parse().map_err(|_| invalid())?,
+        Some(_) => return Err(invalid()),
+        None => 0,
+    };
+    if m.len() != 2 || sec.len() != 2 || !all_digits(m) || !all_digits(sec) {
         return Err(invalid());
     }
     let m: u64 = m.parse().map_err(|_| invalid())?;
@@ -60,15 +76,6 @@ pub(crate) fn parse_timestamp(s: &str) -> Result<u64, Error> {
         .and_then(|v| v.checked_add(ms))
         .ok_or_else(invalid)?;
     total_ms.checked_mul(TICKS_PER_MS).ok_or_else(invalid)
-}
-
-/// Replace the SRT `,` millisecond separator with `.` so
-/// [`parse_timestamp`] can be shared between both formats.
-pub(crate) fn normalize_comma_separator(s: &str) -> alloc::string::String {
-    // SRT timestamps have exactly one comma (the ms separator); a plain
-    // single-pass replace is exact and needs no escaping (unlike
-    // `webvtt::escape_payload`'s multi-entity payload text).
-    s.replace(',', ".")
 }
 
 /// Normalise every WebVTT line-terminator form to a single `\n`.
@@ -123,26 +130,29 @@ mod tests {
 
     #[test]
     fn round_trip_basic() {
-        assert_eq!(parse_timestamp("00:00:01.000").unwrap(), 90_000);
-        assert_eq!(parse_timestamp("01:00:00.000").unwrap(), 3_600 * 90_000);
-        assert_eq!(parse_timestamp("00:00:00.001").unwrap(), 90);
+        assert_eq!(parse_timestamp("00:00:01.000", '.').unwrap(), 90_000);
+        assert_eq!(
+            parse_timestamp("01:00:00.000", '.').unwrap(),
+            3_600 * 90_000
+        );
+        assert_eq!(parse_timestamp("00:00:00.001", '.').unwrap(), 90);
     }
 
     #[test]
     fn rejects_bad_ms_length() {
-        assert!(parse_timestamp("00:00:01.0").is_err());
-        assert!(parse_timestamp("00:00:01.00000").is_err());
+        assert!(parse_timestamp("00:00:01.0", '.').is_err());
+        assert!(parse_timestamp("00:00:01.00000", '.').is_err());
     }
 
     #[test]
     fn rejects_out_of_range_fields() {
-        assert!(parse_timestamp("00:60:00.000").is_err());
-        assert!(parse_timestamp("00:00:60.000").is_err());
+        assert!(parse_timestamp("00:60:00.000", '.').is_err());
+        assert!(parse_timestamp("00:00:60.000", '.').is_err());
     }
 
     #[test]
     fn rejects_missing_dot() {
-        assert!(parse_timestamp("00:00:01").is_err());
+        assert!(parse_timestamp("00:00:01", '.').is_err());
     }
 
     #[test]
@@ -152,18 +162,36 @@ mod tests {
         // to-milliseconds/to-ticks widening multiplications (found by
         // fuzzing -- a debug-assertions build used to panic on this input
         // instead of returning `Err`).
-        assert!(parse_timestamp("11662322688380341727:00:01.000").is_err());
+        assert!(parse_timestamp("11662322688380341727:00:01.000", '.').is_err());
         // u64::MAX itself, for the same reason.
-        assert!(parse_timestamp("18446744073709551615:00:00.000").is_err());
+        assert!(parse_timestamp("18446744073709551615:00:00.000", '.').is_err());
     }
 
     #[test]
-    fn comma_normalization() {
-        assert_eq!(normalize_comma_separator("00:00:01,500"), "00:00:01.500");
+    fn comma_separator_is_parsed_in_place() {
         assert_eq!(
-            parse_timestamp(&normalize_comma_separator("00:00:01,500")).unwrap(),
+            parse_timestamp("00:00:01,500", ',').unwrap(),
             90_000 + 45_000
         );
+        // The wrong separator for the format is an error, not a silent accept.
+        assert!(parse_timestamp("00:00:01,500", '.').is_err());
+        assert!(parse_timestamp("00:00:01.500", ',').is_err());
+    }
+
+    /// CV-O1 (#1109): `str::parse::<u64>` accepts a leading `+`; the timestamp
+    /// grammar is digits only.
+    #[test]
+    fn plus_sign_is_rejected_in_every_field() {
+        for bad in [
+            "+0:00:01.000",
+            "00:+1:01.000",
+            "00:00:+1.000",
+            "00:00:01.+00",
+            "+1:00:00:01.000",
+        ] {
+            assert!(parse_timestamp(bad, '.').is_err(), "{bad}");
+        }
+        assert!(parse_timestamp("00:00:01.000", '.').is_ok());
     }
 
     #[test]
@@ -185,7 +213,7 @@ mod tests {
 
     #[test]
     fn hms_ms_matches_parse() {
-        let ticks = parse_timestamp("01:02:03.456").unwrap();
+        let ticks = parse_timestamp("01:02:03.456", '.').unwrap();
         assert_eq!(to_hms_ms(ticks), (1, 2, 3, 456));
     }
 }

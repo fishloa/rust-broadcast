@@ -38,33 +38,15 @@
 use alloc::vec::Vec;
 use bytes::Bytes;
 use mpeg_ts::pid::Pid;
+use mpeg_ts::ts::TsPacket;
 
 use crate::crc;
 use crate::packet::Header;
 use crate::payload::AnyPayload;
 use crate::ts::PacketReassembler;
 
-// ── TS header constants (ISO/IEC 13818-1 §2.4.3.2) ──────────────────────────
-
-/// TS sync byte.
-const TS_SYNC_BYTE: u8 = 0x47;
-/// Expected size of one MPEG-TS packet.
-const TS_PACKET_SIZE: usize = 188;
-/// Byte 1 bit 7 = TEI (Transport Error Indicator).
-const TEI_MASK: u8 = 0x80;
-/// Byte 1 bit 6 = PUSI (Payload Unit Start Indicator).
-const PUSI_MASK: u8 = 0x40;
-/// Byte 1 bits 4..=0 = PID upper 5 bits.
-const PID_MASK_HI: u8 = 0x1F;
-/// Byte 3 bit 5 = adaptation_field_control bit 1 (adaptation field present).
-const ADAPTATION_FLAG: u8 = 0x20;
-/// Byte 3 bit 4 = adaptation_field_control bit 0 (payload present).
-const PAYLOAD_FLAG: u8 = 0x10;
-/// Byte 3 bits `[3:0]` = 4-bit continuity_counter.
-const CC_MASK: u8 = 0x0F;
-
 /// Minimal result of TS header parsing needed by the pump.
-struct TsInfo {
+struct TsInfo<'a> {
     pid: Pid,
     pusi: bool,
     /// Transport Error Indicator — set by the demodulator when an
@@ -73,59 +55,29 @@ struct TsInfo {
     /// 4-bit continuity_counter, used to detect the one legal repeated
     /// packet ISO/IEC 13818-1 §2.4.3.3 allows (W-T2-2).
     cc: u8,
-    /// Byte offset within the 188-byte packet where the payload starts.
-    payload_start: usize,
+    /// The packet's payload bytes (after the header and any adaptation field).
+    payload: &'a [u8],
 }
 
-/// Parse the 4-byte MPEG-TS header and skip any adaptation field.
+/// Parse one 188-byte TS packet via `mpeg_ts::ts::TsPacket` (ISO/IEC 13818-1
+/// §2.4.3.2 header, §2.4.3.4 adaptation field) — no second hand-rolled decode
+/// of the header bit masks (r11-W-T2-2). See `feed_ts` for the TEI-drop and
+/// continuity-counter-duplicate handling §2.4.3.3 requires.
 ///
-/// A local, minimal decode rather than a dependency on `mpeg-ts`'s
-/// `TsHeader`/`TsPacket` (this crate does not depend on `mpeg-ts`, and this
-/// warning sweep may not add new dependencies) — but see `feed_ts` for the
-/// TEI-drop and continuity-counter-duplicate handling ISO/IEC 13818-1
-/// §2.4.3.3 requires (W-T2-2).
-///
-/// Returns `None` when:
-/// - `buf` is shorter than [`TS_PACKET_SIZE`],
-/// - the sync byte is not `0x47`,
-/// - the payload-present flag is clear, or
-/// - the adaptation field length overflows the packet.
-///
-/// Citation: ISO/IEC 13818-1:2019 §2.4.3.2 (transport_packet header) and
-/// §2.4.3.5 (adaptation_field length).
-fn parse_ts_header(buf: &[u8]) -> Option<TsInfo> {
-    if buf.len() < TS_PACKET_SIZE || buf[0] != TS_SYNC_BYTE {
+/// Returns `None` when `buf` is not one valid 188-byte packet (short, bad
+/// sync byte), the payload-present flag is clear, or the adaptation field
+/// leaves no payload bytes.
+fn parse_ts_header(buf: &[u8]) -> Option<TsInfo<'_>> {
+    let pkt = TsPacket::parse(buf).ok()?;
+    if !pkt.header.has_payload {
         return None;
     }
-    let b1 = buf[1];
-    let b3 = buf[3];
-
-    let tei = (b1 & TEI_MASK) != 0;
-    let pusi = (b1 & PUSI_MASK) != 0;
-    let pid = (((b1 & PID_MASK_HI) as u16) << 8) | (buf[2] as u16);
-    let has_adaptation = (b3 & ADAPTATION_FLAG) != 0;
-    let has_payload = (b3 & PAYLOAD_FLAG) != 0;
-    let cc = b3 & CC_MASK;
-
-    if !has_payload {
-        return None;
-    }
-
-    let mut cursor: usize = 4;
-    if has_adaptation {
-        let af_len = buf[cursor] as usize;
-        cursor += 1 + af_len;
-        if cursor > TS_PACKET_SIZE {
-            return None;
-        }
-    }
-
     Some(TsInfo {
-        pid: Pid::new(pid),
-        pusi,
-        tei,
-        cc,
-        payload_start: cursor,
+        pid: pkt.header.pid,
+        pusi: pkt.header.pusi,
+        tei: pkt.header.tei,
+        cc: pkt.header.continuity_counter,
+        payload: pkt.payload?,
     })
 }
 
@@ -430,7 +382,7 @@ impl T2miPump {
                         self.stats.malformed_packets += 1;
                     }
                     Some(info) if info.pid == filter_pid => {
-                        let payload = &packet[info.payload_start..TS_PACKET_SIZE];
+                        let payload = info.payload;
                         if info.tei {
                             // The demodulator has already flagged this
                             // packet as uncorrectable; feeding it would only
@@ -782,6 +734,13 @@ fn hunt_extract(hunt: &mut Vec<u8>, next: &mut usize, emitted: &mut Vec<T2miEven
 mod tests {
     use super::*;
     use broadcast_common::crc32_mpeg2;
+
+    // Test-packet builder constants (ISO/IEC 13818-1 §2.4.3.2).
+    const TS_SYNC_BYTE: u8 = 0x47;
+    const PUSI_MASK: u8 = 0x40;
+    const PID_MASK_HI: u8 = 0x1F;
+    const PAYLOAD_FLAG: u8 = 0x10;
+    const CC_MASK: u8 = 0x0F;
 
     // ── Test helpers ─────────────────────────────────────────────────────────
 

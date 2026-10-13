@@ -112,22 +112,38 @@ impl WhipSession {
     /// absent header is a plain trickle update.
     ///
     /// # Errors
+    /// [`Error::InvalidSdpFragment`] when `Content-Type` is not
+    /// `application/trickle-ice-sdpfrag`;
     /// [`Error::InvalidHeader`] for a malformed `If-Match`;
     /// [`Error::ETagMismatch`] if it does not strongly match the session's tag;
     /// [`Error::WrongState`] outside [`State::Established`].
     pub fn on_patch(&mut self, sdp_fragment: Vec<u8>, headers: &HeaderMap) -> Result<Event, Error> {
         match &self.state {
-            State::Established { etag } => match http_util::check_if_match(headers, etag)? {
-                Precondition::Any => Ok(Event::IceRestart { sdp_fragment }),
-                Precondition::Passes => Ok(Event::TrickleIce {
-                    sdp_fragment,
-                    if_match: Some(etag.clone()),
-                }),
-                Precondition::Absent => Ok(Event::TrickleIce {
-                    sdp_fragment,
-                    if_match: None,
-                }),
-            },
+            State::Established { etag } => {
+                // RFC 9725 §4: the PATCH body is an
+                // `application/trickle-ice-sdpfrag`; any other (or no) media
+                // type is not an SDP fragment (parameters such as `charset`
+                // are ignored, RFC 9110 §8.3.1) - audit run-09 W21.
+                if !http_util::content_type_is(headers, super::content_type::TRICKLE_ICE) {
+                    return Err(Error::InvalidSdpFragment {
+                        reason: alloc::format!(
+                            "unexpected content-type: {}",
+                            http_util::content_type_text(headers)
+                        ),
+                    });
+                }
+                match http_util::check_if_match(headers, etag)? {
+                    Precondition::Any => Ok(Event::IceRestart { sdp_fragment }),
+                    Precondition::Passes => Ok(Event::TrickleIce {
+                        sdp_fragment,
+                        if_match: Some(etag.clone()),
+                    }),
+                    Precondition::Absent => Ok(Event::TrickleIce {
+                        sdp_fragment,
+                        if_match: None,
+                    }),
+                }
+            }
             _ => Err(Error::WrongState {
                 operation: "PATCH",
                 state: server_state_name(&self.state),

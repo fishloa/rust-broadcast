@@ -31,15 +31,16 @@ const AIT_VERSION_MAX: u8 = 0x1F;
 /// DVB Services registry.
 #[must_use]
 pub fn application_type_name(val: u16) -> Option<&'static str> {
-    match crate::tables::ait::ApplicationType::from_u16(val) {
-        crate::tables::ait::ApplicationType::DvbJ
-        | crate::tables::ait::ApplicationType::DvbHtml
-        | crate::tables::ait::ApplicationType::HbbTv
-        | crate::tables::ait::ApplicationType::OipfDae => {
-            Some(crate::tables::ait::ApplicationType::from_u16(val).name())
-        }
-        _ => None,
-    }
+    use crate::tables::ait::ApplicationType;
+    let ty = ApplicationType::from_u16(val);
+    matches!(
+        ty,
+        ApplicationType::DvbJ
+            | ApplicationType::DvbHtml
+            | ApplicationType::HbbTv
+            | ApplicationType::OipfDae
+    )
+    .then(|| ty.name())
 }
 
 /// Default of the 1-bit `reserved_future_use` before `application_type`:

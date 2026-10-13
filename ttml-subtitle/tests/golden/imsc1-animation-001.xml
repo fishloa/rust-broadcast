@@ -9,8 +9,7 @@
   </head>
   <body>
     <div dur="20s" timeContainer="seq">
-      <p dur="10s" tts:backgroundColor="red" tts:color="white">        <set begin="5s" tts:backgroundColor="blue"/>
-
+      <p dur="10s" tts:backgroundColor="red" tts:color="white"><set begin="5s" tts:backgroundColor="blue"/>
 	This background of this sentence should change from red to blue at 5s</p>
     </div>
   </body>

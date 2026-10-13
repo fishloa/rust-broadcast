@@ -56,6 +56,12 @@ broadcast_common::impl_spec_display!(CloseMmiCmdId, Reserved);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CloseMmi {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `close_mmi_cmd_id`.
     pub cmd_id: CloseMmiCmdId,
     /// `delay` (seconds) — present only when `cmd_id == delay`.
@@ -65,7 +71,7 @@ pub struct CloseMmi {
 impl<'a> Parse<'a> for CloseMmi {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::CLOSE_MMI, "close_mmi")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::CLOSE_MMI, "close_mmi")?;
         let cmd_byte = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
@@ -85,7 +91,11 @@ impl<'a> Parse<'a> for CloseMmi {
         };
         // Table 33: the length_field covers cmd_id [+ delay] exactly.
         super::reject_trailing_body(body, 1 + usize::from(delay.is_some()), "close_mmi")?;
-        Ok(Self { cmd_id, delay })
+        Ok(Self {
+            length_form,
+            cmd_id,
+            delay,
+        })
     }
 }
 
@@ -93,11 +103,11 @@ impl Serialize for CloseMmi {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let body = 1 + usize::from(self.delay.is_some());
-        super::apdu_len(body)
+        super::apdu_len(body, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = 1 + usize::from(self.delay.is_some());
-        let mut pos = super::write_apdu_header(tag::CLOSE_MMI, body_len, buf)?;
+        let mut pos = super::write_apdu_header(tag::CLOSE_MMI, body_len, self.length_form, buf)?;
         buf[pos] = self.cmd_id.to_u8();
         pos += 1;
         if let Some(d) = self.delay {
@@ -120,6 +130,7 @@ mod tests {
     #[test]
     fn immediate_round_trip() {
         let c = CloseMmi {
+            length_form: crate::length::LengthForm::Minimal,
             cmd_id: CloseMmiCmdId::Immediate,
             delay: None,
         };
@@ -131,6 +142,7 @@ mod tests {
     #[test]
     fn delay_round_trip() {
         let c = CloseMmi {
+            length_form: crate::length::LengthForm::Minimal,
             cmd_id: CloseMmiCmdId::Delay,
             delay: Some(5),
         };
@@ -144,6 +156,7 @@ mod tests {
     #[test]
     fn mutating_changes_bytes() {
         let c = CloseMmi {
+            length_form: crate::length::LengthForm::Minimal,
             cmd_id: CloseMmiCmdId::Delay,
             delay: Some(5),
         };

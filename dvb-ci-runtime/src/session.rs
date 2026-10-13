@@ -117,12 +117,18 @@ impl SessionLayer {
     /// `status=0xF0` — verified live against an AlphaCrypt.) The session is
     /// recorded once the module's `open_session_response(ok)` arrives.
     pub fn create_session(&mut self, resource: ResourceId) -> dvb_ci::Result<Vec<u8>> {
-        ser(&OpenSessionRequest { resource })
+        ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            resource,
+        })
     }
 
     /// Wrap an APDU for sending on `session_nb` (`session_number` + body).
     pub fn send_apdu(&self, session_nb: u16, apdu: &[u8]) -> dvb_ci::Result<Vec<u8>> {
-        let mut v = ser(&SessionNumber { session_nb })?;
+        let mut v = ser(&SessionNumber {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            session_nb,
+        })?;
         v.extend_from_slice(apdu);
         Ok(v)
     }
@@ -130,7 +136,10 @@ impl SessionLayer {
     /// Begin closing `session_nb`: returns the `close_session_request` SPDU.
     pub fn close(&mut self, session_nb: u16) -> dvb_ci::Result<Vec<u8>> {
         self.sessions.remove(&session_nb);
-        ser(&CloseSessionRequest { session_nb })
+        ser(&CloseSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            session_nb,
+        })
     }
 
     /// Bind a module-chosen `session_nb` to `resource` (from
@@ -176,6 +185,7 @@ impl SessionLayer {
                     let session_nb = self.alloc();
                     self.sessions.insert(session_nb, req.resource);
                     out.spdus.push(ser(&OpenSessionResponse {
+                        length_form: dvb_ci::length::LengthForm::Minimal,
                         status: SessionStatus::Ok,
                         resource: req.resource,
                         session_nb,
@@ -183,6 +193,7 @@ impl SessionLayer {
                     out.opened.push((session_nb, req.resource));
                 } else {
                     out.spdus.push(ser(&OpenSessionResponse {
+                        length_form: dvb_ci::length::LengthForm::Minimal,
                         status: SessionStatus::ResourceNonExistent,
                         resource: req.resource,
                         session_nb: 0,
@@ -217,6 +228,7 @@ impl SessionLayer {
                 let req = CloseSessionRequest::parse(spdu)?;
                 self.sessions.remove(&req.session_nb);
                 out.spdus.push(ser(&CloseSessionResponse {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     status: SessionStatus::Ok,
                     session_nb: req.session_nb,
                 })?);
@@ -231,9 +243,12 @@ impl SessionLayer {
             // Data: session_number(nb) + APDU body.
             Some(tags::SESSION_NUMBER) => {
                 let sn = SessionNumber::parse(spdu)?;
-                if spdu.len() > SessionNumber::HEADER_LEN {
-                    out.apdus
-                        .push((sn.session_nb, spdu[SessionNumber::HEADER_LEN..].to_vec()));
+                // The header is `sn.header_len()` long: 4 bytes when the
+                // `length_field` is minimally coded, longer for a CAM that
+                // codes it in a long form (`90 82 00 02 ..`).
+                let header_len = sn.header_len();
+                if spdu.len() > header_len {
+                    out.apdus.push((sn.session_nb, spdu[header_len..].to_vec()));
                 }
             }
             _ => {}
@@ -256,10 +271,12 @@ mod tests {
         let mut s = SessionLayer::new();
         assert_eq!(s.session_for(RESOURCE_MANAGER), None);
         let rm_req = ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             resource: RESOURCE_MANAGER,
         })
         .unwrap();
         let ai_req = ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             resource: APPLICATION_INFORMATION,
         })
         .unwrap();
@@ -278,6 +295,7 @@ mod tests {
     fn open_request_for_provided_resource_grants_and_tracks() {
         let mut s = SessionLayer::new();
         let req = ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             resource: RESOURCE_MANAGER,
         })
         .unwrap();
@@ -296,6 +314,7 @@ mod tests {
     fn open_request_for_absent_resource_denied() {
         let mut s = SessionLayer::new();
         let req = ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             resource: APPLICATION_INFORMATION,
         })
         .unwrap();
@@ -312,6 +331,7 @@ mod tests {
         let _spdu = s.create_session(APPLICATION_INFORMATION).unwrap();
         // module replies ok for session 1
         let resp = ser(&CreateSessionResponse {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             status: SessionStatus::Ok,
             resource: APPLICATION_INFORMATION,
             session_nb: 1,
@@ -331,6 +351,7 @@ mod tests {
         let mut s = SessionLayer::new();
         // Session 1 is already RESOURCE_MANAGER (opened via the ordinary path).
         let open = ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             resource: RESOURCE_MANAGER,
         })
         .unwrap();
@@ -341,6 +362,7 @@ mod tests {
         // The module now claims that SAME session_nb for a totally
         // different resource via create_session_response.
         let colliding = ser(&CreateSessionResponse {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             status: SessionStatus::Ok,
             resource: APPLICATION_INFORMATION,
             session_nb: nb,
@@ -364,6 +386,7 @@ mod tests {
     fn module_chosen_session_nb_zero_is_rejected() {
         let mut s = SessionLayer::new();
         let resp = ser(&OpenSessionResponse {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             status: SessionStatus::Ok,
             resource: APPLICATION_INFORMATION,
             session_nb: 0,
@@ -401,7 +424,11 @@ mod tests {
     fn session_number_routes_apdu_up() {
         let mut s = SessionLayer::new();
         let apdu = [0x9F, 0x80, 0x21, 0x00];
-        let mut spdu = ser(&SessionNumber { session_nb: 7 }).unwrap();
+        let mut spdu = ser(&SessionNumber {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            session_nb: 7,
+        })
+        .unwrap();
         spdu.extend_from_slice(&apdu);
         let out = s.on_spdu(&spdu, |_| false).unwrap();
         assert_eq!(out.apdus, vec![(7, apdu.to_vec())]);
@@ -412,12 +439,17 @@ mod tests {
         let mut s = SessionLayer::new();
         // open one first
         let req = ser(&OpenSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             resource: RESOURCE_MANAGER,
         })
         .unwrap();
         let nb = s.on_spdu(&req, provides_rm).unwrap().opened[0].0;
         // peer closes it
-        let close = ser(&CloseSessionRequest { session_nb: nb }).unwrap();
+        let close = ser(&CloseSessionRequest {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            session_nb: nb,
+        })
+        .unwrap();
         let out = s.on_spdu(&close, |_| false).unwrap();
         assert_eq!(out.closed, vec![nb]);
         assert!(s.is_empty());
@@ -432,5 +464,18 @@ mod tests {
         let sn = SessionNumber::parse(&wire).unwrap();
         assert_eq!(sn.session_nb, 3);
         assert_eq!(&wire[SessionNumber::HEADER_LEN..], &[0xAA, 0xBB]);
+    }
+
+    /// r10-W-4: a CAM may code the `session_number` `length_field` in a long
+    /// form (`90 82 00 02 ..`, the `82 00 NN` shape captured on hardware in
+    /// #337 at the TPDU layer). The APDU body then starts after the longer
+    /// header; slicing at the fixed 4-byte `HEADER_LEN` handed the APDU layer
+    /// two stray session bytes.
+    #[test]
+    fn session_number_in_a_long_length_form_still_yields_the_apdu() {
+        let mut s = SessionLayer::new();
+        let wire = [0x90, 0x82, 0x00, 0x02, 0x00, 0x03, 0xAA, 0xBB];
+        let out = s.on_spdu(&wire, |_| false).unwrap();
+        assert_eq!(out.apdus, vec![(3, vec![0xAA, 0xBB])]);
     }
 }

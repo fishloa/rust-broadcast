@@ -853,7 +853,10 @@ pub(crate) mod tests {
     /// a module→host R_TPDU on tcid 1.
     pub(crate) fn r_apdu(session_nb: u16, apdu: &[u8]) -> Vec<u8> {
         use dvb_ci::spdu::SessionNumber;
-        let mut spdu = ser(&SessionNumber { session_nb });
+        let mut spdu = ser(&SessionNumber {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            session_nb,
+        });
         spdu.extend_from_slice(apdu);
         r_data(1, &spdu)
     }
@@ -897,6 +900,7 @@ pub(crate) mod tests {
             r_data(
                 1,
                 &ser(&OpenSessionRequest {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     resource: RESOURCE_MANAGER,
                 }),
             ),
@@ -908,6 +912,7 @@ pub(crate) mod tests {
             r_apdu(
                 1,
                 &ser(&Profile {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     resources: vec![
                         APPLICATION_INFORMATION,
                         CONDITIONAL_ACCESS_SUPPORT,
@@ -929,6 +934,7 @@ pub(crate) mod tests {
                 r_data(
                     1,
                     &ser(&CreateSessionResponse {
+                        length_form: dvb_ci::length::LengthForm::Minimal,
                         status: SessionStatus::Ok,
                         resource: res,
                         session_nb: nb,
@@ -957,6 +963,7 @@ pub(crate) mod tests {
 
         // Module (CAM) sends a Tune request on its host_control session.
         let tune = Tune {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             network_id: 0x1122,
             original_network_id: 0x3344,
             transport_stream_id: 0x5566,
@@ -1035,12 +1042,13 @@ pub(crate) mod tests {
             r_data(
                 1,
                 &ser(&dvb_ci::spdu::OpenSessionRequest {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     resource: RESOURCE_MANAGER,
                 }),
             ),
         );
         // Module → profile_enq on the RM session → host replies with its profile.
-        feed(&mut d, r_apdu(RM_SESSION, &ser(&ProfileEnq)));
+        feed(&mut d, r_apdu(RM_SESSION, &ser(&ProfileEnq::default())));
 
         // Find the host's `profile` reply (tag 9F 80 11) in the written frames and
         // confirm it lists HOST_CONTROL.
@@ -1069,7 +1077,14 @@ pub(crate) mod tests {
         d.mmi_menu_answer(2).unwrap();
         d.device_mut().inbound.push_back(sb());
         d.pump(Duration::from_millis(10)).unwrap();
-        assert_apdu_on_session(&d, mmi_nb, &ser(&MenuAnsw { choice_ref: 2 }));
+        assert_apdu_on_session(
+            &d,
+            mmi_nb,
+            &ser(&MenuAnsw {
+                length_form: dvb_ci::length::LengthForm::Minimal,
+                choice_ref: 2,
+            }),
+        );
 
         // answ(answer, "1234"): byte-exact Answ serialization on the MMI session.
         d.mmi_enquiry_answer(b"1234").unwrap();
@@ -1079,6 +1094,7 @@ pub(crate) mod tests {
             &d,
             mmi_nb,
             &ser(&Answ {
+                length_form: dvb_ci::length::LengthForm::Minimal,
                 answ_id: AnswId::Answer,
                 text_chars: b"1234",
             }),
@@ -1089,7 +1105,10 @@ pub(crate) mod tests {
     /// followed by the exact `apdu` bytes (byte-exact APDU on the right session).
     fn assert_apdu_on_session(d: &Driver<MockCaDevice>, session_nb: u16, apdu: &[u8]) {
         use dvb_ci::spdu::SessionNumber;
-        let mut want = ser(&SessionNumber { session_nb });
+        let mut want = ser(&SessionNumber {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            session_nb,
+        });
         want.extend_from_slice(apdu);
         let hit = d.device().ops.iter().any(|op| match op {
             DeviceOp::Write(w) => w.windows(want.len()).any(|x| x == want.as_slice()),
@@ -1106,7 +1125,10 @@ pub(crate) mod tests {
     /// send from a later re-send (#763 Task 5's re-query timer).
     fn count_apdu_on_session(d: &Driver<MockCaDevice>, session_nb: u16, apdu: &[u8]) -> usize {
         use dvb_ci::spdu::SessionNumber;
-        let mut want = ser(&SessionNumber { session_nb });
+        let mut want = ser(&SessionNumber {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            session_nb,
+        });
         want.extend_from_slice(apdu);
         d.device()
             .ops
@@ -1464,6 +1486,7 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaInfo {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     ca_system_ids: vec![],
                 }),
             ),
@@ -1485,6 +1508,7 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaInfo {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     ca_system_ids: vec![0x0B00],
                 }),
             ),
@@ -1501,6 +1525,7 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaInfo {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     ca_system_ids: vec![0x1800],
                 }),
             ),
@@ -1518,6 +1543,7 @@ pub(crate) mod tests {
 
         fn reply(ca_enable: Option<CaEnable>) -> CaPmtReply {
             CaPmtReply {
+                length_form: dvb_ci::length::LengthForm::Minimal,
                 program_number: 1,
                 version_number: 1,
                 current_next_indicator: true,
@@ -1574,6 +1600,7 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaPmtReply {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     program_number: 7,
                     version_number: 1,
                     current_next_indicator: true,
@@ -1607,6 +1634,7 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaPmtReply {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     program_number: 7,
                     version_number: 1,
                     current_next_indicator: true,
@@ -1638,6 +1666,7 @@ pub(crate) mod tests {
             r_apdu(
                 MMI_SESSION,
                 &ser(&Enq {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     blind_answer: false,
                     answer_text_length: 0,
                     text_chars: b"NO CARD detected - please insert your smart card",
@@ -1662,6 +1691,7 @@ pub(crate) mod tests {
             r_apdu(
                 MMI_SESSION,
                 &ser(&Enq {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     blind_answer: false,
                     answer_text_length: 0,
                     text_chars: text,
@@ -2159,6 +2189,7 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaInfo {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     ca_system_ids: vec![0x0500],
                 }),
             ),
@@ -2231,6 +2262,7 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaInfo {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     ca_system_ids: vec![0x0500],
                 }),
             ),
@@ -2343,6 +2375,7 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaInfo {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     ca_system_ids: vec![0x0648, 0x0100],
                 }),
             ),
@@ -2397,6 +2430,7 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaInfo {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     ca_system_ids: vec![0x0648, 0x0100],
                 }),
             ),
@@ -2430,6 +2464,7 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaInfo {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     ca_system_ids: vec![0x0648, 0x0100],
                 }),
             ),
@@ -2544,6 +2579,7 @@ pub(crate) mod tests {
         ca_enable: Option<dvb_ci::objects::ca_pmt_reply::CaEnable>,
     ) -> dvb_ci::objects::ca_pmt_reply::CaPmtReply {
         dvb_ci::objects::ca_pmt_reply::CaPmtReply {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             program_number,
             version_number: 1,
             current_next_indicator: true,
@@ -3111,6 +3147,7 @@ pub(crate) mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaInfo {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     ca_system_ids: vec![0x0648],
                 }),
             ),

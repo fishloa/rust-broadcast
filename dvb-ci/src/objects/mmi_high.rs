@@ -23,6 +23,12 @@ use broadcast_common::{Parse, Serialize};
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Text<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `true` = `text_more` (more APDUs follow); `false` = `text_last`.
     pub more: bool,
     /// The `text_char` bytes (may be empty: a null text object).
@@ -63,7 +69,7 @@ impl<'a> Text<'a> {
                 });
             }
         };
-        let (len_value, len_hdr) = length::decode(&bytes[3..])?;
+        let (len_value, len_hdr, length_form) = length::decode_form(&bytes[3..])?;
         let body_start = 3 + len_hdr;
         let body_end = body_start + len_value;
         if bytes.len() < body_end {
@@ -75,6 +81,7 @@ impl<'a> Text<'a> {
         }
         Ok((
             Self {
+                length_form,
                 more,
                 text_chars: &bytes[body_start..body_end],
             },
@@ -84,12 +91,13 @@ impl<'a> Text<'a> {
 
     /// Serialized length of this `TEXT()` component (tag + length + chars).
     pub(crate) fn component_len(&self) -> usize {
-        super::apdu_len(self.text_chars.len())
+        super::apdu_len(self.text_chars.len(), self.length_form)
     }
 
     /// Serialize this `TEXT()` component into the front of `buf`.
     pub(crate) fn serialize_component(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(self.tag(), self.text_chars.len(), buf)?;
+        let mut pos =
+            super::write_apdu_header(self.tag(), self.text_chars.len(), self.length_form, buf)?;
         buf[pos..pos + self.text_chars.len()].copy_from_slice(self.text_chars);
         pos += self.text_chars.len();
         Ok(pos)
@@ -131,6 +139,12 @@ impl<'a> ApduDef<'a> for Text<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Enq<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `blind_answer` — when set, the user input is not displayed as typed.
     pub blind_answer: bool,
     /// `answer_text_length` — expected answer length (`0xFF` = unknown).
@@ -146,7 +160,7 @@ const ENQ_PREFIX: usize = 2;
 impl<'a> Parse<'a> for Enq<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::ENQ, "enq")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::ENQ, "enq")?;
         if body.len() < ENQ_PREFIX {
             return Err(Error::BufferTooShort {
                 need: ENQ_PREFIX,
@@ -155,6 +169,7 @@ impl<'a> Parse<'a> for Enq<'a> {
             });
         }
         Ok(Self {
+            length_form,
             blind_answer: (body[0] & 0x01) != 0,
             answer_text_length: body[1],
             text_chars: &body[ENQ_PREFIX..],
@@ -165,11 +180,11 @@ impl<'a> Parse<'a> for Enq<'a> {
 impl Serialize for Enq<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(ENQ_PREFIX + self.text_chars.len())
+        super::apdu_len(ENQ_PREFIX + self.text_chars.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = ENQ_PREFIX + self.text_chars.len();
-        let mut pos = super::write_apdu_header(tag::ENQ, body_len, buf)?;
+        let mut pos = super::write_apdu_header(tag::ENQ, body_len, self.length_form, buf)?;
         // reserved(7)='1111111', blind_answer(1).
         buf[pos] = 0xFE | u8::from(self.blind_answer);
         buf[pos + 1] = self.answer_text_length;
@@ -236,6 +251,12 @@ broadcast_common::impl_spec_display!(AnswId, Reserved);
 #[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Answ<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `answ_id`.
     pub answ_id: AnswId,
     /// The answer `text_char` bytes — present only when `answ_id == answer`.
@@ -255,7 +276,7 @@ impl core::fmt::Debug for Answ<'_> {
 impl<'a> Parse<'a> for Answ<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::ANSW, "answ")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::ANSW, "answ")?;
         let id_byte = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
@@ -271,6 +292,7 @@ impl<'a> Parse<'a> for Answ<'a> {
             &body[..0]
         };
         Ok(Self {
+            length_form,
             answ_id,
             text_chars,
         })
@@ -285,12 +307,12 @@ impl Serialize for Answ<'_> {
         } else {
             0
         };
-        super::apdu_len(body)
+        super::apdu_len(body, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let with_text = self.answ_id == AnswId::Answer;
         let body_len = 1 + if with_text { self.text_chars.len() } else { 0 };
-        let mut pos = super::write_apdu_header(tag::ANSW, body_len, buf)?;
+        let mut pos = super::write_apdu_header(tag::ANSW, body_len, self.length_form, buf)?;
         buf[pos] = self.answ_id.to_u8();
         pos += 1;
         if with_text {
@@ -314,6 +336,12 @@ impl<'a> ApduDef<'a> for Answ<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Menu<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `true` = `_more` tag (more APDUs follow); `false` = `_last`.
     pub more: bool,
     /// `choice_nb` / `item_nb` — `0xFF` means the count is not carried on the wire.
@@ -368,7 +396,7 @@ impl<'a> ApduDef<'a> for List<'a> {
 impl<'a> Menu<'a> {
     fn parse_with_tag(bytes: &'a [u8], expected: ApduTag, what: &'static str) -> Result<Self> {
         let more = expected == tag::MENU_MORE || expected == tag::LIST_MORE;
-        let body = super::parse_apdu_header(bytes, expected, what)?;
+        let (length_form, body) = super::parse_apdu_header(bytes, expected, what)?;
         let choice_nb = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
@@ -388,6 +416,7 @@ impl<'a> Menu<'a> {
             choices.push(c);
         }
         Ok(Self {
+            length_form,
             more,
             choice_nb,
             title,
@@ -410,7 +439,7 @@ impl<'a> Menu<'a> {
 
     fn serialize_with_tag(&self, t: ApduTag, buf: &mut [u8]) -> Result<usize> {
         let body_len = self.body_len();
-        let mut pos = super::write_apdu_header(t, body_len, buf)?;
+        let mut pos = super::write_apdu_header(t, body_len, self.length_form, buf)?;
         buf[pos] = self.choice_nb;
         pos += 1;
         pos += self.title.serialize_component(&mut buf[pos..])?;
@@ -464,7 +493,7 @@ impl<'a> Menu<'a> {
     /// Serialized length of this object as a `list()` (identical to a menu).
     #[must_use]
     pub fn list_serialized_len(&self) -> usize {
-        super::apdu_len(self.body_len())
+        super::apdu_len(self.body_len(), self.length_form)
     }
 
     /// Serialize this object as a `list()` into `buf`.
@@ -496,7 +525,7 @@ impl<'a> Parse<'a> for Menu<'a> {
 impl Serialize for Menu<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(self.body_len())
+        super::apdu_len(self.body_len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         self.serialize_with_tag(self.menu_tag(), buf)
@@ -513,6 +542,12 @@ impl<'a> ApduDef<'a> for Menu<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MenuAnsw {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `choice_ref` — `01` = first choice, …; `00` = cancelled.
     pub choice_ref: u8,
 }
@@ -520,23 +555,26 @@ pub struct MenuAnsw {
 impl<'a> Parse<'a> for MenuAnsw {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::MENU_ANSW, "menu_answ")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::MENU_ANSW, "menu_answ")?;
         let choice_ref = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
             what: "menu_answ choice_ref",
         })?;
-        Ok(Self { choice_ref })
+        Ok(Self {
+            length_form,
+            choice_ref,
+        })
     }
 }
 
 impl Serialize for MenuAnsw {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(1)
+        super::apdu_len(1, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(tag::MENU_ANSW, 1, buf)?;
+        let mut pos = super::write_apdu_header(tag::MENU_ANSW, 1, self.length_form, buf)?;
         buf[pos] = self.choice_ref;
         pos += 1;
         Ok(pos)
@@ -554,6 +592,7 @@ mod tests {
 
     fn text(more: bool, s: &[u8]) -> Text<'_> {
         Text {
+            length_form: crate::length::LengthForm::Minimal,
             more,
             text_chars: s,
         }
@@ -562,6 +601,7 @@ mod tests {
     #[test]
     fn answ_debug_does_not_print_the_typed_text() {
         let a = Answ {
+            length_form: crate::length::LengthForm::Minimal,
             answ_id: AnswId::Answer,
             text_chars: b"1234",
         };
@@ -600,6 +640,7 @@ mod tests {
         // Spec worked example: enq "PLEASE TYPE YOUR PIN CODE", blind_answer=1.
         let prompt = b"PLEASE TYPE YOUR PIN CODE";
         let e = Enq {
+            length_form: crate::length::LengthForm::Minimal,
             blind_answer: true,
             answer_text_length: 4,
             text_chars: prompt,
@@ -623,6 +664,7 @@ mod tests {
     #[test]
     fn answ_answer_and_cancel() {
         let a = Answ {
+            length_form: crate::length::LengthForm::Minimal,
             answ_id: AnswId::Answer,
             text_chars: b"1234",
         };
@@ -635,6 +677,7 @@ mod tests {
 
         // cancel carries no text (even if text_chars set, it is dropped).
         let c = Answ {
+            length_form: crate::length::LengthForm::Minimal,
             answ_id: AnswId::Cancel,
             text_chars: &[],
         };
@@ -654,6 +697,7 @@ mod tests {
         // Spec worked example: menu "DO YOU WANT TO BUY?" / "JURASSIC PARK"
         // with two choices.
         let m = Menu {
+            length_form: crate::length::LengthForm::Minimal,
             more: false,
             choice_nb: 2,
             title: text(false, b"DO YOU WANT TO BUY?"),
@@ -688,6 +732,7 @@ mod tests {
     #[test]
     fn list_uses_list_tags_and_round_trips() {
         let l = List(Menu {
+            length_form: crate::length::LengthForm::Minimal,
             more: false,
             choice_nb: 0xFF, // count not carried
             title: text(false, b"ENTITLEMENTS"),
@@ -712,11 +757,17 @@ mod tests {
 
     #[test]
     fn menu_answ_round_trips_and_bites() {
-        let a = MenuAnsw { choice_ref: 0x02 };
+        let a = MenuAnsw {
+            length_form: crate::length::LengthForm::Minimal,
+            choice_ref: 0x02,
+        };
         let bytes = a.to_bytes();
         assert_eq!(bytes, [0x9F, 0x88, 0x0B, 0x01, 0x02]);
         assert_eq!(MenuAnsw::parse(&bytes).unwrap(), a);
-        let other = MenuAnsw { choice_ref: 0x00 };
+        let other = MenuAnsw {
+            length_form: crate::length::LengthForm::Minimal,
+            choice_ref: 0x00,
+        };
         assert_ne!(bytes, other.to_bytes());
     }
 }

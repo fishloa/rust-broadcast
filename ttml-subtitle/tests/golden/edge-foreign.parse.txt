@@ -497,34 +497,35 @@ Document {
                                             ],
                                         },
                                     ),
+                                    Unknown(
+                                        UnknownElement {
+                                            prefix: Some(
+                                                "acme",
+                                            ),
+                                            namespace: Some(
+                                                "urn:acme:ext",
+                                            ),
+                                            local_name: "para",
+                                            attributes: [],
+                                            children: [
+                                                Text(
+                                                    "px",
+                                                ),
+                                            ],
+                                            scoped_namespaces: Some(
+                                                [
+                                                    (
+                                                        "acme",
+                                                        "urn:acme:ext",
+                                                    ),
+                                                ],
+                                            ),
+                                        },
+                                    ),
                                 ],
                                 metadata: [],
                                 animations: [],
-                                unknown_children: [
-                                    UnknownElement {
-                                        prefix: Some(
-                                            "acme",
-                                        ),
-                                        namespace: Some(
-                                            "urn:acme:ext",
-                                        ),
-                                        local_name: "para",
-                                        attributes: [],
-                                        children: [
-                                            Text(
-                                                "px",
-                                            ),
-                                        ],
-                                        scoped_namespaces: Some(
-                                            [
-                                                (
-                                                    "acme",
-                                                    "urn:acme:ext",
-                                                ),
-                                            ],
-                                        ),
-                                    },
-                                ],
+                                unknown_children: [],
                             },
                         ],
                         images: [],

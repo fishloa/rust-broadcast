@@ -125,61 +125,14 @@ fn adts_frame_len(data: &[u8], i: usize) -> Option<usize> {
 /// the `Insufficient` hint). Bounded: a chain that reaches
 /// [`ADTS_MIN_CHAIN_STRONG`] short-circuits to that value, so no buffer forces
 /// more than a bounded number of link steps.
-fn longest_adts_chain(data: &[u8]) -> (usize, bool, usize, usize) {
-    let mut best = 0usize;
-    let mut best_truncated = false;
-    let mut best_anchor = 0usize;
-    let mut best_frame_len = 0usize;
-    let n = data.len();
-    let mut i = 0usize;
-    while i < n {
-        if let Some(first_len) = adts_frame_len(data, i) {
-            // Count the chain anchored at `i`.
-            let mut p = i;
-            let mut run = 0usize;
-            let mut truncated = false;
-            loop {
-                match adts_frame_len(data, p) {
-                    Some(l) => {
-                        run += 1;
-                        if run >= ADTS_MIN_CHAIN_STRONG {
-                            return (run, false, i, first_len); // strong reached; stop early
-                        }
-                        if p + l > n {
-                            // The frame's body extends past the buffer: a
-                            // genuine truncation (the stream was cut
-                            // mid-frame).
-                            truncated = true;
-                            break;
-                        }
-                        p += l;
-                    }
-                    None => {
-                        // No valid header at `p`. If a full header could not
-                        // have been read here (the region ended within it, or
-                        // exactly at it), the chain ran out of data rather
-                        // than being ruled out — the next frame's header is
-                        // simply not fully visible yet. Mirrors mp3.rs's
-                        // identical branch (W11, audit issue #1076).
-                        if p + ADTS_HEADER_LEN > n {
-                            truncated = true;
-                        }
-                        break;
-                    }
-                }
-            }
-            if run > best || (run == best && truncated) {
-                best = run;
-                best_truncated = truncated;
-                best_anchor = i;
-                best_frame_len = first_len;
-            }
-            i += 1;
-        } else {
-            i += 1;
-        }
-    }
-    (best, best_truncated, best_anchor, best_frame_len)
+fn longest_adts_chain(data: &[u8]) -> crate::chain::Chain {
+    crate::chain::longest_chain(
+        data,
+        0,
+        ADTS_HEADER_LEN,
+        ADTS_MIN_CHAIN_STRONG,
+        adts_frame_len,
+    )
 }
 
 /// Count the number of valid ADTS frame headers anywhere in `data` — used by

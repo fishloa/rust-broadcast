@@ -158,10 +158,13 @@ fn read_33bit_value(bytes: &[u8], pos: usize) -> u64 {
         ]))
 }
 
-fn write_33bit(buf: &mut [u8], pos: usize, reserved: u8, value: u64) {
-    let v = value & 0x1_FFFF_FFFF;
+fn write_33bit(buf: &mut [u8], pos: usize, reserved: u8, value: u64) -> Result<()> {
+    // A value wider than 33 bits used to be masked down silently (audit
+    // r03-W3 class).
+    let v = broadcast_common::len::fit_bits(value, 33, "time_base_value")?;
     buf[pos] = ((reserved & RESERVED_7_MASK) << 1) | ((v >> 32) as u8 & 0x01);
     buf[pos + 1..pos + 5].copy_from_slice(&(v as u32).to_be_bytes());
+    Ok(())
 }
 
 impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
@@ -406,10 +409,10 @@ impl Serialize for ContentLabelingDescriptor<'_> {
 
         if let Some(ref tb) = self.time_base {
             // reserved(7) + 33-bit content_time_base_value
-            write_33bit(buf, pos, tb.reserved_content, tb.content_time_base_value);
+            write_33bit(buf, pos, tb.reserved_content, tb.content_time_base_value)?;
             pos += 5;
             // reserved(7) + 33-bit metadata_time_base_value
-            write_33bit(buf, pos, tb.reserved_metadata, tb.metadata_time_base_value);
+            write_33bit(buf, pos, tb.reserved_metadata, tb.metadata_time_base_value)?;
             pos += 5;
         }
 
@@ -441,6 +444,25 @@ impl<'a> crate::traits::DescriptorDef<'a> for ContentLabelingDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// r03-W3 class: a 33-bit time-base value wider than its field used to be
+    /// masked down silently into a different timestamp.
+    #[test]
+    fn serialize_rejects_time_base_value_wider_than_33_bits() {
+        let mut d = ContentLabelingDescriptor::new(0x0001);
+        d.content_time_base_indicator = ContentTimeBaseIndicator::Stc;
+        d.time_base = Some(ContentTimeBase::new(1 << 33, 0));
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+        d.time_base = Some(ContentTimeBase::new((1 << 33) - 1, (1 << 33) - 1));
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        let re = ContentLabelingDescriptor::parse(&buf).unwrap();
+        assert_eq!(re.time_base, d.time_base);
+    }
 
     // Helper to build a descriptor with all needed bytes
     fn serialize_round_trip(d: &ContentLabelingDescriptor<'_>) {

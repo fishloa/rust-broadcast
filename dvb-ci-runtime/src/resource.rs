@@ -138,7 +138,7 @@ impl Resource for ResourceManager {
     fn on_open(&mut self) -> dvb_ci::Result<ResourceOut> {
         // Kick off the handshake: ask the module for its profile.
         Ok(ResourceOut {
-            apdus: vec![ser(&ProfileEnq)?],
+            apdus: vec![ser(&ProfileEnq::default())?],
             ..ResourceOut::default()
         })
     }
@@ -149,6 +149,7 @@ impl Resource for ResourceManager {
             // Module asks for the host's profile → reply with our resource list.
             Some(t) if t == tag::PROFILE_ENQ => {
                 out.apdus.push(ser(&Profile {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     resources: self.host_resources.clone(),
                 })?);
             }
@@ -162,7 +163,7 @@ impl Resource for ResourceManager {
             }
             // Resource set changed → re-enquire.
             Some(t) if t == tag::PROFILE_CHANGE => {
-                out.apdus.push(ser(&ProfileEnq)?);
+                out.apdus.push(ser(&ProfileEnq::default())?);
                 self.module_profiled = false;
                 self.ready = false;
             }
@@ -183,7 +184,7 @@ impl Resource for ResourceManager {
         // `on_open` then drives its enquiry (app_info_enq, ca_info_enq).
         if self.module_profiled && !self.ready {
             self.ready = true;
-            out.apdus.push(ser(&ProfileChange)?);
+            out.apdus.push(ser(&ProfileChange::default())?);
             out.notify.push(Notification::CamReady);
         }
         Ok(out)
@@ -213,7 +214,7 @@ impl Resource for ApplicationInformation {
 
     fn on_open(&mut self) -> dvb_ci::Result<ResourceOut> {
         Ok(ResourceOut {
-            apdus: vec![ser(&ApplicationInfoEnq)?],
+            apdus: vec![ser(&ApplicationInfoEnq::default())?],
             ..ResourceOut::default()
         })
     }
@@ -248,7 +249,7 @@ impl Resource for ConditionalAccess {
 
     fn on_open(&mut self) -> dvb_ci::Result<ResourceOut> {
         Ok(ResourceOut {
-            apdus: vec![ser(&CaInfoEnq)?],
+            apdus: vec![ser(&CaInfoEnq::default())?],
             ..ResourceOut::default()
         })
     }
@@ -364,6 +365,7 @@ impl DateTime {
 
     fn reply(&self) -> dvb_ci::Result<Vec<u8>> {
         ser(&CiDateTime {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             utc_time: (self.clock)(),
             local_offset: None,
         })
@@ -467,6 +469,7 @@ impl Resource for Mmi {
                 let reply = match dc.cmd {
                     // Acknowledge the requested MMI mode (echo it back).
                     DisplayControlCmd::SetMmiMode => DisplayReply {
+                        length_form: dvb_ci::length::LengthForm::Minimal,
                         reply_id: DisplayReplyId::MmiModeAck,
                         body: DisplayReplyBody::MmiModeAck(
                             dc.mmi_mode.unwrap_or(MmiMode::HighLevel),
@@ -475,6 +478,7 @@ impl Resource for Mmi {
                     // We don't implement the character-table / graphics
                     // queries; tell the module so per Table 35.
                     _ => DisplayReply {
+                        length_form: dvb_ci::length::LengthForm::Minimal,
                         reply_id: DisplayReplyId::UnknownDisplayControlCmd,
                         body: DisplayReplyBody::None,
                     },
@@ -561,7 +565,7 @@ mod tests {
     fn on_open_sends_profile_enq() {
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
         let out = rm.on_open().unwrap();
-        assert_eq!(out.apdus, vec![s(&ProfileEnq)]);
+        assert_eq!(out.apdus, vec![s(&ProfileEnq::default())]);
     }
 
     #[test]
@@ -573,7 +577,10 @@ mod tests {
         // a live AlphaCrypt, which rejects/ignores host-initiated opens).
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
         rm.on_open().unwrap();
-        let empty_profile = s(&Profile { resources: vec![] });
+        let empty_profile = s(&Profile {
+            length_form: dvb_ci::length::LengthForm::Minimal,
+            resources: vec![],
+        });
         let o = rm.on_apdu(&empty_profile).unwrap();
         assert!(o.notify.contains(&Notification::CamReady));
         assert_eq!(o.apdus.len(), 1, "host sends profile_change");
@@ -586,11 +593,12 @@ mod tests {
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
         rm.on_open().unwrap();
         rm.on_apdu(&s(&Profile {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             resources: vec![APPLICATION_INFORMATION],
         }))
         .unwrap();
         // A later module profile_enq → reply with our profile, no second CamReady.
-        let o = rm.on_apdu(&s(&ProfileEnq)).unwrap();
+        let o = rm.on_apdu(&s(&ProfileEnq::default())).unwrap();
         assert_eq!(o.apdus.len(), 1);
         assert_eq!(peek_tag(&o.apdus[0]), Some(tag::PROFILE));
         assert!(!o.notify.contains(&Notification::CamReady));
@@ -607,6 +615,7 @@ mod tests {
         rm.on_open().unwrap();
         let o = rm
             .on_apdu(&s(&Profile {
+                length_form: dvb_ci::length::LengthForm::Minimal,
                 resources: vec![APPLICATION_INFORMATION],
             }))
             .unwrap();
@@ -625,7 +634,12 @@ mod tests {
         // Pre-fix (no reset()), `ready` stayed latched `true` and this second
         // profile exchange would NOT re-fire CamReady.
         rm.on_open().unwrap();
-        let o2 = rm.on_apdu(&s(&Profile { resources: vec![] })).unwrap();
+        let o2 = rm
+            .on_apdu(&s(&Profile {
+                length_form: dvb_ci::length::LengthForm::Minimal,
+                resources: vec![],
+            }))
+            .unwrap();
         assert!(
             o2.notify.contains(&Notification::CamReady),
             "a fresh handshake after reset() must fire CamReady again"
@@ -637,6 +651,7 @@ mod tests {
         let mut h = Mmi;
         // enquiry
         let enq = s(&Enq {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             blind_answer: true,
             answer_text_length: 4,
             text_chars: b"PIN?",
@@ -661,12 +676,14 @@ mod tests {
     fn mmi_surfaces_structured_menu_and_list() {
         use dvb_ci::objects::mmi_high::{List, Menu, Text};
         let txt = |s: &'static [u8]| Text {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             more: false,
             text_chars: s,
         };
         let mut h = Mmi;
         // A `menu()` → MmiEvent::Menu with header lines and choices kept distinct.
         let menu = s(&Menu {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             more: false,
             choice_nb: 2,
             title: txt(b"AlphaCrypt"),
@@ -685,6 +702,7 @@ mod tests {
         );
         // A `list()` (same body) → MmiEvent::List.
         let list = s(&List(Menu {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             more: false,
             choice_nb: 0xFF,
             title: txt(b"Entitlements"),
@@ -708,6 +726,7 @@ mod tests {
         use dvb_ci::objects::mmi_display::{DisplayControl, DisplayControlCmd, MmiMode};
         let mut h = Mmi;
         let dc = s(&DisplayControl {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             cmd: DisplayControlCmd::SetMmiMode,
             mmi_mode: Some(MmiMode::HighLevel),
         });
@@ -721,17 +740,23 @@ mod tests {
     fn profile_change_re_enquires() {
         let mut rm = ResourceManager::new(vec![RESOURCE_MANAGER]);
         let out = rm
-            .on_apdu(&s(&dvb_ci::objects::resource_manager::ProfileChange))
+            .on_apdu(&s(
+                &dvb_ci::objects::resource_manager::ProfileChange::default(),
+            ))
             .unwrap();
-        assert_eq!(out.apdus, vec![s(&ProfileEnq)]);
+        assert_eq!(out.apdus, vec![s(&ProfileEnq::default())]);
     }
 
     #[test]
     fn application_information_surfaces_notification() {
         use dvb_ci::objects::application_info::ApplicationType;
         let mut h = ApplicationInformation;
-        assert_eq!(h.on_open().unwrap().apdus, vec![s(&ApplicationInfoEnq)]);
+        assert_eq!(
+            h.on_open().unwrap().apdus,
+            vec![s(&ApplicationInfoEnq::default())]
+        );
         let ai = s(&ApplicationInfo {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             application_type: ApplicationType::ConditionalAccess,
             application_manufacturer: 0x1234,
             manufacturer_code: 0x5678,
@@ -756,6 +781,7 @@ mod tests {
 
         // tune() → HostControlEvent::Tune with the four 16-bit identifiers.
         let tune = s(&Tune {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             network_id: 0x1122,
             original_network_id: 0x3344,
             transport_stream_id: 0x5566,
@@ -773,6 +799,7 @@ mod tests {
 
         // replace() → HostControlEvent::Replace with the 13-bit PIDs decoded.
         let replace = s(&Replace {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             replacement_ref: 0x07,
             replaced_pid: Pid::new(0x0123),
             replacement_pid: Pid::new(0x01FF),
@@ -788,6 +815,7 @@ mod tests {
 
         // clear_replace() → HostControlEvent::ClearReplace.
         let clear = s(&ClearReplace {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             replacement_ref: 0x42,
         });
         assert_eq!(
@@ -798,7 +826,7 @@ mod tests {
         );
 
         // ask_release() → HostControlEvent::AskRelease (header-only).
-        let ask = s(&AskRelease);
+        let ask = s(&AskRelease::default());
         assert_eq!(
             h.on_apdu(&ask).unwrap().notify,
             vec![Notification::HostControl(HostControlEvent::AskRelease)]
@@ -823,6 +851,7 @@ mod tests {
         let mut h = DateTime::with_clock(fixed);
         // enquiry with a 5s response interval → immediate reply
         let enq = s(&DateTimeEnq {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             response_interval: 5,
         });
         let out = h.on_apdu(&enq).unwrap();
@@ -838,6 +867,7 @@ mod tests {
     fn date_time_interval_zero_does_not_resend() {
         let mut h = DateTime::with_clock(|| [0u8; UTC_TIME_LEN]);
         h.on_apdu(&s(&DateTimeEnq {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             response_interval: 0,
         }))
         .unwrap();
@@ -852,6 +882,7 @@ mod tests {
     fn date_time_reset_clears_interval_and_resend_timer() {
         let mut h = DateTime::with_clock(|| [0u8; UTC_TIME_LEN]);
         h.on_apdu(&s(&DateTimeEnq {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             response_interval: 5,
         }))
         .unwrap();
@@ -871,9 +902,10 @@ mod tests {
     #[test]
     fn conditional_access_surfaces_ca_info_and_pmt_reply() {
         let mut h = ConditionalAccess;
-        assert_eq!(h.on_open().unwrap().apdus, vec![s(&CaInfoEnq)]);
+        assert_eq!(h.on_open().unwrap().apdus, vec![s(&CaInfoEnq::default())]);
         // ca_info -> CaInfo notification
         let ci = s(&CaInfo {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             ca_system_ids: vec![0x0B00, 0x1800],
         });
         assert_eq!(
@@ -884,6 +916,7 @@ mod tests {
         );
         // ca_pmt_reply (descrambling possible) -> CaPmtReply notification
         let reply = s(&CaPmtReply {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             program_number: 0x0042,
             version_number: 0,
             current_next_indicator: true,
@@ -906,6 +939,7 @@ mod tests {
         h.on_open().unwrap();
         // Programme `CA_enable_flag` clear -> no programme-level status given.
         let reply = s(&CaPmtReply {
+            length_form: dvb_ci::length::LengthForm::Minimal,
             program_number: 0x0007,
             version_number: 0,
             current_next_indicator: true,

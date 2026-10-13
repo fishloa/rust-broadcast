@@ -149,8 +149,10 @@ pub const MATRIX: &[MatrixEntry] = &[
         from: Cea608,
         to: WebVtt,
         support: Lossy,
-        reason: "roll-up/pop-on/paint-on text and cue timing carry over \
-                 exactly (timed-metadata::webvtt::Cea608CueExtractor, issue \
+        reason: "roll-up/pop-on/paint-on text carries over, with cue times \
+                 taken at the carrying frame's PTS (frame-granular, not \
+                 re-derived from CEA-608's own timing) \
+                 (timed-metadata::webvtt::Cea608CueExtractor, issue \
                  #568); PAC row/column placement, mid-row style attributes, \
                  and colour are dropped (no line/position cue settings or \
                  <i>/<u>/<c> tags are emitted)",
@@ -184,7 +186,9 @@ pub const MATRIX: &[MatrixEntry] = &[
         from: Cea708,
         to: WebVtt,
         support: Lossy,
-        reason: "window text and cue timing carry over exactly \
+        reason: "window text carries over, with cue times taken at the \
+                 carrying frame's PTS (frame-granular, not re-derived from \
+                 CEA-708's own timing) \
                  (timed-metadata::webvtt::Cea708CueExtractor, issue #568); \
                  window geometry/anchor, pen colour/style, and any \
                  non-primary service the caller did not select are dropped",
@@ -215,7 +219,9 @@ pub const MATRIX: &[MatrixEntry] = &[
         from: Teletext,
         to: WebVtt,
         support: Lossy,
-        reason: "page text and cue timing carry over exactly \
+        reason: "page text carries over, with cue times taken at the \
+                 carrying packet's PTS (not re-derived from Teletext's own \
+                 timing) \
                  (timed-metadata::webvtt::TeletextCueExtractor, issue #666); \
                  double-height/double-size, colour, boxing, and enhancement \
                  packets (Level 1.5+) are dropped -- only basic Level 1 rows \

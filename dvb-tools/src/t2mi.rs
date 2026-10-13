@@ -14,7 +14,7 @@ use std::process::ExitCode;
 use dvb_t2mi::inner_ts::InnerTsRecovery;
 use dvb_t2mi::pump::T2miPump;
 
-use crate::util::{for_each_packet, read_file};
+use crate::util::{PacketReader, READ_CHUNK, open_file, read_chunk};
 
 /// Default T2-MI PID when none is specified (EN 302 755 V1.4.1 §5.1 — the usual
 /// data-piping PID for T2-MI in TS).
@@ -62,15 +62,14 @@ pub fn run(path: &str, pid_arg: Option<&str>, inner: bool, plp: Option<u8>) -> E
         return ExitCode::FAILURE;
     }
 
-    let data = match read_file(path, "dvb-tools t2mi") {
-        Ok(d) => d,
-        Err(code) => return code,
-    };
-
     if inner {
         let PidArg::Ts(t2mi_pid) = pid else {
             // Unreachable — guarded above.
             return ExitCode::FAILURE;
+        };
+        let mut packets = match PacketReader::open(path, "dvb-tools t2mi") {
+            Ok(p) => p,
+            Err(code) => return code,
         };
         let mut rec = match plp {
             Some(p) => InnerTsRecovery::new_for_plp(t2mi_pid, p),
@@ -78,20 +77,18 @@ pub fn run(path: &str, pid_arg: Option<&str>, inner: bool, plp: Option<u8>) -> E
         };
         let stdout = std::io::stdout();
         let mut out = BufWriter::new(stdout.lock());
-        for packet in for_each_packet(&data) {
+        for packet in packets.by_ref() {
             for inner_pkt in rec.feed(&packet) {
                 if let Err(e) = out.write_all(inner_pkt) {
-                    if e.kind() == std::io::ErrorKind::BrokenPipe {
-                        break;
-                    }
-                    eprintln!("dvb-tools t2mi: write stdout: {e}");
-                    return ExitCode::FAILURE;
+                    return stdout_failure("write stdout", &e);
                 }
             }
         }
+        if let Err(code) = packets.finish() {
+            return code;
+        }
         if let Err(e) = out.flush() {
-            eprintln!("dvb-tools t2mi: flush stdout: {e}");
-            return ExitCode::FAILURE;
+            return stdout_failure("flush stdout", &e);
         }
         let s = rec.stats();
         eprintln!(
@@ -112,35 +109,51 @@ pub fn run(path: &str, pid_arg: Option<&str>, inner: bool, plp: Option<u8>) -> E
         PidArg::Raw => T2miPump::raw(),
     };
 
-    let print_event = |event: dvb_t2mi::pump::T2miEvent| match event.header() {
-        Ok(hdr) => println!(
-            "type={} (0x{:02X}) count={} superframe_idx={} stream_id={} payload_bits={}",
-            event.payload().map(|p| p.name()).unwrap_or("PARSE_ERROR"),
-            event.packet_type(),
-            hdr.packet_count,
-            hdr.superframe_idx,
-            hdr.t2mi_stream_id,
-            hdr.payload_len_bits,
-        ),
-        Err(e) => eprintln!(
-            "packet_type=0x{:02X} header error: {e}",
-            event.packet_type()
-        ),
-    };
+    let stdout = std::io::stdout();
+    let mut out = BufWriter::new(stdout.lock());
 
     match pid {
         PidArg::Ts(_) => {
-            for packet in for_each_packet(&data) {
+            let mut packets = match PacketReader::open(path, "dvb-tools t2mi") {
+                Ok(p) => p,
+                Err(code) => return code,
+            };
+            for packet in packets.by_ref() {
                 for event in pump.feed_ts(&packet) {
-                    print_event(event);
+                    if let Err(e) = write_event(&mut out, event) {
+                        return stdout_failure("write stdout", &e);
+                    }
                 }
+            }
+            if let Err(code) = packets.finish() {
+                return code;
             }
         }
         PidArg::Raw => {
-            for event in pump.feed_raw(&data) {
-                print_event(event);
+            let mut file = match open_file(path, "dvb-tools t2mi") {
+                Ok(f) => f,
+                Err(code) => return code,
+            };
+            let mut chunk = vec![0u8; READ_CHUNK];
+            loop {
+                let n = match read_chunk(&mut file, &mut chunk) {
+                    Ok(0) => break,
+                    Ok(n) => n,
+                    Err(e) => {
+                        eprintln!("dvb-tools t2mi: {path}: {e}");
+                        return ExitCode::FAILURE;
+                    }
+                };
+                for event in pump.feed_raw(&chunk[..n]) {
+                    if let Err(e) = write_event(&mut out, event) {
+                        return stdout_failure("write stdout", &e);
+                    }
+                }
             }
         }
+    }
+    if let Err(e) = out.flush() {
+        return stdout_failure("flush stdout", &e);
     }
 
     let s = pump.stats();
@@ -149,4 +162,40 @@ pub fn run(path: &str, pid_arg: Option<&str>, inner: bool, plp: Option<u8>) -> E
         s.ts_packets, s.t2mi_packets, s.crc_failures, s.malformed_packets
     );
     ExitCode::SUCCESS
+}
+
+/// A stdout write failed. A closed pipe (`BrokenPipe`: the consumer — `head`,
+/// a closed pager — went away) is the normal way to stop reading and is a
+/// clean, quiet success; anything else is a real failure. Either way the
+/// caller stops immediately instead of grinding through the rest of the
+/// capture and then failing on the final flush (r11-W-DT-3).
+fn stdout_failure(what: &str, e: &std::io::Error) -> ExitCode {
+    if e.kind() == std::io::ErrorKind::BrokenPipe {
+        return ExitCode::SUCCESS;
+    }
+    eprintln!("dvb-tools t2mi: {what}: {e}");
+    ExitCode::FAILURE
+}
+
+/// One summary line per T2-MI event to `out`; a header error goes to stderr.
+fn write_event(out: &mut impl Write, event: dvb_t2mi::pump::T2miEvent) -> std::io::Result<()> {
+    match event.header() {
+        Ok(hdr) => writeln!(
+            out,
+            "type={} (0x{:02X}) count={} superframe_idx={} stream_id={} payload_bits={}",
+            event.payload().map(|p| p.name()).unwrap_or("PARSE_ERROR"),
+            event.packet_type(),
+            hdr.packet_count,
+            hdr.superframe_idx,
+            hdr.t2mi_stream_id,
+            hdr.payload_len_bits,
+        ),
+        Err(e) => {
+            eprintln!(
+                "packet_type=0x{:02X} header error: {e}",
+                event.packet_type()
+            );
+            Ok(())
+        }
+    }
 }

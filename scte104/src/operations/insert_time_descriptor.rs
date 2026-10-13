@@ -64,6 +64,12 @@ impl Serialize for InsertTimeDescriptor {
                 have: buf.len(),
             });
         }
+        if self.tai_seconds >> 48 != 0 {
+            return Err(Error::InvalidValue {
+                field: "insert_time_descriptor.TAI_seconds",
+                reason: "exceeds 48-bit range",
+            });
+        }
         // TAI_seconds: 6 bytes (48-bit)
         buf[0] = (self.tai_seconds >> 40) as u8;
         buf[1] = (self.tai_seconds >> 32) as u8;
@@ -106,5 +112,16 @@ mod tests {
         let mut op2 = op;
         op2.utc_offset = 99;
         assert_ne!(op2.to_bytes(), bytes);
+    }
+
+    /// A `TAI_seconds` above 48 bits is rejected, not silently masked.
+    #[test]
+    fn tai_seconds_over_48_bits_is_rejected() {
+        let op = InsertTimeDescriptor {
+            tai_seconds: 1 << 48,
+            tai_ns: 0,
+            utc_offset: 0,
+        };
+        assert!(op.try_to_bytes().is_err());
     }
 }

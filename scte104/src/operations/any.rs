@@ -74,10 +74,21 @@ macro_rules! declare_operations {
             /// Parse an operation `body` by its `opID`. Reserved / unimplemented
             /// types yield [`AnyOperation::Unknown`].
             pub fn dispatch(op_id: u16, body: &$lt [u8]) -> Result<Self> {
-                use broadcast_common::Parse;
+                use broadcast_common::{Parse, Serialize};
                 match op_id {
                     $(
-                        $oid => <$ty>::parse(body).map(Self::$variant),
+                        $oid => {
+                            let parsed = <$ty>::parse(body)?;
+                            // Exact length (#1103 W4): a body longer than the
+                            // typed structure would otherwise parse "OK" and
+                            // silently lose its trailing bytes on re-serialize.
+                            crate::operations::require_exact_len(
+                                body.len(),
+                                parsed.serialized_len(),
+                                <$ty as crate::traits::OperationDef>::NAME,
+                            )?;
+                            Ok(Self::$variant(parsed))
+                        }
                     )+
                     _ => Ok(Self::Unknown { op_id, body }),
                 }
@@ -136,9 +147,9 @@ declare_operations! {'a;
     ScheduleDefinition      = 0x010E => crate::operations::schedule_definition::ScheduleDefinition,
     InsertTier              = 0x010F => crate::operations::insert_tier::InsertTier,
     InsertTimeDescriptor    = 0x0110 => crate::operations::insert_time_descriptor::InsertTimeDescriptor,
-    InsertAudioDescriptor   = 0x0111 => crate::operations::insert_audio_descriptor::InsertAudioDescriptor<'a>,
-    InsertAudioProvisioning = 0x0112 => crate::operations::insert_audio_provisioning::InsertAudioProvisioning<'a>,
-    InsertAlternateBreakDuration = 0x0113 => crate::operations::insert_alternate_break_duration::InsertAlternateBreakDuration<'a>,
+    InsertAudioDescriptor   = 0x0111 => crate::operations::insert_audio_descriptor::InsertAudioDescriptor,
+    InsertAudioProvisioning = 0x0112 => crate::operations::insert_audio_provisioning::InsertAudioProvisioning,
+    InsertAlternateBreakDuration = 0x0113 => crate::operations::insert_alternate_break_duration::InsertAlternateBreakDuration,
     DeleteControlWord       = 0x0300 => crate::operations::control_word::DeleteControlWord,
     UpdateControlWord       = 0x0301 => crate::operations::control_word::UpdateControlWord,
     InjectSectionData       = 0x0100 => crate::operations::inject_section_data::InjectSectionData<'a>,

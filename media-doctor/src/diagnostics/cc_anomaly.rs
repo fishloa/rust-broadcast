@@ -18,7 +18,6 @@
 //! Non-payload-bearing packets (AFC `00` or `10`) do not advance the CC.
 
 use alloc::collections::btree_map::BTreeMap;
-use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
 use broadcast_common::ts_dup::{DuplicateVerdict, check_duplicate};
@@ -27,6 +26,15 @@ use crate::Diagnostic;
 use crate::Report;
 use crate::report::{Finding, Location, Severity};
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
+
+/// Copy one TS packet into a fixed array: no heap allocation per packet
+/// (audit MD-O2, #1112). `raw` is always exactly `TS_PACKET_SIZE` here (it
+/// is sliced at that stride).
+fn snapshot(raw: &[u8]) -> [u8; TS_PACKET_SIZE] {
+    let mut out = [0u8; TS_PACKET_SIZE];
+    out.copy_from_slice(raw);
+    out
+}
 
 /// Per-PID continuity counter state.
 #[derive(Debug, Clone)]
@@ -39,7 +47,7 @@ struct CcState {
     /// with [`broadcast_common::ts_dup::check_duplicate`] for the
     /// §2.4.3.3 legal-duplicate byte-identity rule (that function owns
     /// locating and exempting the PCR field).
-    last_packet: Vec<u8>,
+    last_packet: [u8; TS_PACKET_SIZE],
     /// Whether the one legal duplicate repeat of `last_packet` has already
     /// been consumed (§2.4.3.3 "two, and only two").
     dup_used: bool,
@@ -84,7 +92,7 @@ impl Diagnostic for CcAnomalyCheck {
             let state = pid_states.entry(pid).or_insert(CcState {
                 initialized: false,
                 last_cc: 0,
-                last_packet: Vec::new(),
+                last_packet: [0; TS_PACKET_SIZE],
                 dup_used: false,
             });
 
@@ -92,7 +100,7 @@ impl Diagnostic for CcAnomalyCheck {
                 // First payload-bearing packet for this PID — just record state.
                 state.initialized = true;
                 state.last_cc = cc;
-                state.last_packet = raw.to_vec();
+                state.last_packet = snapshot(raw);
                 continue;
             }
 
@@ -108,7 +116,7 @@ impl Diagnostic for CcAnomalyCheck {
                 // §2.4.3.5: discontinuity_indicator == 1 legalises any CC
                 // value here; reset the duplicate-run tracking too.
                 state.last_cc = cc;
-                state.last_packet = raw.to_vec();
+                state.last_packet = snapshot(raw);
                 state.dup_used = false;
                 continue;
             }
@@ -147,7 +155,7 @@ impl Diagnostic for CcAnomalyCheck {
                     }
                     state.dup_used = false;
                     state.last_cc = cc;
-                    state.last_packet = raw.to_vec();
+                    state.last_packet = snapshot(raw);
                 }
                 // `DuplicateVerdict` is `#[non_exhaustive]`; there is no
                 // fourth variant today, but a future addition must not

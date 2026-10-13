@@ -70,7 +70,12 @@ impl DtsDescriptor<'_> {
             0x06 => Some(11_025),
             0x07 => Some(22_050),
             0x08 => Some(44_100),
-            0x09 => Some(88_020),
+            // EN 300 468 Table G.2 prints "88,02 kHz" for 0b1001 — a digit
+            // transposition of 88,2 kHz: the same spec's DTS-HD table (Table
+            // G.7, dts-hd-descriptor.md) lists 88,2 kHz, and 0b0110/0b0111/
+            // 0b1000/0b1010 are 11,025/22,05/44,1/176,4 kHz, so 0b1001 is the
+            // missing 2x44,1 step (r03-W11).
+            0x09 => Some(88_200),
             0x0A => Some(176_400),
             0x0B => Some(12_000),
             0x0C => Some(24_000),
@@ -95,8 +100,9 @@ impl DtsDescriptor<'_> {
             0x06 => Some("11.025 kHz"),
             0x07 => Some("22.05 kHz"),
             0x08 => Some("44.1 kHz"),
-            // Spec typo: 88,02 kHz (comma instead of period) at code 0x09.
-            0x09 => Some("88.02 kHz"),
+            // Printed "88,02 kHz" in Table G.2 (digit transposition); see
+            // `sample_rate_hz` (r03-W11).
+            0x09 => Some("88.2 kHz"),
             0x0A => Some("176.4 kHz"),
             0x0B => Some("12 kHz"),
             0x0C => Some("24 kHz"),
@@ -342,6 +348,30 @@ impl<'a> crate::traits::DescriptorDef<'a> for DtsDescriptor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// r03-W11: code 0b1001 is 88,2 kHz (2 x 44,1), not the 88,02 kHz the
+    /// spec table prints; the 44,1 kHz family doubles at each step.
+    #[test]
+    fn sample_rate_0x09_is_88_200_hz_in_the_44k1_family() {
+        let rate = |code: u8| {
+            DtsDescriptor {
+                sample_rate_code: code,
+                bit_rate_code: 0,
+                nblks: 5,
+                fsize: 95,
+                surround_mode: 0,
+                lfe_flag: false,
+                extended_surround_flag: 0,
+                additional_info: &[],
+            }
+            .sample_rate_hz()
+        };
+        assert_eq!(rate(0x08), Some(44_100));
+        assert_eq!(rate(0x09), Some(88_200));
+        assert_eq!(rate(0x0A), Some(176_400));
+        assert_eq!(rate(0x09), rate(0x08).map(|r| r * 2));
+        assert_eq!(rate(0x0A), rate(0x09).map(|r| r * 2));
+    }
 
     #[test]
     fn parse_no_additional_info() {

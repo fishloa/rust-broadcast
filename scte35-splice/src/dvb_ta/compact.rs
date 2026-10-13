@@ -13,27 +13,30 @@
 //! [`CompactTimeSignal`] (`message_type == 0x00`, Table 6) and
 //! [`CompactSpliceInsert`] (`message_type == 0x01`, Table 8).
 //!
-//! # Bit-width sourcing
+//! # Bit layout (#1102 W5)
 //!
-//! > **Not independently verified.** The PDF render of Tables 6 and 8 is
-//! > vertically mis-registered; this module implements the **reconstructed
-//! > ("likely") widths** the transcription cross-checks against §5.3.5.11 and
-//! > the `DVB_DAS_descriptor()` (Table 1):
-//! > `unique_program_id` is 16-bit, `avail_num`/`avails_expected` 8-bit,
-//! > `DAS_descriptor_flag` 1-bit, `equivalent_segmentation_type` 4-bit, and
-//! > `E_CRC_32` a 32-bit CRC — see `docs/dvb_ta/compact-scte35.md` for the full
-//! > reasoning. No real DVB TA compact-watermark capture or authoritative
-//! > erratum has been obtained to confirm these against; every test in this
-//! > module is hand-built bytes, not an independent oracle (#1102 W5). If any
-//! > reconstructed width is wrong, every compact message this module parses
-//! > is silently misdecoded (`Ok`, wrong field values) rather than rejected.
-//! > Treat [`CompactSpliceInsert`] in particular (Table 8, the more
-//! > mis-registered of the two) as unconfirmed until a real vector surfaces.
+//! Tables 6 and 8 are **bit-packed with no padding other than the explicit
+//! `reserved` rows**: `compact_time_signal()` is 1+6+8+33 = 48 bits to
+//! `pts_time` and byte-aligned by construction, and `compact_splice_insert()`
+//! closes its fixed part with `DAS_descriptor_flag` (1 bit) + `reserved`
+//! (6 bits) to land on a byte boundary (152 bits). The PDF render
+//! (ETSI TS 103 752-1 V1.2.1, pp.27-28) offsets the "No. of Bits" column by one
+//! row from `cw_index` down; re-aligning it row-for-row (re-derived from the
+//! page image and the text layer, see `docs/dvb_ta/compact-scte35.md`) gives
+//! the widths implemented here, and every layout then sums to a whole number of
+//! bytes - a cross-check the earlier reconstruction (which inserted
+//! SCTE 35-style reserved bits the table does not list) did not satisfy.
+//! The one remaining oddity is `E_CRC_32`, whose rendered width is `8` against
+//! the name and `rpchof` mnemonic: it is read as the 32-bit CRC.
+//!
+//! No real compact-watermark capture has been obtained, so every test here is
+//! built from the spec table's own widths rather than a third-party oracle.
 
 use alloc::vec::Vec;
 
 use crate::dvb_ta::das_descriptor::EquivalentSegmentationType;
 use crate::error::{Error, Result};
+use broadcast_common::bits::{BitError, BitReader, BitWriter};
 use broadcast_common::{Parse, Serialize};
 
 /// `message_type` for [`CompactTimeSignal`] (§8.3.3, Table 5).
@@ -45,15 +48,46 @@ pub const MESSAGE_TYPE_SPLICE_INSERT: u8 = 0x01;
 /// Mask for the 33-bit `pts_time` / `duration` fields.
 const MASK_33: u64 = broadcast_common::clock33::WRAP_33BIT - 1;
 
-/// Read a big-endian 33-bit field starting at `bits[0]`'s low bit being the top
-/// of `pts_time`. Helper for the compact bit layouts: the 33-bit field occupies
-/// 1 low bit of `first` plus the next four bytes.
-fn read_33(first_low_bit: u8, next4: &[u8]) -> u64 {
-    (u64::from(first_low_bit & 0x01) << 32)
-        | (u64::from(next4[0]) << 24)
-        | (u64::from(next4[1]) << 16)
-        | (u64::from(next4[2]) << 8)
-        | u64::from(next4[3])
+/// Mask for the 40-bit `segmentation_duration`.
+const MASK_40: u64 = (1 << 40) - 1;
+
+/// Bits of a `compact_time_signal()` up to and including
+/// `segmentation_upid_length` (Table 6): 1+6+8+33+32+40+8+8.
+const TS_FIXED_BITS: usize = 136;
+
+/// Bits of a `compact_splice_insert()` fixed part through the `reserved` row
+/// (Table 8): 1+6+8+33+32+33+16+8+8+1+6.
+const SI_FIXED_BITS: usize = 152;
+
+/// Width of the `DAS_descriptor_flag`-trailing `reserved` row (Table 8).
+const SI_RESERVED_BITS: u32 = 6;
+
+/// Width of the DAS-body `reserved` row (Table 8).
+const DAS_RESERVED_BITS: u32 = 4;
+
+/// All-ones value of the 6-bit reserved row (the SCTE 35 reserved-bit
+/// convention, for hand-built values).
+pub const SI_RESERVED_DEFAULT: u8 = 0x3F;
+
+/// All-ones value of the 4-bit DAS reserved row.
+pub const DAS_RESERVED_DEFAULT: u8 = 0x0F;
+
+/// Map a bit-reader/writer failure to a crate error carrying byte counts.
+fn bit_err(e: BitError, have: usize, what: &'static str) -> Error {
+    match e {
+        BitError::OutOfBounds {
+            needed_bits,
+            remaining_bits,
+        } => Error::BufferTooShort {
+            need: have + needed_bits.saturating_sub(remaining_bits).div_ceil(8),
+            have,
+            what,
+        },
+        _ => Error::InvalidValue {
+            field: what,
+            reason: "value does not fit its bit width",
+        },
+    }
 }
 
 /// `compact_SCTE_35()` — §8.3.3, Table 5.
@@ -162,71 +196,36 @@ pub struct CompactTimeSignal {
     pub e_crc_32: Option<u32>,
 }
 
-/// Mask for the 40-bit `segmentation_duration`.
-const MASK_40: u64 = (1 << 40) - 1;
-
 impl<'a> Parse<'a> for CompactTimeSignal {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        // Fixed prefix to segmentation_upid_length (N):
-        //   byte0:  encrypted(1) + encryption_algorithm(6) + top bit of nothing
-        //           (the 1+6 = 7 bits, low bit unused/reserved here)
-        //   byte1:  cw_index(8)
-        //   byte2:  reserved(7) + top pts_time bit (we store pts top bit in low)
-        //   byte3..6: pts_time low 32 bits
-        //   byte7..10: segmentation_event_id(32)
-        //   byte11..15: segmentation_duration(40)
-        //   byte16: segmentation_type_id(8)
-        //   byte17: segmentation_upid_length N(8)
-        //   byte18..18+N: segmentation_upid
-        //   then segments_num(8), segments_expected(8)
-        //   then optional E_CRC_32(32)
-        const FIXED_PREFIX: usize = 18;
-        if bytes.len() < FIXED_PREFIX {
+        const WHAT: &str = "compact_time_signal";
+        let have = bytes.len();
+        if have * 8 < TS_FIXED_BITS {
             return Err(Error::BufferTooShort {
-                need: FIXED_PREFIX,
-                have: bytes.len(),
+                need: TS_FIXED_BITS / 8,
+                have,
                 what: "compact_time_signal fixed prefix",
             });
         }
-        let encrypted_packet = bytes[0] & 0x80 != 0;
-        let encryption_algorithm = (bytes[0] >> 1) & 0x3F;
-        let cw_index = bytes[1];
-        let pts_time = read_33(bytes[2], &bytes[3..7]);
-        let segmentation_event_id = u32::from_be_bytes([bytes[7], bytes[8], bytes[9], bytes[10]]);
-        let segmentation_duration = (u64::from(bytes[11]) << 32)
-            | (u64::from(bytes[12]) << 24)
-            | (u64::from(bytes[13]) << 16)
-            | (u64::from(bytes[14]) << 8)
-            | u64::from(bytes[15]);
-        let segmentation_type_id = bytes[16];
-        let upid_len = bytes[17] as usize;
-        let upid_end = FIXED_PREFIX + upid_len;
-        // need upid + segments_num + segments_expected
-        if bytes.len() < upid_end + 2 {
-            return Err(Error::BufferTooShort {
-                need: upid_end + 2,
-                have: bytes.len(),
-                what: "compact_time_signal upid + segments",
-            });
+        let e = |e| bit_err(e, have, WHAT);
+        let mut r = BitReader::new(bytes);
+        let encrypted_packet = r.read_bool().map_err(e)?;
+        let encryption_algorithm = r.read_bits(6).map_err(e)? as u8;
+        let cw_index = r.read_bits(8).map_err(e)? as u8;
+        let pts_time = r.read_bits(33).map_err(e)?;
+        let segmentation_event_id = r.read_bits(32).map_err(e)? as u32;
+        let segmentation_duration = r.read_bits(40).map_err(e)?;
+        let segmentation_type_id = r.read_bits(8).map_err(e)? as u8;
+        let upid_len = r.read_bits(8).map_err(e)? as usize;
+        let mut segmentation_upid = Vec::new();
+        for _ in 0..upid_len {
+            segmentation_upid.push(r.read_bits(8).map_err(e)? as u8);
         }
-        let segmentation_upid = bytes[FIXED_PREFIX..upid_end].to_vec();
-        let segments_num = bytes[upid_end];
-        let segments_expected = bytes[upid_end + 1];
-        let mut pos = upid_end + 2;
+        let segments_num = r.read_bits(8).map_err(e)? as u8;
+        let segments_expected = r.read_bits(8).map_err(e)? as u8;
         let e_crc_32 = if encrypted_packet {
-            if bytes.len() < pos + 4 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 4,
-                    have: bytes.len(),
-                    what: "compact_time_signal E_CRC_32",
-                });
-            }
-            let v =
-                u32::from_be_bytes([bytes[pos], bytes[pos + 1], bytes[pos + 2], bytes[pos + 3]]);
-            pos += 4;
-            let _ = pos;
-            Some(v)
+            Some(r.read_bits(32).map_err(e)? as u32)
         } else {
             None
         };
@@ -234,9 +233,9 @@ impl<'a> Parse<'a> for CompactTimeSignal {
             encrypted_packet,
             encryption_algorithm,
             cw_index,
-            pts_time: pts_time & MASK_33,
+            pts_time,
             segmentation_event_id,
-            segmentation_duration: segmentation_duration & MASK_40,
+            segmentation_duration,
             segmentation_type_id,
             segmentation_upid,
             segments_num,
@@ -249,9 +248,13 @@ impl<'a> Parse<'a> for CompactTimeSignal {
 impl Serialize for CompactTimeSignal {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        18 + self.segmentation_upid.len() + 2 + if self.encrypted_packet { 4 } else { 0 }
+        TS_FIXED_BITS / 8
+            + self.segmentation_upid.len()
+            + 2
+            + if self.encrypted_packet { 4 } else { 0 }
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        const WHAT: &str = "compact_time_signal";
         let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
@@ -259,68 +262,64 @@ impl Serialize for CompactTimeSignal {
                 have: buf.len(),
             });
         }
-        if self.segmentation_upid.len() > u8::MAX as usize {
-            return Err(Error::InvalidValue {
-                field: "compact_time_signal.segmentation_upid",
-                reason: "length exceeds 8-bit segmentation_upid_length",
-            });
-        }
-        // byte0: encrypted(1) + encryption_algorithm(6) + reserved low bit (1).
-        buf[0] = (u8::from(self.encrypted_packet) << 7)
-            | ((self.encryption_algorithm & 0x3F) << 1)
-            | 0x01;
-        buf[1] = self.cw_index;
+        let upid_len = broadcast_common::len::fit_u8(
+            self.segmentation_upid.len(),
+            "compact_time_signal.segmentation_upid_length",
+        )?;
         if self.pts_time > MASK_33 {
             return Err(Error::InvalidValue {
                 field: "compact_time_signal.pts_time",
                 reason: "exceeds 33-bit range",
             });
         }
-        let pts = self.pts_time;
-        // byte2: 7 reserved bits = 1, top pts bit.
-        buf[2] = 0xFE | ((pts >> 32) as u8 & 0x01);
-        buf[3] = (pts >> 24) as u8;
-        buf[4] = (pts >> 16) as u8;
-        buf[5] = (pts >> 8) as u8;
-        buf[6] = pts as u8;
-        buf[7..11].copy_from_slice(&self.segmentation_event_id.to_be_bytes());
         if self.segmentation_duration > MASK_40 {
             return Err(Error::InvalidValue {
                 field: "compact_time_signal.segmentation_duration",
                 reason: "exceeds 40-bit range",
             });
         }
-        let dur = self.segmentation_duration;
-        buf[11] = (dur >> 32) as u8;
-        buf[12] = (dur >> 24) as u8;
-        buf[13] = (dur >> 16) as u8;
-        buf[14] = (dur >> 8) as u8;
-        buf[15] = dur as u8;
-        buf[16] = self.segmentation_type_id;
-        buf[17] = self.segmentation_upid.len() as u8;
-        let upid_end = 18 + self.segmentation_upid.len();
-        buf[18..upid_end].copy_from_slice(&self.segmentation_upid);
-        buf[upid_end] = self.segments_num;
-        buf[upid_end + 1] = self.segments_expected;
-        let mut pos = upid_end + 2;
-        if self.encrypted_packet {
-            let crc = self.e_crc_32.unwrap_or(0);
-            buf[pos..pos + 4].copy_from_slice(&crc.to_be_bytes());
-            pos += 4;
+        if self.encryption_algorithm > 0x3F {
+            return Err(Error::InvalidValue {
+                field: "compact_time_signal.encryption_algorithm",
+                reason: "exceeds 6-bit range",
+            });
         }
-        debug_assert_eq!(pos, need);
+        let have = buf.len();
+        let e = |e| bit_err(e, have, WHAT);
+        let mut w = BitWriter::new(&mut buf[..need]);
+        w.write_bool(self.encrypted_packet).map_err(e)?;
+        w.write_bits(u64::from(self.encryption_algorithm), 6)
+            .map_err(e)?;
+        w.write_bits(u64::from(self.cw_index), 8).map_err(e)?;
+        w.write_bits(self.pts_time, 33).map_err(e)?;
+        w.write_bits(u64::from(self.segmentation_event_id), 32)
+            .map_err(e)?;
+        w.write_bits(self.segmentation_duration, 40).map_err(e)?;
+        w.write_bits(u64::from(self.segmentation_type_id), 8)
+            .map_err(e)?;
+        w.write_bits(u64::from(upid_len), 8).map_err(e)?;
+        for &b in &self.segmentation_upid {
+            w.write_bits(u64::from(b), 8).map_err(e)?;
+        }
+        w.write_bits(u64::from(self.segments_num), 8).map_err(e)?;
+        w.write_bits(u64::from(self.segments_expected), 8)
+            .map_err(e)?;
+        if self.encrypted_packet {
+            w.write_bits(u64::from(self.e_crc_32.unwrap_or(0)), 32)
+                .map_err(e)?;
+        }
+        debug_assert_eq!(w.bits_written(), need * 8);
         Ok(need)
     }
 }
 
 /// `compact_splice_insert()` — §8.3.3, Table 8.
 ///
-/// Uses the reconstructed ("likely") bit widths (see module docs): a 16-bit
+/// Bit widths are those of Table 8 (see module docs): a 16-bit
 /// `unique_program_id`, 8-bit `avail_num`/`avails_expected`, a 1-bit
-/// `DAS_descriptor_flag`, and — when the flag is set — an inline DAS-descriptor
-/// body (`break_num`, `breaks_expected`, 4-bit `equivalent_segmentation_type`,
-/// and the variable `upid`). The implied SCTE 35 / DAS field values are Tables 9
-/// and 10.
+/// `DAS_descriptor_flag` followed by a 6-bit `reserved` row and — when the flag
+/// is set — an inline DAS-descriptor body. The implied SCTE 35 / DAS field
+/// values are Tables 9 and 10.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CompactSpliceInsert {
@@ -342,6 +341,9 @@ pub struct CompactSpliceInsert {
     pub avail_num: u8,
     /// `avails_expected` (8 bits).
     pub avails_expected: u8,
+    /// The 6-bit `reserved` row after `DAS_descriptor_flag`, preserved as
+    /// parsed ([`SI_RESERVED_DEFAULT`] when hand-built).
+    pub reserved: u8,
     /// Inline `DVB_DAS_descriptor` body, present iff `DAS_descriptor_flag == 1`
     /// (Table 10 implies `splice_descriptor_tag = 0xF0`, `identifier = "DVB_"`).
     pub das: Option<CompactDas>,
@@ -361,6 +363,9 @@ pub struct CompactDas {
     pub breaks_expected: u8,
     /// `equivalent_segmentation_type` (4 bits, Table 2).
     pub equivalent_segmentation_type: EquivalentSegmentationType,
+    /// The 4-bit `reserved` row after `equivalent_segmentation_type`,
+    /// preserved as parsed ([`DAS_RESERVED_DEFAULT`] when hand-built).
+    pub reserved: u8,
     /// `upid()` — variable-length URI bytes.
     pub upid: Vec<u8>,
 }
@@ -368,98 +373,66 @@ pub struct CompactDas {
 impl<'a> Parse<'a> for CompactSpliceInsert {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        // Layout (likely widths):
-        //   byte0:  encrypted(1) + encryption_algorithm(6) + reserved(1)
-        //   byte1:  cw_index(8)
-        //   byte2:  reserved(7) + top pts bit
-        //   byte3..6: pts_time low 32
-        //   byte7..10: splice_event_id(32)
-        //   byte11: reserved(7) + top duration bit
-        //   byte12..15: duration low 32
-        //   byte16..17: unique_program_id(16)
-        //   byte18: avail_num(8)
-        //   byte19: avails_expected(8)
-        //   byte20: DAS_descriptor_flag(1) + reserved(7)
-        //   if DAS_descriptor_flag:
-        //     descriptor_length N(8)   [length of the DAS body that follows]
-        //     break_num(8), breaks_expected(8)
-        //     reserved(4) + equivalent_segmentation_type(4)
-        //     upid (descriptor_length - 3 bytes)
-        //   if encrypted: E_CRC_32(32)
-        const FIXED: usize = 21;
-        if bytes.len() < FIXED {
+        const WHAT: &str = "compact_splice_insert";
+        let have = bytes.len();
+        if have * 8 < SI_FIXED_BITS {
             return Err(Error::BufferTooShort {
-                need: FIXED,
-                have: bytes.len(),
+                need: SI_FIXED_BITS / 8,
+                have,
                 what: "compact_splice_insert fixed fields",
             });
         }
-        let encrypted_packet = bytes[0] & 0x80 != 0;
-        let encryption_algorithm = (bytes[0] >> 1) & 0x3F;
-        let cw_index = bytes[1];
-        let pts_time = read_33(bytes[2], &bytes[3..7]) & MASK_33;
-        let splice_event_id = u32::from_be_bytes([bytes[7], bytes[8], bytes[9], bytes[10]]);
-        let duration = read_33(bytes[11], &bytes[12..16]) & MASK_33;
-        let unique_program_id = u16::from_be_bytes([bytes[16], bytes[17]]);
-        let avail_num = bytes[18];
-        let avails_expected = bytes[19];
-        let das_flag = bytes[20] & 0x80 != 0;
-        let mut pos = FIXED;
+        let e = |e| bit_err(e, have, WHAT);
+        let mut r = BitReader::new(bytes);
+        let encrypted_packet = r.read_bool().map_err(e)?;
+        let encryption_algorithm = r.read_bits(6).map_err(e)? as u8;
+        let cw_index = r.read_bits(8).map_err(e)? as u8;
+        let pts_time = r.read_bits(33).map_err(e)?;
+        let splice_event_id = r.read_bits(32).map_err(e)? as u32;
+        let duration = r.read_bits(33).map_err(e)?;
+        let unique_program_id = r.read_bits(16).map_err(e)? as u16;
+        let avail_num = r.read_bits(8).map_err(e)? as u8;
+        let avails_expected = r.read_bits(8).map_err(e)? as u8;
+        let das_flag = r.read_bool().map_err(e)?;
+        let reserved = r.read_bits(SI_RESERVED_BITS).map_err(e)? as u8;
         let das = if das_flag {
-            // descriptor_length (1) + break_num (1) + breaks_expected (1)
-            // + reserved/eqseg (1) = 4 bytes minimum.
-            if bytes.len() < pos + 4 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 4,
-                    have: bytes.len(),
-                    what: "compact_splice_insert DAS body",
-                });
-            }
-            let desc_len = bytes[pos] as usize; // length of break_num..upid end
-            pos += 1;
-            // desc_len counts break_num(1)+breaks_expected(1)+nibble(1)+upid.
+            let desc_len = r.read_bits(8).map_err(e)? as usize;
+            // descriptor_length (N) counts break_num + breaks_expected + the
+            // type/reserved byte (3) plus the upid.
             if desc_len < 3 {
                 return Err(Error::InvalidValue {
                     field: "compact_splice_insert.descriptor_length",
                     reason: "DAS body length must be at least 3 (break_num, breaks_expected, type)",
                 });
             }
-            if bytes.len() < pos + desc_len {
+            if r.bits_remaining() < desc_len * 8 {
                 return Err(Error::LengthOverflow {
                     declared: desc_len,
-                    available: bytes.len().saturating_sub(pos),
+                    available: r.bits_remaining() / 8,
                     what: "compact_splice_insert DAS body",
                 });
             }
-            let break_num = bytes[pos];
-            let breaks_expected = bytes[pos + 1];
+            let break_num = r.read_bits(8).map_err(e)? as u8;
+            let breaks_expected = r.read_bits(8).map_err(e)? as u8;
             let equivalent_segmentation_type =
-                EquivalentSegmentationType::from_bits(bytes[pos + 2] & 0x0F);
-            let upid = bytes[pos + 3..pos + desc_len].to_vec();
-            pos += desc_len;
+                EquivalentSegmentationType::from_bits(r.read_bits(4).map_err(e)? as u8);
+            let das_reserved = r.read_bits(DAS_RESERVED_BITS).map_err(e)? as u8;
+            let mut upid = Vec::with_capacity(desc_len - 3);
+            for _ in 0..desc_len - 3 {
+                upid.push(r.read_bits(8).map_err(e)? as u8);
+            }
             Some(CompactDas {
                 break_num,
                 breaks_expected,
                 equivalent_segmentation_type,
+                reserved: das_reserved,
                 upid,
             })
         } else {
             None
         };
         let e_crc_32 = if encrypted_packet {
-            if bytes.len() < pos + 4 {
-                return Err(Error::BufferTooShort {
-                    need: pos + 4,
-                    have: bytes.len(),
-                    what: "compact_splice_insert E_CRC_32",
-                });
-            }
-            Some(u32::from_be_bytes([
-                bytes[pos],
-                bytes[pos + 1],
-                bytes[pos + 2],
-                bytes[pos + 3],
-            ]))
+            Some(r.read_bits(32).map_err(e)? as u32)
         } else {
             None
         };
@@ -473,6 +446,7 @@ impl<'a> Parse<'a> for CompactSpliceInsert {
             unique_program_id,
             avail_num,
             avails_expected,
+            reserved,
             das,
             e_crc_32,
         })
@@ -482,7 +456,7 @@ impl<'a> Parse<'a> for CompactSpliceInsert {
 impl Serialize for CompactSpliceInsert {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        let mut n = 21;
+        let mut n = SI_FIXED_BITS / 8;
         if let Some(das) = &self.das {
             n += 1 + 3 + das.upid.len();
         }
@@ -492,6 +466,7 @@ impl Serialize for CompactSpliceInsert {
         n
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+        const WHAT: &str = "compact_splice_insert";
         let need = self.serialized_len();
         if buf.len() < need {
             return Err(Error::OutputBufferTooSmall {
@@ -499,64 +474,61 @@ impl Serialize for CompactSpliceInsert {
                 have: buf.len(),
             });
         }
-        if let Some(das) = &self.das
-            && das.upid.len() + 3 > u8::MAX as usize
-        {
-            return Err(Error::InvalidValue {
-                field: "compact_splice_insert.das.upid",
-                reason: "DAS body length exceeds 8-bit descriptor_length",
-            });
-        }
-        buf[0] = (u8::from(self.encrypted_packet) << 7)
-            | ((self.encryption_algorithm & 0x3F) << 1)
-            | 0x01;
-        buf[1] = self.cw_index;
+        let desc_len = match &self.das {
+            Some(das) => Some(broadcast_common::len::fit_u8(
+                3 + das.upid.len(),
+                "compact_splice_insert.das.descriptor_length",
+            )?),
+            None => None,
+        };
         if self.pts_time > MASK_33 {
             return Err(Error::InvalidValue {
                 field: "compact_splice_insert.pts_time",
                 reason: "exceeds 33-bit range",
             });
         }
-        let pts = self.pts_time;
-        buf[2] = 0xFE | ((pts >> 32) as u8 & 0x01);
-        buf[3] = (pts >> 24) as u8;
-        buf[4] = (pts >> 16) as u8;
-        buf[5] = (pts >> 8) as u8;
-        buf[6] = pts as u8;
-        buf[7..11].copy_from_slice(&self.splice_event_id.to_be_bytes());
         if self.duration > MASK_33 {
             return Err(Error::InvalidValue {
                 field: "compact_splice_insert.duration",
                 reason: "exceeds 33-bit range",
             });
         }
-        let dur = self.duration;
-        buf[11] = 0xFE | ((dur >> 32) as u8 & 0x01);
-        buf[12] = (dur >> 24) as u8;
-        buf[13] = (dur >> 16) as u8;
-        buf[14] = (dur >> 8) as u8;
-        buf[15] = dur as u8;
-        buf[16..18].copy_from_slice(&self.unique_program_id.to_be_bytes());
-        buf[18] = self.avail_num;
-        buf[19] = self.avails_expected;
-        // DAS_descriptor_flag (1) + 7 reserved bits = 1.
-        buf[20] = (u8::from(self.das.is_some()) << 7) | 0x7F;
-        let mut pos = 21;
-        if let Some(das) = &self.das {
-            let desc_len = 3 + das.upid.len();
-            buf[pos] = desc_len as u8;
-            buf[pos + 1] = das.break_num;
-            buf[pos + 2] = das.breaks_expected;
-            buf[pos + 3] = 0xF0 | das.equivalent_segmentation_type.bits();
-            buf[pos + 4..pos + 4 + das.upid.len()].copy_from_slice(&das.upid);
-            pos += 1 + desc_len;
+        let have = buf.len();
+        let e = |e| bit_err(e, have, WHAT);
+        let mut w = BitWriter::new(&mut buf[..need]);
+        w.write_bool(self.encrypted_packet).map_err(e)?;
+        w.write_bits(u64::from(self.encryption_algorithm), 6)
+            .map_err(e)?;
+        w.write_bits(u64::from(self.cw_index), 8).map_err(e)?;
+        w.write_bits(self.pts_time, 33).map_err(e)?;
+        w.write_bits(u64::from(self.splice_event_id), 32)
+            .map_err(e)?;
+        w.write_bits(self.duration, 33).map_err(e)?;
+        w.write_bits(u64::from(self.unique_program_id), 16)
+            .map_err(e)?;
+        w.write_bits(u64::from(self.avail_num), 8).map_err(e)?;
+        w.write_bits(u64::from(self.avails_expected), 8)
+            .map_err(e)?;
+        w.write_bool(self.das.is_some()).map_err(e)?;
+        w.write_bits(u64::from(self.reserved), SI_RESERVED_BITS)
+            .map_err(e)?;
+        if let (Some(das), Some(desc_len)) = (&self.das, desc_len) {
+            w.write_bits(u64::from(desc_len), 8).map_err(e)?;
+            w.write_bits(u64::from(das.break_num), 8).map_err(e)?;
+            w.write_bits(u64::from(das.breaks_expected), 8).map_err(e)?;
+            w.write_bits(u64::from(das.equivalent_segmentation_type.bits()), 4)
+                .map_err(e)?;
+            w.write_bits(u64::from(das.reserved), DAS_RESERVED_BITS)
+                .map_err(e)?;
+            for &b in &das.upid {
+                w.write_bits(u64::from(b), 8).map_err(e)?;
+            }
         }
         if self.encrypted_packet {
-            let crc = self.e_crc_32.unwrap_or(0);
-            buf[pos..pos + 4].copy_from_slice(&crc.to_be_bytes());
-            pos += 4;
+            w.write_bits(u64::from(self.e_crc_32.unwrap_or(0)), 32)
+                .map_err(e)?;
         }
-        debug_assert_eq!(pos, need);
+        debug_assert_eq!(w.bits_written(), need * 8);
         Ok(need)
     }
 }
@@ -564,6 +536,23 @@ impl Serialize for CompactSpliceInsert {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Independent oracle: pack `(value, width)` fields MSB-first through a
+    /// string of `0`/`1` characters (deliberately not `BitWriter`), so a layout
+    /// bug in the implementation cannot be mirrored by the expected bytes.
+    fn pack(fields: &[(u64, u32)]) -> Vec<u8> {
+        let mut s = alloc::string::String::new();
+        for &(v, w) in fields {
+            for i in (0..w).rev() {
+                s.push(if (v >> i) & 1 == 1 { '1' } else { '0' });
+            }
+        }
+        assert_eq!(s.len() % 8, 0, "layout must be byte aligned");
+        s.as_bytes()
+            .chunks(8)
+            .map(|c| c.iter().fold(0u8, |a, &b| (a << 1) | u8::from(b == b'1')))
+            .collect()
+    }
 
     fn sample_time_signal() -> CompactTimeSignal {
         CompactTimeSignal {
@@ -592,9 +581,35 @@ mod tests {
         assert_eq!(back.to_bytes(), bytes);
     }
 
-    /// SC-W4 (#1129): `CompactTimeSignal::serialize_into` used to mask
-    /// `pts_time`/`segmentation_duration` with `& MASK_33`/`& MASK_40` instead
-    /// of validating them.
+    /// Table 6 is packed with no padding: `cw_index` straddles bytes 0/1 and
+    /// `pts_time` straddles bytes 1/2 (the pre-fix layout inserted reserved bits
+    /// the table does not list and put the fields on different offsets).
+    #[test]
+    fn time_signal_matches_the_spec_table_packing() {
+        let mut ts = sample_time_signal();
+        ts.encrypted_packet = true;
+        ts.encryption_algorithm = 0x15;
+        ts.cw_index = 0xA5;
+        ts.segmentation_upid = b"AB".to_vec();
+        ts.e_crc_32 = Some(0x1122_3344);
+        let bytes = ts.to_bytes();
+        // enc(1)=1, alg(6)=010101, cw[7]=1 -> 1010_1011
+        assert_eq!(bytes[0], 0xAB);
+        // cw[6:0]=0100101, pts[32]=1 -> 0100_1011
+        assert_eq!(bytes[1], 0x4B);
+        assert_eq!(&bytes[2..6], &[0x23, 0x45, 0x67, 0x89]);
+        assert_eq!(&bytes[6..10], &[0xDE, 0xAD, 0xBE, 0xEF]);
+        assert_eq!(&bytes[10..15], &[0x00, 0x01, 0x23, 0x45, 0x67]);
+        assert_eq!(bytes[15], 0x34);
+        assert_eq!(bytes[16], 2);
+        assert_eq!(&bytes[17..19], b"AB");
+        assert_eq!(&bytes[19..21], &[1, 2]);
+        assert_eq!(&bytes[21..25], &[0x11, 0x22, 0x33, 0x44]);
+        assert_eq!(bytes.len(), 25);
+        let back = CompactTimeSignal::parse(&bytes).unwrap();
+        assert_eq!(ts, back);
+    }
+
     #[test]
     fn time_signal_pts_over_33_bits_is_rejected_not_masked() {
         let mut ts = sample_time_signal();
@@ -610,36 +625,14 @@ mod tests {
     }
 
     #[test]
-    fn time_signal_hand_computed_prefix() {
-        let mut ts = sample_time_signal();
-        ts.segmentation_upid = b"AB".to_vec(); // N = 2
-        let bytes = ts.to_bytes();
-        // byte0: encrypted=0, algo=0, reserved low bit=1 -> 0x01
-        assert_eq!(bytes[0], 0x01);
-        // pts_time = 0x123456789 & 2^33-1 = 0x123456789 (33 bits). top bit = 1.
-        assert_eq!(bytes[2], 0xFE | 0x01);
-        assert_eq!(&bytes[3..7], &[0x23, 0x45, 0x67, 0x89]);
-        assert_eq!(&bytes[7..11], &[0xDE, 0xAD, 0xBE, 0xEF]);
-        // duration 0x0001234567 over 5 bytes
-        assert_eq!(&bytes[11..16], &[0x00, 0x01, 0x23, 0x45, 0x67]);
-        assert_eq!(bytes[16], 0x34);
-        assert_eq!(bytes[17], 2); // N
-        assert_eq!(&bytes[18..20], b"AB");
-        assert_eq!(bytes[20], 1); // segments_num
-        assert_eq!(bytes[21], 2); // segments_expected
-        assert_eq!(bytes.len(), 22);
-    }
-
-    #[test]
-    fn time_signal_encrypted_carries_e_crc() {
-        let mut ts = sample_time_signal();
-        ts.encrypted_packet = true;
-        ts.e_crc_32 = Some(0x1122_3344);
-        let bytes = ts.to_bytes();
-        assert_eq!(bytes[0] & 0x80, 0x80);
-        let back = CompactTimeSignal::parse(&bytes).unwrap();
-        assert_eq!(ts, back);
-        assert_eq!(back.e_crc_32, Some(0x1122_3344));
+    fn time_signal_truncated_is_an_error() {
+        let bytes = sample_time_signal().to_bytes();
+        for cut in 0..bytes.len() {
+            assert!(
+                CompactTimeSignal::parse(&bytes[..cut]).is_err(),
+                "cut {cut}"
+            );
+        }
     }
 
     #[test]
@@ -664,13 +657,12 @@ mod tests {
             unique_program_id: 0xABCD,
             avail_num: 1,
             avails_expected: 3,
+            reserved: SI_RESERVED_DEFAULT,
             das,
             e_crc_32: None,
         }
     }
 
-    /// SC-W4 (#1129): `CompactSpliceInsert::serialize_into` used to mask
-    /// `pts_time`/`duration` with `& MASK_33` instead of validating them.
     #[test]
     fn splice_insert_pts_over_33_bits_is_rejected_not_masked() {
         let mut si = sample_splice_insert(None);
@@ -685,38 +677,83 @@ mod tests {
         assert!(si.try_to_bytes().is_err());
     }
 
+    /// Table 8 against the independent packer: 152 fixed bits, the
+    /// `DAS_descriptor_flag` followed by 6 reserved bits (not 7).
+    #[test]
+    fn splice_insert_matches_the_spec_table_packing() {
+        let das = CompactDas {
+            break_num: 2,
+            breaks_expected: 5,
+            equivalent_segmentation_type:
+                EquivalentSegmentationType::DistributorPlacementOpportunity,
+            reserved: 0x0A,
+            upid: b"urn:tv.acme:B637643".to_vec(),
+        };
+        let mut si = sample_splice_insert(Some(das));
+        si.encrypted_packet = true;
+        si.encryption_algorithm = 0x2A;
+        si.cw_index = 0x5C;
+        si.reserved = 0x15;
+        si.e_crc_32 = Some(0xCAFE_F00D);
+        let mut fields = alloc::vec![
+            (1, 1),
+            (0x2A, 6),
+            (0x5C, 8),
+            (0x0_1234_5678, 33),
+            (0x0102_0304, 32),
+            (0x9_0000, 33),
+            (0xABCD, 16),
+            (1, 8),
+            (3, 8),
+            (1, 1),
+            (0x15, 6),
+            (3 + 19, 8),
+            (2, 8),
+            (5, 8),
+            (
+                u64::from(EquivalentSegmentationType::DistributorPlacementOpportunity.bits()),
+                4
+            ),
+            (0x0A, 4),
+        ];
+        for &b in b"urn:tv.acme:B637643" {
+            fields.push((u64::from(b), 8));
+        }
+        fields.push((0xCAFE_F00D, 32));
+        assert_eq!(si.to_bytes(), pack(&fields));
+        let back = CompactSpliceInsert::parse(&si.to_bytes()).unwrap();
+        assert_eq!(si, back);
+    }
+
     #[test]
     fn splice_insert_round_trip_no_das() {
         let si = sample_splice_insert(None);
         let compact = CompactScte35::SpliceInsert(si.clone());
         let bytes = compact.to_bytes();
         assert_eq!(bytes[0], MESSAGE_TYPE_SPLICE_INSERT);
-        // DAS flag clear.
-        assert_eq!(bytes[21] & 0x80, 0x00);
+        assert_eq!(bytes.len(), 1 + 19);
         let back = CompactScte35::parse(&bytes).unwrap();
         assert_eq!(compact, back);
         assert_eq!(back.to_bytes(), bytes);
     }
 
+    /// The reserved rows are typed fields: whatever a sender put there
+    /// survives parse -> serialize.
     #[test]
-    fn splice_insert_round_trip_with_das() {
+    fn reserved_bits_survive_a_round_trip() {
         let das = CompactDas {
-            break_num: 2,
-            breaks_expected: 5,
-            equivalent_segmentation_type:
-                EquivalentSegmentationType::DistributorPlacementOpportunity,
-            upid: b"urn:tv.acme:B637643".to_vec(),
+            break_num: 0,
+            breaks_expected: 0,
+            equivalent_segmentation_type: EquivalentSegmentationType::NoEquivalent,
+            reserved: 0x00,
+            upid: Vec::new(),
         };
-        let si = sample_splice_insert(Some(das));
+        let mut si = sample_splice_insert(Some(das));
+        si.reserved = 0x00;
         let bytes = si.to_bytes();
-        // DAS flag set in the body (offset 20 within the splice-insert body).
-        assert_eq!(bytes[20] & 0x80, 0x80);
-        // descriptor_length = 3 + upid.len()
-        assert_eq!(bytes[21] as usize, 3 + b"urn:tv.acme:B637643".len());
-        // reserved|eqseg nibble = 0xF1 (DPO = 0x1)
-        assert_eq!(bytes[24], 0xF1);
         let back = CompactSpliceInsert::parse(&bytes).unwrap();
-        assert_eq!(si, back);
+        assert_eq!(back.reserved, 0);
+        assert_eq!(back.das.as_ref().unwrap().reserved, 0);
         assert_eq!(back.to_bytes(), bytes);
     }
 
@@ -726,11 +763,11 @@ mod tests {
         let mut b = a.clone();
         b.unique_program_id = 0x0001;
         assert_ne!(a.to_bytes(), b.to_bytes());
-        // Adding a DAS body changes the wire.
         let c = sample_splice_insert(Some(CompactDas {
             break_num: 0,
             breaks_expected: 0,
             equivalent_segmentation_type: EquivalentSegmentationType::NoEquivalent,
+            reserved: DAS_RESERVED_DEFAULT,
             upid: Vec::new(),
         }));
         assert_ne!(a.to_bytes(), c.to_bytes());
@@ -745,25 +782,13 @@ mod tests {
         ));
     }
 
-    /// The overflow guard in `CompactTimeSignal::serialize_into` rejects a
-    /// `segmentation_upid` longer than 255 bytes (the 8-bit
-    /// `segmentation_upid_length` field). Verify the guard actually fires.
     #[test]
     fn time_signal_upid_overflow_guard_fires() {
         let mut ts = sample_time_signal();
-        ts.segmentation_upid = vec![0u8; 256]; // 256 > u8::MAX — must be rejected
+        ts.segmentation_upid = vec![0u8; 256];
         let err = ts
             .serialize_into(&mut vec![0u8; ts.serialized_len()])
             .unwrap_err();
-        assert!(
-            matches!(
-                err,
-                Error::InvalidValue {
-                    field: "compact_time_signal.segmentation_upid",
-                    ..
-                }
-            ),
-            "expected InvalidValue for segmentation_upid overflow, got {err:?}"
-        );
+        assert!(matches!(err, Error::FieldOverflow(_)), "got {err:?}");
     }
 }

@@ -22,6 +22,7 @@ thiserror  = { version = "2", default-features = false }
 libm       = { version = "0.2", default-features = false }
 
 [dev-dependencies]
+test-alloc = { path = "../test-alloc" }
 
 [features]
 default = ["std"]

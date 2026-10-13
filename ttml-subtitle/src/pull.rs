@@ -45,6 +45,9 @@ pub(crate) struct TagAttribute {
 #[derive(Debug)]
 pub(crate) struct StartTag {
     namespace: Option<String>,
+    /// The element name's own prefix as written (`None` for an unprefixed
+    /// name, i.e. one in the default namespace).
+    prefix: Option<String>,
     local: String,
     attributes: Vec<TagAttribute>,
     /// Named (non-default) namespace bindings in scope on this element,
@@ -53,6 +56,12 @@ pub(crate) struct StartTag {
     scope: Vec<(String, String)>,
     /// Self-closing (`<x/>`): no content and no end tag follows.
     empty: bool,
+    /// Per-attribute "a parser read this" flags (parallel to `attributes`),
+    /// set by [`StartTag::attribute_in`]. Whatever is still unset once an
+    /// element's own fields are filled is an attribute the crate does not
+    /// model on that element and must be preserved as foreign (TTML2 §7.2,
+    /// #1110/TT-W1).
+    consumed: core::cell::RefCell<Vec<bool>>,
 }
 
 impl StartTag {
@@ -66,6 +75,11 @@ impl StartTag {
         self.namespace.as_deref()
     }
 
+    /// The prefix the element name was written with (`None` if unprefixed).
+    pub(crate) fn prefix(&self) -> Option<&str> {
+        self.prefix.as_deref()
+    }
+
     /// The value of the unprefixed (no-namespace) attribute `name`.
     pub(crate) fn attribute(&self, name: &str) -> Option<&str> {
         self.attribute_in(None, name)
@@ -73,10 +87,20 @@ impl StartTag {
 
     /// The value of the attribute `local` in namespace `ns`.
     pub(crate) fn attribute_in(&self, ns: Option<&str>, local: &str) -> Option<&str> {
-        self.attributes
+        let idx = self
+            .attributes
             .iter()
-            .find(|a| a.name == local && a.namespace.as_deref() == ns)
-            .map(|a| a.value.as_str())
+            .position(|a| a.name == local && a.namespace.as_deref() == ns)?;
+        if let Some(flag) = self.consumed.borrow_mut().get_mut(idx) {
+            *flag = true;
+        }
+        Some(self.attributes[idx].value.as_str())
+    }
+
+    /// Whether the attribute at `idx` (an index into [`StartTag::attributes`])
+    /// has been read through [`StartTag::attribute_in`].
+    pub(crate) fn is_consumed(&self, idx: usize) -> bool {
+        self.consumed.borrow().get(idx).copied().unwrap_or(false)
     }
 
     /// All attributes, in document order.
@@ -207,12 +231,16 @@ impl<'a> Pull<'a> {
                 value,
             });
         }
+        let consumed = core::cell::RefCell::new(alloc::vec![false; attributes.len()]);
+        let prefix = e.name().prefix().map(|p| String::from(p.into_inner()));
         Ok(StartTag {
             namespace,
+            prefix,
             local: e.local_name().into_inner().to_string(),
             attributes,
             scope: self.scope(),
             empty,
+            consumed,
         })
     }
 

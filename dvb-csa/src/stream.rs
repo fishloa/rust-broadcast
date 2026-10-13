@@ -196,3 +196,36 @@ fn csa_stream_cfed(pqzyx: u32, cfed: u32) -> u32 {
     let cdef_idx = (((cfed & 0x10ff) | (pqzyx & 0x2f00)) >> 4) as usize;
     ((cfed & 0x0f00) >> 4) | u32::from(STREAM_CDEF[cdef_idx])
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tables::STREAM_SBOX_SEL;
+
+    /// r11-O-CSA-2: the S-box input selection is written twice —
+    /// hand-unrolled in `csa_stream_sboxes` and as data in
+    /// `STREAM_SBOX_SEL` (which the bitsliced circuit generator consumes).
+    /// Pin the two to each other over a deterministic sweep of register-A
+    /// values so an edit to either one cannot silently drift.
+    #[test]
+    fn unrolled_sbox_selection_matches_the_selection_table() {
+        let mut x = 0x243f_6a88_85a3_08d3_u64;
+        for _ in 0..20_000 {
+            // xorshift64*
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            let a = x.wrapping_mul(0x2545_f491_4f6c_dd1d) & 0xff_ffff_ffff;
+            let mut want = 0u32;
+            for &(mask, sbox, shifts) in STREAM_SBOX_SEL.iter() {
+                let t = a & mask;
+                let mut idx = 0u64;
+                for &s in shifts.iter() {
+                    idx ^= t >> s;
+                }
+                want |= u32::from(STREAM_SBOX[sbox][(idx & 0x1f) as usize]);
+            }
+            assert_eq!(csa_stream_sboxes(a), want, "A = {a:#012x}");
+        }
+    }
+}

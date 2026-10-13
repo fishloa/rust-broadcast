@@ -24,6 +24,7 @@
 //! # }
 //! ```
 
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 use dvb_bbframe::header::{BBHEADER_LEN, Bbheader, Mode};
 use dvb_bbframe::packet::{CarryOverExtractor, NM_UP_SIZE};
@@ -56,7 +57,9 @@ const MAX_PLPS: usize = 256;
 /// reinsertion is not modelled by the extractor) rather than mis-decoded.
 pub struct InnerTsRecovery {
     pump: T2miPump,
-    extractors: [Option<CarryOverExtractor>; MAX_PLPS],
+    /// Heap-allocated: 256 inline extractors would put ~59 KB in this struct
+    /// (the same stack hazard `dvb_bbframe::pump::BbframePump` boxes away).
+    extractors: Box<[Option<CarryOverExtractor>; MAX_PLPS]>,
     out: Vec<[u8; NM_UP_SIZE]>,
     up_buf: Vec<[u8; NM_UP_SIZE]>,
     target_plp: Option<u8>,
@@ -82,7 +85,7 @@ impl InnerTsRecovery {
     fn build(t2mi_pid: Pid, target_plp: Option<u8>) -> Self {
         Self {
             pump: T2miPump::new(t2mi_pid),
-            extractors: core::array::from_fn(|_| None),
+            extractors: Box::new(core::array::from_fn(|_| None)),
             out: Vec::new(),
             up_buf: Vec::new(),
             target_plp,
@@ -158,6 +161,17 @@ mod tests {
     use dvb_bbframe::crc::crc8;
     use dvb_bbframe::header::{Matype, TsGs};
 
+    /// The 256-slot per-PLP extractor table lives on the heap: the driver
+    /// itself must stay small enough to construct/move on a small stack.
+    #[test]
+    fn recovery_driver_does_not_embed_the_extractor_table() {
+        assert!(
+            core::mem::size_of::<InnerTsRecovery>() < 4096,
+            "InnerTsRecovery is {} bytes",
+            core::mem::size_of::<InnerTsRecovery>()
+        );
+    }
+
     const TS_SYNC: u8 = 0x47;
     const TS_LEN: usize = 188;
 
@@ -190,7 +204,7 @@ mod tests {
             mode: Mode::Normal,
             issy_in_header: None,
         };
-        let mut frame = hdr.serialize().to_vec();
+        let mut frame = hdr.serialize().unwrap().to_vec();
         let mut data = [0u8; TS_LEN];
         data[0] = crc8(&[0u8; TS_LEN]); // CRC-8 of the (all-zero) previous UP
         data[1..].copy_from_slice(&inner[1..]);

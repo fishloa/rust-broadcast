@@ -245,7 +245,7 @@ impl OwnedTsPacket {
                 max: Self::MAX_PAYLOAD_LEN,
             });
         }
-        let mut pkt = [0xFFu8; TS_PACKET_SIZE];
+        let mut pkt = [crate::ts::STUFFING_BYTE; TS_PACKET_SIZE];
         let hdr = TsHeader {
             tei: false,
             pusi,
@@ -409,7 +409,7 @@ mod tests {
     /// afc=0b01 cc=0xC.
     #[test]
     fn getters_report_the_raw_header_fields() {
-        let mut raw = [0xFFu8; TS_PACKET_SIZE];
+        let mut raw = [crate::ts::STUFFING_BYTE; TS_PACKET_SIZE];
         raw[0] = TS_SYNC_BYTE;
         raw[1] = 0b1101_1010; // TEI=1, PUSI=1, priority=0, PID[12:8]=0b11010
         raw[2] = 0xBC;
@@ -486,7 +486,7 @@ mod tests {
     #[test]
     fn owned_adaptation_field_control_accessor() {
         let make = |afc_bits: u8| -> OwnedTsPacket {
-            let mut raw = [0xFFu8; TS_PACKET_SIZE];
+            let mut raw = [crate::ts::STUFFING_BYTE; TS_PACKET_SIZE];
             raw[0] = TS_SYNC_BYTE;
             raw[1] = 0x00;
             raw[2] = 0x00;
@@ -522,7 +522,7 @@ mod tests {
     /// (too-short) declared adaptation field, i.e. the payload.
     #[test]
     fn set_pcr_rejects_adaptation_field_too_short_for_pcr() {
-        let mut raw = [0xFFu8; TS_PACKET_SIZE];
+        let mut raw = [crate::ts::STUFFING_BYTE; TS_PACKET_SIZE];
         raw[0] = TS_SYNC_BYTE;
         raw[1] = 0x00;
         raw[2] = 0x00;

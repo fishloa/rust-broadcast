@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+### Fixed
+- `TsDecoder::datagram` (and so `UdpSectionStream` / `UdpT2miStream`) now
+  unwraps RTP-encapsulated MPEG-2 TS datagrams (RFC 3550 §5.1 header, CSRCs,
+  header extension and padding skipped; payload must be whole 188-byte
+  packets starting on `0x47`). Previously the TS lattice was hunted for
+  through the RTP header bytes, so a `0x47` in the header (sequence number,
+  timestamp or SSRC) 188 bytes before a `0x47` in the first packet latched
+  the decoder onto misaligned bytes (#1099, r11-W-DS-2). Adds `rtp-packet`
+  and `broadcast-common` dependencies.
+
 ### Changed (BREAKING)
 
 - **BREAKING (#1159):** `T2miStream::{new,from_socket,bind}` take `mpeg_ts::pid::Pid` instead of `u16`.

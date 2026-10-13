@@ -248,16 +248,29 @@ pub struct WssDataField {
     pub header: LineHeader,
     /// 14-bit `wss_data_block` (§4.7; EN 300 294 — value in the low 14 bits).
     pub wss_data_block: u16,
+    /// The trailing 2-bit `reserved_future_use` (nominally `11` =
+    /// [`WSS_RESERVED_TAIL`]), preserved as parsed (#1106).
+    pub reserved_tail: u8,
 }
 
 impl WssDataField {
+    /// A WSS field with the canonical `11` reserved tail.
+    pub fn new(header: LineHeader, wss_data_block: u16) -> Self {
+        WssDataField {
+            header,
+            wss_data_block,
+            reserved_tail: WSS_RESERVED_TAIL,
+        }
+    }
+
     /// Bytes this data field occupies (the `data_unit_length`).
     pub fn serialized_len(&self) -> usize {
         WSS_FIELD_LEN
     }
 
     /// Parse exactly one WSS data field from `data`. The trailing 2-bit RFU is
-    /// not validated (decoders ignore RFU).
+    /// not validated (decoders ignore RFU) but is kept in
+    /// [`reserved_tail`](Self::reserved_tail).
     pub fn parse(data: &[u8]) -> Result<Self> {
         if data.len() < WSS_FIELD_LEN {
             return Err(Error::BufferTooShort {
@@ -273,11 +286,12 @@ impl WssDataField {
         Ok(WssDataField {
             header,
             wss_data_block,
+            reserved_tail: data[2] & WSS_RESERVED_TAIL,
         })
     }
 
     /// Serialize into `out`, returning the number of bytes written. The 14-bit
-    /// `wss_data_block` is masked and a `11` RFU tail is emitted.
+    /// `wss_data_block` is range-checked and the preserved RFU tail is emitted.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         if out.len() < WSS_FIELD_LEN {
             return Err(Error::OutputBufferTooSmall {
@@ -294,7 +308,14 @@ impl WssDataField {
         }
         out[0] = self.header.to_byte()?;
         out[1] = (self.wss_data_block >> 6) as u8;
-        out[2] = (((self.wss_data_block as u8) & WSS_BYTE2_DATA_MASK) << 2) | WSS_RESERVED_TAIL;
+        if self.reserved_tail > WSS_RESERVED_TAIL {
+            return Err(Error::FieldTooWide {
+                what: "reserved_future_use",
+                value: self.reserved_tail as u32,
+                bits: 2,
+            });
+        }
+        out[2] = (((self.wss_data_block as u8) & WSS_BYTE2_DATA_MASK) << 2) | self.reserved_tail;
         Ok(WSS_FIELD_LEN)
     }
 }
@@ -531,6 +552,7 @@ impl<'a> DataUnitPayload<'a> {
                 MonochromeDataField::parse(body)?,
             )),
             DataUnitId::Stuffing => {
+                check_stuffing(body)?;
                 if body.len() > u8::MAX as usize {
                     return Err(Error::InvalidDataUnitLength {
                         length: 0,
@@ -631,12 +653,50 @@ pub struct DataUnit<'a> {
     /// The typed body.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub payload: DataUnitPayload<'a>,
+    /// Number of trailing `stuffing_byte`s (each `0xFF`, Table 1) after the
+    /// typed data field inside `data_unit_length`. The spec requires
+    /// `data_unit_length = 0x2C` for `data_identifier` `0x10`-`0x1F`, so a VPS
+    /// / WSS / CC unit there is its 14 / 3 / 3 data bytes plus stuffing up to
+    /// 44. Preserved on parse; always `0` for `Stuffing` / `Opaque` payloads
+    /// (their whole body is the payload). Use [`DataUnit::padded_to`] to build
+    /// the fixed-length form.
+    pub stuffing: u8,
+}
+
+/// Reject a `stuffing_byte` run that is not all `0xFF` (Table 1).
+fn check_stuffing(bytes: &[u8]) -> Result<()> {
+    if bytes.iter().any(|&b| b != crate::data_unit_id::ID_STUFFING) {
+        return Err(Error::InvalidField {
+            what: "stuffing_byte",
+            reason: "stuffing_byte shall be 0xFF (ETSI EN 301 775 Table 1)",
+        });
+    }
+    Ok(())
 }
 
 impl<'a> DataUnit<'a> {
-    /// `data_unit_length`: the number of body bytes after the length field.
+    /// `data_unit_length`: the number of body bytes after the length field
+    /// (the typed payload plus any trailing `stuffing_byte`s).
     pub fn data_unit_length(&self) -> usize {
-        self.payload.serialized_len()
+        self.payload.serialized_len() + usize::from(self.stuffing)
+    }
+
+    /// This unit with `stuffing` set so that `data_unit_length` equals
+    /// `length` (e.g. [`TELETEXT_DATA_UNIT_LENGTH`] for a PES data field whose
+    /// `data_identifier` is `0x10`-`0x1F`, §4.4.2). Errors if the payload is
+    /// already longer than `length`.
+    pub fn padded_to(mut self, length: u8) -> Result<Self> {
+        let have = self.payload.serialized_len();
+        let want = usize::from(length);
+        if have > want {
+            return Err(Error::InvalidDataUnitLength {
+                length,
+                id: self.id.to_u8(),
+                reason: "typed payload is longer than the requested data_unit_length",
+            });
+        }
+        self.stuffing = (want - have) as u8;
+        Ok(self)
     }
 
     /// Total wire size: `data_unit_id` (1) + `data_unit_length` (1) + body.
@@ -650,6 +710,7 @@ impl<'a> DataUnit<'a> {
         DataUnit {
             id,
             payload: DataUnitPayload::Teletext(field),
+            stuffing: 0,
         }
     }
 
@@ -658,6 +719,7 @@ impl<'a> DataUnit<'a> {
         DataUnit {
             id: DataUnitId::Vps,
             payload: DataUnitPayload::Vps(field),
+            stuffing: 0,
         }
     }
 
@@ -666,6 +728,7 @@ impl<'a> DataUnit<'a> {
         DataUnit {
             id: DataUnitId::Wss,
             payload: DataUnitPayload::Wss(field),
+            stuffing: 0,
         }
     }
 
@@ -674,6 +737,7 @@ impl<'a> DataUnit<'a> {
         DataUnit {
             id: DataUnitId::ClosedCaptioning,
             payload: DataUnitPayload::ClosedCaptioning(field),
+            stuffing: 0,
         }
     }
 
@@ -682,6 +746,7 @@ impl<'a> DataUnit<'a> {
         DataUnit {
             id: DataUnitId::Monochrome422Samples,
             payload: DataUnitPayload::Monochrome(field),
+            stuffing: 0,
         }
     }
 
@@ -690,6 +755,7 @@ impl<'a> DataUnit<'a> {
         DataUnit {
             id: DataUnitId::Stuffing,
             payload: DataUnitPayload::Stuffing { length },
+            stuffing: 0,
         }
     }
 
@@ -715,16 +781,26 @@ impl<'a> DataUnit<'a> {
         }
         let body = &data[2..body_end];
         let payload = DataUnitPayload::parse(id, body)?;
-        // Spec fidelity: the typed payload must occupy exactly data_unit_length
-        // bytes (no truncation / no over-read).
-        if payload.serialized_len() != length {
+        // Spec fidelity: the typed payload must fit in data_unit_length; any
+        // bytes after it are the Table 1 `stuffing_byte`s (all 0xFF), kept as a
+        // count so the unit round-trips.
+        let typed = payload.serialized_len();
+        if typed > length {
             return Err(Error::InvalidDataUnitLength {
                 length: data[1],
                 id: data[0],
-                reason: "typed payload size does not match data_unit_length",
+                reason: "typed payload is longer than data_unit_length",
             });
         }
-        Ok((DataUnit { id, payload }, body_end))
+        check_stuffing(&body[typed..])?;
+        Ok((
+            DataUnit {
+                id,
+                payload,
+                stuffing: (length - typed) as u8,
+            },
+            body_end,
+        ))
     }
 
     /// Serialize the data unit into `out`, returning bytes written.
@@ -758,8 +834,11 @@ impl<'a> DataUnit<'a> {
         out[0] = self.id.to_u8();
         out[1] = length as u8;
         let written = self.payload.serialize_into(&mut out[2..total])?;
-        debug_assert_eq!(written, length);
-        Ok(2 + written)
+        for b in &mut out[2 + written..total] {
+            *b = crate::data_unit_id::ID_STUFFING;
+        }
+        debug_assert_eq!(written + usize::from(self.stuffing), length);
+        Ok(total)
     }
 }
 
@@ -836,6 +915,158 @@ impl<'a> DataField<'a> {
             off += unit.serialize_into(&mut out[off..])?;
         }
         Ok(off)
+    }
+}
+
+/// `data_identifier` range of the EBU Teletext-compatible VBI form (Table 2).
+const DI_TELETEXT_COMPATIBLE: core::ops::RangeInclusive<u8> = 0x10..=0x1F;
+/// `data_identifier` range of the VBI form (Table 2).
+const DI_VBI: core::ops::RangeInclusive<u8> = 0x99..=0x9B;
+/// Permitted EBU / Inverted Teletext `line_offset` values besides 0 (§4.5.2).
+const TXT_LINE_OFFSET: core::ops::RangeInclusive<u8> = 7..=22;
+/// VPS `line_offset` (§4.6.1, Table 6).
+const VPS_LINE_OFFSET: u8 = 16;
+/// WSS `line_offset` (§4.7.1, Table 8).
+const WSS_LINE_OFFSET: u8 = 23;
+/// Closed Captioning `line_offset` (§4.8.1, Table 10).
+const CC_LINE_OFFSET: u8 = 21;
+/// Monochrome `line_offset` range (§4.9.1, Table 12).
+const MONO_LINE_OFFSETS: core::ops::RangeInclusive<u8> = 7..=23;
+/// Largest `first_pixel_position` (§4.9.1, Table 12).
+const MONO_MAX_FIRST_PIXEL: u16 = 719;
+/// Largest `n_pixels` (§4.9.1, Table 12).
+const MONO_MAX_PIXELS: usize = 251;
+/// Valid `Y_value` range (ITU-R BT.601, §4.9.1, Table 12).
+const MONO_Y_RANGE: core::ops::RangeInclusive<u8> = 0x10..=0xEB;
+
+fn violation(what: &'static str, reason: &'static str) -> Error {
+    Error::InvalidField { what, reason }
+}
+
+impl DataUnit<'_> {
+    /// Check this unit against the *generation* constraints of ETSI EN 301 775
+    /// §4.4.2 and the per-unit "Valid Range" columns (Tables 1, 4, 6, 8, 10,
+    /// 12). Parsing is deliberately tolerant (decoders accept and ignore
+    /// out-of-range values and the data round-trips); this is the strict view
+    /// for a caller that produces or audits a stream. `data_identifier` is the
+    /// enclosing PES data field's.
+    pub fn validate(&self, data_identifier: u8) -> Result<()> {
+        if DI_TELETEXT_COMPATIBLE.contains(&data_identifier)
+            && self.data_unit_length() != usize::from(TELETEXT_DATA_UNIT_LENGTH)
+        {
+            return Err(violation(
+                "data_unit_length",
+                "shall be 0x2C when data_identifier is 0x10-0x1F (EN 301 775 §4.4.2); pad with DataUnit::padded_to",
+            ));
+        }
+        let header_ok = |h: &LineHeader| {
+            if h.reserved == crate::line_header::RESERVED_PREFIX {
+                Ok(())
+            } else {
+                Err(violation(
+                    "reserved_future_use",
+                    "shall be '11' (EN 301 775 Tables 4, 6, 8, 10)",
+                ))
+            }
+        };
+        match &self.payload {
+            DataUnitPayload::Teletext(f) => {
+                header_ok(&f.header)?;
+                if f.header.line_offset != 0 && !TXT_LINE_OFFSET.contains(&f.header.line_offset) {
+                    return Err(violation(
+                        "line_offset",
+                        "only 0 and 7..=22 are permitted for Teletext (§4.5.2)",
+                    ));
+                }
+                let want = if self.id == DataUnitId::InvertedTeletext {
+                    FRAMING_CODE_INVERTED
+                } else {
+                    FRAMING_CODE_EBU
+                };
+                if f.framing_code != want {
+                    return Err(violation(
+                        "framing_code",
+                        "does not match the data_unit_id's Teletext variant (§4.5.2)",
+                    ));
+                }
+            }
+            DataUnitPayload::Vps(f) => {
+                header_ok(&f.header)?;
+                if !f.header.field_parity || f.header.line_offset != VPS_LINE_OFFSET {
+                    return Err(violation(
+                        "line_offset",
+                        "VPS is generated only on field_parity 1, line_offset 16 (§4.6.2)",
+                    ));
+                }
+            }
+            DataUnitPayload::Wss(f) => {
+                header_ok(&f.header)?;
+                if !f.header.field_parity || f.header.line_offset != WSS_LINE_OFFSET {
+                    return Err(violation(
+                        "line_offset",
+                        "WSS is generated only on field_parity 1, line_offset 23 (§4.7.2)",
+                    ));
+                }
+                if f.reserved_tail != WSS_RESERVED_TAIL {
+                    return Err(violation(
+                        "reserved_future_use",
+                        "the trailing WSS reserved_future_use shall be '11' (Table 8)",
+                    ));
+                }
+            }
+            DataUnitPayload::ClosedCaptioning(f) => {
+                header_ok(&f.header)?;
+                if f.header.line_offset != CC_LINE_OFFSET {
+                    return Err(violation(
+                        "line_offset",
+                        "Closed Captioning is generated only on line_offset 21 (§4.8.2)",
+                    ));
+                }
+            }
+            DataUnitPayload::Monochrome(f) => {
+                if !MONO_LINE_OFFSETS.contains(&f.line_offset) {
+                    return Err(violation("line_offset", "shall be 7..=23 (Table 12)"));
+                }
+                if f.first_pixel_position > MONO_MAX_FIRST_PIXEL {
+                    return Err(violation(
+                        "first_pixel_position",
+                        "shall be 0..=719 (Table 12)",
+                    ));
+                }
+                if f.samples.is_empty() || f.samples.len() > MONO_MAX_PIXELS {
+                    return Err(violation("n_pixels", "shall be 1..=251 (Table 12)"));
+                }
+                if f.samples.iter().any(|y| !MONO_Y_RANGE.contains(y)) {
+                    return Err(violation(
+                        "Y_value",
+                        "shall be 0x10..=0xEB (ITU-R BT.601, Table 12)",
+                    ));
+                }
+            }
+            DataUnitPayload::Stuffing { .. } | DataUnitPayload::Opaque(_) => {}
+        }
+        Ok(())
+    }
+}
+
+impl DataField<'_> {
+    /// Check the whole PES data field against the generation constraints of
+    /// ETSI EN 301 775 §4.1 / §4.4.2 (see [`DataUnit::validate`] for the
+    /// per-unit rules): `data_identifier` shall be `0x10`-`0x1F` or
+    /// `0x99`-`0x9B`, and every unit must satisfy its own constraints. Parsing
+    /// is tolerant; call this when producing or auditing a stream.
+    pub fn validate(&self) -> Result<()> {
+        if !DI_TELETEXT_COMPATIBLE.contains(&self.data_identifier)
+            && !DI_VBI.contains(&self.data_identifier)
+        {
+            return Err(violation(
+                "data_identifier",
+                "shall be 0x10-0x1F or 0x99-0x9B for VBI data (EN 301 775 §4.1)",
+            ));
+        }
+        self.data_units
+            .iter()
+            .try_for_each(|u| u.validate(self.data_identifier))
     }
 }
 
@@ -939,6 +1170,7 @@ mod tests {
         let field = WssDataField {
             header: LineHeader::new(true, 23), // parity=1, line_offset=23
             wss_data_block: 0x3A5C,
+            reserved_tail: 0b11,
         };
         let unit = DataUnit::wss(field);
 
@@ -996,6 +1228,7 @@ mod tests {
         let unit = DataUnit {
             id: DataUnitId::Reserved(0x55),
             payload: DataUnitPayload::Opaque(&body),
+            stuffing: 0,
         };
         let expected = vec![0x55, 0x03, 0xDE, 0xAD, 0xBE];
         unit_round_trip(&unit, &expected);
@@ -1047,6 +1280,7 @@ mod tests {
         let wss = DataUnit::wss(WssDataField {
             header: LineHeader::new(true, 23),
             wss_data_block: 0x1234,
+            reserved_tail: 0b11,
         });
         let block = [0x42u8; TXT_DATA_BLOCK_LEN];
         let txt = DataUnit::teletext(
@@ -1109,6 +1343,7 @@ mod tests {
                 DataUnitPayload::Wss(WssDataField {
                     header: hdr,
                     wss_data_block: 0x123,
+                    reserved_tail: 0b11,
                 }),
                 vec![crate::data_unit_id::ID_WSS],
             ),
@@ -1143,6 +1378,7 @@ mod tests {
                 let unit = DataUnit {
                     id: DataUnitId::from_u8(raw),
                     payload: payload.clone(),
+                    stuffing: 0,
                 };
                 let mut out = vec![0u8; unit.serialized_len()];
                 let r = unit.serialize_into(&mut out);
@@ -1163,6 +1399,7 @@ mod tests {
         let unit = DataUnit {
             id: DataUnitId::Reserved(crate::data_unit_id::ID_VPS),
             payload: DataUnitPayload::Opaque(&opaque_body),
+            stuffing: 0,
         };
         let mut out = vec![0u8; unit.serialized_len()];
         assert!(unit.serialize_into(&mut out).is_err());
@@ -1177,13 +1414,17 @@ mod tests {
 
     #[test]
     fn rejects_length_mismatch() {
-        // VPS body that's longer than the fixed 14 -> typed size != length.
+        // VPS body longer than the fixed 14: the extra byte is a
+        // `stuffing_byte`, which must be 0xFF (#1106) - here it is 14.
         let data = [
             0xC3u8, 0x0F, 0xF0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14,
         ];
         assert!(matches!(
             DataUnit::parse(&data),
-            Err(Error::InvalidDataUnitLength { .. })
+            Err(Error::InvalidField {
+                what: "stuffing_byte",
+                ..
+            })
         ));
     }
 
@@ -1193,6 +1434,7 @@ mod tests {
             let f = WssDataField {
                 header: LineHeader::new(true, 23),
                 wss_data_block: v,
+                reserved_tail: 0b11,
             };
             let mut out = [0u8; WSS_FIELD_LEN];
             f.serialize_into(&mut out).unwrap();
@@ -1289,10 +1531,12 @@ mod tests {
         let a = DataUnit::wss(WssDataField {
             header: LineHeader::new(true, 23),
             wss_data_block: 0x0000,
+            reserved_tail: 0b11,
         });
         let b = DataUnit::wss(WssDataField {
             header: LineHeader::new(true, 23),
             wss_data_block: 0x3FFF,
+            reserved_tail: 0b11,
         });
         let mut out_a = vec![0u8; a.serialized_len()];
         a.serialize_into(&mut out_a).unwrap();
@@ -1454,5 +1698,171 @@ mod tests {
                 DataUnitId::from_u8(id).name()
             );
         }
+    }
+
+    /// #1106 W3: a VPS unit inside a `data_identifier` 0x10-0x1F field is its
+    /// 14 data bytes plus `stuffing_byte`s up to the fixed 0x2C (EN 301 775
+    /// §4.4.2 / Table 1). That used to be rejected as a length mismatch;
+    /// it must parse, keep the count, and round-trip byte-exactly.
+    #[test]
+    fn padded_unit_with_trailing_stuffing_round_trips() {
+        let vps = DataUnit::vps(VpsDataField {
+            header: LineHeader::new(true, 16),
+            vps_data_block: [0x5A; VPS_DATA_BLOCK_LEN],
+        })
+        .padded_to(TELETEXT_DATA_UNIT_LENGTH)
+        .unwrap();
+        assert_eq!(vps.stuffing as usize, 44 - VPS_FIELD_LEN);
+        let mut wire = vec![0u8; vps.serialized_len()];
+        vps.serialize_into(&mut wire).unwrap();
+        assert_eq!(wire[1], TELETEXT_DATA_UNIT_LENGTH);
+        assert!(wire[2 + VPS_FIELD_LEN..].iter().all(|&b| b == 0xFF));
+        let (back, used) = DataUnit::parse(&wire).unwrap();
+        assert_eq!(used, wire.len());
+        assert_eq!(back, vps);
+        let mut again = vec![0u8; back.serialized_len()];
+        back.serialize_into(&mut again).unwrap();
+        assert_eq!(again, wire);
+        // padding past what the payload allows is an error
+        assert!(vps.clone().padded_to(5).is_err());
+    }
+
+    /// #1106 W3: `stuffing_byte` is 0xFF; anything else is rejected instead of
+    /// being silently dropped on re-serialize.
+    #[test]
+    fn non_ff_stuffing_is_rejected() {
+        let mut wire = vec![0xC3, 0x2C, 0xF0 | 0x10]; // VPS, length 44, header
+        wire.extend_from_slice(&[0u8; VPS_DATA_BLOCK_LEN]);
+        wire.extend(core::iter::repeat_n(0xFFu8, 44 - VPS_FIELD_LEN));
+        assert!(DataUnit::parse(&wire).is_ok());
+        let last = wire.len() - 1;
+        wire[last] = 0x00;
+        assert!(matches!(
+            DataUnit::parse(&wire),
+            Err(Error::InvalidField {
+                what: "stuffing_byte",
+                ..
+            })
+        ));
+        // A bare stuffing data unit (0xFF) is checked the same way.
+        assert!(DataUnit::parse(&[0xFF, 0x02, 0xFF, 0x00]).is_err());
+        assert!(DataUnit::parse(&[0xFF, 0x02, 0xFF, 0xFF]).is_ok());
+    }
+
+    /// #1106 reserved-bit policy: both the line header's 2-bit prefix and the
+    /// WSS trailing 2 bits survive parse -> serialize even when not `11`.
+    #[test]
+    fn reserved_bits_are_preserved() {
+        // header byte 0x15 = prefix 00, parity 0, line 21; CC payload 0x9425.
+        let cc = DataUnit::parse(&[0xC5, 0x03, 0x15, 0x94, 0x25]).unwrap().0;
+        match &cc.payload {
+            DataUnitPayload::ClosedCaptioning(f) => assert_eq!(f.header.reserved, 0),
+            _ => panic!("expected CC"),
+        }
+        let mut out = vec![0u8; cc.serialized_len()];
+        cc.serialize_into(&mut out).unwrap();
+        assert_eq!(out, [0xC5, 0x03, 0x15, 0x94, 0x25]);
+        // WSS: header 0xF7 (11 1 10111), 14-bit 0x3A5C -> bytes, tail 00.
+        let wss = DataUnit::parse(&[0xC4, 0x03, 0xF7, 0x0E, 0x70]).unwrap().0;
+        match &wss.payload {
+            DataUnitPayload::Wss(f) => assert_eq!(f.reserved_tail, 0),
+            _ => panic!("expected WSS"),
+        }
+        let mut out = vec![0u8; wss.serialized_len()];
+        wss.serialize_into(&mut out).unwrap();
+        assert_eq!(out, [0xC4, 0x03, 0xF7, 0x0E, 0x70]);
+    }
+
+    /// #1106 W3: the §4.4.2 / Table valid-range constraints are enforced by
+    /// `validate`, while parse stays tolerant of the same data.
+    #[test]
+    fn validate_enforces_the_generation_constraints() {
+        let good = DataField::new(
+            0x10,
+            vec![
+                DataUnit::vps(VpsDataField {
+                    header: LineHeader::new(true, 16),
+                    vps_data_block: [0; VPS_DATA_BLOCK_LEN],
+                })
+                .padded_to(0x2C)
+                .unwrap(),
+                DataUnit::wss(WssDataField::new(LineHeader::new(true, 23), 0x1234))
+                    .padded_to(0x2C)
+                    .unwrap(),
+            ],
+        );
+        good.validate().unwrap();
+
+        // 0x10 field whose unit is not 0x2C long.
+        let short = DataField::new(
+            0x10,
+            vec![DataUnit::vps(VpsDataField {
+                header: LineHeader::new(true, 16),
+                vps_data_block: [0; VPS_DATA_BLOCK_LEN],
+            })],
+        );
+        assert!(short.validate().is_err());
+
+        // Not a VBI data_identifier.
+        let mut bad_di = good.clone();
+        bad_di.data_identifier = 0x20;
+        assert!(bad_di.validate().is_err());
+
+        // VPS on the wrong line parses fine but does not validate.
+        let wrong_line = DataField::new(
+            0x99,
+            vec![DataUnit::vps(VpsDataField {
+                header: LineHeader::new(true, 15),
+                vps_data_block: [0; VPS_DATA_BLOCK_LEN],
+            })],
+        );
+        let mut wire = vec![0u8; wrong_line.serialized_len()];
+        wrong_line.serialize_into(&mut wire).unwrap();
+        let reparsed = DataField::parse(&wire).unwrap();
+        assert!(reparsed.validate().is_err());
+
+        // Teletext framing code vs id.
+        let txt = |id, fc| {
+            DataField::new(
+                0x99,
+                vec![DataUnit::teletext(
+                    id,
+                    TeletextDataField {
+                        header: LineHeader::new(true, 7),
+                        framing_code: fc,
+                        txt_data_block: [0; TXT_DATA_BLOCK_LEN],
+                    },
+                )],
+            )
+        };
+        txt(DataUnitId::EbuTeletextSubtitle, FRAMING_CODE_EBU)
+            .validate()
+            .unwrap();
+        txt(DataUnitId::InvertedTeletext, FRAMING_CODE_INVERTED)
+            .validate()
+            .unwrap();
+        assert!(
+            txt(DataUnitId::InvertedTeletext, FRAMING_CODE_EBU)
+                .validate()
+                .is_err()
+        );
+
+        // Monochrome sample range.
+        let mono = |samples: &'static [u8]| {
+            DataField::new(
+                0x99,
+                vec![DataUnit::monochrome(MonochromeDataField {
+                    first_segment: true,
+                    last_segment: true,
+                    field_parity: true,
+                    line_offset: 10,
+                    first_pixel_position: 0,
+                    samples,
+                })],
+            )
+        };
+        mono(&[0x80; 4]).validate().unwrap();
+        assert!(mono(&[0x00; 4]).validate().is_err());
+        assert!(mono(&[0xF0; 4]).validate().is_err());
     }
 }

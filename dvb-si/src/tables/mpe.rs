@@ -9,8 +9,8 @@
 //! decodes into MAC address + scrambling control + payload fields.
 //!
 //! Like DSM-CC, MPE has no well-known PID — the elementary PID is signalled by
-//! the PMT (via a `data_broadcast_descriptor`, EN 301 192 §7.2.1) — so [`PID`]
-//! is `0x0000`, following the `dsmcc.rs` precedent.
+//! the PMT (via a `data_broadcast_descriptor`, EN 301 192 §7.2.1) — so this
+//! module exports no `PID` constant (the `dsmcc.rs` precedent).
 //!
 //! Per the crate contract this parser does NOT verify the trailing CRC/checksum
 //! integrity; [`broadcast_common`]'s section machinery owns CRC validation. Reserved
@@ -36,8 +36,9 @@ use broadcast_common::{Parse, Serialize};
 /// (ISO/IEC 13818-6); see [`crate::tables::dsmcc`] for the raw view.
 pub const TABLE_ID: u8 = 0x3E;
 
-/// MPE has no well-known PID — the elementary PID comes from the PMT.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 /// 48-bit MAC address in network order (most-significant byte first).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -96,8 +97,7 @@ const HEADER_LEN: usize = 3;
 /// + last_section_number(1) + MAC_4(1) + MAC_3(1) + MAC_2(1) + MAC_1(1).
 const EXTENSION_LEN: usize = 9;
 
-/// Bytes occupied by the trailing CRC_32 / checksum field.
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 
 /// Minimum total encoded length: header + extension + trailer (empty payload).
 const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
@@ -225,8 +225,8 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
         }
 
         // Byte 1: SSI(1) | private(1) | reserved(2) | section_length[11:8].
-        let section_syntax_indicator = (bytes[1] & 0x80) != 0;
-        let private_indicator = (bytes[1] & 0x40) != 0;
+        let section_syntax_indicator = (bytes[1] & super::SECTION_B1_SSI) != 0;
+        let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
         let section_length = super::section_length_of(bytes);
         let total =
             super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
@@ -345,8 +345,7 @@ impl Serialize for MpeDatagramSection<'_> {
 
         if self.section_syntax_indicator {
             // SSI=1 → recompute CRC_32 over the whole section up to the trailer.
-            let crc = broadcast_common::crc32_mpeg2::compute(&buf[..trailer_start]);
-            buf[trailer_start..len].copy_from_slice(&crc.to_be_bytes());
+            super::write_crc(buf, trailer_start);
         } else {
             // SSI=0 → ISO/IEC 13818-6 checksum we cannot recompute; re-emit
             // the preserved trailer bytes verbatim.
@@ -647,7 +646,6 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x3E);
-        assert_eq!(PID.value(), 0x0000);
     }
 
     #[cfg(feature = "serde")]

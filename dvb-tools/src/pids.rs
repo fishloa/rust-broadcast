@@ -13,7 +13,7 @@ use std::process::ExitCode;
 
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 
-use crate::util::{for_each_packet, read_file};
+use crate::util::PacketReader;
 
 /// PCR clock frequency on which PCR_27mhz ticks (ISO/IEC 13818-1 §2.4.3.5).
 const PCR_CLOCK_HZ: u64 = 27_000_000;
@@ -117,8 +117,8 @@ impl PcrTrack {
 }
 
 pub fn run(path: &str) -> ExitCode {
-    let data = match read_file(path, "dvb-tools pids") {
-        Ok(d) => d,
+    let mut packets = match PacketReader::open(path, "dvb-tools pids") {
+        Ok(p) => p,
         Err(code) => return code,
     };
 
@@ -126,7 +126,7 @@ pub fn run(path: &str) -> ExitCode {
     let mut total_packets: u64 = 0;
     let mut pcr_tracks: HashMap<u16, PcrTrack> = HashMap::new();
 
-    for (idx, packet) in for_each_packet(&data).enumerate() {
+    for (idx, packet) in packets.by_ref().enumerate() {
         total_packets = idx as u64 + 1;
         // Every `for_each_packet` chunk should be parseable (sync-byte checked,
         // length is exactly 188 bytes). Keep going on a parse error instead
@@ -150,6 +150,10 @@ pub fn run(path: &str) -> ExitCode {
                 .or_default()
                 .push(total_packets, pcr_27);
         }
+    }
+
+    if let Err(code) = packets.finish() {
+        return code;
     }
 
     // Pick one PCR PID and use only its own first/last PCR. Prefer the PID

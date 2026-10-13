@@ -14,13 +14,12 @@ pub const OP_ID: u16 = 0x0100;
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct InjectSectionData<'a> {
-    /// `SCTE35_command_length` — 2 bytes.
-    pub scte35_command_length: u16,
     /// `SCTE35_protocol_version` — 1 byte.
     pub scte35_protocol_version: u8,
     /// `SCTE35_command_type` — 1 byte.
     pub scte35_command_type: u8,
-    /// `SCTE35_command_contents()` — variable, binary image of the SCTE 35
+    /// `SCTE35_command_contents()` — variable (its length is the on-wire
+    /// `SCTE35_command_length`, derived on serialize, #1103 W1), binary image of the SCTE 35
     /// command body (following the command_type, up to but not including
     /// descriptor_loop_length).
     #[cfg_attr(feature = "serde", serde(borrow))]
@@ -43,7 +42,7 @@ impl<'a> Parse<'a> for InjectSectionData<'a> {
         let scte35_command_length = u16::from_be_bytes([bytes[0], bytes[1]]);
         let scte35_protocol_version = bytes[2];
         let scte35_command_type = bytes[3];
-        let contents_len = scte35_command_length as usize;
+        let contents_len = usize::from(scte35_command_length);
         if bytes.len() < FIXED_LEN + contents_len {
             return Err(Error::BufferTooShort {
                 need: FIXED_LEN + contents_len,
@@ -52,7 +51,6 @@ impl<'a> Parse<'a> for InjectSectionData<'a> {
             });
         }
         Ok(Self {
-            scte35_command_length,
             scte35_protocol_version,
             scte35_command_type,
             scte35_command_contents: &bytes[FIXED_LEN..FIXED_LEN + contents_len],
@@ -73,7 +71,11 @@ impl Serialize for InjectSectionData<'_> {
                 have: buf.len(),
             });
         }
-        buf[0..2].copy_from_slice(&self.scte35_command_length.to_be_bytes());
+        let command_length = broadcast_common::len::fit_u16(
+            self.scte35_command_contents.len(),
+            "inject_section_data.SCTE35_command_length",
+        )?;
+        buf[0..2].copy_from_slice(&command_length.to_be_bytes());
         buf[2] = self.scte35_protocol_version;
         buf[3] = self.scte35_command_type;
         buf[FIXED_LEN..need].copy_from_slice(self.scte35_command_contents);
@@ -93,7 +95,6 @@ mod tests {
     #[test]
     fn round_trip() {
         let op = InjectSectionData {
-            scte35_command_length: 4,
             scte35_protocol_version: 0,
             scte35_command_type: 0x05,
             scte35_command_contents: &[0xAA, 0xBB, 0xCC, 0xDD],
@@ -106,7 +107,6 @@ mod tests {
     #[test]
     fn mutate_field_changes_output() {
         let op = InjectSectionData {
-            scte35_command_length: 2,
             scte35_protocol_version: 0,
             scte35_command_type: 0,
             scte35_command_contents: &[0x01, 0x02],

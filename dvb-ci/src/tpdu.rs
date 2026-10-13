@@ -8,7 +8,7 @@
 //! hardware transport itself is out of scope.
 
 use crate::error::{Error, Result};
-use crate::length;
+use crate::length::{self, LengthForm};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
@@ -109,6 +109,11 @@ pub struct TcObject {
     pub tag: u8,
     /// `t_c_id` — the transport connection identifier.
     pub t_c_id: u8,
+    /// How the `length_field` was coded on the wire (non-minimal long forms
+    /// such as `82 00 09` are preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: LengthForm,
 }
 
 impl TcObject {
@@ -147,7 +152,7 @@ impl<'a> Parse<'a> for TcObject {
                 reason: "tpdu_tag is not a single-t_c_id connection object",
             });
         }
-        let (len, hdr) = length::decode(&bytes[1..])?;
+        let (len, hdr, length_form) = length::decode_form(&bytes[1..])?;
         if len != 1 {
             return Err(Error::InvalidObject {
                 what: "TcObject",
@@ -159,18 +164,24 @@ impl<'a> Parse<'a> for TcObject {
             have: bytes.len(),
             what: "TcObject t_c_id",
         })?;
-        Ok(Self { tag, t_c_id })
+        Ok(Self {
+            tag,
+            t_c_id,
+            length_form,
+        })
     }
 }
 impl Serialize for TcObject {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        3 // tag + length_field(1) + t_c_id
+        // tag + length_field(value 1) + t_c_id
+        1 + length::encoded_len_with(1, self.length_form) + 1
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if buf.len() < 3 {
+        let total = self.serialized_len();
+        if buf.len() < total {
             return Err(Error::OutputBufferTooSmall {
-                need: 3,
+                need: total,
                 have: buf.len(),
             });
         }
@@ -181,9 +192,9 @@ impl Serialize for TcObject {
             });
         }
         buf[0] = self.tag;
-        buf[1] = 1;
-        buf[2] = self.t_c_id;
-        Ok(3)
+        let pos = 1 + length::encode_with(1, self.length_form, &mut buf[1..])?;
+        buf[pos] = self.t_c_id;
+        Ok(pos + 1)
     }
 }
 
@@ -195,25 +206,36 @@ pub struct NewTc {
     pub t_c_id: u8,
     /// `new_t_c_id` — the identifier for the new connection.
     pub new_t_c_id: u8,
+    /// How the `length_field` was coded on the wire (non-minimal long forms
+    /// such as `82 00 09` are preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: LengthForm,
 }
 
 impl<'a> Parse<'a> for NewTc {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = parse_fixed(bytes, tags::NEW_T_C, 2, "New_T_C")?;
+        let (length_form, body) = parse_fixed(bytes, tags::NEW_T_C, 2, "New_T_C")?;
         Ok(Self {
             t_c_id: body[0],
             new_t_c_id: body[1],
+            length_form,
         })
     }
 }
 impl Serialize for NewTc {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        4
+        1 + length::encoded_len_with(2, self.length_form) + 2
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        write_fixed(tags::NEW_T_C, &[self.t_c_id, self.new_t_c_id], buf)
+        write_fixed(
+            tags::NEW_T_C,
+            self.length_form,
+            &[self.t_c_id, self.new_t_c_id],
+            buf,
+        )
     }
 }
 
@@ -225,25 +247,36 @@ pub struct TcError {
     pub t_c_id: u8,
     /// `error_code` (Table A.11: `1` = no transport connections available).
     pub error_code: u8,
+    /// How the `length_field` was coded on the wire (non-minimal long forms
+    /// such as `82 00 09` are preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: LengthForm,
 }
 
 impl<'a> Parse<'a> for TcError {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = parse_fixed(bytes, tags::T_C_ERROR, 2, "T_C_Error")?;
+        let (length_form, body) = parse_fixed(bytes, tags::T_C_ERROR, 2, "T_C_Error")?;
         Ok(Self {
             t_c_id: body[0],
             error_code: body[1],
+            length_form,
         })
     }
 }
 impl Serialize for TcError {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        4
+        1 + length::encoded_len_with(2, self.length_form) + 2
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        write_fixed(tags::T_C_ERROR, &[self.t_c_id, self.error_code], buf)
+        write_fixed(
+            tags::T_C_ERROR,
+            self.length_form,
+            &[self.t_c_id, self.error_code],
+            buf,
+        )
     }
 }
 
@@ -259,6 +292,11 @@ pub struct CommandTpdu<'a> {
     /// Data field (`length_value - 1` bytes).
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub data: &'a [u8],
+    /// How the `length_field` was coded on the wire (non-minimal long forms
+    /// such as `82 00 09` are preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: LengthForm,
 }
 
 impl<'a> Parse<'a> for CommandTpdu<'a> {
@@ -272,7 +310,7 @@ impl<'a> Parse<'a> for CommandTpdu<'a> {
             });
         }
         let tag = bytes[0];
-        let (len, hdr) = length::decode(&bytes[1..])?;
+        let (len, hdr, length_form) = length::decode_form(&bytes[1..])?;
         if len == 0 {
             return Err(Error::InvalidObject {
                 what: "C_TPDU",
@@ -292,6 +330,7 @@ impl<'a> Parse<'a> for CommandTpdu<'a> {
             tag,
             t_c_id: bytes[start],
             data: &bytes[start + 1..end],
+            length_form,
         })
     }
 }
@@ -299,11 +338,11 @@ impl Serialize for CommandTpdu<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let len_value = 1 + self.data.len();
-        1 + length::encoded_len(len_value) + len_value
+        1 + length::encoded_len_with(len_value, self.length_form) + len_value
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len_value = 1 + self.data.len();
-        let total = 1 + length::encoded_len(len_value) + len_value;
+        let total = self.serialized_len();
         if buf.len() < total {
             return Err(Error::OutputBufferTooSmall {
                 need: total,
@@ -311,7 +350,7 @@ impl Serialize for CommandTpdu<'_> {
             });
         }
         buf[0] = self.tag;
-        let mut pos = 1 + length::encode_into(len_value, &mut buf[1..])?;
+        let mut pos = 1 + length::encode_with(len_value, self.length_form, &mut buf[1..])?;
         buf[pos] = self.t_c_id;
         pos += 1;
         buf[pos..pos + self.data.len()].copy_from_slice(self.data);
@@ -336,6 +375,15 @@ pub struct ResponseTpdu<'a> {
     /// Whether the data block was the last (`Tdata_last`) — convenience view of
     /// `tag` for chaining, `None` if `tag` is not a data block tag.
     pub block: Option<DataBlock>,
+    /// How the `length_field` was coded on the wire (non-minimal long forms
+    /// such as `82 00 09` are preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: LengthForm,
+    /// How the trailing Status (SB) object's own `length_field` (value 2) was
+    /// coded; see [`length_form`](Self::length_form).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub status_length_form: LengthForm,
 }
 
 impl<'a> Parse<'a> for ResponseTpdu<'a> {
@@ -349,7 +397,7 @@ impl<'a> Parse<'a> for ResponseTpdu<'a> {
             });
         }
         let tag = bytes[0];
-        let (len, hdr) = length::decode(&bytes[1..])?;
+        let (len, hdr, length_form) = length::decode_form(&bytes[1..])?;
         if len == 0 {
             return Err(Error::InvalidObject {
                 what: "R_TPDU",
@@ -358,11 +406,11 @@ impl<'a> Parse<'a> for ResponseTpdu<'a> {
         }
         let start = 1 + hdr;
         let data_end = start + len;
-        // Status trailer: SB_tag + length_field(=2) + t_c_id + SB_value = 4 bytes.
-        let status_end = data_end + 4;
-        if bytes.len() < status_end {
+        // Status trailer: SB_tag + length_field(value 2) + t_c_id + SB_value.
+        // Need at least the tag and one length byte to learn the field's width.
+        if bytes.len() < data_end + 2 {
             return Err(Error::BufferTooShort {
-                need: status_end,
+                need: data_end + 2,
                 have: bytes.len(),
                 what: "R_TPDU status",
             });
@@ -374,17 +422,27 @@ impl<'a> Parse<'a> for ResponseTpdu<'a> {
                 what: "R_TPDU SB_tag",
             });
         }
-        if bytes[data_end + 1] != 2 {
+        let (sb_len, sb_hdr, status_length_form) = length::decode_form(&bytes[data_end + 1..])?;
+        if sb_len != 2 {
             return Err(Error::InvalidObject {
                 what: "R_TPDU status",
                 reason: "SB length_field must be 2",
             });
         }
-        // bytes[data_end+2] = t_c_id (status), bytes[data_end+3] = SB_value.
+        let sb_body = data_end + 1 + sb_hdr;
+        let status_end = sb_body + 2;
+        if bytes.len() < status_end {
+            return Err(Error::BufferTooShort {
+                need: status_end,
+                have: bytes.len(),
+                what: "R_TPDU status",
+            });
+        }
+        // bytes[sb_body] = t_c_id (status), bytes[sb_body+1] = SB_value.
         // The status trailer names the same transport connection as the
         // TPDU body's own leading t_c_id (bytes[start]) — a mismatch means
         // this status is not actually reporting on this TPDU.
-        if bytes[data_end + 2] != bytes[start] {
+        if bytes[sb_body] != bytes[start] {
             return Err(Error::InvalidObject {
                 what: "R_TPDU status",
                 reason: "status t_c_id does not match the TPDU's t_c_id",
@@ -394,8 +452,10 @@ impl<'a> Parse<'a> for ResponseTpdu<'a> {
             tag,
             t_c_id: bytes[start],
             data: &bytes[start + 1..data_end],
-            sb_value: SbValue(bytes[data_end + 3]),
+            sb_value: SbValue(bytes[sb_body + 1]),
             block: DataBlock::from_tag(tag),
+            length_form,
+            status_length_form,
         })
     }
 }
@@ -403,7 +463,11 @@ impl Serialize for ResponseTpdu<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let len_value = 1 + self.data.len();
-        1 + length::encoded_len(len_value) + len_value + 4
+        1 + length::encoded_len_with(len_value, self.length_form)
+            + len_value
+            + 1
+            + length::encoded_len_with(2, self.status_length_form)
+            + 2
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let total = self.serialized_len();
@@ -415,17 +479,18 @@ impl Serialize for ResponseTpdu<'_> {
         }
         let len_value = 1 + self.data.len();
         buf[0] = self.tag;
-        let mut pos = 1 + length::encode_into(len_value, &mut buf[1..])?;
+        let mut pos = 1 + length::encode_with(len_value, self.length_form, &mut buf[1..])?;
         buf[pos] = self.t_c_id;
         pos += 1;
         buf[pos..pos + self.data.len()].copy_from_slice(self.data);
         pos += self.data.len();
         // Status trailer.
         buf[pos] = tags::SB;
-        buf[pos + 1] = 2;
-        buf[pos + 2] = self.t_c_id;
-        buf[pos + 3] = self.sb_value.0;
-        Ok(pos + 4)
+        pos += 1;
+        pos += length::encode_with(2, self.status_length_form, &mut buf[pos..])?;
+        buf[pos] = self.t_c_id;
+        buf[pos + 1] = self.sb_value.0;
+        Ok(pos + 2)
     }
 }
 
@@ -436,7 +501,7 @@ fn parse_fixed<'a>(
     expected: u8,
     body_len: usize,
     what: &'static str,
-) -> Result<&'a [u8]> {
+) -> Result<(LengthForm, &'a [u8])> {
     if bytes.is_empty() {
         return Err(Error::BufferTooShort {
             need: 1,
@@ -451,7 +516,7 @@ fn parse_fixed<'a>(
             what,
         });
     }
-    let (len, hdr) = length::decode(&bytes[1..])?;
+    let (len, hdr, form) = length::decode_form(&bytes[1..])?;
     if len != body_len {
         return Err(Error::InvalidObject {
             what,
@@ -467,11 +532,11 @@ fn parse_fixed<'a>(
             what,
         });
     }
-    Ok(&bytes[start..end])
+    Ok((form, &bytes[start..end]))
 }
 
-fn write_fixed(tag: u8, body: &[u8], buf: &mut [u8]) -> Result<usize> {
-    let total = 2 + body.len();
+fn write_fixed(tag: u8, form: LengthForm, body: &[u8], buf: &mut [u8]) -> Result<usize> {
+    let total = 1 + length::encoded_len_with(body.len(), form) + body.len();
     if buf.len() < total {
         return Err(Error::OutputBufferTooSmall {
             need: total,
@@ -479,8 +544,8 @@ fn write_fixed(tag: u8, body: &[u8], buf: &mut [u8]) -> Result<usize> {
         });
     }
     buf[0] = tag;
-    buf[1] = body.len() as u8;
-    buf[2..2 + body.len()].copy_from_slice(body);
+    let pos = 1 + length::encode_with(body.len(), form, &mut buf[1..])?;
+    buf[pos..pos + body.len()].copy_from_slice(body);
     Ok(total)
 }
 
@@ -490,6 +555,7 @@ pub fn create_t_c(t_c_id: u8) -> TcObject {
     TcObject {
         tag: tags::CREATE_T_C,
         t_c_id,
+        length_form: LengthForm::Minimal,
     }
 }
 
@@ -522,7 +588,11 @@ mod tests {
                 matches!(TcObject::parse(&wire), Err(Error::InvalidObject { .. })),
                 "tag {tag:#04X} must be rejected on parse"
             );
-            let o = TcObject { tag, t_c_id: 5 };
+            let o = TcObject {
+                length_form: crate::length::LengthForm::Minimal,
+                tag,
+                t_c_id: 5,
+            };
             assert!(matches!(
                 tc_object_bytes(&o),
                 Err(Error::InvalidObject { .. })
@@ -536,7 +606,14 @@ mod tests {
             tags::REQUEST_T_C,
         ] {
             let o = TcObject::parse(&[tag, 0x01, 0x05]).unwrap();
-            assert_eq!(o, TcObject { tag, t_c_id: 5 });
+            assert_eq!(
+                o,
+                TcObject {
+                    length_form: crate::length::LengthForm::Minimal,
+                    tag,
+                    t_c_id: 5
+                }
+            );
             assert_eq!(tc_object_bytes(&o).unwrap(), [tag, 0x01, 0x05]);
         }
     }
@@ -552,6 +629,7 @@ mod tests {
     #[test]
     fn new_tc_round_trip() {
         let n = NewTc {
+            length_form: crate::length::LengthForm::Minimal,
             t_c_id: 1,
             new_t_c_id: 2,
         };
@@ -563,6 +641,7 @@ mod tests {
     #[test]
     fn tc_error_round_trip() {
         let e = TcError {
+            length_form: crate::length::LengthForm::Minimal,
             t_c_id: 3,
             error_code: 1,
         };
@@ -574,6 +653,7 @@ mod tests {
     #[test]
     fn command_tpdu_round_trip() {
         let c = CommandTpdu {
+            length_form: crate::length::LengthForm::Minimal,
             tag: tags::DATA_LAST,
             t_c_id: 1,
             data: &[0xAA, 0xBB, 0xCC],
@@ -587,6 +667,7 @@ mod tests {
     #[test]
     fn receive_data_command_no_payload() {
         let c = CommandTpdu {
+            length_form: crate::length::LengthForm::Minimal,
             tag: tags::RCV,
             t_c_id: 1,
             data: &[],
@@ -599,6 +680,8 @@ mod tests {
     #[test]
     fn response_tpdu_round_trip_with_status() {
         let r = ResponseTpdu {
+            length_form: crate::length::LengthForm::Minimal,
+            status_length_form: crate::length::LengthForm::Minimal,
             tag: tags::DATA_LAST,
             t_c_id: 1,
             data: &[0x9F, 0x80, 0x30, 0x00],
@@ -626,6 +709,8 @@ mod tests {
     #[test]
     fn response_tpdu_rejects_mismatched_status_t_c_id() {
         let r = ResponseTpdu {
+            length_form: crate::length::LengthForm::Minimal,
+            status_length_form: crate::length::LengthForm::Minimal,
             tag: tags::DATA_LAST,
             t_c_id: 1,
             data: &[0x9F, 0x80, 0x30, 0x00],
@@ -645,12 +730,14 @@ mod tests {
     #[test]
     fn mutating_data_changes_bytes() {
         let c = CommandTpdu {
+            length_form: crate::length::LengthForm::Minimal,
             tag: tags::DATA_LAST,
             t_c_id: 1,
             data: &[0xAA],
         };
         let a = c.to_bytes();
         let b = CommandTpdu {
+            length_form: crate::length::LengthForm::Minimal,
             tag: tags::DATA_LAST,
             t_c_id: 1,
             data: &[0xBB],
@@ -663,5 +750,88 @@ mod tests {
     fn sb_value_da() {
         assert!(SbValue::new(true).data_available());
         assert!(!SbValue::new(false).data_available());
+    }
+
+    /// Rewrite the `length_field` of a TPDU wire (1-byte tag + minimal
+    /// length) into the long form with `octets` length octets.
+    fn widen(wire: &[u8], octets: usize) -> alloc::vec::Vec<u8> {
+        let (value, hdr) = length::decode(&wire[1..]).unwrap();
+        let mut out = alloc::vec![wire[0], 0x80 | octets as u8];
+        for i in (0..octets).rev() {
+            out.push((value >> (8 * i)) as u8);
+        }
+        out.extend_from_slice(&wire[1 + hdr..]);
+        out
+    }
+
+    /// The module's `profile_reply` frame, captured raw on hardware
+    /// (dvb-ci-runtime #337): the R_TPDU `length_field` is the long form
+    /// `82 00 09` for the value 9. It must parse and re-serialize to exactly
+    /// these 17 bytes, not the minimal `A0 09 ..`.
+    #[test]
+    fn captured_long_form_r_tpdu_round_trips_byte_exactly() {
+        let frame: [u8; 17] = [
+            0xA0, 0x82, 0x00, 0x09, 0x01, 0x90, 0x02, 0x00, 0x01, 0x9F, 0x80, 0x11, 0x00, 0x80,
+            0x02, 0x01, 0x00,
+        ];
+        let r = ResponseTpdu::parse(&frame).unwrap();
+        assert_eq!(r.length_form, LengthForm::Long { octets: 2 });
+        assert_eq!(r.status_length_form, LengthForm::Minimal);
+        assert_eq!(r.t_c_id, 1);
+        assert_eq!(r.data, &frame[5..13]);
+        assert_eq!(r.to_bytes(), frame);
+    }
+
+    /// r10-W-4: each TPDU object round-trips every length form byte-for-byte,
+    /// including the R_TPDU's own trailing Status `length_field`.
+    #[test]
+    fn every_tpdu_round_trips_each_length_form_byte_exactly() {
+        macro_rules! forms {
+            ($ty:ty, $wire:expr) => {{
+                let wire: &[u8] = &$wire;
+                assert_eq!(<$ty>::parse(wire).unwrap().to_bytes(), wire);
+                for octets in 1..=4 {
+                    let wide = widen(wire, octets);
+                    let parsed = <$ty>::parse(&wide).unwrap();
+                    assert_eq!(parsed.to_bytes(), wide, "{} {octets}", stringify!($ty));
+                    assert_ne!(parsed, <$ty>::parse(wire).unwrap());
+                }
+            }};
+        }
+        forms!(TcObject, [tags::CREATE_T_C, 0x01, 0x05]);
+        forms!(NewTc, [tags::NEW_T_C, 0x02, 0x01, 0x02]);
+        forms!(TcError, [tags::T_C_ERROR, 0x02, 0x01, 0x01]);
+        forms!(CommandTpdu, [tags::DATA_LAST, 0x03, 0x01, 0xAA, 0xBB]);
+        forms!(
+            ResponseTpdu,
+            [
+                tags::DATA_LAST,
+                0x03,
+                0x01,
+                0xAA,
+                0xBB,
+                0x80,
+                0x02,
+                0x01,
+                0x80
+            ]
+        );
+        // The Status trailer's own length_field, widened independently.
+        let wire = [
+            tags::DATA_LAST,
+            0x03,
+            0x01,
+            0xAA,
+            0xBB,
+            0x80,
+            0x82,
+            0x00,
+            0x02,
+            0x01,
+            0x80,
+        ];
+        let r = ResponseTpdu::parse(&wire).unwrap();
+        assert_eq!(r.status_length_form, LengthForm::Long { octets: 2 });
+        assert_eq!(r.to_bytes(), wire);
     }
 }

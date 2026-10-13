@@ -155,7 +155,7 @@ fn serialize_round_trip_all_tnt_bbframes() {
             continue;
         }
         let hdr = Bbheader::parse(frame).unwrap();
-        let serialized = hdr.serialize();
+        let serialized = hdr.serialize().unwrap();
         let round = Bbheader::parse(&serialized).unwrap();
 
         assert_eq!(hdr.matype.ts_gs, round.matype.ts_gs, "#{i} ts_gs");
@@ -243,7 +243,7 @@ fn rai_outer_bbheader_round_trip() {
 
     for (i, frame) in frames.iter().enumerate() {
         let hdr = Bbheader::parse(frame).unwrap();
-        let serialized = hdr.serialize();
+        let serialized = hdr.serialize().unwrap();
         let round = Bbheader::parse(&serialized).unwrap();
 
         assert_eq!(hdr.mode, round.mode, "Rai #{i} mode");

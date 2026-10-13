@@ -23,7 +23,7 @@ pub const TABLE_ID_LAST: u8 = 0x3F;
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 
 /// A DSM-CC section — minimal wrapper that validates header framing
@@ -133,8 +133,8 @@ impl<'a> Parse<'a> for DsmccSection<'a> {
             });
         }
 
-        let section_syntax_indicator = (bytes[1] & 0x80) != 0;
-        let private_indicator = (bytes[1] & 0x40) != 0;
+        let section_syntax_indicator = (bytes[1] & super::SECTION_B1_SSI) != 0;
+        let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
         let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
@@ -221,8 +221,7 @@ impl Serialize for DsmccSection<'_> {
 
         let trailer_start = payload_end;
         if self.section_syntax_indicator {
-            let crc = broadcast_common::crc32_mpeg2::compute(&buf[..trailer_start]);
-            buf[trailer_start..len].copy_from_slice(&crc.to_be_bytes());
+            super::write_crc(buf, trailer_start);
         } else {
             buf[trailer_start..len].copy_from_slice(&self.checksum);
         }

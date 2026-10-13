@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+### Changed
+- `CcAnomalyCheck` keeps the previous packet of each PID in a fixed 188-byte array instead of a fresh `Vec` per payload packet: a clean stream is now O(PIDs) allocations, not O(packets) (audit MD-O2, #1112; `tests/cc_anomaly_allocs.rs`).
 
 ### Changed
 

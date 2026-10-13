@@ -19,7 +19,7 @@
 //!     matype: Matype { ts_gs: TsGs::Ts, sis: true, ccm: true, issyi: false, npd: false, ext: 0, isi: 0 },
 //!     upl: 1504, sync: 0x47, dfl: 1504, syncd: 0, mode: Mode::Normal, issy_in_header: None,
 //! };
-//! let bytes = hdr.serialize();              // 10-byte BBHEADER
+//! let bytes = hdr.serialize().unwrap();              // 10-byte BBHEADER
 //! assert_eq!(bytes.len(), BBHEADER_LEN);
 //! assert_eq!(Bbheader::parse(&bytes).unwrap(), hdr); // byte-identical round-trip
 //! ```

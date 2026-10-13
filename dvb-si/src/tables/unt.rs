@@ -20,8 +20,9 @@ use broadcast_common::{Parse, Serialize};
 /// `table_id` for the Update Notification Table.
 pub const TABLE_ID: u8 = 0x4B;
 
-/// Well-known PID for UNT: **none** — the UNT has no fixed PID.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 /// Action type coding — ETSI TS 102 006 §9.4.2 Table 12.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,7 +77,7 @@ broadcast_common::impl_spec_display!(UntActionType, DvbReserved, UserDefined);
 const HEADER_LEN: usize = 3;
 const FIXED_BODY_LEN: usize = 9;
 const COMMON_DESC_LEN_FIELD: usize = 2;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = HEADER_LEN + FIXED_BODY_LEN + COMMON_DESC_LEN_FIELD + CRC_LEN;
 
 const OFFSET_ACTION_TYPE: usize = HEADER_LEN;
@@ -420,6 +421,9 @@ impl Serialize for UntSection<'_> {
             });
         }
 
+        // 24-bit OUI: the top byte of a wider value used to be dropped
+        // silently (audit r03-W3 class).
+        broadcast_common::len::fit_bits(u64::from(self.oui), 24, "oui")?;
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - HEADER_LEN)?;
@@ -502,8 +506,7 @@ impl Serialize for UntSection<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
-        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, crc_pos);
         Ok(len)
     }
 }
@@ -515,6 +518,36 @@ impl<'a> crate::traits::TableDef<'a> for UntSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// r03-W3 class: a 24-bit `OUI` wider than its field lost its top byte
+    /// silently.
+    #[test]
+    fn serialize_rejects_oui_wider_than_24_bits() {
+        let mk = |oui| {
+            UntSection::new(
+                UntActionType::SystemSoftwareUpdate,
+                0,
+                1,
+                true,
+                0,
+                0,
+                oui,
+                0,
+                DescriptorLoop::new(&[]),
+                vec![],
+            )
+        };
+        let wide = mk(0x0100_0000);
+        let mut buf = vec![0u8; wide.serialized_len()];
+        assert!(matches!(
+            wide.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+        let ok = mk(0x00FF_FFFF);
+        let mut buf = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut buf).unwrap();
+        assert_eq!(UntSection::parse(&buf).unwrap().oui, 0x00FF_FFFF);
+    }
 
     #[test]
     fn parse_happy_path() {

@@ -329,9 +329,9 @@ pub struct MulticastTransportSession {
 impl MulticastTransportSession {
     pub(crate) fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
         let id = require_attr(node, ELEMENT, "id")?;
-        let service_class = require_attr(node, ELEMENT, "serviceClass").ok();
-        let start = require_attr(node, ELEMENT, "start").ok();
-        let duration = require_attr(node, ELEMENT, "duration").ok();
+        let service_class = node.attr_owned("serviceClass");
+        let start = node.attr_owned("start");
+        let duration = node.attr_owned("duration");
         let content_ingest_method = match require_attr(node, ELEMENT, "contentIngestMethod") {
             Ok(v) => Some(ContentIngestMethod::parse(&v)?),
             Err(_) => None,

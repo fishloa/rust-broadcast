@@ -727,6 +727,8 @@ fn next_sub_packet(
     // Parse body: the sub-packet minus any P-bit padding, so a modelled
     // parser never sees padding bytes. RTT Echo is the exception — its
     // padding is its own opaque TR-06-1 §5.2.6 field, not RFC 3550 padding.
+    // (`GenericNack`/`RangeNack` strip the P-bit padding themselves, so they
+    // are handed the whole sub-packet; SDES gets the trimmed body.)
     let body = &full_sub[..head.unpadded_end()];
     let value = match head.packet_type {
         PT_SOURCE_DESCRIPTION => TrailingValue::Sdes(parse_body::<SourceDescription>(body)?),
@@ -737,10 +739,10 @@ fn next_sub_packet(
                     got: head.count,
                 });
             }
-            TrailingValue::GenericNack(parse_body::<GenericNack>(body)?)
+            TrailingValue::GenericNack(parse_body::<GenericNack>(full_sub)?)
         }
         PT_APP if head.count == SUBTYPE_RANGE_NACK => {
-            TrailingValue::RangeNack(parse_body::<RangeNack>(body)?)
+            TrailingValue::RangeNack(parse_body::<RangeNack>(full_sub)?)
         }
         _ => TrailingValue::RttEcho(parse_body::<RttEcho>(full_sub)?),
     };

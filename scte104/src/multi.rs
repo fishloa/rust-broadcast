@@ -21,8 +21,6 @@ const RESERVED: u16 = 0xFFFF;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MultipleOperationMessage<'a> {
-    /// `messageSize` — total size of this structure in bytes.
-    pub message_size: u16,
     /// `protocol_version` — shall be zero (`0x00`).
     pub protocol_version: u8,
     /// `AS_index` — identifies the AS instance (§8.2.1).
@@ -42,7 +40,8 @@ pub struct MultipleOperationMessage<'a> {
 impl<'a> MultipleOperationMessage<'a> {
     /// Construct a new `multiple_operation_message`.
     ///
-    /// `message_size` is computed automatically.
+    /// `messageSize` is derived on serialize (see
+    /// [`message_size`](Self::message_size)); it is not a stored field.
     #[must_use]
     pub fn new(
         protocol_version: u8,
@@ -53,21 +52,7 @@ impl<'a> MultipleOperationMessage<'a> {
         timestamp: Timestamp,
         operations: Vec<Operation<'a>>,
     ) -> Self {
-        // Accumulate in usize (never panics/wraps here, unlike raw u16 `+=`,
-        // #1129); `serialize_into` independently recomputes and validates
-        // this fits the wire field before it trusts the stored value.
-        let mut message_size: usize = HEADER_LEN;
-        message_size += timestamp.serialized_len();
-        message_size += 1; // num_ops
-        for op in &operations {
-            message_size += 4; // opID(2) + data_length(2)
-            message_size += op.body_len();
-        }
-        // Saturate rather than wrap when it doesn't fit; `serialize_into`
-        // recomputes the true size and rejects it rather than trusting this.
-        let message_size = u16::try_from(message_size).unwrap_or(u16::MAX);
         Self {
-            message_size,
             protocol_version,
             as_index,
             message_number,
@@ -119,7 +104,7 @@ impl<'a> Parse<'a> for MultipleOperationMessage<'a> {
         pos += 1;
 
         let mut operations = Vec::with_capacity(num_ops);
-        for i in 0..num_ops {
+        for _ in 0..num_ops {
             if bytes.len() < pos + 4 {
                 return Err(Error::BufferTooShort {
                     need: pos + 4,
@@ -144,22 +129,18 @@ impl<'a> Parse<'a> for MultipleOperationMessage<'a> {
                 op_id,
                 data: any_op,
             });
-            // Silence unused variable warning on the index
-            let _ = i;
         }
 
         // Verify message_size matches
-        let expected_size = pos as u16;
-        if message_size != expected_size {
+        if usize::from(message_size) != pos {
             return Err(Error::LengthOverflow {
-                declared: message_size as usize,
+                declared: usize::from(message_size),
                 available: bytes.len(),
                 what: "multiple_operation_message messageSize mismatch",
             });
         }
 
         Ok(Self {
-            message_size,
             protocol_version,
             as_index,
             message_number,
@@ -172,14 +153,10 @@ impl<'a> Parse<'a> for MultipleOperationMessage<'a> {
 }
 
 impl<'a> MultipleOperationMessage<'a> {
-    /// Recomputes the true wire size from the operations, in `usize`
-    /// (audit run-09 S4-W1): the stored `message_size` field is a cached
-    /// value `new()` fills in, which goes stale the moment a caller mutates
-    /// `operations` directly (the field is `pub`) — `serialized_len()` and
-    /// `serialize_into` must each derive the real size themselves rather
-    /// than trust it, or a stale `message_size` under-reports the buffer a
-    /// caller needs to allocate.
-    fn actual_size(&self) -> usize {
+    /// `messageSize` — the total wire size, derived from the current
+    /// operations in `usize` (#1103 W1/W2). It is not a stored field, so it
+    /// can never go stale when a caller mutates `operations`.
+    pub fn message_size(&self) -> usize {
         let mut size = HEADER_LEN + self.timestamp.serialized_len() + 1;
         for op in &self.operations {
             size += 4 + op.body_len();
@@ -191,10 +168,10 @@ impl<'a> MultipleOperationMessage<'a> {
 impl Serialize for MultipleOperationMessage<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        self.actual_size()
+        self.message_size()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let actual_size = self.actual_size();
+        let actual_size = self.message_size();
         let message_size =
             broadcast_common::len::fit_u16(actual_size, "multiple_operation_message.messageSize")?;
 

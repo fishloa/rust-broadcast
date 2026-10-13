@@ -30,8 +30,9 @@ pub const DURATION_40_MAX: u64 = (1 << 40) - 1;
 #[must_use]
 pub fn ticks_to_duration(ticks: u64) -> core::time::Duration {
     let nanos = (ticks as u128) * 1_000_000_000 / (TICKS_PER_SECOND as u128);
-    // nanos fits u64 for the whole 40-bit range (2^40/90000 s ≈ 12_725_000 s).
-    core::time::Duration::from_nanos(nanos as u64)
+    // nanos fits u64 for the whole 40-bit range (2^40/90000 s ≈ 12_725_000 s);
+    // an out-of-field u64 tick count saturates instead of silently wrapping.
+    core::time::Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
 }
 
 /// Convert a [`Duration`](core::time::Duration) to a 90 kHz tick count,
@@ -281,6 +282,17 @@ mod tests {
             duration_to_ticks(core::time::Duration::from_secs(1), PTS_MAX),
             Some(90_000)
         );
+    }
+
+    /// #1102 O1: an out-of-field tick count saturates, it must not wrap to a
+    /// small bogus duration.
+    #[test]
+    fn ticks_to_duration_saturates() {
+        assert_eq!(
+            ticks_to_duration(u64::MAX),
+            core::time::Duration::from_nanos(u64::MAX)
+        );
+        assert!(ticks_to_duration(u64::MAX) > ticks_to_duration(DURATION_40_MAX));
     }
 
     #[test]

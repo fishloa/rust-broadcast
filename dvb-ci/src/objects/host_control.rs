@@ -16,6 +16,12 @@ use mpeg_ts::pid::Pid;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Tune {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `network_id`.
     pub network_id: u16,
     /// `original_network_id`.
@@ -32,7 +38,7 @@ const TUNE_BODY: usize = 8;
 impl<'a> Parse<'a> for Tune {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::TUNE, "tune")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::TUNE, "tune")?;
         if body.len() < TUNE_BODY {
             return Err(Error::BufferTooShort {
                 need: TUNE_BODY,
@@ -42,6 +48,7 @@ impl<'a> Parse<'a> for Tune {
         }
         super::reject_trailing_body(body, TUNE_BODY, "tune")?;
         Ok(Self {
+            length_form,
             network_id: u16::from_be_bytes([body[0], body[1]]),
             original_network_id: u16::from_be_bytes([body[2], body[3]]),
             transport_stream_id: u16::from_be_bytes([body[4], body[5]]),
@@ -53,10 +60,10 @@ impl<'a> Parse<'a> for Tune {
 impl Serialize for Tune {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(TUNE_BODY)
+        super::apdu_len(TUNE_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(tag::TUNE, TUNE_BODY, buf)?;
+        let mut pos = super::write_apdu_header(tag::TUNE, TUNE_BODY, self.length_form, buf)?;
         buf[pos..pos + 2].copy_from_slice(&self.network_id.to_be_bytes());
         buf[pos + 2..pos + 4].copy_from_slice(&self.original_network_id.to_be_bytes());
         buf[pos + 4..pos + 6].copy_from_slice(&self.transport_stream_id.to_be_bytes());
@@ -76,6 +83,12 @@ impl ApduDef<'_> for Tune {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Replace {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `replacement_ref` — application-allocated reference matched by Clear Replace.
     pub replacement_ref: u8,
     /// 13-bit `replaced_PID` — PID of the component to replace.
@@ -90,7 +103,7 @@ const REPLACE_BODY: usize = 5;
 impl<'a> Parse<'a> for Replace {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::REPLACE, "replace")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::REPLACE, "replace")?;
         if body.len() < REPLACE_BODY {
             return Err(Error::BufferTooShort {
                 need: REPLACE_BODY,
@@ -103,6 +116,7 @@ impl<'a> Parse<'a> for Replace {
         let replaced_pid = Pid::new((((body[1] & 0x1F) as u16) << 8) | body[2] as u16);
         let replacement_pid = Pid::new((((body[3] & 0x1F) as u16) << 8) | body[4] as u16);
         Ok(Self {
+            length_form,
             replacement_ref,
             replaced_pid,
             replacement_pid,
@@ -113,10 +127,10 @@ impl<'a> Parse<'a> for Replace {
 impl Serialize for Replace {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(REPLACE_BODY)
+        super::apdu_len(REPLACE_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(tag::REPLACE, REPLACE_BODY, buf)?;
+        let mut pos = super::write_apdu_header(tag::REPLACE, REPLACE_BODY, self.length_form, buf)?;
         buf[pos] = self.replacement_ref;
         // reserved(3)='111', replaced_PID(13).
         buf[pos + 1] = 0xE0 | ((self.replaced_pid.value() >> 8) as u8 & 0x1F);
@@ -139,6 +153,12 @@ impl ApduDef<'_> for Replace {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ClearReplace {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `replacement_ref` — matches the value used in one or more Replace objects.
     pub replacement_ref: u8,
 }
@@ -146,23 +166,27 @@ pub struct ClearReplace {
 impl<'a> Parse<'a> for ClearReplace {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::CLEAR_REPLACE, "clear_replace")?;
+        let (length_form, body) =
+            super::parse_apdu_header(bytes, tag::CLEAR_REPLACE, "clear_replace")?;
         let replacement_ref = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
             what: "clear_replace replacement_ref",
         })?;
-        Ok(Self { replacement_ref })
+        Ok(Self {
+            length_form,
+            replacement_ref,
+        })
     }
 }
 
 impl Serialize for ClearReplace {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(1)
+        super::apdu_len(1, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(tag::CLEAR_REPLACE, 1, buf)?;
+        let mut pos = super::write_apdu_header(tag::CLEAR_REPLACE, 1, self.length_form, buf)?;
         buf[pos] = self.replacement_ref;
         pos += 1;
         Ok(pos)
@@ -177,23 +201,29 @@ impl ApduDef<'_> for ClearReplace {
 /// `ask_release()` object (Table 30): header-only release request from the host.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct AskRelease;
+pub struct AskRelease {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 impl<'a> Parse<'a> for AskRelease {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        super::parse_empty_apdu(bytes, tag::ASK_RELEASE, "ask_release")?;
-        Ok(Self)
+        let length_form = super::parse_empty_apdu(bytes, tag::ASK_RELEASE, "ask_release")?;
+        Ok(Self { length_form })
     }
 }
 
 impl Serialize for AskRelease {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::empty_apdu_len()
+        super::empty_apdu_len(self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        super::serialize_empty_apdu(tag::ASK_RELEASE, buf)
+        super::serialize_empty_apdu(tag::ASK_RELEASE, self.length_form, buf)
     }
 }
 
@@ -209,6 +239,7 @@ mod tests {
     #[test]
     fn tune_round_trips_and_bites() {
         let t = Tune {
+            length_form: crate::length::LengthForm::Minimal,
             network_id: 0x1122,
             original_network_id: 0x3344,
             transport_stream_id: 0x5566,
@@ -230,6 +261,7 @@ mod tests {
     #[test]
     fn replace_round_trips_and_bites() {
         let r = Replace {
+            length_form: crate::length::LengthForm::Minimal,
             replacement_ref: 0x07,
             replaced_pid: Pid::new(0x0123),    // 13-bit
             replacement_pid: Pid::new(0x01FF), // 13-bit
@@ -258,12 +290,14 @@ mod tests {
     #[test]
     fn clear_replace_round_trips_and_bites() {
         let c = ClearReplace {
+            length_form: crate::length::LengthForm::Minimal,
             replacement_ref: 0x42,
         };
         let bytes = c.to_bytes();
         assert_eq!(bytes, [0x9F, 0x84, 0x02, 0x01, 0x42]);
         assert_eq!(ClearReplace::parse(&bytes).unwrap(), c);
         let other = ClearReplace {
+            length_form: crate::length::LengthForm::Minimal,
             replacement_ref: 0x43,
         };
         assert_ne!(bytes, other.to_bytes());
@@ -271,8 +305,8 @@ mod tests {
 
     #[test]
     fn ask_release_round_trips() {
-        let bytes = AskRelease.to_bytes();
+        let bytes = AskRelease::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x84, 0x03, 0x00]);
-        assert_eq!(AskRelease::parse(&bytes).unwrap(), AskRelease);
+        assert_eq!(AskRelease::parse(&bytes).unwrap(), AskRelease::default());
     }
 }

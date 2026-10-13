@@ -23,7 +23,7 @@ const RESERVED_EXTENSION: u16 = 0xFFFF;
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 
 /// One CA descriptor entry from the CAT, in owned form so it
@@ -212,8 +212,7 @@ impl Serialize for CatSection<'_> {
         buf[desc_start..desc_start + self.descriptors.len()]
             .copy_from_slice(self.descriptors.raw());
         let crc_pos = len - CRC_LEN;
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
-        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, crc_pos);
         Ok(len)
     }
 }

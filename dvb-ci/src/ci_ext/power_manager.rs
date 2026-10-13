@@ -108,6 +108,12 @@ broadcast_common::impl_spec_display!(ReplyCode, Reserved);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ActivationStateChangeRequest {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// The requested new activation state (low 4 bits; top 4 bits reserved).
     pub activation_state: ActivationState,
 }
@@ -116,6 +122,12 @@ pub struct ActivationStateChangeRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ActivationStateChangeAck {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// The module's response.
     pub reply_code: ReplyCode,
 }
@@ -128,7 +140,7 @@ const ACK_BODY: usize = 1;
 impl<'a> Parse<'a> for ActivationStateChangeRequest {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(
+        let (length_form, body) = objects::parse_apdu_header(
             bytes,
             tag::ACTIVATION_STATE_CHANGE_REQUEST,
             "activation_state_change_request",
@@ -146,6 +158,7 @@ impl<'a> Parse<'a> for ActivationStateChangeRequest {
             "activation_state_change_request",
         )?;
         Ok(Self {
+            length_form,
             activation_state: ActivationState::from_u8(body[0] & 0x0F),
         })
     }
@@ -153,11 +166,15 @@ impl<'a> Parse<'a> for ActivationStateChangeRequest {
 impl Serialize for ActivationStateChangeRequest {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(REQUEST_BODY)
+        objects::apdu_len(REQUEST_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos =
-            objects::write_apdu_header(tag::ACTIVATION_STATE_CHANGE_REQUEST, REQUEST_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::ACTIVATION_STATE_CHANGE_REQUEST,
+            REQUEST_BODY,
+            self.length_form,
+            buf,
+        )?;
         // reserved(4)='0000', activation_state(4).
         buf[pos] = self.activation_state.to_u8() & 0x0F;
         Ok(pos + REQUEST_BODY)
@@ -167,7 +184,7 @@ impl Serialize for ActivationStateChangeRequest {
 impl<'a> Parse<'a> for ActivationStateChangeAck {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(
+        let (length_form, body) = objects::parse_apdu_header(
             bytes,
             tag::ACTIVATION_STATE_CHANGE_ACK,
             "activation_state_change_ack",
@@ -181,6 +198,7 @@ impl<'a> Parse<'a> for ActivationStateChangeAck {
         }
         crate::objects::reject_trailing_body(body, ACK_BODY, "activation_state_change_ack")?;
         Ok(Self {
+            length_form,
             reply_code: ReplyCode::from_u8(body[0]),
         })
     }
@@ -188,10 +206,15 @@ impl<'a> Parse<'a> for ActivationStateChangeAck {
 impl Serialize for ActivationStateChangeAck {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(ACK_BODY)
+        objects::apdu_len(ACK_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::ACTIVATION_STATE_CHANGE_ACK, ACK_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::ACTIVATION_STATE_CHANGE_ACK,
+            ACK_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.reply_code.to_u8();
         Ok(pos + ACK_BODY)
     }
@@ -217,6 +240,7 @@ mod tests {
     #[test]
     fn request_round_trips_and_bites() {
         let r = ActivationStateChangeRequest {
+            length_form: crate::length::LengthForm::Minimal,
             activation_state: ActivationState::StandbyPassive,
         };
         let bytes = r.to_bytes();
@@ -224,6 +248,7 @@ mod tests {
         assert_eq!(ActivationStateChangeRequest::parse(&bytes).unwrap(), r);
         assert_eq!(r.activation_state.name(), "Standby-passive");
         let other = ActivationStateChangeRequest {
+            length_form: crate::length::LengthForm::Minimal,
             activation_state: ActivationState::Reserved(5),
         };
         assert_ne!(bytes, other.to_bytes());
@@ -233,6 +258,7 @@ mod tests {
     #[test]
     fn ack_round_trips_and_bites() {
         let a = ActivationStateChangeAck {
+            length_form: crate::length::LengthForm::Minimal,
             reply_code: ReplyCode::Busy,
         };
         let bytes = a.to_bytes();
@@ -240,6 +266,7 @@ mod tests {
         assert_eq!(ActivationStateChangeAck::parse(&bytes).unwrap(), a);
         assert_eq!(a.reply_code.name(), "Module busy, don't change state");
         let other = ActivationStateChangeAck {
+            length_form: crate::length::LengthForm::Minimal,
             reply_code: ReplyCode::Ok,
         };
         assert_ne!(bytes, other.to_bytes());
@@ -278,6 +305,7 @@ mod tests {
     #[test]
     fn dispatch_routes_both_tags() {
         let req = ActivationStateChangeRequest {
+            length_form: crate::length::LengthForm::Minimal,
             activation_state: ActivationState::StandbyPassive,
         }
         .to_bytes();
@@ -286,6 +314,7 @@ mod tests {
             PowerManagerApdu::Request(_)
         ));
         let ack = ActivationStateChangeAck {
+            length_form: crate::length::LengthForm::Minimal,
             reply_code: ReplyCode::Ok,
         }
         .to_bytes();

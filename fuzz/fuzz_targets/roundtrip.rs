@@ -33,12 +33,12 @@ fn roundtrip_bbheader(data: &[u8]) {
         Ok(h) => h,
         Err(_) => return,
     };
-    let serialized = hdr.serialize();
+    let serialized = hdr.serialize().unwrap();
     let reparsed = match dvb_bbframe::header::Bbheader::parse(&serialized) {
         Ok(r) => r,
         Err(_) => return,
     };
-    let reserialized = reparsed.serialize();
+    let reserialized = reparsed.serialize().unwrap();
     assert_eq!(
         serialized, reserialized,
         "bbheader roundtrip: serialized bytes differ"

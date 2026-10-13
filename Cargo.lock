@@ -444,6 +444,7 @@ version = "0.4.0"
 dependencies = [
  "broadcast-common",
  "libm",
+ "test-alloc",
  "thiserror 2.0.21",
 ]
 
@@ -743,6 +744,7 @@ dependencies = [
  "mpeg-ps",
  "mpeg-ts",
  "st377-1",
+ "test-alloc",
 ]
 
 [[package]]
@@ -1162,6 +1164,7 @@ dependencies = [
  "futures-core",
  "futures-util",
  "mpeg-ts",
+ "rtp-packet",
  "socket2",
  "tokio",
  "tokio-util",
@@ -2177,6 +2180,7 @@ dependencies = [
  "serde_json",
  "socket2",
  "ssai-runtime",
+ "test-alloc",
  "test-bounded",
  "thiserror 2.0.21",
  "timed-metadata",
@@ -2329,6 +2333,7 @@ dependencies = [
  "bytes",
  "mp4-emsg",
  "serde",
+ "test-alloc",
  "thiserror 2.0.21",
 ]
 
@@ -3325,6 +3330,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-alloc",
  "thiserror 2.0.21",
 ]
 
@@ -3338,6 +3344,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "test-alloc",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",

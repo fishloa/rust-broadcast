@@ -9,6 +9,7 @@ use dvb_ci::objects::ca_info::CaInfo;
 fn main() {
     // A ca_info() APDU (9F 80 31) advertising two CA_system_ids: 0x0500, 0x0B00.
     let info = CaInfo {
+        length_form: dvb_ci::length::LengthForm::Minimal,
         ca_system_ids: vec![0x0500, 0x0B00],
     };
     let wire = info.to_bytes();

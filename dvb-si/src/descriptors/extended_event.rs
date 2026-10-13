@@ -90,9 +90,6 @@ impl<'a> Parse<'a> for ExtendedEventDescriptor<'a> {
         let mut items = Vec::new();
         let mut pos = items_start;
         while pos < items_end {
-            if pos >= items_end {
-                break;
-            }
             let desc_len = body[pos] as usize;
             let desc_start = pos + 1;
             let desc_end = desc_start + desc_len;

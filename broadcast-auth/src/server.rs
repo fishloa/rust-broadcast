@@ -113,6 +113,7 @@ use lru::LruCache;
 use md5::{Digest as _, Md5};
 use percent_encoding::percent_decode_str;
 use sha2::Sha256;
+use subtle::ConstantTimeEq;
 use url::{Position, Url};
 
 use crate::credentials::Credentials;
@@ -945,18 +946,11 @@ fn md5_hex(input: String) -> String {
     hex::encode(hasher.finalize())
 }
 
-/// Byte-equality that does not short-circuit on the first differing byte —
-/// only the *length* check short-circuits (an equal-length requirement is
-/// not itself the secret being protected). Guards against a timing
-/// side-channel on the password/token/digest-response comparison.
+/// Byte-equality in constant time via [`subtle::ConstantTimeEq`] (the same
+/// primitive `signed_url` uses) — only the *length* check short-circuits (an
+/// equal-length requirement is not itself the secret being protected).
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    a.iter()
-        .zip(b.iter())
-        .fold(0u8, |acc, (x, y)| acc | (x ^ y))
-        == 0
+    a.len() == b.len() && bool::from(a.ct_eq(b))
 }
 
 /// Decodes exactly `N` bytes of hex, or `None`.

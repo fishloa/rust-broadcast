@@ -23,6 +23,7 @@ fn main() {
     let wss = DataUnit::wss(WssDataField {
         header: LineHeader::new(true, 23),
         wss_data_block: 0x1234,
+        reserved_tail: 0b11,
     });
 
     // EBU Teletext (non-subtitle) on line 7, second field.

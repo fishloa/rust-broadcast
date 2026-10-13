@@ -130,57 +130,14 @@ fn need_at_least(anchor: usize, frame_len: usize) -> usize {
 /// running off the buffer (`truncated`) or hitting an invalid next header, plus
 /// its anchor offset and first-frame length. Short-circuits at
 /// [`MP3_MIN_CHAIN_STRONG`], bounding the work.
-fn longest_mp3_chain(data: &[u8]) -> (usize, bool, usize, usize) {
-    let n = data.len();
-    let mut best = 0usize;
-    let mut best_truncated = false;
-    let mut best_anchor = 0usize;
-    let mut best_frame_len = 0usize;
-    let mut i = id3_skip(data).unwrap_or(0);
-    while i < n {
-        if let Some(first_len) = mp3_frame_len(data, i) {
-            let mut p = i;
-            let mut run = 0usize;
-            let mut truncated = false;
-            loop {
-                match mp3_frame_len(data, p) {
-                    Some(l) => {
-                        run += 1;
-                        if run >= MP3_MIN_CHAIN_STRONG {
-                            return (run, false, i, first_len);
-                        }
-                        if p + l > n {
-                            // The frame's body extends past the buffer: a genuine
-                            // truncation (the stream was cut mid-frame).
-                            truncated = true;
-                            break;
-                        }
-                        p += l;
-                    }
-                    None => {
-                        // No valid header at `p`. If a full header could not have
-                        // been read here (the region ended within it), the chain
-                        // ran out of data rather than being ruled out — the next
-                        // frame's header is simply not fully visible yet.
-                        if p + MP3_HEADER_LEN > n {
-                            truncated = true;
-                        }
-                        break;
-                    }
-                }
-            }
-            if run > best || (run == best && truncated) {
-                best = run;
-                best_truncated = truncated;
-                best_anchor = i;
-                best_frame_len = first_len;
-            }
-            i += 1;
-        } else {
-            i += 1;
-        }
-    }
-    (best, best_truncated, best_anchor, best_frame_len)
+fn longest_mp3_chain(data: &[u8]) -> crate::chain::Chain {
+    crate::chain::longest_chain(
+        data,
+        id3_skip(data).unwrap_or(0),
+        MP3_HEADER_LEN,
+        MP3_MIN_CHAIN_STRONG,
+        mp3_frame_len,
+    )
 }
 
 /// `frame_length` for a valid MPEG-1 Layer III frame header at `i`, or `None`

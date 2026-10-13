@@ -69,6 +69,17 @@ pub struct Escr {
     pub extension: u16,
 }
 
+/// ESCR 33-bit base mask (ISO/IEC 13818-1 §2.4.3.7 `ESCR_base`).
+const ESCR_BASE_MASK: u64 = (1 << 33) - 1;
+/// ESCR 9-bit extension mask (`ESCR_extension`).
+const ESCR_EXT_MASK: u16 = (1 << 9) - 1;
+/// ESCR byte 0 leading `reserved(2) = '11'` (spec convention).
+const ESCR_B0_RESERVED: u8 = 0xC0;
+/// ESCR `marker_bit` that sits in bit 2 of bytes 0, 2 and 4.
+const ESCR_MARKER_MID: u8 = 0x04;
+/// ESCR trailing `marker_bit` (bit 0 of byte 5).
+const ESCR_MARKER_LAST: u8 = 0x01;
+
 impl Escr {
     /// Full ESCR value on the 27 MHz clock: `base * 300 + extension`.
     #[must_use]
@@ -104,7 +115,7 @@ impl Escr {
             | (((b[2] & 0x03) as u64) << 13)                  // base[14:13]
             | ((b[3] as u64) << 5)                             // base[12:5]
             | (((b[4] >> 3) & 0x1F) as u64); // base[4:0]
-        let extension = ((((b[4] & 0x03) as u16) << 7) | ((b[5] >> 1) as u16)) & 0x1FF;
+        let extension = ((((b[4] & 0x03) as u16) << 7) | ((b[5] >> 1) as u16)) & ESCR_EXT_MASK;
         Ok(Self { base, extension })
     }
 
@@ -114,21 +125,24 @@ impl Escr {
     /// Exact inverse of [`from_field_bytes`](Self::from_field_bytes).
     #[must_use]
     pub fn to_field_bytes(self) -> [u8; 6] {
-        let b = self.base & 0x1_FFFF_FFFF;
-        let e = (self.extension & 0x1FF) as u64;
+        let b = self.base & ESCR_BASE_MASK;
+        let e = (self.extension & ESCR_EXT_MASK) as u64;
         [
             // B0: reserved(2)='11' | base[32:30](3) | marker(1)='1' | base[29:28](2)
-            0xC0 | (((b >> 30) & 0x07) as u8) << 3 | 0x04 | ((b >> 28) & 0x03) as u8,
+            ESCR_B0_RESERVED
+                | (((b >> 30) & 0x07) as u8) << 3
+                | ESCR_MARKER_MID
+                | ((b >> 28) & 0x03) as u8,
             // B1: base[27:20](8)
             ((b >> 20) & 0xFF) as u8,
             // B2: base[19:15](5) | marker(1)='1' | base[14:13](2)
-            (((b >> 15) & 0x1F) as u8) << 3 | 0x04 | ((b >> 13) & 0x03) as u8,
+            (((b >> 15) & 0x1F) as u8) << 3 | ESCR_MARKER_MID | ((b >> 13) & 0x03) as u8,
             // B3: base[12:5](8)
             ((b >> 5) & 0xFF) as u8,
             // B4: base[4:0](5) | marker(1)='1' | ext[8:7](2)
-            (((b & 0x1F) as u8) << 3) | 0x04 | ((e >> 7) & 0x03) as u8,
+            (((b & 0x1F) as u8) << 3) | ESCR_MARKER_MID | ((e >> 7) & 0x03) as u8,
             // B5: ext[6:0](7) | marker(1)='1'
-            (((e & 0x7F) as u8) << 1) | 0x01,
+            (((e & 0x7F) as u8) << 1) | ESCR_MARKER_LAST,
         ]
     }
 }

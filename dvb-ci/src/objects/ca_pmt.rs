@@ -159,6 +159,12 @@ pub struct CaPmtStream<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CaPmt<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `ca_pmt_list_management`.
     pub list_management: CaPmtListManagement,
     /// `program_number`.
@@ -187,7 +193,7 @@ const ES_PREFIX: usize = 5;
 impl<'a> Parse<'a> for CaPmt<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::CA_PMT, "ca_pmt")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::CA_PMT, "ca_pmt")?;
         if body.len() < CA_PMT_PREFIX {
             return Err(Error::BufferTooShort {
                 need: CA_PMT_PREFIX,
@@ -230,6 +236,7 @@ impl<'a> Parse<'a> for CaPmt<'a> {
         }
 
         Ok(Self {
+            length_form,
             list_management,
             program_number,
             version_number,
@@ -284,7 +291,7 @@ impl Serialize for CaPmt<'_> {
         for s in &self.streams {
             body += ES_PREFIX + info_block_len(s.cmd_id, s.ca_descriptors);
         }
-        super::apdu_len(body)
+        super::apdu_len(body, self.length_form)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -297,7 +304,7 @@ impl Serialize for CaPmt<'_> {
             super::fit_bits(es_info_length as u64, 12, "ca_pmt ES_info_length")?;
             body += ES_PREFIX + es_info_length;
         }
-        let mut pos = super::write_apdu_header(tag::CA_PMT, body, buf)?;
+        let mut pos = super::write_apdu_header(tag::CA_PMT, body, self.length_form, buf)?;
 
         buf[pos] = self.list_management.to_u8();
         buf[pos + 1..pos + 3].copy_from_slice(&self.program_number.to_be_bytes());
@@ -388,6 +395,7 @@ mod tests {
     fn missing_cmd_id_with_descriptors_is_rejected() {
         let desc = sample_ca_descriptor(0x0500, 0x0100);
         let pmt = CaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 0x1234,
             version_number: 5,
@@ -403,6 +411,7 @@ mod tests {
 
         // Same defect at ES level.
         let pmt = CaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 0x1234,
             version_number: 5,
@@ -425,6 +434,7 @@ mod tests {
     #[test]
     fn empty_ca_pmt_round_trips() {
         let pmt = CaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 0x1234,
             version_number: 5,
@@ -444,6 +454,7 @@ mod tests {
         let es0_desc = sample_ca_descriptor(0x0500, 0x0101);
         let es1_desc = sample_ca_descriptor(0x0B00, 0x0201);
         let pmt = CaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 0x0001,
             version_number: 1,
@@ -485,6 +496,7 @@ mod tests {
     #[test]
     fn es_without_ca_info_omits_cmd_id() {
         let pmt = CaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Add,
             program_number: 7,
             version_number: 0,
@@ -516,6 +528,7 @@ mod tests {
     #[test]
     fn max_pid_still_serializes_and_round_trips() {
         let pmt = CaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 1,
             version_number: 0,
@@ -539,6 +552,7 @@ mod tests {
         // program_info_length field (max 0x0FFF).
         let big = alloc::vec![0u8; 4096];
         let pmt = CaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 1,
             version_number: 0,
@@ -557,6 +571,7 @@ mod tests {
     #[test]
     fn oversized_version_number_is_rejected() {
         let pmt = CaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             list_management: CaPmtListManagement::Only,
             program_number: 1,
             version_number: 0x20, // exceeds the 5-bit field (max 0x1F)

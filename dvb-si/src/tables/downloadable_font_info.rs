@@ -5,7 +5,7 @@
 //! font family. Sections of a Downloadable Font Information Table (DFIT) are
 //! carried together on one PID, signalled in the PMT by a `data_broadcast_id`
 //! descriptor with `data_broadcast_id` 0x000D (§5.3.2.3.1) — there is no
-//! well-known PID, so [`PID`] follows the `dsmcc.rs` "no fixed PID" convention.
+//! well-known PID, so this module exports no `PID` constant (`dsmcc.rs` convention).
 //!
 //! ## table_id
 //!
@@ -44,9 +44,9 @@ use broadcast_common::{Parse, Serialize};
 
 /// table_id for the DFIS — the crate registry value (see module docs re. spec 0x4C).
 pub const TABLE_ID: u8 = 0x7C;
-/// DFIS has no well-known PID; carried on the PID signalled by the
-/// `data_broadcast_id` (0x000D) descriptor in the PMT (§5.3.2.3.1).
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 /// `font_info_type` for style/weight (§5.3.2.3.2.1 Table 23).
 pub const FONT_INFO_TYPE_STYLE_WEIGHT: u8 = 0x00;
@@ -60,8 +60,7 @@ pub const FONT_INFO_TYPE_FONT_SIZE: u8 = 0x02;
 const HEADER_LEN: usize = 8;
 /// `section_length` counts from just after the field (byte 3) to end of section.
 const SECTION_LENGTH_PREFIX: usize = 3;
-/// CRC_32 trailer.
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 
 /// `style(3)` field mask inside a StyleWeight style/weight byte: bits `[7:5]`
 /// (ETSI TS 103 283 §5.3.2.3.1 Table 22).
@@ -463,8 +462,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
             }
         }
 
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..pos]);
-        buf[pos..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, pos);
         Ok(len)
     }
 }
@@ -626,7 +624,6 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x7C);
-        assert_eq!(PID.value(), 0x0000);
     }
 
     #[test]

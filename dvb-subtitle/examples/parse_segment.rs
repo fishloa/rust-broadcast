@@ -3,16 +3,16 @@
 //! Run with: `cargo run -p dvb-subtitle --example parse_segment`
 
 use broadcast_common::Parse;
-use dvb_subtitle::{AnySegment, DataIdentifier, EndOfPesMarker, PesDataField, SyncByte};
+use dvb_subtitle::{AnySegment, DATA_IDENTIFIER, END_OF_PES_MARKER, PesDataField, SYNC_BYTE};
 
 fn main() {
     // A complete PES data field with one display definition segment (no window).
     let bytes = [
-        DataIdentifier, // 0x20
-        0x00,           // subtitle_stream_id = 0x00
+        DATA_IDENTIFIER, // 0x20
+        0x00,            // subtitle_stream_id = 0x00
         // Display definition segment (segment_type 0x14, no window):
-        SyncByte, // 0x0F
-        0x14,     // segment_type = display_definition
+        SYNC_BYTE, // 0x0F
+        0x14,      // segment_type = display_definition
         0x00,
         0x01, // page_id = 1
         0x00,
@@ -21,8 +21,8 @@ fn main() {
         0x02,
         0xCF, // display_width  = 720-1 = 719
         0x01,
-        0x1F,           // display_height = 288-1 = 287
-        EndOfPesMarker, // 0xFF
+        0x1F,              // display_height = 288-1 = 287
+        END_OF_PES_MARKER, // 0xFF
     ];
 
     let field = PesDataField::parse(&bytes).expect("valid PES data field");

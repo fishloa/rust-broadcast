@@ -23,6 +23,7 @@ serde  = ["dep:serde"]
 
 [dev-dependencies]
 mp4-emsg = { path = "../mp4-emsg", version = "0.4", default-features = false }
+test-alloc = { path = "../test-alloc" }
 
 [[test]]
 name = "label_coverage"

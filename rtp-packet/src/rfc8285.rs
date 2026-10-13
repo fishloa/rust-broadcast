@@ -232,7 +232,8 @@ impl Serialize for OneByteElements<'_> {
                 what: "RFC 8285 one-byte extension elements serialize output",
             });
         }
-        let mut pos = 0;
+        // Validate every element before writing a byte, so an error leaves
+        // `buf` untouched rather than half-serialized (r14-RTP-O1).
         for e in &self.0 {
             if !(ONE_BYTE_DATA_MIN..=ONE_BYTE_DATA_MAX).contains(&e.data.len()) {
                 return Err(Error::InvalidValue {
@@ -241,6 +242,9 @@ impl Serialize for OneByteElements<'_> {
                     reason: "must be 1..=16 bytes (RFC 8285 §4.2: len nibble = data.len() - 1)",
                 });
             }
+        }
+        let mut pos = 0;
+        for e in &self.0 {
             let len_nibble = (e.data.len() - 1) as u8;
             buf[pos] = (e.id.get() << 4) | len_nibble;
             pos += 1;
@@ -359,7 +363,7 @@ impl Serialize for TwoByteElements<'_> {
                 what: "RFC 8285 two-byte extension elements serialize output",
             });
         }
-        let mut pos = 0;
+        // Validate first (see `OneByteElements::serialize_into`).
         for e in &self.0 {
             if e.data.len() > TWO_BYTE_DATA_MAX {
                 return Err(Error::InvalidValue {
@@ -368,6 +372,9 @@ impl Serialize for TwoByteElements<'_> {
                     reason: "exceeds the 8-bit length field maximum (255)",
                 });
             }
+        }
+        let mut pos = 0;
+        for e in &self.0 {
             buf[pos] = e.id.get();
             buf[pos + 1] = e.data.len() as u8;
             pos += 2;
@@ -446,6 +453,48 @@ pub fn parse_extensions<'a>(ext: &HeaderExtension<'a>) -> Result<ExtensionElemen
 mod tests {
     use super::*;
     use alloc::vec;
+
+    /// r14-RTP-O1: a bad element after good ones must leave the caller's
+    /// buffer untouched (validation used to happen mid-write).
+    #[test]
+    fn invalid_element_leaves_the_buffer_untouched() {
+        let good = [1u8, 2, 3];
+        let too_long = [0u8; 17];
+        let one = OneByteElements(vec![
+            OneByteElement {
+                id: OneByteId::new(1).unwrap(),
+                data: &good,
+            },
+            OneByteElement {
+                id: OneByteId::new(2).unwrap(),
+                data: &too_long,
+            },
+        ]);
+        let mut buf = vec![0xAAu8; 64];
+        assert!(one.serialize_into(&mut buf).is_err());
+        assert!(
+            buf.iter().all(|&b| b == 0xAA),
+            "one-byte wrote before failing"
+        );
+
+        let huge = [0u8; 256];
+        let two = TwoByteElements(vec![
+            TwoByteElement {
+                id: TwoByteId::new(1).unwrap(),
+                data: &good,
+            },
+            TwoByteElement {
+                id: TwoByteId::new(2).unwrap(),
+                data: &huge,
+            },
+        ]);
+        let mut buf = vec![0xAAu8; 512];
+        assert!(two.serialize_into(&mut buf).is_err());
+        assert!(
+            buf.iter().all(|&b| b == 0xAA),
+            "two-byte wrote before failing"
+        );
+    }
 
     // -- OneByteId / TwoByteId validation -----------------------------------
 

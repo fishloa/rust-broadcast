@@ -56,6 +56,130 @@ pub const EXTENSION_UNIT_LEN: usize = 4;
 /// most `15 * 4` = 60 octets.
 pub const MAX_EXTENSION_UNITS: u8 = 0x0F;
 
+/// The `T` value of the special PAD tag: no `L`/`V` follows it (§6.4; see
+/// `docs/st2022-6-framing.md` §3.4).
+pub const EXTENSION_TAG_PAD: u8 = 0;
+
+/// One element of a [`HeaderExtension`]'s Tag/Length/Value chain
+/// (§6.4, `docs/st2022-6-framing.md` §3.4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum ExtensionItem<'a> {
+    /// `T = 0`: one padding octet (no `L` follows).
+    Pad,
+    /// `T = 1..=0xFF` (free to allocate): `L` value octets follow.
+    Tlv {
+        /// `T` — the tag (never `0`).
+        tag: u8,
+        /// `V` — the `L` value octets.
+        value: &'a [u8],
+    },
+}
+
+/// The Header Extension: `Ext * 4` octets holding a TLV chain, present iff
+/// `Ext != 0`. Construction checks the size invariants of the `Ext` field
+/// (non-empty, a multiple of 4 octets, at most 15 units); the chain itself
+/// is walked with [`HeaderExtension::items`], which reports a malformed
+/// chain as an `Err` item rather than refusing the whole header — a
+/// datagram from a sender that fills the extension with data this crate
+/// cannot walk still parses and re-serializes byte-identically (r13-S22-W1,
+/// #1115).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+pub struct HeaderExtension<'a> {
+    bytes: &'a [u8],
+}
+
+impl<'a> HeaderExtension<'a> {
+    /// Wrap the extension octets.
+    ///
+    /// # Errors
+    /// [`Error::InvalidValue`] if `bytes` is empty, not a multiple of
+    /// [`EXTENSION_UNIT_LEN`], or longer than [`MAX_EXTENSION_UNITS`] units.
+    pub fn new(bytes: &'a [u8]) -> Result<Self> {
+        if bytes.is_empty() || !bytes.len().is_multiple_of(EXTENSION_UNIT_LEN) {
+            return Err(Error::InvalidValue {
+                field: "extension",
+                value: bytes.len() as u64,
+                reason: "must be a non-zero multiple of 4 octets",
+            });
+        }
+        let units = bytes.len() / EXTENSION_UNIT_LEN;
+        if units > MAX_EXTENSION_UNITS as usize {
+            return Err(Error::InvalidValue {
+                field: "extension",
+                value: units as u64,
+                reason: "Ext is a 4-bit field: extension may be at most 15 * 4 = 60 octets",
+            });
+        }
+        Ok(Self { bytes })
+    }
+
+    /// Length in octets (`Ext * 4`).
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.bytes.len()
+    }
+
+    /// Always `false`: an extension is never empty.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        false
+    }
+
+    /// The wire octets, exactly as parsed or supplied.
+    #[must_use]
+    pub fn as_bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// Walk the TLV chain. A `T`/`L`/`V` that runs past the end yields one
+    /// final `Err` item.
+    #[must_use]
+    pub fn items(&self) -> ExtensionItems<'a> {
+        ExtensionItems { rest: self.bytes }
+    }
+}
+
+/// Iterator over a [`HeaderExtension`]'s TLV chain.
+#[derive(Debug, Clone)]
+pub struct ExtensionItems<'a> {
+    rest: &'a [u8],
+}
+
+impl<'a> Iterator for ExtensionItems<'a> {
+    type Item = Result<ExtensionItem<'a>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let (&tag, after_tag) = self.rest.split_first()?;
+        if tag == EXTENSION_TAG_PAD {
+            self.rest = after_tag;
+            return Some(Ok(ExtensionItem::Pad));
+        }
+        let Some((&len, after_len)) = after_tag.split_first() else {
+            self.rest = &[];
+            return Some(Err(Error::BufferTooShort {
+                need: 2,
+                have: 1,
+                what: "header extension TLV length",
+            }));
+        };
+        let len = usize::from(len);
+        if after_len.len() < len {
+            let have = after_len.len();
+            self.rest = &[];
+            return Some(Err(Error::BufferTooShort {
+                need: len,
+                have,
+                what: "header extension TLV value",
+            }));
+        }
+        let (value, rest) = after_len.split_at(len);
+        self.rest = rest;
+        Some(Ok(ExtensionItem::Tlv { tag, value }))
+    }
+}
+
 // -- byte 0: Ext(4) | F(1) | VSID(3) --
 const EXT_SHIFT: u32 = 4;
 const F_BIT: u8 = 0x08;
@@ -777,12 +901,12 @@ pub struct PayloadHeader<'a> {
     /// The 32-bit Video Timestamp, present iff `clock_frequency` !=
     /// [`ClockFrequency::NoTimestamp`].
     pub video_timestamp: Option<u32>,
-    /// The Header Extension's raw `Ext * 4` octets (§6.4's Tag/Length/Value
-    /// sub-structure — see `docs/st2022-6-framing.md` §3.4), present iff
-    /// `Ext` != 0. `Ext` is not stored independently — it is exactly
-    /// `self.extension.map_or(0, |e| e.len() / 4)`. This crate treats the
-    /// extension as opaque bytes; it does not walk the TLV chain.
-    pub extension: Option<&'a [u8]>,
+    /// The Header Extension (§6.4's Tag/Length/Value chain — see
+    /// `docs/st2022-6-framing.md` §3.4), present iff `Ext` != 0. `Ext` is
+    /// not stored independently — it is exactly
+    /// `self.extension.map_or(0, |e| e.len() / 4)`. Walk the typed chain
+    /// with [`HeaderExtension::items`].
+    pub extension: Option<HeaderExtension<'a>>,
 }
 
 impl<'a> PayloadHeader<'a> {
@@ -807,7 +931,7 @@ impl<'a> PayloadHeader<'a> {
         reserve: u8,
         video_source_format: Option<VideoSourceFormat>,
         video_timestamp: Option<u32>,
-        extension: Option<&'a [u8]>,
+        extension: Option<HeaderExtension<'a>>,
     ) -> Result<Self> {
         let header = Self {
             vsid,
@@ -831,6 +955,13 @@ impl<'a> PayloadHeader<'a> {
         #[allow(clippy::cast_possible_truncation)]
         self.extension
             .map_or(0, |e| (e.len() / EXTENSION_UNIT_LEN) as u8)
+    }
+
+    /// The extension's typed TLV items, or an empty iterator when `Ext = 0`.
+    #[must_use]
+    pub fn extension_items(&self) -> ExtensionItems<'a> {
+        self.extension
+            .map_or(ExtensionItems { rest: &[] }, |e| e.items())
     }
 
     fn validate(&self) -> Result<()> {
@@ -910,6 +1041,32 @@ impl<'a> PayloadHeader<'a> {
                 });
             }
         }
+        // r13-S22-W2 (#1115): `Reserved(code)` must carry a genuinely
+        // reserved code. `Reserved(0)` would serialize as the defined code 0
+        // and parse back as the defined variant — a value-level round-trip
+        // break — so require the canonical variant for every defined code.
+        macro_rules! canonical {
+            ($field:expr, $ty:ty, $name:literal) => {
+                if <$ty>::from_bits($field.to_bits()) != $field {
+                    return Err(Error::InvalidValue {
+                        field: $name,
+                        value: u64::from($field.to_bits()),
+                        reason: "Reserved(..) carries a defined code; use the named variant",
+                    });
+                }
+            };
+        }
+        canonical!(self.vsid, VideoSourceId, "vsid");
+        canonical!(self.timestamp_ref, TimestampRef, "timestamp_ref");
+        canonical!(self.scrambling, Scrambling, "scrambling");
+        canonical!(self.fec_usage, FecUsage, "fec_usage");
+        canonical!(self.clock_frequency, ClockFrequency, "clock_frequency");
+        if let Some(ref vsf) = self.video_source_format {
+            canonical!(vsf.map, MapStructure, "video_source_format.map");
+            canonical!(vsf.frame, FrameStructure, "video_source_format.frame");
+            canonical!(vsf.frate, FrameRate, "video_source_format.frate");
+            canonical!(vsf.sample, SampleStructure, "video_source_format.sample");
+        }
         let requires_timestamp = self.clock_frequency != ClockFrequency::NoTimestamp;
         if requires_timestamp != self.video_timestamp.is_some() {
             return Err(Error::VideoTimestampMismatch {
@@ -918,23 +1075,8 @@ impl<'a> PayloadHeader<'a> {
                 found_present: self.video_timestamp.is_some(),
             });
         }
-        if let Some(ext) = self.extension {
-            if ext.is_empty() || ext.len() % EXTENSION_UNIT_LEN != 0 {
-                return Err(Error::InvalidValue {
-                    field: "extension",
-                    value: ext.len() as u64,
-                    reason: "must be a non-zero multiple of 4 octets",
-                });
-            }
-            let units = ext.len() / EXTENSION_UNIT_LEN;
-            if units > MAX_EXTENSION_UNITS as usize {
-                return Err(Error::InvalidValue {
-                    field: "extension",
-                    value: units as u64,
-                    reason: "Ext is a 4-bit field: extension may be at most 15 * 4 = 60 octets",
-                });
-            }
-        }
+        // The extension's size invariants are enforced by
+        // `HeaderExtension::new` (its field is private).
         Ok(())
     }
 }
@@ -1014,7 +1156,9 @@ impl<'a> Parse<'a> for PayloadHeader<'a> {
             }
             let data = &bytes[pos..end];
             pos = end;
-            Some(data)
+            // `ext` is a non-zero 4-bit count, so `data` satisfies the
+            // size invariants `HeaderExtension::new` checks.
+            Some(HeaderExtension::new(data)?)
         } else {
             None
         };
@@ -1044,7 +1188,7 @@ impl Serialize for PayloadHeader<'_> {
                 .video_source_format
                 .map_or(0, |_| VIDEO_SOURCE_FORMAT_LEN)
             + self.video_timestamp.map_or(0, |_| VIDEO_TIMESTAMP_LEN)
-            + self.extension.map_or(0, <[u8]>::len)
+            + self.extension.map_or(0, |e| e.len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -1082,7 +1226,7 @@ impl Serialize for PayloadHeader<'_> {
             pos += VIDEO_TIMESTAMP_LEN;
         }
         if let Some(ext) = self.extension {
-            buf[pos..pos + ext.len()].copy_from_slice(ext);
+            buf[pos..pos + ext.len()].copy_from_slice(ext.as_bytes());
             pos += ext.len();
         }
         let _ = pos;
@@ -1180,7 +1324,9 @@ mod tests {
 
     #[test]
     fn round_trips_a_header_with_extension() {
-        let ext_bytes = [0xDE, 0xAD, 0xBE, 0xEF, 0x00, 0x00, 0x11, 0x22];
+        // TLV chain: tag 0xDE, length 2, value [0xAD, 0xBE]; tag 0xEF with
+        // length 0; two PAD octets; tag 0x11, length 0... padded to 8 octets.
+        let ext_bytes = [0xDE, 0x02, 0xAD, 0xBE, 0xEF, 0x00, 0x00, 0x00];
         let header = PayloadHeader::new(
             VideoSourceId::Primary,
             1,
@@ -1191,15 +1337,31 @@ mod tests {
             0,
             None,
             Some(0xAAAA_BBBB),
-            Some(&ext_bytes),
+            Some(HeaderExtension::new(&ext_bytes).unwrap()),
         )
         .unwrap();
         assert_eq!(header.ext(), 2);
+        let items: alloc::vec::Vec<_> = header.extension_items().map(|i| i.unwrap()).collect();
+        assert_eq!(
+            items,
+            [
+                ExtensionItem::Tlv {
+                    tag: 0xDE,
+                    value: &[0xAD, 0xBE]
+                },
+                ExtensionItem::Tlv {
+                    tag: 0xEF,
+                    value: &[]
+                },
+                ExtensionItem::Pad,
+                ExtensionItem::Pad,
+            ]
+        );
         let bytes = header.to_bytes();
         assert_eq!(bytes.len(), 4 + 4 + 8);
         let reparsed = PayloadHeader::parse(&bytes).unwrap();
         assert_eq!(reparsed, header);
-        assert_eq!(reparsed.extension, Some(&ext_bytes[..]));
+        assert_eq!(reparsed.extension.unwrap().as_bytes(), &ext_bytes[..]);
     }
 
     #[test]
@@ -1420,20 +1582,20 @@ mod tests {
 
     #[test]
     fn rejects_extension_not_a_multiple_of_4() {
-        let bytes = [0u8; 5];
-        let err = PayloadHeader::new(
-            VideoSourceId::Primary,
-            0,
-            TimestampRef::NotLocked,
-            Scrambling::NotScrambled,
-            FecUsage::None,
-            ClockFrequency::NoTimestamp,
-            0,
-            None,
-            None,
-            Some(&bytes),
-        )
-        .unwrap_err();
+        let err = HeaderExtension::new(&[0u8; 5]).unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidValue {
+                field: "extension",
+                ..
+            }
+        ));
+        assert!(HeaderExtension::new(&[]).is_err());
+    }
+
+    #[test]
+    fn rejects_extension_over_15_units() {
+        let err = HeaderExtension::new(&[0u8; 64]).unwrap_err(); // 16 units > 15
         assert!(matches!(
             err,
             Error::InvalidValue {
@@ -1443,29 +1605,17 @@ mod tests {
         ));
     }
 
+    /// A parsed extension whose TLV chain is malformed still re-serializes
+    /// byte-identically; the walk reports the fault as an `Err` item.
     #[test]
-    fn rejects_extension_over_15_units() {
-        let bytes = [0u8; 64]; // 16 units > MAX_EXTENSION_UNITS (15)
-        let err = PayloadHeader::new(
-            VideoSourceId::Primary,
-            0,
-            TimestampRef::NotLocked,
-            Scrambling::NotScrambled,
-            FecUsage::None,
-            ClockFrequency::NoTimestamp,
-            0,
-            None,
-            None,
-            Some(&bytes),
-        )
-        .unwrap_err();
-        assert!(matches!(
-            err,
-            Error::InvalidValue {
-                field: "extension",
-                ..
-            }
-        ));
+    fn malformed_tlv_chain_round_trips_and_reports_error() {
+        // Ext=1, no F, no timestamp; tag 0x05 claims 200 value octets.
+        let wire = [0x10, 0x00, 0x00, 0x00, 0x05, 0xC8, 0x01, 0x02];
+        let header = PayloadHeader::parse(&wire).unwrap();
+        assert_eq!(header.to_bytes()[..], wire[..]);
+        let items: alloc::vec::Vec<_> = header.extension_items().collect();
+        assert_eq!(items.len(), 1);
+        assert!(matches!(items[0], Err(Error::BufferTooShort { .. })));
     }
 
     #[test]
@@ -1628,6 +1778,47 @@ mod tests {
         )
         .unwrap_err();
         assert!(matches!(err, Error::InvalidValue { field: "vsid", .. }));
+    }
+
+    /// r13-S22-W2 (#1115): `Reserved(code)` holding a DEFINED code would
+    /// serialize as the defined code and re-parse as the named variant (a
+    /// value-level round-trip break); it must be rejected up front.
+    #[test]
+    fn rejects_reserved_variant_holding_a_defined_code() {
+        let err = PayloadHeader::new(
+            VideoSourceId::Reserved(0), // 0 == Primary
+            0,
+            TimestampRef::NotLocked,
+            Scrambling::NotScrambled,
+            FecUsage::None,
+            ClockFrequency::NoTimestamp,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(err, Error::InvalidValue { field: "vsid", .. }));
+        let err = PayloadHeader::new(
+            VideoSourceId::Primary,
+            0,
+            TimestampRef::NotLocked,
+            Scrambling::NotScrambled,
+            FecUsage::Reserved(0), // 0 == None
+            ClockFrequency::NoTimestamp,
+            0,
+            None,
+            None,
+            None,
+        )
+        .unwrap_err();
+        assert!(matches!(
+            err,
+            Error::InvalidValue {
+                field: "fec_usage",
+                ..
+            }
+        ));
     }
 
     #[test]

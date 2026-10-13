@@ -60,11 +60,4 @@ pub enum Error {
         /// Why the extension header is invalid.
         reason: &'static str,
     },
-    /// A TS packet payload was the wrong size or carried an invalid Payload
-    /// Pointer (RFC 4326 §6/§7).
-    #[error("TS mapping error: {reason}")]
-    TsMapping {
-        /// Why the TS payload could not be processed.
-        reason: &'static str,
-    },
 }

@@ -45,14 +45,14 @@ Two runnable examples ship with this crate
 
 ```rust
 use broadcast_common::Parse;
-use dvb_subtitle::{PesDataField, AnySegment, DataIdentifier, EndOfPesMarker, SyncByte};
+use dvb_subtitle::{PesDataField, AnySegment, DATA_IDENTIFIER, END_OF_PES_MARKER, SYNC_BYTE};
 
 let bytes = [
-    DataIdentifier,               // 0x20
+    DATA_IDENTIFIER,               // 0x20
     0x00,                         // subtitle_stream_id = 0x00
-    SyncByte, 0x80, 0x00, 0x01,   // end_of_display_set segment
+    SYNC_BYTE, 0x80, 0x00, 0x01,   // end_of_display_set segment
     0x00, 0x00,
-    EndOfPesMarker,               // 0xFF
+    END_OF_PES_MARKER,               // 0xFF
 ];
 let field = PesDataField::parse(&bytes).unwrap();
 for seg in &field.segments {

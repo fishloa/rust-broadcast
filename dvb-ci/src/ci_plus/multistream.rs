@@ -39,6 +39,12 @@ pub const NULL_PID: Pid = Pid::new(0x1FFF);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CicamMultistreamCapability {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `max_local_TS` (8) — maximum number of Local TSs the CICAM can receive
     /// concurrently.
     pub max_local_ts: u8,
@@ -53,7 +59,7 @@ const CAPABILITY_BODY: usize = 1 + 2;
 impl<'a> Parse<'a> for CicamMultistreamCapability {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(
+        let (length_form, body) = objects::parse_apdu_header(
             bytes,
             tag::CICAM_MULTISTREAM_CAPABILITY,
             "CICAM_multistream_capability",
@@ -71,6 +77,7 @@ impl<'a> Parse<'a> for CicamMultistreamCapability {
             "CICAM_multistream_capability",
         )?;
         Ok(Self {
+            length_form,
             max_local_ts: body[0],
             max_descramblers: u16::from_be_bytes([body[1], body[2]]),
         })
@@ -79,11 +86,15 @@ impl<'a> Parse<'a> for CicamMultistreamCapability {
 impl Serialize for CicamMultistreamCapability {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(CAPABILITY_BODY)
+        objects::apdu_len(CAPABILITY_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos =
-            objects::write_apdu_header(tag::CICAM_MULTISTREAM_CAPABILITY, CAPABILITY_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::CICAM_MULTISTREAM_CAPABILITY,
+            CAPABILITY_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.max_local_ts;
         buf[pos + 1..pos + 3].copy_from_slice(&self.max_descramblers.to_be_bytes());
         Ok(pos + CAPABILITY_BODY)
@@ -109,6 +120,12 @@ pub struct PidSelectRequest {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PidSelectReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8) — Local TS identifier.
     pub lts_id: u8,
     /// The requested PIDs (loop count = `num_PID`).
@@ -125,7 +142,8 @@ const CRITICAL_FLAG_BIT: u8 = 0x20;
 impl<'a> Parse<'a> for PidSelectReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::PID_SELECT_REQ, "PID_select_req")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::PID_SELECT_REQ, "PID_select_req")?;
         // LTS_id(1) + num_PID(1).
         if body.len() < 2 {
             return Err(Error::BufferTooShort {
@@ -153,18 +171,23 @@ impl<'a> Parse<'a> for PidSelectReq {
                 pid,
             });
         }
-        Ok(Self { lts_id, pids })
+        Ok(Self {
+            length_form,
+            lts_id,
+            pids,
+        })
     }
 }
 impl Serialize for PidSelectReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(2 + self.pids.len() * PID_ENTRY_LEN)
+        objects::apdu_len(2 + self.pids.len() * PID_ENTRY_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         objects::fit_bits(self.pids.len() as u64, 8, "PID_select_req num_PID")?;
         let body_len = 2 + self.pids.len() * PID_ENTRY_LEN;
-        let mut pos = objects::write_apdu_header(tag::PID_SELECT_REQ, body_len, buf)?;
+        let mut pos =
+            objects::write_apdu_header(tag::PID_SELECT_REQ, body_len, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1] = self.pids.len() as u8;
         pos += 2;
@@ -198,6 +221,12 @@ pub struct PidSelectedEntry {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PidSelectReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8) — Local TS identifier.
     pub lts_id: u8,
     /// `PID_selection_flag` (1) — `false` = whole TS sent (`num_PID` shall be 0);
@@ -215,7 +244,8 @@ const PID_SELECTION_FLAG_BIT: u8 = 0x01;
 impl<'a> Parse<'a> for PidSelectReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::PID_SELECT_REPLY, "PID_select_reply")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::PID_SELECT_REPLY, "PID_select_reply")?;
         // LTS_id(1) + reserved(7)+flag(1) byte + num_PID(1).
         if body.len() < 3 {
             return Err(Error::BufferTooShort {
@@ -245,6 +275,7 @@ impl<'a> Parse<'a> for PidSelectReply {
             });
         }
         Ok(Self {
+            length_form,
             lts_id,
             pid_selection,
             pids,
@@ -254,12 +285,13 @@ impl<'a> Parse<'a> for PidSelectReply {
 impl Serialize for PidSelectReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(3 + self.pids.len() * PID_ENTRY_LEN)
+        objects::apdu_len(3 + self.pids.len() * PID_ENTRY_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         objects::fit_bits(self.pids.len() as u64, 8, "PID_select_reply num_PID")?;
         let body_len = 3 + self.pids.len() * PID_ENTRY_LEN;
-        let mut pos = objects::write_apdu_header(tag::PID_SELECT_REPLY, body_len, buf)?;
+        let mut pos =
+            objects::write_apdu_header(tag::PID_SELECT_REPLY, body_len, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1] = if self.pid_selection {
             PID_SELECTION_FLAG_BIT
@@ -303,6 +335,7 @@ mod tests {
     #[test]
     fn capability_round_trips_and_bites() {
         let cap = CicamMultistreamCapability {
+            length_form: crate::length::LengthForm::Minimal,
             max_local_ts: 0x04,
             max_descramblers: 0x0102,
         };
@@ -318,6 +351,7 @@ mod tests {
     #[test]
     fn pid_select_req_round_trips_and_bites() {
         let req = PidSelectReq {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x07,
             pids: alloc::vec![
                 PidSelectRequest {
@@ -349,6 +383,7 @@ mod tests {
     #[test]
     fn pid_select_req_empty_loop() {
         let req = PidSelectReq {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x00,
             pids: Vec::new(),
         };
@@ -360,6 +395,7 @@ mod tests {
     #[test]
     fn pid_select_reply_round_trips_with_two_entries() {
         let reply = PidSelectReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x05,
             pid_selection: true,
             pids: alloc::vec![
@@ -394,6 +430,7 @@ mod tests {
     #[test]
     fn pid_select_reply_whole_ts() {
         let reply = PidSelectReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x01,
             pid_selection: false,
             pids: Vec::new(),
@@ -406,6 +443,7 @@ mod tests {
     #[test]
     fn dispatch_routes_each_tag() {
         let cap = CicamMultistreamCapability {
+            length_form: crate::length::LengthForm::Minimal,
             max_local_ts: 1,
             max_descramblers: 1,
         }
@@ -415,6 +453,7 @@ mod tests {
             MultistreamApdu::CicamMultistreamCapability(_)
         ));
         let reply = PidSelectReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             pid_selection: false,
             pids: Vec::new(),
@@ -428,6 +467,7 @@ mod tests {
     #[test]
     fn max_req_pid_still_serializes_and_round_trips() {
         let req = PidSelectReq {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             pids: alloc::vec![PidSelectRequest {
                 critical_for_descrambling: false,
@@ -442,6 +482,7 @@ mod tests {
     fn oversized_num_pid_req_is_rejected_not_wrapped() {
         // 256 entries silently wrapped num_PID (u8) to 0 before the fix.
         let req = PidSelectReq {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0,
             pids: (0..256)
                 .map(|_| PidSelectRequest {

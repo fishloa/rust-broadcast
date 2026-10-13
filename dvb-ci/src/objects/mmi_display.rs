@@ -134,6 +134,12 @@ broadcast_common::impl_spec_display!(MmiMode, Reserved);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DisplayControl {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `display_control_cmd`.
     pub cmd: DisplayControlCmd,
     /// `MMI_mode` — present only when `cmd == set_mmi_mode`.
@@ -143,7 +149,8 @@ pub struct DisplayControl {
 impl<'a> Parse<'a> for DisplayControl {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::DISPLAY_CONTROL, "display_control")?;
+        let (length_form, body) =
+            super::parse_apdu_header(bytes, tag::DISPLAY_CONTROL, "display_control")?;
         let cmd_byte = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
@@ -164,18 +171,23 @@ impl<'a> Parse<'a> for DisplayControl {
         };
         // Table 32: cmd [+ mmi_mode] exactly.
         super::reject_trailing_body(body, 1 + usize::from(mmi_mode.is_some()), "display_control")?;
-        Ok(Self { cmd, mmi_mode })
+        Ok(Self {
+            length_form,
+            cmd,
+            mmi_mode,
+        })
     }
 }
 
 impl Serialize for DisplayControl {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(1 + usize::from(self.mmi_mode.is_some()))
+        super::apdu_len(1 + usize::from(self.mmi_mode.is_some()), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = 1 + usize::from(self.mmi_mode.is_some());
-        let mut pos = super::write_apdu_header(tag::DISPLAY_CONTROL, body_len, buf)?;
+        let mut pos =
+            super::write_apdu_header(tag::DISPLAY_CONTROL, body_len, self.length_form, buf)?;
         buf[pos] = self.cmd.to_u8();
         pos += 1;
         if let Some(m) = self.mmi_mode {
@@ -331,6 +343,12 @@ pub enum DisplayReplyBody {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DisplayReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `display_reply_id`.
     pub reply_id: DisplayReplyId,
     /// The branch-dependent body keyed by `reply_id`.
@@ -452,7 +470,8 @@ impl DisplayReply {
 impl<'a> Parse<'a> for DisplayReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::DISPLAY_REPLY, "display_reply")?;
+        let (length_form, body) =
+            super::parse_apdu_header(bytes, tag::DISPLAY_REPLY, "display_reply")?;
         let id_byte = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
@@ -479,18 +498,23 @@ impl<'a> Parse<'a> for DisplayReply {
             }
             _ => DisplayReplyBody::None,
         };
-        Ok(Self { reply_id, body })
+        Ok(Self {
+            length_form,
+            reply_id,
+            body,
+        })
     }
 }
 
 impl Serialize for DisplayReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(self.body_len())
+        super::apdu_len(self.body_len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = self.body_len();
-        let mut pos = super::write_apdu_header(tag::DISPLAY_REPLY, body_len, buf)?;
+        let mut pos =
+            super::write_apdu_header(tag::DISPLAY_REPLY, body_len, self.length_form, buf)?;
         buf[pos] = self.reply_id.to_u8();
         pos += 1;
         match &self.body {
@@ -586,6 +610,12 @@ broadcast_common::impl_spec_display!(KeypadControlCmd, Reserved);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct KeypadControl {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `keypad_control_cmd`.
     pub cmd: KeypadControlCmd,
     /// The `key_code` list — non-empty only for the select/reject commands (a
@@ -596,7 +626,8 @@ pub struct KeypadControl {
 impl<'a> Parse<'a> for KeypadControl {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::KEYPAD_CONTROL, "keypad_control")?;
+        let (length_form, body) =
+            super::parse_apdu_header(bytes, tag::KEYPAD_CONTROL, "keypad_control")?;
         let cmd_byte = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
@@ -608,7 +639,11 @@ impl<'a> Parse<'a> for KeypadControl {
         } else {
             Vec::new()
         };
-        Ok(Self { cmd, key_codes })
+        Ok(Self {
+            length_form,
+            cmd,
+            key_codes,
+        })
     }
 }
 
@@ -620,12 +655,13 @@ impl Serialize for KeypadControl {
         } else {
             0
         };
-        super::apdu_len(1 + codes)
+        super::apdu_len(1 + codes, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let with_codes = self.cmd.carries_key_codes();
         let codes = if with_codes { self.key_codes.len() } else { 0 };
-        let mut pos = super::write_apdu_header(tag::KEYPAD_CONTROL, 1 + codes, buf)?;
+        let mut pos =
+            super::write_apdu_header(tag::KEYPAD_CONTROL, 1 + codes, self.length_form, buf)?;
         buf[pos] = self.cmd.to_u8();
         pos += 1;
         if with_codes {
@@ -645,6 +681,12 @@ impl ApduDef<'_> for KeypadControl {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Keypress {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `key_code` (Table of key codes, p. 41).
     pub key_code: u8,
 }
@@ -652,23 +694,26 @@ pub struct Keypress {
 impl<'a> Parse<'a> for Keypress {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::KEYPRESS, "keypress")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::KEYPRESS, "keypress")?;
         let key_code = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
             what: "keypress key_code",
         })?;
-        Ok(Self { key_code })
+        Ok(Self {
+            length_form,
+            key_code,
+        })
     }
 }
 
 impl Serialize for Keypress {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(1)
+        super::apdu_len(1, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(tag::KEYPRESS, 1, buf)?;
+        let mut pos = super::write_apdu_header(tag::KEYPRESS, 1, self.length_form, buf)?;
         buf[pos] = self.key_code;
         pos += 1;
         Ok(pos)
@@ -687,6 +732,12 @@ impl ApduDef<'_> for Keypress {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SubtitleSegment<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `true` = `subtitle_segment_more`; `false` = `subtitle_segment_last`.
     pub more: bool,
     /// The DVB_Subtitling_segment bytes (reference `[9]`), verbatim.
@@ -721,8 +772,9 @@ impl<'a> Parse<'a> for SubtitleSegment<'a> {
             tag::SUBTITLE_SEGMENT_MORE => (tag::SUBTITLE_SEGMENT_MORE, true),
             _ => (tag::SUBTITLE_SEGMENT_LAST, false),
         };
-        let body = super::parse_apdu_header(bytes, expected, "subtitle_segment")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, expected, "subtitle_segment")?;
         Ok(Self {
+            length_form,
             more,
             segment: body,
         })
@@ -732,10 +784,11 @@ impl<'a> Parse<'a> for SubtitleSegment<'a> {
 impl Serialize for SubtitleSegment<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(self.segment.len())
+        super::apdu_len(self.segment.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(self.tag(), self.segment.len(), buf)?;
+        let mut pos =
+            super::write_apdu_header(self.tag(), self.segment.len(), self.length_form, buf)?;
         buf[pos..pos + self.segment.len()].copy_from_slice(self.segment);
         pos += self.segment.len();
         Ok(pos)
@@ -835,6 +888,12 @@ broadcast_common::impl_spec_display!(DisplayMessageId, Reserved);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DisplayMessage {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `display_message_id`.
     pub message_id: DisplayMessageId,
 }
@@ -842,23 +901,27 @@ pub struct DisplayMessage {
 impl<'a> Parse<'a> for DisplayMessage {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::DISPLAY_MESSAGE, "display_message")?;
+        let (length_form, body) =
+            super::parse_apdu_header(bytes, tag::DISPLAY_MESSAGE, "display_message")?;
         let message_id = DisplayMessageId::from_u8(*body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
             what: "display_message id",
         })?);
-        Ok(Self { message_id })
+        Ok(Self {
+            length_form,
+            message_id,
+        })
     }
 }
 
 impl Serialize for DisplayMessage {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(1)
+        super::apdu_len(1, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(tag::DISPLAY_MESSAGE, 1, buf)?;
+        let mut pos = super::write_apdu_header(tag::DISPLAY_MESSAGE, 1, self.length_form, buf)?;
         buf[pos] = self.message_id.to_u8();
         pos += 1;
         Ok(pos)
@@ -874,6 +937,12 @@ impl ApduDef<'_> for DisplayMessage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SceneEndMark {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `decoder_continue_flag`.
     pub decoder_continue_flag: bool,
     /// `scene_reveal_flag`.
@@ -887,13 +956,15 @@ pub struct SceneEndMark {
 impl<'a> Parse<'a> for SceneEndMark {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::SCENE_END_MARK, "scene_end_mark")?;
+        let (length_form, body) =
+            super::parse_apdu_header(bytes, tag::SCENE_END_MARK, "scene_end_mark")?;
         let b = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
             what: "scene_end_mark",
         })?;
         Ok(Self {
+            length_form,
             decoder_continue_flag: (b & 0x80) != 0,
             scene_reveal_flag: (b & 0x40) != 0,
             send_scene_done: (b & 0x20) != 0,
@@ -906,10 +977,10 @@ impl<'a> Parse<'a> for SceneEndMark {
 impl Serialize for SceneEndMark {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(1)
+        super::apdu_len(1, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(tag::SCENE_END_MARK, 1, buf)?;
+        let mut pos = super::write_apdu_header(tag::SCENE_END_MARK, 1, self.length_form, buf)?;
         // decoder_continue(1) reveal(1) send_done(1) reserved(1)=1 scene_tag(4).
         buf[pos] = (u8::from(self.decoder_continue_flag) << 7)
             | (u8::from(self.scene_reveal_flag) << 6)
@@ -933,6 +1004,12 @@ impl ApduDef<'_> for SceneEndMark {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SceneDoneMessage {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `decoder_continue_flag` — duplicates the causing scene end mark.
     pub decoder_continue_flag: bool,
     /// `scene_reveal_flag` — duplicates the causing scene end mark.
@@ -944,13 +1021,15 @@ pub struct SceneDoneMessage {
 impl<'a> Parse<'a> for SceneDoneMessage {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::SCENE_DONE, "scene_done_message")?;
+        let (length_form, body) =
+            super::parse_apdu_header(bytes, tag::SCENE_DONE, "scene_done_message")?;
         let b = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
             what: "scene_done_message",
         })?;
         Ok(Self {
+            length_form,
             decoder_continue_flag: (b & 0x80) != 0,
             scene_reveal_flag: (b & 0x40) != 0,
             // bits `[5:4]` reserved, scene_tag in `[3:0]`.
@@ -962,10 +1041,10 @@ impl<'a> Parse<'a> for SceneDoneMessage {
 impl Serialize for SceneDoneMessage {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(1)
+        super::apdu_len(1, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(tag::SCENE_DONE, 1, buf)?;
+        let mut pos = super::write_apdu_header(tag::SCENE_DONE, 1, self.length_form, buf)?;
         // decoder_continue(1) reveal(1) reserved(2)=11 scene_tag(4).
         buf[pos] = (u8::from(self.decoder_continue_flag) << 7)
             | (u8::from(self.scene_reveal_flag) << 6)
@@ -985,6 +1064,12 @@ impl ApduDef<'_> for SceneDoneMessage {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SceneControl {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `decoder_continue_flag`.
     pub decoder_continue_flag: bool,
     /// `scene_reveal_flag`.
@@ -996,13 +1081,15 @@ pub struct SceneControl {
 impl<'a> Parse<'a> for SceneControl {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::SCENE_CONTROL, "scene_control")?;
+        let (length_form, body) =
+            super::parse_apdu_header(bytes, tag::SCENE_CONTROL, "scene_control")?;
         let b = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
             what: "scene_control",
         })?;
         Ok(Self {
+            length_form,
             decoder_continue_flag: (b & 0x80) != 0,
             scene_reveal_flag: (b & 0x40) != 0,
             scene_tag: b & 0x0F,
@@ -1013,10 +1100,10 @@ impl<'a> Parse<'a> for SceneControl {
 impl Serialize for SceneControl {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(1)
+        super::apdu_len(1, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(tag::SCENE_CONTROL, 1, buf)?;
+        let mut pos = super::write_apdu_header(tag::SCENE_CONTROL, 1, self.length_form, buf)?;
         // decoder_continue(1) reveal(1) reserved(2)=11 scene_tag(4).
         buf[pos] = (u8::from(self.decoder_continue_flag) << 7)
             | (u8::from(self.scene_reveal_flag) << 6)
@@ -1040,6 +1127,12 @@ impl ApduDef<'_> for SceneControl {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct SubtitleDownload<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `true` = `subtitle_download_more`; `false` = `subtitle_download_last`.
     pub more: bool,
     /// The DVB_Subtitling_segment (object-data) bytes, verbatim.
@@ -1074,8 +1167,9 @@ impl<'a> Parse<'a> for SubtitleDownload<'a> {
             tag::SUBTITLE_DOWNLOAD_MORE => (tag::SUBTITLE_DOWNLOAD_MORE, true),
             _ => (tag::SUBTITLE_DOWNLOAD_LAST, false),
         };
-        let body = super::parse_apdu_header(bytes, expected, "subtitle_download")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, expected, "subtitle_download")?;
         Ok(Self {
+            length_form,
             more,
             segment: body,
         })
@@ -1085,10 +1179,11 @@ impl<'a> Parse<'a> for SubtitleDownload<'a> {
 impl Serialize for SubtitleDownload<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(self.segment.len())
+        super::apdu_len(self.segment.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(self.tag(), self.segment.len(), buf)?;
+        let mut pos =
+            super::write_apdu_header(self.tag(), self.segment.len(), self.length_form, buf)?;
         buf[pos..pos + self.segment.len()].copy_from_slice(self.segment);
         pos += self.segment.len();
         Ok(pos)
@@ -1103,23 +1198,29 @@ impl<'a> ApduDef<'a> for SubtitleDownload<'a> {
 /// `flush_download()` object (Table 44): header-only cache-purge request.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct FlushDownload;
+pub struct FlushDownload {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 impl<'a> Parse<'a> for FlushDownload {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        super::parse_empty_apdu(bytes, tag::FLUSH_DOWNLOAD, "flush_download")?;
-        Ok(Self)
+        let length_form = super::parse_empty_apdu(bytes, tag::FLUSH_DOWNLOAD, "flush_download")?;
+        Ok(Self { length_form })
     }
 }
 
 impl Serialize for FlushDownload {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::empty_apdu_len()
+        super::empty_apdu_len(self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        super::serialize_empty_apdu(tag::FLUSH_DOWNLOAD, buf)
+        super::serialize_empty_apdu(tag::FLUSH_DOWNLOAD, self.length_form, buf)
     }
 }
 
@@ -1181,6 +1282,12 @@ broadcast_common::impl_spec_display!(DownloadReplyId, Reserved);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DownloadReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `object_id` — the offending object (`0xFFFF` for "not an object segment").
     pub object_id: u16,
     /// `download_reply_id`.
@@ -1193,7 +1300,8 @@ const DOWNLOAD_REPLY_BODY: usize = 3;
 impl<'a> Parse<'a> for DownloadReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::DOWNLOAD_REPLY, "download_reply")?;
+        let (length_form, body) =
+            super::parse_apdu_header(bytes, tag::DOWNLOAD_REPLY, "download_reply")?;
         if body.len() < DOWNLOAD_REPLY_BODY {
             return Err(Error::BufferTooShort {
                 need: DOWNLOAD_REPLY_BODY,
@@ -1203,6 +1311,7 @@ impl<'a> Parse<'a> for DownloadReply {
         }
         super::reject_trailing_body(body, DOWNLOAD_REPLY_BODY, "download_reply")?;
         Ok(Self {
+            length_form,
             object_id: u16::from_be_bytes([body[0], body[1]]),
             reply_id: DownloadReplyId::from_u8(body[2]),
         })
@@ -1212,10 +1321,15 @@ impl<'a> Parse<'a> for DownloadReply {
 impl Serialize for DownloadReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(DOWNLOAD_REPLY_BODY)
+        super::apdu_len(DOWNLOAD_REPLY_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(tag::DOWNLOAD_REPLY, DOWNLOAD_REPLY_BODY, buf)?;
+        let mut pos = super::write_apdu_header(
+            tag::DOWNLOAD_REPLY,
+            DOWNLOAD_REPLY_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos..pos + 2].copy_from_slice(&self.object_id.to_be_bytes());
         buf[pos + 2] = self.reply_id.to_u8();
         pos += DOWNLOAD_REPLY_BODY;
@@ -1235,6 +1349,7 @@ mod tests {
     #[test]
     fn display_control_set_mmi_mode_and_query() {
         let dc = DisplayControl {
+            length_form: crate::length::LengthForm::Minimal,
             cmd: DisplayControlCmd::SetMmiMode,
             mmi_mode: Some(MmiMode::HighLevel),
         };
@@ -1243,6 +1358,7 @@ mod tests {
         assert_eq!(DisplayControl::parse(&bytes).unwrap(), dc);
 
         let q = DisplayControl {
+            length_form: crate::length::LengthForm::Minimal,
             cmd: DisplayControlCmd::GetDisplayCharacterTableList,
             mmi_mode: None,
         };
@@ -1280,6 +1396,7 @@ mod tests {
             ],
         };
         let dr = DisplayReply {
+            length_form: crate::length::LengthForm::Minimal,
             reply_id: DisplayReplyId::ListGraphicOverlayCharacteristics,
             body: DisplayReplyBody::Graphics(g),
         };
@@ -1331,6 +1448,7 @@ mod tests {
         let mut g = base_graphics();
         g.display_bytes = 0x1000;
         let dr = DisplayReply {
+            length_form: crate::length::LengthForm::Minimal,
             reply_id: DisplayReplyId::ListGraphicOverlayCharacteristics,
             body: DisplayReplyBody::Graphics(g),
         };
@@ -1346,6 +1464,7 @@ mod tests {
         let mut g = base_graphics();
         g.display_bytes = 0x0FFF; // the 12-bit maximum
         let dr = DisplayReply {
+            length_form: crate::length::LengthForm::Minimal,
             reply_id: DisplayReplyId::ListGraphicOverlayCharacteristics,
             body: DisplayReplyBody::Graphics(g),
         };
@@ -1366,6 +1485,7 @@ mod tests {
             })
             .collect();
         let dr = DisplayReply {
+            length_form: crate::length::LengthForm::Minimal,
             reply_id: DisplayReplyId::ListGraphicOverlayCharacteristics,
             body: DisplayReplyBody::Graphics(g),
         };
@@ -1379,6 +1499,7 @@ mod tests {
     #[test]
     fn display_reply_char_tables_and_ack() {
         let ct = DisplayReply {
+            length_form: crate::length::LengthForm::Minimal,
             reply_id: DisplayReplyId::ListDisplayCharacterTables,
             body: DisplayReplyBody::CharacterTables(alloc::vec![0x00, 0x01, 0x02]),
         };
@@ -1387,6 +1508,7 @@ mod tests {
         assert_eq!(DisplayReply::parse(&bytes).unwrap(), ct);
 
         let ack = DisplayReply {
+            length_form: crate::length::LengthForm::Minimal,
             reply_id: DisplayReplyId::MmiModeAck,
             body: DisplayReplyBody::MmiModeAck(MmiMode::HighLevel),
         };
@@ -1395,6 +1517,7 @@ mod tests {
         assert_eq!(DisplayReply::parse(&ab).unwrap(), ack);
 
         let unknown = DisplayReply {
+            length_form: crate::length::LengthForm::Minimal,
             reply_id: DisplayReplyId::UnknownMmiMode,
             body: DisplayReplyBody::None,
         };
@@ -1406,6 +1529,7 @@ mod tests {
     #[test]
     fn keypad_control_multi_key_round_trips_and_bites() {
         let kc = KeypadControl {
+            length_form: crate::length::LengthForm::Minimal,
             cmd: KeypadControlCmd::InterceptSelectedKeypress,
             key_codes: alloc::vec![0x00, 0x01, 0x0A], // 0, 1, menu
         };
@@ -1417,6 +1541,7 @@ mod tests {
 
         // intercept_all carries no codes.
         let all = KeypadControl {
+            length_form: crate::length::LengthForm::Minimal,
             cmd: KeypadControlCmd::InterceptAllKeypresses,
             key_codes: Vec::new(),
         };
@@ -1432,17 +1557,24 @@ mod tests {
 
     #[test]
     fn keypress_round_trips_and_bites() {
-        let k = Keypress { key_code: 0x0A };
+        let k = Keypress {
+            length_form: crate::length::LengthForm::Minimal,
+            key_code: 0x0A,
+        };
         let bytes = k.to_bytes();
         assert_eq!(bytes, [0x9F, 0x88, 0x06, 0x01, 0x0A]);
         assert_eq!(Keypress::parse(&bytes).unwrap(), k);
-        let other = Keypress { key_code: 0x0B };
+        let other = Keypress {
+            length_form: crate::length::LengthForm::Minimal,
+            key_code: 0x0B,
+        };
         assert_ne!(bytes, other.to_bytes());
     }
 
     #[test]
     fn subtitle_segment_more_bites() {
         let s = SubtitleSegment {
+            length_form: crate::length::LengthForm::Minimal,
             more: false,
             segment: &[0x0F, 0x10, 0x00, 0x01, 0x00, 0x05],
         };
@@ -1460,6 +1592,7 @@ mod tests {
     #[test]
     fn display_message_round_trips_and_bites() {
         let m = DisplayMessage {
+            length_form: crate::length::LengthForm::Minimal,
             message_id: DisplayMessageId::DvbSubtitlingSyntaxError,
         };
         let bytes = m.to_bytes();
@@ -1467,6 +1600,7 @@ mod tests {
         assert_eq!(DisplayMessage::parse(&bytes).unwrap(), m);
         assert_eq!(m.message_id.name(), "DVB Subtitling syntax error");
         let other = DisplayMessage {
+            length_form: crate::length::LengthForm::Minimal,
             message_id: DisplayMessageId::DisplayOk,
         };
         assert_ne!(bytes, other.to_bytes());
@@ -1475,6 +1609,7 @@ mod tests {
     #[test]
     fn scene_end_mark_round_trips_and_bites() {
         let s = SceneEndMark {
+            length_form: crate::length::LengthForm::Minimal,
             decoder_continue_flag: true,
             scene_reveal_flag: false,
             send_scene_done: true,
@@ -1492,6 +1627,7 @@ mod tests {
     #[test]
     fn scene_done_message_two_bit_reserved() {
         let s = SceneDoneMessage {
+            length_form: crate::length::LengthForm::Minimal,
             decoder_continue_flag: false,
             scene_reveal_flag: true,
             scene_tag: 0x0A,
@@ -1508,6 +1644,7 @@ mod tests {
     #[test]
     fn scene_control_round_trips() {
         let s = SceneControl {
+            length_form: crate::length::LengthForm::Minimal,
             decoder_continue_flag: true,
             scene_reveal_flag: true,
             scene_tag: 0x03,
@@ -1521,6 +1658,7 @@ mod tests {
     #[test]
     fn subtitle_download_more_bites() {
         let s = SubtitleDownload {
+            length_form: crate::length::LengthForm::Minimal,
             more: true,
             segment: &[0x0F, 0x13, 0x00, 0x01],
         };
@@ -1536,14 +1674,18 @@ mod tests {
 
     #[test]
     fn flush_download_round_trips() {
-        let bytes = FlushDownload.to_bytes();
+        let bytes = FlushDownload::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x88, 0x16, 0x00]);
-        assert_eq!(FlushDownload::parse(&bytes).unwrap(), FlushDownload);
+        assert_eq!(
+            FlushDownload::parse(&bytes).unwrap(),
+            FlushDownload::default()
+        );
     }
 
     #[test]
     fn download_reply_round_trips_and_bites() {
         let d = DownloadReply {
+            length_form: crate::length::LengthForm::Minimal,
             object_id: 0xFFFF,
             reply_id: DownloadReplyId::NotAnObjectDataSegment,
         };

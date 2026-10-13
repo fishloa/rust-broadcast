@@ -8,6 +8,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Removed
+- **BREAKING:** the never-constructed `Error::TsMapping` variant (audit r14-ULE-O1, #1120).
+### Changed
+- The TS receiver hands a completed SNDU out by move (`split_off`) instead of copying it and its tail (audit r14-ULE-O1, #1120).
 
 ## [0.4.1] - 2026-10-05
 ### Added

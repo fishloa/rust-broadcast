@@ -29,6 +29,12 @@ pub mod tag {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CaPipelineRequest<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// Opaque `CASpecificData` bytes.
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub ca_specific_data: &'a [u8],
@@ -39,6 +45,12 @@ pub struct CaPipelineRequest<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CaPipelineResponse<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// Opaque `CA_specific_Data` bytes.
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub ca_specific_data: &'a [u8],
@@ -49,6 +61,12 @@ pub struct CaPipelineResponse<'a> {
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CaPipelineNotification<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// Opaque `CASpecificData` bytes.
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub ca_specific_data: &'a [u8],
@@ -97,6 +115,7 @@ mod tests {
     #[test]
     fn request_round_trips_and_bites() {
         let req = CaPipelineRequest {
+            length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[0xAA, 0xBB, 0xCC],
         };
         let bytes = req.to_bytes();
@@ -104,6 +123,7 @@ mod tests {
         assert_eq!(bytes, [0x9F, 0x80, 0x00, 0x03, 0xAA, 0xBB, 0xCC]);
         assert_eq!(CaPipelineRequest::parse(&bytes).unwrap(), req);
         let other = CaPipelineRequest {
+            length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[0xAA, 0xBB, 0xCD],
         };
         assert_ne!(bytes, other.to_bytes());
@@ -112,6 +132,7 @@ mod tests {
     #[test]
     fn response_and_notification_round_trip() {
         let resp = CaPipelineResponse {
+            length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[0x01],
         };
         let bytes = resp.to_bytes();
@@ -119,6 +140,7 @@ mod tests {
         assert_eq!(CaPipelineResponse::parse(&bytes).unwrap(), resp);
 
         let note = CaPipelineNotification {
+            length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[],
         };
         let bytes = note.to_bytes();
@@ -129,6 +151,7 @@ mod tests {
     #[test]
     fn dispatch_routes_each_tag() {
         let req = CaPipelineRequest {
+            length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[0x10],
         }
         .to_bytes();
@@ -137,6 +160,7 @@ mod tests {
             CaPipelineApdu::Request(_)
         ));
         let resp = CaPipelineResponse {
+            length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[0x20],
         }
         .to_bytes();
@@ -145,6 +169,7 @@ mod tests {
             CaPipelineApdu::Response(_)
         ));
         let note = CaPipelineNotification {
+            length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[0x30],
         }
         .to_bytes();

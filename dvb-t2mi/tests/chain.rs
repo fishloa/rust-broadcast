@@ -121,7 +121,7 @@ fn build_nm_bbframe(inner_ts: &[u8; TS_PACKET_SIZE]) -> Vec<u8> {
         mode: Mode::Normal,
         issy_in_header: None,
     };
-    let header_bytes = hdr.serialize();
+    let header_bytes = hdr.serialize().unwrap();
 
     // Data field: NM places CRC-8 of the *preceding* UP at byte 0.
     // We designate the preceding UP as all-zero bytes, so:

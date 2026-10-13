@@ -27,6 +27,7 @@ fn main() {
 
     // version 0 — segment-relative (presentation_time_delta). Strings first.
     let v0 = EmsgBox {
+        flags: mp4_emsg::EMSG_FLAGS,
         scheme_id_uri: "urn:scte:scte35:2013:bin",
         value: "",
         timescale: 90_000,
@@ -41,6 +42,7 @@ fn main() {
     // version 1 — representation-relative (presentation_time u64). Integers
     // first, then the strings.
     let v1 = EmsgBox {
+        flags: mp4_emsg::EMSG_FLAGS,
         scheme_id_uri: "https://aomedia.org/emsg/ID3",
         value: "0",
         timescale: 1000,

@@ -21,7 +21,7 @@ pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0014);
 const HEADER_LEN: usize = 3;
 const UTC_TIME_LEN: usize = 5;
 const DESC_LOOP_LEN_FIELD: usize = 2;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = HEADER_LEN + UTC_TIME_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
 
 /// Time Offset Table.
@@ -192,8 +192,7 @@ impl Serialize for TotSection<'_> {
         let d_end = 10 + self.descriptors.len();
         buf[10..d_end].copy_from_slice(self.descriptors.raw());
         let crc_pos = len - CRC_LEN;
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
-        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, crc_pos);
         Ok(len)
     }
 }

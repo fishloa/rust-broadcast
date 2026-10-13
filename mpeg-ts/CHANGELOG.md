@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Added
+- `TsResync::feed_into(&mut self, data, &mut Vec<[u8; 188]>)`: `feed` appending to a caller-owned vector; `feed` now reserves its output once from the buffered byte count (2000-packet feed: 11 -> at most 4 allocations; pinned by `tests/resync_alloc.rs`, audit r01-O4, #1074).
+
 ### Changed (BREAKING)
 
 - **BREAKING (#1159, typed PIDs):** `TsHeader::pid` is `pid::Pid`, not `u16`. `SectionPacketiser::{new,with_continuity,pid}`, `SiMux::{upsert,upsert_pmt}`, `PusiReassembler::{new,with_max_unit_size,push}`, `OwnedTsPacket::{pid,serialize_with_payload}` take/return `Pid`. Migrate with `header.pid.value()` for the raw `u16`, or `Pid::try_new(u16)` at API boundaries that take a user-supplied number.

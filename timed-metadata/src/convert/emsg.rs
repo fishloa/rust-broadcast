@@ -34,6 +34,7 @@ pub struct EmsgConfig {
 /// Wrap a verbatim `splice_info_section` as a SCTE-35 `emsg` box (serialized bytes).
 pub fn scte35_to_emsg(splice_raw: &[u8], cfg: &EmsgConfig) -> Result<Vec<u8>> {
     let boxx = EmsgBox {
+        flags: mp4_emsg::EMSG_FLAGS,
         scheme_id_uri: SCTE35_SCHEME,
         value: &cfg.value,
         timescale: cfg.timescale,

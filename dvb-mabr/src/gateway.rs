@@ -101,7 +101,7 @@ pub struct MulticastGatewayConfigurationTransportSession {
 
 impl MulticastGatewayConfigurationTransportSession {
     pub(crate) fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
-        let service_class = require_attr(node, ELEMENT, "serviceClass").ok();
+        let service_class = node.attr_owned("serviceClass");
         let transport_security = match require_attr(node, ELEMENT, "transportSecurity") {
             Ok(v) => Some(TransportSecurity::parse(&v)?),
             Err(_) => None,

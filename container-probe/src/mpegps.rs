@@ -47,6 +47,9 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         // Shorter than a full pack header: cannot reach the marker bits, so a
         // truncated .ps read a few bytes at a time is undecided (`Insufficient`),
         // not `Unknown`.
+        if !crate::prefix_agrees(region, 0, &PACK_START_CODE) {
+            return Outcome::None;
+        }
         return Outcome::Insufficient(PACK_HEADER_MIN_LEN);
     }
     if region[..PACK_START_CODE.len()] != PACK_START_CODE {

@@ -35,6 +35,7 @@
 //! carried as borrowed `&[u8]`.
 
 use crate::error::{Error, Result};
+use crate::length::LengthForm;
 use crate::objects;
 use crate::tag::ApduTag;
 use alloc::vec::Vec;
@@ -328,6 +329,12 @@ broadcast_common::impl_spec_display!(UpdateStatus, Reserved);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerVerifyReq<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `service_location_byte` body (`service_location_length` bytes) — opaque XML.
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub service_location: &'a [u8],
@@ -339,19 +346,26 @@ const SERVICE_LOCATION_PREFIX: usize = 2;
 impl<'a> Parse<'a> for PlayerVerifyReq<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::VERIFY_REQ, "CICAM_player_verify_req")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::VERIFY_REQ, "CICAM_player_verify_req")?;
         let service_location = parse_service_location(body, "CICAM_player_verify_req")?;
-        Ok(Self { service_location })
+        Ok(Self {
+            length_form,
+            service_location,
+        })
     }
 }
 impl Serialize for PlayerVerifyReq<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(SERVICE_LOCATION_PREFIX + self.service_location.len())
+        objects::apdu_len(
+            SERVICE_LOCATION_PREFIX + self.service_location.len(),
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = SERVICE_LOCATION_PREFIX + self.service_location.len();
-        let pos = objects::write_apdu_header(tag::VERIFY_REQ, body_len, buf)?;
+        let pos = objects::write_apdu_header(tag::VERIFY_REQ, body_len, self.length_form, buf)?;
         write_service_location(self.service_location, &mut buf[pos..]);
         Ok(pos + body_len)
     }
@@ -390,6 +404,12 @@ fn write_service_location(loc: &[u8], buf: &mut [u8]) {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerVerifyReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `player_verify_status` (8) — Table 51.
     pub player_verify_status: PlayerVerifyStatus,
 }
@@ -399,7 +419,7 @@ const VERIFY_REPLY_BODY: usize = 1;
 impl<'a> Parse<'a> for PlayerVerifyReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body =
+        let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::VERIFY_REPLY, "CICAM_player_verify_reply")?;
         if body.len() < VERIFY_REPLY_BODY {
             return Err(Error::BufferTooShort {
@@ -410,6 +430,7 @@ impl<'a> Parse<'a> for PlayerVerifyReply {
         }
         crate::objects::reject_trailing_body(body, VERIFY_REPLY_BODY, "CICAM_player_verify_reply")?;
         Ok(Self {
+            length_form,
             player_verify_status: PlayerVerifyStatus::from_u8(body[0]),
         })
     }
@@ -417,10 +438,15 @@ impl<'a> Parse<'a> for PlayerVerifyReply {
 impl Serialize for PlayerVerifyReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(VERIFY_REPLY_BODY)
+        objects::apdu_len(VERIFY_REPLY_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::VERIFY_REPLY, VERIFY_REPLY_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::VERIFY_REPLY,
+            VERIFY_REPLY_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.player_verify_status.to_u8();
         Ok(pos + VERIFY_REPLY_BODY)
     }
@@ -433,26 +459,32 @@ impl Serialize for PlayerVerifyReply {
 /// `CICAM_player_capabilities_req()` (Table 52): CICAM → Host, header-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct PlayerCapabilitiesReq;
+pub struct PlayerCapabilitiesReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 impl<'a> Parse<'a> for PlayerCapabilitiesReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        objects::parse_empty_apdu(
+        let length_form = objects::parse_empty_apdu(
             bytes,
             tag::CAPABILITIES_REQ,
             "CICAM_player_capabilities_req",
         )?;
-        Ok(Self)
+        Ok(Self { length_form })
     }
 }
 impl Serialize for PlayerCapabilitiesReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::empty_apdu_len()
+        objects::empty_apdu_len(self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::serialize_empty_apdu(tag::CAPABILITIES_REQ, buf)
+        objects::serialize_empty_apdu(tag::CAPABILITIES_REQ, self.length_form, buf)
     }
 }
 
@@ -476,6 +508,12 @@ pub struct ComponentType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerCapabilitiesReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `component_type` list (loop count `number_of_component_types`).
     pub component_types: Vec<ComponentType>,
 }
@@ -488,7 +526,7 @@ const STREAM_CONTENT_MASK: u8 = 0x0F;
 impl<'a> Parse<'a> for PlayerCapabilitiesReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(
+        let (length_form, body) = objects::parse_apdu_header(
             bytes,
             tag::CAPABILITIES_REPLY,
             "CICAM_player_capabilities_reply",
@@ -526,17 +564,24 @@ impl<'a> Parse<'a> for PlayerCapabilitiesReply {
             CAPABILITIES_PREFIX + n * COMPONENT_TYPE_LEN,
             "CICAM_player_capabilities_reply",
         )?;
-        Ok(Self { component_types })
+        Ok(Self {
+            length_form,
+            component_types,
+        })
     }
 }
 impl Serialize for PlayerCapabilitiesReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(CAPABILITIES_PREFIX + self.component_types.len() * COMPONENT_TYPE_LEN)
+        objects::apdu_len(
+            CAPABILITIES_PREFIX + self.component_types.len() * COMPONENT_TYPE_LEN,
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = CAPABILITIES_PREFIX + self.component_types.len() * COMPONENT_TYPE_LEN;
-        let mut pos = objects::write_apdu_header(tag::CAPABILITIES_REPLY, body_len, buf)?;
+        let mut pos =
+            objects::write_apdu_header(tag::CAPABILITIES_REPLY, body_len, self.length_form, buf)?;
         buf[pos..pos + 2].copy_from_slice(&(self.component_types.len() as u16).to_be_bytes());
         pos += CAPABILITIES_PREFIX;
         for c in &self.component_types {
@@ -557,6 +602,12 @@ impl Serialize for PlayerCapabilitiesReply {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerStartReq<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `input_max_bitrate` (16) — Host→CICAM delivery, units of 10 kbps (rounded up).
     pub input_max_bitrate: u16,
     /// `output_max_bitrate` (16) — CICAM→Host delivery, units of 10 kbps.
@@ -575,7 +626,8 @@ const LINEAR_CHANNEL_BIT: u8 = 0x80;
 impl<'a> Parse<'a> for PlayerStartReq<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::START_REQ, "CICAM_player_start_req")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::START_REQ, "CICAM_player_start_req")?;
         if body.len() < START_REQ_PREFIX {
             return Err(Error::BufferTooShort {
                 need: START_REQ_PREFIX,
@@ -596,6 +648,7 @@ impl<'a> Parse<'a> for PlayerStartReq<'a> {
             });
         }
         Ok(Self {
+            length_form,
             input_max_bitrate,
             output_max_bitrate,
             linear_channel,
@@ -606,11 +659,11 @@ impl<'a> Parse<'a> for PlayerStartReq<'a> {
 impl Serialize for PlayerStartReq<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(START_REQ_PREFIX + self.pmt.len())
+        objects::apdu_len(START_REQ_PREFIX + self.pmt.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = START_REQ_PREFIX + self.pmt.len();
-        let pos = objects::write_apdu_header(tag::START_REQ, body_len, buf)?;
+        let pos = objects::write_apdu_header(tag::START_REQ, body_len, self.length_form, buf)?;
         buf[pos..pos + 2].copy_from_slice(&self.input_max_bitrate.to_be_bytes());
         buf[pos + 2..pos + 4].copy_from_slice(&self.output_max_bitrate.to_be_bytes());
         // linearChannel(1) + reserved(7)='0000000'.
@@ -633,6 +686,12 @@ impl Serialize for PlayerStartReq<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerStartReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8) — Local TS allocated; uniquely identifies the player session.
     /// Ignored if `input_status` is non-zero.
     pub lts_id: u8,
@@ -645,7 +704,8 @@ const START_REPLY_BODY: usize = 2;
 impl<'a> Parse<'a> for PlayerStartReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::START_REPLY, "CICAM_player_start_reply")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::START_REPLY, "CICAM_player_start_reply")?;
         if body.len() < START_REPLY_BODY {
             return Err(Error::BufferTooShort {
                 need: START_REPLY_BODY,
@@ -655,6 +715,7 @@ impl<'a> Parse<'a> for PlayerStartReply {
         }
         crate::objects::reject_trailing_body(body, START_REPLY_BODY, "CICAM_player_start_reply")?;
         Ok(Self {
+            length_form,
             lts_id: body[0],
             input_status: InputStatus::from_u8(body[1]),
         })
@@ -663,10 +724,11 @@ impl<'a> Parse<'a> for PlayerStartReply {
 impl Serialize for PlayerStartReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(START_REPLY_BODY)
+        objects::apdu_len(START_REPLY_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::START_REPLY, START_REPLY_BODY, buf)?;
+        let pos =
+            objects::write_apdu_header(tag::START_REPLY, START_REPLY_BODY, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1] = self.input_status.to_u8();
         Ok(pos + START_REPLY_BODY)
@@ -682,6 +744,12 @@ impl Serialize for PlayerStartReply {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerPlayReq<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `service_location_byte` body (`service_location_length` bytes) — opaque XML.
     #[cfg_attr(feature = "serde", serde(borrow, with = "crate::objects::bytes_serde"))]
     pub service_location: &'a [u8],
@@ -690,19 +758,26 @@ pub struct PlayerPlayReq<'a> {
 impl<'a> Parse<'a> for PlayerPlayReq<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::PLAY_REQ, "CICAM_player_play_req")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::PLAY_REQ, "CICAM_player_play_req")?;
         let service_location = parse_service_location(body, "CICAM_player_play_req")?;
-        Ok(Self { service_location })
+        Ok(Self {
+            length_form,
+            service_location,
+        })
     }
 }
 impl Serialize for PlayerPlayReq<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(SERVICE_LOCATION_PREFIX + self.service_location.len())
+        objects::apdu_len(
+            SERVICE_LOCATION_PREFIX + self.service_location.len(),
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = SERVICE_LOCATION_PREFIX + self.service_location.len();
-        let pos = objects::write_apdu_header(tag::PLAY_REQ, body_len, buf)?;
+        let pos = objects::write_apdu_header(tag::PLAY_REQ, body_len, self.length_form, buf)?;
         write_service_location(self.service_location, &mut buf[pos..]);
         Ok(pos + body_len)
     }
@@ -716,6 +791,12 @@ impl Serialize for PlayerPlayReq<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerStatusError {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `valid_LTS_id` (1) — `true` when `lts_id` relates to an established session.
     pub valid_lts_id: bool,
     /// `LTS_id` (8) — undefined when `valid_lts_id` is `false`.
@@ -731,7 +812,7 @@ const VALID_LTS_ID_BIT: u8 = 0x01;
 impl<'a> Parse<'a> for PlayerStatusError {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body =
+        let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::STATUS_ERROR, "CICAM_player_status_error")?;
         if body.len() < STATUS_ERROR_BODY {
             return Err(Error::BufferTooShort {
@@ -742,6 +823,7 @@ impl<'a> Parse<'a> for PlayerStatusError {
         }
         crate::objects::reject_trailing_body(body, STATUS_ERROR_BODY, "CICAM_player_status_error")?;
         Ok(Self {
+            length_form,
             valid_lts_id: body[0] & VALID_LTS_ID_BIT != 0,
             lts_id: body[1],
             player_status: PlayStatus::from_u8(body[2]),
@@ -751,10 +833,15 @@ impl<'a> Parse<'a> for PlayerStatusError {
 impl Serialize for PlayerStatusError {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(STATUS_ERROR_BODY)
+        objects::apdu_len(STATUS_ERROR_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::STATUS_ERROR, STATUS_ERROR_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::STATUS_ERROR,
+            STATUS_ERROR_BODY,
+            self.length_form,
+            buf,
+        )?;
         // reserved(7)='0000000' + valid_LTS_id(1).
         buf[pos] = if self.valid_lts_id {
             VALID_LTS_ID_BIT
@@ -807,6 +894,12 @@ impl ControlCommand {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerControlReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8).
     pub lts_id: u8,
     /// The `Command`-selected payload.
@@ -835,7 +928,8 @@ impl PlayerControlReq {
 impl<'a> Parse<'a> for PlayerControlReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::CONTROL_REQ, "CICAM_player_control_req")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::CONTROL_REQ, "CICAM_player_control_req")?;
         if body.len() < CONTROL_PREFIX {
             return Err(Error::BufferTooShort {
                 need: CONTROL_PREFIX,
@@ -892,13 +986,17 @@ impl<'a> Parse<'a> for PlayerControlReq {
                 ControlCommand::Reserved(other)
             }
         };
-        Ok(Self { lts_id, command })
+        Ok(Self {
+            length_form,
+            lts_id,
+            command,
+        })
     }
 }
 impl Serialize for PlayerControlReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(self.body_len())
+        objects::apdu_len(self.body_len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         // `Reserved(0x01 | 0x02)` would emit the SetPosition/SetSpeed command
@@ -913,7 +1011,7 @@ impl Serialize for PlayerControlReq {
             });
         }
         let body_len = self.body_len();
-        let pos = objects::write_apdu_header(tag::CONTROL_REQ, body_len, buf)?;
+        let pos = objects::write_apdu_header(tag::CONTROL_REQ, body_len, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1] = self.command.command();
         match self.command {
@@ -941,6 +1039,12 @@ impl Serialize for PlayerControlReq {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerInfoReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8).
     pub lts_id: u8,
 }
@@ -950,23 +1054,30 @@ const LTS_ID_BODY: usize = 1;
 impl<'a> Parse<'a> for PlayerInfoReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let (length_form, lts_id) =
+            parse_lts_id_body(bytes, tag::INFO_REQ, "CICAM_player_info_req")?;
         Ok(Self {
-            lts_id: parse_lts_id_body(bytes, tag::INFO_REQ, "CICAM_player_info_req")?,
+            length_form,
+            lts_id,
         })
     }
 }
 impl Serialize for PlayerInfoReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(LTS_ID_BODY)
+        objects::apdu_len(LTS_ID_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        serialize_lts_id_body(self.lts_id, tag::INFO_REQ, buf)
+        serialize_lts_id_body(self.lts_id, tag::INFO_REQ, self.length_form, buf)
     }
 }
 
-fn parse_lts_id_body(bytes: &[u8], expected: ApduTag, what: &'static str) -> Result<u8> {
-    let body = objects::parse_apdu_header(bytes, expected, what)?;
+fn parse_lts_id_body(
+    bytes: &[u8],
+    expected: ApduTag,
+    what: &'static str,
+) -> Result<(LengthForm, u8)> {
+    let (length_form, body) = objects::parse_apdu_header(bytes, expected, what)?;
     if body.len() < LTS_ID_BODY {
         return Err(Error::BufferTooShort {
             need: LTS_ID_BODY,
@@ -974,11 +1085,16 @@ fn parse_lts_id_body(bytes: &[u8], expected: ApduTag, what: &'static str) -> Res
             what,
         });
     }
-    Ok(body[0])
+    Ok((length_form, body[0]))
 }
 
-fn serialize_lts_id_body(lts_id: u8, tag: ApduTag, buf: &mut [u8]) -> Result<usize> {
-    let pos = objects::write_apdu_header(tag, LTS_ID_BODY, buf)?;
+fn serialize_lts_id_body(
+    lts_id: u8,
+    tag: ApduTag,
+    form: LengthForm,
+    buf: &mut [u8],
+) -> Result<usize> {
+    let pos = objects::write_apdu_header(tag, LTS_ID_BODY, form, buf)?;
     buf[pos] = lts_id;
     Ok(pos + LTS_ID_BODY)
 }
@@ -991,6 +1107,12 @@ fn serialize_lts_id_body(lts_id: u8, tag: ApduTag, buf: &mut [u8]) -> Result<usi
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerInfoReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8).
     pub lts_id: u8,
     /// `duration` (32) — total content duration in seconds; `0xFFFFFFFF` if unknown.
@@ -1007,7 +1129,8 @@ const INFO_REPLY_BODY: usize = 1 + 4 + 4 + 2;
 impl<'a> Parse<'a> for PlayerInfoReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::INFO_REPLY, "CICAM_player_info_reply")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::INFO_REPLY, "CICAM_player_info_reply")?;
         if body.len() < INFO_REPLY_BODY {
             return Err(Error::BufferTooShort {
                 need: INFO_REPLY_BODY,
@@ -1017,6 +1140,7 @@ impl<'a> Parse<'a> for PlayerInfoReply {
         }
         crate::objects::reject_trailing_body(body, INFO_REPLY_BODY, "CICAM_player_info_reply")?;
         Ok(Self {
+            length_form,
             lts_id: body[0],
             duration: u32::from_be_bytes([body[1], body[2], body[3], body[4]]),
             position: u32::from_be_bytes([body[5], body[6], body[7], body[8]]),
@@ -1027,10 +1151,11 @@ impl<'a> Parse<'a> for PlayerInfoReply {
 impl Serialize for PlayerInfoReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(INFO_REPLY_BODY)
+        objects::apdu_len(INFO_REPLY_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::INFO_REPLY, INFO_REPLY_BODY, buf)?;
+        let pos =
+            objects::write_apdu_header(tag::INFO_REPLY, INFO_REPLY_BODY, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1..pos + 5].copy_from_slice(&self.duration.to_be_bytes());
         buf[pos + 5..pos + 9].copy_from_slice(&self.position.to_be_bytes());
@@ -1047,6 +1172,12 @@ impl Serialize for PlayerInfoReply {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerStop {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8).
     pub lts_id: u8,
 }
@@ -1054,18 +1185,20 @@ pub struct PlayerStop {
 impl<'a> Parse<'a> for PlayerStop {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let (length_form, lts_id) = parse_lts_id_body(bytes, tag::STOP, "CICAM_player_stop")?;
         Ok(Self {
-            lts_id: parse_lts_id_body(bytes, tag::STOP, "CICAM_player_stop")?,
+            length_form,
+            lts_id,
         })
     }
 }
 impl Serialize for PlayerStop {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(LTS_ID_BODY)
+        objects::apdu_len(LTS_ID_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        serialize_lts_id_body(self.lts_id, tag::STOP, buf)
+        serialize_lts_id_body(self.lts_id, tag::STOP, self.length_form, buf)
     }
 }
 
@@ -1073,6 +1206,12 @@ impl Serialize for PlayerStop {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerEnd {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8).
     pub lts_id: u8,
 }
@@ -1080,18 +1219,20 @@ pub struct PlayerEnd {
 impl<'a> Parse<'a> for PlayerEnd {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
+        let (length_form, lts_id) = parse_lts_id_body(bytes, tag::END, "CICAM_player_end")?;
         Ok(Self {
-            lts_id: parse_lts_id_body(bytes, tag::END, "CICAM_player_end")?,
+            length_form,
+            lts_id,
         })
     }
 }
 impl Serialize for PlayerEnd {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(LTS_ID_BODY)
+        objects::apdu_len(LTS_ID_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        serialize_lts_id_body(self.lts_id, tag::END, buf)
+        serialize_lts_id_body(self.lts_id, tag::END, self.length_form, buf)
     }
 }
 
@@ -1103,6 +1244,12 @@ impl Serialize for PlayerEnd {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerAssetEnd {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8).
     pub lts_id: u8,
     /// `beginning` (1) — `true` = start of asset reached; otherwise end reached.
@@ -1118,7 +1265,8 @@ const ASSET_END_RESERVED: u8 = 0x7F << 1;
 impl<'a> Parse<'a> for PlayerAssetEnd {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::ASSET_END, "CICAM_player_asset_end")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::ASSET_END, "CICAM_player_asset_end")?;
         if body.len() < ASSET_END_BODY {
             return Err(Error::BufferTooShort {
                 need: ASSET_END_BODY,
@@ -1128,6 +1276,7 @@ impl<'a> Parse<'a> for PlayerAssetEnd {
         }
         crate::objects::reject_trailing_body(body, ASSET_END_BODY, "CICAM_player_asset_end")?;
         Ok(Self {
+            length_form,
             lts_id: body[0],
             beginning: body[1] & BEGINNING_BIT != 0,
         })
@@ -1136,10 +1285,11 @@ impl<'a> Parse<'a> for PlayerAssetEnd {
 impl Serialize for PlayerAssetEnd {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(ASSET_END_BODY)
+        objects::apdu_len(ASSET_END_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::ASSET_END, ASSET_END_BODY, buf)?;
+        let pos =
+            objects::write_apdu_header(tag::ASSET_END, ASSET_END_BODY, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         // reserved(7) shall be 0x7F + beginning(1).
         buf[pos + 1] = ASSET_END_RESERVED | u8::from(self.beginning);
@@ -1155,6 +1305,12 @@ impl Serialize for PlayerAssetEnd {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerUpdateReq<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8).
     pub lts_id: u8,
     /// `PMT_byte` body (`PMT_length` bytes, shall not be zero) — opaque PMT.
@@ -1168,7 +1324,8 @@ const UPDATE_REQ_PREFIX: usize = 1 + 2;
 impl<'a> Parse<'a> for PlayerUpdateReq<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::UPDATE_REQ, "CICAM_player_update_req")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::UPDATE_REQ, "CICAM_player_update_req")?;
         if body.len() < UPDATE_REQ_PREFIX {
             return Err(Error::BufferTooShort {
                 need: UPDATE_REQ_PREFIX,
@@ -1187,6 +1344,7 @@ impl<'a> Parse<'a> for PlayerUpdateReq<'a> {
             });
         }
         Ok(Self {
+            length_form,
             lts_id,
             pmt: &body[UPDATE_REQ_PREFIX..end],
         })
@@ -1195,11 +1353,11 @@ impl<'a> Parse<'a> for PlayerUpdateReq<'a> {
 impl Serialize for PlayerUpdateReq<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(UPDATE_REQ_PREFIX + self.pmt.len())
+        objects::apdu_len(UPDATE_REQ_PREFIX + self.pmt.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = UPDATE_REQ_PREFIX + self.pmt.len();
-        let pos = objects::write_apdu_header(tag::UPDATE_REQ, body_len, buf)?;
+        let pos = objects::write_apdu_header(tag::UPDATE_REQ, body_len, self.length_form, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1..pos + 3].copy_from_slice(&(self.pmt.len() as u16).to_be_bytes());
         buf[pos + UPDATE_REQ_PREFIX..pos + body_len].copy_from_slice(self.pmt);
@@ -1218,6 +1376,12 @@ impl Serialize for PlayerUpdateReq<'_> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PlayerUpdateReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`] for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `LTS_id` (8).
     pub lts_id: u8,
     /// `update_status` (8) — Table 70.
@@ -1229,7 +1393,7 @@ const UPDATE_REPLY_BODY: usize = 2;
 impl<'a> Parse<'a> for PlayerUpdateReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body =
+        let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::UPDATE_REPLY, "CICAM_player_update_reply")?;
         if body.len() < UPDATE_REPLY_BODY {
             return Err(Error::BufferTooShort {
@@ -1240,6 +1404,7 @@ impl<'a> Parse<'a> for PlayerUpdateReply {
         }
         crate::objects::reject_trailing_body(body, UPDATE_REPLY_BODY, "CICAM_player_update_reply")?;
         Ok(Self {
+            length_form,
             lts_id: body[0],
             update_status: UpdateStatus::from_u8(body[1]),
         })
@@ -1248,10 +1413,15 @@ impl<'a> Parse<'a> for PlayerUpdateReply {
 impl Serialize for PlayerUpdateReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(UPDATE_REPLY_BODY)
+        objects::apdu_len(UPDATE_REPLY_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::UPDATE_REPLY, UPDATE_REPLY_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::UPDATE_REPLY,
+            UPDATE_REPLY_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.lts_id;
         buf[pos + 1] = self.update_status.to_u8();
         Ok(pos + UPDATE_REPLY_BODY)
@@ -1310,6 +1480,7 @@ mod tests {
     #[test]
     fn verify_req_round_trips_and_bites() {
         let req = PlayerVerifyReq {
+            length_form: crate::length::LengthForm::Minimal,
             service_location: &[0x3C, 0x53, 0x4C, 0x3E], // "<SL>"
         };
         let bytes = req.to_bytes();
@@ -1320,6 +1491,7 @@ mod tests {
         );
         assert_eq!(PlayerVerifyReq::parse(&bytes).unwrap(), req);
         let other = PlayerVerifyReq {
+            length_form: crate::length::LengthForm::Minimal,
             service_location: &[0x3C, 0x53, 0x4C, 0x00],
         };
         assert_ne!(bytes, other.to_bytes());
@@ -1328,6 +1500,7 @@ mod tests {
     #[test]
     fn verify_reply_round_trips() {
         let r = PlayerVerifyReply {
+            length_form: crate::length::LengthForm::Minimal,
             player_verify_status: PlayerVerifyStatus::Error,
         };
         let bytes = r.to_bytes();
@@ -1337,17 +1510,18 @@ mod tests {
 
     #[test]
     fn capabilities_req_round_trips() {
-        let bytes = PlayerCapabilitiesReq.to_bytes();
+        let bytes = PlayerCapabilitiesReq::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0xA0, 0x02, 0x00]);
         assert_eq!(
             PlayerCapabilitiesReq::parse(&bytes).unwrap(),
-            PlayerCapabilitiesReq
+            PlayerCapabilitiesReq::default()
         );
     }
 
     #[test]
     fn capabilities_reply_two_entries() {
         let r = PlayerCapabilitiesReply {
+            length_form: crate::length::LengthForm::Minimal,
             component_types: alloc::vec![
                 ComponentType {
                     stream_content: 0x01,
@@ -1374,6 +1548,7 @@ mod tests {
     fn start_req_round_trips_and_bites() {
         // 512 kbps = 0x0034 input; output 0x0040; linear; 3-byte PMT.
         let req = PlayerStartReq {
+            length_form: crate::length::LengthForm::Minimal,
             input_max_bitrate: 0x0034,
             output_max_bitrate: 0x0040,
             linear_channel: true,
@@ -1397,6 +1572,7 @@ mod tests {
     #[test]
     fn start_reply_round_trips() {
         let r = PlayerStartReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x07,
             input_status: InputStatus::InsufficientBitrate,
         };
@@ -1408,6 +1584,7 @@ mod tests {
     #[test]
     fn play_req_round_trips() {
         let req = PlayerPlayReq {
+            length_form: crate::length::LengthForm::Minimal,
             service_location: &[0xAA, 0xBB],
         };
         let bytes = req.to_bytes();
@@ -1418,6 +1595,7 @@ mod tests {
     #[test]
     fn status_error_round_trips_and_bites() {
         let e = PlayerStatusError {
+            length_form: crate::length::LengthForm::Minimal,
             valid_lts_id: true,
             lts_id: 0x09,
             player_status: PlayStatus::ContentBlocked,
@@ -1435,6 +1613,7 @@ mod tests {
     #[test]
     fn control_req_set_position_round_trips_and_bites() {
         let c = PlayerControlReq {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x03,
             command: ControlCommand::SetPosition {
                 seek_mode: SeekMode::Relative,
@@ -1460,6 +1639,7 @@ mod tests {
     #[test]
     fn control_req_set_speed_round_trips() {
         let c = PlayerControlReq {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x01,
             command: ControlCommand::SetSpeed { speed: -100 },
         };
@@ -1477,6 +1657,7 @@ mod tests {
         let mut buf = [0u8; 32];
         for v in [0x01u8, 0x02] {
             let c = PlayerControlReq {
+                length_form: crate::length::LengthForm::Minimal,
                 lts_id: 1,
                 command: ControlCommand::Reserved(v),
             };
@@ -1487,6 +1668,7 @@ mod tests {
         }
         // A genuinely reserved value round-trips.
         let ok = PlayerControlReq {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 1,
             command: ControlCommand::Reserved(0x00),
         };
@@ -1501,12 +1683,16 @@ mod tests {
 
     #[test]
     fn info_req_reply_round_trip() {
-        let req = PlayerInfoReq { lts_id: 0x05 };
+        let req = PlayerInfoReq {
+            length_form: crate::length::LengthForm::Minimal,
+            lts_id: 0x05,
+        };
         let rb = req.to_bytes();
         assert_eq!(rb, [0x9F, 0xA0, 0x09, 0x01, 0x05]);
         assert_eq!(PlayerInfoReq::parse(&rb).unwrap(), req);
 
         let reply = PlayerInfoReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x05,
             duration: 0xFFFF_FFFF,
             position: 0x0000_003C,
@@ -1524,11 +1710,17 @@ mod tests {
 
     #[test]
     fn stop_end_round_trip() {
-        let stop = PlayerStop { lts_id: 0x02 };
+        let stop = PlayerStop {
+            length_form: crate::length::LengthForm::Minimal,
+            lts_id: 0x02,
+        };
         assert_eq!(stop.to_bytes(), [0x9F, 0xA0, 0x0B, 0x01, 0x02]);
         assert_eq!(PlayerStop::parse(&stop.to_bytes()).unwrap(), stop);
 
-        let end = PlayerEnd { lts_id: 0x02 };
+        let end = PlayerEnd {
+            length_form: crate::length::LengthForm::Minimal,
+            lts_id: 0x02,
+        };
         assert_eq!(end.to_bytes(), [0x9F, 0xA0, 0x0C, 0x01, 0x02]);
         assert_eq!(PlayerEnd::parse(&end.to_bytes()).unwrap(), end);
     }
@@ -1536,6 +1728,7 @@ mod tests {
     #[test]
     fn asset_end_round_trips_and_reserved_is_7f() {
         let e = PlayerAssetEnd {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x04,
             beginning: true,
         };
@@ -1544,6 +1737,7 @@ mod tests {
         assert_eq!(bytes, [0x9F, 0xA0, 0x0D, 0x02, 0x04, 0xFF]);
         assert_eq!(PlayerAssetEnd::parse(&bytes).unwrap(), e);
         let other = PlayerAssetEnd {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x04,
             beginning: false,
         };
@@ -1554,6 +1748,7 @@ mod tests {
     #[test]
     fn update_req_round_trips_two_byte_pmt() {
         let req = PlayerUpdateReq {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x08,
             pmt: &[0x02, 0xB0],
         };
@@ -1569,6 +1764,7 @@ mod tests {
     #[test]
     fn update_reply_uses_9fa00f_not_start_reply_slip() {
         let r = PlayerUpdateReply {
+            length_form: crate::length::LengthForm::Minimal,
             lts_id: 0x06,
             update_status: UpdateStatus::RequestRefused,
         };
@@ -1585,19 +1781,23 @@ mod tests {
     fn dispatch_routes_every_tag() {
         let cases: alloc::vec::Vec<alloc::vec::Vec<u8>> = alloc::vec![
             PlayerVerifyReq {
+                length_form: crate::length::LengthForm::Minimal,
                 service_location: &[]
             }
             .to_bytes(),
             PlayerVerifyReply {
+                length_form: crate::length::LengthForm::Minimal,
                 player_verify_status: PlayerVerifyStatus::Ok
             }
             .to_bytes(),
-            PlayerCapabilitiesReq.to_bytes(),
+            PlayerCapabilitiesReq::default().to_bytes(),
             PlayerCapabilitiesReply {
+                length_form: crate::length::LengthForm::Minimal,
                 component_types: alloc::vec![]
             }
             .to_bytes(),
             PlayerStartReq {
+                length_form: crate::length::LengthForm::Minimal,
                 input_max_bitrate: 0,
                 output_max_bitrate: 0,
                 linear_channel: false,
@@ -1605,46 +1805,66 @@ mod tests {
             }
             .to_bytes(),
             PlayerStartReply {
+                length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
                 input_status: InputStatus::Ok
             }
             .to_bytes(),
             PlayerPlayReq {
+                length_form: crate::length::LengthForm::Minimal,
                 service_location: &[]
             }
             .to_bytes(),
             PlayerStatusError {
+                length_form: crate::length::LengthForm::Minimal,
                 valid_lts_id: false,
                 lts_id: 0,
                 player_status: PlayStatus::Unrecoverable
             }
             .to_bytes(),
             PlayerControlReq {
+                length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
                 command: ControlCommand::SetSpeed { speed: 0 }
             }
             .to_bytes(),
-            PlayerInfoReq { lts_id: 0 }.to_bytes(),
+            PlayerInfoReq {
+                length_form: crate::length::LengthForm::Minimal,
+                lts_id: 0
+            }
+            .to_bytes(),
             PlayerInfoReply {
+                length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
                 duration: 0,
                 position: 0,
                 speed: 0
             }
             .to_bytes(),
-            PlayerStop { lts_id: 0 }.to_bytes(),
-            PlayerEnd { lts_id: 0 }.to_bytes(),
+            PlayerStop {
+                length_form: crate::length::LengthForm::Minimal,
+                lts_id: 0
+            }
+            .to_bytes(),
+            PlayerEnd {
+                length_form: crate::length::LengthForm::Minimal,
+                lts_id: 0
+            }
+            .to_bytes(),
             PlayerAssetEnd {
+                length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
                 beginning: false
             }
             .to_bytes(),
             PlayerUpdateReq {
+                length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
                 pmt: &[0x00]
             }
             .to_bytes(),
             PlayerUpdateReply {
+                length_form: crate::length::LengthForm::Minimal,
                 lts_id: 0,
                 update_status: UpdateStatus::Ok
             }

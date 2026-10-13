@@ -86,6 +86,9 @@ pub const SUBTYPE_RANGE_NACK: u8 = 0;
 /// Mask for the 5-bit count/FMT/subtype field in RTCP byte 0 (RFC 3550 §6.4.1).
 pub(crate) const RTCP_COUNT_MASK: u8 = 0x1F;
 
+/// Mask for the padding (P) bit in RTCP byte 0 (RFC 3550 §6.4.1).
+pub(crate) const RTCP_PADDING_MASK: u8 = 0x20;
+
 // ---------------------------------------------------------------------------
 // Re-exports for convenience
 // ---------------------------------------------------------------------------

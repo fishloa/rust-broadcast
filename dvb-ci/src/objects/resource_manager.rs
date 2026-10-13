@@ -14,17 +14,35 @@ use broadcast_common::{Parse, Serialize};
 /// `profile_enq()` — Profile Enquiry, an empty-body object (Table 17).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct ProfileEnq;
+pub struct ProfileEnq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `profile_changed()` — Profile Changed, an empty-body object (Table 19).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct ProfileChange;
+pub struct ProfileChange {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `profile()` reply — the list of resources the sender provides (Table 18).
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct Profile {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// The advertised `resource_identifier()`s, in wire order.
     pub resources: Vec<ResourceId>,
 }
@@ -34,17 +52,17 @@ pub struct Profile {
 impl<'a> Parse<'a> for ProfileEnq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        super::parse_empty_apdu(bytes, tag::PROFILE_ENQ, "profile_enq")?;
-        Ok(Self)
+        let length_form = super::parse_empty_apdu(bytes, tag::PROFILE_ENQ, "profile_enq")?;
+        Ok(Self { length_form })
     }
 }
 impl Serialize for ProfileEnq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::empty_apdu_len()
+        super::empty_apdu_len(self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        super::serialize_empty_apdu(tag::PROFILE_ENQ, buf)
+        super::serialize_empty_apdu(tag::PROFILE_ENQ, self.length_form, buf)
     }
 }
 impl ApduDef<'_> for ProfileEnq {
@@ -57,17 +75,17 @@ impl ApduDef<'_> for ProfileEnq {
 impl<'a> Parse<'a> for ProfileChange {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        super::parse_empty_apdu(bytes, tag::PROFILE_CHANGE, "profile_change")?;
-        Ok(Self)
+        let length_form = super::parse_empty_apdu(bytes, tag::PROFILE_CHANGE, "profile_change")?;
+        Ok(Self { length_form })
     }
 }
 impl Serialize for ProfileChange {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::empty_apdu_len()
+        super::empty_apdu_len(self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        super::serialize_empty_apdu(tag::PROFILE_CHANGE, buf)
+        super::serialize_empty_apdu(tag::PROFILE_CHANGE, self.length_form, buf)
     }
 }
 impl ApduDef<'_> for ProfileChange {
@@ -80,7 +98,7 @@ impl ApduDef<'_> for ProfileChange {
 impl<'a> Parse<'a> for Profile {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::PROFILE, "profile")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::PROFILE, "profile")?;
         if body.len() % ResourceId::LEN != 0 {
             return Err(Error::InvalidObject {
                 what: "profile",
@@ -91,7 +109,10 @@ impl<'a> Parse<'a> for Profile {
         for chunk in body.chunks_exact(ResourceId::LEN) {
             resources.push(ResourceId::parse(chunk)?);
         }
-        Ok(Self { resources })
+        Ok(Self {
+            length_form,
+            resources,
+        })
     }
 }
 
@@ -99,11 +120,11 @@ impl Serialize for Profile {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let body = self.resources.len() * ResourceId::LEN;
-        super::apdu_len(body)
+        super::apdu_len(body, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = self.resources.len() * ResourceId::LEN;
-        let mut pos = super::write_apdu_header(tag::PROFILE, body_len, buf)?;
+        let mut pos = super::write_apdu_header(tag::PROFILE, body_len, self.length_form, buf)?;
         for r in &self.resources {
             pos += r.serialize_into(&mut buf[pos..])?;
         }
@@ -123,21 +144,25 @@ mod tests {
 
     #[test]
     fn profile_enq_round_trip() {
-        let bytes = ProfileEnq.to_bytes();
+        let bytes = ProfileEnq::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x10, 0x00]);
-        assert_eq!(ProfileEnq::parse(&bytes).unwrap(), ProfileEnq);
+        assert_eq!(ProfileEnq::parse(&bytes).unwrap(), ProfileEnq::default());
     }
 
     #[test]
     fn profile_change_round_trip() {
-        let bytes = ProfileChange.to_bytes();
+        let bytes = ProfileChange::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x12, 0x00]);
-        assert_eq!(ProfileChange::parse(&bytes).unwrap(), ProfileChange);
+        assert_eq!(
+            ProfileChange::parse(&bytes).unwrap(),
+            ProfileChange::default()
+        );
     }
 
     #[test]
     fn profile_reply_multi_resource_round_trips() {
         let p = Profile {
+            length_form: crate::length::LengthForm::Minimal,
             resources: alloc::vec![
                 RESOURCE_MANAGER,
                 APPLICATION_INFORMATION,
@@ -156,6 +181,7 @@ mod tests {
     #[test]
     fn mutating_resource_changes_bytes() {
         let p = Profile {
+            length_form: crate::length::LengthForm::Minimal,
             resources: alloc::vec![RESOURCE_MANAGER],
         };
         let bytes = p.to_bytes();

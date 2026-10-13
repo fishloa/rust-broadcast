@@ -84,6 +84,12 @@ pub enum Error {
         body: usize,
     },
 
+    /// The padding (P) bit was set on a packet whose layout fixes `P = 0`
+    /// (the RTT Echo, TR-06-1:2020 §5.2.6: its padding is an in-message field
+    /// of its own, not RFC 3550 §6.4.1 padding).
+    #[error("padding bit set on a packet that requires P = 0")]
+    PaddingBitSet,
+
     /// A RIST compound packet's SDES sub-packet had no CNAME item
     /// (TR-06-1:2020 §5.2.1 requires SDES(CNAME) in every compound packet).
     #[error("RIST compound SDES packet is missing a CNAME item")]

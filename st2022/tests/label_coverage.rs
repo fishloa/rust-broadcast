@@ -9,7 +9,7 @@ use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-const SKIP: &[&str] = &["Error"];
+const SKIP: &[&str] = &["Error", "ExtensionItem"]; // data-carrying TLV ADT, not a label
 
 fn read_rs(dir: &Path, out: &mut Vec<String>) {
     for entry in fs::read_dir(dir).expect("read src dir") {

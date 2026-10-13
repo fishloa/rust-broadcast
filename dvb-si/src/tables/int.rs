@@ -14,12 +14,9 @@ use broadcast_common::{Parse, Serialize};
 /// `table_id` for IP/MAC Notification Table.
 pub const TABLE_ID: u8 = 0x4C;
 
-/// PID on which INT is carried.
-///
-/// INT does not have a fixed PID.  It is discovered through a
-/// `data_broadcast_id_descriptor` (data_broadcast_id 0x000B) inside the PMT
-/// ES_info loop.  This constant is therefore 0x0000 (unknown/variable).
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 /// Action type coding — ETSI EN 301 192 §8.4.4.1 Table 14.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -70,7 +67,7 @@ broadcast_common::impl_spec_display!(IntActionType, DvbReserved);
 const OUTER_HEADER_LEN: usize = 3;
 const INT_FIXED_LEN: usize = 9;
 const LOOP_LEN_FIELD: usize = 2;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = OUTER_HEADER_LEN + INT_FIXED_LEN + LOOP_LEN_FIELD + CRC_LEN;
 
 const OFF_ACTION_TYPE: usize = 3;
@@ -311,6 +308,9 @@ impl Serialize for IntSection<'_> {
             });
         }
 
+        // 24-bit field: the top byte of a wider value used to be dropped
+        // silently (audit r03-W3 class).
+        broadcast_common::len::fit_bits(u64::from(self.platform_id), 24, "platform_id")?;
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - OUTER_HEADER_LEN)?;
@@ -376,8 +376,7 @@ impl Serialize for IntSection<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
-        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, crc_pos);
         Ok(len)
     }
 }
@@ -389,6 +388,36 @@ impl<'a> crate::traits::TableDef<'a> for IntSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// r03-W3 class: a 24-bit `platform_id` wider than its field lost its top
+    /// byte silently.
+    #[test]
+    fn serialize_rejects_platform_id_wider_than_24_bits() {
+        let mk = |platform_id| {
+            IntSection::new(
+                IntActionType::IpMacStreamLocation,
+                0,
+                1,
+                true,
+                0,
+                0,
+                platform_id,
+                0,
+                DescriptorLoop::new(&[]),
+                vec![],
+            )
+        };
+        let wide = mk(0x0100_0000);
+        let mut buf = vec![0u8; wide.serialized_len()];
+        assert!(matches!(
+            wide.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+        let ok = mk(0x00FF_FFFF);
+        let mut buf = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut buf).unwrap();
+        assert_eq!(IntSection::parse(&buf).unwrap().platform_id, 0x00FF_FFFF);
+    }
 
     #[test]
     fn parse_happy_path_no_loops() {

@@ -23,7 +23,17 @@ pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x001B);
 
 const HEADER_LEN: usize = 9;
 const SECTION_LENGTH_PREFIX: usize = 3;
-const CRC_LEN: usize = 4;
+/// Trial-encode buffer for [`sat_body_serialized_len`]: one byte over the
+/// largest legal SAT body (`MAX_SECTION_LENGTH` less the 5 extension-header
+/// bytes and 4 CRC bytes is < 4096).
+const SAT_BODY_STACK_BUF: usize = 4096;
+/// Largest `section_length` (12 bits; EN 300 468 §5.2.11 / Table 11a).
+const MAX_SECTION_LENGTH: usize = 0x0FFF;
+/// `satellite_table_id(6)` sits in the top six bits of byte 3 (§5.2.11).
+const SATELLITE_TABLE_ID_SHIFT: u8 = 2;
+/// Low two bits of byte 3: the high bits of the 10-bit `table_count`.
+const TABLE_COUNT_HI_MASK: u8 = 0x03;
+use super::CRC_LEN;
 
 fn pad_to_byte(bits: usize) -> usize {
     (8 - (bits % 8)) % 8
@@ -747,12 +757,21 @@ fn sat_body_serialized_len(body: &SatBody) -> usize {
         SatBody::Raw(v) => v.len(),
         _ => {
             // The hardened BitWriter errors (rather than silently truncating)
-            // on overrun, so feed it a buffer that's grown until the body fits.
-            // Real SAT bodies are bounded by the 12-bit section_length (<4 KiB);
-            // an over-large constructed body grows to the cap and is then
-            // rejected by the section_length guard in serialize_into — never a
-            // panic in this infallible length calc.
-            let mut cap = 4096usize;
+            // on overrun, so trial-encode into a buffer big enough for any
+            // legal body. Real SAT bodies are bounded by the 12-bit
+            // section_length (<4 KiB), so a stack buffer covers every valid
+            // section with no heap traffic (audit r02-O2: this used to
+            // `vec![0; 4096]` three times per `serialize_into`). An
+            // over-large constructed body falls through to a heap buffer that
+            // grows to the cap and is then rejected by the section_length
+            // guard in serialize_into — never a panic in this infallible
+            // length calc.
+            let mut stack = [0u8; SAT_BODY_STACK_BUF];
+            let mut writer = BitWriter::new(&mut stack);
+            if sat_body_write(body, &mut writer).is_ok() {
+                return writer.bits_written().div_ceil(8);
+            }
+            let mut cap = SAT_BODY_STACK_BUF * 2;
             loop {
                 let mut tmp = vec![0u8; cap];
                 let mut writer = BitWriter::new(&mut tmp);
@@ -1732,9 +1751,9 @@ impl<'a> Parse<'a> for SatSection {
             section_length,
             HEADER_LEN + CRC_LEN,
         )?;
-        let satellite_table_id = bytes[3] >> 2;
-        let private_indicator = (bytes[1] & 0x40) != 0;
-        let table_count = (((bytes[3] & 0x03) as u16) << 8) | bytes[4] as u16;
+        let satellite_table_id = bytes[3] >> SATELLITE_TABLE_ID_SHIFT;
+        let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
+        let table_count = (((bytes[3] & TABLE_COUNT_HI_MASK) as u16) << 8) | bytes[4] as u16;
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
@@ -1771,10 +1790,10 @@ impl Serialize for SatSection {
             });
         }
         let section_length_usize = len - SECTION_LENGTH_PREFIX;
-        if section_length_usize > 0x0FFF {
+        if section_length_usize > MAX_SECTION_LENGTH {
             return Err(Error::SectionLengthOverflow {
                 declared: section_length_usize,
-                available: 0x0FFF,
+                available: MAX_SECTION_LENGTH,
             });
         }
         let section_length = section_length_usize as u16;
@@ -1790,9 +1809,10 @@ impl Serialize for SatSection {
         }
         buf[0] = TABLE_ID;
         buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)
-            | ((section_length >> 8) as u8 & 0x0F);
+            | ((section_length >> 8) as u8 & super::SECTION_LENGTH_HI_MASK);
         buf[2] = (section_length & 0xFF) as u8;
-        buf[3] = (self.satellite_table_id << 2) | ((self.table_count >> 8) as u8 & 0x03);
+        buf[3] = (self.satellite_table_id << SATELLITE_TABLE_ID_SHIFT)
+            | ((self.table_count >> 8) as u8 & TABLE_COUNT_HI_MASK);
         buf[4] = (self.table_count & 0xFF) as u8;
         buf[5] = super::b5_of(
             self.reserved_b5,
@@ -1817,8 +1837,7 @@ impl Serialize for SatSection {
             }
         }
         let body_end = HEADER_LEN + sat_body_serialized_len(&self.body);
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..body_end]);
-        buf[body_end..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, body_end);
         Ok(len)
     }
 }

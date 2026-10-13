@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (BREAKING)
+- **BREAKING (r10-W-4, #1091):** follows `dvb-ci`'s `length_form` fields: the `dvb-ci` objects built or matched in this crate's APIs and tests carry the new field (`Default`/`Minimal` for host-built values).
+
+### Fixed
+- A CAM that codes a `length_field` in a long form (`82 00 09`, #337) no longer misframes the link: `SessionLayer::on_spdu` slices the APDU after `SessionNumber::header_len()` (it assumed the 4-byte minimal header, handing the APDU layer two stray session bytes), and `Transport` decodes the `T_SB` status `length_field` and the `C_T_C_Reply` object length instead of assuming `80 02 ..` and a 3-byte object. `trace::decode_frame` labels are diagnostic only and still assume minimal forms.
+- Linux backend: the `CA_RESET`/`CA_GET_SLOT_INFO` request numbers are built
+  by `rustix::ioctl::opcode` instead of a hand-rolled asm-generic `_IOC`
+  encoding. mips/powerpc/sparc use a different layout (3 direction bits, 13
+  size bits, `_IOC_NONE = 1`), so the old constants issued the wrong request
+  there (r10-W-1, #1092). The ioctls now go through `rustix::ioctl`
+  (`NoArg`/`Updater`) rather than `libc::ioctl`. Pinned by compile-time
+  asserts, verified with `cargo check --tests` on x86_64, musl and
+  powerpc64le; the real ioctl path (ENOTTY fallback) runs in the Linux
+  container test run. Not exercised against a real CI adapter.
+
+### Changed (BREAKING)
 
 - **BREAKING (#1159):** `ManagedService::{es_pids,ca_pids,pcr_pid}` and `ManagedCa`/`Driver`/`CaDescrambler` `emm_pids`/`descramble_pids`/`ca_pids`/`required_pids` use `mpeg_ts::pid::Pid` instead of `u16`.
 

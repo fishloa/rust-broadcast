@@ -164,6 +164,7 @@ impl CaPmtBuilt {
     #[must_use]
     pub fn as_ca_pmt(&self) -> CaPmt<'_> {
         CaPmt {
+            length_form: crate::length::LengthForm::Minimal,
             list_management: self.list_management,
             program_number: self.program_number,
             version_number: self.version_number,

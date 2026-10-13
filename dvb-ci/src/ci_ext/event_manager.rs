@@ -118,6 +118,12 @@ broadcast_common::impl_spec_display!(EventReply, Reserved);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EventRequest<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `event_type`.
     pub event_type: EventType,
     /// The `event_desc` block (format depends on `event_type`).
@@ -129,6 +135,12 @@ pub struct EventRequest<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EventRequestAck {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `event_type`.
     pub event_type: EventType,
     /// `reply`.
@@ -139,6 +151,12 @@ pub struct EventRequestAck {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EventNotification {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `event_type`.
     pub event_type: EventType,
 }
@@ -151,7 +169,8 @@ const EVENT_REQUEST_PREFIX: usize = 1;
 impl<'a> Parse<'a> for EventRequest<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::EVENT_REQUEST, "event_request")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::EVENT_REQUEST, "event_request")?;
         if body.len() < EVENT_REQUEST_PREFIX {
             return Err(Error::BufferTooShort {
                 need: EVENT_REQUEST_PREFIX,
@@ -160,6 +179,7 @@ impl<'a> Parse<'a> for EventRequest<'a> {
             });
         }
         Ok(Self {
+            length_form,
             event_type: EventType::from_u8(body[0]),
             event_desc: &body[EVENT_REQUEST_PREFIX..],
         })
@@ -168,11 +188,15 @@ impl<'a> Parse<'a> for EventRequest<'a> {
 impl Serialize for EventRequest<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(EVENT_REQUEST_PREFIX + self.event_desc.len())
+        objects::apdu_len(
+            EVENT_REQUEST_PREFIX + self.event_desc.len(),
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = EVENT_REQUEST_PREFIX + self.event_desc.len();
-        let mut pos = objects::write_apdu_header(tag::EVENT_REQUEST, body_len, buf)?;
+        let mut pos =
+            objects::write_apdu_header(tag::EVENT_REQUEST, body_len, self.length_form, buf)?;
         buf[pos] = self.event_type.to_u8();
         pos += EVENT_REQUEST_PREFIX;
         buf[pos..pos + self.event_desc.len()].copy_from_slice(self.event_desc);
@@ -188,7 +212,8 @@ const EVENT_REQUEST_ACK_BODY: usize = 2;
 impl<'a> Parse<'a> for EventRequestAck {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::EVENT_REQUEST_ACK, "event_request_ack")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::EVENT_REQUEST_ACK, "event_request_ack")?;
         if body.len() < EVENT_REQUEST_ACK_BODY {
             return Err(Error::BufferTooShort {
                 need: EVENT_REQUEST_ACK_BODY,
@@ -198,6 +223,7 @@ impl<'a> Parse<'a> for EventRequestAck {
         }
         crate::objects::reject_trailing_body(body, EVENT_REQUEST_ACK_BODY, "event_request_ack")?;
         Ok(Self {
+            length_form,
             event_type: EventType::from_u8(body[0]),
             reply: EventReply::from_u8(body[1]),
         })
@@ -206,10 +232,15 @@ impl<'a> Parse<'a> for EventRequestAck {
 impl Serialize for EventRequestAck {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(EVENT_REQUEST_ACK_BODY)
+        objects::apdu_len(EVENT_REQUEST_ACK_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::EVENT_REQUEST_ACK, EVENT_REQUEST_ACK_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::EVENT_REQUEST_ACK,
+            EVENT_REQUEST_ACK_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.event_type.to_u8();
         buf[pos + 1] = self.reply.to_u8();
         Ok(pos + EVENT_REQUEST_ACK_BODY)
@@ -224,7 +255,7 @@ const EVENT_NOTIFICATION_BODY: usize = 1;
 impl<'a> Parse<'a> for EventNotification {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body =
+        let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::EVENT_NOTIFICATION, "event_notification")?;
         if body.len() < EVENT_NOTIFICATION_BODY {
             return Err(Error::BufferTooShort {
@@ -235,6 +266,7 @@ impl<'a> Parse<'a> for EventNotification {
         }
         crate::objects::reject_trailing_body(body, EVENT_NOTIFICATION_BODY, "event_notification")?;
         Ok(Self {
+            length_form,
             event_type: EventType::from_u8(body[0]),
         })
     }
@@ -242,11 +274,15 @@ impl<'a> Parse<'a> for EventNotification {
 impl Serialize for EventNotification {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(EVENT_NOTIFICATION_BODY)
+        objects::apdu_len(EVENT_NOTIFICATION_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos =
-            objects::write_apdu_header(tag::EVENT_NOTIFICATION, EVENT_NOTIFICATION_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::EVENT_NOTIFICATION,
+            EVENT_NOTIFICATION_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos] = self.event_type.to_u8();
         Ok(pos + EVENT_NOTIFICATION_BODY)
     }
@@ -276,6 +312,7 @@ mod tests {
         // Timer: 40-bit start_time + 24-bit duration = 8 desc bytes.
         let desc = [0x11, 0x22, 0x33, 0x44, 0x55, 0x06, 0x07, 0x08];
         let r = EventRequest {
+            length_form: crate::length::LengthForm::Minimal,
             event_type: EventType::Timer,
             event_desc: &desc,
         };
@@ -292,6 +329,7 @@ mod tests {
         let mut desc2 = desc;
         desc2[0] = 0xFF;
         let other = EventRequest {
+            length_form: crate::length::LengthForm::Minimal,
             event_type: EventType::Timer,
             event_desc: &desc2,
         };
@@ -301,6 +339,7 @@ mod tests {
     #[test]
     fn event_request_cancel_empty_desc() {
         let r = EventRequest {
+            length_form: crate::length::LengthForm::Minimal,
             event_type: EventType::Timer,
             event_desc: &[],
         };
@@ -312,6 +351,7 @@ mod tests {
     #[test]
     fn event_request_ack_round_trips_and_bites() {
         let a = EventRequestAck {
+            length_form: crate::length::LengthForm::Minimal,
             event_type: EventType::Timer,
             reply: EventReply::ResourcesConsumed,
         };
@@ -327,6 +367,7 @@ mod tests {
     #[test]
     fn event_notification_round_trips() {
         let n = EventNotification {
+            length_form: crate::length::LengthForm::Minimal,
             event_type: EventType::Timer,
         };
         let bytes = n.to_bytes();
@@ -337,6 +378,7 @@ mod tests {
     #[test]
     fn dispatch_routes_each_tag() {
         let req = EventRequest {
+            length_form: crate::length::LengthForm::Minimal,
             event_type: EventType::Timer,
             event_desc: &[],
         }
@@ -346,6 +388,7 @@ mod tests {
             EventManagerApdu::EventRequest(_)
         ));
         let notif = EventNotification {
+            length_form: crate::length::LengthForm::Minimal,
             event_type: EventType::Timer,
         }
         .to_bytes();

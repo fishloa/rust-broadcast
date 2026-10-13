@@ -1305,7 +1305,10 @@ impl MediaPlaylist {
         // MediaSegment/OpenSegment map, or (a caller that hasn't adopted
         // that field, e.g. a raw #EXT-X-MAP: line) in `extra_tags`.
         let has_map = self.segments.iter().any(|s| s.map.is_some())
-            || self.open_segment.as_ref().is_some_and(|o| o.map.is_some())
+            // The open segment's map renders only with low-latency on, so it
+            // only counts then (audit BH-O3, #1111).
+            || (self.low_latency.is_some()
+                && self.open_segment.as_ref().is_some_and(|o| o.map.is_some()))
             || self.extra_tags.iter().any(|t| t.starts_with("#EXT-X-MAP:"));
         if has_map {
             bump_version(
@@ -1396,7 +1399,10 @@ impl MediaPlaylist {
         // carry extra_attrs fields since issue #884.
         if any_media_typed_req_attr(
             &self.segments,
-            self.open_segment.as_ref(),
+            // Open-segment parts/map render only with low-latency on.
+            self.open_segment
+                .as_ref()
+                .filter(|_| self.low_latency.is_some()),
             &self.rendition_reports,
             self.skip.as_ref(),
             self.low_latency.as_ref(),
@@ -4387,6 +4393,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Audit BH-O3 (#1111): the open segment's EXT-X-MAP is rendered only
+    /// with low-latency on, so it must not raise the computed version
+    /// (EXT-X-MAP needs >= 6) when LL is off.
+    #[test]
+    fn open_segment_map_does_not_count_toward_version_without_low_latency() {
+        let mut open = OpenSegment::new(vec![PartSpec {
+            uri: "part-1-5.0.m4s".into(),
+            duration: DecimalSeconds::new(0.5).unwrap(),
+            independent: true,
+            ..Default::default()
+        }]);
+        open.map = Some(MapTag {
+            uri: "init.mp4".into(),
+            byte_range: None,
+            extra_attrs: Vec::new(),
+        });
+        let mut pl = MediaPlaylist {
+            target_duration: 4,
+            segments: vec![seg("seg-1-4.m4s", 4.0)],
+            open_segment: Some(open),
+            ..Default::default()
+        };
+        assert_eq!(
+            pl.computed_version(),
+            None,
+            "map not rendered, no version row"
+        );
+        pl.low_latency = Some(ll_config());
+        assert!(pl.computed_version() >= Some(6));
     }
 
     #[test]

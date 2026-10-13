@@ -126,6 +126,12 @@ broadcast_common::impl_spec_display!(ConnectionDescriptorType, Reserved);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ConnectionDescriptor<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `connection_descriptor_type`.
     pub descriptor_type: ConnectionDescriptorType,
     /// The branch-dependent payload (telephone_descriptor bytes, or the
@@ -153,7 +159,7 @@ impl<'a> ConnectionDescriptor<'a> {
                 what: "connection_descriptor",
             });
         }
-        let (len_value, len_hdr) = length::decode(&bytes[3..])?;
+        let (len_value, len_hdr, length_form) = length::decode_form(&bytes[3..])?;
         let body_start = 3 + len_hdr;
         let body_end = body_start + len_value;
         if bytes.len() < body_end {
@@ -171,6 +177,7 @@ impl<'a> ConnectionDescriptor<'a> {
         })?;
         Ok((
             Self {
+                length_form,
                 descriptor_type: ConnectionDescriptorType::from_u8(type_byte),
                 payload: &body[1..],
             },
@@ -179,12 +186,13 @@ impl<'a> ConnectionDescriptor<'a> {
     }
 
     pub(crate) fn component_len(&self) -> usize {
-        super::apdu_len(1 + self.payload.len())
+        super::apdu_len(1 + self.payload.len(), self.length_form)
     }
 
     pub(crate) fn serialize_component(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = 1 + self.payload.len();
-        let mut pos = super::write_apdu_header(tag::CONNECTION_DESCRIPTOR, body_len, buf)?;
+        let mut pos =
+            super::write_apdu_header(tag::CONNECTION_DESCRIPTOR, body_len, self.length_form, buf)?;
         buf[pos] = self.descriptor_type.to_u8();
         pos += 1;
         buf[pos..pos + self.payload.len()].copy_from_slice(self.payload);
@@ -259,6 +267,12 @@ pub enum CommsCmdParams<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CommsCmd<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `comms_command_id`.
     pub command_id: CommsCommandId,
     /// The branch-dependent parameters keyed by `command_id`.
@@ -274,7 +288,7 @@ const COMMS_SET_PARAMS_BODY: usize = 2;
 impl<'a> Parse<'a> for CommsCmd<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::COMMS_CMD, "comms_cmd")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::COMMS_CMD, "comms_cmd")?;
         let id_byte = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
@@ -328,7 +342,11 @@ impl<'a> Parse<'a> for CommsCmd<'a> {
                 CommsCmdParams::None
             }
         };
-        Ok(Self { command_id, params })
+        Ok(Self {
+            length_form,
+            command_id,
+            params,
+        })
     }
 }
 
@@ -374,7 +392,7 @@ impl CommsCmd<'_> {
 impl Serialize for CommsCmd<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(self.body_len())
+        super::apdu_len(self.body_len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         // r10-W-9: `command_id` and `params` are independently public fields
@@ -391,7 +409,7 @@ impl Serialize for CommsCmd<'_> {
             });
         }
         let body_len = self.body_len();
-        let mut pos = super::write_apdu_header(tag::COMMS_CMD, body_len, buf)?;
+        let mut pos = super::write_apdu_header(tag::COMMS_CMD, body_len, self.length_form, buf)?;
         buf[pos] = self.command_id.to_u8();
         pos += 1;
         match &self.params {
@@ -496,6 +514,12 @@ broadcast_common::impl_spec_display!(CommsReplyId, Reserved);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CommsReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `comms_reply_id`.
     pub reply_id: CommsReplyId,
     /// `return_value` — positive/zero = OK, negative = error (carried as raw u8).
@@ -508,7 +532,7 @@ const COMMS_REPLY_BODY: usize = 2;
 impl<'a> Parse<'a> for CommsReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::COMMS_REPLY, "comms_reply")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::COMMS_REPLY, "comms_reply")?;
         if body.len() < COMMS_REPLY_BODY {
             return Err(Error::BufferTooShort {
                 need: COMMS_REPLY_BODY,
@@ -518,6 +542,7 @@ impl<'a> Parse<'a> for CommsReply {
         }
         super::reject_trailing_body(body, COMMS_REPLY_BODY, "comms_reply")?;
         Ok(Self {
+            length_form,
             reply_id: CommsReplyId::from_u8(body[0]),
             return_value: body[1],
         })
@@ -527,10 +552,11 @@ impl<'a> Parse<'a> for CommsReply {
 impl Serialize for CommsReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(COMMS_REPLY_BODY)
+        super::apdu_len(COMMS_REPLY_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let mut pos = super::write_apdu_header(tag::COMMS_REPLY, COMMS_REPLY_BODY, buf)?;
+        let mut pos =
+            super::write_apdu_header(tag::COMMS_REPLY, COMMS_REPLY_BODY, self.length_form, buf)?;
         buf[pos] = self.reply_id.to_u8();
         buf[pos + 1] = self.return_value;
         pos += COMMS_REPLY_BODY;
@@ -550,6 +576,12 @@ impl ApduDef<'_> for CommsReply {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CommsSend<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `true` = `comms_send_more`; `false` = `comms_send_last`.
     pub more: bool,
     /// `comms_phase_id` (0 or 1).
@@ -586,13 +618,14 @@ impl<'a> Parse<'a> for CommsSend<'a> {
             tag::COMMS_SEND_MORE => (tag::COMMS_SEND_MORE, true),
             _ => (tag::COMMS_SEND_LAST, false),
         };
-        let body = super::parse_apdu_header(bytes, expected, "comms_send")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, expected, "comms_send")?;
         let comms_phase_id = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
             what: "comms_send comms_phase_id",
         })?;
         Ok(Self {
+            length_form,
             more,
             comms_phase_id,
             message: &body[1..],
@@ -603,11 +636,11 @@ impl<'a> Parse<'a> for CommsSend<'a> {
 impl Serialize for CommsSend<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(1 + self.message.len())
+        super::apdu_len(1 + self.message.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = 1 + self.message.len();
-        let mut pos = super::write_apdu_header(self.tag(), body_len, buf)?;
+        let mut pos = super::write_apdu_header(self.tag(), body_len, self.length_form, buf)?;
         buf[pos] = self.comms_phase_id;
         pos += 1;
         buf[pos..pos + self.message.len()].copy_from_slice(self.message);
@@ -628,6 +661,12 @@ impl<'a> ApduDef<'a> for CommsSend<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CommsRcv<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `true` = `comms_rcv_more`; `false` = `comms_rcv_last`.
     pub more: bool,
     /// `comms_phase_id`.
@@ -664,13 +703,14 @@ impl<'a> Parse<'a> for CommsRcv<'a> {
             tag::COMMS_RCV_MORE => (tag::COMMS_RCV_MORE, true),
             _ => (tag::COMMS_RCV_LAST, false),
         };
-        let body = super::parse_apdu_header(bytes, expected, "comms_rcv")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, expected, "comms_rcv")?;
         let comms_phase_id = *body.first().ok_or(Error::BufferTooShort {
             need: 1,
             have: 0,
             what: "comms_rcv comms_phase_id",
         })?;
         Ok(Self {
+            length_form,
             more,
             comms_phase_id,
             message: &body[1..],
@@ -681,11 +721,11 @@ impl<'a> Parse<'a> for CommsRcv<'a> {
 impl Serialize for CommsRcv<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(1 + self.message.len())
+        super::apdu_len(1 + self.message.len(), self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = 1 + self.message.len();
-        let mut pos = super::write_apdu_header(self.tag(), body_len, buf)?;
+        let mut pos = super::write_apdu_header(self.tag(), body_len, self.length_form, buf)?;
         buf[pos] = self.comms_phase_id;
         pos += 1;
         buf[pos..pos + self.message.len()].copy_from_slice(self.message);
@@ -706,9 +746,11 @@ mod tests {
     #[test]
     fn comms_cmd_connect_round_trips_and_bites() {
         let cmd = CommsCmd {
+            length_form: crate::length::LengthForm::Minimal,
             command_id: CommsCommandId::ConnectOnChannel,
             params: CommsCmdParams::Connect {
                 connection_descriptor: ConnectionDescriptor {
+                    length_form: crate::length::LengthForm::Minimal,
                     descriptor_type: ConnectionDescriptorType::CableReturnChannelDescriptor,
                     payload: &[0x07], // channel_id
                 },
@@ -729,6 +771,7 @@ mod tests {
         let mut other = cmd.clone();
         other.params = CommsCmdParams::Connect {
             connection_descriptor: ConnectionDescriptor {
+                length_form: crate::length::LengthForm::Minimal,
                 descriptor_type: ConnectionDescriptorType::CableReturnChannelDescriptor,
                 payload: &[0x08],
             },
@@ -741,6 +784,7 @@ mod tests {
     #[test]
     fn comms_cmd_set_params_and_get_next() {
         let sp = CommsCmd {
+            length_form: crate::length::LengthForm::Minimal,
             command_id: CommsCommandId::SetParams,
             params: CommsCmdParams::SetParams {
                 buffer_size: 254,
@@ -753,6 +797,7 @@ mod tests {
         assert_eq!(sp.command_id.name(), "Set_Params");
 
         let gnb = CommsCmd {
+            length_form: crate::length::LengthForm::Minimal,
             command_id: CommsCommandId::GetNextBuffer,
             params: CommsCmdParams::GetNextBuffer { comms_phase_id: 1 },
         };
@@ -764,6 +809,7 @@ mod tests {
     #[test]
     fn comms_cmd_disconnect_has_no_params() {
         let d = CommsCmd {
+            length_form: crate::length::LengthForm::Minimal,
             command_id: CommsCommandId::DisconnectOnChannel,
             params: CommsCmdParams::None,
         };
@@ -779,6 +825,7 @@ mod tests {
     #[test]
     fn comms_cmd_rejects_mismatched_command_id_and_params() {
         let mismatched = CommsCmd {
+            length_form: crate::length::LengthForm::Minimal,
             command_id: CommsCommandId::DisconnectOnChannel,
             params: CommsCmdParams::SetParams {
                 buffer_size: 10,
@@ -791,6 +838,7 @@ mod tests {
         ));
 
         let mismatched = CommsCmd {
+            length_form: crate::length::LengthForm::Minimal,
             command_id: CommsCommandId::SetParams,
             params: CommsCmdParams::None,
         };
@@ -803,6 +851,7 @@ mod tests {
     #[test]
     fn connection_descriptor_standalone_round_trips() {
         let cd = ConnectionDescriptor {
+            length_form: crate::length::LengthForm::Minimal,
             descriptor_type: ConnectionDescriptorType::SiTelephoneDescriptor,
             payload: &[0xAA, 0xBB, 0xCC],
         };
@@ -817,6 +866,7 @@ mod tests {
     #[test]
     fn comms_reply_round_trips_and_bites() {
         let r = CommsReply {
+            length_form: crate::length::LengthForm::Minimal,
             reply_id: CommsReplyId::StatusReply,
             return_value: 0x01, // Connected
         };
@@ -832,6 +882,7 @@ mod tests {
     #[test]
     fn comms_send_multibyte_round_trips_and_more_bites() {
         let s = CommsSend {
+            length_form: crate::length::LengthForm::Minimal,
             more: false,
             comms_phase_id: 0,
             message: b"AT&F\r",
@@ -860,6 +911,7 @@ mod tests {
     #[test]
     fn comms_rcv_round_trips_and_more_bites() {
         let r = CommsRcv {
+            length_form: crate::length::LengthForm::Minimal,
             more: true,
             comms_phase_id: 1,
             message: b"OK\r\n",

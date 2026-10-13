@@ -101,6 +101,12 @@ broadcast_common::impl_spec_display!(HostControlMode);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TuneTripletReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `background_tune_flag` (1) — `true` = background (not presented).
     pub background_tune: bool,
     /// `tune_quietly_flag` (1).
@@ -134,7 +140,8 @@ const TRIPLET_KEEP_BIT: u8 = 0x01;
 impl<'a> Parse<'a> for TuneTripletReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::TUNE_TRIPLET_REQ, "tune_triplet_req")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::TUNE_TRIPLET_REQ, "tune_triplet_req")?;
         if body.len() < TRIPLET_BODY {
             return Err(Error::BufferTooShort {
                 need: TRIPLET_BODY,
@@ -151,6 +158,7 @@ impl<'a> Parse<'a> for TuneTripletReq {
             None
         };
         Ok(Self {
+            length_form,
             background_tune: flags & TRIPLET_BACKGROUND_BIT != 0,
             tune_quietly: flags & TRIPLET_QUIETLY_BIT != 0,
             keep_app_running: flags & TRIPLET_KEEP_BIT != 0,
@@ -166,10 +174,11 @@ impl<'a> Parse<'a> for TuneTripletReq {
 impl Serialize for TuneTripletReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(TRIPLET_BODY)
+        objects::apdu_len(TRIPLET_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::TUNE_TRIPLET_REQ, TRIPLET_BODY, buf)?;
+        let pos =
+            objects::write_apdu_header(tag::TUNE_TRIPLET_REQ, TRIPLET_BODY, self.length_form, buf)?;
         let mut flags = 0u8;
         if self.background_tune {
             flags |= TRIPLET_BACKGROUND_BIT;
@@ -196,6 +205,12 @@ impl Serialize for TuneTripletReq {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TuneLcnReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `background_tune_flag` (1).
     pub background_tune: bool,
     /// `tune_quietly_flag` (1).
@@ -224,7 +239,8 @@ const LCN_BITS: u32 = 14;
 impl<'a> Parse<'a> for TuneLcnReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::TUNE_LCN_REQ, "tune_lcn_req")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::TUNE_LCN_REQ, "tune_lcn_req")?;
         if body.len() < LCN_BODY {
             return Err(Error::BufferTooShort {
                 need: LCN_BODY,
@@ -238,6 +254,7 @@ impl<'a> Parse<'a> for TuneLcnReq {
         let keep_app_running = body[1] & LCN_KEEP_BIT != 0;
         let logical_channel_number = u16::from_be_bytes([body[1], body[2]]) & LCN_MASK;
         Ok(Self {
+            length_form,
             background_tune,
             tune_quietly,
             keep_app_running,
@@ -249,7 +266,7 @@ impl<'a> Parse<'a> for TuneLcnReq {
 impl Serialize for TuneLcnReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(LCN_BODY)
+        objects::apdu_len(LCN_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         // 14-bit logical_channel_number (Table 20): reject, don't mask (audit
@@ -259,7 +276,7 @@ impl Serialize for TuneLcnReq {
             LCN_BITS,
             "tune_lcn_req logical_channel_number",
         )?;
-        let pos = objects::write_apdu_header(tag::TUNE_LCN_REQ, LCN_BODY, buf)?;
+        let pos = objects::write_apdu_header(tag::TUNE_LCN_REQ, LCN_BODY, self.length_form, buf)?;
         buf[pos] = if self.background_tune {
             LCN_BACKGROUND_BIT
         } else {
@@ -284,6 +301,12 @@ impl Serialize for TuneLcnReq {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TuneIpReq<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// Which resource layout this APDU uses (selects the reserved-bit budget).
     pub mode: HostControlMode,
     /// `background_tune_flag` (1) — only present in [`HostControlMode::MultiStream`];
@@ -316,7 +339,8 @@ const SLL_HI_MASK: u8 = 0x0F;
 impl<'a> TuneIpReq<'a> {
     /// Parse a `tune_ip_req` body under the given [`HostControlMode`].
     pub fn parse_mode(bytes: &'a [u8], mode: HostControlMode) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::TUNE_IP_REQ, "tune_ip_req")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::TUNE_IP_REQ, "tune_ip_req")?;
         if body.len() < TUNE_IP_PREFIX {
             return Err(Error::BufferTooShort {
                 need: TUNE_IP_PREFIX,
@@ -346,6 +370,7 @@ impl<'a> TuneIpReq<'a> {
             });
         }
         Ok(Self {
+            length_form,
             mode,
             background_tune,
             tune_quietly,
@@ -358,13 +383,16 @@ impl<'a> TuneIpReq<'a> {
 impl Serialize for TuneIpReq<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(TUNE_IP_PREFIX + self.service_location_data.len())
+        objects::apdu_len(
+            TUNE_IP_PREFIX + self.service_location_data.len(),
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let sll = self.service_location_data.len();
         objects::fit_bits(sll as u64, 12, "tune_ip_req service_location_length")?;
         let body_len = TUNE_IP_PREFIX + sll;
-        let pos = objects::write_apdu_header(tag::TUNE_IP_REQ, body_len, buf)?;
+        let pos = objects::write_apdu_header(tag::TUNE_IP_REQ, body_len, self.length_form, buf)?;
         // service_location_length(12) high nibble. Range-checked above.
         let mut byte0 = (sll >> 8) as u8;
         match self.mode {
@@ -406,23 +434,30 @@ impl Serialize for TuneIpReq<'_> {
 /// `tuner_status_req()` (Table 101): CICAM → Host, header-only (`length_field = 0`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct TunerStatusReq;
+pub struct TunerStatusReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 impl<'a> Parse<'a> for TunerStatusReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        objects::parse_empty_apdu(bytes, tag::TUNER_STATUS_REQ, "tuner_status_req")?;
-        Ok(Self)
+        let length_form =
+            objects::parse_empty_apdu(bytes, tag::TUNER_STATUS_REQ, "tuner_status_req")?;
+        Ok(Self { length_form })
     }
 }
 
 impl Serialize for TunerStatusReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::empty_apdu_len()
+        objects::empty_apdu_len(self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::serialize_empty_apdu(tag::TUNER_STATUS_REQ, buf)
+        objects::serialize_empty_apdu(tag::TUNER_STATUS_REQ, self.length_form, buf)
     }
 }
 
@@ -447,6 +482,12 @@ pub struct TunerStatusDsd {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TunerStatusReply {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `IP_tune_capable_flag` (1) — Host can accept `tune_ip_req()` APDUs.
     pub ip_tune_capable: bool,
     /// The DSD entries (loop count = `num_dsd`).
@@ -464,7 +505,7 @@ const DSD_CONNECTED_BIT: u8 = 0x01;
 impl<'a> Parse<'a> for TunerStatusReply {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body =
+        let (length_form, body) =
             objects::parse_apdu_header(bytes, tag::TUNER_STATUS_REPLY, "tuner_status_reply")?;
         if body.is_empty() {
             return Err(Error::BufferTooShort {
@@ -500,6 +541,7 @@ impl<'a> Parse<'a> for TunerStatusReply {
             rest = &rest[DSD_ENTRY_LEN..];
         }
         Ok(Self {
+            length_form,
             ip_tune_capable,
             dsds,
         })
@@ -509,12 +551,13 @@ impl<'a> Parse<'a> for TunerStatusReply {
 impl Serialize for TunerStatusReply {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(1 + self.dsds.len() * DSD_ENTRY_LEN)
+        objects::apdu_len(1 + self.dsds.len() * DSD_ENTRY_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         objects::fit_bits(self.dsds.len() as u64, 7, "tuner_status_reply num_dsd")?;
         let body_len = 1 + self.dsds.len() * DSD_ENTRY_LEN;
-        let mut pos = objects::write_apdu_header(tag::TUNER_STATUS_REPLY, body_len, buf)?;
+        let mut pos =
+            objects::write_apdu_header(tag::TUNER_STATUS_REPLY, body_len, self.length_form, buf)?;
         // num_dsd(7). Range-checked above.
         let mut byte0 = self.dsds.len() as u8;
         if self.ip_tune_capable {
@@ -608,6 +651,7 @@ mod tests {
     #[test]
     fn tune_triplet_round_trips_and_bites() {
         let t = TuneTripletReq {
+            length_form: crate::length::LengthForm::Minimal,
             background_tune: true,
             tune_quietly: false,
             keep_app_running: true,
@@ -636,6 +680,7 @@ mod tests {
     #[test]
     fn tune_triplet_with_descriptor_extension() {
         let t = TuneTripletReq {
+            length_form: crate::length::LengthForm::Minimal,
             background_tune: false,
             tune_quietly: true,
             keep_app_running: false,
@@ -659,6 +704,7 @@ mod tests {
     #[test]
     fn tune_lcn_round_trips_and_bites() {
         let t = TuneLcnReq {
+            length_form: crate::length::LengthForm::Minimal,
             background_tune: true,
             tune_quietly: true,
             keep_app_running: false,
@@ -686,6 +732,7 @@ mod tests {
         let mut buf = [0u8; 16];
         // 0x4000 used to be masked to LCN 0.
         let lcn = TuneLcnReq {
+            length_form: crate::length::LengthForm::Minimal,
             background_tune: false,
             tune_quietly: false,
             keep_app_running: false,
@@ -704,6 +751,7 @@ mod tests {
         assert_eq!(bytes[bytes.len() - 2..], [0x3F, 0xFF]);
         // BaseV3 has no background_tune bit: `true` used to be dropped silently.
         let v3 = TuneIpReq {
+            length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::BaseV3,
             background_tune: true,
             tune_quietly: false,
@@ -721,6 +769,7 @@ mod tests {
         // Same logical request, both with background_tune set where applicable.
         let data: &[u8] = &[0xAA, 0xBB];
         let ms = TuneIpReq {
+            length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::MultiStream,
             background_tune: true,
             tune_quietly: true,
@@ -728,6 +777,7 @@ mod tests {
             service_location_data: data,
         };
         let v3 = TuneIpReq {
+            length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::BaseV3,
             background_tune: false, // not on the wire in v3
             tune_quietly: true,
@@ -758,6 +808,7 @@ mod tests {
         // parsing the multi-stream bytes as v3 must NOT see a flag there, and the
         // background flag is dropped (v3 has no background_tune_flag).
         let ms = TuneIpReq {
+            length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::MultiStream,
             background_tune: true,
             tune_quietly: false,
@@ -776,6 +827,7 @@ mod tests {
     #[test]
     fn tune_ip_empty_location() {
         let t = TuneIpReq {
+            length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::MultiStream,
             background_tune: false,
             tune_quietly: false,
@@ -792,14 +844,18 @@ mod tests {
 
     #[test]
     fn tuner_status_req_round_trips() {
-        let bytes = TunerStatusReq.to_bytes();
+        let bytes = TunerStatusReq::default().to_bytes();
         assert_eq!(bytes, [0x9F, 0x84, 0x0A, 0x00]);
-        assert_eq!(TunerStatusReq::parse(&bytes).unwrap(), TunerStatusReq);
+        assert_eq!(
+            TunerStatusReq::parse(&bytes).unwrap(),
+            TunerStatusReq::default()
+        );
     }
 
     #[test]
     fn tuner_status_reply_round_trips_with_two_dsds() {
         let r = TunerStatusReply {
+            length_form: crate::length::LengthForm::Minimal,
             ip_tune_capable: true,
             dsds: alloc::vec![
                 TunerStatusDsd {
@@ -834,6 +890,7 @@ mod tests {
     #[test]
     fn tuner_status_reply_empty() {
         let r = TunerStatusReply {
+            length_form: crate::length::LengthForm::Minimal,
             ip_tune_capable: false,
             dsds: Vec::new(),
         };
@@ -845,6 +902,7 @@ mod tests {
     #[test]
     fn dispatch_routes_each_tag() {
         let triplet = TuneTripletReq {
+            length_form: crate::length::LengthForm::Minimal,
             background_tune: false,
             tune_quietly: false,
             keep_app_running: false,
@@ -860,6 +918,7 @@ mod tests {
             MultistreamHostControlApdu::TuneTripletReq(_)
         ));
         let ip = TuneIpReq {
+            length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::MultiStream,
             background_tune: true,
             tune_quietly: false,
@@ -887,6 +946,7 @@ mod tests {
         // wrapped the 12-bit service_location_length field to 0.
         let big = alloc::vec![0u8; 4096];
         let req = TuneIpReq {
+            length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::MultiStream,
             background_tune: false,
             tune_quietly: false,
@@ -904,6 +964,7 @@ mod tests {
     fn max_service_location_length_still_serializes_and_round_trips() {
         let data = alloc::vec![0xABu8; 0x0FFF];
         let req = TuneIpReq {
+            length_form: crate::length::LengthForm::Minimal,
             mode: HostControlMode::MultiStream,
             background_tune: false,
             tune_quietly: false,
@@ -921,6 +982,7 @@ mod tests {
     fn oversized_num_dsd_is_rejected_not_wrapped() {
         // 128 entries silently wrapped num_dsd (7-bit) to 0 before the fix.
         let reply = TunerStatusReply {
+            length_form: crate::length::LengthForm::Minimal,
             ip_tune_capable: false,
             dsds: (0..128)
                 .map(|_| TunerStatusDsd {

@@ -128,7 +128,7 @@ impl Serialize for SpliceScheduleTime {
 pub enum TimeType {
     /// No timestamp — immediate processing.
     None,
-    /// UTC time (seconds since NTP epoch 1900-01-01 + microseconds).
+    /// UTC time (§12.5: seconds since the GPS epoch 1980-01-06 + microseconds).
     Utc,
     /// SMPTE VITC timecode (hours, minutes, seconds, frames).
     SmpteVitc,
@@ -182,9 +182,9 @@ broadcast_common::impl_spec_display!(TimeType, Reserved);
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct UtcTimestamp {
-    /// Seconds since NTP epoch (1900-01-01 00:00:00 UTC).
+    /// `UTC_seconds` — elapsed seconds since 12:00 AM UTC 1980-01-06 (the GPS epoch, leap seconds included; §12.5).
     pub seconds: u32,
-    /// Microsecond offset (0..=999_999).
+    /// `UTC_microseconds` — the most significant 16 bits of the microsecond offset (§12.5); the least significant byte is to be ignored (256 us granularity), so this 16-bit field is not a 0..=999_999 count.
     pub microseconds: u16,
 }
 
@@ -222,7 +222,7 @@ pub enum Timestamp {
     /// No timestamp — immediate processing.
     #[default]
     None,
-    /// UTC time (seconds since 1900-01-01 + microseconds).
+    /// UTC time (§12.5: seconds since the GPS epoch 1980-01-06 + microseconds).
     Utc(UtcTimestamp),
     /// SMPTE VITC timecode.
     SmpteVitc(SmpteVitcTimestamp),

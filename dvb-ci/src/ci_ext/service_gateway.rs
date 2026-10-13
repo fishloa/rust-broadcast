@@ -60,17 +60,35 @@ pub struct ServiceReference {
 /// `ServiceListReq()` (Table 22) — A → R: header-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct ServiceListReq;
+pub struct ServiceListReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `ServiceListVersionReq()` (Table 24) — A → R: header-only.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct ServiceListVersionReq;
+pub struct ServiceListVersionReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+}
 
 /// `ServiceListAck()` (Table 23) — R → A: the services the resource can supply.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ServiceListAck {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `VersionNumber` — increments each time the service list is updated.
     pub version_number: u8,
     /// The service references (`NumberOfServices` of them, may be 0).
@@ -81,6 +99,12 @@ pub struct ServiceListAck {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ServiceListVersionAck {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `VersionNumber`.
     pub version_number: u8,
 }
@@ -89,6 +113,12 @@ pub struct ServiceListVersionAck {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ServiceListChanged {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `VersionNumber` — the new version.
     pub version_number: u8,
 }
@@ -97,6 +127,12 @@ pub struct ServiceListChanged {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ServiceDescReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// The service reference being queried.
     pub service: ServiceReference,
 }
@@ -106,6 +142,12 @@ pub struct ServiceDescReq {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct ServiceDescAck<'a> {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// The service reference being described.
     pub service: ServiceReference,
     /// `EIT_schedule_flag` — SDT meaning (ETS 300 468).
@@ -129,6 +171,12 @@ pub struct ServiceDescAck<'a> {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct GetServiceReq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// The requested service reference, or `None` for a network-disconnect request.
     pub service: Option<ServiceReference>,
 }
@@ -137,6 +185,12 @@ pub struct GetServiceReq {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct GetServiceAck {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// The service reference replied about.
     pub service: ServiceReference,
     /// `ServiceTerminated` — `1`: the service has finished (or a disconnect was
@@ -167,7 +221,7 @@ macro_rules! version_byte_object {
         impl<'a> Parse<'a> for $ty {
             type Error = Error;
             fn parse(bytes: &'a [u8]) -> Result<Self> {
-                let body = objects::parse_apdu_header(bytes, $tag, $what)?;
+                let (length_form, body) = objects::parse_apdu_header(bytes, $tag, $what)?;
                 if body.is_empty() {
                     return Err(Error::BufferTooShort {
                         need: 1,
@@ -176,6 +230,7 @@ macro_rules! version_byte_object {
                     });
                 }
                 Ok(Self {
+                    length_form,
                     version_number: body[0],
                 })
             }
@@ -183,10 +238,10 @@ macro_rules! version_byte_object {
         impl Serialize for $ty {
             type Error = Error;
             fn serialized_len(&self) -> usize {
-                objects::apdu_len(1)
+                objects::apdu_len(1, self.length_form)
             }
             fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-                let pos = objects::write_apdu_header($tag, 1, buf)?;
+                let pos = objects::write_apdu_header($tag, 1, self.length_form, buf)?;
                 buf[pos] = self.version_number;
                 Ok(pos + 1)
             }
@@ -215,7 +270,8 @@ const SERVICE_LIST_ACK_PREFIX: usize = 3;
 impl<'a> Parse<'a> for ServiceListAck {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::SERVICE_LIST_ACK, "ServiceListAck")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::SERVICE_LIST_ACK, "ServiceListAck")?;
         if body.len() < SERVICE_LIST_ACK_PREFIX {
             return Err(Error::BufferTooShort {
                 need: SERVICE_LIST_ACK_PREFIX,
@@ -241,6 +297,7 @@ impl<'a> Parse<'a> for ServiceListAck {
             });
         }
         Ok(Self {
+            length_form,
             version_number,
             services,
         })
@@ -249,7 +306,10 @@ impl<'a> Parse<'a> for ServiceListAck {
 impl Serialize for ServiceListAck {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(SERVICE_LIST_ACK_PREFIX + self.services.len() * SERVICE_REF_LEN)
+        objects::apdu_len(
+            SERVICE_LIST_ACK_PREFIX + self.services.len() * SERVICE_REF_LEN,
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if self.services.len() > u16::MAX as usize {
@@ -259,7 +319,8 @@ impl Serialize for ServiceListAck {
             });
         }
         let body_len = SERVICE_LIST_ACK_PREFIX + self.services.len() * SERVICE_REF_LEN;
-        let mut pos = objects::write_apdu_header(tag::SERVICE_LIST_ACK, body_len, buf)?;
+        let mut pos =
+            objects::write_apdu_header(tag::SERVICE_LIST_ACK, body_len, self.length_form, buf)?;
         buf[pos] = self.version_number;
         buf[pos + 1..pos + 3].copy_from_slice(&(self.services.len() as u16).to_be_bytes());
         pos += SERVICE_LIST_ACK_PREFIX;
@@ -277,7 +338,8 @@ impl Serialize for ServiceListAck {
 impl<'a> Parse<'a> for ServiceDescReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::SERVICE_DESC_REQ, "ServiceDescReq")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::SERVICE_DESC_REQ, "ServiceDescReq")?;
         if body.len() < SERVICE_REF_LEN {
             return Err(Error::BufferTooShort {
                 need: SERVICE_REF_LEN,
@@ -286,6 +348,7 @@ impl<'a> Parse<'a> for ServiceDescReq {
             });
         }
         Ok(Self {
+            length_form,
             service: ServiceReference {
                 original_network_id: u16::from_be_bytes([body[0], body[1]]),
                 service_id: u16::from_be_bytes([body[2], body[3]]),
@@ -296,10 +359,15 @@ impl<'a> Parse<'a> for ServiceDescReq {
 impl Serialize for ServiceDescReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(SERVICE_REF_LEN)
+        objects::apdu_len(SERVICE_REF_LEN, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::SERVICE_DESC_REQ, SERVICE_REF_LEN, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::SERVICE_DESC_REQ,
+            SERVICE_REF_LEN,
+            self.length_form,
+            buf,
+        )?;
         buf[pos..pos + 2].copy_from_slice(&self.service.original_network_id.to_be_bytes());
         buf[pos + 2..pos + 4].copy_from_slice(&self.service.service_id.to_be_bytes());
         Ok(pos + SERVICE_REF_LEN)
@@ -314,7 +382,8 @@ const SERVICE_DESC_ACK_PREFIX: usize = SERVICE_REF_LEN + 3;
 impl<'a> Parse<'a> for ServiceDescAck<'a> {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::SERVICE_DESC_ACK, "ServiceDescAck")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::SERVICE_DESC_ACK, "ServiceDescAck")?;
         if body.len() < SERVICE_DESC_ACK_PREFIX {
             return Err(Error::BufferTooShort {
                 need: SERVICE_DESC_ACK_PREFIX,
@@ -340,6 +409,7 @@ impl<'a> Parse<'a> for ServiceDescAck<'a> {
             });
         }
         Ok(Self {
+            length_form,
             service: ServiceReference {
                 original_network_id: u16::from_be_bytes([body[0], body[1]]),
                 service_id: u16::from_be_bytes([body[2], body[3]]),
@@ -355,7 +425,10 @@ impl<'a> Parse<'a> for ServiceDescAck<'a> {
 impl Serialize for ServiceDescAck<'_> {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(SERVICE_DESC_ACK_PREFIX + self.descriptors.len())
+        objects::apdu_len(
+            SERVICE_DESC_ACK_PREFIX + self.descriptors.len(),
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         if self.descriptors.len() > 0x0FFF {
@@ -370,7 +443,8 @@ impl Serialize for ServiceDescAck<'_> {
             "ServiceDescAck running_status",
         )?;
         let body_len = SERVICE_DESC_ACK_PREFIX + self.descriptors.len();
-        let mut pos = objects::write_apdu_header(tag::SERVICE_DESC_ACK, body_len, buf)?;
+        let mut pos =
+            objects::write_apdu_header(tag::SERVICE_DESC_ACK, body_len, self.length_form, buf)?;
         buf[pos..pos + 2].copy_from_slice(&self.service.original_network_id.to_be_bytes());
         buf[pos + 2..pos + 4].copy_from_slice(&self.service.service_id.to_be_bytes());
         // reserved_future_use(6)=0b111111, EIT_schedule(1), EIT_present_following(1).
@@ -395,7 +469,8 @@ impl Serialize for ServiceDescAck<'_> {
 impl<'a> Parse<'a> for GetServiceReq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::GET_SERVICE_REQ, "GetServiceReq")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::GET_SERVICE_REQ, "GetServiceReq")?;
         let service = if body.is_empty() {
             None
         } else {
@@ -411,23 +486,34 @@ impl<'a> Parse<'a> for GetServiceReq {
                 service_id: u16::from_be_bytes([body[2], body[3]]),
             })
         };
-        Ok(Self { service })
+        Ok(Self {
+            length_form,
+            service,
+        })
     }
 }
 impl Serialize for GetServiceReq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(if self.service.is_some() {
-            SERVICE_REF_LEN
-        } else {
-            0
-        })
+        objects::apdu_len(
+            if self.service.is_some() {
+                SERVICE_REF_LEN
+            } else {
+                0
+            },
+            self.length_form,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         match self.service {
-            None => objects::write_apdu_header(tag::GET_SERVICE_REQ, 0, buf),
+            None => objects::write_apdu_header(tag::GET_SERVICE_REQ, 0, self.length_form, buf),
             Some(s) => {
-                let pos = objects::write_apdu_header(tag::GET_SERVICE_REQ, SERVICE_REF_LEN, buf)?;
+                let pos = objects::write_apdu_header(
+                    tag::GET_SERVICE_REQ,
+                    SERVICE_REF_LEN,
+                    self.length_form,
+                    buf,
+                )?;
                 buf[pos..pos + 2].copy_from_slice(&s.original_network_id.to_be_bytes());
                 buf[pos + 2..pos + 4].copy_from_slice(&s.service_id.to_be_bytes());
                 Ok(pos + SERVICE_REF_LEN)
@@ -444,7 +530,8 @@ const GET_SERVICE_ACK_BODY: usize = SERVICE_REF_LEN + 1 + 2;
 impl<'a> Parse<'a> for GetServiceAck {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = objects::parse_apdu_header(bytes, tag::GET_SERVICE_ACK, "GetServiceAck")?;
+        let (length_form, body) =
+            objects::parse_apdu_header(bytes, tag::GET_SERVICE_ACK, "GetServiceAck")?;
         if body.len() < GET_SERVICE_ACK_BODY {
             return Err(Error::BufferTooShort {
                 need: GET_SERVICE_ACK_BODY,
@@ -456,6 +543,7 @@ impl<'a> Parse<'a> for GetServiceAck {
         // byte 4: Reserved(5) + ServiceTerminated(1) + ServiceNotAvailable(1) + CAServiceFlag(1)
         let flags = body[4];
         Ok(Self {
+            length_form,
             service: ServiceReference {
                 original_network_id: u16::from_be_bytes([body[0], body[1]]),
                 service_id: u16::from_be_bytes([body[2], body[3]]),
@@ -470,10 +558,15 @@ impl<'a> Parse<'a> for GetServiceAck {
 impl Serialize for GetServiceAck {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        objects::apdu_len(GET_SERVICE_ACK_BODY)
+        objects::apdu_len(GET_SERVICE_ACK_BODY, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = objects::write_apdu_header(tag::GET_SERVICE_ACK, GET_SERVICE_ACK_BODY, buf)?;
+        let pos = objects::write_apdu_header(
+            tag::GET_SERVICE_ACK,
+            GET_SERVICE_ACK_BODY,
+            self.length_form,
+            buf,
+        )?;
         buf[pos..pos + 2].copy_from_slice(&self.service.original_network_id.to_be_bytes());
         buf[pos + 2..pos + 4].copy_from_slice(&self.service.service_id.to_be_bytes());
         // Reserved(5)=0, then the three flag bits.
@@ -518,17 +611,24 @@ mod tests {
 
     #[test]
     fn header_only_objects_round_trip() {
-        assert_eq!(ServiceListReq.to_bytes(), [0x9F, 0x80, 0x00, 0x00]);
-        assert_eq!(ServiceListVersionReq.to_bytes(), [0x9F, 0x80, 0x02, 0x00]);
+        assert_eq!(
+            ServiceListReq::default().to_bytes(),
+            [0x9F, 0x80, 0x00, 0x00]
+        );
+        assert_eq!(
+            ServiceListVersionReq::default().to_bytes(),
+            [0x9F, 0x80, 0x02, 0x00]
+        );
         assert_eq!(
             ServiceListReq::parse(&[0x9F, 0x80, 0x00, 0x00]).unwrap(),
-            ServiceListReq
+            ServiceListReq::default()
         );
     }
 
     #[test]
     fn service_list_ack_multi_round_trips_and_bites() {
         let ack = ServiceListAck {
+            length_form: crate::length::LengthForm::Minimal,
             version_number: 0x07,
             services: alloc::vec![
                 ServiceReference {
@@ -559,6 +659,7 @@ mod tests {
     #[test]
     fn service_list_ack_empty_round_trips() {
         let ack = ServiceListAck {
+            length_form: crate::length::LengthForm::Minimal,
             version_number: 0x02,
             services: alloc::vec![],
         };
@@ -569,16 +670,26 @@ mod tests {
 
     #[test]
     fn version_ack_and_changed_round_trip_and_bite() {
-        let v = ServiceListVersionAck { version_number: 9 };
+        let v = ServiceListVersionAck {
+            length_form: crate::length::LengthForm::Minimal,
+            version_number: 9,
+        };
         let bytes = v.to_bytes();
         assert_eq!(bytes, [0x9F, 0x80, 0x03, 0x01, 0x09]);
         assert_eq!(ServiceListVersionAck::parse(&bytes).unwrap(), v);
         assert_ne!(
             bytes,
-            ServiceListVersionAck { version_number: 10 }.to_bytes()
+            ServiceListVersionAck {
+                length_form: crate::length::LengthForm::Minimal,
+                version_number: 10
+            }
+            .to_bytes()
         );
 
-        let c = ServiceListChanged { version_number: 3 };
+        let c = ServiceListChanged {
+            length_form: crate::length::LengthForm::Minimal,
+            version_number: 3,
+        };
         let cbytes = c.to_bytes();
         assert_eq!(cbytes, [0x9F, 0x80, 0x04, 0x01, 0x03]);
         assert_eq!(ServiceListChanged::parse(&cbytes).unwrap(), c);
@@ -587,6 +698,7 @@ mod tests {
     #[test]
     fn service_desc_req_round_trips_and_bites() {
         let r = ServiceDescReq {
+            length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 0x1234,
                 service_id: 0x5678,
@@ -605,6 +717,7 @@ mod tests {
         // 2 descriptors: 0x48 (service descriptor) len 2, and 0x52 len 1.
         let desc = [0x48, 0x02, 0xAA, 0xBB, 0x52, 0x01, 0x03];
         let ack = ServiceDescAck {
+            length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 0x0001,
                 service_id: 0x0064,
@@ -641,6 +754,7 @@ mod tests {
     #[test]
     fn service_desc_ack_empty_loop() {
         let ack = ServiceDescAck {
+            length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 0xAAAA,
                 service_id: 0xBBBB,
@@ -665,6 +779,7 @@ mod tests {
     #[test]
     fn get_service_req_with_and_without_ref() {
         let r = GetServiceReq {
+            length_form: crate::length::LengthForm::Minimal,
             service: Some(ServiceReference {
                 original_network_id: 0x0001,
                 service_id: 0x0064,
@@ -674,7 +789,10 @@ mod tests {
         assert_eq!(bytes, [0x9F, 0x80, 0x07, 0x04, 0x00, 0x01, 0x00, 0x64]);
         assert_eq!(GetServiceReq::parse(&bytes).unwrap(), r);
 
-        let disconnect = GetServiceReq { service: None };
+        let disconnect = GetServiceReq {
+            length_form: crate::length::LengthForm::Minimal,
+            service: None,
+        };
         let dbytes = disconnect.to_bytes();
         assert_eq!(dbytes, [0x9F, 0x80, 0x07, 0x00]);
         assert_eq!(GetServiceReq::parse(&dbytes).unwrap(), disconnect);
@@ -684,6 +802,7 @@ mod tests {
     #[test]
     fn get_service_ack_round_trips_and_bites() {
         let ack = GetServiceAck {
+            length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 0x0001,
                 service_id: 0x0064,
@@ -713,12 +832,13 @@ mod tests {
 
     #[test]
     fn dispatch_routes_each_tag() {
-        let req = ServiceListReq.to_bytes();
+        let req = ServiceListReq::default().to_bytes();
         assert!(matches!(
             ServiceGatewayApdu::parse(&req).unwrap(),
             ServiceGatewayApdu::ServiceListReq(_)
         ));
         let gs = GetServiceAck {
+            length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference::default(),
             service_terminated: true,
             service_not_available: false,
@@ -736,6 +856,7 @@ mod tests {
         // Before the fix, 0x0A (exceeds 3 bits) silently wrapped to 0x02 in
         // the running_status field and returned Ok.
         let ack = ServiceDescAck {
+            length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 1,
                 service_id: 1,
@@ -756,6 +877,7 @@ mod tests {
     #[test]
     fn max_running_status_still_serializes_and_round_trips() {
         let ack = ServiceDescAck {
+            length_form: crate::length::LengthForm::Minimal,
             service: ServiceReference {
                 original_network_id: 1,
                 service_id: 1,

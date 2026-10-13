@@ -37,9 +37,8 @@ impl IdentifierType {
             0x00 => Self::None,
             0x01 => Self::EventId,
             0x02 => Self::TvaIdEit,
-            0x03 => Self::TvaIdPes,
-            // unreachable after masking to 2 bits, but the compiler requires it
-            _ => unreachable!(),
+            // The mask leaves exactly 0..=3, so the last arm is `0x03`.
+            _ => Self::TvaIdPes,
         }
     }
 
@@ -74,15 +73,16 @@ use broadcast_common::{Parse, Serialize};
 /// `table_id` for Related Content Table.
 pub const TABLE_ID: u8 = 0x76;
 
-/// Well-known PID on which RCT is carried: none (signalled via PMT).
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
 const POST_EXT_FIXED_LEN: usize = 3;
 const LINK_ENTRY_HEADER_LEN: usize = 2;
 const DESC_LOOP_LEN_FIELD: usize = 2;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
 
@@ -770,6 +770,11 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
         DvbLocatorService::Triplet {
             dvb_service_triplet_id,
         } => {
+            broadcast_common::len::fit_bits(
+                u64::from(*dvb_service_triplet_id),
+                10,
+                "dvb_service_triplet_id",
+            )?;
             let sd_lo = (loc.start_date & 0x3F) as u8;
             buf[1] = (sd_lo << 2) | ((dvb_service_triplet_id >> 8) as u8 & 0x03);
             buf[2] = (dvb_service_triplet_id & 0xFF) as u8;
@@ -1031,7 +1036,7 @@ impl<'a> Parse<'a> for RctSection<'a> {
             });
         }
 
-        let table_id_extension_flag = (bytes[1] & 0x40) != 0;
+        let table_id_extension_flag = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
         let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),
@@ -1194,8 +1199,7 @@ impl Serialize for RctSection<'_> {
         buf[pos..pos + self.descriptors.len()].copy_from_slice(self.descriptors.raw());
         pos += self.descriptors.len();
 
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..pos]);
-        buf[pos..pos + CRC_LEN].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, pos);
         Ok(len)
     }
 }

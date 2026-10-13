@@ -23,7 +23,11 @@ const EXTENSION_HEADER_LEN: usize = 5;
 /// Bytes after the extension header and before the first service entry:
 /// 2 bytes of original_network_id + 1 reserved_future_use byte.
 const POST_EXTENSION_LEN: usize = 3;
-const CRC_LEN: usize = 4;
+/// `EIT_schedule_flag` in a service's flags byte (EN 300 468 §5.2.3).
+const EIT_SCHEDULE_FLAG: u8 = 0x02;
+/// `EIT_present_following_flag` in a service's flags byte (§5.2.3).
+const EIT_PRESENT_FOLLOWING_FLAG: u8 = 0x01;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + CRC_LEN;
 const SERVICE_HEADER_LEN: usize = 5;
 
@@ -207,8 +211,8 @@ impl<'a> Parse<'a> for SdtSection<'a> {
                 })?;
             let service_id = u16::from_be_bytes(*b2);
             let flags = bytes[pos + 2];
-            let eit_schedule_flag = (flags & 0x02) != 0;
-            let eit_present_following_flag = (flags & 0x01) != 0;
+            let eit_schedule_flag = (flags & EIT_SCHEDULE_FLAG) != 0;
+            let eit_present_following_flag = (flags & EIT_PRESENT_FOLLOWING_FLAG) != 0;
             let status_and_len_hi = bytes[pos + 3];
             let running_status =
                 RunningStatus::from_u8(super::running_status_of(status_and_len_hi));
@@ -317,8 +321,7 @@ impl Serialize for SdtSection<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
-        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, crc_pos);
         Ok(len)
     }
 }

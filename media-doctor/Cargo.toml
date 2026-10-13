@@ -68,6 +68,7 @@ tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros"] }
 # crate (one copy across hls-runtime/multimux/media-doctor). Path-only
 # dev-dep, so it never reaches a published manifest.
 test-bounded = { path = "../test-bounded" }
+test-alloc = { path = "../test-alloc" }
 # `mediastreamvalidator_oracle.rs` (issue #870) renders real TS-HLS/CMAF-HLS
 # output through the `transmux` packager CLI core (`transmux::cli::run_bytes`)
 # to hand Apple's independent HLS conformance tool something the origin

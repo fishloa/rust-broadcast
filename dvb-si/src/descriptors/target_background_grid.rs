@@ -70,7 +70,19 @@ impl Serialize for TargetBackgroundGridDescriptor {
         }
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        let hs = self.horizontal_size;
+        // 14 / 14 / 4-bit fields; wider values used to be masked down
+        // silently (audit r03-W3 class).
+        let hs = broadcast_common::len::fit_bits(
+            u64::from(self.horizontal_size),
+            14,
+            "horizontal_size",
+        )? as u16;
+        broadcast_common::len::fit_bits(u64::from(self.vertical_size), 14, "vertical_size")?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.aspect_ratio_information),
+            4,
+            "aspect_ratio_information",
+        )?;
         buf[HEADER_LEN] = (hs >> 6) as u8;
         buf[HEADER_LEN + 1] = ((hs & 0x3F) << 2) as u8 | ((self.vertical_size >> 12) as u8 & 0x03);
         buf[HEADER_LEN + 2] = (self.vertical_size >> 4) as u8;

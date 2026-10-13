@@ -221,8 +221,14 @@ fn parse_block(lines: &[&str]) -> Result<Option<(Cue, bool)>, Error> {
         lossy = true;
     }
 
-    let start = parse_timestamp(start_str.trim())?;
-    let end = parse_timestamp(end_str.trim())?;
+    let start = parse_timestamp(start_str.trim(), '.')?;
+    let end = parse_timestamp(end_str.trim(), '.')?;
+    // W3C WebVTT §4.3.1: a cue's end time must not precede its start time.
+    if end < start {
+        return Err(Error::InvalidWebVtt(
+            "cue end time is before its start time".to_string(),
+        ));
+    }
 
     let text_lines = &lines[idx..];
     if text_lines.iter().any(|l| l.contains('<')) {
@@ -251,6 +257,15 @@ fn format_timing(timing_line: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// CV-O2 (#1109): a cue whose end precedes its start is rejected.
+    #[test]
+    fn rejects_end_before_start() {
+        let bad = "WEBVTT\n\n00:02.000 --> 00:01.000\nhi\n";
+        assert!(matches!(parse_webvtt(bad), Err(Error::InvalidWebVtt(_))));
+        let ok = "WEBVTT\n\n00:01.000 --> 00:01.000\nhi\n";
+        assert!(parse_webvtt(ok).is_ok());
+    }
 
     #[test]
     fn rejects_missing_signature() {

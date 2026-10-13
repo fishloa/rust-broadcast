@@ -21,6 +21,12 @@ pub const UTC_TIME_LEN: usize = 5;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DateTimeEnq {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `response_interval` — if 0, the host replies once; otherwise it replies
     /// immediately then every `response_interval` seconds.
     pub response_interval: u8,
@@ -30,6 +36,12 @@ pub struct DateTimeEnq {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct DateTime {
+    /// How the `length_field` was coded on the wire: a non-minimal long form
+    /// (e.g. `82 00 09`) is preserved so the object re-serializes
+    /// byte-for-byte; [`LengthForm::Minimal`](crate::length::LengthForm::Minimal) for a hand-built value.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub length_form: crate::length::LengthForm,
+
     /// `UTC_time` — 5 bytes, MJD (2) + BCD HH:MM:SS (3), as in TDT/TOT.
     pub utc_time: [u8; UTC_TIME_LEN],
     /// `local_offset` — optional signed minutes (`Local = UTC + offset`); present
@@ -40,24 +52,28 @@ pub struct DateTime {
 impl<'a> Parse<'a> for DateTimeEnq {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::DATE_TIME_ENQ, "date_time_enq")?;
+        let (length_form, body) =
+            super::parse_apdu_header(bytes, tag::DATE_TIME_ENQ, "date_time_enq")?;
         let &[response_interval] = body else {
             return Err(Error::InvalidObject {
                 what: "date_time_enq",
                 reason: "body must be exactly 1 byte (response_interval)",
             });
         };
-        Ok(Self { response_interval })
+        Ok(Self {
+            length_form,
+            response_interval,
+        })
     }
 }
 
 impl Serialize for DateTimeEnq {
     type Error = Error;
     fn serialized_len(&self) -> usize {
-        super::apdu_len(1)
+        super::apdu_len(1, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let pos = super::write_apdu_header(tag::DATE_TIME_ENQ, 1, buf)?;
+        let pos = super::write_apdu_header(tag::DATE_TIME_ENQ, 1, self.length_form, buf)?;
         buf[pos] = self.response_interval;
         Ok(pos + 1)
     }
@@ -71,7 +87,7 @@ impl ApduDef<'_> for DateTimeEnq {
 impl<'a> Parse<'a> for DateTime {
     type Error = Error;
     fn parse(bytes: &'a [u8]) -> Result<Self> {
-        let body = super::parse_apdu_header(bytes, tag::DATE_TIME, "date_time")?;
+        let (length_form, body) = super::parse_apdu_header(bytes, tag::DATE_TIME, "date_time")?;
         let utc_time: [u8; UTC_TIME_LEN] = match (body.len(), body.first_chunk::<UTC_TIME_LEN>()) {
             (UTC_TIME_LEN | 7, Some(utc)) => *utc,
             _ => {
@@ -87,6 +103,7 @@ impl<'a> Parse<'a> for DateTime {
             None
         };
         Ok(Self {
+            length_form,
             utc_time,
             local_offset,
         })
@@ -97,11 +114,11 @@ impl Serialize for DateTime {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let body = if self.local_offset.is_some() { 7 } else { 5 };
-        super::apdu_len(body)
+        super::apdu_len(body, self.length_form)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let body_len = if self.local_offset.is_some() { 7 } else { 5 };
-        let mut pos = super::write_apdu_header(tag::DATE_TIME, body_len, buf)?;
+        let mut pos = super::write_apdu_header(tag::DATE_TIME, body_len, self.length_form, buf)?;
         buf[pos..pos + UTC_TIME_LEN].copy_from_slice(&self.utc_time);
         pos += UTC_TIME_LEN;
         if let Some(off) = self.local_offset {
@@ -124,6 +141,7 @@ mod tests {
     #[test]
     fn enq_round_trip() {
         let e = DateTimeEnq {
+            length_form: crate::length::LengthForm::Minimal,
             response_interval: 10,
         };
         let bytes = e.to_bytes();
@@ -134,6 +152,7 @@ mod tests {
     #[test]
     fn date_time_no_offset_round_trip() {
         let dt = DateTime {
+            length_form: crate::length::LengthForm::Minimal,
             utc_time: [0xC0, 0x79, 0x12, 0x34, 0x56],
             local_offset: None,
         };
@@ -145,6 +164,7 @@ mod tests {
     #[test]
     fn date_time_with_offset_round_trip() {
         let dt = DateTime {
+            length_form: crate::length::LengthForm::Minimal,
             utc_time: [0xC0, 0x79, 0x12, 0x34, 0x56],
             local_offset: Some(-60),
         };
@@ -158,6 +178,7 @@ mod tests {
     #[test]
     fn mutating_offset_changes_bytes_and_length() {
         let dt = DateTime {
+            length_form: crate::length::LengthForm::Minimal,
             utc_time: [0; 5],
             local_offset: None,
         };

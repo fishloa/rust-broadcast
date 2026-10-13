@@ -44,9 +44,9 @@ use broadcast_common::{Parse, Serialize};
 /// table_id for the MPE-IFEC section.
 pub const TABLE_ID: u8 = 0x7A;
 
-/// MPE-IFEC has no well-known PID — its carriage is signalled via descriptors.
-/// `0x0000` follows the DSM-CC precedent.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 /// Bytes 0-2: table_id (1) + flags + section_length (2).
 const HEADER_LEN: usize = 3;
@@ -55,8 +55,7 @@ const HEADER_LEN: usize = 3;
 /// + section_number(1) + last_section_number(1).
 const EXTENSION_HEADER_LEN: usize = 5;
 
-/// Bytes occupied by the trailing CRC-32 field.
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 
 /// Minimum total encoded length: header + extension + RTP + CRC.
 const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + RTP_LEN + CRC_LEN;
@@ -194,7 +193,7 @@ impl<'a> Parse<'a> for MpeIfecSection<'a> {
         let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_LEN)?;
 
-        let private_indicator = (bytes[1] & 0x40) != 0;
+        let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
         let burst_number = bytes[3];
         let ifec_burst_size = bytes[4];
         // byte 5: reserved(2) | version(5) | current_next_indicator(1)
@@ -272,8 +271,7 @@ impl Serialize for MpeIfecSection<'_> {
         buf[data_start..data_end].copy_from_slice(self.ifec_data);
 
         // CRC-32 over everything up to (but not including) the CRC slot.
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..data_end]);
-        buf[data_end..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, data_end);
 
         Ok(len)
     }
@@ -431,7 +429,6 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x7A);
-        assert_eq!(PID.value(), 0x0000);
     }
 
     #[test]

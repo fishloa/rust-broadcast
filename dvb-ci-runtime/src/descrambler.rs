@@ -342,6 +342,7 @@ mod tests {
             r_apdu(
                 CA_SESSION,
                 &ser(&CaInfo {
+                    length_form: dvb_ci::length::LengthForm::Minimal,
                     ca_system_ids: vec![0x0648],
                 }),
             ),

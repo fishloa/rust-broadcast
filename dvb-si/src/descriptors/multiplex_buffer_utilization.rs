@@ -95,6 +95,18 @@ impl Serialize for MultiplexBufferUtilizationDescriptor {
                 have: buf.len(),
             });
         }
+        // 15-bit LTW offsets; a wider value used to be masked down silently
+        // (audit r03-W3 class).
+        broadcast_common::len::fit_bits(
+            u64::from(self.ltw_offset_lower_bound),
+            15,
+            "ltw_offset_lower_bound",
+        )?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.ltw_offset_upper_bound),
+            15,
+            "ltw_offset_upper_bound",
+        )?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         buf[HEADER_LEN] = ((self.bound_valid_flag as u8) << 7)

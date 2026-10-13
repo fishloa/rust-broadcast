@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- ESCR field encoding uses named marker/mask constants (no behaviour change; audit r01-W15 residue).
+
 ### Changed (breaking, umbrella #1139 T11 / audit r01-W2)
 - `PesHeader::header_stuffing_len: usize` is replaced by
   `PesHeader::header_stuffing: &'a [u8]` (the stuffing bytes verbatim; use `&[]`

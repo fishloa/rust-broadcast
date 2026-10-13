@@ -24,7 +24,7 @@ const EXTENSION_HEADER_LEN: usize = 5;
 /// was duplicated *after* the extension header; spec says it lives IN
 /// the extension header at bytes 3-4 as `table_id_extension`.)
 const POST_EXTENSION_LEN: usize = 2;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + CRC_LEN;
 /// Per-transport-stream header: ts_id (2) + original_network_id (2) + reserved_future_use (4 bits) + transport_descriptors_length (12 bits).
 const TS_HEADER_LEN: usize = 6;
@@ -376,8 +376,7 @@ impl Serialize for NitSection<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
-        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, crc_pos);
         Ok(len)
     }
 }

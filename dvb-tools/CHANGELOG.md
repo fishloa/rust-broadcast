@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed
+
+- `t2mi` (event dump and `--inner`) treats a closed stdout pipe (`| head`) as a clean stop: it returns immediately with success instead of continuing through the capture and failing on the final flush, and the event dump no longer panics inside `println!` (r11-W-DT-3, #1100).
+- Every subcommand now streams the capture in 1 MiB reads through the stateful TS resynchroniser instead of reading the whole file and then building a second full-size `Vec` of packets: peak memory on a 152 MB capture is 19 MB (r11-W-DT-4). A mid-file read error is reported and exits non-zero.
+
 ### Changed
 
 - `t2mi --pid` rejects a PID above `0x1FFF` as a usage error (was accepted and matched nothing). All other text/JSON output is byte-identical.

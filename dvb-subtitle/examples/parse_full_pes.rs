@@ -4,16 +4,16 @@
 
 use broadcast_common::Parse;
 use dvb_subtitle::{
-    AnySegment, DataIdentifier, EndOfPesMarker, ObjectDataPayload, PesDataField, SyncByte,
+    AnySegment, DATA_IDENTIFIER, END_OF_PES_MARKER, ObjectDataPayload, PesDataField, SYNC_BYTE,
 };
 
 fn main() {
     // A multi-segment PES data field: DDS, PCS, ODS, EDS.
     let bytes = [
-        DataIdentifier, // 0x20
-        0x00,           // subtitle_stream_id
+        DATA_IDENTIFIER, // 0x20
+        0x00,            // subtitle_stream_id
         // Display definition segment (no window)
-        SyncByte,
+        SYNC_BYTE,
         0x14,
         0x00,
         0x01,
@@ -25,7 +25,7 @@ fn main() {
         0x01,
         0x1F,
         // Page composition segment (one region, page state = acquisition)
-        SyncByte,
+        SYNC_BYTE,
         0x10,
         0x00,
         0x01,
@@ -40,7 +40,7 @@ fn main() {
         0x00,
         0x32, // region at (100, 50)
         // Object data segment (character string)
-        SyncByte,
+        SYNC_BYTE,
         0x13,
         0x00,
         0x01,
@@ -55,13 +55,13 @@ fn main() {
         0x00,
         0x42, // 'A', 'B'
         // End of display set
-        SyncByte,
+        SYNC_BYTE,
         0x80,
         0x00,
         0x01,
         0x00,
         0x00,
-        EndOfPesMarker, // 0xFF
+        END_OF_PES_MARKER, // 0xFF
     ];
 
     let field = PesDataField::parse(&bytes).expect("valid PES data field");

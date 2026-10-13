@@ -28,10 +28,9 @@ use broadcast_common::{Parse, Serialize};
 
 /// table_id for all protection messages (TS 102 809 §9.3.4; coded per EN 300 468 §5.1.3).
 pub const TABLE_ID: u8 = 0x7B;
-/// Protection messages have no well-known PID — they are carried on the PID(s)
-/// of the protectable elementary stream, signalled via the protection message
-/// descriptor (§9.3.3). Mirrors the `dsmcc.rs` "no fixed PID" convention.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 /// `table_id_extension` value (inclusive) of the first authentication message (§9.3.4 Table 41).
 pub const AUTH_EXTENSION_FIRST: u16 = 0x0000;
@@ -96,8 +95,7 @@ broadcast_common::impl_spec_display!(ReferenceType, Unallocated);
 const HEADER_LEN: usize = 8;
 /// `section_length` counts from just after the field (byte 3) to end of section.
 const SECTION_LENGTH_PREFIX: usize = 3;
-/// CRC_32 trailer.
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 
 /// Authentication-message fixed body bytes after the common header, before the
 /// hash loop: section_hash_algorithm_identifier(1) + section_hash_length(1)
@@ -633,8 +631,7 @@ impl Serialize for ProtectionMessageSection<'_> {
         buf[7] = self.last_section_number;
         let body_written = self.body.write_into(&mut buf[HEADER_LEN..])?;
         let body_end = HEADER_LEN + body_written;
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..body_end]);
-        buf[body_end..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, body_end);
         Ok(len)
     }
 }
@@ -872,7 +869,6 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x7B);
-        assert_eq!(PID.value(), 0x0000);
     }
 
     #[test]

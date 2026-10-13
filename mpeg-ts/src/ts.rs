@@ -21,6 +21,9 @@ const SECTION_HEADER_LEN: usize = 3;
 /// the packetiser in `mux.rs`.
 pub(crate) const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 
+/// MPEG-2 stuffing byte (ISO/IEC 13818-1 §2.4.4.1: `0xFF` fill after the last section in a payload; also the packet fill value).
+pub(crate) const STUFFING_BYTE: u8 = 0xFF;
+
 /// Decode the 12-bit `section_length` field from a section's first 3 bytes
 /// (byte 1 bits 3-0 hi, byte 2 lo) and return the section's **total** size:
 /// `section_length + SECTION_HEADER_LEN`, the 3-byte common header plus every
@@ -808,11 +811,7 @@ impl<'a> AdaptationFieldExtension<'a> {
         let mut cursor = 2usize;
 
         if let Some(ltw) = self.ltw {
-            let ltw_valid = if ltw.ltw_valid_flag {
-                AFE_LTW_FLAG
-            } else {
-                0x00
-            };
+            let ltw_valid = if ltw.ltw_valid_flag { AFE_LTW_FLAG } else { 0 };
             buf[cursor] = ltw_valid | ((ltw.ltw_offset >> 8) as u8 & LTW_OFFSET_HI_MASK);
             buf[cursor + 1] = (ltw.ltw_offset & 0xFF) as u8;
             cursor += 2;
@@ -1247,7 +1246,7 @@ impl SectionReassembler {
                 // and wait for the next packet to complete the header.
                 break;
             }
-            if self.buf[0] == 0xFF {
+            if self.buf[0] == STUFFING_BYTE {
                 // Stuffing where a table_id is expected — payload tail is fill.
                 self.buf.clear();
                 break;

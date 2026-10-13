@@ -111,8 +111,21 @@ impl TsResync {
     /// only the 188-byte TS payload is returned.  Bytes that cannot yet form
     /// a complete packet (or fall before lock) are buffered for the next call.
     pub fn feed(&mut self, data: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
-        self.buf.extend_from_slice(data);
         let mut emitted = Vec::new();
+        self.feed_into(data, &mut emitted);
+        emitted
+    }
+
+    /// [`feed`](Self::feed) appending to a caller-owned `out` (not cleared),
+    /// so a steady-state caller that reuses one `Vec` allocates nothing per
+    /// call (audit r01-O4). The output capacity is reserved once from the
+    /// buffered byte count instead of growing by doubling.
+    ///
+    /// Returns the number of packets appended.
+    pub fn feed_into(&mut self, data: &[u8], emitted: &mut Vec<[u8; TS_PACKET_SIZE]>) -> usize {
+        self.buf.extend_from_slice(data);
+        let before = emitted.len();
+        emitted.reserve((self.buf.len() - self.head) / TS_PACKET_SIZE);
 
         loop {
             match self.stride {
@@ -131,7 +144,7 @@ impl TsResync {
                             self.head += excess;
                         }
                         self.compact();
-                        return emitted;
+                        return emitted.len() - before;
                     }
                 }
                 Some(stride) => {
@@ -142,7 +155,7 @@ impl TsResync {
                     let tail_len = self.buf.len() - self.head;
                     if tail_len < s {
                         self.compact();
-                        return emitted;
+                        return emitted.len() - before;
                     }
                     if self.buf[self.head] == TS_SYNC_BYTE {
                         let mut packet = [0u8; TS_PACKET_SIZE];
