@@ -402,15 +402,15 @@ fn srtp_corrupted_ciphertext_byte_fails_auth() {
 // ---------------------------------------------------------------------------
 
 fn build_sender_report(ssrc: u32) -> Vec<u8> {
-    CompoundPacket::new(vec![RtcpPacket::SenderReport(SenderReport {
+    CompoundPacket::new(vec![RtcpPacket::SenderReport(SenderReport::new(
         ssrc,
-        ntp_msw: 0,
-        ntp_lsw: 0,
-        rtp_timestamp: 0,
-        packet_count: 0,
-        octet_count: 0,
-        report_blocks: Vec::new(),
-    })])
+        0,
+        0,
+        0,
+        0,
+        0,
+        Vec::new(),
+    ))])
     .expect("compound packet starting with SR")
     .to_bytes()
 }

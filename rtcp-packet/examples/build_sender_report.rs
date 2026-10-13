@@ -7,14 +7,14 @@ use broadcast_common::Serialize;
 use rtcp_packet::{ReportBlock, SenderReport};
 
 fn main() {
-    let sr = SenderReport {
-        ssrc: 0x1122_3344,
-        ntp_msw: 0xE0E1_E2E3,
-        ntp_lsw: 0x1020_3040,
-        rtp_timestamp: 0x0009_0000,
-        packet_count: 4321,
-        octet_count: 999_999,
-        report_blocks: vec![
+    let sr = SenderReport::new(
+        0x1122_3344,
+        0xE0E1_E2E3,
+        0x1020_3040,
+        0x0009_0000,
+        4321,
+        999_999,
+        vec![
             ReportBlock {
                 ssrc: 0xAAAA_AAAA,
                 fraction_lost: 12,
@@ -34,7 +34,7 @@ fn main() {
                 dlsr: 0,
             },
         ],
-    };
+    );
 
     let mut bytes = vec![0u8; sr.serialized_len()];
     sr.serialize_into(&mut bytes).expect("serialize");

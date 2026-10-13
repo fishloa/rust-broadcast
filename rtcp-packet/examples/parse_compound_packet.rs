@@ -11,14 +11,14 @@ use rtcp_packet::{
 };
 
 fn main() {
-    let sr = SenderReport {
-        ssrc: 0x1122_3344,
-        ntp_msw: 0xE1E2_E3E4,
-        ntp_lsw: 0x5060_7080,
-        rtp_timestamp: 0x000A_0000,
-        packet_count: 12345,
-        octet_count: 6_789_012,
-        report_blocks: vec![ReportBlock {
+    let sr = SenderReport::new(
+        0x1122_3344,
+        0xE1E2_E3E4,
+        0x5060_7080,
+        0x000A_0000,
+        12345,
+        6_789_012,
+        vec![ReportBlock {
             ssrc: 0xAAAA_0001,
             fraction_lost: 0,
             cumulative_lost: 0,
@@ -27,7 +27,7 @@ fn main() {
             lsr: 0x1234_5678,
             dlsr: 0x0000_0100,
         }],
-    };
+    );
     let sdes = SourceDescription {
         chunks: vec![SdesChunk {
             source: 0x1122_3344, // same SSRC as the SR: one participant, two reports

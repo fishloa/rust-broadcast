@@ -30,6 +30,8 @@ fn real_chrome_compound_parses_all_three_packets() {
         RtcpPacket::ReceiverReport(rr) => {
             assert_eq!(rr.ssrc, 1);
             assert_eq!(rr.report_blocks.len(), 1);
+            // The real RR carries no profile-specific extensions.
+            assert!(rr.profile_extensions.is_empty());
             let rb = &rr.report_blocks[0];
             assert_eq!(rb.ssrc, 0x407E_522F);
             assert_eq!(rb.fraction_lost, 0);

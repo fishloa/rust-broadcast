@@ -2104,15 +2104,7 @@ mod tests {
         let mut mt = transport_with_appendix_b3_write_context();
         let compound =
             rtcp_packet::CompoundPacket::new(vec![rtcp_packet::RtcpPacket::SenderReport(
-                rtcp_packet::SenderReport {
-                    ssrc: 0,
-                    ntp_msw: 0,
-                    ntp_lsw: 0,
-                    rtp_timestamp: 0,
-                    packet_count: 0,
-                    octet_count: 0,
-                    report_blocks: Vec::new(),
-                },
+                rtcp_packet::SenderReport::new(0, 0, 0, 0, 0, 0, Vec::new()),
             )])
             .unwrap();
 
@@ -2278,15 +2270,7 @@ mod tests {
 
         let compound =
             rtcp_packet::CompoundPacket::new(vec![rtcp_packet::RtcpPacket::SenderReport(
-                rtcp_packet::SenderReport {
-                    ssrc: 0,
-                    ntp_msw: 0,
-                    ntp_lsw: 0,
-                    rtp_timestamp: 0,
-                    packet_count: 0,
-                    octet_count: 0,
-                    report_blocks: Vec::new(),
-                },
+                rtcp_packet::SenderReport::new(0, 0, 0, 0, 0, 0, Vec::new()),
             )])
             .unwrap();
         mt.encrypt_rtcp(&compound).expect("encrypt_rtcp");
