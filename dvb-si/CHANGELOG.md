@@ -1,6 +1,10 @@
 # Changelog
 
 ## [Unreleased]
+
+### Fixed
+
+- `--no-default-features --features chrono` now builds for bare-metal (`thumbv7em-none-eabi`): `epg` was missing `alloc::vec` and carried a serde-only `format`/`ServiceData` unconditionally (#1181).
 ### Changed (BREAKING)
 - **BREAKING:** the ten `PID = 0x0000` placeholder constants that aliased the PAT PID are removed from the `ait`, `container`, `downloadable_font_info`, `int`, `mpe`, `mpe_fec`, `mpe_ifec`, `protection_message`, `rct` and `unt` table modules (a caller filtering on one picked up PAT traffic); these tables have no fixed PID (audit r02-W15 / r02-O12, #1077). The hidden `owned::doc` doctest helper module is removed too (r02-O7).
 - **BREAKING (behavioural):** serializers reject a value wider than its wire field instead of masking it into a different valid-looking value (audit r03-W3 class, #1077): `ibp_descriptor.max_gop_length` (14 bits), NorDig LCN V1 (14) / V2 (10), `smoothing_buffer` (22), `metadata_std` (22), `multiplex_buffer_utilization` (15), `mvc_extension` (10 / 3), `target_background_grid` and `video_window` (14 / 14 / 4), INT `platform_id` (24), UNT `OUI` (24), RCT `dvb_service_triplet_id` (10), `content_labeling` time base (33), S2Xv2 scrambling indices (20). Parse stays tolerant; legal values round-trip byte-identically.

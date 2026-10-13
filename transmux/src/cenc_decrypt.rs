@@ -83,7 +83,10 @@ use alloc::vec::Vec;
 
 use broadcast_common::{Decrypt, Parse};
 
-use crate::box_types::{BOX_HEADER_MIN_SIZE, box_slices, find_top_box, parse_box};
+use crate::box_types::{
+    BOX_HEADER_MIN_SIZE, box_slices, child_boxes, descend_boxes, find_child_box, find_top_box,
+    parse_box,
+};
 // Re-exported (not just `use`d) so `transmux::cenc_decrypt::CencScheme` keeps
 // resolving for existing callers even though the type now lives in
 // `crate::cenc` (issue #564 — one shared definition for decrypt/encrypt/IR).
@@ -480,7 +483,7 @@ const VISUAL_SAMPLE_ENTRY_HDR: usize = 78;
 fn harvest_tracks(file: &[u8], out: &mut Vec<TrackCrypto>) -> Result<()> {
     let moov = find_top_box(file, b"moov").ok_or(Error::UnexpectedBox { expected: "moov" })?;
     let fragmented = find_top_box(file, b"moof").is_some();
-    for trak in iter_child_boxes(moov, b"trak") {
+    for trak in child_boxes(moov, b"trak") {
         if let Some(crypto) = harvest_track(trak, fragmented)? {
             out.push(crypto);
         }
@@ -501,12 +504,12 @@ fn harvest_tracks(file: &[u8], out: &mut Vec<TrackCrypto>) -> Result<()> {
 /// `stbl` at all.
 fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
     // Navigate trak → mdia → minf → stbl.
-    let Some(stbl) = descend(trak, &[b"mdia", b"minf", b"stbl"]) else {
+    let Some(stbl) = descend_boxes(trak, &[b"mdia", b"minf", b"stbl"]) else {
         return Ok(None);
     };
 
     // sinf lives inside the protected sample entry (encv/enca) under stsd.
-    let Some(stsd) = find_box(stbl, b"stsd") else {
+    let Some(stsd) = find_child_box(stbl, b"stsd") else {
         return Ok(None);
     };
     let Some(sinf) = find_sinf_in_stsd(stsd) else {
@@ -543,7 +546,7 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
         ));
     }
 
-    let tkhd = find_box(trak, b"tkhd").ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
+    let tkhd = find_child_box(trak, b"tkhd").ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
     let track_id = crate::init_segment::TrackHeaderBox::parse(tkhd)?.track_id;
 
     let samples = if fragmented {
@@ -553,7 +556,8 @@ fn harvest_track(trak: &[u8], fragmented: bool) -> Result<Option<TrackCrypto>> {
     } else {
         // Progressive fMP4: a single senc lives inside stbl, covering every
         // sample of the (fragment-less) track.
-        let senc = find_box(stbl, b"senc").ok_or(Error::UnexpectedBox { expected: "senc" })?;
+        let senc =
+            find_child_box(stbl, b"senc").ok_or(Error::UnexpectedBox { expected: "senc" })?;
         parse_senc_box(senc, tenc.default_per_sample_iv_size)?.entries
     };
 
@@ -620,9 +624,9 @@ fn parse_senc_box(senc: &[u8], per_sample_iv_size: u8) -> Result<crate::cenc::Sa
 /// than treated as fatal, and the same sample-count check downstream will
 /// still catch it.
 fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> {
-    for moof in iter_top_boxes(file, b"moof") {
-        for traf in iter_child_boxes(moof, b"traf") {
-            let Some(tfhd) = find_box(traf, b"tfhd") else {
+    for moof in box_slices(file).filter(|b| b[4..8] == *b"moof") {
+        for traf in child_boxes(moof, b"traf") {
+            let Some(tfhd) = find_child_box(traf, b"tfhd") else {
                 continue;
             };
             if tfhd.len() < BOX_HEADER_MIN_SIZE + FULL_HDR {
@@ -653,7 +657,7 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
                     "seig sample-group key rotation not implemented",
                 ));
             }
-            match find_box(traf, b"senc") {
+            match find_child_box(traf, b"senc") {
                 Some(senc) => {
                     let senc_parsed = parse_senc_box(senc, crypto.tenc.default_per_sample_iv_size)?;
                     crypto.samples.extend(senc_parsed.entries);
@@ -776,17 +780,17 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
 
     let mut tracks = Vec::new();
     let mut skipped: Vec<crate::ir::SkippedTrack> = Vec::new();
-    for trak in iter_child_boxes(moov, b"trak") {
-        let Some(stbl) = descend(trak, &[b"mdia", b"minf", b"stbl"]) else {
+    for trak in child_boxes(moov, b"trak") {
+        let Some(stbl) = descend_boxes(trak, &[b"mdia", b"minf", b"stbl"]) else {
             continue;
         };
-        let timescale = descend(trak, &[b"mdia"])
-            .and_then(|mdia| find_box(mdia, b"mdhd"))
+        let timescale = descend_boxes(trak, &[b"mdia"])
+            .and_then(|mdia| find_child_box(mdia, b"mdhd"))
             .and_then(mdhd_timescale)
             .unwrap_or(movie_timescale);
 
         // Only protected video (encv → original avc1) is reconstructed here.
-        let Some(stsd) = find_box(stbl, b"stsd") else {
+        let Some(stsd) = find_child_box(stbl, b"stsd") else {
             continue;
         };
         let Some(sinf) = find_sinf_in_stsd(stsd) else {
@@ -823,7 +827,8 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
         // Recover the avcC config record from inside the encv entry.
         let avc_config = find_avcc_config(stsd)?;
 
-        let tkhd = find_box(trak, b"tkhd").ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
+        let tkhd =
+            find_child_box(trak, b"tkhd").ok_or(Error::UnexpectedBox { expected: "tkhd" })?;
         let track_id = crate::init_segment::TrackHeaderBox::parse(tkhd)?.track_id;
 
         let samples = if fragmented {
@@ -1036,31 +1041,6 @@ fn find_avcc_config(stsd: &[u8]) -> Result<crate::avc_config::AVCDecoderConfigur
 // Small box-navigation helpers (borrow-only, no allocation).
 // ---------------------------------------------------------------------------
 
-/// Iterate a container box's children matching a four-CC (skips the 8-byte
-/// container header first).
-fn iter_child_boxes<'a>(
-    container: &'a [u8],
-    fourcc: &'a [u8; 4],
-) -> impl Iterator<Item = &'a [u8]> {
-    let body = &container[BOX_HEADER_MIN_SIZE.min(container.len())..];
-    box_slices(body).filter(move |b| &b[4..8] == fourcc)
-}
-
-/// Iterate every *top-level* box in `file` matching a four-CC (there can be
-/// several `moof`s in a fragmented CMAF file, unlike the single-match
-/// [`find_top_box`]).
-fn iter_top_boxes<'a>(file: &'a [u8], fourcc: &[u8; 4]) -> impl Iterator<Item = &'a [u8]> {
-    box_slices(file).filter(move |b| b[4..8] == *fourcc)
-}
-
-/// Find the first child box of `container` with the given four-CC (returns its
-/// full bytes). `container` is treated as a full box (its 8-byte header is
-/// skipped before scanning children).
-fn find_box<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
-    let body = &container[BOX_HEADER_MIN_SIZE.min(container.len())..];
-    box_slices(body).find(|b| &b[4..8] == fourcc)
-}
-
 /// Whether `container` (a `stbl` or `traf`, both direct `sgpd` parents per
 /// ISO/IEC 14496-12 §8.9.3.1) has a `sgpd` box whose `grouping_type` is
 /// `seig` — the CENC key-rotation sample group this decryptor does not
@@ -1069,8 +1049,7 @@ fn find_box<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 /// A container can carry more than one `sgpd` (one per grouping type in use),
 /// so every child is checked rather than just the first.
 fn container_has_seig_sgpd(container: &[u8]) -> Result<bool> {
-    let body = &container[BOX_HEADER_MIN_SIZE.min(container.len())..];
-    for entry in box_slices(body).filter(|b| &b[4..8] == b"sgpd") {
+    for entry in child_boxes(container, b"sgpd") {
         let sgpd = SampleGroupDescriptionBox::parse(entry)?;
         if sgpd.grouping_type == GROUPING_TYPE_SEIG {
             return Ok(true);
@@ -1079,19 +1058,9 @@ fn container_has_seig_sgpd(container: &[u8]) -> Result<bool> {
     Ok(false)
 }
 
-/// Descend a chain of container four-CCs from `start`, returning the innermost
-/// box's full bytes (or `None` if any link is missing).
-fn descend<'a>(start: &'a [u8], path: &[&[u8; 4]]) -> Option<&'a [u8]> {
-    let mut cur = start;
-    for fourcc in path {
-        cur = find_box(cur, fourcc)?;
-    }
-    Some(cur)
-}
-
 /// Read `mvhd.timescale` (handles version 0 and 1 layouts).
 fn mvhd_timescale(moov: &[u8]) -> Option<u32> {
-    let mvhd = find_box(moov, b"mvhd")?;
+    let mvhd = find_child_box(moov, b"mvhd")?;
     let version = mvhd.get(BOX_HEADER_MIN_SIZE)?;
     // version 0: after FullBox(4): creation(4) modification(4) timescale(4)
     // version 1: after FullBox(4): creation(8) modification(8) timescale(4)
@@ -1135,15 +1104,15 @@ fn mdhd_timescale(mdhd: &[u8]) -> Option<u32> {
 /// anything allocates (r05-C4).
 fn progressive_sample_layout(stbl: &[u8], file_len: usize) -> Result<Vec<(usize, usize)>> {
     let stsz = SampleSizeBox::parse(
-        find_box(stbl, b"stsz").ok_or(Error::UnexpectedBox { expected: "stsz" })?,
+        find_child_box(stbl, b"stsz").ok_or(Error::UnexpectedBox { expected: "stsz" })?,
     )?;
     let stsc = SampleToChunkBox::parse(
-        find_box(stbl, b"stsc").ok_or(Error::UnexpectedBox { expected: "stsc" })?,
+        find_child_box(stbl, b"stsc").ok_or(Error::UnexpectedBox { expected: "stsc" })?,
     )?;
-    let stco = find_box(stbl, b"stco")
+    let stco = find_child_box(stbl, b"stco")
         .map(ChunkOffsetBox::parse)
         .transpose()?;
-    let co64 = find_box(stbl, b"co64")
+    let co64 = find_child_box(stbl, b"co64")
         .map(ChunkLargeOffsetBox::parse)
         .transpose()?;
     sample_layout(&stsz, &stsc, co64.as_ref(), stco.as_ref(), file_len)
@@ -1725,5 +1694,106 @@ mod tests {
                 );
             }
         }
+    }
+
+    // -- #982: the private box-navigation copies were removed -------------
+
+    /// The deleted private helpers' exact logic (hardcoded 8-byte container
+    /// header skip), kept ONLY as the reference the shared helpers must agree
+    /// with on every real fixture.
+    fn legacy_children<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Vec<&'a [u8]> {
+        let body = &container[BOX_HEADER_MIN_SIZE.min(container.len())..];
+        box_slices(body).filter(|b| &b[4..8] == fourcc).collect()
+    }
+
+    /// Compare shared vs legacy child lookup for one container/four-CC.
+    fn check_agree(container: &[u8], fourcc: &[u8; 4]) {
+        let shared: Vec<&[u8]> = child_boxes(container, fourcc).collect();
+        let legacy = legacy_children(container, fourcc);
+        assert_eq!(shared, legacy);
+        assert_eq!(find_child_box(container, fourcc), legacy.first().copied());
+    }
+
+    const NAV_KIDS: [&[u8; 4]; 12] = [
+        b"trak", b"traf", b"mvhd", b"mdia", b"minf", b"stbl", b"stsd", b"tkhd", b"mdhd", b"senc",
+        b"tfhd", b"sgpd",
+    ];
+
+    /// Walk `moov`/`moof` two levels deep comparing shared vs legacy lookup;
+    /// returns the number of comparisons made.
+    fn assert_nav_agrees(file: &[u8]) -> usize {
+        let mut compared = 0usize;
+        for top in [b"moov", b"moof"] {
+            for c in box_slices(file).filter(|b| b[4..8] == *top) {
+                for kid in NAV_KIDS {
+                    check_agree(c, kid);
+                    compared += 1;
+                    for sub in child_boxes(c, kid) {
+                        for kid2 in NAV_KIDS {
+                            check_agree(sub, kid2);
+                            compared += 1;
+                        }
+                    }
+                }
+            }
+        }
+        compared
+    }
+
+    /// Shared helpers agree with the removed private copies on every real
+    /// fixture (CENC fMP4 layouts, the mixed-track MP4Box file, the cmaf and
+    /// cenc_boxes sets), so the dedup is behaviour-preserving.
+    #[test]
+    fn shared_box_nav_agrees_with_removed_private_copies_on_real_fixtures() {
+        let root = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures");
+        let mut files = Vec::new();
+        for dir in [
+            alloc::format!("{root}/cenc_frag_layouts"),
+            alloc::format!("{root}/mp4/cmaf"),
+            alloc::format!("{root}/mp4/cenc_boxes"),
+            alloc::format!("{root}"),
+        ] {
+            if let Ok(rd) = std::fs::read_dir(&dir) {
+                for e in rd.flatten() {
+                    let p = e.path();
+                    if p.extension().is_some_and(|x| x == "mp4" || x == "m4s") {
+                        files.push(p);
+                    }
+                }
+            }
+        }
+        assert!(
+            files.len() >= 10,
+            "fixtures must be found, got {}",
+            files.len()
+        );
+        let mut compared = 0;
+        for f in &files {
+            compared += assert_nav_agrees(&std::fs::read(f).unwrap());
+        }
+        assert!(
+            compared > 500,
+            "agreement walk must bite, compared {compared}"
+        );
+    }
+
+    /// Where the two paths legitimately differ: a container written in the
+    /// `largesize` form (16-byte header). The old hardcoded 8-byte skip started
+    /// mid-`largesize` and found nothing; the shared helper finds the child.
+    #[test]
+    fn largesize_container_children_are_found() {
+        let child = full_box(b"tkhd", &[0u8; 8], 0);
+        let total = 16 + child.len();
+        let mut trak = Vec::new();
+        trak.extend_from_slice(&1u32.to_be_bytes()); // size == 1 -> largesize
+        trak.extend_from_slice(b"trak");
+        trak.extend_from_slice(&(total as u64).to_be_bytes());
+        trak.extend_from_slice(&child);
+        assert_eq!(find_child_box(&trak, b"tkhd"), Some(child.as_slice()));
+        assert_eq!(child_boxes(&trak, b"tkhd").count(), 1);
+        assert!(
+            legacy_children(&trak, b"tkhd").is_empty(),
+            "the removed 8-byte skip could not see into a largesize container"
+        );
     }
 }
