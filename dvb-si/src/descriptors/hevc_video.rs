@@ -340,7 +340,11 @@ mod tests {
         d.serialize_into(&mut out).unwrap();
         // body byte 12 sits at buffer index HEADER_LEN + 12 = 14.
         assert_eq!(out[14] & 0x03, 0b10, "HDR_WCG_idc must occupy bits [1:0]");
-        assert_eq!(out[14] & 0x0C, 0x0C, "reserved bits [3:2] must serialize as 11");
+        assert_eq!(
+            out[14] & 0x0C,
+            0x0C,
+            "reserved bits [3:2] must serialize as 11"
+        );
     }
 
     /// Real HEVC_video_descriptor bytes from the TSDuck test captures

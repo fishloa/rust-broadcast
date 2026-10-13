@@ -173,9 +173,15 @@ macro_rules! declare_descriptors {
                     $($( Self::$nd_variant(d) => Some(go(d)), )+)?
                     Self::Other { .. } => None,
                     Self::Unknown { tag, body } => {
-                        let mut v = alloc::vec![*tag, body.len() as u8];
-                        v.extend_from_slice(body);
-                        Some(Ok(v))
+                        Some(
+                            broadcast_common::len::fit_u8(body.len(), "descriptor_length")
+                                .map(|n| {
+                                    let mut v = alloc::vec![*tag, n];
+                                    v.extend_from_slice(body);
+                                    v
+                                })
+                                .map_err(|e| alloc::format!("{e:?}")),
+                        )
                     }
                 }
             }
