@@ -12,6 +12,7 @@
 //! without downloads.
 #![cfg(feature = "ts")]
 
+use mpeg_ts::pid::Pid;
 use std::fs;
 use std::path::Path;
 
@@ -62,7 +63,7 @@ fn france_tnt_lcn_descriptors_parse() {
         for ev in demux.feed(chunk) {
             // collector.push_section_with_pid returns Some if the set just completed.
             let pid = Some(u16::from(ev.pid()));
-            let complete = match collector.push_section_with_pid(pid, ev.bytes()) {
+            let complete = match collector.push_section_with_pid(pid.map(Pid::new), ev.bytes()) {
                 Ok(Some(set)) => set,
                 _ => continue,
             };

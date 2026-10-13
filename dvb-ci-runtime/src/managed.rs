@@ -712,7 +712,7 @@ mod tests {
         assert!(m.services().get(&1).is_none());
         assert_eq!(
             m.descramble_pids(),
-            &[0x200],
+            &[Pid::new(0x200)],
             "descramble_pids must recompute (drop program 1's PIDs) after remove"
         );
     }
@@ -802,7 +802,7 @@ mod tests {
 
         assert_eq!(
             m.ca_pids(),
-            &[0x0064, 0x0065, 0x0066],
+            &[Pid::new(0x0064), Pid::new(0x0065), Pid::new(0x0066)],
             "ca_pids must be the dedup+sorted union of both services' ca_pids"
         );
 
@@ -814,11 +814,11 @@ mod tests {
             private_data: Vec::new(),
         }]);
         m.set_cam_caids([0x0648].into_iter().collect());
-        assert_eq!(m.emm_pids(), &[0x1FF0], "precondition: emm_pids populated");
+        assert_eq!(m.emm_pids(), &[Pid::new(0x1FF0)], "precondition: emm_pids populated");
 
         assert_eq!(
             m.required_pids(),
-            vec![0x0064, 0x0065, 0x0066, 0x0100, 0x0101, 0x0200, 0x1FF0],
+            vec![Pid::new(0x0064), Pid::new(0x0065), Pid::new(0x0066), Pid::new(0x0100), Pid::new(0x0101), Pid::new(0x0200), Pid::new(0x1FF0)],
             "required_pids must be descramble_pids ∪ ca_pids ∪ emm_pids"
         );
     }
@@ -842,8 +842,8 @@ mod tests {
 
         let svc = service_of(&pmt, CaPmtCmdId::OkDescrambling, vec![], vec![]);
         assert_eq!(svc.pcr_pid, Pid::new(0x00FF), "service_of must capture pmt.pcr_pid");
-        assert_eq!(svc.es_pids, vec![0x0100, 0x0101]);
-        assert_eq!(svc.ca_pids, vec![0x0064, 0x0065]);
+        assert_eq!(svc.es_pids, vec![Pid::new(0x0100), Pid::new(0x0101)]);
+        assert_eq!(svc.ca_pids, vec![Pid::new(0x0064), Pid::new(0x0065)]);
 
         let mut m = ManagedCa::new();
         m.record(1550, svc);
@@ -878,7 +878,7 @@ mod tests {
         );
         assert_eq!(
             m.required_pids(),
-            vec![0x0064, 0x0100],
+            vec![Pid::new(0x0064), Pid::new(0x0100)],
             "PCR_PID_NONE (0x1FFF) must never be added to required_pids"
         );
     }
@@ -904,7 +904,7 @@ mod tests {
         );
         assert_eq!(
             m.required_pids(),
-            vec![0x0064, 0x0100],
+            vec![Pid::new(0x0064), Pid::new(0x0100)],
             "a pcr_pid coinciding with an ES PID must not duplicate/add a spurious entry"
         );
     }

@@ -1905,8 +1905,8 @@ pub(crate) mod tests {
             .services()
             .get(&1546)
             .expect("program_number 1546 must be tracked after add_service");
-        assert_eq!(svc.es_pids, vec![0x0100, 0x0101]);
-        assert_eq!(svc.ca_pids, vec![0x0064, 0x0065]);
+        assert_eq!(svc.es_pids, vec![Pid::new(0x0100), Pid::new(0x0101)]);
+        assert_eq!(svc.ca_pids, vec![Pid::new(0x0064), Pid::new(0x0065)]);
         assert_eq!(svc.cmd, CaPmtCmdId::OkDescrambling);
         assert_eq!(svc.last_ca_enable, None);
     }
@@ -2361,7 +2361,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             d.emm_pids(),
-            &[0x1FF0],
+            &[Pid::new(0x1FF0)],
             "0x0500 -> 0x1FF1 must be excluded: the CAM never advertised CAID 0x0500"
         );
     }
@@ -2405,7 +2405,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             d.emm_pids(),
-            &[0x1FF0],
+            &[Pid::new(0x1FF0)],
             "emm_pids must recompute once ca_info arrives, using the CAT stored by the earlier set_cat"
         );
     }
@@ -2447,7 +2447,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             d.emm_pids(),
-            &[0x1FF0],
+            &[Pid::new(0x1FF0)],
             "0x1FF0 must appear exactly once even though two CAM-advertised CAIDs map to it, got {:?}",
             d.emm_pids()
         );
@@ -2514,7 +2514,7 @@ pub(crate) mod tests {
         d.device_mut().inbound.push_back(sb());
         d.pump(Duration::from_millis(10)).unwrap();
 
-        assert_eq!(d.descramble_pids(), &[0x0100, 0x0101]);
+        assert_eq!(d.descramble_pids(), &[Pid::new(0x0100), Pid::new(0x0101)]);
 
         let pmt2_bytes = build_ca_pmt_fixture_distinct_pids(1547);
         let pmt2 = PmtSection::parse(&pmt2_bytes).unwrap();
@@ -2525,7 +2525,7 @@ pub(crate) mod tests {
         // Union of both programmes' ES PIDs, sorted.
         assert_eq!(
             d.descramble_pids(),
-            &[0x0100, 0x0101, 0x0200, 0x0201],
+            &[Pid::new(0x0100), Pid::new(0x0101), Pid::new(0x0200), Pid::new(0x0201)],
             "descramble_pids must be the union across both added services"
         );
     }
@@ -3053,7 +3053,7 @@ pub(crate) mod tests {
 
         assert_eq!(
             d.descramble_pids(),
-            &[0x0200, 0x0201],
+            &[Pid::new(0x0200), Pid::new(0x0201)],
             "1546's ES PIDs must be gone; 1547's must remain"
         );
         assert!(

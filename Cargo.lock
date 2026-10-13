@@ -3569,6 +3569,7 @@ dependencies = [
  "broadcast-common",
  "dvb-t2mi",
  "hex",
+ "mpeg-ts",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

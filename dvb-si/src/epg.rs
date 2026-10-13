@@ -90,6 +90,7 @@
 //! a new one begins.  Callers scanning a full carousel cycle can `clear()` and
 //! start fresh, or `retain_services` to keep only the active service list.
 
+use mpeg_ts::pid::Pid;
 use crate::collect::CollectResult;
 use crate::tables::RunningStatus;
 use alloc::collections::BTreeMap;
@@ -481,7 +482,7 @@ impl EpgStore {
     }
 
     /// Feed one EIT section with PID context into the store.
-    pub fn feed_with_pid(&mut self, pid: Option<u16>, bytes: &[u8]) -> CollectResult<()> {
+    pub fn feed_with_pid(&mut self, pid: Option<Pid>, bytes: &[u8]) -> CollectResult<()> {
         if let Some(completed) = self.collector.push_section_with_pid(pid, bytes)? {
             let tables = completed.tables()?;
             for table in &tables {

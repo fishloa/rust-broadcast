@@ -1,3 +1,4 @@
+use mpeg_ts::pid::Pid;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec;
@@ -133,7 +134,7 @@ impl EitCollector {
     /// Push one complete EIT section with PID context.
     pub fn push_section_with_pid(
         &mut self,
-        pid: Option<u16>,
+        pid: Option<Pid>,
         bytes: impl AsRef<[u8]>,
     ) -> CollectResult<Option<CompletedEit>> {
         let raw = bytes.as_ref();
@@ -385,7 +386,7 @@ impl CompletedEit {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct EitLogicalKey {
     /// Optional PID context supplied by the caller.
-    pub pid: Option<u16>,
+    pub pid: Option<Pid>,
     /// EIT kind derived from table_id.
     pub kind: eit::EitKind,
     /// service_id.
