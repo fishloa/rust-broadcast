@@ -16,6 +16,7 @@
 //! container's raw (pre-unwrap) wire stamps survive only as debug-only
 //! [`Provenance`], which no mux/demux logic in this crate reads back.
 
+use crate::TrackId;
 use bytes::Bytes;
 
 use crate::annexb::annexb_to_length_prefixed;
@@ -209,7 +210,7 @@ impl Sample {
 #[non_exhaustive]
 pub struct FragmentTrackData<'a> {
     /// Track ID matching a [`crate::ir::TrackSpec`] from the init segment.
-    pub track_id: u32,
+    pub track_id: TrackId,
     /// The decode time of the first sample, in media-timescale ticks.
     pub base_media_decode_time: u64,
     /// The samples for this fragment, in decode order.
@@ -219,7 +220,7 @@ pub struct FragmentTrackData<'a> {
 impl<'a> FragmentTrackData<'a> {
     /// Build one track's fragment payload from its `tfdt` anchor and its
     /// samples in decode order.
-    pub fn new(track_id: u32, base_media_decode_time: u64, samples: &'a [Sample]) -> Self {
+    pub fn new(track_id: TrackId, base_media_decode_time: u64, samples: &'a [Sample]) -> Self {
         Self {
             track_id,
             base_media_decode_time,

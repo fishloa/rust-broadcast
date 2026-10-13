@@ -74,6 +74,7 @@
 //! [`aes`], [`ctr`], and [`cbc`] crates for the block cipher and mode work.
 //! This module is gated on the `cenc` feature.
 
+use crate::TrackId;
 use core::fmt;
 
 use alloc::collections::BTreeMap;
@@ -154,7 +155,7 @@ struct TrackCrypto {
     /// The track's real `tkhd.track_id` (used to match this track's samples in
     /// [`crate::media::Media`], and to match `moof`/`traf` fragments by
     /// `tfhd.track_id` in [`harvest_fragment_senc`]).
-    track_id: u32,
+    track_id: TrackId,
     /// The `tenc` defaults (KID, IV size, protection flag, and — for `cbcs` —
     /// the pattern's `crypt`:`skip` block counts and optional constant IV).
     tenc: TrackEncryptionBox,
@@ -863,7 +864,7 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
 /// caller, [`demux_protected`], already has that from `moov`).
 fn collect_fragment_samples(
     file: &bytes::Bytes,
-    target_track_id: u32,
+    target_track_id: TrackId,
 ) -> Result<Vec<crate::pipeline::Sample>> {
     let mut out = Vec::new();
     let mut offset = 0usize;
@@ -953,7 +954,7 @@ fn absorb_protected_fragment(
     mdats: &[crate::frag_offsets::MdatRange],
     moof_off: usize,
     moof: &MovieFragmentBox,
-    target_track_id: u32,
+    target_track_id: TrackId,
     next_dts: &mut i64,
     out: &mut Vec<crate::pipeline::Sample>,
 ) -> Result<()> {
@@ -1246,7 +1247,7 @@ mod tests {
         }
     }
 
-    fn crypto(track_id: u32, iv: &[u8; 8]) -> TrackCrypto {
+    fn crypto(track_id: TrackId, iv: &[u8; 8]) -> TrackCrypto {
         TrackCrypto {
             track_id,
             tenc: tenc(),
@@ -1300,7 +1301,7 @@ mod tests {
     }
 
     /// One track's `Media`, its samples already encrypted with `iv`.
-    fn encrypted_media(track_id: u32, iv: &[u8; 8]) -> Media {
+    fn encrypted_media(track_id: TrackId, iv: &[u8; 8]) -> Media {
         let samples = (0..SAMPLES_PER_TRACK)
             .map(|i| {
                 let mut buf = plaintext(i);

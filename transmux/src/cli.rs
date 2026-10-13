@@ -22,6 +22,7 @@
 //!
 //! Only this module (and `main.rs`) is `std`; the library stays `no_std`.
 
+use crate::TrackId;
 use std::fmt;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -498,7 +499,7 @@ pub struct Opts {
     /// not bake a third-party time server into an offline artefact.
     pub utc_timing_url: Option<String>,
     /// Track-ID selection; empty = all tracks.
-    pub tracks: Vec<u32>,
+    pub tracks: Vec<TrackId>,
 }
 
 impl Default for Opts {
@@ -565,7 +566,7 @@ fn flv_reason(_e: crate::flv::FlvError) -> &'static str {
 /// [`Error::InvalidInput`](crate::Error::InvalidInput) if filtering would
 /// leave no track at all.
 fn filter_for_bmff_mux(media: &Media) -> CliResult<Media> {
-    let dropped: Vec<u32> = media
+    let dropped: Vec<TrackId> = media
         .tracks
         .iter()
         .filter(|t| !t.spec.config.is_muxable_in_bmff())
@@ -788,7 +789,7 @@ fn segment_track_ranges(media: &Media, target_secs: u32) -> CliResult<Vec<TrackS
 /// # Errors
 /// [`Error::InvalidInput`](crate::Error::InvalidInput) when the segment's boxes
 /// cannot be parsed.
-fn segment_track_fragments(segment: &[u8]) -> CliResult<Vec<(u32, u32, u64)>> {
+fn segment_track_fragments(segment: &[u8]) -> CliResult<Vec<(TrackId, u32, u64)>> {
     use crate::box_types::parse_box;
     use crate::movie_fragment::MovieFragmentBox;
 
@@ -1238,7 +1239,7 @@ pub fn run(args: Args) -> CliResult<(Container, OutputFormat)> {
         segment_duration: args.segment_duration,
         low_latency: args.ll,
         utc_timing_url: args.utc_timing_url.clone(),
-        tracks: args.tracks.clone(),
+        tracks: args.tracks.iter().copied().map(TrackId::new).collect(),
     };
 
     #[cfg(feature = "cenc")]

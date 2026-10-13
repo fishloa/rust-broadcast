@@ -50,6 +50,7 @@
 mod audio_meta;
 mod codec;
 mod event;
+mod ids;
 mod media;
 mod sample;
 mod track;
@@ -60,6 +61,7 @@ pub use audio_meta::{
 };
 pub use codec::{CodecConfig, DataCarriage, SubtitleFormat};
 pub use event::{AbandonReason, DemuxEvent, DiscontinuityKind, EventProvenance, InputDegradation};
+pub use ids::{ProgramNumber, TrackId};
 pub use media::{Media, PcrSample, SkippedTrack};
 pub use sample::{FragmentTrackData, Provenance, Sample, SampleFlags};
 pub use track::{Track, TrackEncryption, TrackSpec};

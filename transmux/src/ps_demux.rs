@@ -54,6 +54,7 @@
 //!   header (`substream_id` + `number_of_frames` + `first_access_unit_pointer`)
 //!   precedes the AC-3 syncframes.
 
+use crate::TrackId;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -551,7 +552,7 @@ impl<'a> PsDemux<'a> {
 
         // ── Pass 2: build one track per elementary stream, in first-seen order ──
         let mut tracks: Vec<Track> = Vec::new();
-        let mut track_id: u32 = 1;
+        let mut track_id = TrackId::new(1);
         for key in &order {
             let es = &streams[key];
             let built = match es.codec {
@@ -574,7 +575,7 @@ impl<'a> PsDemux<'a> {
             };
             if let Some(track) = built {
                 tracks.push(track);
-                track_id += 1;
+                track_id = track_id.next();
             }
         }
 
@@ -767,7 +768,7 @@ fn assign_stamps(ranges: &[(usize, usize)], stamps: &[Stamp]) -> Vec<(Option<u64
 /// whole file — one sample, one IDR flag (r04-W21). Each unit is then stamped
 /// with the PES-level PTS/DTS at its fragment start and emitted in decode
 /// order. Returns `None` if in-band SPS/PPS cannot be found (skip, never fatal).
-fn build_h264_track(es: &ElementaryStream, track_id: u32) -> MaybeTrack {
+fn build_h264_track(es: &ElementaryStream, track_id: TrackId) -> MaybeTrack {
     let Some(ranges) = split_h264_access_units(&es.es_bytes)? else {
         return Ok(None);
     };
@@ -884,7 +885,7 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> MaybeTrack {
 /// build one raw sample per picture (C6, #1009). Returns `None` if no
 /// `picture_start_code` is found (skip, never fatal) — the sequence header
 /// itself was already confirmed present by the caller.
-fn build_mpeg2_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
+fn build_mpeg2_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
     let seq = Mpeg2SeqHeader::find(&es.es_bytes).ok()?;
     let ranges = split_mpeg2_pictures(&es.es_bytes);
     if ranges.is_empty() {
@@ -1061,7 +1062,7 @@ fn split_ac3_frames(data: &[u8]) -> Vec<(usize, usize)> {
 
 /// Recover AC-3 config (syncframe BSI → `dac3`) + one raw sample per syncframe.
 /// Returns `None` if no valid AC-3 syncframe is found (skip, never fatal).
-fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
+fn build_ac3_track(es: &ElementaryStream, track_id: TrackId) -> Option<Track> {
     let info = Ac3SyncframeInfo::from_es(&es.es_bytes).ok()?;
     let sample_rate = info.sample_rate;
     let channel_count = info.channel_count() as u16;

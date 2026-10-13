@@ -36,6 +36,7 @@
 //! [`quick_xml::Writer`] (`std` feature; every attribute value and text node is
 //! escaped by quick-xml). Integer arithmetic only.
 
+use crate::TrackId;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -213,7 +214,7 @@ impl Serialize for TfxdBox {
 #[derive(Debug, Clone)]
 pub struct SmoothFragment {
     /// Track ID this fragment belongs to.
-    pub track_id: u32,
+    pub track_id: TrackId,
     /// `mfhd.sequence_number` (1-based, monotonically increasing).
     pub sequence_number: u32,
     /// Fragment start time, in [`SMOOTH_TIMESCALE`] ticks (the `c@t` on the first).
@@ -746,7 +747,7 @@ fn to_smooth_signed(ticks: i64, media_timescale: u32) -> i64 {
 /// `tfxd`). Smooth fragments carry timing via the `tfxd` box, so no `tfdt` is
 /// emitted (the fragment is addressed by its manifest start time).
 fn build_smooth_fragment(
-    track_id: u32,
+    track_id: TrackId,
     sequence_number: u32,
     start_smooth: u64,
     dur_smooth: u64,

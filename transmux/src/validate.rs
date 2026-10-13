@@ -60,6 +60,7 @@
 //! - **`track.mfhd.sequence`** (WARNING) — `mfhd.sequence_number` should be
 //!   strictly increasing across segments (§8.8.5).
 
+use crate::TrackId;
 use crate::box_types::{BoxRef, box_iter};
 use crate::movie_fragment::{
     MovieFragmentBox, MovieFragmentHeaderBox, TFHD_DEFAULT_BASE_IS_MOOF,
@@ -327,7 +328,7 @@ struct TrafInfo {
     /// trafs by, so a segment whose tracks are sparse or reordered is compared
     /// against the right predecessor (audit r05-W30b: pairing by traf *index*
     /// mis-paired them).
-    track_id: Option<u32>,
+    track_id: Option<TrackId>,
     tfdt: Option<u64>,
     /// Sum of the `trun` sample durations across all `trun` of this `traf`.
     total_duration: u64,
@@ -353,7 +354,7 @@ struct MediaInfo {
 
 /// One media segment's aggregate for a single track (across all its `moof`s).
 struct TrackFragmentInfo {
-    track_id: u32,
+    track_id: TrackId,
     /// Lowest `tfdt` seen for the track in this segment.
     first_tfdt: Option<u64>,
     /// Highest `tfdt + Σ durations` seen for the track in this segment.
@@ -839,7 +840,7 @@ fn child_whole<'a>(owner: &'a [u8], parent_body: &'a [u8], fourcc: &[u8; 4]) -> 
 
 /// The `track_id`s an init segment declares, from every `moov > trak > tkhd`
 /// (ISO/IEC 14496-12 §8.3.2). Empty when no `moov`/`tkhd` can be parsed.
-fn init_track_ids(init: &[u8]) -> Vec<u32> {
+fn init_track_ids(init: &[u8]) -> Vec<TrackId> {
     use crate::init_segment::TrackHeaderBox;
     use broadcast_common::Parse;
 

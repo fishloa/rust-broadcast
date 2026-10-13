@@ -15,6 +15,7 @@
 //! which packet) moves into [`EventProvenance`] — `None`/absent for a
 //! container that has no such identity (FLV has no PID concept at all).
 
+use crate::TrackId;
 use super::sample::Sample;
 use super::track::TrackSpec;
 use mpeg_ts::pid::Pid;
@@ -222,7 +223,7 @@ pub enum DemuxEvent {
     #[non_exhaustive]
     TrackRemoved {
         /// The removed track's ID (matches a prior [`DemuxEvent::TrackAdded`]).
-        track_id: u32,
+        track_id: TrackId,
         /// Container-native identity for this observation (e.g. the TS PID),
         /// when the container has one.
         provenance: EventProvenance,
@@ -237,7 +238,7 @@ pub enum DemuxEvent {
         /// Always `None` today (see the field doc) — carried as `Option` so
         /// a future abandonment path that *does* have an assigned track_id
         /// is not a breaking change.
-        track_id: Option<u32>,
+        track_id: Option<TrackId>,
         /// Why this track was abandoned.
         reason: AbandonReason,
         /// Container-native identity for this observation (e.g. the TS PID),
@@ -250,7 +251,7 @@ pub enum DemuxEvent {
     #[non_exhaustive]
     Sample {
         /// The owning track's ID (matches a prior [`DemuxEvent::TrackAdded`]).
-        track_id: u32,
+        track_id: TrackId,
         /// The coded sample.
         sample: Sample,
     },
@@ -282,7 +283,7 @@ pub enum DemuxEvent {
         /// PID/stream had already resolved to one at the time it fired.
         /// `None` before that resolution (never fabricated) — a discontinuity
         /// can legitimately be observed on a PID whose track isn't known yet.
-        track: Option<u32>,
+        track: Option<TrackId>,
         /// What kind of discontinuity this is.
         kind: DiscontinuityKind,
         /// Container-native identity for this observation (e.g. the TS PID),
@@ -301,7 +302,7 @@ pub enum DemuxEvent {
         /// PID/stream had already resolved to one at the time it fired.
         /// `None` before that resolution (never fabricated) — degradation
         /// can legitimately be observed on a PID whose track isn't known yet.
-        track: Option<u32>,
+        track: Option<TrackId>,
         /// What degraded.
         kind: InputDegradation,
         /// Container-native identity for this observation (e.g. the TS PID),
@@ -362,7 +363,7 @@ impl DemuxEvent {
     /// Construct a [`DemuxEvent::Discontinuity`] — see
     /// [`Self::clock_reference`] for why this variant needs a constructor.
     pub fn discontinuity(
-        track: Option<u32>,
+        track: Option<TrackId>,
         kind: DiscontinuityKind,
         provenance: EventProvenance,
     ) -> Self {
@@ -375,7 +376,7 @@ impl DemuxEvent {
 
     /// Construct a [`DemuxEvent::TrackRemoved`] — see
     /// [`Self::clock_reference`] for why this variant needs a constructor.
-    pub fn track_removed(track_id: u32, provenance: EventProvenance) -> Self {
+    pub fn track_removed(track_id: TrackId, provenance: EventProvenance) -> Self {
         DemuxEvent::TrackRemoved {
             track_id,
             provenance,
@@ -385,7 +386,7 @@ impl DemuxEvent {
     /// Construct a [`DemuxEvent::TrackAbandoned`] — see
     /// [`Self::clock_reference`] for why this variant needs a constructor.
     pub fn track_abandoned(
-        track_id: Option<u32>,
+        track_id: Option<TrackId>,
         reason: AbandonReason,
         provenance: EventProvenance,
     ) -> Self {
@@ -398,14 +399,14 @@ impl DemuxEvent {
 
     /// Construct a [`DemuxEvent::Sample`] — see [`Self::clock_reference`] for
     /// why this variant needs a constructor.
-    pub fn sample(track_id: u32, sample: Sample) -> Self {
+    pub fn sample(track_id: TrackId, sample: Sample) -> Self {
         DemuxEvent::Sample { track_id, sample }
     }
 
     /// Construct a [`DemuxEvent::InputDegraded`] — see
     /// [`Self::clock_reference`] for why this variant needs a constructor.
     pub fn input_degraded(
-        track: Option<u32>,
+        track: Option<TrackId>,
         kind: InputDegradation,
         provenance: EventProvenance,
     ) -> Self {

@@ -139,6 +139,7 @@
 //! - **Byte-stream resynchronisation**: ISO/IEC 13818-1 §2.4.3.2, via
 //!   [`mpeg_ts::resync::TsResync`] (also strips 204-byte Reed-Solomon FEC).
 
+use crate::{ProgramNumber, TrackId};
 use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
@@ -1483,7 +1484,7 @@ enum LiveKind {
 }
 
 struct LiveTrack {
-    track_id: u32,
+    track_id: TrackId,
     kind: LiveKind,
     /// This track's current codec config, retained so a later PMT metadata
     /// change (issue #774) and a mid-stream config change (r04-W51) can
@@ -1839,7 +1840,7 @@ fn advance_one_behind(
     pts_uw: i128,
     dts_uw: i128,
     duration_from_pts: bool,
-    track_id: u32,
+    track_id: TrackId,
     events: &mut VecDeque<DemuxEvent>,
 ) {
     if let Some(prev) = pending.take() {
@@ -1877,7 +1878,7 @@ fn advance_one_behind(
 fn flush_one_behind(
     pending: &mut Option<PendingOneBehind>,
     last_duration: u32,
-    track_id: u32,
+    track_id: TrackId,
     events: &mut VecDeque<DemuxEvent>,
 ) {
     if let Some(p) = pending.take() {
@@ -2104,7 +2105,7 @@ fn emit_audio_au(
     au_data: &[u8],
     pts_uw: i128,
     dts_uw: i128,
-    track_id: u32,
+    track_id: TrackId,
     events: &mut VecDeque<DemuxEvent>,
 ) {
     // Resolve this AU's track-tick base: reuse the running frame-exact
@@ -3733,7 +3734,7 @@ pub struct StreamingTsDemux {
     /// track_id assigned and `TrackAdded` fired) or abandoned (config never
     /// recoverable / no access units ever arrived, concluded at `finish()`).
     resolved: BTreeSet<Pid>,
-    next_track_id: u32,
+    next_track_id: TrackId,
     events: VecDeque<DemuxEvent>,
     /// Monotonic track-set generation (issue #774): bumped exactly once per
     /// *applied* PMT diff (add/update/remove), never per PID count. This is
@@ -3799,7 +3800,7 @@ impl StreamingTsDemux {
             codec_order: Vec::new(),
             data_order: Vec::new(),
             resolved: BTreeSet::new(),
-            next_track_id: 1,
+            next_track_id: TrackId::new(1),
             events: VecDeque::new(),
             generation: 0,
             tracks_resolved_signalled_at: None,
@@ -3824,7 +3825,7 @@ impl StreamingTsDemux {
     /// fabricated) when the PID is not yet known, still `Probing`/`Parked`,
     /// or has no [`StreamState`] at all (e.g. a discontinuity observed before
     /// this PID's PMT entry has been seen).
-    fn live_track_id(&self, pid: Pid) -> Option<u32> {
+    fn live_track_id(&self, pid: Pid) -> Option<TrackId> {
         match self.streams.get(&pid)?.track.as_ref()? {
             TrackState::Live(live) => Some(live.track_id),
             _ => None,
@@ -4672,7 +4673,7 @@ impl StreamingTsDemux {
                     backlog,
                 } => {
                     let track_id = self.next_track_id;
-                    self.next_track_id += 1;
+                    self.next_track_id = track_id.next();
                     // `Track::start_decode_time` is no longer carried by this
                     // event (issue #774 reshape dropped it along with
                     // `samples`/`encryption` when `TrackAdded` became
@@ -4689,7 +4690,7 @@ impl StreamingTsDemux {
                         .get(&next_pid)
                         .and_then(|pmt_pids| pmt_pids.iter().next())
                         .and_then(|&pmt_pid| self.pmt_reasm.get(&pmt_pid))
-                        .map(|state| state.program_number);
+                        .map(|state| ProgramNumber::new(state.program_number));
                     let spec = if let Some(pn) = program_number {
                         spec.with_program(pn)
                     } else {
@@ -4974,7 +4975,7 @@ impl<'a> TsDemux<'a> {
         demux.finish();
 
         let mut tracks: Vec<Track> = Vec::new();
-        let mut index_by_id: BTreeMap<u32, usize> = BTreeMap::new();
+        let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
         let mut pcr: Vec<PcrSample> = Vec::new();
         while let Some(event) = demux.poll_event() {
             match event {

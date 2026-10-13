@@ -69,6 +69,7 @@
 //! parsing Dolby bytes as an AudioSpecificConfig would silently yield a garbage
 //! AAC track.
 
+use crate::TrackId;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
@@ -901,7 +902,7 @@ const AVC_NAL_PPS: u8 = 8;
 /// `FourCC` matching is case-insensitive (real manifests use `AACL` and
 /// `aacl`); any unrecognised token is [`crate::Error::UnsupportedCodec`].
 pub fn track_spec_from_quality_level(
-    track_id: u32,
+    track_id: TrackId,
     timescale: u32,
     stream_type: StreamType,
     quality: &QualityLevel,

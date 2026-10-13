@@ -87,6 +87,7 @@
 //!
 //! `no_std` + `alloc`.
 
+use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
@@ -123,7 +124,7 @@ struct PendingSample {
 struct TrackState {
     /// `Some` once this track's codec config has been recovered and
     /// [`DemuxEvent::TrackAdded`] fired for it.
-    track_id: Option<u32>,
+    track_id: Option<TrackId>,
     pending: Option<PendingSample>,
     /// The last computed forward-delta duration, reused for the final
     /// sample's duration at [`finish`](StreamingFlvDemux::finish) (or `0` if
@@ -197,7 +198,7 @@ pub struct StreamingFlvDemux {
     header_seen: bool,
     video: TrackState,
     audio: TrackState,
-    next_track_id: u32,
+    next_track_id: TrackId,
     /// Pending events, drained one at a time via
     /// [`poll_event`](Self::poll_event) — mirrors
     /// [`StreamingTsDemux`](crate::ts_demux::StreamingTsDemux)'s internal
@@ -228,7 +229,7 @@ impl StreamingFlvDemux {
             header_seen: false,
             video: TrackState::default(),
             audio: TrackState::default(),
-            next_track_id: 1,
+            next_track_id: TrackId::new(1),
             events: VecDeque::new(),
             #[cfg(test)]
             bytes_moved: 0,
@@ -430,7 +431,7 @@ impl StreamingFlvDemux {
     fn process_tag(
         video: &mut TrackState,
         audio: &mut TrackState,
-        next_track_id: &mut u32,
+        next_track_id: &mut TrackId,
         tag_type_byte: u8,
         timestamp: u32,
         body: &[u8],
@@ -450,7 +451,7 @@ impl StreamingFlvDemux {
 
     fn process_video_tag(
         video: &mut TrackState,
-        next_track_id: &mut u32,
+        next_track_id: &mut TrackId,
         timestamp: u32,
         body: &[u8],
         events: &mut VecDeque<DemuxEvent>,
@@ -520,7 +521,7 @@ impl StreamingFlvDemux {
                     }
                     None => {
                         let track_id = *next_track_id;
-                        *next_track_id += 1;
+                        *next_track_id = track_id.next();
                         video.track_id = Some(track_id);
                         video.config_bytes.clear();
                         video.config_bytes.extend_from_slice(data);
@@ -568,7 +569,7 @@ impl StreamingFlvDemux {
 
     fn process_audio_tag(
         audio: &mut TrackState,
-        next_track_id: &mut u32,
+        next_track_id: &mut TrackId,
         timestamp: u32,
         body: &[u8],
         events: &mut VecDeque<DemuxEvent>,
@@ -621,7 +622,7 @@ impl StreamingFlvDemux {
                     }
                     None => {
                         let track_id = *next_track_id;
-                        *next_track_id += 1;
+                        *next_track_id = track_id.next();
                         audio.track_id = Some(track_id);
                         audio.config_bytes.clear();
                         audio.config_bytes.extend_from_slice(data);

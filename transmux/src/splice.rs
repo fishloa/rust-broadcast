@@ -103,6 +103,7 @@
 //! explicitly supplied time / point; a later transform can compute those points
 //! from SCTE-35 and feed them here.
 
+use crate::TrackId;
 use alloc::vec::Vec;
 
 use crate::error::{Error, Result};
@@ -118,7 +119,7 @@ use crate::pipeline::{CodecConfig, Sample};
 #[non_exhaustive]
 pub struct SplicePoint {
     /// The track this join occurs on.
-    pub track_id: u32,
+    pub track_id: TrackId,
     /// Index, within the resulting track's `samples`, of the first sample of the
     /// spliced-in contribution (the sample that opens the discontinuous region).
     pub sample_index: usize,

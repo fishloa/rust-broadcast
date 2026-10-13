@@ -7,14 +7,14 @@
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
-use super::{CodecConfig, Sample};
+use super::{CodecConfig, ProgramNumber, Sample, TrackId};
 
 /// A track's identity + codec config, used to build the init segment.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
 pub struct TrackSpec {
     /// Track ID (1-based, unique within the movie).
-    pub track_id: u32,
+    pub track_id: TrackId,
     /// Media timescale (ticks per second, e.g. 90000 for video).
     pub timescale: u32,
     /// Codec configuration + dimensions.
@@ -28,13 +28,13 @@ pub struct TrackSpec {
     pub es_info_descriptors: Vec<u8>,
     /// MPEG-2 TS program_number from the declaring PMT (ISO/IEC 13818-1
     /// §2.4.4.3); `None` for non-TS sources (fMP4/FLV/WebM/PS/RTP).
-    pub program_number: Option<u16>,
+    pub program_number: Option<ProgramNumber>,
 }
 
 impl TrackSpec {
     /// A track spec with no TS provenance (`source_pid = None`, no ES_info
     /// descriptors) — the common case for every non-TS demuxer/transform.
-    pub fn new(track_id: u32, timescale: u32, config: CodecConfig) -> Self {
+    pub fn new(track_id: TrackId, timescale: u32, config: CodecConfig) -> Self {
         Self {
             track_id,
             timescale,
@@ -54,7 +54,7 @@ impl TrackSpec {
     }
 
     /// Attach the TS program_number from the declaring PMT.
-    pub fn with_program(mut self, program_number: u16) -> Self {
+    pub fn with_program(mut self, program_number: ProgramNumber) -> Self {
         self.program_number = Some(program_number);
         self
     }
@@ -138,7 +138,7 @@ impl Track {
     }
 
     /// Track ID (1-based, unique within the movie).
-    pub fn track_id(&self) -> u32 {
+    pub fn track_id(&self) -> TrackId {
         self.spec.track_id
     }
 

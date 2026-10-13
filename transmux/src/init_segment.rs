@@ -9,6 +9,7 @@
 //! the `timing` module and `AVCSampleEntry` etc. from
 //! `sample_entries`.
 
+use crate::TrackId;
 use crate::box_types::box_iter;
 use crate::error::{Error, Result};
 use crate::media::TrackEncryption;
@@ -506,7 +507,7 @@ pub struct MovieHeaderBox {
     pub rate: u32,
     pub volume: u16,
     pub matrix: [i32; 9],
-    pub next_track_id: u32,
+    pub next_track_id: TrackId,
 }
 
 impl<'a> Parse<'a> for MovieHeaderBox {
@@ -552,7 +553,7 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                     i32::from_be_bytes([bytes[72], bytes[73], bytes[74], bytes[75]]),
                     i32::from_be_bytes([bytes[76], bytes[77], bytes[78], bytes[79]]),
                 ],
-                next_track_id: u32::from_be_bytes([bytes[104], bytes[105], bytes[106], bytes[107]]),
+                next_track_id: TrackId::new(u32::from_be_bytes([bytes[104], bytes[105], bytes[106], bytes[107]])),
             })
         } else {
             // v1 body (ISO/IEC 14496-12 §8.2.2.2): the 8-byte creation/
@@ -597,7 +598,7 @@ impl<'a> Parse<'a> for MovieHeaderBox {
                     i32::from_be_bytes([bytes[84], bytes[85], bytes[86], bytes[87]]),
                     i32::from_be_bytes([bytes[88], bytes[89], bytes[90], bytes[91]]),
                 ],
-                next_track_id: u32::from_be_bytes([bytes[116], bytes[117], bytes[118], bytes[119]]),
+                next_track_id: TrackId::new(u32::from_be_bytes([bytes[116], bytes[117], bytes[118], bytes[119]])),
             })
         }
     }
@@ -656,7 +657,7 @@ impl Serialize for MovieHeaderBox {
         }
         buf[c..c + 24].fill(0);
         c += 24; // pre_defined
-        buf[c..c + 4].copy_from_slice(&self.next_track_id.to_be_bytes());
+        buf[c..c + 4].copy_from_slice(&self.next_track_id.value().to_be_bytes());
         c += 4;
         Ok(c)
     }
@@ -676,7 +677,7 @@ pub struct TrackHeaderBox {
     pub flags: u32,
     pub creation_time: u64,
     pub modification_time: u64,
-    pub track_id: u32,
+    pub track_id: TrackId,
     pub duration: u64,
     pub layer: i16,
     pub alternate_group: i16,
@@ -716,7 +717,7 @@ impl<'a> Parse<'a> for TrackHeaderBox {
                 flags,
                 creation_time: ct,
                 modification_time: mt,
-                track_id: tid,
+                track_id: TrackId::new(tid),
                 duration: dur,
                 layer: i16::from_be_bytes([bytes[40], bytes[41]]),
                 alternate_group: i16::from_be_bytes([bytes[42], bytes[43]]),
@@ -748,7 +749,7 @@ impl<'a> Parse<'a> for TrackHeaderBox {
                 flags,
                 creation_time: ct,
                 modification_time: mt,
-                track_id: tid,
+                track_id: TrackId::new(tid),
                 duration: dur,
                 layer: i16::from_be_bytes([bytes[52], bytes[53]]),
                 alternate_group: i16::from_be_bytes([bytes[54], bytes[55]]),
@@ -794,7 +795,7 @@ impl Serialize for TrackHeaderBox {
             c += 4;
             buf[c..c + 4].copy_from_slice(&(self.modification_time as u32).to_be_bytes());
             c += 4;
-            buf[c..c + 4].copy_from_slice(&self.track_id.to_be_bytes());
+            buf[c..c + 4].copy_from_slice(&self.track_id.value().to_be_bytes());
             c += 4;
             buf[c..c + 4].fill(0);
             c += 4; // reserved
@@ -815,7 +816,7 @@ impl Serialize for TrackHeaderBox {
             c += 8;
             buf[c..c + 8].copy_from_slice(&self.modification_time.to_be_bytes());
             c += 8;
-            buf[c..c + 4].copy_from_slice(&self.track_id.to_be_bytes());
+            buf[c..c + 4].copy_from_slice(&self.track_id.value().to_be_bytes());
             c += 4;
             buf[c..c + 4].fill(0);
             c += 4; // reserved
@@ -3950,7 +3951,7 @@ pub struct TrackExtendsBox {
     /// FullBox flags (0).
     pub flags: u32,
     /// The track these defaults apply to.
-    pub track_id: u32,
+    pub track_id: TrackId,
     /// Default `stsd` entry index (1-based).
     pub default_sample_description_index: u32,
     /// Default sample duration (movie timescale units).
@@ -3977,7 +3978,7 @@ impl<'a> Parse<'a> for TrackExtendsBox {
         Ok(Self {
             version,
             flags,
-            track_id: u32::from_be_bytes([body[4], body[5], body[6], body[7]]),
+            track_id: TrackId::new(u32::from_be_bytes([body[4], body[5], body[6], body[7]])),
             default_sample_description_index: u32::from_be_bytes([
                 body[8], body[9], body[10], body[11],
             ]),
@@ -4005,7 +4006,7 @@ impl Serialize for TrackExtendsBox {
         buf[8] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[9..12].copy_from_slice(&fb[1..]);
-        buf[12..16].copy_from_slice(&self.track_id.to_be_bytes());
+        buf[12..16].copy_from_slice(&self.track_id.value().to_be_bytes());
         buf[16..20].copy_from_slice(&self.default_sample_description_index.to_be_bytes());
         buf[20..24].copy_from_slice(&self.default_sample_duration.to_be_bytes());
         buf[24..28].copy_from_slice(&self.default_sample_size.to_be_bytes());
@@ -4420,7 +4421,7 @@ pub fn protect_sample_entry(
 /// before and after it is copied through verbatim.
 pub fn protect_init_segment(
     init_segment: &[u8],
-    track_id: u32,
+    track_id: TrackId,
     encryption: &TrackEncryption,
 ) -> Result<Vec<u8>> {
     let mut prefix_len = 0usize;
@@ -4504,7 +4505,7 @@ mod tests {
             rate: 0x00010000,
             volume: 0x0100,
             matrix: [0x00010000, 0, 0, 0, 0x00010000, 0, 0, 0, 0x40000000],
-            next_track_id: 3,
+            next_track_id: TrackId::new(3),
         }
     }
 

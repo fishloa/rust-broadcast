@@ -72,6 +72,7 @@
 //! IR: [`crate::pipeline::Sample::from_raw`] always marks an audio sample
 //! sync); omitted entirely when the [`Media`] has no video track.
 
+use crate::TrackId;
 use alloc::vec;
 use alloc::vec::Vec;
 
@@ -456,7 +457,7 @@ fn codec_debug_name(config: &CodecConfig) -> &'static str {
 /// `TrackUID`.
 fn build_track_entry(
     track_number: u64,
-    track_id: u32,
+    track_id: TrackId,
     config: &CodecConfig,
 ) -> Result<(Vec<u8>, bool)> {
     let is_video = config.is_video();
@@ -559,7 +560,7 @@ fn build_track_entry(
 
     let mut children = vec![
         uint_elem(&ID_TRACK_NUMBER, track_number),
-        uint_elem(&ID_TRACK_UID, track_id as u64),
+        uint_elem(&ID_TRACK_UID, u64::from(track_id.value())),
         uint_elem(&ID_TRACK_TYPE, track_type),
         string_elem(&ID_CODEC_ID, codec_id),
         sub_elem,

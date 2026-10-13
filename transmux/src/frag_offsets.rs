@@ -35,6 +35,7 @@
 //! many runs pointing at the same offset cannot amplify work. Both are checked
 //! before a byte is sliced.
 
+use crate::TrackId;
 use alloc::vec::Vec;
 
 use broadcast_common::Parse;
@@ -140,7 +141,7 @@ pub fn sample_ranges(
     file: &[u8],
     moof_off: usize,
     moof: &MovieFragmentBox,
-    track_id: u32,
+    track_id: TrackId,
 ) -> Result<Vec<FragmentSampleRange>> {
     sample_ranges_in(file, &mdat_ranges(file), moof_off, moof, track_id)
 }
@@ -153,7 +154,7 @@ pub fn sample_ranges_in(
     mdats: &[MdatRange],
     moof_off: usize,
     moof: &MovieFragmentBox,
-    track_id: u32,
+    track_id: TrackId,
 ) -> Result<Vec<FragmentSampleRange>> {
     let mut out = Vec::new();
     // Running end of the data consumed so far in this moof, used for a trun
@@ -294,7 +295,7 @@ mod tests {
         box_bytes(ty, &p)
     }
 
-    fn tfhd(flags: u32, track_id: u32, base: Option<u64>) -> Vec<u8> {
+    fn tfhd(flags: u32, track_id: TrackId, base: Option<u64>) -> Vec<u8> {
         let mut p = Vec::new();
         p.extend_from_slice(&flags.to_be_bytes());
         p.extend_from_slice(&track_id.to_be_bytes());

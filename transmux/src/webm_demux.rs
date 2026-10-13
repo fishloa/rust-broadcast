@@ -47,6 +47,7 @@
 //! next block's presentation time (the final block reuses the previous delta, or
 //! the track's `DefaultDuration` when only one block is present).
 
+use crate::TrackId;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -895,7 +896,7 @@ fn build_media(
         by_track.entry(b.track_number).or_default().push(b);
     }
     let mut out_tracks: Vec<Track> = Vec::new();
-    let mut track_id: u32 = 1;
+    let mut track_id = TrackId::new(1);
 
     for info in &tracks {
         // `DefaultDuration` (ns per frame) in this track's IR ticks, when the
@@ -1003,7 +1004,7 @@ fn build_media(
             samples,
             anchor,
         ));
-        track_id += 1;
+        track_id = track_id.next();
     }
 
     Ok(Media::new(out_tracks, IR_TIMESCALE))

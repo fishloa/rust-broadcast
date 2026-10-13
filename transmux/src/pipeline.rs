@@ -12,6 +12,7 @@
 //! `trun.data_offset` is computed from the finished `moof` size so the samples
 //! resolve against the `default-base-is-moof` base.
 
+use crate::TrackId;
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -72,7 +73,11 @@ pub fn build_init_segment(tracks: &[TrackSpec], movie_timescale: u32) -> Result<
         compatible_brands: vec![*b"iso5", *b"iso6", *b"mp41"],
     };
 
-    let next_track_id = tracks.iter().map(|t| t.track_id).max().unwrap_or(0) + 1;
+    let next_track_id = tracks
+        .iter()
+        .map(|t| t.track_id)
+        .max()
+        .map_or(TrackId::new(1), TrackId::next);
     let mvhd = MovieHeaderBox {
         version: 0,
         flags: 0,

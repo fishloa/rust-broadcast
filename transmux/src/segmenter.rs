@@ -61,6 +61,7 @@
 //! [`Segmenter::take_ready_with_meta`], which callers can forward directly to
 //! [`broadcast_hls::MediaSegment::discontinuous`].
 
+use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
@@ -438,7 +439,7 @@ impl Segmenter {
     /// 14496-12:2015 §8.8.12) at `base` media-timescale ticks instead of 0, so
     /// a track that starts later than the others keeps that offset (issue
     /// #1021). Only meaningful before the first cut.
-    pub(crate) fn set_start_decode_time(&mut self, track_id: u32, base: u64) -> Result<()> {
+    pub(crate) fn set_start_decode_time(&mut self, track_id: TrackId, base: u64) -> Result<()> {
         let t = self
             .tracks
             .iter_mut()
@@ -477,7 +478,7 @@ impl Segmenter {
     /// [`MAX_PENDING_SAMPLES_PER_TRACK`] un-cut samples (no anchor sync sample
     /// to cut on — call [`flush`](Self::flush) to close a trailing partial
     /// segment).
-    pub fn push(&mut self, track_id: u32, sample: Sample) -> Result<()> {
+    pub fn push(&mut self, track_id: TrackId, sample: Sample) -> Result<()> {
         let idx = self
             .tracks
             .iter()
@@ -608,7 +609,7 @@ impl Segmenter {
 /// exactly once no matter which API — inherent, `Stage`, or a mix of both on
 /// the same instance — the caller uses to retrieve it.
 impl Stage for Segmenter {
-    type In<'a> = (u32, Sample);
+    type In<'a> = (TrackId, Sample);
     type Out = (Vec<u8>, SegmentMeta);
     type Error = Error;
 

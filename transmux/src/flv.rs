@@ -40,6 +40,7 @@
 //!
 //! `no_std` + `alloc`.
 
+use crate::TrackId;
 use alloc::vec;
 use alloc::vec::Vec;
 use core::fmt;
@@ -719,7 +720,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
         backfill_last_duration(&mut audio_samples);
 
         let mut tracks: Vec<Track> = Vec::new();
-        let mut track_id = 1u32;
+        let mut track_id = TrackId::new(1);
         if let Some(config) = avc_config
             && !video_samples.is_empty()
         {
@@ -743,7 +744,7 @@ impl<'a> Unpackage for FlvDemux<'a> {
                 video_samples,
                 anchor,
             ));
-            track_id += 1;
+            track_id = track_id.next();
         }
         if let Some(esds) = aac_esds
             && !audio_samples.is_empty()

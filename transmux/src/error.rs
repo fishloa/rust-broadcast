@@ -1,5 +1,6 @@
 //! Error type returned by every parser and builder in this crate.
 
+use crate::TrackId;
 use alloc::string::String;
 use thiserror::Error;
 
@@ -187,7 +188,7 @@ pub enum Error {
     )]
     UnmuxableDataTrack {
         /// The offending track's [`TrackSpec::track_id`](crate::pipeline::TrackSpec::track_id).
-        track_id: u32,
+        track_id: TrackId,
         /// The track's preserved PMT `stream_type` (ISO/IEC 13818-1 Table 2-34).
         stream_type: u8,
     },
@@ -207,7 +208,7 @@ pub enum Error {
     )]
     UnmuxableSubtitleTrack {
         /// The offending track's [`TrackSpec::track_id`](crate::pipeline::TrackSpec::track_id).
-        track_id: u32,
+        track_id: TrackId,
         /// The subtitle wire format the track carries.
         format: crate::pipeline::SubtitleFormat,
     },

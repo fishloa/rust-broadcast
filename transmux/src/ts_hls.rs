@@ -65,6 +65,7 @@
 //!   ISO/IEC 13818-1 §2.4.4 — PSI is periodically repeated so any access point
 //!   is self-describing.
 
+use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::String;
@@ -860,7 +861,7 @@ impl StreamingTsHlsSegmenter {
     ///
     /// Any segment this push cuts is queued, not returned inline (issue R2)
     /// — retrieve it via [`Self::take_ready`] or [`Stage::poll`].
-    pub fn push(&mut self, track_id: u32, sample: Sample) -> Result<()> {
+    pub fn push(&mut self, track_id: TrackId, sample: Sample) -> Result<()> {
         self.push_inner(track_id, sample)
     }
 
@@ -868,7 +869,7 @@ impl StreamingTsHlsSegmenter {
     /// [`ready`](Self::ready) rather than returning it — the shared core of
     /// the inherent and [`Stage::feed`] entry points, so neither can drift and
     /// neither needs a second queue.
-    fn push_inner(&mut self, track_id: u32, sample: Sample) -> Result<()> {
+    fn push_inner(&mut self, track_id: TrackId, sample: Sample) -> Result<()> {
         let idx = self
             .tracks
             .iter()
@@ -1193,7 +1194,7 @@ impl StreamingTsHlsSegmenter {
 /// segment is retrievable exactly once no matter which API — inherent,
 /// `Stage`, or a mix of both on the same instance — the caller uses.
 impl Stage for StreamingTsHlsSegmenter {
-    type In<'a> = (u32, Sample);
+    type In<'a> = (TrackId, Sample);
     type Out = TsSegment;
     type Error = Error;
 
@@ -1311,7 +1312,7 @@ mod tests {
     /// A section-carried SCTE-35 track spec (ISO/IEC 13818-1 Table 2-34
     /// stream_type 0x86, ANSI/SCTE 35): permanently `duration: None`, so it
     /// must never be picked as the segmentation anchor.
-    fn scte35_track(track_id: u32) -> TrackSpec {
+    fn scte35_track(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
             90_000,
@@ -1337,7 +1338,7 @@ mod tests {
         }
     }
 
-    fn aac_track(track_id: u32, timescale: u32) -> TrackSpec {
+    fn aac_track(track_id: TrackId, timescale: u32) -> TrackSpec {
         TrackSpec::new(
             track_id,
             timescale,

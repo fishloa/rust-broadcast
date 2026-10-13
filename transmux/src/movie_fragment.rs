@@ -11,6 +11,7 @@
 //! on the wire. The serializer recomputes every size from the logical fields
 //! (no `self.raw`).
 
+use crate::TrackId;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
@@ -84,7 +85,7 @@ pub(crate) struct MediaRunSample {
 /// placeholder `data_offset` of 0 for the caller to patch once the `moof` size
 /// is known. One copy of what had been three (audit r05-O6).
 pub(crate) fn media_fragment_run(
-    track_id: u32,
+    track_id: TrackId,
     samples: impl Iterator<Item = MediaRunSample> + Clone,
 ) -> Result<(TrackFragmentHeaderBox, TrackFragmentRunBox)> {
     let any_cts = samples.clone().any(|s| s.composition_offset != 0);
@@ -199,7 +200,7 @@ impl Serialize for MovieFragmentHeaderBox {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TrackFragmentHeaderBox {
     pub flags: u32,
-    pub track_id: u32,
+    pub track_id: TrackId,
     pub base_data_offset: Option<u64>,
     pub sample_description_index: Option<u32>,
     pub default_sample_duration: Option<u32>,
@@ -302,7 +303,7 @@ impl TrackFragmentHeaderBox {
         };
         Ok(TrackFragmentHeaderBox {
             flags,
-            track_id: tid,
+            track_id: TrackId::new(tid),
             base_data_offset: v_bdo,
             sample_description_index: v_sdi,
             default_sample_duration: v_dsd,
@@ -401,7 +402,7 @@ impl Serialize for TrackFragmentHeaderBox {
         buf[c + 2] = fb[2];
         buf[c + 3] = fb[3];
         c += 4;
-        buf[c..c + 4].copy_from_slice(&self.track_id.to_be_bytes());
+        buf[c..c + 4].copy_from_slice(&self.track_id.value().to_be_bytes());
         c += 4;
         if let Some(v) = self.base_data_offset {
             buf[c..c + 8].copy_from_slice(&v.to_be_bytes());
@@ -1435,7 +1436,7 @@ fn aux_info_type_of(payload: &[u8], box_type: &[u8; 4]) -> Option<[u8; 4]> {
 /// is the init-segment half).
 pub struct FragmentProtection<'a> {
     /// The `tfhd.track_id` of the `traf` to protect.
-    pub track_id: u32,
+    pub track_id: TrackId,
     /// Per-sample IV + subsample map for **this fragment's samples only**, in
     /// decode order. Must have exactly as many entries as the matching
     /// `traf`'s total `trun` sample count (checked). A `Media` muxed across
