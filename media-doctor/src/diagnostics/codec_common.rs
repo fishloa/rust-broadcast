@@ -241,7 +241,7 @@ pub(crate) mod tests {
             current_next_indicator,
             0,
             0,
-            alloc::vec![PatEntry::new(1, TEST_PMT_PID)],
+            alloc::vec![PatEntry::new(1, TEST_PMT_PID.value())],
         );
         let pmt_streams: Vec<PmtStream<'_>> = streams
             .iter()
@@ -288,7 +288,9 @@ pub(crate) mod tests {
             0,
             programs
                 .iter()
-                .map(|&(program_number, _, _, _)| PatEntry::new(program_number, TEST_PMT_PID))
+                .map(|&(program_number, _, _, _)| {
+                    PatEntry::new(program_number, TEST_PMT_PID.value())
+                })
                 .collect(),
         );
         let pat_bytes = serialize_section(&pat);
@@ -367,7 +369,7 @@ pub(crate) mod tests {
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
                 StreamType::H264,
-                ELEMENTARY_PID,
+                ELEMENTARY_PID.value(),
                 DescriptorLoop::new(&[])
             )],
         );

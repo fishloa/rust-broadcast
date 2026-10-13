@@ -799,7 +799,14 @@ pub(crate) mod tests {
     ) {
         use broadcast_common::Serialize;
         use dvb_si::tables::pat::{PatEntry, PatSection};
-        let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PAT_PMT_PID)]);
+        let pat = PatSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            alloc::vec![PatEntry::new(1, PAT_PMT_PID.value())],
+        );
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         let n = pat.serialize_into(&mut pat_bytes).expect("serialize PAT");
         pat_bytes.truncate(n);
@@ -835,7 +842,7 @@ pub(crate) mod tests {
             0,
             programs
                 .iter()
-                .map(|&program_number| PatEntry::new(program_number, PAT_PMT_PID))
+                .map(|&program_number| PatEntry::new(program_number, PAT_PMT_PID.value()))
                 .collect(),
         );
         let mut bytes = alloc::vec![0u8; pat.serialized_len()];
@@ -924,7 +931,7 @@ pub(crate) mod tests {
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
                 StreamType::H264,
-                elem_pid,
+                elem_pid.value(),
                 DescriptorLoop::new(&[])
             )],
         );
@@ -1148,7 +1155,14 @@ pub(crate) mod tests {
             pkt
         }
 
-        let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PMT_PID)]);
+        let pat = PatSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            alloc::vec![PatEntry::new(1, PMT_PID.value())],
+        );
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
 
@@ -1162,7 +1176,7 @@ pub(crate) mod tests {
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
                 StreamType::Scte35,
-                SCTE35_PID,
+                SCTE35_PID.value(),
                 DescriptorLoop::new(&[])
             )],
         );
@@ -1274,7 +1288,14 @@ pub(crate) mod tests {
             .to_bytes()
         }
 
-        let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PMT_PID)]);
+        let pat = PatSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            alloc::vec![PatEntry::new(1, PMT_PID.value())],
+        );
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
 
@@ -1288,7 +1309,7 @@ pub(crate) mod tests {
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
                 StreamType::Scte35,
-                SCTE35_PID,
+                SCTE35_PID.value(),
                 DescriptorLoop::new(&[])
             )],
         );
@@ -1400,7 +1421,14 @@ pub(crate) mod tests {
             pkt
         }
 
-        let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PMT_PID)]);
+        let pat = PatSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            alloc::vec![PatEntry::new(1, PMT_PID.value())],
+        );
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
 
@@ -1414,7 +1442,7 @@ pub(crate) mod tests {
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
                 StreamType::H264,
-                VIDEO_PID,
+                VIDEO_PID.value(),
                 DescriptorLoop::new(&[])
             )],
         );
@@ -1519,7 +1547,14 @@ pub(crate) mod tests {
             pkt
         }
 
-        let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PMT_PID)]);
+        let pat = PatSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            alloc::vec![PatEntry::new(1, PMT_PID.value())],
+        );
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
 
@@ -1534,7 +1569,7 @@ pub(crate) mod tests {
                 DescriptorLoop::new(&[]),
                 alloc::vec![PmtStream::new(
                     stream_type,
-                    MIXED_PID,
+                    MIXED_PID.value(),
                     DescriptorLoop::new(&[])
                 )],
             );

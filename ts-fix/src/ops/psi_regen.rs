@@ -225,7 +225,10 @@ impl PsiRegenOp {
 
         let mut entries: Vec<PatEntry> = Vec::with_capacity(self.pmt_programs.len() + 1);
         if let Some(pid) = self.network_pid {
-            entries.push(PatEntry::new(dvb_si::tables::pat::PROGRAM_NUMBER_NIT, pid));
+            entries.push(PatEntry::new(
+                dvb_si::tables::pat::PROGRAM_NUMBER_NIT,
+                pid.value(),
+            ));
         }
         entries.extend(
             self.pmt_programs

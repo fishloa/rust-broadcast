@@ -83,7 +83,10 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         true,
         0,
         0,
-        vec![PatEntry::new(1, PMT1_PID), PatEntry::new(2, PMT2_PID)],
+        vec![
+            PatEntry::new(1, PMT1_PID.value()),
+            PatEntry::new(2, PMT2_PID.value()),
+        ],
     );
     let pat_section_bytes = serialize_pat(&pat);
     let mut pat_pktz = SectionPacketiser::new(PAT_PID);
@@ -102,12 +105,12 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P1_VIDEO_PID,
+                P1_VIDEO_PID.value(),
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P1_AUDIO_PID,
+                P1_AUDIO_PID.value(),
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -129,12 +132,12 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P2_VIDEO_PID,
+                P2_VIDEO_PID.value(),
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P2_AUDIO_PID,
+                P2_AUDIO_PID.value(),
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -707,8 +710,8 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
         0,
         vec![
             PatEntry::new(0, network_pid),
-            PatEntry::new(1, PMT1_PID),
-            PatEntry::new(2, PMT2_PID),
+            PatEntry::new(1, PMT1_PID.value()),
+            PatEntry::new(2, PMT2_PID.value()),
         ],
     );
     let pat_section_bytes = serialize_pat(&pat);
@@ -726,12 +729,12 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P1_VIDEO_PID,
+                P1_VIDEO_PID.value(),
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P1_AUDIO_PID,
+                P1_AUDIO_PID.value(),
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -751,12 +754,12 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P2_VIDEO_PID,
+                P2_VIDEO_PID.value(),
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P2_AUDIO_PID,
+                P2_AUDIO_PID.value(),
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -867,7 +870,7 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
             StreamType::Mpeg2Video,
-            P3_PCR_PID,
+            P3_PCR_PID.value(),
             DescriptorLoop::new(&[]),
         )],
     );
@@ -882,9 +885,9 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         0,
         0,
         vec![
-            PatEntry::new(1, PMT1_PID),
-            PatEntry::new(2, PMT2_PID),
-            PatEntry::new(3, PMT3_PID),
+            PatEntry::new(1, PMT1_PID.value()),
+            PatEntry::new(2, PMT2_PID.value()),
+            PatEntry::new(3, PMT3_PID.value()),
         ],
     );
     let pat3_bytes = serialize_pat(&pat3);
@@ -904,12 +907,12 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P1_VIDEO_PID,
+                P1_VIDEO_PID.value(),
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P1_AUDIO_PID,
+                P1_AUDIO_PID.value(),
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -927,12 +930,12 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P2_VIDEO_PID,
+                P2_VIDEO_PID.value(),
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P2_AUDIO_PID,
+                P2_AUDIO_PID.value(),
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -1004,7 +1007,7 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
 #[test]
 fn regen_pat_preserves_network_pid_entry() {
     const NIT_PID: Pid = Pid::new(0x0010);
-    let ts = build_two_program_ts_with_nit(4, NIT_PID);
+    let ts = build_two_program_ts_with_nit(4, NIT_PID.value());
 
     // Sanity: the original PAT really does carry the network_pid entry.
     let orig_pat_pkt = find_pat_packet(&ts).expect("original stream must have PAT");
@@ -1059,7 +1062,7 @@ fn build_patless_p1_ts() -> Vec<u8> {
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
             StreamType::Mpeg2Video,
-            P1_VIDEO_PID,
+            P1_VIDEO_PID.value(),
             DescriptorLoop::new(&[]),
         )],
     );
