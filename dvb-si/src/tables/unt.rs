@@ -421,6 +421,9 @@ impl Serialize for UntSection<'_> {
             });
         }
 
+        // 24-bit OUI: the top byte of a wider value used to be dropped
+        // silently (audit r03-W3 class).
+        broadcast_common::len::fit_bits(u64::from(self.oui), 24, "oui")?;
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - HEADER_LEN)?;
@@ -515,6 +518,36 @@ impl<'a> crate::traits::TableDef<'a> for UntSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// r03-W3 class: a 24-bit `OUI` wider than its field lost its top byte
+    /// silently.
+    #[test]
+    fn serialize_rejects_oui_wider_than_24_bits() {
+        let mk = |oui| {
+            UntSection::new(
+                UntActionType::SystemSoftwareUpdate,
+                0,
+                1,
+                true,
+                0,
+                0,
+                oui,
+                0,
+                DescriptorLoop::new(&[]),
+                vec![],
+            )
+        };
+        let wide = mk(0x0100_0000);
+        let mut buf = vec![0u8; wide.serialized_len()];
+        assert!(matches!(
+            wide.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+        let ok = mk(0x00FF_FFFF);
+        let mut buf = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut buf).unwrap();
+        assert_eq!(UntSection::parse(&buf).unwrap().oui, 0x00FF_FFFF);
+    }
 
     #[test]
     fn parse_happy_path() {

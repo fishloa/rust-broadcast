@@ -308,6 +308,9 @@ impl Serialize for IntSection<'_> {
             });
         }
 
+        // 24-bit field: the top byte of a wider value used to be dropped
+        // silently (audit r03-W3 class).
+        broadcast_common::len::fit_bits(u64::from(self.platform_id), 24, "platform_id")?;
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - OUTER_HEADER_LEN)?;
@@ -385,6 +388,36 @@ impl<'a> crate::traits::TableDef<'a> for IntSection<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// r03-W3 class: a 24-bit `platform_id` wider than its field lost its top
+    /// byte silently.
+    #[test]
+    fn serialize_rejects_platform_id_wider_than_24_bits() {
+        let mk = |platform_id| {
+            IntSection::new(
+                IntActionType::IpMacStreamLocation,
+                0,
+                1,
+                true,
+                0,
+                0,
+                platform_id,
+                0,
+                DescriptorLoop::new(&[]),
+                vec![],
+            )
+        };
+        let wide = mk(0x0100_0000);
+        let mut buf = vec![0u8; wide.serialized_len()];
+        assert!(matches!(
+            wide.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+        let ok = mk(0x00FF_FFFF);
+        let mut buf = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut buf).unwrap();
+        assert_eq!(IntSection::parse(&buf).unwrap().platform_id, 0x00FF_FFFF);
+    }
 
     #[test]
     fn parse_happy_path_no_loops() {

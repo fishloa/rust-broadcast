@@ -770,6 +770,11 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
         DvbLocatorService::Triplet {
             dvb_service_triplet_id,
         } => {
+            broadcast_common::len::fit_bits(
+                u64::from(*dvb_service_triplet_id),
+                10,
+                "dvb_service_triplet_id",
+            )?;
             let sd_lo = (loc.start_date & 0x3F) as u8;
             buf[1] = (sd_lo << 2) | ((dvb_service_triplet_id >> 8) as u8 & 0x03);
             buf[2] = (dvb_service_triplet_id & 0xFF) as u8;

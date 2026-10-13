@@ -668,6 +668,18 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
         }
         // Conditional: superframe block.
         if let Some(sf) = &self.superframe {
+            // 20-bit scrambling indices: wider values used to be masked down
+            // silently (audit r03-W3 class).
+            broadcast_common::len::fit_bits(
+                u64::from(sf.reference_scrambling_index),
+                20,
+                "reference_scrambling_index",
+            )?;
+            broadcast_common::len::fit_bits(
+                u64::from(sf.payload_scrambling_index),
+                20,
+                "payload_scrambling_index",
+            )?;
             buf[p] = sf.sosf_wh_sequence_number;
             let ref_hi = (sf.reference_scrambling_index >> 16) as u8 & 0x0F;
             buf[p + 1] = (u8::from(sf.sffi_selector) << 7)
