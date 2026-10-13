@@ -51,17 +51,7 @@ fn build_pat_section() -> Vec<u8> {
     use broadcast_common::Serialize;
     use dvb_si::tables::pat::{PatEntry, PatSection};
 
-    let pat = PatSection {
-        transport_stream_id: 0x0001,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        entries: vec![PatEntry {
-            program_number: 1,
-            pid: 0x0100,
-        }],
-    };
+    let pat = PatSection::new(0x0001, 0, true, 0, 0, vec![PatEntry::new(1, 0x0100)]);
     let mut buf = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut buf).expect("PAT serialize");
     buf

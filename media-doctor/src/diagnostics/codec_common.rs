@@ -231,24 +231,17 @@ pub(crate) mod tests {
         version_number: u8,
         current_next_indicator: bool,
     ) -> Vec<u8> {
-        let pat = PatSection {
-            transport_stream_id: 1,
+        let pat = PatSection::new(
+            1,
             version_number,
             current_next_indicator,
-            section_number: 0,
-            last_section_number: 0,
-            entries: alloc::vec![PatEntry {
-                program_number: 1,
-                pid: TEST_PMT_PID,
-            }],
-        };
+            0,
+            0,
+            alloc::vec![PatEntry::new(1, TEST_PMT_PID)],
+        );
         let pmt_streams: Vec<PmtStream<'_>> = streams
             .iter()
-            .map(|&(pid, stream_type)| PmtStream {
-                stream_type,
-                elementary_pid: pid,
-                es_info: DescriptorLoop::new(&[]),
-            })
+            .map(|&(pid, stream_type)| PmtStream::new(stream_type, pid, DescriptorLoop::new(&[])))
             .collect();
         let pcr_pid = streams.first().map(|&(pid, _)| pid).unwrap_or(0x1FFF);
         let pmt = PmtSection::new(
@@ -281,20 +274,17 @@ pub(crate) mod tests {
     /// `table_id_extension`), each PMT carrying one elementary stream
     /// `(program_number, elementary_pid, stream_type, version_number)`.
     pub(crate) fn build_shared_pid_pmt_ts(programs: &[(u16, u16, StreamType, u8)]) -> Vec<u8> {
-        let pat = PatSection {
-            transport_stream_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            entries: programs
+        let pat = PatSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            programs
                 .iter()
-                .map(|&(program_number, _, _, _)| PatEntry {
-                    program_number,
-                    pid: TEST_PMT_PID,
-                })
+                .map(|&(program_number, _, _, _)| PatEntry::new(program_number, TEST_PMT_PID))
                 .collect(),
-        };
+        );
         let pat_bytes = serialize_section(&pat);
 
         let mut ts = Vec::new();
@@ -310,11 +300,11 @@ pub(crate) mod tests {
                 0,
                 elementary_pid,
                 DescriptorLoop::new(&[]),
-                alloc::vec![PmtStream {
+                alloc::vec![PmtStream::new(
                     stream_type,
                     elementary_pid,
-                    es_info: DescriptorLoop::new(&[]),
-                }],
+                    DescriptorLoop::new(&[])
+                )],
             );
             let pmt_bytes = serialize_section(&pmt);
             for pkt in SectionPacketiser::new(TEST_PMT_PID).packetise(&[&pmt_bytes]) {
@@ -367,11 +357,11 @@ pub(crate) mod tests {
             0,
             ELEMENTARY_PID,
             DescriptorLoop::new(&[]),
-            alloc::vec![PmtStream {
-                stream_type: StreamType::H264,
-                elementary_pid: ELEMENTARY_PID,
-                es_info: DescriptorLoop::new(&[]),
-            }],
+            alloc::vec![PmtStream::new(
+                StreamType::H264,
+                ELEMENTARY_PID,
+                DescriptorLoop::new(&[])
+            )],
         );
         let pmt_bytes = serialize_section(&pmt);
         let mut ts = Vec::new();

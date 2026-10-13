@@ -27,11 +27,7 @@
 //!
 //! // Build one PAT section and wrap it in a single 188-byte TS packet so the
 //! // example is self-contained. In real code `packet` comes from your source.
-//! let pat = PatSection {
-//!     transport_stream_id: 1, version_number: 0, current_next_indicator: true,
-//!     section_number: 0, last_section_number: 0,
-//!     entries: vec![PatEntry { program_number: 1, pid: PMT_PID }],
-//! };
+//! let pat = PatSection::new(1, 0, true, 0, 0, vec![PatEntry::new(1, PMT_PID)]);
 //! let mut section = vec![0u8; pat.serialized_len()];
 //! pat.serialize_into(&mut section).unwrap();
 //! let mut packet = [STUFFING_BYTE; 188];

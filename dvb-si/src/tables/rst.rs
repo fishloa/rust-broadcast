@@ -70,7 +70,7 @@ impl RstEntry {
 }
 
 /// All-ones `reserved_future_use(5)` before `running_status`.
-const RESERVED_FUTURE_USE_5: u8 = 0x1F;
+const RESERVED_FUTURE_USE_5: u8 = super::RESERVED_5;
 /// Shift of `reserved_future_use(5)` above `running_status(3)`.
 const RESERVED_SHIFT: u32 = 3;
 

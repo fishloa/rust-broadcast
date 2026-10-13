@@ -1158,17 +1158,7 @@ mod tests {
         const VERSIONS: u8 = 32; // version_number is 5 bits
         let mut ts = Vec::new();
         for n in 0..(MAX_TABLE_ENTRIES + 50) {
-            let pat = PatSection {
-                transport_stream_id: 1,
-                version_number: (n % usize::from(VERSIONS)) as u8,
-                current_next_indicator: true,
-                section_number: 0,
-                last_section_number: 0,
-                entries: vec![PatEntry {
-                    program_number: 1,
-                    pid: 0x0100,
-                }],
-            };
+            let pat = PatSection::new(1, (n % usize::from(VERSIONS)) as u8, true, 0, 0, vec![PatEntry::new(1, 0x0100)]);
             let mut bytes = vec![0u8; pat.serialized_len()];
             pat.serialize_into(&mut bytes).unwrap();
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
@@ -1300,17 +1290,7 @@ mod tests {
             pkt
         }
 
-        let pat = PatSection {
-            transport_stream_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            entries: vec![PatEntry {
-                program_number: 1,
-                pid: PMT_PID,
-            }],
-        };
+        let pat = PatSection::new(1, 0, true, 0, 0, vec![PatEntry::new(1, PMT_PID)]);
         let mut pat_bytes = vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
 
@@ -1322,11 +1302,7 @@ mod tests {
             0,
             wk::NULL.value(), // no PCR for this program
             DescriptorLoop::new(&[]),
-            vec![PmtStream {
-                stream_type: StreamType::Scte35,
-                elementary_pid: SCTE35_PID,
-                es_info: DescriptorLoop::new(&[]),
-            }],
+            vec![PmtStream::new(StreamType::Scte35, SCTE35_PID, DescriptorLoop::new(&[]))],
         );
         let mut pmt_bytes = vec![0u8; pmt.serialized_len()];
         pmt.serialize_into(&mut pmt_bytes).unwrap();

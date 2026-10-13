@@ -223,18 +223,12 @@ impl PsiRegenOp {
 
         let mut entries: Vec<PatEntry> = Vec::with_capacity(self.pmt_programs.len() + 1);
         if let Some(pid) = self.network_pid {
-            entries.push(PatEntry {
-                program_number: dvb_si::tables::pat::PROGRAM_NUMBER_NIT,
-                pid,
-            });
+            entries.push(PatEntry::new(dvb_si::tables::pat::PROGRAM_NUMBER_NIT, pid));
         }
         entries.extend(
             self.pmt_programs
                 .iter()
-                .map(|(&program_number, &pmt_pid)| PatEntry {
-                    program_number,
-                    pid: pmt_pid,
-                }),
+                .map(|(&program_number, &pmt_pid)| PatEntry::new(program_number, pmt_pid)),
         );
         Some(entries)
     }
@@ -255,16 +249,14 @@ impl PsiRegenOp {
             self.last_entries = Some(entries.clone());
         }
 
-        let pat = PatSection {
-            // transport_stream_id is not derivable from PMTs; use the hint from
-            // the original PAT if one was seen, else 0.
-            transport_stream_id: self.transport_stream_id.unwrap_or(0),
-            version_number: self.version_number,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
+        let pat = PatSection::new(
+            self.transport_stream_id.unwrap_or(0),
+            self.version_number,
+            true,
+            0,
+            0,
             entries,
-        };
+        );
 
         let mut buf = vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut buf).ok()?;

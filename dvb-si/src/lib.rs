@@ -51,11 +51,7 @@
 //! #     use broadcast_common::Serialize;
 //! #     use dvb_si::tables::pat::{PatSection, PatEntry};
 //! #     const PMT_PID: u16 = 0x0100;
-//! #     let pat = PatSection {
-//! #         transport_stream_id: 1, version_number: 0, current_next_indicator: true,
-//! #         section_number: 0, last_section_number: 0,
-//! #         entries: vec![PatEntry { program_number: 1, pid: PMT_PID }],
-//! #     };
+//! #     let pat = PatSection::new(1, 0, true, 0, 0, vec![PatEntry::new(1, PMT_PID)]);
 //! #     let mut section = vec![0u8; pat.serialized_len()];
 //! #     pat.serialize_into(&mut section).unwrap();
 //! #     const TS_SYNC_BYTE: u8 = 0x47;

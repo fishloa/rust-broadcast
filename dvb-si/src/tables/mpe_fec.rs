@@ -141,7 +141,7 @@ pub struct MpeFecSection<'a> {
 }
 
 /// All-ones `reserved_for_future_use(5)` in byte 5.
-const RESERVED_FUTURE_USE_5: u8 = 0x1F;
+const RESERVED_FUTURE_USE_5: u8 = super::RESERVED_5;
 
 impl<'a> MpeFecSection<'a> {
     /// Construct an MPE-FEC section with the spec `reserved` fill.

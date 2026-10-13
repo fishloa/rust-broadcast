@@ -87,7 +87,7 @@ impl<'a> SdtService<'a> {
 }
 
 /// All-ones `reserved_future_use(6)` before the EIT flags.
-const RESERVED_FUTURE_USE_6: u8 = 0x3F;
+const RESERVED_FUTURE_USE_6: u8 = super::RESERVED_6;
 /// All-ones `reserved_future_use(8)` after `original_network_id`.
 const RESERVED_FUTURE_USE_8: u8 = 0xFF;
 /// Shift of `reserved_future_use(6)` in the EIT-flags byte.

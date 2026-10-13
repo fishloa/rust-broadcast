@@ -85,49 +85,21 @@ const TOLERATED: &[(&str, &str)] = &[
     ("test-101.", "0x43 SATELLITE_DELIVERY_SYSTEM"),
     // CA_descriptor reserved(3) before CA_PID: sender writes 000, we emit 111.
     ("test-128.", "0x09 CA"),
-    // TDT reserved_future_use/reserved(3) in byte 1: sender writes 0, we emit 0x70.
-    ("test-120.", "TIME_AND_DATE (tid 0x70)"),
-    // long-form reserved_future_use bit of byte 1: sender writes 0 (0xB0), we emit 1 (0xF0).
-    ("test-016.", "NETWORK_INFORMATION (tid 0x40)"),
-    // SDT reserved_future_use(6) / long-form bit: sender writes non-1 bits.
-    ("test-062.", "SERVICE_DESCRIPTION (tid 0x42)"),
-    ("test-170.", "SERVICE_DESCRIPTION (tid 0x42)"),
-    // EIT long-form reserved bits (byte 1 0xB0 / version-byte reserved(2)=00): TSDuck-generated EPG samples.
-    ("test-170.", "EVENT_INFORMATION (tid 0x4E)"),
-    // EIT long-form reserved bits (byte 1 0xB0 / version-byte reserved(2)=00): TSDuck-generated EPG samples.
-    ("test-170.", "EVENT_INFORMATION (tid 0x50)"),
-    ("test-109.", "EVENT_INFORMATION (tid 0x50)"),
-    // EIT long-form reserved bits (byte 1 0xB0 / version-byte reserved(2)=00): TSDuck-generated EPG samples.
-    ("test-170.", "EVENT_INFORMATION (tid 0x51)"),
-    // EIT long-form reserved bits (byte 1 0xB0 / version-byte reserved(2)=00): TSDuck-generated EPG samples.
-    ("test-170.", "EVENT_INFORMATION (tid 0x58)"),
-    ("test-171.", "EVENT_INFORMATION (tid 0x58)"),
-    // EIT long-form reserved bits (byte 1 0xB0 / version-byte reserved(2)=00): TSDuck-generated EPG samples.
-    ("test-170.", "EVENT_INFORMATION (tid 0x59)"),
-    // AIT long-form reserved bits written as 0 by the sender (TSDuck-generated).
-    ("test-170.", "APPLICATION_INFORMATION (tid 0x74)"),
-    // PAT reserved(3) before program_map_PID written 000 by the sender.
-    ("test-012.", "PROGRAM_ASSOCIATION (tid 0x00)"),
+    // Section-level reserved bits are now captured in typed fields and re-emitted, so every
+    // real section re-serializes byte-identically (TDT test-120 / NIT test-016 / SDT / EIT /
+    // AIT test-170 / PAT test-012,065 / DSM-CC / ST all graduated off this list).
+    // test-062.ts is a TSDuck random-bits section stress capture: its `section_syntax_indicator`
+    // is random too (0 on sections that carry a CRC_32). SSI is a structural decoded bit, not a
+    // reserved bit, so the serializer re-emits the table's fixed SSI; the reserved bits proper
+    // (private_indicator, reserved(2), version-byte reserved(2), bodies) are byte-exact here.
     ("test-062.", "PROGRAM_ASSOCIATION (tid 0x00)"),
-    ("test-065.", "PROGRAM_ASSOCIATION (tid 0x00)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
-    ("test-062.", "0x75 TVA_ID"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
     ("test-062.", "CONDITIONAL_ACCESS (tid 0x01)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
     ("test-062.", "CONTAINER (tid 0x75)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
-    ("test-062.", "DSM_CC_SECTION (tid 0x3E)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
-    ("test-062.", "DSM_CC_SECTION (tid 0x3F)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
     ("test-062.", "MPE_FEC (tid 0x78)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
     ("test-062.", "MPE_IFEC (tid 0x7A)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
     ("test-062.", "PROTECTION_MESSAGE (tid 0x7B)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
-    ("test-062.", "STUFFING (tid 0x72)"),
+    // test-062.ts random bits in a descriptor (other agent's scope).
+    ("test-062.", "0x75 TVA_ID"),
 ];
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {

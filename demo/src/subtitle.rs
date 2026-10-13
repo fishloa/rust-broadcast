@@ -650,18 +650,10 @@ mod tests {
         // subtitling_descriptor: tag 0x59, len 8, "eng", type 0x10 (DVB
         // subtitles normal), composition_page_id=1, ancillary_page_id=2.
         let raw = [0x59, 8, b'e', b'n', b'g', 0x10, 0x00, 0x01, 0x00, 0x02];
-        let stream = PmtStream {
-            stream_type: StreamType::from_u8(0x06),
-            elementary_pid: 0x100,
-            es_info: DescriptorLoop::new(&raw),
-        };
+        let stream = PmtStream::new(StreamType::from_u8(0x06), 0x100, DescriptorLoop::new(&raw));
         assert!(stream_is_subtitle(&stream));
 
-        let no_sub = PmtStream {
-            stream_type: StreamType::from_u8(0x06),
-            elementary_pid: 0x101,
-            es_info: DescriptorLoop::new(&[]),
-        };
+        let no_sub = PmtStream::new(StreamType::from_u8(0x06), 0x101, DescriptorLoop::new(&[]));
         assert!(!stream_is_subtitle(&no_sub));
     }
 

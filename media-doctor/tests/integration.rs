@@ -509,17 +509,14 @@ fn pat_pmt_ts(
     use mpeg_ts::mux::SectionPacketiser;
     use mpeg_ts::ts::TS_PACKET_SIZE;
 
-    let pat = PatSection {
-        transport_stream_id: 1,
-        version_number: version,
-        current_next_indicator: current_next,
-        section_number: 0,
-        last_section_number: 0,
-        entries: vec![PatEntry {
-            program_number: 1,
-            pid: PAT_PMT_PID,
-        }],
-    };
+    let pat = PatSection::new(
+        1,
+        version,
+        current_next,
+        0,
+        0,
+        vec![PatEntry::new(1, PAT_PMT_PID)],
+    );
     let mut pat_bytes = vec![0u8; pat.serialized_len()];
     let n = pat.serialize_into(&mut pat_bytes).expect("serialize PAT");
     pat_bytes.truncate(n);
@@ -534,11 +531,7 @@ fn pat_pmt_ts(
         DescriptorLoop::new(&[]),
         streams
             .iter()
-            .map(|&(pid, stream_type)| PmtStream {
-                stream_type,
-                elementary_pid: pid,
-                es_info: DescriptorLoop::new(&[]),
-            })
+            .map(|&(pid, stream_type)| PmtStream::new(stream_type, pid, DescriptorLoop::new(&[])))
             .collect(),
     );
     let mut pmt_bytes = vec![0u8; pmt.serialized_len()];
@@ -751,23 +744,14 @@ fn nit_and_null_pids_are_not_tracked() {
     use dvb_si::tables::pat::{PatEntry, PatSection};
     use mpeg_ts::mux::SectionPacketiser;
 
-    let pat = PatSection {
-        transport_stream_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        entries: vec![
-            PatEntry {
-                program_number: 0, // NIT
-                pid: 0x0010,
-            },
-            PatEntry {
-                program_number: 1,
-                pid: 0x1FFF, // reserved NULL PID
-            },
-        ],
-    };
+    let pat = PatSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        vec![PatEntry::new(0, 0x0010), PatEntry::new(1, 0x1FFF)],
+    );
     let mut buf = vec![0u8; pat.serialized_len()];
     let n = pat.serialize_into(&mut buf).expect("serialize PAT");
     buf.truncate(n);

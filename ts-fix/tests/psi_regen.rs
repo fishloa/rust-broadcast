@@ -76,23 +76,14 @@ fn serialize_pmt(pmt: &PmtSection<'_>) -> Vec<u8> {
 /// Build the synthetic 2-program TS as a flat `Vec<u8>`.
 fn build_two_program_ts(cycles: usize) -> Vec<u8> {
     // ── PAT ──────────────────────────────────────────────────────────────────
-    let pat = PatSection {
-        transport_stream_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        entries: vec![
-            PatEntry {
-                program_number: 1,
-                pid: PMT1_PID,
-            },
-            PatEntry {
-                program_number: 2,
-                pid: PMT2_PID,
-            },
-        ],
-    };
+    let pat = PatSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        vec![PatEntry::new(1, PMT1_PID), PatEntry::new(2, PMT2_PID)],
+    );
     let pat_section_bytes = serialize_pat(&pat);
     let mut pat_pktz = SectionPacketiser::new(PAT_PID);
     let pat_pkts = pat_pktz.packetise(&[&pat_section_bytes]);
@@ -108,16 +99,16 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         /* program_info */ DescriptorLoop::new(&[]),
         /* streams */
         vec![
-            PmtStream {
-                stream_type: StreamType::Mpeg2Video,
-                elementary_pid: P1_VIDEO_PID,
-                es_info: DescriptorLoop::new(&[]),
-            },
-            PmtStream {
-                stream_type: StreamType::Mpeg2Audio,
-                elementary_pid: P1_AUDIO_PID,
-                es_info: DescriptorLoop::new(&[]),
-            },
+            PmtStream::new(
+                StreamType::Mpeg2Video,
+                P1_VIDEO_PID,
+                DescriptorLoop::new(&[]),
+            ),
+            PmtStream::new(
+                StreamType::Mpeg2Audio,
+                P1_AUDIO_PID,
+                DescriptorLoop::new(&[]),
+            ),
         ],
     );
     let pmt1_section_bytes = serialize_pmt(&pmt1);
@@ -135,16 +126,16 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         /* program_info */ DescriptorLoop::new(&[]),
         /* streams */
         vec![
-            PmtStream {
-                stream_type: StreamType::Mpeg2Video,
-                elementary_pid: P2_VIDEO_PID,
-                es_info: DescriptorLoop::new(&[]),
-            },
-            PmtStream {
-                stream_type: StreamType::Mpeg2Audio,
-                elementary_pid: P2_AUDIO_PID,
-                es_info: DescriptorLoop::new(&[]),
-            },
+            PmtStream::new(
+                StreamType::Mpeg2Video,
+                P2_VIDEO_PID,
+                DescriptorLoop::new(&[]),
+            ),
+            PmtStream::new(
+                StreamType::Mpeg2Audio,
+                P2_AUDIO_PID,
+                DescriptorLoop::new(&[]),
+            ),
         ],
     );
     let pmt2_section_bytes = serialize_pmt(&pmt2);
@@ -707,27 +698,18 @@ fn continuity_counter(pkt: &[u8]) -> u8 {
 /// `network_pid` entry (`program_number == 0`, ISO/IEC 13818-1 §2.4.4.3) in
 /// the original PAT — the entry `rebuild_pat` cannot derive from any PMT.
 fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
-    let pat = PatSection {
-        transport_stream_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        entries: vec![
-            PatEntry {
-                program_number: 0,
-                pid: network_pid,
-            },
-            PatEntry {
-                program_number: 1,
-                pid: PMT1_PID,
-            },
-            PatEntry {
-                program_number: 2,
-                pid: PMT2_PID,
-            },
+    let pat = PatSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        vec![
+            PatEntry::new(0, network_pid),
+            PatEntry::new(1, PMT1_PID),
+            PatEntry::new(2, PMT2_PID),
         ],
-    };
+    );
     let pat_section_bytes = serialize_pat(&pat);
     let mut pat_pktz = SectionPacketiser::new(PAT_PID);
     let pat_pkts = pat_pktz.packetise(&[&pat_section_bytes]);
@@ -741,16 +723,16 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
         P1_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![
-            PmtStream {
-                stream_type: StreamType::Mpeg2Video,
-                elementary_pid: P1_VIDEO_PID,
-                es_info: DescriptorLoop::new(&[]),
-            },
-            PmtStream {
-                stream_type: StreamType::Mpeg2Audio,
-                elementary_pid: P1_AUDIO_PID,
-                es_info: DescriptorLoop::new(&[]),
-            },
+            PmtStream::new(
+                StreamType::Mpeg2Video,
+                P1_VIDEO_PID,
+                DescriptorLoop::new(&[]),
+            ),
+            PmtStream::new(
+                StreamType::Mpeg2Audio,
+                P1_AUDIO_PID,
+                DescriptorLoop::new(&[]),
+            ),
         ],
     );
     let pmt1_section_bytes = serialize_pmt(&pmt1);
@@ -766,16 +748,16 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
         P2_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![
-            PmtStream {
-                stream_type: StreamType::Mpeg2Video,
-                elementary_pid: P2_VIDEO_PID,
-                es_info: DescriptorLoop::new(&[]),
-            },
-            PmtStream {
-                stream_type: StreamType::Mpeg2Audio,
-                elementary_pid: P2_AUDIO_PID,
-                es_info: DescriptorLoop::new(&[]),
-            },
+            PmtStream::new(
+                StreamType::Mpeg2Video,
+                P2_VIDEO_PID,
+                DescriptorLoop::new(&[]),
+            ),
+            PmtStream::new(
+                StreamType::Mpeg2Audio,
+                P2_AUDIO_PID,
+                DescriptorLoop::new(&[]),
+            ),
         ],
     );
     let pmt2_section_bytes = serialize_pmt(&pmt2);
@@ -882,37 +864,28 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         0,
         P3_PCR_PID,
         DescriptorLoop::new(&[]),
-        vec![PmtStream {
-            stream_type: StreamType::Mpeg2Video,
-            elementary_pid: P3_PCR_PID,
-            es_info: DescriptorLoop::new(&[]),
-        }],
+        vec![PmtStream::new(
+            StreamType::Mpeg2Video,
+            P3_PCR_PID,
+            DescriptorLoop::new(&[]),
+        )],
     );
     let pmt3_section_bytes = serialize_pmt(&pmt3);
     let mut pmt3_pktz = SectionPacketiser::new(PMT3_PID);
     let pmt3_pkts = pmt3_pktz.packetise(&[&pmt3_section_bytes]);
 
-    let pat3 = PatSection {
-        transport_stream_id: 1,
-        version_number: 1,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        entries: vec![
-            PatEntry {
-                program_number: 1,
-                pid: PMT1_PID,
-            },
-            PatEntry {
-                program_number: 2,
-                pid: PMT2_PID,
-            },
-            PatEntry {
-                program_number: 3,
-                pid: PMT3_PID,
-            },
+    let pat3 = PatSection::new(
+        1,
+        1,
+        true,
+        0,
+        0,
+        vec![
+            PatEntry::new(1, PMT1_PID),
+            PatEntry::new(2, PMT2_PID),
+            PatEntry::new(3, PMT3_PID),
         ],
-    };
+    );
     let pat3_bytes = serialize_pat(&pat3);
     let mut pat3_pktz = SectionPacketiser::new(PAT_PID);
     let pat3_pkts = pat3_pktz.packetise(&[&pat3_bytes]);
@@ -928,16 +901,16 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         P1_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![
-            PmtStream {
-                stream_type: StreamType::Mpeg2Video,
-                elementary_pid: P1_VIDEO_PID,
-                es_info: DescriptorLoop::new(&[]),
-            },
-            PmtStream {
-                stream_type: StreamType::Mpeg2Audio,
-                elementary_pid: P1_AUDIO_PID,
-                es_info: DescriptorLoop::new(&[]),
-            },
+            PmtStream::new(
+                StreamType::Mpeg2Video,
+                P1_VIDEO_PID,
+                DescriptorLoop::new(&[]),
+            ),
+            PmtStream::new(
+                StreamType::Mpeg2Audio,
+                P1_AUDIO_PID,
+                DescriptorLoop::new(&[]),
+            ),
         ],
     );
     let pmt1_bytes = serialize_pmt(&pmt1);
@@ -951,16 +924,16 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         P2_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![
-            PmtStream {
-                stream_type: StreamType::Mpeg2Video,
-                elementary_pid: P2_VIDEO_PID,
-                es_info: DescriptorLoop::new(&[]),
-            },
-            PmtStream {
-                stream_type: StreamType::Mpeg2Audio,
-                elementary_pid: P2_AUDIO_PID,
-                es_info: DescriptorLoop::new(&[]),
-            },
+            PmtStream::new(
+                StreamType::Mpeg2Video,
+                P2_VIDEO_PID,
+                DescriptorLoop::new(&[]),
+            ),
+            PmtStream::new(
+                StreamType::Mpeg2Audio,
+                P2_AUDIO_PID,
+                DescriptorLoop::new(&[]),
+            ),
         ],
     );
     let pmt2_bytes = serialize_pmt(&pmt2);
@@ -1083,11 +1056,11 @@ fn build_patless_p1_ts() -> Vec<u8> {
         0,
         P1_PCR_PID,
         DescriptorLoop::new(&[]),
-        vec![PmtStream {
-            stream_type: StreamType::Mpeg2Video,
-            elementary_pid: P1_VIDEO_PID,
-            es_info: DescriptorLoop::new(&[]),
-        }],
+        vec![PmtStream::new(
+            StreamType::Mpeg2Video,
+            P1_VIDEO_PID,
+            DescriptorLoop::new(&[]),
+        )],
     );
     let mut pmt_bytes = vec![0u8; pmt1.serialized_len()];
     pmt1.serialize_into(&mut pmt_bytes).expect("PMT serialize");

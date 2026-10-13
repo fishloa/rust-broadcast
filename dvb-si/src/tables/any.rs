@@ -23,11 +23,7 @@
 //! use dvb_si::tables::pat::{PatSection, PatEntry};
 //!
 //! // Serialize a small PAT, then dispatch the bytes back through AnyTableSection::parse.
-//! let pat = PatSection {
-//!     transport_stream_id: 1, version_number: 0, current_next_indicator: true,
-//!     section_number: 0, last_section_number: 0,
-//!     entries: vec![PatEntry { program_number: 1, pid: 0x0100 }],
-//! };
+//! let pat = PatSection::new(1, 0, true, 0, 0, vec![PatEntry::new(1, 0x0100)]);
 //! let mut section = vec![0u8; pat.serialized_len()];
 //! pat.serialize_into(&mut section).unwrap();
 //!
