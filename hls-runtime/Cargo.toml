@@ -61,7 +61,7 @@ default = ["std"]
 # feature exists only to match the workspace's `no_std`-capable-core convention
 # (verified by the `--no-default-features` gate) and to let `transmux/std`
 # follow along when a caller does want `std`.
-std = ["broadcast-common/std", "thiserror/std", "transmux/std", "broadcast-hls/std", "media-plane/std", "dep:bytes", "url/std", "jiff/std"]
+std = ["broadcast-common/std", "thiserror/std", "transmux/std", "broadcast-hls/std", "media-plane/std", "dep:bytes", "url/std", "jiff/std", "serde?/std"]
 # Derive serde on the public wire/event types (`Action`, `Output`, `ResourceId`, ...).
 serde = ["dep:serde"]
 # `TokioClient` (issue #717 slice 5): an async shell driving the sans-IO

@@ -61,7 +61,7 @@ tokio = { version = "1", default-features = false, features = ["net", "io-util",
 default = ["std"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`. The packet codecs themselves are fully no_std.
-std = ["broadcast-common/std", "thiserror/std"]
+std = ["broadcast-common/std", "thiserror/std", "serde?/std"]
 # Derive serde on the public wire types.
 serde = ["dep:serde"]
 # `crypto` adds the §6 payload-encryption path: AES-CTR encrypt/decrypt, RFC

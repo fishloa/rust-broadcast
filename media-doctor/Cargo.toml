@@ -33,8 +33,8 @@ broadcast-hls    = { path = "../broadcast-hls", version = "0.3", default-feature
 # TS diagnostics. Only the binary needs it, so it is behind `cli`.
 container-probe  = { path = "../container-probe", version = "0.1", optional = true, default-features = false }
 clap             = { workspace = true, optional = true, features = ["derive"] }
-serde            = { version = "1", features = ["derive", "alloc"], optional = true }
-serde_json       = { workspace = true, optional = true }
+serde            = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
+serde_json       = { version = "1.0", default-features = false, features = ["alloc"], optional = true }
 thiserror        = { version = "2", optional = true }
 # Prometheus exposition for `watch` (de-hand-roll W1-P, SP2.3): the exporter's
 # recorder + `PrometheusHandle::render()` do the text format (HELP/TYPE,
@@ -55,8 +55,11 @@ socket2                     = { workspace = true, optional = true, features = ["
 
 [features]
 default = ["std", "serde", "cli"]
-std     = ["broadcast-common/std", "mpeg-ts/std", "transmux/std", "dvb-conformance/std", "broadcast-hls/std"]
+std     = ["broadcast-common/std", "mpeg-ts/std", "transmux/std", "dvb-conformance/std", "broadcast-hls/std", "serde?/std", "serde_json?/std"]
 serde   = ["dep:serde", "dep:serde_json"]
+# STD-ONLY features (not no_std, not built by the CI thumbv7em step): `metrics`
+# (metrics facade + Prometheus exporter), `net` (tokio + hyper + socket2 HTTP
+# endpoint) and `cli` (clap binary) all imply `std`.
 metrics = ["std", "dep:metrics", "dep:metrics-exporter-prometheus"]
 net     = ["metrics", "dep:tokio", "dep:tokio-util", "dep:hyper", "dep:hyper-util", "dep:http-body-util", "dep:socket2"]
 cli     = ["dep:clap", "dep:thiserror", "dep:container-probe", "std", "net"]

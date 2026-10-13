@@ -20,7 +20,7 @@ broadcast-common = { path = "../broadcast-common", version = "9.4", default-feat
 # dvb-mabr, ttml-subtitle, multimux). std-only (quick-xml needs std).
 quick-xml = { workspace = true, optional = true }
 thiserror  = { version = "2", default-features = false }
-serde      = { version = "1", optional = true, features = ["derive"] }
+serde      = { version = "1", default-features = false, optional = true, features = ["derive", "alloc"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
@@ -39,7 +39,9 @@ required-features = ["std"]
 
 [features]
 default = ["std"]
-std = ["broadcast-common/std", "thiserror/std", "dep:quick-xml"]
+# `std` is REQUIRED for the XML document/validation paths (`quick-xml` is
+# std-only); only the `time` expression parser is no_std+alloc.
+std = ["broadcast-common/std", "thiserror/std", "dep:quick-xml", "serde?/std"]
 serde = ["dep:serde"]
 
 [lints]

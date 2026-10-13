@@ -28,6 +28,7 @@ clap      = { workspace = true, optional = true, features = ["derive"] }
 [features]
 default = ["std", "cli"]
 std     = ["broadcast-common/std", "mpeg-ts/std", "mpeg-pes/std", "dvb-si/std", "dvb-conformance/std", "thiserror/std"]
+# STD-ONLY: the `ts-fix` binary (clap) — not built by the CI thumbv7em step.
 # The `ts-fix` binary. On by default so `cargo install ts-fix` keeps working.
 cli     = ["std", "dep:clap"]
 

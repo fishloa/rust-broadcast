@@ -16,7 +16,7 @@ thiserror        = { version = "2", default-features = false }
 
 [features]
 default = ["std"]
-std     = ["broadcast-common/std"]
+std     = ["broadcast-common/std", "serde?/std"]
 serde   = ["dep:serde", "broadcast-common/serde"]
 
 [dependencies.serde]
