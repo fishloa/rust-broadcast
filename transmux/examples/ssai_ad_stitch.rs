@@ -58,6 +58,7 @@
 //! and inspect the printed summary plus the manifest/segment files written to
 //! the temp directory it reports.
 
+use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;

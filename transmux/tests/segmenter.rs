@@ -9,7 +9,6 @@
 //!  2. A **real-fixture** test remuxes `fixtures/ts/h264_aac.ts` through the
 //!     segmenter and checks every emitted segment parses and preserves the stream.
 
-use mpeg_ts::pid::Pid;
 use broadcast_common::Serialize;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
@@ -350,13 +349,13 @@ fn real_fixture_remux_is_lossless_and_parseable() {
         let Some(payload) = pkt.payload() else {
             continue;
         };
-        match pkt.pid() {
-            Pid::new(0x0100) => {
+        match pkt.pid().value() {
+            0x0100 => {
                 if let Some(c) = vid_asm.feed(pkt.pusi(), payload) {
                     ingest_vid(&c, &mut vid);
                 }
             }
-            Pid::new(0x0101) => {
+            0x0101 => {
                 if let Some(c) = aud_asm.feed(pkt.pusi(), payload)
                     && let Ok(pes) = mpeg_pes::PesPacket::parse(&c)
                     && !pes.payload.is_empty()

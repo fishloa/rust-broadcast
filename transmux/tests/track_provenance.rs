@@ -14,6 +14,7 @@
 //! internal `parse_pmt` — it re-implements the byte-level walk from scratch so
 //! the comparison is a real oracle, not a tautology.
 
+use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 
 use broadcast_common::{Package, Unpackage};
@@ -212,13 +213,13 @@ fn every_track_carries_its_pmt_pid_and_es_info() {
             .source_pid
             .expect("every TS-demuxed track must carry its source PID (issue #582)");
         let (_, expected_descriptors) = expected
-            .get(&pid)
+            .get(&pid.value())
             .unwrap_or_else(|| panic!("track pid {pid:#06x} not among the PMT's ES entries"));
         assert_eq!(
             &track.spec.es_info_descriptors, expected_descriptors,
             "es_info_descriptors for PID {pid:#06x} must equal the PMT ES_info bytes verbatim"
         );
-        seen_pids.push(pid);
+        seen_pids.push(pid.value());
     }
     seen_pids.sort_unstable();
     assert_eq!(
@@ -240,7 +241,7 @@ fn audio_language_and_subtitle_descriptors_recoverable() {
         media
             .tracks
             .iter()
-            .find(|t| t.spec.source_pid == Some(pid))
+            .find(|t| t.spec.source_pid == Some(Pid::new(pid)))
             .unwrap_or_else(|| panic!("no track for PID {pid:#06x}"))
     };
 
@@ -291,7 +292,7 @@ fn streaming_demux_track_added_matches_batch_provenance() {
     demux.feed(&ts);
     demux.finish();
 
-    let mut streamed: BTreeMap<u32, (Option<u16>, Vec<u8>)> = BTreeMap::new();
+    let mut streamed: BTreeMap<u32, (Option<Pid>, Vec<u8>)> = BTreeMap::new();
     while let Some(event) = demux.poll_event() {
         if let DemuxEvent::TrackAdded(spec) = event {
             streamed.insert(
@@ -343,7 +344,7 @@ fn fmp4_round_trip_has_no_ts_provenance() {
         .expect("an AVC video track");
     assert_eq!(
         video_track.spec.source_pid,
-        Some(EXPECTED_VIDEO_PID),
+        Some(Pid::new(EXPECTED_VIDEO_PID)),
         "sanity: TS-demuxed video track carries its source PID"
     );
 

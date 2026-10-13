@@ -12,7 +12,6 @@
 //! 4. Sample round-trip: first video sample re-parsed from mdat matches
 //!    annexb_to_length_prefixed(first_video_au).
 
-use mpeg_ts::pid::Pid;
 use std::vec::Vec;
 
 use broadcast_common::{Parse, Serialize};
@@ -124,8 +123,8 @@ fn ts_to_cmaf_end_to_end() {
             None => continue,
         };
 
-        match pkt.pid() {
-            Pid::new(0x0100) => {
+        match pkt.pid().value() {
+            0x0100 => {
                 // Video PID
                 if let Some(completed) = vid_assembler.feed(pkt.pusi(), payload) {
                     // Parse PTS/DTS from the PES header
@@ -144,7 +143,7 @@ fn ts_to_cmaf_end_to_end() {
                     }
                 }
             }
-            Pid::new(0x0101) => {
+            0x0101 => {
                 // Audio PID
                 if let Some(completed) = aud_assembler.feed(pkt.pusi(), payload) {
                     if let Ok(pes) = mpeg_pes::PesPacket::parse(&completed) {

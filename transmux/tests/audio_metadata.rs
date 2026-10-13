@@ -6,6 +6,7 @@
 //! 300 468 §6.2.19/§6.4.11 and carried through a real `TsMux` -> `TsDemux`
 //! round trip so the descriptors travel inside a real PMT.
 
+use mpeg_ts::pid::Pid;
 use broadcast_common::{Package, Unpackage};
 use transmux::{
     AudioMetadata, AudioRole, AudioType, CodecConfig, EditorialClassification, MixType, TsDemux,
@@ -49,7 +50,7 @@ fn france2_real_pmt_roles() {
         media
             .tracks
             .iter()
-            .find(|t| t.spec.source_pid == Some(pid))
+            .find(|t| t.spec.source_pid == Some(Pid::new(pid)))
             .unwrap()
             .spec
             .audio_metadata()

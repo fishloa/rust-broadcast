@@ -27,19 +27,19 @@ use transmux::{AbandonReason, CodecConfig, DemuxEvent, StreamingTsDemux, TsDemux
 
 // ── Fixture constants ───────────────────────────────────────────────────────
 
-const PAT_PID: u16 = 0x0000;
-const PMT_PID: u16 = 0x1000;
+const PAT_PID: Pid = Pid::new(0x0000);
+const PMT_PID: Pid = Pid::new(0x1000);
 /// Second program's PMT PID — used only by the two-program refcount test.
-const PMT_PID_2: u16 = 0x1001;
+const PMT_PID_2: Pid = Pid::new(0x1001);
 const TRANSPORT_STREAM_ID: u16 = 1;
 const PROGRAM_NUMBER: u16 = 1;
 /// Second program — used by the PAT-remap and two-program refcount tests.
 const PROGRAM_NUMBER_2: u16 = 2;
 
-const PID_V: u16 = 0x0101; // "video" (informal — just the first-ranked ES)
-const PID_A: u16 = 0x0102; // "audioA"
-const PID_B: u16 = 0x0103; // "audioB"
-const PID_C: u16 = 0x0104; // used only by the count-collision test
+const PID_V: Pid = Pid::new(0x0101); // "video" (informal — just the first-ranked ES)
+const PID_A: Pid = Pid::new(0x0102); // "audioA"
+const PID_B: Pid = Pid::new(0x0103); // "audioB"
+const PID_C: Pid = Pid::new(0x0104); // used only by the count-collision test
 
 // Deliberately unrecognised (ISO/IEC 13818-1 Table 2-34 has nothing at these
 // values) so every ES here classifies as opaque `Codec::Data` (PES-carried) —
@@ -81,7 +81,7 @@ fn finish_section(table_id: u8, body: &[u8]) -> Vec<u8> {
 /// version 0 / `current_next_indicator = 1` — the default PAT for scenarios
 /// that only vary the PMT.
 fn build_pat() -> Vec<u8> {
-    build_pat_full(0, true, &[(PROGRAM_NUMBER, PMT_PID)])
+    build_pat_full(0, true, &[(PROGRAM_NUMBER, PMT_PID.value())])
 }
 
 /// Build a PAT section (§2.4.4.3) with an explicit `version_number`,
@@ -118,14 +118,14 @@ fn build_pmt_for(
     entries: &[(u16, u8, &[u8])],
 ) -> Vec<u8> {
     const TABLE_ID_PMT: u8 = 0x02;
-    const NO_PCR_PID: u16 = 0x1FFF;
+    const NO_PCR_PID: Pid = Pid::new(0x1FFF);
     let mut body = Vec::new();
     body.extend_from_slice(&program_number.to_be_bytes()); // table_id_extension
     body.push(0xC0 | (version << 1) | u8::from(current_next_indicator));
     body.push(0); // section_number
     body.push(0); // last_section_number
-    body.push(0xE0 | ((NO_PCR_PID >> 8) as u8 & 0x1F));
-    body.push((NO_PCR_PID & 0xFF) as u8);
+    body.push(0xE0 | ((NO_PCR_PID.value() >> 8) as u8 & 0x1F));
+    body.push((NO_PCR_PID.value() & 0xFF) as u8);
     body.push(0xF0); // program_info_length = 0
     body.push(0);
     for &(pid, stream_type, descriptors) in entries {
@@ -144,12 +144,12 @@ fn build_pmt_for(
 /// section...]` PSI shape — the caller builds whichever it needs) on `pid`.
 /// Payload must fit in one packet (184 bytes) — true for every section/PES
 /// this file builds.
-fn ts_packet(pid: u16, pusi: bool, cc: u8, payload: &[u8]) -> [u8; TS_PACKET_SIZE] {
+fn ts_packet(pid: Pid, pusi: bool, cc: u8, payload: &[u8]) -> [u8; TS_PACKET_SIZE] {
     let mut pkt = [0xFFu8; TS_PACKET_SIZE];
     let header = TsHeader {
         tei: false,
         pusi,
-        pid: Pid::new(pid),
+        pid: pid,
         scrambling: 0,
         has_adaptation: false,
         has_payload: true,
@@ -168,7 +168,7 @@ fn ts_packet(pid: u16, pusi: bool, cc: u8, payload: &[u8]) -> [u8; TS_PACKET_SIZ
 }
 
 /// A PSI section, packetised with `pointer_field = 0` (ISO/IEC 13818-1 §2.4.4).
-fn psi_packet(pid: u16, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
+fn psi_packet(pid: Pid, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
     let mut payload = Vec::with_capacity(1 + section.len());
     payload.push(0); // pointer_field: section starts immediately
     payload.extend_from_slice(section);
@@ -219,7 +219,7 @@ fn pes_bytes_with_pts(payload: &[u8], pts: u64) -> Vec<u8> {
 /// with an incrementing 4-bit continuity counter. Trailing bytes of the last
 /// packet are `0xFF` fill, bounded by the `PES_packet_length` every builder
 /// here sets.
-fn pes_ts_packets(pid: u16, cc_start: u8, pes: &[u8]) -> Vec<u8> {
+fn pes_ts_packets(pid: Pid, cc_start: u8, pes: &[u8]) -> Vec<u8> {
     let mut out = Vec::new();
     let mut off = 0usize;
     let mut cc = cc_start;
@@ -247,7 +247,7 @@ fn corrupt_crc(mut section: Vec<u8>) -> Vec<u8> {
 fn feed_locked(demux: &mut StreamingTsDemux, bytes: &[u8]) {
     let mut buf = bytes.to_vec();
     while buf.len() / TS_PACKET_SIZE < mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-        buf.extend_from_slice(&ts_packet(0x1FFF, false, 0, &[]));
+        buf.extend_from_slice(&ts_packet(Pid::new(0x1FFF), false, 0, &[]));
     }
     demux.feed(&buf);
 }
@@ -273,11 +273,11 @@ fn feed_bootstrap(demux: &mut StreamingTsDemux, version: u8, entries: &[(u16, u8
     bytes.extend_from_slice(&psi_packet(PMT_PID, 0, &build_pmt(version, true, entries)));
     for (i, &(pid, _, _)) in entries.iter().enumerate() {
         let cc = (i as u8) * 2;
-        bytes.extend_from_slice(&ts_packet(pid, true, cc, &pes_bytes(b"au1")));
-        bytes.extend_from_slice(&ts_packet(pid, true, cc + 1, &pes_bytes(b"au2")));
+        bytes.extend_from_slice(&ts_packet(Pid::new(pid), true, cc, &pes_bytes(b"au1")));
+        bytes.extend_from_slice(&ts_packet(Pid::new(pid), true, cc + 1, &pes_bytes(b"au2")));
     }
     while bytes.len() / TS_PACKET_SIZE < mpeg_ts::resync::LOCK_CONFIRMATIONS + 1 {
-        bytes.extend_from_slice(&ts_packet(0x1FFF, false, 0, &[]));
+        bytes.extend_from_slice(&ts_packet(Pid::new(0x1FFF), false, 0, &[]));
     }
     demux.feed(&bytes);
 }
@@ -301,9 +301,9 @@ fn bootstrap_three_tracks() -> (StreamingTsDemux, Vec<DemuxEvent>) {
         &mut demux,
         1,
         &[
-            (PID_V, STREAM_TYPE_V, &[][..]),
-            (PID_A, STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
-            (PID_B, STREAM_TYPE_B, &[][..]),
+            (PID_V.value(), STREAM_TYPE_V, &[][..]),
+            (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
+            (PID_B.value(), STREAM_TYPE_B, &[][..]),
         ],
     );
     let events = drain(&mut demux);
@@ -320,7 +320,7 @@ fn track_added_specs(events: &[DemuxEvent]) -> Vec<TrackSpec> {
         .collect()
 }
 
-fn track_id_for_pid(specs: &[TrackSpec], pid: u16) -> u32 {
+fn track_id_for_pid(specs: &[TrackSpec], pid: Pid) -> u32 {
     specs
         .iter()
         .find(|s| s.source_pid == Some(pid))
@@ -375,9 +375,9 @@ fn carousel_repeat_of_identical_version_emits_nothing() {
             1,
             true,
             &[
-                (PID_V, STREAM_TYPE_V, &[][..]),
-                (PID_A, STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
-                (PID_B, STREAM_TYPE_B, &[][..]),
+                (PID_V.value(), STREAM_TYPE_V, &[][..]),
+                (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
+                (PID_B.value(), STREAM_TYPE_B, &[][..]),
             ],
         ),
     );
@@ -406,8 +406,8 @@ fn next_table_cni_zero_is_not_applied() {
             5,
             false,
             &[
-                (PID_V, STREAM_TYPE_V, &[][..]),
-                (PID_A, STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
+                (PID_V.value(), STREAM_TYPE_V, &[][..]),
+                (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
             ],
         ),
     );
@@ -449,8 +449,8 @@ fn removal_and_update_and_rearm_from_one_version_bump() {
             2,
             true,
             &[
-                (PID_V, STREAM_TYPE_V, &[][..]),
-                (PID_A, STREAM_TYPE_A, &lang_descriptor(b"qaa", 0)),
+                (PID_V.value(), STREAM_TYPE_V, &[][..]),
+                (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"qaa", 0)),
                 // audioB dropped.
             ],
         ),
@@ -547,9 +547,9 @@ fn tracks_resolved_rearms_even_when_known_pid_count_returns_to_its_prior_value()
             2,
             true,
             &[
-                (PID_V, STREAM_TYPE_V, &[][..]),
-                (PID_A, STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
-                (PID_C, STREAM_TYPE_C, &[][..]),
+                (PID_V.value(), STREAM_TYPE_V, &[][..]),
+                (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
+                (PID_C.value(), STREAM_TYPE_C, &[][..]),
             ],
         ),
     );
@@ -598,7 +598,7 @@ fn version_wrap_31_to_0_is_treated_as_a_change() {
     feed_bootstrap(
         &mut demux,
         31,
-        &[(PID_V, STREAM_TYPE_V, &lang_descriptor(b"eng", 0))],
+        &[(PID_V.value(), STREAM_TYPE_V, &lang_descriptor(b"eng", 0))],
     );
     let bootstrap_events = drain(&mut demux);
     let specs = track_added_specs(&bootstrap_events);
@@ -611,7 +611,7 @@ fn version_wrap_31_to_0_is_treated_as_a_change() {
         &build_pmt(
             0,
             true,
-            &[(PID_V, STREAM_TYPE_V, &lang_descriptor(b"qaa", 0))],
+            &[(PID_V.value(), STREAM_TYPE_V, &lang_descriptor(b"qaa", 0))],
         ),
     );
     demux.feed(&wrapped);
@@ -662,7 +662,7 @@ fn track_abandoned_config_unrecoverable_is_actually_emitted() {
     bytes.extend_from_slice(&psi_packet(
         PMT_PID,
         0,
-        &build_pmt(1, true, &[(PID_V, STREAM_TYPE_AVC, &[][..])]),
+        &build_pmt(1, true, &[(PID_V.value(), STREAM_TYPE_AVC, &[][..])]),
     ));
     // Annex B access units carrying only non-IDR slice NALs — never an
     // SPS/PPS, so `ConfigProbe::H264` can never resolve.
@@ -764,7 +764,7 @@ fn codec_reclassification_rebuilds_the_probe_instead_of_panicking() {
     boot.extend_from_slice(&psi_packet(
         PMT_PID,
         0,
-        &build_pmt(1, true, &[(PID_V, STREAM_TYPE_PES_PRIVATE, &[][..])]),
+        &build_pmt(1, true, &[(PID_V.value(), STREAM_TYPE_PES_PRIVATE, &[][..])]),
     ));
     feed_locked(&mut demux, &boot);
     let boot_events = drain(&mut demux);
@@ -782,7 +782,7 @@ fn codec_reclassification_rebuilds_the_probe_instead_of_panicking() {
         &build_pmt(
             2,
             true,
-            &[(PID_V, STREAM_TYPE_PES_PRIVATE, &AC3_DESCRIPTOR[..])],
+            &[(PID_V.value(), STREAM_TYPE_PES_PRIVATE, &AC3_DESCRIPTOR[..])],
         ),
     ));
     drain(&mut demux);
@@ -856,7 +856,7 @@ fn carrier_is_rebuilt_when_a_section_carried_pid_becomes_pes_carried() {
     boot.extend_from_slice(&psi_packet(
         PMT_PID,
         0,
-        &build_pmt(1, true, &[(PID_V, STREAM_TYPE_SCTE35, &[][..])]),
+        &build_pmt(1, true, &[(PID_V.value(), STREAM_TYPE_SCTE35, &[][..])]),
     ));
     feed_locked(&mut demux, &boot);
     drain(&mut demux);
@@ -865,7 +865,7 @@ fn carrier_is_rebuilt_when_a_section_carried_pid_becomes_pes_carried() {
     demux.feed(&psi_packet(
         PMT_PID,
         1,
-        &build_pmt(2, true, &[(PID_V, STREAM_TYPE_AVC, &[][..])]),
+        &build_pmt(2, true, &[(PID_V.value(), STREAM_TYPE_AVC, &[][..])]),
     ));
     drain(&mut demux);
 
@@ -929,8 +929,8 @@ fn corrupt_crc_pmt_is_dropped_and_disturbs_nothing() {
         2,
         true,
         &[
-            (PID_V, STREAM_TYPE_V, &[][..]),
-            (PID_A, STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
+            (PID_V.value(), STREAM_TYPE_V, &[][..]),
+            (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
             // audioB dropped.
         ],
     );
@@ -948,8 +948,8 @@ fn corrupt_crc_pmt_is_dropped_and_disturbs_nothing() {
         2,
         true,
         &[
-            (PID_V, STREAM_TYPE_V, &[][..]),
-            (PID_A, STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
+            (PID_V.value(), STREAM_TYPE_V, &[][..]),
+            (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
         ],
     );
     demux.feed(&psi_packet(PMT_PID, 2, &good));
@@ -983,7 +983,7 @@ fn corrupt_crc_pat_cannot_hijack_a_live_es_pid() {
     let bad = build_pat_full(
         1,
         true,
-        &[(PROGRAM_NUMBER, PMT_PID), (PROGRAM_NUMBER_2, PID_B)],
+        &[(PROGRAM_NUMBER, PMT_PID.value()), (PROGRAM_NUMBER_2, PID_B.value())],
     );
     demux.feed(&psi_packet(PAT_PID, 1, &corrupt_crc(bad)));
     drain(&mut demux);
@@ -1014,7 +1014,7 @@ fn next_pat_cni_zero_cannot_hijack_a_live_es_pid() {
     let next = build_pat_full(
         1,
         false,
-        &[(PROGRAM_NUMBER, PMT_PID), (PROGRAM_NUMBER_2, PID_B)],
+        &[(PROGRAM_NUMBER, PMT_PID.value()), (PROGRAM_NUMBER_2, PID_B.value())],
     );
     demux.feed(&psi_packet(PAT_PID, 1, &next));
     drain(&mut demux);
@@ -1045,7 +1045,7 @@ fn pat_remap_of_a_pmt_pid_is_honoured() {
     demux.feed(&psi_packet(
         PAT_PID,
         1,
-        &build_pat_full(1, true, &[(PROGRAM_NUMBER_2, PMT_PID)]),
+        &build_pat_full(1, true, &[(PROGRAM_NUMBER_2, PMT_PID.value())]),
     ));
     drain(&mut demux);
 
@@ -1058,8 +1058,8 @@ fn pat_remap_of_a_pmt_pid_is_honoured() {
             2,
             true,
             &[
-                (PID_V, STREAM_TYPE_V, &[][..]),
-                (PID_A, STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
+                (PID_V.value(), STREAM_TYPE_V, &[][..]),
+                (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
             ],
         ),
     ));
@@ -1106,8 +1106,8 @@ fn post_removal_payload_is_not_replayed_into_the_re_added_track() {
             2,
             true,
             &[
-                (PID_V, STREAM_TYPE_V, &[][..]),
-                (PID_A, STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
+                (PID_V.value(), STREAM_TYPE_V, &[][..]),
+                (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
             ],
         ),
     ));
@@ -1138,9 +1138,9 @@ fn post_removal_payload_is_not_replayed_into_the_re_added_track() {
             3,
             true,
             &[
-                (PID_V, STREAM_TYPE_V, &[][..]),
-                (PID_A, STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
-                (PID_B, STREAM_TYPE_B, &[][..]),
+                (PID_V.value(), STREAM_TYPE_V, &[][..]),
+                (PID_A.value(), STREAM_TYPE_A, &lang_descriptor(b"eng", 0)),
+                (PID_B.value(), STREAM_TYPE_B, &[][..]),
             ],
         ),
     ));
@@ -1214,7 +1214,7 @@ fn es_pid_declared_by_two_programs_survives_one_program_dropping_it() {
         &build_pat_full(
             0,
             true,
-            &[(PROGRAM_NUMBER, PMT_PID), (PROGRAM_NUMBER_2, PMT_PID_2)],
+            &[(PROGRAM_NUMBER, PMT_PID.value()), (PROGRAM_NUMBER_2, PMT_PID_2.value())],
         ),
     ));
     // Both programs declare the shared PID_A; program 1 also has its own PID_V.
@@ -1226,8 +1226,8 @@ fn es_pid_declared_by_two_programs_survives_one_program_dropping_it() {
             1,
             true,
             &[
-                (PID_V, STREAM_TYPE_V, &[][..]),
-                (PID_A, STREAM_TYPE_A, &[][..]),
+                (PID_V.value(), STREAM_TYPE_V, &[][..]),
+                (PID_A.value(), STREAM_TYPE_A, &[][..]),
             ],
         ),
     ));
@@ -1238,7 +1238,7 @@ fn es_pid_declared_by_two_programs_survives_one_program_dropping_it() {
             PROGRAM_NUMBER_2,
             1,
             true,
-            &[(PID_A, STREAM_TYPE_A, &[][..])],
+            &[(PID_A.value(), STREAM_TYPE_A, &[][..])],
         ),
     ));
     for (i, pid) in [PID_V, PID_A].iter().enumerate() {
@@ -1255,7 +1255,7 @@ fn es_pid_declared_by_two_programs_survives_one_program_dropping_it() {
     demux.feed(&psi_packet(
         PMT_PID,
         1,
-        &build_pmt_for(PROGRAM_NUMBER, 2, true, &[(PID_V, STREAM_TYPE_V, &[][..])]),
+        &build_pmt_for(PROGRAM_NUMBER, 2, true, &[(PID_V.value(), STREAM_TYPE_V, &[][..])]),
     ));
     let events = drain(&mut demux);
     assert!(

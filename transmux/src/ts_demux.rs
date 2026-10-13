@@ -5102,8 +5102,8 @@ mod tests {
     fn payload_only_packet(pid: Pid, cc: u8) -> [u8; TS_PACKET_SIZE] {
         let mut p = [0xFFu8; TS_PACKET_SIZE];
         p[0] = 0x47; // sync_byte
-        p[1] = ((pid >> 8) as u8) & PID_HI_MASK; // pusi=0, priority=0, PID hi
-        p[2] = (pid & 0xFF) as u8; // PID lo
+        p[1] = ((pid.value() >> 8) as u8) & PID_HI_MASK; // pusi=0, priority=0, PID hi
+        p[2] = (pid.value() & 0xFF) as u8; // PID lo
         p[3] = 0x10 | (cc & 0x0F); // AFC=01 (payload only) + continuity counter
         p
     }
@@ -5118,7 +5118,7 @@ mod tests {
         // so eviction must have run.
         let target_bytes = MAX_UNATTRIBUTED_BYTES * 3;
         let packet_count = target_bytes / PACKET_PAYLOAD_LEN + 1;
-        let unclaimed_pid: Pid = 0x0123; // never introduced via PAT/PMT
+        let unclaimed_pid: Pid = Pid::new(0x0123); // never introduced via PAT/PMT
 
         let mut demux = StreamingTsDemux::new();
         for i in 0..packet_count {
@@ -5215,8 +5215,8 @@ mod tests {
         for _ in 0..30_000u32 {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             pkt[0] = 0x47;
-            pkt[1] = ((ES_PID >> 8) as u8) & PID_HI_MASK; // pusi = 0
-            pkt[2] = (ES_PID & 0xFF) as u8;
+            pkt[1] = ((ES_PID.value() >> 8) as u8) & PID_HI_MASK; // pusi = 0
+            pkt[2] = (ES_PID.value() & 0xFF) as u8;
             pkt[3] = 0x10 | (cc & 0x0F);
             cc = cc.wrapping_add(1);
             demux.feed(&pkt);
@@ -5244,8 +5244,8 @@ mod tests {
         const PUSI_BIT: u8 = 0x40; // payload_unit_start_indicator (ISO/IEC 13818-1 §2.4.3.2)
         let mut pkt = [0xFFu8; TS_PACKET_SIZE];
         pkt[0] = 0x47;
-        pkt[1] = PUSI_BIT | (((ES_PID >> 8) as u8) & PID_HI_MASK);
-        pkt[2] = (ES_PID & 0xFF) as u8;
+        pkt[1] = PUSI_BIT | (((ES_PID.value() >> 8) as u8) & PID_HI_MASK);
+        pkt[2] = (ES_PID.value() & 0xFF) as u8;
         pkt[3] = 0x10 | (cc & 0x0F);
         pkt[4] = 0; // pointer/no-op first byte for a PES (not a pointer_field — PES has none)
         demux.feed(&pkt);
@@ -5598,13 +5598,13 @@ mod tests {
     fn pat_body() -> Vec<u8> {
         let mut body = Vec::new();
         body.extend_from_slice(&PROGRAM_NUMBER_UNDER_TEST.to_be_bytes());
-        body.extend_from_slice(&(0xE000 | PMT_PID_UNDER_TEST).to_be_bytes());
+        body.extend_from_slice(&(0xE000 | PMT_PID_UNDER_TEST.value()).to_be_bytes());
         body
     }
 
     /// PMT section body (ISO/IEC 13818-1 Table 2-33): one elementary stream.
     fn pmt_body(es_pid: Pid, stream_type: u8) -> Vec<u8> {
-        pmt_body_with_pcr_pid(es_pid, stream_type, 0)
+        pmt_body_with_pcr_pid(es_pid, stream_type, Pid::new(0))
     }
 
     /// A PMT body with **two** elementary streams, declaring `pcr_pid` as the
@@ -5618,11 +5618,11 @@ mod tests {
         pcr_pid: Pid,
     ) -> Vec<u8> {
         let mut body = Vec::new();
-        body.extend_from_slice(&(0xE000 | pcr_pid).to_be_bytes());
+        body.extend_from_slice(&(0xE000 | pcr_pid.value()).to_be_bytes());
         body.extend_from_slice(&0xF000u16.to_be_bytes()); // program_info_length 0
         for (pid, stream_type) in [(video_pid, video_type), (audio_pid, audio_type)] {
             body.push(stream_type);
-            body.extend_from_slice(&(0xE000 | pid).to_be_bytes());
+            body.extend_from_slice(&(0xE000 | pid.value()).to_be_bytes());
             body.extend_from_slice(&0xF000u16.to_be_bytes()); // ES_info_length 0
         }
         body
@@ -5633,10 +5633,10 @@ mod tests {
     /// (or a dedicated PCR PID).
     fn pmt_body_with_pcr_pid(es_pid: Pid, stream_type: u8, pcr_pid: Pid) -> Vec<u8> {
         let mut body = Vec::new();
-        body.extend_from_slice(&(0xE000 | pcr_pid).to_be_bytes());
+        body.extend_from_slice(&(0xE000 | pcr_pid.value()).to_be_bytes());
         body.extend_from_slice(&0xF000u16.to_be_bytes()); // reserved + program_info_length 0
         body.push(stream_type);
-        body.extend_from_slice(&(0xE000 | es_pid).to_be_bytes());
+        body.extend_from_slice(&(0xE000 | es_pid.value()).to_be_bytes());
         body.extend_from_slice(&0xF000u16.to_be_bytes()); // reserved + ES_info_length 0
         body
     }
@@ -5695,8 +5695,8 @@ mod tests {
         let mut out = Vec::new();
         let mut p = [0xFFu8; TS_PACKET_SIZE];
         p[0] = 0x47;
-        p[1] = ((pid >> 8) as u8 & PID_HI_MASK) | 0x40; // pusi
-        p[2] = (pid & 0xFF) as u8;
+        p[1] = ((pid.value() >> 8) as u8 & PID_HI_MASK) | 0x40; // pusi
+        p[2] = (pid.value() & 0xFF) as u8;
         p[3] = 0x30 | (cc0 & 0x0F); // afc = '11'
         p[4] = AF_LEN as u8;
         p[5] = 0x80; // discontinuity_indicator = 1
@@ -5722,8 +5722,8 @@ mod tests {
             let take = (payload.len() - off).min(TS_PACKET_SIZE - 4);
             let mut p = [0xFFu8; TS_PACKET_SIZE];
             p[0] = 0x47;
-            p[1] = (pid >> 8) as u8 & PID_HI_MASK;
-            p[2] = (pid & 0xFF) as u8;
+            p[1] = (pid.value() >> 8) as u8 & PID_HI_MASK;
+            p[2] = (pid.value() & 0xFF) as u8;
             p[3] = 0x10 | (cc & 0x0F);
             p[4..4 + take].copy_from_slice(&payload[off..off + take]);
             out.extend_from_slice(&p);
@@ -5744,8 +5744,8 @@ mod tests {
             let take = (payload.len() - off).min(TS_PACKET_SIZE - 4);
             let mut p = [0xFFu8; TS_PACKET_SIZE];
             p[0] = 0x47;
-            p[1] = ((pid >> 8) as u8 & PID_HI_MASK) | if first { 0x40 } else { 0x00 };
-            p[2] = (pid & 0xFF) as u8;
+            p[1] = ((pid.value() >> 8) as u8 & PID_HI_MASK) | if first { 0x40 } else { 0x00 };
+            p[2] = (pid.value() & 0xFF) as u8;
             p[3] = 0x10 | (cc & 0x0F);
             p[4..4 + take].copy_from_slice(&payload[off..off + take]);
             out.extend_from_slice(&p);
@@ -6157,13 +6157,13 @@ mod tests {
     fn signalled_discontinuity_is_scoped_to_the_signalling_program() {
         /// Program A: PMT PID, ES PIDs (the first is also its PCR PID),
         /// program_number.
-        const A_PMT: u16 = 0x1000;
-        const A_ES: u16 = 0x1100;
+        const A_PMT: Pid = Pid::new(0x1000);
+        const A_ES: Pid = Pid::new(0x1100);
         /// Program A's second elementary stream (audio).
-        const A_ES2: u16 = 0x1101;
+        const A_ES2: Pid = Pid::new(0x1101);
         /// Program B: likewise.
-        const B_PMT: u16 = 0x1001;
-        const B_ES: u16 = 0x1200;
+        const B_PMT: Pid = Pid::new(0x1001);
+        const B_ES: Pid = Pid::new(0x1200);
         /// Program numbers for the two PAT entries.
         const A_PROGRAM: u16 = 1;
         const B_PROGRAM: u16 = 2;
@@ -6187,7 +6187,7 @@ mod tests {
         let mut pat = Vec::new();
         for (program, pmt_pid) in [(A_PROGRAM, A_PMT), (B_PROGRAM, B_PMT)] {
             pat.extend_from_slice(&program.to_be_bytes());
-            pat.extend_from_slice(&(0xE000 | pmt_pid).to_be_bytes());
+            pat.extend_from_slice(&(0xE000 | pmt_pid.value()).to_be_bytes());
         }
         input.extend_from_slice(&psi_section_packets_for(
             PAT_PID_UNDER_TEST,
@@ -6230,8 +6230,8 @@ mod tests {
         {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             pkt[0] = 0x47;
-            pkt[1] = (A_ES >> 8) as u8 & PID_HI_MASK;
-            pkt[2] = (A_ES & 0xFF) as u8;
+            pkt[1] = (A_ES.value() >> 8) as u8 & PID_HI_MASK;
+            pkt[2] = (A_ES.value() & 0xFF) as u8;
             pkt[3] = 0x20 | (cc & 0x0F); // AFC=10: adaptation field only
             pkt[4] = 8;
             pkt[5] = 0x80; // discontinuity_indicator
@@ -6264,7 +6264,7 @@ mod tests {
         demux.feed(&input);
         demux.finish();
         let events: Vec<DemuxEvent> = std::iter::from_fn(|| demux.poll_event()).collect();
-        let ids: BTreeMap<u32, u16> = events
+        let ids: BTreeMap<u32, Pid> = events
             .iter()
             .filter_map(|e| match e {
                 DemuxEvent::TrackAdded(spec) => spec.source_pid.map(|pid| (spec.track_id, pid)),
@@ -6277,7 +6277,7 @@ mod tests {
                 && let Some(pid) = ids.get(track_id)
                 && let Some(dts) = sample.dts
             {
-                samples_by_pid.entry(*pid).or_default().push(dts);
+                samples_by_pid.entry(Pid::new((*pid).value())).or_default().push(dts);
             }
         }
         let a_dts = samples_by_pid
@@ -6412,8 +6412,8 @@ mod tests {
             if i == FRAMES {
                 let mut pkt = [0xFFu8; TS_PACKET_SIZE];
                 pkt[0] = 0x47;
-                pkt[1] = (ES_PID_UNDER_TEST >> 8) as u8 & PID_HI_MASK;
-                pkt[2] = (ES_PID_UNDER_TEST & 0xFF) as u8;
+                pkt[1] = (ES_PID_UNDER_TEST.value() >> 8) as u8 & PID_HI_MASK;
+                pkt[2] = (ES_PID_UNDER_TEST.value() & 0xFF) as u8;
                 pkt[3] = 0x20 | (cc & 0x0F);
                 pkt[4] = 8;
                 pkt[5] = 0x80; // discontinuity_indicator
@@ -6666,8 +6666,8 @@ mod tests {
         {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             pkt[0] = 0x47;
-            pkt[1] = (ES_PID_UNDER_TEST >> 8) as u8 & PID_HI_MASK;
-            pkt[2] = (ES_PID_UNDER_TEST & 0xFF) as u8;
+            pkt[1] = (ES_PID_UNDER_TEST.value() >> 8) as u8 & PID_HI_MASK;
+            pkt[2] = (ES_PID_UNDER_TEST.value() & 0xFF) as u8;
             pkt[3] = 0x20 | (cc & 0x0F);
             pkt[4] = 8;
             pkt[5] = 0x80; // discontinuity_indicator
@@ -6760,8 +6760,8 @@ mod tests {
         {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             pkt[0] = 0x47;
-            pkt[1] = (ES_PID_UNDER_TEST >> 8) as u8 & PID_HI_MASK;
-            pkt[2] = (ES_PID_UNDER_TEST & 0xFF) as u8;
+            pkt[1] = (ES_PID_UNDER_TEST.value() >> 8) as u8 & PID_HI_MASK;
+            pkt[2] = (ES_PID_UNDER_TEST.value() & 0xFF) as u8;
             pkt[3] = 0x20 | (cc & 0x0F);
             pkt[4] = 8;
             pkt[5] = 0x80;
@@ -7585,8 +7585,8 @@ mod tests {
             ];
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             pkt[0] = 0x47;
-            pkt[1] = (ES_PID_UNDER_TEST >> 8) as u8 & PID_HI_MASK;
-            pkt[2] = (ES_PID_UNDER_TEST & 0xFF) as u8;
+            pkt[1] = (ES_PID_UNDER_TEST.value() >> 8) as u8 & PID_HI_MASK;
+            pkt[2] = (ES_PID_UNDER_TEST.value() & 0xFF) as u8;
             pkt[3] = 0x20 | (cc & 0x0F); // AFC=10: adaptation only, no payload
             pkt[4] = af.len() as u8;
             pkt[5..5 + af.len()].copy_from_slice(&af);
@@ -7728,8 +7728,8 @@ mod tests {
             // adaptation field, no payload, flags bit 7 set).
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             pkt[0] = 0x47;
-            pkt[1] = (ES_PID_UNDER_TEST >> 8) as u8 & PID_HI_MASK;
-            pkt[2] = (ES_PID_UNDER_TEST & 0xFF) as u8;
+            pkt[1] = (ES_PID_UNDER_TEST.value() >> 8) as u8 & PID_HI_MASK;
+            pkt[2] = (ES_PID_UNDER_TEST.value() & 0xFF) as u8;
             pkt[3] = 0x20 | (cc & 0x0F); // AFC=10, adaptation only
             pkt[4] = 8;
             pkt[5] = 0x80; // discontinuity_indicator
@@ -8789,12 +8789,12 @@ mod tests {
 
         // PMT A declares the shared PID; PMT B declares it too (same codec).
         demux.apply_pmt_diff(
-            PMT_A,
+            Pid::new(PMT_A),
             &BTreeSet::new(),
             alloc::vec![(SHARED_PID, Codec::Data(STREAM_TYPE), Vec::new())],
         );
         demux.apply_pmt_diff(
-            PMT_B,
+            Pid::new(PMT_B),
             &BTreeSet::new(),
             alloc::vec![(SHARED_PID, Codec::Data(STREAM_TYPE), Vec::new())],
         );
@@ -8836,7 +8836,7 @@ mod tests {
         let mut pmt_a_applied = BTreeSet::new();
         pmt_a_applied.insert(SHARED_PID);
         demux.apply_pmt_diff(
-            PMT_A,
+            Pid::new(PMT_A),
             &pmt_a_applied,
             alloc::vec![(SHARED_PID, Codec::Ac3, Vec::new())],
         );
@@ -8874,7 +8874,7 @@ mod tests {
         // (last) declarer.
         let mut pmt_b_applied = BTreeSet::new();
         pmt_b_applied.insert(SHARED_PID);
-        demux.apply_pmt_diff(PMT_B, &pmt_b_applied, Vec::new());
+        demux.apply_pmt_diff(Pid::new(PMT_B), &pmt_b_applied, Vec::new());
         assert_eq!(
             demux.es_declarers.get(&SHARED_PID).map(|d| d.len()),
             Some(1),
@@ -8884,7 +8884,7 @@ mod tests {
         // PMT A reclassifies again: as the *last* declarer, the
         // teardown-and-rebuild now proceeds.
         demux.apply_pmt_diff(
-            PMT_A,
+            Pid::new(PMT_A),
             &pmt_a_applied,
             alloc::vec![(SHARED_PID, Codec::Aac, Vec::new())],
         );
@@ -8913,7 +8913,7 @@ mod tests {
 
         let mut demux = StreamingTsDemux::new();
         demux.apply_pmt_diff(
-            PMT,
+            Pid::new(PMT),
             &BTreeSet::new(),
             alloc::vec![
                 (PID_X, Codec::Data(0x06), Vec::new()),
@@ -8928,7 +8928,7 @@ mod tests {
         old_applied.insert(PID_X);
         old_applied.insert(PID_Y);
         demux.apply_pmt_diff(
-            PMT,
+            Pid::new(PMT),
             &old_applied,
             alloc::vec![
                 (PID_X, Codec::Data(0x08), Vec::new()),
@@ -8968,8 +8968,8 @@ mod tests {
     ) -> [u8; TS_PACKET_SIZE] {
         let mut p = [0xFFu8; TS_PACKET_SIZE];
         p[0] = 0x47;
-        p[1] = (if tei { 0x80 } else { 0x00 }) | ((pid >> 8) as u8 & PID_HI_MASK);
-        p[2] = (pid & 0xFF) as u8;
+        p[1] = (if tei { 0x80 } else { 0x00 }) | ((pid.value() >> 8) as u8 & PID_HI_MASK);
+        p[2] = (pid.value() & 0xFF) as u8;
         p[3] = afc | (cc & 0x0F);
 
         let mut off = 4usize;
@@ -8998,7 +8998,7 @@ mod tests {
         }
         let pkt = ts_packet_degradation(
             true, // tei
-            0x0100,
+            Pid::new(0x0100),
             0,
             0x10, // AFC=01 (payload only)
             None,
@@ -9017,7 +9017,7 @@ mod tests {
             .collect();
         assert_eq!(degraded.len(), 1, "expected exactly one InputDegraded");
         assert_eq!(degraded[0].0, InputDegradation::TransportError);
-        assert_eq!(degraded[0].1.pid, Some(0x0100));
+        assert_eq!(degraded[0].1.pid, Some(Pid::new(0x0100)));
         // packet_index includes the bootstrap null packets.
         assert_eq!(
             degraded[0].1.packet_index,
@@ -9217,9 +9217,9 @@ mod tests {
             let take = (pes.len() - sent).min(TS_MAX_PAYLOAD_BYTES);
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             pkt[0] = 0x47;
-            pkt[1] = ((ES_PID_UNDER_TEST >> 8) as u8 & PID_HI_MASK)
+            pkt[1] = ((ES_PID_UNDER_TEST.value() >> 8) as u8 & PID_HI_MASK)
                 | if sent == 0 { 0x40 } else { 0x00 };
-            pkt[2] = (ES_PID_UNDER_TEST & 0xFF) as u8;
+            pkt[2] = (ES_PID_UNDER_TEST.value() & 0xFF) as u8;
             pkt[3] = 0x10 | (cc & 0x0F);
             pkt[4..4 + take].copy_from_slice(&pes[sent..sent + take]);
             input.extend_from_slice(&pkt);
@@ -9389,7 +9389,7 @@ mod tests {
                 got: 5
             }
         );
-        assert_eq!(degraded[0].1.pid, Some(0x0042));
+        assert_eq!(degraded[0].1.pid, Some(Pid::new(0x0042)));
         // packet_index of the second packet (the gap), offset by bootstrap nulls.
         assert_eq!(
             degraded[0].1.packet_index,
@@ -9506,7 +9506,7 @@ mod tests {
 
         // First packet: CC=0, no adaptation, PID=0x0077.
         demux.feed(&ts_packet_degradation(
-            false, 0x0077, 0, 0x10, None, payload,
+            false, Pid::new(0x0077), 0, 0x10, None, payload,
         ));
         // Second packet: CC=5 (gap), BUT adaptation field with
         // discontinuity_indicator=1. Should emit Discontinuity, NOT
@@ -9517,7 +9517,7 @@ mod tests {
         ];
         demux.feed(&ts_packet_degradation(
             false,
-            0x0077,
+            Pid::new(0x0077),
             5,
             0x30,
             Some(&af),
@@ -9601,13 +9601,13 @@ mod tests {
         let payload = b"payload";
         // First: normal packet, CC=0, PID=0x0083.
         demux.feed(&ts_packet_degradation(
-            false, 0x0083, 0, 0x10, None, payload,
+            false, Pid::new(0x0083), 0, 0x10, None, payload,
         ));
         // Second: discontinuity_indicator=1, CC=5 (gap — suppressed event, but state updated).
         let af = [0x80u8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
         demux.feed(&ts_packet_degradation(
             false,
-            0x0083,
+            Pid::new(0x0083),
             5,
             0x30,
             Some(&af),
@@ -9615,7 +9615,7 @@ mod tests {
         ));
         // Third: legal follow-up, CC=6 ((5+1) & 0x0F). Must NOT fire ContinuityGap.
         demux.feed(&ts_packet_degradation(
-            false, 0x0083, 6, 0x10, None, payload,
+            false, Pid::new(0x0083), 6, 0x10, None, payload,
         ));
 
         let gaps: Vec<_> = std::iter::from_fn(|| demux.poll_event())
@@ -9662,7 +9662,7 @@ mod tests {
         ];
         demux.feed(&ts_packet_degradation(
             false,
-            0x0100,
+            Pid::new(0x0100),
             0,
             0x30, // AFC=11: adaptation + payload
             Some(&af_pcr_100),
@@ -9677,7 +9677,7 @@ mod tests {
         ];
         demux.feed(&ts_packet_degradation(
             false,
-            0x0100,
+            Pid::new(0x0100),
             0, // same CC
             0x30,
             Some(&af_pcr_200),
@@ -10148,7 +10148,7 @@ mod tests {
         let mut removed = false;
         for (i, p) in ts.chunks_exact(TS_PACKET_SIZE).enumerate() {
             let pid = (u16::from(p[1] & 0x1F) << 8) | u16::from(p[2]);
-            if !removed && i > 12 && pid == ES_PID_UNDER_TEST && p[1] & 0x40 == 0 {
+            if !removed && i > 12 && pid == ES_PID_UNDER_TEST.value() && p[1] & 0x40 == 0 {
                 removed = true;
                 continue;
             }
