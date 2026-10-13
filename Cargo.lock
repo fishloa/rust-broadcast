@@ -2329,6 +2329,7 @@ dependencies = [
  "bytes",
  "mp4-emsg",
  "serde",
+ "test-alloc",
  "thiserror 2.0.21",
 ]
 
