@@ -31,6 +31,7 @@
 //! do the work. The whole module is gated on the `sample-aes` feature; the
 //! default `no_std` core build carries no crypto.
 
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 

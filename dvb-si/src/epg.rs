@@ -93,8 +93,10 @@
 use crate::collect::CollectResult;
 use crate::tables::RunningStatus;
 use alloc::collections::BTreeMap;
+#[cfg(feature = "serde")]
 use alloc::format;
 use alloc::string::String;
+use alloc::vec;
 use alloc::vec::Vec;
 use mpeg_ts::pid::Pid;
 
@@ -274,8 +276,8 @@ pub struct EpgEvent {
 }
 
 /// Serialisable service data exposed by [`EpgStore`] serde export.
-#[derive(Debug, Clone)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[cfg(feature = "serde")]
+#[derive(Debug, Clone, serde::Serialize)]
 struct ServiceData {
     #[cfg_attr(feature = "serde", serde(skip_serializing_if = "Option::is_none"))]
     service_name: Option<String>,
