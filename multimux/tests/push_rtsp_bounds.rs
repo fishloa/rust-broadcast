@@ -12,6 +12,22 @@ use tokio::net::{TcpListener, TcpStream};
 /// one hangs and trips it.
 const GUARD: Duration = Duration::from_secs(5);
 
+/// Wait budget for the end-to-end reconnect. It must stay strictly below
+/// `drive_push`'s 10 s flush bound, so a reconnect inside it can only have
+/// come from the transport's own 300 ms write bound. The bound cannot start
+/// until the sender's socket buffer is full, and that fill is paced by the
+/// transport's per-frame cost: the flake (#1165) was `send_interleaved` parking
+/// ~1.5 ms per frame on a zero-duration timer (fixed in rtsp-runtime), which
+/// stretched the fill to ~4.5 s on a 2-CPU debug runner against the old 5 s
+/// guard. The slack here is for a loaded runner, not for that defect.
+const RECONNECT_GUARD: Duration = Duration::from_secs(8);
+
+/// The receive buffer the stalled peer asks for. Small, so the sender's
+/// socket fills after a few KiB of payload on any OS — instead of depending
+/// on how many MiB the host's loopback autotuning will absorb (Linux CI
+/// absorbs ~10 MiB, which took seconds of debug-build muxing to exceed).
+const STALLED_PEER_RCVBUF: usize = 4096;
+
 /// Tight bounds so a bounded path returns in ~300 ms while an unbounded one
 /// hits `GUARD`.
 fn config_with_bounds() -> RtspTransportConfig {
@@ -110,7 +126,30 @@ async fn scripted_record_peer(
 }
 
 async fn peer(after: AfterRecord) -> (String, Arc<AtomicUsize>, Arc<tokio::sync::Notify>) {
-    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let listener = match after {
+        // Accepted sockets inherit the listener's SO_RCVBUF, which must be
+        // set before listen() for the advertised window to honour it.
+        AfterRecord::StopReading => {
+            let sock = socket2::Socket::new(
+                socket2::Domain::IPV4,
+                socket2::Type::STREAM,
+                Some(socket2::Protocol::TCP),
+            )
+            .unwrap();
+            sock.set_recv_buffer_size(STALLED_PEER_RCVBUF).unwrap();
+            sock.bind(
+                &"127.0.0.1:0"
+                    .parse::<std::net::SocketAddr>()
+                    .unwrap()
+                    .into(),
+            )
+            .unwrap();
+            sock.listen(16).unwrap();
+            sock.set_nonblocking(true).unwrap();
+            TcpListener::from_std(sock.into()).unwrap()
+        }
+        AfterRecord::Drain => TcpListener::bind("127.0.0.1:0").await.unwrap(),
+    };
     let url = format!("rtsp://{}/live/key", listener.local_addr().unwrap());
     let accepted = Arc::new(AtomicUsize::new(0));
     let connected = Arc::new(tokio::sync::Notify::new());
@@ -232,6 +271,20 @@ fn big_sample() -> transmux::ir::Sample {
     )
 }
 
+/// Wait on the acceptor's `Notify` until at least `n` connections have been
+/// accepted (m-3: no yield spin). The `notified()` future is registered
+/// BEFORE re-reading the counter so a notify between the check and the await
+/// is not lost.
+async fn wait_for_connections(accepted: &AtomicUsize, connected: &tokio::sync::Notify, n: usize) {
+    loop {
+        let notified = connected.notified();
+        if accepted.load(Ordering::SeqCst) >= n {
+            return;
+        }
+        notified.await;
+    }
+}
+
 /// END TO END through `drive_push`: a trunk WITH a video track and a steady
 /// stream of large samples, pushed at a peer that stops reading after RECORD.
 /// The transport's write bound (300 ms) must trip and `drive_push` must
@@ -258,32 +311,35 @@ async fn drive_push_reconnects_at_the_transport_write_bound_not_the_ten_second_f
         },
         cancel.clone(),
     ));
-    // Prime the trunk with enough large samples to overflow any loopback
-    // socket buffer, then just wait for the reconnect (a condition wait, not
-    // a fixed-interval ticker): once the socket is full the transport's own
-    // write bound will trip without further publishing.
-    for _ in 0..512 {
+    // Wait for the FIRST connection before publishing anything: `drive_push`
+    // subscribes its cursor before it dials, so once the peer has accepted,
+    // every sample published from here on is seen. Priming earlier raced the
+    // task's first poll (samples published before `subscribe()` are never
+    // delivered to the cursor, leaving nothing to stall on).
+    let first = tokio::time::timeout(
+        RECONNECT_GUARD,
+        wait_for_connections(&accepted, &connected, 1),
+    )
+    .await;
+    assert!(first.is_ok(), "the first connection was never accepted");
+    // Prime the trunk with enough large samples (32 x 256 KiB = 8 MiB, well
+    // inside the 64-slot ring) to overflow the stalled peer's tiny receive
+    // window plus any sender-side buffering, then just wait for the
+    // reconnect (a condition wait, not a ticker): once the socket is full the
+    // transport's own write bound will trip without further publishing.
+    for _ in 0..32 {
         writer.publish(1, RetentionClass::Timed, big_sample());
     }
-    let reconnected = tokio::time::timeout(GUARD, async {
-        // Wait on the acceptor's `Notify` until a SECOND connection has been
-        // accepted (m-3: no yield spin). Register the `notified()` future
-        // BEFORE re-reading the counter so a notify between the check and the
-        // await is not lost.
-        loop {
-            let notified = connected.notified();
-            if accepted.load(Ordering::SeqCst) >= 2 {
-                break;
-            }
-            notified.await;
-        }
-    })
+    let reconnected = tokio::time::timeout(
+        RECONNECT_GUARD,
+        wait_for_connections(&accepted, &connected, 2),
+    )
     .await;
     cancel.cancel();
     let _ = tokio::time::timeout(Duration::from_secs(2), task).await;
     assert!(
         reconnected.is_ok(),
-        "the stalled write must be failed by the transport's own bound (reconnect within {GUARD:?}); \
+        "the stalled write must be failed by the transport's own bound (reconnect within {RECONNECT_GUARD:?}); \
          connections seen: {}",
         accepted.load(Ordering::SeqCst)
     );
