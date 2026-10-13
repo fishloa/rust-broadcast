@@ -353,9 +353,9 @@ impl SiDemuxBuilder {
 /// See the [module docs](crate::demux) for the gate and CRC policies.
 pub struct SiDemux {
     pids: BTreeMap<Pid, SectionReassembler>,
-    // TODO(perf): keys are uniform internal u64s — a non-SipHash hasher (e.g.
-    // FxHash) would shave cycles at high section rates; revisit if profiling
-    // shows it.
+    // A `BTreeMap` (no hasher at all, so `no_std`+`alloc` needs no hash-map
+    // dependency): the gate costs ~20-110 ns per section for 200..65k keys,
+    // against microseconds of CRC-32 + reassembly per section (#1189).
     gate: BTreeMap<u64, GateEntry>,
     gate_order: VecDeque<u64>,
     cfg: Config,
