@@ -153,4 +153,24 @@ mod tests {
             Error::FieldOverflow(_)
         ));
     }
+
+    /// r03-W7 — H.222.0 Table 2-67 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the TSDuck-compiled oracle
+    /// PMT `tsduck-mpeg-simple-pmt.bin` (TSDuck only; no real broadcast capture carries it). (1) conformant bytes (reserved=1) round-trip byte-exactly;
+    /// (2) the same descriptor with reserved=0 (non-conformant sender) parses to
+    /// equal typed fields and re-serializes to the normalized reserved=1 form.
+    #[test]
+    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
+        let conformant: &[u8] = &[TAG, 3, 0xFF, 0xAB, 0xCD];
+        let zeroed: &[u8] = &[TAG, 3, 0x3F, 0xAB, 0xCD];
+        let d = MaximumBitrateDescriptor::parse(conformant).unwrap();
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, conformant);
+
+        let dz = MaximumBitrateDescriptor::parse(zeroed).unwrap();
+        assert_eq!(dz, d, "typed fields must not depend on reserved bits");
+        let mut outz = vec![0u8; dz.serialized_len()];
+        dz.serialize_into(&mut outz).unwrap();
+        assert_eq!(outz, conformant);
+    }
 }
