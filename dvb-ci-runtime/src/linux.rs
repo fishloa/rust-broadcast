@@ -2,11 +2,11 @@
 //! feature).
 //!
 //! This is the one place the crate uses `unsafe` — the DVB CA ioctls
-//! (`CA_RESET`, `CA_GET_SLOT_INFO`) via `libc`, confined to the private
-//! `ioctl` submodule below, which exposes safe functions. The ioctl request
-//! numbers are
-//! computed from the standard Linux `_IOC` encoding (Documentation/userspace-api
-//! + `include/uapi/linux/dvb/ca.h`), not hard-coded magic.
+//! (`CA_RESET`, `CA_GET_SLOT_INFO`) via `rustix::ioctl`, confined to the
+//! private `ioctl` submodule below, which exposes safe functions. The ioctl
+//! request numbers are built by `rustix::ioctl::opcode` (the per-architecture
+//! `_IOC` encoding — it differs between x86/arm and mips/powerpc/sparc) from
+//! `include/uapi/linux/dvb/ca.h`'s group/number/type, not hard-coded magic.
 //!
 //! Runtime behaviour requires a real DVB card with a CI slot; it is
 //! compile-checked in CI but exercised only on hardware.
@@ -45,31 +45,24 @@ fn poll_readable(fd: &impl AsFd, timeout: Duration) -> io::Result<bool> {
     Ok(fds[0].revents().contains(PollFlags::IN))
 }
 
-// --- Linux _IOC ioctl encoding (uapi/asm-generic/ioctl.h) ------------------
-const IOC_NRBITS: u32 = 8;
-const IOC_TYPEBITS: u32 = 8;
-const IOC_SIZEBITS: u32 = 14;
-const IOC_NRSHIFT: u32 = 0;
-const IOC_TYPESHIFT: u32 = IOC_NRSHIFT + IOC_NRBITS;
-const IOC_SIZESHIFT: u32 = IOC_TYPESHIFT + IOC_TYPEBITS;
-const IOC_DIRSHIFT: u32 = IOC_SIZESHIFT + IOC_SIZEBITS;
-const IOC_NONE: u32 = 0;
-const IOC_READ: u32 = 2;
+// --- DVB CA ioctl request numbers (uapi/linux/dvb/ca.h) --------------------
+//
+// The `_IOC` request encoding is NOT one layout on Linux: x86/arm/arm64/riscv/
+// s390x/... use the asm-generic one (2 direction bits, 14 size bits), but
+// mips/powerpc/sparc use 3 direction bits, 13 size bits and different
+// direction values (`_IOC_NONE` = 1, `_IOC_READ` = 2, `_IOC_WRITE` = 4). A
+// hand-rolled asm-generic encoding therefore issues the WRONG request on those
+// targets (r10-W-1). `rustix::ioctl::opcode` carries the per-architecture
+// table, so the request numbers are derived from it rather than re-encoded
+// here.
+use rustix::ioctl::{Opcode, opcode};
 
-const fn ioc(dir: u32, typ: u32, nr: u32, size: u32) -> u64 {
-    ((dir << IOC_DIRSHIFT) | (typ << IOC_TYPESHIFT) | (nr << IOC_NRSHIFT) | (size << IOC_SIZESHIFT))
-        as u64
-}
-
-// DVB CA device (uapi/linux/dvb/ca.h): magic 'o', ca_slot_info, flags bit.
-const DVB_CA_MAGIC: u32 = b'o' as u32;
-const CA_RESET: u64 = ioc(IOC_NONE, DVB_CA_MAGIC, 128, 0);
-const CA_GET_SLOT_INFO: u64 = ioc(
-    IOC_READ,
-    DVB_CA_MAGIC,
-    130,
-    core::mem::size_of::<CaSlotInfo>() as u32,
-);
+/// The DVB CA ioctl "magic" group, `'o'` (uapi `linux/dvb/ca.h`).
+const DVB_CA_MAGIC: u8 = b'o';
+/// `_IO('o', 128)` (uapi `linux/dvb/ca.h`).
+const CA_RESET: Opcode = opcode::none(DVB_CA_MAGIC, 128);
+/// `_IOR('o', 130, ca_slot_info_t)` (uapi `linux/dvb/ca.h`).
+const CA_GET_SLOT_INFO: Opcode = opcode::read::<CaSlotInfo>(DVB_CA_MAGIC, 130);
 /// `CA_CI_MODULE_PRESENT` — a module (or card) is physically inserted in the
 /// slot (uapi `linux/dvb/ca.h` `ca_slot_info.flags`, bit 0).
 const CA_CI_MODULE_PRESENT: u32 = 1;
@@ -99,47 +92,30 @@ const KERNEL_CA_SLOT_INFO_ALIGN: usize = 4;
 #[allow(unsafe_code)]
 mod ioctl {
     use super::{CA_GET_SLOT_INFO, CA_RESET, CaSlotInfo};
+    use rustix::ioctl::{NoArg, Updater, ioctl};
     use std::io;
-    use std::os::unix::io::{AsRawFd, BorrowedFd};
-
-    // r10-W-1: `libc::ioctl`'s request parameter is `libc::Ioctl`, which is
-    // `c_ulong` on glibc but `c_int` on musl/uclibc/Android — a hard-coded
-    // `as libc::c_ulong` fails to compile there. The encoded request always
-    // fits in 32 bits, so the narrowing cast on musl/Android is lossless.
+    use std::os::unix::io::BorrowedFd;
 
     /// `CA_RESET` on `fd`.
     pub(super) fn ca_reset(fd: BorrowedFd<'_>) -> io::Result<()> {
-        // SAFETY: `fd` is a live borrowed descriptor for the whole call (the
-        // `BorrowedFd` lifetime guarantees it is open); `CA_RESET` is an
-        // `_IO` request that takes no argument, so no pointer is passed and
-        // there is no memory for the kernel to read or write.
-        let r = unsafe { libc::ioctl(fd.as_raw_fd(), CA_RESET as libc::Ioctl) };
-        if r < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
+        // SAFETY: `CA_RESET` is `_IO('o', 128)` (built by `rustix::ioctl::
+        // opcode::none`, the correct request for this target architecture)
+        // and takes no argument, so there is no memory for the kernel to read
+        // or write. `fd` is a live borrowed descriptor for the whole call.
+        unsafe { ioctl(fd, NoArg::<CA_RESET>::new()) }.map_err(io::Error::from)
     }
 
     /// `CA_GET_SLOT_INFO` on `fd`, filling `info` (its `num` selects the slot).
     pub(super) fn ca_get_slot_info(fd: BorrowedFd<'_>, info: &mut CaSlotInfo) -> io::Result<()> {
-        // SAFETY: `fd` is live for the whole call (as above). The request is
-        // `_IOR('o', 130, CaSlotInfo)`: the kernel reads `num` and writes the
-        // whole `ca_slot_info`, whose size/alignment `CaSlotInfo` mirrors
-        // (`#[repr(C)]`, asserted by the `ca_slot_info_matches_kernel_layout`
-        // test). `info` is an exclusive `&mut` to a fully-initialised value that
-        // outlives the call, so the pointer is valid, aligned, and unaliased
-        // for the kernel's write.
-        let r = unsafe {
-            libc::ioctl(
-                fd.as_raw_fd(),
-                CA_GET_SLOT_INFO as libc::Ioctl,
-                info as *mut CaSlotInfo,
-            )
-        };
-        if r < 0 {
-            return Err(io::Error::last_os_error());
-        }
-        Ok(())
+        // SAFETY: the request is `_IOR('o', 130, CaSlotInfo)` (built by
+        // `rustix::ioctl::opcode::read::<CaSlotInfo>`, per-architecture): the
+        // kernel reads `num` and writes the whole `ca_slot_info`, whose
+        // size/alignment `CaSlotInfo` mirrors (`#[repr(C)]`, asserted by the
+        // `ca_slot_info_matches_kernel_layout` test). `Updater` passes a
+        // pointer to the exclusive, fully-initialised `info`, which outlives
+        // the call. `fd` is live for the whole call.
+        unsafe { ioctl(fd, Updater::<CA_GET_SLOT_INFO, CaSlotInfo>::new(info)) }
+            .map_err(io::Error::from)
     }
 }
 
@@ -688,4 +664,45 @@ mod tests {
             KERNEL_CA_SLOT_INFO_ALIGN
         );
     }
+
+    // r10-W-1: the request numbers the kernel's `dvb_ca_en50221` `ioctl`
+    // handler dispatches on, per target architecture. Linux does not have one
+    // `_IOC` layout: asm-generic targets (x86, arm, aarch64, riscv, s390x, ...)
+    // use `dir << 30 | size << 16 | type << 8 | nr` with `_IOC_READ = 2`;
+    // mips/powerpc/sparc use `dir << 29` (3 direction bits, 13 size bits) with
+    // `_IOC_NONE = 1`, `_IOC_READ = 2`. The expected values are the well-known
+    // ones for `uapi/linux/dvb/ca.h`'s `_IO('o', 128)` and
+    // `_IOR('o', 130, ca_slot_info_t)` (12-byte struct). A hand-rolled
+    // asm-generic encoding fails the second block.
+    //
+    // Compile-time asserts, so `cargo check --tests --target <arch>` verifies
+    // an architecture whose test binary cannot be run on the build host.
+    #[cfg(not(any(
+        target_arch = "mips",
+        target_arch = "mips32r6",
+        target_arch = "mips64",
+        target_arch = "mips64r6",
+        target_arch = "powerpc",
+        target_arch = "powerpc64",
+        target_arch = "sparc",
+        target_arch = "sparc64"
+    )))]
+    const _: () = {
+        assert!(CA_RESET == 0x0000_6F80);
+        assert!(CA_GET_SLOT_INFO == 0x800C_6F82);
+    };
+    #[cfg(any(
+        target_arch = "mips",
+        target_arch = "mips32r6",
+        target_arch = "mips64",
+        target_arch = "mips64r6",
+        target_arch = "powerpc",
+        target_arch = "powerpc64",
+        target_arch = "sparc",
+        target_arch = "sparc64"
+    ))]
+    const _: () = {
+        assert!(CA_RESET == 0x2000_6F80);
+        assert!(CA_GET_SLOT_INFO == 0x400C_6F82);
+    };
 }
