@@ -78,6 +78,7 @@ use crate::TrackId;
 use core::fmt;
 
 use alloc::collections::BTreeMap;
+use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use broadcast_common::{Decrypt, Parse};
@@ -793,9 +794,9 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
             // skipped, but recorded so the drop is never silent (audit
             // r05-W6 follow-up). Its sample-entry FourCC is the `stsd` child.
             skipped.push(crate::ir::SkippedTrack::new(
-                stsd_entry_fourcc(stsd).to_owned(),
+                stsd_entry_fourcc(stsd).to_string(),
                 "unprotected track: CencDecryptor::demux reconstructs protected tracks only"
-                    .to_owned(),
+                    .to_string(),
             ));
             continue;
         };
@@ -811,11 +812,11 @@ fn demux_protected(file: &bytes::Bytes) -> Result<Media> {
             // matches this media track's track_id".
             let fourcc = core::str::from_utf8(&sinf_parsed.original_format.data_format)
                 .unwrap_or("unknown")
-                .to_owned();
+                .to_string();
             skipped.push(crate::ir::SkippedTrack::new(
                 fourcc,
                 "protected track whose original format is not avc1: only protected AVC demux is supported"
-                    .to_owned(),
+                    .to_string(),
             ));
             continue;
         }
