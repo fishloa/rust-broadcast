@@ -3,6 +3,9 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+### Fixed
+
+- `MediaTransport::encrypt_rtp`/`encrypt_rtcp` return `Error::Media` for an unserializable packet instead of panicking.
 
 
 ## [0.2.0] - 2026-10-05

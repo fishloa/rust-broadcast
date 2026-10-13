@@ -1299,7 +1299,9 @@ impl MediaTransport {
         let ctx = self.srtp_write.as_mut().ok_or_else(|| {
             Error::Media("no srtp write context yet: dtls handshake has not completed".to_string())
         })?;
-        let plaintext = packet.to_bytes();
+        let plaintext = packet
+            .try_to_bytes()
+            .map_err(|e| Error::Media(format!("rtp serialize: {e}")))?;
         let protected = ctx
             .encrypt_rtp(&plaintext)
             .map_err(|e| Error::Media(format!("srtp encrypt: {e}")))?;
@@ -1323,7 +1325,9 @@ impl MediaTransport {
         let ctx = self.srtp_write.as_mut().ok_or_else(|| {
             Error::Media("no srtp write context yet: dtls handshake has not completed".to_string())
         })?;
-        let plaintext = packet.to_bytes();
+        let plaintext = packet
+            .try_to_bytes()
+            .map_err(|e| Error::Media(format!("rtcp serialize: {e}")))?;
         let protected = ctx
             .encrypt_rtcp(&plaintext)
             .map_err(|e| Error::Media(format!("srtcp encrypt: {e}")))?;
@@ -2097,6 +2101,30 @@ mod tests {
             dec_ctx.decrypt_rtp(&protected).unwrap().to_vec(),
             packet.to_bytes()
         );
+    }
+
+    /// T15: an over-range hand-built packet (16 CSRCs; the CC field is 4
+    /// bits) and a compound packet with no leading report must return `Err`,
+    /// not panic inside `to_bytes`.
+    #[test]
+    fn encrypt_rtp_and_rtcp_reject_unserializable_packets_without_panicking() {
+        let mut mt = transport_with_appendix_b3_write_context();
+        let packet = rtp_packet::RtpPacket {
+            marker: false,
+            payload_type: 96,
+            sequence_number: 0,
+            timestamp: 0,
+            ssrc: 0,
+            csrc: vec![0u32; 16],
+            extension: None,
+            padding: None,
+            payload: &[0xAAu8; 8],
+        };
+        assert!(matches!(mt.encrypt_rtp(&packet), Err(Error::Media(_))));
+        let empty = rtcp_packet::CompoundPacket {
+            packets: Vec::new(),
+        };
+        assert!(matches!(mt.encrypt_rtcp(&empty), Err(Error::Media(_))));
     }
 
     #[test]

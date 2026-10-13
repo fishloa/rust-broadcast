@@ -5,6 +5,13 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Added
+
+- `ProtocolControl::try_to_message` (fallible `to_message`).
+
+### Fixed
+
+- `ClientSession::send_metadata` and the server's connect reply (configured `chunk_size` of 0) return `Err` instead of panicking on an unserializable value.
 
 ## [0.7.1] - 2026-10-11
 ### Fixed

@@ -5,6 +5,9 @@ All notable changes to `dvb-ci` are documented here. The format follows
 versioning.
 
 ## [Unreleased]
+### Documentation
+
+- `CaPmtBuilt::to_bytes` documents its panic; `try_to_bytes` is the fallible form.
 
 ## [0.9.0] - 2026-10-05
 ### Added

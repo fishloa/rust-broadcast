@@ -795,7 +795,7 @@ fn build_smooth_fragment(
 
     // Serialize the moof (without tfxd), then splice the tfxd in at the end of
     // the traf and patch the two container sizes (moof, traf).
-    let base_moof = moof.to_bytes();
+    let base_moof = moof.try_to_bytes()?;
     let with_tfxd = splice_tfxd_into_traf(&base_moof, &tfxd)?;
     debug_assert_eq!(with_tfxd.len(), moof_size);
 
