@@ -102,9 +102,11 @@
 //! # `no_std` + `alloc`
 //!
 //! The crate is `#![no_std]` and links only `alloc`. Its single runtime
-//! dependency is `broadcast-common`. The only allocation is the candidate `Vec`
-//! of a genuine `Ambiguous` result. Build it without the default features for a
-//! pure-`alloc` target.
+//! dependency is `broadcast-common`. A probe that finds no candidate
+//! (`Insufficient` / `Unknown`) allocates nothing; one that matches allocates
+//! the internal candidate `Vec` once (pinned by `tests/alloc_bound.rs`) — the
+//! result itself carries a `Vec` only for `Ambiguous`. Build it without the
+//! default features for a pure-`alloc` target.
 //!
 //! # Example
 //!
@@ -157,6 +159,7 @@ extern crate std;
 mod adts;
 mod annexb;
 mod asf;
+mod chain;
 mod ebml;
 mod flv;
 mod isobmff;

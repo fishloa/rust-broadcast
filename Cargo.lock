@@ -743,6 +743,7 @@ dependencies = [
  "mpeg-ps",
  "mpeg-ts",
  "st377-1",
+ "test-alloc",
 ]
 
 [[package]]
