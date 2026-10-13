@@ -202,10 +202,14 @@ async fn served_segment_carries_a_decodable_emsg_with_a_nonzero_pts_origin() {
         .expect("parse splice");
     let declared_id = ev.id.expect("a splice_insert has an event id");
     writer.publish_event(ev, EventAnchor::Media(MediaTime(PTS_ORIGIN as u64)));
-
     let last = trunk.last_closed_segment().expect("a segment closed");
-    let attributed: Vec<u32> = (1..=last)
-        .filter(|seq| !trunk.events_in_segment(*seq).is_empty())
+
+    let attributed: Vec<u32> = (1..=last.value())
+        .filter(|seq| {
+            !trunk
+                .events_in_segment(media_plane::ids::SegmentSeq::new(*seq))
+                .is_empty()
+        })
         .collect();
     assert_eq!(
         attributed,

@@ -639,7 +639,7 @@ mod tests {
     }
 
     fn closed(seq: u32, start_ns: u64, duration_secs: f64, discontinuous: bool) -> ClosedSegment {
-        ClosedSegment::new(seq, start_ns, duration_secs, discontinuous)
+        ClosedSegment::new(SegmentSeq::new(seq), start_ns, duration_secs, discontinuous)
     }
 
     // --- merge_segments: the straddle fix itself ---
@@ -663,7 +663,7 @@ mod tests {
     fn merge_segments_excludes_archived_segments_from_live_tail() {
         let archived = vec![
             ArchivedSegment {
-                seq: 1,
+                seq: SegmentSeq::new(1),
                 start_pts_ns: 0,
                 duration_secs: 2.0,
                 discontinuous: false,
@@ -672,7 +672,7 @@ mod tests {
                 byte_len: 10,
             },
             ArchivedSegment {
-                seq: 2,
+                seq: SegmentSeq::new(2),
                 start_pts_ns: 2_000_000_000,
                 duration_secs: 2.0,
                 discontinuous: false,
@@ -681,7 +681,7 @@ mod tests {
                 byte_len: 10,
             },
             ArchivedSegment {
-                seq: 3,
+                seq: SegmentSeq::new(3),
                 start_pts_ns: 4_000_000_000,
                 duration_secs: 2.0,
                 discontinuous: false,
@@ -702,7 +702,7 @@ mod tests {
         ];
 
         let combined = merge_segments(&archived, &live);
-        let seqs: Vec<u32> = combined.iter().map(|s| s.seq).collect();
+        let seqs: Vec<u32> = combined.iter().map(|s| s.seq.value()).collect();
         assert_eq!(
             seqs,
             vec![1, 2, 3, 4],
@@ -717,7 +717,7 @@ mod tests {
             closed(6, 1_000_000_000, 1.0, true),
         ];
         let combined = merge_segments(&[], &live);
-        let seqs: Vec<u32> = combined.iter().map(|s| s.seq).collect();
+        let seqs: Vec<u32> = combined.iter().map(|s| s.seq.value()).collect();
         assert_eq!(seqs, vec![5, 6]);
         assert!(combined[1].discontinuous);
     }
@@ -728,21 +728,21 @@ mod tests {
     fn apply_window_keeps_only_the_trailing_seconds() {
         let combined = vec![
             CatchupSegment {
-                seq: 1,
+                seq: SegmentSeq::new(1),
                 start_pts_ns: 0,
                 duration_secs: 10.0,
                 discontinuous: false,
                 init: None,
             },
             CatchupSegment {
-                seq: 2,
+                seq: SegmentSeq::new(2),
                 start_pts_ns: 10_000_000_000,
                 duration_secs: 10.0,
                 discontinuous: false,
                 init: None,
             },
             CatchupSegment {
-                seq: 3,
+                seq: SegmentSeq::new(3),
                 start_pts_ns: 20_000_000_000,
                 duration_secs: 10.0,
                 discontinuous: false,
@@ -753,7 +753,7 @@ mod tests {
         // before it, so only segment 3 survives (the durations, not the pts
         // clock, measure the distance).
         let windowed = apply_window(&combined, Some(5));
-        let seqs: Vec<u32> = windowed.iter().map(|s| s.seq).collect();
+        let seqs: Vec<u32> = windowed.iter().map(|s| s.seq.value()).collect();
         assert_eq!(
             seqs,
             vec![3],
@@ -768,7 +768,7 @@ mod tests {
     #[test]
     fn apply_window_is_correct_across_a_reconnect_whose_pts_restarted() {
         let seg = |seq: u32, start_s: u64, discontinuous: bool| CatchupSegment {
-            seq,
+            seq: SegmentSeq::new(seq),
             start_pts_ns: start_s * NANOS_PER_SEC_U64,
             duration_secs: 4.0,
             discontinuous,
@@ -789,7 +789,7 @@ mod tests {
         let seqs = |w| -> Vec<u32> {
             apply_window(&combined, Some(w))
                 .iter()
-                .map(|s| s.seq)
+                .map(|s| s.seq.value())
                 .collect()
         };
         // Edge = seg 9. 8 s back covers segs 7 and 8 (4 s and 8 s before it).
@@ -807,7 +807,7 @@ mod tests {
     #[test]
     fn apply_window_none_or_zero_returns_everything() {
         let combined = vec![CatchupSegment {
-            seq: 1,
+            seq: SegmentSeq::new(1),
             start_pts_ns: 0,
             duration_secs: 2.0,
             discontinuous: false,
@@ -823,7 +823,7 @@ mod tests {
     fn dummy_segment(seq: u32, byte: u8) -> SegmentEntry {
         SegmentEntry::new(
             bytes::Bytes::from(vec![byte; 24]),
-            seq,
+            SegmentSeq::new(seq),
             Duration::from_secs(3),
             broadcast_common::Timestamp::from_nanos(u64::from(seq) * 3_000_000_000),
             transmux::SegmentMeta {
@@ -871,7 +871,7 @@ mod tests {
         assert_eq!(archived.len(), 3);
         for (i, seg) in archived.iter().enumerate() {
             let seq = i as u32 + 1;
-            assert_eq!(seg.seq, seq);
+            assert_eq!(seg.seq.value(), seq);
             assert_eq!(
                 seg.duration_secs, 3.0,
                 "seq {seq} duration must be real, not a shape"
@@ -913,7 +913,8 @@ mod tests {
         recorder.poll_and_persist(Some(init)).expect("persist");
 
         let dir = archive_dir(&recorder_cfg(&tmp), "find");
-        let found = find_archived_segment(&dir, 1).expect("segment 1 must be found");
+        let found =
+            find_archived_segment(&dir, SegmentSeq::new(1)).expect("segment 1 must be found");
         assert_eq!(found.period_num, 0);
         let bytes = read_archived_bytes(
             &dir,
@@ -925,7 +926,7 @@ mod tests {
         .expect("read bytes");
         assert_eq!(bytes.as_ref(), vec![0x11u8; 24].as_slice());
 
-        assert!(find_archived_segment(&dir, 99).is_none());
+        assert!(find_archived_segment(&dir, SegmentSeq::new(99)).is_none());
 
         cleanup(&tmp);
     }
@@ -961,7 +962,8 @@ mod tests {
         recorder.poll_and_persist(Some(init)).expect("persist");
 
         let dir = archive_dir(&recorder_cfg(&tmp), "corrupt");
-        let found = find_archived_segment(&dir, 1).expect("segment 1 must be found");
+        let found =
+            find_archived_segment(&dir, SegmentSeq::new(1)).expect("segment 1 must be found");
 
         // Simulate a corrupt sidecar: claim a length the period file cannot
         // possibly back, but not so large it would overflow u64 on its own
@@ -990,14 +992,14 @@ mod tests {
     fn render_playlist_renders_real_segment_numbers_and_map() {
         let segments = vec![
             CatchupSegment {
-                seq: 5,
+                seq: SegmentSeq::new(5),
                 start_pts_ns: 0,
                 duration_secs: 3.4,
                 discontinuous: false,
                 init: Some(InitRef::Live(hls_runtime::server::Generation::new(1))),
             },
             CatchupSegment {
-                seq: 6,
+                seq: SegmentSeq::new(6),
                 start_pts_ns: 3_400_000_000,
                 duration_secs: 3.4,
                 discontinuous: true,
@@ -1028,7 +1030,7 @@ mod tests {
     #[test]
     fn render_playlist_vod_finished_emits_endlist_and_vod_type() {
         let segments = vec![CatchupSegment {
-            seq: 1,
+            seq: SegmentSeq::new(1),
             start_pts_ns: 0,
             duration_secs: 2.0,
             discontinuous: false,
@@ -1077,7 +1079,7 @@ mod tests {
         std::fs::write(&idx, &one).unwrap();
         let first = read_period_segments(&dir, 0);
         assert_eq!(
-            first.iter().map(|s| s.seq).collect::<Vec<_>>(),
+            first.iter().map(|s| s.seq.value()).collect::<Vec<_>>(),
             vec![7],
             "the first read must reflect the on-disk sidecar"
         );
@@ -1107,7 +1109,7 @@ mod tests {
 
         let second = read_period_segments(&dir, 0);
         assert_eq!(
-            second.iter().map(|s| s.seq).collect::<Vec<_>>(),
+            second.iter().map(|s| s.seq.value()).collect::<Vec<_>>(),
             vec![7, 8],
             "a changed sidecar must invalidate the cache, not serve the stale parse"
         );
@@ -1147,7 +1149,7 @@ mod tests {
         assert_eq!(
             read_period_segments(&dir, 0)
                 .iter()
-                .map(|s| s.seq)
+                .map(|s| s.seq.value())
                 .collect::<Vec<_>>(),
             vec![7]
         );
@@ -1168,7 +1170,7 @@ mod tests {
         assert_eq!(
             read_period_segments(&dir, 0)
                 .iter()
-                .map(|s| s.seq)
+                .map(|s| s.seq.value())
                 .collect::<Vec<_>>(),
             vec![8],
             "a same-length rewrite must invalidate the cache"
@@ -1220,7 +1222,7 @@ mod tests {
         assert_eq!(
             read_period_segments(&dir, 3)
                 .iter()
-                .map(|s| s.seq)
+                .map(|s| s.seq.value())
                 .collect::<Vec<_>>(),
             vec![42],
             "a sidecar written after a miss must be read"
@@ -1248,7 +1250,7 @@ mod tests {
     #[test]
     fn render_playlist_omits_playlist_type_when_passed_none() {
         let segments = [CatchupSegment {
-            seq: 5,
+            seq: SegmentSeq::new(5),
             start_pts_ns: 0,
             duration_secs: 2.0,
             discontinuous: false,

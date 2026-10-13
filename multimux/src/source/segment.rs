@@ -1428,13 +1428,16 @@ mod tests {
         let last = trunk
             .last_closed_segment()
             .expect("the segmenter must have closed at least one segment");
-        let attributed = (1..=last).any(|seq| {
-            trunk.events_in_segment(seq).iter().any(|e| {
-                matches!(
-                    e.event.source,
-                    timed_metadata::event::SourcePayload::Scte35 { .. }
-                )
-            })
+        let attributed = (1..=last.value()).any(|seq| {
+            trunk
+                .events_in_segment(SegmentSeq::new(seq))
+                .iter()
+                .any(|e| {
+                    matches!(
+                        e.event.source,
+                        timed_metadata::event::SourcePayload::Scte35 { .. }
+                    )
+                })
         });
         assert!(
             attributed,
@@ -1490,7 +1493,7 @@ mod tests {
         // is promoted, offset by that segment's duration.
         segmenter.queue_segment(ReadySegment {
             bytes: vec![0u8; 8],
-            segment_seq: 1,
+            segment_seq: SegmentSeq::new(1),
             duration: 1.0,
             discontinuous: false,
         });
@@ -2110,7 +2113,7 @@ mod tests {
     /// — the check `existing_tracks_are_uninterrupted_across_mid_stream_addition`
     /// makes (issue #781).
     fn note_segment_seq(trunk: &Trunk, observed: &mut Vec<u32>) {
-        if let Some(seq) = trunk.last_closed_segment()
+        if let Some(seq) = trunk.last_closed_segment().map(SegmentSeq::value)
             && observed.last() != Some(&seq)
         {
             observed.push(seq);
@@ -2595,7 +2598,7 @@ mod tests {
     fn fake_ready_entry(seq: u32) -> SegmentEntry {
         SegmentEntry::new(
             bytes::Bytes::from(vec![seq as u8; 4]),
-            seq,
+            SegmentSeq::new(seq),
             Duration::from_secs(1),
             Timestamp::from_nanos(u64::from(seq)),
             SegmentMeta {
@@ -2689,7 +2692,7 @@ mod tests {
 
         assert_eq!(
             trunk.last_closed_segment(),
-            Some(6),
+            Some(SegmentSeq::new(6)),
             "the first segment a freshly-built TS segmenter cuts against an \
              already-populated Trunk must resume from next_sequence_number(), \
              not renumber from 1"
@@ -2743,7 +2746,7 @@ mod tests {
 
         assert_eq!(
             trunk.last_closed_segment(),
-            Some(6),
+            Some(SegmentSeq::new(6)),
             "the rebuilt TS segmenter's first cut segment must resume from \
              next_sequence_number(), not renumber from 1"
         );
@@ -2865,8 +2868,8 @@ mod tests {
             .pending
             .iter()
             .map(|item| match item {
-                PendingPublish::Segment(e) => e.sequence_number,
-                PendingPublish::Part(p) => p.segment_number,
+                PendingPublish::Segment(e) => e.sequence_number.value(),
+                PendingPublish::Part(p) => p.segment_number.value(),
             })
             .collect()
     }
@@ -3008,8 +3011,8 @@ mod tests {
         for i in 0..(PENDING_PUBLISH_QUEUE_CAP as u32 * 4) {
             segmenter.publish_without_blocking(PendingPublish::Part(PartEntry::new(
                 bytes::Bytes::from_static(b"x"),
-                2,
-                i,
+                SegmentSeq::new(2),
+                PartIndex::new(i),
                 Duration::from_millis(200),
                 i == 0,
             )));
@@ -3192,7 +3195,7 @@ mod tests {
     /// (`for part in take_ready_parts() { queue it }` fully, THEN
     /// `for segment in take_ready_segments() { queue it }`) and calling that
     /// through this test's same inputs makes the final assertion fail:
-    /// `trunk.part_bytes(2, 0)` returns `Some(_)` — part `(2, 0)` was queued
+    /// `trunk.part_bytes(SegmentSeq::new(2), PartIndex::new(0))` returns `Some(_)` — part `(2, 0)` was queued
     /// (and, since nothing was queued ahead of it yet at that point in the
     /// old ordering, drained straight through to the `Trunk`) before
     /// segment 1 was ever even attempted. Recompiled with the reverted
@@ -3239,7 +3242,7 @@ mod tests {
         ];
         let segments = vec![ReadySegment {
             bytes: vec![1u8; 4],
-            segment_seq: 1,
+            segment_seq: SegmentSeq::new(1),
             duration: 1.0,
             discontinuous: false,
         }];
@@ -3249,7 +3252,12 @@ mod tests {
         // Segment 1's own two parts must have gone through — they were
         // never behind anything stuck.
         assert!(
-            trunk.part_bytes(1, 0).is_some() && trunk.part_bytes(1, 1).is_some(),
+            trunk
+                .part_bytes(SegmentSeq::new(1), PartIndex::new(0))
+                .is_some()
+                && trunk
+                    .part_bytes(SegmentSeq::new(1), PartIndex::new(1))
+                    .is_some(),
             "segment 1's own parts must reach the Trunk — nothing was ever stuck ahead of them"
         );
         // Segment 1 itself must be stuck (queued, not yet in the Trunk) —
@@ -3257,14 +3265,16 @@ mod tests {
         // capacity.
         assert_eq!(
             trunk.last_closed_segment(),
-            Some(0),
+            Some(SegmentSeq::new(0)),
             "segment 1 must still be stuck behind the un-consumed StallIngest pin"
         );
         // THE INVARIANT: segment 2's opening part must NOT have bypassed
         // the still-stuck segment 1 — it must be queued behind it, in
         // stream order, not delivered early.
         assert!(
-            trunk.part_bytes(2, 0).is_none(),
+            trunk
+                .part_bytes(SegmentSeq::new(2), PartIndex::new(0))
+                .is_none(),
             "segment 2's opening part must not land in the Trunk ahead of the \
              still-stuck segment 1's own close"
         );

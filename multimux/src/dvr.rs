@@ -1684,7 +1684,7 @@ mod tests {
     fn dummy_segment(seq: u32, byte: u8) -> SegmentEntry {
         SegmentEntry::new(
             bytes::Bytes::from(vec![byte; 16]),
-            seq,
+            SegmentSeq::new(seq),
             Duration::from_secs(2),
             broadcast_common::Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
             transmux::SegmentMeta {
@@ -1774,10 +1774,10 @@ mod tests {
         // whose by-number lookup finds the right run's bytes.
         let archived = crate::catchup::scan_archive(&dir);
         assert_eq!(
-            archived.iter().map(|s| s.seq).collect::<Vec<_>>(),
+            archived.iter().map(|s| s.seq.value()).collect::<Vec<_>>(),
             vec![1, 2, 3, 4, 5]
         );
-        let found = crate::catchup::find_archived_segment(&dir, 4).expect("seq 4");
+        let found = crate::catchup::find_archived_segment(&dir, SegmentSeq::new(4)).expect("seq 4");
         assert_eq!(found.period_num, 1);
         let bytes = crate::catchup::read_archived_bytes(
             &dir,
@@ -1816,10 +1816,14 @@ mod tests {
     async fn archive_floor_is_the_highest_archived_sequence() {
         let tmp = temp_dir();
         let cfg = dvr_config(&tmp, 10);
-        assert_eq!(archive_seq_floor(&cfg, "floor").await, 0, "no archive yet");
+        assert_eq!(
+            archive_seq_floor(&cfg, "floor").await.value(),
+            0,
+            "no archive yet"
+        );
         record_run("floor", &cfg, 0, &[(1, 1), (2, 2), (3, 3)]);
         record_run("floor", &cfg, 3, &[(1, 4), (2, 5)]);
-        assert_eq!(archive_seq_floor(&cfg, "floor").await, 5);
+        assert_eq!(archive_seq_floor(&cfg, "floor").await.value(), 5);
         cleanup_temp(&tmp);
     }
 
@@ -1952,7 +1956,7 @@ mod tests {
         writer
             .publish_segment(SegmentEntry::new(
                 bytes::Bytes::from(moof),
-                0,
+                SegmentSeq::new(0),
                 Duration::from_secs(1),
                 broadcast_common::Timestamp::from_nanos(0),
                 transmux::SegmentMeta {
@@ -2087,7 +2091,7 @@ mod tests {
         writer
             .publish_segment(SegmentEntry::new(
                 bytes::Bytes::from(vec![0xABu8; 200]),
-                1,
+                SegmentSeq::new(1),
                 Duration::from_secs(1),
                 broadcast_common::Timestamp::from_nanos(0),
                 transmux::SegmentMeta {
@@ -2149,7 +2153,7 @@ mod tests {
             writer
                 .publish_segment(SegmentEntry::new(
                     bytes::Bytes::from(vec![0xCDu8; 100]),
-                    seq,
+                    SegmentSeq::new(seq),
                     Duration::from_secs(1),
                     broadcast_common::Timestamp::from_nanos(u64::from(seq)),
                     transmux::SegmentMeta {
@@ -2286,7 +2290,7 @@ mod tests {
             writer
                 .publish_segment(SegmentEntry::new(
                     bytes::Bytes::from(vec![0xABu8; 2000]),
-                    seq,
+                    SegmentSeq::new(seq),
                     Duration::from_secs(1),
                     broadcast_common::Timestamp::from_nanos(u64::from(seq)),
                     transmux::SegmentMeta {
@@ -2341,7 +2345,7 @@ mod tests {
             writer
                 .publish_segment(SegmentEntry::new(
                     bytes::Bytes::from(vec![0xCDu8; 1000]),
-                    seq,
+                    SegmentSeq::new(seq),
                     Duration::from_secs(1),
                     broadcast_common::Timestamp::from_nanos(u64::from(seq)),
                     transmux::SegmentMeta {
@@ -2520,7 +2524,7 @@ mod tests {
     fn moof_segment_entry(seq: u32, content: &[u8]) -> SegmentEntry {
         SegmentEntry::new(
             bytes::Bytes::from(moof_mdat_segment(content)),
-            seq,
+            SegmentSeq::new(seq),
             Duration::from_secs(2),
             broadcast_common::Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
             transmux::SegmentMeta {
@@ -2728,7 +2732,7 @@ mod tests {
         let mut live_seqs = Vec::new();
         while let Some(item) = live_cursor.poll() {
             if let SegmentCursorItem::Segment(entry) = item {
-                live_seqs.push(entry.sequence_number);
+                live_seqs.push(entry.sequence_number.value());
             }
         }
 
@@ -3406,8 +3410,7 @@ mod tests {
     /// pre-fix `self.terminated = true; self.current_file.take();` (no
     /// policy check, no re-arm) makes this test's
     /// `assert!(!recorder.terminated, ...)` fail immediately (`terminated`
-    /// is `true`), and the final `assert_eq!(recorder.last_appended_seq,
-    /// Some(3), ...)` also fails — the `terminated` guard at the top of
+    /// is `true`), and the final `assert_eq!(XX    /// Some(3), ...)` also fails — the `terminated` guard at the top of
     /// `on_segment` makes every following `poll_and_persist` call a no-op,
     /// so segment 3 is never appended at all. Recompiled and re-run to
     /// confirm both failures, then reverted.
@@ -3473,7 +3476,7 @@ mod tests {
             .expect("persist seg 3 via the re-armed cursor");
         assert_eq!(
             recorder.last_appended_seq,
-            Some(3),
+            Some(SegmentSeq::new(3)),
             "the re-armed cursor must keep recording later segments"
         );
 

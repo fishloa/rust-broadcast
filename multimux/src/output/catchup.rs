@@ -974,7 +974,7 @@ mod tests {
         assert_eq!(
             archived
                 .iter()
-                .map(|s| (s.period_num, s.seq))
+                .map(|s| (s.period_num, s.seq.value()))
                 .collect::<Vec<_>>(),
             vec![(0, 1), (0, 2), (1, 4), (1, 5)]
         );
@@ -1077,7 +1077,7 @@ mod tests {
         assert_eq!(
             catchup::scan_archive(&tmp.join("c5-live"))
                 .iter()
-                .map(|s| s.seq)
+                .map(|s| s.seq.value())
                 .collect::<Vec<_>>(),
             vec![1, 2],
             "premise: only run 1 is archived"

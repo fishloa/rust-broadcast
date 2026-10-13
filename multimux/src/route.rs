@@ -1848,12 +1848,18 @@ mod program_registry_tests {
         let window_a = route.window_segments(program_a);
         let window_b = route.window_segments(program_b);
         assert_eq!(
-            window_a.iter().map(|s| s.segment_seq).collect::<Vec<_>>(),
+            window_a
+                .iter()
+                .map(|s| s.segment_seq.value())
+                .collect::<Vec<_>>(),
             vec![10],
             "program 1 must show only its own segment"
         );
         assert_eq!(
-            window_b.iter().map(|s| s.segment_seq).collect::<Vec<_>>(),
+            window_b
+                .iter()
+                .map(|s| s.segment_seq.value())
+                .collect::<Vec<_>>(),
             vec![20, 21],
             "program 2 must show only its own (different-count) segments"
         );

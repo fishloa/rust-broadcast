@@ -674,7 +674,7 @@ fn dvr_period_file_from_real_samples_replays_decodably() {
         seg_writer
             .publish_segment(SegmentEntry::new(
                 segment.bytes,
-                segment.segment_seq,
+                media_plane::ids::SegmentSeq::new(segment.segment_seq),
                 Duration::from_secs_f64(segment.duration),
                 broadcast_common::Timestamp::from_nanos(0),
                 transmux::SegmentMeta {

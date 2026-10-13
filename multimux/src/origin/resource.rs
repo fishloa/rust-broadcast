@@ -885,8 +885,8 @@ mod tests {
 
         // Segment boundaries: segment 1 spans [0, 4_000_000), segment 2 from
         // 4_000_000 on. The event at pts 0 falls inside segment 1.
-        seg_writer.note_segment_start(1, MediaTime(0));
-        seg_writer.note_segment_start(2, MediaTime(4_000_000));
+        seg_writer.note_segment_start(media_plane::ids::SegmentSeq::new(1), MediaTime(0));
+        seg_writer.note_segment_start(media_plane::ids::SegmentSeq::new(2), MediaTime(4_000_000));
         trunk
     }
 
@@ -969,8 +969,8 @@ mod tests {
         b.id = None;
         writer.publish_event(a, EventAnchor::Media(MediaTime(0)));
         writer.publish_event(b, EventAnchor::Media(MediaTime(1_000_000)));
-        seg_writer.note_segment_start(1, MediaTime(0));
-        seg_writer.note_segment_start(2, MediaTime(4_000_000));
+        seg_writer.note_segment_start(media_plane::ids::SegmentSeq::new(1), MediaTime(0));
+        seg_writer.note_segment_start(media_plane::ids::SegmentSeq::new(2), MediaTime(4_000_000));
 
         let styp: [u8; 12] = [0, 0, 0, 12, b's', b't', b'y', b'p', b'm', b's', b'd', b'h'];
         let mut seg_bytes = Vec::new();
