@@ -57,6 +57,7 @@ use crate::annexb::{NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
 use crate::hevc_config::{HEVCConfigurationBox, HEVCDecoderConfigurationRecord};
+use crate::ir::InputDegradation;
 use crate::media::{Media, Track};
 use crate::opus::OpusSpecificBox;
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
@@ -327,13 +328,21 @@ impl<'a> WebmDemux<'a> {
         let mut timestamp_scale_ns = DEFAULT_TIMESTAMP_SCALE_NS;
         let mut tracks: Vec<TrackInfo> = Vec::new();
         let mut blocks: Vec<RawBlock> = Vec::new();
+        let mut degraded: Vec<InputDegradation> = Vec::new();
 
         // Top level: EBML header + Segment(s). Only Segment carries media.
         while let Some((id, body)) = r.next_element()? {
             match id {
                 EBML_HEADER => {}
                 SEGMENT => {
-                    Self::walk_segment(body, &mut timestamp_scale_ns, &mut tracks, &mut blocks)?;
+                    Self::walk_segment(
+                        input,
+                        body,
+                        &mut timestamp_scale_ns,
+                        &mut tracks,
+                        &mut blocks,
+                        &mut degraded,
+                    )?;
                 }
                 _ => {}
             }
@@ -354,22 +363,56 @@ impl<'a> WebmDemux<'a> {
             ));
         }
 
-        build_media(timestamp_scale_ns, tracks, blocks)
+        let mut media = build_media(timestamp_scale_ns, tracks, blocks)?;
+        media.degraded = degraded;
+        Ok(media)
     }
 
     /// Walk a `Segment` body, filling `timestamp_scale`, `tracks` and `blocks`.
+    ///
+    /// Damage is skipped and reported in `degraded` (audit T16, #1144) rather
+    /// than failing the file: a corrupt element header resynchronises at the
+    /// next `Cluster` ID, a corrupt `TrackEntry` is dropped, and a corrupt
+    /// block is dropped (see [`Self::walk_cluster`]).
     fn walk_segment(
+        root: &[u8],
         body: &[u8],
         timestamp_scale_ns: &mut u64,
         tracks: &mut Vec<TrackInfo>,
         blocks: &mut Vec<RawBlock>,
+        degraded: &mut Vec<InputDegradation>,
     ) -> Result<()> {
         let mut r = EbmlReader::new(body);
-        while let Some((id, child)) = r.next_element_bounded(SEGMENT_LEVEL_IDS)? {
+        loop {
+            let at = r.pos;
+            let (id, child) = match r.next_element_bounded(SEGMENT_LEVEL_IDS) {
+                Ok(Some(el)) => el,
+                Ok(None) => break,
+                Err(_) => {
+                    // Framing lost: report, then resume at the next Cluster
+                    // (the unit that carries the data); none left ends the walk.
+                    degraded.push(InputDegradation::MalformedUnit {
+                        position: offset_in(root, &body[at..]),
+                    });
+                    match find_sibling_boundary(body, at + 1, &[CLUSTER]) {
+                        Some(p) => {
+                            r.pos = p;
+                            continue;
+                        }
+                        None => break,
+                    }
+                }
+            };
             match id {
-                INFO => Self::walk_info(child, timestamp_scale_ns)?,
-                TRACKS => Self::walk_tracks(child, tracks)?,
-                CLUSTER => Self::walk_cluster(child, *timestamp_scale_ns, blocks)?,
+                INFO => {
+                    if Self::walk_info(child, timestamp_scale_ns).is_err() {
+                        degraded.push(InputDegradation::MalformedUnit {
+                            position: offset_in(root, child),
+                        });
+                    }
+                }
+                TRACKS => Self::walk_tracks(root, child, tracks, degraded),
+                CLUSTER => Self::walk_cluster(root, child, *timestamp_scale_ns, blocks, degraded),
                 // SeekHead, Cues, Tags, Chapters, unknown masters: skip.
                 _ => {}
             }
@@ -388,15 +431,35 @@ impl<'a> WebmDemux<'a> {
         Ok(())
     }
 
-    /// Walk `Tracks`, pushing one [`TrackInfo`] per `TrackEntry`.
-    fn walk_tracks(body: &[u8], tracks: &mut Vec<TrackInfo>) -> Result<()> {
+    /// Walk `Tracks`, pushing one [`TrackInfo`] per `TrackEntry`. A corrupt
+    /// entry is skipped and reported; the entries after it are still read.
+    fn walk_tracks(
+        root: &[u8],
+        body: &[u8],
+        tracks: &mut Vec<TrackInfo>,
+        degraded: &mut Vec<InputDegradation>,
+    ) {
         let mut r = EbmlReader::new(body);
-        while let Some((id, child)) = r.next_element()? {
+        loop {
+            let (id, child) = match r.next_element() {
+                Ok(Some(el)) => el,
+                Ok(None) => break,
+                Err(_) => {
+                    degraded.push(InputDegradation::MalformedUnit {
+                        position: offset_in(root, &body[r.pos..]),
+                    });
+                    break;
+                }
+            };
             if id == TRACK_ENTRY {
-                tracks.push(Self::parse_track_entry(child)?);
+                match Self::parse_track_entry(child) {
+                    Ok(t) => tracks.push(t),
+                    Err(_) => degraded.push(InputDegradation::MalformedUnit {
+                        position: offset_in(root, child),
+                    }),
+                }
             }
         }
-        Ok(())
     }
 
     /// Parse a single `TrackEntry` master into a [`TrackInfo`].
@@ -445,23 +508,43 @@ impl<'a> WebmDemux<'a> {
     }
 
     /// Walk a `Cluster`: read its base `Timestamp`, then each (Simple)Block.
+    ///
+    /// A block that does not parse is dropped and reported; a corrupt element
+    /// header inside the cluster ends *this* cluster (keeping the blocks read
+    /// so far) and is reported, so the next cluster is still read.
     fn walk_cluster(
+        root: &[u8],
         body: &[u8],
         timestamp_scale_ns: u64,
         blocks: &mut Vec<RawBlock>,
-    ) -> Result<()> {
+        degraded: &mut Vec<InputDegradation>,
+    ) {
         let mut cluster_ts: i64 = 0;
         let mut r = EbmlReader::new(body);
-        while let Some((id, child)) = r.next_element()? {
+        loop {
+            let (id, child) = match r.next_element() {
+                Ok(Some(el)) => el,
+                Ok(None) => break,
+                Err(_) => {
+                    degraded.push(InputDegradation::MalformedUnit {
+                        position: offset_in(root, &body[r.pos..]),
+                    });
+                    break;
+                }
+            };
             match id {
-                CLUSTER_TIMESTAMP => {
-                    cluster_ts = i64::try_from(read_uint(child)).map_err(|_| {
-                        Error::InvalidInput("webm cluster timestamp exceeds i64 range")
-                    })?;
-                }
-                SIMPLE_BLOCK => {
-                    blocks.push(parse_block(child, cluster_ts, timestamp_scale_ns, true)?);
-                }
+                CLUSTER_TIMESTAMP => match i64::try_from(read_uint(child)) {
+                    Ok(ts) => cluster_ts = ts,
+                    Err(_) => degraded.push(InputDegradation::MalformedUnit {
+                        position: offset_in(root, child),
+                    }),
+                },
+                SIMPLE_BLOCK => match parse_block(child, cluster_ts, timestamp_scale_ns, true) {
+                    Ok(b) => blocks.push(b),
+                    Err(_) => degraded.push(InputDegradation::MalformedUnit {
+                        position: offset_in(root, child),
+                    }),
+                },
                 BLOCK_GROUP => {
                     // A BlockGroup wraps one Block. The Block carries no keyframe
                     // flag; its sync-ness is "no ReferenceBlock present in the
@@ -469,24 +552,51 @@ impl<'a> WebmDemux<'a> {
                     let mut block_bytes: Option<&[u8]> = None;
                     let mut has_reference = false;
                     let mut g = EbmlReader::new(child);
-                    while let Some((gid, gchild)) = g.next_element()? {
-                        match gid {
-                            BLOCK => block_bytes = Some(gchild),
-                            REFERENCE_BLOCK => has_reference = true,
-                            _ => {}
+                    let mut group_ok = true;
+                    loop {
+                        match g.next_element() {
+                            Ok(Some((gid, gchild))) => match gid {
+                                BLOCK => block_bytes = Some(gchild),
+                                REFERENCE_BLOCK => has_reference = true,
+                                _ => {}
+                            },
+                            Ok(None) => break,
+                            Err(_) => {
+                                group_ok = false;
+                                break;
+                            }
                         }
                     }
-                    if let Some(b) = block_bytes {
-                        let mut rb = parse_block(b, cluster_ts, timestamp_scale_ns, false)?;
-                        rb.is_sync = !has_reference;
-                        blocks.push(rb);
+                    let parsed = block_bytes
+                        .filter(|_| group_ok)
+                        .map(|b| parse_block(b, cluster_ts, timestamp_scale_ns, false));
+                    match parsed {
+                        Some(Ok(mut rb)) => {
+                            rb.is_sync = !has_reference;
+                            blocks.push(rb);
+                        }
+                        Some(Err(_)) => degraded.push(InputDegradation::MalformedUnit {
+                            position: offset_in(root, child),
+                        }),
+                        None if !group_ok => degraded.push(InputDegradation::MalformedUnit {
+                            position: offset_in(root, child),
+                        }),
+                        None => {}
                     }
                 }
                 _ => {}
             }
         }
-        Ok(())
     }
+}
+
+/// Byte offset of `part` within `root` (`part` must be a sub-slice of `root`);
+/// 0 if it is not, so a bookkeeping slip can never panic a demux.
+fn offset_in(root: &[u8], part: &[u8]) -> u64 {
+    (part.as_ptr() as usize)
+        .checked_sub(root.as_ptr() as usize)
+        .filter(|o| *o <= root.len())
+        .unwrap_or(0) as u64
 }
 
 impl<'a> Unpackage for WebmDemux<'a> {
