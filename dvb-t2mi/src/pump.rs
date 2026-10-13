@@ -34,9 +34,9 @@
 //! `dvb-si` dependency is introduced; the TS header reader is a private
 //! helper below.
 
-use mpeg_ts::pid::Pid;
 use alloc::vec::Vec;
 use bytes::Bytes;
+use mpeg_ts::pid::Pid;
 
 use crate::crc;
 use crate::packet::Header;

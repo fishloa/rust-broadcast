@@ -36,8 +36,8 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use alloc::vec::Vec;
-use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
+use mpeg_ts::pid::Pid;
 
 /// New LSC v4 `apdu_tag`s (§10), in the `0x9F8Cxx` namespace.
 pub mod tag {
@@ -222,9 +222,8 @@ impl<'a> Parse<'a> for CommsInfoReply {
         source_ip_address.copy_from_slice(&body[2..2 + IP_ADDR_LEN]);
         let p = 2 + IP_ADDR_LEN;
         let source_port = u16::from_be_bytes([body[p], body[p + 1]]);
-        let input_delivery_pid = Pid::new(
-            u16::from_be_bytes([body[p + 2], body[p + 3]]) & INPUT_DELIVERY_PID_MASK,
-        );
+        let input_delivery_pid =
+            Pid::new(u16::from_be_bytes([body[p + 2], body[p + 3]]) & INPUT_DELIVERY_PID_MASK);
         Ok(Self {
             lts_id,
             status,

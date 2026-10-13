@@ -42,7 +42,11 @@ fn main() {
         if total <= 5 || hdr.pusi {
             println!(
                 "pkt {:>6}: pid=0x{:04X} cc={:2} scrambling={} afc={}",
-                total, hdr.pid.value(), hdr.continuity_counter, sc, afc,
+                total,
+                hdr.pid.value(),
+                hdr.continuity_counter,
+                sc,
+                afc,
             );
         }
     }

@@ -3,9 +3,9 @@
 //! Moved out of `transmux/src/media.rs` (media plane step 2a, no-op): same
 //! types, same fields, same impls.
 
-use mpeg_ts::pid::Pid;
 use alloc::string::String;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use super::{InputDegradation, Track};
 

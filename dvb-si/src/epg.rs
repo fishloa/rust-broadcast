@@ -90,13 +90,13 @@
 //! a new one begins.  Callers scanning a full carousel cycle can `clear()` and
 //! start fresh, or `retain_services` to keep only the active service list.
 
-use mpeg_ts::pid::Pid;
 use crate::collect::CollectResult;
 use crate::tables::RunningStatus;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 /// Logical key identifying a service across the DVB network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]

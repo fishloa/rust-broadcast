@@ -17,9 +17,9 @@
 //! probe resolved. NAL classification is `transmux::nal`/`transmux::annexb`
 //! throughout — no duplicated NAL/SPS parsing.
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
+use mpeg_ts::pid::Pid;
 
 use dvb_si::tables::pmt::StreamType;
 use transmux::annexb::iter_annexb_nals;
@@ -77,10 +77,10 @@ impl Diagnostic for ParamSetsCheck {
             ts,
             |pid| avc_pids.contains(&pid) || hevc_pids.contains(&pid),
             |payload, packet_index, pid| {
-                if let Some(state) = avc_state.get_mut(&Pid::new(pid.value())) {
-                    walk_avc(payload, packet_index, Pid::new(pid.value()), state, report);
-                } else if let Some(state) = hevc_state.get_mut(&Pid::new(pid.value())) {
-                    walk_hevc(payload, packet_index, Pid::new(pid.value()), state, report);
+                if let Some(state) = avc_state.get_mut(&pid) {
+                    walk_avc(payload, packet_index, pid, state, report);
+                } else if let Some(state) = hevc_state.get_mut(&pid) {
+                    walk_hevc(payload, packet_index, pid, state, report);
                 }
             },
         );
@@ -105,7 +105,7 @@ fn walk_avc(
                 if is_keyframe_nal(NalCodec::Avc, nal) && !(state.seen_sps && state.seen_pps) {
                     report.push(Finding::new(
                         Severity::Error,
-                        Location::at_pid(packet_index, Pid::new(pid.value())),
+                        Location::at_pid(packet_index, pid),
                         "missing-parameter-sets",
                         format!(
                             "IDR access unit on PID 0x{pid:04X} appears before SPS+PPS were \
@@ -138,7 +138,7 @@ fn walk_hevc(
                 if is_keyframe_nal(NalCodec::Hevc, nal) && !(state.seen_sps && state.seen_pps) {
                     report.push(Finding::new(
                         Severity::Error,
-                        Location::at_pid(packet_index, Pid::new(pid.value())),
+                        Location::at_pid(packet_index, pid),
                         "missing-parameter-sets",
                         format!(
                             "IRAP access unit on PID 0x{pid:04X} appears before SPS+PPS were \

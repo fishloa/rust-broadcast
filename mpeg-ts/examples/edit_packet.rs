@@ -7,8 +7,8 @@
 //! Run with:
 //!   cargo run -p mpeg-ts --example edit_packet
 
-use mpeg_ts::pid::Pid;
 use mpeg_ts::OwnedTsPacket;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{
     ADAPTATION_FLAG, AF_PCR_FLAG, PAYLOAD_FLAG, Pcr, TS_PACKET_SIZE, TS_SYNC_BYTE, TsHeader,
     TsPacket,
@@ -83,7 +83,8 @@ fn main() {
     println!("\n--- null packet ---");
     println!(
         "null packet PID = 0x{:04X}  (expect 0x1FFF), CC = {}",
-        null_pkt.header.pid.value(), null_pkt.header.continuity_counter
+        null_pkt.header.pid.value(),
+        null_pkt.header.continuity_counter
     );
 
     // ── 5) Round-trip a TsHeader ────────────────────────────────────────────
@@ -97,7 +98,9 @@ fn main() {
     println!("\n--- round-trip (TsHeader) ---");
     println!(
         "TsHeader parse → serialize_into → parse: pid=0x{:04X}, pusi={}, cc={}",
-        re_hdr.pid.value(), re_hdr.pusi, re_hdr.continuity_counter
+        re_hdr.pid.value(),
+        re_hdr.pusi,
+        re_hdr.continuity_counter
     );
 
     // ── 6) Round-trip an OwnedTsPacket ──────────────────────────────────────

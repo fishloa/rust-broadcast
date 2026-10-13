@@ -691,11 +691,17 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
                     upgrade_role(pid_stats.entry(Pid::new(ev_pid)).or_default(), PidRole::Pat);
                     for pat_entry in &pat.entries {
                         if pat_entry.program_number != 0 {
-                            upgrade_role(pid_stats.entry(Pid::new(pat_entry.pid)).or_default(), PidRole::Pmt);
+                            upgrade_role(
+                                pid_stats.entry(Pid::new(pat_entry.pid)).or_default(),
+                                PidRole::Pmt,
+                            );
                         } else {
                             // program_number == 0 -> this entry's PID is the
                             // network_PID (NIT), not a PMT.
-                            upgrade_role(pid_stats.entry(Pid::new(pat_entry.pid)).or_default(), PidRole::Si);
+                            upgrade_role(
+                                pid_stats.entry(Pid::new(pat_entry.pid)).or_default(),
+                                PidRole::Si,
+                            );
                         }
                     }
                 }
@@ -703,23 +709,32 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
                     // 0x1FFF is the spec sentinel for "no PCR for this
                     // program" — don't mislabel the NULL PID as PCR.
                     if pmt.pcr_pid != wk::NULL.value() {
-                        upgrade_role(pid_stats.entry(Pid::new(pmt.pcr_pid)).or_default(), PidRole::Pcr);
+                        upgrade_role(
+                            pid_stats.entry(Pid::new(pmt.pcr_pid)).or_default(),
+                            PidRole::Pcr,
+                        );
                     }
                     for stream in &pmt.streams {
                         let kind = classify_stream_type(stream.stream_type);
-                        let accum = pid_stats.entry(Pid::new(stream.elementary_pid)).or_default();
+                        let accum = pid_stats
+                            .entry(Pid::new(stream.elementary_pid))
+                            .or_default();
                         upgrade_role(accum, kind);
                         accum.stream_type_name = Some(stream.stream_type.name());
 
                         if stream.stream_type == StreamType::Scte35 {
-                            scte35_pids.entry(Pid::new(stream.elementary_pid)).or_default();
+                            scte35_pids
+                                .entry(Pid::new(stream.elementary_pid))
+                                .or_default();
                         }
                         if matches!(kind, PidRole::Video | PidRole::Audio) {
                             pes_pids.entry(Pid::new(stream.elementary_pid)).or_default();
                         }
                         if subtitle::stream_is_subtitle(stream) {
                             upgrade_role(
-                                pid_stats.entry(Pid::new(stream.elementary_pid)).or_default(),
+                                pid_stats
+                                    .entry(Pid::new(stream.elementary_pid))
+                                    .or_default(),
                                 PidRole::Subtitle,
                             );
                             subtitles.note_pid(Pid::new(stream.elementary_pid));

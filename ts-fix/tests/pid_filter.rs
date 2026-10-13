@@ -20,13 +20,13 @@
 //! Packets are interleaved so that naive prefix/suffix cuts cannot pass the
 //! "only these PIDs" assertion.
 
-use mpeg_ts::pid::Pid;
 use broadcast_common::traits::{Parse, Serialize};
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::cat::CatSection;
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{PmtSection, PmtStream, StreamType};
 use mpeg_ts::mux::SectionPacketiser;
+use mpeg_ts::pid::Pid;
 use ts_fix::{PidFilter, TsFix};
 
 // ── PID constants ────────────────────────────────────────────────────────────

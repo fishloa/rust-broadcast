@@ -14,9 +14,9 @@
 //! its metrics accordingly (`compliance_probe_pcr_drift_ppm`, not
 //! `pcr_accuracy_error`) so a dashboard never implies the stricter check ran.
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::BTreeMap;
 use core::time::Duration;
+use mpeg_ts::pid::Pid;
 
 /// PCR clock rate — ISO/IEC 13818-1 §2.4.2.2, "27 MHz System Clock".
 const PCR_HZ: u64 = 27_000_000;
@@ -267,7 +267,9 @@ mod tests {
         // The PID resumes normal tracking afterwards.
         pcr += PCR_HZ / 10;
         t += Duration::from_millis(100);
-        let sample = tracker.observe(Pid::new(pid), pcr, t).expect("tracking resumes");
+        let sample = tracker
+            .observe(Pid::new(pid), pcr, t)
+            .expect("tracking resumes");
         assert!(
             sample.drift_ppm.abs() < 1.0,
             "expected ~0 ppm drift after the reset settles, got {}",

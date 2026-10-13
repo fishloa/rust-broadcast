@@ -222,7 +222,8 @@ impl SubtitleState {
                 }
             }
             AnySegment::RegionComposition(rcs) => {
-                self.regions.insert((pid.value(), rcs.region_id), rcs.clone());
+                self.regions
+                    .insert((pid.value(), rcs.region_id), rcs.clone());
             }
             AnySegment::ClutDefinition(cds) => {
                 self.cluts.insert((pid.value(), cds.clut_id), cds.clone());
@@ -265,7 +266,8 @@ impl SubtitleState {
                     let Some(decoded) = self.objects.get(&(*pid, obj_entry.object_id)) else {
                         continue;
                     };
-                    if let Some(preview) = render_preview(Pid::new(*pid), page.page_id, region, clut, decoded)
+                    if let Some(preview) =
+                        render_preview(Pid::new(*pid), page.page_id, region, clut, decoded)
                     {
                         return Some(preview);
                     }

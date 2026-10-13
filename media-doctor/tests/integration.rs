@@ -540,7 +540,9 @@ fn pat_pmt_ts(
     pmt_bytes.truncate(n);
 
     let mut ts = Vec::new();
-    for packet in SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&pat_bytes]) {
+    for packet in
+        SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&pat_bytes])
+    {
         ts.extend_from_slice(&packet);
     }
     for packet in SectionPacketiser::new(Pid::new(PAT_PMT_PID)).packetise(&[&pmt_bytes]) {

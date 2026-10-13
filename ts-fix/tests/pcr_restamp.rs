@@ -243,7 +243,13 @@ fn discontinuity_reanchors_on_system_time_base_change() {
     // Collect PCRs on PID 0x208 from the output.
     let outp: Vec<u64> = out
         .chunks_exact(PKT)
-        .filter_map(|p| if pid(p) == Pid::new(0x208) { pcr_27mhz(p) } else { None })
+        .filter_map(|p| {
+            if pid(p) == Pid::new(0x208) {
+                pcr_27mhz(p)
+            } else {
+                None
+            }
+        })
         .collect();
     assert_eq!(outp.len(), 5, "5 PCRs on PID 0x208");
 
@@ -344,7 +350,13 @@ fn without_reanchor_output_would_be_nonmonotonic_across_discontinuity() {
     // We assert monotonicity on the first two (A) and last three (B).
     let outp: Vec<u64> = out
         .chunks_exact(PKT)
-        .filter_map(|p| if pid(p) == Pid::new(0x208) { pcr_27mhz(p) } else { None })
+        .filter_map(|p| {
+            if pid(p) == Pid::new(0x208) {
+                pcr_27mhz(p)
+            } else {
+                None
+            }
+        })
         .collect();
     assert_eq!(outp.len(), 5);
 
@@ -358,7 +370,13 @@ fn without_reanchor_output_would_be_nonmonotonic_across_discontinuity() {
     // We can verify the raw input has a huge jump that would cause this.
     let raw_pcrs: Vec<u64> = input
         .chunks_exact(PKT)
-        .filter_map(|p| if pid(p) == Pid::new(0x208) { pcr_27mhz(p) } else { None })
+        .filter_map(|p| {
+            if pid(p) == Pid::new(0x208) {
+                pcr_27mhz(p)
+            } else {
+                None
+            }
+        })
         .collect();
     let raw_jump = raw_pcrs[2] - raw_pcrs[1];
     assert!(

@@ -2,10 +2,10 @@
 //! object's fixed body must be rejected, not have the extra bytes silently
 //! dropped (which made parse -> serialize non-identical).
 
-use mpeg_ts::pid::Pid;
 use broadcast_common::Parse;
 use dvb_ci::Error;
 use dvb_ci::objects::host_control::{Replace, Tune};
+use mpeg_ts::pid::Pid;
 
 fn is_trailing(e: &Error) -> bool {
     matches!(

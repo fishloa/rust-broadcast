@@ -139,11 +139,11 @@
 //! - **Byte-stream resynchronisation**: ISO/IEC 13818-1 §2.4.3.2, via
 //!   [`mpeg_ts::resync::TsResync`] (also strips 204-byte Reed-Solomon FEC).
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
 use core::marker::PhantomData;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::{Demand, Serialize, Stage, Timestamp, Unpackage};
 use mpeg_pes::{PesAssembler, PesPacket};
@@ -6277,7 +6277,10 @@ mod tests {
                 && let Some(pid) = ids.get(track_id)
                 && let Some(dts) = sample.dts
             {
-                samples_by_pid.entry(Pid::new((*pid).value())).or_default().push(dts);
+                samples_by_pid
+                    .entry(Pid::new((*pid).value()))
+                    .or_default()
+                    .push(dts);
             }
         }
         let a_dts = samples_by_pid
@@ -9506,7 +9509,12 @@ mod tests {
 
         // First packet: CC=0, no adaptation, PID=0x0077.
         demux.feed(&ts_packet_degradation(
-            false, Pid::new(0x0077), 0, 0x10, None, payload,
+            false,
+            Pid::new(0x0077),
+            0,
+            0x10,
+            None,
+            payload,
         ));
         // Second packet: CC=5 (gap), BUT adaptation field with
         // discontinuity_indicator=1. Should emit Discontinuity, NOT
@@ -9601,7 +9609,12 @@ mod tests {
         let payload = b"payload";
         // First: normal packet, CC=0, PID=0x0083.
         demux.feed(&ts_packet_degradation(
-            false, Pid::new(0x0083), 0, 0x10, None, payload,
+            false,
+            Pid::new(0x0083),
+            0,
+            0x10,
+            None,
+            payload,
         ));
         // Second: discontinuity_indicator=1, CC=5 (gap — suppressed event, but state updated).
         let af = [0x80u8, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF];
@@ -9615,7 +9628,12 @@ mod tests {
         ));
         // Third: legal follow-up, CC=6 ((5+1) & 0x0F). Must NOT fire ContinuityGap.
         demux.feed(&ts_packet_degradation(
-            false, Pid::new(0x0083), 6, 0x10, None, payload,
+            false,
+            Pid::new(0x0083),
+            6,
+            0x10,
+            None,
+            payload,
         ));
 
         let gaps: Vec<_> = std::iter::from_fn(|| demux.poll_event())

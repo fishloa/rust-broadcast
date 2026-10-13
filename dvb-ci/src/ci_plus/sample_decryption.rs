@@ -19,8 +19,8 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use alloc::vec::Vec;
-use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
+use mpeg_ts::pid::Pid;
 
 /// Resource-scoped `apdu_tag`s for the Sample decryption resource (Table 30).
 pub mod tag {

@@ -355,7 +355,13 @@ mod tests {
 
         assert_eq!(
             d.required_pids(),
-            vec![Pid::new(0x0064), Pid::new(0x0065), Pid::new(0x0100), Pid::new(0x0101), Pid::new(0x1FF0)],
+            vec![
+                Pid::new(0x0064),
+                Pid::new(0x0065),
+                Pid::new(0x0100),
+                Pid::new(0x0101),
+                Pid::new(0x1FF0)
+            ],
             "precondition: required_pids = descramble_pids ∪ ca_pids ∪ emm_pids"
         );
 
@@ -363,7 +369,13 @@ mod tests {
         let mut descrambler = descrambler_with(d, [descrambled_script.clone()]);
         assert_eq!(
             descrambler.required_pids(),
-            vec![Pid::new(0x0064), Pid::new(0x0065), Pid::new(0x0100), Pid::new(0x0101), Pid::new(0x1FF0)],
+            vec![
+                Pid::new(0x0064),
+                Pid::new(0x0065),
+                Pid::new(0x0100),
+                Pid::new(0x0101),
+                Pid::new(0x1FF0)
+            ],
             "required_pids must delegate through the wrapper"
         );
 

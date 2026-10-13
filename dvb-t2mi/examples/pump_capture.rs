@@ -5,9 +5,9 @@
 //! `ts` feature). Reads the committed `colombia-capital-t2mi.ts` fixture at
 //! runtime.
 
-use mpeg_ts::pid::Pid;
 use dvb_t2mi::payload::AnyPayload;
 use dvb_t2mi::pump::T2miPump;
+use mpeg_ts::pid::Pid;
 
 const T2MI_PID: Pid = Pid::new(0x0040);
 const PKT: usize = 188;

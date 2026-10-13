@@ -17,8 +17,8 @@
 //!
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.1 (null packets).
 
-use mpeg_ts::pid::Pid;
 use mpeg_ts::owned::OwnedTsPacket;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
 use crate::ops::{Op, StreamModel};

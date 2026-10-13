@@ -14,8 +14,8 @@
 //! the named event and neither open nor close a splice). Well-formed, balanced
 //! out→in pairs produce no findings.
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::BTreeMap;
+use mpeg_ts::pid::Pid;
 
 use dvb_si::tables::pmt::StreamType;
 
@@ -62,7 +62,7 @@ impl Diagnostic for Scte35Check {
             // No PSI at all to discover a PID from (e.g. a minimal
             // synthetic fixture with no PAT/PMT) — fall back to the
             // conventional PID rather than watching nothing.
-            scte35_pids.push(Pid::new(SCTE35_PID.value()));
+            scte35_pids.push(SCTE35_PID);
         }
 
         for i in 0..n_packets {
@@ -77,7 +77,7 @@ impl Diagnostic for Scte35Check {
 
             // Only watch PID(s) the PMT declares as SCTE-35 (or the
             // fallback above).
-            if !scte35_pids.contains(&Pid::new(pid.value())) {
+            if !scte35_pids.contains(&pid) {
                 continue;
             }
 
@@ -86,7 +86,7 @@ impl Diagnostic for Scte35Check {
                 None => continue,
             };
 
-            let state = pid_states.entry(Pid::new(pid.value())).or_default();
+            let state = pid_states.entry(pid).or_default();
             state.feed(payload, pkt.header.pusi, |event| {
                 if event.duplicate_open {
                     // Duplicate open "out" with no intervening "in".
@@ -109,7 +109,7 @@ impl Diagnostic for Scte35Check {
             for eid in state.open_events() {
                 report.push(Finding::new(
                     Severity::Warning,
-                    Location::at_pid(n_packets.saturating_sub(1), Pid::new(pid.value())),
+                    Location::at_pid(n_packets.saturating_sub(1), pid),
                     "scte35-unbalanced",
                     alloc::format!(
                         "unbalanced splice_insert: out event_id {eid} with no matching in",

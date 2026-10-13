@@ -73,10 +73,10 @@
 //! "no sync byte at all in this file" respectively) and are left as
 //! one-shot `check` diagnostics for v1.
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 use core::time::Duration;
+use mpeg_ts::pid::Pid;
 
 use crate::diagnostics::codec_common::has_adts_sync;
 use crate::diagnostics::scte35_track::SpliceTracker;
@@ -344,10 +344,10 @@ impl WatchState {
         }
 
         if self.scte35_tracks.contains_key(&pid.value()) {
-            self.feed_scte35(Pid::new(pid.value()), &ts_packet);
+            self.feed_scte35(pid, &ts_packet);
         }
         if self.es_tracks.contains_key(&pid.value()) {
-            self.feed_es(Pid::new(pid.value()), &ts_packet);
+            self.feed_es(pid, &ts_packet);
         }
     }
 
@@ -402,7 +402,8 @@ impl WatchState {
             }
             StreamType::H264 | StreamType::Hevc => {
                 self.scte35_tracks.remove(&elem_pid.value());
-                self.es_tracks.insert(elem_pid.value(), EsTrack::new(EsKind::Video));
+                self.es_tracks
+                    .insert(elem_pid.value(), EsTrack::new(EsKind::Video));
             }
             StreamType::AacAdts => {
                 self.scte35_tracks.remove(&elem_pid.value());
@@ -811,7 +812,7 @@ pub(crate) mod tests {
             let header = mpeg_ts::ts::TsHeader {
                 tei: false,
                 pusi: false,
-                pid: Pid::new(mpeg_ts::pid::well_known::NULL.value()),
+                pid: mpeg_ts::pid::well_known::NULL,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -850,7 +851,7 @@ pub(crate) mod tests {
         let header = TsHeader {
             tei: false,
             pusi: true,
-            pid: Pid::new(pid.value()),
+            pid: pid,
             scrambling: 0,
             has_adaptation: false,
             has_payload: true,
@@ -947,7 +948,7 @@ pub(crate) mod tests {
         let header = TsHeader {
             tei: false,
             pusi: true,
-            pid: Pid::new(pid.value()),
+            pid: pid,
             scrambling: 0,
             has_adaptation: false,
             has_payload: true,
@@ -1135,7 +1136,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid: Pid::new(pid.value()),
+                pid: pid,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1191,11 +1192,11 @@ pub(crate) mod tests {
         // reached (and all 5 packets, including the PAT/PMT/SCTE-35 ones,
         // are then emitted together) within this test.
         for packet in [
-            ts_packet(Pid::new(wk::PAT.value()), &pat_bytes),
+            ts_packet(wk::PAT, &pat_bytes),
             ts_packet(PMT_PID, &pmt_bytes),
             ts_packet(SCTE35_PID, &out_bytes),
-            ts_packet(Pid::new(wk::NULL.value()), &[]),
-            ts_packet(Pid::new(wk::NULL.value()), &[]),
+            ts_packet(wk::NULL, &[]),
+            ts_packet(wk::NULL, &[]),
         ] {
             state.feed_datagram(&packet, clock);
             clock += Duration::from_millis(1);
@@ -1243,7 +1244,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid: Pid::new(pid.value()),
+                pid: pid,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1305,10 +1306,10 @@ pub(crate) mod tests {
 
         // Lock needs 5 consecutive sync bytes at the stride first.
         for _ in 0..5 {
-            state.feed_datagram(&ts_packet(Pid::new(wk::NULL.value()), 0, &[]), clock);
+            state.feed_datagram(&ts_packet(wk::NULL, 0, &[]), clock);
             clock += Duration::from_millis(1);
         }
-        feed(&mut state, Pid::new(wk::PAT.value()), &pat_bytes, &mut clock);
+        feed(&mut state, wk::PAT, &pat_bytes, &mut clock);
         feed(&mut state, PMT_PID, &pmt_bytes, &mut clock);
 
         for cycle in 0..CYCLES {
@@ -1386,7 +1387,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid: Pid::new(pid.value()),
+                pid: pid,
                 scrambling: 0,
                 has_adaptation: true,
                 has_payload: true,
@@ -1425,7 +1426,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid: Pid::new(pid.value()),
+                pid: pid,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1445,7 +1446,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: false,
-                pid: Pid::new(wk::NULL.value()),
+                pid: wk::NULL,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1455,7 +1456,7 @@ pub(crate) mod tests {
             state.feed_datagram(&null, clock);
             clock += Duration::from_millis(1);
         }
-        state.feed_datagram(&section_packet(Pid::new(wk::PAT.value()), 0, &pat_bytes), clock);
+        state.feed_datagram(&section_packet(wk::PAT, 0, &pat_bytes), clock);
         clock += Duration::from_millis(1);
         state.feed_datagram(&section_packet(PMT_PID, 0, &pmt_bytes), clock);
         clock += Duration::from_millis(1);
@@ -1506,7 +1507,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid: Pid::new(pid.value()),
+                pid: pid,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1560,7 +1561,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid: Pid::new(MIXED_PID.value()),
+                pid: MIXED_PID,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1584,7 +1585,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: false,
-                pid: Pid::new(wk::NULL.value()),
+                pid: wk::NULL,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1596,7 +1597,7 @@ pub(crate) mod tests {
 
         // Generation 0: the PID is declared H.264, so one video-framed unit
         // is not "structured" and the mismatch gauge reads 1.
-        feed(&mut state, &section_packet(Pid::new(wk::PAT.value()), 0, &pat_bytes));
+        feed(&mut state, &section_packet(wk::PAT, 0, &pat_bytes));
         feed(
             &mut state,
             &section_packet(PMT_PID, 0, &pmt_for(0, StreamType::H264)),

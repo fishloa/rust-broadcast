@@ -21,9 +21,9 @@
 //! without adding new decode surface to `transmux` — out of bounds for this
 //! issue (`media-doctor` consumes `transmux`, it does not extend it).
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
+use mpeg_ts::pid::Pid;
 
 use dvb_si::tables::pmt::StreamType;
 use transmux::annexb::iter_annexb_nals;
@@ -62,7 +62,7 @@ impl Diagnostic for InterlaceCheck {
             ts,
             |pid| avc_pids.contains(&pid),
             |payload, packet_index, pid| {
-                let Some(done) = reported.get(&Pid::new(pid.value())).copied() else {
+                let Some(done) = reported.get(&pid).copied() else {
                     return;
                 };
                 if done {
@@ -75,11 +75,11 @@ impl Diagnostic for InterlaceCheck {
                     let Ok(info) = decode_avc_sps(nal) else {
                         continue;
                     };
-                    reported.insert(Pid::new(pid.value()), true);
+                    reported.insert(pid, true);
                     if !info.frame_mbs_only {
                         report.push(Finding::new(
                             Severity::Info,
-                            Location::at_pid(packet_index, Pid::new(pid.value())),
+                            Location::at_pid(packet_index, pid),
                             "avc-interlaced-content",
                             format!(
                                 "AVC SPS on PID 0x{pid:04X} has frame_mbs_only_flag=0 \

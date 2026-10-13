@@ -14,9 +14,9 @@
 //! streams, their PMT-declared type, and hands each check the PES-stripped
 //! elementary-stream bytes for a completed access unit.
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::Parse;
 use dvb_si::tables::pat::PatSection;
@@ -53,7 +53,9 @@ pub(crate) struct DeclaredStream {
 pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
     let n_packets = ts.len() / TS_PACKET_SIZE;
     let mut reassemblers: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
-    reassemblers.entry(Pid::new(dvb_si::tables::pat::PID)).or_default();
+    reassemblers
+        .entry(Pid::new(dvb_si::tables::pat::PID))
+        .or_default();
 
     let mut pmt_pids: Vec<Pid> = Vec::new();
     let mut declared: BTreeMap<Pid, StreamType> = BTreeMap::new();
@@ -199,8 +201,8 @@ pub(crate) mod tests {
     use dvb_si::descriptors::any::DescriptorLoop;
     use dvb_si::tables::pat::{PatEntry, PatSection};
     use dvb_si::tables::pmt::{PmtSection, PmtStream, StreamType};
-use mpeg_ts::pid::Pid;
     use mpeg_ts::mux::SectionPacketiser;
+    use mpeg_ts::pid::Pid;
     use mpeg_ts::ts::TS_PACKET_SIZE;
 
     /// PMT PID used by every test fixture built here.
@@ -261,10 +263,12 @@ use mpeg_ts::pid::Pid;
         let pmt_bytes = serialize_section(&pmt);
 
         let mut ts = Vec::new();
-        for pkt in SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&pat_bytes]) {
+        for pkt in
+            SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&pat_bytes])
+        {
             ts.extend_from_slice(&pkt);
         }
-        for pkt in SectionPacketiser::new(Pid::new(TEST_PMT_PID.value())).packetise(&[&pmt_bytes]) {
+        for pkt in SectionPacketiser::new(TEST_PMT_PID).packetise(&[&pmt_bytes]) {
             ts.extend_from_slice(&pkt);
         }
         assert_eq!(ts.len() % TS_PACKET_SIZE, 0);
@@ -290,7 +294,9 @@ use mpeg_ts::pid::Pid;
         let pat_bytes = serialize_section(&pat);
 
         let mut ts = Vec::new();
-        for pkt in SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&pat_bytes]) {
+        for pkt in
+            SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&pat_bytes])
+        {
             ts.extend_from_slice(&pkt);
         }
         for &(program_number, elementary_pid, stream_type, version_number) in programs {
@@ -309,7 +315,7 @@ use mpeg_ts::pid::Pid;
                 )],
             );
             let pmt_bytes = serialize_section(&pmt);
-            for pkt in SectionPacketiser::new(Pid::new(TEST_PMT_PID.value())).packetise(&[&pmt_bytes]) {
+            for pkt in SectionPacketiser::new(TEST_PMT_PID).packetise(&[&pmt_bytes]) {
                 ts.extend_from_slice(&pkt);
             }
         }
@@ -367,7 +373,7 @@ use mpeg_ts::pid::Pid;
         );
         let pmt_bytes = serialize_section(&pmt);
         let mut ts = Vec::new();
-        for pkt in SectionPacketiser::new(Pid::new(pid.value())).packetise(&[&pmt_bytes]) {
+        for pkt in SectionPacketiser::new(pid).packetise(&[&pmt_bytes]) {
             ts.extend_from_slice(&pkt);
         }
         ts

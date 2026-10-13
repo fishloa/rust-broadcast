@@ -8,11 +8,11 @@
 //! - `tests/fixtures/tnt-5w-12732v-isi6-10s.ts` — 2 NIT sections (primary fixture)
 #![cfg(feature = "ts")]
 
-use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
 use dvb_si::tables::ait::AitSection;
 use dvb_si::tables::dsmcc::DsmccSection;
 use dvb_si::tables::nit::NitSection;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 /// Read a TS file and return all reassembled sections for a given PID.

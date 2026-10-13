@@ -45,9 +45,9 @@
 //! capture) is likewise not flagged: there is no bitstream to judge, so
 //! there is nothing to disagree with the PMT's claim.
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use dvb_si::tables::pmt::StreamType;
 use transmux::iter_annexb_nals;
@@ -93,12 +93,12 @@ impl Diagnostic for CodecSignallingCheck {
             ts,
             |pid| video_pids.contains(&pid) || audio_pids.contains(&pid),
             |payload, _packet_index, pid| {
-                if let Some(seen) = video_seen.get_mut(&Pid::new(pid.value())) {
+                if let Some(seen) = video_seen.get_mut(&pid) {
                     seen.any_au = true;
                     if iter_annexb_nals(payload).next().is_some() {
                         seen.structured = true;
                     }
-                } else if let Some(seen) = audio_seen.get_mut(&Pid::new(pid.value())) {
+                } else if let Some(seen) = audio_seen.get_mut(&pid) {
                     seen.any_au = true;
                     if has_adts_sync(payload) {
                         seen.structured = true;
@@ -111,7 +111,7 @@ impl Diagnostic for CodecSignallingCheck {
             if seen.any_au && !seen.structured {
                 report.push(Finding::new(
                     Severity::Error,
-                    Location::at_pid(0, Pid::new(pid.value())),
+                    Location::at_pid(0, pid),
                     "codec-signalling-mismatch",
                     alloc::format!(
                         "PMT declares a NAL video codec on PID 0x{pid:04X} but its elementary \
@@ -125,7 +125,7 @@ impl Diagnostic for CodecSignallingCheck {
             if seen.any_au && !seen.structured {
                 report.push(Finding::new(
                     Severity::Error,
-                    Location::at_pid(0, Pid::new(pid.value())),
+                    Location::at_pid(0, pid),
                     "codec-signalling-mismatch",
                     alloc::format!(
                         "PMT declares stream_type AAC-ADTS (0x0F) on PID 0x{pid:04X} but its \

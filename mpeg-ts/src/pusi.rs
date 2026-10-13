@@ -15,9 +15,9 @@
 //! `Option<Vec<u8>>` when a unit completes. This type is not `emsg`-specific
 //! — it works for any PUSI-delimited non-PSI PID payload.
 
+use crate::pid::Pid;
 use alloc::vec::Vec;
 use broadcast_common::pusi::PusiAccumulator;
-use crate::pid::Pid;
 
 /// Default maximum accumulated unit size (16 MiB), shared with `mpeg-pes`'s
 /// `PesAssembler` through [`broadcast_common::pusi`] (audit r01-W13, #1074).
@@ -171,7 +171,11 @@ mod tests {
 
         // Packet with different PID should be ignored.
         assert!(reasm.push(Pid::new(0x0100), true, b"ignored").is_none());
-        assert!(reasm.push(Pid::new(0x0100), false, b"more-ignored").is_none());
+        assert!(
+            reasm
+                .push(Pid::new(0x0100), false, b"more-ignored")
+                .is_none()
+        );
         assert!(reasm.flush().is_none());
 
         // Now feed a packet on our PID.

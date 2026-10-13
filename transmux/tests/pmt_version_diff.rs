@@ -19,8 +19,8 @@
 //! exercising the real PMT-declaration-order promotion path
 //! (`StreamingTsDemux::try_promote_ready`), not a shortcut around it.
 
-use mpeg_ts::pid::Pid;
 use broadcast_common::{Unpackage, crc32_mpeg2};
+use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
 use transmux::pipeline::TrackSpec;
 use transmux::{AbandonReason, CodecConfig, DemuxEvent, StreamingTsDemux, TsDemux};
@@ -764,7 +764,11 @@ fn codec_reclassification_rebuilds_the_probe_instead_of_panicking() {
     boot.extend_from_slice(&psi_packet(
         PMT_PID,
         0,
-        &build_pmt(1, true, &[(PID_V.value(), STREAM_TYPE_PES_PRIVATE, &[][..])]),
+        &build_pmt(
+            1,
+            true,
+            &[(PID_V.value(), STREAM_TYPE_PES_PRIVATE, &[][..])],
+        ),
     ));
     feed_locked(&mut demux, &boot);
     let boot_events = drain(&mut demux);
@@ -983,7 +987,10 @@ fn corrupt_crc_pat_cannot_hijack_a_live_es_pid() {
     let bad = build_pat_full(
         1,
         true,
-        &[(PROGRAM_NUMBER, PMT_PID.value()), (PROGRAM_NUMBER_2, PID_B.value())],
+        &[
+            (PROGRAM_NUMBER, PMT_PID.value()),
+            (PROGRAM_NUMBER_2, PID_B.value()),
+        ],
     );
     demux.feed(&psi_packet(PAT_PID, 1, &corrupt_crc(bad)));
     drain(&mut demux);
@@ -1014,7 +1021,10 @@ fn next_pat_cni_zero_cannot_hijack_a_live_es_pid() {
     let next = build_pat_full(
         1,
         false,
-        &[(PROGRAM_NUMBER, PMT_PID.value()), (PROGRAM_NUMBER_2, PID_B.value())],
+        &[
+            (PROGRAM_NUMBER, PMT_PID.value()),
+            (PROGRAM_NUMBER_2, PID_B.value()),
+        ],
     );
     demux.feed(&psi_packet(PAT_PID, 1, &next));
     drain(&mut demux);
@@ -1214,7 +1224,10 @@ fn es_pid_declared_by_two_programs_survives_one_program_dropping_it() {
         &build_pat_full(
             0,
             true,
-            &[(PROGRAM_NUMBER, PMT_PID.value()), (PROGRAM_NUMBER_2, PMT_PID_2.value())],
+            &[
+                (PROGRAM_NUMBER, PMT_PID.value()),
+                (PROGRAM_NUMBER_2, PMT_PID_2.value()),
+            ],
         ),
     ));
     // Both programs declare the shared PID_A; program 1 also has its own PID_V.
@@ -1255,7 +1268,12 @@ fn es_pid_declared_by_two_programs_survives_one_program_dropping_it() {
     demux.feed(&psi_packet(
         PMT_PID,
         1,
-        &build_pmt_for(PROGRAM_NUMBER, 2, true, &[(PID_V.value(), STREAM_TYPE_V, &[][..])]),
+        &build_pmt_for(
+            PROGRAM_NUMBER,
+            2,
+            true,
+            &[(PID_V.value(), STREAM_TYPE_V, &[][..])],
+        ),
     ));
     let events = drain(&mut demux);
     assert!(

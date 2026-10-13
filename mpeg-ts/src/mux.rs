@@ -341,11 +341,7 @@ impl SiMux {
     ///
     /// Interval cites dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2.
     pub fn upsert_sdt_actual(&mut self, sections: Vec<u8>) {
-        self.upsert(
-            well_known::SDT_BAT,
-            sections,
-            SDT_ACTUAL_MAX_INTERVAL,
-        );
+        self.upsert(well_known::SDT_BAT, sections, SDT_ACTUAL_MAX_INTERVAL);
     }
 
     /// NIT at [`NIT_MAX_INTERVAL`] on PID 0x0010.
@@ -646,8 +642,16 @@ mod tests {
         let s1 = build_section(0x42, &[0x01; 5]);
         let s2 = build_section(0x46, &[0x02; 5]);
         let mut mux = SiMux::new();
-        mux.upsert(Pid::new(0x0100), concat_sections(&[s1]), Duration::from_millis(100));
-        mux.upsert(Pid::new(0x0200), concat_sections(&[s2]), Duration::from_millis(200));
+        mux.upsert(
+            Pid::new(0x0100),
+            concat_sections(&[s1]),
+            Duration::from_millis(100),
+        );
+        mux.upsert(
+            Pid::new(0x0200),
+            concat_sections(&[s2]),
+            Duration::from_millis(200),
+        );
 
         // t=0: both emit
         let pkts = mux.poll(Duration::ZERO);
@@ -660,7 +664,10 @@ mod tests {
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
-        assert!(pids100.contains(&Pid::new(0x0100)), "PID 0x0100 should emit at t=100");
+        assert!(
+            pids100.contains(&Pid::new(0x0100)),
+            "PID 0x0100 should emit at t=100"
+        );
         assert!(
             !pids100.contains(&Pid::new(0x0200)),
             "PID 0x0200 should NOT emit at t=100"
@@ -676,8 +683,14 @@ mod tests {
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
-        assert!(pids200.contains(&Pid::new(0x0100)), "PID 0x0100 should emit at t=200");
-        assert!(pids200.contains(&Pid::new(0x0200)), "PID 0x0200 should emit at t=200");
+        assert!(
+            pids200.contains(&Pid::new(0x0100)),
+            "PID 0x0100 should emit at t=200"
+        );
+        assert!(
+            pids200.contains(&Pid::new(0x0200)),
+            "PID 0x0200 should emit at t=200"
+        );
     }
 
     #[test]

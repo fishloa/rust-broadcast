@@ -12,11 +12,11 @@
 //! stream. Long-running consumers should normally log/drop that section and
 //! continue feeding later sections; previous valid collector state is retained.
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use crate::descriptors::{AnyDescriptor, DescriptorLoop, DescriptorRegistry};
 use broadcast_common::Parse;

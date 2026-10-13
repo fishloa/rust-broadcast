@@ -4,12 +4,12 @@
 //! corruption scenarios.  All tests use either a real capture (m6-single.ts)
 //! with fault injection, or the synthetic 2-program mux from pid_filter tests.
 
-use mpeg_ts::pid::Pid;
 use broadcast_common::traits::{Parse, Serialize};
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::pat::{PatEntry, PatSection};
 use dvb_si::tables::pmt::{self, PmtSection, PmtStream, StreamType};
 use mpeg_ts::mux::SectionPacketiser;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{TsHeader, extract_ts_payload};
 use std::fs;
 use ts_fix::{PidFilter, Stuffing, TsFix};

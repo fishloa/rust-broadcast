@@ -29,12 +29,12 @@
 
 #![cfg(feature = "ts")]
 
-use mpeg_ts::pid::Pid;
 use broadcast_common::crc32_mpeg2;
 use dvb_si::demux::SiDemux;
 use dvb_si::tables::AnyTableSection;
 use dvb_t2mi::payload::AnyPayload;
 use dvb_t2mi::pump::T2miPump;
+use mpeg_ts::pid::Pid;
 
 // ── Helper constants ──────────────────────────────────────────────────────────
 

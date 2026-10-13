@@ -230,8 +230,8 @@ impl Diagnostic for PcrCheck {
 mod tests {
     use super::*;
     use crate::report::{Report, Severity};
-use mpeg_ts::pid::Pid;
     use mpeg_ts::Pcr;
+    use mpeg_ts::pid::Pid;
 
     /// Encode a PCR value into its 6-byte adaptation-field representation.
     fn encode_pcr_27mhz(ticks: u64) -> [u8; 6] {
@@ -279,7 +279,12 @@ use mpeg_ts::pid::Pid;
         let mut ts = Vec::new();
         ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), 0, 0, false));
         // 30 ms later in PCR ticks (within 40 ms warning threshold).
-        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 30 / 1000, 1, false));
+        ts.extend_from_slice(&make_pcr_packet(
+            Pid::new(pid),
+            CLOCK_27MHZ * 30 / 1000,
+            1,
+            false,
+        ));
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
         assert!(
@@ -298,7 +303,12 @@ use mpeg_ts::pid::Pid;
         let mut ts = Vec::new();
         ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), 0, 0, false));
         // 150 ms later in PCR ticks, no discontinuity_indicator.
-        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 150 / 1000, 1, false));
+        ts.extend_from_slice(&make_pcr_packet(
+            Pid::new(pid),
+            CLOCK_27MHZ * 150 / 1000,
+            1,
+            false,
+        ));
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
 
@@ -338,7 +348,12 @@ use mpeg_ts::pid::Pid;
         let pid = 0x0100u16;
         let mut ts = Vec::new();
         ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), 0, 0, false));
-        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 80 / 1000, 1, false));
+        ts.extend_from_slice(&make_pcr_packet(
+            Pid::new(pid),
+            CLOCK_27MHZ * 80 / 1000,
+            1,
+            false,
+        ));
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
         assert!(
@@ -370,7 +385,12 @@ use mpeg_ts::pid::Pid;
             filler[3] = 0x10; // payload only => no adaptation field => no PCR
             ts.extend_from_slice(&filler);
         }
-        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 40 / 1000, 2, false));
+        ts.extend_from_slice(&make_pcr_packet(
+            Pid::new(pid),
+            CLOCK_27MHZ * 40 / 1000,
+            2,
+            false,
+        ));
 
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
@@ -392,8 +412,18 @@ use mpeg_ts::pid::Pid;
         let mut ts = Vec::new();
         // A normal 40 ms step, then a +200 ms jump with no discontinuity flag.
         ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), 0, 0, false));
-        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 40 / 1000, 1, false));
-        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 240 / 1000, 2, false));
+        ts.extend_from_slice(&make_pcr_packet(
+            Pid::new(pid),
+            CLOCK_27MHZ * 40 / 1000,
+            1,
+            false,
+        ));
+        ts.extend_from_slice(&make_pcr_packet(
+            Pid::new(pid),
+            CLOCK_27MHZ * 240 / 1000,
+            2,
+            false,
+        ));
 
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);

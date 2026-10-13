@@ -8,8 +8,8 @@
 //! Header parsing delegates to [`crate::ts::TsHeader::parse`]; no bit-twiddling
 //! is duplicated here.
 
-use crate::pid::Pid;
 use crate::error::{Error, Result};
+use crate::pid::Pid;
 use crate::ts::{
     ADAPTATION_FLAG, AF_PCR_FLAG, AdaptationField, AdaptationFieldControl, CC_MASK, PCR_FIELD_LEN,
     Pcr, ScramblingControl, TS_PACKET_SIZE, TS_SYNC_BYTE, TsHeader,
@@ -448,7 +448,9 @@ mod tests {
     #[test]
     fn oversized_payload_is_rejected_not_truncated() {
         let payload = [0xAAu8; 185];
-        assert!(OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 0, &payload).is_err());
+        assert!(
+            OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 0, &payload).is_err()
+        );
     }
 
     /// The boundary: exactly 184 bytes (the fixed payload capacity) still
@@ -456,7 +458,8 @@ mod tests {
     #[test]
     fn max_payload_len_round_trips() {
         let payload = [0xBBu8; OwnedTsPacket::MAX_PAYLOAD_LEN];
-        let raw = OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 0, &payload).unwrap();
+        let raw =
+            OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 0, &payload).unwrap();
         let pkt = OwnedTsPacket::parse(raw).unwrap();
         assert_eq!(pkt.payload().unwrap(), &payload[..]);
     }
@@ -464,7 +467,8 @@ mod tests {
     #[test]
     fn owned_scrambling_control_accessor() {
         let make = |scrambling_bits: u8| -> OwnedTsPacket {
-            let mut raw = OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), false, 0, &[]).unwrap();
+            let mut raw =
+                OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), false, 0, &[]).unwrap();
             // byte 3 bits [7:6] = scrambling
             raw[3] = (raw[3] & 0x3F) | (scrambling_bits << 6);
             OwnedTsPacket::parse(raw).unwrap()

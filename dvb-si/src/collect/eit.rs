@@ -1,8 +1,8 @@
-use mpeg_ts::pid::Pid;
 use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use crate::descriptors::DescriptorRegistry;
 use crate::tables::RunningStatus;

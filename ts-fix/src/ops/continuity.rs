@@ -17,9 +17,9 @@
 //!   may legally have any CC value (§2.4.3.5 L649).  A repair MUST NOT
 //!   renumber CC across a signalled discontinuity.
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use mpeg_ts::owned::OwnedTsPacket;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};

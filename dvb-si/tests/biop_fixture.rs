@@ -8,7 +8,6 @@
 //! independently-derived ground truth, then verifies byte-exact round-trip.
 #![cfg(feature = "ts")]
 
-use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
 use dvb_si::carousel::UnMessage;
 use dvb_si::carousel::biop::message::BindingType;
@@ -19,6 +18,7 @@ use dvb_si::carousel::biop::{
 };
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::dsmcc::DsmccSection;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 /// Extract reassembled sections for PID 0x00AB from the m6 fixture.

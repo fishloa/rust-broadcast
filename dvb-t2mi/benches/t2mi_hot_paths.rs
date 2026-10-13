@@ -5,9 +5,9 @@
 
 #![cfg(feature = "ts")]
 
-use mpeg_ts::pid::Pid;
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use dvb_t2mi::pump::T2miPump;
+use mpeg_ts::pid::Pid;
 use std::hint::black_box;
 
 // ── Fixture (shared /fixtures/dvb-t2mi/) ────────────────────────────

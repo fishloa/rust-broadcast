@@ -1,5 +1,5 @@
-use mpeg_ts::pid::Pid;
 use core::time::Duration;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::Serialize;
 use dvb_si::descriptors::any::DescriptorLoop;
@@ -2371,7 +2371,9 @@ fn pmt_removed_by_new_pat_version_stops_firing_and_becomes_unreferenced() {
 
     let unref: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(removed_pmt_pid)))
+        .filter(|e| {
+            e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(removed_pmt_pid))
+        })
         .collect();
     assert_eq!(
         unref.len(),
@@ -2440,7 +2442,9 @@ fn es_pid_removed_by_new_pmt_version_stops_firing_and_becomes_unreferenced() {
 
     let unref: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(dropped_es_pid)))
+        .filter(|e| {
+            e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(dropped_es_pid))
+        })
         .collect();
     assert_eq!(
         unref.len(),

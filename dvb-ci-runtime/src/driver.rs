@@ -2525,7 +2525,12 @@ pub(crate) mod tests {
         // Union of both programmes' ES PIDs, sorted.
         assert_eq!(
             d.descramble_pids(),
-            &[Pid::new(0x0100), Pid::new(0x0101), Pid::new(0x0200), Pid::new(0x0201)],
+            &[
+                Pid::new(0x0100),
+                Pid::new(0x0101),
+                Pid::new(0x0200),
+                Pid::new(0x0201)
+            ],
             "descramble_pids must be the union across both added services"
         );
     }

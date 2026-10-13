@@ -21,9 +21,9 @@ use crate::objects::ca_pmt::{
 };
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
-use mpeg_ts::pid::Pid;
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::pmt::PmtSection;
+use mpeg_ts::pid::Pid;
 
 /// An owned, CA-only projection of a PMT. Holds the filtered `CA_descriptor`
 /// loops (programme + per-ES) so a borrowed [`CaPmt`] can be reconstructed.

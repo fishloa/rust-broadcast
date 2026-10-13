@@ -27,8 +27,8 @@
 //! ETSI TR 101 290 v1.4.1 §5.2.2, Table 5.0b, indicator 2.3b. ISO/IEC 13818-1
 //! (= ITU-T H.222.0) §2.4.3.5 (`discontinuity_indicator`).
 
-use mpeg_ts::pid::Pid;
 use core::time::Duration;
+use mpeg_ts::pid::Pid;
 
 use dvb_conformance::{ConformanceMonitor, Indicator};
 

@@ -20,8 +20,8 @@
 //! it. The repair ops perform the same classification internally as they
 //! stream packets through.
 
-use mpeg_ts::pid::Pid;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 

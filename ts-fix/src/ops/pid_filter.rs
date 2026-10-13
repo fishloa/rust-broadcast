@@ -27,8 +27,8 @@
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.4.3 (PAT) / §2.4.4.6 (CAT) /
 //! §2.4.4.8 (PMT) / §2.6.16 (CA_descriptor).
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::BTreeSet;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::traits::Parse;
 use dvb_si::descriptors::ca::CaDescriptor;
@@ -369,7 +369,8 @@ impl PidFilterOp {
                         *pmt_version = pmt.version_number;
                         let mut emm_pids = BTreeSet::new();
                         for p in keep.iter() {
-                            if *p != PAT_PID && *p != CAT_PID && *p != Pid::new((*pmt_pid).value()) {
+                            if *p != PAT_PID && *p != CAT_PID && *p != Pid::new((*pmt_pid).value())
+                            {
                                 emm_pids.insert(*p);
                             }
                         }

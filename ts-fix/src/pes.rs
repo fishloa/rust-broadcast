@@ -10,8 +10,8 @@
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) — §2.4.3.6 (PES packet), §2.4.3.7 (PES
 //! header / PTS/DTS).
 
-use mpeg_ts::pid::Pid;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 /// A reassembled PES access unit — the complete PES packet bytes with optional
 /// timing from the PES header.

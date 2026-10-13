@@ -314,7 +314,10 @@ impl ManagedCa {
     /// Calling this before any `ca_info` is not an error: the map is kept so
     /// a later [`set_cam_caids`](Self::set_cam_caids) recomputes against it.
     pub(crate) fn set_cat(&mut self, entries: &[CatCaEntry]) {
-        self.cat_emm_pids = entries.iter().map(|e| (e.ca_system_id, Pid::new(e.ca_pid))).collect();
+        self.cat_emm_pids = entries
+            .iter()
+            .map(|e| (e.ca_system_id, Pid::new(e.ca_pid)))
+            .collect();
         self.recompute_emm_pids();
     }
 
@@ -437,7 +440,9 @@ const CA_PID_HIGH_MASK: u8 = 0x1F;
 /// carry the mandatory fields.
 fn ca_pid_of(body: &[u8]) -> Option<Pid> {
     let field = body.get(CA_PID_BODY_OFFSET..CA_PID_BODY_OFFSET + CA_PID_FIELD_LEN)?;
-    Some(Pid::new((u16::from(field[0] & CA_PID_HIGH_MASK) << 8) | u16::from(field[1])))
+    Some(Pid::new(
+        (u16::from(field[0] & CA_PID_HIGH_MASK) << 8) | u16::from(field[1]),
+    ))
 }
 
 /// Collect the `CA_PID`s from every `CA_descriptor` in `loop_`.
@@ -814,11 +819,23 @@ mod tests {
             private_data: Vec::new(),
         }]);
         m.set_cam_caids([0x0648].into_iter().collect());
-        assert_eq!(m.emm_pids(), &[Pid::new(0x1FF0)], "precondition: emm_pids populated");
+        assert_eq!(
+            m.emm_pids(),
+            &[Pid::new(0x1FF0)],
+            "precondition: emm_pids populated"
+        );
 
         assert_eq!(
             m.required_pids(),
-            vec![Pid::new(0x0064), Pid::new(0x0065), Pid::new(0x0066), Pid::new(0x0100), Pid::new(0x0101), Pid::new(0x0200), Pid::new(0x1FF0)],
+            vec![
+                Pid::new(0x0064),
+                Pid::new(0x0065),
+                Pid::new(0x0066),
+                Pid::new(0x0100),
+                Pid::new(0x0101),
+                Pid::new(0x0200),
+                Pid::new(0x1FF0)
+            ],
             "required_pids must be descramble_pids ∪ ca_pids ∪ emm_pids"
         );
     }
@@ -841,7 +858,11 @@ mod tests {
         );
 
         let svc = service_of(&pmt, CaPmtCmdId::OkDescrambling, vec![], vec![]);
-        assert_eq!(svc.pcr_pid, Pid::new(0x00FF), "service_of must capture pmt.pcr_pid");
+        assert_eq!(
+            svc.pcr_pid,
+            Pid::new(0x00FF),
+            "service_of must capture pmt.pcr_pid"
+        );
         assert_eq!(svc.es_pids, vec![Pid::new(0x0100), Pid::new(0x0101)]);
         assert_eq!(svc.ca_pids, vec![Pid::new(0x0064), Pid::new(0x0065)]);
 

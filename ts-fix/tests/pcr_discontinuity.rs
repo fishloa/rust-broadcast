@@ -22,8 +22,8 @@
 //! indicator — the exact "defect" scenario ISO/IEC 13818-1 §2.4.3.5 /
 //! ETSI TR 101 290 §5.2.2 indicator 2.3b describes.
 
-use mpeg_ts::pid::Pid;
 use dvb_conformance::{ConformanceMonitor, Indicator};
+use mpeg_ts::pid::Pid;
 use ts_fix::discontinuity::detect_pcr_discontinuities;
 use ts_fix::{PcrRestamp, TsFix};
 

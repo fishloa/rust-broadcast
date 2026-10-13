@@ -5,10 +5,10 @@
 
 #![cfg(feature = "ts")]
 
-use mpeg_ts::pid::Pid;
 use broadcast_common::crc32_mpeg2;
 use dvb_t2mi::payload::AnyPayload;
 use dvb_t2mi::pump::{Stats, T2miPump};
+use mpeg_ts::pid::Pid;
 
 // ── TS constants (duplicated from the private pump module) ───────────────────
 

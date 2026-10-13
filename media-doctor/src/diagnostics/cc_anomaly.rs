@@ -17,9 +17,9 @@
 //!
 //! Non-payload-bearing packets (AFC `00` or `10`) do not advance the CC.
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::ts_dup::{DuplicateVerdict, check_duplicate};
 
@@ -81,7 +81,7 @@ impl Diagnostic for CcAnomalyCheck {
             }
 
             let cc = hdr.continuity_counter;
-            let state = pid_states.entry(Pid::new(pid.value())).or_insert(CcState {
+            let state = pid_states.entry(pid).or_insert(CcState {
                 initialized: false,
                 last_cc: 0,
                 last_packet: Vec::new(),

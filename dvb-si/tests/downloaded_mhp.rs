@@ -70,7 +70,9 @@ fn hotbird_mhp_dsmcc_parse() {
         };
 
         // Only scan carousel-range PIDs (skip well-known SI).
-        if pkt.header.pid < Pid::new(MIN_CAROUSEL_PID) || pkt.header.pid > Pid::new(MAX_CAROUSEL_PID) {
+        if pkt.header.pid < Pid::new(MIN_CAROUSEL_PID)
+            || pkt.header.pid > Pid::new(MAX_CAROUSEL_PID)
+        {
             continue;
         }
 

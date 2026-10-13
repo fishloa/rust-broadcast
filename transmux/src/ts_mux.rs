@@ -65,8 +65,8 @@
 //!   would exceed the 12-bit `ES_info_length` field's 4095-byte maximum
 //!   (§2.4.4.8) — a truncated descriptor loop is a malformed PMT.
 
-use mpeg_ts::pid::Pid;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::{Package, crc32_mpeg2};
 use mpeg_pes::{Pts as PesPts, StreamId};
@@ -777,8 +777,9 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
         };
         let descriptors = merge_es_info_descriptors(&track.spec.es_info_descriptors, &synthesized)?;
         plans.push(EsPlan {
-            pid: Pid::try_new(next_pid)
-                .map_err(|_| Error::InvalidInput("too many tracks: elementary PID exceeds 0x1FFF"))?,
+            pid: Pid::try_new(next_pid).map_err(|_| {
+                Error::InvalidInput("too many tracks: elementary PID exceeds 0x1FFF")
+            })?,
             stream_id,
             kind,
             asc,
@@ -1138,7 +1139,7 @@ fn mux_tracks_timed_with_cc(
         // sections (issue #576) — packetised directly, never PES-wrapped.
         // The packetiser's own continuity_counter (independent of `cc`
         // above, which only tracks the PES path) persists across samples.
-        let mut section_packetiser = SectionPacketiser::with_continuity(Pid::new(plan.pid.value()), cc);
+        let mut section_packetiser = SectionPacketiser::with_continuity(plan.pid, cc);
         for (sample, &dts_local) in samples[track_idx].iter().zip(dts_ticks[track_idx]) {
             // Rescale the sample's decode/composition time to the 90 kHz TS
             // clock. composition_offset is (pts − dts) in the track scale.
@@ -1350,7 +1351,7 @@ fn write_pcr_only_packet(pkt: &mut [u8; TS_PACKET_SIZE], pid: Pid, cc: u8, pcr: 
     let hdr = TsHeader {
         tei: false,
         pusi: false,
-        pid: Pid::new(pid.value()),
+        pid: pid,
         scrambling: 0,
         has_adaptation: true,
         has_payload: false,
@@ -1728,7 +1729,7 @@ fn packetise_section(pid: Pid, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACK
         let hdr = TsHeader {
             tei: false,
             pusi: first,
-            pid: Pid::new(pid.value()),
+            pid: pid,
             scrambling: 0,
             has_adaptation: false,
             has_payload: true,
@@ -1834,7 +1835,7 @@ fn packetise_pes(
             let hdr = TsHeader {
                 tei: false,
                 pusi: first,
-                pid: Pid::new(plan.pid.value()),
+                pid: plan.pid,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1882,7 +1883,7 @@ fn write_af_packet(
     let hdr = TsHeader {
         tei: false,
         pusi,
-        pid: Pid::new(pid.value()),
+        pid: pid,
         scrambling: 0,
         has_adaptation: true,
         has_payload: true,

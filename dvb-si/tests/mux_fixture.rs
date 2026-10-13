@@ -10,9 +10,9 @@
 //! the lower-level `SectionReassembler`.
 #![cfg(feature = "ts")]
 
-use mpeg_ts::pid::Pid;
 use dvb_si::demux::SiDemux;
 use mpeg_ts::mux::SectionPacketiser;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
 
 fn read_fixture(name: &str) -> Vec<u8> {

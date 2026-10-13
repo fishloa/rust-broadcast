@@ -33,8 +33,8 @@ use crate::objects::ca_pmt::{
 use crate::objects::ca_pmt_reply::{CaEnable, encode_enable_byte};
 use crate::tag::{CA_PMT, CA_PMT_REPLY};
 use alloc::vec::Vec;
-use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
+use mpeg_ts::pid::Pid;
 
 // Re-export the shared value enums so callers needn't reach into `objects`.
 pub use crate::objects::ca_pmt::{
@@ -134,7 +134,8 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
                 });
             }
             let stream_type = body[pos];
-            let elementary_pid = Pid::new((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
+            let elementary_pid =
+                Pid::new((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
             let es_info_length = (((body[pos + 3] & 0x0F) as usize) << 8) | body[pos + 4] as usize;
             pos += MS_ES_PREFIX;
             let (es_cmd, ca_descriptors) =
@@ -288,7 +289,8 @@ impl<'a> Parse<'a> for MsCaPmtReply {
                     what: "ms ca_pmt_reply ES",
                 });
             }
-            let elementary_pid = Pid::new((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
+            let elementary_pid =
+                Pid::new((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
             let es_flag = (body[pos + 2] & 0x80) != 0;
             let es_enable = if es_flag {
                 Some(CaEnable::from_u8(body[pos + 2] & 0x7F))
@@ -546,7 +548,6 @@ mod tests {
         let bytes = pmt.to_bytes();
         assert_eq!(MsCaPmt::parse(&bytes).unwrap(), pmt);
     }
-
 
     #[test]
     fn oversized_pids_are_unrepresentable() {

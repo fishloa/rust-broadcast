@@ -24,8 +24,8 @@
 //! [`transmux::sps::HevcSpsInfo::fps`] (via the recovered config's own SPS)
 //! do that; this check only compares the two already-decoded numbers.
 
-use mpeg_ts::pid::Pid;
 use alloc::format;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::Unpackage;
 use transmux::{CodecConfig, Media, TsDemux};

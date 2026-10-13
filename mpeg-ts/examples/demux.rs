@@ -28,7 +28,9 @@ fn main() {
     let pkt = TsPacket::parse(&PAT_PACKET).expect("hardcoded packet must parse");
     println!(
         "TS packet: pid=0x{:04X} pusi={} has_payload={}",
-        pkt.header.pid.value(), pkt.header.pusi, pkt.header.has_payload
+        pkt.header.pid.value(),
+        pkt.header.pusi,
+        pkt.header.has_payload
     );
 
     let mut reasm = SectionReassembler::default();

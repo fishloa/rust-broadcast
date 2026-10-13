@@ -22,9 +22,9 @@
 //! distinguished only by their `table_id_extension` (the `program_number`),
 //! so keying on PID alone emits a finding on every repetition.
 
-use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::Parse;
 use dvb_si::tables::pat::{self, PatSection};
@@ -90,7 +90,9 @@ fn current_pat(raw: &[u8]) -> Option<PatSection> {
 fn declared_pmt_pids(pat: &PatSection) -> impl Iterator<Item = u16> + '_ {
     pat.entries.iter().filter_map(|entry| {
         let pid = entry.pid;
-        (entry.program_number != pat::PROGRAM_NUMBER_NIT && pid != pat::PID && Pid::new(pid) != NULL_PID)
+        (entry.program_number != pat::PROGRAM_NUMBER_NIT
+            && pid != pat::PID
+            && Pid::new(pid) != NULL_PID)
             .then_some(pid)
     })
 }
@@ -145,7 +147,7 @@ impl PatPmtVersionCheck {
         {
             report.push(Finding::new(
                 Severity::Info,
-                Location::at_pid(packet_index, Pid::new(pid.value())),
+                Location::at_pid(packet_index, pid),
                 rule_id,
                 alloc::format!(
                     "{table_name} version_number changed: {prev_ver} → {version} \
@@ -191,7 +193,10 @@ impl Diagnostic for PatPmtVersionCheck {
 
             // Feed payload into section reassembler.
             let pusi = pkt.header.pusi;
-            reassemblers.get_mut(&pid.value()).unwrap().feed(payload, pusi);
+            reassemblers
+                .get_mut(&pid.value())
+                .unwrap()
+                .feed(payload, pusi);
 
             // Collect new PMT PIDs discovered during drain — we cannot borrow
             // `reassemblers` mutably while iterating over sections.
@@ -200,7 +205,7 @@ impl Diagnostic for PatPmtVersionCheck {
             // Drain completed sections.
             while let Some(section) = reassemblers.get_mut(&pid.value()).unwrap().pop_section() {
                 let section_data = &section[..];
-                self.process_section(i, Pid::new(pid.value()), section_data, &mut versions, report);
+                self.process_section(i, pid, section_data, &mut versions, report);
 
                 // PAT discovery goes through the SAME gate as version
                 // tracking — typed parse, CRC-valid, current — so a corrupt
