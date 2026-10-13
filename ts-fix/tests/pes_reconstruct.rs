@@ -9,6 +9,7 @@
 //! they verify framing counts, PTS presence, and the identity passthrough
 //! property.
 
+use mpeg_ts::pid::Pid;
 use std::{fs, path::PathBuf};
 
 /// Path to the shared H.264+AAC fixture in the workspace root.
@@ -34,8 +35,8 @@ fn reconstruct_pes_video_pid_0100() {
     let ts = load_fixture();
     let aus = ts_fix::pes::reconstruct_access_units(&ts, &[0x0100, 0x0101]);
 
-    let video: Vec<_> = aus.iter().filter(|au| au.pid == 0x0100).collect();
-    let audio: Vec<_> = aus.iter().filter(|au| au.pid == 0x0101).collect();
+    let video: Vec<_> = aus.iter().filter(|au| au.pid == Pid::new(0x0100)).collect();
+    let audio: Vec<_> = aus.iter().filter(|au| au.pid == Pid::new(0x0101)).collect();
 
     assert_eq!(video.len(), 75, "expected 75 access units on PID 0x0100");
     assert_eq!(audio.len(), 14, "expected 14 access units on PID 0x0101");

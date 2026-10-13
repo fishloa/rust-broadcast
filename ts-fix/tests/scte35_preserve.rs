@@ -10,6 +10,7 @@
 //!
 //! See <https://github.com/fishloa/rust-broadcast/issues/387>
 
+use mpeg_ts::pid::Pid;
 use broadcast_common::traits::Parse;
 use scte35_splice::SpliceInfoSection;
 use scte35_splice::commands::AnyCommand;
@@ -17,15 +18,15 @@ use ts_fix::{PcrRestamp, PidFilter, TsFix};
 
 const PKT: usize = 188;
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/scte35-pcr.ts");
-const PCR_PID: u16 = 0x0100;
-const SCTE35_PID: u16 = 0x01F0;
+const PCR_PID: Pid = Pid::new(0x0100);
+const SCTE35_PID: Pid = Pid::new(0x01F0);
 
 fn load() -> Vec<u8> {
     std::fs::read(FIXTURE).unwrap_or_else(|e| panic!("fixture {FIXTURE}: {e}"))
 }
 
-fn pid(p: &[u8]) -> u16 {
-    (((p[1] & 0x1f) as u16) << 8) | p[2] as u16
+fn pid(p: &[u8]) -> Pid {
+    Pid::new((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
 }
 
 /// Check that a packet is on the SCTE-35 PID and is byte-identical.
@@ -170,7 +171,7 @@ fn scte35_survives_when_pcr_pid_dropped() {
     let out = run(&input, |b| b.filter_pids(PidFilter::keep([SCTE35_PID])));
 
     // Only PAT (implicitly added) and SCTE-35 PID should be present.
-    let output_pids: std::collections::BTreeSet<u16> = out.chunks_exact(PKT).map(pid).collect();
+    let output_pids: std::collections::BTreeSet<Pid> = out.chunks_exact(PKT).map(pid).collect();
     assert!(
         output_pids.contains(&SCTE35_PID),
         "SCTE-35 PID must survive even without PCR PID"

@@ -17,13 +17,14 @@
 //!
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.1 (null packets).
 
+use mpeg_ts::pid::Pid;
 use mpeg_ts::owned::OwnedTsPacket;
 use mpeg_ts::ts::TS_PACKET_SIZE;
 
 use crate::ops::{Op, StreamModel};
 
 /// Null packet PID (ISO/IEC 13818-1 §2.4.1).
-const NULL_PID: u16 = 0x1FFF;
+const NULL_PID: Pid = Pid::new(0x1FFF);
 
 /// Configuration for [`TsFixBuilder::stuffing`](crate::TsFixBuilder::stuffing).
 ///
@@ -132,7 +133,7 @@ impl StuffingOp {
         }
         // Extract PID from bytes 1-2.
         let pid = (((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16;
-        pid == NULL_PID
+        pid == NULL_PID.value()
     }
 }
 

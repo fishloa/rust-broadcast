@@ -2,6 +2,8 @@
 
 #![allow(dead_code)]
 
+use mpeg_ts::pid::Pid;
+
 /// Deterministically corrupt the continuity counter in a TS packet.
 ///
 /// The continuity counter is the 4-bit field in byte 3, bits [3:0].
@@ -55,11 +57,11 @@ fn make_null_packet() -> [u8; 188] {
 }
 
 /// Extract the PID from bytes 1-2 of a TS packet header.
-pub fn extract_pid(pkt: &[u8]) -> u16 {
+pub fn extract_pid(pkt: &[u8]) -> Pid {
     if pkt.len() < 3 {
-        return 0;
+        return Pid::new(0);
     }
     let b1 = pkt[1];
     let b2 = pkt[2];
-    (((b1 & 0x1F) as u16) << 8) | (b2 as u16)
+    Pid::new((((b1 & 0x1F) as u16) << 8) | (b2 as u16))
 }

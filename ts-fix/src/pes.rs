@@ -10,6 +10,7 @@
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) — §2.4.3.6 (PES packet), §2.4.3.7 (PES
 //! header / PTS/DTS).
 
+use mpeg_ts::pid::Pid;
 use alloc::vec::Vec;
 
 /// A reassembled PES access unit — the complete PES packet bytes with optional
@@ -21,7 +22,7 @@ use alloc::vec::Vec;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessUnit {
     /// PID this access unit was carried on.
-    pub pid: u16,
+    pub pid: Pid,
     /// Presentation time stamp from the PES header, if present (33-bit, 90 kHz).
     pub pts: Option<u64>,
     /// Decoding time stamp from the PES header, if present (33-bit, 90 kHz).
@@ -90,7 +91,7 @@ pub fn reconstruct_access_units(ts: &[u8], pids: &[u16]) -> Vec<AccessUnit> {
         let asm = assemblers.entry(pkt.pid().value()).or_default();
 
         if let Some(completed) = asm.feed(pkt.pusi(), payload) {
-            let au = parse_au(pkt.pid().value(), completed);
+            let au = parse_au(pkt.pid(), completed);
             result.push(au);
         }
     }
@@ -98,7 +99,7 @@ pub fn reconstruct_access_units(ts: &[u8], pids: &[u16]) -> Vec<AccessUnit> {
     // Flush any remaining PES on each PID.
     for (&pid, asm) in assemblers.iter_mut() {
         if let Some(completed) = asm.flush() {
-            let au = parse_au(pid, completed);
+            let au = parse_au(Pid::new(pid), completed);
             result.push(au);
         }
     }
@@ -107,7 +108,7 @@ pub fn reconstruct_access_units(ts: &[u8], pids: &[u16]) -> Vec<AccessUnit> {
 }
 
 /// Parse a completed PES packet `Vec<u8>` into an `AccessUnit`.
-fn parse_au(pid: u16, data: Vec<u8>) -> AccessUnit {
+fn parse_au(pid: Pid, data: Vec<u8>) -> AccessUnit {
     let (pts, dts) = match mpeg_pes::PesPacket::parse(&data) {
         Ok(pkt) => {
             let pts = pkt.header.as_ref().and_then(|h| h.pts).map(|p| p.ticks());

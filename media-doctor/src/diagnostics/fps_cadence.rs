@@ -88,7 +88,7 @@ fn total_duration_of(durations: impl Iterator<Item = Option<u32>>) -> u64 {
 
 fn check_media(media: &Media, report: &mut Report) {
     for track in &media.tracks {
-        let pid = track.spec.source_pid.unwrap_or(0);
+        let pid = track.spec.source_pid.unwrap_or(Pid::new(0));
         let declared_fps = match &track.spec.config {
             CodecConfig::Avc { config, .. } => config.config.sps.first().and_then(|s| {
                 let info = s.decode().ok()?;
@@ -139,7 +139,7 @@ fn check_media(media: &Media, report: &mut Report) {
         if relative_diff > FPS_TOLERANCE_FRACTION as f64 {
             report.push(Finding::new(
                 Severity::Warning,
-                Location::at_pid(0, Pid::new(pid)),
+                Location::at_pid(0, pid),
                 "fps-cadence-mismatch",
                 format!(
                     "Track (PID 0x{pid:04X}) VUI-declared frame rate {declared_fps:.3} fps \

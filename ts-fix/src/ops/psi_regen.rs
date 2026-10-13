@@ -62,9 +62,9 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsHeader, extract_ts_paylo
 use crate::ops::{Op, StreamModel};
 
 /// PAT well-known PID (ISO/IEC 13818-1 §2.4.4.3).
-const PAT_PID: u16 = 0x0000;
+const PAT_PID: Pid = Pid::new(0x0000);
 /// Null-packet PID (ISO/IEC 13818-1 §2.4.1).
-const NULL_PID: u16 = 0x1FFF;
+const NULL_PID: Pid = Pid::new(0x1FFF);
 
 // ── The operation ──────────────────────────────────────────────────────────
 
@@ -85,7 +85,7 @@ pub(crate) struct PsiRegenOp {
     /// ISO/IEC 13818-1 §2.4.4.3), copied from the original PAT if one carries
     /// one. Not derivable from PMTs, so a regenerated PAT would otherwise
     /// silently drop this entry.
-    network_pid: Option<u16>,
+    network_pid: Option<Pid>,
     /// Whether an original PAT section has already been successfully parsed
     /// for hints — guards against re-parsing every single PAT slot forever
     /// when the original PAT genuinely carries no network_pid entry.
@@ -120,7 +120,7 @@ impl PsiRegenOp {
             pat_hints_observed: false,
             seen_pat_slot: false,
             emitted_pat: false,
-            pat_packetiser: SectionPacketiser::new(Pid::new(PAT_PID)),
+            pat_packetiser: SectionPacketiser::new(PAT_PID),
             version_number: 0,
             last_entries: None,
         }
@@ -134,8 +134,8 @@ impl PsiRegenOp {
     }
 
     /// Extract the PID from a TS packet header (bytes 1-2).
-    fn pid_from_packet(packet: &[u8]) -> u16 {
-        (((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16
+    fn pid_from_packet(packet: &[u8]) -> Pid {
+        Pid::new((((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16)
     }
 
     /// The `table_id` a PUSI section payload begins with, if any.
@@ -172,7 +172,7 @@ impl PsiRegenOp {
                 .entries
                 .iter()
                 .find(|e| e.program_number == dvb_si::tables::pat::PROGRAM_NUMBER_NIT)
-                .map(|e| e.pid);
+                .map(|e| e.pid).map(Pid::new);
             self.pat_hints_observed = true;
         }
     }
@@ -182,10 +182,10 @@ impl PsiRegenOp {
     /// Returns `true` if a PMT was parsed for a `program_number` already in the
     /// map — i.e. the PMT cycle has wrapped, signalling that the mapping is
     /// complete (every program's PMT has been seen at least once).
-    fn scan_pmt(&mut self, pid: u16, payload: &[u8], pusi: bool) -> bool {
+    fn scan_pmt(&mut self, pid: Pid, payload: &[u8], pusi: bool) -> bool {
         // Only start tracking a PID once we see a section beginning with the PMT
         // table_id (bounds memory: we don't reassemble every PID in the mux).
-        let reasm = match self.pmt_reasm.entry(pid) {
+        let reasm = match self.pmt_reasm.entry(pid.value()) {
             alloc::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
             alloc::collections::btree_map::Entry::Vacant(slot) => {
                 if !pusi {
@@ -204,7 +204,7 @@ impl PsiRegenOp {
         while let Some(section) = reasm.pop_section() {
             if let Ok(p) = PmtSection::parse(&section) {
                 // (program_number from the PMT body → the PID it arrived on).
-                let prev = self.pmt_programs.insert(p.program_number, pid);
+                let prev = self.pmt_programs.insert(p.program_number, pid.value());
                 if prev.is_some() {
                     cycle_wrapped = true;
                 }

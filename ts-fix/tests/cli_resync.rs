@@ -8,6 +8,7 @@
 //! instead resynchronise (`mpeg_ts::resync::TsResync`), skip/count bad
 //! packets, and still write repaired output.
 
+use mpeg_ts::pid::Pid;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -24,8 +25,8 @@ fn fixture_path() -> PathBuf {
         .join("m6-single.ts")
 }
 
-fn pid_of(packet: &[u8]) -> u16 {
-    (((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16
+fn pid_of(packet: &[u8]) -> Pid {
+    Pid::new((((packet[1] & 0x1F) as u16) << 8) | packet[2] as u16)
 }
 
 /// Run the built `ts-fix` binary; returns (exit success, stderr, output bytes
@@ -84,7 +85,7 @@ fn cli_repairs_capture_starting_mid_packet() {
     assert!(
         output
             .chunks(TS_PACKET_SIZE)
-            .all(|p| p[0] == SYNC_BYTE && pid_of(p) != 0x1FFF),
+            .all(|p| p[0] == SYNC_BYTE && pid_of(p) != Pid::new(0x1FFF)),
         "output must be aligned 188-byte packets with nulls dropped"
     );
     let _ = fs::remove_file(&input_path);

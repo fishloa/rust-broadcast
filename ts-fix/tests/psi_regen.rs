@@ -4,6 +4,7 @@
 //! corruption scenarios.  All tests use either a real capture (m6-single.ts)
 //! with fault injection, or the synthetic 2-program mux from pid_filter tests.
 
+use mpeg_ts::pid::Pid;
 use broadcast_common::traits::{Parse, Serialize};
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::pat::{PatEntry, PatSection};
@@ -15,33 +16,33 @@ use ts_fix::{PidFilter, Stuffing, TsFix};
 
 // ── PID constants ────────────────────────────────────────────────────────────
 
-const PAT_PID: u16 = 0x0000;
+const PAT_PID: Pid = Pid::new(0x0000);
 /// PMT table_id (ISO/IEC 13818-1 Table 2-30).
 const PMT_TABLE_ID: u8 = pmt::TABLE_ID;
-const PMT1_PID: u16 = 0x0100;
-const PMT2_PID: u16 = 0x0200;
+const PMT1_PID: Pid = Pid::new(0x0100);
+const PMT2_PID: Pid = Pid::new(0x0200);
 /// Null-packet PID (ISO/IEC 13818-1 §2.4.1).
-const NULL_PID: u16 = 0x1FFF;
+const NULL_PID: Pid = Pid::new(0x1FFF);
 
-const P1_PCR_PID: u16 = 0x0101;
-const P1_VIDEO_PID: u16 = 0x0101;
-const P1_AUDIO_PID: u16 = 0x0102;
+const P1_PCR_PID: Pid = Pid::new(0x0101);
+const P1_VIDEO_PID: Pid = Pid::new(0x0101);
+const P1_AUDIO_PID: Pid = Pid::new(0x0102);
 
-const P2_PCR_PID: u16 = 0x0201;
-const P2_VIDEO_PID: u16 = 0x0201;
-const P2_AUDIO_PID: u16 = 0x0202;
+const P2_PCR_PID: Pid = Pid::new(0x0201);
+const P2_VIDEO_PID: Pid = Pid::new(0x0201);
+const P2_AUDIO_PID: Pid = Pid::new(0x0202);
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// Build a 188-byte TS packet carrying a dummy payload on `pid`.
-fn dummy_es_packet(pid: u16, cc: u8) -> [u8; 188] {
+fn dummy_es_packet(pid: Pid, cc: u8) -> [u8; 188] {
     let mut pkt = [0u8; 188];
     pkt[0] = 0x47; // sync byte
-    pkt[1] = ((pid >> 8) as u8) & 0x1F;
-    pkt[2] = (pid & 0xFF) as u8;
+    pkt[1] = ((pid.value() >> 8) as u8) & 0x1F;
+    pkt[2] = (pid.value() & 0xFF) as u8;
     pkt[3] = 0x10 | (cc & 0x0F); // adaptation_field_control=01 (payload only), CC
     for (i, b) in pkt[4..].iter_mut().enumerate() {
-        *b = (i as u8).wrapping_add(pid as u8);
+        *b = (i as u8).wrapping_add(pid.value() as u8);
     }
     pkt
 }
@@ -95,7 +96,7 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         /* current_next_indicator */ true,
         /* section_number */ 0,
         /* last_section_number */ 0,
-        /* pcr_pid */ P1_PCR_PID,
+        /* pcr_pid */ P1_PCR_PID.value(),
         /* program_info */ DescriptorLoop::new(&[]),
         /* streams */
         vec![
@@ -122,7 +123,7 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         /* current_next_indicator */ true,
         /* section_number */ 0,
         /* last_section_number */ 0,
-        /* pcr_pid */ P2_PCR_PID,
+        /* pcr_pid */ P2_PCR_PID.value(),
         /* program_info */ DescriptorLoop::new(&[]),
         /* streams */
         vec![
@@ -182,8 +183,8 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
 }
 
 /// Extract the PID from a TS packet header.
-fn pid_from_packet(pkt: &[u8]) -> u16 {
-    (((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16
+fn pid_from_packet(pkt: &[u8]) -> Pid {
+    Pid::new((((pkt[1] & 0x1F) as u16) << 8) | pkt[2] as u16)
 }
 
 /// Find a PAT packet in a TS (first packet on PID 0x0000).
@@ -327,15 +328,15 @@ fn regen_pat_from_zero_corruption() {
     let regen_pat = parse_pat_from_packet(regen_pat_pkt).expect("regen PAT must parse");
 
     // The regen PAT lists exactly the original program → PMT-PID mapping.
-    let orig_map: std::collections::BTreeMap<u16, u16> = orig_pat
+    let orig_map: std::collections::BTreeMap<u16, Pid> = orig_pat
         .entries
         .iter()
-        .map(|e| (e.program_number, e.pid))
+        .map(|e| (e.program_number, Pid::new(e.pid)))
         .collect();
-    let regen_map: std::collections::BTreeMap<u16, u16> = regen_pat
+    let regen_map: std::collections::BTreeMap<u16, Pid> = regen_pat
         .entries
         .iter()
-        .map(|e| (e.program_number, e.pid))
+        .map(|e| (e.program_number, Pid::new(e.pid)))
         .collect();
     assert_eq!(
         orig_map, regen_map,
@@ -360,7 +361,7 @@ fn filter_then_regen_lists_only_surviving_program() {
     // Verify: only program 1 listed.
     assert_eq!(pat.entries.len(), 1, "filtered PAT should have 1 program");
     assert_eq!(pat.entries[0].program_number, 1);
-    assert_eq!(pat.entries[0].pid, PMT1_PID);
+    assert_eq!(pat.entries[0].pid, PMT1_PID.value());
 }
 
 /// Combine filter + regen: extract program 2, then regenerate PAT.
@@ -380,7 +381,7 @@ fn filter_program_2_then_regen() {
     // Verify: only program 2 listed.
     assert_eq!(pat.entries.len(), 1, "filtered PAT should have 1 program");
     assert_eq!(pat.entries[0].program_number, 2);
-    assert_eq!(pat.entries[0].pid, PMT2_PID);
+    assert_eq!(pat.entries[0].pid, PMT2_PID.value());
 }
 
 /// No-op regen on a corrupted PAT FAILS (test harness verification).
@@ -423,14 +424,14 @@ fn load_m6_single() -> Vec<u8> {
 ///
 /// This mirrors the op's own discovery and is the correct oracle: the PMTs are
 /// the authoritative source, independent of whatever the PAT claims.
-fn pmt_derived_mapping(ts: &[u8]) -> std::collections::BTreeMap<u16, u16> {
+fn pmt_derived_mapping(ts: &[u8]) -> std::collections::BTreeMap<u16, Pid> {
     use mpeg_ts::ts::SectionReassembler;
     let mut reasm: std::collections::BTreeMap<u16, SectionReassembler> =
         std::collections::BTreeMap::new();
-    let mut map = std::collections::BTreeMap::new();
+    let mut map: std::collections::BTreeMap<u16, Pid> = std::collections::BTreeMap::new();
     for pkt in ts.chunks_exact(188) {
         let pid = pid_from_packet(pkt);
-        if pid == PAT_PID || pid == 0x1FFF {
+        if pid == PAT_PID || pid == Pid::new(0x1FFF) {
             continue;
         }
         // Parse the header to validate the packet; PUSI is read from byte 1.
@@ -443,7 +444,7 @@ fn pmt_derived_mapping(ts: &[u8]) -> std::collections::BTreeMap<u16, u16> {
             None => continue,
         };
         // Only track PIDs whose first PUSI section starts with the PMT table_id.
-        let r = match reasm.entry(pid) {
+        let r = match reasm.entry(pid.value()) {
             std::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
             std::collections::btree_map::Entry::Vacant(slot) => {
                 if !pusi {
@@ -468,14 +469,14 @@ fn pmt_derived_mapping(ts: &[u8]) -> std::collections::BTreeMap<u16, u16> {
 }
 
 /// Collect every parseable output PAT's program→PMT mapping (in order).
-fn output_pat_mappings(ts: &[u8]) -> Vec<std::collections::BTreeMap<u16, u16>> {
+fn output_pat_mappings(ts: &[u8]) -> Vec<std::collections::BTreeMap<u16, Pid>> {
     ts.chunks_exact(188)
         .filter(|pkt| pid_from_packet(pkt) == PAT_PID)
         .filter_map(|pkt| parse_pat_from_packet(pkt).ok())
         .map(|pat| {
             pat.entries
                 .iter()
-                .map(|e| (e.program_number, e.pid))
+                .map(|e| (e.program_number, Pid::new(e.pid)))
                 .collect()
         })
         .collect()
@@ -508,7 +509,7 @@ fn regen_pat_on_m6_single() {
     for e in &orig_pat.entries {
         assert_eq!(
             oracle.get(&e.program_number),
-            Some(&e.pid),
+            Some(&Pid::new(e.pid)),
             "original PAT program {} must appear in the PMT-derived mapping",
             e.program_number
         );
@@ -720,7 +721,7 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
         true,
         0,
         0,
-        P1_PCR_PID,
+        P1_PCR_PID.value(),
         DescriptorLoop::new(&[]),
         vec![
             PmtStream::new(
@@ -745,7 +746,7 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
         true,
         0,
         0,
-        P2_PCR_PID,
+        P2_PCR_PID.value(),
         DescriptorLoop::new(&[]),
         vec![
             PmtStream::new(
@@ -854,15 +855,15 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
     let phase1 = build_two_program_ts(3);
 
     // Phase 2: a 3rd program (PMT on a fresh PID) is added, repeated 3 times.
-    const PMT3_PID: u16 = 0x0300;
-    const P3_PCR_PID: u16 = 0x0301;
+    const PMT3_PID: Pid = Pid::new(0x0300);
+    const P3_PCR_PID: Pid = Pid::new(0x0301);
     let pmt3 = PmtSection::new(
         3,
         0,
         true,
         0,
         0,
-        P3_PCR_PID,
+        P3_PCR_PID.value(),
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
             StreamType::Mpeg2Video,
@@ -898,7 +899,7 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         true,
         0,
         0,
-        P1_PCR_PID,
+        P1_PCR_PID.value(),
         DescriptorLoop::new(&[]),
         vec![
             PmtStream::new(
@@ -921,7 +922,7 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         true,
         0,
         0,
-        P2_PCR_PID,
+        P2_PCR_PID.value(),
         DescriptorLoop::new(&[]),
         vec![
             PmtStream::new(
@@ -1002,7 +1003,7 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
 /// which no PMT carries — was silently dropped from every regenerated PAT.
 #[test]
 fn regen_pat_preserves_network_pid_entry() {
-    const NIT_PID: u16 = 0x0010;
+    const NIT_PID: Pid = Pid::new(0x0010);
     let ts = build_two_program_ts_with_nit(4, NIT_PID);
 
     // Sanity: the original PAT really does carry the network_pid entry.
@@ -1012,7 +1013,7 @@ fn regen_pat_preserves_network_pid_entry() {
         orig_pat
             .entries
             .iter()
-            .any(|e| e.program_number == 0 && e.pid == NIT_PID),
+            .any(|e| e.program_number == 0 && e.pid == NIT_PID.value()),
         "test precondition: original PAT must carry a network_pid entry"
     );
 
@@ -1024,7 +1025,7 @@ fn regen_pat_preserves_network_pid_entry() {
         regen_pat
             .entries
             .iter()
-            .any(|e| e.program_number == 0 && e.pid == NIT_PID),
+            .any(|e| e.program_number == 0 && e.pid == NIT_PID.value()),
         "regenerated PAT must preserve the network_pid entry from the original \
          PAT (not derivable from any PMT), got entries {:?}",
         regen_pat.entries
@@ -1054,7 +1055,7 @@ fn build_patless_p1_ts() -> Vec<u8> {
         true,
         0,
         0,
-        P1_PCR_PID,
+        P1_PCR_PID.value(),
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
             StreamType::Mpeg2Video,
@@ -1103,9 +1104,9 @@ fn regen_psi_flush_pat_flows_through_later_ops() {
     }
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
-    let pids: Vec<u16> = output
+    let pids: Vec<Pid> = output
         .chunks_exact(188)
-        .map(|p| (((p[1] & 0x1F) as u16) << 8) | p[2] as u16)
+        .map(|p| Pid::new((((p[1] & 0x1F) as u16) << 8) | p[2] as u16))
         .collect();
     assert!(
         pids.contains(&PAT_PID),
@@ -1120,7 +1121,7 @@ fn regen_psi_flush_pat_flows_through_later_ops() {
     // pattern): the chained flush PAT must be a clean PAT section.
     if tsanalyze_available() {
         let path = write_temp_ts(&output, "tsfix-wtf4");
-        let (disc, dups) = tsanalyze_pid_stats(&path, 0);
+        let (disc, dups) = tsanalyze_pid_stats(&path, Pid::new(0));
         assert_eq!(
             disc, 0,
             "tsanalyze: chained flush PAT must have no discontinuities"
@@ -1152,7 +1153,7 @@ fn write_temp_ts(bytes: &[u8], prefix: &str) -> std::path::PathBuf {
 }
 
 /// Run `tsanalyze --normalized` and return (discontinuities, duplicates) for `pid`.
-fn tsanalyze_pid_stats(path: &std::path::Path, pid: u16) -> (i64, i64) {
+fn tsanalyze_pid_stats(path: &std::path::Path, pid: Pid) -> (i64, i64) {
     let output = std::process::Command::new("tsanalyze")
         .arg("--normalized")
         .arg(path)
@@ -1167,7 +1168,7 @@ fn tsanalyze_pid_stats(path: &std::path::Path, pid: u16) -> (i64, i64) {
                 && l.split(':')
                     .find_map(|kv| kv.strip_prefix("pid="))
                     .and_then(|v| v.parse::<i64>().ok())
-                    == Some(pid as i64)
+                    == Some(pid.value() as i64)
         })
         .unwrap_or_else(|| panic!("no tsanalyze pid: line for PID {pid} in:\n{text}"));
     let field = |key: &str| -> i64 {

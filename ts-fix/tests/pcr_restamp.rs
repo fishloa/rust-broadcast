@@ -10,6 +10,7 @@
 //! The test BITES: an identity pass-through leaves the corrupted, non-monotonic
 //! PCRs (see `identity_leaves_corrupted_pcrs_nonmonotonic`).
 
+use mpeg_ts::pid::Pid;
 use ts_fix::{PcrRestamp, TsFix};
 
 const PKT: usize = 188;
@@ -22,8 +23,8 @@ const DISC_FIXTURE: &str = concat!(
     "/../fixtures/ts/france-pcr-discontinuity.ts"
 );
 
-fn pid(p: &[u8]) -> u16 {
-    (((p[1] & 0x1f) as u16) << 8) | p[2] as u16
+fn pid(p: &[u8]) -> Pid {
+    Pid::new((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
 }
 
 /// `Some(pcr_27mhz)` if this packet carries a PCR in its adaptation field.
@@ -91,9 +92,9 @@ fn load() -> Vec<u8> {
 }
 
 /// The PCR PID with the most PCRs, and its (packet_index, pcr_27mhz) series.
-fn busiest_pcr_pid(buf: &[u8]) -> (u16, Vec<(usize, u64)>) {
+fn busiest_pcr_pid(buf: &[u8]) -> (Pid, Vec<(usize, u64)>) {
     use std::collections::BTreeMap;
-    let mut by_pid: BTreeMap<u16, Vec<(usize, u64)>> = BTreeMap::new();
+    let mut by_pid: BTreeMap<Pid, Vec<(usize, u64)>> = BTreeMap::new();
     for (i, p) in buf.chunks_exact(PKT).enumerate() {
         if let Some(v) = pcr_27mhz(p) {
             by_pid.entry(pid(p)).or_default().push((i, v));
@@ -106,7 +107,7 @@ fn busiest_pcr_pid(buf: &[u8]) -> (u16, Vec<(usize, u64)>) {
 }
 
 /// Zero every PCR on `pcr_pid` except the one at `keep_index` (the anchor).
-fn corrupt_pcrs(buf: &mut [u8], pcr_pid: u16, keep_index: usize) {
+fn corrupt_pcrs(buf: &mut [u8], pcr_pid: Pid, keep_index: usize) {
     for (idx, p) in buf.chunks_exact_mut(PKT).enumerate() {
         if pid(p) == pcr_pid && pcr_27mhz(p).is_some() && idx != keep_index {
             set_pcr_27mhz(p, 0);
@@ -212,7 +213,7 @@ fn discontinuity_reanchors_on_system_time_base_change() {
     // the full fixture without a clock jump — ~24.3 Mbps for this TNT slice.
     // Using a PID with discontinuity would give a bogus rate (the ~10 s clock
     // jump inflates the PCR span beyond the packet-count ratio).
-    fn bitrate_from(buf: &[u8], target_pid: u16) -> u64 {
+    fn bitrate_from(buf: &[u8], target_pid: Pid) -> u64 {
         let pcrs: Vec<(usize, u64)> = buf
             .chunks_exact(PKT)
             .enumerate()
@@ -230,7 +231,7 @@ fn discontinuity_reanchors_on_system_time_base_change() {
         let pcr_span = last_pcr - first_pcr;
         (pkt_span * 188 * 8 * 27_000_000) / pcr_span
     }
-    let bps = bitrate_from(&input, 0x026c);
+    let bps = bitrate_from(&input, Pid::new(0x026c));
     assert!(
         (10_000_000..50_000_000).contains(&bps),
         "sane bitrate from PID 0x026c: {bps}"
@@ -242,13 +243,13 @@ fn discontinuity_reanchors_on_system_time_base_change() {
     // Collect PCRs on PID 0x208 from the output.
     let outp: Vec<u64> = out
         .chunks_exact(PKT)
-        .filter_map(|p| if pid(p) == 0x208 { pcr_27mhz(p) } else { None })
+        .filter_map(|p| if pid(p) == Pid::new(0x208) { pcr_27mhz(p) } else { None })
         .collect();
     assert_eq!(outp.len(), 5, "5 PCRs on PID 0x208");
 
     // Check discontinuity packet still has indicator set.
     let disc_pkt: &[u8] = out.chunks_exact(PKT).nth(1251).expect("pkt 1251 exists");
-    assert!(pid(disc_pkt) == 0x208, "pkt 1251 is PID 0x208");
+    assert!(pid(disc_pkt) == Pid::new(0x208), "pkt 1251 is PID 0x208");
     let (_, disc_flag) = pcr_and_disc(disc_pkt).expect("pkt 1251 has PCR");
     assert!(disc_flag, "discontinuity packet still has indicator");
 
@@ -290,12 +291,12 @@ fn discontinuity_reanchors_on_system_time_base_change() {
     );
 
     // Other PCR PIDs are unaffected (still have the same count of PCRs).
-    let other_pids: Vec<u16> = input
+    let other_pids: Vec<Pid> = input
         .chunks_exact(PKT)
         .filter_map(|p| pcr_27mhz(p).map(|_| pid(p)))
         .collect::<std::collections::BTreeSet<_>>()
         .into_iter()
-        .filter(|&p| p != 0x208)
+        .filter(|&p| p != Pid::new(0x208))
         .collect();
     for &opid in &other_pids {
         let before: Vec<u64> = input
@@ -343,7 +344,7 @@ fn without_reanchor_output_would_be_nonmonotonic_across_discontinuity() {
     // We assert monotonicity on the first two (A) and last three (B).
     let outp: Vec<u64> = out
         .chunks_exact(PKT)
-        .filter_map(|p| if pid(p) == 0x208 { pcr_27mhz(p) } else { None })
+        .filter_map(|p| if pid(p) == Pid::new(0x208) { pcr_27mhz(p) } else { None })
         .collect();
     assert_eq!(outp.len(), 5);
 
@@ -357,7 +358,7 @@ fn without_reanchor_output_would_be_nonmonotonic_across_discontinuity() {
     // We can verify the raw input has a huge jump that would cause this.
     let raw_pcrs: Vec<u64> = input
         .chunks_exact(PKT)
-        .filter_map(|p| if pid(p) == 0x208 { pcr_27mhz(p) } else { None })
+        .filter_map(|p| if pid(p) == Pid::new(0x208) { pcr_27mhz(p) } else { None })
         .collect();
     let raw_jump = raw_pcrs[2] - raw_pcrs[1];
     assert!(

@@ -22,6 +22,7 @@
 //! indicator — the exact "defect" scenario ISO/IEC 13818-1 §2.4.3.5 /
 //! ETSI TR 101 290 §5.2.2 indicator 2.3b describes.
 
+use mpeg_ts::pid::Pid;
 use dvb_conformance::{ConformanceMonitor, Indicator};
 use ts_fix::discontinuity::detect_pcr_discontinuities;
 use ts_fix::{PcrRestamp, TsFix};
@@ -36,7 +37,7 @@ const CLEAN_FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts
 /// Independently-determined offset of the fixture's only PCR discontinuity
 /// (documented in the module doc above).
 const DISC_PACKET_INDEX: u64 = 1251;
-const DISC_PID: u16 = 0x0208;
+const DISC_PID: Pid = Pid::new(0x0208);
 /// Byte offset of the adaptation-field flags byte within a 188-byte packet.
 const AF_FLAGS_OFFSET: usize = 5;
 /// `discontinuity_indicator` bit (ISO/IEC 13818-1 §2.4.3.5).
@@ -46,8 +47,8 @@ fn load(path: &str) -> Vec<u8> {
     std::fs::read(path).unwrap_or_else(|e| panic!("fixture {path}: {e}"))
 }
 
-fn pid(p: &[u8]) -> u16 {
-    (((p[1] & 0x1f) as u16) << 8) | p[2] as u16
+fn pid(p: &[u8]) -> Pid {
+    Pid::new((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
 }
 
 /// `Some(pcr_27mhz)` if this packet carries a PCR in its adaptation field.
@@ -89,7 +90,7 @@ fn unflag_discontinuity(buf: &mut [u8], packet_index: u64) {
 /// (dvb-conformance's public API, used directly here so the assertion is
 /// independent of ts-fix's own `discontinuity` module) and collect every
 /// `PcrDiscontinuityError` (TR 101 290 §5.2.2 indicator 2.3b) event.
-fn pcr_disc_errors(bytes: &[u8]) -> Vec<(usize, Option<u16>)> {
+fn pcr_disc_errors(bytes: &[u8]) -> Vec<(usize, Option<Pid>)> {
     let mut monitor = ConformanceMonitor::new();
     let mut out = Vec::new();
     for (i, p) in bytes.chunks_exact(PKT).enumerate() {

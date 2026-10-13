@@ -27,6 +27,7 @@
 //! ISO/IEC 13818-1 (= ITU-T H.222.0) §2.4.4.3 (PAT) / §2.4.4.6 (CAT) /
 //! §2.4.4.8 (PMT) / §2.6.16 (CA_descriptor).
 
+use mpeg_ts::pid::Pid;
 use alloc::collections::BTreeSet;
 
 use broadcast_common::traits::Parse;
@@ -40,11 +41,11 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsHeader, extract_ts_paylo
 use crate::ops::{Op, StreamModel};
 
 /// PAT well-known PID (ISO/IEC 13818-1 §2.4.4.3).
-const PAT_PID: u16 = 0x0000;
+const PAT_PID: Pid = Pid::new(0x0000);
 /// CAT well-known PID (ISO/IEC 13818-1 §2.4.4.6).
-const CAT_PID: u16 = 0x0001;
+const CAT_PID: Pid = Pid::new(0x0001);
 /// Null-packet PID (ISO/IEC 13818-1 §2.4.1).
-const NULL_PID: u16 = 0x1FFF;
+const NULL_PID: Pid = Pid::new(0x1FFF);
 
 /// Configuration for [`TsFixBuilder::filter_pids`](crate::TsFixBuilder::filter_pids).
 ///
@@ -57,7 +58,7 @@ pub enum PidFilter {
     /// Constructed via [`PidFilter::keep`].
     Keep {
         /// The set of PIDs to retain.
-        pids: BTreeSet<u16>,
+        pids: BTreeSet<Pid>,
     },
 
     /// Extract one programme: resolve its PMT PID via the PAT, then keep
@@ -82,8 +83,8 @@ impl PidFilter {
     /// use ts_fix::PidFilter;
     /// let cfg = PidFilter::keep([0x0101, 0x0102]);
     /// ```
-    pub fn keep(pids: impl IntoIterator<Item = u16>) -> Self {
-        let mut set: BTreeSet<u16> = pids.into_iter().collect();
+    pub fn keep(pids: impl IntoIterator<Item = Pid>) -> Self {
+        let mut set: BTreeSet<Pid> = pids.into_iter().collect();
         set.insert(PAT_PID);
         Self::Keep { pids: set }
     }
@@ -121,7 +122,7 @@ enum ServiceState {
     /// PAT seen; waiting for the PMT on `pmt_pid`.
     WaitingPmt {
         program_number: u16,
-        pmt_pid: u16,
+        pmt_pid: Pid,
         /// Reassembles PMT sections on `pmt_pid`.
         pmt_reasm: SectionReassembler,
     },
@@ -130,7 +131,7 @@ enum ServiceState {
     /// version changes re-resolve the keep-set.
     Resolved {
         program_number: u16,
-        pmt_pid: u16,
+        pmt_pid: Pid,
         /// Last observed PAT `version_number` (ISO/IEC 13818-1 §2.4.4.3).
         pat_version: u8,
         /// Last observed PMT `version_number` (ISO/IEC 13818-1 §2.4.4.8).
@@ -144,7 +145,7 @@ enum ServiceState {
         pmt_reasm: SectionReassembler,
         /// Reassembles CAT sections on PID 0x0001.
         cat_reasm: SectionReassembler,
-        keep: BTreeSet<u16>,
+        keep: BTreeSet<Pid>,
     },
 }
 
@@ -161,18 +162,18 @@ fn ts_payload_and_pusi(packet: &[u8]) -> Option<(&[u8], bool)> {
 ///
 /// Parsed through [`TsHeader::parse`] so a short packet is `None`, not an
 /// out-of-bounds index, and the PID mask lives in one place.
-fn pid_of(packet: &[u8]) -> Option<u16> {
+fn pid_of(packet: &[u8]) -> Option<Pid> {
     TsHeader::parse(packet).ok().map(|h| h.pid)
 }
 
 /// Collect every `ca_pid` from the CA_descriptors (tag 0x09, ISO/IEC 13818-1
 /// §2.6.16) in a descriptor loop.  A malformed loop is skipped rather than
 /// failing the whole PMT — the ES/PCR PIDs are still valid.
-fn ca_pids_in_loop(raw: &[u8]) -> BTreeSet<u16> {
+fn ca_pids_in_loop(raw: &[u8]) -> BTreeSet<Pid> {
     let mut pids = BTreeSet::new();
     for desc in parse_loop(raw) {
         if let Ok(AnyDescriptor::Ca(CaDescriptor { ca_pid, .. })) = desc {
-            pids.insert(ca_pid);
+            pids.insert(Pid::new(ca_pid));
         }
     }
     pids
@@ -182,15 +183,15 @@ fn ca_pids_in_loop(raw: &[u8]) -> BTreeSet<u16> {
 /// discovered from the CAT, if one has been parsed).
 fn resolve_keep_set(
     pmt: &PmtSection<'_>,
-    pmt_pid: u16,
-    cat_emm_pids: &BTreeSet<u16>,
-) -> BTreeSet<u16> {
+    pmt_pid: Pid,
+    cat_emm_pids: &BTreeSet<Pid>,
+) -> BTreeSet<Pid> {
     let mut keep = BTreeSet::new();
     keep.insert(PAT_PID);
     keep.insert(pmt_pid);
-    keep.insert(pmt.pcr_pid);
+    keep.insert(Pid::new(pmt.pcr_pid));
     for stream in &pmt.streams {
-        keep.insert(stream.elementary_pid);
+        keep.insert(Pid::new(stream.elementary_pid));
     }
     // ECM PIDs from the PMT program-info loop (§2.4.4.8 / §2.6.16).
     let mut has_ca = false;
@@ -224,7 +225,7 @@ pub(crate) struct PidFilterOp {
 
 enum FilterState {
     /// Keep exactly this set of PIDs.
-    KeepSet(BTreeSet<u16>),
+    KeepSet(BTreeSet<Pid>),
     /// Service extract — stateful.
     Service(ServiceState),
 }
@@ -244,7 +245,7 @@ impl PidFilterOp {
     }
 
     /// Decide whether a packet on `pid` should pass the filter.
-    fn should_keep(&self, pid: u16) -> bool {
+    fn should_keep(&self, pid: Pid) -> bool {
         match &self.state {
             FilterState::KeepSet(set) => set.contains(&pid),
             FilterState::Service(svc_state) => match svc_state {
@@ -295,7 +296,7 @@ impl PidFilterOp {
                         let pmt_pid = entry.pid;
                         *state = ServiceState::WaitingPmt {
                             program_number: pn,
-                            pmt_pid,
+                            pmt_pid: Pid::new(pmt_pid),
                             pmt_reasm: SectionReassembler::default(),
                         };
                         return;
@@ -368,7 +369,7 @@ impl PidFilterOp {
                         *pmt_version = pmt.version_number;
                         let mut emm_pids = BTreeSet::new();
                         for p in keep.iter() {
-                            if *p != PAT_PID && *p != CAT_PID && *p != *pmt_pid {
+                            if *p != PAT_PID && *p != CAT_PID && *p != Pid::new((*pmt_pid).value()) {
                                 emm_pids.insert(*p);
                             }
                         }
@@ -394,14 +395,14 @@ impl PidFilterOp {
                             .entries
                             .iter()
                             .find(|e| e.program_number == *program_number)
-                            && entry.pid != *pmt_pid
+                            && entry.pid != (*pmt_pid).value()
                         {
                             // The PMT moved to a new PID: track the new
                             // one and drop the old PMT PID from the keep-set.
                             keep.remove(pmt_pid);
-                            *pmt_pid = entry.pid;
+                            *pmt_pid = Pid::new(entry.pid);
                             *pmt_version = 0;
-                            keep.insert(entry.pid);
+                            keep.insert(Pid::new(entry.pid));
                         }
                     }
                 } else if pid == CAT_PID && keep.contains(&CAT_PID) {
@@ -422,7 +423,7 @@ impl PidFilterOp {
                         // is an EMM PID).
                         keep.insert(CAT_PID);
                         if let Ok(entries) = cat.ca_descriptors() {
-                            keep.extend(entries.iter().map(|e| e.ca_pid));
+                            keep.extend(entries.iter().map(|e| Pid::new(e.ca_pid)));
                         }
                     }
                 }
@@ -476,7 +477,7 @@ mod tests {
         }
         // PID is the 13-bit field: byte1 low 5 bits (the top 3 flag bits are
         // ignored) and byte 2.
-        assert_eq!(pid_of(&[0x47, 0xFF, 0xFF, 0x10]), Some(0x1FFF));
-        assert_eq!(pid_of(&[0x47, 0x41, 0x23, 0x10]), Some(0x0123));
+        assert_eq!(pid_of(&[0x47, 0xFF, 0xFF, 0x10]), Some(Pid::new(0x1FFF)));
+        assert_eq!(pid_of(&[0x47, 0x41, 0x23, 0x10]), Some(Pid::new(0x0123)));
     }
 }
