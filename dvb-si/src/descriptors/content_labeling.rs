@@ -318,10 +318,10 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         }
 
         if let Some(ref tb) = self.time_base {
-            // 7 reserved bits (0) + 33-bit content_time_base_value
+            // 7 reserved bits (1) + 33-bit content_time_base_value
             write_33bit(buf, pos, tb.content_time_base_value);
             pos += 5;
-            // 7 reserved bits (0) + 33-bit metadata_time_base_value
+            // 7 reserved bits (1) + 33-bit metadata_time_base_value
             write_33bit(buf, pos, tb.metadata_time_base_value);
             pos += 5;
         }

@@ -97,6 +97,11 @@ const SSU_OUI_DATA_LENGTH_LEN: usize = 1;
 /// selector_length(1) = 6 bytes before the selector bytes.
 const SSU_OUI_FIXED_LEN: usize = 6;
 const SSU_UPDATE_TYPE_MASK: u8 = 0x0F;
+/// `reserved(4)` ahead of `update_type` and `reserved(2)` ahead of
+/// `update_versioning_flag` (TS 102 006 Table 4), emitted as ones (DVB
+/// reserved-bits convention; owner-approved sweep, no fixture carries SSU).
+const SSU_RESERVED_4_BITS: u8 = 0xF0;
+const SSU_RESERVED_2_BITS: u8 = 0xC0;
 const SSU_UPDATE_VERSIONING_FLAG_MASK: u8 = 0x20;
 const SSU_UPDATE_VERSION_MASK: u8 = 0x1F;
 
@@ -320,13 +325,14 @@ impl Serialize for SsuIdSelector<'_> {
         let mut pos = SSU_OUI_DATA_LENGTH_LEN;
         for e in &self.oui_entries {
             buf[pos..pos + 3].copy_from_slice(&e.oui);
-            buf[pos + 3] = e.update_type.to_u8() & SSU_UPDATE_TYPE_MASK; // reserved=0 | update_type
+            buf[pos + 3] = SSU_RESERVED_4_BITS | (e.update_type.to_u8() & SSU_UPDATE_TYPE_MASK);
             let uvf_bit: u8 = if e.update_versioning_flag {
                 SSU_UPDATE_VERSIONING_FLAG_MASK
             } else {
                 0
             };
-            buf[pos + 4] = uvf_bit | (e.update_version & SSU_UPDATE_VERSION_MASK);
+            buf[pos + 4] =
+                SSU_RESERVED_2_BITS | uvf_bit | (e.update_version & SSU_UPDATE_VERSION_MASK);
             buf[pos + 5] = broadcast_common::len::fit_u8(e.selector.len(), "selector_length")?;
             pos += SSU_OUI_FIXED_LEN;
             buf[pos..pos + e.selector.len()].copy_from_slice(e.selector);
@@ -606,8 +612,8 @@ mod tests {
         let expected: &[u8] = &[
             0x09,                   // OUI_data_length = 9
             0x00, 0x15, 0x0A,       // OUI
-            0x02,                   // reserved(0)|update_type(2)
-            0x21,                   // reserved(0)|uvf(1)|uversion(1)
+            0xF2,                   // reserved(1111)|update_type(2)
+            0xE1,                   // reserved(11)|uvf(1)|uversion(1)
             0x03,                   // selector_length = 3
             0xAA, 0xBB, 0xCC,       // selector bytes
         ];
@@ -663,8 +669,8 @@ mod tests {
         // Wire layout: [0]=OUI_data_length, [1..4]=OUI, [4]=byte3(update_type),
         // [5]=byte4(uvf|uversion), [6]=selector_length.
         // StandardUpdateCarousel.to_u8() = 0x01
-        assert_eq!(buf[4], 0x01); // byte3: update_type = 1
-        assert_eq!(buf[5], 0x00); // byte4: uvf=0, uversion=0
+        assert_eq!(buf[4], 0xF1); // byte3: reserved(1111) | update_type = 1
+        assert_eq!(buf[5], 0xC0); // byte4: reserved(11) | uvf=0, uversion=0
         let re = SsuIdSelector::parse(&buf).unwrap();
         assert_eq!(re, s);
     }
@@ -781,5 +787,24 @@ mod tests {
             "standard update carousel"
         );
         assert_eq!(UpdateType::Reserved(0xF).name(), "reserved");
+    }
+
+    /// r03-W7 sweep — TS 102 006 Table 4 plain `reserved(4)`/`reserved(2)` are
+    /// emitted as ones (DVB convention; no real fixture carries an SSU
+    /// selector, so this rests on the spec table + convention only). A sender
+    /// that wrote zeros parses to equal fields and is normalized.
+    #[test]
+    fn ssu_reserved_bits_one_on_serialize_and_zero_input_normalized() {
+        let conformant: &[u8] = &[0x09, 0x00, 0x15, 0x0A, 0xF2, 0xE1, 0x03, 0xAA, 0xBB, 0xCC];
+        let zeroed: &[u8] = &[0x09, 0x00, 0x15, 0x0A, 0x02, 0x21, 0x03, 0xAA, 0xBB, 0xCC];
+        let d = SsuIdSelector::parse(conformant).unwrap();
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, conformant);
+        let dz = SsuIdSelector::parse(zeroed).unwrap();
+        assert_eq!(dz, d);
+        let mut outz = vec![0u8; dz.serialized_len()];
+        dz.serialize_into(&mut outz).unwrap();
+        assert_eq!(outz, conformant);
     }
 }
