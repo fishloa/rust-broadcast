@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [11.1.0] - 2026-10-13
 ### Fixed
 
 - Presence flags stored next to an `Option` no longer drive the serializer, so a mismatch cannot write a misframed descriptor (r03-W5, #1138): `metadata` (`dsmcc_flag`), `content_labeling` (`content_reference_id_record_flag`, and an indicator/Option mismatch now returns `ValueOutOfRange`), `j2k_video` (`extended_capability_flag`, the stripe/block/mdm flags, and a missing `color_specification` now returns `ValueOutOfRange` instead of leaving a stale byte), `supplementary_audio` (`language_code_present`). The flag fields are kept (informational, set by parse); serialize derives the wire bit from the `Option`.

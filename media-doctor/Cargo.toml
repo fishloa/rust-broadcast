@@ -1,6 +1,6 @@
 [package]
 name         = "media-doctor"
-version      = "0.9.0"
+version      = "0.10.0"
 edition      = "2024"
 description  = "Media diagnostics harness for DVB/MPEG-TS: pluggable lint-style checks (sync, PAT/PMT versioning, CC anomalies, PCR, PTS/DTS monotonicity, SCTE-35 splice consistency) + HLS playlist validation."
 license      = "MIT OR Apache-2.0"
@@ -19,11 +19,11 @@ required-features = ["cli"]
 broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 mpeg-pes         = { path = "../mpeg-pes", version = "0.5", default-features = false }
 mpeg-ts          = { path = "../mpeg-ts", version = "0.5", default-features = false }
-dvb-si           = { path = "../dvb-si", version = "11.0", default-features = false, features = ["ts"] }
-dvb-conformance  = { path = "../dvb-conformance", version = "11.0", default-features = false }
+dvb-si           = { path = "../dvb-si", version = "11.1", default-features = false, features = ["ts"] }
+dvb-conformance  = { path = "../dvb-conformance", version = "11.1", default-features = false }
 scte35-splice    = { path = "../scte35-splice", version = "3.0", default-features = false }
 timed-metadata   = { path = "../timed-metadata", version = "0.6", default-features = false }
-transmux         = { path = "../transmux", version = "0.25", default-features = false }
+transmux         = { path = "../transmux", version = "0.26", default-features = false }
 # HLS (M3U8) playlist syntax (issue #878): the validator parses playlists
 # via this crate directly rather than reaching through `transmux` for it.
 broadcast-hls    = { path = "../broadcast-hls", version = "0.3", default-features = false }
@@ -75,7 +75,7 @@ test-bounded = { path = "../test-bounded" }
 # the library dependency above stays `default-features = false` (no `cli`,
 # no `clap`); Cargo unifies the two requirements for test builds only, same
 # pattern as `rtmp-runtime`'s dev-dependency on `transmux`.
-transmux = { path = "../transmux", version = "0.25", default-features = false, features = ["cli"] }
+transmux = { path = "../transmux", version = "0.26", default-features = false, features = ["cli"] }
 # Real SSAI Interstitial `EXT-X-DATERANGE` rendering (issue #1140): the
 # oracle test renders through `ssai-runtime`'s own
 # `InterstitialDateRange::to_tag_line`, not a hand-typed approximation of

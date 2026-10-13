@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.6.1] - 2026-10-13
 ### Changed
 
 - Added `tests/clock33_guard.rs` lexical tripwire against hand-rolled 33-bit wrap arithmetic.

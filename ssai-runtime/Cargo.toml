@@ -1,6 +1,6 @@
 [package]
 name         = "ssai-runtime"
-version      = "0.2.0"
+version      = "0.2.1"
 edition      = "2024"
 description  = "Sans-IO SCTE-35 SSAI session core: per-session ad-break state, a pluggable ad-decision trait, splice-point conditioning, and per-session HLS Interstitial playlist rendering. No HTTP, no ad-decision client. no_std."
 license      = "MIT OR Apache-2.0"

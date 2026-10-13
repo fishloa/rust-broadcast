@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 
+## [0.10.0] - 2026-10-13
 ### Changed
 
 - PCR modulus derived from `clock33::WRAP_33BIT`; added `tests/clock33_guard.rs` lexical tripwire.

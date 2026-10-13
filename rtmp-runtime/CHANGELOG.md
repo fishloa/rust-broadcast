@@ -5,6 +5,8 @@ All notable changes to `rtmp-runtime` are documented here. The format follows
 to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+## [0.7.2] - 2026-10-13
 ### Added
 
 - `ProtocolControl::try_to_message` (fallible `to_message`).

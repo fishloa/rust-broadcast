@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+
+## [0.12.0] - 2026-10-13
 ### Fixed
 - SRT and RTSP push now deliver one continuous MPEG-2 TS (#1024, audit r07-C1). The default `PushTransport::encode_media` ran a fresh one-shot `TsMux::package` per sample, so the receiver saw PAT/PMT before every frame, continuity counters restarting at 0 and the same PTS/PCR on every frame. `SrtTransport`/`RtspTransport` now own a per-connection `transmux::StreamingTsMux` (new hook `PushTransport::ts_mux`, default `None` = the old stateless path, so out-of-tree transports are unaffected): continuity counters, PCR and one shared DTS/PTS origin continue across samples, and PAT/PMT repeat on a media-time interval. `PushTransportEgress` also hands the muxer the full carried track set with every sample (a one-track `Media` per sample mapped every track onto the first ES PID and flipped the PMT).
 - `SrtTransport::send` splits a muxed frame into 1316-byte (7 x 188) SRT messages. SRT delivers one message per UDP datagram and the receiver drops and counts anything over its MTU-sized cap, so every frame over ~1.3 kB (all keyframes) was silently lost.

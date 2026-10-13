@@ -1,6 +1,6 @@
 [package]
 name         = "playout-runtime"
-version      = "0.2.0"
+version      = "0.2.1"
 edition      = "2024"
 description  = "Sans-IO linear channel playout: a schedule model (programme/ad/slate), transition planning across a join (PTS-rebase offset + discontinuity detection), and SCTE-35 splice_insert() emission points built with scte35-splice. No HTTP, no tokio, no transcoding."
 license      = "MIT OR Apache-2.0"

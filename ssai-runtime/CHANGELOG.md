@@ -4,6 +4,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-13
 ### Changed
 
 - `PTS_MODULUS_33` is now an alias of `clock33::WRAP_33BIT`; added `tests/clock33_guard.rs` lexical tripwire (the linear `condition_splice_point` `abs_diff` is the one allowlisted, documented exception).
