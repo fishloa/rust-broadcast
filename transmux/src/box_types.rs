@@ -829,6 +829,7 @@ pub(crate) fn find_top_box<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [
 /// so a `largesize` container's children are found — a hardcoded 8-byte skip
 /// would start mid-`largesize`). A truncated header yields an empty body: the
 /// lenient navigation contract of [`box_slices`].
+#[cfg(feature = "cenc")]
 fn container_body(container: &[u8]) -> &[u8] {
     match box_header_len(container) {
         Ok(hdr) => &container[hdr..],
@@ -840,6 +841,7 @@ fn container_body(container: &[u8]) -> &[u8] {
 /// four-CC is `fourcc`, each as full box bytes. Best-effort like
 /// [`box_slices`]. The shared child-navigation helper (issue #982:
 /// `cenc_decrypt` carried private copies).
+#[cfg(feature = "cenc")]
 pub(crate) fn child_boxes<'a>(
     container: &'a [u8],
     fourcc: &'a [u8; 4],
@@ -848,12 +850,14 @@ pub(crate) fn child_boxes<'a>(
 }
 
 /// The first child of `container` with four-CC `fourcc` (full box bytes).
+#[cfg(feature = "cenc")]
 pub(crate) fn find_child_box<'a>(container: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
     box_slices(container_body(container)).find(|b| b[BOX_TYPE_RANGE] == *fourcc)
 }
 
 /// Descend a chain of container four-CCs from `start`, returning the innermost
 /// box's full bytes (or `None` if any link is missing).
+#[cfg(feature = "cenc")]
 pub(crate) fn descend_boxes<'a>(start: &'a [u8], path: &[&[u8; 4]]) -> Option<&'a [u8]> {
     let mut cur = start;
     for fourcc in path {

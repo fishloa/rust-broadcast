@@ -1751,7 +1751,7 @@ mod tests {
             alloc::format!("{root}/cenc_frag_layouts"),
             alloc::format!("{root}/mp4/cmaf"),
             alloc::format!("{root}/mp4/cenc_boxes"),
-            alloc::format!("{root}"),
+            root.to_string(),
         ] {
             if let Ok(rd) = std::fs::read_dir(&dir) {
                 for e in rd.flatten() {
