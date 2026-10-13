@@ -77,3 +77,20 @@ fn colombia_t2mi_timestamps_and_l1_decode() {
         "no CRC failures on conformant stream"
     );
 }
+
+/// The pump filters on a typed [`Pid`]: the capture's T2-MI PID (0x0040)
+/// yields packets, a different valid PID yields none, and a value outside the
+/// 13-bit range cannot be turned into a filter at all (#1159).
+#[test]
+fn typed_pid_filter_selects_the_t2mi_pid_on_a_real_capture() {
+    let data = fixture();
+    let count = |pid: Pid| {
+        let mut pump = T2miPump::new(pid);
+        data.chunks(TS_PACKET)
+            .map(|pkt| pump.feed_ts(pkt).count())
+            .sum::<usize>()
+    };
+    assert!(count(T2MI_PID) > 100, "T2-MI PID must yield packets");
+    assert_eq!(count(Pid::try_new(0x0041).unwrap()), 0);
+    assert!(Pid::try_new(0x2040).is_err(), "0x2040 aliases 0x0040 if masked");
+}

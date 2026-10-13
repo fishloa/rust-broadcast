@@ -190,3 +190,22 @@ impl fmt::Display for Report {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn at_pid_widens_a_typed_pid_losslessly_and_at_track_keeps_32_bits() {
+        // Every valid PID survives the u32 field unchanged.
+        for raw in [0x0000u16, 0x0100, 0x1FFE, 0x1FFF] {
+            let pid = Pid::try_new(raw).unwrap();
+            assert_eq!(Location::at_pid(7, pid).pid, u32::from(raw));
+            assert_eq!(Location::at_pid(7, pid).packet, 7);
+        }
+        // A track id above 16 bits is not aliased (the reason the field is u32).
+        assert_eq!(Location::at_track(0, 0x0001_0064).pid, 0x0001_0064);
+        // An out-of-range PID cannot be turned into a typed location at all.
+        assert!(Pid::try_new(0x2064).is_err());
+    }
+}
