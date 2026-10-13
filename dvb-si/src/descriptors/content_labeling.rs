@@ -716,6 +716,26 @@ mod tests {
         }
     }
 
+    /// Issue #1005 spec vector, independent of the serializer: Table 2-83 is
+    /// `reserved(7) | content_time_base_value(33)`, so the conformant bytes
+    /// `FE 00 00 00 01` decode to 1 (the pre-fix reader took the FIRST 33
+    /// bits and returned 0x1_FC00_0000), and `FF FF FF FF FF` decodes to
+    /// the 33-bit maximum.
+    #[test]
+    fn time_base_values_read_the_low_33_bits() {
+        let bytes = [
+            TAG, 14, 0x01, 0x00, 0x17, 0xFE, 0x00, 0x00, 0x00, 0x01, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF,
+            0xAA,
+        ];
+        let d = ContentLabelingDescriptor::parse(&bytes).unwrap();
+        let tb = d.time_base.as_ref().unwrap();
+        assert_eq!(tb.content_time_base_value, 1);
+        assert_eq!(tb.metadata_time_base_value, 0x1_FFFF_FFFF);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, bytes);
+    }
+
     #[test]
     fn content_labeling_default_is_spec_value() {
         let mut d = ContentLabelingDescriptor::new(0x0100);

@@ -1710,6 +1710,92 @@ mod tests {
         ));
     }
 
+    /// number_items is a 6-bit count (#1004): 64 promotional-text items
+    /// must be rejected, not written as `number_items = 0` followed by all
+    /// 64 items.
+    #[test]
+    fn serialize_rejects_64_promotional_text_items_6_bit_count() {
+        let items = || {
+            (0..64)
+                .map(|_| LinkItem {
+                    language_code: LangCode(*b"eng"),
+                    promotional_text: DvbText::new(b"x"),
+                })
+                .collect::<Vec<_>>()
+        };
+        let mk = |n: usize| {
+            RctSection::new(
+                false,
+                1,
+                0,
+                true,
+                0,
+                0,
+                2000,
+                vec![LinkInfo::new(
+                    LinkType::from_u8(0x03),
+                    HowRelated::from_u8(0),
+                    0,
+                    0,
+                    0,
+                    None,
+                    None,
+                    items().into_iter().take(n).collect(),
+                    false,
+                    0,
+                    DescriptorLoop::new(&[]),
+                )],
+                DescriptorLoop::new(&[]),
+            )
+        };
+        let rct = mk(64);
+        let mut buf = vec![0u8; rct.serialized_len()];
+        assert!(matches!(
+            rct.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+        // 63 is the widest legal count and must still round-trip.
+        let ok = mk(63);
+        let mut buf = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut buf).unwrap();
+        assert_eq!(RctSection::parse(&buf).unwrap().links[0].items.len(), 63);
+    }
+
+    /// media_URI_length is an 8-bit field (#1004); a 256-byte URI must be
+    /// rejected, not wrapped to 0.
+    #[test]
+    fn serialize_rejects_256_byte_media_uri() {
+        let uri = vec![b'u'; 256];
+        let rct = RctSection::new(
+            false,
+            1,
+            0,
+            true,
+            0,
+            0,
+            2000,
+            vec![LinkInfo::new(
+                LinkType::from_u8(0x00),
+                HowRelated::from_u8(0),
+                0,
+                0,
+                0,
+                Some(&uri),
+                None,
+                vec![],
+                false,
+                0,
+                DescriptorLoop::new(&[]),
+            )],
+            DescriptorLoop::new(&[]),
+        );
+        let mut buf = vec![0u8; rct.serialized_len()];
+        assert!(matches!(
+            rct.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+    }
+
     #[test]
     fn parse_handwritten_rct_no_links() {
         let mut bytes: Vec<u8> = vec![
