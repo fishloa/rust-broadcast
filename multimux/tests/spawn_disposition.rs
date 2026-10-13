@@ -56,37 +56,42 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "source/whip.rs",
-        349,
+        366,
         "WHIP signalling server TaskTracker (WhipInfra)",
     ),
     (
         "source/whip.rs",
-        554,
+        617,
         "WHIP run task; owned by the route supervisor handle",
     ),
     (
         "source/whip.rs",
-        569,
+        632,
         "WHIP accept pump; owned by the route supervisor handle",
     ),
     (
         "output/whep.rs",
-        916,
+        989,
         "WHEP saturated-accept test harness server; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        966,
+        1040,
         "serve_whep_run_for_test -> run_whep_with_tracker; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        1508,
+        1078,
+        "serve_whep_run_probed_for_test -> run_whep_on_probed; cancelled by the returned WhepRunHarness token (test-hooks only)",
+    ),
+    (
+        "output/whep.rs",
+        1707,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1529,
+        1729,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (

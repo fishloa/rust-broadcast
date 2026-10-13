@@ -50,13 +50,13 @@ pub(crate) fn timer_fire_at(
 /// the [`MIN_TIMER_INTERVAL`] floor from the previous fire has elapsed. A loop
 /// checks this before reading another datagram, so a datagram flood cannot
 /// postpone an overdue timer (issue #1150).
+#[cfg(feature = "whip")]
 pub(crate) fn timer_due(
     deadline: Option<std::time::Instant>,
     last_fire: Option<std::time::Instant>,
     now: std::time::Instant,
 ) -> bool {
-    timer_fire_at(deadline, last_fire)
-        .is_some_and(|at| at <= tokio::time::Instant::from_std(now))
+    timer_fire_at(deadline, last_fire).is_some_and(|at| at <= tokio::time::Instant::from_std(now))
 }
 
 /// Sleep until [`timer_fire_at`], or forever when there is no deadline.
@@ -263,8 +263,8 @@ impl<M> ResourceTable<M> {
         self.map.lock().remove(id)
     }
 
-    /// Number of live resources (test observable).
-    #[cfg(any(test, feature = "test-hooks"))]
+    /// Number of live resources (observable through the `#[doc(hidden)]`
+    /// test handles).
     pub(crate) fn len(&self) -> usize {
         self.map.lock().len()
     }
@@ -423,6 +423,66 @@ mod tests {
         // counter exactly once.
         counter.fetch_sub(1, Ordering::SeqCst);
         assert_eq!(counter.load(Ordering::SeqCst), 0);
+    }
+
+    #[test]
+    fn a_trickle_fragment_yields_its_candidates_generation_and_end_marker() {
+        let frag = b"a=ice-ufrag:EsAw\r\na=ice-pwd:P2uYro0UCOQ4zxjKXaWCBui1\r\n\
+            m=audio 9 RTP/AVP 0\r\na=mid:0\r\n\
+            a=candidate:1 1 udp 2130706431 192.0.2.1 5000 typ host\r\n\
+            a=candidate:2 1 udp 1694498815 198.51.100.7 6000 typ srflx raddr 192.0.2.1 rport 5000\r\n\
+            a=end-of-candidates\r\n";
+        let f = parse_ice_fragment(frag).expect("RFC 8840 section 4.4 fragment");
+        assert_eq!(f.ufrag.as_deref(), Some("EsAw"));
+        assert_eq!(f.candidates.len(), 2);
+        assert!(f.candidates[0].starts_with("1 1 udp 2130706431 192.0.2.1 5000"));
+        assert!(f.end_of_candidates);
+        assert!(validate_trickle(&f, "EsAw").is_ok());
+        assert!(
+            validate_trickle(&f, "other").is_err(),
+            "another ICE generation"
+        );
+        let empty = parse_ice_fragment(b"a=ice-pwd:x\r\n").unwrap();
+        assert!(validate_trickle(&empty, "x").is_err(), "nothing to add");
+        assert!(parse_ice_fragment(&[0xff, 0xfe]).is_err(), "not UTF-8");
+    }
+
+    #[test]
+    fn control_termination_is_sticky_and_candidates_drain_once() {
+        let c = SessionControl::new();
+        assert!(c.push_candidates(vec!["a".into(), "b".into()]));
+        c.terminate();
+        let first = c.take();
+        assert!(first.terminated);
+        assert_eq!(first.candidates, ["a", "b"]);
+        let second = c.take();
+        assert!(second.terminated, "DELETE is never forgotten");
+        assert!(
+            second.candidates.is_empty(),
+            "candidates drain exactly once"
+        );
+        let over = vec![String::new(); MAX_PENDING_CANDIDATES + 1];
+        assert!(
+            !SessionControl::new().push_candidates(over),
+            "bounded queue"
+        );
+    }
+
+    #[test]
+    fn a_resource_unregisters_when_its_guard_drops() {
+        let table = ResourceTable::<u8>::new();
+        let guard = table.insert(
+            "id".into(),
+            Resource {
+                machine: parking_lot::Mutex::new(0),
+                control: SessionControl::new(),
+                remote_ufrag: "u".into(),
+            },
+        );
+        assert!(table.get("id").is_some());
+        drop(guard);
+        assert!(table.get("id").is_none());
+        assert_eq!(table.len(), 0);
     }
 
     use std::time::Duration;

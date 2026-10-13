@@ -89,7 +89,9 @@ fn resource_path(resp: &Resp) -> String {
 }
 
 fn etag_of(resp: &Resp) -> String {
-    resp.header("etag").expect("201 carries an ETag").to_string()
+    resp.header("etag")
+        .expect("201 carries an ETag")
+        .to_string()
 }
 
 async fn wait_until(what: &str, mut cond: impl FnMut() -> bool) {
@@ -124,7 +126,10 @@ async fn delete_ends_the_viewer_drops_its_trunk_subscription_and_frees_the_slot(
     let created = post_offer(h.addr).await;
     let loc = resource_path(&created);
     assert!(
-        created.header("content-type").unwrap().starts_with("application/sdp"),
+        created
+            .header("content-type")
+            .unwrap()
+            .starts_with("application/sdp"),
         "{:?}",
         created.headers
     );
@@ -200,7 +205,12 @@ async fn unknown_resources_are_404_for_patch_and_delete() {
         .status,
         404
     );
-    assert_eq!(http(h.addr, "DELETE", "/whep/session", &[], "").await.status, 404);
+    assert_eq!(
+        http(h.addr, "DELETE", "/whep/session", &[], "")
+            .await
+            .status,
+        404
+    );
     h.cancel.cancel();
     let _ = tokio::time::timeout(Duration::from_secs(10), h.handle).await;
 }
@@ -235,7 +245,9 @@ async fn patch_trickles_a_candidate_and_rejections_follow_the_rfc() {
     // 415 for a wrong or missing Content-Type.
     for ct in ["application/sdp", "text/plain"] {
         assert_eq!(
-            http(h.addr, "PATCH", &loc, &[("Content-Type", ct)], &good).await.status,
+            http(h.addr, "PATCH", &loc, &[("Content-Type", ct)], &good)
+                .await
+                .status,
             415,
             "{ct}"
         );

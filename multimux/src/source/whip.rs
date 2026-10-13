@@ -104,13 +104,13 @@ use webrtc_runtime::media::{
 
 use crate::error::{MultimuxError, Result};
 use crate::route::RouteHandle;
-use crate::webrtc_session::{Resource, ResourceGuard, ResourceTable, SessionControl};
-use webrtc_runtime::whip::server::{Event as WhipEvent, WhipSession};
 use crate::source::SessionClocks;
 #[cfg(feature = "test-hooks")]
 use crate::source::handshake_policy;
 use crate::source::{DriverProgress, IngestTimeouts, Source};
+use crate::webrtc_session::{Resource, ResourceGuard, ResourceTable, SessionControl};
 use axum::response::IntoResponse as _;
+use webrtc_runtime::whip::server::{Event as WhipEvent, WhipSession};
 
 /// Unknown coded dimensions — the SDP/RTP path gives no frame geometry at
 /// all, matching `crate::source::sdp`'s own `UNKNOWN_DIMENSION` placeholder
@@ -946,10 +946,7 @@ fn whip_router_with_cap(state: Arc<WhipServeState>, max_pending: usize) -> axum:
 
     axum::Router::new()
         .route("/whip", post(whip_post).options(whip_options))
-        .route(
-            "/whip/session/{id}",
-            patch(whip_patch).delete(whip_delete),
-        )
+        .route("/whip/session/{id}", patch(whip_patch).delete(whip_delete))
         // Mirror `output::whep`'s `ensure_connect_info`: a test harness driving
         // the router with `oneshot` has no accepted stream, so `ConnectInfo`
         // (and the `LocalAddr` extension) is absent and `whip_post`'s
@@ -1249,17 +1246,17 @@ async fn whip_patch(
     let event = resource.machine.lock().on_patch(body.to_vec(), &headers);
     match event {
         Ok(WhipEvent::TrickleIce { sdp_fragment, .. }) => {
-            let fragment = match crate::webrtc_session::parse_ice_fragment(&sdp_fragment)
-                .and_then(|f| {
+            let fragment =
+                match crate::webrtc_session::parse_ice_fragment(&sdp_fragment).and_then(|f| {
                     crate::webrtc_session::validate_trickle(&f, &resource.remote_ufrag)?;
                     Ok(f)
                 }) {
-                Ok(f) => f,
-                Err(reason) => {
-                    tracing::debug!(%reason, "whip: trickle fragment rejected");
-                    return StatusCode::BAD_REQUEST.into_response();
-                }
-            };
+                    Ok(f) => f,
+                    Err(reason) => {
+                        tracing::debug!(%reason, "whip: trickle fragment rejected");
+                        return StatusCode::BAD_REQUEST.into_response();
+                    }
+                };
             if !resource.control.push_candidates(fragment.candidates) {
                 return StatusCode::BAD_REQUEST.into_response();
             }
@@ -2222,7 +2219,6 @@ pub(crate) async fn run_whip_with_clock(
                 }
                 AcceptOutcome::Error(e) => return e,
                 AcceptOutcome::Admitted(id) => {
-                    #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
                     let (socket, control, taken) = {
                         let s = driver
                             .driver(id)
@@ -2230,6 +2226,7 @@ pub(crate) async fn run_whip_with_clock(
                             .session();
                         (s.socket_handle(), s.control_handle(), s.take_transport())
                     };
+                    #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
                     let Some(mut media) = taken else {
                         tracing::error!(
                             "whip: media transport of a just-admitted session was already taken; skipping its read loop"
@@ -2463,7 +2460,8 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         fn recv_from<'a>(
             &'a self,
             buf: &'a mut [u8],
-        ) -> impl Future<Output = std::io::Result<(usize, std::net::SocketAddr)>> + Send + 'a {
+        ) -> impl Future<Output = std::io::Result<(usize, std::net::SocketAddr)>> + Send + 'a
+        {
             self.reads.fetch_add(1, Ordering::Relaxed);
             buf[..8].fill(0xAB);
             std::future::ready(Ok((8, "127.0.0.1:9".parse().unwrap())))
@@ -2511,8 +2509,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         .unwrap();
         let first = media.poll_timeout().expect("a STUN gatherer has a timer");
         // The first deadline is already overdue by 5 ms when the flood starts.
-        tokio::time::advance(first.saturating_duration_since(t0) + Duration::from_millis(5))
-            .await;
+        tokio::time::advance(first.saturating_duration_since(t0) + Duration::from_millis(5)).await;
 
         let socket = Arc::new(FloodSocket::default());
         let shared = test_shared();

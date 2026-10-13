@@ -72,7 +72,11 @@ const SLEEP_ALLOW: &[&str] = &[
     "smooth_oracle.rs",
     "ts_hls_oracle.rs",
     "whep_egress.rs",
+    // `wait_until`: a bounded condition poll (5 ms step, 5 s bound) on a
+    // session counter the route updates from another task; no event to await.
+    "whep_session_resource.rs",
     "whip_ingest.rs",
+    "whip_session_resource.rs",
     "whip_whep_timers.rs",
 ];
 

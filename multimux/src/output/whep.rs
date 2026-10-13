@@ -574,10 +574,7 @@ fn whep_router_with_cap(
 
     axum::Router::new()
         .route("/whep", post(whep_post).options(whep_options))
-        .route(
-            "/whep/session/{id}",
-            patch(whep_patch).delete(whep_delete),
-        )
+        .route("/whep/session/{id}", patch(whep_patch).delete(whep_delete))
         .layer(axum::middleware::from_fn(move |req, next| {
             let auth = output_auth.clone();
             async move { whep_auth_middleware(auth, req, next).await }
@@ -898,17 +895,17 @@ async fn whep_patch(
     let event = resource.machine.lock().on_patch(body.to_vec(), &headers);
     match event {
         Ok(WhepEvent::TrickleIce { sdp_fragment, .. }) => {
-            let fragment = match crate::webrtc_session::parse_ice_fragment(&sdp_fragment)
-                .and_then(|f| {
+            let fragment =
+                match crate::webrtc_session::parse_ice_fragment(&sdp_fragment).and_then(|f| {
                     crate::webrtc_session::validate_trickle(&f, &resource.remote_ufrag)?;
                     Ok(f)
                 }) {
-                Ok(f) => f,
-                Err(reason) => {
-                    tracing::debug!(%reason, "whep: trickle fragment rejected");
-                    return StatusCode::BAD_REQUEST.into_response();
-                }
-            };
+                    Ok(f) => f,
+                    Err(reason) => {
+                        tracing::debug!(%reason, "whep: trickle fragment rejected");
+                        return StatusCode::BAD_REQUEST.into_response();
+                    }
+                };
             if !resource.control.push_candidates(fragment.candidates) {
                 return StatusCode::BAD_REQUEST.into_response();
             }

@@ -112,7 +112,9 @@ fn resource_path(resp: &Resp) -> String {
 }
 
 fn etag_of(resp: &Resp) -> String {
-    resp.header("etag").expect("201 carries an ETag").to_string()
+    resp.header("etag")
+        .expect("201 carries an ETag")
+        .to_string()
 }
 
 /// Bounded condition wait (not a sleep).
@@ -167,7 +169,11 @@ async fn delete_ends_the_session_frees_its_slot_and_is_not_repeatable() {
     assert_eq!(post_offer(addr).await.status, 503, "cap of 1 is full");
 
     let del = http(addr, "DELETE", &loc, &[], "").await;
-    assert_eq!(del.status, 200, "DELETE terminates the session: {}", del.body);
+    assert_eq!(
+        del.status, 200,
+        "DELETE terminates the session: {}",
+        del.body
+    );
 
     // The driver ends the session through its release-then-reap path.
     wait_until("capacity slot released", || route.active_sessions() == 0).await;
@@ -181,9 +187,15 @@ async fn delete_ends_the_session_frees_its_slot_and_is_not_repeatable() {
     assert_eq!(http(addr, "DELETE", &loc, &[], "").await.status, 404);
     // PATCH on a deleted resource: also gone.
     assert_eq!(
-        http(addr, "PATCH", &loc, &[("Content-Type", TRICKLE)], &fragment("abcd", CANDIDATE))
-            .await
-            .status,
+        http(
+            addr,
+            "PATCH",
+            &loc,
+            &[("Content-Type", TRICKLE)],
+            &fragment("abcd", CANDIDATE)
+        )
+        .await
+        .status,
         404
     );
 
@@ -200,13 +212,22 @@ async fn unknown_resources_are_404_for_patch_and_delete() {
     let bogus = "/whip/session/does-not-exist";
     assert_eq!(http(addr, "DELETE", bogus, &[], "").await.status, 404);
     assert_eq!(
-        http(addr, "PATCH", bogus, &[("Content-Type", TRICKLE)], &fragment("abcd", CANDIDATE))
-            .await
-            .status,
+        http(
+            addr,
+            "PATCH",
+            bogus,
+            &[("Content-Type", TRICKLE)],
+            &fragment("abcd", CANDIDATE)
+        )
+        .await
+        .status,
         404
     );
     // The old, id-less resource path no longer exists.
-    assert_eq!(http(addr, "DELETE", "/whip/session", &[], "").await.status, 404);
+    assert_eq!(
+        http(addr, "DELETE", "/whip/session", &[], "").await.status,
+        404
+    );
     token.cancel();
 }
 
@@ -317,11 +338,10 @@ async fn patch_rejections_follow_rfc_9725() {
 /// A resource whose session ended on its own (idle reap) is not a stale 200.
 #[tokio::test]
 async fn a_session_reaped_by_idle_timeout_unregisters_its_resource() {
-    let (addr, route, token) =
-        multimux::source::whip::serve_for_test_with_read_load_and_timeout(Duration::from_millis(
-            150,
-        ))
-        .await;
+    let (addr, route, token) = multimux::source::whip::serve_for_test_with_read_load_and_timeout(
+        Duration::from_millis(150),
+    )
+    .await;
     let created = post_offer(addr).await;
     let loc = resource_path(&created);
     wait_until("idle reap", || {
@@ -471,7 +491,9 @@ async fn a_real_peer_session_is_trickled_and_deleted() {
         std::time::Instant::now(),
     )
     .expect("client transport");
-    client_media.add_remote_candidate(&server.candidate).unwrap();
+    client_media
+        .add_remote_candidate(&server.candidate)
+        .unwrap();
     drive_client_until_srtp_ready(&mut client_media, &client_socket).await;
     assert_eq!(server.media_addr.ip().to_string(), "127.0.0.1");
 
