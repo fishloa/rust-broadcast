@@ -6,6 +6,20 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### BREAKING
+- `SenderReport` / `ReceiverReport` gain `profile_extensions: Vec<u8>`
+  (RFC 3550 §6.4.1/§6.4.2): bytes after the report blocks were previously
+  silently dropped on parse; they are now retained, written by serialize and
+  counted in the length word. A length that is not a multiple of 4 is rejected
+  with `Error::InvalidValue { field: "profile_extensions_len" }` on both parse
+  and serialize.
+- Both structs are now `#[non_exhaustive]`; construct with the new
+  `SenderReport::new(..)` / `ReceiverReport::new(..)` plus
+  `.with_profile_extensions(Vec<u8>)`. Struct literals outside the crate no
+  longer compile.
+- In-workspace dependents migrated to the constructors: rist-runtime
+  (tests), webrtc-runtime (`media/transport.rs`, SRTP vector test), transmux
+  (tests `rtcp.rs`, `rtcp_av_sync.rs`); crate docs/README/examples updated.
 
 ## [0.4.0] - 2026-10-05
 ### Changed (breaking)

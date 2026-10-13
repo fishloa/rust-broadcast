@@ -405,7 +405,7 @@ fn parse_report_blocks(bytes: &[u8], count: usize) -> Result<Vec<ReportBlock>> {
 /// Validate that profile-specific extension bytes are a whole number of
 /// 32-bit words (RFC 3550 §6.4.1/§6.4.2: the packet length is in words).
 fn check_profile_extensions(ext: &[u8]) -> Result<()> {
-    if ext.len() % WORD_LEN != 0 {
+    if !ext.len().is_multiple_of(WORD_LEN) {
         return Err(Error::InvalidValue {
             field: "profile_extensions_len",
             value: ext.len() as u64,
