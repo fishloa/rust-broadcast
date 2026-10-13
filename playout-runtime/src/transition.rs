@@ -75,11 +75,33 @@ impl TransitionPlan {
     /// pure, with no memory of previously-seen values to compare against.
     /// The caller must unroll any source-clock wrap *before* calling this
     /// (`timed_metadata::Timeline` already does exactly this for 33-bit MPEG PTS)
-    /// so every `source_pts` passed here is monotonic within the entry.
+    /// so every `source_pts` passed here is monotonic within the entry — or
+    /// use [`Self::rebase_wrapped`], which does the unroll for a raw 33-bit PTS.
     #[must_use]
     pub fn rebase(&self, source_pts: u64) -> Option<u64> {
         let rebased = i128::from(source_pts) + self.pts_rebase_offset;
         u64::try_from(rebased).ok()
+    }
+
+    /// [`Self::rebase`] for a **raw, still-wrapped** 33-bit source PTS
+    /// (PLAY-W2 hardening): `raw_pts` is unrolled against
+    /// `last_unwrapped_pts` (the previous *unwrapped* source PTS of this
+    /// entry, e.g. `to.source_start_pts` for the first sample) with
+    /// [`broadcast_common::clock33::unwrap_delta`], then rebased. Handles one
+    /// wrap in either direction, so a source straddling 2^33 lands on the
+    /// right timeline instant instead of off by the modulus.
+    ///
+    /// Returns `None` if `raw_pts` is not a 33-bit value (`>= 2^33`, i.e.
+    /// it is not a raw wire PTS) or the result is out of `u64` range.
+    #[must_use]
+    pub fn rebase_wrapped(&self, raw_pts: u64, last_unwrapped_pts: u64) -> Option<u64> {
+        use broadcast_common::clock33::{WRAP_33BIT, unwrap_delta};
+        if raw_pts >= WRAP_33BIT {
+            return None;
+        }
+        let prev_raw = last_unwrapped_pts % WRAP_33BIT;
+        let unwrapped = unwrap_delta(i128::from(last_unwrapped_pts), prev_raw, raw_pts);
+        u64::try_from(unwrapped + self.pts_rebase_offset).ok()
     }
 }
 
@@ -224,5 +246,32 @@ mod tests {
         assert!(next_transition(&sched, 2_500).is_none());
         // pts 0 IS prog-1's start, so the next transition is still found.
         assert!(next_transition(&sched, 0).is_some());
+    }
+
+    /// PLAY-W2: a raw 33-bit source PTS that wrapped mid-entry must land on
+    /// the right channel instant (values straddling 2^33), not off by 2^33.
+    #[test]
+    fn rebase_wrapped_handles_a_source_pts_wrap() {
+        use broadcast_common::clock33::WRAP_33BIT;
+        let start = WRAP_33BIT - 90_000;
+        let from = entry("prog-1", EntryKind::Programme, 0, 0, 1);
+        let to = entry("prog-2", EntryKind::Programme, 1_000_000, start, 1);
+        let plan = TransitionPlan::plan(&from, &to);
+        // Before the wrap: same as plain rebase.
+        assert_eq!(plan.rebase_wrapped(start, start), Some(1_000_000));
+        // Two seconds later the raw PTS has wrapped to 90_000.
+        assert_eq!(
+            plan.rebase_wrapped(90_000, start),
+            Some(1_000_000 + 180_000)
+        );
+        // The naive (documented-unsafe) call lands ~2^33 away.
+        assert_ne!(plan.rebase(90_000), Some(1_180_000));
+        // A later sample after the unwrapped accumulator crossed the wrap.
+        assert_eq!(
+            plan.rebase_wrapped(180_000, WRAP_33BIT + 90_000),
+            Some(1_000_000 + 270_000)
+        );
+        // Not a 33-bit wire value.
+        assert_eq!(plan.rebase_wrapped(WRAP_33BIT, start), None);
     }
 }

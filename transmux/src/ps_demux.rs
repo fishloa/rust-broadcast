@@ -178,10 +178,6 @@ const H264_NAL_TYPE_MASK: u8 = 0x1F;
 const VIDEO_TIMESCALE: u32 = 90_000;
 /// Audio sample size in bits carried in the sample entry (PCM-equivalent; 16).
 const AUDIO_SAMPLE_SIZE_BITS: u16 = 16;
-/// 33-bit PTS/DTS modulus, for wrap-around unrolling (§2.4.3.7, 90 kHz clock).
-const TS_WRAP: i128 = 1 << 33;
-/// Half the 33-bit range — the threshold used to detect a backward wrap.
-const TS_WRAP_HALF: i128 = TS_WRAP / 2;
 /// Fallback per-frame duration (90 kHz ticks) when only one stamped frame exists.
 const DEFAULT_FRAME_DURATION: i128 = 3600;
 
@@ -681,14 +677,11 @@ fn split_mpeg2_pictures(data: &[u8]) -> Vec<(usize, usize)> {
 
 /// Extend a running unwrapped timestamp by the delta to the next raw 33-bit
 /// value, correcting for a single 90 kHz wrap in either direction (§2.4.3.7).
+///
+/// Delegates to [`broadcast_common::clock33::unwrap_delta`], the workspace's
+/// single owner of 33-bit wrap arithmetic.
 fn unwrap_ts(prev_unwrapped: i128, prev_raw: u64, raw: u64) -> i128 {
-    let mut delta = raw as i128 - prev_raw as i128;
-    if delta > TS_WRAP_HALF {
-        delta -= TS_WRAP;
-    } else if delta < -TS_WRAP_HALF {
-        delta += TS_WRAP;
-    }
-    prev_unwrapped + delta
+    broadcast_common::clock33::unwrap_delta(prev_unwrapped, prev_raw, raw)
 }
 
 /// Assign each access unit its (optional) PTS/DTS from the PES-level stamps.
@@ -1159,4 +1152,42 @@ fn build_ac3_track(es: &ElementaryStream, track_id: u32) -> Option<Track> {
         samples,
         anchor,
     ))
+}
+
+#[cfg(test)]
+mod wrap_tests {
+    use super::*;
+
+    const WRAP: u64 = broadcast_common::clock33::WRAP_33BIT;
+
+    /// PS stamps straddling 2^33 (ISO/IEC 13818-1 §2.4.3.7): PTS 2^33-90000,
+    /// then 90000 (one wrap, +180000 ticks), then a B-frame style backward
+    /// dip back across the wrap (2^33-45000) must unroll monotonically /
+    /// bidirectionally, never jump by ~2^33.
+    #[test]
+    fn assign_stamps_unrolls_across_the_33bit_wrap() {
+        let ranges = [(0usize, 10usize), (10, 20), (20, 30)];
+        let stamps = [
+            Stamp {
+                offset: 0,
+                pts: Some(WRAP - 90_000),
+                dts: Some(WRAP - 90_000),
+            },
+            Stamp {
+                offset: 10,
+                pts: Some(90_000),
+                dts: Some(90_000),
+            },
+            Stamp {
+                offset: 20,
+                pts: Some(WRAP - 45_000),
+                dts: Some(WRAP - 45_000),
+            },
+        ];
+        let out = assign_stamps(&ranges, &stamps);
+        assert_eq!(out[0].0, Some(WRAP - 90_000));
+        assert_eq!(out[1].0, Some(WRAP + 90_000));
+        assert_eq!(out[2].0, Some(WRAP - 45_000));
+        assert_eq!(out[1].1, Some(WRAP + 90_000));
+    }
 }

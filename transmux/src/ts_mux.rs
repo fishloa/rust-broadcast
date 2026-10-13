@@ -296,8 +296,9 @@ const STUFFING_BYTE: u8 = 0xFF;
 
 /// Media timescale of a Transport Stream / PES clock (90 kHz).
 const TS_CLOCK_HZ: u64 = 90_000;
-/// 33-bit PTS/DTS modulus (90 kHz clock, §2.4.3.7).
-const TS_TIMESTAMP_MOD: u64 = 1 << 33;
+/// 33-bit PTS/DTS modulus (90 kHz clock, §2.4.3.7) — alias of
+/// [`broadcast_common::clock33::WRAP_33BIT`], the shared owner.
+const TS_TIMESTAMP_MOD: u64 = broadcast_common::clock33::WRAP_33BIT;
 /// PCR lead time ahead of the first DTS, ~100 ms of 90 kHz ticks — keeps the PCR
 /// slightly ahead of the earliest presentation so a decoder's STC is primed.
 const PCR_LEAD_TICKS: u64 = 9_000;

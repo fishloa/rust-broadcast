@@ -24,7 +24,7 @@ use crate::error::{Error, Result};
 /// The 33-bit modulus of an MPEG-2 PTS/DTS and of a SCTE-35 `pts_time`
 /// (ISO/IEC 13818-1 §2.4.3.7 `PTS[32..0]`; ANSI/SCTE 35 2023r1 §9.8.1
 /// `pts_time` is a 33-bit field), in 90 kHz ticks: 2^33 ≈ 26.5 hours.
-pub const PTS_MODULUS_33: u64 = 1 << 33;
+pub const PTS_MODULUS_33: u64 = broadcast_common::clock33::WRAP_33BIT;
 
 /// Where the chosen boundary landed relative to the requested instant.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

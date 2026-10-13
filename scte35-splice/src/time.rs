@@ -14,7 +14,7 @@ pub const TICKS_PER_SECOND: u64 = 90_000;
 
 /// Number of distinct values of a 33-bit field; the `pts_adjustment` /
 /// `pts_time` wrap modulus (§9.6.1: carry is ignored on overflow).
-pub const PTS_MODULUS: u64 = 1 << 33;
+pub const PTS_MODULUS: u64 = broadcast_common::clock33::WRAP_33BIT;
 
 /// Largest value a 33-bit field can hold (`2^33 - 1`).
 pub const PTS_MAX: u64 = PTS_MODULUS - 1;
@@ -52,7 +52,7 @@ pub fn duration_to_ticks(d: core::time::Duration, max: u64) -> Option<u64> {
 /// defines for `pts_adjustment` applied to a `pts_time` (§9.6.1, §9.8.1).
 #[must_use]
 pub fn pts_add_wrapping(pts_time: u64, pts_adjustment: u64) -> u64 {
-    (pts_time.wrapping_add(pts_adjustment)) % PTS_MODULUS
+    broadcast_common::clock33::add(pts_time, pts_adjustment)
 }
 
 /// `splice_time()` — §9.8.1, Table 14.
