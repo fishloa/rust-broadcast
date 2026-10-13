@@ -2651,24 +2651,29 @@ struct ParameterSets {
     pps: ParamSlot,
 }
 
-/// Upper bound on distinct NALs remembered per parameter-set type. The id
-/// spaces are small (16 VPS, 16/32 SPS, 64/256 PPS), so a real stream never
-/// reaches it; it only bounds a hostile one.
+/// Upper bound on distinct PPS ids remembered. The id spaces are small
+/// (64 HEVC / 256 H.264), so a real stream never reaches it; it only bounds a
+/// hostile one.
 const MAX_SEEN_PARAMETER_SETS: usize = 64;
 
 /// One parameter-set type's state: the NAL the track's config is built from
-/// (`current`) and every distinct NAL seen so far (`seen`).
+/// (`current`) and, for PPS, the content last announced for each id (`by_id`).
 ///
-/// Encoders routinely carry several parameter sets of one type at once —
-/// multiple PPS ids (issue #1166: orf1 cycles three), or several SPS ids — and
-/// re-send them in a rotating order (PPS only; SPS/VPS use
-/// [`ParamSlot::record_current`]). A single "last seen" slot compared against
-/// each arrival reads every rotation step as a change (A, B, A, B, ...), so an
-/// arrival counts as a change only when its bytes were **never seen** before.
+/// Encoders routinely carry several PPS ids at once — orf1 cycles three
+/// (issue #1166) — and re-send them in a rotating order. A single "last seen"
+/// slot compared against each arrival reads every rotation step as a change
+/// (A, B, A, B, ...). The PPS is therefore keyed by its
+/// `pic_parameter_set_id` (the first syntax element of H.264 §7.3.2.2 and
+/// H.265 §7.3.2.3.1): re-sending an id with the **same** bytes is never a
+/// change, however the ids interleave; an id announced for the first time, or
+/// re-announced with **different** bytes, is. The latter makes A -> B -> A on
+/// one id (an encoder switching settings and back) a change at *every* switch
+/// — a "never seen before" test misses the return to an already-seen A
+/// (issue #1186). SPS/VPS do not rotate and use [`ParamSlot::record_current`].
 #[derive(Default, Clone)]
 struct ParamSlot {
     current: Option<Vec<u8>>,
-    seen: Vec<Vec<u8>>,
+    by_id: Vec<(u64, Vec<u8>)>,
 }
 
 impl ParamSlot {
@@ -2683,19 +2688,37 @@ impl ParamSlot {
         true
     }
 
-    /// Fold in one NAL; `true` if its bytes had not been seen before (it then
-    /// becomes the `current` set the config is built from).
-    fn record(&mut self, bytes: &[u8]) -> bool {
-        if self.seen.iter().any(|s| s.as_slice() == bytes) {
-            return false;
+    /// Fold in one PPS announced for `id`; `true` if that id is new or its
+    /// bytes changed (it then becomes the `current` set the config is built
+    /// from).
+    fn record_pps(&mut self, id: u64, bytes: &[u8]) -> bool {
+        match self.by_id.iter_mut().find(|(i, _)| *i == id) {
+            Some((_, known)) if known.as_slice() == bytes => return false,
+            Some((_, known)) => *known = bytes.to_vec(),
+            None => {
+                if self.by_id.len() >= MAX_SEEN_PARAMETER_SETS {
+                    self.by_id.remove(0);
+                }
+                self.by_id.push((id, bytes.to_vec()));
+            }
         }
-        if self.seen.len() >= MAX_SEEN_PARAMETER_SETS {
-            self.seen.remove(0);
-        }
-        self.seen.push(bytes.to_vec());
         self.current = Some(bytes.to_vec());
         true
     }
+}
+
+/// `pic_parameter_set_id` of a PPS NAL (`ue(v)`, the first element of the RBSP
+/// after the NAL header: 1 byte for H.264, 2 for H.265). `u64::MAX` when it
+/// does not decode, so a damaged PPS still compares by its bytes as one slot.
+fn pps_id(codec: Codec, nal: &[u8]) -> u64 {
+    let header_len = match codec {
+        Codec::Hevc => 2,
+        _ => 1,
+    };
+    nal.get(header_len..)
+        .and_then(|body| crate::bitreader::BitReader::with_unescape(body, "pps id").ok())
+        .and_then(|mut r| r.read_ue("pic_parameter_set_id").ok())
+        .unwrap_or(u64::MAX)
 }
 
 impl ParameterSets {
@@ -2719,7 +2742,7 @@ impl ParameterSets {
                         H264_NAL_PPS
                             if parameter_set_is_valid(nal_codec_of(codec), ParamKind::Pps, nal) =>
                         {
-                            changed |= self.pps.record(nal)
+                            changed |= self.pps.record_pps(pps_id(codec, nal), nal)
                         }
                         _ => {}
                     }
@@ -2741,7 +2764,7 @@ impl ParameterSets {
                         Some(H265_NAL_PPS)
                             if parameter_set_is_valid(nal_codec_of(codec), ParamKind::Pps, nal) =>
                         {
-                            changed |= self.pps.record(nal)
+                            changed |= self.pps.record_pps(pps_id(codec, nal), nal)
                         }
                         _ => {}
                     }
@@ -7278,16 +7301,58 @@ mod tests {
         );
     }
 
-    /// Distinct PPS NALs (different ids / bytes) for the #1166 rotation tests.
+    /// Rewrite a real H.264 PPS NAL so its `pic_parameter_set_id` (the first
+    /// `ue(v)` of the RBSP, H.264 §7.3.2.2) is `id`, keeping every later field
+    /// bit-for-bit: unescape, swap the leading `ue(v)`, drop the old
+    /// alignment, re-pad after the stop bit, re-escape (§7.4.1.1).
+    fn pps_with_id(pps: &[u8], id: u64) -> Vec<u8> {
+        let rbsp = crate::bitreader::unescape(&pps[1..]);
+        let bits: Vec<bool> = rbsp
+            .iter()
+            .flat_map(|b| (0..8).rev().map(move |i| (b >> i) & 1 == 1))
+            .collect();
+        let zeros = bits.iter().take_while(|b| !**b).count();
+        let rest = &bits[2 * zeros + 1..];
+        let stop = rest.iter().rposition(|b| *b).expect("stop bit");
+        let v = id + 1;
+        let width = 64 - v.leading_zeros() as usize;
+        let mut out_bits: Vec<bool> = vec![false; width - 1];
+        out_bits.extend((0..width).rev().map(|i| (v >> i) & 1 == 1));
+        out_bits.extend_from_slice(&rest[..=stop]);
+        while !out_bits.len().is_multiple_of(8) {
+            out_bits.push(false);
+        }
+        let mut out = vec![pps[0]];
+        let mut zero_run = 0;
+        for chunk in out_bits.chunks(8) {
+            let byte = chunk.iter().fold(0u8, |a, b| (a << 1) | u8::from(*b));
+            if zero_run >= 2 && byte <= 3 {
+                out.push(3);
+                zero_run = 0;
+            }
+            zero_run = if byte == 0 { zero_run + 1 } else { 0 };
+            out.push(byte);
+        }
+        out
+    }
+
+    /// Three PPS NALs with DIFFERENT `pic_parameter_set_id`s 0, 1, 2 and
+    /// otherwise the real PPS's content (issue #1166: an encoder cycling
+    /// several PPS ids). `pps` must carry id 0 (the real capture's does).
     fn rotating_pps_set(pps: &[u8]) -> Vec<Vec<u8>> {
-        (0u8..3)
-            .map(|i| {
-                let mut p = pps.to_vec();
-                let last = p.len() - 1;
-                p[last] ^= i * 0x11; // i = 0 is the original
-                p
-            })
-            .collect()
+        assert_eq!(pps_id(Codec::H264, pps), 0, "the real PPS is id 0");
+        (0u64..3).map(|i| pps_with_id(pps, i)).collect()
+    }
+
+    #[test]
+    fn pps_with_id_helper_changes_only_the_id() {
+        let (_, pps, _) = real_avc_parameter_sets();
+        assert_eq!(pps_with_id(&pps, 0), pps, "id 0 reproduces the real PPS");
+        for id in [1u64, 2, 3, 17, 255] {
+            let v = pps_with_id(&pps, id);
+            assert_eq!(pps_id(Codec::H264, &v), id);
+            assert!(parameter_set_is_valid(NalCodec::Avc, ParamKind::Pps, &v));
+        }
     }
 
     /// Updates + the whole event log (Debug lines) for `bytes` fed in `chunk`s.
@@ -7368,10 +7433,9 @@ mod tests {
     fn same_length_pps_change_after_rotation_raises_exactly_one_update() {
         let (sps, pps, _) = real_avc_parameter_sets();
         let set = rotating_pps_set(&pps);
-        let mut changed = pps.clone();
-        let last = changed.len() - 1;
-        changed[last] ^= 0xA5;
-        assert!(!set.contains(&changed) && changed.len() == pps.len());
+        // A genuinely new PPS: a fourth id, announced after the rotation settled.
+        let changed = pps_with_id(&pps, 3);
+        assert!(!set.contains(&changed));
         let mut aus = vec![annexb_au(&[
             &sps,
             &set[0],
@@ -7399,6 +7463,63 @@ mod tests {
         for chunk in [1usize, 188, 1000] {
             assert_eq!(events_chunked(&bytes, chunk).1, base, "chunk {chunk}");
         }
+    }
+
+    /// Issue #1186 (follow-up of #1166): one PPS id whose content switches
+    /// A -> B -> A (an encoder changing settings and back) is re-reported at
+    /// EVERY switch. The old "never seen before" test reported A -> B but
+    /// missed B -> A because A had been seen.
+    #[test]
+    fn pps_a_b_a_on_one_id_is_reported_at_every_switch() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let a = pps.clone();
+        // Same id (0), different content: flip a bit inside the body.
+        let mut b = pps.clone();
+        let mid = b.len() - 2;
+        b[mid] ^= 0x04;
+        assert!(parameter_set_is_valid(NalCodec::Avc, ParamKind::Pps, &b));
+        assert_eq!(pps_id(Codec::H264, &a), pps_id(Codec::H264, &b));
+        assert_ne!(a, b);
+        let idr = [0x65u8, 0x88, 0x84, 0x01];
+        // A, then B (x3 repeats), then A again (x3), then B, then A.
+        let mut aus = vec![annexb_au(&[&sps, &a, &idr])];
+        let mut seq: Vec<&Vec<u8>> = Vec::new();
+        for _ in 0..3 {
+            seq.push(&b);
+        }
+        for _ in 0..3 {
+            seq.push(&a);
+        }
+        seq.push(&b);
+        seq.push(&a);
+        for (i, p) in seq.iter().enumerate() {
+            aus.push(annexb_au(&[p, &[0x65, 0x88, 0x84, 0x10 + i as u8]]));
+        }
+        let bytes = avc_ts_over(&aus);
+        let (updates, base) = events_chunked(&bytes, bytes.len());
+        // A->B, B->A, A->B, B->A: four real switches (repeats are silent).
+        assert_eq!(updates, 4, "every A<->B switch on one id is a change");
+        for chunk in [1usize, 188, 1000] {
+            assert_eq!(events_chunked(&bytes, chunk).1, base, "chunk {chunk}");
+        }
+    }
+
+    /// The same switching on a *different id* per set is rotation, not change:
+    /// ids 0 and 1 coexist, so A, B, A, B is silent after B's first sight.
+    #[test]
+    fn pps_alternating_between_two_ids_is_rotation_not_change() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let a = pps_with_id(&pps, 0);
+        let b = pps_with_id(&pps, 1);
+        let idr = [0x65u8, 0x88, 0x84, 0x01];
+        let mut aus = vec![annexb_au(&[&sps, &a, &idr])];
+        for i in 0..8usize {
+            let p = if i % 2 == 0 { &b } else { &a };
+            aus.push(annexb_au(&[p, &[0x65, 0x88, 0x84, 0x10 + i as u8]]));
+        }
+        let bytes = avc_ts_over(&aus);
+        let (updates, _) = events_chunked(&bytes, bytes.len());
+        assert_eq!(updates, 1, "only the first sight of id 1");
     }
 
     /// Issue #1171: parameter sets that are over the `avcC` u16 length limit,
