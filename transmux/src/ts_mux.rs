@@ -65,6 +65,7 @@
 //!   would exceed the 12-bit `ES_info_length` field's 4095-byte maximum
 //!   (§2.4.4.8) — a truncated descriptor loop is a malformed PMT.
 
+use mpeg_ts::pid::Pid;
 use alloc::vec::Vec;
 
 use broadcast_common::{Package, crc32_mpeg2};
@@ -1136,7 +1137,7 @@ fn mux_tracks_timed_with_cc(
         // sections (issue #576) — packetised directly, never PES-wrapped.
         // The packetiser's own continuity_counter (independent of `cc`
         // above, which only tracks the PES path) persists across samples.
-        let mut section_packetiser = SectionPacketiser::with_continuity(plan.pid, cc);
+        let mut section_packetiser = SectionPacketiser::with_continuity(Pid::new(plan.pid), cc);
         for (sample, &dts_local) in samples[track_idx].iter().zip(dts_ticks[track_idx]) {
             // Rescale the sample's decode/composition time to the 90 kHz TS
             // clock. composition_offset is (pts − dts) in the track scale.
@@ -1348,7 +1349,7 @@ fn write_pcr_only_packet(pkt: &mut [u8; TS_PACKET_SIZE], pid: u16, cc: u8, pcr: 
     let hdr = TsHeader {
         tei: false,
         pusi: false,
-        pid,
+        pid: Pid::new(pid),
         scrambling: 0,
         has_adaptation: true,
         has_payload: false,
@@ -1726,7 +1727,7 @@ fn packetise_section(pid: u16, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACK
         let hdr = TsHeader {
             tei: false,
             pusi: first,
-            pid,
+            pid: Pid::new(pid),
             scrambling: 0,
             has_adaptation: false,
             has_payload: true,
@@ -1832,7 +1833,7 @@ fn packetise_pes(
             let hdr = TsHeader {
                 tei: false,
                 pusi: first,
-                pid: plan.pid,
+                pid: Pid::new(plan.pid),
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1880,7 +1881,7 @@ fn write_af_packet(
     let hdr = TsHeader {
         tei: false,
         pusi,
-        pid,
+        pid: Pid::new(pid),
         scrambling: 0,
         has_adaptation: true,
         has_payload: true,

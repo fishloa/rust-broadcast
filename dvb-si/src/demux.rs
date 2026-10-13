@@ -394,7 +394,7 @@ impl SiDemux {
         match TsPacket::parse(packet) {
             Err(_) => self.stats.malformed_packets += 1,
             Ok(ts) => {
-                let pid = Pid::new(ts.header.pid);
+                let pid = Pid::new(ts.header.pid.value());
                 let payload = ts.payload.unwrap_or(&[]);
                 // Single map lookup: feed and drain every section this packet
                 // completed while holding the reassembler borrow, then process
@@ -568,7 +568,7 @@ mod tests {
         let header = TsHeader {
             tei: false,
             pusi: true,
-            pid,
+            pid: Pid::new(pid),
             scrambling: 0,
             has_adaptation: false,
             has_payload: true,

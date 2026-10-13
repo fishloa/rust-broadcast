@@ -139,7 +139,7 @@ impl Op for ContinuityOp {
         if is_discontinuity {
             // Remove existing per-PID state so the next packet starts
             // fresh.  Pass through unchanged.
-            self.per_pid.remove(&pid);
+            self.per_pid.remove(&pid.value());
             out(packet);
             return;
         }
@@ -149,7 +149,7 @@ impl Op for ContinuityOp {
         // Get or initialise per-PID state.  If this is the first payload-bearing
         // packet for this PID, we initialise with the observed CC and pass
         // through (no repair needed for the first occurrence).
-        let state = self.per_pid.entry(pid).or_insert_with(|| {
+        let state = self.per_pid.entry(pid.value()).or_insert_with(|| {
             state_initialised = true;
             PidState {
                 expected: current_cc,

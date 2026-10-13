@@ -148,7 +148,7 @@ fn ts_packet(pid: u16, pusi: bool, cc: u8, payload: &[u8]) -> [u8; TS_PACKET_SIZ
     let header = TsHeader {
         tei: false,
         pusi,
-        pid,
+        pid: Pid::new(pid),
         scrambling: 0,
         has_adaptation: false,
         has_payload: true,

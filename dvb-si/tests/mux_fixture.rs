@@ -10,6 +10,7 @@
 //! the lower-level `SectionReassembler`.
 #![cfg(feature = "ts")]
 
+use mpeg_ts::pid::Pid;
 use dvb_si::demux::SiDemux;
 use mpeg_ts::mux::SectionPacketiser;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TS_SYNC_BYTE};
@@ -62,7 +63,7 @@ fn packetiser_round_trips_real_capture_through_si_demux() {
             .filter(|(p, _)| *p == pid)
             .map(|(_, b)| b.as_slice())
             .collect();
-        let mut packetiser = SectionPacketiser::new(pid);
+        let mut packetiser = SectionPacketiser::new(Pid::new(pid));
         regenerated.extend(packetiser.packetise(&sections));
     }
 

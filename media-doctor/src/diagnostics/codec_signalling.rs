@@ -45,6 +45,7 @@
 //! capture) is likewise not flagged: there is no bitstream to judge, so
 //! there is nothing to disagree with the PMT's claim.
 
+use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 
@@ -74,7 +75,7 @@ pub struct CodecSignallingCheck;
 impl Diagnostic for CodecSignallingCheck {
     fn run(&self, ts: &[u8], report: &mut Report) {
         let declared = collect_pmt_streams(ts);
-        let video_pids: Vec<u16> = pids_with_stream_type(&declared, StreamType::H264)
+        let video_pids: Vec<Pid> = pids_with_stream_type(&declared, StreamType::H264)
             .into_iter()
             .chain(pids_with_stream_type(&declared, StreamType::Hevc))
             .collect();
@@ -83,21 +84,21 @@ impl Diagnostic for CodecSignallingCheck {
             return;
         }
 
-        let mut video_seen: BTreeMap<u16, Seen> =
+        let mut video_seen: BTreeMap<Pid, Seen> =
             video_pids.iter().map(|&p| (p, Seen::default())).collect();
-        let mut audio_seen: BTreeMap<u16, Seen> =
+        let mut audio_seen: BTreeMap<Pid, Seen> =
             audio_pids.iter().map(|&p| (p, Seen::default())).collect();
 
         for_each_access_unit(
             ts,
             |pid| video_pids.contains(&pid) || audio_pids.contains(&pid),
             |payload, _packet_index, pid| {
-                if let Some(seen) = video_seen.get_mut(&pid) {
+                if let Some(seen) = video_seen.get_mut(&Pid::new(pid.value())) {
                     seen.any_au = true;
                     if iter_annexb_nals(payload).next().is_some() {
                         seen.structured = true;
                     }
-                } else if let Some(seen) = audio_seen.get_mut(&pid) {
+                } else if let Some(seen) = audio_seen.get_mut(&Pid::new(pid.value())) {
                     seen.any_au = true;
                     if has_adts_sync(payload) {
                         seen.structured = true;
@@ -110,7 +111,7 @@ impl Diagnostic for CodecSignallingCheck {
             if seen.any_au && !seen.structured {
                 report.push(Finding::new(
                     Severity::Error,
-                    Location::new(0, u32::from(pid)),
+                    Location::at_pid(0, Pid::new(pid.value())),
                     "codec-signalling-mismatch",
                     alloc::format!(
                         "PMT declares a NAL video codec on PID 0x{pid:04X} but its elementary \
@@ -124,7 +125,7 @@ impl Diagnostic for CodecSignallingCheck {
             if seen.any_au && !seen.structured {
                 report.push(Finding::new(
                     Severity::Error,
-                    Location::new(0, u32::from(pid)),
+                    Location::at_pid(0, Pid::new(pid.value())),
                     "codec-signalling-mismatch",
                     alloc::format!(
                         "PMT declares stream_type AAC-ADTS (0x0F) on PID 0x{pid:04X} but its \
@@ -166,9 +167,9 @@ mod tests {
     /// literal "PMT says AVC but the ES isn't NAL" case from the issue.
     #[test]
     fn declared_h264_with_non_nal_payload_is_flagged() {
-        const VIDEO_PID: u16 = 0x101;
+        const VIDEO_PID: Pid = Pid::new(0x101);
         let garbage: &[u8] = &[0xAA; 32]; // no 00 00 01 start codes anywhere
-        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID, StreamType::H264)]);
+        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID.value(), StreamType::H264)]);
         ts.extend_from_slice(&make_pes_packet(VIDEO_PID, 0, &build_pes(0xE0, garbage)));
 
         let mut report = Report::new();
@@ -178,7 +179,7 @@ mod tests {
                 .findings()
                 .iter()
                 .any(|f| f.rule_id == "codec-signalling-mismatch"
-                    && f.location.pid == u32::from(VIDEO_PID)),
+                    && f.location.pid == u32::from(VIDEO_PID.value())),
             "expected codec-signalling-mismatch for a non-NAL H.264 PID, got {:?}",
             report.findings()
         );
@@ -188,7 +189,7 @@ mod tests {
     /// (SPS+PPS+slice) — must not be flagged.
     #[test]
     fn declared_h264_with_real_nal_payload_not_flagged() {
-        const VIDEO_PID: u16 = 0x101;
+        const VIDEO_PID: Pid = Pid::new(0x101);
         let sps: &[u8] = &[
             0x67, 0x64, 0x00, 0x0D, 0xAD, 0xC8, 0xBF, 0xFE, 0x03, 0xC1, 0x41, 0xF9,
         ];
@@ -200,7 +201,7 @@ mod tests {
             au.extend_from_slice(&[0x00, 0x00, 0x01]);
             au.extend_from_slice(nal);
         }
-        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID, StreamType::H264)]);
+        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID.value(), StreamType::H264)]);
         ts.extend_from_slice(&make_pes_packet(VIDEO_PID, 0, &build_pes(0xE0, &au)));
 
         let mut report = Report::new();
@@ -219,9 +220,9 @@ mod tests {
     /// ADTS sync — flagged.
     #[test]
     fn declared_aac_with_non_adts_payload_is_flagged() {
-        const AUDIO_PID: u16 = 0x102;
+        const AUDIO_PID: Pid = Pid::new(0x102);
         let garbage: &[u8] = &[0x00; 32];
-        let mut ts = build_pat_pmt_ts(&[(AUDIO_PID, StreamType::AacAdts)]);
+        let mut ts = build_pat_pmt_ts(&[(AUDIO_PID.value(), StreamType::AacAdts)]);
         ts.extend_from_slice(&make_pes_packet(AUDIO_PID, 0, &build_pes(0xC0, garbage)));
 
         let mut report = Report::new();
@@ -231,7 +232,7 @@ mod tests {
                 .findings()
                 .iter()
                 .any(|f| f.rule_id == "codec-signalling-mismatch"
-                    && f.location.pid == u32::from(AUDIO_PID)),
+                    && f.location.pid == u32::from(AUDIO_PID.value())),
             "expected codec-signalling-mismatch for a non-ADTS AAC PID, got {:?}",
             report.findings()
         );
@@ -241,11 +242,11 @@ mod tests {
     /// must not be flagged.
     #[test]
     fn declared_aac_with_real_adts_payload_not_flagged() {
-        const AUDIO_PID: u16 = 0x102;
+        const AUDIO_PID: Pid = Pid::new(0x102);
         // A minimal valid ADTS header (AAC-LC, 44.1kHz, stereo), built via
         // transmux's own builder rather than hand-encoded.
         let header = transmux::build_adts_header(1, 4, 2, 7); // frame_len=7 (header only)
-        let mut ts = build_pat_pmt_ts(&[(AUDIO_PID, StreamType::AacAdts)]);
+        let mut ts = build_pat_pmt_ts(&[(AUDIO_PID.value(), StreamType::AacAdts)]);
         ts.extend_from_slice(&make_pes_packet(AUDIO_PID, 0, &build_pes(0xC0, &header)));
 
         let mut report = Report::new();

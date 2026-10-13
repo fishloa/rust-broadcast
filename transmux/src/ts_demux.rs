@@ -139,6 +139,7 @@
 //! - **Byte-stream resynchronisation**: ISO/IEC 13818-1 §2.4.3.2, via
 //!   [`mpeg_ts::resync::TsResync`] (also strips 204-byte Reed-Solomon FEC).
 
+use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::Entry;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::vec::Vec;
@@ -3842,11 +3843,11 @@ impl StreamingTsDemux {
         // adaptation field handling.
         if pkt.header.tei {
             let provenance = EventProvenance {
-                pid: Some(pkt.header.pid),
+                pid: Some(pkt.header.pid.value()),
                 packet_index: Some(idx),
             };
             self.events.push_back(DemuxEvent::InputDegraded {
-                track: self.live_track_id(pkt.header.pid),
+                track: self.live_track_id(pkt.header.pid.value()),
                 kind: InputDegradation::TransportError,
                 provenance,
             });
@@ -3864,7 +3865,7 @@ impl StreamingTsDemux {
         // every packet's adaptation field regardless of payload routing.
         if let Some(Ok(af)) = pkt.adaptation_field() {
             let provenance = EventProvenance {
-                pid: Some(pkt.header.pid),
+                pid: Some(pkt.header.pid.value()),
                 packet_index: Some(idx),
             };
             if af.discontinuity_indicator {
@@ -3881,7 +3882,7 @@ impl StreamingTsDemux {
                 // review), where the first attempt marked every stream in the
                 // demux.
                 let pid = pkt.header.pid;
-                let program_ok = self.pmt_reasm.values().any(|pmt| pmt.pcr_pid == Some(pid));
+                let program_ok = self.pmt_reasm.values().any(|pmt| pmt.pcr_pid == Some(pid.value()));
                 if program_ok {
                     // Every elementary stream of this program: the ones whose
                     // declaring PMT is this PCR_PID's.
@@ -3892,7 +3893,7 @@ impl StreamingTsDemux {
                             pmt_pids.iter().any(|pmt_pid| {
                                 self.pmt_reasm
                                     .get(pmt_pid)
-                                    .is_some_and(|pmt| pmt.pcr_pid == Some(pid))
+                                    .is_some_and(|pmt| pmt.pcr_pid == Some(pid.value()))
                             })
                         })
                         .map(|(&es_pid, _)| es_pid)
@@ -3904,7 +3905,7 @@ impl StreamingTsDemux {
                     }
                 }
                 self.events.push_back(DemuxEvent::Discontinuity {
-                    track: self.live_track_id(pid),
+                    track: self.live_track_id(pid.value()),
                     kind: DiscontinuityKind::Signalled,
                     provenance,
                 });
@@ -3927,9 +3928,9 @@ impl StreamingTsDemux {
         // lib.rs:979-982 and media-doctor's CcAnomalyCheck at cc_anomaly.rs:110-113
         // — both update last_cc unconditionally on every payload-bearing packet,
         // including those with discontinuity_indicator set).
-        if pkt.header.has_payload && pkt.header.pid != NULL_PACKET_PID {
+        if pkt.header.has_payload && pkt.header.pid != Pid::new(NULL_PACKET_PID) {
             cc_verdict = self.check_cc(
-                pkt.header.pid,
+                pkt.header.pid.value(),
                 pkt.header.continuity_counter,
                 raw,
                 discontinuity_signalled,
@@ -3961,7 +3962,7 @@ impl StreamingTsDemux {
         // the mark, because it begins a new, intact access unit from its first
         // byte. Adaptation-field-only packets never reach here.
 
-        if pid == PAT_PID {
+        if pid == Pid::new(PAT_PID) {
             self.pat_reasm.feed(payload, pusi);
             while let Some(section) = self.pat_reasm.pop_section() {
                 // A corrupt PAT must never rebind a PID: an ES PID wrongly
@@ -3984,7 +3985,7 @@ impl StreamingTsDemux {
             return;
         }
 
-        if let Some(pmt_state) = self.pmt_reasm.get_mut(&pid) {
+        if let Some(pmt_state) = self.pmt_reasm.get_mut(&pid.value()) {
             pmt_state.reasm.feed(payload, pusi);
             let mut sections: Vec<Vec<u8>> = Vec::new();
             while let Some(section) = pmt_state.reasm.pop_section() {
@@ -4038,8 +4039,8 @@ impl StreamingTsDemux {
             if let Some(es_list) = to_apply {
                 let old_applied_es = pmt_state.applied_es.clone();
                 let new_applied_es: BTreeSet<u16> = es_list.iter().map(|(p, _, _)| *p).collect();
-                self.apply_pmt_diff(pid, &old_applied_es, es_list);
-                if let Some(pmt_state) = self.pmt_reasm.get_mut(&pid) {
+                self.apply_pmt_diff(pid.value(), &old_applied_es, es_list);
+                if let Some(pmt_state) = self.pmt_reasm.get_mut(&pid.value()) {
                     pmt_state.applied_es = new_applied_es;
                 }
             }
@@ -4047,7 +4048,7 @@ impl StreamingTsDemux {
             return;
         }
 
-        if let Some(stream) = self.streams.get_mut(&pid) {
+        if let Some(stream) = self.streams.get_mut(&pid.value()) {
             let mut sections: Vec<Vec<u8>> = Vec::new();
             // ── r04-W49 intactness rule ────────────────────────────────────
             //
@@ -4097,7 +4098,7 @@ impl StreamingTsDemux {
             // see the rule above.
             let completed_intact = stream.current_pes_intact && !short_of_declared;
             let completed_pes = if matches!(stream.carrier, Carrier::Pes(_)) {
-                feed_pes_bounded(stream, pid, pusi, payload, &mut self.events)
+                feed_pes_bounded(stream, pid.value(), pusi, payload, &mut self.events)
             } else if let Carrier::Section(reasm) = &mut stream.carrier {
                 reasm.feed(payload, pusi);
                 while let Some(s) = reasm.pop_section() {
@@ -4115,7 +4116,7 @@ impl StreamingTsDemux {
                 clear_audio_carry(stream);
             }
             if completed_intact && let Some(completed) = completed_pes {
-                on_completed_pes(stream, pid, &completed, &mut self.events);
+                on_completed_pes(stream, pid.value(), &completed, &mut self.events);
             }
             if gap_here {
                 // Bytes were lost on this PID: whatever frame tail an audio
@@ -4146,14 +4147,14 @@ impl StreamingTsDemux {
                 }
             }
             for s in sections {
-                on_completed_section(stream, pid, &s, &mut self.events);
+                on_completed_section(stream, pid.value(), &s, &mut self.events);
             }
-        } else if pid != NULL_PACKET_PID && !self.removed_pids.contains(&pid) {
+        } else if pid != Pid::new(NULL_PACKET_PID) && !self.removed_pids.contains(&pid.value()) {
             self.unattributed
-                .entry(pid)
+                .entry(pid.value())
                 .or_default()
                 .push_back((pusi, payload.to_vec()));
-            self.unattributed_order.push_back(pid);
+            self.unattributed_order.push_back(pid.value());
             self.unattributed_bytes += payload.len();
             self.evict_unattributed();
         }

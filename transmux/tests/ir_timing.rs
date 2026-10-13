@@ -70,7 +70,7 @@ fn collect_pes(data: &[u8], target_pid: u16) -> Vec<PesAu> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != target_pid {
+        if pkt.header.pid != Pid::new(target_pid) {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -100,7 +100,7 @@ fn collect_all_pes(data: &[u8], target_pid: u16) -> Vec<PesAu> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != target_pid {
+        if pkt.header.pid != Pid::new(target_pid) {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -421,7 +421,7 @@ fn collect_pmt_es(data: &[u8], pmt_pid: u16) -> Vec<(u8, u16, Vec<u8>)> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != pmt_pid {
+        if pkt.header.pid != Pid::new(pmt_pid) {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -647,7 +647,7 @@ fn collect_pcr_oracle(data: &[u8]) -> Vec<PcrSample> {
         };
         out.push(PcrSample::new(
             pcr.as_27mhz(),
-            pkt.header.pid,
+            pkt.header.pid.value(),
             idx as u64,
             af.discontinuity_indicator,
         ));

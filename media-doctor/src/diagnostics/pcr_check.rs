@@ -124,7 +124,7 @@ impl Diagnostic for PcrCheck {
                 None => continue,
             };
 
-            let state = pcr_states.entry(pid).or_insert(PcrState {
+            let state = pcr_states.entry(pid.value()).or_insert(PcrState {
                 last_pcr: 0,
                 worst_reported_step_ms: 0,
                 initialised: false,
@@ -190,7 +190,7 @@ impl Diagnostic for PcrCheck {
                 };
                 report.push(Finding::new(
                     Severity::Error,
-                    Location::new(i, u32::from(pid)),
+                    Location::at_pid(i, pid),
                     "pcr-discontinuity",
                     alloc::format!(
                         "{what} on PID 0x{pid:04X}, outside the 0..{PCR_DISCONTINUITY_LIMIT_MS} ms range and no discontinuity_indicator — TR 101 290 indicator 2.3b",
@@ -212,7 +212,7 @@ impl Diagnostic for PcrCheck {
                 state.worst_reported_step_ms = forward_ms;
                 report.push(Finding::new(
                     Severity::Info,
-                    Location::new(i, u32::from(pid)),
+                    Location::at_pid(i, pid),
                     "pcr-repetition",
                     alloc::format!(
                         "PCR value step {forward_ms} ms exceeds the {PCR_REPETITION_LIMIT_MS} ms repetition limit on PID 0x{pid:04X} — TR 101 290 indicator 2.3a. Reported at Info: a file carries no arrival clock, so the value step is the only evidence available; `media-doctor watch` evaluates 2.3a against real arrival times",
@@ -230,6 +230,7 @@ impl Diagnostic for PcrCheck {
 mod tests {
     use super::*;
     use crate::report::{Report, Severity};
+use mpeg_ts::pid::Pid;
     use mpeg_ts::Pcr;
 
     /// Encode a PCR value into its 6-byte adaptation-field representation.
@@ -239,10 +240,10 @@ mod tests {
 
     /// Build a TS packet (188 bytes) with a PCR-bearing adaptation field on
     /// the given PID, with optional discontinuity_indicator.
-    fn make_pcr_packet(pid: u16, pcr_27mhz: u64, cc: u8, discontinuity: bool) -> Vec<u8> {
+    fn make_pcr_packet(pid: Pid, pcr_27mhz: u64, cc: u8, discontinuity: bool) -> Vec<u8> {
         let mut pkt = vec![0x47u8; 188];
-        pkt[1] = ((pid >> 8) as u8) & 0x1F;
-        pkt[2] = (pid & 0xFF) as u8;
+        pkt[1] = ((pid.value() >> 8) as u8) & 0x1F;
+        pkt[2] = (pid.value() & 0xFF) as u8;
         // AFC=11 (adaptation + payload), CC=cc.
         pkt[3] = 0x30 | (cc & 0x0F);
 
@@ -265,7 +266,7 @@ mod tests {
     #[test]
     fn single_pcr_no_findings() {
         let pid = 0x0100u16;
-        let ts = make_pcr_packet(pid, 0, 0, false);
+        let ts = make_pcr_packet(Pid::new(pid), 0, 0, false);
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
         assert!(report.is_empty(), "unexpected findings: {report:?}");
@@ -276,9 +277,9 @@ mod tests {
     fn two_pcrs_within_limit_no_findings() {
         let pid = 0x0100u16;
         let mut ts = Vec::new();
-        ts.extend_from_slice(&make_pcr_packet(pid, 0, 0, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), 0, 0, false));
         // 30 ms later in PCR ticks (within 40 ms warning threshold).
-        ts.extend_from_slice(&make_pcr_packet(pid, CLOCK_27MHZ * 30 / 1000, 1, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 30 / 1000, 1, false));
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
         assert!(
@@ -295,9 +296,9 @@ mod tests {
     fn pcr_step_over_100ms_is_2_3b_not_2_3a() {
         let pid = 0x0100u16;
         let mut ts = Vec::new();
-        ts.extend_from_slice(&make_pcr_packet(pid, 0, 0, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), 0, 0, false));
         // 150 ms later in PCR ticks, no discontinuity_indicator.
-        ts.extend_from_slice(&make_pcr_packet(pid, CLOCK_27MHZ * 150 / 1000, 1, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 150 / 1000, 1, false));
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
 
@@ -336,8 +337,8 @@ mod tests {
     fn pcr_value_step_within_100ms_is_silent() {
         let pid = 0x0100u16;
         let mut ts = Vec::new();
-        ts.extend_from_slice(&make_pcr_packet(pid, 0, 0, false));
-        ts.extend_from_slice(&make_pcr_packet(pid, CLOCK_27MHZ * 80 / 1000, 1, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), 0, 0, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 80 / 1000, 1, false));
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
         assert!(
@@ -359,7 +360,7 @@ mod tests {
     fn packet_gap_alone_is_not_a_repetition_error() {
         let pid = 0x0100u16;
         let mut ts = Vec::new();
-        ts.extend_from_slice(&make_pcr_packet(pid, 0, 0, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), 0, 0, false));
         // 3000 non-PCR packets on the PID, then the next PCR only 40 ms of
         // PCR time later — a null-stripped / remuxed capture's shape.
         for _ in 0..3000 {
@@ -369,7 +370,7 @@ mod tests {
             filler[3] = 0x10; // payload only => no adaptation field => no PCR
             ts.extend_from_slice(&filler);
         }
-        ts.extend_from_slice(&make_pcr_packet(pid, CLOCK_27MHZ * 40 / 1000, 2, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 40 / 1000, 2, false));
 
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
@@ -390,9 +391,9 @@ mod tests {
         let pid = 0x0100u16;
         let mut ts = Vec::new();
         // A normal 40 ms step, then a +200 ms jump with no discontinuity flag.
-        ts.extend_from_slice(&make_pcr_packet(pid, 0, 0, false));
-        ts.extend_from_slice(&make_pcr_packet(pid, CLOCK_27MHZ * 40 / 1000, 1, false));
-        ts.extend_from_slice(&make_pcr_packet(pid, CLOCK_27MHZ * 240 / 1000, 2, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), 0, 0, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 40 / 1000, 1, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 240 / 1000, 2, false));
 
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
@@ -416,9 +417,9 @@ mod tests {
     fn pcr_jump_without_discontinuity_flags_error() {
         let pid = 0x0100u16;
         let mut ts = Vec::new();
-        ts.extend_from_slice(&make_pcr_packet(pid, 0, 0, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), 0, 0, false));
         // +10 second jump, no discontinuity_indicator.
-        ts.extend_from_slice(&make_pcr_packet(pid, CLOCK_27MHZ * 10, 1, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 10, 1, false));
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
         let disc: Vec<_> = report
@@ -440,9 +441,9 @@ mod tests {
     fn pcr_jump_with_discontinuity_not_flagged() {
         let pid = 0x0100u16;
         let mut ts = Vec::new();
-        ts.extend_from_slice(&make_pcr_packet(pid, 0, 0, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), 0, 0, false));
         // +10 second jump WITH discontinuity_indicator set.
-        ts.extend_from_slice(&make_pcr_packet(pid, CLOCK_27MHZ * 10, 1, true));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 10, 1, true));
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
         let disc: Vec<_> = report
@@ -463,10 +464,10 @@ mod tests {
         let mut ts = Vec::new();
         // Start near the wrap point — 30 ms before wrap.
         let start = PCR_MODULUS_27MHZ - CLOCK_27MHZ * 30 / 1000;
-        ts.extend_from_slice(&make_pcr_packet(pid, start, 0, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), start, 0, false));
         // After wrap — 5 ms worth of ticks after wrap.
         let after = CLOCK_27MHZ * 5 / 1000;
-        ts.extend_from_slice(&make_pcr_packet(pid, after, 1, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), after, 1, false));
         let mut report = Report::new();
         PcrCheck.run(&ts, &mut report);
         assert!(
@@ -484,12 +485,12 @@ mod tests {
         let pid = 0x0100u16;
         let mut ts = Vec::new();
         // First PCR at t=0.
-        ts.extend_from_slice(&make_pcr_packet(pid, 0, 0, false));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), 0, 0, false));
         // Discontinuity PCR at t=+10s (with indicator).
-        ts.extend_from_slice(&make_pcr_packet(pid, CLOCK_27MHZ * 10, 1, true));
+        ts.extend_from_slice(&make_pcr_packet(Pid::new(pid), CLOCK_27MHZ * 10, 1, true));
         // Next PCR at 30 ms after the new baseline (should be clean).
         ts.extend_from_slice(&make_pcr_packet(
-            pid,
+            Pid::new(pid),
             CLOCK_27MHZ * 10 + CLOCK_27MHZ * 30 / 1000,
             2,
             false,

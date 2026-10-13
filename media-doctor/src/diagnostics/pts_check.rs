@@ -23,6 +23,7 @@
 //! A signalled TS-layer discontinuity (`discontinuity_indicator == 1`) resets
 //! the per-PID baseline so a jump across the discontinuity is not flagged.
 
+use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::BTreeMap;
 
 use crate::Diagnostic;
@@ -84,7 +85,7 @@ pub struct PtsCheck;
 impl Diagnostic for PtsCheck {
     fn run(&self, ts: &[u8], report: &mut Report) {
         let n_packets = ts.len() / TS_PACKET_SIZE;
-        let mut pid_states: BTreeMap<u16, PtsPidState> = BTreeMap::new();
+        let mut pid_states: BTreeMap<Pid, PtsPidState> = BTreeMap::new();
 
         for i in 0..n_packets {
             let offset = i * TS_PACKET_SIZE;
@@ -108,7 +109,7 @@ impl Diagnostic for PtsCheck {
                 && let Some(Ok(af)) = pkt.adaptation_field()
                 && af.discontinuity_indicator
             {
-                pid_states.remove(&pid);
+                pid_states.remove(&Pid::new(pid.value()));
             }
 
             // Get the TS payload for PES reassembly.
@@ -124,9 +125,9 @@ impl Diagnostic for PtsCheck {
             let pus = pkt.header.pusi;
 
             // Feed the assembler and check if a complete PES was produced.
-            let state = pid_states.entry(pid).or_default();
+            let state = pid_states.entry(Pid::new(pid.value())).or_default();
             if let Some(pes_bytes) = state.assembler.feed(pus, payload) {
-                check_pes(&pes_bytes, i, pid, report, &mut state.prev_decode);
+                check_pes(&pes_bytes, i, Pid::new(pid.value()), report, &mut state.prev_decode);
             }
         }
 
@@ -169,7 +170,7 @@ fn is_pes_with_optional_header(stream_id: u8) -> bool {
 fn check_pes(
     pes_bytes: &[u8],
     packet_index: usize,
-    pid: u16,
+    pid: Pid,
     report: &mut Report,
     prev_decode: &mut TsValue,
 ) {
@@ -189,7 +190,7 @@ fn check_pes(
     if pts_dts_flags == 0b01 {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(packet_index, u32::from(pid)),
+            Location::at_pid(packet_index, Pid::new(pid.value())),
             "pts-forbidden-flags",
             alloc::format!(
                 "Forbidden PTS_DTS_flags == 0b01 on PID 0x{pid:04X} \
@@ -229,7 +230,7 @@ fn check_pes(
             };
             report.push(Finding::new(
                 Severity::Error,
-                Location::new(packet_index, u32::from(pid)),
+                Location::at_pid(packet_index, Pid::new(pid.value())),
                 rule,
                 alloc::format!(
                     "Non-monotonic {} (decode order) on PID 0x{:04X}: raw {} → {} (backward delta {})",
@@ -253,10 +254,10 @@ mod tests {
 
     /// Build a TS packet (188 bytes) containing a PES fragment with the given
     /// raw PES bytes at the start of its payload (payload_unit_start=true).
-    fn make_pes_packet(pid: u16, cc: u8, pes_bytes: &[u8]) -> Vec<u8> {
+    fn make_pes_packet(pid: Pid, cc: u8, pes_bytes: &[u8]) -> Vec<u8> {
         let mut pkt = vec![0x47u8; 188];
-        pkt[1] = ((pid >> 8) as u8) & 0x1F;
-        pkt[2] = (pid & 0xFF) as u8;
+        pkt[1] = ((pid.value() >> 8) as u8) & 0x1F;
+        pkt[2] = (pid.value() & 0xFF) as u8;
         // AFC=01 (payload only), PUSI=1, CC=cc.
         // Byte 1: PUSI=1 at bit 6, no adaptation
         pkt[1] |= 0x40; // payload_unit_start
@@ -324,12 +325,12 @@ mod tests {
         let mut ts = Vec::new();
         // AU 0: pts=dts=90_000. AU 1: pts=87_000 (backward, reorder) dts=93_000 (forward).
         ts.extend_from_slice(&make_pes_packet(
-            pid,
+            Pid::new(pid),
             0,
             &build_pes_with_pts_dts(0xE0, 90_000, 90_000, &[0xAA]),
         ));
         ts.extend_from_slice(&make_pes_packet(
-            pid,
+            Pid::new(pid),
             1,
             &build_pes_with_pts_dts(0xE0, 87_000, 93_000, &[0xBB]),
         ));
@@ -348,13 +349,13 @@ mod tests {
         let pid = 0x0100;
         let mut ts = Vec::new();
         ts.extend_from_slice(&make_pes_packet(
-            pid,
+            Pid::new(pid),
             0,
             &build_pes_with_pts_dts(0xE0, 90_000, 90_000, &[0xAA]),
         ));
         // dts=84_000 < prev 90_000 → backward decode timestamp.
         ts.extend_from_slice(&make_pes_packet(
-            pid,
+            Pid::new(pid),
             1,
             &build_pes_with_pts_dts(0xE0, 96_000, 84_000, &[0xBB]),
         ));
@@ -395,7 +396,7 @@ mod tests {
     fn single_pes_no_findings() {
         let pid = 0x0100;
         let pes = build_pes_with_pts(0xE0, 90_000, &[0xAA, 0xBB]);
-        let ts = make_pes_packet(pid, 0, &pes);
+        let ts = make_pes_packet(Pid::new(pid), 0, &pes);
         let mut report = Report::new();
         PtsCheck.run(&ts, &mut report);
         assert!(
@@ -410,12 +411,12 @@ mod tests {
         let pid = 0x0100;
         let mut ts = Vec::new();
         ts.extend_from_slice(&make_pes_packet(
-            pid,
+            Pid::new(pid),
             0,
             &build_pes_with_pts(0xE0, 90_000, &[0xAA]),
         ));
         ts.extend_from_slice(&make_pes_packet(
-            pid,
+            Pid::new(pid),
             1,
             &build_pes_with_pts(0xE0, 93_000, &[0xBB]),
         ));
@@ -433,12 +434,12 @@ mod tests {
         let pid = 0x0100;
         let mut ts = Vec::new();
         ts.extend_from_slice(&make_pes_packet(
-            pid,
+            Pid::new(pid),
             0,
             &build_pes_with_pts(0xE0, 90_000, &[0xAA]),
         ));
         ts.extend_from_slice(&make_pes_packet(
-            pid,
+            Pid::new(pid),
             1,
             &build_pes_with_pts(0xE0, 40_000, &[0xBB]),
         ));
@@ -465,13 +466,13 @@ mod tests {
         // Near the top of the 33-bit range.
         let near_wrap = PTS_MOD - 5000;
         ts.extend_from_slice(&make_pes_packet(
-            pid,
+            Pid::new(pid),
             0,
             &build_pes_with_pts(0xE0, near_wrap, &[0xAA]),
         ));
         // Just past wrap.
         ts.extend_from_slice(&make_pes_packet(
-            pid,
+            Pid::new(pid),
             1,
             &build_pes_with_pts(0xE0, 1000, &[0xBB]),
         ));
@@ -493,7 +494,7 @@ mod tests {
     fn forbidden_pts_dts_flags_detected() {
         let pid = 0x0100;
         let pes = build_pes_forbidden_flags(0xE0, &[0xAA, 0xBB]);
-        let ts = make_pes_packet(pid, 0, &pes);
+        let ts = make_pes_packet(Pid::new(pid), 0, &pes);
         let mut report = Report::new();
         PtsCheck.run(&ts, &mut report);
         let ff: Vec<_> = report
@@ -515,10 +516,10 @@ mod tests {
         let pid = 0x0100;
         // Build helper for packets with adaptation field (carrying discontinuity
         // indicator) + PES payload.
-        fn make_disc_pkt(pid: u16, cc: u8, pes_bytes: &[u8], discontinuity: bool) -> Vec<u8> {
+        fn make_disc_pkt(pid: Pid, cc: u8, pes_bytes: &[u8], discontinuity: bool) -> Vec<u8> {
             let mut pkt = vec![0x47u8; 188];
-            pkt[1] = 0x40 | ((pid >> 8) as u8) & 0x1F;
-            pkt[2] = (pid & 0xFF) as u8;
+            pkt[1] = 0x40 | ((pid.value() >> 8) as u8) & 0x1F;
+            pkt[2] = (pid.value() & 0xFF) as u8;
             pkt[3] = 0x30 | (cc & 0x0F); // AFC=11 (adaptation+payload)
             pkt[4] = 1; // adaptation_field_length = 1 (flags byte only)
             pkt[5] = if discontinuity { 0x80 } else { 0x00 };
@@ -537,9 +538,9 @@ mod tests {
         let pes2 = build_pes_with_pts(0xE0, 45_000, &[0xCC]);
 
         let mut ts = Vec::new();
-        ts.extend_from_slice(&make_disc_pkt(pid, 0, &pes0, false));
-        ts.extend_from_slice(&make_disc_pkt(pid, 1, &pes1, true));
-        ts.extend_from_slice(&make_disc_pkt(pid, 2, &pes2, false));
+        ts.extend_from_slice(&make_disc_pkt(Pid::new(pid), 0, &pes0, false));
+        ts.extend_from_slice(&make_disc_pkt(Pid::new(pid), 1, &pes1, true));
+        ts.extend_from_slice(&make_disc_pkt(Pid::new(pid), 2, &pes2, false));
         let mut report = Report::new();
         PtsCheck.run(&ts, &mut report);
         let bw: Vec<_> = report
@@ -566,10 +567,10 @@ mod tests {
     #[test]
     fn discontinuity_packet_payload_is_still_checked() {
         let pid = 0x0100;
-        fn make_disc_pkt(pid: u16, cc: u8, pes_bytes: &[u8], discontinuity: bool) -> Vec<u8> {
+        fn make_disc_pkt(pid: Pid, cc: u8, pes_bytes: &[u8], discontinuity: bool) -> Vec<u8> {
             let mut pkt = vec![0x47u8; 188];
-            pkt[1] = 0x40 | ((pid >> 8) as u8) & 0x1F;
-            pkt[2] = (pid & 0xFF) as u8;
+            pkt[1] = 0x40 | ((pid.value() >> 8) as u8) & 0x1F;
+            pkt[2] = (pid.value() & 0xFF) as u8;
             pkt[3] = 0x30 | (cc & 0x0F); // AFC=11 (adaptation+payload)
             pkt[4] = 1; // adaptation_field_length = 1 (flags byte only)
             pkt[5] = if discontinuity { 0x80 } else { 0x00 };
@@ -586,9 +587,9 @@ mod tests {
         let pes_after = build_pes_with_pts(0xE0, 100_000, &[0xCC]);
 
         let mut ts = Vec::new();
-        ts.extend_from_slice(&make_disc_pkt(pid, 0, &pes0, false));
-        ts.extend_from_slice(&make_disc_pkt(pid, 1, &pes_disc, true));
-        ts.extend_from_slice(&make_disc_pkt(pid, 2, &pes_after, false));
+        ts.extend_from_slice(&make_disc_pkt(Pid::new(pid), 0, &pes0, false));
+        ts.extend_from_slice(&make_disc_pkt(Pid::new(pid), 1, &pes_disc, true));
+        ts.extend_from_slice(&make_disc_pkt(Pid::new(pid), 2, &pes_after, false));
 
         let mut report = Report::new();
         PtsCheck.run(&ts, &mut report);

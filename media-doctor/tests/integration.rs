@@ -1,5 +1,6 @@
 //! Integration tests for `media-doctor`.
 
+use mpeg_ts::pid::Pid;
 use std::fs;
 
 use media_doctor::Diagnostic;
@@ -360,10 +361,10 @@ fn count_legal_duplicates(ts: &[u8]) -> (usize, usize) {
             continue;
         };
         let pid = pkt.header.pid;
-        if pid == 0x1FFF || !pkt.header.has_payload {
+        if pid == Pid::new(0x1FFF) || !pkt.header.has_payload {
             continue;
         }
-        let st = states.entry(pid).or_insert(St {
+        let st = states.entry(pid.value()).or_insert(St {
             last: Vec::new(),
             dup_used: false,
             initialised: false,
@@ -539,10 +540,10 @@ fn pat_pmt_ts(
     pmt_bytes.truncate(n);
 
     let mut ts = Vec::new();
-    for packet in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes]) {
+    for packet in SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&pat_bytes]) {
         ts.extend_from_slice(&packet);
     }
-    for packet in SectionPacketiser::new(PAT_PMT_PID).packetise(&[&pmt_bytes]) {
+    for packet in SectionPacketiser::new(Pid::new(PAT_PMT_PID)).packetise(&[&pmt_bytes]) {
         ts.extend_from_slice(&packet);
     }
     assert_eq!(ts.len() % TS_PACKET_SIZE, 0);
@@ -757,7 +758,7 @@ fn nit_and_null_pids_are_not_tracked() {
     buf.truncate(n);
 
     let mut ts = Vec::new();
-    for packet in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&buf]) {
+    for packet in SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&buf]) {
         ts.extend_from_slice(&packet);
     }
     // Feed the two candidate PIDs bytes that would reassemble as a PAT-shaped

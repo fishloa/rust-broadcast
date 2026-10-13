@@ -135,7 +135,7 @@ pub fn run(path: &str) -> ExitCode {
             continue;
         };
         let pid = parsed.header.pid;
-        *counts.entry(pid).or_insert(0) += 1;
+        *counts.entry(pid.value()).or_insert(0) += 1;
 
         if let Some(Ok(af)) = parsed.adaptation_field()
             && let Some(pcr) = af.pcr
@@ -146,7 +146,7 @@ pub fn run(path: &str) -> ExitCode {
             // rollover (`PCR_MODULUS_27MHZ`, §2.4.2.2) across samples.
             let pcr_27 = pcr.as_27mhz();
             pcr_tracks
-                .entry(pid)
+                .entry(pid.value())
                 .or_default()
                 .push(total_packets, pcr_27);
         }

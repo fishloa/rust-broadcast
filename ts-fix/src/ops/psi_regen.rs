@@ -119,7 +119,7 @@ impl PsiRegenOp {
             pat_hints_observed: false,
             seen_pat_slot: false,
             emitted_pat: false,
-            pat_packetiser: SectionPacketiser::new(PAT_PID),
+            pat_packetiser: SectionPacketiser::new(Pid::new(PAT_PID)),
             version_number: 0,
             last_entries: None,
         }

@@ -1,3 +1,4 @@
+use mpeg_ts::pid::Pid;
 use core::time::Duration;
 
 use broadcast_common::Serialize;
@@ -46,7 +47,7 @@ fn make_ts_packet(
     let header = TsHeader {
         tei: false,
         pusi,
-        pid,
+        pid: Pid::new(pid),
         scrambling: 0,
         has_adaptation: has_adaptation || !adaptation.is_empty(),
         has_payload: !payload.is_empty(),
@@ -76,7 +77,7 @@ fn make_ts_packet_with_tei(pid: u16, cc: u8) -> [u8; TS_PACKET_SIZE] {
     let header = TsHeader {
         tei: true,
         pusi: false,
-        pid,
+        pid: Pid::new(pid),
         scrambling: 0,
         has_adaptation: false,
         has_payload: false,
@@ -92,7 +93,7 @@ fn make_ts_packet_with_scrambling(pid: u16, cc: u8, scrambling: u8) -> [u8; TS_P
     let header = TsHeader {
         tei: false,
         pusi: false,
-        pid,
+        pid: Pid::new(pid),
         scrambling,
         has_adaptation: false,
         has_payload: true,
@@ -211,7 +212,7 @@ fn build_pmt_section_versioned(
 
 /// Packetise a section into 188-byte TS packets.
 fn packetise_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
-    let mut pktizer = SectionPacketiser::new(pid);
+    let mut pktizer = SectionPacketiser::new(Pid::new(pid));
     pktizer.packetise(&[section])
 }
 
@@ -1208,7 +1209,7 @@ fn si_repetition_sdt_trips_on_timeout() {
         .filter(|e| e.indicator == Indicator::SiRepetitionError)
         .collect();
     assert_eq!(si_events.len(), 1);
-    assert_eq!(si_events[0].pid, Some(PID_SDT_BAT));
+    assert_eq!(si_events[0].pid, Some(Pid::new(PID_SDT_BAT)));
     assert!(si_events[0].detail.contains("SDT_actual"));
 }
 
@@ -1251,7 +1252,7 @@ fn si_repetition_tdt_trips_on_timeout() {
         .filter(|e| e.indicator == Indicator::SiRepetitionError)
         .collect();
     assert_eq!(si_events.len(), 1);
-    assert_eq!(si_events[0].pid, Some(PID_TDT_TOT));
+    assert_eq!(si_events[0].pid, Some(Pid::new(PID_TDT_TOT)));
     assert!(si_events[0].detail.contains("TDT"));
 }
 
@@ -1294,7 +1295,7 @@ fn si_repetition_nit_trips_on_timeout() {
         .filter(|e| e.indicator == Indicator::SiRepetitionError)
         .collect();
     assert_eq!(si_events.len(), 1);
-    assert_eq!(si_events[0].pid, Some(PID_NIT));
+    assert_eq!(si_events[0].pid, Some(Pid::new(PID_NIT)));
     assert!(si_events[0].detail.contains("NIT_actual"));
 }
 
@@ -1337,7 +1338,7 @@ fn si_repetition_eit_pf_trips_on_timeout() {
         .filter(|e| e.indicator == Indicator::SiRepetitionError)
         .collect();
     assert_eq!(si_events.len(), 1);
-    assert_eq!(si_events[0].pid, Some(PID_EIT));
+    assert_eq!(si_events[0].pid, Some(Pid::new(PID_EIT)));
     assert!(si_events[0].detail.contains("EIT_P/F_actual"));
 }
 
@@ -1475,7 +1476,7 @@ fn unreferenced_pid_trips_after_persistence_threshold() {
     let events = monitor.feed(&pkt2, ms(600));
     let unref: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(stray_pid))
+        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(stray_pid)))
         .collect();
     assert_eq!(unref.len(), 1);
 }
@@ -1494,7 +1495,7 @@ fn unreferenced_pid_absent_within_persistence_threshold() {
     let events = monitor.feed(&pkt2, ms(200));
     let unref: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(stray_pid))
+        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(stray_pid)))
         .collect();
     assert!(unref.is_empty());
 }
@@ -1528,7 +1529,7 @@ fn unreferenced_pid_absent_for_well_known_si_pids() {
         let events = monitor.feed(&pkt2, secs(2));
         let flagged = events
             .iter()
-            .any(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(pid));
+            .any(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(pid)));
         assert!(
             !flagged,
             "well-known SI PID 0x{pid:04X} must never be flagged Unreferenced_PID"
@@ -2360,7 +2361,7 @@ fn pmt_removed_by_new_pat_version_stops_firing_and_becomes_unreferenced() {
 
     let stale_pmt_error: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::PmtError2 && e.pid == Some(removed_pmt_pid))
+        .filter(|e| e.indicator == Indicator::PmtError2 && e.pid == Some(Pid::new(removed_pmt_pid)))
         .collect();
     assert!(
         stale_pmt_error.is_empty(),
@@ -2370,7 +2371,7 @@ fn pmt_removed_by_new_pat_version_stops_firing_and_becomes_unreferenced() {
 
     let unref: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(removed_pmt_pid))
+        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(removed_pmt_pid)))
         .collect();
     assert_eq!(
         unref.len(),
@@ -2429,7 +2430,7 @@ fn es_pid_removed_by_new_pmt_version_stops_firing_and_becomes_unreferenced() {
 
     let stale_pid_error: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::PidError && e.pid == Some(dropped_es_pid))
+        .filter(|e| e.indicator == Indicator::PidError && e.pid == Some(Pid::new(dropped_es_pid)))
         .collect();
     assert!(
         stale_pid_error.is_empty(),
@@ -2439,7 +2440,7 @@ fn es_pid_removed_by_new_pmt_version_stops_firing_and_becomes_unreferenced() {
 
     let unref: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(dropped_es_pid))
+        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(dropped_es_pid)))
         .collect();
     assert_eq!(
         unref.len(),

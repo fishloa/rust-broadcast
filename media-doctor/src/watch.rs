@@ -73,6 +73,7 @@
 //! "no sync byte at all in this file" respectively) and are left as
 //! one-shot `check` diagnostics for v1.
 
+use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
 use core::time::Duration;
@@ -158,7 +159,7 @@ pub struct ConformanceSample {
 #[non_exhaustive]
 pub struct PidFlag {
     /// The elementary PID.
-    pub pid: u16,
+    pub pid: Pid,
     /// `true` for a codec-signalling mismatch / a decode-timestamp anomaly.
     pub set: bool,
 }
@@ -218,7 +219,7 @@ pub struct WatchState {
     pmt_generations: BTreeMap<u16, (u8, BTreeMap<u16, StreamType>)>,
     /// How many programs currently declare each elementary PID. A PID shared
     /// by two programs must stay tracked while either still declares it.
-    pid_refs: BTreeMap<u16, usize>,
+    pid_refs: BTreeMap<Pid, usize>,
     conformance_counts: BTreeMap<&'static str, ConformanceCount>,
     datagrams_total: u64,
     scte35_events_total: u64,
@@ -342,11 +343,11 @@ impl WatchState {
             }
         }
 
-        if self.scte35_tracks.contains_key(&pid) {
-            self.feed_scte35(pid, &ts_packet);
+        if self.scte35_tracks.contains_key(&pid.value()) {
+            self.feed_scte35(Pid::new(pid.value()), &ts_packet);
         }
-        if self.es_tracks.contains_key(&pid) {
-            self.feed_es(pid, &ts_packet);
+        if self.es_tracks.contains_key(&pid.value()) {
+            self.feed_es(Pid::new(pid.value()), &ts_packet);
         }
     }
 
@@ -374,43 +375,43 @@ impl WatchState {
         let old_declared = previous.map(|(_, old)| old).unwrap_or_default();
         for old_pid in old_declared.keys() {
             if !declared.contains_key(old_pid) {
-                self.release_pid(*old_pid);
+                self.release_pid(Pid::new(*old_pid));
             }
         }
         for (&elem_pid, &stream_type) in &declared {
             if !old_declared.contains_key(&elem_pid) {
                 self.pid_refs
-                    .entry(elem_pid)
+                    .entry(Pid::new(elem_pid))
                     .and_modify(|n| *n += 1)
                     .or_insert(1);
             }
             if old_declared.get(&elem_pid) == Some(&stream_type) {
                 continue;
             }
-            self.retrack(elem_pid, stream_type);
+            self.retrack(Pid::new(elem_pid), stream_type);
         }
     }
 
     /// (Re-)create the tracker for `elem_pid` under `stream_type`, clearing
     /// any tracker of the other kind.
-    fn retrack(&mut self, elem_pid: u16, stream_type: StreamType) {
+    fn retrack(&mut self, elem_pid: Pid, stream_type: StreamType) {
         match stream_type {
             StreamType::Scte35 => {
-                self.es_tracks.remove(&elem_pid);
-                self.scte35_tracks.entry(elem_pid).or_default();
+                self.es_tracks.remove(&elem_pid.value());
+                self.scte35_tracks.entry(elem_pid.value()).or_default();
             }
             StreamType::H264 | StreamType::Hevc => {
-                self.scte35_tracks.remove(&elem_pid);
-                self.es_tracks.insert(elem_pid, EsTrack::new(EsKind::Video));
+                self.scte35_tracks.remove(&elem_pid.value());
+                self.es_tracks.insert(elem_pid.value(), EsTrack::new(EsKind::Video));
             }
             StreamType::AacAdts => {
-                self.scte35_tracks.remove(&elem_pid);
+                self.scte35_tracks.remove(&elem_pid.value());
                 self.es_tracks
-                    .insert(elem_pid, EsTrack::new(EsKind::AudioAdts));
+                    .insert(elem_pid.value(), EsTrack::new(EsKind::AudioAdts));
             }
             _ => {
-                self.es_tracks.remove(&elem_pid);
-                self.scte35_tracks.remove(&elem_pid);
+                self.es_tracks.remove(&elem_pid.value());
+                self.scte35_tracks.remove(&elem_pid.value());
             }
         }
     }
@@ -433,7 +434,7 @@ impl WatchState {
                 continue;
             };
             for elem_pid in declared.keys() {
-                self.release_pid(*elem_pid);
+                self.release_pid(Pid::new(*elem_pid));
             }
         }
     }
@@ -446,7 +447,7 @@ impl WatchState {
     /// different `stream_type`s: `retrack` is last-declarer-wins, so when that
     /// declarer leaves, the PID would otherwise keep a codec nothing declares
     /// any more.
-    fn release_pid(&mut self, pid: u16) {
+    fn release_pid(&mut self, pid: Pid) {
         let Some(count) = self.pid_refs.get_mut(&pid) else {
             return;
         };
@@ -458,27 +459,27 @@ impl WatchState {
             return;
         }
         self.pid_refs.remove(&pid);
-        self.es_tracks.remove(&pid);
-        self.scte35_tracks.remove(&pid);
+        self.es_tracks.remove(&pid.value());
+        self.scte35_tracks.remove(&pid.value());
     }
 
     /// The `stream_type` some still-registered program declares for `pid`.
     /// `pmt_generations` is a `BTreeMap` keyed by program number, so this
     /// takes the lowest-numbered declarer and is deterministic.
-    fn remaining_declared_type(&self, pid: u16) -> Option<StreamType> {
+    fn remaining_declared_type(&self, pid: Pid) -> Option<StreamType> {
         self.pmt_generations
             .values()
-            .filter_map(|(_, declared)| declared.get(&pid).copied())
+            .filter_map(|(_, declared)| declared.get(&pid.value()).copied())
             .next()
     }
 
     /// Reassemble + parse `splice_info_section`s on a PMT-declared SCTE-35
     /// PID, tracking each `splice_event_id`'s open/closed state.
-    fn feed_scte35(&mut self, pid: u16, ts_packet: &TsPacket<'_>) {
+    fn feed_scte35(&mut self, pid: Pid, ts_packet: &TsPacket<'_>) {
         let Some(payload) = ts_packet.payload else {
             return;
         };
-        let Some(track) = self.scte35_tracks.get_mut(&pid) else {
+        let Some(track) = self.scte35_tracks.get_mut(&pid.value()) else {
             return;
         };
         // The shared tracker keeps only events that are still open (an "out"
@@ -493,7 +494,7 @@ impl WatchState {
 
     /// Reassemble PES on a PMT-declared video/audio PID, checking codec
     /// framing and decode-timestamp monotonicity on each completed unit.
-    fn feed_es(&mut self, pid: u16, ts_packet: &TsPacket<'_>) {
+    fn feed_es(&mut self, pid: Pid, ts_packet: &TsPacket<'_>) {
         let mut discontinuity = false;
         if ts_packet.header.has_adaptation
             && let Some(Ok(af)) = ts_packet.adaptation_field()
@@ -501,7 +502,7 @@ impl WatchState {
             discontinuity = af.discontinuity_indicator;
         }
 
-        let Some(track) = self.es_tracks.get_mut(&pid) else {
+        let Some(track) = self.es_tracks.get_mut(&pid.value()) else {
             return;
         };
         if discontinuity {
@@ -535,11 +536,11 @@ impl WatchState {
 
     /// Check one reassembled PES unit's ES-payload framing and decode
     /// timestamp against the tracked PID's running state.
-    fn process_es_unit(&mut self, pid: u16, pes_bytes: &[u8]) {
+    fn process_es_unit(&mut self, pid: Pid, pes_bytes: &[u8]) {
         let Ok(pes) = PesPacket::parse(pes_bytes) else {
             return;
         };
-        let Some(track) = self.es_tracks.get_mut(&pid) else {
+        let Some(track) = self.es_tracks.get_mut(&pid.value()) else {
             return;
         };
         track.any_au = true;
@@ -612,7 +613,7 @@ impl WatchState {
                 .iter()
                 .filter(|(_, t)| t.any_au)
                 .map(|(&pid, t)| PidFlag {
-                    pid,
+                    pid: Pid::new(pid),
                     set: !t.structured,
                 })
                 .collect(),
@@ -621,7 +622,7 @@ impl WatchState {
                 .iter()
                 .filter(|(_, t)| t.prev_decode.is_some())
                 .map(|(&pid, t)| PidFlag {
-                    pid,
+                    pid: Pid::new(pid),
                     set: t.decode_anomaly,
                 })
                 .collect(),
@@ -772,14 +773,14 @@ pub(crate) mod tests {
     }
 
     /// PMT PID every synthetic PMT fixture is carried on.
-    const PAT_PMT_PID: u16 = 0x0100;
+    const PAT_PMT_PID: Pid = Pid::new(0x0100);
     /// Elementary PID the synthetic fixtures declare.
-    const SHARED_PID: u16 = 0x0101;
+    const SHARED_PID: Pid = Pid::new(0x0101);
     /// SCTE-35 cue PID the synthetic fixtures declare.
-    const CUE_PID: u16 = 0x0102;
+    const CUE_PID: Pid = Pid::new(0x0102);
     /// An unrelated elementary PID, used where a program must stop
     /// referencing `SHARED_PID`.
-    const OTHER_PID: u16 = 0x0103;
+    const OTHER_PID: Pid = Pid::new(0x0103);
 
     /// PMT declaring one H.264 video PID.
     const SINGLE_H264_PMT: u8 = 0;
@@ -803,14 +804,14 @@ pub(crate) mod tests {
         pat_bytes.truncate(n);
         feed(
             state,
-            &section_packet(dvb_si::tables::pat::PID, 0, &pat_bytes),
+            &section_packet(Pid::new(dvb_si::tables::pat::PID), 0, &pat_bytes),
         );
         for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS {
             let mut null = [0xFFu8; TS_PACKET_SIZE];
             let header = mpeg_ts::ts::TsHeader {
                 tei: false,
                 pusi: false,
-                pid: mpeg_ts::pid::well_known::NULL.value(),
+                pid: Pid::new(mpeg_ts::pid::well_known::NULL.value()),
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -839,17 +840,17 @@ pub(crate) mod tests {
         let mut bytes = alloc::vec![0u8; pat.serialized_len()];
         let n = pat.serialize_into(&mut bytes).expect("serialize PAT");
         bytes.truncate(n);
-        section_packet(dvb_si::tables::pat::PID, version, &bytes)
+        section_packet(Pid::new(dvb_si::tables::pat::PID), version, &bytes)
     }
 
     /// A section-bearing TS packet.
-    fn section_packet(pid: u16, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
+    fn section_packet(pid: Pid, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
         use mpeg_ts::ts::TsHeader;
         let mut pkt = [0xFFu8; TS_PACKET_SIZE];
         let header = TsHeader {
             tei: false,
             pusi: true,
-            pid,
+            pid: Pid::new(pid.value()),
             scrambling: 0,
             has_adaptation: false,
             has_payload: true,
@@ -865,11 +866,11 @@ pub(crate) mod tests {
     /// `SINGLE_*`/`WITH_CUE_PMT` shapes.
     fn pmt_shape(shape: u8) -> alloc::vec::Vec<(u16, StreamType)> {
         match shape {
-            SINGLE_H264_PMT => alloc::vec![(SHARED_PID, StreamType::H264)],
-            SINGLE_AAC_PMT => alloc::vec![(SHARED_PID, StreamType::AacAdts)],
+            SINGLE_H264_PMT => alloc::vec![(SHARED_PID.value(), StreamType::H264)],
+            SINGLE_AAC_PMT => alloc::vec![(SHARED_PID.value(), StreamType::AacAdts)],
             WITH_CUE_PMT => alloc::vec![
-                (SHARED_PID, StreamType::H264),
-                (CUE_PID, StreamType::Scte35),
+                (SHARED_PID.value(), StreamType::H264),
+                (CUE_PID.value(), StreamType::Scte35),
             ],
             other => panic!("unknown PMT shape {other}"),
         }
@@ -877,7 +878,7 @@ pub(crate) mod tests {
 
     /// A PMT section packet for program 1, version `version`, declaring
     /// `shape`.
-    fn pmt_section_packet(shape: u8, pmt_pid: u16, version: u8, cc: &[u8]) -> [u8; TS_PACKET_SIZE] {
+    fn pmt_section_packet(shape: u8, pmt_pid: Pid, version: u8, cc: &[u8]) -> [u8; TS_PACKET_SIZE] {
         use broadcast_common::Serialize;
         use dvb_si::descriptors::any::DescriptorLoop;
         use dvb_si::tables::pmt::{PmtSection, PmtStream};
@@ -904,9 +905,9 @@ pub(crate) mod tests {
     /// A PMT section packet for a specific `program_number`.
     fn pmt_section_packet_for_program(
         program_number: u16,
-        pmt_pid: u16,
+        pmt_pid: Pid,
         version: u8,
-        elem_pid: u16,
+        elem_pid: Pid,
         cc: &[u8],
     ) -> [u8; TS_PACKET_SIZE] {
         use broadcast_common::Serialize;
@@ -918,7 +919,7 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            elem_pid,
+            elem_pid.value(),
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
                 StreamType::H264,
@@ -933,7 +934,7 @@ pub(crate) mod tests {
     }
 
     /// A PES packet carrying `payload` on `pid`, wrapped in one TS packet.
-    fn pes_packet(pid: u16, cc: u8, stream_id: u8, payload: &[u8]) -> [u8; TS_PACKET_SIZE] {
+    fn pes_packet(pid: Pid, cc: u8, stream_id: u8, payload: &[u8]) -> [u8; TS_PACKET_SIZE] {
         use mpeg_ts::ts::TsHeader;
         let pes_len = 9 + payload.len();
         let mut pes = alloc::vec![0x00, 0x00, 0x01, stream_id];
@@ -946,7 +947,7 @@ pub(crate) mod tests {
         let header = TsHeader {
             tei: false,
             pusi: true,
-            pid,
+            pid: Pid::new(pid.value()),
             scrambling: 0,
             has_adaptation: false,
             has_payload: true,
@@ -959,18 +960,18 @@ pub(crate) mod tests {
 
     /// A PES packet on `pid` whose payload is an Annex B access unit (a NAL
     /// start code), i.e. video framing.
-    fn video_packet(pid: u16, cc: u8) -> [u8; TS_PACKET_SIZE] {
+    fn video_packet(pid: Pid, cc: u8) -> [u8; TS_PACKET_SIZE] {
         pes_packet(pid, cc, 0xE0, &[0x00, 0x00, 0x00, 0x01, 0x65, 0xAA])
     }
 
     /// A PES packet on `pid` whose payload is an ADTS frame, i.e. audio
     /// framing.
-    fn adts_packet(pid: u16, cc: u8) -> [u8; TS_PACKET_SIZE] {
+    fn adts_packet(pid: Pid, cc: u8) -> [u8; TS_PACKET_SIZE] {
         pes_packet(pid, cc, 0xC0, &[0xFF, 0xF1, 0x50, 0x80, 0x00, 0x1F, 0xFC])
     }
 
     /// A `splice_info_section` with a `splice_insert` on `pid`.
-    fn scte35_packet(pid: u16, event_id: u32, out: bool) -> [u8; TS_PACKET_SIZE] {
+    fn scte35_packet(pid: Pid, event_id: u32, out: bool) -> [u8; TS_PACKET_SIZE] {
         use broadcast_common::Serialize;
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::{AnyCommand, SpliceInsert};
@@ -1126,15 +1127,15 @@ pub(crate) mod tests {
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::{AnyCommand, SpliceInsert};
 
-        const PMT_PID: u16 = 0x0100;
-        const SCTE35_PID: u16 = 0x0101;
+        const PMT_PID: Pid = Pid::new(0x0100);
+        const SCTE35_PID: Pid = Pid::new(0x0101);
 
-        fn ts_packet(pid: u16, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
+        fn ts_packet(pid: Pid, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid,
+                pid: Pid::new(pid.value()),
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1190,11 +1191,11 @@ pub(crate) mod tests {
         // reached (and all 5 packets, including the PAT/PMT/SCTE-35 ones,
         // are then emitted together) within this test.
         for packet in [
-            ts_packet(wk::PAT.value(), &pat_bytes),
+            ts_packet(Pid::new(wk::PAT.value()), &pat_bytes),
             ts_packet(PMT_PID, &pmt_bytes),
             ts_packet(SCTE35_PID, &out_bytes),
-            ts_packet(wk::NULL.value(), &[]),
-            ts_packet(wk::NULL.value(), &[]),
+            ts_packet(Pid::new(wk::NULL.value()), &[]),
+            ts_packet(Pid::new(wk::NULL.value()), &[]),
         ] {
             state.feed_datagram(&packet, clock);
             clock += Duration::from_millis(1);
@@ -1233,16 +1234,16 @@ pub(crate) mod tests {
         use scte35_splice::commands::{AnyCommand, SpliceInsert};
         use scte35_splice::time::BreakDuration;
 
-        const PMT_PID: u16 = 0x0100;
-        const SCTE35_PID: u16 = 0x0101;
+        const PMT_PID: Pid = Pid::new(0x0100);
+        const SCTE35_PID: Pid = Pid::new(0x0101);
         const CYCLES: u32 = 20;
 
-        fn ts_packet(pid: u16, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
+        fn ts_packet(pid: Pid, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid,
+                pid: Pid::new(pid.value()),
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1296,7 +1297,7 @@ pub(crate) mod tests {
         let mut state = WatchState::new();
         let mut clock = Duration::ZERO;
         let mut cc = 0u8;
-        let mut feed = |state: &mut WatchState, pid: u16, sec: &[u8], clock: &mut Duration| {
+        let mut feed = |state: &mut WatchState, pid: Pid, sec: &[u8], clock: &mut Duration| {
             state.feed_datagram(&ts_packet(pid, cc, sec), *clock);
             *clock += Duration::from_millis(1);
             cc = cc.wrapping_add(1) & 0x0F;
@@ -1304,10 +1305,10 @@ pub(crate) mod tests {
 
         // Lock needs 5 consecutive sync bytes at the stride first.
         for _ in 0..5 {
-            state.feed_datagram(&ts_packet(wk::NULL.value(), 0, &[]), clock);
+            state.feed_datagram(&ts_packet(Pid::new(wk::NULL.value()), 0, &[]), clock);
             clock += Duration::from_millis(1);
         }
-        feed(&mut state, wk::PAT.value(), &pat_bytes, &mut clock);
+        feed(&mut state, Pid::new(wk::PAT.value()), &pat_bytes, &mut clock);
         feed(&mut state, PMT_PID, &pmt_bytes, &mut clock);
 
         for cycle in 0..CYCLES {
@@ -1362,8 +1363,8 @@ pub(crate) mod tests {
         use mpeg_ts::pid::well_known as wk;
         use mpeg_ts::ts::TsHeader;
 
-        const PMT_PID: u16 = 0x0100;
-        const VIDEO_PID: u16 = 0x0101;
+        const PMT_PID: Pid = Pid::new(0x0100);
+        const VIDEO_PID: Pid = Pid::new(0x0101);
 
         /// A PES packet with the given PTS (`pts_dts_flags = 10`) — encoded
         /// with `mpeg-pes`'s own field serializer, never a hand-rolled one.
@@ -1380,12 +1381,12 @@ pub(crate) mod tests {
             pes
         }
 
-        fn ts_packet(pid: u16, cc: u8, pes: &[u8], discontinuity: bool) -> [u8; TS_PACKET_SIZE] {
+        fn ts_packet(pid: Pid, cc: u8, pes: &[u8], discontinuity: bool) -> [u8; TS_PACKET_SIZE] {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid,
+                pid: Pid::new(pid.value()),
                 scrambling: 0,
                 has_adaptation: true,
                 has_payload: true,
@@ -1408,7 +1409,7 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            VIDEO_PID,
+            VIDEO_PID.value(),
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
                 StreamType::H264,
@@ -1419,12 +1420,12 @@ pub(crate) mod tests {
         let mut pmt_bytes = alloc::vec![0u8; pmt.serialized_len()];
         pmt.serialize_into(&mut pmt_bytes).unwrap();
 
-        fn section_packet(pid: u16, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
+        fn section_packet(pid: Pid, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid,
+                pid: Pid::new(pid.value()),
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1444,7 +1445,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: false,
-                pid: wk::NULL.value(),
+                pid: Pid::new(wk::NULL.value()),
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1454,7 +1455,7 @@ pub(crate) mod tests {
             state.feed_datagram(&null, clock);
             clock += Duration::from_millis(1);
         }
-        state.feed_datagram(&section_packet(wk::PAT.value(), 0, &pat_bytes), clock);
+        state.feed_datagram(&section_packet(Pid::new(wk::PAT.value()), 0, &pat_bytes), clock);
         clock += Duration::from_millis(1);
         state.feed_datagram(&section_packet(PMT_PID, 0, &pmt_bytes), clock);
         clock += Duration::from_millis(1);
@@ -1497,15 +1498,15 @@ pub(crate) mod tests {
         use mpeg_ts::pid::well_known as wk;
         use mpeg_ts::ts::TsHeader;
 
-        const PMT_PID: u16 = 0x0100;
-        const MIXED_PID: u16 = 0x0101;
+        const PMT_PID: Pid = Pid::new(0x0100);
+        const MIXED_PID: Pid = Pid::new(0x0101);
 
-        fn section_packet(pid: u16, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
+        fn section_packet(pid: Pid, cc: u8, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid,
+                pid: Pid::new(pid.value()),
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1528,7 +1529,7 @@ pub(crate) mod tests {
                 true,
                 0,
                 0,
-                MIXED_PID,
+                MIXED_PID.value(),
                 DescriptorLoop::new(&[]),
                 alloc::vec![PmtStream::new(
                     stream_type,
@@ -1559,7 +1560,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid: MIXED_PID,
+                pid: Pid::new(MIXED_PID.value()),
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1583,7 +1584,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: false,
-                pid: wk::NULL.value(),
+                pid: Pid::new(wk::NULL.value()),
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1595,7 +1596,7 @@ pub(crate) mod tests {
 
         // Generation 0: the PID is declared H.264, so one video-framed unit
         // is not "structured" and the mismatch gauge reads 1.
-        feed(&mut state, &section_packet(wk::PAT.value(), 0, &pat_bytes));
+        feed(&mut state, &section_packet(Pid::new(wk::PAT.value()), 0, &pat_bytes));
         feed(
             &mut state,
             &section_packet(PMT_PID, 0, &pmt_for(0, StreamType::H264)),
@@ -1747,7 +1748,7 @@ pub(crate) mod tests {
         );
 
         // Re-declared as AAC at the SAME version number.
-        state.apply_pmt_declaration(1, 3, &[(SHARED_PID, StreamType::AacAdts)]);
+        state.apply_pmt_declaration(1, 3, &[(SHARED_PID.value(), StreamType::AacAdts)]);
 
         // Only ADTS is fed. A track still holding EsKind::Video would never
         // become `structured`, so the gauge would read 1.
@@ -1770,20 +1771,20 @@ pub(crate) mod tests {
     #[test]
     fn program_leaving_the_pat_releases_its_pids() {
         let mut state = WatchState::new();
-        state.apply_pmt_declaration(1, 0, &[(SHARED_PID, StreamType::H264)]);
+        state.apply_pmt_declaration(1, 0, &[(SHARED_PID.value(), StreamType::H264)]);
         assert!(
-            state.es_tracks.contains_key(&SHARED_PID),
+            state.es_tracks.contains_key(&SHARED_PID.value()),
             "the PID must be tracked while program 1 declares it",
         );
 
         // The PAT no longer lists program 1.
         state.retain_programs(&[]);
         assert!(
-            !state.es_tracks.contains_key(&SHARED_PID),
+            !state.es_tracks.contains_key(&SHARED_PID.value()),
             "a program that left the PAT must stop being tracked",
         );
         assert!(
-            !state.scte35_tracks.contains_key(&SHARED_PID),
+            !state.scte35_tracks.contains_key(&SHARED_PID.value()),
             "and its SCTE-35 tracker, if any, must go too",
         );
         assert!(
@@ -1805,16 +1806,16 @@ pub(crate) mod tests {
 
         // Program 1 declares AAC; program 2 then declares the same PID as
         // H.264, so H.264 is current.
-        state.apply_pmt_declaration(1, 0, &[(SHARED_PID, StreamType::AacAdts)]);
-        state.apply_pmt_declaration(2, 0, &[(SHARED_PID, StreamType::H264)]);
+        state.apply_pmt_declaration(1, 0, &[(SHARED_PID.value(), StreamType::AacAdts)]);
+        state.apply_pmt_declaration(2, 0, &[(SHARED_PID.value(), StreamType::H264)]);
         // Program 2 leaves the PAT.
         state.retain_programs(&[1]);
         assert!(
-            state.es_tracks.contains_key(&SHARED_PID),
+            state.es_tracks.contains_key(&SHARED_PID.value()),
             "program 1 still declares the PID, so it stays tracked",
         );
         assert_eq!(
-            state.es_tracks.get(&SHARED_PID).map(|t| t.kind),
+            state.es_tracks.get(&SHARED_PID.value()).map(|t| t.kind),
             Some(EsKind::AudioAdts),
             "the PID must be restored to the type program 1 declares",
         );
@@ -1840,7 +1841,7 @@ pub(crate) mod tests {
             &pmt_section_packet_for_program(1, PAT_PMT_PID, 0, SHARED_PID, &[0]),
         );
         assert!(
-            state.es_tracks.contains_key(&SHARED_PID),
+            state.es_tracks.contains_key(&SHARED_PID.value()),
             "the PID is declared by program 1 and must be tracked",
         );
 
@@ -1848,7 +1849,7 @@ pub(crate) mod tests {
         feed(&mut state, &pat_packet(&[], 1));
 
         assert!(
-            !state.es_tracks.contains_key(&SHARED_PID),
+            !state.es_tracks.contains_key(&SHARED_PID.value()),
             "a PAT generation that drops the program must release its PIDs",
         );
         assert!(

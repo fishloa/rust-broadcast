@@ -8,6 +8,7 @@
 //! independently-derived ground truth, then verifies byte-exact round-trip.
 #![cfg(feature = "ts")]
 
+use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
 use dvb_si::carousel::UnMessage;
 use dvb_si::carousel::biop::message::BindingType;
@@ -35,7 +36,7 @@ fn m6_sections_pid_ab() -> Vec<Vec<u8>> {
             Ok(p) => p,
             Err(_) => continue,
         };
-        if pkt.header.pid != 0x00AB {
+        if pkt.header.pid != Pid::new(0x00AB) {
             continue;
         }
         if let Some(payload) = pkt.payload {

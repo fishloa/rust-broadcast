@@ -21,6 +21,7 @@
 //! without adding new decode surface to `transmux` — out of bounds for this
 //! issue (`media-doctor` consumes `transmux`, it does not extend it).
 
+use mpeg_ts::pid::Pid;
 use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
 
@@ -55,13 +56,13 @@ impl Diagnostic for InterlaceCheck {
 
         // `None` = not yet decoded; `Some(true)` = already reported, stop
         // looking on this PID.
-        let mut reported: BTreeMap<u16, bool> = avc_pids.iter().map(|&p| (p, false)).collect();
+        let mut reported: BTreeMap<Pid, bool> = avc_pids.iter().map(|&p| (p, false)).collect();
 
         for_each_access_unit(
             ts,
             |pid| avc_pids.contains(&pid),
             |payload, packet_index, pid| {
-                let Some(done) = reported.get(&pid).copied() else {
+                let Some(done) = reported.get(&Pid::new(pid.value())).copied() else {
                     return;
                 };
                 if done {
@@ -74,11 +75,11 @@ impl Diagnostic for InterlaceCheck {
                     let Ok(info) = decode_avc_sps(nal) else {
                         continue;
                     };
-                    reported.insert(pid, true);
+                    reported.insert(Pid::new(pid.value()), true);
                     if !info.frame_mbs_only {
                         report.push(Finding::new(
                             Severity::Info,
-                            Location::new(packet_index, u32::from(pid)),
+                            Location::at_pid(packet_index, Pid::new(pid.value())),
                             "avc-interlaced-content",
                             format!(
                                 "AVC SPS on PID 0x{pid:04X} has frame_mbs_only_flag=0 \
@@ -98,7 +99,7 @@ mod tests {
     use super::*;
     use crate::diagnostics::codec_common::tests::{build_pat_pmt_ts, build_pes, make_pes_packet};
 
-    const VIDEO_PID: u16 = 0x101;
+    const VIDEO_PID: Pid = Pid::new(0x101);
 
     /// A progressive SPS (`frame_mbs_only_flag=1`) must not be flagged.
     /// Real SPS extracted for `decode_high_sps_with_scaling_lists` in
@@ -112,7 +113,7 @@ mod tests {
         au.extend_from_slice(&[0x00, 0x00, 0x01]);
         au.extend_from_slice(sps);
 
-        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID, StreamType::H264)]);
+        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID.value(), StreamType::H264)]);
         ts.extend_from_slice(&make_pes_packet(VIDEO_PID, 0, &build_pes(0xE0, &au)));
 
         let mut report = Report::new();
@@ -168,7 +169,7 @@ mod tests {
         au.extend_from_slice(&[0x00, 0x00, 0x01]);
         au.extend_from_slice(INTERLACED_SPS);
 
-        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID, StreamType::H264)]);
+        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID.value(), StreamType::H264)]);
         ts.extend_from_slice(&make_pes_packet(VIDEO_PID, 0, &build_pes(0xE0, &au)));
 
         let mut report = Report::new();
@@ -178,7 +179,7 @@ mod tests {
                 .findings()
                 .iter()
                 .any(|f| f.rule_id == "avc-interlaced-content"
-                    && f.location.pid == u32::from(VIDEO_PID)),
+                    && f.location.pid == u32::from(VIDEO_PID.value())),
             "expected avc-interlaced-content, got {:?}",
             report.findings()
         );

@@ -8,6 +8,7 @@
 //! - `tests/fixtures/tnt-5w-12732v-isi6-10s.ts` — 2 NIT sections (primary fixture)
 #![cfg(feature = "ts")]
 
+use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
 use dvb_si::tables::ait::AitSection;
 use dvb_si::tables::dsmcc::DsmccSection;
@@ -28,7 +29,7 @@ fn extract_sections_for_pid(path: &str, target_pid: u16) -> Vec<Vec<u8>> {
             Ok(p) => p,
             Err(_) => continue,
         };
-        if pkt.header.pid != target_pid {
+        if pkt.header.pid != Pid::new(target_pid) {
             continue;
         }
         if let Some(payload) = pkt.payload {

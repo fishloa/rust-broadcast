@@ -8,6 +8,7 @@
 //! DII geometry vs DDB block sizes).
 #![cfg(feature = "ts")]
 
+use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
 use dvb_si::carousel::{DownloadDataBlock, ModuleReassembler, UnMessage};
 use dvb_si::compatibility::CompatibilityDescriptor;
@@ -28,7 +29,7 @@ fn extract_sections_for_pid(path: &str, target_pid: u16) -> Vec<Vec<u8>> {
             Ok(p) => p,
             Err(_) => continue,
         };
-        if pkt.header.pid != target_pid {
+        if pkt.header.pid != Pid::new(target_pid) {
             continue;
         }
         if let Some(payload) = pkt.payload {
@@ -110,7 +111,7 @@ fn fixture_m6_ddb_header_prefix_links_to_dii() {
             Ok(p) => p,
             Err(_) => continue,
         };
-        if pkt.header.pid != 0x00AB || !pkt.header.pusi {
+        if pkt.header.pid != Pid::new(0x00AB) || !pkt.header.pusi {
             continue;
         }
         if let Some(payload) = pkt.payload {

@@ -124,7 +124,7 @@ fn ts_to_cmaf_end_to_end() {
         };
 
         match pkt.pid() {
-            0x0100 => {
+            Pid::new(0x0100) => {
                 // Video PID
                 if let Some(completed) = vid_assembler.feed(pkt.pusi(), payload) {
                     // Parse PTS/DTS from the PES header
@@ -143,7 +143,7 @@ fn ts_to_cmaf_end_to_end() {
                     }
                 }
             }
-            0x0101 => {
+            Pid::new(0x0101) => {
                 // Audio PID
                 if let Some(completed) = aud_assembler.feed(pkt.pusi(), payload) {
                     if let Ok(pes) = mpeg_pes::PesPacket::parse(&completed) {

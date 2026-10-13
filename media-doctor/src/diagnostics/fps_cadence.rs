@@ -24,6 +24,7 @@
 //! [`transmux::sps::HevcSpsInfo::fps`] (via the recovered config's own SPS)
 //! do that; this check only compares the two already-decoded numbers.
 
+use mpeg_ts::pid::Pid;
 use alloc::format;
 
 use broadcast_common::Unpackage;
@@ -138,7 +139,7 @@ fn check_media(media: &Media, report: &mut Report) {
         if relative_diff > FPS_TOLERANCE_FRACTION as f64 {
             report.push(Finding::new(
                 Severity::Warning,
-                Location::new(0, u32::from(pid)),
+                Location::at_pid(0, Pid::new(pid)),
                 "fps-cadence-mismatch",
                 format!(
                     "Track (PID 0x{pid:04X}) VUI-declared frame rate {declared_fps:.3} fps \

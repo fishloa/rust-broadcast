@@ -86,7 +86,7 @@ pub fn detect_pcr_discontinuities(ts_bytes: &[u8]) -> Vec<PcrDiscontinuity> {
             && af.discontinuity_indicator
         {
             found.push(PcrDiscontinuity {
-                pid: pkt.header.pid,
+                pid: pkt.header.pid.value(),
                 packet_index,
                 flagged: true,
             });

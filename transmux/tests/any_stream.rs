@@ -102,7 +102,7 @@ fn find_pmt_pid(data: &[u8]) -> u16 {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != PAT_PID {
+        if pkt.header.pid != Pid::new(PAT_PID) {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -145,7 +145,7 @@ fn collect_pmt_es(data: &[u8], pmt_pid: u16) -> Vec<(u8, u16, Vec<u8>)> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != pmt_pid {
+        if pkt.header.pid != Pid::new(pmt_pid) {
             continue;
         }
         let Some(payload) = pkt.payload else {
