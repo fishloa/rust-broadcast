@@ -88,7 +88,7 @@ fn single_operation_message_vector_parses_and_round_trips() {
     let msg = SingleOperationMessage::parse(&GENERAL_RESPONSE_MESSAGE_VECTOR)
         .expect("parse spec-derived Table 8-1 vector");
     assert_eq!(msg.op_id, 0x0000);
-    assert_eq!(msg.message_size, 13);
+    assert_eq!(msg.message_size(), 13);
     assert_eq!(msg.result, 0x0000);
     assert_eq!(msg.result_extension, 0xFFFF);
     assert_eq!(msg.protocol_version, 0);
@@ -140,7 +140,7 @@ const MULTIPLE_OPERATION_MESSAGE_VECTOR: [u8; 31] = [
 fn multiple_operation_message_vector_parses_and_round_trips() {
     let msg = MultipleOperationMessage::parse(&MULTIPLE_OPERATION_MESSAGE_VECTOR)
         .expect("parse spec-derived Table 8-2 vector");
-    assert_eq!(msg.message_size, 31);
+    assert_eq!(msg.message_size(), 31);
     assert_eq!(msg.protocol_version, 0);
     assert_eq!(msg.as_index, 1);
     assert_eq!(msg.message_number, 42);
@@ -406,4 +406,42 @@ fn new_op_ids_match_table_8_3() {
     assert_eq!(scte104::operations::FaultResponse::OP_ID, 0x0010);
     assert_eq!(scte104::operations::AsAliveRequest::OP_ID, 0x0011);
     assert_eq!(scte104::operations::AsAliveResponse::OP_ID, 0x0012);
+}
+
+// ── #1103 W4: exact data_length ─────────────────────────────────────────────
+
+/// The Table 9-5 splice_request body is exactly 15 bytes; a `data_length`
+/// that claims one more byte used to parse "OK" and silently drop the byte on
+/// re-serialize (a broken round-trip). It must be rejected.
+#[test]
+fn fixed_size_operation_with_extra_data_length_is_rejected() {
+    let mut bytes = MULTIPLE_OPERATION_MESSAGE_VECTOR.to_vec();
+    bytes[15] = 0x10; // data_length 15 -> 16
+    bytes[3] = 0x20; // messageSize 31 -> 32
+    bytes.push(0xAA);
+    assert!(MultipleOperationMessage::parse(&bytes).is_err());
+    // The pristine vector still parses.
+    assert!(MultipleOperationMessage::parse(&MULTIPLE_OPERATION_MESSAGE_VECTOR).is_ok());
+}
+
+/// `messageSize` is a 16-bit field; a 64 KiB+ buffer whose `messageSize`
+/// equals the true size modulo 65 536 used to pass (`pos as u16`).
+#[test]
+fn message_size_is_compared_in_usize_not_truncated() {
+    let mut bytes = vec![
+        0xFF, 0xFF, // reserved
+        0x00, 0x00, // messageSize placeholder
+        0x00, 0x01, 0x2A, 0x00, 0x00, 0x00, // pv, AS, msg#, DPI idx, scte35 pv
+        0x00, // timestamp none
+        0x02, // num_ops
+    ];
+    for _ in 0..2 {
+        bytes.extend_from_slice(&[0x7F, 0xFF, 0xFF, 0xF0]); // unknown opID, 0xFFF0 bytes
+        bytes.extend(core::iter::repeat_n(0u8, 0xFFF0));
+    }
+    let true_size = bytes.len();
+    assert!(true_size > 0x1_0000);
+    let wrapped = (true_size & 0xFFFF) as u16;
+    bytes[2..4].copy_from_slice(&wrapped.to_be_bytes());
+    assert!(MultipleOperationMessage::parse(&bytes).is_err());
 }

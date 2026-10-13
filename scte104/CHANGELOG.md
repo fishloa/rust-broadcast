@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- `insert_audio_descriptor`, `insert_audio_provisioning` and
+  `insert_alternate_break_duration` are now typed from Tables 9-33..9-36
+  (re-transcribed into `docs/ansi_scte_104/audio-and-alternate-break.md`)
+  instead of raw passthrough structs: `InsertAudioDescriptor { entries }`,
+  `InsertAudioProvisioning { entries }` (+ `CodecIndex`, Table 9-35) and
+  `InsertAlternateBreakDuration { alternate_break_duration }` (milliseconds);
+  none carries a lifetime any more (#1103 W5).
+- `SingleOperationMessage::message_size`, `MultipleOperationMessage::message_size`
+  and `InjectSectionData::scte35_command_length` are no longer stored fields
+  (they could disagree with the data); `message_size()` is now a derived
+  accessor and the command length is derived on serialize (#1103 W1).
+- Operation bodies must now be exactly the length the typed structure
+  re-serializes to; a `data_length` with trailing bytes is rejected instead of
+  parsing and silently losing them (#1103 W4).
+
+### Fixed
+- `MultipleOperationMessage::parse` compared `messageSize` against
+  `pos as u16`, accepting a 64 KiB+ buffer whose size matched modulo 65 536.
+- `InsertTimeDescriptor` serialize rejects a `TAI_seconds` above 48 bits
+  instead of masking it.
+- `UtcTimestamp` docs: `UTC_seconds` is GPS-epoch (1980-01-06), and
+  `UTC_microseconds` is the top 16 bits of the microsecond offset, not a
+  0..=999_999 count (#1103 O2).
+
 ## [0.5.0] - 2026-10-05
 
 ### Security

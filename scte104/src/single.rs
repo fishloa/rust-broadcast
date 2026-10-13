@@ -20,8 +20,6 @@ const HEADER_LEN: usize = 13; // opID(2) + messageSize(2) + result(2) + result_e
 pub struct SingleOperationMessage<'a> {
     /// `opID` (2 bytes, big-endian) — identifies the operation (Table 8-3).
     pub op_id: u16,
-    /// `messageSize` — total size of this structure in bytes (includes header).
-    pub message_size: u16,
     /// `result` — result code (§14). For requests it is `0xFFFF`.
     pub result: u16,
     /// `result_extension` — normally `0xFFFF` unless sending additional result info.
@@ -41,9 +39,18 @@ pub struct SingleOperationMessage<'a> {
 const RESULT_REQUEST: u16 = 0xFFFF;
 
 impl<'a> SingleOperationMessage<'a> {
+    /// `messageSize` — the total wire size (header + operation body), derived
+    /// from the current operation body so it can never disagree with the data
+    /// (#1103 W1).
+    #[must_use]
+    pub fn message_size(&self) -> usize {
+        HEADER_LEN + self.data.body_len()
+    }
+
     /// Construct a new single_operation_message for a basic request.
     ///
-    /// `message_size` is computed automatically from the fields + operation body.
+    /// `messageSize` is derived from the operation body on serialize (see
+    /// [`message_size`](Self::message_size)); it is not a stored field.
     #[must_use]
     pub fn new_request(
         op_id: u16,
@@ -53,10 +60,8 @@ impl<'a> SingleOperationMessage<'a> {
         dpi_pid_index: u16,
         data: AnySingleOperation<'a>,
     ) -> Self {
-        let message_size = (HEADER_LEN + data.body_len()) as u16;
         Self {
             op_id,
-            message_size,
             result: RESULT_REQUEST,
             result_extension: RESULT_REQUEST,
             protocol_version,
@@ -80,10 +85,8 @@ impl<'a> SingleOperationMessage<'a> {
         dpi_pid_index: u16,
         data: AnySingleOperation<'a>,
     ) -> Self {
-        let message_size = (HEADER_LEN + data.body_len()) as u16;
         Self {
             op_id,
-            message_size,
             result,
             result_extension,
             protocol_version,
@@ -137,7 +140,6 @@ impl<'a> Parse<'a> for SingleOperationMessage<'a> {
 
         Ok(Self {
             op_id,
-            message_size,
             result,
             result_extension,
             protocol_version,
