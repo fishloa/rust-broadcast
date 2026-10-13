@@ -746,6 +746,12 @@ trait FrameSync {
     fn folds_into_previous(_hdr: &Self::Hdr) -> bool {
         false
     }
+    /// Does an unfinished `tail` (a frame start that runs past the buffer) begin
+    /// a new access unit, as opposed to a dependent substream of the previous
+    /// one? Only E-AC-3 distinguishes them (issue #1186).
+    fn tail_starts_new_unit(_tail: &[u8]) -> bool {
+        true
+    }
     /// The sample bytes of a whole frame, given the `header_len` bytes the
     /// caller's shape says to strip. `None` when nothing follows the header.
     fn payload<'a>(
@@ -881,6 +887,13 @@ impl FrameSync for Eac3Sync {
     }
     fn folds_into_previous(hdr: &Self::Hdr) -> bool {
         hdr.strmtyp == EAC3_STRMTYP_DEPENDENT
+    }
+    /// `strmtyp` is the top two bits of the byte after the syncword (ETSI TS
+    /// 102 366 §E.1.2.2). Until that byte has arrived the type is unknown and
+    /// the tail is not counted as commencing an access unit: a dependent
+    /// substream must not move the timeline anchor (issue #1186).
+    fn tail_starts_new_unit(tail: &[u8]) -> bool {
+        tail.len() > AC3_SYNC_BYTES.len() && (tail[AC3_SYNC_BYTES.len()] >> 6) != EAC3_STRMTYP_DEPENDENT
     }
 }
 
@@ -1391,6 +1404,16 @@ struct AudioAnchor {
     /// re-anchor ([`clear_audio_carry`]); a dangling tail at end of stream is
     /// simply never emitted.
     carry: Vec<u8>,
+    /// E-AC-3 with dependent substreams (issue #1186): hold the *final* whole
+    /// access unit of each PES back in `carry` instead of emitting it, because
+    /// a dependent substream that belongs to it may begin the next PES
+    /// (ETSI TS 102 366 §E.1.3.1.2: dependent substreams follow their
+    /// independent substream). Set from the track's `dec3` before each
+    /// access unit; released with the next PES, or by `finish()`.
+    hold_final_au: bool,
+    /// The wire stamps of the PES that last set `carry`, for a held access
+    /// unit emitted by `finish()` (no later PES supplies one).
+    carry_provenance: Option<Provenance>,
 }
 
 #[derive(Clone, Copy)]
@@ -2016,6 +2039,11 @@ struct PlannedFrame<'a> {
     duration: u32,
     /// The frame *began* in the carried bytes, i.e. in the previous PES.
     from_carry: bool,
+    /// Offset in the planned buffer where the frame (with any E-AC-3 dependent
+    /// substreams folded into it) starts.
+    start: usize,
+    /// Offset in the planned buffer one past the frame's last byte.
+    end: usize,
 }
 
 /// The frames cut from `carry ++ payload`, plus what to carry forward.
@@ -2063,12 +2091,14 @@ fn plan_with<'a, F: FrameSync>(
                 data: F::payload(h, f, header_len),
                 duration,
                 from_carry: start < carry_len,
+                start,
+                end: start + f.len(),
             }
         })
         .collect();
     let tail = &data[split.tail_start..];
-    let commences =
-        frames.iter().any(|f| !f.from_carry) || (!tail.is_empty() && split.tail_start >= carry_len);
+    let commences = frames.iter().any(|f| !f.from_carry)
+        || (!tail.is_empty() && split.tail_start >= carry_len && F::tail_starts_new_unit(tail));
     AudioPlan {
         frames,
         tail,
@@ -2257,6 +2287,20 @@ fn emit_audio_au(
     };
 
     let mut elapsed = 0u64;
+    // E-AC-3 dependent-substream hold-back (issue #1186): the final whole
+    // access unit may still gain a dependent substream from the next PES, so it
+    // is carried instead of emitted — together with whatever partial tail
+    // follows it, provided the two are contiguous and fit the carry bound.
+    let held_from: Option<usize> = plan.as_ref().and_then(|p| {
+        let last = p.frames.last()?;
+        let tail_start = data.len() - p.tail.len();
+        (matches!(kind, AudioKind::Eac3)
+            && anchor.hold_final_au
+            && last.data.is_some()
+            && last.end == tail_start
+            && data.len() - last.start <= AUDIO_CARRY_MAX_BYTES)
+            .then_some(last.start)
+    });
     // Every frame split out of this access unit came from the same PES packet,
     // so they share that PES header's raw 90 kHz wire stamps — that, not the
     // rescaled per-frame value, is what `Provenance` means (media plane step
@@ -2283,7 +2327,12 @@ fn emit_audio_au(
         | AudioKind::Eac3
         | AudioKind::Dts => {
             if let Some(plan) = &plan {
-                for f in &plan.frames {
+                for (i, f) in plan.frames.iter().enumerate() {
+                    if held_from.is_some() && i + 1 == plan.frames.len() {
+                        // Held back in `anchor.carry` below: neither emitted
+                        // nor counted into the cursor.
+                        break;
+                    }
                     if let Some(payload) = &f.data {
                         events.push_back(DemuxEvent::Sample {
                             track_id,
@@ -2322,11 +2371,61 @@ fn emit_audio_au(
     });
     // Hold the unfinished tail for the next PES of this PID — never more than
     // one frame's worth (see [`AUDIO_CARRY_MAX_BYTES`]).
-    if let Some(plan) = &plan
+    if let Some(from) = held_from {
+        anchor.carry = data[from..].to_vec();
+        anchor.carry_provenance = Some(au_provenance);
+    } else if let Some(plan) = &plan
         && plan.tail.len() <= AUDIO_CARRY_MAX_BYTES
     {
         anchor.carry = plan.tail.to_vec();
+        anchor.carry_provenance = Some(au_provenance);
     }
+}
+
+/// Emit the whole frames still held in a live audio track's carry at end of
+/// input (issue #1186): the E-AC-3 final access unit held back for a possible
+/// dependent substream (see [`AudioAnchor::hold_final_au`]). A partial frame
+/// tail yields no whole frame and is dropped, as before.
+fn flush_audio_carry(
+    kind: &AudioKind,
+    anchor: &mut AudioAnchor,
+    track_id: TrackId,
+    events: &mut VecDeque<DemuxEvent>,
+) {
+    let carry = core::mem::take(&mut anchor.carry);
+    let (Some(seed), false) = (anchor.seed, carry.is_empty()) else {
+        return;
+    };
+    let Some(plan) = plan_audio_frames(kind, &carry, 0) else {
+        return;
+    };
+    let mut elapsed = 0i64;
+    for f in &plan.frames {
+        if let Some(payload) = &f.data {
+            let mut sample = Sample::from_raw(
+                payload.to_vec(),
+                Some(seed.next_dts + elapsed),
+                Some(seed.next_pts + elapsed),
+                Some(f.duration),
+            );
+            if let Some(p) = anchor.carry_provenance {
+                sample = sample.with_provenance(p);
+            }
+            events.push_back(DemuxEvent::Sample { track_id, sample });
+        }
+        elapsed += f.duration as i64;
+    }
+}
+
+/// Does this E-AC-3 config carry dependent substreams (a `dec3` substream entry
+/// with `num_dep_sub > 0`, ETSI TS 102 366 §F.6.2.12, or a `chan_loc` built
+/// from a dependent frame's `chanmap`, §F.6.2.13)? Only then can a dependent
+/// frame begin a PES, so only then is the final access unit held back (see
+/// [`AudioAnchor::hold_final_au`]). `num_dep_sub` alone is not enough: it is
+/// the dependent frame's `substreamid`, which is 0 for the first one.
+fn eac3_has_dependent_substreams(config: &CodecConfig) -> bool {
+    matches!(config, CodecConfig::Eac3 { config, .. }
+        if config.substreams.iter().any(|s| s.num_dep_sub > 0 || s.chan_loc.is_some()))
 }
 
 /// Apply one access unit to an already-live track, emitting whatever
@@ -2400,6 +2499,7 @@ fn push_live_au(
             kind,
             anchor,
         } => {
+            anchor.hold_final_au = eac3_has_dependent_substreams(&live.config);
             emit_audio_au(
                 kind,
                 *sample_rate,
@@ -3059,35 +3159,7 @@ fn finalize_probe(
                 },
             ))
         }
-        ConfigProbe::Eac3 => {
-            // The `dec3` describes the bitstream's substream layout and is
-            // built from the newest access unit's *first* AU: the dependent
-            // substreams that make a programme 7.1 follow that AU's
-            // independent frame. Scanning the whole backlog would emit one
-            // substream per repeated access unit (and re-scan it on every
-            // access unit — see the O(n²) note above `finalize_probe`).
-            let start = first_sync_offset::<Eac3Sync>(latest)?;
-            let frames: alloc::vec::Vec<Ec3SyncframeInfo> =
-                Ec3SyncframeInfo::from_es_first_au(&latest[start..]);
-            let info = *frames.first()?;
-            let sample_rate = info.sample_rate;
-            let channel_count = info.channel_count() as u16;
-            let config = Ec3SpecificBox::from_syncframes(&frames).ok()?;
-            Some((
-                CodecConfig::Eac3 {
-                    config,
-                    channel_count,
-                    sample_rate,
-                    sample_size: AUDIO_SAMPLE_SIZE_BITS,
-                },
-                sample_rate,
-                LiveKind::Audio {
-                    sample_rate,
-                    kind: AudioKind::Eac3,
-                    anchor: AudioAnchor::default(),
-                },
-            ))
-        }
+        ConfigProbe::Eac3 => eac3_probe_result(latest, false),
         ConfigProbe::Dts => {
             let info = DtsCoreFrameInfo::from_es(latest).ok()?;
             let sample_rate = info.sample_rate;
@@ -3330,10 +3402,17 @@ fn advance_track(
 /// there (issue #1160).
 const AUDIO_PROBE_BOUNDARY_BYTES: usize = 16;
 
-/// The most an E-AC-3 probe holds: its `dec3` is built from a whole independent
-/// syncframe, at most `2^11` 16-bit words (ETSI TS 102 366 Annex E `frmsiz`),
+/// Syncframes an E-AC-3 probe may hold while waiting for its first access unit
+/// to complete (an independent frame, its dependent frames, then the next
+/// access unit's independent frame; issue #1186). An implementation bound, not
+/// a spec value: an access unit this long never completing means the data is
+/// not E-AC-3 framing.
+const EAC3_PROBE_MAX_FRAMES: usize = 16;
+
+/// The most an E-AC-3 probe holds: [`EAC3_PROBE_MAX_FRAMES`] syncframes of at
+/// most `2^11` 16-bit words each (ETSI TS 102 366 Annex E §E.1.3.1.3 `frmsiz`),
 /// plus a header's worth.
-const EAC3_PROBE_TAIL_MAX: usize = 2 * 2048 + AUDIO_PROBE_BOUNDARY_BYTES;
+const EAC3_PROBE_TAIL_MAX: usize = EAC3_PROBE_MAX_FRAMES * 2 * 2048 + AUDIO_PROBE_BOUNDARY_BYTES;
 
 /// The window to retry an audio config probe over when the newest access unit
 /// alone did not resolve (see [`StreamState::probe_tail`]); `None` when there is
@@ -3371,9 +3450,10 @@ fn audio_probe_next_tail(codec: Codec, tail: &[u8], latest: &[u8]) -> Vec<u8> {
         }
         Codec::Eac3 => {
             let all = [tail, latest].concat();
-            // From the first valid header, or a header prefix not yet judgeable.
+            // From the first valid *independent* header (a dependent frame is
+            // mid-access-unit, #1186), or a header prefix not yet judgeable.
             let start = (0..all.len()).find(|&at| match Eac3Sync::parse(&all[at..]) {
-                SyncParse::Frame(..) => true,
+                SyncParse::Frame(hdr, _) => hdr.strmtyp != EAC3_STRMTYP_DEPENDENT,
                 SyncParse::NeedMore => Eac3Sync::is_partial_sync(&all[at..]),
                 SyncParse::NotSync => false,
             });
@@ -3384,6 +3464,61 @@ fn audio_probe_next_tail(codec: Codec, tail: &[u8], latest: &[u8]) -> Vec<u8> {
         }
         _ => Vec::new(),
     }
+}
+
+/// Offset of the first valid *independent* (or AC-3-derived) E-AC-3 frame in
+/// `data`. A leading dependent frame belongs to an access unit that began
+/// before `data` (ETSI TS 102 366 §E.1.3.1.2: dependent substreams follow the
+/// independent substream they belong to), so a config must not be built from it.
+fn first_eac3_independent_offset(data: &[u8]) -> Option<usize> {
+    (0..data.len()).find(|&at| {
+        matches!(
+            Eac3Sync::parse(&data[at..]),
+            SyncParse::Frame(hdr, len) if len >= Eac3Sync::MIN_FRAME_LEN
+                && hdr.strmtyp != EAC3_STRMTYP_DEPENDENT
+        )
+    })
+}
+
+/// Recover an E-AC-3 track config from `latest`.
+///
+/// The `dec3` describes the bitstream's substream layout and is built from the
+/// *first access unit* found: one independent frame plus the dependent frames
+/// that follow it (the dependent substreams make a programme 7.1). Scanning the
+/// whole backlog would emit one substream per repeated access unit (and
+/// re-scan it on every access unit — see the O(n²) note above
+/// `finalize_probe`).
+///
+/// The access unit must be **provably complete** (issue #1186): until a
+/// following independent frame has been seen, a dependent frame may still be
+/// on its way in the next PES, and a `dec3` built now would silently signal 5.1
+/// for a 7.1 stream. `at_eof` (end of input: nothing more can arrive) accepts
+/// whatever the access unit holds.
+fn eac3_probe_result(latest: &[u8], at_eof: bool) -> Option<(CodecConfig, u32, LiveKind)> {
+    let start = first_eac3_independent_offset(latest)?;
+    let frames: alloc::vec::Vec<Ec3SyncframeInfo> = if at_eof {
+        Ec3SyncframeInfo::from_es_first_au(&latest[start..])
+    } else {
+        Ec3SyncframeInfo::from_es_first_complete_au(&latest[start..])?
+    };
+    let info = *frames.first()?;
+    let sample_rate = info.sample_rate;
+    let channel_count = info.channel_count() as u16;
+    let config = Ec3SpecificBox::from_syncframes(&frames).ok()?;
+    Some((
+        CodecConfig::Eac3 {
+            config,
+            channel_count,
+            sample_rate,
+            sample_size: AUDIO_SAMPLE_SIZE_BITS,
+        },
+        sample_rate,
+        LiveKind::Audio {
+            sample_rate,
+            kind: AudioKind::Eac3,
+            anchor: AudioAnchor::default(),
+        },
+    ))
 }
 
 /// Offset of the first *valid* frame header in `data` (a header that parses and
@@ -4896,6 +5031,31 @@ impl StreamingTsDemux {
                 }
             }
         }
+        // End of input is the only thing that can complete a first E-AC-3 access
+        // unit that no later independent frame closed (issue #1186): resolve
+        // from what the probe holds rather than abandoning the track.
+        for stream in self.streams.values_mut() {
+            if stream.codec != Codec::Eac3
+                || stream.probe_tail.is_empty()
+                || !matches!(stream.track, Some(TrackState::Probing { .. }))
+            {
+                continue;
+            }
+            let Some(TrackState::Probing { probe, backlog }) = stream.track.take() else {
+                continue;
+            };
+            let resolved = eac3_probe_result(&stream.probe_tail, true);
+            stream.probe_tail = Vec::new();
+            stream.track = Some(match resolved {
+                Some((config, timescale, kind)) => TrackState::Parked {
+                    config,
+                    timescale,
+                    kind,
+                    backlog,
+                },
+                None => TrackState::Probing { probe, backlog },
+            });
+        }
         self.try_promote_ready();
 
         while let Some(&next_pid) = self
@@ -4944,7 +5104,9 @@ impl StreamingTsDemux {
                     } => {
                         flush_one_behind(pending, *last_duration, live.track_id, &mut self.events);
                     }
-                    LiveKind::Audio { .. } => {}
+                    LiveKind::Audio { kind, anchor, .. } => {
+                        flush_audio_carry(kind, anchor, live.track_id, &mut self.events);
+                    }
                     LiveKind::Section => {}
                 }
             }
@@ -10565,6 +10727,227 @@ mod tests {
                 p,
             );
         }
+    }
+
+    // ── E-AC-3 dependent substreams across PES boundaries (issue #1186) ────
+    //
+    // PROVENANCE: no real E-AC-3 capture with dependent substreams exists on
+    // this machine or in the repo (`ac3.rs::seven_one_eac3_es` documents that
+    // the bundled Dolby captures are 5.1 and ffmpeg's `eac3` encoder cannot
+    // emit above 5.1). The independent frames below are therefore REAL (the
+    // committed `fixtures/ts/dolby/eac3.ts` capture's own frames) where
+    // marked; the dependent frame is built from the ETSI TS 102 366 §E.1.2.2
+    // `bsi()` syntax (strmtyp 1, `chanmap` Lrs/Rrs + Cs per Table E.1.4), and
+    // §E.1.3.1.2 ("Dependent substreams shall immediately follow the
+    // independent substream with which they are associated") is the rule
+    // under test.
+
+    /// Dependent-substream syncframe of 64 bytes (`frmsiz = 31`): `syncword |
+    /// strmtyp=1 substreamid=1 frmsiz | fscod=0 numblkscod=3 acmod=2 lfeon=0 |
+    /// bsid=16 | dialnorm compre chanmape=1 chanmap | mixmdate=0 infomdate=0`
+    /// (§E.1.2.2), filler body varying by `n`.
+    fn eac3_dependent_frame(n: usize) -> Vec<u8> {
+        let mut h = alloc::vec![0x0B, 0x77];
+        let mut nb = 16;
+        put_bits(&mut h, &mut nb, 1, 2); // strmtyp = dependent
+        put_bits(&mut h, &mut nb, 1, 3); // substreamid
+        put_bits(&mut h, &mut nb, 31, 11); // frmsiz
+        put_bits(&mut h, &mut nb, 0, 2); // fscod
+        put_bits(&mut h, &mut nb, 3, 2); // numblkscod
+        put_bits(&mut h, &mut nb, 2, 3); // acmod
+        put_bits(&mut h, &mut nb, 0, 1); // lfeon
+        put_bits(&mut h, &mut nb, 16, 5); // bsid
+        put_bits(&mut h, &mut nb, 31, 5); // dialnorm
+        put_bits(&mut h, &mut nb, 0, 1); // compre
+        put_bits(&mut h, &mut nb, 1, 1); // chanmape
+        // Table E.1.4 bits 6 (Lrs/Rrs) and 7 (Cs), bit 0 = MSB.
+        put_bits(&mut h, &mut nb, (1 << 9) | (1 << 8), 16); // chanmap
+        put_bits(&mut h, &mut nb, 0, 1); // mixmdate
+        put_bits(&mut h, &mut nb, 0, 1); // infomdate
+        let hdr = h.len();
+        h.extend_from_slice(&body_bytes(n + 1000, 64 - hdr));
+        assert_eq!(h.len(), 64);
+        let info = Ec3SyncframeInfo::parse_at(&h, 0).unwrap();
+        assert_eq!(info.strmtyp, EAC3_STRMTYP_DEPENDENT);
+        h
+    }
+
+    /// `n` access units of `independent(i) ++ eac3_dependent_frame(i)`.
+    fn eac3_aus(independent: impl Fn(usize) -> Vec<u8>, n: usize) -> AudioEs {
+        audio_es(
+            (0..n)
+                .map(|i| [independent(i), eac3_dependent_frame(i)].concat())
+                .collect(),
+        )
+    }
+
+    /// The real independent frames of the committed Dolby E-AC-3 capture.
+    fn real_eac3_independent_frames() -> Vec<Vec<u8>> {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/ts/dolby/eac3.ts"
+        );
+        let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
+        let media = TsDemux::new().demux(&ts).expect("demux real E-AC-3");
+        media.tracks[0]
+            .samples
+            .iter()
+            .map(|s| s.data.to_vec())
+            .collect()
+    }
+
+    /// PES sizes that put a boundary at every `split` bytes into an access unit
+    /// of `au_len`: first PES = `split` bytes, then whole-AU strides.
+    fn boundary_sizes(split: usize, au_len: usize) -> Vec<usize> {
+        let mut v = alloc::vec![split];
+        v.extend(core::iter::repeat_n(au_len, 64));
+        v
+    }
+
+    /// Config of the first track of `ts`.
+    fn first_track_config(ts: &[u8]) -> CodecConfig {
+        let media = TsDemux::new().demux(ts).expect("demux");
+        media.tracks[0].spec.config.clone()
+    }
+
+    #[test]
+    fn eac3_dependent_substream_starting_a_pes_joins_its_access_unit() {
+        let es = eac3_aus(eac3_frame, 12);
+        let au_len = es.frames[0].len();
+        // 128 = the boundary falls exactly between the independent frame and
+        // its dependent frame, so the dependent frame STARTS a PES — the
+        // reported defect. The others cut inside the dependent frame's header
+        // and body, or at the access-unit boundary itself.
+        for split in [128usize, 129, 131, 133, 140, 190, 192, 100, 5, au_len] {
+            assert_carry_contract(
+                &alloc::format!("eac3+dep split {split}"),
+                STREAM_TYPE_EAC3,
+                &es,
+                0,
+                1536,
+                &boundary_sizes(split, au_len),
+            );
+        }
+        // Boundaries everywhere, not aligned to anything.
+        for p in [&[1usize][..], &[7], &[300, 13], &[1000]] {
+            assert_carry_contract(
+                &alloc::format!("eac3+dep {p:?}"),
+                STREAM_TYPE_EAC3,
+                &es,
+                0,
+                1536,
+                p,
+            );
+        }
+    }
+
+    #[test]
+    fn eac3_real_independent_frames_with_dependents_join_across_pes() {
+        let real = real_eac3_independent_frames();
+        assert!(real.len() >= 12, "the real capture carries many frames");
+        // The capture is 44.1 kHz (fscod 1), 1536 samples per frame.
+        const REAL_RATE: i64 = 44_100;
+        let es = eac3_aus(|i| real[i % real.len()].clone(), 12);
+        let ind_len = real[0].len();
+        for split in [ind_len, ind_len + 3, ind_len + 40] {
+            let ts = audio_ts(
+                STREAM_TYPE_EAC3,
+                &es,
+                &boundary_sizes(split, es.frames[0].len()),
+                1536 * 90_000 / REAL_RATE,
+            );
+            let (samples, disc) = observe(&ts, ts.len());
+            assert_eq!(disc, 0, "split {split}: no Discontinuity");
+            assert_eq!(
+                samples.len(),
+                es.frames.len(),
+                "split {split}: one sample per access unit — the dependent frame that starts a PES is NOT its own sample"
+            );
+            for (n, (data, dts, _, dur)) in samples.iter().enumerate() {
+                assert_eq!(data, &es.frames[n], "split {split}: AU {n} byte-exact");
+                assert_eq!(*dur, Some(1536));
+                assert_eq!(*dts, Some(samples[0].1.unwrap() + n as i64 * 1536));
+            }
+            let CodecConfig::Eac3 { config, .. } = first_track_config(&ts) else {
+                panic!("E-AC-3 track expected");
+            };
+            assert!(config.substreams[0].chan_loc.is_some(), "dec3 carries the dependent substream");
+        }
+    }
+
+    /// Config recovery needs the WHOLE first access unit: a PES that ends right
+    /// after the independent frame must not yield a `dec3` without the
+    /// dependent substream (it signalled 5.1 for a 7.1 stream).
+    #[test]
+    fn eac3_config_recovery_waits_for_the_dependent_substream() {
+        let es = eac3_aus(eac3_frame, 8);
+        let au_len = es.frames[0].len();
+        for split in [128usize, 131, 190] {
+            let ts = audio_ts(
+                STREAM_TYPE_EAC3,
+                &es,
+                &boundary_sizes(split, au_len),
+                1536 * 90_000 / CARRY_SAMPLE_RATE,
+            );
+            let CodecConfig::Eac3 { config, .. } = first_track_config(&ts) else {
+                panic!("E-AC-3 track expected");
+            };
+            let s0 = &config.substreams[0];
+            assert!(
+                s0.chan_loc.is_some() && s0.num_dep_sub == 1,
+                "split {split}: dec3 must describe the dependent substream, got {config:?}"
+            );
+            assert_eq!(s0.chan_loc, Some(0b110), "Lrs/Rrs + Cs");
+        }
+    }
+
+    /// End of input is the only thing that completes a one-access-unit stream:
+    /// it must still resolve (with its dependent substream) and its sample must
+    /// be emitted (it is held back for a dependent that never comes).
+    #[test]
+    fn eac3_single_access_unit_stream_resolves_at_end_of_input() {
+        let es = eac3_aus(eac3_frame, 1);
+        let au_len = es.frames[0].len();
+        let ts = audio_ts(
+            STREAM_TYPE_EAC3,
+            &es,
+            &boundary_sizes(128, au_len),
+            1536 * 90_000 / CARRY_SAMPLE_RATE,
+        );
+        let media = TsDemux::new().demux(&ts).expect("demux");
+        let CodecConfig::Eac3 { config, .. } = &media.tracks[0].spec.config else {
+            panic!("E-AC-3 track expected");
+        };
+        assert!(config.substreams[0].chan_loc.is_some());
+        assert_eq!(media.tracks[0].samples.len(), 1);
+        assert_eq!(&media.tracks[0].samples[0].data[..], &es.frames[0][..]);
+    }
+
+    /// Streams with NO dependent substreams are untouched: nothing is held
+    /// back, so every sample is emitted as the PES arrives (real capture).
+    #[test]
+    fn eac3_without_dependents_emits_each_access_unit_immediately() {
+        let real = real_eac3_independent_frames();
+        let ts = std::fs::read(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../fixtures/ts/dolby/eac3.ts"
+        ))
+        .unwrap();
+        let mut d = StreamingTsDemux::new();
+        let mut got = 0usize;
+        for c in ts.chunks(188) {
+            d.feed(c);
+            while let Some(e) = d.poll_event() {
+                got += usize::from(matches!(e, DemuxEvent::Sample { .. }));
+            }
+        }
+        // Before finish(): all but the last PES's frames are out already, and
+        // the count is within one PES of the total (no frame withheld).
+        assert!(
+            got + 8 >= real.len(),
+            "no per-PES hold-back without dependents: {got} of {}",
+            real.len()
+        );
     }
 
     #[test]
