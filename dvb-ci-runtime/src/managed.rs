@@ -314,10 +314,7 @@ impl ManagedCa {
     /// Calling this before any `ca_info` is not an error: the map is kept so
     /// a later [`set_cam_caids`](Self::set_cam_caids) recomputes against it.
     pub(crate) fn set_cat(&mut self, entries: &[CatCaEntry]) {
-        self.cat_emm_pids = entries
-            .iter()
-            .map(|e| (e.ca_system_id, e.ca_pid))
-            .collect();
+        self.cat_emm_pids = entries.iter().map(|e| (e.ca_system_id, e.ca_pid)).collect();
         self.recompute_emm_pids();
     }
 
@@ -479,11 +476,7 @@ pub(crate) fn service_of(
         ca_pids.extend(ca_pids_in(&s.es_info));
     }
     ManagedService {
-        es_pids: pmt
-            .streams
-            .iter()
-            .map(|s| s.elementary_pid)
-            .collect(),
+        es_pids: pmt.streams.iter().map(|s| s.elementary_pid).collect(),
         ca_pids,
         pcr_pid: pmt.pcr_pid,
         cmd,
@@ -853,7 +846,8 @@ mod tests {
         let pmt_bytes = crate::driver::tests::build_ca_pmt_fixture_dedicated_pcr(1550);
         let pmt = PmtSection::parse(&pmt_bytes).unwrap();
         assert_eq!(
-            pmt.pcr_pid, Pid::new(0x00FF),
+            pmt.pcr_pid,
+            Pid::new(0x00FF),
             "fixture precondition: dedicated PCR PID outside the ES/CA set"
         );
 

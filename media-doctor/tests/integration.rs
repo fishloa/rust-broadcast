@@ -528,11 +528,16 @@ fn pat_pmt_ts(
         current_next,
         0,
         0,
-        streams.first().map(|&(pid, _)| Pid::new(pid)).unwrap_or(Pid::new(0x1FFF)),
+        streams
+            .first()
+            .map(|&(pid, _)| Pid::new(pid))
+            .unwrap_or(Pid::new(0x1FFF)),
         DescriptorLoop::new(&[]),
         streams
             .iter()
-            .map(|&(pid, stream_type)| PmtStream::new(stream_type, Pid::new(pid), DescriptorLoop::new(&[])))
+            .map(|&(pid, stream_type)| {
+                PmtStream::new(stream_type, Pid::new(pid), DescriptorLoop::new(&[]))
+            })
             .collect(),
     );
     let mut pmt_bytes = vec![0u8; pmt.serialized_len()];
@@ -540,9 +545,7 @@ fn pat_pmt_ts(
     pmt_bytes.truncate(n);
 
     let mut ts = Vec::new();
-    for packet in
-        SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes])
-    {
+    for packet in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes]) {
         ts.extend_from_slice(&packet);
     }
     for packet in SectionPacketiser::new(Pid::new(PAT_PMT_PID)).packetise(&[&pmt_bytes]) {
@@ -753,7 +756,10 @@ fn nit_and_null_pids_are_not_tracked() {
         true,
         0,
         0,
-        vec![PatEntry::new(0, Pid::new(0x0010)), PatEntry::new(1, Pid::new(0x1FFF))],
+        vec![
+            PatEntry::new(0, Pid::new(0x0010)),
+            PatEntry::new(1, Pid::new(0x1FFF)),
+        ],
     );
     let mut buf = vec![0u8; pat.serialized_len()];
     let n = pat.serialize_into(&mut buf).expect("serialize PAT");

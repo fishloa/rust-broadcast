@@ -90,9 +90,7 @@ fn current_pat(raw: &[u8]) -> Option<PatSection> {
 fn declared_pmt_pids(pat: &PatSection) -> impl Iterator<Item = Pid> + '_ {
     pat.entries.iter().filter_map(|entry| {
         let pid = entry.pid;
-        (entry.program_number != pat::PROGRAM_NUMBER_NIT
-            && pid != pat::PID
-            && pid != NULL_PID)
+        (entry.program_number != pat::PROGRAM_NUMBER_NIT && pid != pat::PID && pid != NULL_PID)
             .then_some(pid)
     })
 }
@@ -193,10 +191,7 @@ impl Diagnostic for PatPmtVersionCheck {
 
             // Feed payload into section reassembler.
             let pusi = pkt.header.pusi;
-            reassemblers
-                .get_mut(&pid)
-                .unwrap()
-                .feed(payload, pusi);
+            reassemblers.get_mut(&pid).unwrap().feed(payload, pusi);
 
             // Collect new PMT PIDs discovered during drain — we cannot borrow
             // `reassemblers` mutably while iterating over sections.

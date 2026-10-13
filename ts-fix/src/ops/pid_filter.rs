@@ -297,7 +297,7 @@ impl PidFilterOp {
                         let pmt_pid = entry.pid;
                         *state = ServiceState::WaitingPmt {
                             program_number: pn,
-                            pmt_pid: pmt_pid,
+                            pmt_pid,
                             pmt_reasm: SectionReassembler::default(),
                         };
                         return;

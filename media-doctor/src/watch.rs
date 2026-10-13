@@ -799,14 +799,7 @@ pub(crate) mod tests {
     ) {
         use broadcast_common::Serialize;
         use dvb_si::tables::pat::{PatEntry, PatSection};
-        let pat = PatSection::new(
-            1,
-            0,
-            true,
-            0,
-            0,
-            alloc::vec![PatEntry::new(1, PAT_PMT_PID)],
-        );
+        let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PAT_PMT_PID)]);
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         let n = pat.serialize_into(&mut pat_bytes).expect("serialize PAT");
         pat_bytes.truncate(n);
@@ -900,7 +893,10 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            streams.first().map(|s| s.elementary_pid).unwrap_or(Pid::new(0x1FFF)),
+            streams
+                .first()
+                .map(|s| s.elementary_pid)
+                .unwrap_or(Pid::new(0x1FFF)),
             DescriptorLoop::new(&[]),
             streams,
         );
@@ -1155,14 +1151,7 @@ pub(crate) mod tests {
             pkt
         }
 
-        let pat = PatSection::new(
-            1,
-            0,
-            true,
-            0,
-            0,
-            alloc::vec![PatEntry::new(1, PMT_PID)],
-        );
+        let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PMT_PID)]);
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
 
@@ -1288,14 +1277,7 @@ pub(crate) mod tests {
             .to_bytes()
         }
 
-        let pat = PatSection::new(
-            1,
-            0,
-            true,
-            0,
-            0,
-            alloc::vec![PatEntry::new(1, PMT_PID)],
-        );
+        let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PMT_PID)]);
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
 
@@ -1421,14 +1403,7 @@ pub(crate) mod tests {
             pkt
         }
 
-        let pat = PatSection::new(
-            1,
-            0,
-            true,
-            0,
-            0,
-            alloc::vec![PatEntry::new(1, PMT_PID)],
-        );
+        let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PMT_PID)]);
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
 
@@ -1547,14 +1522,7 @@ pub(crate) mod tests {
             pkt
         }
 
-        let pat = PatSection::new(
-            1,
-            0,
-            true,
-            0,
-            0,
-            alloc::vec![PatEntry::new(1, PMT_PID)],
-        );
+        let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PMT_PID)]);
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
 

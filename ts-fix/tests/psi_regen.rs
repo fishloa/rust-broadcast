@@ -83,10 +83,7 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         true,
         0,
         0,
-        vec![
-            PatEntry::new(1, PMT1_PID),
-            PatEntry::new(2, PMT2_PID),
-        ],
+        vec![PatEntry::new(1, PMT1_PID), PatEntry::new(2, PMT2_PID)],
     );
     let pat_section_bytes = serialize_pat(&pat);
     let mut pat_pktz = SectionPacketiser::new(PAT_PID);

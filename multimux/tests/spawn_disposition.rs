@@ -32,7 +32,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
         641,
         "spawn_blocking DVR persist; awaited inline",
     ),
-    ("dvr.rs", 595, "spawn_blocking DVR write; awaited inline"),
+    ("dvr.rs", 594, "spawn_blocking DVR write; awaited inline"),
     (
         "source/pull.rs",
         174,

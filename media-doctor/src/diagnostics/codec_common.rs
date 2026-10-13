@@ -53,9 +53,7 @@ pub(crate) struct DeclaredStream {
 pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
     let n_packets = ts.len() / TS_PACKET_SIZE;
     let mut reassemblers: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
-    reassemblers
-        .entry(dvb_si::tables::pat::PID)
-        .or_default();
+    reassemblers.entry(dvb_si::tables::pat::PID).or_default();
 
     let mut pmt_pids: Vec<Pid> = Vec::new();
     let mut declared: BTreeMap<Pid, StreamType> = BTreeMap::new();
@@ -245,7 +243,9 @@ pub(crate) mod tests {
         );
         let pmt_streams: Vec<PmtStream<'_>> = streams
             .iter()
-            .map(|&(pid, stream_type)| PmtStream::new(stream_type, Pid::new(pid), DescriptorLoop::new(&[])))
+            .map(|&(pid, stream_type)| {
+                PmtStream::new(stream_type, Pid::new(pid), DescriptorLoop::new(&[]))
+            })
             .collect();
         let pcr_pid = streams.first().map(|&(pid, _)| pid).unwrap_or(0x1FFF);
         let pmt = PmtSection::new(
@@ -263,9 +263,7 @@ pub(crate) mod tests {
         let pmt_bytes = serialize_section(&pmt);
 
         let mut ts = Vec::new();
-        for pkt in
-            SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes])
-        {
+        for pkt in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes]) {
             ts.extend_from_slice(&pkt);
         }
         for pkt in SectionPacketiser::new(TEST_PMT_PID).packetise(&[&pmt_bytes]) {
@@ -288,17 +286,13 @@ pub(crate) mod tests {
             0,
             programs
                 .iter()
-                .map(|&(program_number, _, _, _)| {
-                    PatEntry::new(program_number, TEST_PMT_PID)
-                })
+                .map(|&(program_number, _, _, _)| PatEntry::new(program_number, TEST_PMT_PID))
                 .collect(),
         );
         let pat_bytes = serialize_section(&pat);
 
         let mut ts = Vec::new();
-        for pkt in
-            SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes])
-        {
+        for pkt in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes]) {
             ts.extend_from_slice(&pkt);
         }
         for &(program_number, elementary_pid, stream_type, version_number) in programs {
