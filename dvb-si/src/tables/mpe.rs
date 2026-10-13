@@ -9,8 +9,8 @@
 //! decodes into MAC address + scrambling control + payload fields.
 //!
 //! Like DSM-CC, MPE has no well-known PID — the elementary PID is signalled by
-//! the PMT (via a `data_broadcast_descriptor`, EN 301 192 §7.2.1) — so [`PID`]
-//! is `0x0000`, following the `dsmcc.rs` precedent.
+//! the PMT (via a `data_broadcast_descriptor`, EN 301 192 §7.2.1) — so this
+//! module exports no `PID` constant (the `dsmcc.rs` precedent).
 //!
 //! Per the crate contract this parser does NOT verify the trailing CRC/checksum
 //! integrity; [`broadcast_common`]'s section machinery owns CRC validation. Reserved

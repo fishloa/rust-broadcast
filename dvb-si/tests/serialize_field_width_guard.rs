@@ -63,7 +63,7 @@ fn mvc_extension_10_bit_indices_and_3_bit_temporal_ids() {
         |d: &mut MvcExtensionDescriptor| d.temporal_id_start = 8,
         |d: &mut MvcExtensionDescriptor| d.temporal_id_end = 8,
     ] {
-        let mut d = ok.clone();
+        let mut d = ok;
         edit(&mut d);
         assert!(is_overflow(ser(&d)));
     }

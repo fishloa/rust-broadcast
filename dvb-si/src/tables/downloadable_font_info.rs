@@ -5,7 +5,7 @@
 //! font family. Sections of a Downloadable Font Information Table (DFIT) are
 //! carried together on one PID, signalled in the PMT by a `data_broadcast_id`
 //! descriptor with `data_broadcast_id` 0x000D (§5.3.2.3.1) — there is no
-//! well-known PID, so [`PID`] follows the `dsmcc.rs` "no fixed PID" convention.
+//! well-known PID, so this module exports no `PID` constant (`dsmcc.rs` convention).
 //!
 //! ## table_id
 //!
