@@ -11,7 +11,7 @@ fn main() {
     // A multi-segment PES data field: DDS, PCS, ODS, EDS.
     let bytes = [
         DATA_IDENTIFIER, // 0x20
-        0x00,           // subtitle_stream_id
+        0x00,            // subtitle_stream_id
         // Display definition segment (no window)
         SYNC_BYTE,
         0x14,

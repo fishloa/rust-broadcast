@@ -232,10 +232,7 @@ impl<'a> Pull<'a> {
             });
         }
         let consumed = core::cell::RefCell::new(alloc::vec![false; attributes.len()]);
-        let prefix = e
-            .name()
-            .prefix()
-            .map(|p| String::from(p.into_inner()));
+        let prefix = e.name().prefix().map(|p| String::from(p.into_inner()));
         Ok(StartTag {
             namespace,
             prefix,

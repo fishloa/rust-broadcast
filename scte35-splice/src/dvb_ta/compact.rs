@@ -515,8 +515,7 @@ impl Serialize for CompactSpliceInsert {
         if let (Some(das), Some(desc_len)) = (&self.das, desc_len) {
             w.write_bits(u64::from(desc_len), 8).map_err(e)?;
             w.write_bits(u64::from(das.break_num), 8).map_err(e)?;
-            w.write_bits(u64::from(das.breaks_expected), 8)
-                .map_err(e)?;
+            w.write_bits(u64::from(das.breaks_expected), 8).map_err(e)?;
             w.write_bits(u64::from(das.equivalent_segmentation_type.bits()), 4)
                 .map_err(e)?;
             w.write_bits(u64::from(das.reserved), DAS_RESERVED_BITS)
@@ -629,7 +628,10 @@ mod tests {
     fn time_signal_truncated_is_an_error() {
         let bytes = sample_time_signal().to_bytes();
         for cut in 0..bytes.len() {
-            assert!(CompactTimeSignal::parse(&bytes[..cut]).is_err(), "cut {cut}");
+            assert!(
+                CompactTimeSignal::parse(&bytes[..cut]).is_err(),
+                "cut {cut}"
+            );
         }
     }
 
@@ -708,7 +710,10 @@ mod tests {
             (3 + 19, 8),
             (2, 8),
             (5, 8),
-            (u64::from(EquivalentSegmentationType::DistributorPlacementOpportunity.bits()), 4),
+            (
+                u64::from(EquivalentSegmentationType::DistributorPlacementOpportunity.bits()),
+                4
+            ),
             (0x0A, 4),
         ];
         for &b in b"urn:tv.acme:B637643" {

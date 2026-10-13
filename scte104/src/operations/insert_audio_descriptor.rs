@@ -89,8 +89,10 @@ impl Serialize for InsertAudioDescriptor {
                 have: buf.len(),
             });
         }
-        buf[0] =
-            broadcast_common::len::fit_u8(self.entries.len(), "insert_audio_descriptor.audio_count")?;
+        buf[0] = broadcast_common::len::fit_u8(
+            self.entries.len(),
+            "insert_audio_descriptor.audio_count",
+        )?;
         for (chunk, e) in buf[1..need].chunks_exact_mut(ENTRY_LEN).zip(&self.entries) {
             chunk[0] = e.component_tag;
             chunk[1..4].copy_from_slice(&e.iso_code);

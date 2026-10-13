@@ -2215,9 +2215,7 @@ fn parse_p_element(p: &mut Pull<'_>, node: &StartTag) -> Result<PElement> {
                     animations.push(AnimationChild::Set(*parse_set_element(p, &child)?));
                 }
                 _ => {
-                    content.push(InlineContent::Unknown(parse_unknown_element(
-                        p, &child, 0,
-                    )?));
+                    content.push(InlineContent::Unknown(parse_unknown_element(p, &child, 0)?));
                 }
             },
             Item::Other => {}

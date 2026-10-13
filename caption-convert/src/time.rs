@@ -131,7 +131,10 @@ mod tests {
     #[test]
     fn round_trip_basic() {
         assert_eq!(parse_timestamp("00:00:01.000", '.').unwrap(), 90_000);
-        assert_eq!(parse_timestamp("01:00:00.000", '.').unwrap(), 3_600 * 90_000);
+        assert_eq!(
+            parse_timestamp("01:00:00.000", '.').unwrap(),
+            3_600 * 90_000
+        );
         assert_eq!(parse_timestamp("00:00:00.001", '.').unwrap(), 90);
     }
 
@@ -166,7 +169,10 @@ mod tests {
 
     #[test]
     fn comma_separator_is_parsed_in_place() {
-        assert_eq!(parse_timestamp("00:00:01,500", ',').unwrap(), 90_000 + 45_000);
+        assert_eq!(
+            parse_timestamp("00:00:01,500", ',').unwrap(),
+            90_000 + 45_000
+        );
         // The wrong separator for the format is an error, not a silent accept.
         assert!(parse_timestamp("00:00:01,500", '.').is_err());
         assert!(parse_timestamp("00:00:01.500", ',').is_err());

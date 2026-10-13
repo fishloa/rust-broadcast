@@ -1841,9 +1841,11 @@ mod tests {
         txt(DataUnitId::InvertedTeletext, FRAMING_CODE_INVERTED)
             .validate()
             .unwrap();
-        assert!(txt(DataUnitId::InvertedTeletext, FRAMING_CODE_EBU)
-            .validate()
-            .is_err());
+        assert!(
+            txt(DataUnitId::InvertedTeletext, FRAMING_CODE_EBU)
+                .validate()
+                .is_err()
+        );
 
         // Monochrome sample range.
         let mono = |samples: &'static [u8]| {

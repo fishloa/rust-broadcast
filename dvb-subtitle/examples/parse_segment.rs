@@ -9,10 +9,10 @@ fn main() {
     // A complete PES data field with one display definition segment (no window).
     let bytes = [
         DATA_IDENTIFIER, // 0x20
-        0x00,           // subtitle_stream_id = 0x00
+        0x00,            // subtitle_stream_id = 0x00
         // Display definition segment (segment_type 0x14, no window):
         SYNC_BYTE, // 0x0F
-        0x14,     // segment_type = display_definition
+        0x14,      // segment_type = display_definition
         0x00,
         0x01, // page_id = 1
         0x00,
@@ -21,7 +21,7 @@ fn main() {
         0x02,
         0xCF, // display_width  = 720-1 = 719
         0x01,
-        0x1F,           // display_height = 288-1 = 287
+        0x1F,              // display_height = 288-1 = 287
         END_OF_PES_MARKER, // 0xFF
     ];
 

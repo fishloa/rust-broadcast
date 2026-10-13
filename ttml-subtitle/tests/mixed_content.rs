@@ -38,7 +38,10 @@ fn hoisted_metadata_adds_no_whitespace_text_to_a_preserve_paragraph() {
         "{out}"
     );
     let mut again = Document::parse_str(&out).unwrap();
-    assert_eq!(d, again, "text content must be identical after a round trip");
+    assert_eq!(
+        d, again,
+        "text content must be identical after a round trip"
+    );
     assert_eq!(again.to_xml(), out);
 }
 
@@ -110,7 +113,10 @@ fn span_metadata_and_animation_children_are_serialized() {
     assert_eq!(span.animations.len(), 1);
     let out = d.to_xml();
     assert!(out.contains("<ttm:title>m</ttm:title>"), "{out}");
-    assert!(out.contains(r#"<set begin="1s" tts:color="red"/>"#), "{out}");
+    assert!(
+        out.contains(r#"<set begin="1s" tts:color="red"/>"#),
+        "{out}"
+    );
     assert!(out.contains("<v:y/>"), "{out}");
     assert_eq!(Document::parse_str(&out).unwrap(), d);
 }
