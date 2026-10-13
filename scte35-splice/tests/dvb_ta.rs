@@ -69,10 +69,12 @@ fn compact_splice_insert_with_das_round_trips() {
         unique_program_id: 0x1234,
         avail_num: 1,
         avails_expected: 3,
+        reserved: scte35_splice::dvb_ta::SI_RESERVED_DEFAULT,
         das: Some(CompactDas {
             break_num: 1,
             breaks_expected: 2,
             equivalent_segmentation_type: EquivalentSegmentationType::ProviderPlacementOpportunity,
+            reserved: scte35_splice::dvb_ta::DAS_RESERVED_DEFAULT,
             upid: EXAMPLE_UPID.to_vec(),
         }),
         e_crc_32: None,

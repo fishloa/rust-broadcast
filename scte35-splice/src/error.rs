@@ -50,18 +50,6 @@ pub enum Error {
         expected: u8,
     },
 
-    /// `splice_command_type` byte did not match the value the invoked command
-    /// parser expected (§9.6.1, Table 7).
-    #[error("unexpected splice_command_type {got:#04x} for {what} (expected {expected:#04x})")]
-    UnexpectedCommandType {
-        /// Command type byte actually read.
-        got: u8,
-        /// Command parser invoked.
-        what: &'static str,
-        /// Command type the parser expected.
-        expected: u8,
-    },
-
     /// A field carried a value the structure cannot represent or that violates
     /// a spec constraint (e.g. a 33-bit field given a value ≥ 2^33).
     #[error("invalid value for {field}: {reason}")]

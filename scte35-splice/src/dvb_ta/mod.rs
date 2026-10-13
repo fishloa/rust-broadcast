@@ -41,7 +41,10 @@ pub mod das_descriptor;
 pub mod profiling;
 pub mod stream_event;
 
-pub use compact::{CompactDas, CompactScte35, CompactSpliceInsert, CompactTimeSignal};
+pub use compact::{
+    CompactDas, CompactScte35, CompactSpliceInsert, CompactTimeSignal, DAS_RESERVED_DEFAULT,
+    SI_RESERVED_DEFAULT,
+};
 pub use das_descriptor::{DVB_IDENTIFIER, DvbDasDescriptor, EquivalentSegmentationType};
 pub use profiling::{PlacementOpportunity, ProfileViolation, validate_po_segmentation};
 pub use stream_event::{

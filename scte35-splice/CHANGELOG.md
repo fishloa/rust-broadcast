@@ -2,6 +2,23 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- `dvb_ta::compact`: `compact_time_signal()` / `compact_splice_insert()` now use
+  the bit packing of ETSI TS 103 752-1 V1.2.1 Tables 6 and 8 as re-aligned from
+  the PDF (the "No. of Bits" column is offset one row from `cw_index`): no
+  reserved bits between `encryption_algorithm`/`cw_index`/`pts_time`, a 6-bit
+  `reserved` after `DAS_descriptor_flag`, and `equivalent_segmentation_type`
+  (high nibble) before the 4-bit `reserved` in the DAS block. The previous
+  layout inserted SCTE 35-style reserved bits the table does not list, so every
+  compact message was misdecoded (#1102 W5). `CompactSpliceInsert` gains
+  `reserved: u8` and `CompactDas` gains `reserved: u8` (typed, preserved on
+  round-trip; defaults `SI_RESERVED_DEFAULT` / `DAS_RESERVED_DEFAULT`).
+- Removed the never-constructed `Error::UnexpectedCommandType` (#1102 O2).
+
+### Fixed
+- `time::ticks_to_duration` saturates instead of wrapping for an out-of-field
+  tick count (#1102 O1).
+
 ## [3.0.1] - 2026-10-13
 ### Changed
 

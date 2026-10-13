@@ -13,13 +13,22 @@ The compact format is used in watermark carriage only. The non-compact
 ("Standard Encoding Format", §8.3.2) reuses the full SCTE 35 message profile of
 §5.3 unchanged.
 
-> ⚠ **Bit-width caveat (whole document).** The "No. of Bits" column of Tables 6
-> and 8 in the PDF render is vertically mis-registered against the syntax rows in
-> several places (the values column drifts relative to the field names). Each
-> table below transcribes the rendered values **and** gives the most-likely
-> intended widths cross-checked against §5.3.5.11 and the `DVB_DAS_descriptor()`
-> (Table 1, see [`das-descriptor.md`](das-descriptor.md)). **Verify Tables 6 and 8
-> bit widths against a clean copy of the PDF before implementing.**
+> **Bit-width resolution (#1102 W5).** The "No. of Bits" column of Tables 6 and 8
+> in the PDF is offset by **one row** from `cw_index` downwards (the text layer
+> puts `8` on the `pts_time` row, `33` on `segmentation_event_id`, ...). Shifting
+> the column back one row gives an unambiguous, padding-free packing that sums to
+> whole bytes in both tables:
+>
+> - Table 6: `1+6+8+33+32+40+8+8` = 136 bits (17 bytes) to `segmentation_upid_length`.
+> - Table 8: `1+6+8+33+32+33+16+8+8` = 145, plus `DAS_descriptor_flag` (1) and
+>   `reserved` (**6**) = 152 bits (19 bytes); inside the DAS block
+>   `descriptor_length` 8, `break_num` 8, `breaks_expected` 8,
+>   `equivalent_segmentation_type` 4, `reserved` 4, `upid()` `(N-3)*8`.
+> - `E_CRC_32` renders as `8` next to an `rpchof` mnemonic; read as the 32-bit CRC.
+>
+> The tables below keep the as-rendered columns for the audit trail; the
+> implemented widths are the ones above. There are no SCTE 35-style reserved bits
+> between `encryption_algorithm`, `cw_index` and `pts_time`.
 
 ## Table 5 — `compact_SCTE_35()`
 
