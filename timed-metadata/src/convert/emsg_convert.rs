@@ -48,6 +48,7 @@ pub fn emsg_to_v1<'a>(emsg: &EmsgBox<'a>, timing: &SegmentTiming) -> Result<Emsg
     let t = movie_timeline_t(emsg, timing)?;
 
     Ok(EmsgBox {
+        flags: emsg.flags,
         scheme_id_uri: emsg.scheme_id_uri,
         value: emsg.value,
         timescale: emsg.timescale,
@@ -76,6 +77,7 @@ pub fn emsg_to_v0<'a>(emsg: &EmsgBox<'a>, timing: &SegmentTiming) -> Result<Emsg
     }
 
     Ok(EmsgBox {
+        flags: emsg.flags,
         scheme_id_uri: emsg.scheme_id_uri,
         value: emsg.value,
         timescale: emsg.timescale,
@@ -115,6 +117,7 @@ mod tests {
     #[test]
     fn v0_to_v1_ept_plus_delta_overflow_is_error_not_wrap() {
         let emsg = EmsgBox {
+            flags: mp4_emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "1",
             timescale: 90_000,
@@ -141,6 +144,7 @@ mod tests {
     #[test]
     fn v0_to_v1_to_v0_round_trips() {
         let emsg = EmsgBox {
+            flags: mp4_emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "1",
             timescale: 90_000,
@@ -163,6 +167,7 @@ mod tests {
     #[test]
     fn v1_to_v0_to_v1_round_trips() {
         let emsg = EmsgBox {
+            flags: mp4_emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "2",
             timescale: 90_000,
@@ -185,6 +190,7 @@ mod tests {
     #[test]
     fn timescale_mismatch_returns_error() {
         let emsg = EmsgBox {
+            flags: mp4_emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "",
             timescale: 90_000,
@@ -211,6 +217,7 @@ mod tests {
     #[test]
     fn v0_event_before_ept_errors() {
         let emsg = EmsgBox {
+            flags: mp4_emsg::EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "",
             timescale: 90_000,

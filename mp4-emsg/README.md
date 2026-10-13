@@ -59,10 +59,11 @@ project policy.
 ## Quick start
 
 ```rust
-use mp4_emsg::{EmsgBox, PresentationTime};
+use mp4_emsg::{EMSG_FLAGS, EmsgBox, PresentationTime};
 
 let scte35 = [0xFCu8, 0x30, 0x11]; // start of a splice_info_section
 let b = EmsgBox {
+    flags: EMSG_FLAGS,
     scheme_id_uri: "urn:scte:scte35:2013:bin",
     value: "",
     timescale: 90_000,

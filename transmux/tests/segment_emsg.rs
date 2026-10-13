@@ -185,6 +185,7 @@ fn two_emsgs_appear_in_order_before_moof() {
     let msg_b = [0xFCu8, 0x30, 0x02];
 
     let emsg_a = EmsgBox {
+        flags: 0,
         scheme_id_uri: SCTE35_SCHEME,
         value: "",
         timescale: 90_000,
@@ -194,6 +195,7 @@ fn two_emsgs_appear_in_order_before_moof() {
         message_data: &msg_a,
     };
     let emsg_b = EmsgBox {
+        flags: 0,
         scheme_id_uri: SCTE35_SCHEME,
         value: "",
         timescale: 90_000,

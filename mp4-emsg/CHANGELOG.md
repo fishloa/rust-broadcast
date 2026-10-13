@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- `EmsgBox` gains a typed `flags: u32` field (the `FullBox` 24-bit flags,
+  mandated 0, `EMSG_FLAGS`): plain `parse` now keeps it and `serialize_into`
+  writes it back, so a non-conformant box round-trips byte-exactly (#1104 W2).
+  The `parse_with_flags` / `serialize_into_with_flags` pair added in 0.4.1 is
+  removed (superseded by the field). Migrate struct literals with
+  `flags: EMSG_FLAGS`.
+
+### Fixed
+- `EmsgBox::is_scte35` matches the prefix with its colon
+  (`urn:scte:scte35:`), so `urn:scte:scte35x...` is no longer classed as
+  SCTE 35 (#1104 O1).
+
 ## [0.4.1] - 2026-10-05
 ### Fixed
 - `EmsgBox::serialize_into` now rejects `scheme_id_uri`/`value` containing an

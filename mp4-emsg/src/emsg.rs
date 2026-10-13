@@ -97,10 +97,16 @@ broadcast_common::impl_spec_display!(PresentationTime, Delta, Absolute);
 /// null-terminated UTF-8 strings and the opaque `message_data`. The box `size`
 /// and `version` are *not* stored: `size` is recomputed on serialize and
 /// `version` is derived from [`PresentationTime`], so the round-trip is driven
-/// entirely from the typed fields (no raw passthrough).
+/// entirely from the typed fields (no raw passthrough). The 24-bit `flags`
+/// (mandated 0, but parsed permissively) *is* stored so a non-conformant box
+/// round-trips byte-exactly.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct EmsgBox<'a> {
+    /// The `FullBox` 24-bit `flags` (mandated [`EMSG_FLAGS`] = 0 for `emsg`;
+    /// preserved as parsed so a non-conformant box round-trips, EM-W2 / #1104).
+    /// Serialize rejects a value above 24 bits.
+    pub flags: u32,
     /// `scheme_id_uri` (Table 6-2): the URI defining the event scheme. Stored
     /// without the wire `0x00` terminator.
     pub scheme_id_uri: &'a str,
@@ -134,7 +140,12 @@ impl<'a> EmsgBox<'a> {
     /// in which case [`Self::message_data`] carries a SCTE 35
     /// `splice_info_section` (SCTE 214-1 / ANSI/SCTE 35 — see crate root).
     pub fn is_scte35(&self) -> bool {
-        self.scheme_id_uri.starts_with(SCTE35_SCHEME_PREFIX)
+        // Match the prefix *with* its colon so an unrelated scheme that merely
+        // starts with the same letters (`urn:scte:scte35x`) is not classified
+        // as SCTE 35 (EM-O1 / #1104).
+        self.scheme_id_uri
+            .strip_prefix(SCTE35_SCHEME_PREFIX)
+            .is_some_and(|rest| rest.starts_with(':'))
     }
 
     /// Total serialized size in bytes (the `size` field value).
@@ -161,21 +172,10 @@ impl<'a> EmsgBox<'a> {
     /// Parse an `emsg` box from the start of `data`. Requires the full box
     /// (`size` bytes) to be present; trailing bytes beyond `size` are ignored.
     ///
-    /// Discards the box's `flags` (spec-mandated 0; see [`Self::parse_with_flags`]
-    /// to preserve a non-conformant non-zero value, EM-W2 / #1104).
+    /// The box's `flags` (mandated 0, parsed permissively) are kept in
+    /// [`Self::flags`] so [`Self::serialize_into`] reproduces them (EM-W2 /
+    /// #1104).
     pub fn parse(data: &'a [u8]) -> Result<Self> {
-        Self::parse_with_flags(data).map(|(emsg, _flags)| emsg)
-    }
-
-    /// Parse an `emsg` box from the start of `data`, also returning the raw
-    /// 24-bit `flags` field.
-    ///
-    /// `flags` is mandated 0 (DASH-IF Part 10 / ISO `FullBox` for `emsg`), so
-    /// [`Self::serialize_into`] always writes 0 back; a caller that must
-    /// round-trip a non-conformant box byte-exactly should keep the value
-    /// this returns and pass it to [`Self::serialize_into_with_flags`]
-    /// instead (EM-W2, #1104).
-    pub fn parse_with_flags(data: &'a [u8]) -> Result<(Self, u32)> {
         if data.len() < FULLBOX_HEADER_LEN {
             return Err(Error::BufferTooShort {
                 need: FULLBOX_HEADER_LEN,
@@ -191,7 +191,7 @@ impl<'a> EmsgBox<'a> {
         }
         let version = data[8];
         // flags = data[9..12]; mandated 0, but parsed permissively (some
-        // muxers are sloppy) and handed back to the caller alongside `Self`.
+        // muxers are sloppy) and kept in `Self::flags`.
         let flags = u32::from_be_bytes([0, data[9], data[10], data[11]]);
 
         if (size as usize) < FULLBOX_HEADER_LEN {
@@ -212,11 +212,12 @@ impl<'a> EmsgBox<'a> {
         // The box body region is [FULLBOX_HEADER_LEN, size).
         let body = &data[FULLBOX_HEADER_LEN..size as usize];
 
-        let emsg = match version {
+        let mut emsg = match version {
             EmsgVersion::SegmentRelative => Self::parse_v0(body),
             EmsgVersion::RepresentationRelative => Self::parse_v1(body),
         }?;
-        Ok((emsg, flags))
+        emsg.flags = flags;
+        Ok(emsg)
     }
 
     /// version 0 body: scheme\0 value\0 timescale u32 ptd u32 dur u32 id u32
@@ -240,6 +241,7 @@ impl<'a> EmsgBox<'a> {
         let message_data = &rest[need..];
 
         Ok(EmsgBox {
+            flags: EMSG_FLAGS,
             scheme_id_uri,
             value,
             timescale,
@@ -273,6 +275,7 @@ impl<'a> EmsgBox<'a> {
         let (value, message_data) = parse_cstr(rest, "value")?;
 
         Ok(EmsgBox {
+            flags: EMSG_FLAGS,
             scheme_id_uri,
             value,
             timescale,
@@ -284,29 +287,18 @@ impl<'a> EmsgBox<'a> {
     }
 
     /// Serialize the box into `out`, recomputing the `size` field and writing
-    /// `flags = 0`. Returns the number of bytes written.
-    ///
-    /// # Errors
-    /// As [`Self::serialize_into_with_flags`] (with `flags = 0`, which always
-    /// fits), plus [`Error::InvalidString`] if `scheme_id_uri` or `value`
-    /// contains an embedded NUL byte (valid UTF-8, but it would silently
-    /// misframe the null-terminated wire string on reparse — EM-W1, #1104).
-    pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
-        self.serialize_into_with_flags(EMSG_FLAGS, out)
-    }
-
-    /// Serialize the box into `out` with an explicit 24-bit `flags` value
-    /// instead of the spec-mandated 0, so a box parsed with
-    /// [`Self::parse_with_flags`] can be round-tripped byte-exactly even if
-    /// it carried a non-conformant non-zero value (EM-W2, #1104).
+    /// [`Self::flags`]. Returns the number of bytes written.
     ///
     /// # Errors
     /// Returns [`Error::OutputBufferTooSmall`] if `out` is too small,
     /// [`Error::FieldTooWide`] if the total size does not fit in `u32` or
     /// `flags` does not fit in 24 bits, and [`Error::InvalidString`] if
-    /// `scheme_id_uri` or `value` contains an embedded NUL byte.
-    pub fn serialize_into_with_flags(&self, flags: u32, out: &mut [u8]) -> Result<usize> {
+    /// `scheme_id_uri` or `value` contains an embedded NUL byte (valid UTF-8,
+    /// but it would silently misframe the null-terminated wire string on
+    /// reparse — EM-W1, #1104).
+    pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         const FLAGS_MAX: u32 = 0x00FF_FFFF;
+        let flags = self.flags;
         if flags > FLAGS_MAX {
             return Err(Error::FieldTooWide {
                 what: "flags",
@@ -448,6 +440,7 @@ mod tests {
     fn v0_exact_wire_bytes_round_trip() {
         let msg = [0xDEu8, 0xAD, 0xBE, 0xEF];
         let b = EmsgBox {
+            flags: EMSG_FLAGS,
             scheme_id_uri: "urn:example:scheme",
             value: "",
             timescale: 90_000,
@@ -490,6 +483,7 @@ mod tests {
     fn v1_exact_wire_bytes_round_trip() {
         let msg = [0x01u8, 0x02];
         let b = EmsgBox {
+            flags: EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "1001",
             timescale: 1000,
@@ -532,6 +526,7 @@ mod tests {
     fn v0_v1_field_order_differs_but_both_round_trip() {
         let msg = [0xAAu8, 0xBB];
         let v0 = EmsgBox {
+            flags: EMSG_FLAGS,
             scheme_id_uri: "s",
             value: "v",
             timescale: 0x1111_1111,
@@ -541,6 +536,7 @@ mod tests {
             message_data: &msg,
         };
         let v1 = EmsgBox {
+            flags: EMSG_FLAGS,
             scheme_id_uri: "s",
             value: "v",
             timescale: 0x1111_1111,
@@ -568,6 +564,7 @@ mod tests {
     #[test]
     fn mutating_a_field_changes_wire_bytes() {
         let mk = |id: u32| EmsgBox {
+            flags: EMSG_FLAGS,
             scheme_id_uri: "urn:x",
             value: "",
             timescale: 48_000,
@@ -594,6 +591,7 @@ mod tests {
     #[test]
     fn rejects_unsupported_version() {
         let b = EmsgBox {
+            flags: EMSG_FLAGS,
             scheme_id_uri: "x",
             value: "",
             timescale: 1,
@@ -645,6 +643,7 @@ mod tests {
     #[test]
     fn rejects_embedded_nul_in_value() {
         let b = EmsgBox {
+            flags: EMSG_FLAGS,
             scheme_id_uri: "urn:example:scheme",
             value: "a\0b",
             timescale: 1,
@@ -662,6 +661,7 @@ mod tests {
     #[test]
     fn rejects_embedded_nul_in_scheme_id_uri() {
         let b = EmsgBox {
+            flags: EMSG_FLAGS,
             scheme_id_uri: "urn:example:\0scheme",
             value: "",
             timescale: 1,
@@ -679,13 +679,12 @@ mod tests {
         ));
     }
 
-    /// EM-W2 (audit issue #1104): a non-zero `flags` value now round-trips
-    /// byte-exactly through the `_with_flags` pair, while the plain
-    /// `parse`/`serialize_into` pair keeps its documented "flags is always 0"
-    /// behaviour (no change for existing callers that don't need it).
+    /// EM-W2 (audit issue #1104): a non-zero `flags` value round-trips
+    /// byte-exactly through plain `parse` -> `serialize_into`.
     #[test]
-    fn flags_round_trip_with_the_with_flags_api() {
+    fn flags_round_trip_through_plain_parse_and_serialize() {
         let b = EmsgBox {
+            flags: 0x00_A5_5A,
             scheme_id_uri: "urn:example:scheme",
             value: "v",
             timescale: 1,
@@ -694,24 +693,18 @@ mod tests {
             id: 0,
             message_data: &[],
         };
-        let flags = 0x00_A5_5A;
-        let mut out = vec![0u8; b.serialized_len()];
-        b.serialize_into_with_flags(flags, &mut out).unwrap();
+        let out = b.to_vec().unwrap();
         assert_eq!(&out[9..12], &[0x00, 0xA5, 0x5A]);
-
-        let (reparsed, got_flags) = EmsgBox::parse_with_flags(&out).unwrap();
-        assert_eq!(got_flags, flags);
+        let reparsed = EmsgBox::parse(&out).unwrap();
+        assert_eq!(reparsed.flags, 0x00_A5_5A);
         assert_eq!(reparsed, b);
-
-        // The plain API still always writes/discards 0.
-        assert_eq!(EmsgBox::parse(&out).unwrap(), b);
-        let plain = b.to_vec().unwrap();
-        assert_eq!(&plain[9..12], &[0, 0, 0]);
+        assert_eq!(reparsed.to_vec().unwrap(), out);
     }
 
     #[test]
     fn flags_over_24_bits_rejected() {
         let b = EmsgBox {
+            flags: 0x0100_0000,
             scheme_id_uri: "urn:example:scheme",
             value: "",
             timescale: 1,
@@ -720,16 +713,34 @@ mod tests {
             id: 0,
             message_data: &[],
         };
-        let mut out = vec![0u8; b.serialized_len()];
         assert!(matches!(
-            b.serialize_into_with_flags(0x0100_0000, &mut out),
+            b.to_vec(),
             Err(Error::FieldTooWide { what: "flags", .. })
         ));
+    }
+
+    /// EM-O1 (#1104): the prefix is matched with its colon.
+    #[test]
+    fn is_scte35_requires_the_colon_after_the_prefix() {
+        let mk = |uri| EmsgBox {
+            flags: EMSG_FLAGS,
+            scheme_id_uri: uri,
+            value: "",
+            timescale: 1,
+            presentation_time: PresentationTime::Delta(0),
+            event_duration: 0,
+            id: 0,
+            message_data: &[],
+        };
+        assert!(mk("urn:scte:scte35:2014:xml+bin").is_scte35());
+        assert!(!mk("urn:scte:scte35x:other").is_scte35());
+        assert!(!mk("urn:scte:scte35").is_scte35());
     }
 
     #[test]
     fn is_scte35_recognises_prefix() {
         let b = EmsgBox {
+            flags: EMSG_FLAGS,
             scheme_id_uri: "urn:scte:scte35:2013:bin",
             value: "",
             timescale: 1,

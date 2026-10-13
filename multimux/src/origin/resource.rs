@@ -328,6 +328,7 @@ fn inject_segment_events(trunk: &Trunk, file: &str, body: HlsBody) -> HlsBody {
         };
         let id = unique_emsg_id(entry.event.id, media_time.0, &mut used_ids);
         let emsg = EmsgBox {
+            flags: 0, // mandated 0 for emsg (mp4_emsg::EMSG_FLAGS)
             scheme_id_uri: EMSG_SCHEME_ID_URI,
             value: "",
             timescale: EMSG_TIMESCALE, // Trunk's 90 kHz event clock
