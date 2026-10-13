@@ -118,6 +118,11 @@ impl Serialize for MetadataStdDescriptor {
                 have: buf.len(),
             });
         }
+        // 22-bit fields: `write_u22` masks, so reject a wider value first
+        // (audit r03-W3 class).
+        broadcast_common::len::fit_bits(u64::from(self.metadata_input_leak_rate), 22, "metadata_input_leak_rate")?;
+        broadcast_common::len::fit_bits(u64::from(self.metadata_buffer_size), 22, "metadata_buffer_size")?;
+        broadcast_common::len::fit_bits(u64::from(self.metadata_output_leak_rate), 22, "metadata_output_leak_rate")?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         write_u22(
@@ -187,11 +192,29 @@ mod tests {
     }
 
     #[test]
-    fn serialize_round_trip_masks_input_and_default_reserved_bits() {
-        // An over-range value must be masked to 22 bits, and the 2 reserved
-        // bits ahead of it (Table 2-91) default to 1s when default-constructed,
-        // never folded into the value.
-        let d = MetadataStdDescriptor::new(0xFFFF_FFFF, 0xFFFF_FFFF, 0xFFFF_FFFF); // test mask
+    fn serialize_rejects_a_value_wider_than_22_bits() {
+        // Used to be masked down silently into a different valid-looking
+        // value (audit r03-W3 class).
+        for (a, b, c) in [
+            (0x0040_0000, 0, 0),
+            (0, 0x0040_0000, 0),
+            (0, 0, 0x0040_0000),
+        ] {
+            let d = MetadataStdDescriptor::new(a, b, c);
+            let mut buf = vec![0u8; d.serialized_len()];
+            assert!(matches!(
+                d.serialize_into(&mut buf),
+                Err(Error::FieldOverflow(_))
+            ));
+        }
+    }
+
+    #[test]
+    fn serialize_round_trip_max_value_and_default_reserved_bits() {
+        // The largest 22-bit value round-trips, and the 2 reserved bits ahead
+        // of it (Table 2-91) default to 1s when default-constructed, never
+        // folded into the value.
+        let d = MetadataStdDescriptor::new(0x003F_FFFF, 0x003F_FFFF, 0x003F_FFFF);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(

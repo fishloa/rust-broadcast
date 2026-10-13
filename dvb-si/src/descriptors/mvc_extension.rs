@@ -143,8 +143,20 @@ impl Serialize for MvcExtensionDescriptor {
         buf[1] = BODY_LEN;
         buf[HEADER_LEN..HEADER_LEN + 2].copy_from_slice(&self.average_bit_rate.to_be_bytes());
         buf[HEADER_LEN + 2..HEADER_LEN + 4].copy_from_slice(&self.maximum_bitrate.to_be_bytes());
-        let vmin = self.view_order_index_min & 0x03FF;
-        let vmax = self.view_order_index_max & 0x03FF;
+        // Over-wide values used to be masked down silently (audit r03-W3
+        // class).
+        let vmin = broadcast_common::len::fit_bits(
+            u64::from(self.view_order_index_min),
+            10,
+            "view_order_index_min",
+        )? as u16;
+        let vmax = broadcast_common::len::fit_bits(
+            u64::from(self.view_order_index_max),
+            10,
+            "view_order_index_max",
+        )? as u16;
+        broadcast_common::len::fit_bits(u64::from(self.temporal_id_start), 3, "temporal_id_start")?;
+        broadcast_common::len::fit_bits(u64::from(self.temporal_id_end), 3, "temporal_id_end")?;
         buf[HEADER_LEN + 4] = ((self.view_association_not_present as u8) << 7)
             | ((self.base_view_is_left_eyeview as u8) << 6)
             | ((self.reserved & RESERVED_MASK) << 4)

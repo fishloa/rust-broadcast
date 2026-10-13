@@ -70,7 +70,11 @@ impl Serialize for VideoWindowDescriptor {
         }
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        let ho = self.horizontal_offset;
+        // 14 / 14 / 4-bit fields; wider values used to be masked down
+        // silently (audit r03-W3 class).
+        let ho = broadcast_common::len::fit_bits(u64::from(self.horizontal_offset), 14, "horizontal_offset")? as u16;
+        broadcast_common::len::fit_bits(u64::from(self.vertical_offset), 14, "vertical_offset")?;
+        broadcast_common::len::fit_bits(u64::from(self.window_priority), 4, "window_priority")?;
         buf[HEADER_LEN] = (ho >> 6) as u8;
         buf[HEADER_LEN + 1] =
             ((ho & 0x3F) << 2) as u8 | ((self.vertical_offset >> 12) as u8 & 0x03);
