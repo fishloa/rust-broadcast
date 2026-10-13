@@ -46,6 +46,9 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         // few bytes at a time is genuinely undecided, so this is `Insufficient`
         // (`need` = the magic length), not `Unknown` — more bytes could make it
         // the exact bytes EBML opens with.
+        if !crate::prefix_agrees(region, 0, &EBML_MAGIC) {
+            return Outcome::None;
+        }
         return Outcome::Insufficient(EBML_MAGIC.len());
     }
     if region[..EBML_MAGIC.len()] != EBML_MAGIC {

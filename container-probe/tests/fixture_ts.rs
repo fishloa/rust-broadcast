@@ -263,20 +263,18 @@ fn single_byte() {
     }
 }
 
-/// Eight zero bytes match no magic but are too short to rule out a structure
-/// beginning with a zero-valued box size, so the answer asks for ground not yet
-/// examined.
-///
-/// The figure is 13, not 9: no prober can name a structural need here, so the
-/// answer comes from the geometric floor (`limit + limit/2 + 1`). An
-/// arithmetic `limit + 1` also satisfies "more than examined" and is what this
-/// asserted before — but it converges in O(n) reads, which terminates and
-/// crawls. The exact number matters less than which growth class it belongs to.
+/// Eight zero bytes match no magic and no short literal-magic prober can still
+/// claim them (audit r01-O6: a prefix that contradicts a magic is `None`, not
+/// "read more"). What remains undecided is a structure that reaches further —
+/// the TS lattice, whose strong lock needs 8 confirmations at 188 bytes
+/// (1504). That structural need is the answer; before O6 the contradicted
+/// literal probers asked for 4..16 bytes and the minimum collapsed to the
+/// geometric floor (13), a hint that could not reach any real decision.
 #[test]
 fn eight_zero_bytes() {
     match probe(&[0u8; 8]) {
-        Probe::Insufficient { need_at_least, .. } => assert_eq!(need_at_least, 13),
-        other => panic!("eight zero bytes must be Insufficient {{ 13 }}, got {other:?}"),
+        Probe::Insufficient { need_at_least, .. } => assert_eq!(need_at_least, 1504),
+        other => panic!("eight zero bytes must be Insufficient {{ 1504 }}, got {other:?}"),
     }
 }
 

@@ -23,6 +23,11 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
         // Shorter than the `"RIFF"`..`"WAVE"` span the magic needs: a truncated
         // RIFF read a few bytes at a time ("RIF", "RIFF") is undecided
         // (`Insufficient`), not `Unknown`.
+        if !crate::prefix_agrees(region, 0, &RIFF_SIGNATURE)
+            || !crate::prefix_agrees(region, WAVE_OFFSET, &WAVE_FORM_TYPE)
+        {
+            return Outcome::None;
+        }
         return Outcome::Insufficient(need);
     }
     if region[..RIFF_SIGNATURE.len()] != RIFF_SIGNATURE {

@@ -670,6 +670,20 @@ enum Outcome {
     None,
 }
 
+/// `true` when the bytes of `region` that exist so far are still consistent
+/// with `pattern` at `offset` (the overlap compares equal). A prober whose
+/// magic is not yet fully visible uses this to answer [`Outcome::None`] for a
+/// prefix that already contradicts the magic ("XYZ" is never the start of
+/// "OggS"), and `Insufficient` only when more bytes could still confirm it
+/// (audit r01-O6). Vacuously `true` when `region` ends before `offset`.
+pub(crate) fn prefix_agrees(region: &[u8], offset: usize, pattern: &[u8]) -> bool {
+    let Some(seen) = region.get(offset..) else {
+        return true;
+    };
+    let n = seen.len().min(pattern.len());
+    seen[..n] == pattern[..n]
+}
+
 /// The single shared decision every prober must make: is "no match" a *proof of
 /// non-membership* — or merely the walk *running off the end of the supplied
 /// region* mid-structure?
@@ -1033,6 +1047,17 @@ mod sampled_prober_needs {
         for (format, prober) in PROBERS {
             for (seed_name, seed) in seeds() {
                 let mut seen: Vec<(usize, usize)> = Vec::new();
+                // Literal-magic seeds are also sampled at their own genuine
+                // prefixes: once a prober rules out a prefix that contradicts
+                // its magic (audit r01-O6), zero padding turns these short
+                // seeds into `None`, so this is the only way to reach them.
+                if matches!(seed_name, "ogg" | "asf-guid") {
+                    for len in 1..=seed.len() {
+                        if let Outcome::Insufficient(need) = prober(&seed[..len], len) {
+                            seen.push((len, need));
+                        }
+                    }
+                }
                 for len in lengths {
                     if len < seed.len() {
                         continue;
@@ -1408,5 +1433,52 @@ mod dispatch {
             Probe::Identified { format, .. } => assert_eq!(format, Format::MpegTs),
             other => panic!("expected Identified, got {other:?}"),
         }
+    }
+}
+
+/// Audit r01-O6: a prefix that already contradicts a prober's magic is
+/// `None` ("stop"), not `Insufficient` ("read more") — while a genuine
+/// truncated prefix of the same magic stays `Insufficient`.
+#[cfg(test)]
+mod prefix_contradiction {
+    use super::*;
+
+    type ProbeFn = fn(&[u8], usize) -> Outcome;
+
+    fn rows() -> [(&'static str, ProbeFn, &'static [u8], &'static [u8]); 7] {
+        // (name, prober, contradicting short prefix, agreeing short prefix)
+        [
+            ("ogg", ogg::probe, b"XY", b"Og"),
+            ("flv", flv::probe, b"XL", b"FL"),
+            ("asf", asf::probe, &[0xFF, 0xFF], &[0x30, 0x26]),
+            ("mxf", mxf::probe, &[0xFF], &[0x06, 0x0E]),
+            ("mpegps", mpegps::probe, &[0x12, 0x34], &[0x00, 0x00, 0x01]),
+            ("ebml", ebml::probe, &[0x00, 0x00], &[0x1A, 0x45]),
+            ("riff", riff::probe, b"XIFF", b"RIF"),
+        ]
+    }
+
+    #[test]
+    fn contradicting_prefix_is_none_agreeing_prefix_is_insufficient() {
+        for (name, probe, bad, good) in rows() {
+            assert!(
+                matches!(probe(bad, bad.len()), Outcome::None),
+                "{name}: contradicting prefix must be None"
+            );
+            assert!(
+                matches!(probe(good, good.len()), Outcome::Insufficient(_)),
+                "{name}: agreeing prefix must stay Insufficient"
+            );
+        }
+    }
+
+    #[test]
+    fn riff_contradiction_at_the_wave_offset_is_none() {
+        // "RIFF" + size + "WA" is fine so far; "RIFF" + size + "XY" is not WAVE.
+        assert!(matches!(
+            riff::probe(b"RIFF\0\0\0\0WA", 10),
+            Outcome::Insufficient(_)
+        ));
+        assert!(matches!(riff::probe(b"RIFF\0\0\0\0XY", 10), Outcome::None));
     }
 }

@@ -21,6 +21,9 @@ pub(crate) fn probe(data: &[u8], limit: usize) -> Outcome {
     if region.len() < ASF_HEADER_GUID.len() {
         // Shorter than the 16-byte Header Object GUID: a truncated ASF read a
         // few bytes at a time is undecided (`Insufficient`), not `Unknown`.
+        if !crate::prefix_agrees(region, 0, &ASF_HEADER_GUID) {
+            return Outcome::None;
+        }
         return Outcome::Insufficient(ASF_HEADER_GUID.len());
     }
     if region[..ASF_HEADER_GUID.len()] != ASF_HEADER_GUID {
