@@ -13,7 +13,6 @@
 //! (`UnMessage::Dii`).
 #![cfg(feature = "serde")]
 
-use mpeg_ts::pid::Pid;
 use broadcast_common::Parse;
 use dvb_si::carousel::{Dii, DiiModule, UnMessage};
 use dvb_si::compatibility::CompatibilityDescriptor;
@@ -51,6 +50,7 @@ use dvb_si::tables::{
     unt::{UntActionType, UntSection},
 };
 use dvb_si::text::{DvbText, LangCode};
+use mpeg_ts::pid::Pid;
 
 // --- Tables: serialize emits valid JSON -----------------------------------
 

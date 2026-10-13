@@ -1,4 +1,3 @@
-use mpeg_ts::pid::Pid;
 use broadcast_common::Serialize;
 use dvb_si::collect::{CollectError, CompletedEit, EitCollector, SectionSetCollector};
 use dvb_si::descriptors::AnyDescriptor;
@@ -8,6 +7,7 @@ use dvb_si::tables::eit::{
 };
 use dvb_si::tables::nit::{NitKind, NitSection, NitTransportStream};
 use dvb_si::tables::pat::{PatEntry, PatSection};
+use mpeg_ts::pid::Pid;
 
 fn nit_section(
     section_number: u8,

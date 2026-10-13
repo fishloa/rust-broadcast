@@ -22,11 +22,11 @@
 //!    is present.
 #![cfg(feature = "ts")]
 
-use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
 use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::AnyTableSection;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::TS_PACKET_SIZE;
 use std::collections::BTreeSet;
 

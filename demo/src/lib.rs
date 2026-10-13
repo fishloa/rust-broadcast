@@ -683,23 +683,23 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
         // ── SI/PSI demux: tables + PID roles from PAT/PMT ───────────────
         let events: Vec<_> = demux.feed(chunk).collect();
         for ev in events {
-            let ev_pid = ev.pid().value();
+            let ev_pid = ev.pid();
             let section_result = ev.table_section();
 
             match &section_result {
                 Ok(AnyTableSection::PatSection(pat)) => {
-                    upgrade_role(pid_stats.entry(Pid::new(ev_pid)).or_default(), PidRole::Pat);
+                    upgrade_role(pid_stats.entry(ev_pid).or_default(), PidRole::Pat);
                     for pat_entry in &pat.entries {
                         if pat_entry.program_number != 0 {
                             upgrade_role(
-                                pid_stats.entry(Pid::new(pat_entry.pid)).or_default(),
+                                pid_stats.entry(pat_entry.pid).or_default(),
                                 PidRole::Pmt,
                             );
                         } else {
                             // program_number == 0 -> this entry's PID is the
                             // network_PID (NIT), not a PMT.
                             upgrade_role(
-                                pid_stats.entry(Pid::new(pat_entry.pid)).or_default(),
+                                pid_stats.entry(pat_entry.pid).or_default(),
                                 PidRole::Si,
                             );
                         }
@@ -708,36 +708,36 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
                 Ok(AnyTableSection::PmtSection(pmt)) => {
                     // 0x1FFF is the spec sentinel for "no PCR for this
                     // program" — don't mislabel the NULL PID as PCR.
-                    if pmt.pcr_pid != wk::NULL.value() {
+                    if pmt.pcr_pid != wk::NULL {
                         upgrade_role(
-                            pid_stats.entry(Pid::new(pmt.pcr_pid)).or_default(),
+                            pid_stats.entry(pmt.pcr_pid).or_default(),
                             PidRole::Pcr,
                         );
                     }
                     for stream in &pmt.streams {
                         let kind = classify_stream_type(stream.stream_type);
                         let accum = pid_stats
-                            .entry(Pid::new(stream.elementary_pid))
+                            .entry(stream.elementary_pid)
                             .or_default();
                         upgrade_role(accum, kind);
                         accum.stream_type_name = Some(stream.stream_type.name());
 
                         if stream.stream_type == StreamType::Scte35 {
                             scte35_pids
-                                .entry(Pid::new(stream.elementary_pid))
+                                .entry(stream.elementary_pid)
                                 .or_default();
                         }
                         if matches!(kind, PidRole::Video | PidRole::Audio) {
-                            pes_pids.entry(Pid::new(stream.elementary_pid)).or_default();
+                            pes_pids.entry(stream.elementary_pid).or_default();
                         }
                         if subtitle::stream_is_subtitle(stream) {
                             upgrade_role(
                                 pid_stats
-                                    .entry(Pid::new(stream.elementary_pid))
+                                    .entry(stream.elementary_pid)
                                     .or_default(),
                                 PidRole::Subtitle,
                             );
-                            subtitles.note_pid(Pid::new(stream.elementary_pid));
+                            subtitles.note_pid(stream.elementary_pid);
                         }
                     }
                 }
@@ -753,7 +753,7 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
             };
             if tables.len() < MAX_TABLE_ENTRIES {
                 tables.push(TableEntry {
-                    pid: Pid::new(ev_pid),
+                    pid: ev_pid,
                     section: section_json,
                 });
             } else {
@@ -1174,7 +1174,7 @@ mod tests {
         const VERSIONS: u8 = 32; // version_number is 5 bits
         let mut ts = Vec::new();
         for n in 0..(MAX_TABLE_ENTRIES + 50) {
-            let pat = PatSection::new(1, (n % usize::from(VERSIONS)) as u8, true, 0, 0, vec![PatEntry::new(1, 0x0100)]);
+            let pat = PatSection::new(1, (n % usize::from(VERSIONS)) as u8, true, 0, 0, vec![PatEntry::new(1, Pid::new(0x0100))]);
             let mut bytes = vec![0u8; pat.serialized_len()];
             pat.serialize_into(&mut bytes).unwrap();
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
@@ -1316,7 +1316,7 @@ mod tests {
             true,
             0,
             0,
-            wk::NULL.value(), // no PCR for this program
+            wk::NULL, // no PCR for this program
             DescriptorLoop::new(&[]),
             vec![PmtStream::new(StreamType::Scte35, SCTE35_PID, DescriptorLoop::new(&[]))],
         );

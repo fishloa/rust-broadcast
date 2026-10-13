@@ -917,7 +917,16 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_empty_program() {
-        let pmt = PmtSection::new(1, 0, true, 0, 0, Pid::new(0x100), DescriptorLoop::new(&[]), vec![]);
+        let pmt = PmtSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            Pid::new(0x100),
+            DescriptorLoop::new(&[]),
+            vec![],
+        );
         let mut buf = vec![0u8; pmt.serialized_len()];
         pmt.serialize_into(&mut buf).unwrap();
         let re = PmtSection::parse(&buf).unwrap();
@@ -938,8 +947,16 @@ mod tests {
             Pid::new(0x1F0),
             DescriptorLoop::new(&prog_info),
             vec![
-                PmtStream::new(StreamType::Mpeg2Video, Pid::new(0x100), DescriptorLoop::new(&es1)),
-                PmtStream::new(StreamType::Mpeg1Audio, Pid::new(0x101), DescriptorLoop::new(&es2)),
+                PmtStream::new(
+                    StreamType::Mpeg2Video,
+                    Pid::new(0x100),
+                    DescriptorLoop::new(&es1),
+                ),
+                PmtStream::new(
+                    StreamType::Mpeg1Audio,
+                    Pid::new(0x101),
+                    DescriptorLoop::new(&es2),
+                ),
                 PmtStream::new(StreamType::H264, Pid::new(0x102), DescriptorLoop::new(&[])),
             ],
         );
@@ -985,7 +1002,16 @@ mod tests {
     #[test]
     fn serialize_rejects_program_info_exceeding_section_length() {
         let pi = vec![0xAAu8; 4083];
-        let pmt = PmtSection::new(1, 0, true, 0, 0, Pid::new(0x100), DescriptorLoop::new(&pi), vec![]);
+        let pmt = PmtSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            Pid::new(0x100),
+            DescriptorLoop::new(&pi),
+            vec![],
+        );
         let mut buf = vec![0u8; pmt.serialized_len()];
         assert!(matches!(
             pmt.serialize_into(&mut buf).unwrap_err(),
@@ -996,7 +1022,16 @@ mod tests {
     #[test]
     fn serialize_accepts_program_info_at_section_length_boundary() {
         let pi = vec![0xAAu8; 4082];
-        let pmt = PmtSection::new(1, 0, true, 0, 0, Pid::new(0x100), DescriptorLoop::new(&pi), vec![]);
+        let pmt = PmtSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            Pid::new(0x100),
+            DescriptorLoop::new(&pi),
+            vec![],
+        );
         let mut buf = vec![0u8; pmt.serialized_len()];
         pmt.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = PmtSection::parse(&buf).expect("reparse");
@@ -1274,7 +1309,16 @@ mod tests {
     /// hardcoded buf[6]=0 and buf[7]=0, so this test would fail.
     #[test]
     fn section_number_round_trip_nonzero() {
-        let pmt = PmtSection::new(42, 1, true, 3, 7, Pid::new(0x0200), DescriptorLoop::new(&[]), vec![]);
+        let pmt = PmtSection::new(
+            42,
+            1,
+            true,
+            3,
+            7,
+            Pid::new(0x0200),
+            DescriptorLoop::new(&[]),
+            vec![],
+        );
         let mut buf = vec![0u8; pmt.serialized_len()];
         pmt.serialize_into(&mut buf).unwrap();
         // Wire bytes[6] and [7] must carry the encoded values.

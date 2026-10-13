@@ -5,9 +5,9 @@
 //! Shows the symmetric build/parse contract without needing a TS source —
 //! every table type works the same way.
 
-use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
 use dvb_si::tables::pat::{PatEntry, PatSection};
+use mpeg_ts::pid::Pid;
 
 fn main() {
     let pat = PatSection::new(
@@ -16,7 +16,10 @@ fn main() {
         true,
         0,
         0,
-        vec![PatEntry::new(1, Pid::new(0x0100)), PatEntry::new(2, Pid::new(0x0200))],
+        vec![
+            PatEntry::new(1, Pid::new(0x0100)),
+            PatEntry::new(2, Pid::new(0x0200)),
+        ],
     );
 
     // Serialize to the on-wire section bytes (CRC-32 appended automatically).

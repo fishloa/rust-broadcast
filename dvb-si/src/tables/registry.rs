@@ -393,9 +393,9 @@ mod tests {
     fn fallback_to_builtin_for_unregistered() {
         let reg = TableRegistry::new();
         // Build a minimal PAT (table_id 0x00)
-        use mpeg_ts::pid::Pid;
         use crate::tables::pat::{PatEntry, PatSection};
         use broadcast_common::Serialize;
+        use mpeg_ts::pid::Pid;
         let pat = PatSection::new(1, 0, true, 0, 0, vec![PatEntry::new(1, Pid::new(0x0100))]);
         let mut buf = vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut buf).unwrap();

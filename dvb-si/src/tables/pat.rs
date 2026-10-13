@@ -320,7 +320,9 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_many_programs() {
-        let entries: Vec<PatEntry> = (1..=5).map(|i| PatEntry::new(i, Pid::new(0x1000 + i))).collect();
+        let entries: Vec<PatEntry> = (1..=5)
+            .map(|i| PatEntry::new(i, Pid::new(0x1000 + i)))
+            .collect();
         let pat = PatSection::new(0xABCD, 3, true, 0, 0, entries);
         let mut buf = vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut buf).unwrap();
