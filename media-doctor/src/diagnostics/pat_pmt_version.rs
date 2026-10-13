@@ -87,12 +87,12 @@ fn current_pat(raw: &[u8]) -> Option<PatSection> {
 /// A PAT entry naming PID 0 would otherwise collide with the PAT PID itself;
 /// PID 0x1FFF (`NULL`) is reserved and can never carry a PMT
 /// (§2.4.3.3).
-fn declared_pmt_pids(pat: &PatSection) -> impl Iterator<Item = u16> + '_ {
+fn declared_pmt_pids(pat: &PatSection) -> impl Iterator<Item = Pid> + '_ {
     pat.entries.iter().filter_map(|entry| {
         let pid = entry.pid;
         (entry.program_number != pat::PROGRAM_NUMBER_NIT
             && pid != pat::PID
-            && Pid::new(pid) != NULL_PID)
+            && pid != NULL_PID)
             .then_some(pid)
     })
 }
@@ -114,10 +114,10 @@ impl PatPmtVersionCheck {
         // and current_next_indicator without any hand-rolled bit masking. For
         // a PAT the same gate discovery uses (CRC + current_next) is applied
         // here, so the two can never disagree about which sections are real.
-        if pid == Pid::new(pat::PID) && current_pat(raw).is_none() {
+        if pid == pat::PID && current_pat(raw).is_none() {
             return;
         }
-        let (table_id, table_id_extension, version) = if pid == Pid::new(pat::PID) {
+        let (table_id, table_id_extension, version) = if pid == pat::PID {
             let Ok(pat) = PatSection::parse(raw) else {
                 return;
             };
@@ -165,7 +165,7 @@ impl Diagnostic for PatPmtVersionCheck {
         let n_packets = ts.len() / TS_PACKET_SIZE;
 
         // SectionReassembler per PID for PSI sections.
-        let mut reassemblers: BTreeMap<u16, SectionReassembler> = BTreeMap::new();
+        let mut reassemblers: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
         // Track (pid, table_id, table_id_ext) -> version_number.
         let mut versions: BTreeMap<TableKey, u8> = BTreeMap::new();
 
@@ -183,7 +183,7 @@ impl Diagnostic for PatPmtVersionCheck {
             let pid = pkt.header.pid;
 
             // Only process PIDs we're watching.
-            if !reassemblers.contains_key(&pid.value()) {
+            if !reassemblers.contains_key(&pid) {
                 continue;
             }
 
@@ -194,7 +194,7 @@ impl Diagnostic for PatPmtVersionCheck {
             // Feed payload into section reassembler.
             let pusi = pkt.header.pusi;
             reassemblers
-                .get_mut(&pid.value())
+                .get_mut(&pid)
                 .unwrap()
                 .feed(payload, pusi);
 
@@ -203,7 +203,7 @@ impl Diagnostic for PatPmtVersionCheck {
             let mut new_pmt_pids: Vec<Pid> = Vec::new();
 
             // Drain completed sections.
-            while let Some(section) = reassemblers.get_mut(&pid.value()).unwrap().pop_section() {
+            while let Some(section) = reassemblers.get_mut(&pid).unwrap().pop_section() {
                 let section_data = &section[..];
                 self.process_section(i, pid, section_data, &mut versions, report);
 
@@ -212,12 +212,12 @@ impl Diagnostic for PatPmtVersionCheck {
                 // or next-generation PAT cannot register a PMT PID
                 // (audit MD-W1(a)/(c)), and a PAT entry naming PID 0 or the
                 // reserved NULL PID is ignored rather than watched.
-                if pid == Pid::new(pat::PID)
+                if pid == pat::PID
                     && let Some(pat) = current_pat(section_data)
                 {
                     for pmt_pid in declared_pmt_pids(&pat) {
-                        if !new_pmt_pids.contains(&Pid::new(pmt_pid)) {
-                            new_pmt_pids.push(Pid::new(pmt_pid));
+                        if !new_pmt_pids.contains(&pmt_pid) {
+                            new_pmt_pids.push(pmt_pid);
                         }
                     }
                 }
@@ -225,7 +225,7 @@ impl Diagnostic for PatPmtVersionCheck {
 
             // Register new PMT PIDs after draining sections.
             for pmt_pid in new_pmt_pids {
-                reassemblers.entry(pmt_pid.value()).or_default();
+                reassemblers.entry(pmt_pid).or_default();
             }
         }
     }

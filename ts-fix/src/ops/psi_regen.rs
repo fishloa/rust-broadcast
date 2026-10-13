@@ -172,8 +172,7 @@ impl PsiRegenOp {
                 .entries
                 .iter()
                 .find(|e| e.program_number == dvb_si::tables::pat::PROGRAM_NUMBER_NIT)
-                .map(|e| e.pid)
-                .map(Pid::new);
+                .map(|e| e.pid);
             self.pat_hints_observed = true;
         }
     }
@@ -227,13 +226,13 @@ impl PsiRegenOp {
         if let Some(pid) = self.network_pid {
             entries.push(PatEntry::new(
                 dvb_si::tables::pat::PROGRAM_NUMBER_NIT,
-                pid.value(),
+                pid,
             ));
         }
         entries.extend(
             self.pmt_programs
                 .iter()
-                .map(|(&program_number, &pmt_pid)| PatEntry::new(program_number, pmt_pid)),
+                .map(|(&program_number, &pmt_pid)| PatEntry::new(program_number, Pid::new(pmt_pid))),
         );
         Some(entries)
     }

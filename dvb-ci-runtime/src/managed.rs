@@ -316,7 +316,7 @@ impl ManagedCa {
     pub(crate) fn set_cat(&mut self, entries: &[CatCaEntry]) {
         self.cat_emm_pids = entries
             .iter()
-            .map(|e| (e.ca_system_id, Pid::new(e.ca_pid)))
+            .map(|e| (e.ca_system_id, e.ca_pid))
             .collect();
         self.recompute_emm_pids();
     }
@@ -482,10 +482,10 @@ pub(crate) fn service_of(
         es_pids: pmt
             .streams
             .iter()
-            .map(|s| Pid::new(s.elementary_pid))
+            .map(|s| s.elementary_pid)
             .collect(),
         ca_pids,
-        pcr_pid: Pid::new(pmt.pcr_pid),
+        pcr_pid: pmt.pcr_pid,
         cmd,
         last_ca_enable: None,
         last_descrambling_ok: false,
@@ -743,7 +743,7 @@ mod tests {
         );
         m.set_cat(&[CatCaEntry {
             ca_system_id: 0x0648,
-            ca_pid: 0x1FF0,
+            ca_pid: Pid::new(0x1FF0),
             private_data: Vec::new(),
         }]);
         m.set_cam_caids([0x0648].into_iter().collect());
@@ -815,7 +815,7 @@ mod tests {
         // exercises all three classes.
         m.set_cat(&[CatCaEntry {
             ca_system_id: 0x0648,
-            ca_pid: 0x1FF0,
+            ca_pid: Pid::new(0x1FF0),
             private_data: Vec::new(),
         }]);
         m.set_cam_caids([0x0648].into_iter().collect());
@@ -853,7 +853,7 @@ mod tests {
         let pmt_bytes = crate::driver::tests::build_ca_pmt_fixture_dedicated_pcr(1550);
         let pmt = PmtSection::parse(&pmt_bytes).unwrap();
         assert_eq!(
-            pmt.pcr_pid, 0x00FF,
+            pmt.pcr_pid, Pid::new(0x00FF),
             "fixture precondition: dedicated PCR PID outside the ES/CA set"
         );
 

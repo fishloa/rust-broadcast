@@ -54,7 +54,7 @@ pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
     let n_packets = ts.len() / TS_PACKET_SIZE;
     let mut reassemblers: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
     reassemblers
-        .entry(Pid::new(dvb_si::tables::pat::PID))
+        .entry(dvb_si::tables::pat::PID)
         .or_default();
 
     let mut pmt_pids: Vec<Pid> = Vec::new();
@@ -78,20 +78,20 @@ pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
 
         let mut new_pmt_pids: Vec<Pid> = Vec::new();
         while let Some(section) = reassemblers.get_mut(&pid).unwrap().pop_section() {
-            if pid == Pid::new(dvb_si::tables::pat::PID) {
+            if pid == dvb_si::tables::pat::PID {
                 if let Ok(pat) = PatSection::parse(&section) {
                     for entry in &pat.entries {
                         if entry.program_number != dvb_si::tables::pat::PROGRAM_NUMBER_NIT
-                            && !pmt_pids.contains(&Pid::new(entry.pid))
-                            && !new_pmt_pids.contains(&Pid::new(entry.pid))
+                            && !pmt_pids.contains(&entry.pid)
+                            && !new_pmt_pids.contains(&entry.pid)
                         {
-                            new_pmt_pids.push(Pid::new(entry.pid));
+                            new_pmt_pids.push(entry.pid);
                         }
                     }
                 }
             } else if let Ok(pmt) = PmtSection::parse(&section) {
                 for stream in &pmt.streams {
-                    declared.insert(Pid::new(stream.elementary_pid), stream.stream_type);
+                    declared.insert(stream.elementary_pid, stream.stream_type);
                 }
             }
         }
@@ -241,11 +241,11 @@ pub(crate) mod tests {
             current_next_indicator,
             0,
             0,
-            alloc::vec![PatEntry::new(1, TEST_PMT_PID.value())],
+            alloc::vec![PatEntry::new(1, TEST_PMT_PID)],
         );
         let pmt_streams: Vec<PmtStream<'_>> = streams
             .iter()
-            .map(|&(pid, stream_type)| PmtStream::new(stream_type, pid, DescriptorLoop::new(&[])))
+            .map(|&(pid, stream_type)| PmtStream::new(stream_type, Pid::new(pid), DescriptorLoop::new(&[])))
             .collect();
         let pcr_pid = streams.first().map(|&(pid, _)| pid).unwrap_or(0x1FFF);
         let pmt = PmtSection::new(
@@ -254,7 +254,7 @@ pub(crate) mod tests {
             current_next_indicator,
             0,
             0,
-            pcr_pid,
+            Pid::new(pcr_pid),
             DescriptorLoop::new(&[]),
             pmt_streams,
         );
@@ -264,7 +264,7 @@ pub(crate) mod tests {
 
         let mut ts = Vec::new();
         for pkt in
-            SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&pat_bytes])
+            SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes])
         {
             ts.extend_from_slice(&pkt);
         }
@@ -289,7 +289,7 @@ pub(crate) mod tests {
             programs
                 .iter()
                 .map(|&(program_number, _, _, _)| {
-                    PatEntry::new(program_number, TEST_PMT_PID.value())
+                    PatEntry::new(program_number, TEST_PMT_PID)
                 })
                 .collect(),
         );
@@ -297,7 +297,7 @@ pub(crate) mod tests {
 
         let mut ts = Vec::new();
         for pkt in
-            SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&pat_bytes])
+            SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes])
         {
             ts.extend_from_slice(&pkt);
         }
@@ -308,11 +308,11 @@ pub(crate) mod tests {
                 true,
                 0,
                 0,
-                elementary_pid,
+                Pid::new(elementary_pid),
                 DescriptorLoop::new(&[]),
                 alloc::vec![PmtStream::new(
                     stream_type,
-                    elementary_pid,
+                    Pid::new(elementary_pid),
                     DescriptorLoop::new(&[])
                 )],
             );
@@ -365,11 +365,11 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            ELEMENTARY_PID.value(),
+            ELEMENTARY_PID,
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
                 StreamType::H264,
-                ELEMENTARY_PID.value(),
+                ELEMENTARY_PID,
                 DescriptorLoop::new(&[])
             )],
         );

@@ -216,7 +216,7 @@ pub struct WatchState {
     /// (version_number, elementary_pid -> stream_type)`. A new
     /// `version_number` means the program's stream set may have changed, so
     /// its tracks are reconciled against the new PMT (audit MD-W8).
-    pmt_generations: BTreeMap<u16, (u8, BTreeMap<u16, StreamType>)>,
+    pmt_generations: BTreeMap<u16, (u8, BTreeMap<Pid, StreamType>)>,
     /// How many programs currently declare each elementary PID. A PID shared
     /// by two programs must stay tracked while either still declares it.
     pid_refs: BTreeMap<Pid, usize>,
@@ -320,7 +320,7 @@ impl WatchState {
         for ev in events {
             match ev.table_section() {
                 Ok(AnyTableSection::PmtSection(pmt)) => {
-                    let declared: alloc::vec::Vec<(u16, StreamType)> = pmt
+                    let declared: alloc::vec::Vec<(Pid, StreamType)> = pmt
                         .streams
                         .iter()
                         .map(|s| (s.elementary_pid, s.stream_type))
@@ -360,9 +360,9 @@ impl WatchState {
         &mut self,
         program_number: u16,
         version_number: u8,
-        declared: &[(u16, StreamType)],
+        declared: &[(Pid, StreamType)],
     ) {
-        let declared: BTreeMap<u16, StreamType> = declared.iter().copied().collect();
+        let declared: BTreeMap<Pid, StreamType> = declared.iter().copied().collect();
         let previous = self
             .pmt_generations
             .insert(program_number, (version_number, declared.clone()));
@@ -375,20 +375,20 @@ impl WatchState {
         let old_declared = previous.map(|(_, old)| old).unwrap_or_default();
         for old_pid in old_declared.keys() {
             if !declared.contains_key(old_pid) {
-                self.release_pid(Pid::new(*old_pid));
+                self.release_pid(*old_pid);
             }
         }
         for (&elem_pid, &stream_type) in &declared {
             if !old_declared.contains_key(&elem_pid) {
                 self.pid_refs
-                    .entry(Pid::new(elem_pid))
+                    .entry(elem_pid)
                     .and_modify(|n| *n += 1)
                     .or_insert(1);
             }
             if old_declared.get(&elem_pid) == Some(&stream_type) {
                 continue;
             }
-            self.retrack(Pid::new(elem_pid), stream_type);
+            self.retrack(elem_pid, stream_type);
         }
     }
 
@@ -435,7 +435,7 @@ impl WatchState {
                 continue;
             };
             for elem_pid in declared.keys() {
-                self.release_pid(Pid::new(*elem_pid));
+                self.release_pid(*elem_pid);
             }
         }
     }
@@ -470,7 +470,7 @@ impl WatchState {
     fn remaining_declared_type(&self, pid: Pid) -> Option<StreamType> {
         self.pmt_generations
             .values()
-            .filter_map(|(_, declared)| declared.get(&pid.value()).copied())
+            .filter_map(|(_, declared)| declared.get(&pid).copied())
             .next()
     }
 
@@ -805,14 +805,14 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            alloc::vec![PatEntry::new(1, PAT_PMT_PID.value())],
+            alloc::vec![PatEntry::new(1, PAT_PMT_PID)],
         );
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         let n = pat.serialize_into(&mut pat_bytes).expect("serialize PAT");
         pat_bytes.truncate(n);
         feed(
             state,
-            &section_packet(Pid::new(dvb_si::tables::pat::PID), 0, &pat_bytes),
+            &section_packet(dvb_si::tables::pat::PID, 0, &pat_bytes),
         );
         for _ in 0..mpeg_ts::resync::LOCK_CONFIRMATIONS {
             let mut null = [0xFFu8; TS_PACKET_SIZE];
@@ -842,13 +842,13 @@ pub(crate) mod tests {
             0,
             programs
                 .iter()
-                .map(|&program_number| PatEntry::new(program_number, PAT_PMT_PID.value()))
+                .map(|&program_number| PatEntry::new(program_number, PAT_PMT_PID))
                 .collect(),
         );
         let mut bytes = alloc::vec![0u8; pat.serialized_len()];
         let n = pat.serialize_into(&mut bytes).expect("serialize PAT");
         bytes.truncate(n);
-        section_packet(Pid::new(dvb_si::tables::pat::PID), version, &bytes)
+        section_packet(dvb_si::tables::pat::PID, version, &bytes)
     }
 
     /// A section-bearing TS packet.
@@ -872,13 +872,13 @@ pub(crate) mod tests {
 
     /// Build a `(elementary_pid, stream_type)` declaration from one of the
     /// `SINGLE_*`/`WITH_CUE_PMT` shapes.
-    fn pmt_shape(shape: u8) -> alloc::vec::Vec<(u16, StreamType)> {
+    fn pmt_shape(shape: u8) -> alloc::vec::Vec<(Pid, StreamType)> {
         match shape {
-            SINGLE_H264_PMT => alloc::vec![(SHARED_PID.value(), StreamType::H264)],
-            SINGLE_AAC_PMT => alloc::vec![(SHARED_PID.value(), StreamType::AacAdts)],
+            SINGLE_H264_PMT => alloc::vec![(SHARED_PID, StreamType::H264)],
+            SINGLE_AAC_PMT => alloc::vec![(SHARED_PID, StreamType::AacAdts)],
             WITH_CUE_PMT => alloc::vec![
-                (SHARED_PID.value(), StreamType::H264),
-                (CUE_PID.value(), StreamType::Scte35),
+                (SHARED_PID, StreamType::H264),
+                (CUE_PID, StreamType::Scte35),
             ],
             other => panic!("unknown PMT shape {other}"),
         }
@@ -900,7 +900,7 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            streams.first().map(|s| s.elementary_pid).unwrap_or(0x1FFF),
+            streams.first().map(|s| s.elementary_pid).unwrap_or(Pid::new(0x1FFF)),
             DescriptorLoop::new(&[]),
             streams,
         );
@@ -927,11 +927,11 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            elem_pid.value(),
+            elem_pid,
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
                 StreamType::H264,
-                elem_pid.value(),
+                elem_pid,
                 DescriptorLoop::new(&[])
             )],
         );
@@ -1161,7 +1161,7 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            alloc::vec![PatEntry::new(1, PMT_PID.value())],
+            alloc::vec![PatEntry::new(1, PMT_PID)],
         );
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
@@ -1172,11 +1172,11 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            wk::NULL.value(),
+            wk::NULL,
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
                 StreamType::Scte35,
-                SCTE35_PID.value(),
+                SCTE35_PID,
                 DescriptorLoop::new(&[])
             )],
         );
@@ -1294,7 +1294,7 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            alloc::vec![PatEntry::new(1, PMT_PID.value())],
+            alloc::vec![PatEntry::new(1, PMT_PID)],
         );
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
@@ -1305,11 +1305,11 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            wk::NULL.value(),
+            wk::NULL,
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
                 StreamType::Scte35,
-                SCTE35_PID.value(),
+                SCTE35_PID,
                 DescriptorLoop::new(&[])
             )],
         );
@@ -1427,7 +1427,7 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            alloc::vec![PatEntry::new(1, PMT_PID.value())],
+            alloc::vec![PatEntry::new(1, PMT_PID)],
         );
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
@@ -1438,11 +1438,11 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            VIDEO_PID.value(),
+            VIDEO_PID,
             DescriptorLoop::new(&[]),
             alloc::vec![PmtStream::new(
                 StreamType::H264,
-                VIDEO_PID.value(),
+                VIDEO_PID,
                 DescriptorLoop::new(&[])
             )],
         );
@@ -1553,7 +1553,7 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            alloc::vec![PatEntry::new(1, PMT_PID.value())],
+            alloc::vec![PatEntry::new(1, PMT_PID)],
         );
         let mut pat_bytes = alloc::vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut pat_bytes).unwrap();
@@ -1565,11 +1565,11 @@ pub(crate) mod tests {
                 true,
                 0,
                 0,
-                MIXED_PID.value(),
+                MIXED_PID,
                 DescriptorLoop::new(&[]),
                 alloc::vec![PmtStream::new(
                     stream_type,
-                    MIXED_PID.value(),
+                    MIXED_PID,
                     DescriptorLoop::new(&[])
                 )],
             );
@@ -1784,7 +1784,7 @@ pub(crate) mod tests {
         );
 
         // Re-declared as AAC at the SAME version number.
-        state.apply_pmt_declaration(1, 3, &[(SHARED_PID.value(), StreamType::AacAdts)]);
+        state.apply_pmt_declaration(1, 3, &[(SHARED_PID, StreamType::AacAdts)]);
 
         // Only ADTS is fed. A track still holding EsKind::Video would never
         // become `structured`, so the gauge would read 1.
@@ -1807,7 +1807,7 @@ pub(crate) mod tests {
     #[test]
     fn program_leaving_the_pat_releases_its_pids() {
         let mut state = WatchState::new();
-        state.apply_pmt_declaration(1, 0, &[(SHARED_PID.value(), StreamType::H264)]);
+        state.apply_pmt_declaration(1, 0, &[(SHARED_PID, StreamType::H264)]);
         assert!(
             state.es_tracks.contains_key(&SHARED_PID.value()),
             "the PID must be tracked while program 1 declares it",
@@ -1842,8 +1842,8 @@ pub(crate) mod tests {
 
         // Program 1 declares AAC; program 2 then declares the same PID as
         // H.264, so H.264 is current.
-        state.apply_pmt_declaration(1, 0, &[(SHARED_PID.value(), StreamType::AacAdts)]);
-        state.apply_pmt_declaration(2, 0, &[(SHARED_PID.value(), StreamType::H264)]);
+        state.apply_pmt_declaration(1, 0, &[(SHARED_PID, StreamType::AacAdts)]);
+        state.apply_pmt_declaration(2, 0, &[(SHARED_PID, StreamType::H264)]);
         // Program 2 leaves the PAT.
         state.retain_programs(&[1]);
         assert!(

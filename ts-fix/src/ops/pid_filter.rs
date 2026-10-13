@@ -174,7 +174,7 @@ fn ca_pids_in_loop(raw: &[u8]) -> BTreeSet<Pid> {
     let mut pids = BTreeSet::new();
     for desc in parse_loop(raw) {
         if let Ok(AnyDescriptor::Ca(CaDescriptor { ca_pid, .. })) = desc {
-            pids.insert(Pid::new(ca_pid));
+            pids.insert(ca_pid);
         }
     }
     pids
@@ -190,9 +190,9 @@ fn resolve_keep_set(
     let mut keep = BTreeSet::new();
     keep.insert(PAT_PID);
     keep.insert(pmt_pid);
-    keep.insert(Pid::new(pmt.pcr_pid));
+    keep.insert(pmt.pcr_pid);
     for stream in &pmt.streams {
-        keep.insert(Pid::new(stream.elementary_pid));
+        keep.insert(stream.elementary_pid);
     }
     // ECM PIDs from the PMT program-info loop (§2.4.4.8 / §2.6.16).
     let mut has_ca = false;
@@ -297,7 +297,7 @@ impl PidFilterOp {
                         let pmt_pid = entry.pid;
                         *state = ServiceState::WaitingPmt {
                             program_number: pn,
-                            pmt_pid: Pid::new(pmt_pid),
+                            pmt_pid: pmt_pid,
                             pmt_reasm: SectionReassembler::default(),
                         };
                         return;
@@ -397,14 +397,14 @@ impl PidFilterOp {
                             .entries
                             .iter()
                             .find(|e| e.program_number == *program_number)
-                            && entry.pid != (*pmt_pid).value()
+                            && entry.pid != (*pmt_pid)
                         {
                             // The PMT moved to a new PID: track the new
                             // one and drop the old PMT PID from the keep-set.
                             keep.remove(pmt_pid);
-                            *pmt_pid = Pid::new(entry.pid);
+                            *pmt_pid = entry.pid;
                             *pmt_version = 0;
-                            keep.insert(Pid::new(entry.pid));
+                            keep.insert(entry.pid);
                         }
                     }
                 } else if pid == CAT_PID && keep.contains(&CAT_PID) {
@@ -425,7 +425,7 @@ impl PidFilterOp {
                         // is an EMM PID).
                         keep.insert(CAT_PID);
                         if let Ok(entries) = cat.ca_descriptors() {
-                            keep.extend(entries.iter().map(|e| Pid::new(e.ca_pid)));
+                            keep.extend(entries.iter().map(|e| e.ca_pid));
                         }
                     }
                 }

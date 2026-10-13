@@ -347,7 +347,7 @@ pub(crate) struct TstdModel {
     /// System-information transport buffer TBsys (512 bytes, 1 Mbit/s leak).
     pub(crate) tb_sys: StdBuffer,
     /// Per-PID transport buffers TBn for each tracked PID.
-    pub(crate) pid_buffers: alloc::collections::BTreeMap<u16, PidStdState>,
+    pub(crate) pid_buffers: alloc::collections::BTreeMap<mpeg_ts::pid::Pid, PidStdState>,
     /// TBsys empty-interval check (indicator 3.9).
     pub(crate) tb_sys_empty_reported: bool,
 }

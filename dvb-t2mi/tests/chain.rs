@@ -52,7 +52,7 @@ fn build_pat_section() -> Vec<u8> {
     use broadcast_common::Serialize;
     use dvb_si::tables::pat::{PatEntry, PatSection};
 
-    let pat = PatSection::new(0x0001, 0, true, 0, 0, vec![PatEntry::new(1, 0x0100)]);
+    let pat = PatSection::new(0x0001, 0, true, 0, 0, vec![PatEntry::new(1, Pid::new(0x0100))]);
     let mut buf = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut buf).expect("PAT serialize");
     buf
@@ -284,7 +284,7 @@ fn chain_t2mi_bbframe_si_pat() {
             assert_eq!(pat.transport_stream_id, 0x0001, "TSID");
             assert_eq!(pat.entries.len(), 1, "one program entry");
             assert_eq!(pat.entries[0].program_number, 1, "program_number");
-            assert_eq!(pat.entries[0].pid, 0x0100, "PMT PID");
+            assert_eq!(pat.entries[0].pid, Pid::new(0x0100), "PMT PID");
         }
         other => panic!("expected AnyTableSection::PatSection, got {other:?}"),
     }

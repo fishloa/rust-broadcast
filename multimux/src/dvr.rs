@@ -191,7 +191,6 @@ use dvb_si::tables::eit::{EitKind, PID as EIT_PID};
 use dvb_si::tables::{AnyTableSection, RunningStatus};
 use media_plane::egress::SegmentEgress;
 use media_plane::trunk::{ArchiveOverrun, SegmentCursor, SegmentCursorItem, Trunk};
-use mpeg_ts::pid::Pid;
 use serde::{Deserialize, Serialize};
 use tracing;
 
@@ -664,7 +663,7 @@ impl DvrRecorder {
         let si_demux = config.dvb_service_id.map(|_| {
             SiDemux::builder()
                 .dvb_si_pids(false)
-                .pid(Pid::new(EIT_PID))
+                .pid(EIT_PID)
                 .build()
         });
         let target_service_id = config.dvb_service_id;
@@ -3100,7 +3099,7 @@ mod tests {
         // from across every matching section, not just the first.
         let mut discover = SiDemux::builder()
             .dvb_si_pids(false)
-            .pid(Pid::new(EIT_PID))
+            .pid(EIT_PID)
             .build();
         let mut genuine_section_bytes: Vec<bytes::Bytes> = Vec::new();
         for chunk in ts_bytes.chunks_exact(TS_PACKET_LEN) {
@@ -3216,7 +3215,7 @@ mod tests {
         WireSerialize::serialize_into(&transitioned, &mut section_buf)
             .expect("serialize transitioned section");
 
-        let mut packetiser = mpeg_ts::mux::SectionPacketiser::new(Pid::new(EIT_PID));
+        let mut packetiser = mpeg_ts::mux::SectionPacketiser::new(EIT_PID);
         let packets = packetiser.packetise(&[&section_buf]);
         let mut packet_bytes = Vec::new();
         for p in &packets {
@@ -3304,7 +3303,7 @@ mod tests {
         // `eit_transition_rolls_the_period...`.
         let mut discover = SiDemux::builder()
             .dvb_si_pids(false)
-            .pid(Pid::new(EIT_PID))
+            .pid(EIT_PID)
             .build();
         let mut sections = Vec::new();
         for chunk in ts_bytes.chunks_exact(TS_PACKET_LEN) {
@@ -3346,7 +3345,7 @@ mod tests {
         let mut section_buf = vec![0u8; WireSerialize::serialized_len(&transitioned)];
         WireSerialize::serialize_into(&transitioned, &mut section_buf).expect("serialize");
         let mut packet_bytes = Vec::new();
-        for p in &mpeg_ts::mux::SectionPacketiser::new(Pid::new(EIT_PID)).packetise(&[&section_buf])
+        for p in &mpeg_ts::mux::SectionPacketiser::new(EIT_PID).packetise(&[&section_buf])
         {
             packet_bytes.extend_from_slice(p);
         }

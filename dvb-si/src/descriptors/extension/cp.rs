@@ -11,8 +11,6 @@ impl<'a> ExtensionBodyDef<'a> for Cp<'a> {
 }
 
 const CP_HEADER_LEN: usize = 4; // CP_system_id(2) + reserved(3)/CP_PID(13)
-/// Maximum 13-bit PID value.
-const MAX_PID: u16 = 0x1FFF;
 /// Shift of `reserved_future_use(3)` in the CP_PID word.
 const RESERVED_SHIFT: u16 = 13;
 
