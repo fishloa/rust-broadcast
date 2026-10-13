@@ -179,7 +179,7 @@ impl<'a> Parse<'a> for CitSection<'a> {
         let total =
             super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_SECTION_LEN)?;
 
-        let private_indicator = (bytes[1] & 0x40) != 0;
+        let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
         let service_id = crate::wire::be_u16(bytes, 3, "cit")?;
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);

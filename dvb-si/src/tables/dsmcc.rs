@@ -133,8 +133,8 @@ impl<'a> Parse<'a> for DsmccSection<'a> {
             });
         }
 
-        let section_syntax_indicator = (bytes[1] & 0x80) != 0;
-        let private_indicator = (bytes[1] & 0x40) != 0;
+        let section_syntax_indicator = (bytes[1] & super::SECTION_B1_SSI) != 0;
+        let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
         let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),

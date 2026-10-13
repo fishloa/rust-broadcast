@@ -23,6 +23,12 @@ pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x001B);
 
 const HEADER_LEN: usize = 9;
 const SECTION_LENGTH_PREFIX: usize = 3;
+/// Largest `section_length` (12 bits; EN 300 468 §5.2.11 / Table 11a).
+const MAX_SECTION_LENGTH: usize = 0x0FFF;
+/// `satellite_table_id(6)` sits in the top six bits of byte 3 (§5.2.11).
+const SATELLITE_TABLE_ID_SHIFT: u8 = 2;
+/// Low two bits of byte 3: the high bits of the 10-bit `table_count`.
+const TABLE_COUNT_HI_MASK: u8 = 0x03;
 use super::CRC_LEN;
 
 fn pad_to_byte(bits: usize) -> usize {
@@ -1732,9 +1738,9 @@ impl<'a> Parse<'a> for SatSection {
             section_length,
             HEADER_LEN + CRC_LEN,
         )?;
-        let satellite_table_id = bytes[3] >> 2;
-        let private_indicator = (bytes[1] & 0x40) != 0;
-        let table_count = (((bytes[3] & 0x03) as u16) << 8) | bytes[4] as u16;
+        let satellite_table_id = bytes[3] >> SATELLITE_TABLE_ID_SHIFT;
+        let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
+        let table_count = (((bytes[3] & TABLE_COUNT_HI_MASK) as u16) << 8) | bytes[4] as u16;
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);
         let section_number = bytes[6];
@@ -1771,10 +1777,10 @@ impl Serialize for SatSection {
             });
         }
         let section_length_usize = len - SECTION_LENGTH_PREFIX;
-        if section_length_usize > 0x0FFF {
+        if section_length_usize > MAX_SECTION_LENGTH {
             return Err(Error::SectionLengthOverflow {
                 declared: section_length_usize,
-                available: 0x0FFF,
+                available: MAX_SECTION_LENGTH,
             });
         }
         let section_length = section_length_usize as u16;
@@ -1790,9 +1796,10 @@ impl Serialize for SatSection {
         }
         buf[0] = TABLE_ID;
         buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)
-            | ((section_length >> 8) as u8 & 0x0F);
+            | ((section_length >> 8) as u8 & super::SECTION_LENGTH_HI_MASK);
         buf[2] = (section_length & 0xFF) as u8;
-        buf[3] = (self.satellite_table_id << 2) | ((self.table_count >> 8) as u8 & 0x03);
+        buf[3] = (self.satellite_table_id << SATELLITE_TABLE_ID_SHIFT)
+            | ((self.table_count >> 8) as u8 & TABLE_COUNT_HI_MASK);
         buf[4] = (self.table_count & 0xFF) as u8;
         buf[5] = super::b5_of(
             self.reserved_b5,

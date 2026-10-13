@@ -18,6 +18,11 @@ const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
 const COMMON_DESC_LEN_BYTES: usize = 2;
 const APP_LOOP_LEN_BYTES: usize = 2;
+/// `test_application_flag`: top bit of byte 3 (ETSI TS 102 809 §5.3.4).
+const TEST_APPLICATION_FLAG: u8 = 0x80;
+const TEST_APPLICATION_FLAG_SHIFT: u8 = 7;
+/// Low 7 bits of byte 3: the high bits of the 15-bit `application_type`.
+const APPLICATION_TYPE_HI_MASK: u8 = 0x7F;
 use super::CRC_LEN;
 const APP_HEADER_LEN: usize = 9;
 const MIN_SECTION_LEN: usize =
@@ -334,8 +339,8 @@ impl<'a> Parse<'a> for AitSection<'a> {
             MIN_SECTION_LEN,
         )?;
 
-        let test_application_flag = (bytes[3] & 0x80) != 0;
-        let application_type_raw = (((bytes[3] & 0x7F) as u16) << 8) | (bytes[4] as u16);
+        let test_application_flag = (bytes[3] & TEST_APPLICATION_FLAG) != 0;
+        let application_type_raw = (((bytes[3] & APPLICATION_TYPE_HI_MASK) as u16) << 8) | (bytes[4] as u16);
         let application_type = ApplicationType::from_u16(application_type_raw);
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);
@@ -469,7 +474,7 @@ impl Serialize for AitSection<'_> {
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-        buf[3] = (u8::from(self.test_application_flag) << 7) | ((app_type_raw >> 8) as u8);
+        buf[3] = (u8::from(self.test_application_flag) << TEST_APPLICATION_FLAG_SHIFT) | ((app_type_raw >> 8) as u8);
         buf[4] = (app_type_raw & 0xFF) as u8;
         buf[5] = self
             .bits
@@ -561,7 +566,8 @@ mod tests {
             TABLE_ID,
             super::super::SECTION_B1_FLAGS_DVB | ((section_length >> 8) as u8 & 0x0F),
             (section_length & 0xFF) as u8,
-            (u8::from(test_flag) << 7) | ((application_type >> 8) as u8 & 0x7F),
+            (u8::from(test_flag) << TEST_APPLICATION_FLAG_SHIFT)
+                | ((application_type >> 8) as u8 & APPLICATION_TYPE_HI_MASK),
             (application_type & 0xFF) as u8,
             0xC0 | ((version & 0x1F) << 1) | 0x01,
             0,

@@ -193,7 +193,7 @@ impl<'a> Parse<'a> for MpeFecSection<'a> {
         let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_LEN)?;
 
-        let private_indicator = (bytes[1] & 0x40) != 0;
+        let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
         let padding_columns = bytes[3];
         // bytes[4] = reserved_for_future_use(8) — ignored on parse.
         // bytes[5] = reserved(2) | reserved_for_future_use(5) | current_next_indicator(1)

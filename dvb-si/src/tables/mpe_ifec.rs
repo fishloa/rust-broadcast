@@ -193,7 +193,7 @@ impl<'a> Parse<'a> for MpeIfecSection<'a> {
         let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_LEN)?;
 
-        let private_indicator = (bytes[1] & 0x40) != 0;
+        let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
         let burst_number = bytes[3];
         let ifec_burst_size = bytes[4];
         // byte 5: reserved(2) | version(5) | current_next_indicator(1)

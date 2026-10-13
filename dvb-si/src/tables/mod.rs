@@ -173,6 +173,10 @@ pub(crate) const SECTION_B1_FLAGS_DVB: u8 = 0xF0;
 /// `section_syntax_indicator` bit in long-form section byte 1.
 pub(crate) const SECTION_B1_SSI: u8 = 0x80;
 
+/// `private_indicator` / `reserved_future_use` bit in section byte 1 (bit 6;
+/// ISO/IEC 13818-1 §2.4.4.10, ETSI EN 300 468 §5.1.1).
+pub(crate) const SECTION_B1_PRIVATE_INDICATOR: u8 = 0x40;
+
 /// The non-length header bits of a section that are not decoded fields:
 /// `private_indicator` / `reserved_future_use` (byte 1 bit 6), `reserved(2)`
 /// (byte 1 bits `[5:4]`) and, for long-form sections, the `reserved(2)` in

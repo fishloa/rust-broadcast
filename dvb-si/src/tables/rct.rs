@@ -1032,7 +1032,7 @@ impl<'a> Parse<'a> for RctSection<'a> {
             });
         }
 
-        let table_id_extension_flag = (bytes[1] & 0x40) != 0;
+        let table_id_extension_flag = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
         let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(
             bytes.len(),

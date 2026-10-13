@@ -136,7 +136,7 @@ impl<'a> Parse<'a> for ContainerSection<'a> {
         let section_length = super::section_length_of(bytes);
         let total = super::check_section_length(bytes.len(), HEADER_LEN, section_length, MIN_LEN)?;
 
-        let private_indicator = (bytes[1] & 0x40) != 0;
+        let private_indicator = (bytes[1] & super::SECTION_B1_PRIVATE_INDICATOR) != 0;
 
         // Extension header (bytes 3..8).
         let container_id = crate::wire::be_u16(bytes, 3, "container")?;
