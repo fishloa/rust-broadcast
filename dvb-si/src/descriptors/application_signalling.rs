@@ -42,10 +42,28 @@ pub fn application_type_name(val: u16) -> Option<&'static str> {
     }
 }
 
+/// Default of the 1-bit `reserved_future_use` before `application_type`:
+/// TS 102 809 V1.1.1-V1.3.1 §5.3.3.2 ("all reserved_future_use bits shall be
+/// set to 1"). Older MHP editions (TS 101 812 V1.1.1-V1.3.2) have no such bit
+/// — `application_type` is 16 bits there — so MHP-era senders write 0 here
+/// (audit §3.2); parse keeps whatever the sender wrote.
+pub const RESERVED_FUTURE_USE_1_DEFAULT: u8 = 0b1;
+/// Default of the 3-bit `reserved_future_use` before `AIT_version_number`
+/// (TS 102 809 §5.3.3.2: `1`s).
+pub const RESERVED_FUTURE_USE_3_DEFAULT: u8 = 0b111;
+
 /// One application-signalling loop entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct ApplicationSignallingEntry {
+    /// `reserved_future_use(1)` ahead of `application_type` (TS 102 809
+    /// Table 17), captured on parse and re-emitted verbatim. 0 on MHP-era
+    /// (TS 101 812) senders, 1 per TS 102 809.
+    pub reserved_future_use_1: u8,
+    /// `reserved_future_use(3)` ahead of `AIT_version_number` (3 bits,
+    /// right-aligned), captured on parse and re-emitted verbatim.
+    pub reserved_future_use_3: u8,
     /// 15-bit application_type — reuses [`crate::tables::ait::ApplicationType`]
     /// (ETSI TS 102 809 §5.3.5.2.1 / DVB Services registry).
     pub application_type: ApplicationType,
@@ -53,12 +71,34 @@ pub struct ApplicationSignallingEntry {
     pub ait_version_number: u8,
 }
 
+impl ApplicationSignallingEntry {
+    /// Build an entry with the TS 102 809 default reserved bits (all ones).
+    #[must_use]
+    pub const fn new(application_type: ApplicationType, ait_version_number: u8) -> Self {
+        Self {
+            reserved_future_use_1: RESERVED_FUTURE_USE_1_DEFAULT,
+            reserved_future_use_3: RESERVED_FUTURE_USE_3_DEFAULT,
+            application_type,
+            ait_version_number,
+        }
+    }
+}
+
 /// Application Signalling Descriptor.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct ApplicationSignallingDescriptor {
     /// Entries in wire order.
     pub entries: Vec<ApplicationSignallingEntry>,
+}
+
+impl ApplicationSignallingDescriptor {
+    /// Build a descriptor from its loop entries.
+    #[must_use]
+    pub const fn new(entries: Vec<ApplicationSignallingEntry>) -> Self {
+        Self { entries }
+    }
 }
 
 impl<'a> Parse<'a> for ApplicationSignallingDescriptor {
@@ -78,13 +118,13 @@ impl<'a> Parse<'a> for ApplicationSignallingDescriptor {
         }
         let mut entries = Vec::with_capacity(body.len() / ENTRY_LEN);
         for chunk in body.chunks_exact(ENTRY_LEN) {
-            // reserved_future_use(1) ignored on parse.
-            let application_type_raw =
-                crate::wire::be_u16(chunk, 0, "application_signalling")? & APPLICATION_TYPE_MAX;
+            let word = crate::wire::be_u16(chunk, 0, "application_signalling")?;
+            let application_type_raw = word & APPLICATION_TYPE_MAX;
             let application_type = ApplicationType::from_u16(application_type_raw);
-            // reserved_future_use(3) ignored on parse.
             let ait_version_number = chunk[2] & AIT_VERSION_MAX;
             entries.push(ApplicationSignallingEntry {
+                reserved_future_use_1: (word >> 15) as u8,
+                reserved_future_use_3: chunk[2] >> 5,
                 application_type,
                 ait_version_number,
             });
@@ -130,11 +170,13 @@ impl Serialize for ApplicationSignallingDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, self.entries.len() * ENTRY_LEN)?;
         let mut pos = HEADER_LEN;
         for e in &self.entries {
-            // reserved_future_use(1) emitted as 1.
-            let word = 0x8000 | (e.application_type.to_u16() & APPLICATION_TYPE_MAX);
+            // reserved_future_use(1): preserved from parse, default 1.
+            let word = (u16::from(e.reserved_future_use_1 & 1) << 15)
+                | (e.application_type.to_u16() & APPLICATION_TYPE_MAX);
             buf[pos..pos + 2].copy_from_slice(&word.to_be_bytes());
-            // reserved_future_use(3) emitted as 1s.
-            buf[pos + 2] = 0xE0 | (e.ait_version_number & AIT_VERSION_MAX);
+            // reserved_future_use(3): preserved from parse, default 111.
+            buf[pos + 2] =
+                ((e.reserved_future_use_3 & 0x07) << 5) | (e.ait_version_number & AIT_VERSION_MAX);
             pos += ENTRY_LEN;
         }
         Ok(len)
@@ -174,8 +216,8 @@ mod tests {
     }
 
     #[test]
-    fn parse_ignores_reserved_bits() {
-        // top bit of word + top 3 bits of version byte are reserved → masked out.
+    fn parse_captures_reserved_bits() {
+        // top bit of word + top 3 bits of version byte are reserved → captured, not folded into the fields.
         let bytes = [TAG, 3, 0xFF, 0xFF, 0xFF];
         let d = ApplicationSignallingDescriptor::parse(&bytes).unwrap();
         assert_eq!(
@@ -183,6 +225,37 @@ mod tests {
             ApplicationType::Reserved(0x7FFF)
         );
         assert_eq!(d.entries[0].ait_version_number, 0x1F);
+        assert_eq!(d.entries[0].reserved_future_use_1, 1);
+        assert_eq!(d.entries[0].reserved_future_use_3, 0b111);
+    }
+
+    /// Every real-sender reserved-bit combination (MHP-era 0 bit, 000 / 111 in
+    /// the version byte) re-serializes byte-identically.
+    #[test]
+    fn reserved_bits_preserved_for_every_combination() {
+        for r1 in 0u8..=1 {
+            for r3 in 0u8..=7 {
+                let bytes = [TAG, 3, (r1 << 7) | 0x00, 0x10, (r3 << 5) | 0x03];
+                let d = ApplicationSignallingDescriptor::parse(&bytes).unwrap();
+                assert_eq!(d.entries[0].reserved_future_use_1, r1);
+                assert_eq!(d.entries[0].reserved_future_use_3, r3);
+                let mut buf = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut buf).unwrap();
+                assert_eq!(buf, bytes);
+            }
+        }
+    }
+
+    /// A hand-built entry carries the TS 102 809 value (all ones).
+    #[test]
+    fn default_reserved_bits_are_ones() {
+        let d = ApplicationSignallingDescriptor::new(vec![ApplicationSignallingEntry::new(
+            ApplicationType::HbbTv,
+            3,
+        )]);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 3, 0x80, 0x10, 0xE3]);
     }
 
     #[test]
@@ -235,18 +308,10 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = ApplicationSignallingDescriptor {
-            entries: vec![
-                ApplicationSignallingEntry {
-                    application_type: ApplicationType::DvbJ,
-                    ait_version_number: 7,
-                },
-                ApplicationSignallingEntry {
-                    application_type: ApplicationType::HbbTv,
-                    ait_version_number: 0,
-                },
-            ],
-        };
+        let d = ApplicationSignallingDescriptor::new(vec![
+            ApplicationSignallingEntry::new(ApplicationType::DvbJ, 7),
+            ApplicationSignallingEntry::new(ApplicationType::HbbTv, 0),
+        ]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(ApplicationSignallingDescriptor::parse(&buf).unwrap(), d);
@@ -254,13 +319,10 @@ mod tests {
 
     #[test]
     fn serialize_rejects_application_type_over_range() {
-        let d = ApplicationSignallingDescriptor {
-            entries: vec![ApplicationSignallingEntry {
-                // Reserved(0x8000) → to_u16() = 0x8000 > APPLICATION_TYPE_MAX
-                application_type: ApplicationType::Reserved(0x8000),
-                ait_version_number: 0,
-            }],
-        };
+        let d = ApplicationSignallingDescriptor::new(vec![ApplicationSignallingEntry::new(
+            ApplicationType::Reserved(0x8000),
+            0,
+        )]);
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -270,12 +332,10 @@ mod tests {
 
     #[test]
     fn serialize_rejects_ait_version_over_range() {
-        let d = ApplicationSignallingDescriptor {
-            entries: vec![ApplicationSignallingEntry {
-                application_type: ApplicationType::Reserved(0),
-                ait_version_number: 0x20,
-            }],
-        };
+        let d = ApplicationSignallingDescriptor::new(vec![ApplicationSignallingEntry::new(
+            ApplicationType::Reserved(0),
+            0x20,
+        )]);
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -286,12 +346,10 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_round_trip() {
-        let d = ApplicationSignallingDescriptor {
-            entries: vec![ApplicationSignallingEntry {
-                application_type: ApplicationType::HbbTv,
-                ait_version_number: 4,
-            }],
-        };
+        let d = ApplicationSignallingDescriptor::new(vec![ApplicationSignallingEntry::new(
+            ApplicationType::HbbTv,
+            4,
+        )]);
         let j = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&j).unwrap();
@@ -307,12 +365,8 @@ mod tests {
             ApplicationType::OipfDae,
             ApplicationType::Reserved(0x0005),
         ] {
-            let d = ApplicationSignallingDescriptor {
-                entries: vec![ApplicationSignallingEntry {
-                    application_type: at,
-                    ait_version_number: 1,
-                }],
-            };
+            let d =
+                ApplicationSignallingDescriptor::new(vec![ApplicationSignallingEntry::new(at, 1)]);
             let mut buf = vec![0u8; d.serialized_len()];
             d.serialize_into(&mut buf).unwrap();
             let re = ApplicationSignallingDescriptor::parse(&buf).unwrap();

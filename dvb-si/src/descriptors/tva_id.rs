@@ -94,22 +94,53 @@ impl TvaRunningStatus {
 }
 broadcast_common::impl_spec_display!(TvaRunningStatus, Unallocated);
 
+/// Default of the 5-bit `Reserved` ahead of `running_status` (TS 102 323
+/// Table 114): "All fields marked as being reserved shall have all bits set
+/// to '1'" (V1.1.1-V1.5.1). Parse keeps whatever a sender wrote.
+pub const RESERVED_DEFAULT: u8 = 0b1_1111;
+
 /// One TVA_id loop entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct TvaIdEntry {
+    /// `Reserved(5)` ahead of `running_status` (5 bits, right-aligned);
+    /// captured on parse, re-emitted verbatim, [`RESERVED_DEFAULT`] when
+    /// built with [`TvaIdEntry::new`].
+    pub reserved: u8,
     /// 16-bit TVA_id referencing the item of content.
     pub tva_id: u16,
     /// 3-bit running_status (Table 115).
     pub running_status: TvaRunningStatus,
 }
 
+impl TvaIdEntry {
+    /// Build an entry with the spec-default reserved bits (all ones).
+    #[must_use]
+    pub const fn new(tva_id: u16, running_status: TvaRunningStatus) -> Self {
+        Self {
+            reserved: RESERVED_DEFAULT,
+            tva_id,
+            running_status,
+        }
+    }
+}
+
 /// TVA_id Descriptor.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct TvaIdDescriptor {
     /// Entries in wire order.
     pub entries: Vec<TvaIdEntry>,
+}
+
+impl TvaIdDescriptor {
+    /// Build a descriptor from its loop entries.
+    #[must_use]
+    pub const fn new(entries: Vec<TvaIdEntry>) -> Self {
+        Self { entries }
+    }
 }
 
 impl<'a> Parse<'a> for TvaIdDescriptor {
@@ -132,6 +163,7 @@ impl<'a> Parse<'a> for TvaIdDescriptor {
             let tva_id = crate::wire::be_u16(chunk, 0, "tva_id")?;
             let running_status = TvaRunningStatus::from_u8(chunk[2] & RUNNING_STATUS_MAX);
             entries.push(TvaIdEntry {
+                reserved: chunk[2] >> 3,
                 tva_id,
                 running_status,
             });
@@ -172,8 +204,9 @@ impl Serialize for TvaIdDescriptor {
         let mut pos = HEADER_LEN;
         for e in &self.entries {
             buf[pos..pos + 2].copy_from_slice(&e.tva_id.to_be_bytes());
-            // Reserved(5) emitted as 1s.
-            buf[pos + 2] = 0xF8 | (e.running_status.to_u8() & RUNNING_STATUS_MAX);
+            // Reserved(5): preserved from parse, default 11111.
+            buf[pos + 2] =
+                ((e.reserved & 0x1F) << 3) | (e.running_status.to_u8() & RUNNING_STATUS_MAX);
             pos += ENTRY_LEN;
         }
         Ok(len)
@@ -210,13 +243,36 @@ mod tests {
     }
 
     #[test]
-    fn parse_ignores_reserved_bits() {
+    fn parse_captures_reserved_bits() {
         let bytes = [TAG, 3, 0x00, 0x00, 0xFF];
         let d = TvaIdDescriptor::parse(&bytes).unwrap();
         assert_eq!(
             d.entries[0].running_status,
             TvaRunningStatus::Unallocated(0x07)
         );
+        assert_eq!(d.entries[0].reserved, 0x1F);
+    }
+
+    /// All 32 reserved values re-serialize byte-identically (test-062 writes
+    /// random bits there).
+    #[test]
+    fn reserved_preserved_for_every_value() {
+        for r in 0u8..=0x1F {
+            let bytes = [TAG, 3, 0x12, 0x34, (r << 3) | 0x04];
+            let d = TvaIdDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.entries[0].reserved, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes);
+        }
+    }
+
+    #[test]
+    fn default_reserved_is_ones() {
+        let d = TvaIdDescriptor::new(vec![TvaIdEntry::new(0x1234, TvaRunningStatus::Running)]);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 3, 0x12, 0x34, 0xFC]);
     }
 
     #[test]
@@ -245,18 +301,10 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = TvaIdDescriptor {
-            entries: vec![
-                TvaIdEntry {
-                    tva_id: 0x1000,
-                    running_status: TvaRunningStatus::StartsShortly,
-                },
-                TvaIdEntry {
-                    tva_id: 0xFFFF,
-                    running_status: TvaRunningStatus::Reserved,
-                },
-            ],
-        };
+        let d = TvaIdDescriptor::new(vec![
+            TvaIdEntry::new(0x1000, TvaRunningStatus::StartsShortly),
+            TvaIdEntry::new(0xFFFF, TvaRunningStatus::Reserved),
+        ]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(TvaIdDescriptor::parse(&buf).unwrap(), d);
@@ -264,12 +312,10 @@ mod tests {
 
     #[test]
     fn serialize_rejects_running_status_over_range() {
-        let d = TvaIdDescriptor {
-            entries: vec![TvaIdEntry {
-                tva_id: 0,
-                running_status: TvaRunningStatus::Unallocated(0x08),
-            }],
-        };
+        let d = TvaIdDescriptor::new(vec![TvaIdEntry::new(
+            0,
+            TvaRunningStatus::Unallocated(0x08),
+        )]);
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -280,12 +326,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_round_trip() {
-        let d = TvaIdDescriptor {
-            entries: vec![TvaIdEntry {
-                tva_id: 0x4242,
-                running_status: TvaRunningStatus::Running,
-            }],
-        };
+        let d = TvaIdDescriptor::new(vec![TvaIdEntry::new(0x4242, TvaRunningStatus::Running)]);
         let j = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&j).unwrap();

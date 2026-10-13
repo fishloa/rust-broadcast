@@ -44,47 +44,6 @@ const SECTION_STREAM_TYPES: [u8; 5] = [0x05, 0x0A, 0x0B, 0x0C, 0x0D];
 /// occurs is reported stale. The prefix is matched with `starts_with`
 /// (`test-089.` covers the `test-089.*.ts` family cut from one capture).
 const TOLERATED: &[(&str, &str)] = &[
-    // AC-3 reserved_flags(4): these senders write 0000, we emit 1111 (EN 300 468 Annex D.3).
-    ("test-001.", "0x6A AC3"),
-    ("test-002.", "0x6A AC3"),
-    ("test-007.", "0x6A AC3"),
-    ("test-008.", "0x6A AC3"),
-    ("test-009.", "0x6A AC3"),
-    ("test-011.", "0x6A AC3"),
-    ("test-020.", "0x6A AC3"),
-    ("test-028.", "0x6A AC3"),
-    ("test-031.", "0x6A AC3"),
-    ("test-035.", "0x6A AC3"),
-    ("test-036.", "0x6A AC3"),
-    ("test-045.", "0x6A AC3"),
-    ("test-047.", "0x6A AC3"),
-    ("test-078.", "0x6A AC3"),
-    ("test-079.", "0x6A AC3"),
-    ("test-095.", "0x6A AC3"),
-    ("test-132.", "0x6A AC3"),
-    ("test-151.", "0x6A AC3"),
-    // reserved_future_use(1) before application_type (TS 102 809 Table 17): real MHP/HbbTV senders incl. hotbird-mhp.ts write 0, we emit 1.
-    ("hotbird-mhp.", "0x6F APPLICATION_SIGNALLING"),
-    ("test-018.", "0x6F APPLICATION_SIGNALLING"),
-    ("test-083.", "0x6F APPLICATION_SIGNALLING"),
-    ("test-108.", "0x6F APPLICATION_SIGNALLING"),
-    ("test-128.", "0x6F APPLICATION_SIGNALLING"),
-    ("test-135.", "0x6F APPLICATION_SIGNALLING"),
-    ("test-202.", "0x6F APPLICATION_SIGNALLING"),
-    // supplementary_audio_descriptor reserved_future_use(1): france-tnt-uhf32.ts and TSDuck samples write 0, we emit 1.
-    ("france-tnt-uhf32.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-026.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-059.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-074.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-088.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-089.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-092.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-096.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-124.", "0x7F/ext 0x06 EXTENSION"),
-    // roll_off on a DVB-S (modulation_system=0) descriptor must be 00 (Table 37); the sender sets 01, we emit the spec value 00.
-    ("test-101.", "0x43 SATELLITE_DELIVERY_SYSTEM"),
-    // CA_descriptor reserved(3) before CA_PID: sender writes 000, we emit 111.
-    ("test-128.", "0x09 CA"),
     // Section-level reserved bits are now captured in typed fields and re-emitted, so every
     // real section re-serializes byte-identically (TDT test-120 / NIT test-016 / SDT / EIT /
     // AIT test-170 / PAT test-012,065 / DSM-CC / ST all graduated off this list).
