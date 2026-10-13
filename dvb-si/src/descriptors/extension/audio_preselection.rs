@@ -445,11 +445,15 @@ mod tests {
 
     #[test]
     fn audio_preselection_default_is_spec_value() {
-        let mut p = Preselection::default();
-        p.aux_component_tags = Some(&[0x01]);
-        p.future_extension = Some(&[0xAA]);
-        let mut d = AudioPreselection::default();
-        d.preselections.push(p);
+        let p = Preselection {
+            aux_component_tags: Some(&[0x01]),
+            future_extension: Some(&[0xAA]),
+            ..Default::default()
+        };
+        let d = AudioPreselection {
+            preselections: vec![p],
+            ..Default::default()
+        };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         // header 1<<3 | 0; flags multi(0x02)|future(0x01); aux 1<<5; ext len 1.
@@ -460,14 +464,18 @@ mod tests {
     /// serialize; 32 must be rejected instead of silently wrapping the count.
     #[test]
     fn num_preselections_boundary() {
-        let mut ok = AudioPreselection::default();
-        ok.preselections = (0..31).map(|_| minimal_preselection()).collect();
+        let ok = AudioPreselection {
+            preselections: (0..31).map(|_| minimal_preselection()).collect(),
+            ..Default::default()
+        };
         let mut buf = vec![0u8; ok.serialized_len()];
         ok.serialize_into(&mut buf).unwrap();
         assert_eq!(buf[0] >> 3, 31);
 
-        let mut over = AudioPreselection::default();
-        over.preselections = (0..32).map(|_| minimal_preselection()).collect();
+        let over = AudioPreselection {
+            preselections: (0..32).map(|_| minimal_preselection()).collect(),
+            ..Default::default()
+        };
         let mut buf = vec![0u8; over.serialized_len()];
         let err = over.serialize_into(&mut buf).unwrap_err();
         assert!(
