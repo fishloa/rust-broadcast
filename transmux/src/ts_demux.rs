@@ -752,7 +752,7 @@ trait FrameSync {
         _hdr: &Self::Hdr,
         frame: &'a [u8],
         header_len: usize,
-    ) -> Option<std::borrow::Cow<'a, [u8]>> {
+    ) -> Option<alloc::borrow::Cow<'a, [u8]>> {
         (frame.len() > header_len).then(|| frame[header_len..].into())
     }
 }
@@ -798,7 +798,7 @@ impl FrameSync for AdtsSync {
         hdr: &Self::Hdr,
         frame: &'a [u8],
         _header_len: usize,
-    ) -> Option<std::borrow::Cow<'a, [u8]>> {
+    ) -> Option<alloc::borrow::Cow<'a, [u8]>> {
         adts_frame_payload(hdr, frame)
     }
     fn parse(data: &[u8]) -> SyncParse<Self::Hdr> {
@@ -1033,7 +1033,10 @@ fn adts_header_len(hdr: &AdtsHeader) -> usize {
 /// into one sample, as `protection_absent == 1` multi-block frames already
 /// are. A malformed position table (non-monotonic or out of range) never
 /// rejects the frame: it degrades to everything after the header-level CRC.
-fn adts_frame_payload<'a>(hdr: &AdtsHeader, frame: &'a [u8]) -> Option<std::borrow::Cow<'a, [u8]>> {
+fn adts_frame_payload<'a>(
+    hdr: &AdtsHeader,
+    frame: &'a [u8],
+) -> Option<alloc::borrow::Cow<'a, [u8]>> {
     let header_len = adts_header_len(hdr);
     if frame.len() <= header_len {
         return None;
@@ -1044,7 +1047,7 @@ fn adts_frame_payload<'a>(hdr: &AdtsHeader, frame: &'a [u8]) -> Option<std::borr
         return Some(plain.into());
     }
     let positions = &frame[ADTS_HEADER_SIZE..ADTS_HEADER_SIZE + ADTS_BLOCK_POSITION_SIZE * n];
-    let mut starts = vec![0usize];
+    let mut starts = alloc::vec![0usize];
     starts.extend(
         positions
             .chunks_exact(ADTS_BLOCK_POSITION_SIZE)
@@ -2008,7 +2011,7 @@ fn video_sample_bytes(codec: VideoCodec, au_data: &[u8]) -> (Vec<u8>, bool) {
 struct PlannedFrame<'a> {
     /// Sample bytes to emit; `None` for a frame with no payload after its
     /// header (still advances the cursor by its duration).
-    data: Option<std::borrow::Cow<'a, [u8]>>,
+    data: Option<alloc::borrow::Cow<'a, [u8]>>,
     /// Intrinsic duration in track-timescale ticks (= samples).
     duration: u32,
     /// The frame *began* in the carried bytes, i.e. in the previous PES.
