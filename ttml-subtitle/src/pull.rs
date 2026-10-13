@@ -27,6 +27,7 @@ use quick_xml::escape::resolve_predefined_entity;
 use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::{PrefixDeclaration, QName, ResolveResult};
 
+use crate::document::XmlDeclaration;
 use crate::error::{Error, Result};
 
 /// One attribute of a start tag (namespace declarations excluded).
@@ -134,6 +135,8 @@ pub(crate) struct Pull<'a> {
     /// An item already read (and its namespaces resolved) while a text run was
     /// being gathered; returned by the next [`Pull::next`].
     pending: Option<Item>,
+    /// The XML declaration, if the prolog carried one (set by [`Pull::root`]).
+    declaration: Option<XmlDeclaration>,
 }
 
 /// XML 1.0 §2.2 `Char` production: the only characters a document may contain,
@@ -162,6 +165,7 @@ impl<'a> Pull<'a> {
         Self {
             reader: NsReader::from_str(xml),
             pending: None,
+            declaration: None,
         }
     }
 
@@ -291,10 +295,46 @@ impl<'a> Pull<'a> {
                 Event::DocType(_) => {
                     return Err(self.fail("DOCTYPE declarations are not allowed"));
                 }
+                Event::Decl(d) => {
+                    // XML 1.0 §2.8 XMLDecl: version, optional encoding and
+                    // standalone ("yes"/"no").
+                    let version = d
+                        .version()
+                        .map(alloc::borrow::Cow::into_owned)
+                        .map_err(|e| self.fail(&e.to_string()))?;
+                    let encoding = d
+                        .encoding()
+                        .map(|r| {
+                            r.map(alloc::borrow::Cow::into_owned)
+                                .map_err(|e| self.fail(&e.to_string()))
+                        })
+                        .transpose()?;
+                    let standalone = match d
+                        .standalone()
+                        .map(|r| {
+                            r.map(alloc::borrow::Cow::into_owned)
+                                .map_err(|e| self.fail(&e.to_string()))
+                        })
+                        .transpose()?
+                        .as_deref()
+                    {
+                        None => None,
+                        Some("yes") => Some(true),
+                        Some("no") => Some(false),
+                        Some(_) => return Err(self.fail("standalone must be \"yes\" or \"no\"")),
+                    };
+                    self.declaration =
+                        Some(XmlDeclaration::from_parts(version, encoding, standalone));
+                }
                 Event::Eof => return Err(self.fail("no root element")),
                 _ => {}
             }
         }
+    }
+
+    /// The XML declaration read by [`Pull::root`], if any.
+    pub(crate) fn take_declaration(&mut self) -> Option<XmlDeclaration> {
+        self.declaration.take()
     }
 
     /// After the root element closed: only comments, processing instructions

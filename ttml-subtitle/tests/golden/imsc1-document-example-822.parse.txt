@@ -533,5 +533,13 @@ Document {
         unknown_children: [],
         scoped_namespaces: None,
     },
-    xml_declaration: None,
+    xml_declaration: Some(
+        XmlDeclaration {
+            version: "1.0",
+            encoding: Some(
+                "UTF-8",
+            ),
+            standalone: None,
+        },
+    ),
 }

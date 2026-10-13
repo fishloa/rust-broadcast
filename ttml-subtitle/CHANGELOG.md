@@ -8,6 +8,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Changed (BREAKING)
+- `Document::parse_str` now populates `Document::xml_declaration` from the XML
+  declaration (quick-xml `Decl` event; it was always `None`), and `to_xml`
+  round-trips it. `XmlDeclaration::encoding` is now `Option<String>` (the
+  declaration may omit it) and gains `standalone: Option<bool>`; `Default` is
+  `1.0`/`UTF-8`. A `None` declaration (hand-built or declaration-less input)
+  still serializes the default `<?xml version="1.0" encoding="UTF-8"?>`; a
+  non-UTF-8 declared encoding is kept in the model but serialized as `UTF-8`
+  (the output is UTF-8 text). A `standalone` other than yes/no is a parse error
+  (#1189).
 - `InlineContent` gains an `Unknown(Box<UnknownElement>)` variant: an unmodeled
   element inside `<p>`/`<span>` is kept at its original position among the text
   and spans instead of being hoisted to the end of `unknown_children` (which a

@@ -101,7 +101,10 @@ pub const IMSC1_IMAGE_PROFILE: &str = "http://www.w3.org/ns/ttml/profile/imsc1/i
 pub struct Document {
     /// The root `<tt>` element.
     pub tt: TtElement,
-    /// Any XML declaration attributes (version, encoding).
+    /// The XML declaration (`<?xml …?>`, XML 1.0 §2.8) read by
+    /// [`Document::parse_str`]; `None` when the input had none. On
+    /// serialization `None` (a hand-built document) emits the default
+    /// `<?xml version="1.0" encoding="UTF-8"?>`.
     pub xml_declaration: Option<XmlDeclaration>,
 }
 
@@ -111,8 +114,38 @@ pub struct Document {
 pub struct XmlDeclaration {
     /// XML version, e.g. "1.0".
     pub version: String,
-    /// XML encoding, e.g. "UTF-8".
-    pub encoding: String,
+    /// The declared encoding, e.g. "UTF-8"; `None` when omitted. Output is
+    /// always UTF-8 text, so serialization writes the stored encoding only
+    /// when it is a UTF-8 spelling and `UTF-8` otherwise.
+    pub encoding: Option<String>,
+    /// `standalone="yes"`/`"no"` as `Some(true)`/`Some(false)`; `None` when
+    /// omitted.
+    pub standalone: Option<bool>,
+}
+
+impl XmlDeclaration {
+    pub(crate) fn from_parts(
+        version: String,
+        encoding: Option<String>,
+        standalone: Option<bool>,
+    ) -> Self {
+        XmlDeclaration {
+            version,
+            encoding,
+            standalone,
+        }
+    }
+}
+
+impl Default for XmlDeclaration {
+    /// `<?xml version="1.0" encoding="UTF-8"?>`.
+    fn default() -> Self {
+        XmlDeclaration {
+            version: "1.0".into(),
+            encoding: Some("UTF-8".into()),
+            standalone: None,
+        }
+    }
 }
 
 impl Document {
@@ -132,12 +165,13 @@ impl Document {
     pub fn parse_str(xml: &str) -> Result<Self> {
         let mut pull = Pull::new(xml);
         let root = pull.root()?;
+        let xml_declaration = pull.take_declaration();
         match parse_document_root(&mut pull, &root) {
             Ok(tt) => {
                 pull.finish()?;
                 Ok(Document {
                     tt,
-                    xml_declaration: None,
+                    xml_declaration,
                 })
             }
             Err(e) => {
@@ -157,9 +191,19 @@ impl Document {
     /// (#1110/TT-W1). The document remains parseable/serializable afterwards.
     pub fn to_xml(&mut self) -> String {
         let mut w = W::new();
+        let default_decl = XmlDeclaration::default();
+        let decl = self.xml_declaration.as_ref().unwrap_or(&default_decl);
+        let encoding = decl.encoding.as_deref().map(|e| {
+            if e.eq_ignore_ascii_case("utf-8") {
+                e
+            } else {
+                "UTF-8"
+            }
+        });
+        let standalone = decl.standalone.map(|s| if s { "yes" } else { "no" });
         emit(
             &mut w,
-            Event::Decl(BytesDecl::new("1.0", Some("UTF-8"), None)),
+            Event::Decl(BytesDecl::new(&decl.version, encoding, standalone)),
         );
         put_nl(&mut w);
         let mut ns = collect_namespaces(&mut self.tt);
