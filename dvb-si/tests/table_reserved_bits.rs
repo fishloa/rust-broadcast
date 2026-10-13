@@ -124,7 +124,8 @@ fn lost_bits(section: &[u8], has_crc: bool) -> Vec<(usize, u8)> {
                 && re.len() == f.len()
                 && re != f
             {
-                let diffs: Vec<usize> = (0..f.len()).filter(|&i| re[i] != f[i]).collect();
+                // The CRC_32 legitimately differs whenever the content does.
+                let diffs: Vec<usize> = (0..body_end).filter(|&i| re[i] != f[i]).collect();
                 if diffs == [byte] && (re[byte] ^ f[byte]) == mask {
                     lost.push((byte, bit));
                 }
