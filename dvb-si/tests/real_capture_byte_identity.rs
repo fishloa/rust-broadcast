@@ -307,7 +307,7 @@ fn survey_file(s: &mut Survey, path: &Path) {
                 if let Ok(AnyTableSection::PmtSection(pmt)) = ev.table_section() {
                     for st in &pmt.streams {
                         if SECTION_STREAM_TYPES.contains(&st.stream_type.to_u8()) {
-                            extra.insert(st.elementary_pid);
+                            extra.insert(st.elementary_pid.value());
                         }
                     }
                 }

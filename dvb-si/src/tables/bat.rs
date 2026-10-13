@@ -14,7 +14,7 @@ use broadcast_common::{Parse, Serialize};
 /// table_id value for BAT.
 pub const TABLE_ID: u8 = 0x4A;
 /// Well-known PID on which BAT is carried.
-pub const PID: u16 = 0x0011;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0011);
 /// bouquet_name_descriptor tag (ETSI EN 300 468 §6.2.4).
 pub const DESCRIPTOR_TAG_BOUQUET_NAME: u8 = 0x47;
 

@@ -438,13 +438,13 @@ pub(crate) fn current_next_of(flags_byte: u8) -> bool {
 
 /// Decode a 13-bit PID from its two wire bytes.
 #[must_use]
-pub(crate) fn pid_of(hi: u8, lo: u8) -> u16 {
-    ((u16::from(hi & PID_LO_MASK)) << 8) | u16::from(lo)
+pub(crate) fn pid_of(hi: u8, lo: u8) -> mpeg_ts::pid::Pid {
+    mpeg_ts::pid::Pid::new(((u16::from(hi & PID_LO_MASK)) << 8) | u16::from(lo))
 }
 
 /// Write a 13-bit PID carrying the three `reserved='111'` bits.
 #[cfg(test)]
-pub(crate) fn write_pid(buf: &mut [u8], pid: u16) {
+pub(crate) fn write_pid(buf: &mut [u8], pid: mpeg_ts::pid::Pid) {
     write_pid_r(buf, pid, RESERVED_3);
 }
 
@@ -468,7 +468,8 @@ pub(crate) fn pid_reserved_of(hi: u8) -> u8 {
 }
 
 /// Write a 13-bit PID with a caller-supplied `reserved(3)`.
-pub(crate) fn write_pid_r(buf: &mut [u8], pid: u16, reserved: u8) {
+pub(crate) fn write_pid_r(buf: &mut [u8], pid: mpeg_ts::pid::Pid, reserved: u8) {
+    let pid = pid.value();
     buf[0] = ((reserved & RESERVED_3) << PID_RESERVED_SHIFT) | ((pid >> 8) as u8 & PID_LO_MASK);
     buf[1] = (pid & 0xFF) as u8;
 }

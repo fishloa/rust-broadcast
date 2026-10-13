@@ -16,7 +16,7 @@ use broadcast_common::{Parse, Serialize};
 /// table_id for Time Offset Table.
 pub const TABLE_ID: u8 = 0x73;
 /// Well-known PID on which TOT is carried (same as TDT).
-pub const PID: u16 = 0x0014;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0014);
 
 const HEADER_LEN: usize = 3;
 const UTC_TIME_LEN: usize = 5;

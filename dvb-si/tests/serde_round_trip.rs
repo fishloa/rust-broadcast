@@ -13,6 +13,7 @@
 //! (`UnMessage::Dii`).
 #![cfg(feature = "serde")]
 
+use mpeg_ts::pid::Pid;
 use broadcast_common::Parse;
 use dvb_si::carousel::{Dii, DiiModule, UnMessage};
 use dvb_si::compatibility::CompatibilityDescriptor;
@@ -95,9 +96,9 @@ fn pat_with_multiple_entries_serializes() {
         0,
         0,
         vec![
-            PatEntry::new(0, 0x10),
-            PatEntry::new(1, 0x100),
-            PatEntry::new(2, 0x200),
+            PatEntry::new(0, Pid::new(0x10)),
+            PatEntry::new(1, Pid::new(0x100)),
+            PatEntry::new(2, Pid::new(0x200)),
         ],
     );
     let v = serde_json::to_value(&p).expect("serialize");
@@ -123,11 +124,11 @@ fn pmt_serializes_to_valid_json() {
         true,
         0,
         0,
-        0x64,
+        Pid::new(0x64),
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
             StreamType::Mpeg2Video,
-            0xC8,
+            Pid::new(0xC8),
             DescriptorLoop::new(&[]),
         )],
     );

@@ -10,7 +10,7 @@ use broadcast_common::{Parse, Serialize};
 /// table_id for the Discontinuity Information Table.
 pub const TABLE_ID: u8 = 0x7E;
 /// Well-known PID on which the DIT is carried.
-pub const PID: u16 = 0x001E;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x001E);
 
 const HEADER_LEN: usize = 3;
 /// Body length: one byte holding `transition_flag` + reserved bits (§7.1.2).
@@ -209,6 +209,6 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x7E);
-        assert_eq!(PID, 0x001E);
+        assert_eq!(PID.value(), 0x001E);
     }
 }

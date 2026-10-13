@@ -2,6 +2,7 @@
 //! panic, for the parsers whose big-endian reads went through
 //! `wire::be_u16`/`be_u32` (replacing `first_chunk::<N>().unwrap()`).
 
+use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
 use dvb_si::descriptors::ca_identifier::CaIdentifierDescriptor;
 use dvb_si::descriptors::local_time_offset::LocalTimeOffsetDescriptor;
@@ -38,7 +39,7 @@ fn pat_truncated_is_err() {
         true,
         0,
         0,
-        vec![PatEntry::new(1, 0x100), PatEntry::new(2, 0x101)],
+        vec![PatEntry::new(1, Pid::new(0x100)), PatEntry::new(2, Pid::new(0x101))],
     );
     let mut buf = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut buf).unwrap();

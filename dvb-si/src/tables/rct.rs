@@ -75,7 +75,7 @@ use broadcast_common::{Parse, Serialize};
 pub const TABLE_ID: u8 = 0x76;
 
 /// Well-known PID on which RCT is carried: none (signalled via PMT).
-pub const PID: u16 = 0x0000;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;

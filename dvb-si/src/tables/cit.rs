@@ -21,7 +21,7 @@ pub const TABLE_ID: u8 = 0x77;
 ///
 /// Note: PID 0x0012 is shared with the EIT family; demultiplexers must filter
 /// by table_id in addition to PID to isolate CIT sections.
-pub const PID: u16 = 0x0012;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0012);
 
 const HEADER_LEN: usize = 3;
 const EXTENSION_LEN: usize = 10;

@@ -3,6 +3,7 @@
 //! Content protection signalling: a CP_system_id, the PID carrying the CP
 //! stream, and a private_data byte run.
 use super::*;
+use mpeg_ts::pid::Pid;
 
 impl<'a> ExtensionBodyDef<'a> for Cp<'a> {
     const TAG_EXTENSION: u8 = 0x02;
@@ -33,7 +34,7 @@ pub struct Cp<'a> {
     /// [`CP_RESERVED_FUTURE_USE_DEFAULT`] (`0b111`).
     pub reserved_future_use: u8,
     /// CP_PID(13) — the PID carrying the CP stream.
-    pub cp_pid: u16,
+    pub cp_pid: Pid,
     /// private_data_byte run (the rest of the descriptor).
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
@@ -42,7 +43,7 @@ pub struct Cp<'a> {
 impl<'a> Cp<'a> {
     /// Build a body with the spec-default reserved bits.
     #[must_use]
-    pub const fn new(cp_system_id: u16, cp_pid: u16, private_data: &'a [u8]) -> Self {
+    pub const fn new(cp_system_id: u16, cp_pid: Pid, private_data: &'a [u8]) -> Self {
         Self {
             cp_system_id,
             reserved_future_use: CP_RESERVED_FUTURE_USE_DEFAULT,
@@ -65,7 +66,7 @@ impl<'a> Parse<'a> for Cp<'a> {
         Ok(Cp {
             cp_system_id: u16::from_be_bytes([sel[0], sel[1]]),
             reserved_future_use: sel[2] >> 5,
-            cp_pid: u16::from_be_bytes([sel[2], sel[3]]) & MAX_PID,
+            cp_pid: Pid::new(u16::from_be_bytes([sel[2], sel[3]])),
             private_data: &sel[CP_HEADER_LEN..],
         })
     }
@@ -86,7 +87,7 @@ impl Serialize for Cp<'_> {
         }
         buf[0..2].copy_from_slice(&self.cp_system_id.to_be_bytes());
         // reserved_future_use(3), then CP_PID(13).
-        let cp_pid = broadcast_common::len::fit_bits(u64::from(self.cp_pid), 13, "CP_PID")? as u16;
+        let cp_pid = self.cp_pid.value();
         let reserved = u16::from(self.reserved_future_use & 0b111) << RESERVED_SHIFT;
         buf[2..4].copy_from_slice(&(reserved | cp_pid).to_be_bytes());
         buf[CP_HEADER_LEN..len].copy_from_slice(self.private_data);
@@ -110,7 +111,7 @@ mod tests {
         match &d.body {
             ExtensionBody::Cp(b) => {
                 assert_eq!(b.cp_system_id, 0x1234);
-                assert_eq!(b.cp_pid, 0x0100);
+                assert_eq!(b.cp_pid, Pid::new(0x0100));
                 assert_eq!(b.private_data, &[0xAA, 0xBB]);
             }
             other => panic!("expected Cp, got {other:?}"),
@@ -125,14 +126,11 @@ mod tests {
     }
 
     #[test]
-    fn serialize_rejects_over_13bit_pid() {
-        // Pre-fix `cp_pid & MAX_PID` silently clipped bits 13..16 (r03-W3).
-        let d = Cp::new(0x1234, 0x2000, &[]);
-        let mut buf = vec![0u8; d.serialized_len()];
-        assert!(matches!(
-            d.serialize_into(&mut buf).unwrap_err(),
-            Error::FieldOverflow(_)
-        ));
+    fn over_13bit_pid_is_unrepresentable() {
+        // Pre-fix `cp_pid & MAX_PID` silently clipped bits 13..16 (r03-W3);
+        // `Cp::new` now takes a `Pid`, which `try_new` refuses to build.
+        assert!(Pid::try_new(0x2000).is_err());
+        assert_eq!(Pid::try_new(0x1FFF).unwrap().value(), 0x1FFF);
     }
 
     /// Every `reserved_future_use(3)` value re-serializes byte-identically.
@@ -155,7 +153,7 @@ mod tests {
     /// `new()` serializes the spec value `111`.
     #[test]
     fn default_reserved_is_spec_value() {
-        let c = Cp::new(0x1234, 0x0100, &[]);
+        let c = Cp::new(0x1234, Pid::new(0x0100), &[]);
         let mut buf = vec![0u8; c.serialized_len()];
         c.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [0x12, 0x34, 0xE1, 0x00]);

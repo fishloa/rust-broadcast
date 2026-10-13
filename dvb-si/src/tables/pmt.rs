@@ -8,6 +8,7 @@ use crate::descriptors::DescriptorLoop;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
+use mpeg_ts::pid::Pid;
 
 /// PMT table_id (ISO/IEC 13818-1 Table 2-30).
 pub const TABLE_ID: u8 = 0x02;
@@ -539,7 +540,7 @@ pub struct PmtStream<'a> {
     /// MPEG-2 stream_type byte (ISO/IEC 13818-1 Table 2-34).
     pub stream_type: StreamType,
     /// 13-bit elementary stream PID.
-    pub elementary_pid: u16,
+    pub elementary_pid: Pid,
     /// Raw ES_info descriptor bytes; parsing lives in crate::descriptors.
     /// Elementary-stream descriptor loop. Serializes as the typed descriptor
     /// sequence; `.raw()` yields the wire bytes.
@@ -556,7 +557,7 @@ pub struct PmtStream<'a> {
 impl<'a> PmtStream<'a> {
     /// Construct an entry with the spec `reserved` fill (all ones).
     #[must_use]
-    pub fn new(stream_type: StreamType, elementary_pid: u16, es_info: DescriptorLoop<'a>) -> Self {
+    pub fn new(stream_type: StreamType, elementary_pid: Pid, es_info: DescriptorLoop<'a>) -> Self {
         Self {
             stream_type,
             elementary_pid,
@@ -586,7 +587,7 @@ pub struct PmtSection<'a> {
     /// shall be 0x00 for conformant PMTs but preserved for round-trip fidelity).
     pub last_section_number: u8,
     /// 13-bit PCR PID.
-    pub pcr_pid: u16,
+    pub pcr_pid: Pid,
     /// Raw program_info descriptor bytes.
     /// Program-info descriptor loop. Serializes as the typed descriptor
     /// sequence; `.raw()` yields the wire bytes.
@@ -619,7 +620,7 @@ impl<'a> PmtSection<'a> {
         current_next_indicator: bool,
         section_number: u8,
         last_section_number: u8,
-        pcr_pid: u16,
+        pcr_pid: Pid,
         program_info: DescriptorLoop<'a>,
         streams: Vec<PmtStream<'a>>,
     ) -> Self {
@@ -873,7 +874,7 @@ mod tests {
         assert_eq!(pmt.program_number, 42);
         assert_eq!(pmt.version_number, 5);
         assert!(pmt.current_next_indicator);
-        assert_eq!(pmt.pcr_pid, 0x0100);
+        assert_eq!(pmt.pcr_pid, Pid::new(0x0100));
         assert_eq!(pmt.program_info.raw(), &[0xAA, 0xBB]);
         assert_eq!(pmt.streams.len(), 0);
     }
@@ -890,10 +891,10 @@ mod tests {
         let pmt = PmtSection::parse(&bytes).unwrap();
         assert_eq!(pmt.streams.len(), 2);
         assert_eq!(pmt.streams[0].stream_type, StreamType::Mpeg2Video);
-        assert_eq!(pmt.streams[0].elementary_pid, 0x102);
+        assert_eq!(pmt.streams[0].elementary_pid, Pid::new(0x102));
         assert_eq!(pmt.streams[0].es_info.raw(), &[0x11, 0x22]);
         assert_eq!(pmt.streams[1].stream_type, StreamType::H264);
-        assert_eq!(pmt.streams[1].elementary_pid, 0x103);
+        assert_eq!(pmt.streams[1].elementary_pid, Pid::new(0x103));
         assert_eq!(pmt.streams[1].es_info.raw(), &[0x33]);
     }
 
@@ -916,7 +917,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_empty_program() {
-        let pmt = PmtSection::new(1, 0, true, 0, 0, 0x100, DescriptorLoop::new(&[]), vec![]);
+        let pmt = PmtSection::new(1, 0, true, 0, 0, Pid::new(0x100), DescriptorLoop::new(&[]), vec![]);
         let mut buf = vec![0u8; pmt.serialized_len()];
         pmt.serialize_into(&mut buf).unwrap();
         let re = PmtSection::parse(&buf).unwrap();
@@ -934,12 +935,12 @@ mod tests {
             true,
             0,
             0,
-            0x1F0,
+            Pid::new(0x1F0),
             DescriptorLoop::new(&prog_info),
             vec![
-                PmtStream::new(StreamType::Mpeg2Video, 0x100, DescriptorLoop::new(&es1)),
-                PmtStream::new(StreamType::Mpeg1Audio, 0x101, DescriptorLoop::new(&es2)),
-                PmtStream::new(StreamType::H264, 0x102, DescriptorLoop::new(&[])),
+                PmtStream::new(StreamType::Mpeg2Video, Pid::new(0x100), DescriptorLoop::new(&es1)),
+                PmtStream::new(StreamType::Mpeg1Audio, Pid::new(0x101), DescriptorLoop::new(&es2)),
+                PmtStream::new(StreamType::H264, Pid::new(0x102), DescriptorLoop::new(&[])),
             ],
         );
         let mut buf = vec![0u8; pmt.serialized_len()];
@@ -984,7 +985,7 @@ mod tests {
     #[test]
     fn serialize_rejects_program_info_exceeding_section_length() {
         let pi = vec![0xAAu8; 4083];
-        let pmt = PmtSection::new(1, 0, true, 0, 0, 0x100, DescriptorLoop::new(&pi), vec![]);
+        let pmt = PmtSection::new(1, 0, true, 0, 0, Pid::new(0x100), DescriptorLoop::new(&pi), vec![]);
         let mut buf = vec![0u8; pmt.serialized_len()];
         assert!(matches!(
             pmt.serialize_into(&mut buf).unwrap_err(),
@@ -995,7 +996,7 @@ mod tests {
     #[test]
     fn serialize_accepts_program_info_at_section_length_boundary() {
         let pi = vec![0xAAu8; 4082];
-        let pmt = PmtSection::new(1, 0, true, 0, 0, 0x100, DescriptorLoop::new(&pi), vec![]);
+        let pmt = PmtSection::new(1, 0, true, 0, 0, Pid::new(0x100), DescriptorLoop::new(&pi), vec![]);
         let mut buf = vec![0u8; pmt.serialized_len()];
         pmt.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = PmtSection::parse(&buf).expect("reparse");
@@ -1012,11 +1013,11 @@ mod tests {
             true,
             0,
             0,
-            0x100,
+            Pid::new(0x100),
             DescriptorLoop::new(&[]),
             vec![PmtStream::new(
                 StreamType::from_u8(0x02),
-                0x101,
+                Pid::new(0x101),
                 DescriptorLoop::new(&es),
             )],
         );
@@ -1273,7 +1274,7 @@ mod tests {
     /// hardcoded buf[6]=0 and buf[7]=0, so this test would fail.
     #[test]
     fn section_number_round_trip_nonzero() {
-        let pmt = PmtSection::new(42, 1, true, 3, 7, 0x0200, DescriptorLoop::new(&[]), vec![]);
+        let pmt = PmtSection::new(42, 1, true, 3, 7, Pid::new(0x0200), DescriptorLoop::new(&[]), vec![]);
         let mut buf = vec![0u8; pmt.serialized_len()];
         pmt.serialize_into(&mut buf).unwrap();
         // Wire bytes[6] and [7] must carry the encoded values.

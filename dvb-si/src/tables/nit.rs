@@ -15,7 +15,7 @@ pub const TABLE_ID_ACTUAL: u8 = 0x40;
 /// table_id value for NIT other (other TSes in the network).
 pub const TABLE_ID_OTHER: u8 = 0x41;
 /// Well-known PID on which NIT is carried.
-pub const PID: u16 = 0x0010;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0010);
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;

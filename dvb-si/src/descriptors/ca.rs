@@ -6,6 +6,7 @@
 use super::descriptor_body;
 use crate::error::{Error, Result};
 use broadcast_common::{Parse, Serialize};
+use mpeg_ts::pid::Pid;
 
 /// Descriptor tag for CA_descriptor.
 pub const TAG: u8 = 0x09;
@@ -48,7 +49,7 @@ pub struct CaDescriptor<'a> {
 
     /// PID carrying ECM/EMM data for this CA system.
     /// Bits `[12:0]` of the 2-byte field; upper 3 bits are reserved.
-    pub ca_pid: u16,
+    pub ca_pid: Pid,
 
     /// Optional private data following the standard CA descriptor fields.
     pub private_data: &'a [u8],
@@ -57,7 +58,7 @@ pub struct CaDescriptor<'a> {
 impl<'a> CaDescriptor<'a> {
     /// Build a descriptor with the spec-default reserved bits.
     #[must_use]
-    pub const fn new(ca_system_id: u16, ca_pid: u16, private_data: &'a [u8]) -> Self {
+    pub const fn new(ca_system_id: u16, ca_pid: Pid, private_data: &'a [u8]) -> Self {
         Self {
             reserved: RESERVED_DEFAULT,
             ca_system_id,
@@ -85,7 +86,7 @@ impl<'a> Parse<'a> for CaDescriptor<'a> {
                 })?;
         let ca_system_id = u16::from_be_bytes([fixed[0], fixed[1]]);
         // ca_pid: upper 3 bits are reserved (should be 0b111), lower 13 bits are the PID
-        let ca_pid = ((u16::from(fixed[2]) & 0x1F) << 8) | u16::from(fixed[3]);
+        let ca_pid = Pid::new(u16::from_be_bytes([fixed[2], fixed[3]]));
         Ok(Self {
             reserved: fixed[2] >> 5,
             ca_system_id,
@@ -113,11 +114,10 @@ impl Serialize for CaDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         buf[2] = (self.ca_system_id >> 8) as u8;
         buf[3] = (self.ca_system_id & 0xFF) as u8;
-        // ca_pid is a 13-bit field (upper 3 bits reserved, set to 1); an
-        // out-of-range value must be rejected rather than silently wrapped
-        // into a different, wrong PID (r03-W1, the #972 class).
-        let ca_pid = broadcast_common::len::fit_bits(self.ca_pid as u64, 13, "ca_pid")?;
-        buf[4] = ((self.reserved & 0x07) << 5) | ((ca_pid >> 8) as u8);
+        // ca_pid is a 13-bit field (upper 3 bits reserved); `Pid` is 13-bit by
+        // construction, so no out-of-range value can reach the wire.
+        let ca_pid = self.ca_pid.value();
+        buf[4] = ((self.reserved & 0x07) << 5) | ((ca_pid >> 8) as u8 & 0x1F);
         buf[5] = (ca_pid & 0xFF) as u8;
         if !self.private_data.is_empty() {
             buf[HEADER_LEN + MIN_BODY_LEN..len].copy_from_slice(self.private_data);
@@ -140,7 +140,7 @@ mod tests {
         let bytes = [TAG, 4, 0x05, 0x00, 0xE1, 0x01];
         let d = CaDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.ca_system_id, 0x0500);
-        assert_eq!(d.ca_pid, 0x0101);
+        assert_eq!(d.ca_pid, Pid::new(0x0101));
         assert!(d.private_data.is_empty());
     }
 
@@ -150,22 +150,26 @@ mod tests {
         let bytes = [TAG, 6, 0x05, 0x00, 0xE1, 0x01, 0xAA, 0xBB];
         let d = CaDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.ca_system_id, 0x0500);
-        assert_eq!(d.ca_pid, 0x0101);
+        assert_eq!(d.ca_pid, Pid::new(0x0101));
         assert_eq!(d.private_data, &[0xAA, 0xBB]);
     }
 
     /// Regression for r03-W1 (the #972 class): a `ca_pid` over 13 bits must
-    /// be rejected, not silently wrapped into a different, wrong PID.
-    /// Previously `CaDescriptor { ca_pid: 0x2101, .. }` serialized to the
-    /// same bytes as `ca_pid: 0x0101`.
+    /// be rejected, not silently wrapped into a different, wrong PID. The
+    /// field is now a `Pid`, so the bad value is unrepresentable: the only
+    /// way to build one from a caller-supplied `u16` is `Pid::try_new`, which
+    /// rejects it before a descriptor can exist.
     #[test]
-    fn serialize_rejects_ca_pid_over_13_bits() {
-        let d = CaDescriptor::new(0x0500, 0x2101, &[]);
-        let mut buf = vec![0u8; d.serialized_len()];
-        assert!(matches!(
-            d.serialize_into(&mut buf).unwrap_err(),
-            Error::FieldOverflow(_)
-        ));
+    fn ca_pid_over_13_bits_is_unrepresentable() {
+        let err = Pid::try_new(0x2101).unwrap_err();
+        assert_eq!(err.value, 0x2101);
+        assert!(Pid::try_new(0x1FFF).is_ok());
+        assert!(Pid::try_new(0x2000).is_err());
+        // The wire parse masks to the 13 PID bits and keeps the 3 reserved
+        // bits separately, so a parsed descriptor re-serializes identically.
+        let bytes = [TAG, 4, 0x05, 0x00, 0xE1, 0x01];
+        let d = CaDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.ca_pid, Pid::new(0x0101));
     }
 
     #[test]
@@ -196,7 +200,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = CaDescriptor::new(0x1800, 0x0200, &[0xDE, 0xAD]);
+        let d = CaDescriptor::new(0x1800, Pid::new(0x0200), &[0xDE, 0xAD]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = CaDescriptor::parse(&buf).unwrap();
@@ -205,7 +209,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_no_private_data() {
-        let d = CaDescriptor::new(0x0500, 0x0101, &[]);
+        let d = CaDescriptor::new(0x0500, Pid::new(0x0101), &[]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = CaDescriptor::parse(&buf).unwrap();
@@ -214,7 +218,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_small_buffer() {
-        let d = CaDescriptor::new(0x0500, 0x0101, &[]);
+        let d = CaDescriptor::new(0x0500, Pid::new(0x0101), &[]);
         let mut tiny = vec![0u8; 3];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
@@ -222,7 +226,7 @@ mod tests {
 
     #[test]
     fn descriptor_length_matches_payload() {
-        let d = CaDescriptor::new(0x0500, 0x0101, &[0xAA]);
+        let d = CaDescriptor::new(0x0500, Pid::new(0x0101), &[0xAA]);
         assert_eq!(d.serialized_len() - 2, 5);
     }
 
@@ -266,7 +270,7 @@ mod tests {
 
     #[test]
     fn default_reserved_is_ones() {
-        let d = CaDescriptor::new(0x0500, 0x0101, &[]);
+        let d = CaDescriptor::new(0x0500, Pid::new(0x0101), &[]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [TAG, 4, 0x05, 0x00, 0xE1, 0x01]);

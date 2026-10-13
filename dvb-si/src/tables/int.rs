@@ -19,7 +19,7 @@ pub const TABLE_ID: u8 = 0x4C;
 /// INT does not have a fixed PID.  It is discovered through a
 /// `data_broadcast_id_descriptor` (data_broadcast_id 0x000B) inside the PMT
 /// ES_info loop.  This constant is therefore 0x0000 (unknown/variable).
-pub const PID: u16 = 0x0000;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
 
 /// Action type coding — ETSI EN 301 192 §8.4.4.1 Table 14.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
