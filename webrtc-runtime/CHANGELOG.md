@@ -3,6 +3,8 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+### Added
+- `MediaTransport::restart_ice` (feature `media`): an in-place ICE restart (RFC 8445 section 9, as WHIP/WHEP need for RFC 9725 section 4.3.2). Installs new local and remote ICE credentials, drops the previous remote candidates and pairs, restarts connectivity checks and resets the remote-candidate budget; local candidates, DTLS and SRTP are untouched, so media keeps flowing and no new handshake runs. Covered by a two-transport loopback test (pair re-nominated, same SRTP session decrypts both ways).
 
 ## [0.3.0] - 2026-10-13
 ### Fixed

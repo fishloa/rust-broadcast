@@ -2967,7 +2967,7 @@ mod tests {
                 }
                 progressed = true;
             }
-            if !progressed && !(a_ice && b_ice) {
+            if !(progressed || a_ice && b_ice) {
                 let next = [pair.a.poll_timeout(), pair.b.poll_timeout()]
                     .into_iter()
                     .flatten()
