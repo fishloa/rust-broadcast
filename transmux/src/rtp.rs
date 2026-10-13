@@ -72,6 +72,7 @@ use rtp_packet::RtpPacket as RtpPacketWire;
 
 use crate::annexb::NAL_LENGTH_SIZE;
 use crate::error::{Error, Result};
+use crate::ir::InputDegradation;
 use crate::media::Media;
 use crate::pipeline::CodecConfig;
 
@@ -1205,12 +1206,20 @@ impl Unpackage for RtpDepacketiser {
         self.timing_warnings.clear();
         self.dropped_timing_warnings = 0;
         let mut tracks = Vec::new();
+        let mut degraded: Vec<InputDegradation> = Vec::new();
         for (idx, stream) in input.streams.iter().enumerate() {
             let clock_rate = stream.validated_clock_rate()?;
-            let samples = match stream.kind {
-                RtpMediaKind::H264 => depacketise_video(&stream.packets)?,
-                RtpMediaKind::Aac => depacketise_audio(&stream.packets)?,
+            // Lenient (audit T16, #1144): a malformed packet is skipped and
+            // reported in `Media::degraded` (its index in this stream's packet
+            // list), not allowed to fail every packet after it.
+            let (samples, bad) = match stream.kind {
+                RtpMediaKind::H264 => reassemble_video_lenient(&stream.packets),
+                RtpMediaKind::Aac => reassemble_audio_lenient(&stream.packets),
             };
+            degraded.extend(
+                bad.into_iter()
+                    .map(|i| InputDegradation::MalformedUnit { position: i as u64 }),
+            );
             // RFC 6184 §5.1 / RFC 3640 §3.3.1: the wire timestamp is the
             // sampling (presentation) time, one per access unit. A step
             // backward means presentation order is not wire (decode) order, so
@@ -1252,7 +1261,9 @@ impl Unpackage for RtpDepacketiser {
                 samples,
             });
         }
-        rtp_tracks_to_media(tracks)
+        let mut media = rtp_tracks_to_media(tracks)?;
+        media.degraded = degraded;
+        Ok(media)
     }
 }
 
@@ -1612,6 +1623,23 @@ pub(crate) struct ReassembledAu {
 /// H.264 FU-A/STAP-A/single-NAL reassembly (RFC 6184 §5.7/§5.8), preserving
 /// the RTP timestamp and marking IDR access units as sync points.
 pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
+    reassemble_video_impl(packets, None)
+}
+
+/// Lenient form of [`reassemble_video`] for the batch path (audit T16, #1144):
+/// a packet whose header or payload is malformed is skipped, its index
+/// recorded in the second return value, and reassembly carries on with the
+/// next packet instead of failing the whole input.
+pub(crate) fn reassemble_video_lenient(packets: &[Vec<u8>]) -> (Vec<ReassembledAu>, Vec<usize>) {
+    let mut bad = Vec::new();
+    let aus = reassemble_video_impl(packets, Some(&mut bad)).unwrap_or_default();
+    (aus, bad)
+}
+
+fn reassemble_video_impl(
+    packets: &[Vec<u8>],
+    mut lenient: Option<&mut Vec<usize>>,
+) -> Result<Vec<ReassembledAu>> {
     let mut aus: Vec<ReassembledAu> = Vec::new();
     let mut cur_nals: Vec<Vec<u8>> = Vec::new();
     let mut cur_ts: Option<u32> = None;
@@ -1639,8 +1667,24 @@ pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
         nals.clear();
     }
 
-    for pkt in packets {
-        let hdr = parse_rtp_header(pkt)?;
+    'pkts: for (pkt_idx, pkt) in packets.iter().enumerate() {
+        // Strict mode propagates the error; lenient mode records the packet
+        // and moves on to the next one.
+        macro_rules! bad {
+            ($e:expr) => {{
+                match lenient.as_deref_mut() {
+                    Some(skipped) => {
+                        skipped.push(pkt_idx);
+                        continue 'pkts;
+                    }
+                    None => return Err($e),
+                }
+            }};
+        }
+        let hdr = match parse_rtp_header(pkt) {
+            Ok(h) => h,
+            Err(e) => bad!(e),
+        };
         let payload = hdr.payload;
         if payload.is_empty() {
             continue;
@@ -1683,9 +1727,12 @@ pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
         match nal_type {
             NAL_TYPE_STAP_A => {
                 let mut off = 1usize;
+                // Collected apart so a malformed aggregate contributes none
+                // of its NALs (a half-parsed STAP-A would be a torn AU).
+                let mut stap_nals: Vec<Vec<u8>> = Vec::new();
                 while off < payload.len() {
                     if off + STAP_A_SIZE_LEN > payload.len() {
-                        return Err(Error::BufferTooShort {
+                        bad!(Error::BufferTooShort {
                             need: off + STAP_A_SIZE_LEN,
                             have: payload.len(),
                             what: "STAP-A size prefix",
@@ -1695,19 +1742,20 @@ pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
                     off += STAP_A_SIZE_LEN;
                     let end = off + size;
                     if end > payload.len() {
-                        return Err(Error::BufferTooShort {
+                        bad!(Error::BufferTooShort {
                             need: end,
                             have: payload.len(),
                             what: "STAP-A NAL",
                         });
                     }
-                    cur_nals.push(payload[off..end].to_vec());
+                    stap_nals.push(payload[off..end].to_vec());
                     off = end;
                 }
+                cur_nals.extend(stap_nals);
             }
             NAL_TYPE_FU_A => {
                 if payload.len() < 2 {
-                    return Err(Error::BufferTooShort {
+                    bad!(Error::BufferTooShort {
                         need: 2,
                         have: payload.len(),
                         what: "FU-A header",
@@ -1783,6 +1831,21 @@ pub(crate) fn reassemble_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
 /// so a mismatch means the run is not the AU it claims to be. Either way
 /// reassembly resumes at the next access unit.
 pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
+    reassemble_audio_impl(packets, None)
+}
+
+/// Lenient form of [`reassemble_audio`] for the batch path — see
+/// [`reassemble_video_lenient`].
+pub(crate) fn reassemble_audio_lenient(packets: &[Vec<u8>]) -> (Vec<ReassembledAu>, Vec<usize>) {
+    let mut bad = Vec::new();
+    let aus = reassemble_audio_impl(packets, Some(&mut bad)).unwrap_or_default();
+    (aus, bad)
+}
+
+fn reassemble_audio_impl(
+    packets: &[Vec<u8>],
+    mut lenient: Option<&mut Vec<usize>>,
+) -> Result<Vec<ReassembledAu>> {
     let mut aus = Vec::new();
     /// One AU under reassembly from fragments (RFC 3640 §3.2.3.1).
     struct PendingAu {
@@ -1823,11 +1886,27 @@ pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
         pending.take();
     }
 
-    for pkt in packets {
-        let hdr = parse_rtp_header(pkt)?;
+    'pkts: for (pkt_idx, pkt) in packets.iter().enumerate() {
+        // Strict mode propagates the error; lenient mode records the packet
+        // and moves on to the next one.
+        macro_rules! bad {
+            ($e:expr) => {{
+                match lenient.as_deref_mut() {
+                    Some(skipped) => {
+                        skipped.push(pkt_idx);
+                        continue 'pkts;
+                    }
+                    None => return Err($e),
+                }
+            }};
+        }
+        let hdr = match parse_rtp_header(pkt) {
+            Ok(h) => h,
+            Err(e) => bad!(e),
+        };
         let payload = hdr.payload;
         if payload.len() < AAC_AU_HEADERS_LENGTH_LEN {
-            return Err(Error::BufferTooShort {
+            bad!(Error::BufferTooShort {
                 need: AAC_AU_HEADERS_LENGTH_LEN,
                 have: payload.len(),
                 what: "AAC AU-headers-length",
@@ -1838,7 +1917,7 @@ pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
         let num_headers = au_headers_len_bits / (AAC_AU_HEADER_LEN * 8);
         let mut off = AAC_AU_HEADERS_LENGTH_LEN;
         if off + header_bytes > payload.len() {
-            return Err(Error::BufferTooShort {
+            bad!(Error::BufferTooShort {
                 need: off + header_bytes,
                 have: payload.len(),
                 what: "AAC AU headers",
@@ -1929,17 +2008,6 @@ pub(crate) fn reassemble_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>
     Ok(aus)
 }
 
-/// Depacketise an H.264 stream: single-NAL / STAP-A / FU-A → length-prefixed
-/// access units. NALs are grouped into access units by the RTP timestamp; the
-/// marker bit confirms an AU boundary.
-///
-/// Keeps each AU's RTP timestamp + sync flag (media plane step 2c) so the
-/// caller can build absolute `dts`/`pts`; the 32-bit wrap is unrolled once, in
-/// [`rtp_tracks_to_media`].
-fn depacketise_video(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
-    reassemble_video(packets)
-}
-
 /// 4-byte length-prefix a list of NALs into an IR video sample.
 fn length_prefix_nals(nals: &[Vec<u8>]) -> Vec<u8> {
     let total: usize = nals.iter().map(|n| NAL_LENGTH_SIZE + n.len()).sum();
@@ -1949,12 +2017,6 @@ fn length_prefix_nals(nals: &[Vec<u8>]) -> Vec<u8> {
         out.extend_from_slice(nal);
     }
     out
-}
-
-/// Depacketise an AAC (`AAC-hbr`) stream: strip AU-headers → raw AUs,
-/// preserving each AU's RTP timestamp (see [`depacketise_video`]).
-fn depacketise_audio(packets: &[Vec<u8>]) -> Result<Vec<ReassembledAu>> {
-    reassemble_audio(packets)
 }
 
 /// A parsed RTP fixed header (RFC 3550 §5.1) — the fields the spoke needs.

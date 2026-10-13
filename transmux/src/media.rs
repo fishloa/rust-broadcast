@@ -48,7 +48,9 @@ use crate::init_segment::{
     MovieBox, OpaqueBox, SampleDescriptionBox, SampleEntryVariant, StblChild, TrackBox,
     sampling_rate_override,
 };
-use crate::ir::{CodecConfig, FragmentTrackData, Sample, SubtitleFormat, TrackSpec};
+use crate::ir::{
+    CodecConfig, FragmentTrackData, InputDegradation, Sample, SubtitleFormat, TrackSpec,
+};
 use crate::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
 use crate::mp4esds::EsdsBox;
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader, MpegAudioLayer};
@@ -170,6 +172,10 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
         // fragment that follows it, per §8.8.4's "the `mdat` carrying a
         // fragment's data follows that fragment".
         let mut pending_moofs: Vec<(usize, MovieFragmentBox)> = Vec::new();
+        // A `moof` whose body does not parse is skipped and reported (audit
+        // T16, #1144): the box framing is intact, so the next box is read from
+        // a correct offset and one corrupt fragment costs only itself.
+        let mut degraded: Vec<InputDegradation> = Vec::new();
         while offset + BOX_HEADER_MIN_SIZE <= input.len() {
             // A truncated *final* box is ordinary in a live capture or an
             // interrupted recording, so a tail whose declared size runs past
@@ -197,8 +203,12 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             };
             let ty = bx.header.box_type.0;
             if &ty == b"moof" {
-                let moof = MovieFragmentBox::parse_body(bx.body)?;
-                pending_moofs.push((offset, moof));
+                match MovieFragmentBox::parse_body(bx.body) {
+                    Ok(moof) => pending_moofs.push((offset, moof)),
+                    Err(_) => degraded.push(InputDegradation::MalformedUnit {
+                        position: offset as u64,
+                    }),
+                }
             } else if &ty == b"mdat" {
                 // A `moof`'s samples live in the `mdat` that follows it; a
                 // segment carrying several `moof`s before one `mdat` resolves
@@ -233,6 +243,7 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
             movie_timescale,
             pcr: Vec::new(),
             skipped,
+            degraded,
         })
     }
 }

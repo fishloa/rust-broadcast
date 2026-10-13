@@ -135,6 +135,16 @@ pub enum InputDegradation {
     /// The track's current config is unchanged and no `TrackAdded` /
     /// `TrackUpdated` is raised for it. One event per rejected NAL.
     InvalidParameterSet,
+    /// A whole container unit (a Program Stream pack, an RTP packet, an fMP4
+    /// `moof` fragment) failed to parse and was **skipped**; the demuxer
+    /// resynchronised on the next unit and carried on instead of failing the
+    /// whole input (audit T16, #1144). `position` is the unit's byte offset
+    /// for byte-stream inputs (PS pack, fMP4 box) and its index in the packet
+    /// list for packet-list inputs (batch RTP).
+    MalformedUnit {
+        /// Byte offset / packet index of the skipped unit (see variant docs).
+        position: u64,
+    },
 }
 
 impl InputDegradation {
@@ -144,6 +154,7 @@ impl InputDegradation {
             InputDegradation::TransportError => "transport error",
             InputDegradation::ContinuityGap { .. } => "continuity gap",
             InputDegradation::InvalidParameterSet => "invalid parameter set",
+            InputDegradation::MalformedUnit { .. } => "malformed unit",
         }
     }
 }
