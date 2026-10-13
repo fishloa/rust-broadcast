@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+- **BREAKING (minor)**: dropping a deeply nested, hand-built `Document` no longer overflows the stack (#1146). `SpanElement`, `MetadataElement`, `EbuttmElement` and `UnknownElement` now implement `Drop` iteratively (children are moved onto an explicit work stack), so a tree a million levels deep drops on a 256 KiB stack. A type that implements `Drop` can no longer have fields moved out of it or be used as the base of a `..base` struct update by value; clone or `mem::take` the fields instead. Parsed documents were never affected (depth is capped at 64).
+
 ## [0.3.0] - 2026-10-05
 
 ### Security
