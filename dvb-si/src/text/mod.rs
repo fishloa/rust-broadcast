@@ -36,7 +36,6 @@
 
 use alloc::borrow::Cow;
 use alloc::string::String;
-use alloc::vec::Vec;
 
 /// Decode a DVB text payload (e.g. short_event_descriptor event_name_char)
 /// into an owned UTF-8 `String`. The first byte may be a charset indicator
@@ -75,18 +74,35 @@ pub fn decode_dvb_string(bytes: &[u8]) -> String {
     //   two-byte tables (Table A.2): the same functions live at U+E086 /
     //   U+E087 / U+E08A inside the ISO 10646 PUA; the rest of
     //   U+E080..U+E09F is reserved for control functions and stripped.
-    decoded
-        .chars()
-        .filter_map(|c| match c as u32 {
-            0x86 | 0x87 | 0xE086 | 0xE087 => None,
-            0x8A | 0xE08A => Some(' '),
-            0x0A => Some(' '),
-            0x00..0x20 => None,
-            0x80..0xA0 => None,
-            0xE080..0xE0A0 => None,
-            _ => Some(c),
-        })
-        .collect()
+    strip_control_codes(decoded)
+}
+
+/// `true` for a decoded char the Annex A.1 control-code pass must touch:
+/// C0 / C1 controls and the `U+E080..U+E09F` PUA control block.
+fn is_control_char(c: char) -> bool {
+    matches!(c as u32, 0x00..0x20 | 0x80..0xA0 | 0xE080..0xE0A0)
+}
+
+/// Apply the Annex A.1 control-code rules to an already-decoded string.
+///
+/// Text without any control char (the overwhelmingly common case) is
+/// returned as is — no second copy; otherwise one right-sized pass (audit
+/// r02-O4: this used to `collect()` a fresh, growing `String` every time).
+fn strip_control_codes(decoded: String) -> String {
+    if !decoded.chars().any(is_control_char) {
+        return decoded;
+    }
+    let mut out = String::with_capacity(decoded.len());
+    out.extend(decoded.chars().filter_map(|c| match c as u32 {
+        0x86 | 0x87 | 0xE086 | 0xE087 => None,
+        0x8A | 0xE08A => Some(' '),
+        0x0A => Some(' '),
+        0x00..0x20 => None,
+        0x80..0xA0 => None,
+        0xE080..0xE0A0 => None,
+        _ => Some(c),
+    }));
+    out
 }
 
 /// Convenience wrapper returning `Cow::Borrowed` for pure-ASCII input,
@@ -615,12 +631,22 @@ fn decode_with(encoding: &'static encoding_rs::Encoding, bytes: &[u8]) -> String
 }
 
 fn decode_ucs2_be(bytes: &[u8]) -> String {
-    let code_units: Vec<u16> = bytes
-        .chunks_exact(2)
-        // chunks_exact(2) always yields 2 bytes, so the Err arm is unreachable.
-        .filter_map(|pair| crate::wire::be_u16(pair, 0, "ucs2").ok())
-        .collect();
-    String::from_utf16_lossy(&code_units)
+    // `decode_utf16` straight off the byte pairs: no intermediate `Vec<u16>`.
+    // Lone surrogates become U+FFFD (the old `from_utf16_lossy` behaviour); a
+    // trailing odd byte is dropped, as `chunks_exact` always did.
+    //
+    // Capacity = the wire length: exact for 2-byte-UTF-8 scripts (Cyrillic,
+    // Greek, ...), one growth step for 3-byte CJK, a 2x slack for ASCII.
+    let mut out = String::with_capacity(bytes.len());
+    out.extend(
+        char::decode_utf16(
+            bytes
+                .chunks_exact(2)
+                .map(|pair| u16::from_be_bytes([pair[0], pair[1]])),
+        )
+        .map(|r| r.unwrap_or(char::REPLACEMENT_CHARACTER)),
+    );
+    out
 }
 
 #[cfg(test)]

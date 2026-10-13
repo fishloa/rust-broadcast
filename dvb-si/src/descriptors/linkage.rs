@@ -652,7 +652,7 @@ impl ExtendedEventLinkageInfo {
                 have: buf.len(),
             });
         }
-        buf[0] = loop_len as u8;
+        buf[0] = broadcast_common::len::fit_u8(loop_len, "linkage_extended_event_loop_length")?;
         let mut pos = 1;
         for entry in &self.entries {
             let written = entry.serialize_into(&mut buf[pos..])?;
