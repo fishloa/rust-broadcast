@@ -643,7 +643,8 @@ impl ServerSession {
         .to_message();
         out.extend_from_slice(&self.writer.write(&peer_bandwidth)?);
 
-        let set_chunk_size = ProtocolControl::SetChunkSize(self.config.chunk_size).to_message();
+        let set_chunk_size =
+            ProtocolControl::SetChunkSize(self.config.chunk_size).try_to_message()?;
         out.extend_from_slice(&self.writer.write(&set_chunk_size)?);
         self.writer.set_chunk_size(self.config.chunk_size);
 
@@ -1244,6 +1245,17 @@ mod tests {
             commands.iter().any(|c| c.name == "_result"),
             "connect reply must contain a _result command"
         );
+    }
+
+    /// T12/T15: a configured `chunk_size` of 0 is not a valid Set Chunk Size
+    /// value (§5.4.1); the connect reply must return `Err`, not panic.
+    #[test]
+    fn connect_with_invalid_configured_chunk_size_errors_not_panics() {
+        let mut session = ServerSession::new(ServerConfig::default().with_chunk_size(0));
+        session.handle_data(&build_c0_c1()).unwrap();
+        session.handle_data(&build_c2()).unwrap();
+        let err = session.handle_data(&connect_bytes("live")).unwrap_err();
+        assert!(matches!(err, RtmpError::Malformed { .. }), "{err:?}");
     }
 
     /// RTMP-W6 (#1108): an AMF3-encoded `connect` (message type 17) is a

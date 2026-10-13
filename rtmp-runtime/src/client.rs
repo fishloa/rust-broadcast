@@ -304,10 +304,10 @@ impl ClientSession {
                 what: "send_metadata: not in Publishing state",
             });
         }
-        let mut payload = Amf0Value::String("@setDataFrame".to_string()).to_bytes();
-        payload.extend(Amf0Value::String("onMetaData".to_string()).to_bytes());
+        let mut payload = Amf0Value::String("@setDataFrame".to_string()).try_to_bytes()?;
+        payload.extend(Amf0Value::String("onMetaData".to_string()).try_to_bytes()?);
         let obj = Amf0Value::Object(metadata.to_vec());
-        payload.extend(obj.to_bytes());
+        payload.extend(obj.try_to_bytes()?);
         let msg = Message {
             chunk_stream_id: 4,
             timestamp: 0,
@@ -399,7 +399,7 @@ impl ClientSession {
         let mut out = Vec::new();
 
         let set_chunk_size = ProtocolControl::SetChunkSize(self.config.chunk_size);
-        out.extend_from_slice(&self.writer.write(&set_chunk_size.to_message())?);
+        out.extend_from_slice(&self.writer.write(&set_chunk_size.try_to_message()?)?);
         self.writer.set_chunk_size(self.config.chunk_size);
 
         let window_ack = ProtocolControl::WindowAckSize(self.config.window_ack_size);
@@ -1011,6 +1011,22 @@ mod tests {
             ])
             .unwrap();
         assert!(!meta.is_empty());
+    }
+
+    /// T15: an Amf0 String over the u16 length cap inside the metadata
+    /// object must surface as `Err`, not a `to_bytes` panic.
+    #[test]
+    fn send_metadata_over_range_string_errors_not_panics() {
+        let mut client = ClientSession::new(ClientConfig {
+            app: "live".to_string(),
+            stream_key: "test".to_string(),
+            ..ClientConfig::default()
+        });
+        client.state = ClientState::Publishing;
+        client.stream_id = Some(1);
+        let huge = "x".repeat(usize::from(u16::MAX) + 1);
+        let r = client.send_metadata(&[("title".to_string(), Amf0Value::String(huge))]);
+        assert!(matches!(r, Err(RtmpError::Unsupported { .. })), "{r:?}");
     }
 
     #[test]

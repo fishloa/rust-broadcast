@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+### Fixed
+
+- `MediaPlaylist::to_m3u8` now rejects an `EXT-X-SKIP` `RECENTLY-REMOVED-DATERANGES` id containing `"`, CR, LF or the tab separator (tag-line injection) instead of rendering it.
 
 ## [0.3.0] - 2026-10-05
 ### Added
