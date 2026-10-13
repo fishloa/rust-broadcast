@@ -19,7 +19,7 @@ use quick_xml::events::BytesStart;
 
 use crate::error::{Error, Result};
 use crate::gateway::{ConfigurationMacro, MulticastGatewayConfigurationTransportSession};
-use crate::parse::{Events, StartTag, for_each_child, is_baseline_namespace, require_attr};
+use crate::parse::{Events, StartTag, for_each_child, is_baseline_namespace};
 use crate::reporting::MulticastGatewaySessionReporting;
 use crate::serialize::{Out, attr, document, element, num_attr, opt_attr, tag};
 use crate::session::MulticastSession;
@@ -115,8 +115,8 @@ fn parse_common_root(
             node.namespace()
         ))
     })?;
-    let validity_period = require_attr(node, element, "validityPeriod").ok();
-    let valid_until = require_attr(node, element, "validUntil").ok();
+    let validity_period = node.attr_owned("validityPeriod");
+    let valid_until = node.attr_owned("validUntil");
     let mut gateway_config_transport_sessions = Vec::new();
     let mut sessions = Vec::new();
     let mut reporting = None;

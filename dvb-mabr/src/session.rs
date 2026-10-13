@@ -72,10 +72,8 @@ impl PresentationManifestLocator {
     fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
         let manifest_id = require_attr(node, MANIFEST_LOCATOR_ELEMENT, "manifestId")?;
         let content_type = require_attr(node, MANIFEST_LOCATOR_ELEMENT, "contentType")?;
-        let transport_object_uri =
-            require_attr(node, MANIFEST_LOCATOR_ELEMENT, "transportObjectURI").ok();
-        let content_playback_path_pattern =
-            require_attr(node, MANIFEST_LOCATOR_ELEMENT, "contentPlaybackPathPattern").ok();
+        let transport_object_uri = node.attr_owned("transportObjectURI");
+        let content_playback_path_pattern = node.attr_owned("contentPlaybackPathPattern");
         Ok(PresentationManifestLocator {
             manifest_id,
             content_type,
@@ -107,7 +105,7 @@ impl MulticastSession {
     pub(crate) fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
         let service_identifier = require_attr(node, ELEMENT, "serviceIdentifier")?;
         let content_playback_availability_offset =
-            require_attr(node, ELEMENT, "contentPlaybackAvailabilityOffset").ok();
+            node.attr_owned("contentPlaybackAvailabilityOffset");
         let mut manifest_locators = Vec::new();
         let mut reporting = None;
         let mut transport_sessions = Vec::new();

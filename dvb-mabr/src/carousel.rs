@@ -28,7 +28,7 @@ use std::io;
 use quick_xml::events::BytesStart;
 
 use crate::error::Result;
-use crate::parse::{Events, StartTag, for_each_child, opt_attr_bool, opt_attr_u64, require_attr};
+use crate::parse::{Events, StartTag, for_each_child, opt_attr_bool, opt_attr_u64};
 use crate::serialize::{
     Out, element, empty, opt_attr, opt_bool_attr, opt_num_attr, tag, text_element,
 };
@@ -114,10 +114,10 @@ pub struct ResourceLocator {
 /// `type_complexity` lint happy and documents each field once.
 fn parse_manifest_attrs(node: &StartTag, element: &'static str) -> Result<PresentationManifests> {
     Ok(PresentationManifests {
-        target_acquisition_latency: require_attr(node, element, "targetAcquisitionLatency").ok(),
+        target_acquisition_latency: node.attr_owned("targetAcquisitionLatency"),
         compression_preferred: opt_attr_bool(node, element, "compressionPreferred")?,
-        service_id_ref: require_attr(node, element, "serviceIdRef").ok(),
-        transport_session_id_ref: require_attr(node, element, "transportSessionIdRef").ok(),
+        service_id_ref: node.attr_owned("serviceIdRef"),
+        transport_session_id_ref: node.attr_owned("transportSessionIdRef"),
     })
 }
 
@@ -189,9 +189,8 @@ impl InitSegments {
 
 impl ResourceLocator {
     fn parse(ev: &mut Events<'_>, node: &StartTag) -> Result<Self> {
-        let target_acquisition_latency =
-            require_attr(node, RESOURCE_LOCATOR, "targetAcquisitionLatency").ok();
-        let revalidation_period = require_attr(node, RESOURCE_LOCATOR, "revalidationPeriod").ok();
+        let target_acquisition_latency = node.attr_owned("targetAcquisitionLatency");
+        let revalidation_period = node.attr_owned("revalidationPeriod");
         let compression_preferred = opt_attr_bool(node, RESOURCE_LOCATOR, "compressionPreferred")?;
         Ok(ResourceLocator {
             uri: ev.text(node)?,

@@ -12,9 +12,7 @@ use alloc::vec::Vec;
 use std::io;
 
 use crate::error::Result;
-use crate::parse::{
-    Events, StartTag, for_each_child, opt_attr_u32, opt_attr_u64, req_attr_u64, require_attr,
-};
+use crate::parse::{Events, StartTag, for_each_child, opt_attr_u32, opt_attr_u64, req_attr_u64};
 use crate::serialize::{Out, element, empty, num_attr, opt_attr, opt_num_attr, tag, text_element};
 
 const ELEMENT: &str = "UnicastRepairParameters";
@@ -51,7 +49,7 @@ pub struct BaseUrl {
 
 impl UnicastRepairParameters {
     pub(crate) fn parse(ev: &mut Events<'_>, tag: &StartTag) -> Result<Self> {
-        let transport_object_base_uri = require_attr(tag, ELEMENT, "transportObjectBaseURI").ok();
+        let transport_object_base_uri = tag.attr_owned("transportObjectBaseURI");
         let transport_object_reception_timeout =
             req_attr_u64(tag, ELEMENT, "transportObjectReceptionTimeout")?;
         let fixed_back_off_period = opt_attr_u64(tag, ELEMENT, "fixedBackOffPeriod")?;
