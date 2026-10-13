@@ -37,10 +37,12 @@ pub trait Serialize {
     /// # Panics
     /// Panics if `serialize_into` returns an error on a buffer of exactly
     /// `serialized_len()` bytes. For values obtained by parsing real wire data
-    /// this never happens; it can only occur for a **hand-constructed** value
-    /// that violates a wire constraint (e.g. a section whose body exceeds the
-    /// 12-bit `section_length`). When building values by hand and that's a
-    /// possibility, call [`serialize_into`](Self::serialize_into) and handle the
+    /// this never happens; it can only occur for a value that violates a wire
+    /// constraint (e.g. a section whose body exceeds the 12-bit
+    /// `section_length`): a **hand-constructed** value, or one assembled from
+    /// **damaged wire data** by a lenient decoder (transmux #1171). When
+    /// building values by hand, or when serializing anything derived from
+    /// untrusted input, call [`serialize_into`](Self::serialize_into) and handle the
     /// error instead.
     fn to_bytes(&self) -> Vec<u8>
     where
