@@ -24,6 +24,7 @@
 //! The whole point: parse containers/protocols/SI, never the codec
 //! bitstream; 100% client-side (nothing uploaded, no transcode).
 
+use mpeg_ts::pid::Pid;
 use std::collections::{BTreeMap, BTreeSet};
 use std::time::Duration;
 
@@ -180,7 +181,7 @@ fn upgrade_role(accum: &mut PidAccum, candidate: PidRole) {
 #[derive(Serialize)]
 struct TableEntry {
     /// PID the section was carried on (decimal).
-    pid: u16,
+    pid: Pid,
     /// Parsed section, using dvb-si's own serde shape (camelCase external tag).
     /// This is NOT an invented schema — it is the same JSON that
     /// `serde_json::to_value(&AnyTableSection::…)` produces.
@@ -199,7 +200,7 @@ struct ServiceEntry {
 /// One row of the PID map panel.
 #[derive(Serialize)]
 struct PidEntry {
-    pid: u16,
+    pid: Pid,
     packets: u64,
     /// "PAT" | "PMT" | "SI" | "PCR" | "Video" | "Audio" | "Subtitle" | "SCTE-35" | "Null" | "Other".
     kind: &'static str,
@@ -220,7 +221,7 @@ struct PidEntry {
 #[derive(Serialize)]
 struct PcrSample {
     packet_index: u64,
-    pid: u16,
+    pid: Pid,
     /// Full 27 MHz value: `base * 300 + extension`.
     pcr_27mhz: u64,
     seconds: f64,
@@ -230,7 +231,7 @@ struct PcrSample {
 #[derive(Serialize)]
 struct TimestampSample {
     packet_index: u64,
-    pid: u16,
+    pid: Pid,
     /// "pts" | "dts".
     kind: &'static str,
     /// Raw 33-bit 90 kHz value.
@@ -258,7 +259,7 @@ struct Timing {
 /// One SCTE-35 `splice_info_section`, in the crate's own serde shape.
 #[derive(Serialize)]
 struct Scte35Entry {
-    pid: u16,
+    pid: Pid,
     packet_index: u64,
     section: serde_json::Value,
 }
@@ -277,7 +278,7 @@ struct IndicatorGroup {
     indicator: &'static str,
     clause: &'static str,
     count: u64,
-    pids: Vec<u16>,
+    pids: Vec<Pid>,
     sample_details: Vec<String>,
 }
 
@@ -337,7 +338,7 @@ struct IndicatorAccum {
     clause: &'static str,
     priority: Priority,
     count: u64,
-    pids: BTreeSet<u16>,
+    pids: BTreeSet<Pid>,
     samples: Vec<String>,
 }
 
@@ -408,7 +409,7 @@ fn build_conformance_report(
 
 fn process_pes(
     bytes: &[u8],
-    pid: u16,
+    pid: Pid,
     packet_index: u64,
     clock_seconds: f64,
     pts_samples: &mut Vec<TimestampSample>,
@@ -452,7 +453,7 @@ fn process_pes(
 fn push_timestamp(
     samples: &mut Vec<TimestampSample>,
     packet_index: u64,
-    pid: u16,
+    pid: Pid,
     kind: &'static str,
     ticks: u64,
     seconds: f64,
@@ -561,9 +562,9 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
     let mut conformance = ConformanceMonitor::new();
 
     let mut tables: Vec<TableEntry> = Vec::new();
-    let mut pid_stats: BTreeMap<u16, PidAccum> = BTreeMap::new();
-    let mut scte35_pids: BTreeMap<u16, SectionReassembler> = BTreeMap::new();
-    let mut pes_pids: BTreeMap<u16, PesAssembler> = BTreeMap::new();
+    let mut pid_stats: BTreeMap<Pid, PidAccum> = BTreeMap::new();
+    let mut scte35_pids: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
+    let mut pes_pids: BTreeMap<Pid, PesAssembler> = BTreeMap::new();
     let mut conformance_acc: BTreeMap<&'static str, IndicatorAccum> = BTreeMap::new();
     let mut subtitles = SubtitleState::new();
 
@@ -631,11 +632,11 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
             let accum = pid_stats.entry(pid).or_default();
             accum.packets += 1;
         }
-        if pid == wk::PAT.value() {
+        if pid == wk::PAT {
             upgrade_role(pid_stats.entry(pid).or_default(), PidRole::Pat);
-        } else if pid == wk::NULL.value() {
+        } else if pid == wk::NULL {
             upgrade_role(pid_stats.entry(pid).or_default(), PidRole::Null);
-        } else if WELL_KNOWN_SI_PIDS.contains(&pid) {
+        } else if WELL_KNOWN_SI_PIDS.contains(&pid.value()) {
             upgrade_role(pid_stats.entry(pid).or_default(), PidRole::Si);
         }
 
@@ -687,14 +688,14 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
 
             match &section_result {
                 Ok(AnyTableSection::PatSection(pat)) => {
-                    upgrade_role(pid_stats.entry(ev_pid).or_default(), PidRole::Pat);
+                    upgrade_role(pid_stats.entry(Pid::new(ev_pid)).or_default(), PidRole::Pat);
                     for pat_entry in &pat.entries {
                         if pat_entry.program_number != 0 {
-                            upgrade_role(pid_stats.entry(pat_entry.pid).or_default(), PidRole::Pmt);
+                            upgrade_role(pid_stats.entry(Pid::new(pat_entry.pid)).or_default(), PidRole::Pmt);
                         } else {
                             // program_number == 0 -> this entry's PID is the
                             // network_PID (NIT), not a PMT.
-                            upgrade_role(pid_stats.entry(pat_entry.pid).or_default(), PidRole::Si);
+                            upgrade_role(pid_stats.entry(Pid::new(pat_entry.pid)).or_default(), PidRole::Si);
                         }
                     }
                 }
@@ -702,26 +703,26 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
                     // 0x1FFF is the spec sentinel for "no PCR for this
                     // program" — don't mislabel the NULL PID as PCR.
                     if pmt.pcr_pid != wk::NULL.value() {
-                        upgrade_role(pid_stats.entry(pmt.pcr_pid).or_default(), PidRole::Pcr);
+                        upgrade_role(pid_stats.entry(Pid::new(pmt.pcr_pid)).or_default(), PidRole::Pcr);
                     }
                     for stream in &pmt.streams {
                         let kind = classify_stream_type(stream.stream_type);
-                        let accum = pid_stats.entry(stream.elementary_pid).or_default();
+                        let accum = pid_stats.entry(Pid::new(stream.elementary_pid)).or_default();
                         upgrade_role(accum, kind);
                         accum.stream_type_name = Some(stream.stream_type.name());
 
                         if stream.stream_type == StreamType::Scte35 {
-                            scte35_pids.entry(stream.elementary_pid).or_default();
+                            scte35_pids.entry(Pid::new(stream.elementary_pid)).or_default();
                         }
                         if matches!(kind, PidRole::Video | PidRole::Audio) {
-                            pes_pids.entry(stream.elementary_pid).or_default();
+                            pes_pids.entry(Pid::new(stream.elementary_pid)).or_default();
                         }
                         if subtitle::stream_is_subtitle(stream) {
                             upgrade_role(
-                                pid_stats.entry(stream.elementary_pid).or_default(),
+                                pid_stats.entry(Pid::new(stream.elementary_pid)).or_default(),
                                 PidRole::Subtitle,
                             );
-                            subtitles.note_pid(stream.elementary_pid);
+                            subtitles.note_pid(Pid::new(stream.elementary_pid));
                         }
                     }
                 }
@@ -737,7 +738,7 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
             };
             if tables.len() < MAX_TABLE_ENTRIES {
                 tables.push(TableEntry {
-                    pid: ev_pid,
+                    pid: Pid::new(ev_pid),
                     section: section_json,
                 });
             } else {
@@ -1007,7 +1008,7 @@ mod tests {
         let pat_entry = result
             .pid_map
             .iter()
-            .find(|e| e.pid == wk::PAT.value())
+            .find(|e| e.pid == wk::PAT)
             .expect("PAT PID must be present");
         assert!(
             pat_entry.bitrate_bps >= 0.0,
@@ -1061,7 +1062,7 @@ mod tests {
         let pat_entry = result
             .pid_map
             .iter()
-            .find(|e| e.pid == wk::PAT.value())
+            .find(|e| e.pid == wk::PAT)
             .expect("PID 0x0000 (PAT) must be observed");
         assert_eq!(pat_entry.kind, "PAT");
 
@@ -1165,7 +1166,7 @@ mod tests {
             TsHeader {
                 tei: false,
                 pusi: true,
-                pid: wk::PAT.value(),
+                pid: wk::PAT,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1266,10 +1267,10 @@ mod tests {
         use scte35_splice::SpliceInfoSection;
         use scte35_splice::commands::AnyCommand;
 
-        const PMT_PID: u16 = 0x0100;
-        const SCTE35_PID: u16 = 0x0101;
+        const PMT_PID: Pid = Pid::new(0x0100);
+        const SCTE35_PID: Pid = Pid::new(0x0101);
 
-        fn ts_packet(pid: u16, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
+        fn ts_packet(pid: Pid, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
             let mut pkt = [0xFFu8; TS_PACKET_SIZE];
             let header = TsHeader {
                 tei: false,
@@ -1311,7 +1312,7 @@ mod tests {
         let splice_bytes = splice.to_bytes();
 
         let mut ts = Vec::new();
-        ts.extend_from_slice(&ts_packet(wk::PAT.value(), &pat_bytes));
+        ts.extend_from_slice(&ts_packet(wk::PAT, &pat_bytes));
         ts.extend_from_slice(&ts_packet(PMT_PID, &pmt_bytes));
         ts.extend_from_slice(&ts_packet(SCTE35_PID, &splice_bytes));
 
@@ -1359,7 +1360,7 @@ mod tests {
     /// RGBA preview.
     #[test]
     fn analyzes_real_subtitle_fixture_and_decodes_a_preview() {
-        const SUBTITLE_PID: u16 = 0x008C;
+        const SUBTITLE_PID: Pid = Pid::new(0x008C);
 
         let bytes = fixture("france2.ts");
         let result = analyze_impl(&bytes);

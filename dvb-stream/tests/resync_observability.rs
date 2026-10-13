@@ -3,6 +3,7 @@
 //! Verifies that mid-stream desync recovery and resync counters work correctly.
 //! Uses in-memory Cursor sources with crafted byte streams.
 
+use mpeg_ts::pid::Pid;
 use std::pin::Pin;
 use std::time::Duration;
 
@@ -13,11 +14,11 @@ use futures_core::stream::Stream;
 
 /// Build a minimal SI-carrying TS packet on `pid` with a valid PAT-like
 /// section payload so the demux actually produces an event.
-fn make_si_ts_packet(pid: u16, _payload_byte: u8) -> [u8; 188] {
+fn make_si_ts_packet(pid: Pid, _payload_byte: u8) -> [u8; 188] {
     let mut pkt = [0xFFu8; 188];
     pkt[0] = 0x47; // sync
-    pkt[1] = 0x40 | (((pid >> 8) & 0x1F) as u8); // PUSI + PID hi
-    pkt[2] = (pid & 0xFF) as u8;
+    pkt[1] = 0x40 | (((pid.value() >> 8) & 0x1F) as u8); // PUSI + PID hi
+    pkt[2] = (pid.value() & 0xFF) as u8;
     pkt[3] = 0x10; // payload only
 
     // Minimal PAT section: table_id=0x00, section_syntax=1, section_length=13.
@@ -66,7 +67,7 @@ async fn section_stream_clean_resync_stats() {
     let pid = 0x0000u16;
     let mut data = Vec::new();
     for i in 0..3 {
-        let pkt = make_si_ts_packet(pid, i);
+        let pkt = make_si_ts_packet(Pid::new(pid), i);
         data.extend_from_slice(&pkt);
     }
 
@@ -89,7 +90,7 @@ async fn section_stream_leading_junk_increments_resync_counters() {
     data.extend_from_slice(&[0x00u8; 42]); // 42 bytes leading junk
 
     for i in 0..3 {
-        let pkt = make_si_ts_packet(pid, i);
+        let pkt = make_si_ts_packet(Pid::new(pid), i);
         data.extend_from_slice(&pkt);
     }
 
@@ -130,13 +131,13 @@ async fn section_stream_mid_stream_corruption_detected() {
 
     let mut data = Vec::new();
     for i in 0..2 {
-        data.extend_from_slice(&make_si_ts_packet(pid, i));
+        data.extend_from_slice(&make_si_ts_packet(Pid::new(pid), i));
     }
-    let mut corrupt = make_si_ts_packet(pid, 2);
+    let mut corrupt = make_si_ts_packet(Pid::new(pid), 2);
     corrupt[0] = 0x00;
     data.extend_from_slice(&corrupt);
     for i in 3..5 {
-        data.extend_from_slice(&make_si_ts_packet(pid, i));
+        data.extend_from_slice(&make_si_ts_packet(Pid::new(pid), i));
     }
 
     // data = 5 * 188 = 940 bytes
@@ -196,13 +197,13 @@ async fn section_stream_slow_reader_corruption_recovers() {
     // 5 clean packets + 1 corrupted in the middle, then 2 trailing clean.
     let mut data = Vec::new();
     for i in 0..2 {
-        data.extend_from_slice(&make_si_ts_packet(pid, i));
+        data.extend_from_slice(&make_si_ts_packet(Pid::new(pid), i));
     }
-    let mut corrupt = make_si_ts_packet(pid, 2);
+    let mut corrupt = make_si_ts_packet(Pid::new(pid), 2);
     corrupt[0] = 0x00; // corrupt sync byte
     data.extend_from_slice(&corrupt);
     for i in 3..7 {
-        data.extend_from_slice(&make_si_ts_packet(pid, i));
+        data.extend_from_slice(&make_si_ts_packet(Pid::new(pid), i));
     }
     // data = 7 * 188 = 1316 bytes
 
