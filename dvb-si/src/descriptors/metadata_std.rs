@@ -11,10 +11,16 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x27;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 9;
+/// Default of each 2-bit `reserved` ahead of the three 22-bit fields (H.222.0
+/// Table 2-91): clause 2.1 "reserved" = `1` (all editions 2006-08/2023, audit
+/// §5).
+pub const RESERVED_DEFAULT: u8 = 0b11;
+const RESERVED_MASK: u8 = 0x03;
 
 /// Metadata STD Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct MetadataStdDescriptor {
     /// metadata_input_leak_rate, 22-bit uimsbf, in units of 400 bits/s.
     pub metadata_input_leak_rate: u32,
@@ -22,6 +28,37 @@ pub struct MetadataStdDescriptor {
     pub metadata_buffer_size: u32,
     /// metadata_output_leak_rate, 22-bit uimsbf, in units of 400 bits/s.
     pub metadata_output_leak_rate: u32,
+    /// `reserved(2)` ahead of `metadata_input_leak_rate` (2 bits,
+    /// right-aligned). Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_DEFAULT`].
+    pub reserved_input_leak_rate: u8,
+    /// `reserved(2)` ahead of `metadata_buffer_size` (2 bits, right-aligned).
+    /// Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_DEFAULT`].
+    pub reserved_buffer_size: u8,
+    /// `reserved(2)` ahead of `metadata_output_leak_rate` (2 bits,
+    /// right-aligned). Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_DEFAULT`].
+    pub reserved_output_leak_rate: u8,
+}
+
+impl MetadataStdDescriptor {
+    /// Build with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(
+        metadata_input_leak_rate: u32,
+        metadata_buffer_size: u32,
+        metadata_output_leak_rate: u32,
+    ) -> Self {
+        Self {
+            metadata_input_leak_rate,
+            metadata_buffer_size,
+            metadata_output_leak_rate,
+            reserved_input_leak_rate: RESERVED_DEFAULT,
+            reserved_buffer_size: RESERVED_DEFAULT,
+            reserved_output_leak_rate: RESERVED_DEFAULT,
+        }
+    }
 }
 
 /// Extract a 22-bit uimsbf from a 3-byte slice; Table 2-91 puts 2 reserved
@@ -31,11 +68,10 @@ fn read_u22(bytes: &[u8]) -> u32 {
     (((bytes[0] & 0x3F) as u32) << 16) | ((bytes[1] as u32) << 8) | (bytes[2] as u32)
 }
 
-/// Write a 22-bit value into a 3-byte slice; the 2 reserved bits ahead of it
-/// are written as 1s (crate convention for `reserved` bslbf).
-fn write_u22(val: u32, buf: &mut [u8]) {
+/// Write a 22-bit value into a 3-byte slice behind its 2 reserved bits.
+fn write_u22(reserved: u8, val: u32, buf: &mut [u8]) {
     let masked = val & 0x003F_FFFF;
-    buf[0] = 0xC0 | ((masked >> 16) & 0x3F) as u8;
+    buf[0] = ((reserved & RESERVED_MASK) << 6) | ((masked >> 16) & 0x3F) as u8;
     buf[1] = ((masked >> 8) & 0xFF) as u8;
     buf[2] = (masked & 0xFF) as u8;
 }
@@ -60,6 +96,9 @@ impl<'a> Parse<'a> for MetadataStdDescriptor {
             metadata_input_leak_rate: read_u22(&body[0..3]),
             metadata_buffer_size: read_u22(&body[3..6]),
             metadata_output_leak_rate: read_u22(&body[6..9]),
+            reserved_input_leak_rate: body[0] >> 6,
+            reserved_buffer_size: body[3] >> 6,
+            reserved_output_leak_rate: body[6] >> 6,
         })
     }
 }
@@ -82,14 +121,17 @@ impl Serialize for MetadataStdDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         write_u22(
+            self.reserved_input_leak_rate,
             self.metadata_input_leak_rate,
             &mut buf[HEADER_LEN..HEADER_LEN + 3],
         );
         write_u22(
+            self.reserved_buffer_size,
             self.metadata_buffer_size,
             &mut buf[HEADER_LEN + 3..HEADER_LEN + 6],
         );
         write_u22(
+            self.reserved_output_leak_rate,
             self.metadata_output_leak_rate,
             &mut buf[HEADER_LEN + 6..HEADER_LEN + 9],
         );
@@ -137,11 +179,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = MetadataStdDescriptor {
-            metadata_input_leak_rate: 0x000A_BCDE,
-            metadata_buffer_size: 0x003F_0000,
-            metadata_output_leak_rate: 0x0000_1234,
-        };
+        let d = MetadataStdDescriptor::new(0x000A_BCDE, 0x003F_0000, 0x0000_1234);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = MetadataStdDescriptor::parse(&buf).unwrap();
@@ -149,14 +187,11 @@ mod tests {
     }
 
     #[test]
-    fn serialize_round_trip_masks_input_and_sets_reserved_bits() {
+    fn serialize_round_trip_masks_input_and_default_reserved_bits() {
         // An over-range value must be masked to 22 bits, and the 2 reserved
-        // bits ahead of it (Table 2-91) must be written as 1s, not folded in.
-        let d = MetadataStdDescriptor {
-            metadata_input_leak_rate: 0xFFFF_FFFF, // test mask
-            metadata_buffer_size: 0xFFFF_FFFF,
-            metadata_output_leak_rate: 0xFFFF_FFFF,
-        };
+        // bits ahead of it (Table 2-91) default to 1s when default-constructed,
+        // never folded into the value.
+        let d = MetadataStdDescriptor::new(0xFFFF_FFFF, 0xFFFF_FFFF, 0xFFFF_FFFF); // test mask
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(
@@ -194,13 +229,54 @@ mod tests {
 
     #[test]
     fn serialize_rejects_small_buffer() {
-        let d = MetadataStdDescriptor {
-            metadata_input_leak_rate: 0,
-            metadata_buffer_size: 0,
-            metadata_output_leak_rate: 0,
-        };
+        let d = MetadataStdDescriptor::new(0, 0, 0);
         let mut tiny = vec![0u8; 8];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+    }
+
+    /// H.222.0 Table 2-91. All three reserved(2) regions are preserved
+    /// verbatim.
+    #[test]
+    fn metadata_std_reserved_preserved() {
+        for r1 in 0u8..=3 {
+            for r2 in 0u8..=3 {
+                for r3 in 0u8..=3 {
+                    let bytes = [
+                        TAG,
+                        9,
+                        (r1 << 6) | 0x10,
+                        0x20,
+                        0x30,
+                        (r2 << 6) | 0x01,
+                        0x02,
+                        0x03,
+                        (r3 << 6) | 0x3F,
+                        0xFF,
+                        0xFF,
+                    ];
+                    let d = MetadataStdDescriptor::parse(&bytes).unwrap();
+                    assert_eq!(
+                        (
+                            d.reserved_input_leak_rate,
+                            d.reserved_buffer_size,
+                            d.reserved_output_leak_rate
+                        ),
+                        (r1, r2, r3)
+                    );
+                    let mut out = vec![0u8; d.serialized_len()];
+                    d.serialize_into(&mut out).unwrap();
+                    assert_eq!(out, bytes);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn metadata_std_default_is_spec_value() {
+        let d = MetadataStdDescriptor::new(1, 2, 3);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, [TAG, 9, 0xC0, 0x00, 0x01, 0xC0, 0x00, 0x02, 0xC0, 0x00, 0x03]);
     }
 }

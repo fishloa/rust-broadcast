@@ -14,15 +14,53 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for content_labeling_descriptor.
 pub const TAG: u8 = 0x24;
 const HEADER_LEN: usize = 2;
+/// Default of the 3-bit `reserved` after `content_time_base_indicator`, of
+/// each 7-bit `reserved` ahead of a 33-bit time-base value and of the 1-bit
+/// `reserved` ahead of `contentId` (H.222.0 Table 2-83): clause 2.1
+/// "reserved" = `1` (all editions 2006-08/2023, audit §5). The
+/// `time_base_association_data` bytes are `reserved(8)` per entry and are
+/// carried verbatim in [`ContentTimeBaseAssociation::data`].
+pub const RESERVED_3_DEFAULT: u8 = 0b111;
+/// Default of each 7-bit `reserved` ahead of a 33-bit time-base value (see
+/// [`RESERVED_3_DEFAULT`]).
+pub const RESERVED_7_DEFAULT: u8 = 0x7F;
+/// Default of the 1-bit `reserved` ahead of `contentId` (see
+/// [`RESERVED_3_DEFAULT`]).
+pub const RESERVED_1_DEFAULT: u8 = 0b1;
+const RESERVED_3_MASK: u8 = 0x07;
+const RESERVED_7_MASK: u8 = 0x7F;
+const RESERVED_1_MASK: u8 = 0x01;
 
 /// Time-base block — present when content_time_base_indicator is 1 or 2.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct ContentTimeBase {
     /// 33-bit content time base value (stored as u64, masked to 33 bits).
     pub content_time_base_value: u64,
     /// 33-bit metadata time base value (stored as u64, masked to 33 bits).
     pub metadata_time_base_value: u64,
+    /// `reserved(7)` ahead of `content_time_base_value` (7 bits,
+    /// right-aligned). Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_7_DEFAULT`].
+    pub reserved_content: u8,
+    /// `reserved(7)` ahead of `metadata_time_base_value` (7 bits,
+    /// right-aligned). Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_7_DEFAULT`].
+    pub reserved_metadata: u8,
+}
+
+impl ContentTimeBase {
+    /// Build with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(content_time_base_value: u64, metadata_time_base_value: u64) -> Self {
+        Self {
+            content_time_base_value,
+            metadata_time_base_value,
+            reserved_content: RESERVED_7_DEFAULT,
+            reserved_metadata: RESERVED_7_DEFAULT,
+        }
+    }
 }
 
 /// Time-base association block — present when content_time_base_indicator is 3..=7.
@@ -38,6 +76,7 @@ pub struct ContentTimeBaseAssociation<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct ContentLabelingDescriptor<'a> {
     /// Metadata application format (u16; see Table 2-84).
     pub metadata_application_format: u16,
@@ -63,12 +102,53 @@ pub struct ContentLabelingDescriptor<'a> {
     /// Trailing private data bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
+    /// `reserved(3)` after `content_time_base_indicator` (3 bits,
+    /// right-aligned). Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_3_DEFAULT`].
+    pub reserved: u8,
+    /// `reserved(1)` ahead of `contentId` (1 bit, right-aligned); on the wire
+    /// only when `content_id` is present. Captured on parse, re-emitted
+    /// verbatim; defaults to [`RESERVED_1_DEFAULT`].
+    pub content_id_reserved: u8,
+}
+
+impl<'a> ContentLabelingDescriptor<'a> {
+    /// Build a minimal descriptor (indicator `0`, no optional blocks, no
+    /// private data) with the spec-default reserved bits. Set the remaining
+    /// fields (indicator + matching blocks, record, private data) directly.
+    #[must_use]
+    pub const fn new(metadata_application_format: u16) -> Self {
+        Self {
+            metadata_application_format,
+            metadata_application_format_identifier: None,
+            content_reference_id_record_flag: false,
+            content_time_base_indicator: ContentTimeBaseIndicator::None,
+            content_reference_id_record: None,
+            time_base: None,
+            content_id: None,
+            time_base_association: None,
+            private_data: &[],
+            reserved: RESERVED_3_DEFAULT,
+            content_id_reserved: RESERVED_1_DEFAULT,
+        }
+    }
+}
+
+impl Default for ContentLabelingDescriptor<'_> {
+    fn default() -> Self {
+        Self::new(0)
+    }
 }
 
 // Table 2-83: `reserved(7) | value(33)` per group — the reserved bits are the
 // TOP 7 bits of the first byte, and the 33-bit value's MSB is bit 0 of that
-// same byte, followed by 4 full bytes (32 more bits).
-fn read_33bit(bytes: &[u8], pos: usize) -> u64 {
+// same byte, followed by 4 full bytes (32 more bits). Returns
+// `(reserved(7), value(33))`.
+fn read_33bit(bytes: &[u8], pos: usize) -> (u8, u64) {
+    (bytes[pos] >> 1, read_33bit_value(bytes, pos))
+}
+
+fn read_33bit_value(bytes: &[u8], pos: usize) -> u64 {
     ((u64::from(bytes[pos]) & 0x01) << 32)
         | u64::from(u32::from_be_bytes([
             bytes[pos + 1],
@@ -78,10 +158,9 @@ fn read_33bit(bytes: &[u8], pos: usize) -> u64 {
         ]))
 }
 
-fn write_33bit(buf: &mut [u8], pos: usize, value: u64) {
+fn write_33bit(buf: &mut [u8], pos: usize, reserved: u8, value: u64) {
     let v = value & 0x1_FFFF_FFFF;
-    // Reserved 7 bits written as 1s (crate convention for `reserved` bslbf).
-    buf[pos] = 0xFE | ((v >> 32) as u8 & 0x01);
+    buf[pos] = ((reserved & RESERVED_7_MASK) << 1) | ((v >> 32) as u8 & 0x01);
     buf[pos + 1..pos + 5].copy_from_slice(&(v as u32).to_be_bytes());
 }
 
@@ -131,6 +210,7 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
         let content_reference_id_record_flag = (flags & 0x80) != 0;
         let indicator_raw = (flags >> 3) & 0x0F;
         let content_time_base_indicator = ContentTimeBaseIndicator::from_u8(indicator_raw);
+        let reserved = flags & RESERVED_3_MASK;
         pos += 1;
 
         let (content_reference_id_record, _) = if content_reference_id_record_flag {
@@ -173,17 +253,20 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
             // Actually: 7 reserved + 33 = 40 bits = 5 bytes
             // Then: reserved(7) | metadata_time_base_value(33) = 40 bits = 5 bytes
             // Total = 10 bytes
-            let ctv = read_33bit(&body[pos..], 0);
-            let mtv = read_33bit(&body[pos + 5..], 0);
+            let (reserved_content, ctv) = read_33bit(&body[pos..], 0);
+            let (reserved_metadata, mtv) = read_33bit(&body[pos + 5..], 0);
             pos += 10;
             Some(ContentTimeBase {
                 content_time_base_value: ctv,
                 metadata_time_base_value: mtv,
+                reserved_content,
+                reserved_metadata,
             })
         } else {
             None
         };
 
+        let mut content_id_reserved = RESERVED_1_DEFAULT;
         let content_id = if indicator_raw == 2 {
             if body.len() < pos + 1 {
                 return Err(Error::InvalidDescriptor {
@@ -192,6 +275,7 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
                 });
             }
             let id = body[pos] & 0x7F;
+            content_id_reserved = (body[pos] >> 7) & RESERVED_1_MASK;
             pos += 1;
             Some(id)
         } else {
@@ -232,6 +316,8 @@ impl<'a> Parse<'a> for ContentLabelingDescriptor<'a> {
             content_id,
             time_base_association,
             private_data,
+            reserved,
+            content_id_reserved,
         })
     }
 }
@@ -301,7 +387,8 @@ impl Serialize for ContentLabelingDescriptor<'_> {
             pos += 4;
         }
 
-        let mut flags = (self.content_time_base_indicator.to_u8() & 0x0F) << 3;
+        let mut flags = ((self.content_time_base_indicator.to_u8() & 0x0F) << 3)
+            | (self.reserved & RESERVED_3_MASK);
         // Derived from the Option, never the stored flag (r03-W5).
         if self.content_reference_id_record.is_some() {
             flags |= 0x80;
@@ -318,16 +405,16 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         }
 
         if let Some(ref tb) = self.time_base {
-            // 7 reserved bits (1) + 33-bit content_time_base_value
-            write_33bit(buf, pos, tb.content_time_base_value);
+            // reserved(7) + 33-bit content_time_base_value
+            write_33bit(buf, pos, tb.reserved_content, tb.content_time_base_value);
             pos += 5;
-            // 7 reserved bits (1) + 33-bit metadata_time_base_value
-            write_33bit(buf, pos, tb.metadata_time_base_value);
+            // reserved(7) + 33-bit metadata_time_base_value
+            write_33bit(buf, pos, tb.reserved_metadata, tb.metadata_time_base_value);
             pos += 5;
         }
 
         if let Some(cid) = self.content_id {
-            buf[pos] = cid & 0x7F;
+            buf[pos] = ((self.content_id_reserved & RESERVED_1_MASK) << 7) | (cid & 0x7F);
             pos += 1;
         }
 
@@ -375,6 +462,8 @@ mod tests {
             time_base: None,
             content_id: None,
             time_base_association: None,
+            reserved: RESERVED_3_DEFAULT,
+            content_id_reserved: RESERVED_1_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -391,6 +480,8 @@ mod tests {
             time_base: None,
             content_id: None,
             time_base_association: None,
+            reserved: RESERVED_3_DEFAULT,
+            content_id_reserved: RESERVED_1_DEFAULT,
             private_data: &[0xDD, 0xEE],
         };
         serialize_round_trip(&d);
@@ -404,12 +495,11 @@ mod tests {
             content_reference_id_record_flag: false,
             content_time_base_indicator: ContentTimeBaseIndicator::Stc,
             content_reference_id_record: None,
-            time_base: Some(ContentTimeBase {
-                content_time_base_value: 0x123456789,
-                metadata_time_base_value: 0x1ABCDEF01,
-            }),
+            time_base: Some(ContentTimeBase::new(0x123456789, 0x1ABCDEF01)),
             content_id: None,
             time_base_association: None,
+            reserved: RESERVED_3_DEFAULT,
+            content_id_reserved: RESERVED_1_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -423,12 +513,11 @@ mod tests {
             content_reference_id_record_flag: false,
             content_time_base_indicator: ContentTimeBaseIndicator::Npt,
             content_reference_id_record: None,
-            time_base: Some(ContentTimeBase {
-                content_time_base_value: 0x1AABBCCDD,
-                metadata_time_base_value: 0x0,
-            }),
+            time_base: Some(ContentTimeBase::new(0x1AABBCCDD, 0x0)),
             content_id: Some(42),
             time_base_association: None,
+            reserved: RESERVED_3_DEFAULT,
+            content_id_reserved: RESERVED_1_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -447,6 +536,8 @@ mod tests {
             time_base_association: Some(ContentTimeBaseAssociation {
                 data: &[0x11, 0x22, 0x33, 0x44],
             }),
+            reserved: RESERVED_3_DEFAULT,
+            content_id_reserved: RESERVED_1_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -463,6 +554,8 @@ mod tests {
             time_base: None,
             content_id: None,
             time_base_association: None,
+            reserved: RESERVED_3_DEFAULT,
+            content_id_reserved: RESERVED_1_DEFAULT,
             private_data: &[0xFF],
         };
         serialize_round_trip(&d);
@@ -480,6 +573,8 @@ mod tests {
             time_base: None,
             content_id: None,
             time_base_association: None,
+            reserved: RESERVED_3_DEFAULT,
+            content_id_reserved: RESERVED_1_DEFAULT,
             private_data: &[0x99],
         };
         serialize_round_trip(&d);
@@ -507,6 +602,8 @@ mod tests {
             time_base: None,
             content_id: None,
             time_base_association: None,
+            reserved: RESERVED_3_DEFAULT,
+            content_id_reserved: RESERVED_1_DEFAULT,
             private_data: &[],
         }
     }
@@ -555,5 +652,62 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// H.222.0 Table 2-83. Every reserved region (flags-byte `reserved(3)`,
+    /// both `reserved(7)` ahead of the 33-bit values, `reserved(1)` ahead of
+    /// `contentId`) is preserved verbatim, zero and non-default values.
+    #[test]
+    fn content_labeling_reserved_preserved() {
+        for r3 in 0u8..=7 {
+            for r7 in [0u8, 1, 0x2A, 0x55, 0x7F] {
+                for r1 in 0u8..=1 {
+                    let bytes = [
+                        TAG,
+                        3 + 10 + 1,
+                        0x01,
+                        0x00,
+                        (2 << 3) | r3, // indicator 2 (NPT), no record
+                        (r7 << 1) | 1,
+                        0x23,
+                        0x45,
+                        0x67,
+                        0x89,
+                        ((r7 ^ 0x7F) << 1),
+                        0x00,
+                        0x00,
+                        0x00,
+                        0x01,
+                        (r1 << 7) | 42,
+                    ];
+                    let d = ContentLabelingDescriptor::parse(&bytes).unwrap();
+                    assert_eq!(d.reserved, r3);
+                    assert_eq!(d.content_id_reserved, r1);
+                    let tb = d.time_base.as_ref().unwrap();
+                    assert_eq!(tb.reserved_content, r7);
+                    assert_eq!(tb.reserved_metadata, r7 ^ 0x7F);
+                    let mut out = vec![0u8; d.serialized_len()];
+                    d.serialize_into(&mut out).unwrap();
+                    assert_eq!(out, bytes);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn content_labeling_default_is_spec_value() {
+        let mut d = ContentLabelingDescriptor::new(0x0100);
+        d.content_time_base_indicator = ContentTimeBaseIndicator::Npt;
+        d.time_base = Some(ContentTimeBase::new(0x1_2345_6789, 0));
+        d.content_id = Some(42);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(
+            out,
+            [
+                TAG, 14, 0x01, 0x00, 0x17, 0xFF, 0x23, 0x45, 0x67, 0x89, 0xFE, 0x00, 0x00, 0x00,
+                0x00, 0xAA
+            ]
+        );
     }
 }
