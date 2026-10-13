@@ -893,6 +893,12 @@ pub struct AdaptationField<'a> {
     pub stuffing: &'a [u8],
 }
 
+impl Default for AdaptationField<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Overwrite the 6 reserved bits of an encoded PCR/OPCR field.
 fn set_pcr_reserved(field: &mut [u8], reserved: u8) {
     field[4] =

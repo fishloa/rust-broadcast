@@ -19,6 +19,12 @@
   `stuffing_len: n` -> `stuffing: &[0xFF; n]`, `af.stuffing_len` ->
   `af.stuffing.len()`.
 
+- `AdaptationField` gains `pcr_reserved` / `opcr_reserved` (the 6 reserved bits
+  of PCR/OPCR; real streams, e.g. TSDuck `test-002.ts`, carry `0` where the
+  writer previously forced `1`) and `AdaptationField::new()` / `Default`.
+- `SeamlessSplice` is `#[non_exhaustive]`, gains `marker_bits` (real
+  `test-147.ts` carries `0` markers) and `SeamlessSplice::new(type, dts)`.
+
 ### Added
 - `tests/af_extension_roundtrip.rs`: spec-built Table 2-6 extension vectors plus
   an exhaustive gate asserting every adaptation field of every committed `.ts`

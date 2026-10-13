@@ -12,6 +12,14 @@
   (previously always written as `000`). It is now `#[non_exhaustive]` with
   `PesExtension::new()` / `Default` (spec-convention `0b111`).
 
+- `PesHeader` gains `es_rate_marker_bits` (the two `ES_rate` marker bits; a real
+  stream, TSDuck `test-002.ts`, has a `0` leading marker the writer used to
+  force to `1`) and `PesHeader::new()` / `Default`.
+- `PesPacket::parse` now rejects (new `Error::BadHeaderMarker`) a header whose
+  first flag byte is not `'10'` (Table 2-21; MPEG-1 PES or damage was silently
+  misparsed), and rejects a `PES_header_data_length` that does not fit inside a
+  bounded `PES_packet_length` (it re-serialized beyond the declared length).
+
 ### Added
 - `tests/pes_header_roundtrip_exhaustive.rs`: every PES packet reassembled from
   every committed `.ts` fixture re-serializes byte-exactly; real evidence for
