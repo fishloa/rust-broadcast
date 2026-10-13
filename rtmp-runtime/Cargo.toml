@@ -43,6 +43,7 @@ required-features = ["tokio"]
 [dev-dependencies]
 transmux   = { path = "../transmux", version = "0.26", default-features = false, features = ["std"] }
 serde_json = { workspace = true }
+test-alloc = { path = "../test-alloc" }
 tokio      = { version = "1", features = ["full", "test-util"] }
 
 [lints]

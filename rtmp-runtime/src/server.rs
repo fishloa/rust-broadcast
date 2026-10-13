@@ -433,9 +433,16 @@ impl ServerSession {
     /// post-handshake bytes now ready for the chunk assembler — once the
     /// handshake has completed; `None` if it is still in progress (the
     /// caller should return early and wait for more input).
-    fn drive_handshake(&mut self, input: &[u8], out: &mut Vec<u8>) -> Result<Option<Vec<u8>>> {
+    fn drive_handshake<'a>(
+        &mut self,
+        input: &'a [u8],
+        out: &mut Vec<u8>,
+    ) -> Result<Option<std::borrow::Cow<'a, [u8]>>> {
         if self.handshake.is_done() {
-            return Ok(Some(input.to_vec()));
+            // Borrowed: the steady-state path used to copy every inbound
+            // read into a fresh Vec before the assembler copied it again
+            // (r08-RTMP-O1).
+            return Ok(Some(std::borrow::Cow::Borrowed(input)));
         }
 
         self.handshake_buf.extend_from_slice(input);
@@ -454,7 +461,9 @@ impl ServerSession {
         }
 
         if self.handshake.is_done() {
-            Ok(Some(core::mem::take(&mut self.handshake_buf)))
+            Ok(Some(std::borrow::Cow::Owned(core::mem::take(
+                &mut self.handshake_buf,
+            ))))
         } else {
             Ok(None)
         }

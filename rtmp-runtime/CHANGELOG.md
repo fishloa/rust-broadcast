@@ -6,6 +6,9 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+- `ServerSession::handle_data` no longer copies every post-handshake read into a scratch `Vec` before the chunk assembler buffers it (one copy instead of two; measured 246 976 -> 186 976 bytes for a 60 000-byte read) (#1085/RTMP-O1). `test-alloc` added as a dev-dependency for the allocation-count test.
+
 ## [0.7.2] - 2026-10-13
 ### Added
 

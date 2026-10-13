@@ -3341,6 +3341,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "test-alloc",
  "thiserror 2.0.21",
  "tokio",
  "tokio-util",
