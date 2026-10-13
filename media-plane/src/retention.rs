@@ -410,8 +410,6 @@ impl<S: SegmentSink> RetentionDriver<S> {
     ///    [`SegmentLocation::Evicted`] — this driver's guarantee has lapsed,
     ///    so it cannot honestly claim `Hot` for anything it is no longer
     ///    protecting, whether or not the trunk happens to still hold it.
-    /// 2b. The segment currently in flight (offered, sink answered
-    ///    [`SinkOutcome::Busy`], held for retry) ⇒ [`SegmentLocation::Hot`].
     /// 3. Otherwise, if `sequence_number` is at or below
     ///    `drained_up_to` (this driver's own pin-drain progress) ⇒
     ///    [`SegmentLocation::Evicted`] — this driver has already decided
@@ -419,6 +417,9 @@ impl<S: SegmentSink> RetentionDriver<S> {
     ///    gapped out from under the pin before it could), it is not in the
     ///    cold ledger, so it was either gapped before hand-off or handed off
     ///    and has since aged out of `cold_window`.
+    ///    (Before this step the segment currently in flight — offered, the
+    ///    sink answered `Busy`, held for retry — resolves to
+    ///    [`SegmentLocation::Hot`]: it is neither handed off nor gapped.)
     /// 4. Otherwise ⇒ [`SegmentLocation::Hot`] — this driver has not yet
     ///    drained this far, whether because the segment has not been
     ///    produced yet or because [`Self::drive`] simply has not been
