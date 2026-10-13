@@ -41,6 +41,7 @@
 //! section with the `network_pid` entry gone — both exactly the bugs this
 //! test now gates.
 
+use mpeg_ts::pid::Pid;
 use std::process::Command;
 
 use ts_fix::TsFix;
@@ -119,7 +120,7 @@ fn field(line: &str, key: &str) -> Option<i64> {
 }
 
 /// Run `tsanalyze --normalized <path>` and return the `pid:` line for `pid`.
-fn normalized_pid_line(path: &std::path::Path, pid: u16) -> String {
+fn normalized_pid_line(path: &std::path::Path, pid: Pid) -> String {
     let output = Command::new("tsanalyze")
         .arg("--normalized")
         .arg(path)
@@ -132,7 +133,7 @@ fn normalized_pid_line(path: &std::path::Path, pid: u16) -> String {
     );
     let text = String::from_utf8_lossy(&output.stdout);
     text.lines()
-        .find(|l| l.starts_with("pid:") && field(l, "pid") == Some(pid as i64))
+        .find(|l| l.starts_with("pid:") && field(l, "pid") == Some(pid.value() as i64))
         .unwrap_or_else(|| panic!("no tsanalyze pid: line for PID {pid} in:\n{text}"))
         .to_string()
 }
@@ -165,7 +166,7 @@ fn regen_psi_pat_continuity_is_clean_per_tsanalyze() {
     skip_unless_tsduck_available!();
 
     let out_path = run_regen_psi_to_temp_file();
-    let pat_line = normalized_pid_line(&out_path, 0);
+    let pat_line = normalized_pid_line(&out_path, Pid::new(0));
 
     assert_eq!(
         field(&pat_line, "discontinuities"),
@@ -188,7 +189,7 @@ fn regen_psi_pat_continuity_is_clean_per_tsanalyze() {
 fn regen_psi_pmt_continuity_is_clean_per_tsanalyze() {
     skip_unless_tsduck_available!();
 
-    const PMT_PID: u16 = 4096; // fixtures/ts/h264_aac.ts's program_map_PID.
+    const PMT_PID: Pid = Pid::new(4096); // fixtures/ts/h264_aac.ts's program_map_PID.
     let out_path = run_regen_psi_to_temp_file();
     let pmt_line = normalized_pid_line(&out_path, PMT_PID);
 

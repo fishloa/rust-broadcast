@@ -1,5 +1,6 @@
 //! C2 Delivery System Descriptor — ETSI EN 300 468 §6.4.6.1 (tag_extension 0x0D).
 use super::*;
+use alloc::vec::Vec;
 
 impl ExtensionBodyDef<'_> for C2DeliverySystem {
     const TAG_EXTENSION: u8 = 0x0D;
@@ -151,9 +152,12 @@ impl C2GuardInterval {
 }
 broadcast_common::impl_spec_display!(C2GuardInterval, Reserved);
 
-/// C2_delivery_system body (Table 115) — fully typed, fixed 7 bytes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// C2_delivery_system body (Table 115) — fully typed, fixed 7 bytes with no
+/// reserved bits in any edition (audit §6.1 class E). Bytes after the 7 defined
+/// ones (non-conformant, tolerated) are kept in [`trailing`](Self::trailing).
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct C2DeliverySystem {
     /// plp_id(8).
     pub plp_id: u8,
@@ -167,6 +171,32 @@ pub struct C2DeliverySystem {
     pub active_ofdm_symbol_duration: ActiveOfdmSymbolDuration,
     /// guard_interval(3) — Table 118.
     pub guard_interval: C2GuardInterval,
+    /// Body bytes after the 7 defined ones; empty for a conformant
+    /// descriptor, re-emitted verbatim otherwise.
+    pub trailing: Vec<u8>,
+}
+
+impl C2DeliverySystem {
+    /// Build a body (no trailing bytes).
+    #[must_use]
+    pub const fn new(
+        plp_id: u8,
+        data_slice_id: u8,
+        c2_system_tuning_frequency: u32,
+        c2_system_tuning_frequency_type: C2TuningFrequencyType,
+        active_ofdm_symbol_duration: ActiveOfdmSymbolDuration,
+        guard_interval: C2GuardInterval,
+    ) -> Self {
+        Self {
+            plp_id,
+            data_slice_id,
+            c2_system_tuning_frequency,
+            c2_system_tuning_frequency_type,
+            active_ofdm_symbol_duration,
+            guard_interval,
+            trailing: Vec::new(),
+        }
+    }
 }
 
 impl<'a> Parse<'a> for C2DeliverySystem {
@@ -194,6 +224,7 @@ impl<'a> Parse<'a> for C2DeliverySystem {
             c2_system_tuning_frequency_type: C2TuningFrequencyType::from_u8(packed >> 6),
             active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::from_u8((packed >> 3) & 0x07),
             guard_interval: C2GuardInterval::from_u8(packed & 0x07),
+            trailing: sel[C2_LEN..].to_vec(),
         })
     }
 }
@@ -201,7 +232,7 @@ impl<'a> Parse<'a> for C2DeliverySystem {
 impl Serialize for C2DeliverySystem {
     type Error = crate::error::Error;
     fn serialized_len(&self) -> usize {
-        C2_LEN
+        C2_LEN + self.trailing.len()
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let len = self.serialized_len();
@@ -217,6 +248,7 @@ impl Serialize for C2DeliverySystem {
         buf[6] = (self.c2_system_tuning_frequency_type.to_u8() << 6)
             | ((self.active_ofdm_symbol_duration.to_u8() & 0x07) << 3)
             | (self.guard_interval.to_u8() & 0x07);
+        buf[C2_LEN..len].copy_from_slice(&self.trailing);
         Ok(len)
     }
 }
@@ -348,5 +380,20 @@ mod tests {
             other => panic!("expected C2DeliverySystem, got {other:?}"),
         }
         round_trip(&d);
+    }
+
+    /// Bytes past the 7 defined ones are kept and re-emitted.
+    #[test]
+    fn trailing_bytes_preserved() {
+        let sel = [0x05, 0x09, 0x12, 0x34, 0x56, 0x78, 0x41, 0xDE, 0xAD];
+        let bytes = wrap(0x0D, &sel);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::C2DeliverySystem(b) => assert_eq!(b.trailing, [0xDE, 0xAD]),
+            other => panic!("expected C2DeliverySystem, got {other:?}"),
+        }
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, bytes);
     }
 }

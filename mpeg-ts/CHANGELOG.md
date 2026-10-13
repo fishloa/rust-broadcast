@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **BREAKING (#1159, typed PIDs):** `TsHeader::pid` is `pid::Pid`, not `u16`. `SectionPacketiser::{new,with_continuity,pid}`, `SiMux::{upsert,upsert_pmt}`, `PusiReassembler::{new,with_max_unit_size,push}`, `OwnedTsPacket::{pid,serialize_with_payload}` take/return `Pid`. Migrate with `header.pid.value()` for the raw `u16`, or `Pid::try_new(u16)` at API boundaries that take a user-supplied number.
+- **BREAKING:** `impl From<u16> for Pid` is removed (it silently masked an out-of-range value). Use `Pid::new` (masks; for already-masked wire bits) or the new checked `Pid::try_new` / `TryFrom<u16>`.
+- Added `Pid::try_new` (rejects `> 0x1FFF`), `TryFrom<u16> for Pid`, the `#[non_exhaustive]` `pid::PidOutOfRange` error, and `UpperHex`/`LowerHex` for `Pid` so `{:04X}`/`{:#06x}` formatting of a PID is unchanged. Serde output is unchanged (`Pid` is `serde(transparent)`).
+- Tests: `tests/pid_typed.rs` parses every packet of every committed `.ts` fixture (and, `--ignored`, of the local `.test-streams` archive: 7.1 M packets / 294 files) and checks `header.pid.value()` against the 13-bit PID computed independently from the wire bytes, plus header round-trip.
+
 ### Changed (breaking, umbrella #1139 T11 / audit r01-W2)
 - `AdaptationFieldExtension` now carries every bit of ISO/IEC 13818-1 Table 2-6
   so parse -> serialize is byte-exact: new `piecewise_rate_reserved` (2 bits),

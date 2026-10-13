@@ -18,6 +18,12 @@ const PRIORITY_MASK: u8 = 0b0001_0000;
 const TIME_SLICING_MASK: u8 = 0b0000_1000;
 const MPE_FEC_MASK: u8 = 0b0000_0100;
 const RESERVED_FU_MASK: u8 = 0b0000_0011;
+
+/// Spec default of the 2-bit `reserved_future_use` after `MPE-FEC_indicator`:
+/// `11` (EN 300 468 Table 46, V1.6.1-V1.20.1; audit §4 row 6). V1.3.1-V1.5.1
+/// had `reserved_future_use(5)` there, now `priority`/`Time_Slicing`/`MPE-FEC`
+/// (typed) + these 2 bits.
+pub const RESERVED_FUTURE_USE_2_DEFAULT: u8 = 0b11;
 const BW_MASK: u8 = 0b1110_0000;
 
 const CONSTELLATION_SHIFT: u8 = 6;
@@ -34,7 +40,9 @@ const GUARD_INTERVAL_MASK: u8 = 0b0001_1000;
 const TRANSMISSION_MODE_MASK: u8 = 0b0000_0110;
 const OTHER_FREQ_FLAG_MASK: u8 = 0b0000_0001;
 
-const TRAILING_RESERVED: u32 = 0xFFFF_FFFF;
+/// Spec default of the trailing `reserved_future_use(32)`: all ones
+/// (EN 300 468 Table 46, every edition V1.3.1-V1.20.1).
+pub const RESERVED_FUTURE_USE_32_DEFAULT: u32 = 0xFFFF_FFFF;
 
 /// Channel bandwidth (§6.2.13.4 Table 52).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -237,6 +245,7 @@ broadcast_common::impl_spec_display!(TransmissionMode, Reserved);
 /// Terrestrial Delivery System Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct TerrestrialDeliverySystemDescriptor {
     /// Centre frequency in units of 10 Hz.
     pub centre_frequency_10hz: u32,
@@ -262,6 +271,36 @@ pub struct TerrestrialDeliverySystemDescriptor {
     pub transmission_mode: TransmissionMode,
     /// Set when alternative frequencies listed in a frequency_list_descriptor.
     pub other_frequency_flag: bool,
+    /// `reserved_future_use(2)` after `MPE-FEC_indicator` (2 bits,
+    /// right-aligned). Captured on parse, re-emitted verbatim; `Default`
+    /// is [`RESERVED_FUTURE_USE_2_DEFAULT`] (`0b11`).
+    pub reserved_future_use_2: u8,
+    /// Trailing `reserved_future_use(32)` (descriptor bytes 10-13). Captured
+    /// on parse, re-emitted verbatim; `Default` is
+    /// [`RESERVED_FUTURE_USE_32_DEFAULT`] (`0xFFFF_FFFF`).
+    pub reserved_future_use_32: u32,
+}
+
+impl Default for TerrestrialDeliverySystemDescriptor {
+    /// Zero/first-variant field values with the spec-default reserved bits.
+    fn default() -> Self {
+        Self {
+            centre_frequency_10hz: 0,
+            bandwidth: Bandwidth::Mhz8,
+            priority: false,
+            time_slicing_used: false,
+            mpe_fec_used: false,
+            constellation: Constellation::Qpsk,
+            hierarchy: Hierarchy::NonHierarchicalNative,
+            code_rate_hp: CodeRate::Rate1_2,
+            code_rate_lp: CodeRate::Rate1_2,
+            guard_interval: GuardInterval::G1_32,
+            transmission_mode: TransmissionMode::Mode2k,
+            other_frequency_flag: false,
+            reserved_future_use_2: RESERVED_FUTURE_USE_2_DEFAULT,
+            reserved_future_use_32: RESERVED_FUTURE_USE_32_DEFAULT,
+        }
+    }
 }
 
 impl TerrestrialDeliverySystemDescriptor {
@@ -446,6 +485,7 @@ impl<'a> Parse<'a> for TerrestrialDeliverySystemDescriptor {
         let priority = (byte4 & PRIORITY_MASK) != 0;
         let time_slicing_used = (byte4 & TIME_SLICING_MASK) == 0;
         let mpe_fec_used = (byte4 & MPE_FEC_MASK) == 0;
+        let reserved_future_use_2 = byte4 & RESERVED_FU_MASK;
 
         let byte5 = body[5];
         let constellation_raw = (byte5 & CONSTELLATION_MASK) >> CONSTELLATION_SHIFT;
@@ -457,6 +497,8 @@ impl<'a> Parse<'a> for TerrestrialDeliverySystemDescriptor {
         let guard_interval_raw = (byte6 & GUARD_INTERVAL_MASK) >> GUARD_INTERVAL_SHIFT;
         let transmission_mode_raw = (byte6 & TRANSMISSION_MODE_MASK) >> TRANSMISSION_MODE_SHIFT;
         let other_frequency_flag = (byte6 & OTHER_FREQ_FLAG_MASK) != 0;
+
+        let reserved_future_use_32 = crate::wire::be_u32(body, 7, "terrestrial_delivery_system")?;
 
         Ok(Self {
             centre_frequency_10hz,
@@ -471,6 +513,8 @@ impl<'a> Parse<'a> for TerrestrialDeliverySystemDescriptor {
             guard_interval: parse_guard_interval(guard_interval_raw),
             transmission_mode: parse_transmission_mode(transmission_mode_raw),
             other_frequency_flag,
+            reserved_future_use_2,
+            reserved_future_use_32,
         })
     }
 }
@@ -502,7 +546,7 @@ impl Serialize for TerrestrialDeliverySystemDescriptor {
                 0
             }
             | if !self.mpe_fec_used { MPE_FEC_MASK } else { 0 }
-            | RESERVED_FU_MASK;
+            | (self.reserved_future_use_2 & RESERVED_FU_MASK);
         buf[6] = byte6;
 
         let byte7 = (serialize_constellation(self.constellation) << CONSTELLATION_SHIFT)
@@ -520,7 +564,7 @@ impl Serialize for TerrestrialDeliverySystemDescriptor {
             };
         buf[8] = byte8;
 
-        buf[9..13].copy_from_slice(&TRAILING_RESERVED.to_be_bytes());
+        buf[9..13].copy_from_slice(&self.reserved_future_use_32.to_be_bytes());
 
         Ok(len)
     }
@@ -739,6 +783,7 @@ mod tests {
             guard_interval: GuardInterval::G1_4,
             transmission_mode: TransmissionMode::Mode8k,
             other_frequency_flag: true,
+            ..Default::default()
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -766,6 +811,7 @@ mod tests {
             guard_interval: GuardInterval::G1_32,
             transmission_mode: TransmissionMode::Reserved(0xFE),
             other_frequency_flag: false,
+            ..Default::default()
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -790,5 +836,50 @@ mod tests {
         // byte 7 = 0xFE; with the masks byte 7 = Qpsk<<6 | Alpha2InDepth<<3
         // | 0b110 = 0x36.
         assert_eq!(buf[2 + 5], 0x36);
+    }
+
+    /// `reserved_future_use(2)` (every value) and `reserved_future_use(32)`
+    /// (zeros, ones, mixed) re-serialize byte-identically; real senders write
+    /// non-ones here, the spec value is all ones.
+    #[test]
+    fn reserved_preserved() {
+        for r2 in 0u8..=3 {
+            for r32 in [0u32, 0xFFFF_FFFF, 0xA5A5_5A5A, 1, 0x8000_0000] {
+                let b = r32.to_be_bytes();
+                let raw = [
+                    TAG,
+                    BODY_LEN,
+                    0x04,
+                    0xA8,
+                    0x58,
+                    0xF0,
+                    0x20 | r2,
+                    0x4B,
+                    0x42,
+                    b[0],
+                    b[1],
+                    b[2],
+                    b[3],
+                ];
+                let d = TerrestrialDeliverySystemDescriptor::parse(&raw).unwrap();
+                assert_eq!(d.reserved_future_use_2, r2);
+                assert_eq!(d.reserved_future_use_32, r32);
+                let mut buf = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut buf).unwrap();
+                assert_eq!(buf, raw, "r2 {r2} r32 {r32:#x}");
+            }
+        }
+    }
+
+    /// `Default` serializes the spec values: `11` and `0xFFFFFFFF`.
+    #[test]
+    fn default_reserved_is_spec_value() {
+        let d = TerrestrialDeliverySystemDescriptor::default();
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        // byte 6: bandwidth 0, priority 0, time_slicing "not used"=0 -> flag
+        // stored as 1 (used=false), mpe_fec likewise, rfu=11.
+        assert_eq!(buf[6] & 0b11, 0b11);
+        assert_eq!(&buf[9..13], &[0xFF; 4]);
     }
 }

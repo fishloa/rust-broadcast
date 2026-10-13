@@ -123,7 +123,7 @@ fn ts_to_cmaf_end_to_end() {
             None => continue,
         };
 
-        match pkt.pid() {
+        match pkt.pid().value() {
             0x0100 => {
                 // Video PID
                 if let Some(completed) = vid_assembler.feed(pkt.pusi(), payload) {

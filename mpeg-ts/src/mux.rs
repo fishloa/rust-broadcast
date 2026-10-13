@@ -9,7 +9,7 @@
 use alloc::vec::Vec;
 use core::time::Duration;
 
-use crate::pid::well_known;
+use crate::pid::{Pid, well_known};
 use crate::ts::{CC_MASK, TS_PACKET_SIZE, TsHeader};
 
 /// Maximum data bytes in a PUSI=1 packet (188 − 4 header − 1 pointer_field). §2.4.4.
@@ -28,13 +28,13 @@ const STUFFING_BYTE: u8 = 0xFF;
 ///
 /// ISO/IEC 13818-1:2007 §2.4.4 (`mpeg-ts/docs/tables/h222_0/psi_section.md`).
 pub struct SectionPacketiser {
-    pid: u16,
+    pid: Pid,
     continuity_counter: u8,
 }
 
 impl SectionPacketiser {
     /// Start a packetiser for `pid` with continuity_counter = 0.
-    pub fn new(pid: u16) -> Self {
+    pub fn new(pid: Pid) -> Self {
         Self {
             pid,
             continuity_counter: 0,
@@ -42,7 +42,7 @@ impl SectionPacketiser {
     }
 
     /// Start at a specific continuity_counter (0..=15) — for resuming a stream.
-    pub fn with_continuity(pid: u16, cc: u8) -> Self {
+    pub fn with_continuity(pid: Pid, cc: u8) -> Self {
         Self {
             pid,
             continuity_counter: cc & CC_MASK,
@@ -50,7 +50,7 @@ impl SectionPacketiser {
     }
 
     /// The PID this packetiser emits packets for.
-    pub fn pid(&self) -> u16 {
+    pub fn pid(&self) -> Pid {
         self.pid
     }
 
@@ -248,7 +248,7 @@ pub struct SiMux {
 }
 
 struct Entry {
-    pid: u16,
+    pid: Pid,
     table_id: u8,
     sections: Vec<u8>,
     interval: Duration,
@@ -267,7 +267,7 @@ fn table_id_of(sections: &[u8]) -> u8 {
 /// Find the packetiser for `pid`, creating one (fresh continuity counter) if
 /// this is the first entry ever registered on that PID. A free function, not
 /// a method, so callers can hold `&mut entries` and this borrow concurrently.
-fn packetiser_for(packetisers: &mut Vec<SectionPacketiser>, pid: u16) -> &mut SectionPacketiser {
+fn packetiser_for(packetisers: &mut Vec<SectionPacketiser>, pid: Pid) -> &mut SectionPacketiser {
     if let Some(idx) = packetisers.iter().position(|p| p.pid() == pid) {
         &mut packetisers[idx]
     } else {
@@ -298,7 +298,7 @@ impl SiMux {
     ///
     /// `debug_assert!(interval >= MIN_SECTION_INTERVAL)` — EN 300 468 §5.1.4.1
     /// requires a minimum inter-section interval of 25 ms.
-    pub fn upsert(&mut self, pid: u16, sections: Vec<u8>, interval: Duration) {
+    pub fn upsert(&mut self, pid: Pid, sections: Vec<u8>, interval: Duration) {
         debug_assert!(
             interval >= MIN_SECTION_INTERVAL,
             "interval {interval:?} is below the 25 ms minimum (EN 300 468 §5.1.4.1)"
@@ -327,13 +327,13 @@ impl SiMux {
     ///
     /// Interval cites dvb-si/docs/ts_101_154_av_coding.md §4.1.7.
     pub fn upsert_pat(&mut self, sections: Vec<u8>) {
-        self.upsert(well_known::PAT.value(), sections, PAT_MAX_INTERVAL);
+        self.upsert(well_known::PAT, sections, PAT_MAX_INTERVAL);
     }
 
     /// PMT at [`PMT_MAX_INTERVAL`] on the caller-supplied `pid`.
     ///
     /// Interval cites dvb-si/docs/ts_101_154_av_coding.md §4.1.7.
-    pub fn upsert_pmt(&mut self, pid: u16, sections: Vec<u8>) {
+    pub fn upsert_pmt(&mut self, pid: Pid, sections: Vec<u8>) {
         self.upsert(pid, sections, PMT_MAX_INTERVAL);
     }
 
@@ -341,32 +341,28 @@ impl SiMux {
     ///
     /// Interval cites dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2.
     pub fn upsert_sdt_actual(&mut self, sections: Vec<u8>) {
-        self.upsert(
-            well_known::SDT_BAT.value(),
-            sections,
-            SDT_ACTUAL_MAX_INTERVAL,
-        );
+        self.upsert(well_known::SDT_BAT, sections, SDT_ACTUAL_MAX_INTERVAL);
     }
 
     /// NIT at [`NIT_MAX_INTERVAL`] on PID 0x0010.
     ///
     /// Interval cites dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2.
     pub fn upsert_nit(&mut self, sections: Vec<u8>) {
-        self.upsert(well_known::NIT.value(), sections, NIT_MAX_INTERVAL);
+        self.upsert(well_known::NIT, sections, NIT_MAX_INTERVAL);
     }
 
     /// TDT at [`TDT_MAX_INTERVAL`] on PID 0x0014.
     ///
     /// Interval cites dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2.
     pub fn upsert_tdt(&mut self, sections: Vec<u8>) {
-        self.upsert(well_known::TDT_TOT.value(), sections, TDT_MAX_INTERVAL);
+        self.upsert(well_known::TDT_TOT, sections, TDT_MAX_INTERVAL);
     }
 
     /// TOT at [`TOT_MAX_INTERVAL`] on PID 0x0014.
     ///
     /// Interval cites dvb-si/docs/tr_101_211.md §4.4.1/§4.4.2.
     pub fn upsert_tot(&mut self, sections: Vec<u8>) {
-        self.upsert(well_known::TDT_TOT.value(), sections, TOT_MAX_INTERVAL);
+        self.upsert(well_known::TDT_TOT, sections, TOT_MAX_INTERVAL);
     }
 
     /// Emit every entry due at `now` (i.e. `now - last_emit >= interval`, and
@@ -467,7 +463,7 @@ mod tests {
     /// Round-trip `sections` through packetise → reassembler, asserting
     /// byte-identical output in order and no leftovers.
     fn assert_round_trip(sections: &[Vec<u8>]) {
-        let mut packetiser = SectionPacketiser::new(0x0100);
+        let mut packetiser = SectionPacketiser::new(Pid::new(0x0100));
         let refs: Vec<&[u8]> = sections.iter().map(|s| s.as_slice()).collect();
         let packets = packetiser.packetise(&refs);
 
@@ -594,7 +590,7 @@ mod tests {
     fn first_poll_always_emits() {
         let s = build_section(0x42, &[0xAA; 10]);
         let mut mux = SiMux::new();
-        mux.upsert(0x0100, s.clone(), Duration::from_millis(100));
+        mux.upsert(Pid::new(0x0100), s.clone(), Duration::from_millis(100));
         let pkts = mux.poll(Duration::ZERO);
         assert!(!pkts.is_empty(), "first poll must emit");
     }
@@ -604,16 +600,16 @@ mod tests {
         let s1 = build_section(0x42, &[0x01; 5]);
         let s2 = build_section(0x46, &[0x02; 5]);
         let mut mux = SiMux::new();
-        mux.upsert(0x0100, s1.clone(), Duration::from_millis(100));
-        mux.upsert(0x0200, s2.clone(), Duration::from_millis(200));
+        mux.upsert(Pid::new(0x0100), s1.clone(), Duration::from_millis(100));
+        mux.upsert(Pid::new(0x0200), s2.clone(), Duration::from_millis(200));
         let pkts = mux.poll(Duration::ZERO);
         // Both entries should emit — we count PID occurrences
-        let pids: Vec<u16> = pkts
+        let pids: Vec<Pid> = pkts
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
-        assert!(pids.contains(&0x0100));
-        assert!(pids.contains(&0x0200));
+        assert!(pids.contains(&Pid::new(0x0100)));
+        assert!(pids.contains(&Pid::new(0x0200)));
     }
 
     // ── deterministic schedule ───────────────────────────────────────────────
@@ -622,7 +618,7 @@ mod tests {
     fn entry_emits_only_when_due() {
         let s = build_section(0x42, &[0xAA; 10]);
         let mut mux = SiMux::new();
-        mux.upsert(0x0100, s.clone(), Duration::from_millis(100));
+        mux.upsert(Pid::new(0x0100), s.clone(), Duration::from_millis(100));
 
         // First poll at t=0: emits
         let pkts0 = mux.poll(Duration::ZERO);
@@ -646,8 +642,16 @@ mod tests {
         let s1 = build_section(0x42, &[0x01; 5]);
         let s2 = build_section(0x46, &[0x02; 5]);
         let mut mux = SiMux::new();
-        mux.upsert(0x0100, concat_sections(&[s1]), Duration::from_millis(100));
-        mux.upsert(0x0200, concat_sections(&[s2]), Duration::from_millis(200));
+        mux.upsert(
+            Pid::new(0x0100),
+            concat_sections(&[s1]),
+            Duration::from_millis(100),
+        );
+        mux.upsert(
+            Pid::new(0x0200),
+            concat_sections(&[s2]),
+            Duration::from_millis(200),
+        );
 
         // t=0: both emit
         let pkts = mux.poll(Duration::ZERO);
@@ -656,13 +660,16 @@ mod tests {
         // t=100: only 0x0100 emits (due at 100)
         let pkts100 = mux.poll(Duration::from_millis(100));
         assert!(!pkts100.is_empty());
-        let pids100: Vec<u16> = pkts100
+        let pids100: Vec<Pid> = pkts100
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
-        assert!(pids100.contains(&0x0100), "PID 0x0100 should emit at t=100");
         assert!(
-            !pids100.contains(&0x0200),
+            pids100.contains(&Pid::new(0x0100)),
+            "PID 0x0100 should emit at t=100"
+        );
+        assert!(
+            !pids100.contains(&Pid::new(0x0200)),
             "PID 0x0200 should NOT emit at t=100"
         );
 
@@ -672,19 +679,25 @@ mod tests {
 
         // t=200: both emit again
         let pkts200 = mux.poll(Duration::from_millis(200));
-        let pids200: Vec<u16> = pkts200
+        let pids200: Vec<Pid> = pkts200
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
-        assert!(pids200.contains(&0x0100), "PID 0x0100 should emit at t=200");
-        assert!(pids200.contains(&0x0200), "PID 0x0200 should emit at t=200");
+        assert!(
+            pids200.contains(&Pid::new(0x0100)),
+            "PID 0x0100 should emit at t=200"
+        );
+        assert!(
+            pids200.contains(&Pid::new(0x0200)),
+            "PID 0x0200 should emit at t=200"
+        );
     }
 
     #[test]
     fn entry_emits_again_after_full_interval() {
         let s = build_section(0x42, &[0xAA; 20]);
         let mut mux = SiMux::new();
-        mux.upsert(0x0100, s, Duration::from_secs(1));
+        mux.upsert(Pid::new(0x0100), s, Duration::from_secs(1));
 
         // t=0
         let n0 = mux.poll_into(Duration::ZERO, &mut Vec::new());
@@ -711,8 +724,8 @@ mod tests {
         let s2 = build_section(0x42, &[0xBB; 10]);
         let mut mux = SiMux::new();
 
-        mux.upsert(0x0100, s1, Duration::from_millis(100));
-        mux.upsert(0x0100, s2.clone(), Duration::from_millis(200));
+        mux.upsert(Pid::new(0x0100), s1, Duration::from_millis(100));
+        mux.upsert(Pid::new(0x0100), s2.clone(), Duration::from_millis(200));
 
         let pkts = mux.poll(Duration::ZERO);
 
@@ -720,7 +733,7 @@ mod tests {
         let mut reasm = SectionReassembler::default();
         for raw in &pkts {
             let pkt = TsPacket::parse(raw).unwrap();
-            if pkt.header.pid == 0x0100 {
+            if pkt.header.pid == Pid::new(0x0100) {
                 reasm.feed(pkt.payload.unwrap(), pkt.header.pusi);
             }
         }
@@ -752,7 +765,7 @@ mod tests {
         let mut prev_cc: Option<u8> = None;
         for raw in &pkts {
             let pkt = TsPacket::parse(raw).unwrap();
-            assert_eq!(pkt.header.pid, well_known::TDT_TOT.value());
+            assert_eq!(pkt.header.pid, well_known::TDT_TOT);
             if let Some(prev) = prev_cc {
                 assert_eq!(
                     pkt.header.continuity_counter,
@@ -781,7 +794,7 @@ mod tests {
 
         mux.upsert_sdt_actual(sdt.clone());
         mux.upsert(
-            well_known::SDT_BAT.value(),
+            well_known::SDT_BAT,
             bat.clone(),
             Duration::from_millis(1000),
         );
@@ -809,11 +822,11 @@ mod tests {
         let mut mux = SiMux::new();
         mux.upsert_pat(s);
         let pkts = mux.poll(Duration::ZERO);
-        let pids: Vec<u16> = pkts
+        let pids: Vec<Pid> = pkts
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
-        assert!(pids.iter().all(|&p| p == well_known::PAT.value()));
+        assert!(pids.iter().all(|&p| p == well_known::PAT));
     }
 
     #[test]
@@ -822,11 +835,11 @@ mod tests {
         let mut mux = SiMux::new();
         mux.upsert_sdt_actual(s);
         let pkts = mux.poll(Duration::ZERO);
-        let pids: Vec<u16> = pkts
+        let pids: Vec<Pid> = pkts
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
-        assert!(pids.iter().all(|&p| p == well_known::SDT_BAT.value()));
+        assert!(pids.iter().all(|&p| p == well_known::SDT_BAT));
     }
 
     #[test]
@@ -835,11 +848,11 @@ mod tests {
         let mut mux = SiMux::new();
         mux.upsert_nit(s);
         let pkts = mux.poll(Duration::ZERO);
-        let pids: Vec<u16> = pkts
+        let pids: Vec<Pid> = pkts
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
-        assert!(pids.iter().all(|&p| p == well_known::NIT.value()));
+        assert!(pids.iter().all(|&p| p == well_known::NIT));
     }
 
     #[test]
@@ -848,11 +861,11 @@ mod tests {
         let mut mux = SiMux::new();
         mux.upsert_tdt(s);
         let pkts = mux.poll(Duration::ZERO);
-        let pids: Vec<u16> = pkts
+        let pids: Vec<Pid> = pkts
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
-        assert!(pids.iter().all(|&p| p == well_known::TDT_TOT.value()));
+        assert!(pids.iter().all(|&p| p == well_known::TDT_TOT));
     }
 
     #[test]
@@ -861,11 +874,11 @@ mod tests {
         let mut mux = SiMux::new();
         mux.upsert_tot(s);
         let pkts = mux.poll(Duration::ZERO);
-        let pids: Vec<u16> = pkts
+        let pids: Vec<Pid> = pkts
             .iter()
             .map(|raw| TsPacket::parse(raw).unwrap().header.pid)
             .collect();
-        assert!(pids.iter().all(|&p| p == well_known::TDT_TOT.value()));
+        assert!(pids.iter().all(|&p| p == well_known::TDT_TOT));
     }
 
     // ── round-trip through reassembler ───────────────────────────────────────
@@ -876,7 +889,7 @@ mod tests {
         let s2 = build_section(0x46, &[0xBB; 15]);
         let mut mux = SiMux::new();
         mux.upsert(
-            0x0100,
+            Pid::new(0x0100),
             concat_sections(&[s1.clone(), s2.clone()]),
             Duration::from_millis(100),
         );
@@ -886,7 +899,7 @@ mod tests {
         let mut reasm = SectionReassembler::default();
         for raw in &pkts {
             let pkt = TsPacket::parse(raw).unwrap();
-            if pkt.header.pid == 0x0100 {
+            if pkt.header.pid == Pid::new(0x0100) {
                 reasm.feed(pkt.payload.unwrap(), pkt.header.pusi);
             }
         }
@@ -901,8 +914,8 @@ mod tests {
         let s_a = build_section(0x42, &[0xA0; 10]);
         let s_b = build_section(0x46, &[0xB0; 10]);
         let mut mux = SiMux::new();
-        mux.upsert(0x0100, s_a.clone(), Duration::from_millis(100));
-        mux.upsert(0x0200, s_b.clone(), Duration::from_millis(100));
+        mux.upsert(Pid::new(0x0100), s_a.clone(), Duration::from_millis(100));
+        mux.upsert(Pid::new(0x0200), s_b.clone(), Duration::from_millis(100));
 
         let pkts = mux.poll(Duration::ZERO);
 
@@ -910,7 +923,7 @@ mod tests {
         let mut reasm_b = SectionReassembler::default();
         for raw in &pkts {
             let pkt = TsPacket::parse(raw).unwrap();
-            match pkt.header.pid {
+            match pkt.header.pid.value() {
                 0x0100 => reasm_a.feed(pkt.payload.unwrap(), pkt.header.pusi),
                 0x0200 => reasm_b.feed(pkt.payload.unwrap(), pkt.header.pusi),
                 _ => {}
@@ -931,7 +944,7 @@ mod tests {
         // Section large enough to span at least 2 packets.
         let s = build_section(0x42, &[0xAA; 250]);
         let mut mux = SiMux::new();
-        mux.upsert(0x0100, s, Duration::from_millis(100));
+        mux.upsert(Pid::new(0x0100), s, Duration::from_millis(100));
 
         let pkts1 = mux.poll(Duration::ZERO);
         assert!(pkts1.len() >= 2, "need ≥2 packets to test CC continuity");
@@ -962,7 +975,7 @@ mod tests {
     fn poll_into_clears_out_before_appending() {
         let s = build_section(0x42, &[0xAA; 5]);
         let mut mux = SiMux::new();
-        mux.upsert(0x0100, s, Duration::from_millis(100));
+        mux.upsert(Pid::new(0x0100), s, Duration::from_millis(100));
 
         let mut out = vec![[0u8; TS_PACKET_SIZE]; 42];
         let n = mux.poll_into(Duration::ZERO, &mut out);
@@ -977,14 +990,14 @@ mod tests {
     fn upsert_rejects_sub_25ms_interval_in_debug() {
         let s = build_section(0x42, &[0xAA; 5]);
         let mut mux = SiMux::new();
-        mux.upsert(0x0100, s, Duration::from_millis(10));
+        mux.upsert(Pid::new(0x0100), s, Duration::from_millis(10));
     }
 
     #[test]
     fn upsert_accepts_25ms_interval() {
         let s = build_section(0x42, &[0xAA; 5]);
         let mut mux = SiMux::new();
-        mux.upsert(0x0100, s, MIN_SECTION_INTERVAL);
+        mux.upsert(Pid::new(0x0100), s, MIN_SECTION_INTERVAL);
         let pkts = mux.poll(Duration::ZERO);
         assert!(!pkts.is_empty());
     }
@@ -1075,7 +1088,7 @@ mod tests {
         assert_eq!(s1.len(), 366);
         let s2 = build_section(0x52, &[0xB1, 0xB2, 0xB3]);
 
-        let mut packetiser = SectionPacketiser::new(0x0100);
+        let mut packetiser = SectionPacketiser::new(Pid::new(0x0100));
         let packets = packetiser.packetise(&[s1.as_slice(), s2.as_slice()]);
 
         for pkt_raw in &packets {
@@ -1118,7 +1131,7 @@ mod tests {
         // Use a section large enough to span several packets.
         let body = vec![0xAA; 500];
         let section = build_section(0x42, &body);
-        let mut p = SectionPacketiser::new(0x0100);
+        let mut p = SectionPacketiser::new(Pid::new(0x0100));
 
         let packets = p.packetise(&[&section]);
         assert!(packets.len() >= 3, "need multiple packets to test CC");
@@ -1136,7 +1149,7 @@ mod tests {
 
     #[test]
     fn continuity_counter_wraps_and_continues_across_calls() {
-        let mut p = SectionPacketiser::with_continuity(0x0100, 14);
+        let mut p = SectionPacketiser::with_continuity(Pid::new(0x0100), 14);
         // Section large enough to span at least 3 packets.
         let body = vec![0xBB; 500];
         let s = build_section(0x42, &body);
@@ -1166,7 +1179,7 @@ mod tests {
     #[test]
     fn pusi_set_when_section_starts() {
         let s = build_section(0x42, &[0xAA; 10]);
-        let mut p = SectionPacketiser::new(0x0100);
+        let mut p = SectionPacketiser::new(Pid::new(0x0100));
         let packets = p.packetise(&[&s]);
         assert!(!packets.is_empty());
         let pkt = TsPacket::parse(&packets[0]).unwrap();
@@ -1177,7 +1190,7 @@ mod tests {
     fn pusi_not_set_on_mid_section_continuation() {
         let body = vec![0xAA; 500];
         let s = build_section(0x42, &body);
-        let mut p = SectionPacketiser::new(0x0100);
+        let mut p = SectionPacketiser::new(Pid::new(0x0100));
         let packets = p.packetise(&[&s]);
         assert!(packets.len() >= 2);
         let pkt1 = TsPacket::parse(&packets[0]).unwrap();
@@ -1200,7 +1213,7 @@ mod tests {
         let s2 = build_section(0x54, &[0xB1; 47]); // 50-byte section
         assert_eq!(s2.len(), 50);
 
-        let mut p = SectionPacketiser::new(0x0100);
+        let mut p = SectionPacketiser::new(Pid::new(0x0100));
         let packets = p.packetise(&[&s1, &s2]);
 
         // Find the packet where PUSI=1 and pointer>0.
@@ -1223,7 +1236,7 @@ mod tests {
     #[test]
     fn final_packet_unused_tail_is_stuffing() {
         let s = build_section(0x42, &[0xAA; 5]); // 8 bytes total
-        let mut p = SectionPacketiser::new(0x0100);
+        let mut p = SectionPacketiser::new(Pid::new(0x0100));
         let packets = p.packetise(&[&s]);
 
         let pkt = TsPacket::parse(&packets[0]).unwrap();
@@ -1245,7 +1258,7 @@ mod tests {
         let s1 = build_section(0x42, &[0xAA; 10]);
         let s2 = build_section(0x46, &[0xBB; 5]);
 
-        let mut p = SectionPacketiser::new(0x0100);
+        let mut p = SectionPacketiser::new(Pid::new(0x0100));
         let packets = p.packetise(&[&s1, &s2]);
 
         let mut reasm = SectionReassembler::default();
@@ -1266,7 +1279,7 @@ mod tests {
 
     #[test]
     fn empty_batch_produces_no_packets() {
-        let mut p = SectionPacketiser::new(0x0100);
+        let mut p = SectionPacketiser::new(Pid::new(0x0100));
         let packets: Vec<[u8; TS_PACKET_SIZE]> = p.packetise(&[]);
         assert!(packets.is_empty());
     }
@@ -1274,7 +1287,7 @@ mod tests {
     #[test]
     fn packetise_into_clears_out_first() {
         let s = build_section(0x42, &[0xAA; 5]);
-        let mut p = SectionPacketiser::new(0x0100);
+        let mut p = SectionPacketiser::new(Pid::new(0x0100));
 
         let mut out = vec![[0u8; TS_PACKET_SIZE]; 99]; // pre-existing junk
         let n = p.packetise_into(&[&s], &mut out);
@@ -1291,20 +1304,20 @@ mod tests {
 
     #[test]
     fn pid_is_correct() {
-        let p = SectionPacketiser::new(0x1234);
-        assert_eq!(p.pid(), 0x1234);
+        let p = SectionPacketiser::new(Pid::new(0x1234));
+        assert_eq!(p.pid(), Pid::new(0x1234));
     }
 
     #[test]
     fn with_continuity_masks_to_4_bits() {
-        let p = SectionPacketiser::with_continuity(0x0100, 0xFE);
+        let p = SectionPacketiser::with_continuity(Pid::new(0x0100), 0xFE);
         assert_eq!(p.continuity_counter(), 0x0E);
     }
 
     #[test]
     fn has_payload_always_true_no_adaptation() {
         let s = build_section(0x42, &[0xAA; 50]);
-        let mut p = SectionPacketiser::new(0x0100);
+        let mut p = SectionPacketiser::new(Pid::new(0x0100));
         let packets = p.packetise(&[&s]);
         for pkt_raw in &packets {
             let pkt = TsPacket::parse(pkt_raw).unwrap();

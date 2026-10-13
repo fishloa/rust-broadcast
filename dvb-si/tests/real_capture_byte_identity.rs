@@ -10,12 +10,14 @@
 //! * every descriptor in every PMT/SDT/NIT/BAT/EIT/CAT/TSDT/TOT loop:
 //!   re-serializes the typed descriptor and compares with the original bytes.
 //!
-//! Policy (owner decision): parse is tolerant, serialize emits the spec
-//! value. A real sender that clears a spec-reserved bit therefore makes a
-//! descriptor differ from the capture; such known deviations are listed in
-//! [`TOLERATED`] keyed by `(file name, descriptor)` so a *new* deviation (or
-//! any genuine serializer bug) fails this test. Set `SURVEY_REPORT=1` to print
-//! the full per-descriptor table (`--nocapture`).
+//! Policy (owner decision): parse is tolerant and serialize PRESERVES the
+//! parsed reserved bits (typed fields; constructed values default to the
+//! edition value), so a real sender's off-spec reserved bits re-serialize
+//! byte-identically. [`TOLERATED`] therefore lists only what cannot be a
+//! reserved-bit preservation: CRC-recompute noise and genuine sender bugs
+//! that cannot parse. A *new* deviation (or any genuine serializer bug) fails
+//! this test. Set `SURVEY_REPORT=1` to print the full per-descriptor table
+//! (`--nocapture`).
 #![cfg(feature = "ts")]
 
 use broadcast_common::Serialize;
@@ -37,97 +39,27 @@ const SECTION_STREAM_TYPES: [u8; 5] = [0x05, 0x0A, 0x0B, 0x0C, 0x0D];
 
 /// Known real-sender deviations, `(capture file-name prefix, survey key)`:
 /// the capture's bytes differ from our spec-reserved-bit re-serialization.
-/// Policy (owner decision): parse tolerantly, serialize the spec value; a
-/// sender that clears a reserved bit is therefore listed here, never "fixed"
-/// by weakening the serializer. A NEW deviation (new file, or a new
+/// Policy (owner decision): parse tolerantly, serialize the parsed reserved
+/// bits; a deviation is listed here only if it is not a preservable reserved
+/// region (e.g. section-level bits still pending preservation, or an
+/// unparseable sender bug). A NEW deviation (new file, or a new
 /// descriptor/table in an old file) fails the test; an entry that no longer
 /// occurs is reported stale. The prefix is matched with `starts_with`
 /// (`test-089.` covers the `test-089.*.ts` family cut from one capture).
 const TOLERATED: &[(&str, &str)] = &[
-    // AC-3 reserved_flags(4): these senders write 0000, we emit 1111 (EN 300 468 Annex D.3).
-    ("test-001.", "0x6A AC3"),
-    ("test-002.", "0x6A AC3"),
-    ("test-007.", "0x6A AC3"),
-    ("test-008.", "0x6A AC3"),
-    ("test-009.", "0x6A AC3"),
-    ("test-011.", "0x6A AC3"),
-    ("test-020.", "0x6A AC3"),
-    ("test-028.", "0x6A AC3"),
-    ("test-031.", "0x6A AC3"),
-    ("test-035.", "0x6A AC3"),
-    ("test-036.", "0x6A AC3"),
-    ("test-045.", "0x6A AC3"),
-    ("test-047.", "0x6A AC3"),
-    ("test-078.", "0x6A AC3"),
-    ("test-079.", "0x6A AC3"),
-    ("test-095.", "0x6A AC3"),
-    ("test-132.", "0x6A AC3"),
-    ("test-151.", "0x6A AC3"),
-    // reserved_future_use(1) before application_type (TS 102 809 Table 17): real MHP/HbbTV senders incl. hotbird-mhp.ts write 0, we emit 1.
-    ("hotbird-mhp.", "0x6F APPLICATION_SIGNALLING"),
-    ("test-018.", "0x6F APPLICATION_SIGNALLING"),
-    ("test-083.", "0x6F APPLICATION_SIGNALLING"),
-    ("test-108.", "0x6F APPLICATION_SIGNALLING"),
-    ("test-128.", "0x6F APPLICATION_SIGNALLING"),
-    ("test-135.", "0x6F APPLICATION_SIGNALLING"),
-    ("test-202.", "0x6F APPLICATION_SIGNALLING"),
-    // supplementary_audio_descriptor reserved_future_use(1): france-tnt-uhf32.ts and TSDuck samples write 0, we emit 1.
-    ("france-tnt-uhf32.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-026.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-059.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-074.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-088.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-089.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-092.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-096.", "0x7F/ext 0x06 EXTENSION"),
-    ("test-124.", "0x7F/ext 0x06 EXTENSION"),
-    // roll_off on a DVB-S (modulation_system=0) descriptor must be 00 (Table 37); the sender sets 01, we emit the spec value 00.
-    ("test-101.", "0x43 SATELLITE_DELIVERY_SYSTEM"),
-    // CA_descriptor reserved(3) before CA_PID: sender writes 000, we emit 111.
-    ("test-128.", "0x09 CA"),
-    // TDT reserved_future_use/reserved(3) in byte 1: sender writes 0, we emit 0x70.
-    ("test-120.", "TIME_AND_DATE (tid 0x70)"),
-    // long-form reserved_future_use bit of byte 1: sender writes 0 (0xB0), we emit 1 (0xF0).
-    ("test-016.", "NETWORK_INFORMATION (tid 0x40)"),
-    // SDT reserved_future_use(6) / long-form bit: sender writes non-1 bits.
-    ("test-062.", "SERVICE_DESCRIPTION (tid 0x42)"),
-    ("test-170.", "SERVICE_DESCRIPTION (tid 0x42)"),
-    // EIT long-form reserved bits (byte 1 0xB0 / version-byte reserved(2)=00): TSDuck-generated EPG samples.
-    ("test-170.", "EVENT_INFORMATION (tid 0x4E)"),
-    // EIT long-form reserved bits (byte 1 0xB0 / version-byte reserved(2)=00): TSDuck-generated EPG samples.
-    ("test-170.", "EVENT_INFORMATION (tid 0x50)"),
-    ("test-109.", "EVENT_INFORMATION (tid 0x50)"),
-    // EIT long-form reserved bits (byte 1 0xB0 / version-byte reserved(2)=00): TSDuck-generated EPG samples.
-    ("test-170.", "EVENT_INFORMATION (tid 0x51)"),
-    // EIT long-form reserved bits (byte 1 0xB0 / version-byte reserved(2)=00): TSDuck-generated EPG samples.
-    ("test-170.", "EVENT_INFORMATION (tid 0x58)"),
-    ("test-171.", "EVENT_INFORMATION (tid 0x58)"),
-    // EIT long-form reserved bits (byte 1 0xB0 / version-byte reserved(2)=00): TSDuck-generated EPG samples.
-    ("test-170.", "EVENT_INFORMATION (tid 0x59)"),
-    // AIT long-form reserved bits written as 0 by the sender (TSDuck-generated).
-    ("test-170.", "APPLICATION_INFORMATION (tid 0x74)"),
-    // PAT reserved(3) before program_map_PID written 000 by the sender.
-    ("test-012.", "PROGRAM_ASSOCIATION (tid 0x00)"),
+    // Section-level reserved bits are now captured in typed fields and re-emitted, so every
+    // real section re-serializes byte-identically (TDT test-120 / NIT test-016 / SDT / EIT /
+    // AIT test-170 / PAT test-012,065 / DSM-CC / ST all graduated off this list).
+    // test-062.ts is a TSDuck random-bits section stress capture: its `section_syntax_indicator`
+    // is random too (0 on sections that carry a CRC_32). SSI is a structural decoded bit, not a
+    // reserved bit, so the serializer re-emits the table's fixed SSI; the reserved bits proper
+    // (private_indicator, reserved(2), version-byte reserved(2), bodies) are byte-exact here.
     ("test-062.", "PROGRAM_ASSOCIATION (tid 0x00)"),
-    ("test-065.", "PROGRAM_ASSOCIATION (tid 0x00)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
-    ("test-062.", "0x75 TVA_ID"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
     ("test-062.", "CONDITIONAL_ACCESS (tid 0x01)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
     ("test-062.", "CONTAINER (tid 0x75)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
-    ("test-062.", "DSM_CC_SECTION (tid 0x3E)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
-    ("test-062.", "DSM_CC_SECTION (tid 0x3F)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
     ("test-062.", "MPE_FEC (tid 0x78)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
     ("test-062.", "MPE_IFEC (tid 0x7A)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
     ("test-062.", "PROTECTION_MESSAGE (tid 0x7B)"),
-    // test-062.ts is a TSDuck random-bits section/descriptor stress capture: every reserved bit is random.
-    ("test-062.", "STUFFING (tid 0x72)"),
 ];
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {

@@ -13,18 +13,24 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for AVC_timing_and_HRD_descriptor.
 pub const TAG: u8 = 0x2A;
 const HEADER_LEN: usize = 2;
-/// `reserved(6)` in byte 0 (Table 2-93), emitted as ones (r03-W7; confirmed by
-/// the TSDuck oracle PMT).
-const RESERVED_6_BITS: u8 = 0x7E;
-/// `reserved(7)` after `90kHz_flag`, emitted as ones.
-const RESERVED_7_BITS: u8 = 0x7F;
-/// Trailing `reserved(5)` after the frame-rate flags, emitted as ones.
-const RESERVED_5_BITS: u8 = 0x1F;
+/// Default of the 6-bit `reserved` in byte 0 (H.222.0 Table 2-93): clause 2.1
+/// "reserved" = `1` (all editions 06/2012-08/2023, audit §5; confirmed by the
+/// TSDuck oracle PMT).
+pub const RESERVED_6_DEFAULT: u8 = 0b11_1111;
+/// Default of the 7-bit `reserved` after `90kHz_flag` (same rule).
+pub const RESERVED_7_DEFAULT: u8 = 0x7F;
+/// Default of the trailing 5-bit `reserved` after the frame-rate flags (same
+/// rule).
+pub const RESERVED_5_DEFAULT: u8 = 0b1_1111;
+const RESERVED_6_MASK: u8 = 0x3F;
+const RESERVED_7_MASK: u8 = 0x7F;
+const RESERVED_5_MASK: u8 = 0x1F;
 const FIXED_BODY_LEN: u8 = 1; // first byte always present (hrd_management_valid_flag..picture_and_timing_info_present)
 
 /// Picture and timing info block — present when `picture_and_timing_info_present` is true.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct AvcPictureTiming {
     /// 1 — 90 kHz clock; 0 — N/K clock used.
     pub _90khz_flag: bool,
@@ -34,12 +40,36 @@ pub struct AvcPictureTiming {
     pub k: Option<u32>,
     /// num_units_in_tick.
     pub num_units_in_tick: u32,
+    /// `reserved(7)` after `90kHz_flag` (7 bits, right-aligned). Captured on
+    /// parse, re-emitted verbatim; [`AvcPictureTiming::new`] uses
+    /// [`RESERVED_7_DEFAULT`].
+    pub reserved_7: u8,
+}
+
+impl AvcPictureTiming {
+    /// Build with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(
+        _90khz_flag: bool,
+        n: Option<u32>,
+        k: Option<u32>,
+        num_units_in_tick: u32,
+    ) -> Self {
+        Self {
+            _90khz_flag,
+            n,
+            k,
+            num_units_in_tick,
+            reserved_7: RESERVED_7_DEFAULT,
+        }
+    }
 }
 
 /// AVC Timing and HRD Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct AvcTimingAndHrdDescriptor {
     /// HRD management valid flag.
     pub hrd_management_valid_flag: bool,
@@ -51,6 +81,36 @@ pub struct AvcTimingAndHrdDescriptor {
     pub temporal_poc_flag: bool,
     /// Picture to display conversion flag.
     pub picture_to_display_conversion_flag: bool,
+    /// `reserved(6)` in byte 0 (6 bits, right-aligned). Captured on parse,
+    /// re-emitted verbatim; [`AvcTimingAndHrdDescriptor::new`] uses
+    /// [`RESERVED_6_DEFAULT`].
+    pub reserved_6: u8,
+    /// Trailing `reserved(5)` after the flags (5 bits, right-aligned).
+    /// Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_5_DEFAULT`].
+    pub reserved_5: u8,
+}
+
+impl AvcTimingAndHrdDescriptor {
+    /// Build with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(
+        hrd_management_valid_flag: bool,
+        picture_timing: Option<AvcPictureTiming>,
+        fixed_frame_rate_flag: bool,
+        temporal_poc_flag: bool,
+        picture_to_display_conversion_flag: bool,
+    ) -> Self {
+        Self {
+            hrd_management_valid_flag,
+            picture_timing,
+            fixed_frame_rate_flag,
+            temporal_poc_flag,
+            picture_to_display_conversion_flag,
+            reserved_6: RESERVED_6_DEFAULT,
+            reserved_5: RESERVED_5_DEFAULT,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for AvcTimingAndHrdDescriptor {
@@ -118,6 +178,7 @@ impl<'a> Parse<'a> for AvcTimingAndHrdDescriptor {
                 n,
                 k,
                 num_units_in_tick,
+                reserved_7: b1 & RESERVED_7_MASK,
             };
             (Some(timing), num_units_offset + 4)
         } else {
@@ -144,6 +205,8 @@ impl<'a> Parse<'a> for AvcTimingAndHrdDescriptor {
             fixed_frame_rate_flag,
             temporal_poc_flag,
             picture_to_display_conversion_flag,
+            reserved_6: (b0 >> 1) & RESERVED_6_MASK,
+            reserved_5: flags_byte & RESERVED_5_MASK,
         })
     }
 }
@@ -179,7 +242,7 @@ impl Serialize for AvcTimingAndHrdDescriptor {
 
         let picture_and_timing_info_present = self.picture_timing.is_some();
         buf[HEADER_LEN] = ((self.hrd_management_valid_flag as u8) << 7)
-            | RESERVED_6_BITS
+            | ((self.reserved_6 & RESERVED_6_MASK) << 1)
             | (if picture_and_timing_info_present {
                 1
             } else {
@@ -188,7 +251,7 @@ impl Serialize for AvcTimingAndHrdDescriptor {
 
         let mut pos = HEADER_LEN + 1;
         if let Some(ref pt) = self.picture_timing {
-            buf[pos] = if pt._90khz_flag { 0x80 } else { 0x00 } | RESERVED_7_BITS;
+            buf[pos] = if pt._90khz_flag { 0x80 } else { 0x00 } | (pt.reserved_7 & RESERVED_7_MASK);
             pos += 1;
             if !pt._90khz_flag {
                 // N and K are both on the wire whenever the 90 kHz flag is
@@ -212,7 +275,7 @@ impl Serialize for AvcTimingAndHrdDescriptor {
         buf[pos] = ((self.fixed_frame_rate_flag as u8) << 7)
             | ((self.temporal_poc_flag as u8) << 6)
             | ((self.picture_to_display_conversion_flag as u8) << 5)
-            | RESERVED_5_BITS;
+            | (self.reserved_5 & RESERVED_5_MASK);
         Ok(len)
     }
 }
@@ -228,13 +291,7 @@ mod tests {
 
     #[test]
     fn round_trip_no_timing() {
-        let orig = AvcTimingAndHrdDescriptor {
-            hrd_management_valid_flag: true,
-            picture_timing: None,
-            fixed_frame_rate_flag: false,
-            temporal_poc_flag: true,
-            picture_to_display_conversion_flag: false,
-        };
+        let orig = AvcTimingAndHrdDescriptor::new(true, None, false, true, false);
         let mut buf = vec![0u8; orig.serialized_len()];
         orig.serialize_into(&mut buf).unwrap();
         let reparsed = AvcTimingAndHrdDescriptor::parse(&buf).unwrap();
@@ -243,18 +300,13 @@ mod tests {
 
     #[test]
     fn round_trip_90khz() {
-        let orig = AvcTimingAndHrdDescriptor {
-            hrd_management_valid_flag: false,
-            picture_timing: Some(AvcPictureTiming {
-                _90khz_flag: true,
-                n: None,
-                k: None,
-                num_units_in_tick: 0xDEADBEEF,
-            }),
-            fixed_frame_rate_flag: true,
-            temporal_poc_flag: false,
-            picture_to_display_conversion_flag: true,
-        };
+        let orig = AvcTimingAndHrdDescriptor::new(
+            false,
+            Some(AvcPictureTiming::new(true, None, None, 0xDEADBEEF)),
+            true,
+            false,
+            true,
+        );
         let mut buf = vec![0u8; orig.serialized_len()];
         orig.serialize_into(&mut buf).unwrap();
         let reparsed = AvcTimingAndHrdDescriptor::parse(&buf).unwrap();
@@ -263,18 +315,18 @@ mod tests {
 
     #[test]
     fn round_trip_nk() {
-        let orig = AvcTimingAndHrdDescriptor {
-            hrd_management_valid_flag: true,
-            picture_timing: Some(AvcPictureTiming {
-                _90khz_flag: false,
-                n: Some(0x12345678),
-                k: Some(0x9ABCDEF0),
-                num_units_in_tick: 0x0FEDCBA9,
-            }),
-            fixed_frame_rate_flag: false,
-            temporal_poc_flag: false,
-            picture_to_display_conversion_flag: false,
-        };
+        let orig = AvcTimingAndHrdDescriptor::new(
+            true,
+            Some(AvcPictureTiming::new(
+                false,
+                Some(0x12345678),
+                Some(0x9ABCDEF0),
+                0x0FEDCBA9,
+            )),
+            false,
+            false,
+            false,
+        );
         let mut buf = vec![0u8; orig.serialized_len()];
         orig.serialize_into(&mut buf).unwrap();
         let reparsed = AvcTimingAndHrdDescriptor::parse(&buf).unwrap();
@@ -296,18 +348,13 @@ mod tests {
     fn serialize_rejects_missing_n_or_k_when_not_90khz() {
         // r03-W5: N/K used to be `unwrap_or(0)`-ed onto the wire when the
         // 90 kHz flag was clear, silently serializing fabricated zeros.
-        let d = AvcTimingAndHrdDescriptor {
-            hrd_management_valid_flag: true,
-            picture_timing: Some(AvcPictureTiming {
-                _90khz_flag: false,
-                n: None,
-                k: Some(1),
-                num_units_in_tick: 2,
-            }),
-            fixed_frame_rate_flag: false,
-            temporal_poc_flag: false,
-            picture_to_display_conversion_flag: false,
-        };
+        let d = AvcTimingAndHrdDescriptor::new(
+            true,
+            Some(AvcPictureTiming::new(false, None, Some(1), 2)),
+            false,
+            false,
+            false,
+        );
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -328,27 +375,59 @@ mod tests {
         ));
     }
 
-    /// r03-W7 — H.222.0 Table 2-93 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the TSDuck-compiled oracle
-    /// PMT `tsduck-mpeg-simple-pmt.bin` (TSDuck only; no real broadcast capture carries it). (1) conformant bytes (reserved=1) round-trip byte-exactly;
-    /// (2) the same descriptor with reserved=0 (non-conformant sender) parses to
-    /// equal typed fields and re-serializes to the normalized reserved=1 form.
+    /// H.222.0 Table 2-93. All three reserved regions are preserved (zero and
+    /// representative values); the old normalize-to-ones behaviour is gone.
     #[test]
-    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
-        let conformant: &[u8] = &[
-            TAG, 15, 0xFF, 0x7F, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0xBF,
-        ];
-        let zeroed: &[u8] = &[
-            TAG, 15, 0x81, 0x00, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0xA0,
-        ];
-        let d = AvcTimingAndHrdDescriptor::parse(conformant).unwrap();
+    fn avc_timing_and_hrd_reserved_preserved() {
+        for r6 in [0u8, 1, 0x15, 0x2A, 0x3F] {
+            for r7 in [0u8, 1, 0x2A, 0x55, 0x7F] {
+                for r5 in [0u8, 1, 0x0A, 0x15, 0x1F] {
+                    let bytes = [
+                        TAG,
+                        15,
+                        0x80 | (r6 << 1) | 1,
+                        r7,
+                        0,
+                        0,
+                        0,
+                        1,
+                        0,
+                        0,
+                        0,
+                        2,
+                        0,
+                        0,
+                        0,
+                        3,
+                        0xA0 | r5,
+                    ];
+                    let d = AvcTimingAndHrdDescriptor::parse(&bytes).unwrap();
+                    assert_eq!((d.reserved_6, d.reserved_5), (r6, r5));
+                    assert_eq!(d.picture_timing.as_ref().unwrap().reserved_7, r7);
+                    let mut out = vec![0u8; d.serialized_len()];
+                    d.serialize_into(&mut out).unwrap();
+                    assert_eq!(out, bytes);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn avc_timing_and_hrd_default_is_spec_value() {
+        let d = AvcTimingAndHrdDescriptor::new(
+            true,
+            Some(AvcPictureTiming::new(false, Some(1), Some(2), 3)),
+            true,
+            false,
+            true,
+        );
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, conformant);
-
-        let dz = AvcTimingAndHrdDescriptor::parse(zeroed).unwrap();
-        assert_eq!(dz, d, "typed fields must not depend on reserved bits");
-        let mut outz = vec![0u8; dz.serialized_len()];
-        dz.serialize_into(&mut outz).unwrap();
-        assert_eq!(outz, conformant);
+        assert_eq!(
+            out,
+            [
+                TAG, 15, 0xFF, 0x7F, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0xBF
+            ]
+        );
     }
 }

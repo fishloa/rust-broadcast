@@ -17,20 +17,51 @@ pub struct VvcSubpicture {
     pub vvc_subpicture_id: u8,
 }
 
+/// Spec default of the 5-bit `reserved_zero_future_use` before
+/// `processing_mode`: 0 (EN 300 468 Table 162a, V1.18.1-V1.20.1;
+/// `dvb-si/docs/reserved-bits-edition-audit.md` §6).
+pub const VVC_SUBPICTURES_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0x00;
+const RESERVED_ZERO_MASK: u8 = 0x1F;
+const PROCESSING_MODE_MASK: u8 = 0x07;
+
 /// vvc_subpictures body (Table 162a) — fully typed.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct VvcSubpictures<'a> {
     /// default_service_mode(1) — byte 0 bit 7.
     pub default_service_mode: bool,
     /// Subpicture entries in wire order.
     pub subpictures: Vec<VvcSubpicture>,
+    /// `reserved_zero_future_use` (5 bits, right-aligned) — byte after the
+    /// subpicture loop, bits `[7:3]`. Preserved on parse;
+    /// [`VvcSubpictures::new`] uses [`VVC_SUBPICTURES_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
+    pub reserved_zero_future_use: u8,
     /// processing_mode(3) — byte after the subpicture loop, bits `[2:0]`.
     pub processing_mode: u8,
     /// Length-delimited service_description text, present iff
     /// `service_description_present` (byte 0 bit 6) is set.
     pub service_description: Option<DvbText<'a>>,
+}
+
+impl<'a> VvcSubpictures<'a> {
+    /// Build a body with the spec-default (zero) reserved bits.
+    #[must_use]
+    pub const fn new(
+        default_service_mode: bool,
+        subpictures: Vec<VvcSubpicture>,
+        processing_mode: u8,
+        service_description: Option<DvbText<'a>>,
+    ) -> Self {
+        Self {
+            default_service_mode,
+            subpictures,
+            reserved_zero_future_use: VVC_SUBPICTURES_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            processing_mode,
+            service_description,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for VvcSubpictures<'a> {
@@ -71,7 +102,8 @@ impl<'a> Parse<'a> for VvcSubpictures<'a> {
             pos += 2;
         }
 
-        let processing_mode = sel[pos] & 0x07;
+        let processing_mode = sel[pos] & PROCESSING_MODE_MASK;
+        let reserved_zero_future_use = (sel[pos] >> 3) & RESERVED_ZERO_MASK;
         pos += 1;
 
         let service_description = if service_description_present {
@@ -106,6 +138,7 @@ impl<'a> Parse<'a> for VvcSubpictures<'a> {
         Ok(VvcSubpictures {
             default_service_mode,
             subpictures,
+            reserved_zero_future_use,
             processing_mode,
             service_description,
         })
@@ -146,7 +179,8 @@ impl Serialize for VvcSubpictures<'_> {
             buf[p + 1] = sp.vvc_subpicture_id;
             p += 2;
         }
-        buf[p] = self.processing_mode & 0x07;
+        buf[p] = ((self.reserved_zero_future_use & RESERVED_ZERO_MASK) << 3)
+            | (self.processing_mode & PROCESSING_MODE_MASK);
         p += 1;
         if let Some(text) = &self.service_description {
             buf[p] = broadcast_common::len::fit_u8(text.len(), "service_description_length")?;
@@ -263,21 +297,45 @@ mod tests {
         round_trip(&d);
     }
 
+    /// Every value of the 5-bit reserved_zero_future_use region, with every
+    /// processing_mode, re-serializes byte-identically.
+    #[test]
+    fn vvc_subpictures_reserved_preserved() {
+        for r in 0u8..=RESERVED_ZERO_MASK {
+            for pm in 0u8..=PROCESSING_MODE_MASK {
+                let sel = [0x01, 0x20, 0x03, (r << 3) | pm];
+                let bytes = wrap(0x23, &sel);
+                let d = ExtensionDescriptor::parse(&bytes).unwrap();
+                let mut buf = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut buf).unwrap();
+                assert_eq!(buf, bytes, "r={r:#x} pm={pm}");
+            }
+        }
+    }
+
+    #[test]
+    fn vvc_subpictures_default_is_spec_value() {
+        let d = VvcSubpictures::new(false, vec![], 5, None);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [0x00, 0x05]);
+    }
+
     /// Serialization is deterministic for an all-owned typed body.
     #[cfg(feature = "serde")]
     #[test]
     fn serde_serialize_vvc_subpictures() {
         let d = ExtensionDescriptor {
             tag_extension: 0x23,
-            body: ExtensionBody::VvcSubpictures(VvcSubpictures {
-                default_service_mode: true,
-                subpictures: vec![VvcSubpicture {
+            body: ExtensionBody::VvcSubpictures(VvcSubpictures::new(
+                true,
+                vec![VvcSubpicture {
                     component_tag: 0x10,
                     vvc_subpicture_id: 0x01,
                 }],
-                processing_mode: 5,
-                service_description: Some(DvbText::new(b"Hi")),
-            }),
+                5,
+                Some(DvbText::new(b"Hi")),
+            )),
         };
         let json = serde_json::to_string(&d).unwrap();
         assert!(json.contains("\"tag_extension\":35"));
@@ -290,16 +348,18 @@ mod tests {
     /// wrapping the count.
     #[test]
     fn number_of_vvc_subpictures_boundary() {
-        let make = |n: usize| VvcSubpictures {
-            default_service_mode: false,
-            subpictures: (0..n)
-                .map(|_| VvcSubpicture {
-                    component_tag: 0,
-                    vvc_subpicture_id: 0,
-                })
-                .collect(),
-            processing_mode: 0,
-            service_description: None,
+        let make = |n: usize| {
+            VvcSubpictures::new(
+                false,
+                (0..n)
+                    .map(|_| VvcSubpicture {
+                        component_tag: 0,
+                        vvc_subpicture_id: 0,
+                    })
+                    .collect(),
+                0,
+                None,
+            )
         };
 
         let ok = make(63);

@@ -5,6 +5,7 @@
 use broadcast_common::Parse;
 use dvb_ci::Error;
 use dvb_ci::objects::host_control::{Replace, Tune};
+use mpeg_ts::pid::Pid;
 
 fn is_trailing(e: &Error) -> bool {
     matches!(
@@ -42,7 +43,7 @@ fn replace_rejects_a_trailing_byte() {
     let r = Replace::parse(&exact).unwrap();
     assert_eq!(
         (r.replacement_ref, r.replaced_pid, r.replacement_pid),
-        (0x07, 0x0064, 0x0065)
+        (0x07, Pid::new(0x0064), Pid::new(0x0065))
     );
     let padded = [0x9F, 0x84, 0x01, 0x06, 0x07, 0xE0, 0x64, 0xE0, 0x65, 0xEE];
     assert!(is_trailing(&Replace::parse(&padded).unwrap_err()));

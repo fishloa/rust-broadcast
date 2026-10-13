@@ -349,7 +349,7 @@ fn real_fixture_remux_is_lossless_and_parseable() {
         let Some(payload) = pkt.payload() else {
             continue;
         };
-        match pkt.pid() {
+        match pkt.pid().value() {
             0x0100 => {
                 if let Some(c) = vid_asm.feed(pkt.pusi(), payload) {
                     ingest_vid(&c, &mut vid);

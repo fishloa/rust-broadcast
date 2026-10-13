@@ -97,11 +97,17 @@ const SSU_OUI_DATA_LENGTH_LEN: usize = 1;
 /// selector_length(1) = 6 bytes before the selector bytes.
 const SSU_OUI_FIXED_LEN: usize = 6;
 const SSU_UPDATE_TYPE_MASK: u8 = 0x0F;
-/// `reserved(4)` ahead of `update_type` and `reserved(2)` ahead of
-/// `update_versioning_flag` (TS 102 006 Table 4), emitted as ones (DVB
-/// reserved-bits convention; owner-approved sweep, no fixture carries SSU).
-const SSU_RESERVED_4_BITS: u8 = 0xF0;
-const SSU_RESERVED_2_BITS: u8 = 0xC0;
+/// Default of the 4-bit `reserved` ahead of `update_type` (TS 102 006 Table 4,
+/// V1.2.1-V1.4.1): `1111`. **UNVERIFIED value**: no edition of TS 102 006
+/// states a value for the selector's `reserved` rows (audit §2/§5), so the
+/// current emitted default (all ones, the H.222.0/DVB convention) is kept;
+/// no fixture carries an SSU selector. Parse preserves whatever is read.
+pub const SSU_RESERVED_4_DEFAULT: u8 = 0b1111;
+/// Default of the 2-bit `reserved` ahead of `update_versioning_flag` (same
+/// provenance and caveat as [`SSU_RESERVED_4_DEFAULT`]): `11`.
+pub const SSU_RESERVED_2_DEFAULT: u8 = 0b11;
+const SSU_RESERVED_4_MASK: u8 = 0x0F;
+const SSU_RESERVED_2_MASK: u8 = 0x03;
 const SSU_UPDATE_VERSIONING_FLAG_MASK: u8 = 0x20;
 const SSU_UPDATE_VERSION_MASK: u8 = 0x1F;
 
@@ -139,6 +145,7 @@ pub fn data_broadcast_id_name(id: u16) -> Option<&'static str> {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct SsuOuiEntry<'a> {
     /// `OUI` — 24-bit IEEE Organizationally Unique Identifier.
     pub oui: [u8; 3],
@@ -152,6 +159,36 @@ pub struct SsuOuiEntry<'a> {
     /// `selector_byte` loop — additional targeting selector bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub selector: &'a [u8],
+    /// `reserved(4)` ahead of `update_type` (4 bits, right-aligned). Captured
+    /// on parse, re-emitted verbatim; [`SsuOuiEntry::new`] uses
+    /// [`SSU_RESERVED_4_DEFAULT`] (value unverified, see there).
+    pub reserved_4: u8,
+    /// `reserved(2)` ahead of `update_versioning_flag` (2 bits, right-aligned).
+    /// Captured on parse, re-emitted verbatim; [`SsuOuiEntry::new`] uses
+    /// [`SSU_RESERVED_2_DEFAULT`] (value unverified, see there).
+    pub reserved_2: u8,
+}
+
+impl<'a> SsuOuiEntry<'a> {
+    /// Build with the spec-default (current-convention) reserved bits.
+    #[must_use]
+    pub const fn new(
+        oui: [u8; 3],
+        update_type: UpdateType,
+        update_versioning_flag: bool,
+        update_version: u8,
+        selector: &'a [u8],
+    ) -> Self {
+        Self {
+            oui,
+            update_type,
+            update_versioning_flag,
+            update_version,
+            selector,
+            reserved_4: SSU_RESERVED_4_DEFAULT,
+            reserved_2: SSU_RESERVED_2_DEFAULT,
+        }
+    }
 }
 
 /// Typed `id_selector` for `data_broadcast_id = 0x000A` (SSU) —
@@ -286,6 +323,8 @@ impl<'a> Parse<'a> for SsuIdSelector<'a> {
                 update_versioning_flag: (byte4 & SSU_UPDATE_VERSIONING_FLAG_MASK) != 0,
                 update_version: byte4 & SSU_UPDATE_VERSION_MASK,
                 selector,
+                reserved_4: byte3 >> 4,
+                reserved_2: byte4 >> 6,
             });
         }
         let private_data = &bytes[oui_loop_end..];
@@ -325,14 +364,16 @@ impl Serialize for SsuIdSelector<'_> {
         let mut pos = SSU_OUI_DATA_LENGTH_LEN;
         for e in &self.oui_entries {
             buf[pos..pos + 3].copy_from_slice(&e.oui);
-            buf[pos + 3] = SSU_RESERVED_4_BITS | (e.update_type.to_u8() & SSU_UPDATE_TYPE_MASK);
+            buf[pos + 3] = ((e.reserved_4 & SSU_RESERVED_4_MASK) << 4)
+                | (e.update_type.to_u8() & SSU_UPDATE_TYPE_MASK);
             let uvf_bit: u8 = if e.update_versioning_flag {
                 SSU_UPDATE_VERSIONING_FLAG_MASK
             } else {
                 0
             };
-            buf[pos + 4] =
-                SSU_RESERVED_2_BITS | uvf_bit | (e.update_version & SSU_UPDATE_VERSION_MASK);
+            buf[pos + 4] = ((e.reserved_2 & SSU_RESERVED_2_MASK) << 6)
+                | uvf_bit
+                | (e.update_version & SSU_UPDATE_VERSION_MASK);
             buf[pos + 5] = broadcast_common::len::fit_u8(e.selector.len(), "selector_length")?;
             pos += SSU_OUI_FIXED_LEN;
             buf[pos..pos + e.selector.len()].copy_from_slice(e.selector);
@@ -592,13 +633,13 @@ mod tests {
     /// ```
     fn sample_ssu_selector() -> SsuIdSelector<'static> {
         SsuIdSelector {
-            oui_entries: vec![SsuOuiEntry {
-                oui: [0x00, 0x15, 0x0A],
-                update_type: UpdateType::UntCarousel,
-                update_versioning_flag: true,
-                update_version: 0x01,
-                selector: &[0xAA, 0xBB, 0xCC],
-            }],
+            oui_entries: vec![SsuOuiEntry::new(
+                [0x00, 0x15, 0x0A],
+                UpdateType::UntCarousel,
+                true,
+                0x01,
+                &[0xAA, 0xBB, 0xCC],
+            )],
             private_data: &[],
         }
     }
@@ -655,13 +696,13 @@ mod tests {
     #[test]
     fn ssu_selector_no_versioning_flag() {
         let s = SsuIdSelector {
-            oui_entries: vec![SsuOuiEntry {
-                oui: [0x00, 0x00, 0x00],
-                update_type: UpdateType::StandardUpdateCarousel,
-                update_versioning_flag: false,
-                update_version: 0x00,
-                selector: &[],
-            }],
+            oui_entries: vec![SsuOuiEntry::new(
+                [0x00, 0x00, 0x00],
+                UpdateType::StandardUpdateCarousel,
+                false,
+                0x00,
+                &[],
+            )],
             private_data: &[],
         };
         let mut buf = vec![0u8; s.serialized_len()];
@@ -789,22 +830,46 @@ mod tests {
         assert_eq!(UpdateType::Reserved(0xF).name(), "reserved");
     }
 
-    /// r03-W7 sweep — TS 102 006 Table 4 plain `reserved(4)`/`reserved(2)` are
-    /// emitted as ones (DVB convention; no real fixture carries an SSU
-    /// selector, so this rests on the spec table + convention only). A sender
-    /// that wrote zeros parses to equal fields and is normalized.
+    /// TS 102 006 Table 4. Both plain `reserved` regions are preserved
+    /// verbatim (zero-reserved senders are no longer normalized to ones).
     #[test]
-    fn ssu_reserved_bits_one_on_serialize_and_zero_input_normalized() {
-        let conformant: &[u8] = &[0x09, 0x00, 0x15, 0x0A, 0xF2, 0xE1, 0x03, 0xAA, 0xBB, 0xCC];
-        let zeroed: &[u8] = &[0x09, 0x00, 0x15, 0x0A, 0x02, 0x21, 0x03, 0xAA, 0xBB, 0xCC];
-        let d = SsuIdSelector::parse(conformant).unwrap();
-        let mut out = vec![0u8; d.serialized_len()];
-        d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, conformant);
-        let dz = SsuIdSelector::parse(zeroed).unwrap();
-        assert_eq!(dz, d);
-        let mut outz = vec![0u8; dz.serialized_len()];
-        dz.serialize_into(&mut outz).unwrap();
-        assert_eq!(outz, conformant);
+    fn ssu_reserved_preserved() {
+        for r4 in 0u8..=15 {
+            for r2 in 0u8..=3 {
+                let bytes = [
+                    0x09,
+                    0x00,
+                    0x15,
+                    0x0A,
+                    (r4 << 4) | 0x02,
+                    (r2 << 6) | 0x21,
+                    0x03,
+                    0xAA,
+                    0xBB,
+                    0xCC,
+                ];
+                let d = SsuIdSelector::parse(&bytes).unwrap();
+                assert_eq!(
+                    (d.oui_entries[0].reserved_4, d.oui_entries[0].reserved_2),
+                    (r4, r2)
+                );
+                let mut out = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut out).unwrap();
+                assert_eq!(out, bytes);
+            }
+        }
+    }
+
+    /// Default-constructed entries carry the (unverified, current) all-ones
+    /// reserved fill: see `SSU_RESERVED_4_DEFAULT`.
+    #[test]
+    fn ssu_default_is_current_convention_value() {
+        let s = sample_ssu_selector();
+        let mut out = vec![0u8; s.serialized_len()];
+        s.serialize_into(&mut out).unwrap();
+        assert_eq!(
+            out,
+            [0x09, 0x00, 0x15, 0x0A, 0xF2, 0xE1, 0x03, 0xAA, 0xBB, 0xCC]
+        );
     }
 }

@@ -12,6 +12,7 @@ use broadcast_common::{Parse, Serialize};
 use dvb_si::carousel::{DownloadDataBlock, ModuleReassembler, UnMessage};
 use dvb_si::compatibility::CompatibilityDescriptor;
 use dvb_si::tables::dsmcc::DsmccSection;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 /// Read a TS file and return all reassembled sections for a given PID.
@@ -28,7 +29,7 @@ fn extract_sections_for_pid(path: &str, target_pid: u16) -> Vec<Vec<u8>> {
             Ok(p) => p,
             Err(_) => continue,
         };
-        if pkt.header.pid != target_pid {
+        if pkt.header.pid != Pid::new(target_pid) {
             continue;
         }
         if let Some(payload) = pkt.payload {
@@ -110,7 +111,7 @@ fn fixture_m6_ddb_header_prefix_links_to_dii() {
             Ok(p) => p,
             Err(_) => continue,
         };
-        if pkt.header.pid != 0x00AB || !pkt.header.pusi {
+        if pkt.header.pid != Pid::new(0x00AB) || !pkt.header.pusi {
             continue;
         }
         if let Some(payload) = pkt.payload {
@@ -240,17 +241,12 @@ fn synthetic_full_pipeline_reassembles_module() {
     let mut reasm = ModuleReassembler::new();
     let mut completed = None;
     let wrap = |table_id: u8, payload: &[u8]| -> Vec<u8> {
-        let sec = DsmccSection {
-            table_id,
-            section_syntax_indicator: true,
-            private_indicator: false,
-            extension_id: 0,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload,
-            checksum: [0; 4],
+        let sec = {
+            let mut __v = DsmccSection::new(table_id, 0, 0, true, 0, 0, payload);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.checksum = [0; 4];
+            __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).unwrap();

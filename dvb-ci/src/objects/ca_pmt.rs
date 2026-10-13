@@ -14,6 +14,7 @@ use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
+use mpeg_ts::pid::Pid;
 
 /// MPEG-2 `CA_descriptor` tag (ISO/IEC 13818-1 §2.6.16); the only descriptor a
 /// `ca_pmt` carries.
@@ -144,7 +145,7 @@ pub struct CaPmtStream<'a> {
     /// MPEG-2 `stream_type`.
     pub stream_type: u8,
     /// 13-bit `elementary_PID`.
-    pub elementary_pid: u16,
+    pub elementary_pid: Pid,
     /// `ca_pmt_cmd_id` for this ES — present only when the ES has CA info
     /// (i.e. when `ca_descriptors` is non-empty), per the `ES_info_length != 0`
     /// guard in Table 25.
@@ -214,7 +215,8 @@ impl<'a> Parse<'a> for CaPmt<'a> {
                 });
             }
             let stream_type = body[pos];
-            let elementary_pid = (((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16;
+            let elementary_pid =
+                Pid::new((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
             let es_info_length = (((body[pos + 3] & 0x0F) as usize) << 8) | body[pos + 4] as usize;
             pos += ES_PREFIX;
             let (es_cmd, ca_descriptors) =
@@ -291,7 +293,6 @@ impl Serialize for CaPmt<'_> {
         super::fit_bits(program_info_length as u64, 12, "ca_pmt program_info_length")?;
         let mut body = CA_PMT_PREFIX + program_info_length;
         for s in &self.streams {
-            super::fit_bits(u64::from(s.elementary_pid), 13, "ca_pmt ES elementary_PID")?;
             let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
             super::fit_bits(es_info_length as u64, 12, "ca_pmt ES_info_length")?;
             body += ES_PREFIX + es_info_length;
@@ -313,8 +314,8 @@ impl Serialize for CaPmt<'_> {
             let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
             buf[pos] = s.stream_type;
             // reserved(3)='111', elementary_PID(13). Range-checked above.
-            buf[pos + 1] = 0xE0 | (s.elementary_pid >> 8) as u8;
-            buf[pos + 2] = s.elementary_pid as u8;
+            buf[pos + 1] = 0xE0 | (s.elementary_pid.value() >> 8) as u8;
+            buf[pos + 2] = s.elementary_pid.value() as u8;
             // reserved(4)='1111', ES_info_length(12). Range-checked above.
             buf[pos + 3] = 0xF0 | (es_info_length >> 8) as u8;
             buf[pos + 4] = es_info_length as u8;
@@ -410,7 +411,7 @@ mod tests {
             program_ca_descriptors: &[],
             streams: alloc::vec![CaPmtStream {
                 stream_type: 0x02,
-                elementary_pid: 0x0101,
+                elementary_pid: Pid::new(0x0101),
                 cmd_id: None,
                 ca_descriptors: &desc,
             }],
@@ -452,13 +453,13 @@ mod tests {
             streams: alloc::vec![
                 CaPmtStream {
                     stream_type: 0x02,
-                    elementary_pid: 0x0200,
+                    elementary_pid: Pid::new(0x0200),
                     cmd_id: Some(CaPmtCmdId::OkDescrambling),
                     ca_descriptors: &es0_desc,
                 },
                 CaPmtStream {
                     stream_type: 0x03,
-                    elementary_pid: 0x0201,
+                    elementary_pid: Pid::new(0x0201),
                     cmd_id: Some(CaPmtCmdId::OkDescrambling),
                     ca_descriptors: &es1_desc,
                 },
@@ -477,7 +478,7 @@ mod tests {
 
         // bite: mutate a stream's pid.
         let mut other2 = pmt.clone();
-        other2.streams[0].elementary_pid = 0x0300;
+        other2.streams[0].elementary_pid = Pid::new(0x0300);
         assert_ne!(bytes, other2.to_bytes());
     }
 
@@ -492,7 +493,7 @@ mod tests {
             program_ca_descriptors: &[],
             streams: alloc::vec![CaPmtStream {
                 stream_type: 0x1B,
-                elementary_pid: 0x00FF,
+                elementary_pid: Pid::new(0x00FF),
                 cmd_id: None,
                 ca_descriptors: &[],
             }],
@@ -504,28 +505,12 @@ mod tests {
     }
 
     #[test]
-    fn oversized_elementary_pid_is_rejected_not_wrapped() {
-        // Before the fix this silently wrapped 0x2100 to wire PID 0x0100 and
-        // returned Ok; now it must be rejected.
-        let pmt = CaPmt {
-            list_management: CaPmtListManagement::Only,
-            program_number: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            cmd_id: None,
-            program_ca_descriptors: &[],
-            streams: alloc::vec![CaPmtStream {
-                stream_type: 0x02,
-                elementary_pid: 0x2100, // exceeds the 13-bit field (max 0x1FFF)
-                cmd_id: None,
-                ca_descriptors: &[],
-            }],
-        };
-        let mut buf = [0u8; 64];
-        assert!(matches!(
-            pmt.serialize_into(&mut buf),
-            Err(Error::InvalidObject { .. })
-        ));
+    fn oversized_elementary_pid_is_unrepresentable() {
+        // The 13-bit field is now a `Pid`: a value that would previously have
+        // been rejected at serialize time is refused at construction.
+        let err = Pid::try_new(0x2100).unwrap_err();
+        assert_eq!(err.value, 0x2100);
+        assert!(Pid::try_new(0x1FFF).is_ok());
     }
 
     #[test]
@@ -539,7 +524,7 @@ mod tests {
             program_ca_descriptors: &[],
             streams: alloc::vec![CaPmtStream {
                 stream_type: 0x02,
-                elementary_pid: 0x1FFF, // the 13-bit maximum
+                elementary_pid: Pid::new(0x1FFF), // the 13-bit maximum
                 cmd_id: None,
                 ca_descriptors: &[],
             }],

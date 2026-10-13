@@ -16,6 +16,7 @@
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::Parse;
 use dvb_si::tables::pat::PatSection;
@@ -27,7 +28,7 @@ use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct DeclaredStream {
     /// Elementary stream PID.
-    pub pid: u16,
+    pub pid: Pid,
     /// PMT-declared `stream_type` (ISO/IEC 13818-1 Table 2-34).
     pub stream_type: StreamType,
 }
@@ -51,11 +52,13 @@ pub(crate) struct DeclaredStream {
 /// already cover PSI-layer faults.
 pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
     let n_packets = ts.len() / TS_PACKET_SIZE;
-    let mut reassemblers: BTreeMap<u16, SectionReassembler> = BTreeMap::new();
-    reassemblers.entry(dvb_si::tables::pat::PID).or_default();
+    let mut reassemblers: BTreeMap<Pid, SectionReassembler> = BTreeMap::new();
+    reassemblers
+        .entry(Pid::new(dvb_si::tables::pat::PID))
+        .or_default();
 
-    let mut pmt_pids: Vec<u16> = Vec::new();
-    let mut declared: BTreeMap<u16, StreamType> = BTreeMap::new();
+    let mut pmt_pids: Vec<Pid> = Vec::new();
+    let mut declared: BTreeMap<Pid, StreamType> = BTreeMap::new();
 
     for i in 0..n_packets {
         let offset = i * TS_PACKET_SIZE;
@@ -73,22 +76,22 @@ pub(crate) fn collect_pmt_streams(ts: &[u8]) -> Vec<DeclaredStream> {
         let pusi = pkt.header.pusi;
         reassemblers.get_mut(&pid).unwrap().feed(payload, pusi);
 
-        let mut new_pmt_pids: Vec<u16> = Vec::new();
+        let mut new_pmt_pids: Vec<Pid> = Vec::new();
         while let Some(section) = reassemblers.get_mut(&pid).unwrap().pop_section() {
-            if pid == dvb_si::tables::pat::PID {
+            if pid == Pid::new(dvb_si::tables::pat::PID) {
                 if let Ok(pat) = PatSection::parse(&section) {
                     for entry in &pat.entries {
                         if entry.program_number != dvb_si::tables::pat::PROGRAM_NUMBER_NIT
-                            && !pmt_pids.contains(&entry.pid)
-                            && !new_pmt_pids.contains(&entry.pid)
+                            && !pmt_pids.contains(&Pid::new(entry.pid))
+                            && !new_pmt_pids.contains(&Pid::new(entry.pid))
                         {
-                            new_pmt_pids.push(entry.pid);
+                            new_pmt_pids.push(Pid::new(entry.pid));
                         }
                     }
                 }
             } else if let Ok(pmt) = PmtSection::parse(&section) {
                 for stream in &pmt.streams {
-                    declared.insert(stream.elementary_pid, stream.stream_type);
+                    declared.insert(Pid::new(stream.elementary_pid), stream.stream_type);
                 }
             }
         }
@@ -128,7 +131,7 @@ pub(crate) fn has_adts_sync(payload: &[u8]) -> bool {
 pub(crate) fn pids_with_stream_type(
     streams: &[DeclaredStream],
     stream_type: StreamType,
-) -> Vec<u16> {
+) -> Vec<Pid> {
     streams
         .iter()
         .filter(|s| s.stream_type == stream_type)
@@ -145,11 +148,11 @@ pub(crate) fn pids_with_stream_type(
 /// (attributed to the last packet index) — mirrors `PtsCheck`'s flush step.
 pub(crate) fn for_each_access_unit(
     ts: &[u8],
-    mut wanted: impl FnMut(u16) -> bool,
-    mut on_payload: impl FnMut(&[u8], usize, u16),
+    mut wanted: impl FnMut(Pid) -> bool,
+    mut on_payload: impl FnMut(&[u8], usize, Pid),
 ) {
     let n_packets = ts.len() / TS_PACKET_SIZE;
-    let mut assemblers: BTreeMap<u16, PesAssembler> = BTreeMap::new();
+    let mut assemblers: BTreeMap<Pid, PesAssembler> = BTreeMap::new();
 
     for i in 0..n_packets {
         let offset = i * TS_PACKET_SIZE;
@@ -199,10 +202,11 @@ pub(crate) mod tests {
     use dvb_si::tables::pat::{PatEntry, PatSection};
     use dvb_si::tables::pmt::{PmtSection, PmtStream, StreamType};
     use mpeg_ts::mux::SectionPacketiser;
+    use mpeg_ts::pid::Pid;
     use mpeg_ts::ts::TS_PACKET_SIZE;
 
     /// PMT PID used by every test fixture built here.
-    pub(crate) const TEST_PMT_PID: u16 = 0x0100;
+    pub(crate) const TEST_PMT_PID: Pid = Pid::new(0x0100);
 
     fn serialize_section<S: Serialize>(section: &S) -> Vec<u8>
     where
@@ -231,24 +235,17 @@ pub(crate) mod tests {
         version_number: u8,
         current_next_indicator: bool,
     ) -> Vec<u8> {
-        let pat = PatSection {
-            transport_stream_id: 1,
+        let pat = PatSection::new(
+            1,
             version_number,
             current_next_indicator,
-            section_number: 0,
-            last_section_number: 0,
-            entries: alloc::vec![PatEntry {
-                program_number: 1,
-                pid: TEST_PMT_PID,
-            }],
-        };
+            0,
+            0,
+            alloc::vec![PatEntry::new(1, TEST_PMT_PID.value())],
+        );
         let pmt_streams: Vec<PmtStream<'_>> = streams
             .iter()
-            .map(|&(pid, stream_type)| PmtStream {
-                stream_type,
-                elementary_pid: pid,
-                es_info: DescriptorLoop::new(&[]),
-            })
+            .map(|&(pid, stream_type)| PmtStream::new(stream_type, pid, DescriptorLoop::new(&[])))
             .collect();
         let pcr_pid = streams.first().map(|&(pid, _)| pid).unwrap_or(0x1FFF);
         let pmt = PmtSection::new(
@@ -266,7 +263,9 @@ pub(crate) mod tests {
         let pmt_bytes = serialize_section(&pmt);
 
         let mut ts = Vec::new();
-        for pkt in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes]) {
+        for pkt in
+            SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&pat_bytes])
+        {
             ts.extend_from_slice(&pkt);
         }
         for pkt in SectionPacketiser::new(TEST_PMT_PID).packetise(&[&pmt_bytes]) {
@@ -281,24 +280,25 @@ pub(crate) mod tests {
     /// `table_id_extension`), each PMT carrying one elementary stream
     /// `(program_number, elementary_pid, stream_type, version_number)`.
     pub(crate) fn build_shared_pid_pmt_ts(programs: &[(u16, u16, StreamType, u8)]) -> Vec<u8> {
-        let pat = PatSection {
-            transport_stream_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            entries: programs
+        let pat = PatSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            programs
                 .iter()
-                .map(|&(program_number, _, _, _)| PatEntry {
-                    program_number,
-                    pid: TEST_PMT_PID,
+                .map(|&(program_number, _, _, _)| {
+                    PatEntry::new(program_number, TEST_PMT_PID.value())
                 })
                 .collect(),
-        };
+        );
         let pat_bytes = serialize_section(&pat);
 
         let mut ts = Vec::new();
-        for pkt in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes]) {
+        for pkt in
+            SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&pat_bytes])
+        {
             ts.extend_from_slice(&pkt);
         }
         for &(program_number, elementary_pid, stream_type, version_number) in programs {
@@ -310,11 +310,11 @@ pub(crate) mod tests {
                 0,
                 elementary_pid,
                 DescriptorLoop::new(&[]),
-                alloc::vec![PmtStream {
+                alloc::vec![PmtStream::new(
                     stream_type,
                     elementary_pid,
-                    es_info: DescriptorLoop::new(&[]),
-                }],
+                    DescriptorLoop::new(&[])
+                )],
             );
             let pmt_bytes = serialize_section(&pmt);
             for pkt in SectionPacketiser::new(TEST_PMT_PID).packetise(&[&pmt_bytes]) {
@@ -345,10 +345,10 @@ pub(crate) mod tests {
     /// (fine for these tests since every crafted PES here fits in one
     /// packet), and unused trailing packet bytes are left `0x47`-filled
     /// (harmless — the assembler stops at the PES's own declared length).
-    pub(crate) fn make_pes_packet(pid: u16, cc: u8, pes_bytes: &[u8]) -> Vec<u8> {
+    pub(crate) fn make_pes_packet(pid: Pid, cc: u8, pes_bytes: &[u8]) -> Vec<u8> {
         let mut pkt = alloc::vec![0x47u8; TS_PACKET_SIZE];
-        pkt[1] = 0x40 | (((pid >> 8) as u8) & 0x1F); // PUSI=1
-        pkt[2] = (pid & 0xFF) as u8;
+        pkt[1] = 0x40 | (((pid.value() >> 8) as u8) & 0x1F); // PUSI=1
+        pkt[2] = (pid.value() & 0xFF) as u8;
         pkt[3] = 0x10 | (cc & 0x0F); // AFC=01 (payload only)
         let len = pes_bytes.len().min(TS_PACKET_SIZE - 4);
         pkt[4..4 + len].copy_from_slice(&pes_bytes[..len]);
@@ -358,20 +358,20 @@ pub(crate) mod tests {
     /// A single real PMT section, on `pid`, for program 1 declaring one H.264
     /// elementary stream — used to plant a PMT on a PID a PAT does *not*
     /// declare (a corrupted/aliased multiplex) without involving the PAT.
-    pub(crate) fn build_pmt_ts_on_pid(pid: u16, version_number: u8) -> Vec<u8> {
+    pub(crate) fn build_pmt_ts_on_pid(pid: Pid, version_number: u8) -> Vec<u8> {
         let pmt = PmtSection::new(
             1,
             version_number,
             true,
             0,
             0,
-            ELEMENTARY_PID,
+            ELEMENTARY_PID.value(),
             DescriptorLoop::new(&[]),
-            alloc::vec![PmtStream {
-                stream_type: StreamType::H264,
-                elementary_pid: ELEMENTARY_PID,
-                es_info: DescriptorLoop::new(&[]),
-            }],
+            alloc::vec![PmtStream::new(
+                StreamType::H264,
+                ELEMENTARY_PID.value(),
+                DescriptorLoop::new(&[])
+            )],
         );
         let pmt_bytes = serialize_section(&pmt);
         let mut ts = Vec::new();
@@ -382,7 +382,7 @@ pub(crate) mod tests {
     }
 
     /// Elementary-stream PID used by every test fixture built here.
-    pub(crate) const ELEMENTARY_PID: u16 = 0x0101;
+    pub(crate) const ELEMENTARY_PID: Pid = Pid::new(0x0101);
 }
 
 #[cfg(test)]
@@ -409,7 +409,7 @@ mod dedup_tests {
         assert_eq!(
             declared,
             alloc::vec![DeclaredStream {
-                pid: 0x0101,
+                pid: Pid::new(0x0101),
                 stream_type: StreamType::H264,
             }],
             "50 repetitions of the same PMT generation must dedup to exactly \
@@ -434,7 +434,7 @@ mod dedup_tests {
         assert_eq!(
             declared,
             alloc::vec![DeclaredStream {
-                pid: 0x0101,
+                pid: Pid::new(0x0101),
                 stream_type: StreamType::Hevc,
             }],
             "the later PMT generation's stream_type must win for a repeated \

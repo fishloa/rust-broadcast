@@ -38,7 +38,7 @@ pub fn run(path: &str, json: bool) -> ExitCode {
     let mut sdt_collector = SectionSetCollector::new();
     for packet in for_each_packet(&data) {
         for event in demux.feed(&packet) {
-            let pid = u16::from(event.pid());
+            let pid = event.pid();
             let table_id = event.table_id();
             let bytes: &[u8] = event.bytes();
             // EIT → schedule (ignore errors so a malformed/short-form section

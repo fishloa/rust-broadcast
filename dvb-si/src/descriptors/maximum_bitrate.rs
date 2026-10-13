@@ -13,17 +13,35 @@ pub const TAG: u8 = 0x0E;
 const MAXIMUM_BITRATE_BITS: u32 = 22;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 3;
-/// `reserved(2)` ahead of `maximum_bitrate` (Table 2-67), emitted as `11`: H.222.0
-/// reserved bits are 1 (r03-W7; confirmed by the TSDuck-compiled oracle PMT).
-const RESERVED_2: u8 = 0xC0;
+/// Default of the 2-bit `reserved` ahead of `maximum_bitrate` (H.222.0 Table
+/// 2-67): clause 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023, audit
+/// §5; confirmed by the TSDuck-compiled oracle PMT).
+pub const RESERVED_DEFAULT: u8 = 0b11;
+const RESERVED_MASK: u8 = 0x03;
 
 /// Maximum Bitrate Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct MaximumBitrateDescriptor {
     /// Maximum bitrate in units of 50 bytes/second.
     pub maximum_bitrate: u32,
+    /// `reserved(2)` ahead of `maximum_bitrate` (2 bits, right-aligned).
+    /// Captured on parse, re-emitted verbatim;
+    /// [`MaximumBitrateDescriptor::new`] uses [`RESERVED_DEFAULT`].
+    pub reserved: u8,
+}
+
+impl MaximumBitrateDescriptor {
+    /// Build with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(maximum_bitrate: u32) -> Self {
+        Self {
+            maximum_bitrate,
+            reserved: RESERVED_DEFAULT,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for MaximumBitrateDescriptor {
@@ -44,7 +62,10 @@ impl<'a> Parse<'a> for MaximumBitrateDescriptor {
         }
         let maximum_bitrate =
             ((u32::from(body[0]) & 0x3F) << 16) | (u32::from(body[1]) << 8) | u32::from(body[2]);
-        Ok(Self { maximum_bitrate })
+        Ok(Self {
+            maximum_bitrate,
+            reserved: body[0] >> 6,
+        })
     }
 }
 
@@ -71,7 +92,7 @@ impl Serialize for MaximumBitrateDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         let mb = mb as u32;
-        buf[HEADER_LEN] = RESERVED_2 | ((mb >> 16) & 0x3F) as u8;
+        buf[HEADER_LEN] = ((self.reserved & RESERVED_MASK) << 6) | ((mb >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 1] = ((mb >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 2] = (mb & 0xFF) as u8;
         Ok(len)
@@ -101,9 +122,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = MaximumBitrateDescriptor {
-            maximum_bitrate: 0x123456,
-        };
+        let d = MaximumBitrateDescriptor::new(0x123456);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = MaximumBitrateDescriptor::parse(&buf).unwrap();
@@ -112,9 +131,7 @@ mod tests {
 
     #[test]
     fn max_value() {
-        let d = MaximumBitrateDescriptor {
-            maximum_bitrate: 0x3FFFFF, // 22-bit max
-        };
+        let d = MaximumBitrateDescriptor::new(0x3FFFFF); // 22-bit max
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = MaximumBitrateDescriptor::parse(&buf).unwrap();
@@ -135,7 +152,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_small_buffer() {
-        let d = MaximumBitrateDescriptor { maximum_bitrate: 0 };
+        let d = MaximumBitrateDescriptor::new(0);
         let mut tiny = vec![0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
@@ -144,9 +161,7 @@ mod tests {
     #[test]
     fn serialize_rejects_over_22bit_bitrate() {
         // Pre-fix `(mb >> 16) & 0x3F` silently dropped bits 22..32 (r03-W3).
-        let d = MaximumBitrateDescriptor {
-            maximum_bitrate: 1 << 22,
-        };
+        let d = MaximumBitrateDescriptor::new(1 << 22);
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -154,23 +169,25 @@ mod tests {
         ));
     }
 
-    /// r03-W7 — H.222.0 Table 2-67 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the TSDuck-compiled oracle
-    /// PMT `tsduck-mpeg-simple-pmt.bin` (TSDuck only; no real broadcast capture carries it). (1) conformant bytes (reserved=1) round-trip byte-exactly;
-    /// (2) the same descriptor with reserved=0 (non-conformant sender) parses to
-    /// equal typed fields and re-serializes to the normalized reserved=1 form.
+    /// H.222.0 Table 2-67. Parsed reserved bits are preserved (a zero-reserved
+    /// sender is no longer normalized to `11`); defaults carry the spec fill.
     #[test]
-    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
-        let conformant: &[u8] = &[TAG, 3, 0xFF, 0xAB, 0xCD];
-        let zeroed: &[u8] = &[TAG, 3, 0x3F, 0xAB, 0xCD];
-        let d = MaximumBitrateDescriptor::parse(conformant).unwrap();
+    fn maximum_bitrate_reserved_preserved() {
+        for r in 0u8..=3 {
+            let bytes = [TAG, 3, (r << 6) | 0x3F, 0xAB, 0xCD];
+            let d = MaximumBitrateDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved, r);
+            let mut out = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut out).unwrap();
+            assert_eq!(out, bytes);
+        }
+    }
+
+    #[test]
+    fn maximum_bitrate_default_is_spec_value() {
+        let d = MaximumBitrateDescriptor::new(0x3FABCD);
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, conformant);
-
-        let dz = MaximumBitrateDescriptor::parse(zeroed).unwrap();
-        assert_eq!(dz, d, "typed fields must not depend on reserved bits");
-        let mut outz = vec![0u8; dz.serialized_len()];
-        dz.serialize_into(&mut outz).unwrap();
-        assert_eq!(outz, conformant);
+        assert_eq!(out, [TAG, 3, 0xFF, 0xAB, 0xCD]);
     }
 }

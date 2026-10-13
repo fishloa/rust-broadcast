@@ -21,6 +21,14 @@ const HEADER_LEN: usize = 2;
 const ENTRY_HEADER_LEN: usize = 2;
 const MAX_BODY_LEN: usize = u8::MAX as usize;
 const MAX_SERVICE_LEN: usize = u8::MAX as usize;
+const LINE_RESERVED_SHIFT: u8 = 6;
+const LINE_RESERVED_MASK: u8 = 0xC0;
+const LINE_PARITY_MASK: u8 = 0x20;
+const LINE_OFFSET_MASK: u8 = 0x1F;
+/// Spec default of the per-line `reserved_future_use`(2) (`reserved` before
+/// V1.17.1): all ones (EN 300 468 V1.4.1-V1.20.1 Table 106; audit
+/// `dvb-si/docs/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
+pub const LINE_RESERVED_FUTURE_USE_DEFAULT: u8 = 0b11;
 
 /// Per-service-descriptor content, keyed by `data_service_id`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,11 +46,28 @@ pub enum VbiService<'a> {
 /// One VBI line entry (Table 106 per-byte layout for ids 0x01–0x07).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct VbiLine {
+    /// `reserved_future_use`(2) at the top of the line byte (2 bits,
+    /// right-aligned). Captured on parse, re-emitted verbatim;
+    /// [`VbiLine::new`] defaults to [`LINE_RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_future_use: u8,
     /// `field_parity` (1 bit) — `[5]` of the service-descriptor byte.
     pub field_parity: bool,
     /// `line_offset` (5 bits) — `[4:0]` of the service-descriptor byte.
     pub line_offset: u8,
+}
+
+impl VbiLine {
+    /// Build a line entry with the spec-default reserved bits (all ones).
+    #[must_use]
+    pub const fn new(field_parity: bool, line_offset: u8) -> Self {
+        Self {
+            reserved_future_use: LINE_RESERVED_FUTURE_USE_DEFAULT,
+            field_parity,
+            line_offset,
+        }
+    }
 }
 
 /// One VBI data service entry.
@@ -100,8 +125,9 @@ impl<'a> Parse<'a> for VbiDataDescriptor<'a> {
                 let lines = svc_bytes
                     .iter()
                     .map(|&b| VbiLine {
-                        field_parity: (b & 0x20) != 0,
-                        line_offset: b & 0x1F,
+                        reserved_future_use: (b & LINE_RESERVED_MASK) >> LINE_RESERVED_SHIFT,
+                        field_parity: (b & LINE_PARITY_MASK) != 0,
+                        line_offset: b & LINE_OFFSET_MASK,
                     })
                     .collect();
                 VbiService::Lines(lines)
@@ -168,8 +194,10 @@ impl Serialize for VbiDataDescriptor<'_> {
             match &e.service_descriptor {
                 VbiService::Lines(lines) => {
                     for line in lines {
-                        buf[pos] =
-                            0xC0 | (u8::from(line.field_parity) << 5) | (line.line_offset & 0x1F);
+                        buf[pos] = ((line.reserved_future_use << LINE_RESERVED_SHIFT)
+                            & LINE_RESERVED_MASK)
+                            | (u8::from(line.field_parity) << 5)
+                            | (line.line_offset & LINE_OFFSET_MASK);
                         pos += 1;
                     }
                 }
@@ -306,18 +334,9 @@ mod tests {
                 VbiDataEntry {
                     data_service_id: 0x01,
                     service_descriptor: VbiService::Lines(vec![
-                        VbiLine {
-                            field_parity: false,
-                            line_offset: 0x01,
-                        },
-                        VbiLine {
-                            field_parity: false,
-                            line_offset: 0x02,
-                        },
-                        VbiLine {
-                            field_parity: false,
-                            line_offset: 0x03,
-                        },
+                        VbiLine::new(false, 0x01),
+                        VbiLine::new(false, 0x02),
+                        VbiLine::new(false, 0x03),
                     ]),
                 },
                 VbiDataEntry {
@@ -353,6 +372,35 @@ mod tests {
         assert_eq!(buf, bytes);
     }
 
+    /// Every line byte (all 256 values, so every reserved(2) value) round-trips.
+    #[test]
+    fn reserved_preserved_for_every_byte() {
+        for b in 0..=0xFFu8 {
+            let bytes = [TAG, 3, 0x01, 0x01, b];
+            let d = VbiDataDescriptor::parse(&bytes).unwrap();
+            match &d.entries[0].service_descriptor {
+                VbiService::Lines(l) => assert_eq!(l[0].reserved_future_use, b >> 6),
+                other => panic!("expected Lines, got {other:?}"),
+            }
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes);
+        }
+    }
+
+    #[test]
+    fn default_is_spec_value() {
+        let d = VbiDataDescriptor {
+            entries: vec![VbiDataEntry {
+                data_service_id: 0x01,
+                service_descriptor: VbiService::Lines(vec![VbiLine::new(true, 0x0A)]),
+            }],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 3, 0x01, 0x01, 0xEA]);
+    }
+
     #[test]
     fn data_service_id_0x03_is_reserved() {
         let bytes = [TAG, 3, 0x03, 0x01, 0xAA];
@@ -369,10 +417,7 @@ mod tests {
         let d = VbiDataDescriptor {
             entries: vec![VbiDataEntry {
                 data_service_id: 0x01,
-                service_descriptor: VbiService::Lines(vec![VbiLine {
-                    field_parity: false,
-                    line_offset: 0x0A,
-                }]),
+                service_descriptor: VbiService::Lines(vec![VbiLine::new(false, 0x0A)]),
             }],
         };
         let mut tiny = [0u8; 3];
@@ -393,14 +438,8 @@ mod tests {
             entries: vec![VbiDataEntry {
                 data_service_id: 0x01,
                 service_descriptor: VbiService::Lines(vec![
-                    VbiLine {
-                        field_parity: false,
-                        line_offset: 0x01,
-                    },
-                    VbiLine {
-                        field_parity: false,
-                        line_offset: 0x02,
-                    },
+                    VbiLine::new(false, 0x01),
+                    VbiLine::new(false, 0x02),
                 ]),
             }],
         };

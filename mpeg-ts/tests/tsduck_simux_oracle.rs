@@ -13,6 +13,7 @@
 //! collector) and `tsanalyze` (which reports continuity-counter errors per
 //! PID) — the reference DVB toolkit, not our own code, doing the check.
 
+use mpeg_ts::pid::Pid;
 use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -188,7 +189,7 @@ fn sdt_and_bat_both_present_per_tsduck() {
     let bat = build_long_section(0x4A, 0x0001, &[0xF0, 0x00, 0xF0, 0x00]);
     let mut mux = SiMux::new();
     mux.upsert_sdt_actual(sdt);
-    mux.upsert(0x0011, bat, StdDuration::from_millis(1000));
+    mux.upsert(Pid::new(0x0011), bat, StdDuration::from_millis(1000));
     let packets = mux.poll(StdDuration::ZERO);
     assert!(!packets.is_empty());
 

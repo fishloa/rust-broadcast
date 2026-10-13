@@ -122,9 +122,7 @@ fn terrestrial_delivery_centre_frequency_hz() {
 #[test]
 fn pdc_label_components_round_trip() {
     use dvb_si::descriptors::pdc::PdcDescriptor;
-    let mut d = PdcDescriptor {
-        programme_identification_label: 0,
-    };
+    let mut d = PdcDescriptor::new(0);
     d.set_pil(15, 6, 20, 30).unwrap();
     assert_eq!(
         (d.pil_day(), d.pil_month(), d.pil_hour(), d.pil_minute()),
@@ -139,10 +137,7 @@ fn frequency_list_decoded_accessors() {
     use dvb_si::descriptors::frequency_list::{CodingType, FrequencyListDescriptor};
 
     // Cable: 100 Hz units.
-    let mut cable = FrequencyListDescriptor {
-        coding_type: CodingType::Cable,
-        centre_frequencies_bcd: vec![],
-    };
+    let mut cable = FrequencyListDescriptor::new(CodingType::Cable, vec![]);
     cable
         .set_centre_frequencies_hz(&[346_000_000, 474_000_000])
         .unwrap();
@@ -152,31 +147,19 @@ fn frequency_list_decoded_accessors() {
     );
 
     // Satellite: 10 kHz units (consistent with the satellite delivery descriptor).
-    let mut sat = FrequencyListDescriptor {
-        coding_type: CodingType::Satellite,
-        centre_frequencies_bcd: vec![],
-    };
+    let mut sat = FrequencyListDescriptor::new(CodingType::Satellite, vec![]);
     sat.set_centre_frequencies_hz(&[11_725_000_000]).unwrap();
     assert_eq!(sat.centre_frequencies_hz(), vec![Some(11_725_000_000)]);
 
     // Terrestrial: binary u32 in 10 Hz units (§6.2.13.4).
-    let mut terr = FrequencyListDescriptor {
-        coding_type: CodingType::Terrestrial,
-        centre_frequencies_bcd: vec![],
-    };
+    let mut terr = FrequencyListDescriptor::new(CodingType::Terrestrial, vec![]);
     terr.set_centre_frequencies_hz(&[781_416_800]).unwrap();
     assert_eq!(terr.centre_frequencies_hz(), vec![Some(781_416_800)]);
 
     // Undefined coding cannot be interpreted or encoded.
-    let undef = FrequencyListDescriptor {
-        coding_type: CodingType::Undefined,
-        centre_frequencies_bcd: vec![[0x01, 0x17, 0x25, 0x00]],
-    };
+    let undef = FrequencyListDescriptor::new(CodingType::Undefined, vec![[0x01, 0x17, 0x25, 0x00]]);
     assert_eq!(undef.centre_frequencies_hz(), vec![None]);
-    let mut undef_mut = FrequencyListDescriptor {
-        coding_type: CodingType::Undefined,
-        centre_frequencies_bcd: vec![],
-    };
+    let mut undef_mut = FrequencyListDescriptor::new(CodingType::Undefined, vec![]);
     assert!(undef_mut.set_centre_frequencies_hz(&[1_000]).is_err());
 }
 

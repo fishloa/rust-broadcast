@@ -31,6 +31,7 @@ const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 #[derive(Debug, Clone, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct DsmccSection<'a> {
     /// The table_id byte (0x3A..=0x3F).
     pub table_id: u8,
@@ -56,6 +57,42 @@ pub struct DsmccSection<'a> {
     /// ISO/IEC 13818-6 checksum). Ignored when SSI is `true`, where the
     /// trailer is a computed CRC-32.
     pub checksum: [u8; 4],
+    /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_b1: u8,
+    /// `reserved(2)` in front of `version_number` (`11`); preserved.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_b5: u8,
+}
+
+impl<'a> DsmccSection<'a> {
+    /// Construct a CRC-protected (`section_syntax_indicator` = 1,
+    /// `private_indicator` = 0) DSM-CC section with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        table_id: u8,
+        extension_id: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        payload: &'a [u8],
+    ) -> Self {
+        Self {
+            table_id,
+            section_syntax_indicator: true,
+            private_indicator: false,
+            extension_id,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            payload,
+            checksum: [0; 4],
+            reserved_b1: super::RESERVED_2,
+            reserved_b5: super::RESERVED_2,
+        }
+    }
 }
 
 impl PartialEq for DsmccSection<'_> {
@@ -69,6 +106,8 @@ impl PartialEq for DsmccSection<'_> {
             && self.section_number == other.section_number
             && self.last_section_number == other.last_section_number
             && self.payload == other.payload
+            && self.reserved_b1 == other.reserved_b1
+            && self.reserved_b5 == other.reserved_b5
             && (self.section_syntax_indicator || self.checksum == other.checksum)
     }
 }
@@ -133,6 +172,8 @@ impl<'a> Parse<'a> for DsmccSection<'a> {
             last_section_number,
             payload,
             checksum,
+            reserved_b1: super::b1_reserved_of(bytes[1]),
+            reserved_b5: super::b5_reserved_of(bytes[5]),
         })
     }
 }
@@ -159,12 +200,18 @@ impl Serialize for DsmccSection<'_> {
         // round-trip the same way — unlike PAT/PMT/etc, DSM-CC sections can
         // have SSI=1 with `private_indicator` set (r02-W9: this used to
         // silently force it to 0 whenever SSI was true).
-        buf[1] = (u8::from(self.section_syntax_indicator) << 7)
-            | (u8::from(self.private_indicator) << 6)
-            | super::SECTION_B1_RESERVED_HI;
+        buf[1] = super::b1_of(
+            self.section_syntax_indicator,
+            self.private_indicator,
+            self.reserved_b1,
+        );
         super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.extension_id.to_be_bytes());
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = super::b5_of(
+            self.reserved_b5,
+            self.version_number,
+            self.current_next_indicator,
+        );
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -301,17 +348,12 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_empty() {
-        let sec = DsmccSection {
-            table_id: 0x3B,
-            section_syntax_indicator: true,
-            private_indicator: false,
-            extension_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &[],
-            checksum: [0; 4],
+        let sec = {
+            let mut __v = DsmccSection::new(0x3B, 0x0001, 0, true, 0, 0, &[]);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.checksum = [0; 4];
+            __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).unwrap();
@@ -322,17 +364,12 @@ mod tests {
     #[test]
     fn serialize_round_trip_with_payload() {
         let payload: [u8; 5] = [0xDE, 0xAD, 0xBE, 0xEF, 0x00];
-        let sec = DsmccSection {
-            table_id: 0x3C,
-            section_syntax_indicator: true,
-            private_indicator: false,
-            extension_id: 0xABCD,
-            version_number: 3,
-            current_next_indicator: true,
-            section_number: 1,
-            last_section_number: 2,
-            payload: &payload,
-            checksum: [0; 4],
+        let sec = {
+            let mut __v = DsmccSection::new(0x3C, 0xABCD, 3, true, 1, 2, &payload);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.checksum = [0; 4];
+            __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).unwrap();
@@ -344,17 +381,12 @@ mod tests {
     fn serialize_round_trip_ssi_clear_preserves_checksum() {
         let payload: [u8; 3] = [0x01, 0x02, 0x03];
         let checksum: [u8; 4] = [0xAA, 0xBB, 0xCC, 0xDD];
-        let sec = DsmccSection {
-            table_id: 0x3B,
-            section_syntax_indicator: false,
-            private_indicator: true,
-            extension_id: 0x5678,
-            version_number: 1,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &payload,
-            checksum,
+        let sec = {
+            let mut __v = DsmccSection::new(0x3B, 0x5678, 1, true, 0, 0, &payload);
+            __v.section_syntax_indicator = false;
+            __v.private_indicator = true;
+            __v.checksum = checksum;
+            __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).unwrap();
@@ -384,17 +416,12 @@ mod tests {
     #[test]
     fn serialize_rejects_payload_exceeding_section_length() {
         let payload = vec![0xAAu8; 4087];
-        let sec = DsmccSection {
-            table_id: 0x3B,
-            section_syntax_indicator: true,
-            private_indicator: false,
-            extension_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &payload,
-            checksum: [0; 4],
+        let sec = {
+            let mut __v = DsmccSection::new(0x3B, 1, 0, true, 0, 0, &payload);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.checksum = [0; 4];
+            __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         assert!(matches!(
@@ -406,17 +433,12 @@ mod tests {
     #[test]
     fn serialize_accepts_payload_at_section_length_boundary() {
         let payload = vec![0xAAu8; 4086];
-        let sec = DsmccSection {
-            table_id: 0x3B,
-            section_syntax_indicator: true,
-            private_indicator: false,
-            extension_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            payload: &payload,
-            checksum: [0; 4],
+        let sec = {
+            let mut __v = DsmccSection::new(0x3B, 1, 0, true, 0, 0, &payload);
+            __v.section_syntax_indicator = true;
+            __v.private_indicator = false;
+            __v.checksum = [0; 4];
+            __v
         };
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).expect("boundary fits");

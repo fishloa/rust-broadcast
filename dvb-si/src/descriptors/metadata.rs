@@ -15,9 +15,11 @@ pub const TAG: u8 = 0x26;
 const HEADER_LEN: usize = 2;
 /// `DSM-CC_flag` bit of the `decoder_config_flags` byte (Table 2-89).
 const DSMCC_FLAG_BIT: u8 = 0x10;
-/// `reserved(4)` tail of the flags byte (Table 2-89), emitted as `1111`
-/// (H.222.0 reserved bits are 1; r03-W7, owner-approved; no fixture carries it).
-const RESERVED_4_BITS: u8 = 0x0F;
+/// Default of the 4-bit `reserved` tail of the flags byte (H.222.0 Table
+/// 2-89): clause 2.1 "reserved" = `1` (all editions 2006-08/2023, audit §5; no
+/// fixture carries the descriptor).
+pub const RESERVED_DEFAULT: u8 = 0b1111;
+const RESERVED_MASK: u8 = 0x0F;
 
 /// Decoder configuration carried in this descriptor (decoder_config_flags == 0b001).
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -79,6 +81,7 @@ pub enum DecoderConfig<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct MetadataDescriptor<'a> {
     /// Metadata application format (u16; Table 2-84).
     pub metadata_application_format: u16,
@@ -107,6 +110,36 @@ pub struct MetadataDescriptor<'a> {
     /// Trailing private data bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
+    /// `reserved(4)` tail of the flags byte (4 bits, right-aligned). Captured
+    /// on parse, re-emitted verbatim; [`MetadataDescriptor::new`] / [`Default`]
+    /// use [`RESERVED_DEFAULT`].
+    pub reserved: u8,
+}
+
+impl<'a> MetadataDescriptor<'a> {
+    /// Build a minimal descriptor (no identifiers, no DSM-CC record, no decoder
+    /// config, no private data) with the spec-default reserved bits. Set the
+    /// remaining fields directly.
+    #[must_use]
+    pub const fn new(
+        metadata_application_format: u16,
+        metadata_format: MetadataFormat,
+        metadata_service_id: u8,
+    ) -> Self {
+        Self {
+            metadata_application_format,
+            metadata_application_format_identifier: None,
+            metadata_format,
+            metadata_format_identifier: None,
+            metadata_service_id,
+            decoder_config_flags: DecoderConfigFlags::None,
+            dsmcc_flag: false,
+            service_identification: None,
+            decoder_config: DecoderConfig::None,
+            private_data: &[],
+            reserved: RESERVED_DEFAULT,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for MetadataDescriptor<'a> {
@@ -181,7 +214,7 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
         let decoder_config_raw = (flags & 0xE0) >> 5;
         let decoder_config_flags = DecoderConfigFlags::from_u8(decoder_config_raw);
         let dsmcc_flag = (flags & 0x10) != 0;
-        let _reserved = flags & 0x0F;
+        let reserved = flags & RESERVED_MASK;
         pos += 1;
 
         let (service_identification, mut pos) = if dsmcc_flag {
@@ -297,6 +330,7 @@ impl<'a> Parse<'a> for MetadataDescriptor<'a> {
             service_identification,
             decoder_config,
             private_data,
+            reserved,
         })
     }
 }
@@ -358,7 +392,8 @@ impl Serialize for MetadataDescriptor<'_> {
 
         // `DSM-CC_flag` is derived from the Option (never the stored
         // `dsmcc_flag`) so flag and record can never disagree (r03-W5).
-        let mut flags = ((self.decoder_config_flags.to_u8() & 0x07) << 5) | RESERVED_4_BITS;
+        let mut flags =
+            ((self.decoder_config_flags.to_u8() & 0x07) << 5) | (self.reserved & RESERVED_MASK);
         if self.service_identification.is_some() {
             flags |= DSMCC_FLAG_BIT;
         }
@@ -437,6 +472,7 @@ mod tests {
             dsmcc_flag: false,
             service_identification: None,
             decoder_config: DecoderConfig::None,
+            reserved: RESERVED_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -456,6 +492,7 @@ mod tests {
             decoder_config: DecoderConfig::InDescriptor(DecoderConfigInDescriptor {
                 decoder_config: &[0x01, 0x02, 0x03],
             }),
+            reserved: RESERVED_DEFAULT,
             private_data: &[0xFF],
         };
         serialize_round_trip(&d);
@@ -473,6 +510,7 @@ mod tests {
             dsmcc_flag: true,
             service_identification: Some(&[0xAA, 0xBB]),
             decoder_config: DecoderConfig::SameService,
+            reserved: RESERVED_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -492,6 +530,7 @@ mod tests {
             decoder_config: DecoderConfig::DsmccCarousel(DecoderConfigDsmcc {
                 dec_config_identification: &[0x11, 0x22, 0x33, 0x44],
             }),
+            reserved: RESERVED_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -511,6 +550,7 @@ mod tests {
             decoder_config: DecoderConfig::OtherService(DecoderConfigOtherService {
                 decoder_config_metadata_service_id: 99,
             }),
+            reserved: RESERVED_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -530,6 +570,7 @@ mod tests {
             decoder_config: DecoderConfig::ReservedData(ReservedData {
                 data: &[0x99, 0x88, 0x77],
             }),
+            reserved: RESERVED_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -547,6 +588,7 @@ mod tests {
             dsmcc_flag: false,
             service_identification: None,
             decoder_config: DecoderConfig::Private,
+            reserved: RESERVED_DEFAULT,
             private_data: &[0x01],
         };
         serialize_round_trip(&d);
@@ -564,6 +606,7 @@ mod tests {
             dsmcc_flag: true,
             service_identification: Some(&[0xCA, 0xFE]),
             decoder_config: DecoderConfig::None,
+            reserved: RESERVED_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -580,6 +623,7 @@ mod tests {
             dsmcc_flag: false,
             service_identification: None,
             decoder_config: DecoderConfig::None,
+            reserved: RESERVED_DEFAULT,
             private_data: &[],
         }
     }
@@ -620,22 +664,42 @@ mod tests {
         assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
     }
 
-    /// r03-W7 sweep — H.222.0 Table 2-89. No committed capture or TSDuck fixture carries this
-    /// descriptor, so reserved=1 rests on the spec convention only (owner
-    /// decision). Conformant bytes round-trip exactly; reserved=0 input parses
-    /// to equal typed fields and is normalized to reserved=1.
+    /// H.222.0 Table 2-89. `reserved(4)` is preserved verbatim (zero-reserved
+    /// senders are no longer normalized to `1111`).
     #[test]
-    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
-        let conformant: &[u8] = &[TAG, 9, 0x01, 0x00, 0x3F, 0x01, 0x1F, 0x02, 0xAA, 0xBB, 0xEE];
-        let zeroed: &[u8] = &[TAG, 9, 0x01, 0x00, 0x3F, 0x01, 0x10, 0x02, 0xAA, 0xBB, 0xEE];
-        let d = MetadataDescriptor::parse(conformant).unwrap();
+    fn metadata_reserved_preserved() {
+        for r in 0u8..=15 {
+            let bytes = [
+                TAG,
+                9,
+                0x01,
+                0x00,
+                0x3F,
+                0x01,
+                0x10 | r,
+                0x02,
+                0xAA,
+                0xBB,
+                0xEE,
+            ];
+            let d = MetadataDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved, r);
+            let mut out = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut out).unwrap();
+            assert_eq!(out, bytes);
+        }
+    }
+
+    #[test]
+    fn metadata_default_is_spec_value() {
+        let mut d = MetadataDescriptor::new(0x0100, MetadataFormat::Reserved1(0x3F), 1);
+        d.service_identification = Some(&[0xAA, 0xBB]);
+        d.private_data = &[0xEE];
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, conformant);
-        let dz = MetadataDescriptor::parse(zeroed).unwrap();
-        assert_eq!(dz, d);
-        let mut outz = vec![0u8; dz.serialized_len()];
-        dz.serialize_into(&mut outz).unwrap();
-        assert_eq!(outz, conformant);
+        assert_eq!(
+            out,
+            [TAG, 9, 0x01, 0x00, 0x3F, 0x01, 0x1F, 0x02, 0xAA, 0xBB, 0xEE]
+        );
     }
 }

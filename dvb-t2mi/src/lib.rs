@@ -27,9 +27,10 @@
 //! ```no_run
 //! # #[cfg(feature = "ts")] {
 //! use dvb_t2mi::pump::T2miPump;
+//! use mpeg_ts::pid::Pid;
 //! use dvb_t2mi::payload::AnyPayload;
 //!
-//! let mut pump = T2miPump::new(0x0006); // T2-MI PID from the PMT
+//! let mut pump = T2miPump::new(Pid::new(0x0006)); // T2-MI PID from the PMT
 //! # let ts_packets: Vec<[u8; 188]> = Vec::new();
 //! for packet in &ts_packets {          // each aligned 188-byte TS packet
 //!     for event in pump.feed_ts(packet) {

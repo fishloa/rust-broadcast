@@ -29,6 +29,7 @@
 //! never parses ES_info bytes, only carries them verbatim (see
 //! `TrackSpec::es_info_descriptors`'s doc).
 
+use mpeg_ts::pid::Pid;
 use std::collections::BTreeSet;
 
 use broadcast_common::{Package, Unpackage};
@@ -86,7 +87,7 @@ fn track_for_pid(media: &Media, pid: u16) -> &Track {
     media
         .tracks
         .iter()
-        .find(|t| t.spec.source_pid == Some(pid))
+        .find(|t| t.spec.source_pid == Some(Pid::new(pid)))
         .unwrap_or_else(|| panic!("no track for PID {pid:#06x}"))
 }
 

@@ -8,6 +8,7 @@
 //! reference) drives a sequence of events and asserts the emitted action
 //! sequence.
 
+use mpeg_ts::pid::Pid;
 use std::time::Duration;
 
 use dvb_ci::objects::ca_pmt_reply::CaEnable;
@@ -339,9 +340,9 @@ pub enum HostControlEvent {
         /// `replacement_ref` — matched later by a Clear Replace.
         replacement_ref: u8,
         /// 13-bit `replaced_PID`.
-        replaced_pid: u16,
+        replaced_pid: Pid,
         /// 13-bit `replacement_PID`.
-        replacement_pid: u16,
+        replacement_pid: Pid,
     },
     /// `clear_replace()` (Table 29): undo all Replace operations sharing this
     /// `replacement_ref`.

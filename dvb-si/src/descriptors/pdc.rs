@@ -17,19 +17,38 @@ pub const HEADER_LEN: usize = 2;
 pub const BODY_LEN: usize = 3;
 /// The programme_identification_label occupies the low 20 bits.
 pub const PIL_MASK: u32 = 0x000F_FFFF;
-/// Reserved bits occupy the top 4 of the 24-bit body. Ignored on parse,
-/// emitted as 1s on serialize (EN 300 468 §5.1).
-pub const RESERVED_BITS: u32 = 0x00F0_0000;
+/// Shift of the 4-bit `reserved_future_use` in the 24-bit body.
+const RESERVED_SHIFT: u32 = 20;
+/// Mask of the 4-bit `reserved_future_use` once shifted down.
+const RESERVED_MASK: u8 = 0x0F;
+/// Spec default of `reserved_future_use`(4): all ones (EN 300 468
+/// V1.4.1-V1.20.1 Table 84; audit `dvb-si/docs/reserved-bits-edition-audit.md`
+/// §6.1, class A: stable in every edition).
+pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0x0F;
 
 /// PDC Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct PdcDescriptor {
+    /// `reserved_future_use`(4) ahead of the PIL (4 bits, right-aligned).
+    /// Captured on parse and re-emitted verbatim; [`PdcDescriptor::new`]
+    /// defaults to [`RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_future_use: u8,
     /// 20-bit programme_identification_label (day/month/hour/minute packed).
     pub programme_identification_label: u32,
 }
 
 impl PdcDescriptor {
+    /// Build a descriptor with the spec-default reserved bits (all ones).
+    #[must_use]
+    pub const fn new(programme_identification_label: u32) -> Self {
+        Self {
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
+            programme_identification_label,
+        }
+    }
+
     /// Day-of-month component of the `programme_identification_label`
     /// (5 bits `[19:15]`, EN 300 468 §6.2.29).
     #[must_use]
@@ -94,6 +113,7 @@ impl<'a> Parse<'a> for PdcDescriptor {
         }
         let raw = (u32::from(body[0]) << 16) | (u32::from(body[1]) << 8) | u32::from(body[2]);
         Ok(Self {
+            reserved_future_use: ((raw >> RESERVED_SHIFT) as u8) & RESERVED_MASK,
             programme_identification_label: raw & PIL_MASK,
         })
     }
@@ -120,8 +140,9 @@ impl Serialize for PdcDescriptor {
             });
         }
         crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
-        // Reserved 4 bits emitted as 1s.
-        let raw = RESERVED_BITS | (self.programme_identification_label & PIL_MASK);
+        // reserved_future_use(4) preserved from parse (default 1111).
+        let raw = (u32::from(self.reserved_future_use & RESERVED_MASK) << RESERVED_SHIFT)
+            | (self.programme_identification_label & PIL_MASK);
         buf[HEADER_LEN] = (raw >> 16) as u8;
         buf[HEADER_LEN + 1] = (raw >> 8) as u8;
         buf[HEADER_LEN + 2] = raw as u8;
@@ -146,11 +167,34 @@ mod tests {
     }
 
     #[test]
-    fn parse_ignores_reserved_bits() {
-        // Top nibble set (reserved) must be masked off, not rejected (§5.1).
+    fn parse_captures_reserved_bits() {
+        // Top nibble set (reserved) is captured, not rejected, and the PIL is
+        // still extracted.
         let bytes = [TAG, 3, 0xFA, 0xBC, 0xDE];
         let d = PdcDescriptor::parse(&bytes).unwrap();
         assert_eq!(d.programme_identification_label, 0x0A_BCDE);
+        assert_eq!(d.reserved_future_use, 0x0F);
+    }
+
+    /// All 16 reserved nibbles re-serialize byte-identically.
+    #[test]
+    fn reserved_preserved_for_every_value() {
+        for r in 0u8..=0x0F {
+            let bytes = [TAG, 3, (r << 4) | 0x0A, 0xBC, 0xDE];
+            let d = PdcDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved_future_use, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes);
+        }
+    }
+
+    #[test]
+    fn default_is_spec_value() {
+        let d = PdcDescriptor::new(0x0A_BCDE);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 3, 0xFA, 0xBC, 0xDE]);
     }
 
     #[test]
@@ -179,9 +223,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = PdcDescriptor {
-            programme_identification_label: 0x0A_BCDE,
-        };
+        let d = PdcDescriptor::new(0x0A_BCDE);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         // Reserved nibble emitted as 1s.
@@ -191,9 +233,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_too_small_buffer() {
-        let d = PdcDescriptor {
-            programme_identification_label: 0,
-        };
+        let d = PdcDescriptor::new(0);
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -203,9 +243,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_over_range_pil() {
-        let d = PdcDescriptor {
-            programme_identification_label: 0x10_0000, // 21 bits
-        };
+        let d = PdcDescriptor::new(0x10_0000);
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -216,9 +254,7 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_round_trip() {
-        let d = PdcDescriptor {
-            programme_identification_label: 0x0A_BCDE,
-        };
+        let d = PdcDescriptor::new(0x0A_BCDE);
         let json = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&json).unwrap();

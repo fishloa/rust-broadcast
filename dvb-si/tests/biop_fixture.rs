@@ -18,6 +18,7 @@ use dvb_si::carousel::biop::{
 };
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::dsmcc::DsmccSection;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 /// Extract reassembled sections for PID 0x00AB from the m6 fixture.
@@ -35,7 +36,7 @@ fn m6_sections_pid_ab() -> Vec<Vec<u8>> {
             Ok(p) => p,
             Err(_) => continue,
         };
-        if pkt.header.pid != 0x00AB {
+        if pkt.header.pid != Pid::new(0x00AB) {
             continue;
         }
         if let Some(payload) = pkt.payload {

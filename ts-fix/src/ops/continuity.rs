@@ -19,6 +19,7 @@
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use mpeg_ts::owned::OwnedTsPacket;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
@@ -63,7 +64,7 @@ struct PidState {
 ///   field may have any CC value — the repair must not "fix" a signalled
 ///   discontinuity.
 pub(crate) struct ContinuityOp {
-    per_pid: BTreeMap<u16, PidState>,
+    per_pid: BTreeMap<Pid, PidState>,
 }
 
 impl ContinuityOp {
@@ -227,11 +228,11 @@ mod tests {
 
     /// Build a TS packet with the given header fields and payload.
     /// `b3_template` provides the base "byte 3" value (AF bits, CC masked out).
-    fn make_payload_packet(pid: u16, cc: u8, has_adaptation: bool, payload: &[u8]) -> [u8; 188] {
+    fn make_payload_packet(pid: Pid, cc: u8, has_adaptation: bool, payload: &[u8]) -> [u8; 188] {
         let mut pkt = [0xFFu8; 188];
         pkt[0] = TS_SYNC_BYTE;
-        pkt[1] = ((pid >> 8) as u8) & 0x1F;
-        pkt[2] = (pid & 0xFF) as u8;
+        pkt[1] = ((pid.value() >> 8) as u8) & 0x1F;
+        pkt[2] = (pid.value() & 0xFF) as u8;
         let mut b3 = cc & 0x0F;
         b3 |= 0x10; // payload flag
         if has_adaptation {
@@ -252,11 +253,11 @@ mod tests {
     }
 
     /// Build a packet with discontinuity_indicator set.
-    fn make_discontinuity_packet(pid: u16, cc: u8, payload: &[u8]) -> [u8; 188] {
+    fn make_discontinuity_packet(pid: Pid, cc: u8, payload: &[u8]) -> [u8; 188] {
         let mut pkt = [0xFFu8; 188];
         pkt[0] = TS_SYNC_BYTE;
-        pkt[1] = ((pid >> 8) as u8) & 0x1F;
-        pkt[2] = (pid & 0xFF) as u8;
+        pkt[1] = ((pid.value() >> 8) as u8) & 0x1F;
+        pkt[2] = (pid.value() & 0xFF) as u8;
         pkt[3] = cc & 0x0F;
         pkt[3] |= 0x10 | 0x20; // payload + adaptation flags
 
@@ -287,12 +288,12 @@ mod tests {
     #[test]
     fn non_payload_does_not_advance_cc() {
         // §2.4.3.3: CC only increments on payload-bearing packets.
-        let pkt1 = make_payload_packet(0x0100, 0, false, &[0xAA]);
-        let mut pkt2 = make_payload_packet(0x0100, 0, false, &[0xBB]);
+        let pkt1 = make_payload_packet(Pid::new(0x0100), 0, false, &[0xAA]);
+        let mut pkt2 = make_payload_packet(Pid::new(0x0100), 0, false, &[0xBB]);
         pkt2[3] &= 0xCF; // clear AFC bits
         pkt2[3] |= 0x20; // afc = 10 (adaptation-only)
 
-        let mut pkt3 = make_payload_packet(0x0100, 0, false, &[0xCC]);
+        let mut pkt3 = make_payload_packet(Pid::new(0x0100), 0, false, &[0xCC]);
         pkt3[3] &= 0xCF;
         pkt3[3] |= 0x00; // afc = 00 (reserved, no payload)
 
@@ -310,8 +311,8 @@ mod tests {
     fn duplicate_packet_is_preserved() {
         // §2.4.3.3 L554 (`private/docs/h222-0-transport-stream.md`): same PID, same CC, same payload bytes.
         let payload = &[0xAB, 0xCD, 0xEF];
-        let pkt1 = make_payload_packet(0x0200, 0, false, payload);
-        let pkt2 = make_payload_packet(0x0200, 0, false, payload); // duplicate
+        let pkt1 = make_payload_packet(Pid::new(0x0200), 0, false, payload);
+        let pkt2 = make_payload_packet(Pid::new(0x0200), 0, false, payload); // duplicate
 
         let output = run_op(&[pkt1, pkt2]);
         assert_eq!(output.len(), 2);
@@ -325,8 +326,8 @@ mod tests {
         // Same CC but different payload — per §2.4.3.3 L554 this is NOT a
         // legal duplicate (payload must be identical).  The repair renumbers
         // it to the expected CC.
-        let pkt1 = make_payload_packet(0x0200, 0, false, &[0xAB]);
-        let pkt2 = make_payload_packet(0x0200, 0, false, &[0xCD]); // same CC, different payload
+        let pkt1 = make_payload_packet(Pid::new(0x0200), 0, false, &[0xAB]);
+        let pkt2 = make_payload_packet(Pid::new(0x0200), 0, false, &[0xCD]); // same CC, different payload
 
         let output = run_op(&[pkt1, pkt2]);
         assert_eq!(output.len(), 2);
@@ -338,8 +339,8 @@ mod tests {
     #[test]
     fn discontinuity_packet_is_preserved() {
         // §2.4.3.5: discontinuity_indicator = 1 → any CC is valid.
-        let pkt1 = make_payload_packet(0x0300, 0, false, &[0xAA]);
-        let pkt2 = make_discontinuity_packet(0x0300, 0x0F, &[0xBB]);
+        let pkt1 = make_payload_packet(Pid::new(0x0300), 0, false, &[0xAA]);
+        let pkt2 = make_discontinuity_packet(Pid::new(0x0300), 0x0F, &[0xBB]);
 
         let output = run_op(&[pkt1, pkt2]);
         assert_eq!(output.len(), 2);
@@ -352,9 +353,9 @@ mod tests {
     fn cc_after_discontinuity_resets() {
         // After a discontinuity, the next packet's CC should not be forced
         // to match the sequence from before the discontinuity.
-        let pkt1 = make_payload_packet(0x0300, 0, false, &[0xAA]);
-        let pkt2 = make_discontinuity_packet(0x0300, 0x0F, &[0xBB]);
-        let pkt3 = make_payload_packet(0x0300, 3, false, &[0xCC]); // after discontinuity
+        let pkt1 = make_payload_packet(Pid::new(0x0300), 0, false, &[0xAA]);
+        let pkt2 = make_discontinuity_packet(Pid::new(0x0300), 0x0F, &[0xBB]);
+        let pkt3 = make_payload_packet(Pid::new(0x0300), 3, false, &[0xCC]); // after discontinuity
 
         let output = run_op(&[pkt1, pkt2, pkt3]);
         assert_eq!(output.len(), 3);
@@ -368,8 +369,8 @@ mod tests {
     #[test]
     fn genuine_cc_gap_is_repaired() {
         // Uns signalled, non-duplicate gap: 0 → should be 1.
-        let pkt1 = make_payload_packet(0x0400, 0, false, &[0xAA]);
-        let pkt2 = make_payload_packet(0x0400, 3, false, &[0xBB]); // gap: expected 1, got 3
+        let pkt1 = make_payload_packet(Pid::new(0x0400), 0, false, &[0xAA]);
+        let pkt2 = make_payload_packet(Pid::new(0x0400), 3, false, &[0xBB]); // gap: expected 1, got 3
 
         let output = run_op(&[pkt1, pkt2]);
         assert_eq!(output.len(), 2);
@@ -379,9 +380,9 @@ mod tests {
 
     #[test]
     fn normal_cc_sequence_passes_unmodified() {
-        let pkt1 = make_payload_packet(0x0500, 0, false, &[0xAA]);
-        let pkt2 = make_payload_packet(0x0500, 1, false, &[0xBB]);
-        let pkt3 = make_payload_packet(0x0500, 2, false, &[0xCC]);
+        let pkt1 = make_payload_packet(Pid::new(0x0500), 0, false, &[0xAA]);
+        let pkt2 = make_payload_packet(Pid::new(0x0500), 1, false, &[0xBB]);
+        let pkt3 = make_payload_packet(Pid::new(0x0500), 2, false, &[0xCC]);
 
         let output = run_op(&[pkt1, pkt2, pkt3]);
         assert_eq!(output.len(), 3);
@@ -392,8 +393,8 @@ mod tests {
 
     #[test]
     fn cc_wrap_around() {
-        let pkt1 = make_payload_packet(0x0600, 0x0F, false, &[0xAA]);
-        let pkt2 = make_payload_packet(0x0600, 0x00, false, &[0xBB]); // 15→0, correct wrap
+        let pkt1 = make_payload_packet(Pid::new(0x0600), 0x0F, false, &[0xAA]);
+        let pkt2 = make_payload_packet(Pid::new(0x0600), 0x00, false, &[0xBB]); // 15→0, correct wrap
 
         let output = run_op(&[pkt1, pkt2]);
         assert_eq!(output.len(), 2);
@@ -403,11 +404,11 @@ mod tests {
 
     #[test]
     fn multiple_pids_independent() {
-        let pkt1 = make_payload_packet(0x0100, 0, false, &[0xAA]);
-        let pkt2 = make_payload_packet(0x0200, 0, false, &[0xBB]);
-        let pkt3 = make_payload_packet(0x0100, 1, false, &[0xCC]); // correct next CC for PID 0x0100
-        let pkt4 = make_payload_packet(0x0200, 1, false, &[0xDD]); // correct next CC for PID 0x0200
-        let pkt5 = make_payload_packet(0x0100, 2, false, &[0xEE]); // correct
+        let pkt1 = make_payload_packet(Pid::new(0x0100), 0, false, &[0xAA]);
+        let pkt2 = make_payload_packet(Pid::new(0x0200), 0, false, &[0xBB]);
+        let pkt3 = make_payload_packet(Pid::new(0x0100), 1, false, &[0xCC]); // correct next CC for PID 0x0100
+        let pkt4 = make_payload_packet(Pid::new(0x0200), 1, false, &[0xDD]); // correct next CC for PID 0x0200
+        let pkt5 = make_payload_packet(Pid::new(0x0100), 2, false, &[0xEE]); // correct
 
         let output = run_op(&[pkt1, pkt2, pkt3, pkt4, pkt5]);
         assert_eq!(output.len(), 5);
@@ -421,8 +422,8 @@ mod tests {
     #[test]
     fn afc_11_packet_with_adaptation_advances_cc() {
         // afc = 11 (both adaptation and payload) — CC SHOULD increment.
-        let pkt1 = make_payload_packet(0x0700, 0, true, &[0xAA]);
-        let pkt2 = make_payload_packet(0x0700, 1, true, &[0xBB]);
+        let pkt1 = make_payload_packet(Pid::new(0x0700), 0, true, &[0xAA]);
+        let pkt2 = make_payload_packet(Pid::new(0x0700), 1, true, &[0xBB]);
 
         let output = run_op(&[pkt1, pkt2]);
         assert_eq!(output.len(), 2);

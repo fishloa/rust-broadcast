@@ -23,6 +23,21 @@ impl Pid {
         Self(value & Self::MASK)
     }
 
+    /// Construct a `Pid`, rejecting any value above [`Pid::MASK`] (`0x1FFF`).
+    ///
+    /// Use this at API boundaries that take a caller-supplied value; use
+    /// [`Pid::new`] only where the bits are already masked by the wire format.
+    ///
+    /// # Errors
+    /// [`PidOutOfRange`] when `value > 0x1FFF`.
+    pub const fn try_new(value: u16) -> Result<Self, PidOutOfRange> {
+        if value > Self::MASK {
+            Err(PidOutOfRange { value })
+        } else {
+            Ok(Self(value))
+        }
+    }
+
     /// The raw 13-bit value.
     #[must_use]
     pub const fn value(self) -> u16 {
@@ -30,9 +45,30 @@ impl Pid {
     }
 }
 
-impl From<u16> for Pid {
-    fn from(value: u16) -> Self {
-        Self::new(value)
+/// A value that does not fit the 13-bit PID field (ISO/IEC 13818-1 §2.4.3.2).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct PidOutOfRange {
+    /// The rejected value.
+    pub value: u16,
+}
+
+impl core::fmt::Display for PidOutOfRange {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(
+            f,
+            "PID 0x{:04X} exceeds the 13-bit range 0x0000..=0x1FFF",
+            self.value
+        )
+    }
+}
+
+impl core::error::Error for PidOutOfRange {}
+
+impl TryFrom<u16> for Pid {
+    type Error = PidOutOfRange;
+    fn try_from(value: u16) -> Result<Self, Self::Error> {
+        Self::try_new(value)
     }
 }
 
@@ -45,6 +81,18 @@ impl From<Pid> for u16 {
 impl core::fmt::Debug for Pid {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Pid(0x{:04X})", self.0)
+    }
+}
+
+impl core::fmt::UpperHex for Pid {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::UpperHex::fmt(&self.0, f)
+    }
+}
+
+impl core::fmt::LowerHex for Pid {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        core::fmt::LowerHex::fmt(&self.0, f)
     }
 }
 

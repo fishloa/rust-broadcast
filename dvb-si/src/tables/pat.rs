@@ -24,16 +24,34 @@ const ENTRY_LEN: usize = 4;
 /// One entry in the PAT program loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct PatEntry {
     /// program_number. 0x0000 means "next PID is the NIT PID".
     pub program_number: u16,
     /// PMT PID (or NIT PID when program_number == 0).
     pub pid: u16,
+    /// `reserved(3)` before the PID (ISO/IEC 13818-1 §2.4.4.3, `111`);
+    /// preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: u8,
+}
+
+impl PatEntry {
+    /// Construct an entry with the spec `reserved` fill (`111`).
+    #[must_use]
+    pub const fn new(program_number: u16, pid: u16) -> Self {
+        Self {
+            program_number,
+            pid,
+            reserved: super::RESERVED_3,
+        }
+    }
 }
 
 /// Program Association Table.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct PatSection {
     /// transport_stream_id from the section header.
     pub transport_stream_id: u16,
@@ -47,6 +65,39 @@ pub struct PatSection {
     pub last_section_number: u8,
     /// Program entries in wire order.
     pub entries: Vec<PatEntry>,
+    /// Header bit fields (`'0'` after `section_syntax_indicator`, the two
+    /// `reserved(2)`; default [`SectionBits::psi`](super::SectionBits::psi)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+}
+
+impl Default for PatSection {
+    fn default() -> Self {
+        Self::new(0, 0, false, 0, 0, Vec::new())
+    }
+}
+
+impl PatSection {
+    /// Construct a PAT section with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        transport_stream_id: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        entries: Vec<PatEntry>,
+    ) -> Self {
+        Self {
+            transport_stream_id,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            entries,
+            bits: super::SectionBits::psi(),
+        }
+    }
 }
 
 impl<'a> Parse<'a> for PatSection {
@@ -99,6 +150,7 @@ impl<'a> Parse<'a> for PatSection {
             entries.push(PatEntry {
                 program_number,
                 pid,
+                reserved: super::pid_reserved_of(chunk[2]),
             });
             pos += ENTRY_LEN;
         }
@@ -110,6 +162,7 @@ impl<'a> Parse<'a> for PatSection {
             section_number,
             last_section_number,
             entries,
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
         })
     }
 }
@@ -132,17 +185,19 @@ impl Serialize for PatSection {
         let section_length = EXTENSION_HEADER_LEN + self.entries.len() * ENTRY_LEN + CRC_LEN;
 
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_PSI;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
         let mut pos = 8;
         for entry in &self.entries {
             buf[pos..pos + 2].copy_from_slice(&entry.program_number.to_be_bytes());
-            super::write_pid(&mut buf[pos + 2..pos + 4], entry.pid);
+            super::write_pid_r(&mut buf[pos + 2..pos + 4], entry.pid, entry.reserved);
             pos += ENTRY_LEN;
         }
 
@@ -255,14 +310,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_empty() {
-        let pat = PatSection {
-            transport_stream_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            entries: vec![],
-        };
+        let pat = PatSection::new(0x0001, 0, true, 0, 0, vec![]);
         let mut buf = vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut buf).expect("serialize");
         let reparsed = PatSection::parse(&buf).expect("reparse");
@@ -271,20 +319,8 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_many_programs() {
-        let entries: Vec<PatEntry> = (1..=5)
-            .map(|i| PatEntry {
-                program_number: i,
-                pid: 0x1000 + i,
-            })
-            .collect();
-        let pat = PatSection {
-            transport_stream_id: 0xABCD,
-            version_number: 3,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            entries,
-        };
+        let entries: Vec<PatEntry> = (1..=5).map(|i| PatEntry::new(i, 0x1000 + i)).collect();
+        let pat = PatSection::new(0xABCD, 3, true, 0, 0, entries);
         let mut buf = vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut buf).unwrap();
         let reparsed = PatSection::parse(&buf).unwrap();
@@ -297,19 +333,9 @@ mod tests {
     #[test]
     fn serialize_rejects_program_loop_exceeding_section_length() {
         let entries: Vec<PatEntry> = (0..1022u32)
-            .map(|i| PatEntry {
-                program_number: (i % u16::MAX as u32) as u16,
-                pid: 0x0100,
-            })
+            .map(|i| PatEntry::new((i % u16::MAX as u32) as u16, 0x0100))
             .collect();
-        let pat = PatSection {
-            transport_stream_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            entries,
-        };
+        let pat = PatSection::new(1, 0, true, 0, 0, entries);
         let mut buf = vec![0u8; pat.serialized_len()];
         assert!(matches!(
             pat.serialize_into(&mut buf).unwrap_err(),
@@ -320,19 +346,9 @@ mod tests {
     #[test]
     fn serialize_accepts_program_loop_at_section_length_boundary() {
         let entries: Vec<PatEntry> = (0..1021u32)
-            .map(|i| PatEntry {
-                program_number: (i % u16::MAX as u32) as u16,
-                pid: 0x0100,
-            })
+            .map(|i| PatEntry::new((i % u16::MAX as u32) as u16, 0x0100))
             .collect();
-        let pat = PatSection {
-            transport_stream_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            entries,
-        };
+        let pat = PatSection::new(1, 0, true, 0, 0, entries);
         let mut buf = vec![0u8; pat.serialized_len()];
         pat.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = PatSection::parse(&buf).expect("reparse");

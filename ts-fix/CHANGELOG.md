@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **BREAKING (#1159):** `PidFilter::keep` takes `IntoIterator<Item = Pid>`; `reconstruct_access_units(ts, &[Pid])`, `AccessUnit::pid` and `PcrDiscontinuity::pid` are `Pid`; `AccessUnit` is now `#[non_exhaustive]` with a new `AccessUnit::new` constructor. CLI: `--keep-pids` now rejects a PID above `0x1FFF` (was silently accepted and never matched).
+
 ## [0.6.0] - 2026-10-05
 ### Fixed
 - `--service` (service extract, `PidFilterOp`): the keep-set was built from the

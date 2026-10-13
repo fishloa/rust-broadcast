@@ -19,6 +19,7 @@
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
+use mpeg_ts::pid::Pid;
 
 use dvb_si::tables::pmt::StreamType;
 use transmux::annexb::iter_annexb_nals;
@@ -63,11 +64,11 @@ impl Diagnostic for ParamSetsCheck {
             return;
         }
 
-        let mut avc_state: BTreeMap<u16, ParamState> = avc_pids
+        let mut avc_state: BTreeMap<Pid, ParamState> = avc_pids
             .iter()
             .map(|&p| (p, ParamState::default()))
             .collect();
-        let mut hevc_state: BTreeMap<u16, ParamState> = hevc_pids
+        let mut hevc_state: BTreeMap<Pid, ParamState> = hevc_pids
             .iter()
             .map(|&p| (p, ParamState::default()))
             .collect();
@@ -89,7 +90,7 @@ impl Diagnostic for ParamSetsCheck {
 fn walk_avc(
     payload: &[u8],
     packet_index: usize,
-    pid: u16,
+    pid: Pid,
     state: &mut ParamState,
     report: &mut Report,
 ) {
@@ -104,7 +105,7 @@ fn walk_avc(
                 if is_keyframe_nal(NalCodec::Avc, nal) && !(state.seen_sps && state.seen_pps) {
                     report.push(Finding::new(
                         Severity::Error,
-                        Location::new(packet_index, u32::from(pid)),
+                        Location::at_pid(packet_index, pid),
                         "missing-parameter-sets",
                         format!(
                             "IDR access unit on PID 0x{pid:04X} appears before SPS+PPS were \
@@ -122,7 +123,7 @@ fn walk_avc(
 fn walk_hevc(
     payload: &[u8],
     packet_index: usize,
-    pid: u16,
+    pid: Pid,
     state: &mut ParamState,
     report: &mut Report,
 ) {
@@ -137,7 +138,7 @@ fn walk_hevc(
                 if is_keyframe_nal(NalCodec::Hevc, nal) && !(state.seen_sps && state.seen_pps) {
                     report.push(Finding::new(
                         Severity::Error,
-                        Location::new(packet_index, u32::from(pid)),
+                        Location::at_pid(packet_index, pid),
                         "missing-parameter-sets",
                         format!(
                             "IRAP access unit on PID 0x{pid:04X} appears before SPS+PPS were \
@@ -157,7 +158,7 @@ mod tests {
     use super::*;
     use crate::diagnostics::codec_common::tests::{build_pat_pmt_ts, build_pes, make_pes_packet};
 
-    const VIDEO_PID: u16 = 0x101;
+    const VIDEO_PID: Pid = Pid::new(0x101);
 
     /// A real-shaped SPS/PPS/IDR ordering (params before the IDR) must not be
     /// flagged.
@@ -175,7 +176,7 @@ mod tests {
         au.extend_from_slice(&[0x00, 0x00, 0x01]);
         au.extend_from_slice(idr);
 
-        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID, StreamType::H264)]);
+        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID.value(), StreamType::H264)]);
         ts.extend_from_slice(&make_pes_packet(VIDEO_PID, 0, &build_pes(0xE0, &au)));
 
         let mut report = Report::new();
@@ -198,7 +199,7 @@ mod tests {
         au.extend_from_slice(&[0x00, 0x00, 0x01]);
         au.extend_from_slice(idr);
 
-        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID, StreamType::H264)]);
+        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID.value(), StreamType::H264)]);
         ts.extend_from_slice(&make_pes_packet(VIDEO_PID, 0, &build_pes(0xE0, &au)));
 
         let mut report = Report::new();
@@ -208,7 +209,7 @@ mod tests {
                 .findings()
                 .iter()
                 .any(|f| f.rule_id == "missing-parameter-sets"
-                    && f.location.pid == u32::from(VIDEO_PID)),
+                    && f.location.pid == u32::from(VIDEO_PID.value())),
             "expected missing-parameter-sets, got {:?}",
             report.findings()
         );

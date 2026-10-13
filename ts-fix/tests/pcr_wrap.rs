@@ -17,6 +17,7 @@
 //! observed wrapped value. The unrolled output sequence is monotonically
 //! increasing by a constant per-packet step (900_000 27 MHz ticks = 3000 × 300).
 
+use mpeg_ts::pid::Pid;
 use ts_fix::{PcrRestamp, TsFix};
 
 const PKT: usize = 188;
@@ -47,8 +48,8 @@ fn pcr_27mhz(p: &[u8]) -> Option<u64> {
 /// PCR 27 MHz modulus: 33-bit base × 300.
 const PCR_27MHZ_MODULUS: u64 = (1u64 << 33) * 300;
 
-fn pid(p: &[u8]) -> u16 {
-    (((p[1] & 0x1f) as u16) << 8) | p[2] as u16
+fn pid(p: &[u8]) -> Pid {
+    Pid::new((((p[1] & 0x1f) as u16) << 8) | p[2] as u16)
 }
 
 /// Unroll a PCR sequence across the PCR modulus for monotonicity checking.
@@ -101,7 +102,7 @@ fn interpolate_preserves_33bit_pcr_base_wrap() {
     // Extract output PCRs.
     let out_pcrs: Vec<u64> = out
         .chunks_exact(PKT)
-        .filter(|p| pid(p) == 0x0100)
+        .filter(|p| pid(p) == Pid::new(0x0100))
         .filter_map(pcr_27mhz)
         .collect();
     assert_eq!(out_pcrs.len(), 5, "all 5 output PCRs present");

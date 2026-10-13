@@ -11,6 +11,7 @@
 //! `dvb-si/tests/fixtures/`) in this checkout — `transmux/tests/ir_timing.rs`
 //! already reads it from that path.
 
+use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
@@ -98,7 +99,7 @@ fn assemble(mut demux: StreamingTsDemux) -> Media {
                 ..
             } => pcr.push(PcrSample::new(
                 ticks,
-                provenance.pid.unwrap_or(0),
+                provenance.pid.unwrap_or(Pid::new(0)),
                 provenance.packet_index.unwrap_or(0),
                 discontinuous,
             )),

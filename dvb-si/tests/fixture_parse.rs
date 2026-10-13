@@ -12,6 +12,7 @@ use broadcast_common::{Parse, Serialize};
 use dvb_si::tables::ait::AitSection;
 use dvb_si::tables::dsmcc::DsmccSection;
 use dvb_si::tables::nit::NitSection;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{SectionReassembler, TS_PACKET_SIZE, TsPacket};
 
 /// Read a TS file and return all reassembled sections for a given PID.
@@ -28,7 +29,7 @@ fn extract_sections_for_pid(path: &str, target_pid: u16) -> Vec<Vec<u8>> {
             Ok(p) => p,
             Err(_) => continue,
         };
-        if pkt.header.pid != target_pid {
+        if pkt.header.pid != Pid::new(target_pid) {
             continue;
         }
         if let Some(payload) = pkt.payload {

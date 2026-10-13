@@ -14,6 +14,20 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for J2K_video_descriptor.
 pub const TAG: u8 = 0x32;
 const HEADER_LEN: usize = 2;
+/// Default of the 5-bit `reserved` in the extended-capability flags byte
+/// (H.222.0 Table 2-101, 08/2018-08/2023, audit §4 row 14): the table says
+/// "reserved (all bits to be set to '0')", an explicit exception to the
+/// clause 2.1 "reserved = 1" rule.
+pub const RESERVED_5_EXTENDED_DEFAULT: u8 = 0;
+/// Default of the 6-bit `reserved` after `still_mode`/`interlaced_video`
+/// (both branches) — plain `reserved`, clause 2.1 = `1` (all ones).
+pub const RESERVED_6_DEFAULT: u8 = 0b11_1111;
+/// Default of the 7-bit `reserved` after `video_full_range_flag` — plain
+/// `reserved`, clause 2.1 = `1` (all ones).
+pub const RESERVED_7_DEFAULT: u8 = 0x7F;
+const RESERVED_5_MASK: u8 = 0x1F;
+const RESERVED_6_MASK: u8 = 0x3F;
+const RESERVED_7_MASK: u8 = 0x7F;
 
 /// Stripe sub-block — present when extended_capability_flag AND stripe_flag.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -80,6 +94,7 @@ pub struct J2kMdm {
 /// Extended capability block — present when extended_capability_flag is true.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct J2kExtendedCapability {
     /// Stripe mode enabled.
     pub stripe_flag: bool,
@@ -101,12 +116,49 @@ pub struct J2kExtendedCapability {
     pub block: Option<J2kBlock>,
     /// Mastering display metadata sub-block — present when mdm_flag.
     pub mdm: Option<J2kMdm>,
+    /// `reserved(5)` after the `mdm_flag` (5 bits, right-aligned; the spec
+    /// says "all bits to be set to '0'"). Captured on parse, re-emitted
+    /// verbatim; defaults to [`RESERVED_5_EXTENDED_DEFAULT`] (0).
+    pub reserved_5: u8,
+    /// `reserved(7)` after `video_full_range_flag` (7 bits, right-aligned).
+    /// Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_7_DEFAULT`].
+    pub reserved_7: u8,
+}
+
+impl J2kExtendedCapability {
+    /// Build with the colour parameters; no sub-blocks, full-range flag clear
+    /// and the spec-default reserved bits. Set the remaining fields directly
+    /// (the three sub-block flags are derived from the sub-blocks on
+    /// serialize).
+    #[must_use]
+    pub const fn new(
+        colour_primaries: u8,
+        transfer_characteristics: u8,
+        matrix_coefficients: u8,
+    ) -> Self {
+        Self {
+            stripe_flag: false,
+            block_flag: false,
+            mdm_flag: false,
+            colour_primaries,
+            transfer_characteristics,
+            matrix_coefficients,
+            video_full_range_flag: false,
+            stripe: None,
+            block: None,
+            mdm: None,
+            reserved_5: RESERVED_5_EXTENDED_DEFAULT,
+            reserved_7: RESERVED_7_DEFAULT,
+        }
+    }
 }
 
 /// J2K Video Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct J2kVideoDescriptor<'a> {
     /// Extended capability flag, as parsed from the wire.
     ///
@@ -140,12 +192,48 @@ pub struct J2kVideoDescriptor<'a> {
     /// Trailing private data bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
+    /// `reserved(6)` after `still_mode`/`interlaced_video` (6 bits,
+    /// right-aligned; present in both the extended and the legacy branch).
+    /// Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_6_DEFAULT`].
+    pub reserved_6: u8,
+}
+
+impl<'a> J2kVideoDescriptor<'a> {
+    /// Build a legacy-form descriptor (`extended_capability` absent,
+    /// `color_specification` 0), zero rates/sizes beyond the given ones and
+    /// the spec-default reserved bits. Set the remaining fields directly.
+    #[must_use]
+    pub const fn new(profile_and_level: u16, horizontal_size: u32, vertical_size: u32) -> Self {
+        Self {
+            extended_capability_flag: false,
+            profile_and_level,
+            horizontal_size,
+            vertical_size,
+            max_bit_rate: 0,
+            max_buffer_size: 0,
+            den_frame_rate: 0,
+            num_frame_rate: 0,
+            extended_capability: None,
+            color_specification: Some(0),
+            still_mode: false,
+            interlaced_video: false,
+            private_data: &[],
+            reserved_6: RESERVED_6_DEFAULT,
+        }
+    }
+}
+
+impl Default for J2kVideoDescriptor<'_> {
+    fn default() -> Self {
+        Self::new(0, 0, 0)
+    }
 }
 
 fn parse_extended_capability(
     body: &[u8],
     mut pos: usize,
-) -> Result<(J2kExtendedCapability, bool, bool, usize)> {
+) -> Result<(J2kExtendedCapability, bool, bool, u8, usize)> {
     // stripe_flag(1) + block_flag(1) + mdm_flag(1) + reserved(5) = 1 byte
     if body.len() < pos + 1 {
         return Err(Error::InvalidDescriptor {
@@ -157,6 +245,7 @@ fn parse_extended_capability(
     let stripe_flag = (sb & 0x80) != 0;
     let block_flag = (sb & 0x40) != 0;
     let mdm_flag = (sb & 0x20) != 0;
+    let reserved_5 = sb & RESERVED_5_MASK;
     pos += 1;
 
     // Table 2-101: still_mode(1) | interlaced_video(1) | reserved(6) comes
@@ -171,6 +260,7 @@ fn parse_extended_capability(
     let sm_iv = body[pos];
     let still_mode = (sm_iv & 0x80) != 0;
     let interlaced_video = (sm_iv & 0x40) != 0;
+    let reserved_6 = sm_iv & RESERVED_6_MASK;
     pos += 1;
 
     // colour_primaries(1) + transfer(1) + matrix(1) + video_full_range(1) + reserved(7) = 4 bytes
@@ -185,6 +275,7 @@ fn parse_extended_capability(
     let matrix_coefficients = body[pos + 2];
     let vfr = body[pos + 3];
     let video_full_range_flag = (vfr & 0x80) != 0;
+    let reserved_7 = vfr & RESERVED_7_MASK;
     pos += 4;
 
     // Stripe sub-block: strp_max_idx(1) + strp_height(2) = 3 bytes
@@ -300,9 +391,12 @@ fn parse_extended_capability(
             stripe,
             block,
             mdm,
+            reserved_5,
+            reserved_7,
         },
         still_mode,
         interlaced_video,
+        reserved_6,
         pos,
     ))
 }
@@ -311,12 +405,13 @@ fn serialize_extended_capability(
     ext: &J2kExtendedCapability,
     still_mode: bool,
     interlaced_video: bool,
+    reserved_6: u8,
     buf: &mut [u8],
     mut pos: usize,
 ) -> usize {
     // The three sub-block flags are derived from which sub-blocks exist, so a
     // stored flag can never promise bytes that are not written (r03-W5).
-    let mut sb = 0u8;
+    let mut sb = ext.reserved_5 & RESERVED_5_MASK;
     if ext.stripe.is_some() {
         sb |= 0x80;
     }
@@ -330,7 +425,7 @@ fn serialize_extended_capability(
     pos += 1;
 
     // still_mode/interlaced_video precede the colour parameters here (Table 2-101).
-    let mut sm_iv = 0u8;
+    let mut sm_iv = reserved_6 & RESERVED_6_MASK;
     if still_mode {
         sm_iv |= 0x80;
     }
@@ -347,7 +442,7 @@ fn serialize_extended_capability(
         0x80
     } else {
         0x00
-    };
+    } | (ext.reserved_7 & RESERVED_7_MASK);
     pos += 4;
 
     if let Some(ref s) = ext.stripe {
@@ -435,25 +530,45 @@ impl<'a> Parse<'a> for J2kVideoDescriptor<'a> {
         let num_frame_rate = u16::from_be_bytes([body[20], body[21]]);
         let pos = 22;
 
-        let (extended_capability, color_specification, still_mode, interlaced_video, pos) =
-            if extended_capability_flag {
-                let (ext, still_mode, interlaced_video, new_pos) =
-                    parse_extended_capability(body, pos)?;
-                (Some(ext), None, still_mode, interlaced_video, new_pos)
-            } else {
-                // color_specification(1) then still_mode(1) | interlaced_video(1) | reserved(6)
-                if body.len() < pos + 2 {
-                    return Err(Error::InvalidDescriptor {
-                        tag: TAG,
-                        reason: "J2K_video_descriptor too short for color_specification/still_mode",
-                    });
-                }
-                let cs = body[pos];
-                let sm_iv = body[pos + 1];
-                let still_mode = (sm_iv & 0x80) != 0;
-                let interlaced_video = (sm_iv & 0x40) != 0;
-                (None, Some(cs), still_mode, interlaced_video, pos + 2)
-            };
+        let (
+            extended_capability,
+            color_specification,
+            still_mode,
+            interlaced_video,
+            reserved_6,
+            pos,
+        ) = if extended_capability_flag {
+            let (ext, still_mode, interlaced_video, reserved_6, new_pos) =
+                parse_extended_capability(body, pos)?;
+            (
+                Some(ext),
+                None,
+                still_mode,
+                interlaced_video,
+                reserved_6,
+                new_pos,
+            )
+        } else {
+            // color_specification(1) then still_mode(1) | interlaced_video(1) | reserved(6)
+            if body.len() < pos + 2 {
+                return Err(Error::InvalidDescriptor {
+                    tag: TAG,
+                    reason: "J2K_video_descriptor too short for color_specification/still_mode",
+                });
+            }
+            let cs = body[pos];
+            let sm_iv = body[pos + 1];
+            let still_mode = (sm_iv & 0x80) != 0;
+            let interlaced_video = (sm_iv & 0x40) != 0;
+            (
+                None,
+                Some(cs),
+                still_mode,
+                interlaced_video,
+                sm_iv & RESERVED_6_MASK,
+                pos + 2,
+            )
+        };
 
         let private_data = &body[pos..];
 
@@ -471,6 +586,7 @@ impl<'a> Parse<'a> for J2kVideoDescriptor<'a> {
             still_mode,
             interlaced_video,
             private_data,
+            reserved_6,
         })
     }
 }
@@ -520,6 +636,7 @@ impl Serialize for J2kVideoDescriptor<'_> {
                 ext,
                 self.still_mode,
                 self.interlaced_video,
+                self.reserved_6,
                 buf,
                 pos,
             );
@@ -533,7 +650,7 @@ impl Serialize for J2kVideoDescriptor<'_> {
             buf[pos] = cs;
             pos += 1;
 
-            let mut sm_iv = 0u8;
+            let mut sm_iv = self.reserved_6 & RESERVED_6_MASK;
             if self.still_mode {
                 sm_iv |= 0x80;
             }
@@ -581,6 +698,7 @@ mod tests {
             color_specification: Some(0x03),
             still_mode: false,
             interlaced_video: true,
+            reserved_6: RESERVED_6_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -605,6 +723,8 @@ mod tests {
                 transfer_characteristics: 16,
                 matrix_coefficients: 0,
                 video_full_range_flag: true,
+                reserved_5: RESERVED_5_EXTENDED_DEFAULT,
+                reserved_7: RESERVED_7_DEFAULT,
                 stripe: None,
                 block: None,
                 mdm: None,
@@ -612,6 +732,7 @@ mod tests {
             color_specification: None,
             still_mode: false,
             interlaced_video: false,
+            reserved_6: RESERVED_6_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -636,6 +757,8 @@ mod tests {
                 transfer_characteristics: 14,
                 matrix_coefficients: 0,
                 video_full_range_flag: false,
+                reserved_5: RESERVED_5_EXTENDED_DEFAULT,
+                reserved_7: RESERVED_7_DEFAULT,
                 stripe: Some(J2kStripe {
                     strp_max_idx: 3,
                     strp_height: 1024,
@@ -646,6 +769,7 @@ mod tests {
             color_specification: None,
             still_mode: true,
             interlaced_video: false,
+            reserved_6: RESERVED_6_DEFAULT,
             private_data: &[0xAA],
         };
         serialize_round_trip(&d);
@@ -670,6 +794,8 @@ mod tests {
                 transfer_characteristics: 1,
                 matrix_coefficients: 1,
                 video_full_range_flag: true,
+                reserved_5: RESERVED_5_EXTENDED_DEFAULT,
+                reserved_7: RESERVED_7_DEFAULT,
                 stripe: None,
                 block: Some(J2kBlock {
                     full_horizontal_size: 3840,
@@ -686,6 +812,7 @@ mod tests {
             color_specification: None,
             still_mode: false,
             interlaced_video: false,
+            reserved_6: RESERVED_6_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -710,6 +837,8 @@ mod tests {
                 transfer_characteristics: 16,
                 matrix_coefficients: 9,
                 video_full_range_flag: false,
+                reserved_5: RESERVED_5_EXTENDED_DEFAULT,
+                reserved_7: RESERVED_7_DEFAULT,
                 stripe: None,
                 block: None,
                 mdm: Some(J2kMdm {
@@ -730,6 +859,7 @@ mod tests {
             color_specification: None,
             still_mode: false,
             interlaced_video: true,
+            reserved_6: RESERVED_6_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -754,6 +884,8 @@ mod tests {
                 transfer_characteristics: 16,
                 matrix_coefficients: 9,
                 video_full_range_flag: true,
+                reserved_5: RESERVED_5_EXTENDED_DEFAULT,
+                reserved_7: RESERVED_7_DEFAULT,
                 stripe: Some(J2kStripe {
                     strp_max_idx: 7,
                     strp_height: 540,
@@ -786,6 +918,7 @@ mod tests {
             color_specification: None,
             still_mode: true,
             interlaced_video: true,
+            reserved_6: RESERVED_6_DEFAULT,
             private_data: &[0xDD, 0xEE, 0xFF],
         };
         serialize_round_trip(&d);
@@ -820,6 +953,7 @@ mod tests {
             color_specification: Some(0x03),
             still_mode: false,
             interlaced_video: false,
+            reserved_6: RESERVED_6_DEFAULT,
             private_data: &[],
         }
     }
@@ -848,6 +982,8 @@ mod tests {
             transfer_characteristics: 2,
             matrix_coefficients: 3,
             video_full_range_flag: false,
+            reserved_5: RESERVED_5_EXTENDED_DEFAULT,
+            reserved_7: RESERVED_7_DEFAULT,
             stripe: None,
             block: Some(J2kBlock {
                 full_horizontal_size: 1,
@@ -883,5 +1019,67 @@ mod tests {
                 ..
             })
         ));
+    }
+
+    /// H.222.0 Table 2-101. All three reserved regions are preserved
+    /// verbatim (zero, ones and mixed values), both branches.
+    #[test]
+    fn j2k_video_reserved_preserved() {
+        let head = |ext: bool| {
+            let mut v = vec![TAG, 0u8];
+            let b01: u16 = if ext { 0x8000 | 0x0307 } else { 0x0307 };
+            v.extend_from_slice(&b01.to_be_bytes());
+            v.extend_from_slice(&1920u32.to_be_bytes());
+            v.extend_from_slice(&1080u32.to_be_bytes());
+            v.extend_from_slice(&1u32.to_be_bytes());
+            v.extend_from_slice(&2u32.to_be_bytes());
+            v.extend_from_slice(&1001u16.to_be_bytes());
+            v.extend_from_slice(&24000u16.to_be_bytes());
+            v
+        };
+        for r6 in [0u8, 1, 0x15, 0x2A, 0x3F] {
+            // Extended branch.
+            for r5 in [0u8, 1, 0x0A, 0x1F] {
+                for r7 in [0u8, 1, 0x55, 0x7F] {
+                    let mut bytes = head(true);
+                    bytes.extend_from_slice(&[r5, 0x80 | r6, 1, 16, 0, 0x80 | r7]);
+                    bytes[1] = (bytes.len() - 2) as u8;
+                    let d = J2kVideoDescriptor::parse(&bytes).unwrap();
+                    assert_eq!(d.reserved_6, r6);
+                    let ext = d.extended_capability.as_ref().unwrap();
+                    assert_eq!((ext.reserved_5, ext.reserved_7), (r5, r7));
+                    let mut out = vec![0u8; d.serialized_len()];
+                    d.serialize_into(&mut out).unwrap();
+                    assert_eq!(out, bytes);
+                }
+            }
+            // Legacy branch.
+            let mut bytes = head(false);
+            bytes.extend_from_slice(&[0x03, 0x40 | r6]);
+            bytes[1] = (bytes.len() - 2) as u8;
+            let d = J2kVideoDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved_6, r6);
+            let mut out = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut out).unwrap();
+            assert_eq!(out, bytes);
+        }
+    }
+
+    /// Defaults: the explicit-extended-branch `reserved(5)` is `0` ("all bits
+    /// to be set to '0'"); every other reserved region is all ones.
+    #[test]
+    fn j2k_video_default_is_spec_value() {
+        let mut d = J2kVideoDescriptor::new(0x0307, 1920, 1080);
+        d.color_specification = None;
+        d.extended_capability = Some(J2kExtendedCapability::new(1, 16, 0));
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        let tail = &out[out.len() - 6..];
+        assert_eq!(tail, [0x00, 0x3F, 1, 16, 0, 0x7F]);
+
+        let legacy = J2kVideoDescriptor::new(0x0102, 1920, 1080);
+        let mut out = vec![0u8; legacy.serialized_len()];
+        legacy.serialize_into(&mut out).unwrap();
+        assert_eq!(&out[out.len() - 2..], [0x00, 0x3F]);
     }
 }

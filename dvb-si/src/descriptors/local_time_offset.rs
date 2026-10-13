@@ -18,11 +18,21 @@ const REGION_ID_MASK: u8 = 0xFC;
 /// `country_region_id` is 6 bits.
 const REGION_ID_BITS: u32 = 6;
 const RESERVED_BIT_MASK: u8 = 0x02;
+const RESERVED_BIT_SHIFT: u8 = 1;
+/// Spec default of the entry's 1-bit `reserved_future_use` (`reserved` before
+/// V1.17.1): `1` (EN 300 468 V1.3.1-V1.20.1 Table 29; audit
+/// `dvb-si/docs/reserved-bits-edition-audit.md` §6.1, class B: renamed only).
+pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 1;
 
 /// One per-country offset entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct LocalTimeOffsetEntry {
+    /// `reserved_future_use`(1) between `country_region_id` and the polarity
+    /// bit (1 bit, right-aligned). Captured on parse and re-emitted verbatim;
+    /// [`LocalTimeOffsetEntry::new`] defaults to [`RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_future_use: u8,
     /// ISO 3166 alpha country code.
     pub country_code: LangCode,
     /// 6-bit country_region_id for sub-national regions.
@@ -52,6 +62,7 @@ impl LocalTimeOffsetEntry {
         next_time_offset_bcd: u16,
     ) -> Self {
         Self {
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
             country_code,
             country_region_id,
             local_time_offset_negative,
@@ -217,6 +228,7 @@ impl<'a> Parse<'a> for LocalTimeOffsetDescriptor {
             time_of_change_raw.copy_from_slice(&chunk[6..11]);
             let next_time_offset_bcd = crate::wire::be_u16(chunk, 11, "local_time_offset")?;
             entries.push(LocalTimeOffsetEntry {
+                reserved_future_use: (flags & RESERVED_BIT_MASK) >> RESERVED_BIT_SHIFT,
                 country_code,
                 country_region_id,
                 local_time_offset_negative,
@@ -253,7 +265,7 @@ impl Serialize for LocalTimeOffsetDescriptor {
                 "country_region_id",
             )? as u8;
             let flags = ((region_id << 2) & REGION_ID_MASK)
-                | RESERVED_BIT_MASK
+                | ((entry.reserved_future_use << RESERVED_BIT_SHIFT) & RESERVED_BIT_MASK)
                 | if entry.local_time_offset_negative {
                     POLARITY_MASK
                 } else {
@@ -312,6 +324,7 @@ mod tests {
     #[test]
     fn time_of_change_parts_valid_bcd() {
         let entry = LocalTimeOffsetEntry {
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
             country_code: LangCode([0x47, 0x42, 0x52]),
             country_region_id: 0,
             local_time_offset_negative: false,
@@ -375,6 +388,34 @@ mod tests {
         assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
     }
 
+    /// Both reserved_future_use values re-serialize verbatim (the spec default
+    /// is 1; a sender writing 0 is preserved). Hand-built entries carry the
+    /// default.
+    #[test]
+    fn reserved_preserved() {
+        for r in 0u8..=1 {
+            let flags = (r << 1) | 0x01;
+            let bytes = [
+                TAG, 13, 0x46, 0x52, 0x41, flags, 0x01, 0x00, 0xAB, 0xCD, 0xEF, 0x12, 0x34, 0x02,
+                0x00,
+            ];
+            let d = LocalTimeOffsetDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.entries[0].reserved_future_use, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes);
+        }
+    }
+
+    #[test]
+    fn default_is_spec_value() {
+        let e = LocalTimeOffsetEntry::new(LangCode(*b"FRA"), 0, false, 0x0100, [0; 5], 0x0200);
+        let d = LocalTimeOffsetDescriptor { entries: vec![e] };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[5], 0x02);
+    }
+
     #[test]
     fn parse_ignores_reserved_bit_not_set() {
         let bytes = [
@@ -388,6 +429,7 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let e = LocalTimeOffsetEntry {
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
             country_code: LangCode([0x46, 0x52, 0x41]),
             country_region_id: 0,
             local_time_offset_negative: false,
@@ -405,6 +447,7 @@ mod tests {
     #[test]
     fn set_time_of_change_raw_updates_field() {
         let mut e = LocalTimeOffsetEntry {
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
             country_code: LangCode([0x46, 0x52, 0x41]),
             country_region_id: 0,
             local_time_offset_negative: false,
@@ -428,6 +471,7 @@ mod tests {
         // Pre-fix `(id << 2) & 0xFC` silently dropped bit 6/7 (r03-W3).
         let d = LocalTimeOffsetDescriptor {
             entries: alloc::vec![LocalTimeOffsetEntry {
+                reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
                 country_code: LangCode([0x46, 0x52, 0x41]),
                 country_region_id: 0x40,
                 local_time_offset_negative: false,

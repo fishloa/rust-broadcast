@@ -15,6 +15,7 @@
 //! `Option<Vec<u8>>` when a unit completes. This type is not `emsg`-specific
 //! — it works for any PUSI-delimited non-PSI PID payload.
 
+use crate::pid::Pid;
 use alloc::vec::Vec;
 use broadcast_common::pusi::PusiAccumulator;
 
@@ -49,14 +50,14 @@ pub use broadcast_common::pusi::DEFAULT_MAX_UNIT_SIZE;
 #[derive(Debug, Clone)]
 pub struct PusiReassembler {
     /// The PID we are listening to. Packets with a different PID are ignored.
-    pid: u16,
+    pid: Pid,
     inner: PusiAccumulator,
 }
 
 impl PusiReassembler {
     /// Create a new reassembler for the given `pid` using the default maximum unit size.
     #[inline]
-    pub fn new(pid: u16) -> Self {
+    pub fn new(pid: Pid) -> Self {
         Self {
             pid,
             inner: PusiAccumulator::new(),
@@ -65,7 +66,7 @@ impl PusiReassembler {
 
     /// Create a new reassembler with a custom maximum unit size.
     #[inline]
-    pub fn with_max_unit_size(pid: u16, max: usize) -> Self {
+    pub fn with_max_unit_size(pid: Pid, max: usize) -> Self {
         Self {
             pid,
             inner: PusiAccumulator::with_max_unit_size(max),
@@ -83,7 +84,7 @@ impl PusiReassembler {
     /// the payload is appended to the in-progress unit; payload before the
     /// first PUSI is ignored (ISO/IEC 13818-1 §2.4.3.2), and a unit past the
     /// size cap is discarded until the next PUSI.
-    pub fn push(&mut self, pid: u16, pusi: bool, payload: &[u8]) -> Option<Vec<u8>> {
+    pub fn push(&mut self, pid: Pid, pusi: bool, payload: &[u8]) -> Option<Vec<u8>> {
         if pid != self.pid {
             return None;
         }
@@ -124,7 +125,7 @@ mod tests {
     #[test]
     fn spanning_across_two_packets() {
         let box_bytes = synthetic_box_bytes(BIG_BOX_SIZE);
-        let pid = 0x0004u16;
+        let pid = Pid::new(0x0004);
 
         // Split at a boundary that fits in a single TS payload (≤ 184 bytes).
         let chunk1 = &box_bytes[..184];
@@ -147,7 +148,7 @@ mod tests {
     fn boundary_two_units() {
         let unit_a = b"AAAA-first-unit-data";
         let unit_b = b"BBBB-second-unit-data";
-        let pid = 0x0004u16;
+        let pid = Pid::new(0x0004);
 
         let mut reasm = PusiReassembler::new(pid);
 
@@ -165,12 +166,16 @@ mod tests {
 
     #[test]
     fn different_pid_ignored() {
-        let pid = 0x0004u16;
+        let pid = Pid::new(0x0004);
         let mut reasm = PusiReassembler::new(pid);
 
         // Packet with different PID should be ignored.
-        assert!(reasm.push(0x0100, true, b"ignored").is_none());
-        assert!(reasm.push(0x0100, false, b"more-ignored").is_none());
+        assert!(reasm.push(Pid::new(0x0100), true, b"ignored").is_none());
+        assert!(
+            reasm
+                .push(Pid::new(0x0100), false, b"more-ignored")
+                .is_none()
+        );
         assert!(reasm.flush().is_none());
 
         // Now feed a packet on our PID.
@@ -181,13 +186,13 @@ mod tests {
 
     #[test]
     fn flush_empty_returns_none() {
-        let mut reasm = PusiReassembler::new(0x0004);
+        let mut reasm = PusiReassembler::new(Pid::new(0x0004));
         assert!(reasm.flush().is_none());
     }
 
     #[test]
     fn single_packet_unit() {
-        let pid = 0x0004u16;
+        let pid = Pid::new(0x0004);
         let mut reasm = PusiReassembler::new(pid);
 
         assert!(reasm.push(pid, true, b"single-packet-emsg").is_none());
@@ -197,7 +202,7 @@ mod tests {
 
     #[test]
     fn ignores_payload_before_first_pusi() {
-        let pid = 0x0004u16;
+        let pid = Pid::new(0x0004);
         let mut reasm = PusiReassembler::new(pid);
 
         // Feed non-PUSI payloads before any PUSI — these should be ignored.
@@ -214,7 +219,7 @@ mod tests {
 
     #[test]
     fn caps_buffer_at_default_max_unit_size() {
-        let pid = 0x0004u16;
+        let pid = Pid::new(0x0004);
         let mut reasm = PusiReassembler::new(pid);
 
         // Start with PUSI.
@@ -230,7 +235,7 @@ mod tests {
 
     #[test]
     fn custom_cap_discards_oversized_unit() {
-        let pid = 0x0004u16;
+        let pid = Pid::new(0x0004);
         let custom_cap = 1000usize;
         let mut reasm = PusiReassembler::with_max_unit_size(pid, custom_cap);
 
@@ -255,7 +260,7 @@ mod tests {
 
     #[test]
     fn one_mib_unit_reassembles_with_default_cap() {
-        let pid = 0x0004u16;
+        let pid = Pid::new(0x0004);
         let mut reasm = PusiReassembler::new(pid);
         let unit_size = 1024 * 1024usize;
 

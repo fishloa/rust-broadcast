@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **BREAKING (#1159):** `ConformanceEvent::pid` is `Option<mpeg_ts::pid::Pid>` instead of `Option<u16>` (serde output unchanged: `Pid` is transparent).
+
 ## [11.0.1] - 2026-10-11
 ### Changed
 - Version bump with the lockstep (11.0.1); no functional changes in this crate.

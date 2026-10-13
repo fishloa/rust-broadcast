@@ -109,6 +109,7 @@ impl RealTimeParameters {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct MpeFecSection<'a> {
     /// `private_indicator` bit from byte 1 (MPE-FEC is a private section).
     pub private_indicator: bool,
@@ -125,6 +126,49 @@ pub struct MpeFecSection<'a> {
     /// Raw Reed-Solomon data bytes (everything between the real_time_parameters
     /// block and the CRC-32 trailer).
     pub rs_data: &'a [u8],
+    /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_b1: u8,
+    /// `reserved_for_future_use(8)` at byte 4 (`0xFF`); preserved.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use_8: u8,
+    /// `reserved(2)` in byte 5 bits `[7:6]` (`11`); preserved.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_b5: u8,
+    /// `reserved_for_future_use(5)` in byte 5 bits `[5:1]` (`11111`); preserved.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use_5: u8,
+}
+
+/// All-ones `reserved_for_future_use(5)` in byte 5.
+const RESERVED_FUTURE_USE_5: u8 = super::RESERVED_5;
+
+impl<'a> MpeFecSection<'a> {
+    /// Construct an MPE-FEC section with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        private_indicator: bool,
+        padding_columns: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        real_time_parameters: RealTimeParameters,
+        rs_data: &'a [u8],
+    ) -> Self {
+        Self {
+            private_indicator,
+            padding_columns,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            real_time_parameters,
+            rs_data,
+            reserved_b1: super::RESERVED_2,
+            reserved_future_use_8: 0xFF,
+            reserved_b5: super::RESERVED_2,
+            reserved_future_use_5: RESERVED_FUTURE_USE_5,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for MpeFecSection<'a> {
@@ -178,6 +222,10 @@ impl<'a> Parse<'a> for MpeFecSection<'a> {
             last_section_number,
             real_time_parameters,
             rs_data,
+            reserved_b1: super::b1_reserved_of(bytes[1]),
+            reserved_future_use_8: bytes[4],
+            reserved_b5: super::b5_reserved_of(bytes[5]),
+            reserved_future_use_5: (bytes[5] >> 1) & RESERVED_FUTURE_USE_5,
         })
     }
 }
@@ -202,14 +250,16 @@ impl Serialize for MpeFecSection<'_> {
         buf[0] = TABLE_ID;
         // Byte 1: section_syntax_indicator(1)=1 | private_indicator(1)
         //         | reserved(2)=11 | section_length[11:8](4).
-        buf[1] = super::private_section_b1(self.private_indicator, 0);
+        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1);
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         // Extension header.
         buf[3] = self.padding_columns;
-        buf[4] = 0xFF; // reserved_for_future_use(8) emitted as 1s.
+        buf[4] = self.reserved_future_use_8;
         // reserved(2)=11 | reserved_for_future_use(5)=11111 | current_next_indicator(1)
-        buf[5] = 0xFE | u8::from(self.current_next_indicator);
+        buf[5] = ((self.reserved_b5 & super::RESERVED_2) << 6)
+            | ((self.reserved_future_use_5 & RESERVED_FUTURE_USE_5) << 1)
+            | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -246,15 +296,15 @@ mod tests {
         rtp: RealTimeParameters,
         rs_data: &[u8],
     ) -> Vec<u8> {
-        let s = MpeFecSection {
-            private_indicator: true,
+        let s = MpeFecSection::new(
+            true,
             padding_columns,
-            current_next_indicator: current_next,
+            current_next,
             section_number,
             last_section_number,
-            real_time_parameters: rtp,
+            rtp,
             rs_data,
-        };
+        );
         let mut buf = vec![0u8; s.serialized_len()];
         s.serialize_into(&mut buf).unwrap();
         buf
@@ -338,15 +388,7 @@ mod tests {
     #[test]
     fn serialize_round_trip() {
         let rs = [0xDEu8, 0xAD, 0xBE, 0xEF, 0x00];
-        let original = MpeFecSection {
-            private_indicator: false,
-            padding_columns: 191,
-            current_next_indicator: false,
-            section_number: 2,
-            last_section_number: 4,
-            real_time_parameters: sample_rtp(),
-            rs_data: &rs,
-        };
+        let original = MpeFecSection::new(false, 191, false, 2, 4, sample_rtp(), &rs);
         let mut buf = vec![0u8; original.serialized_len()];
         original.serialize_into(&mut buf).unwrap();
         assert_eq!(MpeFecSection::parse(&buf).unwrap(), original);
@@ -354,15 +396,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_output_buffer_too_small() {
-        let s = MpeFecSection {
-            private_indicator: false,
-            padding_columns: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            real_time_parameters: sample_rtp(),
-            rs_data: &[],
-        };
+        let s = MpeFecSection::new(false, 0, true, 0, 0, sample_rtp(), &[]);
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             s.serialize_into(&mut buf).unwrap_err(),
@@ -374,15 +408,7 @@ mod tests {
     fn serialize_rejects_over_wide_real_time_parameters() {
         let mut rtp = sample_rtp();
         rtp.delta_t = 0x1000; // 13 bits
-        let mut s = MpeFecSection {
-            private_indicator: false,
-            padding_columns: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            real_time_parameters: rtp,
-            rs_data: &[],
-        };
+        let mut s = MpeFecSection::new(false, 0, true, 0, 0, rtp, &[]);
         let mut buf = vec![0u8; s.serialized_len()];
         assert!(matches!(
             s.serialize_into(&mut buf).unwrap_err(),
@@ -423,20 +449,20 @@ mod tests {
     #[test]
     fn serialize_rejects_rs_data_exceeding_section_length() {
         let rs_data = vec![0xAAu8; 4083];
-        let mpe_fec = MpeFecSection {
-            private_indicator: false,
-            padding_columns: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            real_time_parameters: RealTimeParameters {
+        let mpe_fec = MpeFecSection::new(
+            false,
+            0,
+            true,
+            0,
+            0,
+            RealTimeParameters {
                 delta_t: 0,
                 table_boundary: false,
                 frame_boundary: false,
                 address: 0,
             },
-            rs_data: &rs_data,
-        };
+            &rs_data,
+        );
         let mut buf = vec![0u8; mpe_fec.serialized_len()];
         assert!(matches!(
             mpe_fec.serialize_into(&mut buf).unwrap_err(),
@@ -447,20 +473,20 @@ mod tests {
     #[test]
     fn serialize_accepts_rs_data_at_section_length_boundary() {
         let rs_data = vec![0xAAu8; 4082];
-        let mpe_fec = MpeFecSection {
-            private_indicator: false,
-            padding_columns: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            real_time_parameters: RealTimeParameters {
+        let mpe_fec = MpeFecSection::new(
+            false,
+            0,
+            true,
+            0,
+            0,
+            RealTimeParameters {
                 delta_t: 0,
                 table_boundary: false,
                 frame_boundary: false,
                 address: 0,
             },
-            rs_data: &rs_data,
-        };
+            &rs_data,
+        );
         let mut buf = vec![0u8; mpe_fec.serialized_len()];
         mpe_fec.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = MpeFecSection::parse(&buf).expect("reparse");

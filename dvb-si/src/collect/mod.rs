@@ -16,6 +16,7 @@ use alloc::collections::BTreeMap;
 use alloc::sync::Arc;
 use alloc::vec;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use crate::descriptors::{AnyDescriptor, DescriptorLoop, DescriptorRegistry};
 use broadcast_common::Parse;
@@ -119,7 +120,7 @@ impl From<mpeg_ts::Error> for CollectError {
 #[non_exhaustive]
 pub struct SectionSetKey {
     /// Optional PID context supplied by the caller.
-    pub pid: Option<u16>,
+    pub pid: Option<Pid>,
     /// Raw `table_id`.
     pub table_id: u8,
     /// Long-form `table_id_extension`.
@@ -325,7 +326,7 @@ impl SectionSetCollector {
     /// table id/extension on different PIDs do not collide.
     pub fn push_section_with_pid(
         &mut self,
-        pid: Option<u16>,
+        pid: Option<Pid>,
         bytes: impl AsRef<[u8]>,
     ) -> CollectResult<Option<CompleteSectionSet>> {
         let raw = bytes.as_ref();

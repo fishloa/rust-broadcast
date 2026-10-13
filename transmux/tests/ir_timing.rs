@@ -6,6 +6,7 @@
 //! PMT section parsing, or an adaptation-field scan) — never against the
 //! `TsDemux` internals under test.
 
+use mpeg_ts::pid::Pid;
 use std::collections::HashMap;
 use std::path::PathBuf;
 
@@ -70,7 +71,7 @@ fn collect_pes(data: &[u8], target_pid: u16) -> Vec<PesAu> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != target_pid {
+        if pkt.header.pid != Pid::new(target_pid) {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -100,7 +101,7 @@ fn collect_all_pes(data: &[u8], target_pid: u16) -> Vec<PesAu> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != target_pid {
+        if pkt.header.pid != Pid::new(target_pid) {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -421,7 +422,7 @@ fn collect_pmt_es(data: &[u8], pmt_pid: u16) -> Vec<(u8, u16, Vec<u8>)> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != pmt_pid {
+        if pkt.header.pid != Pid::new(pmt_pid) {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -665,13 +666,13 @@ const ONE_SECOND_27MHZ: i128 = 27_000_000;
 fn find_discontinuity(samples: &[PcrSample]) -> Option<(usize, usize)> {
     let mut last: HashMap<u16, (usize, u64)> = HashMap::new();
     for (i, s) in samples.iter().enumerate() {
-        if let Some(&(prev_idx, prev_val)) = last.get(&s.pid) {
+        if let Some(&(prev_idx, prev_val)) = last.get(&s.pid.value()) {
             let delta = s.pcr_27mhz as i128 - prev_val as i128;
             if !(0..=ONE_SECOND_27MHZ).contains(&delta) {
                 return Some((prev_idx, i));
             }
         }
-        last.insert(s.pid, (i, s.pcr_27mhz));
+        last.insert(s.pid.value(), (i, s.pcr_27mhz));
     }
     None
 }

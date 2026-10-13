@@ -160,7 +160,7 @@ fn check_media(media: &Media, report: &mut Report) {
             if iter_length_prefixed_nals_with(&sample.data, length_size).is_err() {
                 report.push(Finding::new(
                     Severity::Error,
-                    Location::new(idx, track_id),
+                    Location::at_track(idx, track_id),
                     "length-prefix-violation",
                     alloc::format!(
                         "Sample {idx} on track {track_id} is not a well-formed {length_size}-byte \
@@ -194,7 +194,7 @@ fn check_avc_track(
     if record.profile_indication != info.profile_idc {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(0, track_id),
+            Location::at_track(0, track_id),
             "avcc-sps-mismatch",
             alloc::format!(
                 "avcC AVCProfileIndication 0x{:02X} on track {track_id} disagrees with the \
@@ -207,7 +207,7 @@ fn check_avc_track(
     if record.level_indication != info.level_idc {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(0, track_id),
+            Location::at_track(0, track_id),
             "avcc-sps-mismatch",
             alloc::format!(
                 "avcC AVCLevelIndication 0x{:02X} on track {track_id} disagrees with the \
@@ -222,7 +222,7 @@ fn check_avc_track(
     {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(0, track_id),
+            Location::at_track(0, track_id),
             "avcc-sps-mismatch",
             alloc::format!(
                 "avcC chroma_format {chroma} on track {track_id} disagrees with the \
@@ -237,7 +237,7 @@ fn check_avc_track(
     {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(0, track_id),
+            Location::at_track(0, track_id),
             "container-sps-dimension-mismatch",
             alloc::format!(
                 "Sample entry declares {width}x{height} on track {track_id} but the embedded \
@@ -250,7 +250,7 @@ fn check_avc_track(
     if !info.frame_mbs_only {
         report.push(Finding::new(
             Severity::Info,
-            Location::new(0, track_id),
+            Location::at_track(0, track_id),
             "avc-interlaced-content",
             alloc::format!(
                 "AVC SPS on track {track_id} has frame_mbs_only_flag=0 (interlaced coding \
@@ -280,7 +280,7 @@ fn check_hevc_track(
     if record.general_profile_idc != info.general_profile_idc {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(0, track_id),
+            Location::at_track(0, track_id),
             "hvcc-sps-mismatch",
             alloc::format!(
                 "hvcC general_profile_idc {} on track {track_id} disagrees with the embedded \
@@ -293,7 +293,7 @@ fn check_hevc_track(
     if record.general_level_idc != info.general_level_idc {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(0, track_id),
+            Location::at_track(0, track_id),
             "hvcc-sps-mismatch",
             alloc::format!(
                 "hvcC general_level_idc {} on track {track_id} disagrees with the embedded SPS \
@@ -306,7 +306,7 @@ fn check_hevc_track(
     if record.chroma_format_idc != info.chroma_format_idc {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(0, track_id),
+            Location::at_track(0, track_id),
             "hvcc-sps-mismatch",
             alloc::format!(
                 "hvcC chroma_format_idc {} on track {track_id} disagrees with the embedded SPS \
@@ -322,7 +322,7 @@ fn check_hevc_track(
     {
         report.push(Finding::new(
             Severity::Error,
-            Location::new(0, track_id),
+            Location::at_track(0, track_id),
             "container-sps-dimension-mismatch",
             alloc::format!(
                 "Sample entry declares {width}x{height} on track {track_id} but the embedded \

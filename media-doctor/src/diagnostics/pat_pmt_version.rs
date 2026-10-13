@@ -24,6 +24,7 @@
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::Parse;
 use dvb_si::tables::pat::{self, PatSection};
@@ -42,7 +43,7 @@ use crate::report::{Finding, Location, Severity};
 /// enough (ISO/IEC 13818-1 §2.4.4.8).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct TableKey {
-    pid: u16,
+    pid: Pid,
     table_id: u8,
     table_id_extension: u16,
 }
@@ -89,20 +90,22 @@ fn current_pat(raw: &[u8]) -> Option<PatSection> {
 fn declared_pmt_pids(pat: &PatSection) -> impl Iterator<Item = u16> + '_ {
     pat.entries.iter().filter_map(|entry| {
         let pid = entry.pid;
-        (entry.program_number != pat::PROGRAM_NUMBER_NIT && pid != pat::PID && pid != NULL_PID)
+        (entry.program_number != pat::PROGRAM_NUMBER_NIT
+            && pid != pat::PID
+            && Pid::new(pid) != NULL_PID)
             .then_some(pid)
     })
 }
 
 /// The reserved null-packet PID (`0x1FFF`), which never carries a section
 /// (ISO/IEC 13818-1 §2.4.3.3).
-const NULL_PID: u16 = 0x1FFF;
+const NULL_PID: Pid = Pid::new(0x1FFF);
 
 impl PatPmtVersionCheck {
     fn process_section(
         &self,
         packet_index: usize,
-        pid: u16,
+        pid: Pid,
         raw: &[u8],
         versions: &mut BTreeMap<TableKey, u8>,
         report: &mut Report,
@@ -111,10 +114,10 @@ impl PatPmtVersionCheck {
         // and current_next_indicator without any hand-rolled bit masking. For
         // a PAT the same gate discovery uses (CRC + current_next) is applied
         // here, so the two can never disagree about which sections are real.
-        if pid == pat::PID && current_pat(raw).is_none() {
+        if pid == Pid::new(pat::PID) && current_pat(raw).is_none() {
             return;
         }
-        let (table_id, table_id_extension, version) = if pid == pat::PID {
+        let (table_id, table_id_extension, version) = if pid == Pid::new(pat::PID) {
             let Ok(pat) = PatSection::parse(raw) else {
                 return;
             };
@@ -144,7 +147,7 @@ impl PatPmtVersionCheck {
         {
             report.push(Finding::new(
                 Severity::Info,
-                Location::new(packet_index, u32::from(pid)),
+                Location::at_pid(packet_index, pid),
                 rule_id,
                 alloc::format!(
                     "{table_name} version_number changed: {prev_ver} → {version} \
@@ -180,7 +183,7 @@ impl Diagnostic for PatPmtVersionCheck {
             let pid = pkt.header.pid;
 
             // Only process PIDs we're watching.
-            if !reassemblers.contains_key(&pid) {
+            if !reassemblers.contains_key(&pid.value()) {
                 continue;
             }
 
@@ -190,14 +193,17 @@ impl Diagnostic for PatPmtVersionCheck {
 
             // Feed payload into section reassembler.
             let pusi = pkt.header.pusi;
-            reassemblers.get_mut(&pid).unwrap().feed(payload, pusi);
+            reassemblers
+                .get_mut(&pid.value())
+                .unwrap()
+                .feed(payload, pusi);
 
             // Collect new PMT PIDs discovered during drain — we cannot borrow
             // `reassemblers` mutably while iterating over sections.
-            let mut new_pmt_pids: Vec<u16> = Vec::new();
+            let mut new_pmt_pids: Vec<Pid> = Vec::new();
 
             // Drain completed sections.
-            while let Some(section) = reassemblers.get_mut(&pid).unwrap().pop_section() {
+            while let Some(section) = reassemblers.get_mut(&pid.value()).unwrap().pop_section() {
                 let section_data = &section[..];
                 self.process_section(i, pid, section_data, &mut versions, report);
 
@@ -206,12 +212,12 @@ impl Diagnostic for PatPmtVersionCheck {
                 // or next-generation PAT cannot register a PMT PID
                 // (audit MD-W1(a)/(c)), and a PAT entry naming PID 0 or the
                 // reserved NULL PID is ignored rather than watched.
-                if pid == pat::PID
+                if pid == Pid::new(pat::PID)
                     && let Some(pat) = current_pat(section_data)
                 {
                     for pmt_pid in declared_pmt_pids(&pat) {
-                        if !new_pmt_pids.contains(&pmt_pid) {
-                            new_pmt_pids.push(pmt_pid);
+                        if !new_pmt_pids.contains(&Pid::new(pmt_pid)) {
+                            new_pmt_pids.push(Pid::new(pmt_pid));
                         }
                     }
                 }
@@ -219,7 +225,7 @@ impl Diagnostic for PatPmtVersionCheck {
 
             // Register new PMT PIDs after draining sections.
             for pmt_pid in new_pmt_pids {
-                reassemblers.entry(pmt_pid).or_default();
+                reassemblers.entry(pmt_pid.value()).or_default();
             }
         }
     }
@@ -383,7 +389,8 @@ mod tests {
         let crc = &one[section_start + section_len - CRC_LEN..section_start + section_len];
         let aliased_pid = (u16::from(crc[2] & PID_HI_MASK) << 8) | u16::from(crc[3]);
         assert_ne!(
-            aliased_pid, TEST_PMT_PID,
+            aliased_pid,
+            TEST_PMT_PID.value(),
             "test setup: the CRC must alias a different PID than the real PMT",
         );
 
@@ -392,7 +399,7 @@ mod tests {
             ts.extend_from_slice(&one);
             // A genuine PMT on the aliased PID, its version changing between
             // repetitions — the shape the old walk misreports as `pmt-version`.
-            ts.extend_from_slice(&build_pmt_ts_on_pid(aliased_pid, cycle));
+            ts.extend_from_slice(&build_pmt_ts_on_pid(Pid::new(aliased_pid), cycle));
         }
 
         let report = check(&ts);

@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **BREAKING (#1159):** `T2miPump::new` and `InnerTsRecovery::{new,new_for_plp}` take `mpeg_ts::pid::Pid` instead of `u16` (new optional `mpeg-ts` dependency behind the `ts` feature). A PID above `0x1FFF` can no longer be passed (use `Pid::try_new`).
+
 ## [11.0.1] - 2026-10-11
 ### Changed
 - Version bump with the lockstep (11.0.1); no functional changes in this crate.

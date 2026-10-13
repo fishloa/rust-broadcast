@@ -19,17 +19,21 @@
 //!   that real senders emit, is accepted rather than rejected (a crate may
 //!   choose stricter validation, as `dvb-t2mi` does for RFU bits, but must
 //!   document it).
-//! - **Serialize emits the spec value** for reserved bits: `1` for
-//!   `reserved_future_use` and H.222.0 "reserved", `0` for
-//!   `reserved_zero_future_use`. Re-serializing therefore **normalizes**
-//!   non-standard reserved bits and is deliberately not byte-identical
-//!   (`dvb-si`, `mpeg-pes`, `transmux`).
-//! - **Exception: preserve-on-parse.** Crates whose structs carry the
-//!   reserved/trailing bytes as explicit fields re-emit them verbatim
-//!   (`mpeg-ps`, `rmt-flute`, `cc-data` fixed bits, `rtcp-packet`
-//!   `profile_extensions`, `mp4-emsg` flags).
-//! - A caller that needs byte-for-byte preservation of arbitrary reserved
-//!   bits **keeps the original bytes** rather than re-serializing.
+//! - **Serialize preserves what was parsed.** Reserved bits are captured on
+//!   parse in typed, spec-named fields and re-emitted verbatim, so a stream
+//!   from a sender that deviates from the governing edition re-serializes
+//!   **byte-identically** (`dvb-si` descriptors, `mpeg-ps`, `rmt-flute`,
+//!   `cc-data` fixed bits, `rtcp-packet` `profile_extensions`, `mp4-emsg`
+//!   flags). There is no raw passthrough blob.
+//! - **Constructed values default to the edition value**: a struct built by
+//!   hand (`new(..)` / `Default`) carries `1` for `reserved_future_use` and
+//!   H.222.0 "reserved", `0` for `reserved_zero_future_use`, with any explicit
+//!   per-field exception documented on the field. (A crate that has not yet
+//!   adopted preserve-on-parse — `mpeg-pes`, `transmux` — still normalizes
+//!   to the spec value on serialize; migrating it is the same change.)
+//! - A caller that needs byte-for-byte preservation of reserved bits in a
+//!   not-yet-migrated crate **keeps the original bytes** rather than
+//!   re-serializing.
 //! - Trailing bytes inside a descriptor or section body are never silently
 //!   dropped without a documented decision: hold them in a typed field, or
 //!   document the field as "ignored".

@@ -5,6 +5,7 @@
 
 use alloc::string::String;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use super::{InputDegradation, Track};
 
@@ -19,7 +20,7 @@ pub struct PcrSample {
     /// `program_clock_reference` as a 27 MHz value (`base * 300 + extension`).
     pub pcr_27mhz: u64,
     /// PID the PCR was carried on.
-    pub pid: u16,
+    pub pid: Pid,
     /// 0-based index of the 188-byte packet in the demuxed input.
     pub packet_index: u64,
     /// The adaptation field's `discontinuity_indicator` (§2.4.3.5).
@@ -28,7 +29,7 @@ pub struct PcrSample {
 
 impl PcrSample {
     /// Create a PCR observation with every field explicit.
-    pub fn new(pcr_27mhz: u64, pid: u16, packet_index: u64, discontinuity: bool) -> Self {
+    pub fn new(pcr_27mhz: u64, pid: Pid, packet_index: u64, discontinuity: bool) -> Self {
         Self {
             pcr_27mhz,
             pid,

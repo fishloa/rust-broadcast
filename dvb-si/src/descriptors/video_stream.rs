@@ -5,6 +5,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for video_stream_descriptor.
@@ -12,9 +13,12 @@ pub const TAG: u8 = 0x02;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 3;
 const BODY_MPEG1_LEN: u8 = 1;
-/// Trailing `reserved(5)` (Table 2-46), emitted as ones (r03-W7; confirmed by
-/// the TSDuck oracle PMT and the real `shared/real-pmt.bin` capture).
-const RESERVED_5_BITS: u8 = 0x1F;
+/// Default of the trailing 5-bit `reserved` of the MPEG-2 branch (H.222.0
+/// Table 2-46): clause 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023,
+/// audit §5; confirmed by the TSDuck oracle PMT and the real
+/// `shared/real-pmt.bin` capture).
+pub const RESERVED_5_DEFAULT: u8 = 0b1_1111;
+const RESERVED_5_MASK: u8 = 0x1F;
 
 /// `frame_rate_code(4)` field mask inside byte 0: bits `[6:3]`; masks the
 /// `Reserved(v)` payload so it cannot bleed into `multiple_frame_rate_flag`
@@ -116,6 +120,7 @@ broadcast_common::impl_spec_display!(FrameRateCode, Reserved);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct VideoStreamDescriptor {
     /// 1 — more than one frame rate may be present (see Table 2-47 "also includes").
     pub multiple_frame_rate_flag: bool,
@@ -133,6 +138,63 @@ pub struct VideoStreamDescriptor {
     pub chroma_format: Option<u8>,
     /// Frame rate extension flag — only when `mpeg_1_only_flag` is false.
     pub frame_rate_extension_flag: Option<bool>,
+    /// Trailing `reserved(5)` of the MPEG-2 branch (5 bits, right-aligned);
+    /// not on the wire when `mpeg_1_only_flag` is set. Captured on parse,
+    /// re-emitted verbatim; the constructors use [`RESERVED_5_DEFAULT`].
+    pub reserved_5: u8,
+    /// Body bytes after the defined fields (after byte 0 in the MPEG-1 branch,
+    /// after byte 2 otherwise): tolerated on parse and re-emitted verbatim.
+    pub trailing: Vec<u8>,
+}
+
+impl VideoStreamDescriptor {
+    /// Build an MPEG-1-only descriptor (`mpeg_1_only_flag` = 1, 1-byte body).
+    #[must_use]
+    pub const fn mpeg1(
+        multiple_frame_rate_flag: bool,
+        frame_rate_code: FrameRateCode,
+        constrained_parameter_flag: bool,
+        still_picture_flag: bool,
+    ) -> Self {
+        Self {
+            multiple_frame_rate_flag,
+            frame_rate_code,
+            mpeg_1_only_flag: true,
+            constrained_parameter_flag,
+            still_picture_flag,
+            profile_and_level_indication: None,
+            chroma_format: None,
+            frame_rate_extension_flag: None,
+            reserved_5: RESERVED_5_DEFAULT,
+            trailing: Vec::new(),
+        }
+    }
+
+    /// Build an MPEG-2 descriptor (`mpeg_1_only_flag` = 0, 3-byte body) with
+    /// the spec-default reserved bits.
+    #[must_use]
+    pub const fn mpeg2(
+        multiple_frame_rate_flag: bool,
+        frame_rate_code: FrameRateCode,
+        constrained_parameter_flag: bool,
+        still_picture_flag: bool,
+        profile_and_level_indication: u8,
+        chroma_format: u8,
+        frame_rate_extension_flag: bool,
+    ) -> Self {
+        Self {
+            multiple_frame_rate_flag,
+            frame_rate_code,
+            mpeg_1_only_flag: false,
+            constrained_parameter_flag,
+            still_picture_flag,
+            profile_and_level_indication: Some(profile_and_level_indication),
+            chroma_format: Some(chroma_format),
+            frame_rate_extension_flag: Some(frame_rate_extension_flag),
+            reserved_5: RESERVED_5_DEFAULT,
+            trailing: Vec::new(),
+        }
+    }
 }
 
 impl<'a> Parse<'a> for VideoStreamDescriptor {
@@ -168,6 +230,8 @@ impl<'a> Parse<'a> for VideoStreamDescriptor {
                 profile_and_level_indication: None,
                 chroma_format: None,
                 frame_rate_extension_flag: None,
+                reserved_5: RESERVED_5_DEFAULT,
+                trailing: body[BODY_MPEG1_LEN as usize..].to_vec(),
             })
         } else {
             if body.len() < (BODY_LEN as usize) {
@@ -190,6 +254,8 @@ impl<'a> Parse<'a> for VideoStreamDescriptor {
                 profile_and_level_indication: Some(profile_and_level_indication),
                 chroma_format: Some(chroma_format),
                 frame_rate_extension_flag: Some(frame_rate_extension_flag),
+                reserved_5: b2 & RESERVED_5_MASK,
+                trailing: body[BODY_LEN as usize..].to_vec(),
             })
         }
     }
@@ -200,9 +266,9 @@ impl Serialize for VideoStreamDescriptor {
 
     fn serialized_len(&self) -> usize {
         if self.mpeg_1_only_flag {
-            HEADER_LEN + (BODY_MPEG1_LEN as usize)
+            HEADER_LEN + (BODY_MPEG1_LEN as usize) + self.trailing.len()
         } else {
-            HEADER_LEN + (BODY_LEN as usize)
+            HEADER_LEN + (BODY_LEN as usize) + self.trailing.len()
         }
     }
 
@@ -242,8 +308,14 @@ impl Serialize for VideoStreamDescriptor {
                     reason: "required when mpeg_1_only_flag is false",
                 })? as u8;
             buf[HEADER_LEN + 1] = pal;
-            buf[HEADER_LEN + 2] = (chroma << 6) | (fre << 5) | RESERVED_5_BITS;
+            buf[HEADER_LEN + 2] = (chroma << 6) | (fre << 5) | (self.reserved_5 & RESERVED_5_MASK);
         }
+        let fixed = if self.mpeg_1_only_flag {
+            BODY_MPEG1_LEN as usize
+        } else {
+            BODY_LEN as usize
+        };
+        buf[HEADER_LEN + fixed..len].copy_from_slice(&self.trailing);
         Ok(len)
     }
 }
@@ -296,16 +368,15 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_mpeg_2() {
-        let d = VideoStreamDescriptor {
-            multiple_frame_rate_flag: true,
-            frame_rate_code: FrameRateCode::Frame60_0,
-            mpeg_1_only_flag: false,
-            constrained_parameter_flag: false,
-            still_picture_flag: true,
-            profile_and_level_indication: Some(0xAB),
-            chroma_format: Some(1),
-            frame_rate_extension_flag: Some(false),
-        };
+        let d = VideoStreamDescriptor::mpeg2(
+            true,
+            FrameRateCode::Frame60_0,
+            false,
+            true,
+            0xAB,
+            1,
+            false,
+        );
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = VideoStreamDescriptor::parse(&buf).unwrap();
@@ -314,16 +385,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_mpeg_1() {
-        let d = VideoStreamDescriptor {
-            multiple_frame_rate_flag: false,
-            frame_rate_code: FrameRateCode::Frame23_976,
-            mpeg_1_only_flag: true,
-            constrained_parameter_flag: true,
-            still_picture_flag: false,
-            profile_and_level_indication: None,
-            chroma_format: None,
-            frame_rate_extension_flag: None,
-        };
+        let d = VideoStreamDescriptor::mpeg1(false, FrameRateCode::Frame23_976, true, false);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = VideoStreamDescriptor::parse(&buf).unwrap();
@@ -363,16 +425,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_small_buffer() {
-        let d = VideoStreamDescriptor {
-            multiple_frame_rate_flag: false,
-            frame_rate_code: FrameRateCode::Frame25_0,
-            mpeg_1_only_flag: true,
-            constrained_parameter_flag: false,
-            still_picture_flag: false,
-            profile_and_level_indication: None,
-            chroma_format: None,
-            frame_rate_extension_flag: None,
-        };
+        let d = VideoStreamDescriptor::mpeg1(false, FrameRateCode::Frame25_0, false, false);
         let mut tiny = vec![0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
@@ -382,16 +435,16 @@ mod tests {
         // r03-W5: with `mpeg_1_only_flag` false the three conditional fields
         // are mandatory; serialize used to fabricate 0 / false via
         // `unwrap_or` instead of erroring.
-        let d = VideoStreamDescriptor {
-            multiple_frame_rate_flag: false,
-            frame_rate_code: FrameRateCode::Frame25_0,
-            mpeg_1_only_flag: false,
-            constrained_parameter_flag: false,
-            still_picture_flag: false,
-            profile_and_level_indication: None,
-            chroma_format: Some(1),
-            frame_rate_extension_flag: Some(false),
-        };
+        let mut d = VideoStreamDescriptor::mpeg2(
+            false,
+            FrameRateCode::Frame25_0,
+            false,
+            false,
+            0,
+            1,
+            false,
+        );
+        d.profile_and_level_indication = None;
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -402,23 +455,44 @@ mod tests {
         ));
     }
 
-    /// r03-W7 — H.222.0 Table 2-46 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the TSDuck-compiled oracle
-    /// PMT `tsduck-mpeg-simple-pmt.bin` and the real `shared/real-pmt.bin` capture. (1) conformant bytes (reserved=1) round-trip byte-exactly;
-    /// (2) the same descriptor with reserved=0 (non-conformant sender) parses to
-    /// equal typed fields and re-serializes to the normalized reserved=1 form.
+    /// H.222.0 Table 2-46. Parsed reserved bits (and any trailing body bytes)
+    /// are preserved; the old normalize-to-ones behaviour is gone.
     #[test]
-    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
-        let conformant: &[u8] = &[TAG, 3, 0b1010_0011, 0xDE, 0xFF];
-        let zeroed: &[u8] = &[TAG, 3, 0b1010_0011, 0xDE, 0xE0];
-        let d = VideoStreamDescriptor::parse(conformant).unwrap();
+    fn video_stream_reserved_preserved() {
+        for r in 0u8..=0x1F {
+            let bytes = [TAG, 3, 0b1010_0011, 0xDE, 0xE0 | r];
+            let d = VideoStreamDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved_5, r);
+            let mut out = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut out).unwrap();
+            assert_eq!(out, bytes);
+        }
+        // Tolerated trailing bytes survive in both branches.
+        for bytes in [
+            &[TAG, 3 + 2, 0b1010_0011, 0xDE, 0xE5, 0xAA, 0xBB][..],
+            &[TAG, 1 + 2, 0b0001_1101, 0xAA, 0xBB][..],
+        ] {
+            let d = VideoStreamDescriptor::parse(bytes).unwrap();
+            assert_eq!(d.trailing, [0xAA, 0xBB]);
+            let mut out = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut out).unwrap();
+            assert_eq!(out, bytes);
+        }
+    }
+
+    #[test]
+    fn video_stream_default_is_spec_value() {
+        let d = VideoStreamDescriptor::mpeg2(
+            true,
+            FrameRateCode::Frame29_97,
+            true,
+            true,
+            0xDE,
+            3,
+            true,
+        );
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, conformant);
-
-        let dz = VideoStreamDescriptor::parse(zeroed).unwrap();
-        assert_eq!(dz, d, "typed fields must not depend on reserved bits");
-        let mut outz = vec![0u8; dz.serialized_len()];
-        dz.serialize_into(&mut outz).unwrap();
-        assert_eq!(outz, conformant);
+        assert_eq!(out, [TAG, 3, 0b1010_0011, 0xDE, 0xFF]);
     }
 }

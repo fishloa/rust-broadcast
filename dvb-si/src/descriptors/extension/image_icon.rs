@@ -12,6 +12,17 @@ const TRANSPORT_MODE_VALUE_MASK: u8 = 0x03;
 /// `coordinate_system(3)` raw field mask (Table 147).
 const COORDINATE_SYSTEM_MASK: u8 = 0x07;
 
+/// Spec default of the 5-bit `reserved_future_use` fields (the one in byte 1
+/// and the one that follows `position_flag == 0`): all ones, EN 300 468 Table
+/// 145 in every edition V1.9.1-V1.20.1
+/// (`dvb-si/docs/reserved-bits-edition-audit.md` §6).
+pub const IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT: u8 = 0x1F;
+/// Spec default of the 2-bit `reserved_future_use` after `coordinate_system`:
+/// all ones (same source as [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`]).
+pub const IMAGE_ICON_RESERVED_FUTURE_USE_2_DEFAULT: u8 = 0x03;
+const RESERVED_5_MASK: u8 = 0x1F;
+const RESERVED_2_MASK: u8 = 0x03;
+
 /// Icon transport mode — ETSI EN 300 468 §6.4.8 Table 146
 /// (`dvb-si/docs/enums/en_300_468/146-icon-transport-mode-coding.md`).
 ///
@@ -80,11 +91,16 @@ impl<'a> ExtensionBodyDef<'a> for ImageIcon<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct ImageIcon<'a> {
     /// `descriptor_number` (4 bits) — `[7:4]` of byte 0.
     pub descriptor_number: u8,
     /// `last_descriptor_number` (4 bits) — `[3:0]` of byte 0.
     pub last_descriptor_number: u8,
+    /// `reserved_future_use` (5 bits, right-aligned) — `[7:3]` of byte 1.
+    /// Preserved on parse; [`ImageIcon::new`] uses
+    /// [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`] (all ones).
+    pub reserved_future_use: u8,
     /// `icon_id` (3 bits) — `[2:0]` of byte 1.
     pub icon_id: u8,
     /// First-segment metadata vs. continuation payload (keyed by `descriptor_number == 0`).
@@ -106,15 +122,40 @@ pub enum ImageIconBody<'a> {
     },
 }
 
+impl<'a> ImageIcon<'a> {
+    /// Build a descriptor with the spec-default (all ones) reserved bits.
+    #[must_use]
+    pub const fn new(
+        descriptor_number: u8,
+        last_descriptor_number: u8,
+        icon_id: u8,
+        body: ImageIconBody<'a>,
+    ) -> Self {
+        Self {
+            descriptor_number,
+            last_descriptor_number,
+            reserved_future_use: IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT,
+            icon_id,
+            body,
+        }
+    }
+}
+
 /// First-segment metadata (`descriptor_number == 0`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct ImageIconFirst<'a> {
     /// `icon_transport_mode` (2 bits) — Table 146.
     pub icon_transport_mode: IconTransportMode,
     /// `position` is `Some` iff `position_flag == 1`.
     pub position: Option<IconPosition>,
+    /// `reserved_future_use` (5 bits, right-aligned) that follows
+    /// `position_flag == 0`; `Some` iff `position` is `None`. Preserved on
+    /// parse; a hand-built `None` serializes as
+    /// [`IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT`].
+    pub reserved_future_use: Option<u8>,
     /// `icon_type_char` text run (length-delimited in the wire).
     pub icon_type: crate::text::DvbText<'a>,
     /// Transport-mode-dependent payload (Table 146):
@@ -137,16 +178,63 @@ pub enum IconLocation<'a> {
     None,
 }
 
+impl<'a> ImageIconFirst<'a> {
+    /// Build first-segment metadata with the spec-default (all ones) reserved
+    /// bits for the given `position` presence.
+    #[must_use]
+    pub const fn new(
+        icon_transport_mode: IconTransportMode,
+        position: Option<IconPosition>,
+        icon_type: crate::text::DvbText<'a>,
+        payload: IconLocation<'a>,
+    ) -> Self {
+        let reserved_future_use = if position.is_some() {
+            None
+        } else {
+            Some(IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT)
+        };
+        Self {
+            icon_transport_mode,
+            position,
+            reserved_future_use,
+            icon_type,
+            payload,
+        }
+    }
+}
+
 /// Position data (present iff `position_flag == 1`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct IconPosition {
     /// `coordinate_system` (3 bits) — Table 147.
     pub coordinate_system: u8,
+    /// `reserved_future_use` (2 bits, right-aligned) after `coordinate_system`.
+    /// Preserved on parse; [`IconPosition::new`] uses
+    /// [`IMAGE_ICON_RESERVED_FUTURE_USE_2_DEFAULT`] (all ones).
+    pub reserved_future_use: u8,
     /// `icon_horizontal_origin` (12 bits).
     pub icon_horizontal_origin: u16,
     /// `icon_vertical_origin` (12 bits).
     pub icon_vertical_origin: u16,
+}
+
+impl IconPosition {
+    /// Build a position with the spec-default (all ones) reserved bits.
+    #[must_use]
+    pub const fn new(
+        coordinate_system: u8,
+        icon_horizontal_origin: u16,
+        icon_vertical_origin: u16,
+    ) -> Self {
+        Self {
+            coordinate_system,
+            reserved_future_use: IMAGE_ICON_RESERVED_FUTURE_USE_2_DEFAULT,
+            icon_horizontal_origin,
+            icon_vertical_origin,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for ImageIcon<'a> {
@@ -163,7 +251,8 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
         }
         let descriptor_number = sel[0] >> 4;
         let last_descriptor_number = sel[0] & 0x0F;
-        let icon_id = sel[1] & 0x07;
+        let icon_id = sel[1] & ICON_ID_MASK;
+        let reserved_future_use = (sel[1] >> 3) & RESERVED_5_MASK;
 
         let body = if descriptor_number == 0x00 {
             // First segment: metadata + payload.
@@ -179,8 +268,10 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
             let position_flag = (packed >> 5) & 0x01;
             let mut pos = 3usize;
 
+            let mut no_position_reserved = None;
             let position = if position_flag == 1 {
                 let coordinate_system = (packed >> 2) & 0x07;
+                let position_reserved = packed & RESERVED_2_MASK;
                 if sel.len() < pos + 3 {
                     return Err(Error::BufferTooShort {
                         need: pos + 3,
@@ -196,10 +287,12 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
                 pos += 3;
                 Some(IconPosition {
                     coordinate_system,
+                    reserved_future_use: position_reserved,
                     icon_horizontal_origin,
                     icon_vertical_origin,
                 })
             } else {
+                no_position_reserved = Some(packed & RESERVED_5_MASK);
                 None
             };
 
@@ -277,6 +370,7 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
             ImageIconBody::First(ImageIconFirst {
                 icon_transport_mode,
                 position,
+                reserved_future_use: no_position_reserved,
                 icon_type,
                 payload,
             })
@@ -307,6 +401,7 @@ impl<'a> Parse<'a> for ImageIcon<'a> {
         Ok(ImageIcon {
             descriptor_number,
             last_descriptor_number,
+            reserved_future_use,
             icon_id,
             body,
         })
@@ -342,8 +437,9 @@ impl Serialize for ImageIcon<'_> {
         // byte0: descriptor_number(4) | last_descriptor_number(4)
         buf[0] = ((self.descriptor_number & DESCRIPTOR_NUMBER_MASK) << 4)
             | (self.last_descriptor_number & DESCRIPTOR_NUMBER_MASK);
-        // byte1: reserved_future_use(5)=1 | icon_id(3)
-        buf[1] = 0xF8 | (self.icon_id & ICON_ID_MASK);
+        // byte1: reserved_future_use(5) (preserved) | icon_id(3)
+        buf[1] =
+            ((self.reserved_future_use & RESERVED_5_MASK) << 3) | (self.icon_id & ICON_ID_MASK);
         let mut p = 2;
         match &self.body {
             ImageIconBody::First(f) => {
@@ -351,11 +447,11 @@ impl Serialize for ImageIcon<'_> {
                 let position_flag = u8::from(f.position.is_some());
                 let itm = f.icon_transport_mode.to_u8() & TRANSPORT_MODE_VALUE_MASK;
                 if let Some(pos) = &f.position {
-                    // ... | coordinate_system(3) | reserved_future_use(2)=1
+                    // ... | coordinate_system(3) | reserved_future_use(2) (preserved)
                     buf[p] = (itm << 6)
                         | (position_flag << 5)
                         | ((pos.coordinate_system & COORDINATE_SYSTEM_MASK) << 2)
-                        | 0x03;
+                        | (pos.reserved_future_use & RESERVED_2_MASK);
                     p += 1;
                     // 3 origin bytes: 12+12 bits packed
                     let h = pos.icon_horizontal_origin & 0x0FFF;
@@ -365,8 +461,12 @@ impl Serialize for ImageIcon<'_> {
                     buf[p + 2] = v as u8;
                     p += 3;
                 } else {
-                    // ... | position_flag(1) | reserved_future_use(5)=1
-                    buf[p] = (itm << 6) | (position_flag << 5) | 0x1F;
+                    // ... | position_flag(1) | reserved_future_use(5) (preserved)
+                    buf[p] = (itm << 6)
+                        | (position_flag << 5)
+                        | (f.reserved_future_use
+                            .unwrap_or(IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT)
+                            & RESERVED_5_MASK);
                     p += 1;
                 }
                 // icon_type_length + run
@@ -523,6 +623,72 @@ mod tests {
         round_trip(&d);
     }
 
+    /// Every value of each reserved_future_use region (5-bit in byte 1,
+    /// 2-bit after coordinate_system, 5-bit after position_flag==0)
+    /// re-serializes byte-identically.
+    #[test]
+    fn image_icon_reserved_preserved() {
+        let check = |sel: &[u8], what: &str, r: u8| {
+            let bytes = wrap(0x00, sel);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "{what} r={r:#x}");
+        };
+        for r in 0u8..=RESERVED_5_MASK {
+            // continuation, byte1 reserved
+            check(&[0x23, (r << 3) | 0x01, 0x01, 0xAA], "byte1", r);
+            // first, no position: packed reserved(5)
+            check(&[0x00, 0xF8, 0x40 | r, 0x00, 0x00], "no-position", r);
+        }
+        for r in 0u8..=RESERVED_2_MASK {
+            // first, position (cs=1), mode 0, icon_type 0 bytes, data 0 bytes
+            check(
+                &[
+                    0x00,
+                    0xF8,
+                    0x20 | (1 << 2) | r,
+                    0x06,
+                    0x40,
+                    0xC8,
+                    0x00,
+                    0x00,
+                ],
+                "position",
+                r,
+            );
+        }
+    }
+
+    #[test]
+    fn image_icon_default_is_spec_value() {
+        let pos = IconPosition::new(1, 100, 200);
+        let first = ImageIconFirst::new(
+            IconTransportMode::InlineData,
+            Some(pos),
+            crate::text::DvbText::new(&[]),
+            IconLocation::Data(&[]),
+        );
+        let d = ImageIcon::new(0, 0, 5, ImageIconBody::First(first));
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        // byte1 = 0xF8|5; packed = pos flag 0x20 | cs 1<<2 | rfu 0x03.
+        assert_eq!(
+            buf,
+            [0x00, 0xFD, 0x20 | 0x04 | 0x03, 0x06, 0x40, 0xC8, 0x00, 0x00]
+        );
+        let first = ImageIconFirst::new(
+            IconTransportMode::Url,
+            None,
+            crate::text::DvbText::new(&[]),
+            IconLocation::Url(crate::text::DvbText::new(&[])),
+        );
+        let d = ImageIcon::new(0, 0, 0, ImageIconBody::First(first));
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [0x00, 0xF8, 0x40 | 0x1F, 0x00, 0x00]);
+    }
+
     #[test]
     fn parse_image_icon_rejects_trailing_bytes() {
         // First segment with an extra trailing byte.
@@ -554,14 +720,14 @@ mod tests {
     fn serde_serialize_image_icon() {
         let d = ExtensionDescriptor {
             tag_extension: 0x00,
-            body: ExtensionBody::ImageIcon(ImageIcon {
-                descriptor_number: 2,
-                last_descriptor_number: 3,
-                icon_id: 1,
-                body: ImageIconBody::Continuation {
+            body: ExtensionBody::ImageIcon(ImageIcon::new(
+                2,
+                3,
+                1,
+                ImageIconBody::Continuation {
                     icon_data: &[0xAA, 0xBB],
                 },
-            }),
+            )),
         };
         let json = serde_json::to_string(&d).unwrap();
         assert!(json.contains("\"tag_extension\":0"));

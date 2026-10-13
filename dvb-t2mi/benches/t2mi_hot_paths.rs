@@ -7,6 +7,7 @@
 
 use criterion::{Criterion, Throughput, criterion_group, criterion_main};
 use dvb_t2mi::pump::T2miPump;
+use mpeg_ts::pid::Pid;
 use std::hint::black_box;
 
 // ── Fixture (shared /fixtures/dvb-t2mi/) ────────────────────────────
@@ -17,7 +18,7 @@ const COLOMBIA_FIXTURE: &[u8] = include_bytes!(concat!(
 ));
 
 /// PID carrying T2-MI in the Colombia fixture (from the PMT).
-const T2MI_PID: u16 = 0x0040;
+const T2MI_PID: Pid = Pid::new(0x0040);
 
 const TS_PACKET_SIZE: usize = 188;
 

@@ -11,6 +11,7 @@
 //! header / PTS/DTS).
 
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 /// A reassembled PES access unit — the complete PES packet bytes with optional
 /// timing from the PES header.
@@ -19,15 +20,29 @@ use alloc::vec::Vec;
 /// `packet_start_code_prefix` through the last `PES_packet_data_byte`). No codec
 /// parsing is performed; the bytes are opaque.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
 pub struct AccessUnit {
     /// PID this access unit was carried on.
-    pub pid: u16,
+    pub pid: Pid,
     /// Presentation time stamp from the PES header, if present (33-bit, 90 kHz).
     pub pts: Option<u64>,
     /// Decoding time stamp from the PES header, if present (33-bit, 90 kHz).
     pub dts: Option<u64>,
     /// The reassembled PES packet bytes (`00 00 01 stream_id ...`).
     pub data: Vec<u8>,
+}
+
+impl AccessUnit {
+    /// Create an access unit from its parts.
+    #[must_use]
+    pub fn new(pid: Pid, pts: Option<u64>, dts: Option<u64>, data: Vec<u8>) -> Self {
+        Self {
+            pid,
+            pts,
+            dts,
+            data,
+        }
+    }
 }
 
 /// Reconstruct PES access units on the given PIDs from a contiguous TS buffer.
@@ -41,7 +56,7 @@ pub struct AccessUnit {
 ///
 /// Panics if `ts` is not a multiple of 188 bytes (caller must pre-chop to
 /// packet boundaries).
-pub fn reconstruct_access_units(ts: &[u8], pids: &[u16]) -> Vec<AccessUnit> {
+pub fn reconstruct_access_units(ts: &[u8], pids: &[Pid]) -> Vec<AccessUnit> {
     const TS_PACKET_SIZE: usize = 188;
 
     assert_eq!(
@@ -61,7 +76,7 @@ pub fn reconstruct_access_units(ts: &[u8], pids: &[u16]) -> Vec<AccessUnit> {
     };
 
     // Per-PID assemblers.
-    let mut assemblers: alloc::collections::BTreeMap<u16, mpeg_pes::PesAssembler> =
+    let mut assemblers: alloc::collections::BTreeMap<Pid, mpeg_pes::PesAssembler> =
         alloc::collections::BTreeMap::new();
 
     // Completed AUs, in order.
@@ -107,7 +122,7 @@ pub fn reconstruct_access_units(ts: &[u8], pids: &[u16]) -> Vec<AccessUnit> {
 }
 
 /// Parse a completed PES packet `Vec<u8>` into an `AccessUnit`.
-fn parse_au(pid: u16, data: Vec<u8>) -> AccessUnit {
+fn parse_au(pid: Pid, data: Vec<u8>) -> AccessUnit {
     let (pts, dts) = match mpeg_pes::PesPacket::parse(&data) {
         Ok(pkt) => {
             let pts = pkt.header.as_ref().and_then(|h| h.pts).map(|p| p.ticks());

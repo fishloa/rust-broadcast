@@ -10,6 +10,7 @@
 //! Dropping the `T2miEventStream` cancels cleanly — no internal tasks are
 //! spawned.
 
+use mpeg_ts::pid::Pid;
 use std::collections::VecDeque;
 use std::pin::Pin;
 use std::task::{Context, Poll};
@@ -95,7 +96,7 @@ impl<R: AsyncRead + Unpin> T2miEventStream<R> {
     ///
     /// `pid` is the 13-bit T2-MI PID from the PMT (e.g. `0x0006`).
     #[must_use]
-    pub fn new(reader: R, pid: u16) -> Self {
+    pub fn new(reader: R, pid: Pid) -> Self {
         Self::with_pump(reader, T2miPump::new(pid))
     }
 
@@ -147,7 +148,7 @@ pub struct UdpT2miStream {
 impl UdpT2miStream {
     /// Wrap an already-bound socket; `pid` is the 13-bit T2-MI PID from the PMT.
     #[must_use]
-    pub fn from_socket(socket: tokio::net::UdpSocket, pid: u16) -> Self {
+    pub fn from_socket(socket: tokio::net::UdpSocket, pid: Pid) -> Self {
         Self {
             pump: T2miPumpDriver::new(UdpPackets::new(socket), T2miPump::new(pid)),
         }
@@ -164,7 +165,7 @@ impl UdpT2miStream {
     pub async fn bind_multicast(
         bind_addr: std::net::SocketAddrV4,
         multicast_addr: std::net::Ipv4Addr,
-        pid: u16,
+        pid: Pid,
     ) -> std::io::Result<Self> {
         Self::bind(&MulticastConfig::new(bind_addr, multicast_addr), pid).await
     }
@@ -175,7 +176,7 @@ impl UdpT2miStream {
     ///
     /// Returns a [`std::io::Error`] if binding or joining the multicast group
     /// fails.
-    pub async fn bind(config: &MulticastConfig, pid: u16) -> std::io::Result<Self> {
+    pub async fn bind(config: &MulticastConfig, pid: Pid) -> std::io::Result<Self> {
         let std_socket = config.bind()?;
         Ok(Self::from_socket(
             tokio::net::UdpSocket::from_std(std_socket)?,

@@ -9,6 +9,7 @@
 //! The capture is large — this is a **scaffold** test. It **skips cleanly** by
 //! default (the file won't be present without an explicit download).
 
+use mpeg_ts::pid::Pid;
 use std::fs;
 use std::path::Path;
 
@@ -41,7 +42,7 @@ fn russia_t2mi_scte35_parse() {
     }
 
     let data = fs::read(&path).expect("read capture");
-    let mut rec = InnerTsRecovery::new_for_plp(T2MI_PID, 0);
+    let mut rec = InnerTsRecovery::new_for_plp(Pid::new(T2MI_PID), 0);
 
     let mut scte35_sections = 0usize;
     let mut splice_commands = 0usize;

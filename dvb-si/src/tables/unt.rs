@@ -100,6 +100,7 @@ const DESC_LOOP_LEN_FIELD: usize = 2;
 /// target/operational descriptor-loop pairs.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct UntPlatform<'a> {
     /// `compatibilityDescriptor()` — TS 102 006 Table 15 / ISO/IEC 13818-6.
     pub compatibility_descriptor: CompatibilityDescriptor<'a>,
@@ -107,6 +108,20 @@ pub struct UntPlatform<'a> {
     /// the same typed pair the INT body loop uses (r02-W22), replacing the
     /// previous anonymous tuple.
     pub target_operational_pairs: Vec<crate::tables::TargetOperationalLoop<'a>>,
+}
+
+impl<'a> UntPlatform<'a> {
+    /// Construct a platform entry.
+    #[must_use]
+    pub fn new(
+        compatibility_descriptor: CompatibilityDescriptor<'a>,
+        target_operational_pairs: Vec<crate::tables::TargetOperationalLoop<'a>>,
+    ) -> Self {
+        Self {
+            compatibility_descriptor,
+            target_operational_pairs,
+        }
+    }
 }
 
 fn unt_platform_serialized_len(p: &UntPlatform) -> usize {
@@ -127,6 +142,7 @@ fn unt_platform_serialized_len(p: &UntPlatform) -> usize {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct UntSection<'a> {
     /// Action type (Table 12): 0x01 = System Software Update, 0x80–0xFF user defined.
     pub action_type: UntActionType,
@@ -149,6 +165,46 @@ pub struct UntSection<'a> {
     pub common_descriptors: DescriptorLoop<'a>,
     /// Platform entries — unfolded per §9.4.2.2–9.4.2.4.
     pub platforms: Vec<UntPlatform<'a>>,
+    /// Header bit fields (`reserved_for_future_use`, `reserved(2)` x2; default
+    /// [`SectionBits::dvb`](super::SectionBits::dvb)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+    /// `reserved(4)` before `common_descriptor_loop_length` (`1111`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_common_descriptor_loop_length: u8,
+}
+
+impl<'a> UntSection<'a> {
+    /// Construct a UNT section with the spec `reserved` fill.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        action_type: UntActionType,
+        oui_hash: u8,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        oui: u32,
+        processing_order: u8,
+        common_descriptors: DescriptorLoop<'a>,
+        platforms: Vec<UntPlatform<'a>>,
+    ) -> Self {
+        Self {
+            action_type,
+            oui_hash,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            oui,
+            processing_order,
+            common_descriptors,
+            platforms,
+            bits: super::SectionBits::dvb(),
+            reserved_common_descriptor_loop_length: super::RESERVED_4,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for UntSection<'a> {
@@ -275,6 +331,7 @@ impl<'a> Parse<'a> for UntSection<'a> {
                         available: platform_end.saturating_sub(target_start),
                     });
                 }
+                let reserved_target_length = super::len_reserved_of(bytes[pos]);
                 let target_descriptors = DescriptorLoop::new(&bytes[target_start..target_end]);
                 pos = target_end;
 
@@ -294,13 +351,17 @@ impl<'a> Parse<'a> for UntSection<'a> {
                         available: platform_end.saturating_sub(op_start),
                     });
                 }
+                let reserved_operational_length = super::len_reserved_of(bytes[pos]);
                 let operational_descriptors = DescriptorLoop::new(&bytes[op_start..op_end]);
                 pos = op_end;
 
-                target_operational_pairs.push(crate::tables::TargetOperationalLoop {
+                let mut pair = crate::tables::TargetOperationalLoop::new(
                     target_descriptors,
                     operational_descriptors,
-                });
+                );
+                pair.reserved_target_length = reserved_target_length;
+                pair.reserved_operational_length = reserved_operational_length;
+                target_operational_pairs.push(pair);
             }
             if pos != platform_end {
                 return Err(Error::SectionLengthOverflow {
@@ -326,6 +387,10 @@ impl<'a> Parse<'a> for UntSection<'a> {
             processing_order,
             common_descriptors,
             platforms,
+            bits: super::SectionBits::parse(bytes[1], Some(flags_byte)),
+            reserved_common_descriptor_loop_length: super::len_reserved_of(
+                bytes[OFFSET_COMMON_DESC_LEN],
+            ),
         })
     }
 }
@@ -356,12 +421,14 @@ impl Serialize for UntSection<'_> {
         }
 
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[OFFSET_ACTION_TYPE] = self.action_type.to_u8();
         buf[OFFSET_OUI_HASH] = self.oui_hash;
-        buf[OFFSET_FLAGS] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[OFFSET_FLAGS] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[OFFSET_SECTION_NUMBER] = self.section_number;
         buf[OFFSET_LAST_SECTION_NUMBER] = self.last_section_number;
         buf[OFFSET_OUI] = ((self.oui >> 16) & 0xFF) as u8;
@@ -374,9 +441,10 @@ impl Serialize for UntSection<'_> {
             12,
             "common_descriptors_length",
         )?;
-        super::write_desc_loop_len(
+        super::write_desc_loop_len_r(
             &mut buf[OFFSET_COMMON_DESC_LEN..OFFSET_COMMON_DESC_LEN + 2],
             cdl as usize,
+            self.reserved_common_descriptor_loop_length,
         )?;
 
         let common_start = OFFSET_COMMON_DESC_LEN + COMMON_DESC_LEN_FIELD;
@@ -407,7 +475,11 @@ impl Serialize for UntSection<'_> {
                     12,
                     "target_descriptors_length",
                 )?;
-                super::write_desc_loop_len(&mut buf[pos..pos + 2], tl as usize)?;
+                super::write_desc_loop_len_r(
+                    &mut buf[pos..pos + 2],
+                    tl as usize,
+                    pair.reserved_target_length,
+                )?;
                 pos += DESC_LOOP_LEN_FIELD;
                 buf[pos..pos + target_descriptors.len()].copy_from_slice(target_descriptors.raw());
                 pos += target_descriptors.len();
@@ -417,7 +489,11 @@ impl Serialize for UntSection<'_> {
                     12,
                     "operational_descriptors_length",
                 )?;
-                super::write_desc_loop_len(&mut buf[pos..pos + 2], ol as usize)?;
+                super::write_desc_loop_len_r(
+                    &mut buf[pos..pos + 2],
+                    ol as usize,
+                    pair.reserved_operational_length,
+                )?;
                 pos += DESC_LOOP_LEN_FIELD;
                 buf[pos..pos + operational_descriptors.len()]
                     .copy_from_slice(operational_descriptors.raw());
@@ -445,26 +521,26 @@ mod tests {
         let oui: u32 = 0x00_01_5A;
         let oui_hash: u8 = 0x01 ^ 0x5A;
         let common_descs: &[u8] = &[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00];
-        let unt = UntSection {
-            action_type: UntActionType::SystemSoftwareUpdate,
+        let unt = UntSection::new(
+            UntActionType::SystemSoftwareUpdate,
             oui_hash,
-            version_number: 7,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
+            7,
+            true,
+            0,
+            0,
             oui,
-            processing_order: 0x00,
-            common_descriptors: DescriptorLoop::new(common_descs),
-            platforms: vec![UntPlatform {
-                compatibility_descriptor: CompatibilityDescriptor {
+            0x00,
+            DescriptorLoop::new(common_descs),
+            vec![UntPlatform::new(
+                CompatibilityDescriptor {
                     descriptors: vec![],
                 },
-                target_operational_pairs: vec![crate::tables::TargetOperationalLoop {
-                    target_descriptors: DescriptorLoop::new(&[]),
-                    operational_descriptors: DescriptorLoop::new(&[]),
-                }],
-            }],
-        };
+                vec![crate::tables::TargetOperationalLoop::new(
+                    DescriptorLoop::new(&[]),
+                    DescriptorLoop::new(&[]),
+                )],
+            )],
+        );
         let sl = unt.serialized_len();
         let mut buf = vec![0u8; sl];
         unt.serialize_into(&mut buf).unwrap();
@@ -486,18 +562,18 @@ mod tests {
 
     #[test]
     fn parse_empty_platforms() {
-        let unt = UntSection {
-            action_type: UntActionType::SystemSoftwareUpdate,
-            oui_hash: 0x5B,
-            version_number: 1,
-            current_next_indicator: false,
-            section_number: 1,
-            last_section_number: 2,
-            oui: 0x00015A,
-            processing_order: 0x01,
-            common_descriptors: DescriptorLoop::new(&[]),
-            platforms: Vec::new(),
-        };
+        let unt = UntSection::new(
+            UntActionType::SystemSoftwareUpdate,
+            0x5B,
+            1,
+            false,
+            1,
+            2,
+            0x00015A,
+            0x01,
+            DescriptorLoop::new(&[]),
+            Vec::new(),
+        );
         let mut buf = vec![0u8; unt.serialized_len()];
         unt.serialize_into(&mut buf).unwrap();
         let parsed = UntSection::parse(&buf).unwrap();
@@ -509,26 +585,26 @@ mod tests {
     fn byte_exact_round_trip() {
         let target_desc: &[u8] = &[0x09, 0x01, 0xAA];
         let op_desc: &[u8] = &[0x0A, 0x01, 0xBB];
-        let unt = UntSection {
-            action_type: UntActionType::SystemSoftwareUpdate,
-            oui_hash: 0x5B,
-            version_number: 15,
-            current_next_indicator: true,
-            section_number: 2,
-            last_section_number: 5,
-            oui: 0x00015A,
-            processing_order: 0x02,
-            common_descriptors: DescriptorLoop::new(&[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00]),
-            platforms: vec![UntPlatform {
-                compatibility_descriptor: CompatibilityDescriptor {
+        let unt = UntSection::new(
+            UntActionType::SystemSoftwareUpdate,
+            0x5B,
+            15,
+            true,
+            2,
+            5,
+            0x00015A,
+            0x02,
+            DescriptorLoop::new(&[0x66, 0x04, 0x00, 0x0A, 0x00, 0x00]),
+            vec![UntPlatform::new(
+                CompatibilityDescriptor {
                     descriptors: vec![],
                 },
-                target_operational_pairs: vec![crate::tables::TargetOperationalLoop {
-                    target_descriptors: DescriptorLoop::new(target_desc),
-                    operational_descriptors: DescriptorLoop::new(op_desc),
-                }],
-            }],
-        };
+                vec![crate::tables::TargetOperationalLoop::new(
+                    DescriptorLoop::new(target_desc),
+                    DescriptorLoop::new(op_desc),
+                )],
+            )],
+        );
         let mut buf = vec![0u8; unt.serialized_len()];
         unt.serialize_into(&mut buf).unwrap();
         let re = UntSection::parse(&buf).unwrap();
@@ -564,32 +640,32 @@ mod tests {
         let o0: &[u8] = &[0x0A, 0x01, 0xBB];
         let t1: &[u8] = &[0x01, 0x02, 0xCC, 0xDD];
         let o1: &[u8] = &[];
-        let unt = UntSection {
-            action_type: UntActionType::SystemSoftwareUpdate,
-            oui_hash: 0x5B,
-            version_number: 15,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            oui: 0x00015A,
-            processing_order: 0x02,
-            common_descriptors: DescriptorLoop::new(&[]),
-            platforms: vec![UntPlatform {
-                compatibility_descriptor: CompatibilityDescriptor {
+        let unt = UntSection::new(
+            UntActionType::SystemSoftwareUpdate,
+            0x5B,
+            15,
+            true,
+            0,
+            0,
+            0x00015A,
+            0x02,
+            DescriptorLoop::new(&[]),
+            vec![UntPlatform::new(
+                CompatibilityDescriptor {
                     descriptors: vec![],
                 },
-                target_operational_pairs: vec![
-                    crate::tables::TargetOperationalLoop {
-                        target_descriptors: DescriptorLoop::new(t0),
-                        operational_descriptors: DescriptorLoop::new(o0),
-                    },
-                    crate::tables::TargetOperationalLoop {
-                        target_descriptors: DescriptorLoop::new(t1),
-                        operational_descriptors: DescriptorLoop::new(o1),
-                    },
+                vec![
+                    crate::tables::TargetOperationalLoop::new(
+                        DescriptorLoop::new(t0),
+                        DescriptorLoop::new(o0),
+                    ),
+                    crate::tables::TargetOperationalLoop::new(
+                        DescriptorLoop::new(t1),
+                        DescriptorLoop::new(o1),
+                    ),
                 ],
-            }],
-        };
+            )],
+        );
         let mut buf = vec![0u8; unt.serialized_len()];
         unt.serialize_into(&mut buf).unwrap();
         let re = UntSection::parse(&buf).unwrap();
@@ -615,18 +691,18 @@ mod tests {
             CompatibilityDescriptorEntry, DescriptorType, SpecifierType, SubDescriptor,
             SubDescriptorType,
         };
-        let unt = UntSection {
-            action_type: UntActionType::SystemSoftwareUpdate,
-            oui_hash: 0x5B,
-            version_number: 3,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            oui: 0x00015A,
-            processing_order: 0x00,
-            common_descriptors: DescriptorLoop::new(&[]),
-            platforms: vec![UntPlatform {
-                compatibility_descriptor: CompatibilityDescriptor {
+        let unt = UntSection::new(
+            UntActionType::SystemSoftwareUpdate,
+            0x5B,
+            3,
+            true,
+            0,
+            0,
+            0x00015A,
+            0x00,
+            DescriptorLoop::new(&[]),
+            vec![UntPlatform::new(
+                CompatibilityDescriptor {
                     descriptors: vec![CompatibilityDescriptorEntry {
                         descriptor_type: DescriptorType::SystemHardware,
                         specifier_type: SpecifierType::IeeeOui,
@@ -639,12 +715,12 @@ mod tests {
                         }],
                     }],
                 },
-                target_operational_pairs: vec![crate::tables::TargetOperationalLoop {
-                    target_descriptors: DescriptorLoop::new(&[]),
-                    operational_descriptors: DescriptorLoop::new(&[]),
-                }],
-            }],
-        };
+                vec![crate::tables::TargetOperationalLoop::new(
+                    DescriptorLoop::new(&[]),
+                    DescriptorLoop::new(&[]),
+                )],
+            )],
+        );
         let mut buf = vec![0u8; unt.serialized_len()];
         unt.serialize_into(&mut buf).unwrap();
         let re = UntSection::parse(&buf).unwrap();
@@ -660,18 +736,18 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_table_id() {
-        let unt = UntSection {
-            action_type: UntActionType::SystemSoftwareUpdate,
-            oui_hash: 0x5B,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            oui: 0x00015A,
-            processing_order: 0x00,
-            common_descriptors: DescriptorLoop::new(&[]),
-            platforms: Vec::new(),
-        };
+        let unt = UntSection::new(
+            UntActionType::SystemSoftwareUpdate,
+            0x5B,
+            0,
+            true,
+            0,
+            0,
+            0x00015A,
+            0x00,
+            DescriptorLoop::new(&[]),
+            Vec::new(),
+        );
         let mut buf = vec![0u8; unt.serialized_len()];
         unt.serialize_into(&mut buf).unwrap();
         buf[0] = 0x4A;
@@ -691,18 +767,18 @@ mod tests {
 
     #[test]
     fn serialize_rejects_small_output_buffer() {
-        let unt = UntSection {
-            action_type: UntActionType::SystemSoftwareUpdate,
-            oui_hash: 0x5B,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            oui: 0x00015A,
-            processing_order: 0x00,
-            common_descriptors: DescriptorLoop::new(&[]),
-            platforms: Vec::new(),
-        };
+        let unt = UntSection::new(
+            UntActionType::SystemSoftwareUpdate,
+            0x5B,
+            0,
+            true,
+            0,
+            0,
+            0x00015A,
+            0x00,
+            DescriptorLoop::new(&[]),
+            Vec::new(),
+        );
         let mut buf = vec![0u8; unt.serialized_len() - 1];
         assert!(matches!(
             unt.serialize_into(&mut buf).unwrap_err(),
@@ -731,18 +807,18 @@ mod tests {
     #[test]
     fn serialize_rejects_common_descriptors_exceeding_section_length() {
         let desc = vec![0xAAu8; 4081];
-        let unt = UntSection {
-            action_type: UntActionType::SystemSoftwareUpdate,
-            oui_hash: 0,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            oui: 0,
-            processing_order: 0,
-            common_descriptors: DescriptorLoop::new(&desc),
-            platforms: vec![],
-        };
+        let unt = UntSection::new(
+            UntActionType::SystemSoftwareUpdate,
+            0,
+            0,
+            true,
+            0,
+            0,
+            0,
+            0,
+            DescriptorLoop::new(&desc),
+            vec![],
+        );
         let mut buf = vec![0u8; unt.serialized_len()];
         assert!(matches!(
             unt.serialize_into(&mut buf).unwrap_err(),
@@ -753,18 +829,18 @@ mod tests {
     #[test]
     fn serialize_accepts_common_descriptors_at_section_length_boundary() {
         let desc = vec![0xAAu8; 4080];
-        let unt = UntSection {
-            action_type: UntActionType::SystemSoftwareUpdate,
-            oui_hash: 0,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            oui: 0,
-            processing_order: 0,
-            common_descriptors: DescriptorLoop::new(&desc),
-            platforms: vec![],
-        };
+        let unt = UntSection::new(
+            UntActionType::SystemSoftwareUpdate,
+            0,
+            0,
+            true,
+            0,
+            0,
+            0,
+            0,
+            DescriptorLoop::new(&desc),
+            vec![],
+        );
         let mut buf = vec![0u8; unt.serialized_len()];
         unt.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = UntSection::parse(&buf).expect("reparse");

@@ -16,7 +16,7 @@ fn ts_packet(pid: u16, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
     let header = TsHeader {
         tei: false,
         pusi: true,
-        pid,
+        pid: Pid::new(pid),
         scrambling: 0,
         has_adaptation: false,
         has_payload: true,

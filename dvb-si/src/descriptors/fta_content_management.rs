@@ -19,6 +19,12 @@ pub const BODY_LEN: usize = 1;
 
 const USER_DEFINED_MASK: u8 = 0b1000_0000;
 const RESERVED_MASK: u8 = 0b0111_0000;
+const RESERVED_SHIFT: u8 = 4;
+/// Spec default of `reserved_future_use`(3): all ones (EN 300 468 V1.12.1-V1.20.1
+/// Table 57; audit `dvb-si/docs/reserved-bits-edition-audit.md` §4 row 3 / §6.1:
+/// `user_defined`(1) was carved out of the old `reserved_future_use`(4) in V1.12.1,
+/// the remaining 3 bits stay reserved = 1).
+pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0b111;
 const DO_NOT_SCRAMBLE_MASK: u8 = 0b0000_1000;
 const CONTROL_REMOTE_ACCESS_MASK: u8 = 0b0000_0110;
 const CONTROL_REMOTE_ACCESS_SHIFT: u8 = 1;
@@ -91,6 +97,12 @@ broadcast_common::impl_spec_display!(ControlRemoteAccess, Reserved);
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct FtaContentManagementDescriptor {
+    /// `reserved_future_use`(3) after `user_defined` (3 bits, right-aligned).
+    /// Captured on parse and re-emitted verbatim;
+    /// [`FtaContentManagementDescriptor::new`] defaults to
+    /// [`RESERVED_FUTURE_USE_DEFAULT`]. (A pre-V1.12.1 all-ones sender reads as
+    /// `user_defined = 1`; that bit is typed, the round-trip stays byte-exact.)
+    pub reserved_future_use: u8,
     /// 1-bit user_defined flag.
     pub user_defined: bool,
     /// 1-bit do_not_scramble flag.
@@ -99,6 +111,25 @@ pub struct FtaContentManagementDescriptor {
     pub control_remote_access_over_internet: ControlRemoteAccess,
     /// 1-bit do_not_apply_revocation flag.
     pub do_not_apply_revocation: bool,
+}
+
+impl FtaContentManagementDescriptor {
+    /// Build a descriptor with the spec-default reserved bits (all ones).
+    #[must_use]
+    pub const fn new(
+        user_defined: bool,
+        do_not_scramble: bool,
+        control_remote_access_over_internet: ControlRemoteAccess,
+        do_not_apply_revocation: bool,
+    ) -> Self {
+        Self {
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
+            user_defined,
+            do_not_scramble,
+            control_remote_access_over_internet,
+            do_not_apply_revocation,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for FtaContentManagementDescriptor {
@@ -117,8 +148,8 @@ impl<'a> Parse<'a> for FtaContentManagementDescriptor {
             });
         }
         let flags = body[0];
-        // reserved_future_use (3 bits) ignored on parse (§5.1).
         Ok(Self {
+            reserved_future_use: (flags & RESERVED_MASK) >> RESERVED_SHIFT,
             user_defined: flags & USER_DEFINED_MASK != 0,
             do_not_scramble: flags & DO_NOT_SCRAMBLE_MASK != 0,
             control_remote_access_over_internet: ControlRemoteAccess::from_u8(
@@ -149,8 +180,8 @@ impl Serialize for FtaContentManagementDescriptor {
                 have: buf.len(),
             });
         }
-        // reserved_future_use 3 bits emitted as 1s (§5.1).
-        let mut flags = RESERVED_MASK;
+        // reserved_future_use(3) preserved from parse (default 111).
+        let mut flags = (self.reserved_future_use << RESERVED_SHIFT) & RESERVED_MASK;
         if self.user_defined {
             flags |= USER_DEFINED_MASK;
         }
@@ -191,11 +222,34 @@ mod tests {
         assert!(d.do_not_apply_revocation);
     }
 
+    /// Every flag-byte value (all 256) re-serializes byte-identically.
     #[test]
-    fn parse_ignores_reserved_bits() {
+    fn reserved_preserved_for_every_byte() {
+        for b in 0..=0xFFu8 {
+            let bytes = [TAG, 1, b];
+            let d = FtaContentManagementDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved_future_use, (b >> 4) & 0x07);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes);
+        }
+    }
+
+    #[test]
+    fn default_is_spec_value() {
+        let d =
+            FtaContentManagementDescriptor::new(false, false, ControlRemoteAccess::Enabled, false);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 1, 0x70]);
+    }
+
+    #[test]
+    fn parse_captures_reserved_bits() {
         // reserved bits all set, everything else zero: 0 111 0 00 0 = 0x70.
         let bytes = [TAG, 1, 0x70];
         let d = FtaContentManagementDescriptor::parse(&bytes).unwrap();
+        assert_eq!(d.reserved_future_use, 0b111);
         assert!(!d.user_defined);
         assert!(!d.do_not_scramble);
         assert_eq!(
@@ -231,13 +285,12 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = FtaContentManagementDescriptor {
-            user_defined: true,
-            do_not_scramble: true,
-            control_remote_access_over_internet:
-                ControlRemoteAccess::EnabledManagedDomainTimeLimited,
-            do_not_apply_revocation: true,
-        };
+        let d = FtaContentManagementDescriptor::new(
+            true,
+            true,
+            ControlRemoteAccess::EnabledManagedDomainTimeLimited,
+            true,
+        );
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         // Reserved 3 bits emitted as 1s: 1 111 1 10 1 = 0xFD.
@@ -247,12 +300,8 @@ mod tests {
 
     #[test]
     fn serialize_rejects_too_small_buffer() {
-        let d = FtaContentManagementDescriptor {
-            user_defined: false,
-            do_not_scramble: false,
-            control_remote_access_over_internet: ControlRemoteAccess::Enabled,
-            do_not_apply_revocation: false,
-        };
+        let d =
+            FtaContentManagementDescriptor::new(false, false, ControlRemoteAccess::Enabled, false);
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -262,12 +311,12 @@ mod tests {
 
     #[test]
     fn serialize_rejects_over_range_cra() {
-        let d = FtaContentManagementDescriptor {
-            user_defined: false,
-            do_not_scramble: false,
-            control_remote_access_over_internet: ControlRemoteAccess::Reserved(0b100), // 3 bits
-            do_not_apply_revocation: false,
-        };
+        let d = FtaContentManagementDescriptor::new(
+            false,
+            false,
+            ControlRemoteAccess::Reserved(0b100),
+            false,
+        );
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -278,12 +327,12 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_round_trip() {
-        let d = FtaContentManagementDescriptor {
-            user_defined: true,
-            do_not_scramble: false,
-            control_remote_access_over_internet: ControlRemoteAccess::EnabledManagedDomain,
-            do_not_apply_revocation: true,
-        };
+        let d = FtaContentManagementDescriptor::new(
+            true,
+            false,
+            ControlRemoteAccess::EnabledManagedDomain,
+            true,
+        );
         let json = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&json).unwrap();

@@ -19,6 +19,7 @@
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::ts_dup::{DuplicateVerdict, check_duplicate};
 
@@ -56,7 +57,7 @@ pub struct CcAnomalyCheck;
 impl Diagnostic for CcAnomalyCheck {
     fn run(&self, ts: &[u8], report: &mut Report) {
         let n_packets = ts.len() / TS_PACKET_SIZE;
-        let mut pid_states: BTreeMap<u16, CcState> = BTreeMap::new();
+        let mut pid_states: BTreeMap<Pid, CcState> = BTreeMap::new();
 
         for i in 0..n_packets {
             let offset = i * TS_PACKET_SIZE;
@@ -70,7 +71,7 @@ impl Diagnostic for CcAnomalyCheck {
             let pid = hdr.pid;
 
             // Skip null packets — CC is undefined (§2.4.3.3).
-            if pid == 0x1FFF {
+            if pid == Pid::new(0x1FFF) {
                 continue;
             }
 
@@ -122,7 +123,7 @@ impl Diagnostic for CcAnomalyCheck {
                 DuplicateVerdict::IllegalThirdRepeat => {
                     report.push(Finding::new(
                         Severity::Error,
-                        Location::new(i, u32::from(pid)),
+                        Location::at_pid(i, pid),
                         "cc-anomaly",
                         alloc::format!(
                             "PID 0x{pid:04X}: third consecutive repeat of CC={cc} \
@@ -136,7 +137,7 @@ impl Diagnostic for CcAnomalyCheck {
                     if cc != expected {
                         report.push(Finding::new(
                             Severity::Error,
-                            Location::new(i, u32::from(pid)),
+                            Location::at_pid(i, pid),
                             "cc-anomaly",
                             alloc::format!(
                                 "PID 0x{pid:04X}: expected CC={expected}, got CC={cc} \

@@ -238,11 +238,23 @@ impl Ac3ComponentType {
     }
 }
 
+/// Spec default of the 4-bit `reserved_flags` field: EN 300 468 Annex D
+/// (every edition V1.4.1-V1.20.1, and TS 102 366 V1.1.1/V1.2.1 A.3.3.2) says
+/// "should always be set to 0" — an explicit exception to the global
+/// "reserved = 1" rule (`dvb-si/docs/reserved-bits-edition-audit.md` §3.1).
+pub const RESERVED_FLAGS_DEFAULT: u8 = 0x0;
+const RESERVED_FLAGS_MASK: u8 = 0x0F;
+
 /// AC-3 Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct Ac3Descriptor<'a> {
+    /// `reserved_flags` (4 bits, right-aligned). Captured on parse and
+    /// re-emitted verbatim (15 of 62 real descriptors carry `0b1111`);
+    /// [`Ac3Descriptor::new`] defaults to [`RESERVED_FLAGS_DEFAULT`] (0).
+    pub reserved_flags: u8,
     /// AC-3 component_type (layout per Annex D).
     pub component_type: Option<u8>,
     /// Bit stream identification.
@@ -253,6 +265,28 @@ pub struct Ac3Descriptor<'a> {
     pub asvc: Option<u8>,
     /// Raw trailing additional_info bytes.
     pub additional_info: &'a [u8],
+}
+
+impl Ac3Descriptor<'_> {
+    /// Build a descriptor with every optional field absent, no
+    /// `additional_info` and the spec-default `reserved_flags` (0).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            reserved_flags: RESERVED_FLAGS_DEFAULT,
+            component_type: None,
+            bsid: None,
+            mainid: None,
+            asvc: None,
+            additional_info: &[],
+        }
+    }
+}
+
+impl Default for Ac3Descriptor<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl Ac3Descriptor<'_> {
@@ -303,6 +337,7 @@ impl<'a> Parse<'a> for Ac3Descriptor<'a> {
         let asvc = read_one(flags & FLAG_ASVC != 0)?;
         let additional_info = &body[pos..];
         Ok(Self {
+            reserved_flags: flags & RESERVED_FLAGS_MASK,
             component_type,
             bsid,
             mainid,
@@ -346,8 +381,8 @@ impl Serialize for Ac3Descriptor<'_> {
         if self.asvc.is_some() {
             flags |= FLAG_ASVC;
         }
-        // The low 4 bits are reserved_flags and must be set to 1.
-        buf[2] = flags | 0x0F;
+        // reserved_flags: preserved from parse, spec default 0 when constructed.
+        buf[2] = flags | (self.reserved_flags & RESERVED_FLAGS_MASK);
         let mut pos = 3;
         for b in [self.component_type, self.bsid, self.mainid, self.asvc]
             .into_iter()
@@ -461,13 +496,7 @@ mod tests {
 
     #[test]
     fn decode_component_type_none() {
-        let d = Ac3Descriptor {
-            component_type: None,
-            bsid: None,
-            mainid: None,
-            asvc: None,
-            additional_info: &[],
-        };
+        let d = Ac3Descriptor::new();
         assert!(d.decoded_component_type().is_none());
     }
 
@@ -535,13 +564,10 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = Ac3Descriptor {
-            component_type: Some(0x40),
-            bsid: Some(8),
-            mainid: None,
-            asvc: None,
-            additional_info: &[0xFE, 0xED],
-        };
+        let mut d = Ac3Descriptor::new();
+        d.component_type = Some(0x40);
+        d.bsid = Some(8);
+        d.additional_info = &[0xFE, 0xED];
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(Ac3Descriptor::parse(&buf).unwrap(), d);
@@ -554,5 +580,31 @@ mod tests {
             Ac3Descriptor::parse(&bytes).unwrap_err(),
             Error::InvalidDescriptor { .. }
         ));
+    }
+
+    /// Every `reserved_flags` value a real sender may write (0000 = spec,
+    /// 1111 = global-rule analogy) re-serializes byte-identically.
+    #[test]
+    fn reserved_flags_preserved_for_every_value() {
+        for r in 0u8..=0x0F {
+            let bytes = [TAG, 3, FLAG_COMPONENT_TYPE | r, 0x42, 0xAB];
+            let d = Ac3Descriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved_flags, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "reserved_flags={r:#x}");
+        }
+    }
+
+    /// A hand-built descriptor takes the spec value: all editions say 0.
+    #[test]
+    fn default_reserved_flags_is_zero() {
+        let d = Ac3Descriptor {
+            component_type: Some(0x42),
+            ..Ac3Descriptor::default()
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 2, FLAG_COMPONENT_TYPE, 0x42]);
     }
 }

@@ -3,6 +3,32 @@
 //! Each `*Section` type parses and serializes one wire section. Use
 //! [`crate::collect`] to assemble complete logical tables that span multiple
 //! sections.
+//!
+//! # Reserved-bit policy (parse tolerant, serialize re-emits)
+//!
+//! Every `reserved` / `reserved_future_use` bit of a section header and body
+//! is captured into a typed field on parse and written back unchanged on
+//! serialize, so a real sender's section re-serializes byte-identically (CRC is
+//! recomputed). Constructed values (`new()` / `Default`) carry the spec fill
+//! value of the edition the crate is transcribed from
+//! (`dvb-si/docs/reserved-bits-edition-audit.md` is the authority):
+//!
+//! * the bit after `section_syntax_indicator` is **`private_indicator`** in
+//!   ITU-T H.222.0 (all nine editions: "a 1-bit user definable flag that shall
+//!   not be specified by ITU-T | ISO/IEC in the future") and `reserved_future_use`
+//!   (=`1`) in EN 300 468. It is modelled as [`SectionBits::private_indicator`];
+//!   PSI sections ([`SectionBits::psi`]) default to `0` (the H.222.0 literal),
+//!   EN 300 468 tables ([`SectionBits::dvb`]) to `1`;
+//! * the `reserved(2)` after it and the `reserved(2)` in front of
+//!   `version_number` are [`SectionBits::reserved_b1`] / [`SectionBits::reserved_b5`]
+//!   (default `0b11`);
+//! * body `reserved(3)` before a PID, `reserved(4)` before a descriptor-loop
+//!   length and each table's own `reserved_future_use` runs are typed
+//!   `reserved*` fields on the entry/section they belong to (default all ones).
+//!
+//! The reserved fields never take part in serde output (serialize-only,
+//! decoded view) and every changed public struct is `#[non_exhaustive]` with a
+//! `new(..)` constructor so future fields stay non-breaking.
 
 /// Running status of an event or service — EN 300 468 Table 6.
 ///
@@ -133,6 +159,7 @@ mod running_status_tests {
 /// Layout: `section_syntax_indicator(1) | '0'(1) | reserved(2)`.
 /// Per ISO/IEC 13818-1 §2.4.4.10, the second bit is a spec-mandated
 /// zero in PSI tables (PAT, PMT, CAT, TSDT, DSM-CC).
+#[cfg(test)]
 pub(crate) const SECTION_B1_FLAGS_PSI: u8 = 0xB0;
 
 /// Byte 1 flags nibble for EN 300 468 (DVB) long-form sections.
@@ -140,19 +167,136 @@ pub(crate) const SECTION_B1_FLAGS_PSI: u8 = 0xB0;
 /// Layout: `section_syntax_indicator(1) | reserved_future_use(1) | reserved(2)`.
 /// Per ETSI EN 300 468 §5.1.1, the top nibble must be `F` — all four
 /// bits set (SSI=1, rfu=1, reserved=11).
+#[cfg(test)]
 pub(crate) const SECTION_B1_FLAGS_DVB: u8 = 0xF0;
 
 /// `section_syntax_indicator` bit in long-form section byte 1.
 pub(crate) const SECTION_B1_SSI: u8 = 0x80;
 
-/// Reserved bits `[5:4]` in long-form section byte 1, set to `11`.
-pub(crate) const SECTION_B1_RESERVED_HI: u8 = 0x30;
-
-/// Byte 1 flags nibble for short-form sections (no extension header, no CRC).
+/// The non-length header bits of a section that are not decoded fields:
+/// `private_indicator` / `reserved_future_use` (byte 1 bit 6), `reserved(2)`
+/// (byte 1 bits `[5:4]`) and, for long-form sections, the `reserved(2)` in
+/// front of `version_number` (byte 5 bits `[7:6]`).
 ///
-/// Layout: `section_syntax_indicator(0) | reserved_future_use(1) | reserved(11)`.
-/// Top nibble `0b0111` = `0x70`. Used by RST, ST, DIT, TDT, TOT.
-pub(crate) const SECTION_B1_FLAGS_SHORT: u8 = 0x70;
+/// See the module docs for the policy and
+/// `dvb-si/docs/reserved-bits-edition-audit.md` §3.6 for the per-edition
+/// evidence.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub struct SectionBits {
+    /// Byte 1 bit 6: `private_indicator` (ISO/IEC 13818-1 §2.4.4.10, user
+    /// definable) = `reserved_future_use` (ETSI EN 300 468 §5.1.1).
+    pub private_indicator: bool,
+    /// Byte 1 bits `[5:4]`: `reserved(2)`.
+    pub reserved_b1: u8,
+    /// Byte 5 bits `[7:6]`: `reserved(2)` before `version_number` (long-form
+    /// sections only; unused by short-form sections).
+    pub reserved_b5: u8,
+}
+
+/// Value of an all-ones 2-bit reserved field.
+pub(crate) const RESERVED_2: u8 = 0x03;
+
+impl SectionBits {
+    /// MPEG-2 PSI sections (PAT/PMT/CAT/TSDT, ISO/IEC 13818-1 §2.4.4): the
+    /// bit after `section_syntax_indicator` is the literal `'0'`.
+    #[must_use]
+    pub const fn psi() -> Self {
+        Self {
+            private_indicator: false,
+            reserved_b1: RESERVED_2,
+            reserved_b5: RESERVED_2,
+        }
+    }
+
+    /// ETSI EN 300 468 (DVB) sections: `reserved_future_use` = `1` after
+    /// `section_syntax_indicator` (§5.1.1).
+    #[must_use]
+    pub const fn dvb() -> Self {
+        Self {
+            private_indicator: true,
+            reserved_b1: RESERVED_2,
+            reserved_b5: RESERVED_2,
+        }
+    }
+
+    /// Read the bits from byte 1 (and byte 5 for long-form sections; pass
+    /// `None` for short-form sections, which take the all-ones fill).
+    #[must_use]
+    pub(crate) fn parse(b1: u8, b5: Option<u8>) -> Self {
+        Self {
+            private_indicator: b1 & B1_PRIVATE_INDICATOR != 0,
+            reserved_b1: (b1 >> B1_RESERVED_SHIFT) & RESERVED_2,
+            reserved_b5: b5.map_or(RESERVED_2, |b| b >> B5_RESERVED_SHIFT),
+        }
+    }
+
+    /// Byte 1 flags (everything above `section_length[11:8]`) given the
+    /// `section_syntax_indicator`.
+    #[must_use]
+    pub(crate) fn b1(&self, section_syntax_indicator: bool) -> u8 {
+        b1_of(
+            section_syntax_indicator,
+            self.private_indicator,
+            self.reserved_b1,
+        )
+    }
+
+    /// Byte 5: `reserved(2) | version_number(5) | current_next_indicator(1)`.
+    #[must_use]
+    pub(crate) fn b5(&self, version_number: u8, current_next_indicator: bool) -> u8 {
+        b5_of(self.reserved_b5, version_number, current_next_indicator)
+    }
+}
+
+/// Assemble section byte 1 (everything above `section_length[11:8]`) from its
+/// parts, for tables that keep `private_indicator` / `reserved_b1` as their
+/// own fields.
+#[must_use]
+pub(crate) fn b1_of(
+    section_syntax_indicator: bool,
+    private_indicator: bool,
+    reserved_b1: u8,
+) -> u8 {
+    (u8::from(section_syntax_indicator) * SECTION_B1_SSI)
+        | (u8::from(private_indicator) * B1_PRIVATE_INDICATOR)
+        | ((reserved_b1 & RESERVED_2) << B1_RESERVED_SHIFT)
+}
+
+/// Assemble the long-form byte 5 with a caller-supplied `reserved(2)`.
+#[must_use]
+pub(crate) fn b5_of(reserved_b5: u8, version_number: u8, current_next_indicator: bool) -> u8 {
+    ((reserved_b5 & RESERVED_2) << B5_RESERVED_SHIFT)
+        | ((version_number & B5_VERSION_MASK) << 1)
+        | u8::from(current_next_indicator)
+}
+
+/// The `reserved(2)` bits in section byte 1 (`[5:4]`).
+#[must_use]
+pub(crate) fn b1_reserved_of(b1: u8) -> u8 {
+    (b1 >> B1_RESERVED_SHIFT) & RESERVED_2
+}
+
+/// The `reserved(2)` bits in the long-form version byte (`[7:6]`).
+#[must_use]
+pub(crate) fn b5_reserved_of(b5: u8) -> u8 {
+    b5 >> B5_RESERVED_SHIFT
+}
+
+impl Default for SectionBits {
+    /// The EN 300 468 fill ([`SectionBits::dvb`]); PSI tables default to
+    /// [`SectionBits::psi`] in their own `Default`.
+    fn default() -> Self {
+        Self::dvb()
+    }
+}
+
+/// `private_indicator` mask in section byte 1 (bit 6).
+const B1_PRIVATE_INDICATOR: u8 = 0x40;
+/// Shift of the `reserved(2)` in section byte 1 (bits `[5:4]`).
+const B1_RESERVED_SHIFT: u32 = 4;
+/// Shift of the `reserved(2)` in the version byte (bits `[7:6]`).
+const B5_RESERVED_SHIFT: u32 = 6;
 
 /// Validate a section_length field and compute the total encoded length.
 ///
@@ -210,10 +354,6 @@ pub(crate) fn write_section_length(buf: &mut [u8], body_len: usize) -> crate::Re
 /// `section_length`.
 pub(crate) const SECTION_LENGTH_HI_MASK: u8 = 0x0F;
 
-/// `reserved(2) = '11'` fill in the extension-header flags byte (byte 5):
-/// bits `[7:6]` (ISO/IEC 13818-1 §2.4.4.10, ETSI EN 300 468 §5.1.1).
-pub(crate) const B5_RESERVED_HI: u8 = 0xC0;
-
 /// `version_number` field mask in the extension-header flags byte (byte 5):
 /// bits `[5:1]`.
 pub(crate) const B5_VERSION_MASK: u8 = 0x1F;
@@ -224,12 +364,6 @@ pub(crate) const B5_CNI: u8 = 0x01;
 
 /// `pid(13)` field mask inside a PID's first wire byte (the 5 low bits).
 pub(crate) const PID_LO_MASK: u8 = 0x1F;
-
-/// The three `reserved = '111'` bits that precede a 13-bit PID high byte
-/// (ISO/IEC 13818-1 §2.4.4.8/§2.4.4.9: PAT `reserved`, PMT `pcr_pid`, ES
-/// `elementary_pid`; ETSI EN 300 468 §5.3 CAT-style `ca_pid` uses the same
-/// form): bits `[7:5]` of the PID's first wire byte.
-pub(crate) const PID_HI_RESERVED_BITS: u8 = 0xE0;
 
 /// The four `reserved = '1111'` bits that precede a 12-bit descriptor-loop
 /// length (ISO/IEC 13818-1 §2.4.4.9, ETSI EN 300 468 §5.1): bits `[7:4]` of
@@ -278,8 +412,9 @@ pub(crate) fn status_byte(running_status: u8, free_ca_mode: bool, dll_hi: u8) ->
 /// The 5-bit version is masked defensively so a constructed value wider than
 /// the field can never bleed into the reserved bits.
 #[must_use]
+#[cfg(test)]
 pub(crate) fn version_byte(version_number: u8, current_next_indicator: bool) -> u8 {
-    B5_RESERVED_HI | ((version_number & B5_VERSION_MASK) << 1) | u8::from(current_next_indicator)
+    b5_of(RESERVED_2, version_number, current_next_indicator)
 }
 
 /// Decode the 12-bit `section_length` from bytes 1–2 of a section header.
@@ -308,9 +443,48 @@ pub(crate) fn pid_of(hi: u8, lo: u8) -> u16 {
 }
 
 /// Write a 13-bit PID carrying the three `reserved='111'` bits.
+#[cfg(test)]
 pub(crate) fn write_pid(buf: &mut [u8], pid: u16) {
-    buf[0] = PID_HI_RESERVED_BITS | ((pid >> 8) as u8 & PID_LO_MASK);
+    write_pid_r(buf, pid, RESERVED_3);
+}
+
+/// All-ones `reserved(3)` fill (ISO/IEC 13818-1 §2.4.4.8 etc.).
+pub const RESERVED_3: u8 = 0x07;
+/// All-ones `reserved(4)` / `reserved_future_use(4)` fill.
+pub const RESERVED_4: u8 = 0x0F;
+/// All-ones `reserved_future_use(5)` fill (RST entry, MPE-FEC section).
+pub(crate) const RESERVED_5: u8 = 0x1F;
+/// All-ones `reserved_future_use(6)` fill (SDT service entry).
+pub(crate) const RESERVED_6: u8 = 0x3F;
+/// Shift of the `reserved(3)` above a 13-bit PID.
+const PID_RESERVED_SHIFT: u32 = 5;
+/// Shift of the `reserved(4)` above a 12-bit length.
+const LEN_RESERVED_SHIFT: u32 = 4;
+
+/// The `reserved(3)` bits above a 13-bit PID's first wire byte.
+#[must_use]
+pub(crate) fn pid_reserved_of(hi: u8) -> u8 {
+    hi >> PID_RESERVED_SHIFT
+}
+
+/// Write a 13-bit PID with a caller-supplied `reserved(3)`.
+pub(crate) fn write_pid_r(buf: &mut [u8], pid: u16, reserved: u8) {
+    buf[0] = ((reserved & RESERVED_3) << PID_RESERVED_SHIFT) | ((pid >> 8) as u8 & PID_LO_MASK);
     buf[1] = (pid & 0xFF) as u8;
+}
+
+/// The `reserved(4)` bits above a 12-bit length's first wire byte.
+#[must_use]
+pub(crate) fn len_reserved_of(hi: u8) -> u8 {
+    hi >> LEN_RESERVED_SHIFT
+}
+
+/// Write a checked 12-bit length with a caller-supplied `reserved(4)`.
+pub(crate) fn write_desc_loop_len_r(buf: &mut [u8], len: usize, reserved: u8) -> crate::Result<()> {
+    let fitted = broadcast_common::len::fit_bits(len as u64, 12, "descriptors_length")?;
+    buf[0] = ((reserved & RESERVED_4) << LEN_RESERVED_SHIFT) | ((fitted >> 8) as u8);
+    buf[1] = fitted as u8;
+    Ok(())
 }
 
 /// Decode a 12-bit descriptor-loop length from its two wire bytes (the top
@@ -320,47 +494,9 @@ pub(crate) fn desc_loop_len_of(hi: u8, lo: u8) -> usize {
     (((hi & !DESC_LOOP_LEN_HI_RESERVED_BITS) as usize) << 8) | usize::from(lo)
 }
 
-/// Write a 12-bit descriptor-loop length carrying the four
-/// `reserved='1111'` bits; errors instead of silently wrapping (cf. #1129).
-pub(crate) fn write_desc_loop_len(buf: &mut [u8], len: usize) -> crate::Result<()> {
-    let fitted = broadcast_common::len::fit_bits(len as u64, 12, "descriptors_length")?;
-    buf[0] = DESC_LOOP_LEN_HI_RESERVED_BITS | ((fitted >> 8) as u8);
-    buf[1] = fitted as u8;
-    Ok(())
-}
-
-/// Position of the `private_indicator(1)` bit within byte 1 of a section
-/// whose flags byte is built from typed fields (private-section forms,
-/// ISO/IEC 13818-1 §2.4.4.10 / ETSI EN 301 192 §8.4): bit `[6]`. Only the
-/// shift is named — the bit is always written through
-/// [`private_section_b1`], so a standalone mask constant would be dead code.
-pub(crate) const B1_PRIVATE_INDICATOR_SHIFT: u32 = 6;
-
-/// The two `reserved = '11'` bits that follow `private_indicator` in byte 1
-/// of a private-section flags byte (ISO/IEC 13818-1 §2.4.4.10): bits
-/// `[5:4]`.
-pub(crate) const B1_PRIVATE_RESERVED: u8 = 0x30;
-
-/// The five `reserved_future_use = '11111'` bits that precede a
-/// `running_status(3)` field (ETSI EN 300 468 §5.4 RST entry): bits `[7:3]`.
-pub(crate) const RESERVED_FUTURE_USE_5: u8 = 0xF8;
-
 /// Mask of the low nibble of a byte: a sub-byte field's width when the byte
 /// also carries reserved bits above it (r02-W16).
 pub(crate) const LOW_NIBBLE_MASK: u8 = 0x0F;
-
-/// Assemble byte 1 of a section that carries a `private_indicator` flag:
-/// `section_syntax_indicator(1) | private_indicator(1) | reserved(2)='11' |
-/// section_length[11:8]` (ISO/IEC 13818-1 §2.4.4.10 / ETSI EN 301 192
-/// §8.4.4). `length_hi` is masked defensively so a wider value cannot bleed
-/// into the reserved bits.
-#[must_use]
-pub(crate) fn private_section_b1(private_indicator: bool, length_hi: u8) -> u8 {
-    SECTION_B1_SSI
-        | (u8::from(private_indicator) << B1_PRIVATE_INDICATOR_SHIFT)
-        | B1_PRIVATE_RESERVED
-        | (length_hi & LOW_NIBBLE_MASK)
-}
 
 /// Push the two `SECTION_B1_FLAGS_* | section_length` header bytes of a
 /// section; test/fixture helper counterpart of [`write_section_length`].
@@ -372,7 +508,7 @@ pub(crate) fn push_section_header(v: &mut Vec<u8>, flags: u8, len: usize) {
 
 /// Push the two `reserved(4) | descriptors_loop_length(12)` bytes of a
 /// descriptor loop length; test/fixture helper counterpart of
-/// [`write_desc_loop_len`].
+/// [`write_desc_loop_len_r`].
 #[cfg(test)]
 pub(crate) fn push_desc_loop_len(v: &mut Vec<u8>, len: usize) {
     v.push(DESC_LOOP_LEN_HI_RESERVED_BITS | ((len >> 8) as u8 & SECTION_LENGTH_HI_MASK));

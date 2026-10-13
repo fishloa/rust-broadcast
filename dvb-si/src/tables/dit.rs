@@ -19,9 +19,36 @@ const BODY_LEN: usize = 1;
 /// Discontinuity Information Table (§7.1.2, Table 163).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct DitSection {
     /// When set, a discontinuity in the transport stream occurs at this point.
     pub transition_flag: bool,
+    /// `reserved_future_use(7)` after `transition_flag` (`1111111`);
+    /// preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: u8,
+    /// Header bit fields: `reserved_future_use` and `reserved(2)` of byte 1
+    /// (default [`SectionBits::dvb`](super::SectionBits::dvb)); `reserved_b5`
+    /// is unused (short-form section).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+}
+
+/// All-ones `reserved_future_use(7)` after `transition_flag`.
+const RESERVED_FUTURE_USE_7: u8 = 0x7F;
+/// `transition_flag` mask in the body byte (bit 7).
+const TRANSITION_FLAG: u8 = 0x80;
+
+impl DitSection {
+    /// Construct a DIT with the spec `reserved` fill.
+    #[must_use]
+    pub const fn new(transition_flag: bool) -> Self {
+        Self {
+            transition_flag,
+            reserved_future_use: RESERVED_FUTURE_USE_7,
+            bits: super::SectionBits::dvb(),
+        }
+    }
 }
 
 impl<'a> Parse<'a> for DitSection {
@@ -51,8 +78,12 @@ impl<'a> Parse<'a> for DitSection {
             });
         }
         // transition_flag is the top bit of the body byte; rest is reserved.
-        let transition_flag = bytes[3] & 0x80 != 0;
-        Ok(DitSection { transition_flag })
+        let transition_flag = bytes[3] & TRANSITION_FLAG != 0;
+        Ok(DitSection {
+            transition_flag,
+            reserved_future_use: bytes[3] & RESERVED_FUTURE_USE_7,
+            bits: super::SectionBits::parse(bytes[1], None),
+        })
     }
 }
 
@@ -74,10 +105,11 @@ impl Serialize for DitSection {
         buf[0] = TABLE_ID;
         // section_syntax_indicator=0 (short form), reserved_future_use=1,
         // reserved=11, section_length high nibble.
-        buf[1] = super::SECTION_B1_FLAGS_SHORT;
+        buf[1] = self.bits.b1(false);
         super::write_section_length(buf, BODY_LEN)?;
         // transition_flag in bit 7; remaining 7 bits reserved (set to 1).
-        buf[3] = (u8::from(self.transition_flag) << 7) | 0x7F;
+        buf[3] = (u8::from(self.transition_flag) * TRANSITION_FLAG)
+            | (self.reserved_future_use & RESERVED_FUTURE_USE_7);
         Ok(len)
     }
 }
@@ -134,9 +166,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_set() {
-        let dit = DitSection {
-            transition_flag: true,
-        };
+        let dit = DitSection::new(true);
         let mut buf = vec![0u8; dit.serialized_len()];
         dit.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [TABLE_ID, 0x70, 0x01, 0xFF]);
@@ -145,9 +175,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_clear() {
-        let dit = DitSection {
-            transition_flag: false,
-        };
+        let dit = DitSection::new(false);
         let mut buf = vec![0u8; dit.serialized_len()];
         dit.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [TABLE_ID, 0x70, 0x01, 0x7F]);
@@ -156,9 +184,7 @@ mod tests {
 
     #[test]
     fn serialize_into_too_small_buffer() {
-        let dit = DitSection {
-            transition_flag: false,
-        };
+        let dit = DitSection::new(false);
         let mut buf = [0u8; 3];
         assert!(matches!(
             dit.serialize_into(&mut buf).unwrap_err(),
@@ -168,22 +194,14 @@ mod tests {
 
     #[test]
     fn serialized_len_is_four() {
-        assert_eq!(
-            DitSection {
-                transition_flag: false
-            }
-            .serialized_len(),
-            4
-        );
+        assert_eq!(DitSection::new(false).serialized_len(), 4);
     }
 
     #[cfg(feature = "serde")]
     #[test]
     fn serde_json_serializes_fields() {
         // Serialize-only: assert the emitted JSON carries the field.
-        let dit = DitSection {
-            transition_flag: true,
-        };
+        let dit = DitSection::new(true);
         let v = serde_json::to_value(dit).unwrap();
         assert_eq!(v["transition_flag"], true);
     }

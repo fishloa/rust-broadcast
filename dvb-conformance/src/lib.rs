@@ -69,6 +69,7 @@ use broadcast_common::Parse;
 use dvb_si::tables::eit::EitSection;
 use dvb_si::tables::pat::{PatSection, TABLE_ID as PAT_TABLE_ID};
 use dvb_si::tables::pmt::PmtSection;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::section::Section;
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
 
@@ -515,7 +516,7 @@ pub struct ConformanceEvent {
     /// Priority tier of the indicator.
     pub priority: Priority,
     /// PID the error concerns, when applicable.
-    pub pid: Option<u16>,
+    pub pid: Option<Pid>,
     /// Caller timestamp of the packet that raised it.
     pub at: Duration,
     /// Human-readable specifics (e.g. "expected cc=5, got 7").
@@ -954,7 +955,7 @@ impl ConformanceMonitor {
             Err(_) => return &self.events,
         };
         let header = &packet.header;
-        let pid = header.pid;
+        let pid = header.pid.value();
 
         // ── 2.1 Transport_error (Table 5.0b indicator 2.1) ──────────────
         if header.tei {
@@ -1180,7 +1181,7 @@ impl ConformanceMonitor {
         let event = ConformanceEvent {
             indicator,
             priority: indicator.priority(),
-            pid,
+            pid: pid.map(Pid::new),
             at,
             detail: detail.into(),
         };
@@ -2257,7 +2258,7 @@ impl ConformanceMonitor {
     /// actual transport rate. The monitor documents this: the caller is
     /// responsible for supplying realistic timestamps.
     fn process_tstd(&mut self, header: &mpeg_ts::ts::TsHeader, ts_packet: &[u8], t: Duration) {
-        let pid = header.pid;
+        let pid = header.pid.value();
 
         // Periodic TBsys drain and empty-interval check. TBsys feeds at
         // section-completion, but we must drain it on every packet to

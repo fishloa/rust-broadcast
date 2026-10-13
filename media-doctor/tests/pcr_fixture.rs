@@ -110,7 +110,7 @@ fn pcr_stats(ts: &[u8]) -> Vec<(u16, PcrStats)> {
         };
         let Some(pcr) = af.pcr else { continue };
         per_pid
-            .entry(pkt.header.pid)
+            .entry(pkt.header.pid.value())
             .or_default()
             .push((pcr.as_27mhz(), af.discontinuity_indicator));
     }

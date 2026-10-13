@@ -88,27 +88,18 @@ fn st_serializes_to_valid_json() {
 
 #[test]
 fn pat_with_multiple_entries_serializes() {
-    let p = PatSection {
-        transport_stream_id: 0x1234,
-        version_number: 5,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        entries: vec![
-            PatEntry {
-                program_number: 0,
-                pid: 0x10,
-            },
-            PatEntry {
-                program_number: 1,
-                pid: 0x100,
-            },
-            PatEntry {
-                program_number: 2,
-                pid: 0x200,
-            },
+    let p = PatSection::new(
+        0x1234,
+        5,
+        true,
+        0,
+        0,
+        vec![
+            PatEntry::new(0, 0x10),
+            PatEntry::new(1, 0x100),
+            PatEntry::new(2, 0x200),
         ],
-    };
+    );
     let v = serde_json::to_value(&p).expect("serialize");
     assert_eq!(v["transport_stream_id"], 0x1234);
     assert_eq!(v["entries"].as_array().unwrap().len(), 3);
@@ -134,11 +125,11 @@ fn pmt_serializes_to_valid_json() {
         0,
         0x64,
         DescriptorLoop::new(&[]),
-        vec![PmtStream {
-            stream_type: StreamType::Mpeg2Video,
-            elementary_pid: 0xC8,
-            es_info: DescriptorLoop::new(&[]),
-        }],
+        vec![PmtStream::new(
+            StreamType::Mpeg2Video,
+            0xC8,
+            DescriptorLoop::new(&[]),
+        )],
     );
     let j = serde_json::to_string(&pmt).expect("serialize PMT");
     assert_valid_json_with_keys(&j, &["program_number", "pcr_pid", "streams"]);
@@ -146,23 +137,23 @@ fn pmt_serializes_to_valid_json() {
 
 #[test]
 fn sdt_serializes_to_valid_json() {
-    let sdt = SdtSection {
-        kind: SdtKind::Actual,
-        transport_stream_id: 0x1234,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        original_network_id: 0x0020,
-        services: vec![SdtService {
-            service_id: 1,
-            eit_schedule_flag: false,
-            eit_present_following_flag: true,
-            running_status: RunningStatus::Running,
-            free_ca_mode: false,
-            descriptors: DescriptorLoop::new(&[]),
-        }],
-    };
+    let sdt = SdtSection::new(
+        SdtKind::Actual,
+        0x1234,
+        0,
+        true,
+        0,
+        0,
+        0x0020,
+        vec![SdtService::new(
+            1,
+            false,
+            true,
+            RunningStatus::Running,
+            false,
+            DescriptorLoop::new(&[]),
+        )],
+    );
     let j = serde_json::to_string(&sdt).expect("serialize SDT");
     assert_valid_json_with_keys(&j, &["kind", "transport_stream_id", "services"]);
 }
@@ -177,23 +168,23 @@ fn sdt_service_descriptor_loop_serializes_decoded_name() {
     let raw_loop: &[u8] = &[
         0x48, 0x09, 0x01, 0x03, b'B', b'B', b'C', 0x03, b'O', b'N', b'E',
     ];
-    let sdt = SdtSection {
-        kind: SdtKind::Actual,
-        transport_stream_id: 0x1234,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        original_network_id: 0x0020,
-        services: vec![SdtService {
-            service_id: 1,
-            eit_schedule_flag: false,
-            eit_present_following_flag: true,
-            running_status: RunningStatus::Running,
-            free_ca_mode: false,
-            descriptors: DescriptorLoop::new(raw_loop),
-        }],
-    };
+    let sdt = SdtSection::new(
+        SdtKind::Actual,
+        0x1234,
+        0,
+        true,
+        0,
+        0,
+        0x0020,
+        vec![SdtService::new(
+            1,
+            false,
+            true,
+            RunningStatus::Running,
+            false,
+            DescriptorLoop::new(raw_loop),
+        )],
+    );
     let v = serde_json::to_value(&sdt).expect("serialize SDT");
     assert_eq!(
         v["services"][0]["descriptors"][0]["service"]["service_name"],
@@ -207,19 +198,19 @@ fn sdt_service_descriptor_loop_serializes_decoded_name() {
 
 #[test]
 fn eit_serializes_to_valid_json() {
-    let eit = EitSection {
-        kind: EitKind::PresentFollowingActual,
-        table_id: 0x4E,
-        service_id: 0x0001,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        transport_stream_id: 0x1234,
-        original_network_id: 0x0020,
-        segment_last_section_number: 0,
-        last_table_id: 0x4E,
-        events: vec![EitEvent::new(
+    let eit = EitSection::new(
+        EitKind::PresentFollowingActual,
+        0x4E,
+        0x0001,
+        0,
+        true,
+        0,
+        0,
+        0x1234,
+        0x0020,
+        0,
+        0x4E,
+        vec![EitEvent::new(
             0x0001,
             [0xDA, 0x06, 0x12, 0x34, 0x56],
             [0x00, 0x00, 0x10],
@@ -227,27 +218,27 @@ fn eit_serializes_to_valid_json() {
             false,
             DescriptorLoop::new(&[]),
         )],
-    };
+    );
     let j = serde_json::to_string(&eit).expect("serialize EIT");
     assert_valid_json_with_keys(&j, &["kind", "service_id", "events"]);
 }
 
 #[test]
 fn nit_serializes_to_valid_json() {
-    let nit = NitSection {
-        kind: NitKind::Actual,
-        network_id: 0x0020,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        network_descriptors: DescriptorLoop::new(&[]),
-        transport_streams: vec![NitTransportStream {
-            transport_stream_id: 0x1234,
-            original_network_id: 0x0020,
-            descriptors: DescriptorLoop::new(&[]),
-        }],
-    };
+    let nit = NitSection::new(
+        NitKind::Actual,
+        0x0020,
+        0,
+        true,
+        0,
+        0,
+        DescriptorLoop::new(&[]),
+        vec![NitTransportStream::new(
+            0x1234,
+            0x0020,
+            DescriptorLoop::new(&[]),
+        )],
+    );
     let j = serde_json::to_string(&nit).expect("serialize NIT");
     assert_valid_json_with_keys(&j, &["kind", "network_id", "transport_streams"]);
 }
@@ -261,23 +252,23 @@ fn tot_serializes_to_valid_json() {
 
 #[test]
 fn ait_serializes_to_valid_json() {
-    let ait = AitSection {
-        application_type: ApplicationType::HbbTv,
-        version_number: 0,
-        current_next_indicator: true,
-        test_application_flag: false,
-        section_number: 0,
-        last_section_number: 0,
-        common_descriptors: DescriptorLoop::new(&[]),
-        applications: vec![AitApplication {
-            identifier: ApplicationIdentifier {
+    let ait = AitSection::new(
+        ApplicationType::HbbTv,
+        false,
+        0,
+        true,
+        0,
+        0,
+        DescriptorLoop::new(&[]),
+        vec![AitApplication::new(
+            ApplicationIdentifier {
                 organisation_id: 0x0001_0001,
                 application_id: 0x0001,
             },
-            control_code: ControlCode::Autostart,
-            descriptors: DescriptorLoop::new(&[]),
-        }],
-    };
+            ControlCode::Autostart,
+            DescriptorLoop::new(&[]),
+        )],
+    );
     let j = serde_json::to_string(&ait).expect("serialize AIT");
     assert_valid_json_with_keys(&j, &["application_type", "applications"]);
 }
@@ -296,70 +287,59 @@ fn dsmcc_section_serializes_to_valid_json() {
 
 #[test]
 fn cat_serializes_to_valid_json() {
-    let cat = CatSection {
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        descriptors: DescriptorLoop::new(&[0x09, 0x04, 0x06, 0x48, 0xE0, 0x50]),
-    };
+    let cat = CatSection::new(
+        0,
+        true,
+        0,
+        0,
+        DescriptorLoop::new(&[0x09, 0x04, 0x06, 0x48, 0xE0, 0x50]),
+    );
     let j = serde_json::to_string(&cat).expect("serialize CAT");
     assert_valid_json_with_keys(&j, &["version_number", "descriptors"]);
 }
 
 #[test]
 fn tsdt_serializes_to_valid_json() {
-    let tsdt = TsdtSection {
-        table_id_extension: 0xFFFF,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        descriptors: DescriptorLoop::new(&[0x42, 0x00]),
-    };
+    let tsdt = TsdtSection::new(0xFFFF, 0, true, 0, 0, DescriptorLoop::new(&[0x42, 0x00]));
     let j = serde_json::to_string(&tsdt).expect("serialize TSDT");
     assert_valid_json_with_keys(&j, &["table_id_extension", "descriptors"]);
 }
 
 #[test]
 fn bat_serializes_to_valid_json() {
-    let bat = BatSection {
-        bouquet_id: 0x0001,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        bouquet_descriptors: DescriptorLoop::new(&[]),
-        transport_streams: vec![BatTransportStream {
-            transport_stream_id: 0x1234,
-            original_network_id: 0x0020,
-            descriptors: DescriptorLoop::new(&[]),
-        }],
-    };
+    let bat = BatSection::new(
+        0x0001,
+        0,
+        true,
+        0,
+        0,
+        DescriptorLoop::new(&[]),
+        vec![BatTransportStream::new(
+            0x1234,
+            0x0020,
+            DescriptorLoop::new(&[]),
+        )],
+    );
     let j = serde_json::to_string(&bat).expect("serialize BAT");
     assert_valid_json_with_keys(&j, &["bouquet_id", "transport_streams"]);
 }
 
 #[test]
 fn rst_serializes_to_valid_json() {
-    let rst = RstSection {
-        entries: vec![RstEntry {
-            transport_stream_id: 0x1234,
-            original_network_id: 0x0020,
-            service_id: 0x0001,
-            event_id: 0x0001,
-            running_status: RunningStatus::Running,
-        }],
-    };
+    let rst = RstSection::new(vec![RstEntry::new(
+        0x1234,
+        0x0020,
+        0x0001,
+        0x0001,
+        RunningStatus::Running,
+    )]);
     let j = serde_json::to_string(&rst).expect("serialize RST");
     assert_valid_json_with_keys(&j, &["entries"]);
 }
 
 #[test]
 fn dit_serializes_to_valid_json() {
-    let dit = DitSection {
-        transition_flag: true,
-    };
+    let dit = DitSection::new(true);
     let j = serde_json::to_string(&dit).expect("serialize DIT");
     assert_valid_json_with_keys(&j, &["transition_flag"]);
 }
@@ -367,22 +347,21 @@ fn dit_serializes_to_valid_json() {
 #[test]
 fn sit_serializes_to_valid_json() {
     use dvb_si::tables::sit::SitService;
-    let sit = SitSection {
-        table_id_extension: 0xFFFF,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        transmission_info_descriptors: DescriptorLoop::new(&[]),
-        services: vec![SitService {
-            service_id: 0x0001,
-            running_status: RunningStatus::Running,
-            // service_descriptor (tag 0x48): type 0x01, "BBC"/"ONE".
-            descriptors: DescriptorLoop::new(&[
+    let sit = SitSection::new(
+        0xFFFF,
+        0,
+        true,
+        0,
+        0,
+        DescriptorLoop::new(&[]),
+        vec![SitService::new(
+            0x0001,
+            RunningStatus::Running,
+            DescriptorLoop::new(&[
                 0x48, 0x09, 0x01, 0x03, b'B', b'B', b'C', 0x03, b'O', b'N', b'E',
             ]),
-        }],
-    };
+        )],
+    );
     let v = serde_json::to_value(&sit).expect("serialize SIT");
     assert!(v.is_object(), "expected JSON object, got {v}");
     assert!(v["transmission_info_descriptors"].is_array());
@@ -397,103 +376,94 @@ fn sit_serializes_to_valid_json() {
 
 #[test]
 fn sat_serializes_to_valid_json() {
-    let sat = SatSection {
-        satellite_table_id: 0,
-        private_indicator: true,
-        table_count: 0,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        body: SatBody::Raw(vec![]),
-    };
+    let sat = SatSection::new(0, true, 0, 0, true, 0, 0, SatBody::Raw(vec![]));
     let j = serde_json::to_string(&sat).expect("serialize SAT");
     assert_valid_json_with_keys(&j, &["satellite_table_id", "body"]);
 }
 
 #[test]
 fn unt_serializes_to_valid_json() {
-    let unt = UntSection {
-        action_type: UntActionType::SystemSoftwareUpdate,
-        oui_hash: 0x00,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        oui: 0x00_00_01,
-        processing_order: 0,
-        common_descriptors: DescriptorLoop::new(&[]),
-        platforms: vec![],
-    };
+    let unt = UntSection::new(
+        UntActionType::SystemSoftwareUpdate,
+        0x00,
+        0,
+        true,
+        0,
+        0,
+        0x00_00_01,
+        0,
+        DescriptorLoop::new(&[]),
+        vec![],
+    );
     let j = serde_json::to_string(&unt).expect("serialize UNT");
     assert_valid_json_with_keys(&j, &["action_type", "oui", "platforms"]);
 }
 
 #[test]
 fn int_serializes_to_valid_json() {
-    let int = IntSection {
-        action_type: IntActionType::IpMacStreamLocation,
-        platform_id_hash: 0x00,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        platform_id: 0x00_00_01,
-        processing_order: 0,
-        platform_descriptors: DescriptorLoop::new(&[]),
-        loops: vec![],
-    };
+    let int = IntSection::new(
+        IntActionType::IpMacStreamLocation,
+        0x00,
+        0,
+        true,
+        0,
+        0,
+        0x00_00_01,
+        0,
+        DescriptorLoop::new(&[]),
+        vec![],
+    );
     let j = serde_json::to_string(&int).expect("serialize INT");
     assert_valid_json_with_keys(&j, &["action_type", "platform_id", "loops"]);
 }
 
 #[test]
 fn rct_serializes_to_valid_json() {
-    let rct = RctSection {
-        table_id_extension_flag: false,
-        service_id: 0x0001,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        year_offset: 0x07D3,
-        links: vec![],
-        descriptors: DescriptorLoop::new(&[]),
-    };
+    let rct = RctSection::new(
+        false,
+        0x0001,
+        0,
+        true,
+        0,
+        0,
+        0x07D3,
+        vec![],
+        DescriptorLoop::new(&[]),
+    );
     let j = serde_json::to_string(&rct).expect("serialize RCT");
     assert_valid_json_with_keys(&j, &["service_id", "year_offset", "links"]);
 }
 
 #[test]
 fn cit_serializes_to_valid_json() {
-    let cit = CitSection {
-        private_indicator: false,
-        service_id: 0x0001,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        transport_stream_id: 0x1234,
-        original_network_id: 0x0020,
-        prepend_strings: DvbText::new(&[]),
-        crid_entries: vec![],
-    };
+    let cit = CitSection::new(
+        false,
+        0x0001,
+        0,
+        true,
+        0,
+        0,
+        0x1234,
+        0x0020,
+        DvbText::new(&[]),
+        vec![],
+    );
     let j = serde_json::to_string(&cit).expect("serialize CIT");
     assert_valid_json_with_keys(&j, &["service_id", "prepend_strings", "crid_entries"]);
 }
 
 #[test]
 fn rnt_serializes_to_valid_json() {
-    let rnt = RntSection {
-        context_id: 0x0001,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        context_id_type: ContextIdType::BouquetId,
-        common_descriptors: DescriptorLoop::new(&[]),
-        resolution_providers: vec![],
-    };
+    let rnt = RntSection::new(
+        0x0001,
+        0,
+        true,
+        0,
+        0,
+        ContextIdType::BouquetId,
+        DescriptorLoop::new(&[]),
+        vec![],
+    );
     let j = serde_json::to_string(&rnt).expect("serialize RNT");
     assert_valid_json_with_keys(&j, &["context_id", "resolution_providers"]);
 }
@@ -502,33 +472,28 @@ fn rnt_serializes_to_valid_json() {
 
 #[test]
 fn container_serializes_to_valid_json() {
-    let container = ContainerSection {
-        private_indicator: true,
-        container_id: 0xBEEF,
-        version_number: 9,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        container_data: &[0xCA, 0xFE],
-    };
+    let container = ContainerSection::new(true, 0xBEEF, 9, true, 0, 0, &[0xCA, 0xFE]);
     let j = serde_json::to_string(&container).expect("serialize ContainerSection");
     assert_valid_json_with_keys(&j, &["container_id", "version_number", "container_data"]);
 }
 
 #[test]
 fn mpe_datagram_section_serializes_to_valid_json() {
-    let mpe = MpeDatagramSection {
-        section_syntax_indicator: false,
-        private_indicator: true,
-        mac_address: MacAddress([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]),
-        payload_scrambling_control: 0b01,
-        address_scrambling_control: 0b11,
-        llc_snap_flag: true,
-        current_next_indicator: true,
-        section_number: 3,
-        last_section_number: 7,
-        payload: &[0xAB, 0xCD],
-        checksum: Checksum([0xDE, 0xAD, 0xBE, 0xEF]),
+    let mpe = {
+        let mut __v = MpeDatagramSection::new(
+            MacAddress([0x0A, 0x0B, 0x0C, 0x0D, 0x0E, 0x0F]),
+            3,
+            7,
+            &[0xAB, 0xCD],
+        );
+        __v.section_syntax_indicator = false;
+        __v.private_indicator = true;
+        __v.payload_scrambling_control = 0b01;
+        __v.address_scrambling_control = 0b11;
+        __v.llc_snap_flag = true;
+        __v.current_next_indicator = true;
+        __v.checksum = Checksum([0xDE, 0xAD, 0xBE, 0xEF]);
+        __v
     };
     let j = serde_json::to_string(&mpe).expect("serialize MpeDatagramSection");
     assert_valid_json_with_keys(&j, &["mac_address", "payload", "checksum"]);
@@ -536,82 +501,77 @@ fn mpe_datagram_section_serializes_to_valid_json() {
 
 #[test]
 fn mpe_fec_serializes_to_valid_json() {
-    let mpe_fec = MpeFecSection {
-        private_indicator: true,
-        padding_columns: 12,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        real_time_parameters: MpeFecRtp {
+    let mpe_fec = MpeFecSection::new(
+        true,
+        12,
+        true,
+        0,
+        0,
+        MpeFecRtp {
             delta_t: 0x0ABC,
             table_boundary: true,
             frame_boundary: false,
             address: 0x0001_2345,
         },
-        rs_data: &[0x01, 0x02],
-    };
+        &[0x01, 0x02],
+    );
     let j = serde_json::to_string(&mpe_fec).expect("serialize MpeFecSection");
     assert_valid_json_with_keys(&j, &["padding_columns", "real_time_parameters", "rs_data"]);
 }
 
 #[test]
 fn mpe_ifec_serializes_to_valid_json() {
-    let mpe_ifec = MpeIfecSection {
-        private_indicator: true,
-        burst_number: 7,
-        ifec_burst_size: 8,
-        version: 3,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        real_time_parameters: MpeIfecRtp {
+    let mpe_ifec = MpeIfecSection::new(
+        true,
+        7,
+        8,
+        3,
+        true,
+        0,
+        0,
+        MpeIfecRtp {
             delta_t: 0x0ABC,
             mpe_boundary: true,
             frame_boundary: false,
             prev_burst_size: 0x0001_2345,
         },
-        ifec_data: &[0x01, 0x02],
-    };
+        &[0x01, 0x02],
+    );
     let j = serde_json::to_string(&mpe_ifec).expect("serialize MpeIfecSection");
     assert_valid_json_with_keys(&j, &["burst_number", "real_time_parameters", "ifec_data"]);
 }
 
 #[test]
 fn protection_message_section_serializes_to_valid_json() {
-    let pms = ProtectionMessageSection {
-        table_id_extension: 0x0100,
-        version_number: 5,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        body: ProtectionMessageBody::CertificateCollection {
-            certificates: vec![&[0x30, 0x82, 0x01, 0x02], &[0xAB, 0xCD]],
-        },
-    };
+    let pms = ProtectionMessageSection::new(
+        0x0100,
+        5,
+        true,
+        0,
+        0,
+        ProtectionMessageBody::certificate_collection(vec![
+            &[0x30, 0x82, 0x01, 0x02],
+            &[0xAB, 0xCD],
+        ]),
+    );
     let j = serde_json::to_string(&pms).expect("serialize ProtectionMessageSection");
     assert_valid_json_with_keys(&j, &["table_id_extension", "body"]);
 }
 
 #[test]
 fn downloadable_font_info_section_serializes_to_valid_json() {
-    let dfis = DownloadableFontInfoSection {
-        font_id_extension: 0,
-        font_id: 0x42,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        font_info: vec![
-            FontInfo::StyleWeight {
-                style: 2,
-                weight: 2,
-            },
-            FontInfo::FileUri {
-                format: 1,
-                uri: b"https://f.example/Droid.otf",
-            },
+    let dfis = DownloadableFontInfoSection::new(
+        0,
+        0x42,
+        0,
+        true,
+        0,
+        0,
+        vec![
+            FontInfo::style_weight(2, 2),
+            FontInfo::file_uri(1, b"https://f.example/Droid.otf"),
         ],
-    };
+    );
     let j = serde_json::to_string(&dfis).expect("serialize DownloadableFontInfoSection");
     assert_valid_json_with_keys(&j, &["font_id", "font_info"]);
 }

@@ -1,4 +1,5 @@
 use core::time::Duration;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::Serialize;
 use dvb_si::descriptors::any::DescriptorLoop;
@@ -46,7 +47,7 @@ fn make_ts_packet(
     let header = TsHeader {
         tei: false,
         pusi,
-        pid,
+        pid: Pid::new(pid),
         scrambling: 0,
         has_adaptation: has_adaptation || !adaptation.is_empty(),
         has_payload: !payload.is_empty(),
@@ -76,7 +77,7 @@ fn make_ts_packet_with_tei(pid: u16, cc: u8) -> [u8; TS_PACKET_SIZE] {
     let header = TsHeader {
         tei: true,
         pusi: false,
-        pid,
+        pid: Pid::new(pid),
         scrambling: 0,
         has_adaptation: false,
         has_payload: false,
@@ -92,7 +93,7 @@ fn make_ts_packet_with_scrambling(pid: u16, cc: u8, scrambling: u8) -> [u8; TS_P
     let header = TsHeader {
         tei: false,
         pusi: false,
-        pid,
+        pid: Pid::new(pid),
         scrambling,
         has_adaptation: false,
         has_payload: true,
@@ -157,20 +158,17 @@ fn build_pat_section(program_map_pids: &[(u16, u16)]) -> Vec<u8> {
 
 /// Build a PAT section with an explicit `version_number`.
 fn build_pat_section_versioned(program_map_pids: &[(u16, u16)], version: u8) -> Vec<u8> {
-    let pat = PatSection {
-        transport_stream_id: 1,
-        version_number: version,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        entries: program_map_pids
+    let pat = PatSection::new(
+        1,
+        version,
+        true,
+        0,
+        0,
+        program_map_pids
             .iter()
-            .map(|&(pn, pid)| PatEntry {
-                program_number: pn,
-                pid,
-            })
+            .map(|&(pn, pid)| PatEntry::new(pn, pid))
             .collect(),
-    };
+    );
     let mut buf = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut buf).unwrap();
     buf
@@ -198,10 +196,12 @@ fn build_pmt_section_versioned(
         Default::default(),
         es_pids
             .iter()
-            .map(|&pid| PmtStream {
-                stream_type: dvb_si::tables::pmt::StreamType::Mpeg2Video,
-                elementary_pid: pid,
-                es_info: Default::default(),
+            .map(|&pid| {
+                PmtStream::new(
+                    dvb_si::tables::pmt::StreamType::Mpeg2Video,
+                    pid,
+                    Default::default(),
+                )
             })
             .collect(),
     );
@@ -212,7 +212,7 @@ fn build_pmt_section_versioned(
 
 /// Packetise a section into 188-byte TS packets.
 fn packetise_section(pid: u16, section: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
-    let mut pktizer = SectionPacketiser::new(pid);
+    let mut pktizer = SectionPacketiser::new(Pid::new(pid));
     pktizer.packetise(&[section])
 }
 
@@ -1127,16 +1127,7 @@ fn cat_error_absent_when_cat_seen_then_scrambled() {
 
 /// Build an SDT_actual section's wire bytes.
 fn build_sdt_actual_section() -> Vec<u8> {
-    let sdt = SdtSection {
-        kind: SdtKind::Actual,
-        transport_stream_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        original_network_id: 1,
-        services: vec![],
-    };
+    let sdt = SdtSection::new(SdtKind::Actual, 1, 0, true, 0, 0, 1, vec![]);
     let mut buf = vec![0u8; sdt.serialized_len()];
     sdt.serialize_into(&mut buf).unwrap();
     buf
@@ -1144,16 +1135,16 @@ fn build_sdt_actual_section() -> Vec<u8> {
 
 /// Build a NIT_actual section's wire bytes.
 fn build_nit_actual_section() -> Vec<u8> {
-    let nit = NitSection {
-        kind: NitKind::Actual,
-        network_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        network_descriptors: DescriptorLoop::new(&[]),
-        transport_streams: vec![],
-    };
+    let nit = NitSection::new(
+        NitKind::Actual,
+        1,
+        0,
+        true,
+        0,
+        0,
+        DescriptorLoop::new(&[]),
+        vec![],
+    );
     let mut buf = vec![0u8; nit.serialized_len()];
     nit.serialize_into(&mut buf).unwrap();
     buf
@@ -1161,20 +1152,20 @@ fn build_nit_actual_section() -> Vec<u8> {
 
 /// Build an EIT P/F actual section's wire bytes.
 fn build_eit_pf_actual_section() -> Vec<u8> {
-    let eit = EitSection {
-        kind: EitKind::PresentFollowingActual,
-        table_id: dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
-        service_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        transport_stream_id: 1,
-        original_network_id: 1,
-        segment_last_section_number: 0,
-        last_table_id: dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
-        events: vec![],
-    };
+    let eit = EitSection::new(
+        EitKind::PresentFollowingActual,
+        dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
+        1,
+        0,
+        true,
+        0,
+        0,
+        1,
+        1,
+        0,
+        dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
+        vec![],
+    );
     let mut buf = vec![0u8; eit.serialized_len()];
     eit.serialize_into(&mut buf).unwrap();
     buf
@@ -1190,7 +1181,7 @@ fn build_tdt_section() -> Vec<u8> {
 
 /// Build an (empty) RST section's wire bytes — short-form, no CRC.
 fn build_rst_section() -> Vec<u8> {
-    let rst = RstSection { entries: vec![] };
+    let rst = RstSection::new(vec![]);
     let mut buf = vec![0u8; rst.serialized_len()];
     rst.serialize_into(&mut buf).unwrap();
     buf
@@ -1218,7 +1209,7 @@ fn si_repetition_sdt_trips_on_timeout() {
         .filter(|e| e.indicator == Indicator::SiRepetitionError)
         .collect();
     assert_eq!(si_events.len(), 1);
-    assert_eq!(si_events[0].pid, Some(PID_SDT_BAT));
+    assert_eq!(si_events[0].pid, Some(Pid::new(PID_SDT_BAT)));
     assert!(si_events[0].detail.contains("SDT_actual"));
 }
 
@@ -1261,7 +1252,7 @@ fn si_repetition_tdt_trips_on_timeout() {
         .filter(|e| e.indicator == Indicator::SiRepetitionError)
         .collect();
     assert_eq!(si_events.len(), 1);
-    assert_eq!(si_events[0].pid, Some(PID_TDT_TOT));
+    assert_eq!(si_events[0].pid, Some(Pid::new(PID_TDT_TOT)));
     assert!(si_events[0].detail.contains("TDT"));
 }
 
@@ -1304,7 +1295,7 @@ fn si_repetition_nit_trips_on_timeout() {
         .filter(|e| e.indicator == Indicator::SiRepetitionError)
         .collect();
     assert_eq!(si_events.len(), 1);
-    assert_eq!(si_events[0].pid, Some(PID_NIT));
+    assert_eq!(si_events[0].pid, Some(Pid::new(PID_NIT)));
     assert!(si_events[0].detail.contains("NIT_actual"));
 }
 
@@ -1347,7 +1338,7 @@ fn si_repetition_eit_pf_trips_on_timeout() {
         .filter(|e| e.indicator == Indicator::SiRepetitionError)
         .collect();
     assert_eq!(si_events.len(), 1);
-    assert_eq!(si_events[0].pid, Some(PID_EIT));
+    assert_eq!(si_events[0].pid, Some(Pid::new(PID_EIT)));
     assert!(si_events[0].detail.contains("EIT_P/F_actual"));
 }
 
@@ -1485,7 +1476,7 @@ fn unreferenced_pid_trips_after_persistence_threshold() {
     let events = monitor.feed(&pkt2, ms(600));
     let unref: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(stray_pid))
+        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(stray_pid)))
         .collect();
     assert_eq!(unref.len(), 1);
 }
@@ -1504,7 +1495,7 @@ fn unreferenced_pid_absent_within_persistence_threshold() {
     let events = monitor.feed(&pkt2, ms(200));
     let unref: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(stray_pid))
+        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(stray_pid)))
         .collect();
     assert!(unref.is_empty());
 }
@@ -1538,7 +1529,7 @@ fn unreferenced_pid_absent_for_well_known_si_pids() {
         let events = monitor.feed(&pkt2, secs(2));
         let flagged = events
             .iter()
-            .any(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(pid));
+            .any(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(pid)));
         assert!(
             !flagged,
             "well-known SI PID 0x{pid:04X} must never be flagged Unreferenced_PID"
@@ -1757,19 +1748,9 @@ fn build_large_pat_section() -> Vec<u8> {
     // After 5 packets: 920 - 5*5 = 895 bytes > 512 → overflow.
     let mut entries = Vec::new();
     for i in 0u16..200 {
-        entries.push(PatEntry {
-            program_number: i,
-            pid: 0x0100 + i,
-        });
+        entries.push(PatEntry::new(i, 0x0100 + i));
     }
-    let pat = PatSection {
-        transport_stream_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        entries,
-    };
+    let pat = PatSection::new(1, 0, true, 0, 0, entries);
     let mut buf = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut buf).unwrap();
     buf
@@ -1968,16 +1949,16 @@ fn data_delay_error_absent_with_rapid_drain() {
 
 /// Build a NIT_actual section with a specific section_number.
 fn build_nit_actual_section_numbered(section_number: u8) -> Vec<u8> {
-    let nit = NitSection {
-        kind: NitKind::Actual,
-        network_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
+    let nit = NitSection::new(
+        NitKind::Actual,
+        1,
+        0,
+        true,
         section_number,
-        last_section_number: 0,
-        network_descriptors: DescriptorLoop::new(&[]),
-        transport_streams: vec![],
-    };
+        0,
+        DescriptorLoop::new(&[]),
+        vec![],
+    );
     let mut buf = vec![0u8; nit.serialized_len()];
     nit.serialize_into(&mut buf).unwrap();
     buf
@@ -1985,16 +1966,7 @@ fn build_nit_actual_section_numbered(section_number: u8) -> Vec<u8> {
 
 /// Build an SDT_actual section with a specific section_number.
 fn build_sdt_actual_section_numbered(section_number: u8) -> Vec<u8> {
-    let sdt = SdtSection {
-        kind: SdtKind::Actual,
-        transport_stream_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number,
-        last_section_number: 0,
-        original_network_id: 1,
-        services: vec![],
-    };
+    let sdt = SdtSection::new(SdtKind::Actual, 1, 0, true, section_number, 0, 1, vec![]);
     let mut buf = vec![0u8; sdt.serialized_len()];
     sdt.serialize_into(&mut buf).unwrap();
     buf
@@ -2007,20 +1979,20 @@ fn build_eit_pf_actual_section_keyed(
     ts_id: u16,
     onw_id: u16,
 ) -> Vec<u8> {
-    let eit = EitSection {
-        kind: EitKind::PresentFollowingActual,
-        table_id: dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
+    let eit = EitSection::new(
+        EitKind::PresentFollowingActual,
+        dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
         service_id,
-        version_number: 0,
-        current_next_indicator: true,
+        0,
+        true,
         section_number,
-        last_section_number: 0,
-        transport_stream_id: ts_id,
-        original_network_id: onw_id,
-        segment_last_section_number: 0,
-        last_table_id: dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
-        events: vec![],
-    };
+        0,
+        ts_id,
+        onw_id,
+        0,
+        dvb_si::tables::eit::TABLE_ID_PF_ACTUAL,
+        vec![],
+    );
     let mut buf = vec![0u8; eit.serialized_len()];
     eit.serialize_into(&mut buf).unwrap();
     buf
@@ -2028,16 +2000,16 @@ fn build_eit_pf_actual_section_keyed(
 
 /// Build an NIT_other section (table_id 0x41) with specific section_number.
 fn build_nit_other_section(section_number: u8) -> Vec<u8> {
-    let nit = NitSection {
-        kind: NitKind::Other,
-        network_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
+    let nit = NitSection::new(
+        NitKind::Other,
+        1,
+        0,
+        true,
         section_number,
-        last_section_number: 0,
-        network_descriptors: DescriptorLoop::new(&[]),
-        transport_streams: vec![],
-    };
+        0,
+        DescriptorLoop::new(&[]),
+        vec![],
+    );
     let mut buf = vec![0u8; nit.serialized_len()];
     nit.serialize_into(&mut buf).unwrap();
     buf
@@ -2045,16 +2017,7 @@ fn build_nit_other_section(section_number: u8) -> Vec<u8> {
 
 /// Build an SDT_other section (table_id 0x46) with specific section_number.
 fn build_sdt_other_section(section_number: u8) -> Vec<u8> {
-    let sdt = SdtSection {
-        kind: SdtKind::Other,
-        transport_stream_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number,
-        last_section_number: 0,
-        original_network_id: 1,
-        services: vec![],
-    };
+    let sdt = SdtSection::new(SdtKind::Other, 1, 0, true, section_number, 0, 1, vec![]);
     let mut buf = vec![0u8; sdt.serialized_len()];
     sdt.serialize_into(&mut buf).unwrap();
     buf
@@ -2062,20 +2025,20 @@ fn build_sdt_other_section(section_number: u8) -> Vec<u8> {
 
 /// Build an EIT P/F other section (table_id 0x4F) with specific section_number.
 fn build_eit_other_section(section_number: u8) -> Vec<u8> {
-    let eit = EitSection {
-        kind: EitKind::PresentFollowingOther,
-        table_id: dvb_si::tables::eit::TABLE_ID_PF_OTHER,
-        service_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
+    let eit = EitSection::new(
+        EitKind::PresentFollowingOther,
+        dvb_si::tables::eit::TABLE_ID_PF_OTHER,
+        1,
+        0,
+        true,
         section_number,
-        last_section_number: 0,
-        transport_stream_id: 1,
-        original_network_id: 1,
-        segment_last_section_number: 0,
-        last_table_id: dvb_si::tables::eit::TABLE_ID_PF_OTHER,
-        events: vec![],
-    };
+        0,
+        1,
+        1,
+        0,
+        dvb_si::tables::eit::TABLE_ID_PF_OTHER,
+        vec![],
+    );
     let mut buf = vec![0u8; eit.serialized_len()];
     eit.serialize_into(&mut buf).unwrap();
     buf
@@ -2398,7 +2361,7 @@ fn pmt_removed_by_new_pat_version_stops_firing_and_becomes_unreferenced() {
 
     let stale_pmt_error: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::PmtError2 && e.pid == Some(removed_pmt_pid))
+        .filter(|e| e.indicator == Indicator::PmtError2 && e.pid == Some(Pid::new(removed_pmt_pid)))
         .collect();
     assert!(
         stale_pmt_error.is_empty(),
@@ -2408,7 +2371,9 @@ fn pmt_removed_by_new_pat_version_stops_firing_and_becomes_unreferenced() {
 
     let unref: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(removed_pmt_pid))
+        .filter(|e| {
+            e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(removed_pmt_pid))
+        })
         .collect();
     assert_eq!(
         unref.len(),
@@ -2467,7 +2432,7 @@ fn es_pid_removed_by_new_pmt_version_stops_firing_and_becomes_unreferenced() {
 
     let stale_pid_error: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::PidError && e.pid == Some(dropped_es_pid))
+        .filter(|e| e.indicator == Indicator::PidError && e.pid == Some(Pid::new(dropped_es_pid)))
         .collect();
     assert!(
         stale_pid_error.is_empty(),
@@ -2477,7 +2442,9 @@ fn es_pid_removed_by_new_pmt_version_stops_firing_and_becomes_unreferenced() {
 
     let unref: Vec<_> = events
         .iter()
-        .filter(|e| e.indicator == Indicator::UnreferencedPid && e.pid == Some(dropped_es_pid))
+        .filter(|e| {
+            e.indicator == Indicator::UnreferencedPid && e.pid == Some(Pid::new(dropped_es_pid))
+        })
         .collect();
     assert_eq!(
         unref.len(),

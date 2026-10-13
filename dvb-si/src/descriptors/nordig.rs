@@ -22,18 +22,47 @@ const V1_HEADER_LEN: usize = 2;
 const V1_ENTRY_LEN: usize = 4;
 const V1_VISIBLE_MASK: u8 = 0x80;
 const V1_RESERVED_MASK: u8 = 0x40;
+const V1_RESERVED_SHIFT: u8 = 6;
 const V1_LCN_HI_MASK: u8 = 0x3F;
+
+/// Default of the 1-bit per-entry `reserved` of the v1 descriptor: `1`.
+/// NorDig Unified Requirements v3.1.1 §12.2.9.2 (a D-Book/NorDig layout, not
+/// in the EN 300 468 reserved-bit audit); the existing emitted value is kept
+/// as the default and the bit is preserved on parse.
+pub const V1_RESERVED_DEFAULT: u8 = 1;
 
 /// One NorDig LCD v1 LCN assignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct NordigLogicalChannelV1Entry {
     /// Service being numbered.
     pub service_id: u16,
     /// Visible in the viewer's channel list.
     pub visible_service_flag: bool,
+    /// `reserved(1)` between the visible flag and the LCN (1 bit,
+    /// right-aligned). Captured on parse and re-emitted verbatim;
+    /// [`NordigLogicalChannelV1Entry::new`] defaults to [`V1_RESERVED_DEFAULT`].
+    pub reserved: u8,
     /// 14-bit logical channel number (0..=16383).
     pub logical_channel_number: u16,
+}
+
+impl NordigLogicalChannelV1Entry {
+    /// Build an entry with the default reserved bit.
+    #[must_use]
+    pub const fn new(
+        service_id: u16,
+        visible_service_flag: bool,
+        logical_channel_number: u16,
+    ) -> Self {
+        Self {
+            service_id,
+            visible_service_flag,
+            reserved: V1_RESERVED_DEFAULT,
+            logical_channel_number,
+        }
+    }
 }
 
 /// NorDig Logical Channel Descriptor version 1.
@@ -64,10 +93,12 @@ impl<'a> Parse<'a> for NordigLogicalChannelV1 {
             let service_id = crate::wire::be_u16(chunk, 0, "nordig")?;
             let flags = chunk[2];
             let visible_service_flag = flags & V1_VISIBLE_MASK != 0;
+            let reserved = (flags & V1_RESERVED_MASK) >> V1_RESERVED_SHIFT;
             let lcn = (u16::from(flags & V1_LCN_HI_MASK) << 8) | u16::from(chunk[3]);
             entries.push(NordigLogicalChannelV1Entry {
                 service_id,
                 visible_service_flag,
+                reserved,
                 logical_channel_number: lcn,
             });
         }
@@ -99,7 +130,7 @@ impl Serialize for NordigLogicalChannelV1 {
                 0
             };
             let flags = visible_byte
-                | V1_RESERVED_MASK
+                | ((entry.reserved & 1) << V1_RESERVED_SHIFT)
                 | ((entry.logical_channel_number >> 8) as u8 & V1_LCN_HI_MASK);
             buf[offset + 2] = flags;
             buf[offset + 3] = (entry.logical_channel_number & 0xFF) as u8;
@@ -124,18 +155,47 @@ const V2_HEADER_LEN: usize = 2;
 const V2_SERVICE_ENTRY_LEN: usize = 4;
 const V2_VISIBLE_MASK: u8 = 0x80;
 const V2_RESERVED_MASK: u8 = 0x7C;
+const V2_RESERVED_SHIFT: u8 = 2;
 const V2_LCN_HI_MASK: u8 = 0x03;
+
+/// Default of the 5-bit per-service `reserved` of the v2 descriptor: all ones
+/// (`0x1F`). NorDig Unified Requirements v3.1.1 §12.2.9.3 (not in the
+/// EN 300 468 audit); the existing emitted value is kept as the default and
+/// the bits are preserved on parse.
+pub const V2_RESERVED_DEFAULT: u8 = 0x1F;
 
 /// One service entry inside a NorDig LCD v2 channel list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct NordigLogicalChannelV2Service {
     /// Service being numbered.
     pub service_id: u16,
     /// Visible in the viewer's channel list.
     pub visible_service_flag: bool,
+    /// `reserved(5)` between the visible flag and the LCN (5 bits,
+    /// right-aligned). Captured on parse and re-emitted verbatim;
+    /// [`NordigLogicalChannelV2Service::new`] defaults to [`V2_RESERVED_DEFAULT`].
+    pub reserved: u8,
     /// 10-bit logical channel number (0..=1023).
     pub logical_channel_number: u16,
+}
+
+impl NordigLogicalChannelV2Service {
+    /// Build a service entry with the default reserved bits.
+    #[must_use]
+    pub const fn new(
+        service_id: u16,
+        visible_service_flag: bool,
+        logical_channel_number: u16,
+    ) -> Self {
+        Self {
+            service_id,
+            visible_service_flag,
+            reserved: V2_RESERVED_DEFAULT,
+            logical_channel_number,
+        }
+    }
 }
 
 /// One channel list inside a NorDig LCD v2 descriptor.
@@ -215,10 +275,12 @@ impl<'a> Parse<'a> for NordigLogicalChannelV2 {
                 let service_id = crate::wire::be_u16(chunk, 0, "nordig")?;
                 let flags = chunk[2];
                 let visible_service_flag = flags & V2_VISIBLE_MASK != 0;
+                let reserved = (flags & V2_RESERVED_MASK) >> V2_RESERVED_SHIFT;
                 let lcn = (u16::from(flags & V2_LCN_HI_MASK) << 8) | u16::from(chunk[3]);
                 services.push(NordigLogicalChannelV2Service {
                     service_id,
                     visible_service_flag,
+                    reserved,
                     logical_channel_number: lcn,
                 });
             }
@@ -281,7 +343,7 @@ impl Serialize for NordigLogicalChannelV2 {
                     0
                 };
                 let flags = visible_byte
-                    | V2_RESERVED_MASK
+                    | ((svc.reserved << V2_RESERVED_SHIFT) & V2_RESERVED_MASK)
                     | ((svc.logical_channel_number >> 8) as u8 & V2_LCN_HI_MASK);
                 buf[offset + 2] = flags;
                 buf[offset + 3] = (svc.logical_channel_number & 0xFF) as u8;
@@ -409,16 +471,8 @@ mod tests {
     fn v1_serialize_round_trip() {
         let d = NordigLogicalChannelV1 {
             entries: vec![
-                NordigLogicalChannelV1Entry {
-                    service_id: 1,
-                    visible_service_flag: true,
-                    logical_channel_number: 5,
-                },
-                NordigLogicalChannelV1Entry {
-                    service_id: 0x0102,
-                    visible_service_flag: false,
-                    logical_channel_number: 16383,
-                },
+                NordigLogicalChannelV1Entry::new(1, true, 5),
+                NordigLogicalChannelV1Entry::new(0x0102, false, 16383),
             ],
         };
         let mut buf = vec![0u8; d.serialized_len()];
@@ -567,27 +621,15 @@ mod tests {
                     channel_list_name: b"Terrestrial".to_vec(),
                     country_code: LangCode(*b"GBR"),
                     services: vec![
-                        NordigLogicalChannelV2Service {
-                            service_id: 1,
-                            visible_service_flag: true,
-                            logical_channel_number: 1,
-                        },
-                        NordigLogicalChannelV2Service {
-                            service_id: 2,
-                            visible_service_flag: false,
-                            logical_channel_number: 1023,
-                        },
+                        NordigLogicalChannelV2Service::new(1, true, 1),
+                        NordigLogicalChannelV2Service::new(2, false, 1023),
                     ],
                 },
                 NordigLogicalChannelV2ChannelList {
                     channel_list_id: 2,
                     channel_list_name: vec![],
                     country_code: LangCode(*b"DEU"),
-                    services: vec![NordigLogicalChannelV2Service {
-                        service_id: 3,
-                        visible_service_flag: true,
-                        logical_channel_number: 3,
-                    }],
+                    services: vec![NordigLogicalChannelV2Service::new(3, true, 3)],
                 },
             ],
         };
@@ -611,5 +653,53 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, bytes);
+    }
+
+    /// v1 `reserved(1)` and v2 `reserved(5)` (every value) re-serialize
+    /// byte-identically (NorDig layouts; default kept, preserved on parse).
+    #[test]
+    fn reserved_preserved() {
+        for r in 0u8..=1 {
+            let flags = 0x80 | (r << 6) | 0x01;
+            let bytes = [TAG_V1, 4, 0x00, 0x01, flags, 0x05];
+            let d = NordigLogicalChannelV1::parse(&bytes).unwrap();
+            assert_eq!(d.entries[0].reserved, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "v1 r {r}");
+        }
+        for r in 0u8..=0x1F {
+            let flags = 0x80 | (r << 2) | 0x01;
+            let bytes = [
+                TAG_V2, 10, 0x01, 0x00, b'S', b'W', b'E', 4, 0x00, 0x07, flags, 0x23,
+            ];
+            let d = NordigLogicalChannelV2::parse(&bytes).unwrap();
+            assert_eq!(d.channel_lists[0].services[0].reserved, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "v2 r {r:#x}");
+        }
+    }
+
+    /// `new()` entries carry the previously emitted defaults (v1 `1`, v2 `0x1F`).
+    #[test]
+    fn default_reserved_is_documented_value() {
+        let v1 = NordigLogicalChannelV1 {
+            entries: vec![NordigLogicalChannelV1Entry::new(1, true, 5)],
+        };
+        let mut buf = vec![0u8; v1.serialized_len()];
+        v1.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[4], 0xC0);
+        let v2 = NordigLogicalChannelV2 {
+            channel_lists: vec![NordigLogicalChannelV2ChannelList {
+                channel_list_id: 1,
+                channel_list_name: vec![],
+                country_code: LangCode(*b"SWE"),
+                services: vec![NordigLogicalChannelV2Service::new(7, true, 0x123)],
+            }],
+        };
+        let mut buf = vec![0u8; v2.serialized_len()];
+        v2.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[buf.len() - 2], 0x80 | 0x7C | 0x01);
     }
 }

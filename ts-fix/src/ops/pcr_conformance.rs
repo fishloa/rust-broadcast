@@ -28,6 +28,7 @@
 //! (= ITU-T H.222.0) §2.4.3.5 (`discontinuity_indicator`).
 
 use core::time::Duration;
+use mpeg_ts::pid::Pid;
 
 use dvb_conformance::{ConformanceMonitor, Indicator};
 
@@ -62,7 +63,7 @@ impl PcrDiscDetector {
     /// caller ultimately treats specially, e.g. flagged discontinuities) so
     /// the monitor's per-PID PCR state stays in sync with the true input
     /// timeline.
-    pub(crate) fn feed(&mut self, packet: &[u8]) -> Option<u16> {
+    pub(crate) fn feed(&mut self, packet: &[u8]) -> Option<Pid> {
         let t = Duration::from_micros(self.tick_us);
         self.tick_us = self.tick_us.saturating_add(1);
         let events = self.monitor.feed(packet, t);

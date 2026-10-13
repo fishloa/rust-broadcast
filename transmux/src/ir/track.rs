@@ -5,6 +5,7 @@
 //! same impls.
 
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use super::{CodecConfig, Sample};
 
@@ -20,7 +21,7 @@ pub struct TrackSpec {
     pub config: CodecConfig,
     /// Source elementary-stream PID for TS-demuxed tracks; `None` for non-TS
     /// sources (fMP4/FLV/WebM/PS/RTP). (issue #582)
-    pub source_pid: Option<u16>,
+    pub source_pid: Option<Pid>,
     /// Raw PMT ES_info descriptor-loop bytes for this elementary stream
     /// (ISO/IEC 13818-1 §2.4.4.8), verbatim; empty for non-TS sources.
     /// transmux does not parse these — consumers use dvb-si. (issue #582)
@@ -46,7 +47,7 @@ impl TrackSpec {
 
     /// Attach TS provenance (issue #582): the source elementary-stream PID
     /// and its verbatim PMT ES_info descriptor-loop bytes.
-    pub fn with_source(mut self, source_pid: u16, es_info_descriptors: Vec<u8>) -> Self {
+    pub fn with_source(mut self, source_pid: Pid, es_info_descriptors: Vec<u8>) -> Self {
         self.source_pid = Some(source_pid);
         self.es_info_descriptors = es_info_descriptors;
         self

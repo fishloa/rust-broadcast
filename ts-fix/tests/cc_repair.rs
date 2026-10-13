@@ -9,6 +9,7 @@
 //!    (`private/docs/h222-0-transport-stream.md` L649),
 //! 5. Repairs genuine unsignalled, non-duplicate CC gaps.
 
+use mpeg_ts::pid::Pid;
 use std::{collections::BTreeMap, fs, path::PathBuf};
 
 mod support;
@@ -37,8 +38,8 @@ fn m6_discontinuity_path() -> PathBuf {
         .join("m6-discontinuity.ts")
 }
 
-fn extract_pid(pkt: &[u8]) -> u16 {
-    (((pkt[1] & 0x1F) as u16) << 8) | (pkt[2] as u16)
+fn extract_pid(pkt: &[u8]) -> Pid {
+    Pid::new((((pkt[1] & 0x1F) as u16) << 8) | (pkt[2] as u16))
 }
 
 fn extract_cc(pkt: &[u8]) -> u8 {
@@ -149,7 +150,7 @@ fn repair_continuity_makes_stream_valid() {
 fn legal_duplicates_are_preserved_from_real_fixture() {
     let input = fs::read(m6_duplicate_path()).expect("fixture m6-duplicate.ts not found");
     let mut legal_dup_count = 0usize;
-    let mut last_per_pid: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
+    let mut last_per_pid: BTreeMap<Pid, Vec<u8>> = BTreeMap::new();
     for chunk in input.chunks(188) {
         let pid = extract_pid(chunk);
         let hp = has_payload(chunk);
@@ -185,12 +186,12 @@ fn legal_duplicates_are_preserved_from_real_fixture() {
         let pid = extract_pid(chunk);
         let hp = has_payload(chunk);
         if hp {
-            if let Some(last_pkt) = out_last.get(&pid)
+            if let Some(last_pkt) = out_last.get(&pid.value())
                 && is_legal_duplicate(last_pkt, chunk)
             {
                 output_dup_count += 1;
             }
-            out_last.insert(pid, chunk.to_vec());
+            out_last.insert(pid.value(), chunk.to_vec());
         }
     }
     assert_eq!(
@@ -215,7 +216,7 @@ fn cc_errors_on_m6_single_are_renumbered() {
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
     let mut remaining_errors = 0usize;
-    let mut last_per_pid: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
+    let mut last_per_pid: BTreeMap<Pid, Vec<u8>> = BTreeMap::new();
     for chunk in output.chunks(188) {
         let pid = extract_pid(chunk);
         let cc = extract_cc(chunk);
@@ -277,7 +278,7 @@ fn genuine_cc_gap_is_repaired_in_stream() {
     for chunk in input.chunks_mut(188) {
         let pid = extract_pid(chunk);
         let hp = has_payload(chunk);
-        if pid == target_pid && hp {
+        if pid == Pid::new(target_pid) && hp {
             payload_count += 1;
             if payload_count == 2 {
                 let cc = extract_cc(chunk);
@@ -301,8 +302,8 @@ fn genuine_cc_gap_is_repaired_in_stream() {
     }
     engine.finish(|pkt| output.extend_from_slice(pkt));
 
-    let before = count_pid_anomalies(&input, target_pid);
-    let after = count_pid_anomalies(&output, target_pid);
+    let before = count_pid_anomalies(&input, Pid::new(target_pid));
+    let after = count_pid_anomalies(&output, Pid::new(target_pid));
     assert!(
         after < before,
         "PID {target_pid:#05x}: before={before}, after={after}; repair must reduce"
@@ -330,12 +331,12 @@ fn strict_plus_one_would_renumber_legal_duplicates() {
         let pid = extract_pid(chunk);
         let hp = has_payload(chunk);
         if hp {
-            if let Some(last_pkt) = out_last.get(&pid)
+            if let Some(last_pkt) = out_last.get(&pid.value())
                 && is_legal_duplicate(last_pkt, chunk)
             {
                 output_dup_count += 1;
             }
-            out_last.insert(pid, chunk.to_vec());
+            out_last.insert(pid.value(), chunk.to_vec());
         }
     }
     assert_eq!(
@@ -350,7 +351,7 @@ fn strict_plus_one_would_renumber_legal_duplicates() {
 }
 
 fn count_strict_anomalies(data: &[u8]) -> usize {
-    let mut per_pid_cc: BTreeMap<u16, u8> = BTreeMap::new();
+    let mut per_pid_cc: BTreeMap<Pid, u8> = BTreeMap::new();
     let mut anomalies = 0;
     for chunk in data.chunks(188) {
         if chunk.len() < 4 {
@@ -372,7 +373,7 @@ fn count_strict_anomalies(data: &[u8]) -> usize {
     anomalies
 }
 
-fn count_pid_anomalies(data: &[u8], pid: u16) -> usize {
+fn count_pid_anomalies(data: &[u8], pid: Pid) -> usize {
     let mut last_cc: Option<u8> = None;
     let mut anomalies = 0;
     for chunk in data.chunks(188) {

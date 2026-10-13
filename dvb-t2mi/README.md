@@ -22,9 +22,10 @@ Each T2-MI packet is a 6-byte header + variable payload + 4-byte CRC-32, encapsu
 
 ```rust
 use dvb_t2mi::pump::T2miPump;
+use mpeg_ts::pid::Pid;
 use dvb_t2mi::payload::AnyPayload;
 
-let mut pump = T2miPump::new(0x0006);       // T2-MI PID from the PMT
+let mut pump = T2miPump::new(Pid::new(0x0006));      // T2-MI PID from the PMT
 for packet in ts_packets {                  // each aligned 188-byte packet
     for event in pump.feed_ts(packet) {     // CRC-valid packets only
         match event.payload()? {
@@ -51,8 +52,9 @@ feed-and-collect driver — feed outer TS packets, get inner TS packets out:
 ```rust
 # #[cfg(feature = "ts")] {
 use dvb_t2mi::inner_ts::InnerTsRecovery;
+use mpeg_ts::pid::Pid;
 
-let mut rec = InnerTsRecovery::new(0x1000); // the T2-MI PID
+let mut rec = InnerTsRecovery::new(Pid::new(0x1000)); // the T2-MI PID
 for outer in ts_packets() {                 // 188-byte outer TS packets
     for inner in rec.feed(&outer) {          // recovered inner TS packets
         assert_eq!(inner[0], 0x47);

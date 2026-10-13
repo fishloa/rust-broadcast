@@ -96,6 +96,7 @@ pub struct EitEvent<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct EitSection<'a> {
     /// Variant based on table_id.
     pub kind: EitKind,
@@ -121,6 +122,46 @@ pub struct EitSection<'a> {
     pub last_table_id: u8,
     /// Events in wire order.
     pub events: Vec<EitEvent<'a>>,
+    /// Header bit fields (`reserved_future_use`, `reserved(2)` x2; default
+    /// [`SectionBits::dvb`](super::SectionBits::dvb)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+}
+
+impl<'a> EitSection<'a> {
+    /// Construct an EIT section with the spec `reserved` fill.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        kind: EitKind,
+        table_id: u8,
+        service_id: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        transport_stream_id: u16,
+        original_network_id: u16,
+        segment_last_section_number: u8,
+        last_table_id: u8,
+        events: Vec<EitEvent<'a>>,
+    ) -> Self {
+        Self {
+            kind,
+            table_id,
+            service_id,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            transport_stream_id,
+            original_network_id,
+            segment_last_section_number,
+            last_table_id,
+            events,
+            bits: super::SectionBits::dvb(),
+        }
+    }
 }
 
 impl<'a> Parse<'a> for EitSection<'a> {
@@ -234,6 +275,7 @@ impl<'a> Parse<'a> for EitSection<'a> {
             segment_last_section_number,
             last_table_id,
             events,
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
         })
     }
 }
@@ -258,10 +300,12 @@ impl Serialize for EitSection<'_> {
             });
         }
         buf[0] = self.table_id;
-        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.transport_stream_id.to_be_bytes());
@@ -556,19 +600,19 @@ mod tests {
     #[test]
     fn serialize_round_trip_preserves_all_events() {
         let desc1: [u8; 2] = [0x54, 0x00];
-        let eit = EitSection {
-            kind: EitKind::PresentFollowingActual,
-            table_id: TABLE_ID_PF_ACTUAL,
-            service_id: 0x0100,
-            version_number: 3,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: 0x1234,
-            original_network_id: 0x0020,
-            segment_last_section_number: 0,
-            last_table_id: TABLE_ID_PF_ACTUAL,
-            events: vec![
+        let eit = EitSection::new(
+            EitKind::PresentFollowingActual,
+            TABLE_ID_PF_ACTUAL,
+            0x0100,
+            3,
+            true,
+            0,
+            0,
+            0x1234,
+            0x0020,
+            0,
+            TABLE_ID_PF_ACTUAL,
+            vec![
                 EitEvent::new(
                     1,
                     [0xDF, 0xA1, 0x12, 0x34, 0x56],
@@ -586,7 +630,7 @@ mod tests {
                     DescriptorLoop::new(&[]),
                 ),
             ],
-        };
+        );
         let mut buf = vec![0u8; eit.serialized_len()];
         eit.serialize_into(&mut buf).unwrap();
         let re = EitSection::parse(&buf).unwrap();
@@ -763,19 +807,19 @@ mod tests {
     #[test]
     fn serialize_rejects_event_descriptors_exceeding_section_length() {
         let desc = vec![0xAAu8; 4069];
-        let eit = EitSection {
-            kind: EitKind::PresentFollowingActual,
-            table_id: TABLE_ID_PF_ACTUAL,
-            service_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: 1,
-            original_network_id: 1,
-            segment_last_section_number: 0,
-            last_table_id: TABLE_ID_PF_ACTUAL,
-            events: vec![EitEvent {
+        let eit = EitSection::new(
+            EitKind::PresentFollowingActual,
+            TABLE_ID_PF_ACTUAL,
+            1,
+            0,
+            true,
+            0,
+            0,
+            1,
+            1,
+            0,
+            TABLE_ID_PF_ACTUAL,
+            vec![EitEvent {
                 event_id: 1,
                 start_time_raw: [0; 5],
                 duration_raw: [0; 3],
@@ -783,7 +827,7 @@ mod tests {
                 free_ca_mode: false,
                 descriptors: DescriptorLoop::new(&desc),
             }],
-        };
+        );
         let mut buf = vec![0u8; eit.serialized_len()];
         assert!(matches!(
             eit.serialize_into(&mut buf).unwrap_err(),
@@ -794,19 +838,19 @@ mod tests {
     #[test]
     fn serialize_accepts_event_descriptors_at_section_length_boundary() {
         let desc = vec![0xAAu8; 4068];
-        let eit = EitSection {
-            kind: EitKind::PresentFollowingActual,
-            table_id: TABLE_ID_PF_ACTUAL,
-            service_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: 1,
-            original_network_id: 1,
-            segment_last_section_number: 0,
-            last_table_id: TABLE_ID_PF_ACTUAL,
-            events: vec![EitEvent {
+        let eit = EitSection::new(
+            EitKind::PresentFollowingActual,
+            TABLE_ID_PF_ACTUAL,
+            1,
+            0,
+            true,
+            0,
+            0,
+            1,
+            1,
+            0,
+            TABLE_ID_PF_ACTUAL,
+            vec![EitEvent {
                 event_id: 1,
                 start_time_raw: [0; 5],
                 duration_raw: [0; 3],
@@ -814,7 +858,7 @@ mod tests {
                 free_ca_mode: false,
                 descriptors: DescriptorLoop::new(&desc),
             }],
-        };
+        );
         let mut buf = vec![0u8; eit.serialized_len()];
         eit.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = EitSection::parse(&buf).expect("reparse");

@@ -622,10 +622,7 @@ mod tests {
         let tags = [0u8; 16];
         let d = ExtensionDescriptor {
             tag_extension: 0x18,
-            body: ExtensionBody::ProtectionMessage(ProtectionMessage {
-                reserved: 0x0F,
-                component_tags: &tags,
-            }),
+            body: ExtensionBody::ProtectionMessage(ProtectionMessage::new(&tags)),
         };
         let mut buf = [0u8; 32];
         assert!(matches!(
@@ -674,14 +671,14 @@ mod tests {
     fn serde_serialize_is_stable_owned_body() {
         let typed = ExtensionDescriptor {
             tag_extension: 0x0D,
-            body: ExtensionBody::C2DeliverySystem(C2DeliverySystem {
-                plp_id: 1,
-                data_slice_id: 2,
-                c2_system_tuning_frequency: 0xDEAD_BEEF,
-                c2_system_tuning_frequency_type: C2TuningFrequencyType::C2SystemCentreFrequency,
-                active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::Reserved(2),
-                guard_interval: C2GuardInterval::Reserved(3),
-            }),
+            body: ExtensionBody::C2DeliverySystem(C2DeliverySystem::new(
+                1,
+                2,
+                0xDEAD_BEEF,
+                C2TuningFrequencyType::C2SystemCentreFrequency,
+                ActiveOfdmSymbolDuration::Reserved(2),
+                C2GuardInterval::Reserved(3),
+            )),
         };
         let json = serde_json::to_string(&typed).unwrap();
         assert_eq!(json, serde_json::to_string(&typed.clone()).unwrap());
@@ -812,14 +809,7 @@ mod tests {
         // serialized.
         let d = ExtensionDescriptor {
             tag_extension: 0x06,
-            body: ExtensionBody::Ac4(super::ac4::Ac4 {
-                ac4_config_flag: false,
-                ac4_toc_flag: false,
-                ac4_dialog_enhancement_enabled: None,
-                ac4_channel_mode: None,
-                toc: None,
-                additional_info: &[],
-            }),
+            body: ExtensionBody::Ac4(super::ac4::Ac4::new(false, false, None, None, None, &[])),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(

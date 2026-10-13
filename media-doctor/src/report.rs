@@ -3,6 +3,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
+use mpeg_ts::pid::Pid;
 
 /// Severity of a diagnostic finding.
 #[non_exhaustive]
@@ -48,9 +49,30 @@ pub struct Location {
 }
 
 impl Location {
-    /// Create a new location.
+    /// Create a new location from a raw stream id (a PID or a media track id;
+    /// prefer [`Location::at_pid`] / [`Location::at_track`] where the kind is
+    /// known, and `0` for "unknown / N/A").
     pub fn new(packet: usize, pid: u32) -> Self {
         Self { packet, pid }
+    }
+
+    /// A location on a transport-stream PID.
+    ///
+    /// The `pid` field is `u32` because it is shared with media track ids
+    /// (see [`Location::pid`]); a typed [`Pid`] here widens losslessly.
+    pub fn at_pid(packet: usize, pid: Pid) -> Self {
+        Self {
+            packet,
+            pid: u32::from(pid.value()),
+        }
+    }
+
+    /// A location on a container-level media track (ISO/IEC 14496-12 `track_ID`).
+    pub fn at_track(packet: usize, track_id: u32) -> Self {
+        Self {
+            packet,
+            pid: track_id,
+        }
     }
 }
 
@@ -166,5 +188,24 @@ impl fmt::Display for Report {
             writeln!(f, "{:>4}. {}", i + 1, finding)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn at_pid_widens_a_typed_pid_losslessly_and_at_track_keeps_32_bits() {
+        // Every valid PID survives the u32 field unchanged.
+        for raw in [0x0000u16, 0x0100, 0x1FFE, 0x1FFF] {
+            let pid = Pid::try_new(raw).unwrap();
+            assert_eq!(Location::at_pid(7, pid).pid, u32::from(raw));
+            assert_eq!(Location::at_pid(7, pid).packet, 7);
+        }
+        // A track id above 16 bits is not aliased (the reason the field is u32).
+        assert_eq!(Location::at_track(0, 0x0001_0064).pid, 0x0001_0064);
+        // An out-of-range PID cannot be turned into a typed location at all.
+        assert!(Pid::try_new(0x2064).is_err());
     }
 }

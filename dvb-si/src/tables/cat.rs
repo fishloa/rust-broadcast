@@ -17,6 +17,8 @@ use broadcast_common::{Parse, Serialize};
 pub const TABLE_ID: u8 = 0x01;
 /// CAT well-known PID.
 pub const PID: u16 = 0x0001;
+/// The 16 reserved bits in place of `table_id_extension` (all ones).
+const RESERVED_EXTENSION: u16 = 0xFFFF;
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
@@ -38,9 +40,10 @@ pub struct CatCaEntry {
 }
 
 /// Conditional Access Table.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct CatSection<'a> {
     /// 5-bit version_number from the section header.
     pub version_number: u8,
@@ -56,6 +59,42 @@ pub struct CatSection<'a> {
     /// the typed descriptor sequence; `.raw()` yields the wire bytes. Use
     /// [`CatSection::ca_descriptors`] for the typed CA (tag 0x09) view.
     pub descriptors: DescriptorLoop<'a>,
+    /// Header bit fields (`'0'` after `section_syntax_indicator`, the two
+    /// `reserved(2)`; default [`SectionBits::psi`](super::SectionBits::psi)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+    /// The 16 reserved bits at bytes 3-4 (the `reserved(18)` of `CA_section`,
+    /// ISO/IEC 13818-1 §2.4.4.6; all ones = `0xFFFF`), preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_extension: u16,
+}
+
+impl Default for CatSection<'_> {
+    fn default() -> Self {
+        Self::new(0, false, 0, 0, DescriptorLoop::default())
+    }
+}
+
+impl<'a> CatSection<'a> {
+    /// Construct a CAT section with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        descriptors: DescriptorLoop<'a>,
+    ) -> Self {
+        Self {
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            descriptors,
+            bits: super::SectionBits::psi(),
+            reserved_extension: RESERVED_EXTENSION,
+        }
+    }
 }
 
 impl CatSection<'_> {
@@ -137,6 +176,8 @@ impl<'a> Parse<'a> for CatSection<'a> {
             section_number,
             last_section_number,
             descriptors: DescriptorLoop::new(&bytes[8..descriptors_end]),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
+            reserved_extension: crate::wire::be_u16(bytes, 3, "cat")?,
         })
     }
 }
@@ -158,12 +199,12 @@ impl Serialize for CatSection<'_> {
         }
         let section_length = len - MIN_HEADER_LEN;
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_PSI;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, section_length)?;
-        // table_id_extension is reserved for the CAT — conventionally 0xFFFF.
-        buf[3] = 0xFF;
-        buf[4] = 0xFF;
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[3..5].copy_from_slice(&self.reserved_extension.to_be_bytes());
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         let desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN;
@@ -334,13 +375,7 @@ mod tests {
     #[test]
     fn serialize_rejects_descriptor_loop_exceeding_section_length() {
         let raw = vec![0xAAu8; 4091]; // + 9 header/crc bytes > 4095
-        let cat = CatSection {
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            descriptors: DescriptorLoop::from(raw.as_slice()),
-        };
+        let cat = CatSection::new(0, true, 0, 0, DescriptorLoop::from(raw.as_slice()));
         let mut buf = vec![0u8; cat.serialized_len()];
         assert!(matches!(
             cat.serialize_into(&mut buf).unwrap_err(),
@@ -353,13 +388,7 @@ mod tests {
         // section_length = EXTENSION_HEADER_LEN(5) + loop_len + CRC_LEN(4);
         // 4086 is the largest loop that keeps it at the 12-bit max, 4095.
         let raw = vec![0xAAu8; 4086];
-        let cat = CatSection {
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            descriptors: DescriptorLoop::from(raw.as_slice()),
-        };
+        let cat = CatSection::new(0, true, 0, 0, DescriptorLoop::from(raw.as_slice()));
         let mut buf = vec![0u8; cat.serialized_len()];
         cat.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = CatSection::parse(&buf).expect("reparse");

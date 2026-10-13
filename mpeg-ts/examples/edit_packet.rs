@@ -8,6 +8,7 @@
 //!   cargo run -p mpeg-ts --example edit_packet
 
 use mpeg_ts::OwnedTsPacket;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{
     ADAPTATION_FLAG, AF_PCR_FLAG, PAYLOAD_FLAG, Pcr, TS_PACKET_SIZE, TS_SYNC_BYTE, TsHeader,
     TsPacket,
@@ -38,7 +39,7 @@ fn main() {
     let pkt = TsPacket::parse(&pkt_raw).unwrap();
     let af = pkt.adaptation_field().unwrap().unwrap();
     assert_eq!(af.pcr, Some(orig_pcr));
-    assert_eq!(pkt.header.pid, 0x0100);
+    assert_eq!(pkt.header.pid, Pid::new(0x0100));
     assert_eq!(pkt.header.continuity_counter, 5);
     println!("--- PCR-bearing packet ---");
     println!(
@@ -66,7 +67,7 @@ fn main() {
 
     // ── 3) set_continuity_counter on a packet ──────────────────────────────
     let mut cc_raw: [u8; TS_PACKET_SIZE] =
-        OwnedTsPacket::serialize_with_payload(0x0200, true, 0, &[]).unwrap();
+        OwnedTsPacket::serialize_with_payload(Pid::new(0x0200), true, 0, &[]).unwrap();
     let orig_cc = TsPacket::parse(&cc_raw).unwrap().header.continuity_counter;
     OwnedTsPacket::set_continuity_counter(&mut cc_raw, 15);
     let new_cc = TsPacket::parse(&cc_raw).unwrap().header.continuity_counter;
@@ -77,12 +78,13 @@ fn main() {
     // ── 4) Build a null_packet and verify PID ───────────────────────────────
     let null_raw = OwnedTsPacket::null_packet(7);
     let null_pkt = TsPacket::parse(&null_raw).unwrap();
-    assert_eq!(null_pkt.header.pid, 0x1FFF);
+    assert_eq!(null_pkt.header.pid, Pid::new(0x1FFF));
     assert_eq!(null_pkt.header.continuity_counter, 7);
     println!("\n--- null packet ---");
     println!(
         "null packet PID = 0x{:04X}  (expect 0x1FFF), CC = {}",
-        null_pkt.header.pid, null_pkt.header.continuity_counter
+        null_pkt.header.pid.value(),
+        null_pkt.header.continuity_counter
     );
 
     // ── 5) Round-trip a TsHeader ────────────────────────────────────────────
@@ -96,22 +98,24 @@ fn main() {
     println!("\n--- round-trip (TsHeader) ---");
     println!(
         "TsHeader parse → serialize_into → parse: pid=0x{:04X}, pusi={}, cc={}",
-        re_hdr.pid, re_hdr.pusi, re_hdr.continuity_counter
+        re_hdr.pid.value(),
+        re_hdr.pusi,
+        re_hdr.continuity_counter
     );
 
     // ── 6) Round-trip an OwnedTsPacket ──────────────────────────────────────
     let owned = OwnedTsPacket::parse(
-        OwnedTsPacket::serialize_with_payload(0x0100, true, 3, &[0xAA, 0xBB]).unwrap(),
+        OwnedTsPacket::serialize_with_payload(Pid::new(0x0100), true, 3, &[0xAA, 0xBB]).unwrap(),
     )
     .unwrap();
-    assert_eq!(owned.pid(), 0x0100);
+    assert_eq!(owned.pid(), Pid::new(0x0100));
     assert_eq!(owned.continuity_counter(), 3);
     assert!(owned.payload().is_some());
     assert_eq!(owned.payload().unwrap().len(), 184); // full payload area (serialize_with_payload fills the rest with 0xFF)
     assert_eq!(owned.payload().unwrap()[..2], [0xAA, 0xBB]);
     println!(
         "OwnedTsPacket serialize_with_payload → parse → fields match: pid=0x{:04X}, pusi={}, cc={}",
-        owned.pid(),
+        owned.pid().value(),
         owned.pusi(),
         owned.continuity_counter()
     );

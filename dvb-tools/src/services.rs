@@ -15,6 +15,7 @@
 //!
 //! Empty streams (no SDT seen) are not an error — note to stderr and exit
 //! successfully.
+use mpeg_ts::pid::Pid;
 use std::collections::HashMap;
 use std::process::ExitCode;
 
@@ -63,7 +64,7 @@ struct ServiceRow {
 /// silently dropped — we only want valid long-form SDT/NIT sections.
 fn collect_event(
     collector: &mut SectionSetCollector,
-    pid: u16,
+    pid: Pid,
     bytes: &[u8],
 ) -> Option<dvb_si::collect::CompleteSectionSet> {
     collector
@@ -137,16 +138,16 @@ pub fn run(path: &str) -> ExitCode {
             let table_id = event.table_id();
             let bytes = event.bytes().to_vec();
             // SDT (other/current) — table_id 0x42 / 0x46. NIT — 0x40 / 0x41.
-            let pid_u16 = u16::from(event.pid());
+            let pid = event.pid();
             if SDT_TABLE_IDS.contains(&table_id) {
-                if let Some(complete) = collect_event(&mut collector, pid_u16, &bytes) {
+                if let Some(complete) = collect_event(&mut collector, pid, &bytes) {
                     sdt_seen += 1;
                     if let Ok(sdt) = complete.sdt() {
                         absorb_sdt(&sdt, &mut services);
                     }
                 }
             } else if NIT_TABLE_IDS.contains(&table_id)
-                && let Some(complete) = collect_event(&mut collector, pid_u16, &bytes)
+                && let Some(complete) = collect_event(&mut collector, pid, &bytes)
             {
                 nit_seen += 1;
                 if let Ok(nit) = complete.nit_with_registry(&lcn_registry) {

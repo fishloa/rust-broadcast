@@ -19,9 +19,15 @@ const HEADER_LEN: usize = 3;
 /// Stuffing Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct StSection {
     /// Raw stuffing bytes — any value, no meaning (§5.2.8).
     pub payload: Vec<u8>,
+    /// Header bit fields: `reserved_future_use` and `reserved(2)` of byte 1
+    /// (default [`SectionBits::dvb`](super::SectionBits::dvb)); `reserved_b5`
+    /// is unused (short-form section).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
 }
 
 impl StSection {
@@ -29,7 +35,10 @@ impl StSection {
     #[inline]
     #[must_use]
     pub fn new(payload: Vec<u8>) -> Self {
-        Self { payload }
+        Self {
+            payload,
+            bits: super::SectionBits::dvb(),
+        }
     }
 
     /// Number of stuffing bytes in the payload.
@@ -82,6 +91,7 @@ impl<'a> Parse<'a> for StSection {
         let payload = &bytes[HEADER_LEN..HEADER_LEN + payload_len];
         Ok(Self {
             payload: payload.to_vec(),
+            bits: super::SectionBits::parse(bytes[1], None),
         })
     }
 }
@@ -107,7 +117,7 @@ impl Serialize for StSection {
 
         // Byte 1: SSI=0, reserved_future_use='1', reserved='11', upper nibble of
         // section_length. Top nibble 0b0111 = 0x70, matching DIT/RST/TDT/TOT.
-        buf[1] = super::SECTION_B1_FLAGS_SHORT;
+        buf[1] = self.bits.b1(false);
         super::write_section_length(buf, self.payload.len())?;
 
         // Payload: stuffing bytes

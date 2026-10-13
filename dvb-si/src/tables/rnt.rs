@@ -33,9 +33,9 @@ const CA_HEADER_LEN: usize = 2;
 /// byte: bits `[5:4]` (ETSI TS 102 323 §5.2.2 Table 3).
 const CRID_POLICY_MASK: u8 = 0x03;
 
-/// The three `reserved = '111'` bits preceding the 2-bit
-/// `crid_authority_policy`: bits `[7:6]` of the CRID_authority header byte.
-const CRID_POLICY_RESERVED_HI: u8 = 0xC0;
+/// Shift of the `reserved(2)` bits preceding the 2-bit `crid_authority_policy`:
+/// bits `[7:6]` of the CRID_authority header byte (TS 102 323 §5.2.2).
+const CRID_POLICY_RESERVED_SHIFT: u32 = 6;
 
 /// CRID authority policy — ETSI TS 102 323 §5.2.2 Table 3.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -146,6 +146,7 @@ broadcast_common::impl_spec_display!(ContextIdType, DvbReserved, UserDefined);
 /// A CRID authority entry within a resolution provider (Table 1, §5.2.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct CridAuthority<'a> {
     /// CRID authority name (EN 300 468 Annex A text).
     pub name: DvbText<'a>,
@@ -154,11 +155,32 @@ pub struct CridAuthority<'a> {
     pub crid_authority_policy: CridAuthorityPolicy,
     /// CRID authority descriptor loop.
     pub descriptors: DescriptorLoop<'a>,
+    /// `reserved(2)` above `CRID_authority_policy` (`11`); preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved: u8,
+}
+
+impl<'a> CridAuthority<'a> {
+    /// Construct a CRID authority entry with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        name: DvbText<'a>,
+        crid_authority_policy: CridAuthorityPolicy,
+        descriptors: DescriptorLoop<'a>,
+    ) -> Self {
+        Self {
+            name,
+            crid_authority_policy,
+            descriptors,
+            reserved: super::RESERVED_2,
+        }
+    }
 }
 
 /// A resolution-provider entry (Table 1, §5.2.2).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct ResolutionProvider<'a> {
     /// Resolution provider name (EN 300 468 Annex A text).
     pub name: DvbText<'a>,
@@ -166,6 +188,32 @@ pub struct ResolutionProvider<'a> {
     pub descriptors: DescriptorLoop<'a>,
     /// CRID authority sub-entries.
     pub crid_authorities: Vec<CridAuthority<'a>>,
+    /// `reserved(4)` before `resolution_provider_info_length` (`1111`);
+    /// preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_info_length: u8,
+    /// `reserved(4)` before `resolution_provider_descriptors_length` (`1111`);
+    /// preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_descriptors_length: u8,
+}
+
+impl<'a> ResolutionProvider<'a> {
+    /// Construct a resolution provider with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        name: DvbText<'a>,
+        descriptors: DescriptorLoop<'a>,
+        crid_authorities: Vec<CridAuthority<'a>>,
+    ) -> Self {
+        Self {
+            name,
+            descriptors,
+            crid_authorities,
+            reserved_info_length: super::RESERVED_4,
+            reserved_descriptors_length: super::RESERVED_4,
+        }
+    }
 }
 
 fn crid_authority_serialized_len(ca: &CridAuthority) -> usize {
@@ -191,6 +239,7 @@ fn resolution_provider_serialized_len(rp: &ResolutionProvider) -> usize {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct RntSection<'a> {
     /// 16-bit context identifier (table_id_extension).
     pub context_id: u16,
@@ -209,6 +258,42 @@ pub struct RntSection<'a> {
     pub common_descriptors: DescriptorLoop<'a>,
     /// Resolution-provider entries — unfolded per Table 1.
     pub resolution_providers: Vec<ResolutionProvider<'a>>,
+    /// Header bit fields (`reserved`, `reserved(2)` x2; default
+    /// [`SectionBits::dvb`](super::SectionBits::dvb)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+    /// `reserved(4)` before `common_descriptors_length` (`1111`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_common_descriptors_length: u8,
+}
+
+impl<'a> RntSection<'a> {
+    /// Construct an RNT section with the spec `reserved` fill.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        context_id: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        context_id_type: ContextIdType,
+        common_descriptors: DescriptorLoop<'a>,
+        resolution_providers: Vec<ResolutionProvider<'a>>,
+    ) -> Self {
+        Self {
+            context_id,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            context_id_type,
+            common_descriptors,
+            resolution_providers,
+            bits: super::SectionBits::dvb(),
+            reserved_common_descriptors_length: super::RESERVED_4,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for RntSection<'a> {
@@ -266,6 +351,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
                 });
             }
             let rp_info_length = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
+            let reserved_info_length = super::len_reserved_of(bytes[pos]);
             pos += RP_INFO_LEN_FIELD;
             let rp_end = pos + rp_info_length;
             if rp_end > payload_end {
@@ -302,6 +388,7 @@ impl<'a> Parse<'a> for RntSection<'a> {
                 });
             }
             let rp_desc_len = super::desc_loop_len_of(bytes[pos], bytes[pos + 1]);
+            let reserved_descriptors_length = super::len_reserved_of(bytes[pos]);
             pos += RP_DESC_LEN_FIELD;
             let rp_desc_start = pos;
             let rp_desc_end = rp_desc_start + rp_desc_len;
@@ -358,18 +445,16 @@ impl<'a> Parse<'a> for RntSection<'a> {
                 let ca_descriptors = DescriptorLoop::new(&bytes[ca_desc_start..ca_desc_end]);
                 pos = ca_desc_end;
 
-                crid_authorities.push(CridAuthority {
-                    name: ca_name,
-                    crid_authority_policy,
-                    descriptors: ca_descriptors,
-                });
+                let mut authority =
+                    CridAuthority::new(ca_name, crid_authority_policy, ca_descriptors);
+                authority.reserved = ca_packed >> CRID_POLICY_RESERVED_SHIFT;
+                crid_authorities.push(authority);
             }
 
-            resolution_providers.push(ResolutionProvider {
-                name,
-                descriptors,
-                crid_authorities,
-            });
+            let mut provider = ResolutionProvider::new(name, descriptors, crid_authorities);
+            provider.reserved_info_length = reserved_info_length;
+            provider.reserved_descriptors_length = reserved_descriptors_length;
+            resolution_providers.push(provider);
             pos = rp_end;
         }
 
@@ -382,6 +467,8 @@ impl<'a> Parse<'a> for RntSection<'a> {
             context_id_type,
             common_descriptors,
             resolution_providers,
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
+            reserved_common_descriptors_length: super::len_reserved_of(bytes[common_desc_len_pos]),
         })
     }
 }
@@ -412,11 +499,13 @@ impl Serialize for RntSection<'_> {
         }
 
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.context_id.to_be_bytes());
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8] = self.context_id_type.to_u8();
@@ -427,7 +516,11 @@ impl Serialize for RntSection<'_> {
             "common_descriptors_length",
         )?;
         let cdl_pos = HEADER_LEN + EXTENSION_HEADER_LEN;
-        super::write_desc_loop_len(&mut buf[cdl_pos..cdl_pos + 2], cdl as usize)?;
+        super::write_desc_loop_len_r(
+            &mut buf[cdl_pos..cdl_pos + 2],
+            cdl as usize,
+            self.reserved_common_descriptors_length,
+        )?;
 
         let cd_start = cdl_pos + COMMON_DESC_LEN_FIELD;
         let cd_end = cd_start + self.common_descriptors.len();
@@ -441,7 +534,11 @@ impl Serialize for RntSection<'_> {
                 12,
                 "resolution_provider_loop_length",
             )?;
-            super::write_desc_loop_len(&mut buf[pos..pos + 2], rp_info_length as usize)?;
+            super::write_desc_loop_len_r(
+                &mut buf[pos..pos + 2],
+                rp_info_length as usize,
+                rp.reserved_info_length,
+            )?;
             pos += RP_INFO_LEN_FIELD;
 
             let rp_name_len =
@@ -456,7 +553,11 @@ impl Serialize for RntSection<'_> {
                 12,
                 "resolution_provider_descriptors_length",
             )?;
-            super::write_desc_loop_len(&mut buf[pos..pos + 2], rdl as usize)?;
+            super::write_desc_loop_len_r(
+                &mut buf[pos..pos + 2],
+                rdl as usize,
+                rp.reserved_descriptors_length,
+            )?;
             pos += RP_DESC_LEN_FIELD;
             buf[pos..pos + rp.descriptors.len()].copy_from_slice(rp.descriptors.raw());
             pos += rp.descriptors.len();
@@ -474,7 +575,7 @@ impl Serialize for RntSection<'_> {
                     12,
                     "crid_authority_descriptors_length",
                 )?;
-                buf[pos] = CRID_POLICY_RESERVED_HI
+                buf[pos] = ((ca.reserved & super::RESERVED_2) << CRID_POLICY_RESERVED_SHIFT)
                     | ((ca.crid_authority_policy.to_u8() & CRID_POLICY_MASK) << 4)
                     | ((adl >> 8) as u8);
                 buf[pos + 1] = adl as u8;
@@ -502,25 +603,25 @@ mod tests {
     #[test]
     fn parse_happy_path() {
         let common_desc = [0x83u8, 0x02, 0xAB, 0xCD];
-        let rp = ResolutionProvider {
-            name: DvbText::new(b"bb"),
-            descriptors: DescriptorLoop::new(&[]),
-            crid_authorities: vec![CridAuthority {
-                name: DvbText::new(b"au"),
-                crid_authority_policy: CridAuthorityPolicy::Transient,
-                descriptors: DescriptorLoop::new(&[]),
-            }],
-        };
-        let rnt = RntSection {
-            context_id: 0x0042,
-            version_number: 3,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            context_id_type: ContextIdType::BouquetId,
-            common_descriptors: DescriptorLoop::new(&common_desc),
-            resolution_providers: vec![rp],
-        };
+        let rp = ResolutionProvider::new(
+            DvbText::new(b"bb"),
+            DescriptorLoop::new(&[]),
+            vec![CridAuthority::new(
+                DvbText::new(b"au"),
+                CridAuthorityPolicy::Transient,
+                DescriptorLoop::new(&[]),
+            )],
+        );
+        let rnt = RntSection::new(
+            0x0042,
+            3,
+            true,
+            0,
+            0,
+            ContextIdType::BouquetId,
+            DescriptorLoop::new(&common_desc),
+            vec![rp],
+        );
         let mut buf = vec![0u8; rnt.serialized_len()];
         rnt.serialize_into(&mut buf).unwrap();
         let parsed = RntSection::parse(&buf).unwrap();
@@ -545,16 +646,16 @@ mod tests {
 
     #[test]
     fn parse_no_descriptors_no_providers() {
-        let rnt = RntSection {
-            context_id: 0x0000,
-            version_number: 0,
-            current_next_indicator: false,
-            section_number: 0,
-            last_section_number: 0,
-            context_id_type: ContextIdType::BouquetId,
-            common_descriptors: DescriptorLoop::new(&[]),
-            resolution_providers: Vec::new(),
-        };
+        let rnt = RntSection::new(
+            0x0000,
+            0,
+            false,
+            0,
+            0,
+            ContextIdType::BouquetId,
+            DescriptorLoop::new(&[]),
+            Vec::new(),
+        );
         let mut buf = vec![0u8; rnt.serialized_len()];
         rnt.serialize_into(&mut buf).unwrap();
         let parsed = RntSection::parse(&buf).unwrap();
@@ -564,32 +665,32 @@ mod tests {
 
     #[test]
     fn byte_exact_round_trip() {
-        let rp = ResolutionProvider {
-            name: DvbText::new(b"provider"),
-            descriptors: DescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
-            crid_authorities: vec![
-                CridAuthority {
-                    name: DvbText::new(b"auth1"),
-                    crid_authority_policy: CridAuthorityPolicy::Permanent,
-                    descriptors: DescriptorLoop::new(&[]),
-                },
-                CridAuthority {
-                    name: DvbText::new(b"auth2"),
-                    crid_authority_policy: CridAuthorityPolicy::Either,
-                    descriptors: DescriptorLoop::new(&[0x42, 0x00]),
-                },
+        let rp = ResolutionProvider::new(
+            DvbText::new(b"provider"),
+            DescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
+            vec![
+                CridAuthority::new(
+                    DvbText::new(b"auth1"),
+                    CridAuthorityPolicy::Permanent,
+                    DescriptorLoop::new(&[]),
+                ),
+                CridAuthority::new(
+                    DvbText::new(b"auth2"),
+                    CridAuthorityPolicy::Either,
+                    DescriptorLoop::new(&[0x42, 0x00]),
+                ),
             ],
-        };
-        let rnt = RntSection {
-            context_id: 0xABCD,
-            version_number: 15,
-            current_next_indicator: true,
-            section_number: 1,
-            last_section_number: 2,
-            context_id_type: ContextIdType::NetworkId,
-            common_descriptors: DescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
-            resolution_providers: vec![rp],
-        };
+        );
+        let rnt = RntSection::new(
+            0xABCD,
+            15,
+            true,
+            1,
+            2,
+            ContextIdType::NetworkId,
+            DescriptorLoop::new(&[0x40, 0x03, b'R', b'N', b'T']),
+            vec![rp],
+        );
         let mut buf = vec![0u8; rnt.serialized_len()];
         rnt.serialize_into(&mut buf).unwrap();
         let re = RntSection::parse(&buf).unwrap();
@@ -608,16 +709,16 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_table_id() {
-        let rnt = RntSection {
-            context_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            context_id_type: ContextIdType::BouquetId,
-            common_descriptors: DescriptorLoop::new(&[]),
-            resolution_providers: Vec::new(),
-        };
+        let rnt = RntSection::new(
+            0x0001,
+            0,
+            true,
+            0,
+            0,
+            ContextIdType::BouquetId,
+            DescriptorLoop::new(&[]),
+            Vec::new(),
+        );
         let mut buf = vec![0u8; rnt.serialized_len()];
         rnt.serialize_into(&mut buf).unwrap();
         buf[0] = 0x70;
@@ -637,16 +738,16 @@ mod tests {
 
     #[test]
     fn serialize_rejects_too_small_buffer() {
-        let rnt = RntSection {
-            context_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            context_id_type: ContextIdType::BouquetId,
-            common_descriptors: DescriptorLoop::new(&[]),
-            resolution_providers: Vec::new(),
-        };
+        let rnt = RntSection::new(
+            0x0001,
+            0,
+            true,
+            0,
+            0,
+            ContextIdType::BouquetId,
+            DescriptorLoop::new(&[]),
+            Vec::new(),
+        );
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             rnt.serialize_into(&mut buf).unwrap_err(),
@@ -676,16 +777,16 @@ mod tests {
     #[test]
     fn serialize_rejects_common_descriptors_exceeding_section_length() {
         let desc = vec![0xAAu8; 4084];
-        let rnt = RntSection {
-            context_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            context_id_type: ContextIdType::BouquetId,
-            common_descriptors: DescriptorLoop::new(&desc),
-            resolution_providers: vec![],
-        };
+        let rnt = RntSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            ContextIdType::BouquetId,
+            DescriptorLoop::new(&desc),
+            vec![],
+        );
         let mut buf = vec![0u8; rnt.serialized_len()];
         assert!(matches!(
             rnt.serialize_into(&mut buf).unwrap_err(),
@@ -696,16 +797,16 @@ mod tests {
     #[test]
     fn serialize_accepts_common_descriptors_at_section_length_boundary() {
         let desc = vec![0xAAu8; 4083];
-        let rnt = RntSection {
-            context_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            context_id_type: ContextIdType::BouquetId,
-            common_descriptors: DescriptorLoop::new(&desc),
-            resolution_providers: vec![],
-        };
+        let rnt = RntSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            ContextIdType::BouquetId,
+            DescriptorLoop::new(&desc),
+            vec![],
+        );
         let mut buf = vec![0u8; rnt.serialized_len()];
         rnt.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = RntSection::parse(&buf).expect("reparse");

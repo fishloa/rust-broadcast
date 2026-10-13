@@ -42,6 +42,7 @@
 //! plus a hand-rolled PMT-body walk) — never the crate's own PMT parser
 //! under test (mirrors `tests/ir_timing.rs`'s `collect_pmt_es`).
 
+use mpeg_ts::pid::Pid;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
 
@@ -79,7 +80,7 @@ fn demux(data: &[u8]) -> Media {
 /// `PUSI=1` (e.g. this fixture's `0xAC`, a truncated tail) can never
 /// reassemble anything, and a PID that never appears on the wire at all
 /// (e.g. this fixture's H.264 PID) trivially has none either.
-fn pusi_seen_pids(data: &[u8]) -> HashMap<u16, usize> {
+fn pusi_seen_pids(data: &[u8]) -> HashMap<Pid, usize> {
     let mut counts = HashMap::new();
     for chunk in data.chunks_exact(TS) {
         let Ok(pkt) = TsPacket::parse(chunk) else {
@@ -102,7 +103,7 @@ fn find_pmt_pid(data: &[u8]) -> u16 {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != PAT_PID {
+        if pkt.header.pid != Pid::new(PAT_PID) {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -145,7 +146,7 @@ fn collect_pmt_es(data: &[u8], pmt_pid: u16) -> Vec<(u8, u16, Vec<u8>)> {
         let Ok(pkt) = TsPacket::parse(chunk) else {
             continue;
         };
-        if pkt.header.pid != pmt_pid {
+        if pkt.header.pid != Pid::new(pmt_pid) {
             continue;
         }
         let Some(payload) = pkt.payload else {
@@ -200,7 +201,7 @@ fn live_pmt_es(data: &[u8]) -> Vec<LiveEs> {
     let pusi_counts = pusi_seen_pids(data);
     let mut by_pid: BTreeMap<u16, (u8, BTreeSet<Vec<u8>>)> = BTreeMap::new();
     for (stream_type, pid, descriptors) in collect_pmt_es(data, pmt_pid) {
-        if pusi_counts.get(&pid).copied().unwrap_or(0) == 0 {
+        if pusi_counts.get(&Pid::new(pid)).copied().unwrap_or(0) == 0 {
             continue; // PMT-listed but never starts a PES/section on the wire
         }
         let entry = by_pid.entry(pid).or_insert((stream_type, BTreeSet::new()));
@@ -260,7 +261,7 @@ fn find_track_by_pid(media: &Media, pid: u16) -> &Track {
     media
         .tracks
         .iter()
-        .find(|t| t.spec.source_pid == Some(pid))
+        .find(|t| t.spec.source_pid == Some(Pid::new(pid)))
         .unwrap_or_else(|| panic!("no track with source_pid {pid:#06x}"))
 }
 

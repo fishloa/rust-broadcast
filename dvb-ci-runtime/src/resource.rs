@@ -549,6 +549,7 @@ impl Resource for HostControl {
 mod tests {
     use super::*;
     use dvb_ci::objects::resource_manager::Profile;
+    use mpeg_ts::pid::Pid;
 
     /// Local test helper: unwrap a serialize that must succeed for the
     /// fixed/bounded values these tests construct.
@@ -773,15 +774,15 @@ mod tests {
         // replace() → HostControlEvent::Replace with the 13-bit PIDs decoded.
         let replace = s(&Replace {
             replacement_ref: 0x07,
-            replaced_pid: 0x0123,
-            replacement_pid: 0x01FF,
+            replaced_pid: Pid::new(0x0123),
+            replacement_pid: Pid::new(0x01FF),
         });
         assert_eq!(
             h.on_apdu(&replace).unwrap().notify,
             vec![Notification::HostControl(HostControlEvent::Replace {
                 replacement_ref: 0x07,
-                replaced_pid: 0x0123,
-                replacement_pid: 0x01FF,
+                replaced_pid: Pid::new(0x0123),
+                replacement_pid: Pid::new(0x01FF),
             })]
         );
 

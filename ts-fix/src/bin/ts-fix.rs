@@ -13,6 +13,7 @@ use std::fs;
 use std::path::PathBuf;
 
 use clap::Parser;
+use mpeg_ts::pid::Pid;
 use mpeg_ts::resync::TsResync;
 use ts_fix::{PcrRestamp, PidFilter, Stuffing, TsFix};
 
@@ -58,9 +59,10 @@ struct Cli {
         value_name = "PID,PID,...",
         conflicts_with = "service",
         value_delimiter = ',',
+        value_parser = parse_pid,
         help = "Comma-separated PIDs to keep (PAT PID 0x0000 always included)"
     )]
-    keep_pids: Option<Vec<u16>>,
+    keep_pids: Option<Vec<Pid>>,
 
     /// Extract a single programme by number.
     #[arg(
@@ -121,6 +123,13 @@ struct Cli {
         help = "Insert null packets to reach target rate (packets_per_input)"
     )]
     pad_to: Option<f64>,
+}
+
+/// clap value parser for a decimal PID, rejecting values outside the 13-bit
+/// range (ISO/IEC 13818-1 §2.4.3.2) instead of silently never matching them.
+fn parse_pid(s: &str) -> Result<Pid, String> {
+    let value: u16 = s.parse().map_err(|e| format!("{e}"))?;
+    Pid::try_new(value).map_err(|e| e.to_string())
 }
 
 fn main() {

@@ -96,6 +96,7 @@ use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 /// Logical key identifying a service across the DVB network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
@@ -481,7 +482,7 @@ impl EpgStore {
     }
 
     /// Feed one EIT section with PID context into the store.
-    pub fn feed_with_pid(&mut self, pid: Option<u16>, bytes: &[u8]) -> CollectResult<()> {
+    pub fn feed_with_pid(&mut self, pid: Option<Pid>, bytes: &[u8]) -> CollectResult<()> {
         if let Some(completed) = self.collector.push_section_with_pid(pid, bytes)? {
             let tables = completed.tables()?;
             for table in &tables {

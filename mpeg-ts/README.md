@@ -119,11 +119,11 @@ use mpeg_ts::OwnedTsPacket;
 // Build a null packet (PID 0x1FFF) with a given continuity counter.
 let null_raw = OwnedTsPacket::null_packet(3);
 let pkt = TsPacket::parse(&null_raw)?;
-assert_eq!(pkt.header.pid, 0x1FFF);
+assert_eq!(pkt.header.pid, mpeg_ts::pid::well_known::NULL);
 assert_eq!(pkt.header.continuity_counter, 3);
 
 // Overwrite a continuity counter in-place.
-let mut raw = OwnedTsPacket::serialize_with_payload(0x0100, false, 0, &[])?;
+let mut raw = OwnedTsPacket::serialize_with_payload(mpeg_ts::pid::Pid::new(0x0100), false, 0, &[])?;
 OwnedTsPacket::set_continuity_counter(&mut raw, 7);
 let pkt = TsPacket::parse(&raw)?;
 assert_eq!(pkt.header.continuity_counter, 7);

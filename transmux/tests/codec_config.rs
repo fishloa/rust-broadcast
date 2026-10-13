@@ -11,6 +11,7 @@
 use broadcast_common::Serialize;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
+use mpeg_ts::pid::Pid;
 use transmux::annexb::iter_annexb_nals;
 use transmux::{AVCDecoderConfigurationRecord, AvcSps, AvcSpsInfo, HevcNalUnit, HevcSpsInfo};
 
@@ -32,7 +33,7 @@ fn demux_annexb_nals<P: AsRef<std::path::Path>>(path: P, pid: u16) -> Vec<Vec<u8
             Some(p) => p,
             None => continue,
         };
-        if pkt.pid() != pid {
+        if pkt.pid() != Pid::new(pid) {
             continue;
         }
         if let Some(completed) = assembler.feed(pkt.pusi(), payload) {

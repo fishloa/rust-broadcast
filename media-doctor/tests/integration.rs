@@ -1,5 +1,6 @@
 //! Integration tests for `media-doctor`.
 
+use mpeg_ts::pid::Pid;
 use std::fs;
 
 use media_doctor::Diagnostic;
@@ -360,10 +361,10 @@ fn count_legal_duplicates(ts: &[u8]) -> (usize, usize) {
             continue;
         };
         let pid = pkt.header.pid;
-        if pid == 0x1FFF || !pkt.header.has_payload {
+        if pid == Pid::new(0x1FFF) || !pkt.header.has_payload {
             continue;
         }
-        let st = states.entry(pid).or_insert(St {
+        let st = states.entry(pid.value()).or_insert(St {
             last: Vec::new(),
             dup_used: false,
             initialised: false,
@@ -509,17 +510,14 @@ fn pat_pmt_ts(
     use mpeg_ts::mux::SectionPacketiser;
     use mpeg_ts::ts::TS_PACKET_SIZE;
 
-    let pat = PatSection {
-        transport_stream_id: 1,
-        version_number: version,
-        current_next_indicator: current_next,
-        section_number: 0,
-        last_section_number: 0,
-        entries: vec![PatEntry {
-            program_number: 1,
-            pid: PAT_PMT_PID,
-        }],
-    };
+    let pat = PatSection::new(
+        1,
+        version,
+        current_next,
+        0,
+        0,
+        vec![PatEntry::new(1, PAT_PMT_PID)],
+    );
     let mut pat_bytes = vec![0u8; pat.serialized_len()];
     let n = pat.serialize_into(&mut pat_bytes).expect("serialize PAT");
     pat_bytes.truncate(n);
@@ -534,11 +532,7 @@ fn pat_pmt_ts(
         DescriptorLoop::new(&[]),
         streams
             .iter()
-            .map(|&(pid, stream_type)| PmtStream {
-                stream_type,
-                elementary_pid: pid,
-                es_info: DescriptorLoop::new(&[]),
-            })
+            .map(|&(pid, stream_type)| PmtStream::new(stream_type, pid, DescriptorLoop::new(&[])))
             .collect(),
     );
     let mut pmt_bytes = vec![0u8; pmt.serialized_len()];
@@ -546,10 +540,12 @@ fn pat_pmt_ts(
     pmt_bytes.truncate(n);
 
     let mut ts = Vec::new();
-    for packet in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&pat_bytes]) {
+    for packet in
+        SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&pat_bytes])
+    {
         ts.extend_from_slice(&packet);
     }
-    for packet in SectionPacketiser::new(PAT_PMT_PID).packetise(&[&pmt_bytes]) {
+    for packet in SectionPacketiser::new(Pid::new(PAT_PMT_PID)).packetise(&[&pmt_bytes]) {
         ts.extend_from_slice(&packet);
     }
     assert_eq!(ts.len() % TS_PACKET_SIZE, 0);
@@ -751,29 +747,20 @@ fn nit_and_null_pids_are_not_tracked() {
     use dvb_si::tables::pat::{PatEntry, PatSection};
     use mpeg_ts::mux::SectionPacketiser;
 
-    let pat = PatSection {
-        transport_stream_id: 1,
-        version_number: 0,
-        current_next_indicator: true,
-        section_number: 0,
-        last_section_number: 0,
-        entries: vec![
-            PatEntry {
-                program_number: 0, // NIT
-                pid: 0x0010,
-            },
-            PatEntry {
-                program_number: 1,
-                pid: 0x1FFF, // reserved NULL PID
-            },
-        ],
-    };
+    let pat = PatSection::new(
+        1,
+        0,
+        true,
+        0,
+        0,
+        vec![PatEntry::new(0, 0x0010), PatEntry::new(1, 0x1FFF)],
+    );
     let mut buf = vec![0u8; pat.serialized_len()];
     let n = pat.serialize_into(&mut buf).expect("serialize PAT");
     buf.truncate(n);
 
     let mut ts = Vec::new();
-    for packet in SectionPacketiser::new(dvb_si::tables::pat::PID).packetise(&[&buf]) {
+    for packet in SectionPacketiser::new(Pid::new(dvb_si::tables::pat::PID)).packetise(&[&buf]) {
         ts.extend_from_slice(&packet);
     }
     // Feed the two candidate PIDs bytes that would reassemble as a PAT-shaped

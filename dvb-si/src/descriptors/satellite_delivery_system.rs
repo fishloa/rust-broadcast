@@ -182,8 +182,10 @@ pub struct SatelliteDeliverySystemDescriptor {
     /// Polarization.
     pub polarization: Polarization,
     /// DVB-S2 roll-off factor. Meaningful only when `modulation_system` is
-    /// DVB-S2 (Table 37); for DVB-S the bits are reserved_zero_future_use and
-    /// serialize emits them as 0 regardless of this field.
+    /// DVB-S2 (Table 37); for DVB-S the bits are reserved_zero_future_use
+    /// (`00` in every edition, audit §3.5). Parse keeps whatever the sender
+    /// wrote and serialize re-emits it, so a DVB-S descriptor with `01` is
+    /// byte-identical; construct DVB-S descriptors with `Alpha035` (`00`).
     pub roll_off: RollOff,
     /// Modulation system.
     pub modulation_system: ModulationSystem,
@@ -395,16 +397,17 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
             Polarization::CircularLeft => 0x40,
             Polarization::CircularRight => 0x60,
         };
-        // Table 37: roll_off exists only when modulation_system == DVB-S2;
-        // for DVB-S those 2 bits are reserved_zero_future_use and SHALL be 0.
-        if self.modulation_system == ModulationSystem::DvbS2 {
-            flags |= match self.roll_off {
-                RollOff::Alpha035 => 0x00,
-                RollOff::Alpha025 => 0x08,
-                RollOff::Alpha020 => 0x10,
-                RollOff::Reserved(v) => (v & 0x03) << 3,
-            };
-        }
+        // Table 37: roll_off is defined only when modulation_system == DVB-S2;
+        // for DVB-S those 2 bits are reserved_zero_future_use. They are still
+        // emitted from `roll_off` (a DVB-S sender writing `01`, e.g. test-101,
+        // must round-trip byte-identically); a constructed DVB-S descriptor
+        // defaults `roll_off` to `Alpha035` (= `00`, the spec value).
+        flags |= match self.roll_off {
+            RollOff::Alpha035 => 0x00,
+            RollOff::Alpha025 => 0x08,
+            RollOff::Alpha020 => 0x10,
+            RollOff::Reserved(v) => (v & 0x03) << 3,
+        };
         flags |= match self.modulation_system {
             ModulationSystem::DvbS => 0x00,
             ModulationSystem::DvbS2 => 0x04,
@@ -660,5 +663,38 @@ mod tests {
         desc.set_frequency_hz(11_725_000_000).unwrap();
         assert_eq!(desc.frequency_hz(), Some(11_725_000_000));
         assert_eq!(desc.frequency_bcd, 0x01172500);
+    }
+
+    /// test-101 writes roll_off=`01` on a DVB-S descriptor (audit §3.5): every
+    /// roll_off value, on both modulation systems, re-serializes identically.
+    #[test]
+    fn roll_off_preserved_on_dvb_s_and_dvb_s2() {
+        for modsys in [0x00u8, 0x04] {
+            for ro in 0u8..=3 {
+                let flags = 0x80 | (ro << 3) | modsys | 0x01;
+                let raw = [
+                    TAG, BODY_LEN, 0x01, 0x17, 0x25, 0x00, 0x19, 0x20, flags, 0x02, 0x75, 0x00,
+                    0x08,
+                ];
+                let d = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
+                assert_eq!(d.roll_off.to_u8(), ro);
+                let mut buf = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut buf).unwrap();
+                assert_eq!(buf, raw, "modulation_system bits {modsys:#x} roll_off {ro}");
+            }
+        }
+    }
+
+    /// A hand-built DVB-S descriptor carries the spec value `00`.
+    #[test]
+    fn dvb_s_constructed_roll_off_is_zero() {
+        let raw = [
+            TAG, BODY_LEN, 0x01, 0x17, 0x25, 0x00, 0x19, 0x20, 0x81, 0x02, 0x75, 0x00, 0x08,
+        ];
+        let mut d = SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
+        d.roll_off = RollOff::Alpha035;
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[8] & 0x18, 0);
     }
 }

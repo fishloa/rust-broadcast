@@ -70,12 +70,14 @@ fn hotbird_mhp_dsmcc_parse() {
         };
 
         // Only scan carousel-range PIDs (skip well-known SI).
-        if pkt.header.pid < MIN_CAROUSEL_PID || pkt.header.pid > MAX_CAROUSEL_PID {
+        if pkt.header.pid < Pid::new(MIN_CAROUSEL_PID)
+            || pkt.header.pid > Pid::new(MAX_CAROUSEL_PID)
+        {
             continue;
         }
 
         if let Some(payload) = pkt.payload {
-            let reasm = reassemblers.entry(pkt.header.pid).or_default();
+            let reasm = reassemblers.entry(pkt.header.pid.value()).or_default();
             reasm.feed(payload, pkt.header.pusi);
             while let Some(sec_bytes) = reasm.pop_section() {
                 let table_id = sec_bytes[0];

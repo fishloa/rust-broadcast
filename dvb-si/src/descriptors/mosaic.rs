@@ -32,6 +32,23 @@ const CELL_FIXED_LEN: usize = 3; // 2 id/presentation bytes + elementary_cell_fi
 const MAX_BODY_LEN: usize = u8::MAX as usize;
 const ENTRY_POINT_MASK: u8 = 0x80; // header bit 7
 const ELEM_CELL_ID_MASK: u8 = 0x3F; // low 6 bits
+const ELEM_RESERVED_SHIFT: u8 = 6; // top 2 bits of an elementary-cell byte
+const GRID_RESERVED_MASK: u8 = 0x08; // header bit 3
+const GRID_RESERVED_SHIFT: u8 = 3;
+/// 7-bit `reserved_future_use` spans the low 2 bits of cell byte 0 and the
+/// high 5 bits of cell byte 1.
+const CELL_RESERVED_HI_MASK: u8 = 0x03;
+const CELL_RESERVED_LO_SHIFT: u8 = 3;
+const CELL_RESERVED_HI_SHIFT: u8 = 5;
+const CELL_PRESENTATION_MASK: u8 = 0x07;
+/// Spec default of the grid header `reserved_future_use`(1): `1` (EN 300 468
+/// V1.3.1-V1.20.1 Table 71; audit `dvb-si/docs/reserved-bits-edition-audit.md`
+/// §6.1, class A: stable in every edition).
+pub const GRID_RESERVED_FUTURE_USE_DEFAULT: u8 = 1;
+/// Spec default of the per-logical-cell `reserved_future_use`(7): all ones.
+pub const CELL_RESERVED_FUTURE_USE_DEFAULT: u8 = 0x7F;
+/// Spec default of the per-elementary-cell `reserved_future_use`(2): all ones.
+pub const ELEMENTARY_CELL_RESERVED_FUTURE_USE_DEFAULT: u8 = 0b11;
 
 /// Conditional linkage payload selected by `cell_linkage_info` (Table 75).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -106,25 +123,81 @@ impl CellLinkage {
     }
 }
 
+/// One elementary cell entry: `reserved_future_use`(2) + `elementary_cell_id`(6).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
+pub struct ElementaryCell {
+    /// `reserved_future_use`(2) ahead of the id (2 bits, right-aligned).
+    /// Captured on parse, re-emitted verbatim; [`ElementaryCell::new`] defaults
+    /// to [`ELEMENTARY_CELL_RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_future_use: u8,
+    /// 6-bit elementary_cell_id.
+    pub elementary_cell_id: u8,
+}
+
+impl ElementaryCell {
+    /// Build an entry with the spec-default reserved bits (all ones).
+    #[must_use]
+    pub const fn new(elementary_cell_id: u8) -> Self {
+        Self {
+            reserved_future_use: ELEMENTARY_CELL_RESERVED_FUTURE_USE_DEFAULT,
+            elementary_cell_id,
+        }
+    }
+}
+
 /// One logical cell within the mosaic.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct MosaicLogicalCell {
+    /// `reserved_future_use`(7) between `logical_cell_id` and
+    /// `logical_cell_presentation_info` (7 bits, right-aligned). Captured on
+    /// parse, re-emitted verbatim; [`MosaicLogicalCell::new`] defaults to
+    /// [`CELL_RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_future_use: u8,
     /// 6-bit logical_cell_id.
     pub logical_cell_id: u8,
     /// 3-bit logical_cell_presentation_info (Table 74): 1 = video,
     /// 2 = still picture, 3 = graphics/text.
     pub presentation_info: u8,
-    /// elementary_cell_id values (each 6 bits) composing this logical cell.
-    pub elementary_cell_ids: Vec<u8>,
+    /// Elementary cells (each `reserved_future_use`(2) + 6-bit id) composing
+    /// this logical cell.
+    pub elementary_cells: Vec<ElementaryCell>,
     /// Linkage of this logical cell to a bouquet / service / event.
     pub linkage: CellLinkage,
+}
+
+impl MosaicLogicalCell {
+    /// Build a logical cell with the spec-default reserved bits (all ones).
+    #[must_use]
+    pub const fn new(
+        logical_cell_id: u8,
+        presentation_info: u8,
+        elementary_cells: Vec<ElementaryCell>,
+        linkage: CellLinkage,
+    ) -> Self {
+        Self {
+            reserved_future_use: CELL_RESERVED_FUTURE_USE_DEFAULT,
+            logical_cell_id,
+            presentation_info,
+            elementary_cells,
+            linkage,
+        }
+    }
 }
 
 /// Mosaic Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct MosaicDescriptor {
+    /// `reserved_future_use`(1) between the horizontal and vertical cell
+    /// counts (1 bit). Captured on parse, re-emitted verbatim;
+    /// [`MosaicDescriptor::new`] defaults to
+    /// [`GRID_RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_future_use: u8,
     /// mosaic_entry_point: set when this mosaic is the top of a hierarchy.
     pub mosaic_entry_point: bool,
     /// 3-bit number_of_horizontal_elementary_cells (Table 72; 0 = one cell).
@@ -133,6 +206,25 @@ pub struct MosaicDescriptor {
     pub num_vertical_cells: u8,
     /// Logical cells in wire order.
     pub logical_cells: Vec<MosaicLogicalCell>,
+}
+
+impl MosaicDescriptor {
+    /// Build a descriptor with the spec-default reserved bit.
+    #[must_use]
+    pub const fn new(
+        mosaic_entry_point: bool,
+        num_horizontal_cells: u8,
+        num_vertical_cells: u8,
+        logical_cells: Vec<MosaicLogicalCell>,
+    ) -> Self {
+        Self {
+            reserved_future_use: GRID_RESERVED_FUTURE_USE_DEFAULT,
+            mosaic_entry_point,
+            num_horizontal_cells,
+            num_vertical_cells,
+            logical_cells,
+        }
+    }
 }
 
 fn read_u16(b: &[u8], at: usize) -> Result<u16> {
@@ -154,7 +246,6 @@ impl<'a> Parse<'a> for MosaicDescriptor {
                 reason: "mosaic_descriptor missing grid header byte",
             });
         }
-        // grid header: reserved bit (bit 3) ignored on parse (§5.1).
         let mosaic_entry_point = body[0] & ENTRY_POINT_MASK != 0;
         let num_horizontal_cells = (body[0] >> 4) & 0x07;
         let num_vertical_cells = body[0] & 0x07;
@@ -170,7 +261,9 @@ impl<'a> Parse<'a> for MosaicDescriptor {
             }
             // logical_cell_id(6) | reserved(7) | presentation_info(3)
             let logical_cell_id = (body[pos] >> 2) & 0x3F;
-            let presentation_info = body[pos + 1] & 0x07;
+            let presentation_info = body[pos + 1] & CELL_PRESENTATION_MASK;
+            let cell_reserved = ((body[pos] & CELL_RESERVED_HI_MASK) << CELL_RESERVED_HI_SHIFT)
+                | (body[pos + 1] >> CELL_RESERVED_LO_SHIFT);
             let elem_field_len = body[pos + 2] as usize;
             pos += CELL_FIXED_LEN;
             if pos + elem_field_len > body.len() {
@@ -179,10 +272,12 @@ impl<'a> Parse<'a> for MosaicDescriptor {
                     reason: "elementary_cell_field_length exceeds descriptor body",
                 });
             }
-            let mut elementary_cell_ids = Vec::with_capacity(elem_field_len);
+            let mut elementary_cells = Vec::with_capacity(elem_field_len);
             for &b in &body[pos..pos + elem_field_len] {
-                // reserved(2) ignored on parse; low 6 bits are the id.
-                elementary_cell_ids.push(b & ELEM_CELL_ID_MASK);
+                elementary_cells.push(ElementaryCell {
+                    reserved_future_use: b >> ELEM_RESERVED_SHIFT,
+                    elementary_cell_id: b & ELEM_CELL_ID_MASK,
+                });
             }
             pos += elem_field_len;
             if pos >= body.len() {
@@ -253,13 +348,15 @@ impl<'a> Parse<'a> for MosaicDescriptor {
                 other => CellLinkage::Reserved { value: other },
             };
             logical_cells.push(MosaicLogicalCell {
+                reserved_future_use: cell_reserved,
                 logical_cell_id,
                 presentation_info,
-                elementary_cell_ids,
+                elementary_cells,
                 linkage,
             });
         }
         Ok(Self {
+            reserved_future_use: (body[0] & GRID_RESERVED_MASK) >> GRID_RESERVED_SHIFT,
             mosaic_entry_point,
             num_horizontal_cells,
             num_vertical_cells,
@@ -274,7 +371,7 @@ impl Serialize for MosaicDescriptor {
         let cells: usize = self
             .logical_cells
             .iter()
-            .map(|c| CELL_FIXED_LEN + c.elementary_cell_ids.len() + 1 + c.linkage.payload_len())
+            .map(|c| CELL_FIXED_LEN + c.elementary_cells.len() + 1 + c.linkage.payload_len())
             .sum();
         HEADER_LEN + GRID_HEADER_LEN + cells
     }
@@ -296,28 +393,31 @@ impl Serialize for MosaicDescriptor {
             });
         }
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
-        // grid header: reserved bit (bit 3) emitted as 1 (§5.1).
+        // grid header: reserved_future_use (bit 3) preserved from parse.
         buf[2] = if self.mosaic_entry_point {
             ENTRY_POINT_MASK
         } else {
             0
         } | ((self.num_horizontal_cells & 0x07) << 4)
-            | 0x08
+            | ((self.reserved_future_use << GRID_RESERVED_SHIFT) & GRID_RESERVED_MASK)
             | (self.num_vertical_cells & 0x07);
         let mut pos = HEADER_LEN + GRID_HEADER_LEN;
         for cell in &self.logical_cells {
-            // byte0: logical_cell_id(6) | top 2 reserved bits emitted 1s.
-            buf[pos] = ((cell.logical_cell_id & 0x3F) << 2) | 0x03;
-            // byte1: 5 reserved bits emitted 1s | presentation_info(3).
-            buf[pos + 1] = 0xF8 | (cell.presentation_info & 0x07);
+            // byte0: logical_cell_id(6) | high 2 bits of reserved_future_use(7).
+            buf[pos] = ((cell.logical_cell_id & 0x3F) << 2)
+                | ((cell.reserved_future_use >> CELL_RESERVED_HI_SHIFT) & CELL_RESERVED_HI_MASK);
+            // byte1: low 5 bits of reserved_future_use(7) | presentation_info(3).
+            buf[pos + 1] = (cell.reserved_future_use << CELL_RESERVED_LO_SHIFT)
+                | (cell.presentation_info & CELL_PRESENTATION_MASK);
             buf[pos + 2] = broadcast_common::len::fit_u8(
-                cell.elementary_cell_ids.len(),
+                cell.elementary_cells.len(),
                 "elementary_cell_field_length",
             )?;
             pos += CELL_FIXED_LEN;
-            for &id in &cell.elementary_cell_ids {
-                // reserved(2) emitted 1s | elementary_cell_id(6).
-                buf[pos] = 0xC0 | (id & ELEM_CELL_ID_MASK);
+            for ec in &cell.elementary_cells {
+                // reserved_future_use(2) preserved | elementary_cell_id(6).
+                buf[pos] = ((ec.reserved_future_use << ELEM_RESERVED_SHIFT) & !ELEM_CELL_ID_MASK)
+                    | (ec.elementary_cell_id & ELEM_CELL_ID_MASK);
                 pos += 1;
             }
             buf[pos] = cell.linkage.info_byte();
@@ -392,27 +492,30 @@ mod tests {
         let c = &d.logical_cells[0];
         assert_eq!(c.logical_cell_id, 5);
         assert_eq!(c.presentation_info, 1);
-        assert_eq!(c.elementary_cell_ids, vec![3, 7]);
+        assert_eq!(
+            c.elementary_cells,
+            vec![ElementaryCell::new(3), ElementaryCell::new(7)]
+        );
         assert_eq!(c.linkage, CellLinkage::Undefined);
     }
 
     #[test]
     fn parse_service_linkage() {
-        let d = MosaicDescriptor {
-            mosaic_entry_point: false,
-            num_horizontal_cells: 0,
-            num_vertical_cells: 0,
-            logical_cells: vec![MosaicLogicalCell {
-                logical_cell_id: 1,
-                presentation_info: 2,
-                elementary_cell_ids: vec![0],
-                linkage: CellLinkage::Service {
+        let d = MosaicDescriptor::new(
+            false,
+            0,
+            0,
+            vec![MosaicLogicalCell::new(
+                1,
+                2,
+                vec![ElementaryCell::new(0)],
+                CellLinkage::Service {
                     original_network_id: 0x1111,
                     transport_stream_id: 0x2222,
                     service_id: 0x3333,
                 },
-            }],
-        };
+            )],
+        );
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let p = MosaicDescriptor::parse(&buf).unwrap();
@@ -429,22 +532,26 @@ mod tests {
 
     #[test]
     fn parse_event_linkage_round_trip() {
-        let d = MosaicDescriptor {
-            mosaic_entry_point: true,
-            num_horizontal_cells: 3,
-            num_vertical_cells: 2,
-            logical_cells: vec![MosaicLogicalCell {
-                logical_cell_id: 10,
-                presentation_info: 3,
-                elementary_cell_ids: vec![1, 2, 3],
-                linkage: CellLinkage::Event {
+        let d = MosaicDescriptor::new(
+            true,
+            3,
+            2,
+            vec![MosaicLogicalCell::new(
+                10,
+                3,
+                vec![
+                    ElementaryCell::new(1),
+                    ElementaryCell::new(2),
+                    ElementaryCell::new(3),
+                ],
+                CellLinkage::Event {
                     original_network_id: 0xAAAA,
                     transport_stream_id: 0xBBBB,
                     service_id: 0xCCCC,
                     event_id: 0xDDDD,
                 },
-            }],
-        };
+            )],
+        );
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(MosaicDescriptor::parse(&buf).unwrap(), d);
@@ -473,25 +580,20 @@ mod tests {
 
     #[test]
     fn parse_multiple_cells() {
-        let d = MosaicDescriptor {
-            mosaic_entry_point: false,
-            num_horizontal_cells: 1,
-            num_vertical_cells: 1,
-            logical_cells: vec![
-                MosaicLogicalCell {
-                    logical_cell_id: 0,
-                    presentation_info: 1,
-                    elementary_cell_ids: vec![0],
-                    linkage: CellLinkage::Bouquet { bouquet_id: 0x1234 },
-                },
-                MosaicLogicalCell {
-                    logical_cell_id: 1,
-                    presentation_info: 1,
-                    elementary_cell_ids: vec![1],
-                    linkage: CellLinkage::Undefined,
-                },
+        let d = MosaicDescriptor::new(
+            false,
+            1,
+            1,
+            vec![
+                MosaicLogicalCell::new(
+                    0,
+                    1,
+                    vec![ElementaryCell::new(0)],
+                    CellLinkage::Bouquet { bouquet_id: 0x1234 },
+                ),
+                MosaicLogicalCell::new(1, 1, vec![ElementaryCell::new(1)], CellLinkage::Undefined),
             ],
-        };
+        );
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let p = MosaicDescriptor::parse(&buf).unwrap();
@@ -547,14 +649,66 @@ mod tests {
         ));
     }
 
+    /// Reserved regions of all three levels (grid 1 bit, logical cell 7 bits
+    /// spanning two bytes, elementary cell 2 bits) re-serialize verbatim for
+    /// non-default and default values.
+    #[test]
+    fn reserved_preserved() {
+        for g in 0u8..=1 {
+            for c in [0u8, 0x01, 0x2A, 0x55, 0x7F] {
+                for e in 0u8..=3 {
+                    let bytes = [
+                        TAG,
+                        0x08,
+                        0x80 | (1 << 4) | (g << 3) | 1,
+                        (5 << 2) | (c >> 5),
+                        ((c & 0x1F) << 3) | 1,
+                        0x02,
+                        (e << 6) | 3,
+                        ((3 - e) << 6) | 7,
+                        0x01,
+                        0x12,
+                        0x34,
+                    ];
+                    // body length: 1 + 3 + 2 + 1 + 2 = 9
+                    let mut b = bytes.to_vec();
+                    b[1] = 9;
+                    let d = MosaicDescriptor::parse(&b).unwrap();
+                    assert_eq!(d.reserved_future_use, g);
+                    assert_eq!(d.logical_cells[0].reserved_future_use, c);
+                    assert_eq!(
+                        d.logical_cells[0].elementary_cells[0].reserved_future_use,
+                        e
+                    );
+                    let mut buf = vec![0u8; d.serialized_len()];
+                    d.serialize_into(&mut buf).unwrap();
+                    assert_eq!(buf, b);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn default_is_spec_value() {
+        let d = MosaicDescriptor::new(
+            false,
+            0,
+            0,
+            vec![MosaicLogicalCell::new(
+                1,
+                1,
+                vec![ElementaryCell::new(2)],
+                CellLinkage::Undefined,
+            )],
+        );
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 6, 0x08, (1 << 2) | 0x03, 0xF9, 0x01, 0xC2, 0x00]);
+    }
+
     #[test]
     fn serialize_emits_reserved_ones() {
-        let d = MosaicDescriptor {
-            mosaic_entry_point: false,
-            num_horizontal_cells: 0,
-            num_vertical_cells: 0,
-            logical_cells: vec![],
-        };
+        let d = MosaicDescriptor::new(false, 0, 0, vec![]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         // grid header reserved bit (bit 3) set
@@ -563,12 +717,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_empty_grid() {
-        let d = MosaicDescriptor {
-            mosaic_entry_point: true,
-            num_horizontal_cells: 7,
-            num_vertical_cells: 7,
-            logical_cells: vec![],
-        };
+        let d = MosaicDescriptor::new(true, 7, 7, vec![]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(MosaicDescriptor::parse(&buf).unwrap(), d);
@@ -577,17 +726,17 @@ mod tests {
     #[cfg(feature = "serde")]
     #[test]
     fn serde_round_trip() {
-        let d = MosaicDescriptor {
-            mosaic_entry_point: true,
-            num_horizontal_cells: 1,
-            num_vertical_cells: 1,
-            logical_cells: vec![MosaicLogicalCell {
-                logical_cell_id: 5,
-                presentation_info: 1,
-                elementary_cell_ids: vec![3, 7],
-                linkage: CellLinkage::Bouquet { bouquet_id: 0x1234 },
-            }],
-        };
+        let d = MosaicDescriptor::new(
+            true,
+            1,
+            1,
+            vec![MosaicLogicalCell::new(
+                5,
+                1,
+                vec![ElementaryCell::new(3), ElementaryCell::new(7)],
+                CellLinkage::Bouquet { bouquet_id: 0x1234 },
+            )],
+        );
         let json = serde_json::to_string(&d).unwrap();
         // Serialize-only: assert the emitted JSON re-parses (serialize-stable).
         let _v: serde_json::Value = serde_json::from_str(&json).unwrap();

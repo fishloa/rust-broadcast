@@ -6,20 +6,35 @@ impl<'a> ExtensionBodyDef<'a> for AudioPreselection<'a> {
     const TAG_EXTENSION: u8 = 0x19;
     const NAME: &'static str = "AUDIO_PRESELECTION";
 }
+/// Spec default of every `reserved_zero_future_use` field of the
+/// audio_preselection_descriptor (3-bit header, 5-bit after the aux
+/// component tags count, 3-bit before `future_extension_length`): 0 since the
+/// descriptor's introduction in EN 300 468 V1.16.1
+/// (`dvb-si/docs/reserved-bits-edition-audit.md` §6).
+pub const AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0x00;
+const RESERVED_ZERO_3_MASK: u8 = 0x07;
+const RESERVED_ZERO_5_MASK: u8 = 0x1F;
+
 /// audio_preselection body (Table 110, §6.4.1). The preselection loop is unfolded.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct AudioPreselection<'a> {
+    /// `reserved_zero_future_use` (3 bits, right-aligned) after
+    /// `num_preselections`. Preserved on parse; defaults to
+    /// [`AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
+    pub reserved_zero_future_use_3: u8,
     /// Preselection entries (num_preselections is their count).
     pub preselections: Vec<Preselection<'a>>,
 }
 
 /// A single preselection entry in the audio_preselection_descriptor loop
 /// (Table 110, §6.4.1).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct Preselection<'a> {
     /// preselection_id(5).
     pub preselection_id: u8,
@@ -39,8 +54,18 @@ pub struct Preselection<'a> {
     pub message_id: Option<u8>,
     /// component_tag bytes (num_aux_components of them), present iff multi_stream_info_present.
     pub aux_component_tags: Option<&'a [u8]>,
+    /// `reserved_zero_future_use` (5 bits, right-aligned) next to
+    /// `num_aux_components`; `Some` iff `aux_component_tags` is. Preserved on
+    /// parse; a hand-built `None` serializes as
+    /// [`AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
+    pub reserved_zero_future_use_5: Option<u8>,
     /// future_extension_byte run, present iff future_extension.
     pub future_extension: Option<&'a [u8]>,
+    /// `reserved_zero_future_use` (3 bits, right-aligned) before
+    /// `future_extension_length`; `Some` iff `future_extension` is. Preserved on
+    /// parse; a hand-built `None` serializes as
+    /// [`AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT`].
+    pub reserved_zero_future_use_3: Option<u8>,
 }
 
 impl<'a> Parse<'a> for AudioPreselection<'a> {
@@ -54,6 +79,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
             });
         }
         let num_preselections = sel[0] >> 3;
+        let header_reserved = sel[0] & RESERVED_ZERO_3_MASK;
         let mut pos = 1;
         let mut preselections = Vec::with_capacity(num_preselections as usize);
         for _ in 0..num_preselections {
@@ -108,6 +134,8 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
                 None
             };
 
+            let mut reserved_zero_future_use_5 = None;
+            let mut reserved_zero_future_use_3 = None;
             let aux_component_tags = if multi_stream_info_present {
                 if pos >= sel.len() {
                     return Err(Error::BufferTooShort {
@@ -117,6 +145,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
                     });
                 }
                 let num_aux = sel[pos] >> 5;
+                reserved_zero_future_use_5 = Some(sel[pos] & RESERVED_ZERO_5_MASK);
                 pos += 1;
                 if pos + num_aux as usize > sel.len() {
                     return Err(Error::BufferTooShort {
@@ -141,6 +170,7 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
                     });
                 }
                 let ext_len = (sel[pos] & 0x1F) as usize;
+                reserved_zero_future_use_3 = Some(sel[pos] >> 5);
                 pos += 1;
                 if pos + ext_len > sel.len() {
                     return Err(Error::BufferTooShort {
@@ -166,10 +196,15 @@ impl<'a> Parse<'a> for AudioPreselection<'a> {
                 language_code,
                 message_id,
                 aux_component_tags,
+                reserved_zero_future_use_5,
                 future_extension: future_ext,
+                reserved_zero_future_use_3,
             });
         }
-        Ok(AudioPreselection { preselections })
+        Ok(AudioPreselection {
+            reserved_zero_future_use_3: header_reserved,
+            preselections,
+        })
     }
 }
 
@@ -201,7 +236,8 @@ impl Serialize for AudioPreselection<'_> {
             5,
             "num_preselections",
         )? as u8;
-        buf[0] = num_preselections << 3;
+        buf[0] =
+            (num_preselections << 3) | (self.reserved_zero_future_use_3 & RESERVED_ZERO_3_MASK);
         let mut p = 1;
         for s in &self.preselections {
             buf[p] = ((s.preselection_id & 0x1F) << 3) | (s.audio_rendering_indication & 0x07);
@@ -228,17 +264,25 @@ impl Serialize for AudioPreselection<'_> {
                     3,
                     "num_aux_component_tags",
                 )? as u8;
-                buf[p] = num_aux_component_tags << 5;
+                buf[p] = (num_aux_component_tags << 5)
+                    | (s.reserved_zero_future_use_5
+                        .unwrap_or(AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT)
+                        & RESERVED_ZERO_5_MASK);
                 p += 1;
                 buf[p..p + tags.len()].copy_from_slice(tags);
                 p += tags.len();
             }
             if let Some(ext) = s.future_extension {
-                buf[p] = broadcast_common::len::fit_bits(
+                buf[p] = (broadcast_common::len::fit_bits(
                     ext.len() as u64,
                     5,
                     "future_extension_length",
-                )? as u8;
+                )? as u8)
+                    | ((s
+                        .reserved_zero_future_use_3
+                        .unwrap_or(AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT)
+                        & RESERVED_ZERO_3_MASK)
+                        << 5);
                 p += 1;
                 buf[p..p + ext.len()].copy_from_slice(ext);
                 p += ext.len();
@@ -366,18 +410,54 @@ mod tests {
     }
 
     fn minimal_preselection() -> Preselection<'static> {
-        Preselection {
-            preselection_id: 0,
-            audio_rendering_indication: 0,
-            audio_description: false,
-            spoken_subtitles: false,
-            dialogue_enhancement: false,
-            interactivity_enabled: false,
-            language_code: None,
-            message_id: None,
-            aux_component_tags: None,
-            future_extension: None,
+        Preselection::default()
+    }
+
+    /// Every value of each of the three reserved_zero_future_use regions
+    /// (3-bit header, 5-bit aux, 3-bit future-extension) re-serializes
+    /// byte-identically.
+    #[test]
+    fn audio_preselection_reserved_preserved() {
+        for r in 0u8..=RESERVED_ZERO_3_MASK {
+            let bytes = wrap(0x19, &[(1 << 3) | r, 0x08, 0x00]);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "header r={r:#x}");
         }
+        for r in 0u8..=RESERVED_ZERO_5_MASK {
+            // multi_stream_info_present, 1 aux tag
+            let bytes = wrap(0x19, &[1 << 3, 0x08, 0x02, (1 << 5) | r, 0x77]);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "aux r={r:#x}");
+        }
+        for r in 0u8..=RESERVED_ZERO_3_MASK {
+            // future_extension present, 2 bytes
+            let bytes = wrap(0x19, &[1 << 3, 0x08, 0x01, (r << 5) | 2, 0xAA, 0xBB]);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "future r={r:#x}");
+        }
+    }
+
+    #[test]
+    fn audio_preselection_default_is_spec_value() {
+        let p = Preselection {
+            aux_component_tags: Some(&[0x01]),
+            future_extension: Some(&[0xAA]),
+            ..Default::default()
+        };
+        let d = AudioPreselection {
+            preselections: vec![p],
+            ..Default::default()
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        // header 1<<3 | 0; flags multi(0x02)|future(0x01); aux 1<<5; ext len 1.
+        assert_eq!(buf, [1 << 3, 0, 0x03, 1 << 5, 0x01, 0x01, 0xAA]);
     }
 
     /// `num_preselections` is a 5-bit field (max 31, #1129): 31 entries still
@@ -386,6 +466,7 @@ mod tests {
     fn num_preselections_boundary() {
         let ok = AudioPreselection {
             preselections: (0..31).map(|_| minimal_preselection()).collect(),
+            ..Default::default()
         };
         let mut buf = vec![0u8; ok.serialized_len()];
         ok.serialize_into(&mut buf).unwrap();
@@ -393,6 +474,7 @@ mod tests {
 
         let over = AudioPreselection {
             preselections: (0..32).map(|_| minimal_preselection()).collect(),
+            ..Default::default()
         };
         let mut buf = vec![0u8; over.serialized_len()];
         let err = over.serialize_into(&mut buf).unwrap_err();

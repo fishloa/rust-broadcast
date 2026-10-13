@@ -37,6 +37,14 @@ pub struct TotSection<'a> {
     /// Descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub descriptors: DescriptorLoop<'a>,
+    /// Header bit fields: `reserved_future_use` and `reserved(2)` of byte 1
+    /// (`section_syntax_indicator` is the fixed `0b0` of §5.2.6; default
+    /// [`SectionBits::dvb`](super::SectionBits::dvb)). `reserved_b5` is unused.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+    /// `reserved(4)` before `descriptors_loop_length` (`1111`); preserved.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_descriptors_loop_length: u8,
 }
 
 impl<'a> TotSection<'a> {
@@ -79,6 +87,8 @@ impl<'a> TotSection<'a> {
         Self {
             utc_time_raw,
             descriptors,
+            bits: super::SectionBits::dvb(),
+            reserved_descriptors_loop_length: super::RESERVED_4,
         }
     }
 }
@@ -144,6 +154,8 @@ impl<'a> Parse<'a> for TotSection<'a> {
         Ok(TotSection {
             utc_time_raw,
             descriptors: DescriptorLoop::new(&bytes[d_start..d_end]),
+            bits: super::SectionBits::parse(bytes[1], None),
+            reserved_descriptors_loop_length: super::len_reserved_of(bytes[dl_pos]),
         })
     }
 }
@@ -164,7 +176,7 @@ impl Serialize for TotSection<'_> {
         buf[0] = TABLE_ID;
         // §5.2.6: section_syntax_indicator SHALL be 0 for the TOT (despite the
         // trailing CRC_32). 0x70 = SSI(0) | reserved_future_use(1) | reserved(11).
-        buf[1] = super::SECTION_B1_FLAGS_SHORT;
+        buf[1] = self.bits.b1(false);
         super::write_section_length(buf, len - HEADER_LEN)?;
         buf[3..8].copy_from_slice(&self.utc_time_raw);
         let dl = broadcast_common::len::fit_bits(
@@ -172,7 +184,11 @@ impl Serialize for TotSection<'_> {
             12,
             "descriptors_loop_length",
         )?;
-        super::write_desc_loop_len(&mut buf[8..10], dl as usize)?;
+        super::write_desc_loop_len_r(
+            &mut buf[8..10],
+            dl as usize,
+            self.reserved_descriptors_loop_length,
+        )?;
         let d_end = 10 + self.descriptors.len();
         buf[10..d_end].copy_from_slice(self.descriptors.raw());
         let crc_pos = len - CRC_LEN;
@@ -267,10 +283,7 @@ mod tests {
     #[test]
     fn serialize_rejects_descriptors_exceeding_section_length() {
         let desc = vec![0xAAu8; 4085];
-        let tot = TotSection {
-            utc_time_raw: [0xE4, 0x09, 0x12, 0x34, 0x56],
-            descriptors: DescriptorLoop::new(&desc),
-        };
+        let tot = TotSection::new([0xE4, 0x09, 0x12, 0x34, 0x56], DescriptorLoop::new(&desc));
         let mut buf = vec![0u8; tot.serialized_len()];
         assert!(matches!(
             tot.serialize_into(&mut buf).unwrap_err(),
@@ -281,10 +294,7 @@ mod tests {
     #[test]
     fn serialize_accepts_descriptors_at_section_length_boundary() {
         let desc = vec![0xAAu8; 4084];
-        let tot = TotSection {
-            utc_time_raw: [0xE4, 0x09, 0x12, 0x34, 0x56],
-            descriptors: DescriptorLoop::new(&desc),
-        };
+        let tot = TotSection::new([0xE4, 0x09, 0x12, 0x34, 0x56], DescriptorLoop::new(&desc));
         let mut buf = vec![0u8; tot.serialized_len()];
         tot.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = TotSection::parse(&buf).expect("reparse");

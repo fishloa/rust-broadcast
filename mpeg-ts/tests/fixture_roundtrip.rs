@@ -4,6 +4,7 @@
 //! header round-trip, exercises typed accessors on real broadcast bytes, and
 //! feeds the PAT PID through `SectionReassembler` to verify the CRC.
 
+use mpeg_ts::pid::Pid;
 use std::collections::HashMap;
 use std::fs;
 
@@ -83,7 +84,7 @@ fn parsed_fields_match_wire_bytes() {
         assert_eq!(hdr.tei, (b1 & 0x80) != 0, "pkt {i}: tei");
         assert_eq!(hdr.pusi, (b1 & 0x40) != 0, "pkt {i}: pusi");
         let pid_expected = (((b1 & 0x1F) as u16) << 8) | (chunk[2] as u16);
-        assert_eq!(hdr.pid, pid_expected, "pkt {i}: pid");
+        assert_eq!(hdr.pid, Pid::new(pid_expected), "pkt {i}: pid");
 
         // byte 3
         let b3 = chunk[3];
@@ -103,7 +104,7 @@ fn at_least_one_pid_appears_multiple_times() {
     let buf = fs::read(fixture_path()).expect("read fixture");
     let mut pid_counts: HashMap<u16, usize> = HashMap::new();
     for pkt in iter_packets(&buf) {
-        *pid_counts.entry(pkt.header.pid).or_insert(0) += 1;
+        *pid_counts.entry(pkt.header.pid.value()).or_insert(0) += 1;
     }
     let max_count = pid_counts.values().copied().max().unwrap_or(0);
     assert!(
@@ -163,7 +164,7 @@ fn pat_section_reassembles_and_crc_validates() {
     let mut reasm = SectionReassembler::default();
 
     for pkt in iter_packets(&buf) {
-        if pkt.header.pid != PAT_PID {
+        if pkt.header.pid != Pid::new(PAT_PID) {
             continue;
         }
         if let Some(payload) = pkt.payload {

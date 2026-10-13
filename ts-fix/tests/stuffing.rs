@@ -6,6 +6,7 @@
 //! 3. Inserts null packets at a configured rate when in pad mode,
 //! 4. The inserted packets are valid null packets (PID 0x1FFF, proper format).
 
+use mpeg_ts::pid::Pid;
 use std::{fs, path::PathBuf};
 
 mod support;
@@ -22,7 +23,7 @@ fn is_null_packet(pkt: &[u8]) -> bool {
     if pkt.len() < 3 {
         return false;
     }
-    support::extract_pid(pkt) == 0x1FFF
+    support::extract_pid(pkt) == Pid::new(0x1FFF)
 }
 
 /// Validate that a packet is a properly-formed null packet.
@@ -35,7 +36,7 @@ fn validate_null_packet(pkt: &[u8]) -> bool {
         return false;
     }
     // PID must be 0x1FFF
-    if support::extract_pid(pkt) != 0x1FFF {
+    if support::extract_pid(pkt) != Pid::new(0x1FFF) {
         return false;
     }
     // Adaptation field control must be 01 (payload only).

@@ -3198,25 +3198,25 @@ mod tests {
         // Construct the transitioned section (see PROVENANCE above): the
         // genuine following event, running_status forced to Running.
         following.running_status = RunningStatus::Running;
-        let transitioned = dvb_si::tables::eit::EitSection {
-            kind: genuine.kind,
-            table_id: genuine.table_id,
-            service_id: genuine.service_id,
-            version_number: (genuine.version_number + 1) % 32,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: genuine.transport_stream_id,
-            original_network_id: genuine.original_network_id,
-            segment_last_section_number: 0,
-            last_table_id: genuine.table_id,
-            events: vec![following],
-        };
+        let transitioned = dvb_si::tables::eit::EitSection::new(
+            genuine.kind,
+            genuine.table_id,
+            genuine.service_id,
+            (genuine.version_number + 1) % 32,
+            true,
+            0,
+            0,
+            genuine.transport_stream_id,
+            genuine.original_network_id,
+            0,
+            genuine.table_id,
+            vec![following],
+        );
         let mut section_buf = vec![0u8; WireSerialize::serialized_len(&transitioned)];
         WireSerialize::serialize_into(&transitioned, &mut section_buf)
             .expect("serialize transitioned section");
 
-        let mut packetiser = mpeg_ts::mux::SectionPacketiser::new(EIT_PID);
+        let mut packetiser = mpeg_ts::mux::SectionPacketiser::new(Pid::new(EIT_PID));
         let packets = packetiser.packetise(&[&section_buf]);
         let mut packet_bytes = Vec::new();
         for p in &packets {
@@ -3329,24 +3329,25 @@ mod tests {
             .cloned()
             .expect("a following event");
         following.running_status = RunningStatus::Running;
-        let transitioned = dvb_si::tables::eit::EitSection {
-            kind: genuine.kind,
-            table_id: genuine.table_id,
-            service_id: genuine.service_id,
-            version_number: (genuine.version_number + 1) % 32,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            transport_stream_id: genuine.transport_stream_id,
-            original_network_id: genuine.original_network_id,
-            segment_last_section_number: 0,
-            last_table_id: genuine.table_id,
-            events: vec![following],
-        };
+        let transitioned = dvb_si::tables::eit::EitSection::new(
+            genuine.kind,
+            genuine.table_id,
+            genuine.service_id,
+            (genuine.version_number + 1) % 32,
+            true,
+            0,
+            0,
+            genuine.transport_stream_id,
+            genuine.original_network_id,
+            0,
+            genuine.table_id,
+            vec![following],
+        );
         let mut section_buf = vec![0u8; WireSerialize::serialized_len(&transitioned)];
         WireSerialize::serialize_into(&transitioned, &mut section_buf).expect("serialize");
         let mut packet_bytes = Vec::new();
-        for p in &mpeg_ts::mux::SectionPacketiser::new(EIT_PID).packetise(&[&section_buf]) {
+        for p in &mpeg_ts::mux::SectionPacketiser::new(Pid::new(EIT_PID)).packetise(&[&section_buf])
+        {
             packet_bytes.extend_from_slice(p);
         }
 

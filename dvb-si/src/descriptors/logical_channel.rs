@@ -15,20 +15,45 @@ const HEADER_LEN: usize = 2;
 const ENTRY_LEN: usize = 4;
 const VISIBLE_MASK: u8 = 0x80;
 const RESERVED_BITS_MASK: u8 = 0x7C;
+const RESERVED_SHIFT: u8 = 2;
 const LCN_HI_MASK: u8 = 0x03;
+
+/// Default of the 5-bit per-entry `reserved` between `visible_service_flag`
+/// and the LCN: all ones (`0x1F`). EACEM/NorDig/D-Book private layout, not
+/// covered by the EN 300 468 reserved-bit audit; the previously emitted value
+/// is kept as the default and the bits are preserved on parse.
+pub const RESERVED_DEFAULT: u8 = 0x1F;
 /// `logical_channel_number` is 10 bits (0..=1023).
 const LCN_BITS: u32 = 10;
 
 /// One LCN assignment.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct LogicalChannelEntry {
     /// Service being numbered.
     pub service_id: u16,
     /// Visible in the viewer's channel list.
     pub visible_service: bool,
+    /// `reserved(5)` between the visible flag and the LCN (5 bits,
+    /// right-aligned). Captured on parse and re-emitted verbatim;
+    /// [`LogicalChannelEntry::new`] defaults to [`RESERVED_DEFAULT`] (`0x1F`).
+    pub reserved: u8,
     /// 10-bit logical channel number (0..=1023).
     pub logical_channel_number: u16,
+}
+
+impl LogicalChannelEntry {
+    /// Build an entry with the default reserved bits.
+    #[must_use]
+    pub const fn new(service_id: u16, visible_service: bool, logical_channel_number: u16) -> Self {
+        Self {
+            service_id,
+            visible_service,
+            reserved: RESERVED_DEFAULT,
+            logical_channel_number,
+        }
+    }
 }
 
 /// Logical Channel Descriptor.
@@ -59,10 +84,12 @@ impl<'a> Parse<'a> for LogicalChannelDescriptor {
             let service_id = crate::wire::be_u16(chunk, 0, "logical_channel")?;
             let flags = chunk[2];
             let visible_service = flags & VISIBLE_MASK != 0;
+            let reserved = (flags & RESERVED_BITS_MASK) >> RESERVED_SHIFT;
             let lcn = (u16::from(flags & LCN_HI_MASK) << 8) | u16::from(chunk[3]);
             entries.push(LogicalChannelEntry {
                 service_id,
                 visible_service,
+                reserved,
                 logical_channel_number: lcn,
             });
         }
@@ -98,7 +125,9 @@ impl Serialize for LogicalChannelDescriptor {
                 LCN_BITS,
                 "logical_channel_number",
             )? as u16;
-            let flags = visible_byte | RESERVED_BITS_MASK | ((lcn >> 8) as u8 & LCN_HI_MASK);
+            let flags = visible_byte
+                | ((entry.reserved << RESERVED_SHIFT) & RESERVED_BITS_MASK)
+                | ((lcn >> 8) as u8 & LCN_HI_MASK);
             buf[offset + 2] = flags;
             buf[offset + 3] = (lcn & 0xFF) as u8;
             offset += ENTRY_LEN;
@@ -201,16 +230,8 @@ mod tests {
     fn serialize_round_trip() {
         let d = LogicalChannelDescriptor {
             entries: vec![
-                LogicalChannelEntry {
-                    service_id: 1,
-                    visible_service: true,
-                    logical_channel_number: 5,
-                },
-                LogicalChannelEntry {
-                    service_id: 0x0102,
-                    visible_service: false,
-                    logical_channel_number: 1023,
-                },
+                LogicalChannelEntry::new(1, true, 5),
+                LogicalChannelEntry::new(0x0102, false, 1023),
             ],
         };
         let mut buf = vec![0u8; d.serialized_len()];
@@ -223,16 +244,38 @@ mod tests {
     fn serialize_rejects_over_10bit_lcn() {
         // Pre-fix `>> 8 as u8 & 0x03` silently clipped bits 10..16 (r03-W3).
         let d = LogicalChannelDescriptor {
-            entries: alloc::vec![LogicalChannelEntry {
-                service_id: 1,
-                visible_service: true,
-                logical_channel_number: 1024,
-            }],
+            entries: alloc::vec![LogicalChannelEntry::new(1, true, 1024)],
         };
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
             Error::FieldOverflow(_)
         ));
+    }
+
+    /// Every `reserved(5)` value re-serializes byte-identically (real senders
+    /// such as TNTSat / ORF write `0`; default `0x1F` is kept for new values).
+    #[test]
+    fn reserved_preserved() {
+        for r in 0u8..=0x1F {
+            let flags = 0x80 | (r << 2) | 0x02;
+            let bytes = [TAG, 4, 0x00, 0x01, flags, 0x05];
+            let d = LogicalChannelDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.entries[0].reserved, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "r {r:#x}");
+        }
+    }
+
+    /// `new()` carries the documented default (`0x1F`).
+    #[test]
+    fn default_reserved_is_documented_value() {
+        let d = LogicalChannelDescriptor {
+            entries: vec![LogicalChannelEntry::new(1, true, 5)],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 4, 0x00, 0x01, 0xFC, 0x05]);
     }
 }

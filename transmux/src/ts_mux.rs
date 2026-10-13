@@ -66,6 +66,7 @@
 //!   (§2.4.4.8) — a truncated descriptor loop is a malformed PMT.
 
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use broadcast_common::{Package, crc32_mpeg2};
 use mpeg_pes::{Pts as PesPts, StreamId};
@@ -83,11 +84,11 @@ use crate::pipeline::{CodecConfig, DataCarriage, Sample};
 // ── PID / PSI constants (ISO/IEC 13818-1 §2.4.4) ────────────────────────────
 
 /// PID carrying the Program Association Table (§2.4.4.3).
-const PAT_PID: u16 = 0x0000;
+const PAT_PID: Pid = Pid::new(0x0000);
 /// PID chosen for the single Program Map Table this muxer emits.
-const PMT_PID: u16 = 0x1000;
+const PMT_PID: Pid = Pid::new(0x1000);
 /// First elementary-stream PID; each subsequent ES gets the next value.
-const ES_PID_BASE: u16 = 0x0100;
+const ES_PID_BASE: Pid = Pid::new(0x0100);
 /// `program_number` assigned to the single program.
 const PROGRAM_NUMBER: u16 = 1;
 /// `table_id` of a PAT section (§2.4.4.3, Table 2-31).
@@ -455,7 +456,7 @@ fn mpeg_audio_is_mpeg2(esds: &EsdsBox) -> bool {
 /// One elementary stream to emit: its PID, `stream_id`, kind, and codec-derived
 /// framing state (AAC ADTS template / AVC parameter sets).
 pub(crate) struct EsPlan {
-    pid: u16,
+    pid: Pid,
     stream_id: StreamId,
     kind: EsKind,
     /// AAC AudioSpecificConfig (for re-wrapping raw frames in ADTS), else `None`.
@@ -689,7 +690,7 @@ impl Package for StreamingTsMux {
 pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, Vec<usize>)> {
     let mut plans: Vec<EsPlan> = Vec::new();
     let mut planned_idx: Vec<usize> = Vec::new();
-    let mut next_pid = ES_PID_BASE;
+    let mut next_pid = ES_PID_BASE.value();
     let (mut n_video, mut n_audio) = (0u8, 0u8);
     for (idx, track) in tracks.iter().enumerate() {
         let Some(kind) = EsKind::from_config(&track.spec.config) else {
@@ -776,7 +777,9 @@ pub(crate) fn plan_elementary_streams(tracks: &[Track]) -> Result<(Vec<EsPlan>, 
         };
         let descriptors = merge_es_info_descriptors(&track.spec.es_info_descriptors, &synthesized)?;
         plans.push(EsPlan {
-            pid: next_pid,
+            pid: Pid::try_new(next_pid).map_err(|_| {
+                Error::InvalidInput("too many tracks: elementary PID exceeds 0x1FFF")
+            })?,
             stream_id,
             kind,
             asc,
@@ -1022,9 +1025,9 @@ impl TsContinuity {
     }
 
     /// The CC the next payload-bearing packet on `pid` must carry.
-    fn next_for(&self, pid: u16) -> u8 {
+    fn next_for(&self, pid: Pid) -> u8 {
         self.counters
-            .get(pid as usize)
+            .get(usize::from(pid.value()))
             .copied()
             .flatten()
             .unwrap_or(0)
@@ -1032,13 +1035,13 @@ impl TsContinuity {
 
     /// Record that a payload-bearing packet with counter `cc` was written on
     /// `pid`; the next one takes `cc + 1` modulo 16 (§2.4.3.3).
-    fn advance(&mut self, pid: u16, cc: u8) {
+    fn advance(&mut self, pid: Pid, cc: u8) {
         self.set_next_for(pid, (cc + 1) & 0x0F);
     }
 
     /// Set the counter the next payload-bearing packet on `pid` must carry.
-    fn set_next_for(&mut self, pid: u16, cc: u8) {
-        let idx = pid as usize;
+    fn set_next_for(&mut self, pid: Pid, cc: u8) {
+        let idx = usize::from(pid.value());
         if self.counters.len() <= idx {
             self.counters.resize(idx + 1, None);
         }
@@ -1283,7 +1286,7 @@ const PCR_INTERVAL_MS: u64 = 40;
 /// field carrying the PCR and `payload_flag = 0` (§2.4.3.3: such a packet does
 /// **not** increment the continuity counter, so the CC state of `pcr_pid` is
 /// unchanged), placed at the gap's midpoint key so it interleaves in order.
-fn emit_pcr_only_packets(pcr_pid: u16, pcr_stamps: &mut [u64], tagged: &mut Vec<TaggedPacket>) {
+fn emit_pcr_only_packets(pcr_pid: Pid, pcr_stamps: &mut [u64], tagged: &mut Vec<TaggedPacket>) {
     if pcr_stamps.is_empty() {
         return;
     }
@@ -1315,7 +1318,7 @@ fn emit_pcr_only_packets(pcr_pid: u16, pcr_stamps: &mut [u64], tagged: &mut Vec<
     // own predecessor up.
     let mut cc_at: Vec<(u64, u8)> = tagged
         .iter()
-        .filter(|tp| pid_of_packet(&tp.packet) == pcr_pid)
+        .filter(|tp| pid_of_packet(&tp.packet) == pcr_pid.value())
         .map(|tp| (tp.sort_key, tp.packet[3] & 0x0F))
         .collect();
     cc_at.sort_by_key(|&(k, _)| k);
@@ -1344,7 +1347,7 @@ fn pid_of_packet(pkt: &[u8; TS_PACKET_SIZE]) -> u16 {
 
 /// Write a PCR-only TS packet: an adaptation field with the PCR and no payload
 /// (`adaptation_field_control` `10`). §2.4.3.4 / §2.4.3.5.
-fn write_pcr_only_packet(pkt: &mut [u8; TS_PACKET_SIZE], pid: u16, cc: u8, pcr: Pcr) {
+fn write_pcr_only_packet(pkt: &mut [u8; TS_PACKET_SIZE], pid: Pid, cc: u8, pcr: Pcr) {
     let hdr = TsHeader {
         tei: false,
         pusi: false,
@@ -1630,7 +1633,7 @@ fn annexb_first_nal(annexb: &[u8]) -> Option<&[u8]> {
 
 /// Build a PAT section (one program → `pmt_pid`) with its trailing CRC_32.
 /// ISO/IEC 13818-1 §2.4.4.3.
-fn build_pat_section(pmt_pid: u16) -> Result<Vec<u8>> {
+fn build_pat_section(pmt_pid: Pid) -> Result<Vec<u8>> {
     // table_body: transport_stream_id(2) + version/cni(1) + section_number(1) +
     // last_section_number(1) + one program-loop entry (program_number(2) +
     // reserved/program_map_PID(2)).
@@ -1640,8 +1643,8 @@ fn build_pat_section(pmt_pid: u16) -> Result<Vec<u8>> {
     body.push(0); // section_number
     body.push(0); // last_section_number
     body.extend_from_slice(&PROGRAM_NUMBER.to_be_bytes());
-    body.push(PID_RESERVED_HI | ((pmt_pid >> 8) as u8 & !PID_RESERVED_HI));
-    body.push((pmt_pid & 0xFF) as u8);
+    body.push(PID_RESERVED_HI | ((pmt_pid.value() >> 8) as u8 & !PID_RESERVED_HI));
+    body.push((pmt_pid.value() & 0xFF) as u8);
     finish_section(TABLE_ID_PAT, body)
 }
 
@@ -1655,7 +1658,7 @@ fn build_pat_section(pmt_pid: u16) -> Result<Vec<u8>> {
 /// descriptor (issue #576) or an audio track's language (issue #775) after a
 /// re-mux. `program_info` stays empty (no program-level descriptors are
 /// modelled).
-fn build_pmt_section(pcr_pid: u16, plans: &[EsPlan]) -> Result<Vec<u8>> {
+fn build_pmt_section(pcr_pid: Pid, plans: &[EsPlan]) -> Result<Vec<u8>> {
     let mut body = Vec::new();
     // table_id_extension = program_number, then version/cni + section numbers.
     body.extend_from_slice(&PROGRAM_NUMBER.to_be_bytes());
@@ -1663,8 +1666,8 @@ fn build_pmt_section(pcr_pid: u16, plans: &[EsPlan]) -> Result<Vec<u8>> {
     body.push(0); // section_number
     body.push(0); // last_section_number
     // reserved(3) + PCR_PID(13).
-    body.push(PID_RESERVED_HI | ((pcr_pid >> 8) as u8 & !PID_RESERVED_HI));
-    body.push((pcr_pid & 0xFF) as u8);
+    body.push(PID_RESERVED_HI | ((pcr_pid.value() >> 8) as u8 & !PID_RESERVED_HI));
+    body.push((pcr_pid.value() & 0xFF) as u8);
     // reserved(4) + program_info_length(12) = 0 (no program descriptors).
     body.push(INFO_RESERVED_HI);
     body.push(0);
@@ -1672,8 +1675,8 @@ fn build_pmt_section(pcr_pid: u16, plans: &[EsPlan]) -> Result<Vec<u8>> {
     // reserved/ES_info_length(2) + descriptor()×ES_info_length.
     for p in plans {
         body.push(p.kind.stream_type());
-        body.push(PID_RESERVED_HI | ((p.pid >> 8) as u8 & !PID_RESERVED_HI));
-        body.push((p.pid & 0xFF) as u8);
+        body.push(PID_RESERVED_HI | ((p.pid.value() >> 8) as u8 & !PID_RESERVED_HI));
+        body.push((p.pid.value() & 0xFF) as u8);
         let es_info_length = p.descriptors.len().min(MAX_ES_INFO_LENGTH);
         body.push(INFO_RESERVED_HI | ((es_info_length >> 8) as u8 & !INFO_RESERVED_HI));
         body.push((es_info_length & 0xFF) as u8);
@@ -1716,7 +1719,7 @@ fn finish_section(table_id: u8, body: Vec<u8>) -> Result<Vec<u8>> {
 /// A single PUSI packet with a `pointer_field = 0` prefix, 0xFF-stuffed
 /// (all this crate's sections fit one packet); multi-packet continuation is
 /// handled by the generic loop for safety. ISO/IEC 13818-1 §2.4.4.
-fn packetise_section(pid: u16, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACKET_SIZE]> {
+fn packetise_section(pid: Pid, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACKET_SIZE]> {
     let mut packets = Vec::new();
     let mut cc: u8 = start_cc & 0x0F;
     let mut pos = 0usize;
@@ -1869,7 +1872,7 @@ fn pcr_for(dts90: u64) -> Pcr {
 #[allow(clippy::too_many_arguments)]
 fn write_af_packet(
     pkt: &mut [u8; TS_PACKET_SIZE],
-    pid: u16,
+    pid: Pid,
     pusi: bool,
     cc: u8,
     af_len: usize,

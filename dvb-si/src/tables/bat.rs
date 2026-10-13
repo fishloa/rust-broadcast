@@ -31,6 +31,7 @@ const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTE
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct BatTransportStream<'a> {
     /// transport_stream_id of the described TS.
     pub transport_stream_id: u16,
@@ -40,12 +41,34 @@ pub struct BatTransportStream<'a> {
     /// Per-TS descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub descriptors: DescriptorLoop<'a>,
+    /// `reserved_future_use(4)` before `transport_descriptors_length`
+    /// (EN 300 468 §5.2.2, `1111`); preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: u8,
+}
+
+impl<'a> BatTransportStream<'a> {
+    /// Construct a transport-stream entry with the spec `reserved_future_use` fill.
+    #[must_use]
+    pub fn new(
+        transport_stream_id: u16,
+        original_network_id: u16,
+        descriptors: DescriptorLoop<'a>,
+    ) -> Self {
+        Self {
+            transport_stream_id,
+            original_network_id,
+            descriptors,
+            reserved_future_use: super::RESERVED_4,
+        }
+    }
 }
 
 /// Bouquet Association Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct BatSection<'a> {
     /// Bouquet identifier (table_id_extension at bytes 3-4).
     pub bouquet_id: u16,
@@ -63,6 +86,43 @@ pub struct BatSection<'a> {
     pub bouquet_descriptors: DescriptorLoop<'a>,
     /// Transport-stream loop entries in wire order.
     pub transport_streams: Vec<BatTransportStream<'a>>,
+    /// Header bit fields (`reserved_future_use`, `reserved(2)` x2; default
+    /// [`SectionBits::dvb`](super::SectionBits::dvb)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+    /// `reserved_future_use(4)` before `bouquet_descriptors_length` (`1111`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_bouquet_descriptors_length: u8,
+    /// `reserved_future_use(4)` before `transport_stream_loop_length` (`1111`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_transport_stream_loop_length: u8,
+}
+
+impl<'a> BatSection<'a> {
+    /// Construct a BAT section with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        bouquet_id: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        bouquet_descriptors: DescriptorLoop<'a>,
+        transport_streams: Vec<BatTransportStream<'a>>,
+    ) -> Self {
+        Self {
+            bouquet_id,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            bouquet_descriptors,
+            transport_streams,
+            bits: super::SectionBits::dvb(),
+            reserved_bouquet_descriptors_length: super::RESERVED_4,
+            reserved_transport_stream_loop_length: super::RESERVED_4,
+        }
+    }
 }
 
 impl BatSection<'_> {
@@ -196,6 +256,7 @@ impl<'a> Parse<'a> for BatSection<'a> {
                 transport_stream_id,
                 original_network_id,
                 descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
+                reserved_future_use: super::len_reserved_of(bytes[pos + 4]),
             });
 
             pos = desc_end;
@@ -214,6 +275,9 @@ impl<'a> Parse<'a> for BatSection<'a> {
             last_section_number,
             bouquet_descriptors,
             transport_streams,
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
+            reserved_bouquet_descriptors_length: super::len_reserved_of(bytes[8]),
+            reserved_transport_stream_loop_length: super::len_reserved_of(bytes[ts_loop_start]),
         })
     }
 }
@@ -246,12 +310,14 @@ impl Serialize for BatSection<'_> {
         }
 
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
         // Extension header.
         buf[3..5].copy_from_slice(&self.bouquet_id.to_be_bytes());
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -261,7 +327,11 @@ impl Serialize for BatSection<'_> {
             12,
             "bouquet_descriptors_length",
         )?;
-        super::write_desc_loop_len(&mut buf[8..10], bdl as usize)?;
+        super::write_desc_loop_len_r(
+            &mut buf[8..10],
+            bdl as usize,
+            self.reserved_bouquet_descriptors_length,
+        )?;
 
         let bouquet_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         buf[bouquet_desc_start..bouquet_desc_start + self.bouquet_descriptors.len()]
@@ -273,9 +343,10 @@ impl Serialize for BatSection<'_> {
             12,
             "transport_stream_loop_length",
         )?;
-        super::write_desc_loop_len(
+        super::write_desc_loop_len_r(
             &mut buf[ts_loop_start..ts_loop_start + 2],
             ts_loop_length as usize,
+            self.reserved_transport_stream_loop_length,
         )?;
 
         let mut pos = ts_loop_start + 2;
@@ -287,7 +358,11 @@ impl Serialize for BatSection<'_> {
                 12,
                 "transport_descriptors_length",
             )?;
-            super::write_desc_loop_len(&mut buf[pos + 4..pos + 6], tdl as usize)?;
+            super::write_desc_loop_len_r(
+                &mut buf[pos + 4..pos + 6],
+                tdl as usize,
+                ts.reserved_future_use,
+            )?;
             let desc_start = pos + TS_HEADER_LEN;
             buf[desc_start..desc_start + ts.descriptors.len()]
                 .copy_from_slice(ts.descriptors.raw());
@@ -323,21 +398,17 @@ mod tests {
     ) -> Vec<u8> {
         let ts_streams: Vec<BatTransportStream> = transport_streams
             .iter()
-            .map(|(tsid, onid, d)| BatTransportStream {
-                transport_stream_id: *tsid,
-                original_network_id: *onid,
-                descriptors: DescriptorLoop::new(d),
-            })
+            .map(|(tsid, onid, d)| BatTransportStream::new(*tsid, *onid, DescriptorLoop::new(d)))
             .collect();
-        let bat = BatSection {
+        let bat = BatSection::new(
             bouquet_id,
-            version_number: version,
-            current_next_indicator: true,
+            version,
+            true,
             section_number,
             last_section_number,
-            bouquet_descriptors: DescriptorLoop::new(bouquet_desc),
-            transport_streams: ts_streams,
-        };
+            DescriptorLoop::new(bouquet_desc),
+            ts_streams,
+        );
         let mut buf = vec![0u8; bat.serialized_len()];
         bat.serialize_into(&mut buf).unwrap();
         buf
@@ -440,26 +511,18 @@ mod tests {
     fn serialize_round_trip() {
         let name_desc: Vec<u8> = vec![DESCRIPTOR_TAG_BOUQUET_NAME, 0x04, b'T', b'E', b'S', b'T'];
         let ts_desc: [u8; 3] = [0x43, 0x01, 0x01];
-        let bat = BatSection {
-            bouquet_id: 0x4242,
-            version_number: 5,
-            current_next_indicator: true,
-            section_number: 1,
-            last_section_number: 2,
-            bouquet_descriptors: DescriptorLoop::new(&name_desc),
-            transport_streams: vec![
-                BatTransportStream {
-                    transport_stream_id: 0x1234,
-                    original_network_id: 0x0020,
-                    descriptors: DescriptorLoop::new(&ts_desc),
-                },
-                BatTransportStream {
-                    transport_stream_id: 0x5678,
-                    original_network_id: 0x0020,
-                    descriptors: DescriptorLoop::new(&[]),
-                },
+        let bat = BatSection::new(
+            0x4242,
+            5,
+            true,
+            1,
+            2,
+            DescriptorLoop::new(&name_desc),
+            vec![
+                BatTransportStream::new(0x1234, 0x0020, DescriptorLoop::new(&ts_desc)),
+                BatTransportStream::new(0x5678, 0x0020, DescriptorLoop::new(&[])),
             ],
-        };
+        );
         let mut buf = vec![0u8; bat.serialized_len()];
         bat.serialize_into(&mut buf).unwrap();
         let parsed = BatSection::parse(&buf).unwrap();
@@ -496,15 +559,7 @@ mod tests {
 
     #[test]
     fn serialize_too_small_buffer_returns_error() {
-        let bat = BatSection {
-            bouquet_id: 0x0001,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            bouquet_descriptors: DescriptorLoop::new(&[]),
-            transport_streams: vec![],
-        };
+        let bat = BatSection::new(0x0001, 0, true, 0, 0, DescriptorLoop::new(&[]), vec![]);
         let mut buf = vec![0u8; 2];
         let err = bat.serialize_into(&mut buf).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
@@ -532,15 +587,7 @@ mod tests {
     #[test]
     fn serialize_rejects_bouquet_descriptors_exceeding_section_length() {
         let desc = vec![0xAAu8; 4083];
-        let bat = BatSection {
-            bouquet_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            bouquet_descriptors: DescriptorLoop::new(&desc),
-            transport_streams: vec![],
-        };
+        let bat = BatSection::new(1, 0, true, 0, 0, DescriptorLoop::new(&desc), vec![]);
         let mut buf = vec![0u8; bat.serialized_len()];
         assert!(matches!(
             bat.serialize_into(&mut buf).unwrap_err(),
@@ -551,15 +598,7 @@ mod tests {
     #[test]
     fn serialize_accepts_bouquet_descriptors_at_section_length_boundary() {
         let desc = vec![0xAAu8; 4082];
-        let bat = BatSection {
-            bouquet_id: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            bouquet_descriptors: DescriptorLoop::new(&desc),
-            transport_streams: vec![],
-        };
+        let bat = BatSection::new(1, 0, true, 0, 0, DescriptorLoop::new(&desc), vec![]);
         let mut buf = vec![0u8; bat.serialized_len()];
         bat.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = BatSection::parse(&buf).expect("reparse");

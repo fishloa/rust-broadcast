@@ -20,6 +20,11 @@ pub fn ca_system_name(ca_system_id: u16) -> Option<&'static str> {
     crate::registry_names::ca_system_name_generated(ca_system_id)
 }
 
+/// Default of the 3-bit `reserved` ahead of `CA_PID`: H.222.0 clause 2.1
+/// "reserved" = `1` (all 9 editions 07/1995-08/2023, Table 2-46). Never given
+/// a meaning; 2/715 real descriptors (test-128) write `000`, so parse keeps it.
+pub const RESERVED_DEFAULT: u8 = 0b111;
+
 /// Conditional Access Descriptor.
 ///
 /// Carried in the program-level or ES-level descriptor loops of a PMT, or in
@@ -28,7 +33,13 @@ pub fn ca_system_name(ca_system_id: u16) -> Option<&'static str> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct CaDescriptor<'a> {
+    /// `reserved(3)` ahead of `CA_PID` (3 bits, right-aligned). Captured on
+    /// parse, re-emitted verbatim; [`CaDescriptor::new`] defaults to
+    /// [`RESERVED_DEFAULT`] (`0b111`).
+    pub reserved: u8,
+
     /// Conditional Access System ID.
     ///
     /// See [`ca_system_name`] for a best-effort human-readable name built
@@ -41,6 +52,19 @@ pub struct CaDescriptor<'a> {
 
     /// Optional private data following the standard CA descriptor fields.
     pub private_data: &'a [u8],
+}
+
+impl<'a> CaDescriptor<'a> {
+    /// Build a descriptor with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(ca_system_id: u16, ca_pid: u16, private_data: &'a [u8]) -> Self {
+        Self {
+            reserved: RESERVED_DEFAULT,
+            ca_system_id,
+            ca_pid,
+            private_data,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for CaDescriptor<'a> {
@@ -63,6 +87,7 @@ impl<'a> Parse<'a> for CaDescriptor<'a> {
         // ca_pid: upper 3 bits are reserved (should be 0b111), lower 13 bits are the PID
         let ca_pid = ((u16::from(fixed[2]) & 0x1F) << 8) | u16::from(fixed[3]);
         Ok(Self {
+            reserved: fixed[2] >> 5,
             ca_system_id,
             ca_pid,
             private_data,
@@ -92,7 +117,7 @@ impl Serialize for CaDescriptor<'_> {
         // out-of-range value must be rejected rather than silently wrapped
         // into a different, wrong PID (r03-W1, the #972 class).
         let ca_pid = broadcast_common::len::fit_bits(self.ca_pid as u64, 13, "ca_pid")?;
-        buf[4] = 0xE0 | ((ca_pid >> 8) as u8);
+        buf[4] = ((self.reserved & 0x07) << 5) | ((ca_pid >> 8) as u8);
         buf[5] = (ca_pid & 0xFF) as u8;
         if !self.private_data.is_empty() {
             buf[HEADER_LEN + MIN_BODY_LEN..len].copy_from_slice(self.private_data);
@@ -135,11 +160,7 @@ mod tests {
     /// same bytes as `ca_pid: 0x0101`.
     #[test]
     fn serialize_rejects_ca_pid_over_13_bits() {
-        let d = CaDescriptor {
-            ca_system_id: 0x0500,
-            ca_pid: 0x2101,
-            private_data: &[],
-        };
+        let d = CaDescriptor::new(0x0500, 0x2101, &[]);
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -175,11 +196,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = CaDescriptor {
-            ca_system_id: 0x1800,
-            ca_pid: 0x0200,
-            private_data: &[0xDE, 0xAD],
-        };
+        let d = CaDescriptor::new(0x1800, 0x0200, &[0xDE, 0xAD]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = CaDescriptor::parse(&buf).unwrap();
@@ -188,11 +205,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip_no_private_data() {
-        let d = CaDescriptor {
-            ca_system_id: 0x0500,
-            ca_pid: 0x0101,
-            private_data: &[],
-        };
+        let d = CaDescriptor::new(0x0500, 0x0101, &[]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = CaDescriptor::parse(&buf).unwrap();
@@ -201,11 +214,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_small_buffer() {
-        let d = CaDescriptor {
-            ca_system_id: 0x0500,
-            ca_pid: 0x0101,
-            private_data: &[],
-        };
+        let d = CaDescriptor::new(0x0500, 0x0101, &[]);
         let mut tiny = vec![0u8; 3];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
@@ -213,11 +222,7 @@ mod tests {
 
     #[test]
     fn descriptor_length_matches_payload() {
-        let d = CaDescriptor {
-            ca_system_id: 0x0500,
-            ca_pid: 0x0101,
-            private_data: &[0xAA],
-        };
+        let d = CaDescriptor::new(0x0500, 0x0101, &[0xAA]);
         assert_eq!(d.serialized_len() - 2, 5);
     }
 
@@ -243,5 +248,27 @@ mod tests {
         assert_eq!(ca_system_name(0x0000), None);
         assert_eq!(ca_system_name(0x0003), None);
         assert_eq!(ca_system_name(0xDEAD), None);
+    }
+
+    /// Every reserved(3) value a real sender writes re-serializes identically
+    /// (test-128 writes `000`, the spec value is `111`).
+    #[test]
+    fn reserved_preserved_for_every_value() {
+        for r in 0u8..=7 {
+            let bytes = [TAG, 6, 0x05, 0x00, (r << 5) | 0x01, 0x01, 0xAA, 0xBB];
+            let d = CaDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes);
+        }
+    }
+
+    #[test]
+    fn default_reserved_is_ones() {
+        let d = CaDescriptor::new(0x0500, 0x0101, &[]);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 4, 0x05, 0x00, 0xE1, 0x01]);
     }
 }

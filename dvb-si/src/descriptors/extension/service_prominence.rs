@@ -7,10 +7,13 @@ impl<'a> ExtensionBodyDef<'a> for ServiceProminence<'a> {
     const NAME: &'static str = "SERVICE_PROMINENCE";
 }
 
-/// `[4]` of the SOGI-entry packed byte: `reserved_future_use` = 1 per DVB convention.
 /// `sogi_priority` is 12 bits.
 const SOGI_PRIORITY_BITS: u32 = 12;
-const SOGI_RESERVED_FUTURE_USE: u8 = 0x10;
+/// Spec default of the 1-bit `reserved_future_use` in each SOGI entry (bit 4
+/// of its first byte): 1 (EN 300 468 Table 162c, V1.19.1/V1.20.1;
+/// `dvb-si/docs/reserved-bits-edition-audit.md` §6).
+pub const SOGI_RESERVED_FUTURE_USE_DEFAULT: u8 = 0x01;
+const SOGI_RESERVED_MASK: u8 = 0x01;
 
 /// service_prominence body (Table 162c). The SOGI loop is unfolded;
 /// each entry's target_region loop uses the typed
@@ -29,15 +32,39 @@ pub struct ServiceProminence<'a> {
 /// One SOGI entry (Table 162c inner loop).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct SogiEntry {
     /// `SOGI_flag` (1 bit).
     pub sogi_flag: bool,
+    /// `reserved_future_use` (1 bit, right-aligned) — bit 4 of the entry's
+    /// first byte. Preserved on parse; [`SogiEntry::new`] uses
+    /// [`SOGI_RESERVED_FUTURE_USE_DEFAULT`].
+    pub reserved_future_use: u8,
     /// `SOGI_priority` (12 bits).
     pub sogi_priority: u16,
     /// `service_id` (16 bits), present iff `service_flag` wire bit is set.
     pub service_id: Option<u16>,
     /// Typed `target_region` loop (Table 156 format), present iff `target_region_flag` wire bit is set.
     pub target_region_loop: Option<Vec<super::target_region::TargetRegionEntry>>,
+}
+
+impl SogiEntry {
+    /// Build an entry with the spec-default (1) `reserved_future_use`.
+    #[must_use]
+    pub const fn new(
+        sogi_flag: bool,
+        sogi_priority: u16,
+        service_id: Option<u16>,
+        target_region_loop: Option<Vec<super::target_region::TargetRegionEntry>>,
+    ) -> Self {
+        Self {
+            sogi_flag,
+            reserved_future_use: SOGI_RESERVED_FUTURE_USE_DEFAULT,
+            sogi_priority,
+            service_id,
+            target_region_loop,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for ServiceProminence<'a> {
@@ -74,6 +101,7 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
             let sogi_flag = (byte0 >> 7) != 0;
             let target_region_flag = ((byte0 >> 6) & 0x01) != 0;
             let service_flag = ((byte0 >> 5) & 0x01) != 0;
+            let reserved_future_use = (byte0 >> 4) & SOGI_RESERVED_MASK;
             let sogi_priority = ((u16::from(byte0) & 0x0F) << 8) | u16::from(byte1);
             k += 2;
             let service_id = if service_flag {
@@ -117,6 +145,7 @@ impl<'a> Parse<'a> for ServiceProminence<'a> {
             };
             sogi_list.push(SogiEntry {
                 sogi_flag,
+                reserved_future_use,
                 sogi_priority,
                 service_id,
                 target_region_loop,
@@ -169,7 +198,7 @@ impl Serialize for ServiceProminence<'_> {
             buf[p] = ((e.sogi_flag as u8) << 7)
                 | ((e.target_region_loop.is_some() as u8) << 6)
                 | ((e.service_id.is_some() as u8) << 5)
-                | SOGI_RESERVED_FUTURE_USE
+                | ((e.reserved_future_use & SOGI_RESERVED_MASK) << 4)
                 | ((priority >> 8) as u8 & 0x0F);
             buf[p + 1] = priority as u8;
             p += 2;
@@ -298,6 +327,37 @@ mod tests {
         round_trip(&d);
     }
 
+    /// Both values of the per-entry 1-bit reserved_future_use (the spec says
+    /// 1; a 0 must survive) re-serialize byte-identically.
+    #[test]
+    fn service_prominence_reserved_preserved() {
+        for r in 0u8..=1 {
+            let sel = [0x04, 0x20 | (r << 4) | 0x01, 0x23, 0x45, 0x67];
+            let bytes = wrap(0x22, &sel);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            match &d.body {
+                ExtensionBody::ServiceProminence(b) => {
+                    assert_eq!(b.sogi_list[0].reserved_future_use, r);
+                }
+                other => panic!("expected ServiceProminence, got {other:?}"),
+            }
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "r={r}");
+        }
+    }
+
+    #[test]
+    fn service_prominence_default_is_spec_value() {
+        let d = ServiceProminence {
+            sogi_list: vec![SogiEntry::new(false, 0x123, Some(0x4567), None)],
+            private_data: &[],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [0x04, 0x20 | 0x10 | 0x01, 0x23, 0x45, 0x67]);
+    }
+
     #[test]
     fn parse_service_prominence_rejects_overrun() {
         // SOGI_list_length=5 but only 3 bytes follow
@@ -326,12 +386,7 @@ mod tests {
         let d = ExtensionDescriptor {
             tag_extension: 0x22,
             body: ExtensionBody::ServiceProminence(ServiceProminence {
-                sogi_list: vec![SogiEntry {
-                    sogi_flag: false,
-                    sogi_priority: 0x123,
-                    service_id: Some(0x4567),
-                    target_region_loop: None,
-                }],
+                sogi_list: vec![SogiEntry::new(false, 0x123, Some(0x4567), None)],
                 private_data: &[0xAB],
             }),
         };
@@ -345,12 +400,7 @@ mod tests {
         // Pre-fix `(sogi_priority >> 8) as u8 & 0x0F` silently dropped bits
         // 12..16 (r03-W3).
         let d = ServiceProminence {
-            sogi_list: alloc::vec![SogiEntry {
-                sogi_flag: true,
-                sogi_priority: 1 << 12,
-                service_id: None,
-                target_region_loop: None,
-            }],
+            sogi_list: alloc::vec![SogiEntry::new(true, 1 << 12, None, None)],
             private_data: &[],
         };
         let mut buf = vec![0u8; d.serialized_len()];

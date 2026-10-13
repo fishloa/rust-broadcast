@@ -26,6 +26,7 @@ base64     = { version = "0.23", default-features = false, features = ["alloc"] 
 hex        = "0.4"
 serde_json = { workspace = true }
 dvb-t2mi   = { path = "../dvb-t2mi", features = ["ts"] }
+mpeg-ts    = { path = "../mpeg-ts", version = "0.5" }
 
 [features]
 default = ["std", "serde"]

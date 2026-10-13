@@ -5,11 +5,22 @@ impl<'a> ExtensionBodyDef<'a> for SupplementaryAudio<'a> {
     const TAG_EXTENSION: u8 = 0x06;
     const NAME: &'static str = "SUPPLEMENTARY_AUDIO";
 }
+/// Default of the 1-bit `reserved_future_use` (Table 153 bit 1): `1` in every
+/// edition (V1.13.1 `reserved` ... V1.20.1 `reserved_future_use`, audit §3.3).
+/// 37 of 47 real descriptors write `0` (cause unexplained), so parse keeps it.
+pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 1;
+
 /// supplementary_audio body (Table 153).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct SupplementaryAudio<'a> {
+    /// `reserved_future_use(1)` between `editorial_classification` and
+    /// `language_code_present` (1 bit, right-aligned): captured on parse and
+    /// re-emitted verbatim; [`SupplementaryAudio::new`] defaults to
+    /// [`RESERVED_FUTURE_USE_DEFAULT`] (1).
+    pub reserved_future_use: u8,
     /// mix_type(1) — Table 154.
     pub mix_type: bool,
     /// editorial_classification(5) — Table 155.
@@ -25,6 +36,22 @@ pub struct SupplementaryAudio<'a> {
     pub iso_639_language_code: Option<LangCode>,
     /// Trailing private_data_byte run.
     pub private_data: &'a [u8],
+}
+
+impl<'a> SupplementaryAudio<'a> {
+    /// Build a body with the spec-default reserved bit, no language code and
+    /// no private data.
+    #[must_use]
+    pub const fn new(mix_type: bool, editorial_classification: u8) -> Self {
+        Self {
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
+            mix_type,
+            editorial_classification,
+            language_code_present: false,
+            iso_639_language_code: None,
+            private_data: &[],
+        }
+    }
 }
 
 impl<'a> Parse<'a> for SupplementaryAudio<'a> {
@@ -57,6 +84,7 @@ impl<'a> Parse<'a> for SupplementaryAudio<'a> {
             None
         };
         Ok(SupplementaryAudio {
+            reserved_future_use: (flags >> 1) & 1,
             mix_type,
             editorial_classification,
             language_code_present,
@@ -79,10 +107,10 @@ impl Serialize for SupplementaryAudio<'_> {
                 have: buf.len(),
             });
         }
-        // Table 153 bit 1 is plain reserved_future_use → emitted as 1.
+        // Table 153 bit 1 reserved_future_use: preserved, default 1.
         buf[0] = (u8::from(self.mix_type) << 7)
             | ((self.editorial_classification & 0x1F) << 2)
-            | 0x02
+            | ((self.reserved_future_use & 1) << 1)
             | u8::from(self.iso_639_language_code.is_some());
         let mut p = 1;
         if let Some(lc) = self.iso_639_language_code {
@@ -126,13 +154,9 @@ mod tests {
     /// directions, so the output always re-parses to the same framing.
     #[test]
     fn serialize_derives_language_flag_from_option() {
-        let mut d = SupplementaryAudio {
-            mix_type: false,
-            editorial_classification: 1,
-            language_code_present: true, // lies: no code
-            iso_639_language_code: None,
-            private_data: &[0x55],
-        };
+        let mut d = SupplementaryAudio::new(false, 1);
+        d.language_code_present = true; // lies: no code
+        d.private_data = &[0x55];
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let re = SupplementaryAudio::parse(&buf).unwrap();
@@ -164,5 +188,28 @@ mod tests {
             other => panic!("expected SupplementaryAudio, got {other:?}"),
         }
         round_trip(&d);
+    }
+
+    /// Both values of the reserved bit round-trip (France TNT / TSDuck samples
+    /// write 0, the spec value is 1).
+    #[test]
+    fn reserved_future_use_preserved() {
+        for r in 0u8..=1 {
+            let flags = (0x05 << 2) | (r << 1) | 0x01;
+            let sel = [flags, b'f', b'r', b'e'];
+            let d = SupplementaryAudio::parse(&sel).unwrap();
+            assert_eq!(d.reserved_future_use, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, sel);
+        }
+    }
+
+    #[test]
+    fn default_reserved_future_use_is_one() {
+        let d = SupplementaryAudio::new(false, 0);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [0x02]);
     }
 }

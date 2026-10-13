@@ -10,16 +10,21 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for SVC_extension_descriptor.
 pub const TAG: u8 = 0x30;
 const HEADER_LEN: usize = 2;
-/// Trailing `reserved(5)` after `dependency_id` (Table 2-99), emitted as ones
-/// (r03-W7; confirmed by the TSDuck oracle PMT).
-const RESERVED_5_BITS: u8 = 0x1F;
-/// Trailing `reserved(1)` after `no_sei_nal_unit_present`, emitted as 1.
-const RESERVED_1_BIT: u8 = 0x01;
+/// Default of the 5-bit `reserved` after `dependency_id` (H.222.0 Table 2-99):
+/// clause 2.1 "reserved" = `1` (all editions 06/2012-08/2023, audit §5;
+/// confirmed by the TSDuck oracle PMT).
+pub const RESERVED_5_DEFAULT: u8 = 0b1_1111;
+/// Default of the trailing 1-bit `reserved` after `no_sei_nal_unit_present`
+/// (same rule).
+pub const RESERVED_1_DEFAULT: u8 = 0b1;
+const RESERVED_5_MASK: u8 = 0x1F;
+const RESERVED_1_MASK: u8 = 0x01;
 const BODY_LEN: u8 = 13;
 
 /// SVC Extension Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct SvcExtensionDescriptor {
     /// Width of the SVC stream in pixels.
     pub width: u16,
@@ -43,6 +48,42 @@ pub struct SvcExtensionDescriptor {
     pub temporal_id_end: u8,
     /// No SEI NAL unit present flag.
     pub no_sei_nal_unit_present: bool,
+    /// `reserved(5)` after `dependency_id` (5 bits, right-aligned). Captured
+    /// on parse, re-emitted verbatim; defaults to [`RESERVED_5_DEFAULT`].
+    pub reserved_5: u8,
+    /// Trailing `reserved(1)` (1 bit, right-aligned). Captured on parse,
+    /// re-emitted verbatim; defaults to [`RESERVED_1_DEFAULT`].
+    pub reserved_1: u8,
+}
+
+impl SvcExtensionDescriptor {
+    /// Build with the picture geometry; bitrates unspecified (`0`), layer ids
+    /// 0, SEI flag clear and the spec-default reserved bits. Set the remaining
+    /// fields directly.
+    #[must_use]
+    pub const fn new(width: u16, height: u16, frame_rate: u16) -> Self {
+        Self {
+            width,
+            height,
+            frame_rate,
+            average_bitrate: 0,
+            maximum_bitrate: 0,
+            dependency_id: 0,
+            quality_id_start: 0,
+            quality_id_end: 0,
+            temporal_id_start: 0,
+            temporal_id_end: 0,
+            no_sei_nal_unit_present: false,
+            reserved_5: RESERVED_5_DEFAULT,
+            reserved_1: RESERVED_1_DEFAULT,
+        }
+    }
+}
+
+impl Default for SvcExtensionDescriptor {
+    fn default() -> Self {
+        Self::new(0, 0, 0)
+    }
 }
 
 impl<'a> Parse<'a> for SvcExtensionDescriptor {
@@ -89,6 +130,8 @@ impl<'a> Parse<'a> for SvcExtensionDescriptor {
             temporal_id_start,
             temporal_id_end,
             no_sei_nal_unit_present,
+            reserved_5: b10 & RESERVED_5_MASK,
+            reserved_1: b12 & RESERVED_1_MASK,
         })
     }
 }
@@ -115,12 +158,13 @@ impl Serialize for SvcExtensionDescriptor {
         buf[HEADER_LEN + 4..HEADER_LEN + 6].copy_from_slice(&self.frame_rate.to_be_bytes());
         buf[HEADER_LEN + 6..HEADER_LEN + 8].copy_from_slice(&self.average_bitrate.to_be_bytes());
         buf[HEADER_LEN + 8..HEADER_LEN + 10].copy_from_slice(&self.maximum_bitrate.to_be_bytes());
-        buf[HEADER_LEN + 10] = ((self.dependency_id & 0x07) << 5) | RESERVED_5_BITS;
+        buf[HEADER_LEN + 10] =
+            ((self.dependency_id & 0x07) << 5) | (self.reserved_5 & RESERVED_5_MASK);
         buf[HEADER_LEN + 11] = ((self.quality_id_start & 0x0F) << 4) | (self.quality_id_end & 0x0F);
         buf[HEADER_LEN + 12] = ((self.temporal_id_start & 0x07) << 5)
             | ((self.temporal_id_end & 0x07) << 2)
             | ((self.no_sei_nal_unit_present as u8) << 1)
-            | RESERVED_1_BIT;
+            | (self.reserved_1 & RESERVED_1_MASK);
         Ok(len)
     }
 }
@@ -191,19 +235,14 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = SvcExtensionDescriptor {
-            width: 1280,
-            height: 720,
-            frame_rate: 50,
-            average_bitrate: 5000,
-            maximum_bitrate: 10000,
-            dependency_id: 2,
-            quality_id_start: 3,
-            quality_id_end: 5,
-            temporal_id_start: 1,
-            temporal_id_end: 3,
-            no_sei_nal_unit_present: false,
-        };
+        let mut d = SvcExtensionDescriptor::new(1280, 720, 50);
+        d.average_bitrate = 5000;
+        d.maximum_bitrate = 10000;
+        d.dependency_id = 2;
+        d.quality_id_start = 3;
+        d.quality_id_end = 5;
+        d.temporal_id_start = 1;
+        d.temporal_id_end = 3;
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = SvcExtensionDescriptor::parse(&buf).unwrap();
@@ -211,66 +250,61 @@ mod tests {
     }
 
     #[test]
-    fn serialize_round_trip_reserved_preserved() {
-        // Reserved bits are not part of any field that the struct can
-        // round-trip; the serializer writes zero for those bits.
-        // This test confirms we parse and re-serialize deterministically
-        // with the reserved bits wiped.
-        let bytes_with_reserved = [
-            TAG, 13, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x1F, // dependency_id=0, reserved non-zero
-            0x00, 0x01, // temporal_id_start=0, temporal_id_end=0, no_sei=0, reserved=1
-        ];
-        let d = SvcExtensionDescriptor::parse(&bytes_with_reserved).unwrap();
-        let mut buf = vec![0u8; d.serialized_len()];
-        d.serialize_into(&mut buf).unwrap();
-        // Re-parse the serialized output and verify it's stable
-        let reparsed = SvcExtensionDescriptor::parse(&buf).unwrap();
-        let mut buf2 = vec![0u8; reparsed.serialized_len()];
-        reparsed.serialize_into(&mut buf2).unwrap();
-        assert_eq!(buf, buf2);
-    }
-
-    #[test]
     fn serialize_rejects_small_buffer() {
-        let d = SvcExtensionDescriptor {
-            width: 0,
-            height: 0,
-            frame_rate: 0,
-            average_bitrate: 0,
-            maximum_bitrate: 0,
-            dependency_id: 0,
-            quality_id_start: 0,
-            quality_id_end: 0,
-            temporal_id_start: 0,
-            temporal_id_end: 0,
-            no_sei_nal_unit_present: false,
-        };
+        let d = SvcExtensionDescriptor::default();
         let mut tiny = vec![0u8; 5];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
     }
 
-    /// r03-W7 — H.222.0 Table 2-99 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the TSDuck-compiled oracle
-    /// PMT `tsduck-mpeg-simple-pmt.bin` (TSDuck only; no real broadcast capture carries it). (1) conformant bytes (reserved=1) round-trip byte-exactly;
-    /// (2) the same descriptor with reserved=0 (non-conformant sender) parses to
-    /// equal typed fields and re-serializes to the normalized reserved=1 form.
+    /// H.222.0 Table 2-99. Both reserved regions are preserved verbatim (the
+    /// earlier test that expected them to be wiped/normalized is replaced).
     #[test]
-    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
-        let conformant: &[u8] = &[
-            TAG, 13, 0x07, 0x80, 0x04, 0x38, 0x00, 0x3C, 0x00, 0x64, 0x00, 0xC8, 0x3F, 0x01, 0x07,
-        ];
-        let zeroed: &[u8] = &[
-            TAG, 13, 0x07, 0x80, 0x04, 0x38, 0x00, 0x3C, 0x00, 0x64, 0x00, 0xC8, 0x20, 0x01, 0x06,
-        ];
-        let d = SvcExtensionDescriptor::parse(conformant).unwrap();
+    fn svc_extension_reserved_preserved() {
+        for r5 in [0u8, 1, 0x0A, 0x15, 0x1F] {
+            for r1 in 0u8..=1 {
+                let bytes = [
+                    TAG,
+                    13,
+                    0x07,
+                    0x80,
+                    0x04,
+                    0x38,
+                    0x00,
+                    0x3C,
+                    0x00,
+                    0x64,
+                    0x00,
+                    0xC8,
+                    0x20 | r5,
+                    0x01,
+                    0x06 | r1,
+                ];
+                let d = SvcExtensionDescriptor::parse(&bytes).unwrap();
+                assert_eq!((d.reserved_5, d.reserved_1), (r5, r1));
+                let mut out = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut out).unwrap();
+                assert_eq!(out, bytes);
+            }
+        }
+    }
+
+    #[test]
+    fn svc_extension_default_is_spec_value() {
+        let mut d = SvcExtensionDescriptor::new(0x0780, 0x0438, 0x003C);
+        d.average_bitrate = 0x64;
+        d.maximum_bitrate = 0xC8;
+        d.dependency_id = 1;
+        d.quality_id_end = 1;
+        d.temporal_id_end = 1;
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, conformant);
-
-        let dz = SvcExtensionDescriptor::parse(zeroed).unwrap();
-        assert_eq!(dz, d, "typed fields must not depend on reserved bits");
-        let mut outz = vec![0u8; dz.serialized_len()];
-        dz.serialize_into(&mut outz).unwrap();
-        assert_eq!(outz, conformant);
+        assert_eq!(
+            out,
+            [
+                TAG, 13, 0x07, 0x80, 0x04, 0x38, 0x00, 0x3C, 0x00, 0x64, 0x00, 0xC8, 0x3F, 0x01,
+                0x05
+            ]
+        );
     }
 }

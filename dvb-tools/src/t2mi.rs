@@ -7,6 +7,7 @@
 //! carried inside the BBFrames of the T2-MI stream and writes the recovered
 //! 188-byte packets to stdout, so a caller can `> inner.ts` and pipe them
 //! back into `dvb-tools dump`.
+use mpeg_ts::pid::Pid;
 use std::io::{BufWriter, Write};
 use std::process::ExitCode;
 
@@ -17,11 +18,11 @@ use crate::util::{for_each_packet, read_file};
 
 /// Default T2-MI PID when none is specified (EN 302 755 V1.4.1 §5.1 — the usual
 /// data-piping PID for T2-MI in TS).
-const DEFAULT_T2MI_PID: u16 = 0x0006;
+const DEFAULT_T2MI_PID: Pid = Pid::new(0x0006);
 
 /// `--pid` value: a TS-encapsulated target PID, or raw bytes.
 enum PidArg {
-    Ts(u16),
+    Ts(Pid),
     Raw,
 }
 
@@ -35,7 +36,8 @@ fn parse_pid(s: &str) -> Option<PidArg> {
     } else {
         s.parse::<u16>().ok()?
     };
-    Some(PidArg::Ts(value))
+    // A value outside the 13-bit PID range can never match a packet: reject it.
+    Pid::try_new(value).ok().map(PidArg::Ts)
 }
 
 pub fn run(path: &str, pid_arg: Option<&str>, inner: bool, plp: Option<u8>) -> ExitCode {

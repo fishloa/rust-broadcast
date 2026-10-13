@@ -15,6 +15,7 @@
 //! out→in pairs produce no findings.
 
 use alloc::collections::btree_map::BTreeMap;
+use mpeg_ts::pid::Pid;
 
 use dvb_si::tables::pmt::StreamType;
 
@@ -42,12 +43,12 @@ pub struct Scte35Check;
 /// `stream_type 0x86` (or a `registration_descriptor` for `"CUEI"`). Used
 /// only as a fallback (see [`Diagnostic::run`]) when the stream carries no
 /// PSI at all to discover a PID from (issue #1046 / audit MD-C1).
-const SCTE35_PID: u16 = 0x01F0;
+const SCTE35_PID: Pid = Pid::new(0x01F0);
 
 impl Diagnostic for Scte35Check {
     fn run(&self, ts: &[u8], report: &mut Report) {
         let n_packets = ts.len() / TS_PACKET_SIZE;
-        let mut pid_states: BTreeMap<u16, SpliceTracker> = BTreeMap::new();
+        let mut pid_states: BTreeMap<Pid, SpliceTracker> = BTreeMap::new();
 
         // Discover the real SCTE-35 PID(s) from the PMT (`stream_type
         // 0x86`, ANSI/SCTE 35 §8.1), the same source `watch.rs` uses —
@@ -91,7 +92,7 @@ impl Diagnostic for Scte35Check {
                     // Duplicate open "out" with no intervening "in".
                     report.push(Finding::new(
                         Severity::Warning,
-                        Location::new(i, u32::from(pid)),
+                        Location::at_pid(i, pid),
                         "scte35-dup-out",
                         alloc::format!(
                             "duplicate open splice_insert: out event_id {} \
@@ -108,7 +109,7 @@ impl Diagnostic for Scte35Check {
             for eid in state.open_events() {
                 report.push(Finding::new(
                     Severity::Warning,
-                    Location::new(n_packets.saturating_sub(1), u32::from(pid)),
+                    Location::at_pid(n_packets.saturating_sub(1), pid),
                     "scte35-unbalanced",
                     alloc::format!(
                         "unbalanced splice_insert: out event_id {eid} with no matching in",
@@ -126,10 +127,10 @@ mod tests {
 
     /// Build a TS packet with SCTE-35 sections on the given PID.
     /// PUSI is set in byte 1, payload starts at offset 4.
-    fn make_packet(payload: &[u8], pid: u16, cc: u8) -> Vec<u8> {
+    fn make_packet(payload: &[u8], pid: Pid, cc: u8) -> Vec<u8> {
         let mut pkt = vec![0x47u8; 188];
-        pkt[1] = 0x40 | (((pid >> 8) as u8) & 0x1F); // PUSI=1, PID high
-        pkt[2] = (pid & 0xFF) as u8;
+        pkt[1] = 0x40 | (((pid.value() >> 8) as u8) & 0x1F); // PUSI=1, PID high
+        pkt[2] = (pid.value() & 0xFF) as u8;
         pkt[3] = 0x10 | (cc & 0x0F); // AFC=01 payload-only, CC
         let write_end = 4 + payload.len().min(184);
         pkt[4..write_end].copy_from_slice(payload);
@@ -209,7 +210,7 @@ mod tests {
         payload.extend_from_slice(&out_bytes);
         payload.extend_from_slice(&in_bytes);
 
-        let ts = make_packet(&payload, pid, 0);
+        let ts = make_packet(&payload, Pid::new(pid), 0);
         let mut report = Report::new();
         Scte35Check.run(&ts, &mut report);
         assert!(
@@ -230,7 +231,7 @@ mod tests {
         payload.push(0x00);
         payload.extend_from_slice(&out_bytes);
 
-        let ts = make_packet(&payload, pid, 0);
+        let ts = make_packet(&payload, Pid::new(pid), 0);
         let mut report = Report::new();
         Scte35Check.run(&ts, &mut report);
         let unbal: Vec<_> = report
@@ -264,7 +265,7 @@ mod tests {
         payload.extend_from_slice(&out1);
         payload.extend_from_slice(&out2);
 
-        let ts = make_packet(&payload, pid, 0);
+        let ts = make_packet(&payload, Pid::new(pid), 0);
         let mut report = Report::new();
         Scte35Check.run(&ts, &mut report);
         let dup: Vec<_> = report
@@ -295,7 +296,7 @@ mod tests {
         payload.push(0x00);
         payload.extend_from_slice(&cancel);
 
-        let ts = make_packet(&payload, pid, 0);
+        let ts = make_packet(&payload, Pid::new(pid), 0);
         let mut report = Report::new();
         Scte35Check.run(&ts, &mut report);
         assert!(
@@ -318,7 +319,7 @@ mod tests {
         payload.push(0x00);
         payload.extend_from_slice(&out);
 
-        let ts = make_packet(&payload, pid, 0);
+        let ts = make_packet(&payload, Pid::new(pid), 0);
         let mut report = Report::new();
         Scte35Check.run(&ts, &mut report);
         assert!(
@@ -342,7 +343,7 @@ mod tests {
         payload.extend_from_slice(&out);
         payload.extend_from_slice(&back);
 
-        let ts = make_packet(&payload, pid, 0);
+        let ts = make_packet(&payload, Pid::new(pid), 0);
         let mut report = Report::new();
         Scte35Check.run(&ts, &mut report);
         assert!(
@@ -364,7 +365,7 @@ mod tests {
         payload.push(0x00);
         payload.extend_from_slice(&out);
 
-        let ts = make_packet(&payload, pid, 0);
+        let ts = make_packet(&payload, Pid::new(pid), 0);
         let mut report = Report::new();
         Scte35Check.run(&ts, &mut report);
         let unbal: Vec<_> = report

@@ -58,6 +58,7 @@
 //! and inspect the printed summary plus the manifest/segment files written to
 //! the temp directory it reports.
 
+use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
@@ -191,7 +192,7 @@ fn extract_scte35_raw(ts: &[u8], pid: u16) -> Vec<u8> {
         let Ok(pkt) = TsPacket::parse(raw) else {
             continue;
         };
-        if pkt.header.pid != pid {
+        if pkt.header.pid != Pid::new(pid) {
             continue;
         }
         let Some(payload) = pkt.payload else {

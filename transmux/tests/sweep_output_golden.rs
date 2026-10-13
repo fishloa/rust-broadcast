@@ -23,7 +23,34 @@ fn fnv1a(bytes: &[u8]) -> u64 {
 /// #1144, so the goldens captured before that field keep proving the demux
 /// output itself is unchanged (a non-empty `degraded` still shows).
 fn media_debug(media: &transmux::Media) -> String {
-    format!("{media:?}").replace(", degraded: []", "")
+    legacy_pid_debug(&format!("{media:?}")).replace(", degraded: []", "")
+}
+
+/// Typed PIDs (#1159) render as `Pid(0x0100)` in `Debug`; the goldens were
+/// captured when the same field was a bare `u16` (`256`). Rewrite every
+/// `Pid(0xNNNN)` back to the decimal it used to print, so the hash keeps
+/// proving the demux output itself is unchanged (a differing PID *value*
+/// still changes the text and fails).
+fn legacy_pid_debug(s: &str) -> String {
+    const OPEN: &str = "Pid(0x";
+    let mut out = String::with_capacity(s.len());
+    let mut rest = s;
+    while let Some(i) = rest.find(OPEN) {
+        out.push_str(&rest[..i]);
+        let after = &rest[i + OPEN.len()..];
+        match after.find(')') {
+            Some(end) if u16::from_str_radix(&after[..end], 16).is_ok() => {
+                out.push_str(&u16::from_str_radix(&after[..end], 16).unwrap().to_string());
+                rest = &after[end + 1..];
+            }
+            _ => {
+                out.push_str(OPEN);
+                rest = after;
+            }
+        }
+    }
+    out.push_str(rest);
+    out
 }
 
 fn fixture(rel: &str) -> Option<Vec<u8>> {

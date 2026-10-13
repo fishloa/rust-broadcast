@@ -14,13 +14,18 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for metadata_pointer_descriptor.
 pub const TAG: u8 = 0x25;
 const HEADER_LEN: usize = 2;
-/// `reserved(5)` tail of the flags byte (Table 2-86).
-const RESERVED_5_BITS: u8 = 0x1F;
+/// Default of the 5-bit `reserved` tail of the flags byte (H.222.0 Table
+/// 2-86): clause 2.1 "reserved" = `1` (all editions 2006-08/2023, audit §5; the
+/// MPEG_carriage_flags semantics widen in 2017 but the layout is unchanged; no
+/// fixture carries the descriptor).
+pub const RESERVED_DEFAULT: u8 = 0b1_1111;
+const RESERVED_MASK: u8 = 0x1F;
 
 /// Metadata Pointer Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct MetadataPointerDescriptor<'a> {
     /// Metadata application format (u16; Table 2-84).
     pub metadata_application_format: u16,
@@ -48,6 +53,38 @@ pub struct MetadataPointerDescriptor<'a> {
     /// Trailing private data bytes.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
+    /// `reserved(5)` tail of the flags byte (5 bits, right-aligned). Captured
+    /// on parse, re-emitted verbatim; [`MetadataPointerDescriptor::new`] /
+    /// [`Default`] use [`RESERVED_DEFAULT`].
+    pub reserved: u8,
+}
+
+impl<'a> MetadataPointerDescriptor<'a> {
+    /// Build a minimal descriptor (no identifiers, no locator record, no
+    /// program/TS fields, no private data, `MPEG_carriage_flags` = 3) with the
+    /// spec-default reserved bits. Set the remaining fields directly.
+    #[must_use]
+    pub const fn new(
+        metadata_application_format: u16,
+        metadata_format: MetadataFormat,
+        metadata_service_id: u8,
+    ) -> Self {
+        Self {
+            metadata_application_format,
+            metadata_application_format_identifier: None,
+            metadata_format,
+            metadata_format_identifier: None,
+            metadata_service_id,
+            metadata_locator_record_flag: false,
+            mpeg_carriage_flags: MpegCarriageFlags::None,
+            metadata_locator_record: None,
+            program_number: None,
+            transport_stream_location: None,
+            transport_stream_id: None,
+            private_data: &[],
+            reserved: RESERVED_DEFAULT,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
@@ -121,6 +158,7 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
         let flags = body[pos];
         let metadata_locator_record_flag = (flags & 0x80) != 0;
         let mpeg_carriage_flags = MpegCarriageFlags::from_u8((flags >> 5) & 0x03);
+        let reserved = flags & RESERVED_MASK;
         pos += 1;
 
         let (metadata_locator_record, mut pos) = if metadata_locator_record_flag {
@@ -191,6 +229,7 @@ impl<'a> Parse<'a> for MetadataPointerDescriptor<'a> {
             transport_stream_location,
             transport_stream_id,
             private_data,
+            reserved,
         })
     }
 }
@@ -251,9 +290,9 @@ impl Serialize for MetadataPointerDescriptor<'_> {
 
         // The record flag is derived from the Option, so it can never claim
         // a record that is not written (r03-W5).
-        // `reserved(5)` (Table 2-86) is emitted as `11111` (H.222.0 reserved
-        // bits are 1; r03-W7, owner-approved; no fixture carries it).
-        let mut flags = ((self.mpeg_carriage_flags.to_u8() & 0x03) << 5) | RESERVED_5_BITS;
+        // `reserved(5)` (Table 2-86) is re-emitted as parsed.
+        let mut flags =
+            ((self.mpeg_carriage_flags.to_u8() & 0x03) << 5) | (self.reserved & RESERVED_MASK);
         if self.metadata_locator_record.is_some() {
             flags |= 0x80;
         }
@@ -319,6 +358,7 @@ mod tests {
             program_number: Some(0x0101),
             transport_stream_location: None,
             transport_stream_id: None,
+            reserved: RESERVED_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -338,6 +378,7 @@ mod tests {
             program_number: Some(0x0202),
             transport_stream_location: Some(0x0303),
             transport_stream_id: Some(0x0404),
+            reserved: RESERVED_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -357,6 +398,7 @@ mod tests {
             program_number: Some(0x0505),
             transport_stream_location: None,
             transport_stream_id: None,
+            reserved: RESERVED_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -376,6 +418,7 @@ mod tests {
             program_number: None,
             transport_stream_location: None,
             transport_stream_id: None,
+            reserved: RESERVED_DEFAULT,
             private_data: &[0xCC],
         };
         serialize_round_trip(&d);
@@ -395,6 +438,7 @@ mod tests {
             program_number: Some(42),
             transport_stream_location: None,
             transport_stream_id: None,
+            reserved: RESERVED_DEFAULT,
             private_data: &[0xFF],
         };
         serialize_round_trip(&d);
@@ -414,6 +458,7 @@ mod tests {
             program_number: None,
             transport_stream_location: None,
             transport_stream_id: None,
+            reserved: RESERVED_DEFAULT,
             private_data: &[],
         };
         serialize_round_trip(&d);
@@ -447,6 +492,7 @@ mod tests {
             transport_stream_location: None,
             transport_stream_id: None,
             mpeg_carriage_flags: MpegCarriageFlags::from_u8(0),
+            reserved: RESERVED_DEFAULT,
             private_data: &[],
         };
         let mut d = base.clone();
@@ -475,22 +521,26 @@ mod tests {
         assert!(!re.metadata_locator_record_flag);
     }
 
-    /// r03-W7 sweep — H.222.0 Table 2-86. No committed capture or TSDuck fixture carries this
-    /// descriptor, so reserved=1 rests on the spec convention only (owner
-    /// decision). Conformant bytes round-trip exactly; reserved=0 input parses
-    /// to equal typed fields and is normalized to reserved=1.
+    /// H.222.0 Table 2-86. `reserved(5)` is preserved verbatim (zero-reserved
+    /// senders are no longer normalized to `11111`).
     #[test]
-    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
-        let conformant: &[u8] = &[TAG, 6, 0x00, 0x01, 0x3F, 0x02, 0x7F, 0xEE];
-        let zeroed: &[u8] = &[TAG, 6, 0x00, 0x01, 0x3F, 0x02, 0x60, 0xEE];
-        let d = MetadataPointerDescriptor::parse(conformant).unwrap();
+    fn metadata_pointer_reserved_preserved() {
+        for r in 0u8..=31 {
+            let bytes = [TAG, 6, 0x00, 0x01, 0x3F, 0x02, 0x60 | r, 0xEE];
+            let d = MetadataPointerDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved, r);
+            let mut out = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut out).unwrap();
+            assert_eq!(out, bytes);
+        }
+    }
+
+    #[test]
+    fn metadata_pointer_default_is_spec_value() {
+        let mut d = MetadataPointerDescriptor::new(0x0001, MetadataFormat::Reserved1(0x3F), 2);
+        d.private_data = &[0xEE];
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, conformant);
-        let dz = MetadataPointerDescriptor::parse(zeroed).unwrap();
-        assert_eq!(dz, d);
-        let mut outz = vec![0u8; dz.serialized_len()];
-        dz.serialize_into(&mut outz).unwrap();
-        assert_eq!(outz, conformant);
+        assert_eq!(out, [TAG, 6, 0x00, 0x01, 0x3F, 0x02, 0x7F, 0xEE]);
     }
 }

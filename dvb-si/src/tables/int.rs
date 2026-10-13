@@ -96,6 +96,7 @@ pub type IntLoopEntry<'a> = crate::tables::TargetOperationalLoop<'a>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct IntSection<'a> {
     /// Semantics of this INT announcement — 0x01 = stream announcement/location.
     pub action_type: IntActionType,
@@ -119,6 +120,46 @@ pub struct IntSection<'a> {
     pub platform_descriptors: DescriptorLoop<'a>,
     /// Target/operational descriptor-loop pairs — unfolded per Tables 17/18.
     pub loops: Vec<IntLoopEntry<'a>>,
+    /// Header bit fields (`reserved_future_use`, `reserved(2)` x2; default
+    /// [`SectionBits::dvb`](super::SectionBits::dvb)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+    /// `reserved(4)` before `platform_descriptor_loop_length` (`1111`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_platform_descriptor_loop_length: u8,
+}
+
+impl<'a> IntSection<'a> {
+    /// Construct an INT section with the spec `reserved` fill.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        action_type: IntActionType,
+        platform_id_hash: u8,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        platform_id: u32,
+        processing_order: u8,
+        platform_descriptors: DescriptorLoop<'a>,
+        loops: Vec<IntLoopEntry<'a>>,
+    ) -> Self {
+        Self {
+            action_type,
+            platform_id_hash,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            platform_id,
+            processing_order,
+            platform_descriptors,
+            loops,
+            bits: super::SectionBits::dvb(),
+            reserved_platform_descriptor_loop_length: super::RESERVED_4,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for IntSection<'a> {
@@ -194,6 +235,7 @@ impl<'a> Parse<'a> for IntSection<'a> {
                     available: payload_end.saturating_sub(target_start),
                 });
             }
+            let reserved_target_length = super::len_reserved_of(bytes[pos]);
             let target_descriptors = DescriptorLoop::new(&bytes[target_start..target_end]);
             pos = target_end;
 
@@ -213,12 +255,15 @@ impl<'a> Parse<'a> for IntSection<'a> {
                     available: payload_end.saturating_sub(op_start),
                 });
             }
+            let reserved_operational_length = super::len_reserved_of(bytes[pos]);
             let operational_descriptors = DescriptorLoop::new(&bytes[op_start..op_end]);
             pos = op_end;
 
             loops.push(IntLoopEntry {
                 target_descriptors,
                 operational_descriptors,
+                reserved_target_length,
+                reserved_operational_length,
             });
         }
 
@@ -233,6 +278,10 @@ impl<'a> Parse<'a> for IntSection<'a> {
             processing_order,
             platform_descriptors,
             loops,
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[OFF_VERSION_BYTE])),
+            reserved_platform_descriptor_loop_length: super::len_reserved_of(
+                bytes[OFF_PLATFORM_DESC_LEN],
+            ),
         })
     }
 }
@@ -263,13 +312,14 @@ impl Serialize for IntSection<'_> {
         }
 
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - OUTER_HEADER_LEN)?;
 
         buf[OFF_ACTION_TYPE] = self.action_type.to_u8();
         buf[OFF_PLATFORM_ID_HASH] = self.platform_id_hash;
-        buf[OFF_VERSION_BYTE] =
-            super::version_byte(self.version_number, self.current_next_indicator);
+        buf[OFF_VERSION_BYTE] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[OFF_SECTION_NUMBER] = self.section_number;
         buf[OFF_LAST_SECTION_NUMBER] = self.last_section_number;
         buf[OFF_PLATFORM_ID] = ((self.platform_id >> 16) & 0xFF) as u8;
@@ -282,9 +332,10 @@ impl Serialize for IntSection<'_> {
             12,
             "platform_descriptors_loop_length",
         )?;
-        super::write_desc_loop_len(
+        super::write_desc_loop_len_r(
             &mut buf[OFF_PLATFORM_DESC_LEN..OFF_PLATFORM_DESC_LEN + 2],
             pdl as usize,
+            self.reserved_platform_descriptor_loop_length,
         )?;
 
         let plat_start = OFF_PLATFORM_DESC_LEN + LOOP_LEN_FIELD;
@@ -298,7 +349,11 @@ impl Serialize for IntSection<'_> {
                 12,
                 "target_descriptor_loop_length",
             )?;
-            super::write_desc_loop_len(&mut buf[pos..pos + 2], tl as usize)?;
+            super::write_desc_loop_len_r(
+                &mut buf[pos..pos + 2],
+                tl as usize,
+                entry.reserved_target_length,
+            )?;
             pos += LOOP_LEN_FIELD;
             buf[pos..pos + entry.target_descriptors.len()]
                 .copy_from_slice(entry.target_descriptors.raw());
@@ -309,7 +364,11 @@ impl Serialize for IntSection<'_> {
                 12,
                 "operational_descriptor_loop_length",
             )?;
-            super::write_desc_loop_len(&mut buf[pos..pos + 2], ol as usize)?;
+            super::write_desc_loop_len_r(
+                &mut buf[pos..pos + 2],
+                ol as usize,
+                entry.reserved_operational_length,
+            )?;
             pos += LOOP_LEN_FIELD;
             buf[pos..pos + entry.operational_descriptors.len()]
                 .copy_from_slice(entry.operational_descriptors.raw());
@@ -334,18 +393,18 @@ mod tests {
     #[test]
     fn parse_happy_path_no_loops() {
         let plat_desc: &[u8] = &[0x81, 0x02, 0xAB, 0xCD];
-        let int = IntSection {
-            action_type: IntActionType::IpMacStreamLocation,
-            platform_id_hash: 0x12 ^ 0x34,
-            version_number: 3,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            platform_id: 0x00_12_34,
-            processing_order: 0x00,
-            platform_descriptors: DescriptorLoop::new(plat_desc),
-            loops: Vec::new(),
-        };
+        let int = IntSection::new(
+            IntActionType::IpMacStreamLocation,
+            0x12 ^ 0x34,
+            3,
+            true,
+            0,
+            0,
+            0x00_12_34,
+            0x00,
+            DescriptorLoop::new(plat_desc),
+            Vec::new(),
+        );
         let mut buf = vec![0u8; int.serialized_len()];
         int.serialize_into(&mut buf).unwrap();
         let parsed = IntSection::parse(&buf).unwrap();
@@ -359,27 +418,24 @@ mod tests {
     fn parse_happy_path_with_loops() {
         let target_desc: &[u8] = &[0x09, 0x01, 0xAA];
         let op_desc: &[u8] = &[0x0A, 0x01, 0xBB];
-        let int = IntSection {
-            action_type: IntActionType::IpMacStreamLocation,
-            platform_id_hash: 0x56,
-            version_number: 5,
-            current_next_indicator: false,
-            section_number: 1,
-            last_section_number: 1,
-            platform_id: 0x00_56_78,
-            processing_order: 0x01,
-            platform_descriptors: DescriptorLoop::new(&[]),
-            loops: vec![
-                IntLoopEntry {
-                    target_descriptors: DescriptorLoop::new(target_desc),
-                    operational_descriptors: DescriptorLoop::new(op_desc),
-                },
-                IntLoopEntry {
-                    target_descriptors: DescriptorLoop::new(&[]),
-                    operational_descriptors: DescriptorLoop::new(&[]),
-                },
+        let int = IntSection::new(
+            IntActionType::IpMacStreamLocation,
+            0x56,
+            5,
+            false,
+            1,
+            1,
+            0x00_56_78,
+            0x01,
+            DescriptorLoop::new(&[]),
+            vec![
+                IntLoopEntry::new(
+                    DescriptorLoop::new(target_desc),
+                    DescriptorLoop::new(op_desc),
+                ),
+                IntLoopEntry::new(DescriptorLoop::new(&[]), DescriptorLoop::new(&[])),
             ],
-        };
+        );
         let mut buf = vec![0u8; int.serialized_len()];
         int.serialize_into(&mut buf).unwrap();
         let parsed = IntSection::parse(&buf).unwrap();
@@ -393,21 +449,21 @@ mod tests {
     #[test]
     fn byte_exact_round_trip() {
         let plat_desc: &[u8] = &[0x7C, 0x04, 0x01, 0x02, 0x03, 0x04];
-        let int = IntSection {
-            action_type: IntActionType::IpMacStreamLocation,
-            platform_id_hash: 0xAB,
-            version_number: 15,
-            current_next_indicator: true,
-            section_number: 2,
-            last_section_number: 3,
-            platform_id: 0x00_AB_CD,
-            processing_order: 0x00,
-            platform_descriptors: DescriptorLoop::new(plat_desc),
-            loops: vec![IntLoopEntry {
-                target_descriptors: DescriptorLoop::new(&[]),
-                operational_descriptors: DescriptorLoop::new(&[]),
-            }],
-        };
+        let int = IntSection::new(
+            IntActionType::IpMacStreamLocation,
+            0xAB,
+            15,
+            true,
+            2,
+            3,
+            0x00_AB_CD,
+            0x00,
+            DescriptorLoop::new(plat_desc),
+            vec![IntLoopEntry::new(
+                DescriptorLoop::new(&[]),
+                DescriptorLoop::new(&[]),
+            )],
+        );
         let mut buf = vec![0u8; int.serialized_len()];
         int.serialize_into(&mut buf).unwrap();
         let re = IntSection::parse(&buf).unwrap();
@@ -419,18 +475,18 @@ mod tests {
 
     #[test]
     fn parse_rejects_wrong_table_id() {
-        let int = IntSection {
-            action_type: IntActionType::IpMacStreamLocation,
-            platform_id_hash: 0x00,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            platform_id: 0,
-            processing_order: 0,
-            platform_descriptors: DescriptorLoop::new(&[]),
-            loops: Vec::new(),
-        };
+        let int = IntSection::new(
+            IntActionType::IpMacStreamLocation,
+            0x00,
+            0,
+            true,
+            0,
+            0,
+            0,
+            0,
+            DescriptorLoop::new(&[]),
+            Vec::new(),
+        );
         let mut buf = vec![0u8; int.serialized_len()];
         int.serialize_into(&mut buf).unwrap();
         buf[0] = 0x4B;
@@ -453,18 +509,18 @@ mod tests {
 
     #[test]
     fn serialize_rejects_too_small_output_buffer() {
-        let int = IntSection {
-            action_type: IntActionType::IpMacStreamLocation,
-            platform_id_hash: 0x00,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            platform_id: 0,
-            processing_order: 0,
-            platform_descriptors: DescriptorLoop::new(&[]),
-            loops: Vec::new(),
-        };
+        let int = IntSection::new(
+            IntActionType::IpMacStreamLocation,
+            0x00,
+            0,
+            true,
+            0,
+            0,
+            0,
+            0,
+            DescriptorLoop::new(&[]),
+            Vec::new(),
+        );
         let mut buf = vec![0u8; 2];
         assert!(matches!(
             int.serialize_into(&mut buf).unwrap_err(),
@@ -494,18 +550,18 @@ mod tests {
     #[test]
     fn serialize_rejects_platform_descriptors_exceeding_section_length() {
         let desc = vec![0xAAu8; 4081];
-        let int = IntSection {
-            action_type: IntActionType::IpMacStreamLocation,
-            platform_id_hash: 0,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            platform_id: 0,
-            processing_order: 0,
-            platform_descriptors: DescriptorLoop::new(&desc),
-            loops: vec![],
-        };
+        let int = IntSection::new(
+            IntActionType::IpMacStreamLocation,
+            0,
+            0,
+            true,
+            0,
+            0,
+            0,
+            0,
+            DescriptorLoop::new(&desc),
+            vec![],
+        );
         let mut buf = vec![0u8; int.serialized_len()];
         assert!(matches!(
             int.serialize_into(&mut buf).unwrap_err(),
@@ -516,18 +572,18 @@ mod tests {
     #[test]
     fn serialize_accepts_platform_descriptors_at_section_length_boundary() {
         let desc = vec![0xAAu8; 4080];
-        let int = IntSection {
-            action_type: IntActionType::IpMacStreamLocation,
-            platform_id_hash: 0,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            platform_id: 0,
-            processing_order: 0,
-            platform_descriptors: DescriptorLoop::new(&desc),
-            loops: vec![],
-        };
+        let int = IntSection::new(
+            IntActionType::IpMacStreamLocation,
+            0,
+            0,
+            true,
+            0,
+            0,
+            0,
+            0,
+            DescriptorLoop::new(&desc),
+            vec![],
+        );
         let mut buf = vec![0u8; int.serialized_len()];
         int.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = IntSection::parse(&buf).expect("reparse");
@@ -536,18 +592,18 @@ mod tests {
 
     #[test]
     fn platform_id_24bit_boundary() {
-        let int = IntSection {
-            action_type: IntActionType::IpMacStreamLocation,
-            platform_id_hash: 0xFF,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            platform_id: 0x00FF_FFFF,
-            processing_order: 0x00,
-            platform_descriptors: DescriptorLoop::new(&[]),
-            loops: Vec::new(),
-        };
+        let int = IntSection::new(
+            IntActionType::IpMacStreamLocation,
+            0xFF,
+            0,
+            true,
+            0,
+            0,
+            0x00FF_FFFF,
+            0x00,
+            DescriptorLoop::new(&[]),
+            Vec::new(),
+        );
         let mut buf = vec![0u8; int.serialized_len()];
         int.serialize_into(&mut buf).unwrap();
         let parsed = IntSection::parse(&buf).unwrap();

@@ -143,12 +143,38 @@ const S2X_MODE_VALUE_MASK: u8 = 0x03;
 /// `ts_gs_s2x_mode(2)` value mask (Table 143).
 const TSGS_S2X_MODE_VALUE_MASK: u8 = 0x03;
 
+/// Spec default of every `reserved_zero_future_use` region of the S2X
+/// descriptor (Table 140; `reserved_zero_future_use` since its introduction in
+/// V1.16.1, audit §6.1 class A): all zeros.
+pub const S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0;
+/// Width mask of `reserved_zero_future_use(3)` (low bits of byte 0 and bits 4:2
+/// of byte 1).
+const RZFU_3_MASK: u8 = 0x07;
+/// Width mask of the `reserved_zero_future_use(6)` ahead of the scrambling index.
+const RZFU_6_MASK: u8 = 0x3F;
+/// Width mask of `reserved_zero_future_use(4)` ahead of `symbol_rate`.
+const RZFU_4_MASK: u8 = 0x0F;
+/// Width mask of `reserved_zero_future_use(7)` ahead of `num_channel_bonds_minus_one`.
+const RZFU_7_MASK: u8 = 0x7F;
+/// Shift of the 3-bit reserved region in byte 1 (above `TS_GS_S2X_mode`).
+const RZFU_3B_SHIFT: u8 = 2;
+/// Shift of the 6-bit reserved region in the first scrambling byte.
+const RZFU_6_SHIFT: u8 = 2;
+/// Shift of the 7-bit reserved region in the channel-bond count byte.
+const RZFU_7_SHIFT: u8 = 1;
+/// Bit of the packed channel byte holding the 1-bit reserved region
+/// (between `multiple_input_stream_flag` and `roll_off`).
+const PACKED_RZFU_1_BIT: u8 = 0x08;
+/// Shift of the packed channel byte's 1-bit reserved region.
+const PACKED_RZFU_1_SHIFT: u8 = 3;
+
 /// A single channel-bond entry (Table 140 inner `for` loop).
 ///
 /// Layout mirrors the primary channel: frequency(4) + orbital_position(2) +
 /// packed byte + symbol_rate(4) + optional input_stream_identifier(1).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct S2XChannelBond {
     /// frequency(32) — 32-bit BCD (10 kHz resolution, §6.2.13.2).
     pub frequency: u32,
@@ -166,6 +192,31 @@ pub struct S2XChannelBond {
     pub symbol_rate: u32,
     /// input_stream_identifier(8), present iff `multiple_input_stream_flag`.
     pub input_stream_identifier: Option<u8>,
+    /// `reserved_zero_future_use(1)` between `multiple_input_stream_flag` and
+    /// `roll_off` (1 bit, right-aligned). Captured on parse, re-emitted
+    /// verbatim; `Default` is [`S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
+    pub reserved_zero_future_use_1: u8,
+    /// `reserved_zero_future_use(4)` ahead of `symbol_rate` (4 bits). Same
+    /// policy as above.
+    pub reserved_zero_future_use_4: u8,
+}
+
+impl Default for S2XChannelBond {
+    /// Zero/first-variant field values with the spec-default reserved bits.
+    fn default() -> Self {
+        Self {
+            frequency: 0,
+            orbital_position: 0,
+            west_east_flag: false,
+            polarization: Polarization::from_u8(0),
+            multiple_input_stream_flag: false,
+            roll_off: RollOff::from_u8(0),
+            symbol_rate: 0,
+            input_stream_identifier: None,
+            reserved_zero_future_use_1: S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reserved_zero_future_use_4: S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+        }
+    }
 }
 
 impl S2XChannelBond {
@@ -194,15 +245,27 @@ impl S2XChannelBond {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct S2XSatelliteDeliverySystem<'a> {
     /// receiver_profiles(5) — Table 141 (raw bitmask, see flag accessors below).
     pub receiver_profiles: u8,
+    /// `reserved_zero_future_use(3)` after `receiver_profiles` (byte 0 low
+    /// bits, right-aligned). Captured on parse, re-emitted verbatim; `Default`
+    /// is [`S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
+    pub reserved_zero_future_use_3a: u8,
     /// S2X_mode(2) — Table 142.
     pub s2x_mode: S2XMode,
     /// scrambling_sequence_selector(1).
     pub scrambling_sequence_selector: bool,
+    /// `reserved_zero_future_use(3)` ahead of `TS_GS_S2X_mode` (byte 1 bits
+    /// 4:2, right-aligned). Same policy as above.
+    pub reserved_zero_future_use_3b: u8,
     /// TS_GS_S2X_mode(2) — Table 143.
     pub ts_gs_s2x_mode: TsGsS2XMode,
+    /// `reserved_zero_future_use(6)` ahead of `scrambling_sequence_index`
+    /// (6 bits); on the wire only when `scrambling_sequence_selector` is set.
+    /// Same policy as above.
+    pub reserved_zero_future_use_6: u8,
     /// scrambling_sequence_index(18), present iff `scrambling_sequence_selector`.
     pub scrambling_sequence_index: Option<u32>,
     /// frequency(32) — primary channel, 32-bit BCD (10 kHz resolution, §6.2.13.2).
@@ -219,14 +282,53 @@ pub struct S2XSatelliteDeliverySystem<'a> {
     pub roll_off: RollOff,
     /// symbol_rate(28) — 28-bit BCD (100 sym/s resolution).
     pub symbol_rate: u32,
+    /// `reserved_zero_future_use(1)` between `multiple_input_stream_flag` and
+    /// `roll_off` (1 bit). Same policy as above.
+    pub reserved_zero_future_use_1: u8,
+    /// `reserved_zero_future_use(4)` ahead of `symbol_rate` (4 bits). Same
+    /// policy as above.
+    pub reserved_zero_future_use_4: u8,
     /// input_stream_identifier(8), present iff `multiple_input_stream_flag`.
     pub input_stream_identifier: Option<u8>,
     /// timeslice_number(8), present iff `s2x_mode == 2`.
     pub timeslice_number: Option<u8>,
+    /// `reserved_zero_future_use(7)` ahead of `num_channel_bonds_minus_one`
+    /// (7 bits); on the wire only when `s2x_mode == 3`. Same policy as above.
+    pub reserved_zero_future_use_7: u8,
     /// S2X_mode==3 channel-bond entries (empty unless s2x_mode==3).
     pub channel_bonds: Vec<S2XChannelBond>,
     /// Trailing reserved_future_use bytes (opaque), preserved verbatim.
     pub reserved_tail: &'a [u8],
+}
+
+impl Default for S2XSatelliteDeliverySystem<'_> {
+    /// Zero/first-variant field values with the spec-default reserved bits.
+    fn default() -> Self {
+        Self {
+            receiver_profiles: 0,
+            reserved_zero_future_use_3a: S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            s2x_mode: S2XMode::from_u8(0),
+            scrambling_sequence_selector: false,
+            reserved_zero_future_use_3b: S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            ts_gs_s2x_mode: TsGsS2XMode::from_u8(0),
+            reserved_zero_future_use_6: S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            scrambling_sequence_index: None,
+            frequency: 0,
+            orbital_position: 0,
+            west_east_flag: false,
+            polarization: Polarization::from_u8(0),
+            multiple_input_stream_flag: false,
+            roll_off: RollOff::from_u8(0),
+            symbol_rate: 0,
+            reserved_zero_future_use_1: S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reserved_zero_future_use_4: S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            input_stream_identifier: None,
+            timeslice_number: None,
+            reserved_zero_future_use_7: S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            channel_bonds: Vec::new(),
+            reserved_tail: &[],
+        }
+    }
 }
 
 impl S2XSatelliteDeliverySystem<'_> {
@@ -285,10 +387,20 @@ impl S2XSatelliteDeliverySystem<'_> {
 
 const BOND_BASE_LEN: usize = S2X_PRIMARY_LEN;
 
-fn parse_channel_common(
-    sel: &[u8],
-    pos: &mut usize,
-) -> Result<(u32, u16, bool, Polarization, bool, RollOff, u32)> {
+/// Fields shared by the primary channel and every bonded channel (Table 140).
+struct ChannelCommon {
+    frequency: u32,
+    orbital_position: u16,
+    west_east_flag: bool,
+    polarization: Polarization,
+    multiple_input_stream_flag: bool,
+    roll_off: RollOff,
+    symbol_rate: u32,
+    reserved_zero_future_use_1: u8,
+    reserved_zero_future_use_4: u8,
+}
+
+fn parse_channel_common(sel: &[u8], pos: &mut usize) -> Result<ChannelCommon> {
     if sel.len() < *pos + BOND_BASE_LEN {
         return Err(Error::BufferTooShort {
             need: *pos + BOND_BASE_LEN,
@@ -317,12 +429,14 @@ fn parse_channel_common(
     let polarization = Polarization::from_u8((pb >> 5) & 0x03);
     let multiple_input_stream_flag = (pb & 0x10) != 0;
     let roll_off = RollOff::from_u8(pb & 0x07);
+    let reserved_zero_future_use_1 = (pb & PACKED_RZFU_1_BIT) >> PACKED_RZFU_1_SHIFT;
+    let reserved_zero_future_use_4 = sel[*pos + 7] >> 4;
     let symbol_rate = (u32::from(sel[*pos + 7] & 0x0F) << 24)
         | (u32::from(sel[*pos + 8]) << 16)
         | (u32::from(sel[*pos + 9]) << 8)
         | u32::from(sel[*pos + 10]);
     *pos += BOND_BASE_LEN;
-    Ok((
+    Ok(ChannelCommon {
         frequency,
         orbital_position,
         west_east_flag,
@@ -330,7 +444,9 @@ fn parse_channel_common(
         multiple_input_stream_flag,
         roll_off,
         symbol_rate,
-    ))
+        reserved_zero_future_use_1,
+        reserved_zero_future_use_4,
+    })
 }
 
 fn write_channel_common(
@@ -339,21 +455,32 @@ fn write_channel_common(
     frequency: u32,
     orbital_position: u16,
     packed: u8,
+    reserved_zero_future_use_4: u8,
     symbol_rate: u32,
 ) {
     buf[*p..*p + 4].copy_from_slice(&frequency.to_be_bytes());
     buf[*p + 4..*p + 6].copy_from_slice(&orbital_position.to_be_bytes());
     buf[*p + 6] = packed;
     let sr = symbol_rate & 0x0FFF_FFFF;
-    buf[*p + 7] = (sr >> 24) as u8 & 0x0F;
+    buf[*p + 7] = ((reserved_zero_future_use_4 & RZFU_4_MASK) << 4) | ((sr >> 24) as u8 & 0x0F);
     buf[*p + 8] = (sr >> 16) as u8;
     buf[*p + 9] = (sr >> 8) as u8;
     buf[*p + 10] = sr as u8;
     *p += BOND_BASE_LEN;
 }
 
-fn pack_we_pol_mis_ro(we: bool, pol: Polarization, mis: bool, ro: RollOff) -> u8 {
-    (u8::from(we) << 7) | ((pol.to_u8() & 0x03) << 5) | (u8::from(mis) << 4) | (ro.to_u8() & 0x07)
+fn pack_we_pol_mis_ro(
+    we: bool,
+    pol: Polarization,
+    mis: bool,
+    reserved_zero_future_use_1: u8,
+    ro: RollOff,
+) -> u8 {
+    (u8::from(we) << 7)
+        | ((pol.to_u8() & 0x03) << 5)
+        | (u8::from(mis) << 4)
+        | ((reserved_zero_future_use_1 & 1) << PACKED_RZFU_1_SHIFT)
+        | (ro.to_u8() & 0x07)
 }
 
 impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
@@ -368,13 +495,16 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
             });
         }
         let receiver_profiles = sel[0] >> 3;
+        let reserved_zero_future_use_3a = sel[0] & RZFU_3_MASK;
         let b1 = sel[1];
+        let reserved_zero_future_use_3b = (b1 >> RZFU_3B_SHIFT) & RZFU_3_MASK;
         // Table 140 byte 1, MSB-first: S2X_mode(2) scrambling_sequence_selector(1)
         // reserved_zero_future_use(3) TS_GS_S2X_mode(2).
         let s2x_mode = S2XMode::from_u8((b1 >> 6) & 0x03);
         let scrambling_sequence_selector = (b1 & 0x20) != 0;
         let ts_gs_s2x_mode = TsGsS2XMode::from_u8(b1 & 0x03);
         let mut pos = 2;
+        let mut reserved_zero_future_use_6 = S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT;
         let scrambling_sequence_index = if scrambling_sequence_selector {
             if sel.len() < pos + S2X_SCRAMBLING_LEN {
                 return Err(Error::BufferTooShort {
@@ -383,6 +513,7 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
                     what: "S2X body",
                 });
             }
+            reserved_zero_future_use_6 = sel[pos] >> RZFU_6_SHIFT;
             let idx = (u32::from(sel[pos] & 0x03) << 16)
                 | (u32::from(sel[pos + 1]) << 8)
                 | u32::from(sel[pos + 2]);
@@ -394,7 +525,7 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
         // Primary channel (Table 140): frequency(32) orbital_position(16)
         //   packed byte = west_east(1) polarization(2) mis(1) reserved(1) roll_off(3)
         //   then reserved(4) | symbol_rate[27:24], and 3 bytes symbol_rate[23:0].
-        let (
+        let ChannelCommon {
             frequency,
             orbital_position,
             west_east_flag,
@@ -402,7 +533,9 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
             multiple_input_stream_flag,
             roll_off,
             symbol_rate,
-        ) = parse_channel_common(sel, &mut pos)?;
+            reserved_zero_future_use_1,
+            reserved_zero_future_use_4,
+        } = parse_channel_common(sel, &mut pos)?;
         let input_stream_identifier = if multiple_input_stream_flag {
             if sel.len() < pos + 1 {
                 return Err(Error::BufferTooShort {
@@ -431,6 +564,7 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
         } else {
             None
         };
+        let mut reserved_zero_future_use_7 = S2X_RESERVED_ZERO_FUTURE_USE_DEFAULT;
         let (channel_bonds, reserved_tail) = if s2x_mode == S2XMode::S2XChannelBonding {
             // --- channel bonding loop (Table 140) ---
             if sel.len() < pos + 1 {
@@ -443,11 +577,12 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
             let bond_byte = sel[pos];
             pos += 1;
             // reserved_zero_future_use(7) | num_channel_bonds_minus_one(1)
+            reserved_zero_future_use_7 = bond_byte >> RZFU_7_SHIFT;
             let num_channel_bonds = (bond_byte & 0x01) as usize + 1;
             let mut bonds = Vec::with_capacity(num_channel_bonds);
             for _ in 0..num_channel_bonds {
-                let (freq, orb, we, pol, mis, ro, sr) = parse_channel_common(sel, &mut pos)?;
-                let isi = if mis {
+                let ch = parse_channel_common(sel, &mut pos)?;
+                let isi = if ch.multiple_input_stream_flag {
                     if sel.len() < pos + 1 {
                         return Err(Error::BufferTooShort {
                             need: pos + 1,
@@ -462,14 +597,16 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
                     None
                 };
                 bonds.push(S2XChannelBond {
-                    frequency: freq,
-                    orbital_position: orb,
-                    west_east_flag: we,
-                    polarization: pol,
-                    multiple_input_stream_flag: mis,
-                    roll_off: ro,
-                    symbol_rate: sr,
+                    frequency: ch.frequency,
+                    orbital_position: ch.orbital_position,
+                    west_east_flag: ch.west_east_flag,
+                    polarization: ch.polarization,
+                    multiple_input_stream_flag: ch.multiple_input_stream_flag,
+                    roll_off: ch.roll_off,
+                    symbol_rate: ch.symbol_rate,
                     input_stream_identifier: isi,
+                    reserved_zero_future_use_1: ch.reserved_zero_future_use_1,
+                    reserved_zero_future_use_4: ch.reserved_zero_future_use_4,
                 });
             }
             (bonds, &sel[pos..])
@@ -478,9 +615,12 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
         };
         Ok(S2XSatelliteDeliverySystem {
             receiver_profiles,
+            reserved_zero_future_use_3a,
             s2x_mode,
             scrambling_sequence_selector,
+            reserved_zero_future_use_3b,
             ts_gs_s2x_mode,
+            reserved_zero_future_use_6,
             scrambling_sequence_index,
             frequency,
             orbital_position,
@@ -489,8 +629,11 @@ impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
             multiple_input_stream_flag,
             roll_off,
             symbol_rate,
+            reserved_zero_future_use_1,
+            reserved_zero_future_use_4,
             input_stream_identifier,
             timeslice_number,
+            reserved_zero_future_use_7,
             channel_bonds,
             reserved_tail,
         })
@@ -529,9 +672,11 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
         }
         // `receiver_profiles` is a raw 5-bit field and `ts_gs_s2x_mode` a raw
         // 2-bit field; mask at the shift so high bits cannot bleed (r03-W2).
-        buf[0] = (self.receiver_profiles & RECEIVER_PROFILES_MASK) << 3;
+        buf[0] = ((self.receiver_profiles & RECEIVER_PROFILES_MASK) << 3)
+            | (self.reserved_zero_future_use_3a & RZFU_3_MASK);
         buf[1] = ((self.s2x_mode.to_u8() & S2X_MODE_VALUE_MASK) << 6)
             | (u8::from(self.scrambling_sequence_selector) << 5)
+            | ((self.reserved_zero_future_use_3b & RZFU_3_MASK) << RZFU_3B_SHIFT)
             | (self.ts_gs_s2x_mode.to_u8() & TSGS_S2X_MODE_VALUE_MASK);
         let mut p = 2;
         if self.scrambling_sequence_selector {
@@ -544,7 +689,8 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
                     reason: "required when scrambling_sequence_selector is set",
                 })?
                 & SCRAMBLING_INDEX_MAX;
-            buf[p] = (idx >> 16) as u8 & 0x03;
+            buf[p] = ((self.reserved_zero_future_use_6 & RZFU_6_MASK) << RZFU_6_SHIFT)
+                | ((idx >> 16) as u8 & 0x03);
             buf[p + 1] = (idx >> 8) as u8;
             buf[p + 2] = idx as u8;
             p += S2X_SCRAMBLING_LEN;
@@ -558,8 +704,10 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
                 self.west_east_flag,
                 self.polarization,
                 self.multiple_input_stream_flag,
+                self.reserved_zero_future_use_1,
                 self.roll_off,
             ),
+            self.reserved_zero_future_use_4,
             self.symbol_rate,
         );
         if let Some(isi) = self.input_stream_identifier {
@@ -575,8 +723,9 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
             // u64::MAX for a zero-length list, which `fit_bits` rejects rather than
             // masking to 0.
             let minus_one = (self.channel_bonds.len() as u64).wrapping_sub(1);
-            buf[p] =
-                broadcast_common::len::fit_bits(minus_one, 1, "num_channel_bonds_minus_one")? as u8;
+            buf[p] = ((self.reserved_zero_future_use_7 & RZFU_7_MASK) << RZFU_7_SHIFT)
+                | broadcast_common::len::fit_bits(minus_one, 1, "num_channel_bonds_minus_one")?
+                    as u8;
             p += 1;
             for bond in &self.channel_bonds {
                 write_channel_common(
@@ -588,8 +737,10 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
                         bond.west_east_flag,
                         bond.polarization,
                         bond.multiple_input_stream_flag,
+                        bond.reserved_zero_future_use_1,
                         bond.roll_off,
                     ),
+                    bond.reserved_zero_future_use_4,
                     bond.symbol_rate,
                 );
                 if let Some(isi) = bond.input_stream_identifier {
@@ -847,22 +998,8 @@ mod tests {
         // r03-W5: the selector used to fabricate a 0 scrambling index via
         // `unwrap_or` instead of erroring.
         let d = S2XSatelliteDeliverySystem {
-            receiver_profiles: 0,
-            s2x_mode: S2XMode::from_u8(0),
             scrambling_sequence_selector: true,
-            ts_gs_s2x_mode: TsGsS2XMode::from_u8(0),
-            scrambling_sequence_index: None,
-            frequency: 0,
-            orbital_position: 0,
-            west_east_flag: false,
-            polarization: Polarization::from_u8(0),
-            multiple_input_stream_flag: false,
-            roll_off: RollOff::from_u8(0),
-            symbol_rate: 0,
-            input_stream_identifier: None,
-            timeslice_number: None,
-            channel_bonds: vec![],
-            reserved_tail: &[],
+            ..Default::default()
         };
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
@@ -872,5 +1009,74 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Every reserved_zero_future_use region of the S2X descriptor (3/3/6 bits
+    /// in the head, 1/4 bits per channel, 7 bits before the bond count)
+    /// re-serializes byte-identically at zeros, ones and mixed values, for the
+    /// primary channel and every bonded channel.
+    #[test]
+    fn reserved_preserved() {
+        for (r3a, r3b, r6, r1, r4, r7) in [
+            (0u8, 0u8, 0u8, 0u8, 0u8, 0u8),
+            (7, 7, 0x3F, 1, 0x0F, 0x7F),
+            (5, 2, 0x2A, 1, 0x05, 0x55),
+            (1, 4, 0x01, 0, 0x08, 0x40),
+        ] {
+            // mode 3 (bonds) + scrambling selector + 1 bond (ISI absent).
+            let b0 = (0x01 << 3) | r3a;
+            let b1 = (0x03 << 6) | 0x20 | (r3b << 2) | 0x01;
+            let mut sel = vec![b0, b1, (r6 << 2) | 0x02, 0xAB, 0xCD];
+            // primary channel
+            sel.extend_from_slice(&0x1111_1111u32.to_be_bytes());
+            sel.extend_from_slice(&0x0001u16.to_be_bytes());
+            sel.push((r1 << 3) | 0x02);
+            sel.extend_from_slice(&[(r4 << 4) | 0x0A, 0xBC, 0xDE, 0xF0]);
+            // bond count byte: rzfu(7) | num_minus_one(1) = 0 -> 1 bond
+            sel.push(r7 << 1);
+            sel.extend_from_slice(&0x2222_2222u32.to_be_bytes());
+            sel.extend_from_slice(&0x0002u16.to_be_bytes());
+            sel.push(((r1 ^ 1) << 3) | 0x01);
+            sel.extend_from_slice(&[((r4 ^ 0x0F) << 4) | 0x01, 0x23, 0x45, 0x67]);
+            let bytes = wrap(0x17, &sel);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            match &d.body {
+                ExtensionBody::S2XSatelliteDeliverySystem(b) => {
+                    assert_eq!(b.reserved_zero_future_use_3a, r3a);
+                    assert_eq!(b.reserved_zero_future_use_3b, r3b);
+                    assert_eq!(b.reserved_zero_future_use_6, r6);
+                    assert_eq!(b.reserved_zero_future_use_1, r1);
+                    assert_eq!(b.reserved_zero_future_use_4, r4);
+                    assert_eq!(b.reserved_zero_future_use_7, r7);
+                    assert_eq!(b.channel_bonds[0].reserved_zero_future_use_1, r1 ^ 1);
+                    assert_eq!(b.channel_bonds[0].reserved_zero_future_use_4, r4 ^ 0x0F);
+                }
+                other => panic!("expected S2X, got {other:?}"),
+            }
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes);
+        }
+    }
+
+    /// `Default` serializes the spec value (all zeros) in every region.
+    #[test]
+    fn default_reserved_is_spec_value() {
+        let d = S2XSatelliteDeliverySystem {
+            scrambling_sequence_selector: true,
+            scrambling_sequence_index: Some(0x2ABCD),
+            s2x_mode: S2XMode::S2XChannelBonding,
+            channel_bonds: vec![S2XChannelBond::default()],
+            ..Default::default()
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        // b0, b1 (mode 3 | selector), scrambling index 0x2ABCD, then a
+        // zero primary channel, the bond count byte and one zero bonded channel.
+        let mut expected = vec![0x00, 0xE0, 0x02, 0xAB, 0xCD];
+        expected.extend_from_slice(&[0u8; 11]);
+        expected.push(0x00); // rzfu(7)=0 | num_channel_bonds_minus_one=0
+        expected.extend_from_slice(&[0u8; 11]);
+        assert_eq!(buf, expected);
     }
 }

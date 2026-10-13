@@ -207,7 +207,7 @@ impl PcrRestampOp {
         let pkt = TsPacket::parse(packet).ok()?;
         let af = pkt.adaptation_field().and_then(|r| r.ok())?;
         let pcr = af.pcr?;
-        Some((pkt.header.pid, pcr, af.discontinuity_indicator))
+        Some((pkt.header.pid.value(), pcr, af.discontinuity_indicator))
     }
 }
 

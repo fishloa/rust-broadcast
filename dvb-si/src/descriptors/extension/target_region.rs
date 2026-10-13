@@ -2,6 +2,17 @@
 use super::*;
 use alloc::vec::Vec;
 
+/// Shift of `reserved_future_use(5)` in the per-entry flags byte.
+const ENTRY_RESERVED_SHIFT: u8 = 3;
+/// Width mask of the 5-bit `reserved_future_use`.
+const ENTRY_RESERVED_MASK: u8 = 0x1F;
+
+/// Spec default of the per-entry `reserved_future_use(5)` ahead of
+/// `country_code_flag`: all ones (EN 300 468 Table 156; `reserved` in
+/// V1.14.1-V1.16.1, `reserved_future_use` in V1.17.1+, value 1 throughout;
+/// audit §6.1 class B).
+pub const TARGET_REGION_RESERVED_FUTURE_USE_DEFAULT: u8 = 0x1F;
+
 impl ExtensionBodyDef<'_> for TargetRegion {
     const TAG_EXTENSION: u8 = 0x09;
     const NAME: &'static str = "TARGET_REGION";
@@ -19,11 +30,29 @@ pub struct TargetRegion {
 /// An entry in the target_region_descriptor region loop.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct TargetRegionEntry {
+    /// `reserved_future_use(5)` ahead of `country_code_flag` (5 bits,
+    /// right-aligned). Captured on parse, re-emitted verbatim;
+    /// [`TargetRegionEntry::new`] defaults to [`TARGET_REGION_RESERVED_FUTURE_USE_DEFAULT`]
+    /// (`0x1F`).
+    pub reserved_future_use: u8,
     /// Per-entry country_code(24), present iff country_code_flag==1.
     pub country_code: Option<LangCode>,
     /// region_depth and its region codes.
     pub region_codes: RegionCodes,
+}
+
+impl TargetRegionEntry {
+    /// Build an entry with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(country_code: Option<LangCode>, region_codes: RegionCodes) -> Self {
+        Self {
+            reserved_future_use: TARGET_REGION_RESERVED_FUTURE_USE_DEFAULT,
+            country_code,
+            region_codes,
+        }
+    }
 }
 
 /// The `region_depth` field and its associated region codes (Table 156, §6.4.12).
@@ -86,6 +115,7 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
     while pos < sel.len() {
         let flags = sel[pos];
         pos += 1;
+        let reserved_future_use = flags >> ENTRY_RESERVED_SHIFT;
         let country_code_flag = (flags >> 2) & 1;
         let region_depth = flags & 0x03;
         let country_code = if country_code_flag == 1 {
@@ -163,6 +193,7 @@ pub(crate) fn parse_region_entries(sel: &[u8], start: usize) -> Result<Vec<Targe
             _ => return Err(invalid("target_region: invalid region_depth")),
         };
         regions.push(TargetRegionEntry {
+            reserved_future_use,
             country_code,
             region_codes,
         });
@@ -205,7 +236,9 @@ pub(crate) fn write_region_entries(
             RegionCodes::PrimarySecondary { .. } => 2,
             RegionCodes::Full { .. } => 3,
         };
-        buf[pos] = 0xF8 | ((region.country_code.is_some() as u8) << 2) | depth;
+        buf[pos] = ((region.reserved_future_use & ENTRY_RESERVED_MASK) << ENTRY_RESERVED_SHIFT)
+            | ((region.country_code.is_some() as u8) << 2)
+            | depth;
         pos += 1;
         if let Some(cc) = &region.country_code {
             buf[pos..pos + ISO_639_LEN].copy_from_slice(&cc.0);
@@ -350,5 +383,40 @@ mod tests {
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, bytes);
+    }
+
+    /// Every per-entry `reserved_future_use(5)` value re-serializes
+    /// byte-identically (spec value is all ones).
+    #[test]
+    fn reserved_preserved() {
+        for r in 0u8..=0x1F {
+            let sel = [b'g', b'b', b'r', (r << 3) | 0x01, 0x12];
+            let bytes = wrap(0x09, &sel);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            match &d.body {
+                ExtensionBody::TargetRegion(b) => assert_eq!(b.regions[0].reserved_future_use, r),
+                other => panic!("expected TargetRegion, got {other:?}"),
+            }
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "r {r:#x}");
+        }
+    }
+
+    /// `TargetRegionEntry::new` serializes the spec value (all ones).
+    #[test]
+    fn default_reserved_is_spec_value() {
+        let t = TargetRegion {
+            country_code: LangCode(*b"gbr"),
+            regions: vec![TargetRegionEntry::new(
+                None,
+                RegionCodes::Primary {
+                    primary_region_code: 0x12,
+                },
+            )],
+        };
+        let mut buf = vec![0u8; t.serialized_len()];
+        t.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [b'g', b'b', b'r', 0xF9, 0x12]);
     }
 }

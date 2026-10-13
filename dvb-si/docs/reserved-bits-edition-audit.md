@@ -410,3 +410,42 @@ Everything in scope that dvb-si currently models as `reserved` **and** that any 
 * Real-capture survey not re-run; only its published pattern list used.
 * `emit` column is by convention except where cited (`ac3.rs`, `hevc_video.rs`, `aac.rs`, `satellite_delivery_system.rs:399`, `application_signalling.rs:133-136`, `ca.rs:63-91`, `extension/supplementary_audio.rs:82`, and the `RESERVED_*` masks listed in §6).
 * The root cause of the supplementary_audio, CA and roll_off deviations is **unknown**; no edition supports them.
+
+## 11. H.222.0 04/2025 (version 10): what we could establish without the paid text
+
+**Source (free, authoritative):** the publisher's free preview of ISO/IEC 13818-1:2025 (= Rec. ITU-T H.222.0 v10, 04/2025, ISO publication 2025-08) exposes the Foreword, the Summary and the edition-history table (preview PDF at `cdn.standards.iteh.ai/samples/iso/iso-iec-13818-1-2025/...`; ISO catalogue id 91403; ITU page `itu.int/rec/T-REC-H.222.0-202504-I/en` carries metadata only, full text paid). The ITU `T-REC-H.222.0/en` listing supplies the amendment/corrigendum chronology below. Nothing beyond the Foreword/Summary text was read; the technical clauses were not.
+
+### 11.1 What the edition says changed (v9 08/2023 -> v10 04/2025)
+
+"This tenth edition was initially developed as Amd. 1 to the ninth edition and was eventually approved as a new edition." Main changes, verbatim in substance:
+
+1. the usage of certain codec parameters and the definition of certain program element descriptors is clarified;
+2. Annex T.4: interpretation of the optional `codecs` parameter for the audio layer is clarified;
+3. a field name is adjusted in the syntax/semantics of the MPEG-H 3D audio descriptor;
+4. 2.6.110: the syntax of the MPEG-H 3D audio **scene** descriptor is corrected and field names are aligned with the referenced specification;
+5. 2.6.115: clarification of `thisStreamID` / `auxiliaryStreamID` semantics in the MPEG-H 3D audio **multi-stream** descriptor.
+
+No new descriptor, stream_type, table or stream_id is listed. The Summary's codec list is unchanged in kind. No bullet mentions a reserved bit, reserved field or marker bit.
+
+### 11.2 Edition chronology 2021-2025 (ITU listing + preview history table)
+
+| Edition / item | Date | Abstract |
+|---|---|---|
+| v8 (06/2021) | 2021-06-13 | consolidated edition (the one in `private/specs` as the 2021 text) |
+| v8 Cor. 1 | 2022-12-14 | adds a missing profile-set field |
+| v8 Amd. 1 | 2022-12-14 | carriage of LCEVC and other improvements; additional descriptor signalling media service kind/usage; JPEG XS carriage clarifications |
+| v9 (08/2023) | 2023-08-29 | consolidated edition (our free PDF; listed as approved internally as Cor. 2) |
+| v10 (04/2025) | 2025-04-13 | the changes in 11.1; ISO/IEC 13818-1:2025 edition 10, 324 pp |
+
+No amendment or corrigendum to v9 is listed (ITU listing shows v10 as the sole item after v9). ISO lists only a withdrawn draft "Amd 2: Carriage of VVC" against the 2019 edition, i.e. VVC carriage is not in v10's change list.
+
+### 11.3 Verdict on reserved bits
+
+* **Established:** the published change list of v10 touches only clarifications and MPEG-H 3D audio descriptor fields (scene descriptor 2.6.110, multi-stream descriptor 2.6.115, one renamed field in the MPEG-H 3D audio descriptor 2.6.108), codec-parameter / `codecs` text, and unspecified "certain program element descriptors". There is NO stated new descriptor/stream_type/table and NO stated reserved-bit meaning or mandated value.
+* **Not established (UNVERIFIED):** which "program element descriptors" are clarified in change 1, and whether the MPEG-H 3D audio scene descriptor syntax correction changes a reserved/`reserved` field width. The Foreword is a summary, not a diff; a one-bit reserved change could hide inside "clarified" / "corrected".
+* **Concrete verdict per dvb-si descriptor:** for the 12 flipped descriptors, `hevc_video`, `hierarchy`, `audio_stream`, `avc_video`, `content_labeling`, `metadata_std`, `metadata`, `metadata_pointer`, etc.: **no evidence of any 2023->2025 change** (none is named in the Foreword and none is in the amendment chronology); we assume v9 (08/2023) layouts stand. This is absence of evidence, not proof. The only descriptors with a *stated* syntax change are the MPEG-H 3D audio family (tags in the 2.6.108/110/115 clauses), which dvb-si should treat as UNVERIFIED against v10; dvb-si should check whether it implements them and whether the corrected scene-descriptor syntax differs from the v9 layout it follows.
+* Sibling hint, not authority: TSDuck/ffmpeg/EN 300 468 V1.20.1 were not consulted for this (the Foreword already bounds the change set), so they add nothing here.
+
+### 11.4 Is buying the PDF warranted?
+
+Only if dvb-si implements the MPEG-H 3D audio descriptor family (2.6.108/110/115) and must be byte-faithful to v10, or if a release claims v10 conformance. For the reserved-bit question on all other descriptors the free evidence is as strong as can be had without the text; buying clauses 2.6.108-2.6.115 + Annex T.4 only would settle the remainder.

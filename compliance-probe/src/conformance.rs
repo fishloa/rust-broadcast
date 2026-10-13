@@ -16,6 +16,7 @@
 
 use alloc::collections::BTreeMap;
 use core::time::Duration;
+use mpeg_ts::pid::Pid;
 
 /// PCR clock rate — ISO/IEC 13818-1 §2.4.2.2, "27 MHz System Clock".
 const PCR_HZ: u64 = 27_000_000;
@@ -52,7 +53,7 @@ struct PidState {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct PcrSample {
     /// The PID this sample concerns.
-    pub pid: u16,
+    pub pid: Pid,
     /// Smoothed (EWMA) interval-error, parts-per-million: positive means the
     /// PCR is advancing faster than wall-clock arrival time, negative slower.
     pub drift_ppm: f64,
@@ -65,7 +66,7 @@ pub struct PcrSample {
 /// does and does not measure.
 #[derive(Default)]
 pub(crate) struct PcrTracker {
-    pids: BTreeMap<u16, PidState>,
+    pids: BTreeMap<Pid, PidState>,
 }
 
 impl PcrTracker {
@@ -80,7 +81,7 @@ impl PcrTracker {
     /// series is not continuous here" (ad-insertion splice, channel switch),
     /// and without this a forward jump under [`DISCONTINUITY_GUARD`] is
     /// measured as tens of millions of ppm of "drift" (W-CP-2).
-    pub(crate) fn reset(&mut self, pid: u16) {
+    pub(crate) fn reset(&mut self, pid: Pid) {
         self.pids.remove(&pid);
     }
 
@@ -89,7 +90,7 @@ impl PcrTracker {
     /// seen for this PID (nothing to compare against yet), or when the
     /// interval since the last PCR looks like a discontinuity rather than a
     /// measurable rate — see [`DISCONTINUITY_GUARD`].
-    pub(crate) fn observe(&mut self, pid: u16, pcr_27mhz: u64, t: Duration) -> Option<PcrSample> {
+    pub(crate) fn observe(&mut self, pid: Pid, pcr_27mhz: u64, t: Duration) -> Option<PcrSample> {
         let state = self.pids.entry(pid).or_insert(PidState {
             last_pcr_27mhz: pcr_27mhz,
             last_arrival: t,
@@ -161,7 +162,7 @@ mod tests {
         for _ in 0..20 {
             pcr += PCR_HZ / 10; // exactly 100ms worth of 27MHz ticks
             t += Duration::from_millis(100);
-            last = tracker.observe(pid, pcr, t);
+            last = tracker.observe(Pid::new(pid), pcr, t);
         }
         let sample = last.expect("must have a sample after >1 observation");
         assert!(
@@ -194,7 +195,7 @@ mod tests {
         for _ in 0..30 {
             pcr += signalled_hz / 10;
             t += Duration::from_millis(100);
-            last = tracker.observe(pid, pcr, t);
+            last = tracker.observe(Pid::new(pid), pcr, t);
         }
         let sample = last.unwrap();
         assert!(
@@ -210,7 +211,7 @@ mod tests {
     fn first_observation_yields_no_sample() {
         let mut tracker = PcrTracker::new();
         assert_eq!(
-            tracker.observe(0x0100, 12_345, Duration::from_millis(1)),
+            tracker.observe(Pid::new(0x0100), 12_345, Duration::from_millis(1)),
             None
         );
     }
@@ -221,10 +222,10 @@ mod tests {
     fn large_gap_is_treated_as_discontinuity_not_drift() {
         let mut tracker = PcrTracker::new();
         let pid = 0x0100;
-        assert_eq!(tracker.observe(pid, 0, Duration::ZERO), None);
+        assert_eq!(tracker.observe(Pid::new(pid), 0, Duration::ZERO), None);
         // 20 real seconds elapse with only a small PCR advance recorded —
         // this must not be reported as a multi-million-ppm drift.
-        let sample = tracker.observe(pid, PCR_HZ / 10, Duration::from_secs(20));
+        let sample = tracker.observe(Pid::new(pid), PCR_HZ / 10, Duration::from_secs(20));
         assert!(
             sample.is_none(),
             "expected a suppressed discontinuity, got {sample:?}"
@@ -247,16 +248,16 @@ mod tests {
         for _ in 0..5 {
             pcr += PCR_HZ / 10;
             t += Duration::from_millis(100);
-            tracker.observe(pid, pcr, t);
+            tracker.observe(Pid::new(pid), pcr, t);
         }
 
         // A 2-second forward PCR jump over a 40ms wall-clock interval — the
         // shape of a real splice discontinuity — but the caller has just
         // told us (via `reset`) that this PID's PCR series discontinued.
-        tracker.reset(pid);
+        tracker.reset(Pid::new(pid));
         pcr += PCR_HZ * 2;
         t += Duration::from_millis(40);
-        let sample = tracker.observe(pid, pcr, t);
+        let sample = tracker.observe(Pid::new(pid), pcr, t);
         assert_eq!(
             sample, None,
             "a reset PID's next observation must be treated as a fresh \
@@ -266,7 +267,9 @@ mod tests {
         // The PID resumes normal tracking afterwards.
         pcr += PCR_HZ / 10;
         t += Duration::from_millis(100);
-        let sample = tracker.observe(pid, pcr, t).expect("tracking resumes");
+        let sample = tracker
+            .observe(Pid::new(pid), pcr, t)
+            .expect("tracking resumes");
         assert!(
             sample.drift_ppm.abs() < 1.0,
             "expected ~0 ppm drift after the reset settles, got {}",
@@ -290,8 +293,8 @@ mod tests {
             steady_pcr += PCR_HZ / 10;
             fast_pcr += (PCR_HZ + 27_000) / 10; // +1000 ppm
             t += Duration::from_millis(100);
-            steady_sample = tracker.observe(steady_pid, steady_pcr, t);
-            fast_sample = tracker.observe(fast_pid, fast_pcr, t);
+            steady_sample = tracker.observe(Pid::new(steady_pid), steady_pcr, t);
+            fast_sample = tracker.observe(Pid::new(fast_pid), fast_pcr, t);
         }
         assert!(steady_sample.unwrap().drift_ppm.abs() < 1.0);
         assert!((fast_sample.unwrap().drift_ppm - 1000.0).abs() < 5.0);

@@ -9,6 +9,7 @@
 //! they verify framing counts, PTS presence, and the identity passthrough
 //! property.
 
+use mpeg_ts::pid::Pid;
 use std::{fs, path::PathBuf};
 
 /// Path to the shared H.264+AAC fixture in the workspace root.
@@ -32,10 +33,10 @@ fn load_fixture() -> Vec<u8> {
 #[test]
 fn reconstruct_pes_video_pid_0100() {
     let ts = load_fixture();
-    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[0x0100, 0x0101]);
+    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100), Pid::new(0x0101)]);
 
-    let video: Vec<_> = aus.iter().filter(|au| au.pid == 0x0100).collect();
-    let audio: Vec<_> = aus.iter().filter(|au| au.pid == 0x0101).collect();
+    let video: Vec<_> = aus.iter().filter(|au| au.pid == Pid::new(0x0100)).collect();
+    let audio: Vec<_> = aus.iter().filter(|au| au.pid == Pid::new(0x0101)).collect();
 
     assert_eq!(video.len(), 75, "expected 75 access units on PID 0x0100");
     assert_eq!(audio.len(), 14, "expected 14 access units on PID 0x0101");
@@ -44,7 +45,7 @@ fn reconstruct_pes_video_pid_0100() {
 #[test]
 fn all_video_aus_have_pts() {
     let ts = load_fixture();
-    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[0x0100]);
+    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100)]);
     assert!(!aus.is_empty(), "expected at least one AU on PID 0x0100");
     for au in &aus {
         assert!(
@@ -58,7 +59,7 @@ fn all_video_aus_have_pts() {
 #[test]
 fn all_audio_aus_have_pts() {
     let ts = load_fixture();
-    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[0x0101]);
+    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0101)]);
     assert!(!aus.is_empty(), "expected at least one AU on PID 0x0101");
     for au in &aus {
         assert!(
@@ -72,7 +73,7 @@ fn all_audio_aus_have_pts() {
 #[test]
 fn every_au_starts_with_pes_start_code() {
     let ts = load_fixture();
-    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[0x0100, 0x0101]);
+    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100), Pid::new(0x0101)]);
     assert!(!aus.is_empty(), "expected at least one access unit");
     for au in &aus {
         assert!(
@@ -95,7 +96,7 @@ fn every_au_starts_with_pes_start_code() {
 #[test]
 fn video_dts_non_decreasing() {
     let ts = load_fixture();
-    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[0x0100]);
+    let aus = ts_fix::pes::reconstruct_access_units(&ts, &[Pid::new(0x0100)]);
     let mut prev_dts: Option<u64> = None;
     for au in &aus {
         if let Some(dts) = au.dts {

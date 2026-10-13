@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **BREAKING (#1159):** `T2miStream::{new,from_socket,bind}` take `mpeg_ts::pid::Pid` instead of `u16`.
+
 ## [0.6.0] - 2026-10-05
 ### Added
 - `udp::MulticastConfig` (`socket2` bind + join: `SO_RCVBUF`, opt-in `SO_REUSEADDR` / `SO_REUSEPORT` (default off, as with the plain bind it replaces), multicast interface), `UdpSectionStream::bind` / `UdpT2miStream::bind`, and `from_socket` constructors for an already-bound socket (tests bind port 0).

@@ -84,24 +84,24 @@ mod tests {
         ts_entries: &[(u16, u16, &[u8])],
     ) -> Vec<u8> {
         use broadcast_common::Serialize;
-        let bat = BatSection {
+        let bat = BatSection::new(
             bouquet_id,
-            version_number: version,
-            current_next_indicator: true,
+            version,
+            true,
             section_number,
             last_section_number,
-            bouquet_descriptors: DescriptorLoop::new(bouquet_desc),
-            transport_streams: ts_entries
+            DescriptorLoop::new(bouquet_desc),
+            ts_entries
                 .iter()
-                .map(
-                    |(tsid, onid, desc)| crate::tables::bat::BatTransportStream {
-                        transport_stream_id: *tsid,
-                        original_network_id: *onid,
-                        descriptors: DescriptorLoop::new(desc),
-                    },
-                )
+                .map(|(tsid, onid, desc)| {
+                    crate::tables::bat::BatTransportStream::new(
+                        *tsid,
+                        *onid,
+                        DescriptorLoop::new(desc),
+                    )
+                })
                 .collect(),
-        };
+        );
         let mut buf = vec![0u8; bat.serialized_len()];
         bat.serialize_into(&mut buf).unwrap();
         buf

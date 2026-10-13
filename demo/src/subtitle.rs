@@ -25,6 +25,7 @@
 //! (no pixels to decode — `dvb-subtitle` parses them, this module just skips
 //! them for the preview).
 
+use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 
 use broadcast_common::Parse;
@@ -91,7 +92,7 @@ struct DecodedObject {
 #[derive(Serialize)]
 pub struct SubtitlePreview {
     /// The PID this preview was decoded from.
-    pub pid: u16,
+    pub pid: Pid,
     /// `page_id` of the page composition segment the region belongs to.
     pub page_id: u16,
     /// `region_id` of the resolved region.
@@ -109,7 +110,7 @@ pub struct SubtitlePreview {
 #[derive(Serialize)]
 pub struct SubtitleReport {
     /// Every PID whose PMT ES_info declared a `subtitling_descriptor`.
-    pub pids: Vec<u16>,
+    pub pids: Vec<Pid>,
     /// `PES_data_field`s successfully reassembled and parsed on the tracked
     /// (first) subtitle PID.
     pub pes_fields: u64,
@@ -132,8 +133,8 @@ const MAX_PAGES: usize = 1_000;
 /// are only unique *within* one subtitle component, not across PIDs.
 #[derive(Default)]
 pub struct SubtitleState {
-    pids: Vec<u16>,
-    assemblers: BTreeMap<u16, PesAssembler>,
+    pids: Vec<Pid>,
+    assemblers: BTreeMap<Pid, PesAssembler>,
     pages: Vec<(u16, PageCompositionSegment)>,
     regions: BTreeMap<(u16, u8), RegionCompositionSegment>,
     cluts: BTreeMap<(u16, u8), ClutDefinitionSegment>,
@@ -150,7 +151,7 @@ impl SubtitleState {
 
     /// Record that `pid` declared a `subtitling_descriptor` and start
     /// reassembling its PES stream.
-    pub fn note_pid(&mut self, pid: u16) {
+    pub fn note_pid(&mut self, pid: Pid) {
         if self.pids.contains(&pid) {
             return;
         }
@@ -160,7 +161,7 @@ impl SubtitleState {
 
     /// Feed one TS packet's payload. A no-op for any PID that wasn't
     /// discovered via [`Self::note_pid`].
-    pub fn feed(&mut self, pid: u16, pusi: bool, payload: &[u8]) {
+    pub fn feed(&mut self, pid: Pid, pusi: bool, payload: &[u8]) {
         let Some(asm) = self.assemblers.get_mut(&pid) else {
             return;
         };
@@ -172,7 +173,7 @@ impl SubtitleState {
     /// Flush any PES packet still buffered at end of stream, on every
     /// tracked PID.
     pub fn flush(&mut self) {
-        let pids: Vec<u16> = self.assemblers.keys().copied().collect();
+        let pids: Vec<Pid> = self.assemblers.keys().copied().collect();
         for pid in pids {
             let completed = self.assemblers.get_mut(&pid).and_then(PesAssembler::flush);
             if let Some(completed) = completed {
@@ -181,7 +182,7 @@ impl SubtitleState {
         }
     }
 
-    fn process_pes(&mut self, pid: u16, bytes: &[u8]) {
+    fn process_pes(&mut self, pid: Pid, bytes: &[u8]) {
         let pkt = match PesPacket::parse(bytes) {
             Ok(p) => p,
             Err(_) => {
@@ -208,7 +209,7 @@ impl SubtitleState {
         }
     }
 
-    fn record_segment(&mut self, pid: u16, seg: &AnySegment<'_>) {
+    fn record_segment(&mut self, pid: Pid, seg: &AnySegment<'_>) {
         match seg {
             AnySegment::PageComposition(pcs) => {
                 // Memory bound only: a hostile capture of endless page
@@ -217,18 +218,19 @@ impl SubtitleState {
                 // preview, even if a later page would have resolved against
                 // the final region/CLUT/object maps.
                 if self.pages.len() < MAX_PAGES {
-                    self.pages.push((pid, pcs.clone()));
+                    self.pages.push((pid.value(), pcs.clone()));
                 }
             }
             AnySegment::RegionComposition(rcs) => {
-                self.regions.insert((pid, rcs.region_id), rcs.clone());
+                self.regions
+                    .insert((pid.value(), rcs.region_id), rcs.clone());
             }
             AnySegment::ClutDefinition(cds) => {
-                self.cluts.insert((pid, cds.clut_id), cds.clone());
+                self.cluts.insert((pid.value(), cds.clut_id), cds.clone());
             }
             AnySegment::ObjectData(ods) => {
                 if let Some(decoded) = decode_object(ods) {
-                    self.objects.insert((pid, ods.object_id), decoded);
+                    self.objects.insert((pid.value(), ods.object_id), decoded);
                 }
             }
             _ => {}
@@ -264,7 +266,8 @@ impl SubtitleState {
                     let Some(decoded) = self.objects.get(&(*pid, obj_entry.object_id)) else {
                         continue;
                     };
-                    if let Some(preview) = render_preview(*pid, page.page_id, region, clut, decoded)
+                    if let Some(preview) =
+                        render_preview(Pid::new(*pid), page.page_id, region, clut, decoded)
                     {
                         return Some(preview);
                     }
@@ -606,7 +609,7 @@ fn base64_encode(data: &[u8]) -> String {
 /// `None` only if the object decoded to zero rows/columns (shouldn't happen
 /// given [`decode_object`] already filters that).
 fn render_preview(
-    pid: u16,
+    pid: Pid,
     page_id: u16,
     region: &RegionCompositionSegment,
     clut: &ClutDefinitionSegment,
@@ -650,18 +653,10 @@ mod tests {
         // subtitling_descriptor: tag 0x59, len 8, "eng", type 0x10 (DVB
         // subtitles normal), composition_page_id=1, ancillary_page_id=2.
         let raw = [0x59, 8, b'e', b'n', b'g', 0x10, 0x00, 0x01, 0x00, 0x02];
-        let stream = PmtStream {
-            stream_type: StreamType::from_u8(0x06),
-            elementary_pid: 0x100,
-            es_info: DescriptorLoop::new(&raw),
-        };
+        let stream = PmtStream::new(StreamType::from_u8(0x06), 0x100, DescriptorLoop::new(&raw));
         assert!(stream_is_subtitle(&stream));
 
-        let no_sub = PmtStream {
-            stream_type: StreamType::from_u8(0x06),
-            elementary_pid: 0x101,
-            es_info: DescriptorLoop::new(&[]),
-        };
+        let no_sub = PmtStream::new(StreamType::from_u8(0x06), 0x101, DescriptorLoop::new(&[]));
         assert!(!stream_is_subtitle(&no_sub));
     }
 

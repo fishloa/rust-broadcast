@@ -51,11 +51,7 @@
 //! #     use broadcast_common::Serialize;
 //! #     use dvb_si::tables::pat::{PatSection, PatEntry};
 //! #     const PMT_PID: u16 = 0x0100;
-//! #     let pat = PatSection {
-//! #         transport_stream_id: 1, version_number: 0, current_next_indicator: true,
-//! #         section_number: 0, last_section_number: 0,
-//! #         entries: vec![PatEntry { program_number: 1, pid: PMT_PID }],
-//! #     };
+//! #     let pat = PatSection::new(1, 0, true, 0, 0, vec![PatEntry::new(1, PMT_PID)]);
 //! #     let mut section = vec![0u8; pat.serialized_len()];
 //! #     pat.serialize_into(&mut section).unwrap();
 //! #     const TS_SYNC_BYTE: u8 = 0x47;
@@ -103,23 +99,36 @@
 //!
 //! # RFU policy
 //!
-//! DVB reserved-bit fields carry a semantic distinction:
-//! - `reserved_future_use` bits are **emitted as 1** (the DVB convention that
-//!   future equipment sees a "1" for unimplemented bits).
-//! - `reserved_zero_future_use` bits are **emitted as 0**.
+//! One rule for every reserved region (owner decision, supersedes r03-W8/#1077
+//! "drop on parse, emit the spec value"):
 //!
-//! Parsers **accept** any value (no rejection on non-zero RFU) — unlike
-//! `dvb-t2mi`, which validates RFU bits. This crate prioritises forward
-//! compatibility with future broadcast streams.
+//! - **Parse is tolerant.** Any value of a `reserved`, `reserved_future_use`
+//!   or `reserved_zero_future_use` region is accepted (no rejection) — unlike
+//!   `dvb-t2mi`, which validates RFU bits.
+//! - **Serialize preserves what was parsed.** The reserved bits are captured
+//!   in typed, spec-named fields (`reserved`, `reserved_future_use`,
+//!   `reserved_flags`, ... right-aligned to their bit width) and re-emitted
+//!   verbatim, so a descriptor from a real sender that deviates from the
+//!   edition this crate was transcribed from (e.g. an AC-3 descriptor with
+//!   `reserved_flags = 1111`, an MHP-era `application_signalling_descriptor`
+//!   whose 16-bit `application_type` has bit 15 clear, a DVB-S descriptor with
+//!   `roll_off = 01`) re-serializes **byte-identically**. There is no raw
+//!   passthrough blob: every preserved bit is a named, typed field.
+//! - **Constructed values carry the edition value.** A struct built with
+//!   `new(..)` / `Default` takes the value the governing edition prescribes:
+//!   `reserved` / `reserved_future_use` bits are **1** (the DVB / H.222.0
+//!   convention that future equipment sees a "1" for unimplemented bits),
+//!   `reserved_zero_future_use` bits are **0**, with the explicit per-field
+//!   exceptions documented on the field (AC-3 `reserved_flags` is `0000` in
+//!   every edition; the J2K extended-branch `reserved(5)` is `00000`).
+//! - Where a newer edition gives reserved bits a meaning (the carve-outs
+//!   listed in `docs/reserved-bits-edition-audit.md` §4) the bits are typed
+//!   with that meaning instead.
 //!
-//! The policy is one-directional, and this is the authoritative statement of
-//! it (r03-W8, #1077): on parse, reserved bits are **dropped** (not stored on
-//! the struct), so re-serializing a stream whose transponder used non-standard
-//! reserved-bit values normalizes those bits to the emit policy above and is
-//! deliberately **not** byte-identical. Only bits the spec assigns a meaning
-//! are kept typed (`Reserved(v)` enum payloads, raw spec-named fields); a
-//! caller that must preserve arbitrary reserved-bit patterns byte-for-byte
-//! keeps the original section bytes, not a re-serialization.
+//! The per-edition evidence for every default lives in
+//! `docs/reserved-bits-edition-audit.md`; the `real_capture_byte_identity`
+//! test re-serializes every descriptor found in the real-capture archive and
+//! requires byte-identity.
 //!
 //! # Features
 //!

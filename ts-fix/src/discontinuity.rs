@@ -21,6 +21,7 @@
 //! stream packets through.
 
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 
@@ -34,7 +35,7 @@ use crate::ops::pcr_conformance::PcrDiscDetector;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PcrDiscontinuity {
     /// The PCR PID this discontinuity was observed on.
-    pub pid: u16,
+    pub pid: Pid,
     /// 0-based index (into 188-byte packets) of the packet carrying the
     /// post-break PCR.
     pub packet_index: u64,

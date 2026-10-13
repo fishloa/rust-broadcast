@@ -110,7 +110,6 @@ const LOOP_LEN_MAX: usize = 0x0FFF;
 /// The 4-bit `reference_length` / `certificate_count` maximum.
 const NIBBLE_MAX: usize = 0x0F;
 /// The four `reserved = '1111'` bits preceding a 4-bit length/count field.
-const RESERVED_NIBBLE: u8 = 0xF0;
 /// The four `reserved = '1111'` bits preceding the 12-bit loop-length field
 /// (low nibble of the field's first wire byte).
 const LOOP_LEN_HI_MASK: u8 = 0x0F;
@@ -153,14 +152,39 @@ pub enum ProtectionMessageBody<'a> {
         signature_key_identifier: &'a [u8],
         /// Detached signature — runs from after the key identifier to the CRC.
         signature: &'a [u8],
+        /// `reserved(4)` before `section_hashes_loop_length` (`1111`);
+        /// preserved from the wire.
+        #[cfg_attr(feature = "serde", serde(skip))]
+        reserved_section_hashes_loop_length: u8,
     },
     /// Certificate collection message (extension `0x0100`; §9.5.4.9 Table 51).
     CertificateCollection {
         /// DER-encoded DVBCertificate byte runs, one slice per `certificate_length` loop entry.
         certificates: Vec<&'a [u8]>,
+        /// `reserved(4)` before `certificate_count` (`1111`); preserved from
+        /// the wire.
+        #[cfg_attr(feature = "serde", serde(skip))]
+        reserved_certificate_count: u8,
+        /// `reserved(4)` before each `certificate_length` (`1111`), parallel
+        /// to `certificates`; entries missing from the vector default to
+        /// all-ones on serialize. Preserved from the wire.
+        #[cfg_attr(feature = "serde", serde(skip))]
+        reserved_certificate_lengths: Vec<u8>,
     },
     /// Reserved extension (`0x0101..=0xFFFF`) — body preserved verbatim.
     Raw(&'a [u8]),
+}
+
+impl<'a> ProtectionMessageBody<'a> {
+    /// A certificate-collection body with the spec `reserved` fill.
+    #[must_use]
+    pub fn certificate_collection(certificates: Vec<&'a [u8]>) -> Self {
+        Self::CertificateCollection {
+            certificates,
+            reserved_certificate_count: super::RESERVED_4,
+            reserved_certificate_lengths: Vec::new(),
+        }
+    }
 }
 
 /// Protection message section (TS 102 809 §9; Tables 42 / 51).
@@ -170,6 +194,7 @@ pub enum ProtectionMessageBody<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct ProtectionMessageSection<'a> {
     /// `table_id_extension` — `authentication_group_id` for authentication
     /// messages, `trust_message_id` (0x0100) for certificate collections.
@@ -184,6 +209,33 @@ pub struct ProtectionMessageSection<'a> {
     pub last_section_number: u8,
     /// Discriminated body, selected by `table_id_extension`.
     pub body: ProtectionMessageBody<'a>,
+    /// Header bit fields (`reserved_future_use`, `reserved(2)` x2; default
+    /// [`SectionBits::dvb`](super::SectionBits::dvb)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+}
+
+impl<'a> ProtectionMessageSection<'a> {
+    /// Construct a protection message section with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        table_id_extension: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        body: ProtectionMessageBody<'a>,
+    ) -> Self {
+        Self {
+            table_id_extension,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            body,
+            bits: super::SectionBits::dvb(),
+        }
+    }
 }
 
 impl<'a> Parse<'a> for ProtectionMessageSection<'a> {
@@ -232,6 +284,7 @@ impl<'a> Parse<'a> for ProtectionMessageSection<'a> {
             section_number,
             last_section_number,
             body,
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
         })
     }
 }
@@ -332,6 +385,7 @@ fn parse_authentication_message(body: &[u8]) -> Result<ProtectionMessageBody<'_>
         extension_bytes: &body[ext_start..ext_end],
         signature_key_identifier: &body[key_start..key_end],
         signature,
+        reserved_section_hashes_loop_length: super::len_reserved_of(body[3]),
     })
 }
 
@@ -347,6 +401,7 @@ fn parse_certificate_collection(body: &[u8]) -> Result<ProtectionMessageBody<'_>
     // byte 0: reserved(4) | certificate_count(4)
     let certificate_count = (body[0] & LOOP_LEN_HI_MASK) as usize;
     let mut certificates = Vec::with_capacity(certificate_count);
+    let mut reserved_certificate_lengths = Vec::with_capacity(certificate_count);
     let mut pos = 1;
     for _ in 0..certificate_count {
         if pos + 2 > body.len() {
@@ -366,6 +421,7 @@ fn parse_certificate_collection(body: &[u8]) -> Result<ProtectionMessageBody<'_>
                 available: body.len() - cert_start,
             });
         }
+        reserved_certificate_lengths.push(super::len_reserved_of(body[pos]));
         certificates.push(&body[cert_start..cert_end]);
         pos = cert_end;
     }
@@ -379,7 +435,11 @@ fn parse_certificate_collection(body: &[u8]) -> Result<ProtectionMessageBody<'_>
             what: "ProtectionMessageSection::CertificateCollection trailing bytes",
         });
     }
-    Ok(ProtectionMessageBody::CertificateCollection { certificates })
+    Ok(ProtectionMessageBody::CertificateCollection {
+        certificates,
+        reserved_certificate_count: super::len_reserved_of(body[0]),
+        reserved_certificate_lengths,
+    })
 }
 
 impl ProtectionMessageBody<'_> {
@@ -405,7 +465,7 @@ impl ProtectionMessageBody<'_> {
                     + signature_key_identifier.len()
                     + signature.len()
             }
-            ProtectionMessageBody::CertificateCollection { certificates } => {
+            ProtectionMessageBody::CertificateCollection { certificates, .. } => {
                 1 + certificates.iter().map(|c| 2 + c.len()).sum::<usize>()
             }
             ProtectionMessageBody::Raw(raw) => raw.len(),
@@ -423,6 +483,7 @@ impl ProtectionMessageBody<'_> {
                 extension_bytes,
                 signature_key_identifier,
                 signature,
+                reserved_section_hashes_loop_length,
             } => {
                 buf[0] = *section_hash_algorithm_identifier;
                 buf[1] = *section_hash_length;
@@ -450,7 +511,11 @@ impl ProtectionMessageBody<'_> {
                     });
                 }
                 // reserved(4) emitted 1s | section_hashes_loop_length(12).
-                super::write_desc_loop_len(&mut buf[3..5], loop_bytes)?;
+                super::write_desc_loop_len_r(
+                    &mut buf[3..5],
+                    loop_bytes,
+                    *reserved_section_hashes_loop_length,
+                )?;
                 let mut pos = AUTH_FIXED_PREFIX;
                 for h in hashes {
                     if h.reference.len() > NIBBLE_MAX {
@@ -497,7 +562,11 @@ impl ProtectionMessageBody<'_> {
                 pos += signature.len();
                 Ok(pos)
             }
-            ProtectionMessageBody::CertificateCollection { certificates } => {
+            ProtectionMessageBody::CertificateCollection {
+                certificates,
+                reserved_certificate_count,
+                reserved_certificate_lengths,
+            } => {
                 if certificates.len() > NIBBLE_MAX {
                     return Err(Error::SectionLengthOverflow {
                         declared: certificates.len(),
@@ -505,11 +574,11 @@ impl ProtectionMessageBody<'_> {
                     });
                 }
                 // reserved(4) emitted 1s | certificate_count(4).
-                buf[0] = RESERVED_NIBBLE
+                buf[0] = ((*reserved_certificate_count & super::RESERVED_4) << 4)
                     | broadcast_common::len::fit_bits(certificates.len() as u64, 4, "certificates")?
                         as u8;
                 let mut pos = 1;
-                for c in certificates {
+                for (i, c) in certificates.iter().enumerate() {
                     if c.len() > LOOP_LEN_MAX {
                         return Err(Error::SectionLengthOverflow {
                             declared: c.len(),
@@ -517,7 +586,14 @@ impl ProtectionMessageBody<'_> {
                         });
                     }
                     // reserved(4) emitted 1s | certificate_length(12).
-                    super::write_desc_loop_len(&mut buf[pos..pos + 2], c.len())?;
+                    super::write_desc_loop_len_r(
+                        &mut buf[pos..pos + 2],
+                        c.len(),
+                        reserved_certificate_lengths
+                            .get(i)
+                            .copied()
+                            .unwrap_or(super::RESERVED_4),
+                    )?;
                     pos += 2;
                     buf[pos..pos + c.len()].copy_from_slice(c);
                     pos += c.len();
@@ -546,11 +622,13 @@ impl Serialize for ProtectionMessageSection<'_> {
             });
         }
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = self
+            .bits
+            .b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         let body_written = self.body.write_into(&mut buf[HEADER_LEN..])?;
@@ -645,6 +723,7 @@ mod tests {
                 extension_bytes,
                 signature_key_identifier,
                 signature,
+                ..
             } => {
                 assert_eq!(section_hash_algorithm_identifier, 0x00);
                 assert_eq!(section_hash_length, 4);
@@ -667,7 +746,7 @@ mod tests {
         let sec = ProtectionMessageSection::parse(&bytes).unwrap();
         assert_eq!(sec.table_id_extension, 0x0100);
         match sec.body {
-            ProtectionMessageBody::CertificateCollection { certificates } => {
+            ProtectionMessageBody::CertificateCollection { certificates, .. } => {
                 assert_eq!(certificates.len(), 2);
                 assert_eq!(certificates[0], &[0x30, 0x82, 0x01, 0x02]);
                 assert_eq!(certificates[1], &[0xAB, 0xCD]);
@@ -828,14 +907,8 @@ mod tests {
     #[test]
     fn serialize_rejects_raw_body_exceeding_section_length() {
         let raw = vec![0xAAu8; 4087];
-        let sec = ProtectionMessageSection {
-            table_id_extension: 0x0200, // outside AUTH and CERTIFICATE_COLLECTION ranges
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            body: ProtectionMessageBody::Raw(&raw),
-        };
+        let sec =
+            ProtectionMessageSection::new(0x0200, 0, true, 0, 0, ProtectionMessageBody::Raw(&raw));
         let mut buf = vec![0u8; sec.serialized_len()];
         assert!(matches!(
             sec.serialize_into(&mut buf).unwrap_err(),
@@ -846,14 +919,8 @@ mod tests {
     #[test]
     fn serialize_accepts_raw_body_at_section_length_boundary() {
         let raw = vec![0xAAu8; 4086];
-        let sec = ProtectionMessageSection {
-            table_id_extension: 0x0200,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            body: ProtectionMessageBody::Raw(&raw),
-        };
+        let sec =
+            ProtectionMessageSection::new(0x0200, 0, true, 0, 0, ProtectionMessageBody::Raw(&raw));
         let mut buf = vec![0u8; sec.serialized_len()];
         sec.serialize_into(&mut buf).expect("boundary fits");
         let reparsed = ProtectionMessageSection::parse(&buf).expect("reparse");

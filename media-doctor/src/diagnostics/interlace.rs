@@ -23,6 +23,7 @@
 
 use alloc::collections::btree_map::BTreeMap;
 use alloc::format;
+use mpeg_ts::pid::Pid;
 
 use dvb_si::tables::pmt::StreamType;
 use transmux::annexb::iter_annexb_nals;
@@ -55,7 +56,7 @@ impl Diagnostic for InterlaceCheck {
 
         // `None` = not yet decoded; `Some(true)` = already reported, stop
         // looking on this PID.
-        let mut reported: BTreeMap<u16, bool> = avc_pids.iter().map(|&p| (p, false)).collect();
+        let mut reported: BTreeMap<Pid, bool> = avc_pids.iter().map(|&p| (p, false)).collect();
 
         for_each_access_unit(
             ts,
@@ -78,7 +79,7 @@ impl Diagnostic for InterlaceCheck {
                     if !info.frame_mbs_only {
                         report.push(Finding::new(
                             Severity::Info,
-                            Location::new(packet_index, u32::from(pid)),
+                            Location::at_pid(packet_index, pid),
                             "avc-interlaced-content",
                             format!(
                                 "AVC SPS on PID 0x{pid:04X} has frame_mbs_only_flag=0 \
@@ -98,7 +99,7 @@ mod tests {
     use super::*;
     use crate::diagnostics::codec_common::tests::{build_pat_pmt_ts, build_pes, make_pes_packet};
 
-    const VIDEO_PID: u16 = 0x101;
+    const VIDEO_PID: Pid = Pid::new(0x101);
 
     /// A progressive SPS (`frame_mbs_only_flag=1`) must not be flagged.
     /// Real SPS extracted for `decode_high_sps_with_scaling_lists` in
@@ -112,7 +113,7 @@ mod tests {
         au.extend_from_slice(&[0x00, 0x00, 0x01]);
         au.extend_from_slice(sps);
 
-        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID, StreamType::H264)]);
+        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID.value(), StreamType::H264)]);
         ts.extend_from_slice(&make_pes_packet(VIDEO_PID, 0, &build_pes(0xE0, &au)));
 
         let mut report = Report::new();
@@ -168,7 +169,7 @@ mod tests {
         au.extend_from_slice(&[0x00, 0x00, 0x01]);
         au.extend_from_slice(INTERLACED_SPS);
 
-        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID, StreamType::H264)]);
+        let mut ts = build_pat_pmt_ts(&[(VIDEO_PID.value(), StreamType::H264)]);
         ts.extend_from_slice(&make_pes_packet(VIDEO_PID, 0, &build_pes(0xE0, &au)));
 
         let mut report = Report::new();
@@ -178,7 +179,7 @@ mod tests {
                 .findings()
                 .iter()
                 .any(|f| f.rule_id == "avc-interlaced-content"
-                    && f.location.pid == u32::from(VIDEO_PID)),
+                    && f.location.pid == u32::from(VIDEO_PID.value())),
             "expected avc-interlaced-content, got {:?}",
             report.findings()
         );

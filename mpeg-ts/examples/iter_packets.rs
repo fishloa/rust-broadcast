@@ -30,7 +30,7 @@ fn main() {
     for pkt in iter_packets(&buf) {
         total += 1;
         let hdr = &pkt.header;
-        *pid_counts.entry(hdr.pid).or_insert(0) += 1;
+        *pid_counts.entry(hdr.pid.value()).or_insert(0) += 1;
 
         let sc = hdr.scrambling_control();
         let afc = hdr.adaptation_field_control();
@@ -42,7 +42,11 @@ fn main() {
         if total <= 5 || hdr.pusi {
             println!(
                 "pkt {:>6}: pid=0x{:04X} cc={:2} scrambling={} afc={}",
-                total, hdr.pid, hdr.continuity_counter, sc, afc,
+                total,
+                hdr.pid.value(),
+                hdr.continuity_counter,
+                sc,
+                afc,
             );
         }
     }

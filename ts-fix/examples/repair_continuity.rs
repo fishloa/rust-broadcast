@@ -9,6 +9,7 @@
 //! cargo run --example repair_continuity
 //! ```
 
+use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use std::fs;
 
@@ -55,7 +56,7 @@ fn main() {
 /// An anomaly is any payload-bearing packet whose CC does not match
 /// `(last_cc + 1) & 0x0F` for that PID.
 fn count_cc_anomalies(data: &[u8]) -> usize {
-    let mut per_pid_cc: BTreeMap<u16, u8> = BTreeMap::new();
+    let mut per_pid_cc: BTreeMap<Pid, u8> = BTreeMap::new();
     let mut anomalies = 0;
 
     for chunk in data.chunks(188) {
@@ -67,13 +68,13 @@ fn count_cc_anomalies(data: &[u8]) -> usize {
         let has_payload = (chunk[3] & 0x10) != 0;
 
         if has_payload {
-            if let Some(&last_cc) = per_pid_cc.get(&pid) {
+            if let Some(&last_cc) = per_pid_cc.get(&Pid::new(pid)) {
                 let expected = (last_cc + 1) & 0x0F;
                 if cc != expected {
                     anomalies += 1;
                 }
             }
-            per_pid_cc.insert(pid, cc);
+            per_pid_cc.insert(Pid::new(pid), cc);
         }
     }
 
