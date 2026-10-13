@@ -16,8 +16,7 @@ use crate::ts::{CC_MASK, TS_PACKET_SIZE, TsHeader};
 const PUSI_PAYLOAD_CAP: usize = 183;
 /// Maximum data bytes in a continuation packet (188 − 4 header). §2.4.4.
 const PAYLOAD_CAP: usize = 184;
-/// Stuffing byte for unused TS payload bytes (ISO/IEC 13818-1 §2.4.4).
-const STUFFING_BYTE: u8 = 0xFF;
+use crate::ts::STUFFING_BYTE;
 
 /// Packetises PSI/SI sections into 188-byte TS packets.
 ///
