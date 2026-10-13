@@ -47,6 +47,8 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
+#[cfg(test)]
+use transmux::TrackId;
 
 use axum::Router;
 use axum::extract::{Path, Query, State};
@@ -587,7 +589,7 @@ mod tests {
             );
             let mut progress = DriverProgress::new();
             driver.feed(
-                &build_ts_bytes(1, 0xAB, 90),
+                &build_ts_bytes(TrackId::new(1), 0xAB, 90),
                 broadcast_common::Timestamp::ZERO,
             );
 
@@ -1111,7 +1113,7 @@ mod tests {
         let init = route
             .ll_hls(SPTS_PROGRAM_ID)
             .expect("origin")
-            .init_name(1, 1);
+            .init_name(TrackId::new(1), hls_runtime::server::Generation::new(1));
         assert_eq!(live_init, init);
 
         // And the tail bytes are the live ones, under the playlist's numbers.

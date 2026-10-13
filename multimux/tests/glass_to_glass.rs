@@ -35,6 +35,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use transmux::TrackId;
 
 use axum::Router;
 use axum::response::IntoResponse;
@@ -54,7 +55,7 @@ use transmux::{
 };
 
 use hls_runtime::server::DEFAULT_TRACK_ID;
-const TRACK_ID: u32 = DEFAULT_TRACK_ID;
+const TRACK_ID: u32 = DEFAULT_TRACK_ID.value();
 /// Matches `multimux::pipeline`'s own fixed CMAF movie timescale.
 const MOVIE_TIMESCALE: u32 = 90_000;
 const VIDEO_TIMESCALE: u32 = 90_000;
@@ -90,7 +91,7 @@ fn dummy_avc_config() -> AVCConfigurationBox {
 
 fn video_track() -> TrackSpec {
     TrackSpec::new(
-        TRACK_ID,
+        TrackId::new(TRACK_ID),
         VIDEO_TIMESCALE,
         CodecConfig::Avc {
             config: dummy_avc_config(),
@@ -146,7 +147,7 @@ async fn run_live_producer(store: Arc<RouteHandle>) {
     let frame_interval = Duration::from_millis(1000 / u64::from(FPS));
     for i in 0..FRAME_COUNT {
         let is_sync = i % SYNC_EVERY == 0;
-        seg.push(TRACK_ID, timestamped_sample(is_sync))
+        seg.push(TrackId::new(TRACK_ID), timestamped_sample(is_sync))
             .expect("push succeeds");
         for part in seg.take_ready_parts() {
             store.add_part(program, part);
@@ -318,9 +319,9 @@ async fn non_ll_origin_plays_via_full_segment_fallback_over_http() {
         for i in 0..30u32 {
             let s = timestamped_sample(i == 0);
             fed_samples.push(s.clone());
-            seg.push(TRACK_ID, s).expect("push succeeds");
+            seg.push(TrackId::new(TRACK_ID), s).expect("push succeeds");
         }
-        seg.push(TRACK_ID, timestamped_sample(true))
+        seg.push(TrackId::new(TRACK_ID), timestamped_sample(true))
             .expect("push succeeds");
         seg.flush().expect("flush succeeds");
         let init_bytes = seg.init_segment().expect("init segment builds");

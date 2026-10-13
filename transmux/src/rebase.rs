@@ -121,6 +121,7 @@ pub fn insert_discontinuity_gap(track: &mut Track, at_sample_index: usize, gap_t
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TrackId;
     use crate::ir::SampleFlags;
     use crate::media::Track;
     use crate::pipeline::{Sample, TrackSpec};
@@ -168,7 +169,7 @@ mod tests {
             sps_ext: vec![],
         };
         TrackSpec::new(
-            1,
+            TrackId::new(1),
             90_000,
             CodecConfig::Avc {
                 config: AVCConfigurationBox::new(record),

@@ -7,6 +7,7 @@ use dvb_si::tables::eit::{
 };
 use dvb_si::tables::nit::{NitKind, NitSection, NitTransportStream};
 use dvb_si::tables::pat::{PatEntry, PatSection};
+use mpeg_ts::pid::Pid;
 
 fn nit_section(
     section_number: u8,
@@ -125,7 +126,7 @@ fn pat_section_versioned(
         true,
         section_number,
         last_section_number,
-        vec![PatEntry::new(section_number as u16 + 1, pid)],
+        vec![PatEntry::new(section_number as u16 + 1, Pid::new(pid))],
     );
     let mut bytes = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut bytes).unwrap();
@@ -193,7 +194,7 @@ fn generic_complete_table_handles_pat_sections() {
         .iter()
         .flat_map(|section| section.entries.iter().map(|entry| entry.pid))
         .collect();
-    assert_eq!(pids, [0x0100, 0x0101]);
+    assert_eq!(pids, [Pid::new(0x0100), Pid::new(0x0101)]);
 }
 
 #[test]

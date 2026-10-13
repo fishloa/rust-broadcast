@@ -10,7 +10,7 @@ use broadcast_common::{Parse, Serialize};
 /// table_id for Transport Stream Description Table.
 pub const TABLE_ID: u8 = 0x03;
 /// Well-known PID on which TSDT is carried.
-pub const PID: u16 = 0x0002;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0002);
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
@@ -241,7 +241,7 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x03);
-        assert_eq!(PID, 0x0002);
+        assert_eq!(PID.value(), 0x0002);
     }
 
     #[cfg(feature = "serde")]

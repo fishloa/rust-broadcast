@@ -25,6 +25,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use broadcast_hls::{
@@ -420,7 +421,7 @@ fn ir_trick_track_wired_to_signalling() {
 fn minimal_video_media() -> transmux::media::Media {
     use transmux::media::Media;
     let spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         90000,
         CodecConfig::Avc {
             config: AVCConfigurationBox {

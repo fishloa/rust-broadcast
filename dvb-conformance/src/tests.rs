@@ -166,7 +166,7 @@ fn build_pat_section_versioned(program_map_pids: &[(u16, u16)], version: u8) -> 
         0,
         program_map_pids
             .iter()
-            .map(|&(pn, pid)| PatEntry::new(pn, pid))
+            .map(|&(pn, pid)| PatEntry::new(pn, Pid::new(pid)))
             .collect(),
     );
     let mut buf = vec![0u8; pat.serialized_len()];
@@ -192,14 +192,14 @@ fn build_pmt_section_versioned(
         true,
         0,
         0,
-        pcr_pid,
+        Pid::new(pcr_pid),
         Default::default(),
         es_pids
             .iter()
             .map(|&pid| {
                 PmtStream::new(
                     dvb_si::tables::pmt::StreamType::Mpeg2Video,
-                    pid,
+                    Pid::new(pid),
                     Default::default(),
                 )
             })
@@ -1748,7 +1748,7 @@ fn build_large_pat_section() -> Vec<u8> {
     // After 5 packets: 920 - 5*5 = 895 bytes > 512 → overflow.
     let mut entries = Vec::new();
     for i in 0u16..200 {
-        entries.push(PatEntry::new(i, 0x0100 + i));
+        entries.push(PatEntry::new(i, Pid::new(0x0100 + i)));
     }
     let pat = PatSection::new(1, 0, true, 0, 0, entries);
     let mut buf = vec![0u8; pat.serialized_len()];

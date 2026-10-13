@@ -60,6 +60,7 @@
 //!
 //! `no_std` + `alloc`.
 
+use crate::TrackId;
 use alloc::collections::VecDeque;
 #[cfg(any(feature = "std", test))]
 use alloc::format;
@@ -1254,7 +1255,7 @@ impl Unpackage for RtpDepacketiser {
                 // a stream index past `u32::MAX` is not reachable (the caller
                 // had to build the `Vec`), and the fallback states that rather
                 // than truncating an index into a colliding ID.
-                id: u32::try_from(idx).unwrap_or(u32::MAX).saturating_add(1),
+                id: TrackId::new(u32::try_from(idx).unwrap_or(u32::MAX).saturating_add(1)),
                 kind: stream.kind,
                 clock_rate,
                 config: stream.config.clone(),
@@ -1271,7 +1272,7 @@ impl Unpackage for RtpDepacketiser {
 /// config carried alongside the wire packets (RTP itself has none — see
 /// [`RtpInputStream::config`]) and the reassembled coded samples.
 struct RtpTrack {
-    id: u32,
+    id: TrackId,
     kind: RtpMediaKind,
     clock_rate: u32,
     config: Option<CodecConfig>,

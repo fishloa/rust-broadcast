@@ -406,6 +406,7 @@ mod instant {
     use std::collections::VecDeque;
     use std::convert::Infallible;
     use std::sync::Arc;
+    use transmux::TrackId;
 
     use broadcast_common::{Demand, Stage, Timestamp};
     use media_plane::ingress::{
@@ -425,7 +426,7 @@ mod instant {
     fn track_spec() -> TrackSpec {
         let config = transmux::avc_config_from_sprop(SPROP).expect("valid sprop");
         TrackSpec::new(
-            1,
+            TrackId::new(1),
             VIDEO_TIMESCALE,
             CodecConfig::Avc {
                 config,
@@ -460,7 +461,7 @@ mod instant {
                     let data = vec![0xAAu8.wrapping_add((i % 251) as u8); 32];
                     self.pending.push_back(SessionEvent::Sample {
                         program: ProgramId(0),
-                        track_id: 1,
+                        track_id: TrackId::new(1),
                         retention: RetentionClass::Timed,
                         sample: Sample::new(
                             data,

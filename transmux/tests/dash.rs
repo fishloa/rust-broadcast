@@ -12,6 +12,7 @@
 #![cfg(feature = "std")]
 
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Unpackage};
 use transmux::aac_asc::AudioSpecificConfig;
@@ -490,10 +491,10 @@ fn adaptation_sets_split_by_language_and_codec() {
         .clone();
 
     let mut eng = audio.clone();
-    eng.spec.track_id = 2;
+    eng.spec.track_id = TrackId::new(2);
     eng.spec.es_info_descriptors = lang_es_info(b"eng");
     let mut fra = audio.clone();
-    fra.spec.track_id = 3;
+    fra.spec.track_id = TrackId::new(3);
     fra.spec.es_info_descriptors = lang_es_info(b"fra");
 
     let media = transmux::media::Media::new(vec![video, eng, fra], 90_000);
@@ -557,10 +558,10 @@ fn adaptation_sets_merge_same_language_and_codec() {
         .clone();
 
     let mut a1 = audio.clone();
-    a1.spec.track_id = 2;
+    a1.spec.track_id = TrackId::new(2);
     a1.spec.es_info_descriptors = lang_es_info(b"eng");
     let mut a2 = audio.clone();
-    a2.spec.track_id = 3;
+    a2.spec.track_id = TrackId::new(3);
     a2.spec.es_info_descriptors = lang_es_info(b"eng");
 
     let media = transmux::media::Media::new(vec![video, a1, a2], 90_000);
@@ -608,13 +609,13 @@ fn adaptation_sets_have_unique_ids_and_split_by_codec_family() {
         .find(|t| matches!(t.spec.config, CodecConfig::Aac { .. }))
         .expect("aac track")
         .clone();
-    aac.spec.track_id = 2;
+    aac.spec.track_id = TrackId::new(2);
     aac.spec.es_info_descriptors = lang_es_info(b"eng");
 
     let ac3_ts = std::fs::read(fixtures_dir().join("ts/dolby/ac3.ts")).expect("ac3 fixture");
     let ac3_ir = TsDemux::new().unpackage(&ac3_ts[..]).expect("demux ac3");
     let mut ac3 = ac3_ir.tracks[0].clone();
-    ac3.spec.track_id = 3;
+    ac3.spec.track_id = TrackId::new(3);
     ac3.spec.es_info_descriptors = lang_es_info(b"eng");
 
     let media = transmux::media::Media::new(vec![video, aac, ac3], 90_000);

@@ -4,6 +4,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::fmt;
 use mpeg_ts::pid::Pid;
+use transmux::TrackId;
 
 /// Severity of a diagnostic finding.
 #[non_exhaustive]
@@ -68,10 +69,10 @@ impl Location {
     }
 
     /// A location on a container-level media track (ISO/IEC 14496-12 `track_ID`).
-    pub fn at_track(packet: usize, track_id: u32) -> Self {
+    pub fn at_track(packet: usize, track_id: TrackId) -> Self {
         Self {
             packet,
-            pid: track_id,
+            pid: track_id.value(),
         }
     }
 }
@@ -204,7 +205,10 @@ mod tests {
             assert_eq!(Location::at_pid(7, pid).packet, 7);
         }
         // A track id above 16 bits is not aliased (the reason the field is u32).
-        assert_eq!(Location::at_track(0, 0x0001_0064).pid, 0x0001_0064);
+        assert_eq!(
+            Location::at_track(0, TrackId::new(0x0001_0064)).pid,
+            0x0001_0064
+        );
         // An out-of-range PID cannot be turned into a typed location at all.
         assert!(Pid::try_new(0x2064).is_err());
     }

@@ -142,7 +142,7 @@ fn build(
         .iter()
         .map(|s| BuiltStream {
             stream_type: s.stream_type.to_u8(),
-            elementary_pid: Pid::new(s.elementary_pid),
+            elementary_pid: s.elementary_pid,
             ca_descriptors: ca_descriptors_filtered(&s.es_info, allowed),
         })
         .collect();
@@ -353,7 +353,7 @@ mod tests {
             true,
             0,
             0,
-            0x0100,
+            Pid::new(0x0100),
             DescriptorLoop::new(&prog_info),
             Vec::new(),
         );

@@ -179,6 +179,7 @@
 //! that is a decision for whoever builds that cross-container layer, not one
 //! this module should presume.
 
+use crate::TrackId;
 use crate::error::{Error, Result};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::rtcp::SenderReport;
@@ -276,7 +277,7 @@ pub enum RtpLossEvent {
     /// than reassembled from a run missing a fragment.
     SequenceGap {
         /// The track this gap was observed on.
-        track_id: u32,
+        track_id: TrackId,
         /// The SSRC (RFC 3550 §5.1) the gap was observed on.
         ssrc: u32,
         /// The sequence number that was expected next.
@@ -292,7 +293,7 @@ pub enum RtpLossEvent {
     /// triggered the resync.
     DamagedAccessUnit {
         /// The track this occurred on.
-        track_id: u32,
+        track_id: TrackId,
     },
     /// An access unit's RTP timestamp was **earlier** than the previous
     /// access unit's, i.e. the stream's presentation order is not wire order
@@ -310,7 +311,7 @@ pub enum RtpLossEvent {
     /// count or route it.
     NonMonotonicTimestamp {
         /// The track this occurred on.
-        track_id: u32,
+        track_id: TrackId,
         /// The previous access unit's unwrapped presentation timestamp, in the
         /// track's clock (the same unit as [`crate::ir::Sample::pts`]).
         previous_pts: i64,
@@ -329,7 +330,7 @@ pub enum RtpLossEvent {
 #[non_exhaustive]
 pub struct RtpStreamTrack {
     /// Track ID (matches the IR `track_id` this depayloader emits).
-    pub track_id: u32,
+    pub track_id: TrackId,
     /// The payload format carried on this track's RTP stream.
     pub kind: RtpMediaKind,
     /// Real codec config (e.g. from [`crate::rtp_sdp`]).
@@ -343,7 +344,12 @@ pub struct RtpStreamTrack {
 impl RtpStreamTrack {
     /// Build a track config from its fields, with the default reorder-buffer
     /// depth ([`DEFAULT_REORDER_DEPTH`]).
-    pub fn new(track_id: u32, kind: RtpMediaKind, config: CodecConfig, clock_rate: u32) -> Self {
+    pub fn new(
+        track_id: TrackId,
+        kind: RtpMediaKind,
+        config: CodecConfig,
+        clock_rate: u32,
+    ) -> Self {
         Self {
             track_id,
             kind,
@@ -786,7 +792,7 @@ struct PendingAu {
 
 /// Stateful, timing- and config-aware RTP depayloader (see module docs).
 pub struct RtpStreamDepacketiser {
-    tracks: Vec<(u32, TrackState)>,
+    tracks: Vec<(TrackId, TrackState)>,
     /// Output buffered for the [`Stage`] adapter (media plane step 2e), which
     /// — unlike [`push`](Self::push)/[`flush`](Self::flush) — cannot return
     /// samples directly (drained via [`Stage::poll`] instead). Unused by the
@@ -880,7 +886,7 @@ impl RtpStreamDepacketiser {
             .collect()
     }
 
-    fn state(&mut self, track_id: u32) -> Option<&mut TrackState> {
+    fn state(&mut self, track_id: TrackId) -> Option<&mut TrackState> {
         self.tracks
             .iter_mut()
             .find(|(id, _)| *id == track_id)
@@ -898,7 +904,7 @@ impl RtpStreamDepacketiser {
     /// this track's wallclock for [`Self::sync_start_decode_times`]. Replaces
     /// any previous anchor for the track (the most recent SR wins); unknown
     /// `track_id`s are silently ignored, matching [`Self::push`].
-    pub fn push_sender_report(&mut self, track_id: u32, sr: SenderReport) {
+    pub fn push_sender_report(&mut self, track_id: TrackId, sr: SenderReport) {
         if let Some(st) = self.state(track_id) {
             let ntp_seconds = f64::from(sr.ntp_msw) + f64::from(sr.ntp_lsw) / NTP_FRACTION_SCALE;
             st.sr_anchor = Some(SrAnchor {
@@ -914,7 +920,7 @@ impl RtpStreamDepacketiser {
     /// bytes) is silently ignored — this is a convenience wrapper for
     /// callers holding raw RTCP bytes off the wire, not a general RTCP
     /// dispatcher.
-    pub fn push_rtcp(&mut self, track_id: u32, bytes: &[u8]) {
+    pub fn push_rtcp(&mut self, track_id: TrackId, bytes: &[u8]) {
         if let Ok(sr) = SenderReport::parse(bytes) {
             self.push_sender_report(track_id, sr);
         }
@@ -934,8 +940,8 @@ impl RtpStreamDepacketiser {
     /// anchor, or fewer than two anchored tracks overall) keeps the existing
     /// independent-rebase-to-0 behaviour: the caller should only apply the
     /// returned `start_decode_time` to tracks it names.
-    pub fn sync_start_decode_times(&self) -> Vec<(u32, u64)> {
-        let anchored: Vec<(u32, f64, u32)> = self
+    pub fn sync_start_decode_times(&self) -> Vec<(TrackId, u64)> {
+        let anchored: Vec<(TrackId, f64, u32)> = self
             .tracks
             .iter()
             .filter_map(|(id, st)| {
@@ -989,7 +995,7 @@ impl RtpStreamDepacketiser {
     /// RTP timestamp clock is unrelated across the seam (§5.1 — the origin
     /// is random per source instance). No `SequenceGap` is raised: nothing
     /// was lost, the sender simply renumbered.
-    pub fn push(&mut self, track_id: u32, rtp_packet: &[u8]) -> Result<Vec<Sample>> {
+    pub fn push(&mut self, track_id: TrackId, rtp_packet: &[u8]) -> Result<Vec<Sample>> {
         let hdr = parse_rtp_header(rtp_packet)?;
         let RtpStreamDepacketiser {
             tracks,
@@ -1054,7 +1060,7 @@ impl RtpStreamDepacketiser {
     fn push_one(
         st: &mut TrackState,
         loss_events: &mut VecDeque<RtpLossEvent>,
-        track_id: u32,
+        track_id: TrackId,
         rtp_packet: Vec<u8>,
         out: &mut Vec<Sample>,
     ) -> Result<()> {
@@ -1112,7 +1118,7 @@ impl RtpStreamDepacketiser {
     fn drain_complete_or_discard(
         st: &mut TrackState,
         loss_events: &mut VecDeque<RtpLossEvent>,
-        track_id: u32,
+        track_id: TrackId,
         out: &mut Vec<Sample>,
     ) {
         if Self::drain_complete(st, loss_events, track_id, out).is_err() {
@@ -1131,7 +1137,7 @@ impl RtpStreamDepacketiser {
     /// its still-buffered continuation would sit invisibly in the reorder
     /// buffer forever while `cur_pkts` (missing that fragment) got wrongly
     /// flushed below as if it were complete.
-    pub fn flush(&mut self, track_id: u32) -> Result<Vec<Sample>> {
+    pub fn flush(&mut self, track_id: TrackId) -> Result<Vec<Sample>> {
         let RtpStreamDepacketiser {
             tracks,
             loss_events,
@@ -1185,7 +1191,7 @@ impl RtpStreamDepacketiser {
     fn drain_complete(
         st: &mut TrackState,
         loss_events: &mut VecDeque<RtpLossEvent>,
-        track_id: u32,
+        track_id: TrackId,
         out: &mut Vec<Sample>,
     ) -> Result<()> {
         let pkts = core::mem::take(&mut st.cur_pkts);
@@ -1387,7 +1393,7 @@ mod tests {
     #[test]
     fn video_stream_recovers_durations_and_sync() {
         let mut d = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
-            1,
+            TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
             90_000,
@@ -1397,20 +1403,24 @@ mod tests {
         let idr = [0x65u8, 0xAA];
         let non = [0x41u8, 0xBB];
         // AU0: emits nothing yet (duration needs AU1).
-        assert!(d.push(1, &vpkt(1, 1000, true, &idr)).unwrap().is_empty());
+        assert!(
+            d.push(TrackId::new(1), &vpkt(1, 1000, true, &idr))
+                .unwrap()
+                .is_empty()
+        );
         // AU1 arrives → AU0 emitted with duration 3000, is_sync=true.
-        let s0 = d.push(1, &vpkt(2, 4000, true, &non)).unwrap();
+        let s0 = d.push(TrackId::new(1), &vpkt(2, 4000, true, &non)).unwrap();
         assert_eq!(s0.len(), 1);
         assert_eq!(s0[0].duration, Some(3000));
         assert!(s0[0].flags.is_sync);
         assert_eq!(s0[0].composition_offset(), 0);
         // AU2 arrives → AU1 emitted, duration 3000, is_sync=false.
-        let s1 = d.push(1, &vpkt(3, 7000, true, &non)).unwrap();
+        let s1 = d.push(TrackId::new(1), &vpkt(3, 7000, true, &non)).unwrap();
         assert_eq!(s1.len(), 1);
         assert_eq!(s1[0].duration, Some(3000));
         assert!(!s1[0].flags.is_sync);
         // flush → AU2 emitted with the last-known duration (3000).
-        let s2 = d.flush(1).unwrap();
+        let s2 = d.flush(TrackId::new(1)).unwrap();
         assert_eq!(s2.len(), 1);
         assert_eq!(s2[0].duration, Some(3000));
     }
@@ -1432,20 +1442,20 @@ mod tests {
 
         // Oracle: drive the inherent push/flush API directly.
         let mut oracle = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
-            1,
+            TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
             90_000,
         )]);
         let mut oracle_samples: Vec<Sample> = Vec::new();
         for pkt in &packets {
-            oracle_samples.extend(oracle.push(1, pkt).unwrap());
+            oracle_samples.extend(oracle.push(TrackId::new(1), pkt).unwrap());
         }
-        oracle_samples.extend(oracle.flush(1).unwrap());
+        oracle_samples.extend(oracle.flush(TrackId::new(1)).unwrap());
 
         // Same input, driven through Stage instead.
         let mut staged = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
-            1,
+            TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
             90_000,
@@ -1478,8 +1488,8 @@ mod tests {
     #[test]
     fn stage_feed_errors_on_multi_track_construction() {
         let mut d = RtpStreamDepacketiser::new(alloc::vec![
-            RtpStreamTrack::new(1, RtpMediaKind::H264, dummy_avc(), 90_000),
-            RtpStreamTrack::new(2, RtpMediaKind::H264, dummy_avc(), 90_000),
+            RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, dummy_avc(), 90_000),
+            RtpStreamTrack::new(TrackId::new(2), RtpMediaKind::H264, dummy_avc(), 90_000),
         ]);
         let err = Stage::feed(&mut d, &vpkt(1, 1000, true, &[0x65]), Timestamp::ZERO).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
@@ -1514,7 +1524,7 @@ mod tests {
     #[test]
     fn runaway_fu_a_without_end_bit_is_bounded_not_unbounded() {
         let mut d = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
-            1,
+            TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
             90_000,
@@ -1528,7 +1538,7 @@ mod tests {
         let mut resume_seq: u16 = 0;
         for i in 0..4096u16 {
             match d.push(
-                1,
+                TrackId::new(1),
                 &vpkt(i, 1000, false, &fu_a_fragment(i == 0, FRAGMENT_FILLER)),
             ) {
                 Ok(samples) => assert!(
@@ -1565,12 +1575,15 @@ mod tests {
         let idr = [0x65u8, 0xAA];
         let non = [0x41u8, 0xBB];
         assert!(
-            d.push(1, &vpkt(resume_seq, 4000, true, &idr))
+            d.push(TrackId::new(1), &vpkt(resume_seq, 4000, true, &idr))
                 .unwrap()
                 .is_empty()
         );
         let s = d
-            .push(1, &vpkt(resume_seq.wrapping_add(1), 7000, true, &non))
+            .push(
+                TrackId::new(1),
+                &vpkt(resume_seq.wrapping_add(1), 7000, true, &non),
+            )
             .unwrap();
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].duration, Some(3000));
@@ -1586,14 +1599,14 @@ mod tests {
     #[test]
     fn track_specs_use_clock_rate_as_timescale() {
         let d = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
-            7,
+            TrackId::new(7),
             RtpMediaKind::H264,
             dummy_avc(),
             90_000,
         )]);
         let specs = d.track_specs();
         assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].track_id, 7);
+        assert_eq!(specs[0].track_id, TrackId::new(7));
         assert_eq!(specs[0].timescale, 90_000);
     }
 }

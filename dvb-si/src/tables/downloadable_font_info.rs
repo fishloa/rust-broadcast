@@ -46,7 +46,7 @@ use broadcast_common::{Parse, Serialize};
 pub const TABLE_ID: u8 = 0x7C;
 /// DFIS has no well-known PID; carried on the PID signalled by the
 /// `data_broadcast_id` (0x000D) descriptor in the PMT (§5.3.2.3.1).
-pub const PID: u16 = 0x0000;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
 
 /// `font_info_type` for style/weight (§5.3.2.3.2.1 Table 23).
 pub const FONT_INFO_TYPE_STYLE_WEIGHT: u8 = 0x00;
@@ -626,7 +626,7 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x7C);
-        assert_eq!(PID, 0x0000);
+        assert_eq!(PID.value(), 0x0000);
     }
 
     #[test]

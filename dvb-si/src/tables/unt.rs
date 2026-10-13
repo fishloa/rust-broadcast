@@ -21,7 +21,7 @@ use broadcast_common::{Parse, Serialize};
 pub const TABLE_ID: u8 = 0x4B;
 
 /// Well-known PID for UNT: **none** — the UNT has no fixed PID.
-pub const PID: u16 = 0x0000;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
 
 /// Action type coding — ETSI TS 102 006 §9.4.2 Table 12.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

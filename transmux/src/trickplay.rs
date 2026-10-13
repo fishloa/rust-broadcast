@@ -33,7 +33,7 @@
 //! use transmux::media::Track;
 //!
 //! // Build a minimal AVC TrackSpec for the example.
-//! let spec = TrackSpec::new(1, 90000, CodecConfig::Avc {
+//! let spec = TrackSpec::new(transmux::TrackId::new(1), 90000, CodecConfig::Avc {
 //!     config: AVCConfigurationBox {
 //!         config: AVCDecoderConfigurationRecord {
 //!             configuration_version: 1,

@@ -83,10 +83,7 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         true,
         0,
         0,
-        vec![
-            PatEntry::new(1, PMT1_PID.value()),
-            PatEntry::new(2, PMT2_PID.value()),
-        ],
+        vec![PatEntry::new(1, PMT1_PID), PatEntry::new(2, PMT2_PID)],
     );
     let pat_section_bytes = serialize_pat(&pat);
     let mut pat_pktz = SectionPacketiser::new(PAT_PID);
@@ -99,18 +96,18 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         /* current_next_indicator */ true,
         /* section_number */ 0,
         /* last_section_number */ 0,
-        /* pcr_pid */ P1_PCR_PID.value(),
+        /* pcr_pid */ P1_PCR_PID,
         /* program_info */ DescriptorLoop::new(&[]),
         /* streams */
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P1_VIDEO_PID.value(),
+                P1_VIDEO_PID,
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P1_AUDIO_PID.value(),
+                P1_AUDIO_PID,
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -126,18 +123,18 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         /* current_next_indicator */ true,
         /* section_number */ 0,
         /* last_section_number */ 0,
-        /* pcr_pid */ P2_PCR_PID.value(),
+        /* pcr_pid */ P2_PCR_PID,
         /* program_info */ DescriptorLoop::new(&[]),
         /* streams */
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P2_VIDEO_PID.value(),
+                P2_VIDEO_PID,
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P2_AUDIO_PID.value(),
+                P2_AUDIO_PID,
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -334,12 +331,12 @@ fn regen_pat_from_zero_corruption() {
     let orig_map: std::collections::BTreeMap<u16, Pid> = orig_pat
         .entries
         .iter()
-        .map(|e| (e.program_number, Pid::new(e.pid)))
+        .map(|e| (e.program_number, e.pid))
         .collect();
     let regen_map: std::collections::BTreeMap<u16, Pid> = regen_pat
         .entries
         .iter()
-        .map(|e| (e.program_number, Pid::new(e.pid)))
+        .map(|e| (e.program_number, e.pid))
         .collect();
     assert_eq!(
         orig_map, regen_map,
@@ -364,7 +361,7 @@ fn filter_then_regen_lists_only_surviving_program() {
     // Verify: only program 1 listed.
     assert_eq!(pat.entries.len(), 1, "filtered PAT should have 1 program");
     assert_eq!(pat.entries[0].program_number, 1);
-    assert_eq!(pat.entries[0].pid, PMT1_PID.value());
+    assert_eq!(pat.entries[0].pid, PMT1_PID);
 }
 
 /// Combine filter + regen: extract program 2, then regenerate PAT.
@@ -384,7 +381,7 @@ fn filter_program_2_then_regen() {
     // Verify: only program 2 listed.
     assert_eq!(pat.entries.len(), 1, "filtered PAT should have 1 program");
     assert_eq!(pat.entries[0].program_number, 2);
-    assert_eq!(pat.entries[0].pid, PMT2_PID.value());
+    assert_eq!(pat.entries[0].pid, PMT2_PID);
 }
 
 /// No-op regen on a corrupted PAT FAILS (test harness verification).
@@ -479,7 +476,7 @@ fn output_pat_mappings(ts: &[u8]) -> Vec<std::collections::BTreeMap<u16, Pid>> {
         .map(|pat| {
             pat.entries
                 .iter()
-                .map(|e| (e.program_number, Pid::new(e.pid)))
+                .map(|e| (e.program_number, e.pid))
                 .collect()
         })
         .collect()
@@ -512,7 +509,7 @@ fn regen_pat_on_m6_single() {
     for e in &orig_pat.entries {
         assert_eq!(
             oracle.get(&e.program_number),
-            Some(&Pid::new(e.pid)),
+            Some(&e.pid),
             "original PAT program {} must appear in the PMT-derived mapping",
             e.program_number
         );
@@ -709,9 +706,9 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
         0,
         0,
         vec![
-            PatEntry::new(0, network_pid),
-            PatEntry::new(1, PMT1_PID.value()),
-            PatEntry::new(2, PMT2_PID.value()),
+            PatEntry::new(0, Pid::new(network_pid)),
+            PatEntry::new(1, PMT1_PID),
+            PatEntry::new(2, PMT2_PID),
         ],
     );
     let pat_section_bytes = serialize_pat(&pat);
@@ -724,17 +721,17 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
         true,
         0,
         0,
-        P1_PCR_PID.value(),
+        P1_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P1_VIDEO_PID.value(),
+                P1_VIDEO_PID,
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P1_AUDIO_PID.value(),
+                P1_AUDIO_PID,
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -749,17 +746,17 @@ fn build_two_program_ts_with_nit(cycles: usize, network_pid: u16) -> Vec<u8> {
         true,
         0,
         0,
-        P2_PCR_PID.value(),
+        P2_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P2_VIDEO_PID.value(),
+                P2_VIDEO_PID,
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P2_AUDIO_PID.value(),
+                P2_AUDIO_PID,
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -866,11 +863,11 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         true,
         0,
         0,
-        P3_PCR_PID.value(),
+        P3_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
             StreamType::Mpeg2Video,
-            P3_PCR_PID.value(),
+            P3_PCR_PID,
             DescriptorLoop::new(&[]),
         )],
     );
@@ -885,9 +882,9 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         0,
         0,
         vec![
-            PatEntry::new(1, PMT1_PID.value()),
-            PatEntry::new(2, PMT2_PID.value()),
-            PatEntry::new(3, PMT3_PID.value()),
+            PatEntry::new(1, PMT1_PID),
+            PatEntry::new(2, PMT2_PID),
+            PatEntry::new(3, PMT3_PID),
         ],
     );
     let pat3_bytes = serialize_pat(&pat3);
@@ -902,17 +899,17 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         true,
         0,
         0,
-        P1_PCR_PID.value(),
+        P1_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P1_VIDEO_PID.value(),
+                P1_VIDEO_PID,
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P1_AUDIO_PID.value(),
+                P1_AUDIO_PID,
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -925,17 +922,17 @@ fn regen_pat_version_number_bumps_once_when_mapping_changes() {
         true,
         0,
         0,
-        P2_PCR_PID.value(),
+        P2_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P2_VIDEO_PID.value(),
+                P2_VIDEO_PID,
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P2_AUDIO_PID.value(),
+                P2_AUDIO_PID,
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -1016,7 +1013,7 @@ fn regen_pat_preserves_network_pid_entry() {
         orig_pat
             .entries
             .iter()
-            .any(|e| e.program_number == 0 && e.pid == NIT_PID.value()),
+            .any(|e| e.program_number == 0 && e.pid == NIT_PID),
         "test precondition: original PAT must carry a network_pid entry"
     );
 
@@ -1028,7 +1025,7 @@ fn regen_pat_preserves_network_pid_entry() {
         regen_pat
             .entries
             .iter()
-            .any(|e| e.program_number == 0 && e.pid == NIT_PID.value()),
+            .any(|e| e.program_number == 0 && e.pid == NIT_PID),
         "regenerated PAT must preserve the network_pid entry from the original \
          PAT (not derivable from any PMT), got entries {:?}",
         regen_pat.entries
@@ -1058,11 +1055,11 @@ fn build_patless_p1_ts() -> Vec<u8> {
         true,
         0,
         0,
-        P1_PCR_PID.value(),
+        P1_PCR_PID,
         DescriptorLoop::new(&[]),
         vec![PmtStream::new(
             StreamType::Mpeg2Video,
-            P1_VIDEO_PID.value(),
+            P1_VIDEO_PID,
             DescriptorLoop::new(&[]),
         )],
     );

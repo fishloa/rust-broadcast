@@ -9,6 +9,7 @@
 #![cfg(feature = "std")]
 
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::ll_dash::{Chunk, LlDashPackager, LlSegmenter};
@@ -132,7 +133,7 @@ fn demux_bytes(init: &[u8], body: &[u8]) -> Media {
 /// samples spanning [start,end) of each track. Mirrors what `Segmenter` cuts.
 fn whole_segment(
     media: &Media,
-    ranges: &[(u32, u64, std::ops::Range<usize>)],
+    ranges: &[(TrackId, u64, std::ops::Range<usize>)],
     seq: u32,
 ) -> Vec<u8> {
     let frags: Vec<FragmentTrackData<'_>> = ranges
@@ -213,7 +214,7 @@ fn chunked_structure_multiple_chunks_contiguous_tfdt_and_seq() {
             let tfhd = child_boxes(&traf[8..], b"tfhd").into_iter().next().unwrap();
             // tfhd: 8 header + 4 fullbox + 4 track_id
             let tid = u32::from_be_bytes(tfhd[12..16].try_into().unwrap());
-            if tid == vid_id {
+            if tid == vid_id.value() {
                 if let Some(prev) = last {
                     assert!(*base > prev, "video tfdt must increase: {prev} -> {base}");
                 }
@@ -446,7 +447,7 @@ fn segment_first_chunk_starts_on_keyframe() {
         for traf in &trafs {
             let tfhd = child_boxes(&traf[8..], b"tfhd").into_iter().next().unwrap();
             let tid = u32::from_be_bytes(tfhd[12..16].try_into().unwrap());
-            if tid != vid_id {
+            if tid != vid_id.value() {
                 continue;
             }
             checked_video = true;

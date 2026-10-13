@@ -105,10 +105,7 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         true,
         0,
         0,
-        vec![
-            PatEntry::new(1, PMT1_PID.value()),
-            PatEntry::new(2, PMT2_PID.value()),
-        ],
+        vec![PatEntry::new(1, PMT1_PID), PatEntry::new(2, PMT2_PID)],
     );
     let pat_section_bytes = serialize_pat(&pat);
     let mut pat_pktz = SectionPacketiser::new(PAT_PID);
@@ -121,18 +118,18 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         /* current_next_indicator */ true,
         /* section_number */ 0,
         /* last_section_number */ 0,
-        /* pcr_pid */ P1_PCR_PID.value(),
+        /* pcr_pid */ P1_PCR_PID,
         /* program_info */ DescriptorLoop::new(&[]),
         /* streams */
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P1_VIDEO_PID.value(),
+                P1_VIDEO_PID,
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P1_AUDIO_PID.value(),
+                P1_AUDIO_PID,
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -148,18 +145,18 @@ fn build_two_program_ts(cycles: usize) -> Vec<u8> {
         /* current_next_indicator */ true,
         /* section_number */ 0,
         /* last_section_number */ 0,
-        /* pcr_pid */ P2_PCR_PID.value(),
+        /* pcr_pid */ P2_PCR_PID,
         /* program_info */ DescriptorLoop::new(&[]),
         /* streams */
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P2_VIDEO_PID.value(),
+                P2_VIDEO_PID,
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P2_AUDIO_PID.value(),
+                P2_AUDIO_PID,
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -445,7 +442,7 @@ fn output_pmt_still_parses() {
 
     let pmt = PmtSection::parse(section_bytes).expect("output PMT must parse successfully");
     assert_eq!(pmt.program_number, 1);
-    assert_eq!(pmt.pcr_pid, P1_PCR_PID.value());
+    assert_eq!(pmt.pcr_pid, P1_PCR_PID);
     assert_eq!(pmt.streams.len(), 2);
 }
 
@@ -467,7 +464,7 @@ fn ca_descriptor_bytes(ca_pid: Pid) -> Vec<u8> {
 /// PID 0x0101/0x0102 — ES, PID 0x0200 — ECM, PID 0x0300 — EMM, nulls
 /// ```
 fn build_scrambled_ts(cycles: usize) -> Vec<u8> {
-    let pat = PatSection::new(1, 0, true, 0, 0, vec![PatEntry::new(1, PMT1_PID.value())]);
+    let pat = PatSection::new(1, 0, true, 0, 0, vec![PatEntry::new(1, PMT1_PID)]);
     let pat_bytes = serialize_pat(&pat);
     let mut pat_pktz = SectionPacketiser::new(PAT_PID);
     let pat_pkts = pat_pktz.packetise(&[&pat_bytes]);
@@ -487,17 +484,17 @@ fn build_scrambled_ts(cycles: usize) -> Vec<u8> {
         true,
         0,
         0,
-        P1_PCR_PID.value(),
+        P1_PCR_PID,
         DescriptorLoop::new(&ecm_ca),
         vec![
             PmtStream::new(
                 StreamType::Mpeg2Video,
-                P1_VIDEO_PID.value(),
+                P1_VIDEO_PID,
                 DescriptorLoop::new(&[]),
             ),
             PmtStream::new(
                 StreamType::Mpeg2Audio,
-                P1_AUDIO_PID.value(),
+                P1_AUDIO_PID,
                 DescriptorLoop::new(&[]),
             ),
         ],
@@ -565,7 +562,7 @@ fn service_extract_re_observes_pat_version_change() {
     let mut stream = base.clone();
 
     // Phase 2: PAT v1 moves program 1 → PMT 0x0200 (PMT2 content).
-    let pat_v1 = PatSection::new(1, 1, true, 0, 0, vec![PatEntry::new(1, PMT2_PID.value())]);
+    let pat_v1 = PatSection::new(1, 1, true, 0, 0, vec![PatEntry::new(1, PMT2_PID)]);
     let pat_v1_bytes = serialize_pat(&pat_v1);
     let mut pktz = SectionPacketiser::new(PAT_PID);
     let pat_v1_pkts = pktz.packetise(&[&pat_v1_bytes]);
@@ -578,17 +575,17 @@ fn service_extract_re_observes_pat_version_change() {
             true,
             0,
             0,
-            P2_PCR_PID.value(),
+            P2_PCR_PID,
             DescriptorLoop::new(&[]),
             vec![
                 PmtStream::new(
                     StreamType::Mpeg2Video,
-                    P2_VIDEO_PID.value(),
+                    P2_VIDEO_PID,
                     DescriptorLoop::new(&[]),
                 ),
                 PmtStream::new(
                     StreamType::Mpeg2Audio,
-                    P2_AUDIO_PID.value(),
+                    P2_AUDIO_PID,
                     DescriptorLoop::new(&[]),
                 ),
             ],

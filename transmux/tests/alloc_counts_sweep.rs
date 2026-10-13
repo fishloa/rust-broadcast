@@ -121,6 +121,7 @@ mod rtmp_read_chunks {
 mod rtp_stream_copies {
     use super::bytes_allocated;
     use broadcast_common::{Package, Unpackage};
+    use transmux::TrackId;
     use transmux::pipeline::CodecConfig;
     use transmux::rtp::RtpMediaKind;
     use transmux::{RtpPacketiser, RtpStreamDepacketiser, RtpStreamTrack, TsDemux};
@@ -164,7 +165,7 @@ mod rtp_stream_copies {
             .collect();
         let total: usize = packets.iter().map(Vec::len).sum();
         let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
-            1,
+            TrackId::new(1),
             RtpMediaKind::H264,
             video.spec.config.clone(),
             90_000,
@@ -172,7 +173,7 @@ mod rtp_stream_copies {
         let (samples, allocated) = bytes_allocated(|| {
             let mut n = 0;
             for pkt in &packets {
-                n += d.push(1, pkt).unwrap().len();
+                n += d.push(TrackId::new(1), pkt).unwrap().len();
             }
             n
         });
@@ -270,6 +271,7 @@ mod muxer_buffering {
 
 mod segmenter_cuts {
     use super::measure;
+    use transmux::TrackId;
     use transmux::{
         AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Sample,
         Segmenter, TrackSpec,
@@ -292,7 +294,7 @@ mod segmenter_cuts {
             sps_ext: vec![],
         };
         TrackSpec::new(
-            1,
+            TrackId::new(1),
             90_000,
             CodecConfig::Avc {
                 config: AVCConfigurationBox::new(record),
@@ -314,7 +316,7 @@ mod segmenter_cuts {
             .collect();
         let (n, allocs, _) = measure(|| {
             for s in samples {
-                seg.push(1, s).unwrap();
+                seg.push(TrackId::new(1), s).unwrap();
             }
             seg.take_ready().len()
         });

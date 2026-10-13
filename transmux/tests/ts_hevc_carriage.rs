@@ -27,6 +27,7 @@
 //! HEVC's).
 
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
@@ -325,7 +326,7 @@ fn mid_stream_segment_prepends_missing_hevc_parameter_sets() {
     let parts = real_hevc_parts();
 
     let spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         90_000,
         CodecConfig::Hevc {
             config: parts.config.clone(),
@@ -425,7 +426,7 @@ fn hevc_track_is_chosen_as_anchor_over_audio() {
     // short total duration never reaches the 1-second target, so the whole
     // stream would land in a single segment.
     let audio_spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         48_000,
         CodecConfig::Ac3 {
             config: dummy_ac3_config(),
@@ -452,7 +453,7 @@ fn hevc_track_is_chosen_as_anchor_over_audio() {
         .flat_map(|n| lp_nal(n))
         .collect();
     let video_spec = TrackSpec::new(
-        2,
+        TrackId::new(2),
         90_000,
         CodecConfig::Hevc {
             config: parts.config,
@@ -508,7 +509,7 @@ fn add_track_promotes_hevc_anchor_over_audio_like_construction_time_does() {
     // silently reintroducing the audio-anchors-and-video-never-cuts bug for
     // every non-AVC video codec.
     let audio_spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         48_000,
         CodecConfig::Ac3 {
             config: dummy_ac3_config(),
@@ -532,7 +533,7 @@ fn add_track_promotes_hevc_anchor_over_audio_like_construction_time_does() {
         .flat_map(|n| lp_nal(n))
         .collect();
     let video_spec = TrackSpec::new(
-        2,
+        TrackId::new(2),
         90_000,
         CodecConfig::Hevc {
             config: parts.config,
@@ -566,13 +567,13 @@ fn add_track_promotes_hevc_anchor_over_audio_like_construction_time_does() {
     ];
     let mut cuts = 0usize;
     for s in video_samples {
-        seg.push(2, s).expect("push video");
+        seg.push(TrackId::new(2), s).expect("push video");
         cuts += seg.take_ready().len();
     }
     for i in 0..5i64 {
         let dts = i * 1_024;
         seg.push(
-            1,
+            TrackId::new(1),
             Sample::new(vec![0xAAu8; 8], Some(dts), Some(dts), Some(1_024), true),
         )
         .expect("push audio");

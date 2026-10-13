@@ -9,6 +9,7 @@
 use mpeg_ts::pid::Pid;
 use std::collections::HashMap;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use mpeg_pes::PesAssembler;
@@ -772,7 +773,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
     let data_only = Media::new(
         vec![Track::new(
             TrackSpec::new(
-                1,
+                TrackId::new(1),
                 90_000,
                 CodecConfig::Data {
                     stream_type: 0x06,
@@ -787,7 +788,7 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
     let vp8_media = Media::new(
         vec![Track::new(
             TrackSpec::new(
-                1,
+                TrackId::new(1),
                 90_000,
                 CodecConfig::Vp8 {
                     width: 640,
@@ -806,9 +807,9 @@ fn data_track_errors_named_by_cmaf_unlike_vp8() {
         matches!(
             data_err,
             Error::UnmuxableDataTrack {
-                track_id: 1,
+                track_id,
                 stream_type: 0x06
-            }
+            } if track_id.value() == 1
         ),
         "a Data track must fail with UnmuxableDataTrack naming track_id + \
          stream_type, got {data_err:?}"

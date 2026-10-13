@@ -64,6 +64,7 @@ use std::convert::Infallible;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
+use transmux::TrackId;
 
 use broadcast_common::{Demand, Stage, Timestamp};
 use media_plane::ingress::{
@@ -94,7 +95,7 @@ const SYNC_INTERVAL_FRAMES: u32 = 30;
 fn track_spec() -> TrackSpec {
     let config = avc_config_from_sprop(SPROP).expect("valid sprop");
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         VIDEO_TIMESCALE,
         CodecConfig::Avc {
             config,
@@ -161,7 +162,7 @@ impl Stage for DemoSession {
                 );
                 self.pending.push_back(SessionEvent::Sample {
                     program: ProgramId(0),
-                    track_id: 1,
+                    track_id: TrackId::new(1),
                     retention: RetentionClass::Timed,
                     sample,
                 });

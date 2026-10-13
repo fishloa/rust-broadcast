@@ -19,6 +19,7 @@
 
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use transmux::init_segment::{
@@ -66,7 +67,7 @@ fn real_flac_config() -> FlacSpecificBox {
 fn mux_one(rate: u32) -> Vec<u8> {
     let track = transmux::Track::new(
         TrackSpec::new(
-            1,
+            TrackId::new(1),
             rate,
             CodecConfig::Flac {
                 config: real_flac_config(),
@@ -430,7 +431,7 @@ fn quicktime_v2_entry_version_round_trips_verbatim() {
 #[test]
 fn built_init_segment_emits_v1_and_srat_for_192k() {
     let spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         192_000,
         CodecConfig::Flac {
             config: real_flac_config(),
@@ -474,7 +475,7 @@ fn built_init_segment_emits_v1_and_srat_for_192k() {
 #[test]
 fn built_init_segment_keeps_v0_for_a_fitting_rate() {
     let spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         48_000,
         CodecConfig::Flac {
             config: real_flac_config(),

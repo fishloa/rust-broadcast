@@ -16,6 +16,7 @@ use rtmp_runtime::amf0::Amf0Value;
 use rtmp_runtime::target::RtmpTarget;
 use tokio::net::TcpStream;
 use transmux::CodecConfig;
+use transmux::TrackId;
 use transmux::ir::{Media, Track, TrackSpec};
 
 /// FLV `videocodecid` metadata value for AVC (`CodecID` 7, Adobe FLV v10.1 §E.4.3).
@@ -272,7 +273,7 @@ impl PushTransport for RtmpTransport {
         let refused = media.tracks.len() - flv_tracks.len();
         if refused > 0 && !self.warned_refused_tracks {
             self.warned_refused_tracks = true;
-            let refused_track_ids: Vec<u32> = media
+            let refused_track_ids: Vec<TrackId> = media
                 .tracks
                 .iter()
                 .filter(|t| !is_flv_codec(&t.spec.config))

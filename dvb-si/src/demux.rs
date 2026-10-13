@@ -17,7 +17,8 @@
 //! use dvb_si::tables::AnyTableSection;
 //! use dvb_si::tables::pat::{PatSection, PatEntry};
 //!
-//! const PMT_PID: u16 = 0x0100;
+//! use mpeg_ts::pid::Pid;
+//! const PMT_PID: Pid = Pid::new(0x0100);
 //! const TS_SYNC_BYTE: u8 = 0x47;
 //! const PAYLOAD_UNIT_START_INDICATOR: u8 = 0x40;
 //! const PAT_PID_LOW_BYTE: u8 = 0x00;
@@ -541,7 +542,7 @@ impl SiDemux {
                 .entries
                 .iter()
                 .filter(|e| e.program_number != 0)
-                .map(|e| Pid::new(e.pid))
+                .map(|e| e.pid)
                 .collect();
             for &pid in &new_pmt_pids {
                 self.pids.entry(pid).or_default();

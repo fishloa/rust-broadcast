@@ -13,6 +13,7 @@
 //!    annexb_to_length_prefixed(first_video_au).
 
 use std::vec::Vec;
+use transmux::TrackId;
 
 use broadcast_common::{Parse, Serialize};
 use mpeg_pes::PesAssembler;
@@ -304,7 +305,7 @@ fn ts_to_cmaf_end_to_end() {
 
     // ---- Phase 6: Build CMAF segments ---------------------------------------
     let video_track = TrackSpec::new(
-        1,
+        TrackId::new(1),
         90000,
         CodecConfig::Avc {
             config: config.clone(),
@@ -313,7 +314,7 @@ fn ts_to_cmaf_end_to_end() {
         },
     );
     let audio_track = TrackSpec::new(
-        2,
+        TrackId::new(2),
         audio_sample_rate,
         CodecConfig::Aac {
             esds: esds.clone(),
@@ -327,8 +328,8 @@ fn ts_to_cmaf_end_to_end() {
     let init_data = build_init_segment(&tracks, 1000).expect("build_init_segment must succeed");
 
     let fragment_tracks = [
-        FragmentTrackData::new(1, 0, &video_samples),
-        FragmentTrackData::new(2, 0, &audio_samples_vec),
+        FragmentTrackData::new(TrackId::new(1), 0, &video_samples),
+        FragmentTrackData::new(TrackId::new(2), 0, &audio_samples_vec),
     ];
     let media_data =
         build_media_segment(1, &fragment_tracks).expect("build_media_segment must succeed");
@@ -486,7 +487,11 @@ fn ts_to_cmaf_end_to_end() {
         75,
         "video trun must have 75 samples"
     );
-    assert_eq!(vid_traf.tfhd.track_id, 1, "video traf tfhd track_id = 1");
+    assert_eq!(
+        vid_traf.tfhd.track_id,
+        TrackId::new(1),
+        "video traf tfhd track_id = 1"
+    );
 
     // Audio trun: sample_count == total ADTS frames
     let aud_traf = &moof.traf[1];
@@ -496,7 +501,11 @@ fn ts_to_cmaf_end_to_end() {
         total_adts_frames,
         "audio trun sample count must equal total ADTS frame count"
     );
-    assert_eq!(aud_traf.tfhd.track_id, 2, "audio traf tfhd track_id = 2");
+    assert_eq!(
+        aud_traf.tfhd.track_id,
+        TrackId::new(2),
+        "audio traf tfhd track_id = 2"
+    );
 
     // ---- Phase 9: First video sample round-trip -----------------------------
     // Find mdat

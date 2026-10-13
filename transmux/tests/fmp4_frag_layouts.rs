@@ -13,6 +13,7 @@
 #![cfg(feature = "std")]
 
 use broadcast_common::Unpackage;
+use transmux::TrackId;
 use transmux::{CodecConfig, Fmp4Demux, Media};
 
 const DIR: &str = concat!(
@@ -33,7 +34,7 @@ fn demux(name: &str) -> Media {
 }
 
 /// `(track_id, per-sample bytes)` for every track, in moov order.
-fn by_track(m: &Media) -> Vec<(u32, Vec<Vec<u8>>)> {
+fn by_track(m: &Media) -> Vec<(TrackId, Vec<Vec<u8>>)> {
     m.tracks
         .iter()
         .map(|t| {
@@ -220,7 +221,7 @@ fn two_moofs_before_one_mdat_keeps_both_fragments() {
                 TrackFragmentHeaderBox {
                     // An explicit base pointing at the single `mdat` payload.
                     flags: TFHD_BASE_DATA_OFFSET_PRESENT,
-                    track_id: 1,
+                    track_id: TrackId::new(1),
                     base_data_offset: Some(0),
                     sample_description_index: None,
                     default_sample_duration: None,

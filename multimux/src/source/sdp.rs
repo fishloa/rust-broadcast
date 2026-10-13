@@ -4,6 +4,7 @@
 use crate::error::{MultimuxError, Result};
 use crate::source::TrackInit;
 use sdp_types::Session;
+use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::rtpmap_clock_rate;
@@ -87,7 +88,7 @@ pub fn parse_sdp_tracks(sdp: &[u8]) -> Result<Vec<TrackInit>> {
             }
         };
         tracks.push(TrackInit {
-            track_id,
+            track_id: TrackId::new(track_id),
             kind,
             config,
             clock_rate,
@@ -143,7 +144,7 @@ a=control:streamid=0\r\n";
         assert_eq!(t.clock_rate, 90_000);
         assert_eq!(t.channel, 0, "first media gets RTP channel 0");
         assert_eq!(t.control.as_deref(), Some("streamid=0"));
-        assert_eq!(t.track_id, 1);
+        assert_eq!(t.track_id, TrackId::new(1));
         assert_eq!(
             t.payload_type, 96,
             "the m=video line's fmt payload type must be captured"

@@ -15,7 +15,7 @@ use broadcast_common::{Parse, Serialize};
 /// `table_id` for the Resolution provider Notification Table.
 pub const TABLE_ID: u8 = 0x79;
 /// Well-known PID on which RNT sections are carried.
-pub const PID: u16 = 0x0016;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0016);
 
 const HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 6;

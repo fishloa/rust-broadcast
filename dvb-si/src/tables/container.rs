@@ -38,7 +38,7 @@ pub const TABLE_ID: u8 = 0x75;
 
 /// The Container table has no well-known PID — its carriage is signalled via
 /// descriptors. `0x0000` is a placeholder following the DSM-CC precedent.
-pub const PID: u16 = 0x0000;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
 
 /// Bytes 0-2: table_id (1) + flags + private_section_length (2).
 const HEADER_LEN: usize = 3;
@@ -321,7 +321,7 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x75);
-        assert_eq!(PID, 0x0000);
+        assert_eq!(PID.value(), 0x0000);
     }
 
     #[test]

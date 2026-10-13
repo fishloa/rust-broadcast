@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+### Changed (BREAKING)
+
+- **PID fields are the typed `mpeg_ts::pid::Pid`** (typed-ids wave 1b): `PatEntry::pid`, `PmtStream::elementary_pid`, `PmtSection::pcr_pid`, `CatCaEntry::ca_pid`, `CaDescriptor::ca_pid`, `Cp::cp_pid`, `PatSection::nit_pid()` (now `Option<Pid>`), and every per-table `PID` const (`pat::PID`, `eit::PID`, ...). The matching constructors (`PatEntry::new`, `PmtStream::new`, `PmtSection::new`, `CaDescriptor::new`, `Cp::new`) take `Pid`, so an over-13-bit value is unrepresentable (use `Pid::try_new` at a user boundary); the old serialize-time `FieldOverflow` for `ca_pid`/`cp_pid` is gone with it. Parse masks the 13 wire bits into the `Pid` (the 3 reserved bits stay in their typed reserved fields); serde and `dvb-tools` output are byte-identical (`Pid` serializes transparently as the number). `CatCaEntry` no longer derives `Default` (`Pid` has none). `XaitPid::xait_pid` stays a raw `u16`: TS 102 727 Table 95 defines one 16-bit field with no reserved split and the crate round-trips it verbatim. Migration: drop `Pid::new(entry.pid)` / `.value()` adaptors at call sites; pass `Pid::new(..)`/`Pid::try_new(..)` where a literal was used. Gate: `real_capture_byte_identity` now compares every PAT/PMT/CA PID against an independent 13-bit wire extraction over all real captures; `tests/typed_pid.rs` pins the boundary.
 ### Changed (breaking)
 
 - **Tables preserve every `reserved` / `reserved_future_use` bit of the section header and body in typed fields** (reserved-bits audit §3.6): parse is tolerant and `serialize` re-emits what was parsed, so a real sender's section re-serializes byte-identically (CRC is recomputed); values built with `new()` / `Default` carry the spec fill (all ones, except the PSI `'0'` bit, `reserved_zero_future_use` = 0).

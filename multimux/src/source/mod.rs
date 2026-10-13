@@ -48,6 +48,7 @@ pub mod udp;
 pub mod whip;
 
 use std::time::Duration;
+use transmux::TrackId;
 
 /// Read-size hint every MPEG-2 TS transport reports via
 /// [`broadcast_common::Stage::demand`], and the read-buffer size the
@@ -913,7 +914,9 @@ mod driver_progress_tests {
                 if self.feed_count == 2 {
                     self.pending.push_back(SessionEvent::NewProgram {
                         program: ProgramId(0),
-                        tracks: vec![crate::source::ts_program::test_support::track_spec(1)],
+                        tracks: vec![crate::source::ts_program::test_support::track_spec(
+                            TrackId::new(1),
+                        )],
                     });
                 } else if self.feed_count == 3 {
                     self.pending.push_back(SessionEvent::TracksChanged {
@@ -1020,10 +1023,10 @@ mod advance_route_tests {
         );
         let mut progress = DriverProgress::new();
 
-        let ts_bytes = build_ts_bytes(1, 0xAB, 90);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
         driver.feed(&ts_bytes, Timestamp::ZERO);
         advance_route(&driver, &route, &mut progress).await;
-        let more = build_ts_bytes(1, 0xCD, 90);
+        let more = build_ts_bytes(TrackId::new(1), 0xCD, 90);
         driver.feed(&more, Timestamp::from_nanos(1));
         advance_route(&driver, &route, &mut progress).await;
 
@@ -1048,7 +1051,7 @@ mod advance_route_tests {
 #[derive(Debug, Clone)]
 pub struct TrackInit {
     /// 1-based track id used across the segmenter + playlist URIs.
-    pub track_id: u32,
+    pub track_id: TrackId,
     /// Payload kind (H.264 / AAC).
     pub kind: RtpMediaKind,
     /// Codec config built from the SDP fmtp.

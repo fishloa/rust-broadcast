@@ -10,6 +10,7 @@
 //!  - a part's sample set is reconstructed and compared to `build_media_segment`.
 
 use broadcast_hls::{DecimalSeconds, LowLatencyConfig, MediaPlaylist, MediaSegment, PartSpec};
+use transmux::TrackId;
 use transmux::ll_hls::LlHlsSegmenter;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, DecoderConfigDescriptor,
@@ -56,7 +57,7 @@ fn dummy_esds() -> EsdsBox {
 
 fn video_track() -> TrackSpec {
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         90_000,
         CodecConfig::Avc {
             config: dummy_avc_config(),
@@ -68,7 +69,7 @@ fn video_track() -> TrackSpec {
 
 fn audio_track() -> TrackSpec {
     TrackSpec::new(
-        2,
+        TrackId::new(2),
         48_000,
         CodecConfig::Aac {
             esds: dummy_esds(),
@@ -128,10 +129,10 @@ fn parts_are_valid_fragments_and_sum_to_segment() {
 
     // ~1 s of 30 fps video: 30 AUs @ 3000 ticks. First AU is a keyframe.
     for i in 0..30u8 {
-        seg.push(1, vsample(i == 0, i)).unwrap();
+        seg.push(TrackId::new(1), vsample(i == 0, i)).unwrap();
     }
     // Next keyframe past the target closes the segment; then flush the tail.
-    seg.push(1, vsample(true, 200)).unwrap();
+    seg.push(TrackId::new(1), vsample(true, 200)).unwrap();
     seg.flush().unwrap();
 
     let parts = seg.take_ready_parts();
@@ -183,9 +184,9 @@ fn independent_flag_tracks_sync_first_sample() {
     // 30 AUs: keyframe only at index 0. Part 1 starts at a sync sample; parts 2
     // and 3 start mid-GOP (no sync).
     for i in 0..30u8 {
-        seg.push(1, vsample(i == 0, i)).unwrap();
+        seg.push(TrackId::new(1), vsample(i == 0, i)).unwrap();
     }
-    seg.push(1, vsample(true, 200)).unwrap();
+    seg.push(TrackId::new(1), vsample(true, 200)).unwrap();
     seg.flush().unwrap();
 
     let parts = seg.take_ready_parts();
@@ -406,7 +407,7 @@ fn part_media_matches_whole_segment_build() {
         if *is_video {
             let s = vsample(*idx == 0, *idx as u8);
             vid_samples.push(s.clone());
-            seg.push(1, s).unwrap();
+            seg.push(TrackId::new(1), s).unwrap();
         } else {
             let s = Sample::from_raw(
                 vec![(*idx as u8).wrapping_add(1); 20],
@@ -415,11 +416,11 @@ fn part_media_matches_whole_segment_build() {
                 Some(AUD_DUR),
             );
             aud_samples.push(s.clone());
-            seg.push(2, s).unwrap();
+            seg.push(TrackId::new(2), s).unwrap();
         }
     }
     // Close the (single) segment and flush.
-    seg.push(1, vsample(true, 250)).unwrap();
+    seg.push(TrackId::new(1), vsample(true, 250)).unwrap();
     seg.flush().unwrap();
 
     let parts = seg.take_ready_parts();
@@ -444,7 +445,7 @@ fn part_media_matches_whole_segment_build() {
                     let sz = s.sample_size.expect("sample_size present") as usize;
                     let bytes = mdat[cursor..cursor + sz].to_vec();
                     cursor += sz;
-                    if tid == 1 {
+                    if tid == TrackId::new(1) {
                         part_vid.push(bytes);
                     } else {
                         part_aud.push(bytes);
@@ -457,8 +458,8 @@ fn part_media_matches_whole_segment_build() {
     // The whole segment built from the identical sample set.
     let whole = {
         let frags = vec![
-            FragmentTrackData::new(1, 0, &vid_samples),
-            FragmentTrackData::new(2, 0, &aud_samples),
+            FragmentTrackData::new(TrackId::new(1), 0, &vid_samples),
+            FragmentTrackData::new(TrackId::new(2), 0, &aud_samples),
         ];
         transmux::pipeline::build_media_segment(1, &frags).unwrap()
     };
@@ -478,7 +479,7 @@ fn part_media_matches_whole_segment_build() {
                 let sz = s.sample_size.unwrap() as usize;
                 let bytes = whole_mdat[cursor..cursor + sz].to_vec();
                 cursor += sz;
-                if tid == 1 {
+                if tid == TrackId::new(1) {
                     whole_vid.push(bytes);
                 } else {
                     whole_aud.push(bytes);
@@ -514,7 +515,7 @@ fn part_media_matches_whole_segment_build() {
                 let sz = s.sample_size.unwrap() as usize;
                 let bytes = seg_mdat[c2..c2 + sz].to_vec();
                 c2 += sz;
-                if tid == 1 {
+                if tid == TrackId::new(1) {
                     seg_vid.push(bytes);
                 } else {
                     seg_aud.push(bytes);
@@ -551,7 +552,7 @@ fn part_media_matches_whole_segment_build() {
 #[test]
 fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
     let zero_ts_video = TrackSpec::new(
-        1,
+        TrackId::new(1),
         0, // malformed mdhd.timescale
         CodecConfig::Avc {
             config: dummy_avc_config(),
@@ -568,7 +569,7 @@ fn zero_anchor_timescale_does_not_render_inf_or_nan_into_playlist() {
     );
 
     for i in 0..10u8 {
-        seg.push(1, vsample(i == 0, i)).unwrap();
+        seg.push(TrackId::new(1), vsample(i == 0, i)).unwrap();
     }
     seg.flush().unwrap();
 
@@ -742,10 +743,10 @@ fn every_part_carries_both_tracks() {
     // 1 s of 30 fps video; 2 audio frames per video frame (1024 @ 48 kHz).
     let mut ai: usize = 0;
     for i in 0..30u8 {
-        seg.push(1, vsample(i == 0, i)).unwrap();
+        seg.push(TrackId::new(1), vsample(i == 0, i)).unwrap();
         for _ in 0..2 {
             seg.push(
-                2,
+                TrackId::new(2),
                 Sample::new(vec![ai as u8; 8], None, None, Some(1024), true),
             )
             .unwrap();
@@ -794,7 +795,7 @@ fn part_duration_never_exceeds_part_target() {
     // 334 ms part target, 33.3 ms AUs: the pre-fix code emitted 367 ms parts.
     let mut seg = LlHlsSegmenter::with_part_target(vec![video_track()], 1000, 1.0, 334).unwrap();
     for i in 0..30u8 {
-        seg.push(1, vsample(i == 0, i)).unwrap();
+        seg.push(TrackId::new(1), vsample(i == 0, i)).unwrap();
     }
     seg.flush().unwrap();
     let parts = seg.take_ready_parts();
@@ -845,10 +846,11 @@ fn long_segment_parts_stay_within_part_target() {
     for (_, is_video, i) in items {
         if is_video {
             // Keyframe only at the segment start: one 6 s segment.
-            seg.push(1, vsample(i == 0, (i % 251) as u8)).unwrap();
+            seg.push(TrackId::new(1), vsample(i == 0, (i % 251) as u8))
+                .unwrap();
         } else {
             seg.push(
-                2,
+                TrackId::new(2),
                 Sample::new(vec![(i % 251) as u8; 8], None, None, Some(AUD_DUR), true),
             )
             .unwrap();

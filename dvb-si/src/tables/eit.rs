@@ -26,7 +26,7 @@ pub const TABLE_ID_SCHEDULE_OTHER_FIRST: u8 = 0x60;
 /// Last table_id in the schedule range for other TSes (inclusive).
 pub const TABLE_ID_SCHEDULE_OTHER_LAST: u8 = 0x6F;
 /// Well-known PID on which EIT is carried.
-pub const PID: u16 = 0x0012;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0012);
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;

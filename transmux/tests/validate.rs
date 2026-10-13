@@ -7,6 +7,7 @@
 //! `build_init_segment` / `build_media_segment`.
 
 use broadcast_common::Parse;
+use transmux::TrackId;
 use transmux::{
     CodecConfig, FragmentTrackData, MovieBox, MovieFragmentBox, Sample, SampleEntryVariant,
     Severity, StblChild, TrackSpec, build_init_segment, build_media_segment, validate_cmaf_track,
@@ -81,7 +82,7 @@ fn video_spec(moov: &MovieBox) -> TrackSpec {
         _ => panic!("expected avc1"),
     };
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         track_timescale(moov, 0),
         CodecConfig::Avc {
             config: avc.config.clone(),
@@ -131,7 +132,11 @@ fn clean_init() -> Vec<u8> {
 /// A clean media segment with the given sequence_number + base decode time,
 /// carrying the real video samples.
 fn clean_media(seq: u32, base_time: u64, samples: &[Sample]) -> Vec<u8> {
-    build_media_segment(seq, &[FragmentTrackData::new(1, base_time, samples)]).expect("build media")
+    build_media_segment(
+        seq,
+        &[FragmentTrackData::new(TrackId::new(1), base_time, samples)],
+    )
+    .expect("build media")
 }
 
 // ---------------------------------------------------------------------------
@@ -718,7 +723,7 @@ fn unknown_track_id_bites() {
     let data = fixture();
     let samples = video_samples(&data);
     // Track id 7 is not in `clean_init()` (which carries the fixture's own id).
-    let media = build_media_segment(1, &[FragmentTrackData::new(7, 0, &samples)])
+    let media = build_media_segment(1, &[FragmentTrackData::new(TrackId::new(7), 0, &samples)])
         .expect("build media with an undeclared track id");
 
     let issues = validate_cmaf_track(&clean_init(), &[&media]);

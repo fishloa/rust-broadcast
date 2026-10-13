@@ -64,6 +64,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use container_probe::{Format, IsobmffLayout, Probe};
@@ -947,7 +948,7 @@ where
     F: FnMut(&mut D) -> Option<DemuxEvent>,
 {
     let mut tracks: Vec<(TrackSpec, Vec<Sample>)> = Vec::new();
-    let mut index: std::collections::HashMap<u32, usize> = std::collections::HashMap::new();
+    let mut index: std::collections::HashMap<TrackId, usize> = std::collections::HashMap::new();
 
     while let Some(event) = poll(demux) {
         match event {
@@ -1162,7 +1163,7 @@ struct FileIngestSession {
     /// [`advance_offsets`] after each pass.
     offsets: Vec<i64>,
     /// `track_ref` → the track's id, for publishing.
-    track_ids: Vec<u32>,
+    track_ids: Vec<TrackId>,
     /// The file's earliest presentation time in seconds, across all tracks —
     /// the pacing anchor each sample's within-pass offset is measured from.
     file_start_secs: f64,
@@ -1204,7 +1205,7 @@ impl FileIngestSession {
             .iter()
             .map(|i| i.due_seconds)
             .fold(f64::INFINITY, f64::min);
-        let track_ids: Vec<u32> = specs.iter().map(|t| t.track_id).collect();
+        let track_ids: Vec<TrackId> = specs.iter().map(|t| t.track_id).collect();
         let mut session = FileIngestSession {
             program,
             tracks: specs.into(),
@@ -1290,7 +1291,7 @@ impl FileIngestSession {
             }
             let within_pass = (item.due_seconds - self.file_start_secs).max(0.0);
             self.queue
-                .push_back((self.track_ids[item.track_ref], sample, within_pass));
+                .push_back((self.track_ids[item.track_ref].value(), sample, within_pass));
         }
         advance_offsets(&mut self.offsets, &self.ranges)?;
         Ok(())
@@ -1357,7 +1358,7 @@ impl Stage for FileIngestSession {
             .pop_front()
             .map(|(track_id, sample, _)| SessionEvent::Sample {
                 program: self.program,
-                track_id,
+                track_id: TrackId::new(track_id),
                 retention: RetentionClass::Timed,
                 sample,
             })
@@ -1536,7 +1537,7 @@ mod loop_tests {
     /// sample (skipping the program/established events). DTS (decode time) is
     /// the intra-track key the reader emits in — decode order — so it is the
     /// timestamp whose monotonicity the loop offset must preserve.
-    fn drain_dts(sess: &mut FileIngestSession) -> Vec<(u32, i64)> {
+    fn drain_dts(sess: &mut FileIngestSession) -> Vec<(TrackId, i64)> {
         let mut dts = Vec::new();
         while let Some(ev) = sess.poll() {
             if let SessionEvent::Sample {
@@ -1589,8 +1590,8 @@ mod loop_tests {
         assert!(!pass1.is_empty(), "a looped pass must emit samples");
 
         // Per-track: concatenate pass0 + pass1 and assert strictly monotonic.
-        let both: Vec<(u32, i64)> = pass0.into_iter().chain(pass1).collect();
-        let mut by_track: std::collections::HashMap<u32, Vec<i64>> =
+        let both: Vec<(TrackId, i64)> = pass0.into_iter().chain(pass1).collect();
+        let mut by_track: std::collections::HashMap<TrackId, Vec<i64>> =
             std::collections::HashMap::new();
         for (track_id, d) in &both {
             by_track.entry(*track_id).or_default().push(*d);
@@ -1664,7 +1665,7 @@ mod playout_tests {
 
     /// A minimal AVC [`TrackSpec`] at the given timescale — `build_playout`
     /// reads only `timescale`/`track_id`, so the codec config body is inert.
-    fn avc_spec(track_id: u32, timescale: u32) -> TrackSpec {
+    fn avc_spec(track_id: TrackId, timescale: u32) -> TrackSpec {
         TrackSpec::new(
             track_id,
             timescale,
@@ -1698,7 +1699,7 @@ mod playout_tests {
             .map(|&p| Sample::new(vec![0], Some(p), Some(p), Some(10), true))
             .collect();
         ParsedFile {
-            tracks: vec![Track::new(avc_spec(1, 90_000), samples)],
+            tracks: vec![Track::new(avc_spec(TrackId::new(1), 90_000), samples)],
         }
     }
 
@@ -1792,7 +1793,7 @@ mod playout_tests {
     fn zero_duration_falls_back_to_unit_frame() {
         let samples = vec![Sample::new(vec![0], Some(0), Some(0), Some(0), true)];
         let parsed = ParsedFile {
-            tracks: vec![Track::new(avc_spec(1, 90_000), samples)],
+            tracks: vec![Track::new(avc_spec(TrackId::new(1), 90_000), samples)],
         };
         let (_, _, ranges) = parsed.build_playout();
         assert_eq!(
@@ -1827,7 +1828,7 @@ mod playout_tests {
     fn no_playable_samples_fails_session() {
         let samples = vec![Sample::new(vec![0], None, None, None, false)];
         let parsed = ParsedFile {
-            tracks: vec![Track::new(avc_spec(1, 90_000), samples)],
+            tracks: vec![Track::new(avc_spec(TrackId::new(1), 90_000), samples)],
         };
         let err = FileIngestSession::new(parsed, ProgramId(0), true, false);
         assert!(
@@ -1847,7 +1848,7 @@ mod playout_tests {
         );
         let samples = vec![Sample::new(vec![0], None, None, None, false)];
         let parsed = ParsedFile {
-            tracks: vec![Track::new(avc_spec(1, 90_000), samples)],
+            tracks: vec![Track::new(avc_spec(TrackId::new(1), 90_000), samples)],
         };
         let err = reader.publish_looping(parsed).await;
         assert!(

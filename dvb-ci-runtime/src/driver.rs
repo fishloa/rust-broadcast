@@ -2041,7 +2041,7 @@ pub(crate) mod tests {
             true,
             0,
             0,
-            0x0200,
+            Pid::new(0x0200),
             dvb_si::descriptors::DescriptorLoop::new(Box::leak(prog_info.into_boxed_slice())),
             Vec::new(),
         )

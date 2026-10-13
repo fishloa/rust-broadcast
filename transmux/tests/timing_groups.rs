@@ -8,6 +8,7 @@
 //! - Mutation: mutating a field changes the serialized bytes.
 
 use broadcast_common::{Parse, Serialize};
+use transmux::TrackId;
 use transmux::{
     GROUPING_TYPE_ROLL, ProducerReferenceTimeBox, SampleGroupDescriptionBox, SampleToGroupBox,
     SbgpEntry, SgpdEntry, SubSampleDescriptor, SubSampleInformationBox, SubsEntry,
@@ -111,7 +112,11 @@ fn prft_real_fixture_parse_fields() {
 
     assert_eq!(parsed.version, 1, "prft version");
     assert_eq!(parsed.flags, 0x000018, "prft flags");
-    assert_eq!(parsed.reference_track_id, 1, "prft reference_track_id");
+    assert_eq!(
+        parsed.reference_track_id,
+        TrackId::new(1),
+        "prft reference_track_id"
+    );
     assert_eq!(
         parsed.ntp_timestamp, 0xedefe3e3_a7ae147a,
         "prft ntp_timestamp"

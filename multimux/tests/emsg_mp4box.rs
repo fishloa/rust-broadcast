@@ -14,6 +14,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Duration;
+use transmux::TrackId;
 
 use broadcast_common::Parse;
 use media_plane::ProgramId;
@@ -80,7 +81,7 @@ fn track_spec() -> TrackSpec {
     let sprop = "Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==";
     let config = transmux::avc_config_from_sprop(sprop).expect("valid sprop");
     TrackSpec::new(
-        TRACK_ID,
+        TrackId::new(TRACK_ID),
         TIMESCALE,
         CodecConfig::Avc {
             config,
@@ -124,7 +125,7 @@ fn build_real_trunk(pts_origin: i64, frames: u32) -> (Arc<RouteHandle>, Arc<Trun
     for i in 0..frames {
         let pts = pts_origin + i64::from(i) * i64::from(FRAME_DUR);
         writer.publish(
-            TRACK_ID,
+            TrackId::new(TRACK_ID),
             RetentionClass::Timed,
             sample_at(pts, i % SYNC_INTERVAL == 0),
         );

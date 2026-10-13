@@ -28,6 +28,7 @@
 //! track — each needs values chosen to make the property observable.
 
 use broadcast_common::Unpackage;
+use transmux::TrackId;
 use transmux::pipeline::DataCarriage;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, AvcPps, AvcSps, CodecConfig, Media,
@@ -52,7 +53,7 @@ fn avc_spec(track_id: u32) -> TrackSpec {
         sps_ext: vec![],
     };
     TrackSpec::new(
-        track_id,
+        TrackId::new(track_id),
         TIMESCALE,
         CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),
@@ -151,7 +152,7 @@ fn data_track_at(
         .collect();
     Track::new_at(
         TrackSpec::new(
-            track_id,
+            TrackId::new(track_id),
             timescale,
             CodecConfig::Data {
                 stream_type: 0x86,
@@ -197,7 +198,7 @@ fn data_track(
         .collect();
     Track::new(
         TrackSpec::new(
-            track_id,
+            TrackId::new(track_id),
             timescale,
             CodecConfig::Data {
                 stream_type: 0x86, // SCTE-35 (ISO/IEC 13818-1 Table 2-34) — arbitrary; only used as a non-video codec-kind stand-in here
@@ -322,7 +323,7 @@ fn concat_is_contiguous_and_preserves_bytes() {
     // Discontinuity reported at the join sample.
     assert_eq!(res.discontinuity_points.len(), 1);
     assert_eq!(res.discontinuity_points[0].sample_index, k);
-    assert_eq!(res.discontinuity_points[0].track_id, 1);
+    assert_eq!(res.discontinuity_points[0].track_id, TrackId::new(1));
     assert_eq!(res.discontinuity_points[0].presentation_time, ta_end);
 }
 
@@ -344,7 +345,7 @@ fn concat_muxed_tfdts_are_monotonic_across_join() {
     // The segmenter counts from 0; offset every emitted tfdt by the anchor.
     let anchor = joined.start_decode_time;
     for s in &joined.samples {
-        seg.push(1, s.clone()).unwrap();
+        seg.push(TrackId::new(1), s.clone()).unwrap();
     }
     seg.flush().unwrap();
     let segments = seg.take_ready();
@@ -503,7 +504,7 @@ fn discontinuity_points_drive_segmenter() {
                 seg.mark_discontinuity();
             }
         }
-        seg.push(1, s.clone()).unwrap();
+        seg.push(TrackId::new(1), s.clone()).unwrap();
     }
     // The final (trailing) segment is closed by flush; flag it if it is a join.
     let trailing_seg = joined.samples.len().div_ceil(GOP) - 1;
@@ -743,13 +744,13 @@ fn concat_preserves_av_alignment_across_mixed_timescales() {
         .media
         .tracks
         .iter()
-        .find(|t| t.spec.track_id == 1)
+        .find(|t| t.spec.track_id == TrackId::new(1))
         .unwrap();
     let audio_out = res
         .media
         .tracks
         .iter()
-        .find(|t| t.spec.track_id == 2)
+        .find(|t| t.spec.track_id == TrackId::new(2))
         .unwrap();
 
     let video_join_index = 5; // a_video had 5 samples
@@ -809,21 +810,21 @@ fn concat_repeated_does_not_accumulate_rounding_drift() {
         let video_before_len = media
             .tracks
             .iter()
-            .find(|t| t.spec.track_id == 1)
+            .find(|t| t.spec.track_id == TrackId::new(1))
             .unwrap()
             .samples
             .len();
         let audio_before_len = media
             .tracks
             .iter()
-            .find(|t| t.spec.track_id == 2)
+            .find(|t| t.spec.track_id == TrackId::new(2))
             .unwrap()
             .samples
             .len();
         let video_before_last = media
             .tracks
             .iter()
-            .find(|t| t.spec.track_id == 1)
+            .find(|t| t.spec.track_id == TrackId::new(1))
             .unwrap()
             .samples
             .last()
@@ -846,8 +847,16 @@ fn concat_repeated_does_not_accumulate_rounding_drift() {
 
         media = concat(&media, &increment).unwrap().media;
 
-        let video_out = media.tracks.iter().find(|t| t.spec.track_id == 1).unwrap();
-        let audio_out = media.tracks.iter().find(|t| t.spec.track_id == 2).unwrap();
+        let video_out = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.track_id == TrackId::new(1))
+            .unwrap();
+        let audio_out = media
+            .tracks
+            .iter()
+            .find(|t| t.spec.track_id == TrackId::new(2))
+            .unwrap();
 
         let video_join_dts = video_out.samples[video_before_len].dts.unwrap();
         assert_eq!(
@@ -931,13 +940,13 @@ fn concat_leaves_untimed_section_samples_as_none() {
         .media
         .tracks
         .iter()
-        .find(|t| t.spec.track_id == 1)
+        .find(|t| t.spec.track_id == TrackId::new(1))
         .unwrap();
     let data_out = res2
         .media
         .tracks
         .iter()
-        .find(|t| t.spec.track_id == 2)
+        .find(|t| t.spec.track_id == TrackId::new(2))
         .unwrap();
     assert_eq!(video_out.samples.len(), 5);
     assert!(
@@ -1317,7 +1326,7 @@ fn splice_cut_on_a_gapped_track_uses_absolute_dts() {
     let point = res
         .discontinuity_points
         .iter()
-        .find(|p| p.track_id == 9)
+        .find(|p| p.track_id == TrackId::new(9))
         .expect("a discontinuity point for the spliced track");
     assert_eq!(
         point.sample_index, 0,
@@ -1378,7 +1387,7 @@ fn nonvideo_cut_uses_the_absolute_instant_not_the_track_relative_offset() {
     let point = res
         .discontinuity_points
         .iter()
-        .find(|p| p.track_id == 9)
+        .find(|p| p.track_id == TrackId::new(9))
         .expect("a splice point for the non-video track");
 
     // The video cut snaps back to the sync sample at absolute dts 100000
@@ -1442,7 +1451,7 @@ fn cut_rescale_rounds_up_so_audio_is_never_ahead_of_video() {
     let point = res
         .discontinuity_points
         .iter()
-        .find(|p| p.track_id == 9)
+        .find(|p| p.track_id == TrackId::new(9))
         .expect("a splice point for the audio track");
     assert_eq!(
         point.sample_index, 48_001,
@@ -1455,7 +1464,7 @@ fn cut_rescale_rounds_up_so_audio_is_never_ahead_of_video() {
     let point = res
         .discontinuity_points
         .iter()
-        .find(|p| p.track_id == 9)
+        .find(|p| p.track_id == TrackId::new(9))
         .expect("a splice point for the audio track");
     assert_eq!(
         point.sample_index, 48_000,
@@ -1498,7 +1507,7 @@ fn negative_dts_track_cut_is_not_saturated_to_a_wrong_index() {
     let point = res
         .discontinuity_points
         .iter()
-        .find(|p| p.track_id == 9)
+        .find(|p| p.track_id == TrackId::new(9))
         .expect("a splice point for the audio track");
     assert_eq!(
         point.sample_index, 100,
@@ -1510,7 +1519,7 @@ fn negative_dts_track_cut_is_not_saturated_to_a_wrong_index() {
     let point = res
         .discontinuity_points
         .iter()
-        .find(|p| p.track_id == 9)
+        .find(|p| p.track_id == TrackId::new(9))
         .expect("a splice point for the audio track");
     assert_eq!(point.sample_index, 199);
 }

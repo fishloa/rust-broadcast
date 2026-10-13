@@ -16,7 +16,7 @@ pub const TABLE_ID_ACTUAL: u8 = 0x42;
 /// table_id value for SDT describing services on other TSes.
 pub const TABLE_ID_OTHER: u8 = 0x46;
 /// Well-known PID on which SDT is carried.
-pub const PID: u16 = 0x0011;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0011);
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;

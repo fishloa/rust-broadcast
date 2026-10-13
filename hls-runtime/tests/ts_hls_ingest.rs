@@ -21,6 +21,7 @@
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use hls_runtime::client::{Action, HlsClient, Output};
@@ -93,7 +94,7 @@ fn drive_to_end(client: &mut HlsClient) -> Vec<Output> {
 /// segment through `transmux::TsDemux` one at a time (the same
 /// one-segment-at-a-time shape `HlsClient`'s TS routing uses internally),
 /// independent of the client entirely.
-fn oracle_track_totals(segment_names: &[String]) -> BTreeMap<u32, usize> {
+fn oracle_track_totals(segment_names: &[String]) -> BTreeMap<TrackId, usize> {
     let mut totals = BTreeMap::new();
     for name in segment_names {
         let bytes = read_fixture(name);
@@ -204,7 +205,7 @@ fn client_ingests_classic_ts_segment_hls_end_to_end() {
     );
 
     // Per-track sample totals must match the direct TsDemux oracle exactly.
-    let mut got_totals: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut got_totals: BTreeMap<TrackId, usize> = BTreeMap::new();
     for output in &outputs {
         if let Output::Samples { track_id, samples } = output {
             *got_totals.entry(*track_id).or_insert(0) += samples.len();
@@ -291,7 +292,7 @@ fn avc_track_dts(media: &transmux::Media) -> (u32, Vec<i64>) {
         .find(|t| matches!(t.spec.config, CodecConfig::Avc { .. }))
         .expect("fixture has an AVC track");
     (
-        track.spec.track_id,
+        track.spec.track_id.value(),
         track
             .samples
             .iter()
@@ -311,7 +312,7 @@ fn timing_of(media: &transmux::Media, pick: impl Fn(&CodecConfig) -> bool) -> (u
         .find(|t| pick(&t.spec.config))
         .expect("fixture has the track");
     (
-        track.spec.track_id,
+        track.spec.track_id.value(),
         track
             .samples
             .iter()
@@ -409,7 +410,9 @@ fn pts_wrap_between_segments_is_unrolled_across_the_boundary() {
         outputs
             .iter()
             .filter_map(|o| match o {
-                Output::Samples { track_id, samples } if *track_id == track => Some(samples),
+                Output::Samples { track_id, samples } if *track_id == TrackId::new(track) => {
+                    Some(samples)
+                }
                 _ => None,
             })
             .flatten()

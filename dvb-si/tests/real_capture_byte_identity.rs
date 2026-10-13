@@ -111,6 +111,75 @@ struct Survey {
     parse_fail: Vec<(String, String, String)>,
     files: u64,
     files_with_si: u64,
+    /// Typed `Pid` fields compared against the independently extracted
+    /// 13-bit wire value (PAT program_map_PID, PMT PCR_PID / elementary_PID,
+    /// CA_descriptor CA_PID).
+    pid_checks: u64,
+    /// `(file, what)` of every typed PID that differs from the wire value.
+    pid_mismatch: Vec<(String, String)>,
+}
+
+/// The 13-bit PID in the low bits of a 2-byte wire word, computed here with
+/// plain shifts/masks, independent of `Pid`/`pid_of` in the crate under test.
+fn wire_pid(hi: u8, lo: u8) -> u16 {
+    ((u16::from(hi) & 0x1F) << 8) | u16::from(lo)
+}
+
+/// Independently walk a PAT section's program loop and compare every typed
+/// `PatEntry::pid` with the wire 13 bits.
+fn check_pat_pids(s: &mut Survey, file: &str, orig: &[u8], pat: &dvb_si::tables::pat::PatSection) {
+    let section_length = ((usize::from(orig[1]) & 0x0F) << 8) | usize::from(orig[2]);
+    let end = 3 + section_length - 4;
+    let wire: Vec<u16> = orig[8..end]
+        .chunks_exact(4)
+        .map(|c| wire_pid(c[2], c[3]))
+        .collect();
+    let typed: Vec<u16> = pat.entries.iter().map(|e| e.pid.value()).collect();
+    s.pid_checks += wire.len() as u64;
+    if wire != typed {
+        s.pid_mismatch.push((
+            file.to_string(),
+            format!("PAT wire {wire:04X?} typed {typed:04X?}"),
+        ));
+    }
+}
+
+/// Independently walk a PMT section and compare PCR_PID and every
+/// elementary_PID.
+fn check_pmt_pids(s: &mut Survey, file: &str, orig: &[u8], pmt: &dvb_si::tables::pmt::PmtSection) {
+    let section_length = ((usize::from(orig[1]) & 0x0F) << 8) | usize::from(orig[2]);
+    let end = 3 + section_length - 4;
+    let wire_pcr = wire_pid(orig[8], orig[9]);
+    s.pid_checks += 1;
+    if wire_pcr != pmt.pcr_pid.value() {
+        s.pid_mismatch.push((
+            file.to_string(),
+            format!(
+                "PMT PCR wire {wire_pcr:04X} typed {:04X}",
+                pmt.pcr_pid.value()
+            ),
+        ));
+    }
+    let pil = ((usize::from(orig[10]) & 0x0F) << 8) | usize::from(orig[11]);
+    let mut pos = 12 + pil;
+    let mut wire = Vec::new();
+    while pos + 5 <= end {
+        wire.push(wire_pid(orig[pos + 1], orig[pos + 2]));
+        let esl = ((usize::from(orig[pos + 3]) & 0x0F) << 8) | usize::from(orig[pos + 4]);
+        pos += 5 + esl;
+    }
+    let typed: Vec<u16> = pmt
+        .streams
+        .iter()
+        .map(|x| x.elementary_pid.value())
+        .collect();
+    s.pid_checks += wire.len() as u64;
+    if wire != typed {
+        s.pid_mismatch.push((
+            file.to_string(),
+            format!("PMT ES wire {wire:04X?} typed {typed:04X?}"),
+        ));
+    }
 }
 
 fn hex(b: &[u8]) -> String {
@@ -187,6 +256,18 @@ fn survey_loop(s: &mut Survey, file: &str, seen: &mut BTreeSet<Vec<u8>>, l: &Des
         if matches!(d, AnyDescriptor::Unknown { .. }) {
             continue;
         }
+        if let AnyDescriptor::Ca(ca) = &d
+            && body.len() >= 4
+        {
+            let wire = wire_pid(body[2], body[3]);
+            s.pid_checks += 1;
+            if wire != ca.ca_pid.value() {
+                s.pid_mismatch.push((
+                    file.to_string(),
+                    format!("CA wire {wire:04X} typed {:04X}", ca.ca_pid.value()),
+                ));
+            }
+        }
         let key = if tag == EXTENSION_TAG {
             format!(
                 "0x{tag:02X}/ext 0x{:02X} {}",
@@ -252,6 +333,11 @@ fn survey_section(
         s.bad_crc += 1;
         return;
     }
+    match t {
+        AnyTableSection::PatSection(p) => check_pat_pids(s, file, original, p),
+        AnyTableSection::PmtSection(p) => check_pmt_pids(s, file, original, p),
+        _ => {}
+    }
     let key = format!("{} (tid 0x{:02X})", t.name(), original[0]);
     record(&mut s.sections, key, file, original, Some(re));
 
@@ -293,7 +379,7 @@ fn survey_file(s: &mut Survey, path: &Path) {
     };
     // Pass 1: learn the PIDs that carry sections outside the well-known SI
     // set (private sections, DSM-CC, MPE) from the PMTs.
-    let mut extra: BTreeSet<u16> = BTreeSet::new();
+    let mut extra: BTreeSet<mpeg_ts::pid::Pid> = BTreeSet::new();
     {
         let mut d = SiDemux::builder().build();
         let mut p = start;
@@ -316,7 +402,7 @@ fn survey_file(s: &mut Survey, path: &Path) {
     }
     let mut b = SiDemux::builder().emit_repeats(true);
     for pid in &extra {
-        b = b.pid(mpeg_ts::pid::Pid::new(*pid));
+        b = b.pid(*pid);
     }
     let mut demux = b.build();
     let mut seen_sections: BTreeSet<Vec<u8>> = BTreeSet::new();
@@ -381,6 +467,18 @@ fn real_captures_reserialize_byte_identically() {
         for (f, h, e) in &s.parse_fail {
             eprintln!("PARSE-FAIL {f}: {e} | {h}");
         }
+    }
+    assert!(
+        s.pid_mismatch.is_empty(),
+        "typed Pid field differs from the independently extracted wire value:\n{:?}",
+        s.pid_mismatch
+    );
+    if !files.is_empty() {
+        eprintln!("typed PID fields verified against wire: {}", s.pid_checks);
+        assert!(
+            s.pid_checks > 0,
+            "no PAT/PMT/CA PID was checked: the gate does not bite"
+        );
     }
     let tolerated = |f: &str, k: &str| TOLERATED.iter().any(|(p, tk)| f.starts_with(p) && *tk == k);
     let mut failures = Vec::new();

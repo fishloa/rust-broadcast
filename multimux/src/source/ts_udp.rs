@@ -24,6 +24,8 @@
 
 use std::convert::Infallible;
 use std::time::Duration;
+#[cfg(test)]
+use transmux::TrackId;
 
 use broadcast_common::Timestamp;
 use media_plane::ingress::Dialer;
@@ -342,7 +344,7 @@ mod tests {
         // stream could fit in the single datagram that also resolves the
         // PMT, and `Trunk::subscribe`'s "starting from now" contract (no
         // backlog) would have nothing left to observe.
-        let ts_bytes = build_ts_bytes(1, 0xAB, 60);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 60);
         let sender = UdpSocket::bind("127.0.0.1:0").await.expect("bind sender");
 
         let socket = bind(&route).await.expect("bind route socket");

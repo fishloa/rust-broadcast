@@ -75,9 +75,9 @@ const NULL_PID: Pid = Pid::new(0x1FFF);
 pub(crate) struct PsiRegenOp {
     /// Authoritative mapping: program_number → PMT PID, derived from parsed PMT
     /// sections (each PMT carries its own program_number in its body).
-    pmt_programs: BTreeMap<u16, u16>,
+    pmt_programs: BTreeMap<u16, Pid>,
     /// Per-PID section reassemblers for candidate PMT PIDs.
-    pmt_reasm: BTreeMap<u16, SectionReassembler>,
+    pmt_reasm: BTreeMap<Pid, SectionReassembler>,
     /// transport_stream_id hint, copied from the original PAT if one is seen.
     /// Not derivable from PMTs, so absent a PAT we fall back to 0.
     transport_stream_id: Option<u16>,
@@ -172,8 +172,7 @@ impl PsiRegenOp {
                 .entries
                 .iter()
                 .find(|e| e.program_number == dvb_si::tables::pat::PROGRAM_NUMBER_NIT)
-                .map(|e| e.pid)
-                .map(Pid::new);
+                .map(|e| e.pid);
             self.pat_hints_observed = true;
         }
     }
@@ -186,7 +185,7 @@ impl PsiRegenOp {
     fn scan_pmt(&mut self, pid: Pid, payload: &[u8], pusi: bool) -> bool {
         // Only start tracking a PID once we see a section beginning with the PMT
         // table_id (bounds memory: we don't reassemble every PID in the mux).
-        let reasm = match self.pmt_reasm.entry(pid.value()) {
+        let reasm = match self.pmt_reasm.entry(pid) {
             alloc::collections::btree_map::Entry::Occupied(e) => e.into_mut(),
             alloc::collections::btree_map::Entry::Vacant(slot) => {
                 if !pusi {
@@ -205,7 +204,7 @@ impl PsiRegenOp {
         while let Some(section) = reasm.pop_section() {
             if let Ok(p) = PmtSection::parse(&section) {
                 // (program_number from the PMT body → the PID it arrived on).
-                let prev = self.pmt_programs.insert(p.program_number, pid.value());
+                let prev = self.pmt_programs.insert(p.program_number, pid);
                 if prev.is_some() {
                     cycle_wrapped = true;
                 }
@@ -225,10 +224,7 @@ impl PsiRegenOp {
 
         let mut entries: Vec<PatEntry> = Vec::with_capacity(self.pmt_programs.len() + 1);
         if let Some(pid) = self.network_pid {
-            entries.push(PatEntry::new(
-                dvb_si::tables::pat::PROGRAM_NUMBER_NIT,
-                pid.value(),
-            ));
+            entries.push(PatEntry::new(dvb_si::tables::pat::PROGRAM_NUMBER_NIT, pid));
         }
         entries.extend(
             self.pmt_programs

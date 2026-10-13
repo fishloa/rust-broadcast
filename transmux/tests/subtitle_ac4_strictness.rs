@@ -27,6 +27,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use transmux::pipeline::{CodecConfig, SubtitleFormat, build_init_segment};
@@ -188,7 +189,7 @@ fn ac4_round_trips_through_cmaf_mux_then_demux() {
     let config = Ac4SpecificBox::parse(DAC4_ORACLE).expect("parse dac4 oracle");
 
     let spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         48_000,
         CodecConfig::Ac4 {
             config: config.clone(),

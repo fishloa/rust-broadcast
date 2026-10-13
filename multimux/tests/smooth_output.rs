@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use transmux::TrackId;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
@@ -41,7 +42,7 @@ const PART_TARGET_MS: u32 = 500;
 fn video_track_spec() -> TrackSpec {
     let config = avc_config_from_sprop(SPROP).expect("valid sprop");
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         VIDEO_TIMESCALE,
         CodecConfig::Avc {
             config,
@@ -94,7 +95,8 @@ fn feed_via_segmenter(
 
     for batch in batches {
         for (track_id, sample) in batch {
-            seg.push(track_id, sample).expect("push succeeds");
+            seg.push(TrackId::new(track_id), sample)
+                .expect("push succeeds");
         }
         for part in seg.take_ready_parts() {
             store.add_part(program, part);
@@ -161,7 +163,7 @@ impl SlideRoute {
                 Some(W13_FRAME_DUR),
                 is_sync,
             );
-            self.seg.push(1, sample).expect("push");
+            self.seg.push(TrackId::new(1), sample).expect("push");
             self.next_frame += 1;
         }
         for part in self.seg.take_ready_parts() {
@@ -648,13 +650,17 @@ async fn w13_real_multitrack_per_chunk_timeline_is_exact() {
     for track in &media.tracks {
         if specs.iter().any(|s| s.track_id == track.spec.track_id) {
             for sample in &track.samples {
-                events.push((sample.dts.unwrap_or(0), track.spec.track_id, sample.clone()));
+                events.push((
+                    sample.dts.unwrap_or(0),
+                    track.spec.track_id.value(),
+                    sample.clone(),
+                ));
             }
         }
     }
     events.sort_by_key(|(dts, _, _)| *dts);
     for (_, track_id, sample) in events {
-        seg.push(track_id, sample).expect("push");
+        seg.push(TrackId::new(track_id), sample).expect("push");
     }
     seg.flush().expect("flush");
     for part in seg.take_ready_parts() {

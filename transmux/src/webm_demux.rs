@@ -47,6 +47,7 @@
 //! next block's presentation time (the final block reuses the previous delta, or
 //! the track's `DefaultDuration` when only one block is present).
 
+use crate::TrackId;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use core::marker::PhantomData;
@@ -895,7 +896,7 @@ fn build_media(
         by_track.entry(b.track_number).or_default().push(b);
     }
     let mut out_tracks: Vec<Track> = Vec::new();
-    let mut track_id: u32 = 1;
+    let mut track_id = TrackId::new(1);
 
     for info in &tracks {
         // `DefaultDuration` (ns per frame) in this track's IR ticks, when the
@@ -1003,7 +1004,7 @@ fn build_media(
             samples,
             anchor,
         ));
-        track_id += 1;
+        track_id = track_id.next();
     }
 
     Ok(Media::new(out_tracks, IR_TIMESCALE))
@@ -1891,7 +1892,7 @@ mod tests {
         };
         let media = Media::new(
             alloc::vec![Track::new_at(
-                TrackSpec::new(1, IR_TIMESCALE, config),
+                TrackSpec::new(TrackId::new(1), IR_TIMESCALE, config),
                 alloc::vec![sample],
                 0,
             )],
@@ -1924,8 +1925,11 @@ mod tests {
         // avcC declares 4-byte lengths and the sample's NALs are unchanged.
         let init = build_init_segment(core::slice::from_ref(&track.spec), IR_TIMESCALE)
             .expect("init segment");
-        let frag = build_media_segment(1, &[FragmentTrackData::new(1, 0, &track.samples)])
-            .expect("media segment");
+        let frag = build_media_segment(
+            1,
+            &[FragmentTrackData::new(TrackId::new(1), 0, &track.samples)],
+        )
+        .expect("media segment");
         let mut both = init;
         both.extend_from_slice(&frag);
         let reparsed = crate::media::Fmp4Demux::new()
@@ -1996,7 +2000,7 @@ mod tests {
         };
         let media = Media::new(
             alloc::vec![Track::new_at(
-                TrackSpec::new(1, IR_TIMESCALE, config),
+                TrackSpec::new(TrackId::new(1), IR_TIMESCALE, config),
                 alloc::vec![sample],
                 0,
             )],
@@ -2023,8 +2027,11 @@ mod tests {
         let expected: [u8; 8] = [0x00, 0x00, 0x00, 0x04, 0x26, 0x01, 0xAF, 0x09];
         let init =
             build_init_segment(core::slice::from_ref(&track.spec), IR_TIMESCALE).expect("init");
-        let frag = build_media_segment(1, &[FragmentTrackData::new(1, 0, &track.samples)])
-            .expect("media segment");
+        let frag = build_media_segment(
+            1,
+            &[FragmentTrackData::new(TrackId::new(1), 0, &track.samples)],
+        )
+        .expect("media segment");
         let mut both = init;
         both.extend_from_slice(&frag);
         let reparsed = crate::media::Fmp4Demux::new()

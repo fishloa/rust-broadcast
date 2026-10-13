@@ -215,6 +215,7 @@
 
 use broadcast_common::Timestamp;
 use bytes::Bytes;
+use transmux::TrackId;
 use transmux::TrackSpec;
 
 use crate::trunk::{SampleCursorItem, SegmentCursorItem};
@@ -394,12 +395,12 @@ pub trait ServedEgress: Send + Sync + 'static {
 #[non_exhaustive]
 pub struct TrackSelection {
     /// The selected tracks' ids, matching [`transmux::TrackSpec::track_id`].
-    pub track_ids: Vec<u32>,
+    pub track_ids: Vec<TrackId>,
 }
 
 impl TrackSelection {
     /// Select exactly `track_ids`.
-    pub fn new(track_ids: Vec<u32>) -> Self {
+    pub fn new(track_ids: Vec<TrackId>) -> Self {
         TrackSelection { track_ids }
     }
 }
@@ -534,7 +535,7 @@ mod tests {
         )
     }
 
-    fn video_spec(track_id: u32) -> TrackSpec {
+    fn video_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
             90_000,
@@ -717,12 +718,16 @@ mod tests {
         };
 
         assert!(matches!(
-            egress.negotiate(&[video_spec(1)]),
+            egress.negotiate(&[video_spec(TrackId::new(1))]),
             NegotiationOutcome::Accepted(_)
         ));
 
         for i in 0u8..5 {
-            writer.publish(1, crate::trunk::RetentionClass::Timed, sample(i));
+            writer.publish(
+                TrackId::new(1),
+                crate::trunk::RetentionClass::Timed,
+                sample(i),
+            );
         }
 
         // No executor anywhere: draining a cursor and calling `send` is
@@ -758,7 +763,7 @@ mod tests {
         }
 
         fn renegotiate(&mut self, tracks: &[TrackSpec]) -> NegotiationOutcome<Self::Error> {
-            let proposed: Vec<u32> = tracks.iter().map(|t| t.track_id).collect();
+            let proposed: Vec<TrackId> = tracks.iter().map(|t| t.track_id).collect();
             if self.committed && proposed != self.selection.track_ids {
                 // MUTATION TARGET: returning `NegotiationOutcome::Accepted`
                 // here instead (silently adopting `proposed` without
@@ -786,16 +791,16 @@ mod tests {
             selection: TrackSelection::default(),
             committed: false,
         };
-        match egress.negotiate(&[video_spec(1)]) {
-            NegotiationOutcome::Accepted(sel) => assert_eq!(sel.track_ids, vec![1]),
+        match egress.negotiate(&[video_spec(TrackId::new(1))]) {
+            NegotiationOutcome::Accepted(sel) => assert_eq!(sel.track_ids, vec![TrackId::new(1)]),
             other => panic!("expected Accepted, got {other:?}"),
         }
         egress.committed = false; // still free to accept the next change
-        match egress.renegotiate(&[video_spec(1), video_spec(2)]) {
+        match egress.renegotiate(&[video_spec(TrackId::new(1)), video_spec(TrackId::new(2))]) {
             NegotiationOutcome::Accepted(sel) => {
                 assert_eq!(
                     sel.track_ids,
-                    vec![1, 2],
+                    vec![TrackId::new(1), TrackId::new(2)],
                     "the added track (2) must reach the selection"
                 )
             }
@@ -816,10 +821,10 @@ mod tests {
             selection: TrackSelection::default(),
             committed: false,
         };
-        egress.negotiate(&[video_spec(1)]);
+        egress.negotiate(&[video_spec(TrackId::new(1))]);
         assert!(egress.committed);
 
-        match egress.renegotiate(&[video_spec(1), video_spec(2)]) {
+        match egress.renegotiate(&[video_spec(TrackId::new(1)), video_spec(TrackId::new(2))]) {
             NegotiationOutcome::Refused { reason } => {
                 assert!(!reason.is_empty(), "a refusal must carry a real reason");
             }
@@ -829,7 +834,7 @@ mod tests {
             ),
         }
         // The output's own selection is unchanged by the refused proposal.
-        assert_eq!(egress.selection.track_ids, vec![1]);
+        assert_eq!(egress.selection.track_ids, vec![TrackId::new(1)]);
     }
 
     // --- 4. SegmentEgress: every segment while pinning; ArchiveOverrun

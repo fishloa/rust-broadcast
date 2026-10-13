@@ -27,6 +27,7 @@
 //! - **subs**: ISO/IEC 14496-12:2015 §8.7.7.2 — version 0: `subsample_size` is
 //!   u16; version 1: `subsample_size` is u32.
 
+use crate::TrackId;
 use crate::error::{Error, Result};
 use crate::init_segment::bounded_entry_count;
 use alloc::vec::Vec;
@@ -88,7 +89,7 @@ pub struct ProducerReferenceTimeBox {
     /// FullBox flags `[23:0]`.
     pub flags: u32,
     /// Track ID of the reference track (§8.16.5.3).
-    pub reference_track_id: u32,
+    pub reference_track_id: TrackId,
     /// UTC time in NTP format (§8.16.5.3).
     pub ntp_timestamp: u64,
     /// Media time in the reference track's timescale.
@@ -112,8 +113,12 @@ impl ProducerReferenceTimeBox {
         let version = body[0];
         let flags = u32::from_be_bytes([0, body[1], body[2], body[3]]);
         let mut c = FULLBOX_EXTRA_SIZE;
-        let reference_track_id =
-            u32::from_be_bytes([body[c], body[c + 1], body[c + 2], body[c + 3]]);
+        let reference_track_id = TrackId::new(u32::from_be_bytes([
+            body[c],
+            body[c + 1],
+            body[c + 2],
+            body[c + 3],
+        ]));
         c += 4;
         let ntp_timestamp = u64::from_be_bytes([
             body[c],
@@ -208,7 +213,7 @@ impl Serialize for ProducerReferenceTimeBox {
         buf[c + 2] = fb[2];
         buf[c + 3] = fb[3];
         c += 4;
-        buf[c..c + 4].copy_from_slice(&self.reference_track_id.to_be_bytes());
+        buf[c..c + 4].copy_from_slice(&self.reference_track_id.value().to_be_bytes());
         c += 4;
         buf[c..c + 8].copy_from_slice(&self.ntp_timestamp.to_be_bytes());
         c += 8;
@@ -1027,7 +1032,7 @@ mod tests {
         let b = ProducerReferenceTimeBox {
             version: 0,
             flags: 0,
-            reference_track_id: 1,
+            reference_track_id: TrackId::new(1),
             ntp_timestamp: 0x1234_5678_9abc_def0,
             media_time: 0x0000_0000_0000_1234,
         };
@@ -1042,7 +1047,7 @@ mod tests {
         let b = ProducerReferenceTimeBox {
             version: 1,
             flags: 0x000018,
-            reference_track_id: 1,
+            reference_track_id: TrackId::new(1),
             ntp_timestamp: 0xedefe3e3_a7ae147a,
             media_time: 0x0000_0000_0000_1c20,
         };

@@ -35,6 +35,7 @@
 //! [`low_latency`](broadcast_hls::MediaPlaylist::low_latency) config is set;
 //! see the `broadcast-hls` crate for the exact RFC 8216bis syntax and sections.
 
+use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::vec::Vec;
 
@@ -144,7 +145,7 @@ struct TrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(1, 90_000, CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), 90_000, CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -160,8 +161,8 @@ struct TrackState {
 /// let mut seg = LlHlsSegmenter::with_part_target(vec![spec()], 1000, 1.0, 334).unwrap();
 /// let init = seg.init_segment().unwrap();      // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
-/// seg.push(1, au(true)).unwrap();              // keyframe
-/// seg.push(1, au(false)).unwrap();
+/// seg.push(transmux::TrackId::new(1), au(true)).unwrap();              // keyframe
+/// seg.push(transmux::TrackId::new(1), au(false)).unwrap();
 /// assert!(seg.take_ready_parts().is_empty());  // still buffering: below the part target
 /// seg.flush().unwrap();                        // trailing part + segment
 /// assert_eq!(seg.take_ready_parts().len(), 1);
@@ -381,7 +382,7 @@ impl LlHlsSegmenter {
     /// [`MAX_PENDING_SAMPLES_PER_TRACK`] un-cut samples (no anchor sync sample
     /// to cut on — call [`flush`](Self::flush) to close a trailing partial
     /// segment).
-    pub fn push(&mut self, track_id: u32, sample: Sample) -> Result<()> {
+    pub fn push(&mut self, track_id: TrackId, sample: Sample) -> Result<()> {
         let idx = self
             .tracks
             .iter()
@@ -693,7 +694,7 @@ pub enum LlHlsStageOutput {
 /// `Stage`, or a mix of both on the same instance — the caller uses to
 /// retrieve it.
 impl Stage for LlHlsSegmenter {
-    type In<'a> = (u32, Sample);
+    type In<'a> = (TrackId, Sample);
     type Out = LlHlsStageOutput;
     type Error = Error;
 

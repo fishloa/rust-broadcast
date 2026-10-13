@@ -37,7 +37,7 @@ use broadcast_common::{Parse, Serialize};
 pub const TABLE_ID: u8 = 0x3E;
 
 /// MPE has no well-known PID — the elementary PID comes from the PMT.
-pub const PID: u16 = 0x0000;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
 
 /// 48-bit MAC address in network order (most-significant byte first).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -647,7 +647,7 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x3E);
-        assert_eq!(PID, 0x0000);
+        assert_eq!(PID.value(), 0x0000);
     }
 
     #[cfg(feature = "serde")]

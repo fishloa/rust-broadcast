@@ -317,7 +317,7 @@ fn describe_track(track: &Track, protected_scheme: Option<&'static str>) -> Mp4T
     };
 
     Mp4Track {
-        track_id: track.track_id(),
+        track_id: track.track_id().value(),
         timescale: track.spec.timescale,
         kind: track_kind(config),
         codec: codec_label(config),
@@ -337,7 +337,7 @@ fn describe_track(track: &Track, protected_scheme: Option<&'static str>) -> Mp4T
 
 fn build_report(
     media: Media,
-    protected_track_id: Option<u32>,
+    protected_track_id: Option<transmux::TrackId>,
     protected_scheme: Option<&'static str>,
 ) -> Mp4Report {
     let tracks = media

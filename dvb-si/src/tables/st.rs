@@ -12,7 +12,7 @@ use broadcast_common::{Parse, Serialize};
 /// table_id for Stuffing Table.
 pub const TABLE_ID: u8 = 0x72;
 /// Well-known PID on which ST is carried (shared with TDT/TOT).
-pub const PID: u16 = 0x0014;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0014);
 
 const HEADER_LEN: usize = 3;
 
@@ -245,7 +245,7 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x72);
-        assert_eq!(PID, 0x0014);
+        assert_eq!(PID.value(), 0x0014);
     }
 
     #[test]

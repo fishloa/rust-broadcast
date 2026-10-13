@@ -5,6 +5,7 @@
 //! Every test bites against the demuxed oracle, never hardcoded values.
 
 use broadcast_common::{Package, Serialize, Unpackage};
+use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{base64_decode, hex_decode};
 use transmux::{
@@ -785,16 +786,16 @@ fn streaming_depacketiser_reports_reordered_timestamps() {
         .map(|p| p.as_contiguous().to_vec())
         .collect();
     let mut d = transmux::RtpStreamDepacketiser::new(vec![transmux::RtpStreamTrack::new(
-        1,
+        TrackId::new(1),
         RtpMediaKind::H264,
         config,
         VIDEO_CLOCK_RATE,
     )]);
     let mut samples = Vec::new();
     for pkt in &packets {
-        samples.extend(d.push(1, pkt).unwrap());
+        samples.extend(d.push(TrackId::new(1), pkt).unwrap());
     }
-    samples.extend(d.flush(1).unwrap());
+    samples.extend(d.flush(TrackId::new(1)).unwrap());
 
     let mut reorders = 0usize;
     while let Some(e) = d.poll_loss_event() {

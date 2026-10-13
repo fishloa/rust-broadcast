@@ -70,11 +70,13 @@
 //! `Trunk`'s four rings. [`HlsOrigin::set_init`] is the (small, honest) side
 //! channel for it — not a duplicate of anything `Trunk` holds.
 
+use super::ids::{Generation, PartIndex, SegmentSeq};
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
+use transmux::TrackId;
 
 use broadcast_common::{Timestamp, Unpackage};
 use broadcast_hls::{
@@ -131,7 +133,7 @@ fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// Track id for the single rendition served per stream (no multi-track/
 /// multi-rendition support yet).
-pub const DEFAULT_TRACK_ID: u32 = 1;
+pub const DEFAULT_TRACK_ID: TrackId = TrackId::new(1);
 
 /// Which container [`HlsOrigin`] serves segments/parts as — orthogonal to
 /// whether LL-HLS is enabled ([`HlsOriginBuilder::low_latency`]); issue #873.
@@ -280,7 +282,7 @@ pub enum HlsRequest {
     Playlist {
         /// The track id to render the playlist for (a naming parameter only —
         /// see [`DEFAULT_TRACK_ID`]).
-        track_id: u32,
+        track_id: TrackId,
         /// The blocking-reload query parameters, if any.
         query: BlockingQuery,
     },
@@ -314,7 +316,7 @@ struct WindowSegment {
     sequence_number: u32,
     /// The init-segment generation this segment was cut against (see
     /// [`InitStore`]).
-    init_gen: u32,
+    init_gen: Generation,
     bytes: Bytes,
     duration_secs: f64,
     discontinuous: bool,
@@ -349,13 +351,13 @@ pub struct ClosedSegment {
     pub discontinuous: bool,
     /// The init-segment generation this segment was cut against (see
     /// [`HlsOrigin::init_name`]).
-    pub init_generation: u32,
+    pub init_generation: Generation,
 }
 
 impl ClosedSegment {
     /// The same segment, cut against init generation `generation`.
     #[must_use]
-    pub fn with_init_generation(mut self, generation: u32) -> Self {
+    pub fn with_init_generation(mut self, generation: Generation) -> Self {
         self.init_generation = generation;
         self
     }
@@ -377,7 +379,7 @@ impl ClosedSegment {
             start_ns,
             duration_secs,
             discontinuous,
-            init_generation: 1,
+            init_generation: Generation::new(1),
         }
     }
 }
@@ -451,7 +453,7 @@ impl Window {
     /// lost segments, starts a new run: the old entries are cleared and the
     /// entry is marked discontinuous (RFC 8216 §4.3.4.3) rather than being
     /// appended under a wrong implied number.
-    fn push(&mut self, entry: SegmentEntry, init_gen: u32) {
+    fn push(&mut self, entry: SegmentEntry, init_gen: Generation) {
         let follows = self
             .segments
             .back()
@@ -525,14 +527,14 @@ struct WindowView {
 #[derive(Default)]
 struct InitStore {
     /// Generation of `current` (`0` = no init set yet); starts at `1`.
-    generation: u32,
+    generation: Generation,
     current: Option<Bytes>,
     /// The last [`INIT_HISTORY`] generations' bytes, oldest first.
-    history: VecDeque<(u32, Bytes)>,
+    history: VecDeque<(Generation, Bytes)>,
     /// `(first origin sequence number cut against it, generation)`, oldest
     /// first: segment `seq` belongs to the last entry whose first number is
     /// `<= seq`.
-    starts: VecDeque<(u32, u32)>,
+    starts: VecDeque<(u32, Generation)>,
 }
 
 impl InitStore {
@@ -542,7 +544,7 @@ impl InitStore {
         if self.current.as_ref() == Some(&bytes) {
             return;
         }
-        self.generation = self.generation.saturating_add(1);
+        self.generation = Generation::new(self.generation.value().saturating_add(1));
         // The very first init covers every segment ever seen.
         let first_seq = if self.current.is_none() { 0 } else { next_seq };
         self.current = Some(bytes.clone());
@@ -557,16 +559,16 @@ impl InitStore {
     }
 
     /// The generation segment `seq` was cut against (`1` before any init).
-    fn generation_for(&self, seq: u32) -> u32 {
+    fn generation_for(&self, seq: u32) -> Generation {
         self.starts
             .iter()
             .rev()
             .find(|(first, _)| *first <= seq)
             .or_else(|| self.starts.front())
-            .map_or(1, |&(_, generation)| generation)
+            .map_or(Generation::new(1), |&(_, generation)| generation)
     }
 
-    fn bytes_of(&self, generation: u32) -> Option<Bytes> {
+    fn bytes_of(&self, generation: Generation) -> Option<Bytes> {
         self.history
             .iter()
             .find(|(g, _)| *g == generation)
@@ -622,7 +624,7 @@ enum ImmediateResource {
     CurrentInit,
     /// `init-{track}-{instance}-{generation}.mp4` (`epoch` is the instance
     /// token).
-    VersionedInit { epoch: u64, generation: u32 },
+    VersionedInit { epoch: u64, generation: Generation },
     /// `seg-{track}-{seq}.{ext}` (`epoch: None`, legacy) or
     /// `seg-{track}-{instance}-{seq}.{ext}` (`epoch` is the instance token).
     Segment { epoch: Option<u64>, seq: u64 },
@@ -647,7 +649,7 @@ fn parse_immediate(file: &str, container: Container) -> Option<ImmediateResource
             (None, ..) => Some(ImmediateResource::CurrentInit),
             (Some(epoch), Some(generation), None) => Some(ImmediateResource::VersionedInit {
                 epoch: epoch.parse().ok()?,
-                generation: generation.parse().ok()?,
+                generation: Generation::new(generation.parse().ok()?),
             }),
             _ => None,
         };
@@ -1045,23 +1047,23 @@ impl HlsOrigin {
     }
 
     /// The wire name of init generation `generation` for `track_id`.
-    pub fn init_name(&self, track_id: u32, generation: u32) -> String {
+    pub fn init_name(&self, track_id: TrackId, generation: Generation) -> String {
         format!("init-{track_id}-{}-{generation}.mp4", self.instance)
     }
 
-    fn segment_name(&self, track_id: u32, seq: u32, ext: &str) -> String {
+    fn segment_name(&self, track_id: TrackId, seq: SegmentSeq, ext: &str) -> String {
         format!(
             "seg-{track_id}-{}-{}.{ext}",
             self.instance,
-            self.public_msn(seq)
+            self.public_msn(seq.value())
         )
     }
 
-    fn part_name(&self, track_id: u32, seq: u32, idx: u32, ext: &str) -> String {
+    fn part_name(&self, track_id: TrackId, seq: SegmentSeq, idx: PartIndex, ext: &str) -> String {
         format!(
             "part-{track_id}-{}-{}.{idx}.{ext}",
             self.instance,
-            self.public_msn(seq)
+            self.public_msn(seq.value())
         )
     }
 
@@ -1235,12 +1237,12 @@ impl HlsOrigin {
     /// parts cannot back the playlist's promise that they stay downloadable
     /// (RFC 8216bis §6.2.2), and a run with a hole would number the parts
     /// wrongly.
-    fn resident_part_specs(&self, track_id: u32, seq: u32, ext: &str) -> Vec<PartSpec> {
+    fn resident_part_specs(&self, track_id: TrackId, seq: SegmentSeq, ext: &str) -> Vec<PartSpec> {
         // Keyed by index: a stale entry reusing a number is overwritten by
         // the newer one (publish order).
         let by_index: BTreeMap<u32, PartEntry> = self
             .trunk
-            .parts_in_segment(seq)
+            .parts_in_segment(seq.value())
             .into_iter()
             .map(|p| (p.part_index, p))
             .collect();
@@ -1255,7 +1257,12 @@ impl HlsOrigin {
         by_index
             .values()
             .map(|p| PartSpec {
-                uri: self.part_name(track_id, p.segment_number, p.part_index, ext),
+                uri: self.part_name(
+                    track_id,
+                    SegmentSeq::new(p.segment_number),
+                    PartIndex::new(p.part_index),
+                    ext,
+                ),
                 // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
                 duration: DecimalSeconds::new(p.duration.as_secs_f64())
                     .expect("Duration::as_secs_f64 is finite, >= 0"),
@@ -1283,7 +1290,7 @@ impl HlsOrigin {
     /// forbidden in an HLS quoted-string/URI — audit BH-W7, issue
     /// #1111; unreachable for this origin, which only ever supplies
     /// its own generated URIs).
-    fn render_playlist(&self, track_id: u32) -> core::result::Result<String, String> {
+    fn render_playlist(&self, track_id: TrackId) -> core::result::Result<String, String> {
         self.drain();
         // Snapshot the window and release its lock before any `Trunk` call:
         // `live_edge`, the part lookups and the event lookups below take the
@@ -1338,7 +1345,7 @@ impl HlsOrigin {
         for s in window.segments.iter().rev() {
             let keep = low_latency_enabled && behind_secs <= retention_secs;
             closed_parts.push(if keep {
-                self.resident_part_specs(track_id, s.sequence_number, ext)
+                self.resident_part_specs(track_id, SegmentSeq::new(s.sequence_number), ext)
             } else {
                 Vec::new()
             });
@@ -1346,7 +1353,7 @@ impl HlsOrigin {
         }
         closed_parts.reverse();
         let fmp4 = self.container == Container::Fmp4;
-        let map_for = |generation: u32| {
+        let map_for = |generation: Generation| {
             fmp4.then(|| MapTag {
                 uri: self.init_name(track_id, generation),
                 byte_range: None,
@@ -1359,7 +1366,7 @@ impl HlsOrigin {
             .zip(closed_parts)
             .map(|(s, parts)| MediaSegment {
                 map: map_for(s.init_gen),
-                uri: self.segment_name(track_id, s.sequence_number, ext),
+                uri: self.segment_name(track_id, SegmentSeq::new(s.sequence_number), ext),
                 // `duration_secs` is always `Duration::as_secs_f64()`
                 // (issue #1140): a `std::time::Duration` can never be
                 // negative or non-finite.
@@ -1379,7 +1386,12 @@ impl HlsOrigin {
                 open_parts
                     .iter()
                     .map(|p| PartSpec {
-                        uri: self.part_name(track_id, p.segment_number, p.part_index, ext),
+                        uri: self.part_name(
+                            track_id,
+                            SegmentSeq::new(p.segment_number),
+                            PartIndex::new(p.part_index),
+                            ext,
+                        ),
                         // `p.duration` is a `std::time::Duration`: always
                         // finite and non-negative (issue #1140).
                         duration: DecimalSeconds::new(p.duration.as_secs_f64())
@@ -1401,7 +1413,12 @@ impl HlsOrigin {
                 .max()
                 .map(|idx| idx.saturating_add(1))
                 .unwrap_or(0);
-            self.part_name(track_id, open_seq, next_idx, ext)
+            self.part_name(
+                track_id,
+                SegmentSeq::new(open_seq),
+                PartIndex::new(next_idx),
+                ext,
+            )
         });
         // `#EXT-X-MAP`: unconditional under Fmp4 (RFC 8216bis §3.1.2 MUST);
         // omitted under MpegTs by default (§3.1.1's PAT/PMT-or-MAP
@@ -1418,7 +1435,7 @@ impl HlsOrigin {
         // carries it as a bare tag.
         let mut extra_tags = Vec::new();
         if fmp4 && segments.is_empty() && open_segment.is_none() {
-            let generation = locked(&self.init).generation.max(1);
+            let generation = locked(&self.init).generation.max(Generation::new(1));
             extra_tags.push(format!(
                 "#EXT-X-MAP:URI=\"{}\"",
                 self.init_name(track_id, generation)
@@ -1483,7 +1500,7 @@ impl HlsOrigin {
 
     fn resolve_playlist(
         &self,
-        track_id: u32,
+        track_id: TrackId,
         query: BlockingQuery,
         now: Timestamp,
         await_policy: AwaitPolicy,
@@ -1707,6 +1724,52 @@ mod tests {
             .expect("both required fields set");
         origin.set_init(vec![0xAAu8; 8]);
         (trunk, origin, writer)
+    }
+
+    /// #1159: the resource-naming functions take distinct id types, and every
+    /// argument lands in its own slot of the wire name. All six numbers differ
+    /// (track 3, instance 7, generation 4, sequence 5, part 2, offset 100), so
+    /// a swapped or misrouted argument changes the exact string.
+    #[test]
+    fn resource_names_place_every_distinct_id_in_its_own_slot() {
+        let (_trunk, origin, _writer) = make_origin();
+        let track = TrackId::new(3);
+        assert_eq!(origin.instance(), 7);
+        assert_eq!(
+            origin.init_name(track, Generation::new(4)),
+            "init-3-7-4.mp4"
+        );
+        assert_eq!(
+            origin.segment_name(track, SegmentSeq::new(5), "m4s"),
+            "seg-3-7-5.m4s"
+        );
+        assert_eq!(
+            origin.part_name(track, SegmentSeq::new(5), PartIndex::new(2), "m4s"),
+            "part-3-7-5.2.m4s"
+        );
+
+        let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(8), nz(8), nz(8), nz(64)));
+        let offset = HlsOrigin::builder(trunk)
+            .target_duration_secs(4.0)
+            .window_segments(nz(4))
+            .instance(7)
+            .media_sequence_offset(100)
+            .build()
+            .expect("both required fields set");
+        assert_eq!(
+            offset.segment_name(track, SegmentSeq::new(5), "m4s"),
+            "seg-3-7-105.m4s",
+            "the Media Sequence Number offset applies to the sequence slot only"
+        );
+        assert_eq!(
+            offset.part_name(track, SegmentSeq::new(5), PartIndex::new(2), "m4s"),
+            "part-3-7-105.2.m4s"
+        );
+        assert_eq!(
+            offset.init_name(track, Generation::new(4)),
+            "init-3-7-4.mp4",
+            "the offset never touches the generation"
+        );
     }
 
     fn seg(
@@ -2931,12 +2994,12 @@ mod tests {
     #[test]
     fn window_restarts_on_a_repeated_or_decreasing_sequence_number() {
         let mut w = Window::new(nz(6));
-        w.push(window_entry(5, 0xA5, false), 1);
-        w.push(window_entry(6, 0xA6, true), 1);
+        w.push(window_entry(5, 0xA5, false), Generation::new(1));
+        w.push(window_entry(6, 0xA6, true), Generation::new(1));
         assert_eq!(window_seqs(&w), vec![(5, false), (6, true)]);
 
         // Decrease: 3 after 6.
-        w.push(window_entry(3, 0xB3, false), 1);
+        w.push(window_entry(3, 0xB3, false), Generation::new(1));
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         // The discontinuous 6 rolled off the front.
         assert_eq!(w.discontinuity_sequence, 1);
@@ -2945,7 +3008,7 @@ mod tests {
         assert_eq!(w.bytes_of(6), None);
 
         // Repeat: 3 again with different bytes replaces, never duplicates.
-        w.push(window_entry(3, 0xC3, false), 1);
+        w.push(window_entry(3, 0xC3, false), Generation::new(1));
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         assert_eq!(w.bytes_of(3), Some(Bytes::from(vec![0xC3; 4])));
     }
@@ -2955,13 +3018,13 @@ mod tests {
     #[test]
     fn window_handles_u32_max_sequence_numbers() {
         let mut w = Window::new(nz(4));
-        w.push(window_entry(u32::MAX - 1, 1, false), 1);
-        w.push(window_entry(u32::MAX, 2, false), 1);
+        w.push(window_entry(u32::MAX - 1, 1, false), Generation::new(1));
+        w.push(window_entry(u32::MAX, 2, false), Generation::new(1));
         assert_eq!(
             window_seqs(&w),
             vec![(u32::MAX - 1, false), (u32::MAX, false)]
         );
-        w.push(window_entry(u32::MAX, 3, false), 1);
+        w.push(window_entry(u32::MAX, 3, false), Generation::new(1));
         assert_eq!(window_seqs(&w), vec![(u32::MAX, true)]);
         assert_eq!(w.bytes_of(u32::MAX), Some(Bytes::from(vec![3; 4])));
     }
@@ -2970,7 +3033,7 @@ mod tests {
     fn window_capacity_is_never_below_three_segments() {
         let mut w = Window::new(nz(1));
         for seq in 1..=5 {
-            w.push(window_entry(seq, 0, false), 1);
+            w.push(window_entry(seq, 0, false), Generation::new(1));
         }
         assert_eq!(window_seqs(&w), vec![(3, false), (4, false), (5, false)]);
     }
@@ -3025,7 +3088,7 @@ mod tests {
     fn bytes_of_addresses_exactly_the_matching_entry() {
         let mut w = Window::new(nz(6));
         for (seq, tag) in [(5u32, 0x15u8), (6, 0x16), (7, 0x17)] {
-            w.push(window_entry(seq, tag, false), 1);
+            w.push(window_entry(seq, tag, false), Generation::new(1));
         }
         assert_eq!(w.bytes_of(5), Some(Bytes::from(vec![0x15; 4])));
         assert_eq!(w.bytes_of(6), Some(Bytes::from(vec![0x16; 4])));

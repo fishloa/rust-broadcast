@@ -8,6 +8,7 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
+use transmux::TrackId;
 
 use bytes::Bytes;
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
@@ -48,7 +49,7 @@ fn publish_with_readers(readers: usize, iters: u64) -> Duration {
     );
     let start = Instant::now();
     for _ in 0..iters {
-        writer.publish(TRACK, RetentionClass::Timed, sample.clone());
+        writer.publish(TrackId::new(TRACK), RetentionClass::Timed, sample.clone());
     }
     let elapsed = start.elapsed();
     stop.store(true, Ordering::Relaxed);

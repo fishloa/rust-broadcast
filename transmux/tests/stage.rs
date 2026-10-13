@@ -9,7 +9,7 @@
 //! wants. Step 2e-2 fixed the trait instead of forcing the segmenters:
 //! `Stage::In<'a>` is now a generic associated type, so byte-stream stages
 //! declare `type In<'a> = &'a [u8];` and segmenters declare
-//! `type In<'a> = (u32, Sample);` — each family states its own honest input.
+//! `type In<'a> = (TrackId, Sample);` — each family states its own honest input.
 //!
 //! What this file proves, honestly:
 //!
@@ -44,6 +44,7 @@
 //!    covers `LlHlsSegmenter` too (previously zero `Stage` coverage at all).
 
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Stage, Timestamp};
 use transmux::media::Media;
@@ -84,7 +85,7 @@ fn read(path: &std::path::Path) -> Vec<u8> {
 /// batch oracle's `Media`, not merely by count.
 fn collect_tracks_from_events(events: &[DemuxEvent]) -> Vec<(TrackSpec, Vec<Sample>)> {
     let mut specs: Vec<TrackSpec> = Vec::new();
-    let mut samples: std::collections::BTreeMap<u32, Vec<Sample>> = Default::default();
+    let mut samples: std::collections::BTreeMap<TrackId, Vec<Sample>> = Default::default();
     for e in events {
         match e {
             DemuxEvent::TrackAdded(spec) => specs.push(spec.clone()),
@@ -195,7 +196,7 @@ fn assert_samples_match_catches_wrong_payload_at_matching_count() {
 /// rest. Works against *any* `Stage` implementor regardless of what its
 /// native `feed`/`finish` signatures looked like before adoption, and
 /// regardless of whether `S::In<'a>` is a borrowed byte slice (the demux
-/// family) or an owned `(u32, Sample)` (the segmenter family) — the only
+/// family) or an owned `(TrackId, Sample)` (the segmenter family) — the only
 /// thing pinning `'a` down is whatever the caller's `inputs` iterator
 /// actually borrows (nothing, for the owned segmenter case).
 fn drive<'a, S, I>(stage: &mut S, inputs: I) -> Vec<S::Out>
@@ -405,7 +406,7 @@ fn dummy_esds() -> EsdsBox {
 
 fn audio_track_spec() -> TrackSpec {
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         48_000,
         CodecConfig::Aac {
             esds: dummy_esds(),
@@ -419,9 +420,14 @@ fn audio_track_spec() -> TrackSpec {
 /// 50 audio samples at 1024 ticks (~21.3 ms) each @ 48 kHz — audio samples
 /// are always sync (`Sample::from_raw`), so the anchor cuts purely on
 /// accumulated duration against the segmenter's target.
-fn audio_samples(n: usize) -> Vec<(u32, Sample)> {
+fn audio_samples(n: usize) -> Vec<(TrackId, Sample)> {
     (0..n)
-        .map(|_| (1u32, Sample::from_raw(vec![0u8; 4], None, None, Some(1024))))
+        .map(|_| {
+            (
+                TrackId::new(1),
+                Sample::from_raw(vec![0u8; 4], None, None, Some(1024)),
+            )
+        })
         .collect()
 }
 
@@ -442,7 +448,9 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
     let mut oracle_seg = Segmenter::new(vec![track.clone()], 1000, 0.1).unwrap();
     let mut oracle_seg_out: Vec<(Vec<u8>, SegmentMeta)> = Vec::new();
     for (track_id, sample) in samples.clone() {
-        oracle_seg.push(track_id, sample).unwrap();
+        oracle_seg
+            .push(TrackId::new(track_id.value()), sample)
+            .unwrap();
         oracle_seg_out.extend(oracle_seg.take_ready_with_meta());
     }
     oracle_seg.flush().unwrap();
@@ -463,7 +471,9 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
     let mut oracle_ll = LlSegmenter::new(vec![track.clone()], 1000, 0.1, 4).unwrap();
     let mut oracle_ll_out: Vec<transmux::Chunk> = Vec::new();
     for (track_id, sample) in samples.clone() {
-        oracle_ll.push(track_id, sample).unwrap();
+        oracle_ll
+            .push(TrackId::new(track_id.value()), sample)
+            .unwrap();
         oracle_ll_out.extend(oracle_ll.take_ready());
     }
     oracle_ll.flush().unwrap();
@@ -498,7 +508,9 @@ fn generic_drive_helper_also_spans_segmenter_stages() {
     let mut oracle_hls_parts: Vec<PartInfo> = Vec::new();
     let mut oracle_hls_segments: Vec<SegmentInfo> = Vec::new();
     for (track_id, sample) in samples.clone() {
-        oracle_hls.push(track_id, sample).unwrap();
+        oracle_hls
+            .push(TrackId::new(track_id.value()), sample)
+            .unwrap();
         oracle_hls_parts.extend(oracle_hls.take_ready_parts());
         oracle_hls_segments.extend(oracle_hls.take_ready_segments());
     }
@@ -572,7 +584,9 @@ fn ts_hls_segmenter_stage_matches_inline_push() {
     let mut inline_seg = StreamingTsHlsSegmenter::new(vec![track.clone()], 1, 10).unwrap();
     let mut inline_out = Vec::new();
     for (track_id, sample) in samples.clone() {
-        inline_seg.push(track_id, sample).unwrap();
+        inline_seg
+            .push(TrackId::new(track_id.value()), sample)
+            .unwrap();
         inline_out.extend(inline_seg.take_ready());
     }
     inline_seg.finish().unwrap();
@@ -627,7 +641,7 @@ fn segmenter_mixed_api_delivers_each_output_exactly_once() {
     let mut oracle = Segmenter::new(vec![track.clone()], 1000, 0.1).unwrap();
     let mut oracle_out: Vec<(Vec<u8>, SegmentMeta)> = Vec::new();
     for (track_id, sample) in samples.clone() {
-        oracle.push(track_id, sample).unwrap();
+        oracle.push(TrackId::new(track_id.value()), sample).unwrap();
         oracle_out.extend(oracle.take_ready_with_meta());
     }
     oracle.flush().unwrap();
@@ -649,7 +663,10 @@ fn segmenter_mixed_api_delivers_each_output_exactly_once() {
     let batch = 30;
     for (i, (track_id, sample)) in samples.by_ref().take(batch).enumerate() {
         mixed
-            .feed((track_id, sample), Timestamp::from_nanos(i as u64))
+            .feed(
+                (TrackId::new(track_id.value()), sample),
+                Timestamp::from_nanos(i as u64),
+            )
             .unwrap();
     }
     for _ in 0..2 {
@@ -661,7 +678,7 @@ fn segmenter_mixed_api_delivers_each_output_exactly_once() {
     mixed_out.extend(mixed.take_ready_with_meta());
 
     for (track_id, sample) in samples {
-        mixed.push(track_id, sample).unwrap();
+        mixed.push(TrackId::new(track_id.value()), sample).unwrap();
         mixed_out.extend(mixed.take_ready_with_meta());
     }
     mixed.finish().unwrap();
@@ -689,7 +706,7 @@ fn ll_segmenter_mixed_api_delivers_each_output_exactly_once() {
     let mut oracle = LlSegmenter::new(vec![track.clone()], 1000, 0.1, 4).unwrap();
     let mut oracle_out: Vec<transmux::Chunk> = Vec::new();
     for (track_id, sample) in samples.clone() {
-        oracle.push(track_id, sample).unwrap();
+        oracle.push(TrackId::new(track_id.value()), sample).unwrap();
         oracle_out.extend(oracle.take_ready());
     }
     oracle.flush().unwrap();
@@ -706,7 +723,10 @@ fn ll_segmenter_mixed_api_delivers_each_output_exactly_once() {
     let batch = 30;
     for (i, (track_id, sample)) in samples.by_ref().take(batch).enumerate() {
         mixed
-            .feed((track_id, sample), Timestamp::from_nanos(i as u64))
+            .feed(
+                (TrackId::new(track_id.value()), sample),
+                Timestamp::from_nanos(i as u64),
+            )
             .unwrap();
     }
     for _ in 0..2 {
@@ -717,7 +737,7 @@ fn ll_segmenter_mixed_api_delivers_each_output_exactly_once() {
     mixed_out.extend(mixed.take_ready());
 
     for (track_id, sample) in samples {
-        mixed.push(track_id, sample).unwrap();
+        mixed.push(TrackId::new(track_id.value()), sample).unwrap();
         mixed_out.extend(mixed.take_ready());
     }
     mixed.finish().unwrap();
@@ -752,7 +772,7 @@ fn ll_hls_segmenter_mixed_api_delivers_each_output_exactly_once() {
     let mut oracle_parts: Vec<PartInfo> = Vec::new();
     let mut oracle_segments: Vec<SegmentInfo> = Vec::new();
     for (track_id, sample) in samples.clone() {
-        oracle.push(track_id, sample).unwrap();
+        oracle.push(TrackId::new(track_id.value()), sample).unwrap();
         oracle_parts.extend(oracle.take_ready_parts());
         oracle_segments.extend(oracle.take_ready_segments());
     }
@@ -781,7 +801,10 @@ fn ll_hls_segmenter_mixed_api_delivers_each_output_exactly_once() {
     let batch = 30;
     for (i, (track_id, sample)) in samples.by_ref().take(batch).enumerate() {
         mixed
-            .feed((track_id, sample), Timestamp::from_nanos(i as u64))
+            .feed(
+                (TrackId::new(track_id.value()), sample),
+                Timestamp::from_nanos(i as u64),
+            )
             .unwrap();
     }
     for _ in 0..2 {
@@ -800,7 +823,7 @@ fn ll_hls_segmenter_mixed_api_delivers_each_output_exactly_once() {
     mixed_segments.extend(mixed.take_ready_segments());
 
     for (track_id, sample) in samples {
-        mixed.push(track_id, sample).unwrap();
+        mixed.push(TrackId::new(track_id.value()), sample).unwrap();
         mixed_parts.extend(mixed.take_ready_parts());
         mixed_segments.extend(mixed.take_ready_segments());
     }

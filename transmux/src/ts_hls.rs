@@ -65,6 +65,7 @@
 //!   ISO/IEC 13818-1 §2.4.4 — PSI is periodically repeated so any access point
 //!   is self-describing.
 
+use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::format;
 use alloc::string::String;
@@ -627,7 +628,7 @@ struct StreamTrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(1, 90_000, CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), 90_000, CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -641,7 +642,7 @@ struct StreamTrackState {
 /// # }
 /// // 2 s target segments, keep the last 3 in the rolling playlist.
 /// let mut seg = StreamingTsHlsSegmenter::new(vec![spec()], 2, 3).unwrap();
-/// seg.push(1, au(true)).unwrap();
+/// seg.push(transmux::TrackId::new(1), au(true)).unwrap();
 /// seg.finish().unwrap();
 /// let segments = seg.take_ready();          // write s.bytes for each
 /// assert_eq!(segments.len(), 1);
@@ -860,7 +861,7 @@ impl StreamingTsHlsSegmenter {
     ///
     /// Any segment this push cuts is queued, not returned inline (issue R2)
     /// — retrieve it via [`Self::take_ready`] or [`Stage::poll`].
-    pub fn push(&mut self, track_id: u32, sample: Sample) -> Result<()> {
+    pub fn push(&mut self, track_id: TrackId, sample: Sample) -> Result<()> {
         self.push_inner(track_id, sample)
     }
 
@@ -868,7 +869,7 @@ impl StreamingTsHlsSegmenter {
     /// [`ready`](Self::ready) rather than returning it — the shared core of
     /// the inherent and [`Stage::feed`] entry points, so neither can drift and
     /// neither needs a second queue.
-    fn push_inner(&mut self, track_id: u32, sample: Sample) -> Result<()> {
+    fn push_inner(&mut self, track_id: TrackId, sample: Sample) -> Result<()> {
         let idx = self
             .tracks
             .iter()
@@ -1193,7 +1194,7 @@ impl StreamingTsHlsSegmenter {
 /// segment is retrievable exactly once no matter which API — inherent,
 /// `Stage`, or a mix of both on the same instance — the caller uses.
 impl Stage for StreamingTsHlsSegmenter {
-    type In<'a> = (u32, Sample);
+    type In<'a> = (TrackId, Sample);
     type Out = TsSegment;
     type Error = Error;
 
@@ -1311,7 +1312,7 @@ mod tests {
     /// A section-carried SCTE-35 track spec (ISO/IEC 13818-1 Table 2-34
     /// stream_type 0x86, ANSI/SCTE 35): permanently `duration: None`, so it
     /// must never be picked as the segmentation anchor.
-    fn scte35_track(track_id: u32) -> TrackSpec {
+    fn scte35_track(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
             90_000,
@@ -1337,7 +1338,7 @@ mod tests {
         }
     }
 
-    fn aac_track(track_id: u32, timescale: u32) -> TrackSpec {
+    fn aac_track(track_id: TrackId, timescale: u32) -> TrackSpec {
         TrackSpec::new(
             track_id,
             timescale,
@@ -1366,7 +1367,10 @@ mod tests {
         // Section track first, no video — the exact routine DVB/ad-insertion
         // shape that used to stall forever.
         let mut seg = StreamingTsHlsSegmenter::new(
-            vec![scte35_track(SCTE_ID), aac_track(AUDIO_ID, TIMESCALE)],
+            vec![
+                scte35_track(TrackId::new(SCTE_ID)),
+                aac_track(TrackId::new(AUDIO_ID), TIMESCALE),
+            ],
             TARGET_SECS,
             usize::MAX,
         )
@@ -1374,14 +1378,17 @@ mod tests {
 
         // A couple of section samples up front (duration: None) must not
         // prevent the audio anchor from advancing.
-        seg.push(SCTE_ID, section_sample()).expect("push section");
-        seg.push(SCTE_ID, section_sample()).expect("push section");
+        seg.push(TrackId::new(SCTE_ID), section_sample())
+            .expect("push section");
+        seg.push(TrackId::new(SCTE_ID), section_sample())
+            .expect("push section");
 
         // 12 audio samples of 200 ticks each: a cut fires once buffered
         // reaches the 1000-tick target on the 6th and 11th pushes. Cuts are
         // queued, not returned inline (issue R2) — drained via `take_ready`.
         for _ in 0..12 {
-            seg.push(AUDIO_ID, audio_sample(200)).expect("push audio");
+            seg.push(TrackId::new(AUDIO_ID), audio_sample(200))
+                .expect("push audio");
         }
         let cuts = seg.take_ready();
 
@@ -1421,7 +1428,7 @@ mod tests {
         let audio_track_state = seg
             .tracks
             .iter()
-            .find(|t| t.spec.track_id == AUDIO_ID)
+            .find(|t| t.spec.track_id == TrackId::new(AUDIO_ID))
             .expect("audio track state");
         assert_eq!(
             audio_track_state.pending.len(),
@@ -1435,8 +1442,14 @@ mod tests {
         // Only section/opaque tracks, no video/audio: there is no track
         // whose duration can ever advance a cut boundary. Prefer a loud
         // construction error over a segmenter that silently never cuts.
-        let result =
-            StreamingTsHlsSegmenter::new(vec![scte35_track(10), scte35_track(11)], 1, usize::MAX);
+        let result = StreamingTsHlsSegmenter::new(
+            vec![
+                scte35_track(TrackId::new(10)),
+                scte35_track(TrackId::new(11)),
+            ],
+            1,
+            usize::MAX,
+        );
         match result {
             Err(Error::InvalidInput(_)) => {}
             Err(other) => panic!("expected InvalidInput, got a different error: {other:?}"),
@@ -1464,15 +1477,22 @@ mod tests {
         const AUDIO_ID: u32 = 1;
         const TIMESCALE: u32 = 1000;
 
-        let mut seg =
-            StreamingTsHlsSegmenter::new(vec![aac_track(AUDIO_ID, TIMESCALE)], 1000, usize::MAX)
-                .expect("construct");
+        let mut seg = StreamingTsHlsSegmenter::new(
+            vec![aac_track(TrackId::new(AUDIO_ID), TIMESCALE)],
+            1000,
+            usize::MAX,
+        )
+        .expect("construct");
 
         // One sample only: not enough to cross the (huge) cut target, so
         // nothing is cut yet and the only segment `Stage::poll` will ever see
         // is the trailing one `finish` cuts below.
-        Stage::feed(&mut seg, (AUDIO_ID, audio_sample(200)), Timestamp::ZERO)
-            .expect("feed via Stage");
+        Stage::feed(
+            &mut seg,
+            (TrackId::new(AUDIO_ID), audio_sample(200)),
+            Timestamp::ZERO,
+        )
+        .expect("feed via Stage");
         assert!(
             Stage::poll(&mut seg).is_none(),
             "no cut yet: nothing should be ready before finish"
@@ -1505,7 +1525,7 @@ mod tests {
         const SEED: u64 = 41;
 
         let mut seg = StreamingTsHlsSegmenter::with_start_sequence(
-            vec![aac_track(AUDIO_ID, TIMESCALE)],
+            vec![aac_track(TrackId::new(AUDIO_ID), TIMESCALE)],
             1,
             usize::MAX,
             SEED,
@@ -1513,8 +1533,10 @@ mod tests {
         .expect("construct");
 
         // Two 1000-tick (1s) samples cross the 1s target on the second push.
-        seg.push(AUDIO_ID, audio_sample(1000)).expect("push 1");
-        seg.push(AUDIO_ID, audio_sample(1000)).expect("push 2");
+        seg.push(TrackId::new(AUDIO_ID), audio_sample(1000))
+            .expect("push 1");
+        seg.push(TrackId::new(AUDIO_ID), audio_sample(1000))
+            .expect("push 2");
         seg.finish().expect("finish");
 
         let cut: Vec<TsSegment> = seg.take_ready().into_iter().collect();
@@ -1546,7 +1568,7 @@ mod tests {
             sps_ext: vec![],
         };
         let video_spec = TrackSpec::new(
-            1,
+            TrackId::new(1),
             90_000,
             CodecConfig::Avc {
                 config: crate::avc_config::AVCConfigurationBox::new(record),
@@ -1554,7 +1576,7 @@ mod tests {
                 height: 240,
             },
         );
-        let audio_spec = aac_track(2, 90_000);
+        let audio_spec = aac_track(TrackId::new(2), 90_000);
         // One second per sample in a 90 kHz timescale, so a 1-second target
         // cuts `count / gop` segments.
         let video: Vec<Sample> = (0..count).map(|i| sample(90_000, i % gop == 0)).collect();

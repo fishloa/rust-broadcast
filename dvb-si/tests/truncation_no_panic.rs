@@ -9,6 +9,7 @@ use dvb_si::descriptors::nvod_reference::NvodReferenceDescriptor;
 use dvb_si::descriptors::service_list::ServiceListDescriptor;
 use dvb_si::descriptors::subtitling::SubtitlingDescriptor;
 use dvb_si::tables::pat::{PatEntry, PatSection};
+use mpeg_ts::pid::Pid;
 
 /// Parse every strict prefix of `full` (which itself must parse) and require Err.
 fn all_prefixes_err<'a, T: Parse<'a>>(full: &'a [u8]) {
@@ -38,7 +39,10 @@ fn pat_truncated_is_err() {
         true,
         0,
         0,
-        vec![PatEntry::new(1, 0x100), PatEntry::new(2, 0x101)],
+        vec![
+            PatEntry::new(1, Pid::new(0x100)),
+            PatEntry::new(2, Pid::new(0x101)),
+        ],
     );
     let mut buf = vec![0u8; pat.serialized_len()];
     pat.serialize_into(&mut buf).unwrap();

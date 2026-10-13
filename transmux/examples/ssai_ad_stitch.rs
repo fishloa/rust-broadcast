@@ -63,6 +63,7 @@ use std::collections::BTreeMap;
 use std::error::Error;
 use std::fs;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Serialize, Unpackage};
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment};
@@ -353,7 +354,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     // ------------------------------------------------------------------
     let result = splice_insert(&base_media, &ad_media, at_ticks)?;
 
-    let mut points_by_track: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    let mut points_by_track: BTreeMap<TrackId, Vec<usize>> = BTreeMap::new();
     for p in &result.discontinuity_points {
         points_by_track
             .entry(p.track_id)

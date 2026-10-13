@@ -28,6 +28,7 @@
 //! everything in segment 0) trips them.
 
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Stage, Unpackage};
 use transmux::ll_dash::LlSegmenter;
@@ -89,7 +90,7 @@ fn dummy_esds() -> EsdsBox {
 
 fn avc_track(track_id: u32) -> TrackSpec {
     TrackSpec::new(
-        track_id,
+        TrackId::new(track_id),
         TS_TIMESCALE,
         CodecConfig::Avc {
             config: dummy_avc_config(),
@@ -101,7 +102,7 @@ fn avc_track(track_id: u32) -> TrackSpec {
 
 fn aac_track(track_id: u32) -> TrackSpec {
     TrackSpec::new(
-        track_id,
+        TrackId::new(track_id),
         TS_TIMESCALE,
         CodecConfig::Aac {
             esds: dummy_esds(),
@@ -116,7 +117,7 @@ fn aac_track(track_id: u32) -> TrackSpec {
 /// 0x86): its samples never carry a `duration`, so it can never be the anchor.
 fn scte35_track(track_id: u32) -> TrackSpec {
     TrackSpec::new(
-        track_id,
+        TrackId::new(track_id),
         TS_TIMESCALE,
         CodecConfig::Data {
             stream_type: 0x86,
@@ -182,7 +183,7 @@ fn zero_duration_stream(n: usize) -> Vec<Sample> {
 }
 
 /// Per-`traf` `(track_id, base_media_decode_time)` of a `moof`-bearing segment.
-fn tfdts(segment: &[u8]) -> Vec<(u32, u64)> {
+fn tfdts(segment: &[u8]) -> Vec<(TrackId, u64)> {
     let mut off = 0usize;
     let moof = loop {
         assert!(off + 8 <= segment.len(), "segment must contain a moof");
@@ -231,7 +232,7 @@ const C1_CUTS_BEFORE_FLUSH: usize = 3;
 fn c1_zero_duration_anchor_still_cuts_segments_in_cmaf_segmenter() {
     let mut seg = Segmenter::new(vec![avc_track(1)], TS_TIMESCALE, 1.0).expect("construct");
     for s in zero_duration_stream(C1_FRAMES) {
-        seg.push(1, s).expect("push");
+        seg.push(TrackId::new(1), s).expect("push");
     }
     let cut_before_flush = seg.take_ready().len();
     seg.flush().expect("flush");
@@ -253,7 +254,7 @@ fn c1_zero_duration_anchor_tfdt_advances_across_segments() {
     let mut seg = Segmenter::new(vec![avc_track(1)], TS_TIMESCALE, 1.0).expect("construct");
     let mut bases = Vec::new();
     for s in zero_duration_stream(C1_FRAMES) {
-        seg.push(1, s).expect("push");
+        seg.push(TrackId::new(1), s).expect("push");
         for (bytes, _meta) in seg.take_ready_with_meta() {
             bases.push(tfdts(&bytes)[0].1);
         }
@@ -277,7 +278,7 @@ fn c1_zero_duration_anchor_still_cuts_segments_in_ll_dash() {
     // chunk_samples = 10 so chunking is exercised alongside the segment cuts.
     let mut seg = LlSegmenter::new(vec![avc_track(1)], TS_TIMESCALE, 1.0, 10).expect("construct");
     for s in zero_duration_stream(C1_FRAMES) {
-        seg.push(1, s).expect("push");
+        seg.push(TrackId::new(1), s).expect("push");
     }
     seg.flush().expect("flush");
     let starts = seg
@@ -299,7 +300,7 @@ fn c1_zero_duration_anchor_still_cuts_parts_and_segments_in_ll_hls() {
     let mut seg = LlHlsSegmenter::with_part_target(vec![avc_track(1)], TS_TIMESCALE, 1.0, 250)
         .expect("construct");
     for s in zero_duration_stream(C1_FRAMES) {
-        seg.push(1, s).expect("push");
+        seg.push(TrackId::new(1), s).expect("push");
     }
     let parts_before_flush = seg.take_ready_parts().len();
     let segments_before_flush = seg.take_ready_segments().len();
@@ -324,7 +325,7 @@ fn c1_zero_duration_anchor_still_cuts_segments_in_streaming_ts_hls() {
         // Pre-fix this call *errored* on the first sample: the streaming
         // TS-HLS path rejected `duration: None` outright and only tolerated
         // Some(0) by never advancing.
-        seg.push(1, s).expect("push");
+        seg.push(TrackId::new(1), s).expect("push");
     }
     seg.finish().expect("finish");
     let cuts: Vec<TsSegment> = seg.take_ready();
@@ -407,7 +408,7 @@ fn c2_infinite_gop_is_bounded_in_cmaf_segmenter() {
     let samples = infinite_gop_stream();
     let mut seg = Segmenter::new(vec![avc_track(1)], TS_TIMESCALE, 1.0).expect("construct");
     let (accepted, saw_saturated) = drive_until_rejected(&mut seg, samples.len(), |s, i| {
-        s.push(1, samples[i].clone())
+        s.push(TrackId::new(1), samples[i].clone())
     });
     assert_eq!(
         accepted, MAX_PENDING_SAMPLES_PER_TRACK,
@@ -427,7 +428,7 @@ fn c2_infinite_gop_is_bounded_in_cmaf_segmenter() {
         !Stage::demand(&seg).saturated,
         "flush clears the saturation"
     );
-    seg.push(1, au(999_000, false))
+    seg.push(TrackId::new(1), au(999_000, false))
         .expect("accepts input again");
 }
 
@@ -444,7 +445,7 @@ fn c2_infinite_gop_is_bounded_in_ll_dash() {
     )
     .expect("construct");
     let (accepted, saw_saturated) = drive_until_rejected(&mut seg, samples.len(), |s, i| {
-        s.push(1, samples[i].clone())
+        s.push(TrackId::new(1), samples[i].clone())
     });
     assert_eq!(accepted, MAX_PENDING_SAMPLES_PER_TRACK);
     assert!(saw_saturated, "demand() must flip before push errors");
@@ -456,7 +457,7 @@ fn c2_infinite_gop_is_bounded_in_ll_hls() {
     let mut seg = LlHlsSegmenter::with_part_target(vec![avc_track(1)], TS_TIMESCALE, 1.0, 250)
         .expect("construct");
     let (accepted, saw_saturated) = drive_until_rejected(&mut seg, samples.len(), |s, i| {
-        s.push(1, samples[i].clone())
+        s.push(TrackId::new(1), samples[i].clone())
     });
     assert_eq!(accepted, MAX_PENDING_SAMPLES_PER_TRACK);
     assert!(saw_saturated, "demand() must flip before push errors");
@@ -468,7 +469,7 @@ fn c2_infinite_gop_is_bounded_in_streaming_ts_hls() {
     let mut seg =
         StreamingTsHlsSegmenter::new(vec![avc_track(1)], 1, usize::MAX).expect("construct");
     let (accepted, saw_saturated) = drive_until_rejected(&mut seg, samples.len(), |s, i| {
-        s.push(1, samples[i].clone())
+        s.push(TrackId::new(1), samples[i].clone())
     });
     assert_eq!(accepted, MAX_PENDING_SAMPLES_PER_TRACK);
     assert!(saw_saturated, "demand() must flip before push errors");
@@ -489,7 +490,7 @@ fn hevc_video_after_audio_is_still_the_anchor_and_parts_report_real_independence
     const VIDEO_ID: u32 = 2;
 
     let video = TrackSpec::new(
-        VIDEO_ID,
+        TrackId::new(VIDEO_ID),
         TS_TIMESCALE,
         CodecConfig::Hevc {
             config: hvcc,
@@ -508,7 +509,7 @@ fn hevc_video_after_audio_is_still_the_anchor_and_parts_report_real_independence
     // Two 1-second GOPs of video, IRAP only at the head of each.
     for i in 0..(2 * FRAMES_PER_SEC + 2) {
         let dts = i as i64 * FRAME_TICKS;
-        seg.push(VIDEO_ID, au(dts, i % FRAMES_PER_SEC == 0))
+        seg.push(TrackId::new(VIDEO_ID), au(dts, i % FRAMES_PER_SEC == 0))
             .expect("push video");
     }
 
@@ -540,7 +541,7 @@ fn hevc_video_after_audio_is_still_the_anchor_and_parts_report_real_independence
         vec![
             aac_track(AUDIO_ID),
             TrackSpec::new(
-                VIDEO_ID,
+                TrackId::new(VIDEO_ID),
                 TS_TIMESCALE,
                 CodecConfig::Hevc {
                     config: hvcc2,
@@ -559,7 +560,7 @@ fn hevc_video_after_audio_is_still_the_anchor_and_parts_report_real_independence
     let mut ll = ll;
     for i in 0..(2 * FRAMES_PER_SEC + 2) {
         ll.push(
-            VIDEO_ID,
+            TrackId::new(VIDEO_ID),
             au(i as i64 * FRAME_TICKS, i % FRAMES_PER_SEC == 0),
         )
         .expect("push video");
@@ -639,11 +640,13 @@ fn section_sample_lands_in_the_same_segment_batch_and_streaming() {
     // (which is what `section_segment_index` reads a segment *index* out of).
     for s in &video {
         if !pushed_cue && s.dts.unwrap_or(0) >= CUE_DTS {
-            seg.push(SCTE_ID, section.clone()).expect("push cue");
+            seg.push(TrackId::new(SCTE_ID), section.clone())
+                .expect("push cue");
             streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));
             pushed_cue = true;
         }
-        seg.push(VIDEO_ID, s.clone()).expect("push video");
+        seg.push(TrackId::new(VIDEO_ID), s.clone())
+            .expect("push video");
         streamed.extend(seg.take_ready().into_iter().map(|c| c.bytes));
     }
     assert!(pushed_cue, "the test stream must reach the cue's timestamp");

@@ -63,6 +63,8 @@
 use std::collections::{HashMap, VecDeque};
 use std::convert::Infallible;
 use std::time::Duration;
+#[cfg(test)]
+use transmux::TrackId;
 
 use broadcast_auth::Credentials;
 use broadcast_common::{Demand, Stage, Timestamp, Unpackage};
@@ -950,7 +952,7 @@ Content-Length: {over}
         n
     }
 
-    const TRACK_ID: u32 = 1;
+    const TRACK_ID: TrackId = TrackId::new(1);
     const VIDEO_TIMESCALE: u32 = 90_000;
     const FRAME_DUR: u32 = VIDEO_TIMESCALE / 30;
     const TARGET_DURATION_SECS: f64 = 1.0;
@@ -1144,12 +1146,12 @@ Content-Length: {over}
     /// [`assert_samples_reach_the_trunk`].
     async fn drive_session_and_count(
         route: &HlsPullRoute,
-    ) -> Result<(Vec<TrackSpec>, HashMap<u32, usize>)> {
+    ) -> Result<(Vec<TrackSpec>, HashMap<TrackId, usize>)> {
         let (http, clean_url, credentials) = build_client(route)?;
         let mut session = HlsIngestSession::new(clean_url.to_string());
         let mut backlog: VecDeque<Action> = VecDeque::new();
         let mut specs: Vec<TrackSpec> = Vec::new();
-        let mut per_track: HashMap<u32, usize> = HashMap::new();
+        let mut per_track: HashMap<TrackId, usize> = HashMap::new();
         // HANG GUARD (issue #826): ceiling on the whole session-drive loop.
         // The session fetches playlist + init + segments over real loopback
         // HTTP against a local axum server; each fetch completes in ~ms.

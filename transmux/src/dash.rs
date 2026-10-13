@@ -73,6 +73,7 @@
 //! [`crate::dash_parse`], [`crate::smooth`] and [`crate::smooth_parse`] — needs
 //! the `std` feature (quick-xml is `std`-only).
 
+use crate::TrackId;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -178,7 +179,7 @@ broadcast_common::impl_spec_display!(Addressing);
 #[derive(Debug, Clone)]
 pub struct TrackSegments {
     /// The [`crate::pipeline::TrackSpec::track_id`] these durations belong to.
-    pub track_id: u32,
+    pub track_id: TrackId,
     /// Segment durations, in decode/segment order, in this track's timescale.
     pub durations: Vec<u64>,
 }

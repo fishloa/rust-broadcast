@@ -284,7 +284,7 @@ pub use interlace::{
 };
 pub use ir::{
     AudioLanguage, AudioMetadata, AudioRole, AudioType, EditorialClassification, MixType,
-    SupplementaryAudio,
+    ProgramNumber, SupplementaryAudio, TrackId,
 };
 pub use klv::{
     CHECKSUM_LEN, KlvItem, LocalSetItem, PRECISION_TIMESTAMP_LEN, TAG_CHECKSUM,

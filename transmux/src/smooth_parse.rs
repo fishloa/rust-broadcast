@@ -69,6 +69,7 @@
 //! parsing Dolby bytes as an AudioSpecificConfig would silently yield a garbage
 //! AAC track.
 
+use crate::TrackId;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use core::fmt;
@@ -901,7 +902,7 @@ const AVC_NAL_PPS: u8 = 8;
 /// `FourCC` matching is case-insensitive (real manifests use `AACL` and
 /// `aacl`); any unrecognised token is [`crate::Error::UnsupportedCodec`].
 pub fn track_spec_from_quality_level(
-    track_id: u32,
+    track_id: TrackId,
     timescale: u32,
     stream_type: StreamType,
     quality: &QualityLevel,
@@ -1431,8 +1432,9 @@ mod tests {
             packet_size: None,
             audio_tag: None,
         };
-        let spec = track_spec_from_quality_level(1, 90_000, StreamType::Video, &quality)
-            .expect("build video TrackSpec");
+        let spec =
+            track_spec_from_quality_level(TrackId::new(1), 90_000, StreamType::Video, &quality)
+                .expect("build video TrackSpec");
         match spec.config {
             CodecConfig::Avc { config, .. } => {
                 assert_eq!(config.config.sps.len(), 1);
@@ -1462,8 +1464,9 @@ mod tests {
             packet_size: None,
             audio_tag: Some(255),
         };
-        let spec = track_spec_from_quality_level(2, 44_100, StreamType::Audio, &quality)
-            .expect("build audio TrackSpec");
+        let spec =
+            track_spec_from_quality_level(TrackId::new(2), 44_100, StreamType::Audio, &quality)
+                .expect("build audio TrackSpec");
         match spec.config {
             CodecConfig::Aac {
                 sample_rate,
@@ -1496,7 +1499,7 @@ mod tests {
             packet_size: None,
             audio_tag: None,
         };
-        match track_spec_from_quality_level(2, 48_000, StreamType::Audio, &quality) {
+        match track_spec_from_quality_level(TrackId::new(2), 48_000, StreamType::Audio, &quality) {
             Err(CrateError::UnsupportedCodec { codec }) => {
                 assert_eq!(codec, "Smooth audio FourCC (only AACL/AACH is synthesised)");
             }
@@ -1507,7 +1510,7 @@ mod tests {
             ..quality
         };
         assert!(matches!(
-            track_spec_from_quality_level(2, 48_000, StreamType::Audio, &quality),
+            track_spec_from_quality_level(TrackId::new(2), 48_000, StreamType::Audio, &quality),
             Err(CrateError::UnsupportedCodec { .. })
         ));
     }
@@ -1529,7 +1532,7 @@ mod tests {
             packet_size: None,
             audio_tag: None,
         };
-        match track_spec_from_quality_level(1, 90_000, StreamType::Video, &quality) {
+        match track_spec_from_quality_level(TrackId::new(1), 90_000, StreamType::Video, &quality) {
             Err(CrateError::UnsupportedCodec { codec }) => {
                 assert_eq!(codec, "Smooth video FourCC (only H264/AVC1 is synthesised)");
             }
@@ -1560,7 +1563,8 @@ mod tests {
                 audio_tag: None,
             };
             assert!(
-                track_spec_from_quality_level(1, 90_000, StreamType::Video, &quality).is_ok(),
+                track_spec_from_quality_level(TrackId::new(1), 90_000, StreamType::Video, &quality)
+                    .is_ok(),
                 "video FourCC {cc} must be accepted"
             );
         }
@@ -1580,7 +1584,8 @@ mod tests {
                 audio_tag: Some(255),
             };
             assert!(
-                track_spec_from_quality_level(2, 44_100, StreamType::Audio, &quality).is_ok(),
+                track_spec_from_quality_level(TrackId::new(2), 44_100, StreamType::Audio, &quality)
+                    .is_ok(),
                 "audio FourCC {cc} must be accepted"
             );
         }
@@ -1618,8 +1623,9 @@ mod tests {
         assert_eq!(asc.sampling_frequency_index.raw(), 4);
         assert_eq!(asc.channel_configuration.raw(), 2);
 
-        let spec = track_spec_from_quality_level(2, 44_100, StreamType::Audio, &quality)
-            .expect("empty CodecPrivateData must synthesise an ASC");
+        let spec =
+            track_spec_from_quality_level(TrackId::new(2), 44_100, StreamType::Audio, &quality)
+                .expect("empty CodecPrivateData must synthesise an ASC");
         let CodecConfig::Aac {
             sample_rate,
             channel_count,
@@ -1665,8 +1671,9 @@ mod tests {
         };
         // Through the real entry point, so the AOT the caller picks is what
         // actually lands in the esds.
-        let spec = track_spec_from_quality_level(3, 44_100, StreamType::Audio, &quality)
-            .expect("AACH must synthesise a core ASC");
+        let spec =
+            track_spec_from_quality_level(TrackId::new(3), 44_100, StreamType::Audio, &quality)
+                .expect("AACH must synthesise a core ASC");
         let CodecConfig::Aac {
             sample_rate,
             channel_count,
@@ -1824,7 +1831,7 @@ mod tests {
         let decoded = crate::sps::decode_avc_sps(&quality.codec_private_data[4..])
             .expect("the oversize SPS decodes");
         assert_eq!(decoded.width, 65_536);
-        match track_spec_from_quality_level(1, 90_000, StreamType::Video, &quality) {
+        match track_spec_from_quality_level(TrackId::new(1), 90_000, StreamType::Video, &quality) {
             Err(CrateError::InvalidValue {
                 field: "SPS sps_pic_width_max_in_luma_samples",
                 value: 65_536,
@@ -1855,7 +1862,7 @@ mod tests {
             packet_size: None,
             audio_tag: None,
         };
-        match track_spec_from_quality_level(1, 90_000, StreamType::Video, &quality) {
+        match track_spec_from_quality_level(TrackId::new(1), 90_000, StreamType::Video, &quality) {
             Err(CrateError::InvalidValue {
                 field: "QualityLevel@MaxWidth",
                 value: 70_000,
@@ -1880,7 +1887,10 @@ mod tests {
             packet_size: None,
             audio_tag: None,
         };
-        assert!(track_spec_from_quality_level(3, 1000, StreamType::Text, &quality).is_err());
+        assert!(
+            track_spec_from_quality_level(TrackId::new(3), 1000, StreamType::Text, &quality)
+                .is_err()
+        );
     }
 
     #[test]
@@ -1898,6 +1908,9 @@ mod tests {
             packet_size: None,
             audio_tag: None,
         };
-        assert!(track_spec_from_quality_level(1, 90_000, StreamType::Video, &quality).is_err());
+        assert!(
+            track_spec_from_quality_level(TrackId::new(1), 90_000, StreamType::Video, &quality)
+                .is_err()
+        );
     }
 }

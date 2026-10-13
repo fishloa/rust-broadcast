@@ -7,6 +7,7 @@
 //! EXIT CRITERION 3: A leaf-box unit test (mvhd v0) round-trips (in `init_segment` module).
 
 use broadcast_common::{Parse, Serialize};
+use transmux::TrackId;
 use transmux::{MovieBox, SampleDescriptionBox, SampleEntryVariant};
 
 /// Find a top-level box by type and return its full bytes (header + body).
@@ -100,7 +101,11 @@ fn moov_real_fixture_round_trip() {
     assert_eq!(moov.mvhd.version, 0, "mvhd version");
     assert_eq!(moov.mvhd.timescale, 1000, "mvhd timescale");
     assert_eq!(moov.mvhd.duration, 2000, "mvhd duration");
-    assert_eq!(moov.mvhd.next_track_id, 3, "mvhd next_track_id");
+    assert_eq!(
+        moov.mvhd.next_track_id,
+        TrackId::new(3),
+        "mvhd next_track_id"
+    );
 
     // Verify we have two tracks
     assert_eq!(moov.tracks.len(), 2, "moov track count");
@@ -137,8 +142,8 @@ fn moov_frag_fixture_round_trip() {
     // mvex must be typed (not swept into opaque) and carry one trex per track.
     let mvex = moov.mvex.as_ref().expect("fragmented moov must have mvex");
     assert_eq!(mvex.trex.len(), 2, "two trex (video + audio)");
-    assert_eq!(mvex.trex[0].track_id, 1, "trex[0] track_id");
-    assert_eq!(mvex.trex[1].track_id, 2, "trex[1] track_id");
+    assert_eq!(mvex.trex[0].track_id, TrackId::new(1), "trex[0] track_id");
+    assert_eq!(mvex.trex[1].track_id, TrackId::new(2), "trex[1] track_id");
     assert_eq!(
         mvex.trex[0].default_sample_description_index, 1,
         "trex default_sample_description_index"
@@ -263,7 +268,7 @@ fn tkhd_mutation_changes_bytes() {
 
     // Clone and mutate
     let mut moov2 = moov.clone();
-    moov2.tracks[0].tkhd.track_id = 99;
+    moov2.tracks[0].tkhd.track_id = TrackId::new(99);
     let mutated = moov2.tracks[0].tkhd.to_bytes();
 
     assert_ne!(

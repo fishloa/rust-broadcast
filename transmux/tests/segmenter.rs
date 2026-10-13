@@ -12,6 +12,7 @@
 use broadcast_common::Serialize;
 use mpeg_pes::PesAssembler;
 use mpeg_ts::OwnedTsPacket;
+use transmux::TrackId;
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, DecoderConfigDescriptor,
     DecoderSpecificInfo, ESDescriptor, EsdsBox, FragmentTrackData, MovieFragmentBox,
@@ -58,7 +59,7 @@ fn dummy_esds() -> EsdsBox {
 
 fn video_track() -> TrackSpec {
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         90_000,
         CodecConfig::Avc {
             config: dummy_avc_config(),
@@ -70,7 +71,7 @@ fn video_track() -> TrackSpec {
 
 fn audio_track() -> TrackSpec {
     TrackSpec::new(
-        2,
+        TrackId::new(2),
         48_000,
         CodecConfig::Aac {
             esds: dummy_esds(),
@@ -103,7 +104,7 @@ fn find_box_body<'a>(data: &'a [u8], fourcc: &[u8; 4]) -> Option<&'a [u8]> {
 /// `(track_id, base_media_decode_time, sample_count, first_sample_flags)`.
 /// `first_sample_flags` resolves `first_sample_flags` when present, else the
 /// first per-sample `sample_flags`.
-fn moof_summary(segment: &[u8]) -> Vec<(u32, u64, usize, u32)> {
+fn moof_summary(segment: &[u8]) -> Vec<(TrackId, u64, usize, u32)> {
     let moof = find_box_body(segment, b"moof").expect("segment has moof");
     // find_box_body gave us the moof *body*; MovieFragmentBox::parse_body wants that.
     let mf = MovieFragmentBox::parse_body(moof).expect("moof parses");
@@ -160,13 +161,13 @@ fn synthetic_cuts_are_exact_and_lossless() {
             // Duration-driven segmenter: dts/pts stay `None` for these
             // synthetic samples (media plane step 2c — never fabricated).
             seg.push(
-                1,
+                TrackId::new(1),
                 Sample::new(vec![0xAA; 16], None, None, Some(VID_DUR), is_sync),
             )
             .unwrap();
         } else {
             seg.push(
-                2,
+                TrackId::new(2),
                 Sample::from_raw(vec![0xBB; 8], None, None, Some(AUD_DUR)),
             )
             .unwrap();
@@ -189,7 +190,7 @@ fn synthetic_cuts_are_exact_and_lossless() {
         assert!(find_box_body(s, b"styp").is_some(), "seg {si} has styp");
         assert!(find_box_body(s, b"mdat").is_some(), "seg {si} has mdat");
         for (track_id, base, count, first_flags) in moof_summary(s) {
-            match track_id {
+            match track_id.value() {
                 1 => {
                     // Video segment must START on a keyframe (sync flags on sample 0).
                     assert_eq!(
@@ -246,8 +247,8 @@ fn single_segment_is_byte_identical_to_batch_builder() {
     let reference = build_media_segment(
         1,
         &[
-            FragmentTrackData::new(1, 0, &vid),
-            FragmentTrackData::new(2, 0, &aud),
+            FragmentTrackData::new(TrackId::new(1), 0, &vid),
+            FragmentTrackData::new(TrackId::new(2), 0, &aud),
         ],
     )
     .unwrap();
@@ -255,10 +256,10 @@ fn single_segment_is_byte_identical_to_batch_builder() {
     // Segmenter with a 1000 s target → no mid cut. Push interleaved; flush once.
     let mut seg = Segmenter::new(vec![video_track(), audio_track()], 1000, 1000.0).unwrap();
     for v in &vid {
-        seg.push(1, v.clone()).unwrap();
+        seg.push(TrackId::new(1), v.clone()).unwrap();
     }
     for a in &aud {
-        seg.push(2, a.clone()).unwrap();
+        seg.push(TrackId::new(2), a.clone()).unwrap();
     }
     seg.flush().unwrap();
     let segments = seg.take_ready();
@@ -286,8 +287,11 @@ fn rejects_bad_construction() {
     );
     let mut seg = Segmenter::new(vec![video_track()], 1000, 2.0).unwrap();
     assert!(
-        seg.push(99, Sample::from_raw(vec![0], None, None, Some(1)))
-            .is_err(),
+        seg.push(
+            TrackId::new(99),
+            Sample::from_raw(vec![0], None, None, Some(1))
+        )
+        .is_err(),
         "unknown track_id"
     );
 }
@@ -428,7 +432,7 @@ fn real_fixture_remux_is_lossless_and_parseable() {
     let audio_rate = sfi_to_hz(adts.sampling_frequency_index);
 
     let vtrack = TrackSpec::new(
-        1,
+        TrackId::new(1),
         90_000,
         CodecConfig::Avc {
             config,
@@ -437,7 +441,7 @@ fn real_fixture_remux_is_lossless_and_parseable() {
         },
     );
     let atrack = TrackSpec::new(
-        2,
+        TrackId::new(2),
         audio_rate,
         CodecConfig::Aac {
             esds,
@@ -466,7 +470,7 @@ fn real_fixture_remux_is_lossless_and_parseable() {
         // media plane step 2c: feed the real absolute PES dts/pts pair.
         let dts_val = (*dts).unwrap_or(*pts) as i64;
         seg.push(
-            1,
+            TrackId::new(1),
             Sample::from_annexb(
                 payload,
                 Some(dts_val),
@@ -480,8 +484,11 @@ fn real_fixture_remux_is_lossless_and_parseable() {
     for p in &aud {
         for f in split_adts_frames(p) {
             if f.len() > 7 {
-                seg.push(2, Sample::from_raw(f[7..].to_vec(), None, None, Some(1024)))
-                    .unwrap();
+                seg.push(
+                    TrackId::new(2),
+                    Sample::from_raw(f[7..].to_vec(), None, None, Some(1024)),
+                )
+                .unwrap();
             }
         }
     }
@@ -496,7 +503,7 @@ fn real_fixture_remux_is_lossless_and_parseable() {
         assert!(find_box_body(s, b"styp").is_some());
         assert!(find_box_body(s, b"mdat").is_some());
         for (tid, base, count, first_flags) in moof_summary(s) {
-            match tid {
+            match tid.value() {
                 1 => {
                     assert_eq!(first_flags, WIRE_SYNC_FLAGS, "video seg starts on keyframe");
                     assert_eq!(base, vid_tfdt, "video tfdt contiguity");

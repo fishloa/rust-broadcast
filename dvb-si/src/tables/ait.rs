@@ -11,7 +11,7 @@ use broadcast_common::{Parse, Serialize};
 /// AIT table_id (ETSI TS 102 809 §5.3.4).
 pub const TABLE_ID: u8 = 0x74;
 /// AIT has no well-known PID — it is service-specific.
-pub const PID: u16 = 0x0000;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;

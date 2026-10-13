@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING (#1159):** `TrackSelection::track_ids`, `TrunkWriter::publish(track_id, ..)`, `SampleCursorItem::Timed { track_id }` and `SessionEvent::Sample { track_id }` use `transmux::TrackId` instead of `u32`.
+
 ## [0.6.0] - 2026-10-13
 
 ### Changed

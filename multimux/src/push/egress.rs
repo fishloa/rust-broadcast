@@ -76,6 +76,7 @@
 //!   previously-carried one.
 
 use std::collections::VecDeque;
+use transmux::TrackId;
 
 use bytes::Bytes;
 use media_plane::egress::{NegotiationOutcome, PushEgress, TrackSelection};
@@ -239,7 +240,7 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
                 self.unsatisfiable_reason.to_string(),
             ));
         }
-        let proposed_ids: Vec<u32> = carriable.iter().map(|t| t.track_id).collect();
+        let proposed_ids: Vec<TrackId> = carriable.iter().map(|t| t.track_id).collect();
         if self.committed && proposed_ids != self.selection.track_ids {
             return NegotiationOutcome::Refused {
                 reason: "already publishing; cannot change the carried track set mid-session",
@@ -366,7 +367,7 @@ mod tests {
         fn close(&mut self) {}
     }
 
-    fn avc_spec(track_id: u32) -> TrackSpec {
+    fn avc_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
             90_000,
@@ -392,7 +393,7 @@ mod tests {
         )
     }
 
-    fn opaque_spec(track_id: u32) -> TrackSpec {
+    fn opaque_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
             90_000,
@@ -424,9 +425,9 @@ mod tests {
     #[test]
     fn unrestricted_transport_accepts_every_track() {
         let mut egress = PushTransportEgress::new(FakeTransport::default(), "unreachable");
-        match egress.negotiate(&[avc_spec(1), opaque_spec(2)]) {
+        match egress.negotiate(&[avc_spec(TrackId::new(1)), opaque_spec(TrackId::new(2))]) {
             NegotiationOutcome::Accepted(sel) => {
-                assert_eq!(sel.track_ids, vec![1, 2]);
+                assert_eq!(sel.track_ids, vec![TrackId::new(1), TrackId::new(2)]);
             }
             other => panic!("expected Accepted, got {other:?}"),
         }
@@ -446,7 +447,7 @@ mod tests {
             ..Default::default()
         };
         let mut egress = PushTransportEgress::new(transport, "no AVC video or AAC audio track");
-        match egress.negotiate(&[opaque_spec(9)]) {
+        match egress.negotiate(&[opaque_spec(TrackId::new(9))]) {
             NegotiationOutcome::Error(SendMediaError::Mux(reason)) => {
                 assert_eq!(reason, "no AVC video or AAC audio track");
             }
@@ -467,8 +468,8 @@ mod tests {
             ..Default::default()
         };
         let mut egress = PushTransportEgress::new(transport, "no AVC video or AAC audio track");
-        match egress.negotiate(&[avc_spec(1), opaque_spec(2)]) {
-            NegotiationOutcome::Accepted(sel) => assert_eq!(sel.track_ids, vec![1]),
+        match egress.negotiate(&[avc_spec(TrackId::new(1)), opaque_spec(TrackId::new(2))]) {
+            NegotiationOutcome::Accepted(sel) => assert_eq!(sel.track_ids, vec![TrackId::new(1)]),
             other => panic!("expected Accepted([1]), got {other:?}"),
         }
         assert_eq!(egress.selected_tracks().len(), 1);
@@ -487,8 +488,8 @@ mod tests {
     #[test]
     fn renegotiate_refuses_a_track_set_change_once_committed() {
         let mut egress = PushTransportEgress::new(FakeTransport::default(), "unreachable");
-        egress.negotiate(&[avc_spec(1)]);
-        match egress.renegotiate(&[avc_spec(1), avc_spec(2)]) {
+        egress.negotiate(&[avc_spec(TrackId::new(1))]);
+        match egress.renegotiate(&[avc_spec(TrackId::new(1)), avc_spec(TrackId::new(2))]) {
             NegotiationOutcome::Refused { reason } => assert!(!reason.is_empty()),
             other => panic!("expected Refused, got {other:?}"),
         }
@@ -506,10 +507,10 @@ mod tests {
             ..Default::default()
         };
         let mut egress = PushTransportEgress::new(transport, "no AVC video or AAC audio track");
-        egress.negotiate(&[avc_spec(1)]);
+        egress.negotiate(&[avc_spec(TrackId::new(1))]);
         egress
             .send(&SampleCursorItem::Timed {
-                track_id: 2, // never selected
+                track_id: TrackId::new(2), // never selected
                 sample: sample(),
             })
             .expect("must not error");
@@ -527,10 +528,10 @@ mod tests {
     #[tokio::test]
     async fn send_then_flush_transmit_writes_a_real_encoded_message() {
         let mut egress = PushTransportEgress::new(FakeTransport::default(), "unreachable");
-        egress.negotiate(&[avc_spec(1)]);
+        egress.negotiate(&[avc_spec(TrackId::new(1))]);
         egress
             .send(&SampleCursorItem::Timed {
-                track_id: 1,
+                track_id: TrackId::new(1),
                 sample: sample(),
             })
             .expect("send must not error");
@@ -574,10 +575,10 @@ mod tests {
 
     fn egress_with_queued_message() -> PushTransportEgress<HangingTransport> {
         let mut egress = PushTransportEgress::new(HangingTransport, "unreachable");
-        egress.negotiate(&[avc_spec(1)]);
+        egress.negotiate(&[avc_spec(TrackId::new(1))]);
         egress
             .send(&SampleCursorItem::Timed {
-                track_id: 1,
+                track_id: TrackId::new(1),
                 sample: sample(),
             })
             .expect("send");
@@ -615,10 +616,10 @@ mod tests {
     #[tokio::test]
     async fn a_healthy_flush_completes_within_the_bound() {
         let mut egress = PushTransportEgress::new(FakeTransport::default(), "unreachable");
-        egress.negotiate(&[avc_spec(1)]);
+        egress.negotiate(&[avc_spec(TrackId::new(1))]);
         egress
             .send(&SampleCursorItem::Timed {
-                track_id: 1,
+                track_id: TrackId::new(1),
                 sample: sample(),
             })
             .expect("send");
@@ -649,7 +650,7 @@ mod tests {
             nz(64),
         ));
         let writer = trunk.writer().expect("the writer is free");
-        writer.set_tracks(vec![avc_spec(1)]);
+        writer.set_tracks(vec![avc_spec(TrackId::new(1))]);
         (trunk, writer)
     }
 
@@ -679,7 +680,11 @@ mod tests {
             tokio::time::advance(std::time::Duration::from_millis(100)).await;
             tokio::task::yield_now().await;
         }
-        writer.publish(1, media_plane::trunk::RetentionClass::Timed, sample());
+        writer.publish(
+            TrackId::new(1),
+            media_plane::trunk::RetentionClass::Timed,
+            sample(),
+        );
         for _ in 0..20 {
             tokio::time::advance(std::time::Duration::from_millis(100)).await;
             tokio::task::yield_now().await;
@@ -708,7 +713,11 @@ mod tests {
         // Well past the flush timeout, feeding one sample per step so every
         // fresh connection has something to block on.
         for _ in 0..300 {
-            writer.publish(1, media_plane::trunk::RetentionClass::Timed, sample());
+            writer.publish(
+                TrackId::new(1),
+                media_plane::trunk::RetentionClass::Timed,
+                sample(),
+            );
             tokio::time::advance(std::time::Duration::from_millis(100)).await;
             tokio::task::yield_now().await;
         }
@@ -777,12 +786,12 @@ mod tests {
             },
             "unreachable",
         );
-        let tracks = [avc_spec(1)];
+        let tracks = [avc_spec(TrackId::new(1))];
         let _ = egress.negotiate(&tracks);
         // Queue two frames (encode_media yields f0, f1).
         egress
             .send(&SampleCursorItem::Timed {
-                track_id: 1,
+                track_id: TrackId::new(1),
                 sample: sample(),
             })
             .expect("send");

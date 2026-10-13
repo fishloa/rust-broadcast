@@ -1043,6 +1043,7 @@ fn config_box_body<'b>(boxes: &'b [OpaqueBox], fourcc: &[u8; 4]) -> Result<&'b [
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TrackId;
     use crate::subtitle_entries::WvttSampleEntry;
 
     /// ffmpeg's `mov` muxer cannot produce a `wvtt` sample entry (only
@@ -1129,7 +1130,7 @@ mod tests {
         const GAP_TICKS: u64 = FRAME_DUR as u64;
 
         let spec = TrackSpec::new(
-            1,
+            TrackId::new(1),
             TIMESCALE,
             CodecConfig::Avc {
                 config: minimal_avc_config(),
@@ -1160,10 +1161,20 @@ mod tests {
 
         let f1 = frames(first_base as i64);
         let f2 = frames(gapped_second_base as i64);
-        let seg1 = build_media_segment(1, &[FragmentTrackData::new(1, first_base, &f1)])
-            .expect("fragment 1 builds");
-        let seg2 = build_media_segment(2, &[FragmentTrackData::new(1, gapped_second_base, &f2)])
-            .expect("fragment 2 builds");
+        let seg1 = build_media_segment(
+            1,
+            &[FragmentTrackData::new(TrackId::new(1), first_base, &f1)],
+        )
+        .expect("fragment 1 builds");
+        let seg2 = build_media_segment(
+            2,
+            &[FragmentTrackData::new(
+                TrackId::new(1),
+                gapped_second_base,
+                &f2,
+            )],
+        )
+        .expect("fragment 2 builds");
 
         let mut file = init;
         file.extend_from_slice(&seg1);
@@ -1215,7 +1226,7 @@ mod tests {
         const FRAMES: u32 = 3;
 
         let spec = TrackSpec::new(
-            7,
+            TrackId::new(7),
             TIMESCALE,
             CodecConfig::Avc {
                 config: minimal_avc_config(),
@@ -1240,10 +1251,14 @@ mod tests {
         let f2 = frames(second_base as i64);
         let mut file = init;
         file.extend_from_slice(
-            &build_media_segment(1, &[FragmentTrackData::new(7, 0, &f1)]).unwrap(),
+            &build_media_segment(1, &[FragmentTrackData::new(TrackId::new(7), 0, &f1)]).unwrap(),
         );
         file.extend_from_slice(
-            &build_media_segment(2, &[FragmentTrackData::new(7, second_base, &f2)]).unwrap(),
+            &build_media_segment(
+                2,
+                &[FragmentTrackData::new(TrackId::new(7), second_base, &f2)],
+            )
+            .unwrap(),
         );
 
         let media = Fmp4Demux::new().unpackage(&file).unwrap();
@@ -1271,7 +1286,7 @@ mod tests {
 
         let timed = Track::new(
             TrackSpec::new(
-                1,
+                TrackId::new(1),
                 TIMESCALE,
                 CodecConfig::Avc {
                     config: minimal_avc_config(),
@@ -1294,7 +1309,7 @@ mod tests {
         // A section-carried data track: no dts, no pts, no duration — ever.
         let sections = Track::new(
             TrackSpec::new(
-                2,
+                TrackId::new(2),
                 TIMESCALE,
                 CodecConfig::Data {
                     stream_type: 0x86,
@@ -1329,7 +1344,7 @@ mod tests {
         // Every track timestamp-less => nothing truthful to render at all.
         let only_sections = Track::new(
             TrackSpec::new(
-                2,
+                TrackId::new(2),
                 TIMESCALE,
                 CodecConfig::Data {
                     stream_type: 0x86,
@@ -1366,7 +1381,7 @@ mod tests {
         let mut avcc = minimal_avc_config();
         avcc.config.length_size_minus_one = 1;
         let spec = TrackSpec::new(
-            1,
+            TrackId::new(1),
             TIMESCALE,
             CodecConfig::Avc {
                 config: avcc,
@@ -1398,7 +1413,11 @@ mod tests {
         );
         let frag = build_media_segment(
             1,
-            &[FragmentTrackData::new(1, 0, std::slice::from_ref(&sample))],
+            &[FragmentTrackData::new(
+                TrackId::new(1),
+                0,
+                std::slice::from_ref(&sample),
+            )],
         )
         .expect("media segment");
         let mut file = init;

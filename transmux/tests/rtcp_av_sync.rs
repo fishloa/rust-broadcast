@@ -16,6 +16,7 @@
 //! changes the recovered alignment rather than being inert.
 #![cfg(feature = "std")]
 
+use transmux::TrackId;
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::pipeline::{CodecConfig, Sample};
 use transmux::rtcp::SenderReport;
@@ -150,9 +151,12 @@ fn feed_track(
     let mut out = Vec::new();
     for i in 0..count {
         let ts = base_ts.wrapping_add(i * frame_ticks);
-        out.extend(d.push(track_id, &build_pkt(i as u16, ts)).unwrap());
+        out.extend(
+            d.push(TrackId::new(track_id), &build_pkt(i as u16, ts))
+                .unwrap(),
+        );
     }
-    out.extend(d.flush(track_id).unwrap());
+    out.extend(d.flush(TrackId::new(track_id)).unwrap());
     out
 }
 
@@ -175,8 +179,18 @@ fn marker_wall_seconds(
 
 fn tracks() -> Vec<RtpStreamTrack> {
     vec![
-        RtpStreamTrack::new(VIDEO_TRACK, RtpMediaKind::H264, dummy_avc(), VIDEO_CLOCK),
-        RtpStreamTrack::new(AUDIO_TRACK, RtpMediaKind::Aac, dummy_aac(), AUDIO_CLOCK),
+        RtpStreamTrack::new(
+            TrackId::new(VIDEO_TRACK),
+            RtpMediaKind::H264,
+            dummy_avc(),
+            VIDEO_CLOCK,
+        ),
+        RtpStreamTrack::new(
+            TrackId::new(AUDIO_TRACK),
+            RtpMediaKind::Aac,
+            dummy_aac(),
+            AUDIO_CLOCK,
+        ),
     ]
 }
 
@@ -210,8 +224,14 @@ fn rtcp_sr_recovers_true_av_sync_negative_control_without_sr_is_wrong() {
     );
 
     let audio_start_wall = VIDEO_START_WALL + AUDIO_START_DELAY_S;
-    with_sr.push_sender_report(VIDEO_TRACK, sender_report(VIDEO_TS_BASE, VIDEO_START_WALL));
-    with_sr.push_sender_report(AUDIO_TRACK, sender_report(AUDIO_TS_BASE, audio_start_wall));
+    with_sr.push_sender_report(
+        TrackId::new(VIDEO_TRACK),
+        sender_report(VIDEO_TS_BASE, VIDEO_START_WALL),
+    );
+    with_sr.push_sender_report(
+        TrackId::new(AUDIO_TRACK),
+        sender_report(AUDIO_TS_BASE, audio_start_wall),
+    );
 
     let starts = with_sr.sync_start_decode_times();
     assert_eq!(
@@ -219,8 +239,16 @@ fn rtcp_sr_recovers_true_av_sync_negative_control_without_sr_is_wrong() {
         2,
         "both tracks anchored -> both get a common-wallclock start_decode_time"
     );
-    let video_start = starts.iter().find(|(id, _)| *id == VIDEO_TRACK).unwrap().1;
-    let audio_start = starts.iter().find(|(id, _)| *id == AUDIO_TRACK).unwrap().1;
+    let video_start = starts
+        .iter()
+        .find(|(id, _)| *id == TrackId::new(VIDEO_TRACK))
+        .unwrap()
+        .1;
+    let audio_start = starts
+        .iter()
+        .find(|(id, _)| *id == TrackId::new(AUDIO_TRACK))
+        .unwrap()
+        .1;
     // The video track began recording first, so it defines the common
     // origin (start_decode_time == 0); audio's start is pushed forward by
     // ~AUDIO_START_DELAY_S, expressed in audio's own 48 kHz clock.

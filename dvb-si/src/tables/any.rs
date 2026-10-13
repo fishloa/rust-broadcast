@@ -20,15 +20,16 @@
 //! ```
 //! use broadcast_common::Serialize;
 //! use dvb_si::tables::AnyTableSection;
+//! use mpeg_ts::pid::Pid;
 //! use dvb_si::tables::pat::{PatSection, PatEntry};
 //!
 //! // Serialize a small PAT, then dispatch the bytes back through AnyTableSection::parse.
-//! let pat = PatSection::new(1, 0, true, 0, 0, vec![PatEntry::new(1, 0x0100)]);
+//! let pat = PatSection::new(1, 0, true, 0, 0, vec![PatEntry::new(1, Pid::new(0x0100))]);
 //! let mut section = vec![0u8; pat.serialized_len()];
 //! pat.serialize_into(&mut section).unwrap();
 //!
 //! match AnyTableSection::parse(&section).unwrap() {
-//!     AnyTableSection::PatSection(parsed) => assert_eq!(parsed.entries[0].pid, 0x0100),
+//!     AnyTableSection::PatSection(parsed) => assert_eq!(parsed.entries[0].pid, Pid::new(0x0100)),
 //!     other => panic!("expected PatSection, got {other:?}"),
 //! }
 //! ```

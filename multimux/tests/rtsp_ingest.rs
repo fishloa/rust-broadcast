@@ -52,6 +52,7 @@
 //! `rtsp://`).
 
 use std::time::{Duration, Instant};
+use transmux::TrackId;
 
 use broadcast_auth::{AuthResult, RequestContext, Verifier};
 use broadcast_common::{Stage, Timestamp};
@@ -365,13 +366,17 @@ async fn run() {
         "3 access units over interleaved RTP yield exactly 2 completed samples"
     );
     let (track_id0, sample0) = samples[0];
-    assert_eq!(track_id0, 1, "the sole video track routes to track id 1");
+    assert_eq!(
+        track_id0,
+        TrackId::new(1),
+        "the sole video track routes to track id 1"
+    );
     // The same `transmux::Sample` a `Trunk`'s `SampleCursorItem::Timed` would
     // hand back — see this module's doc for why this test reads it here
     // instead.
     assert!(sample0.flags.is_sync, "the first access unit was the IDR");
     let (track_id1, sample1) = samples[1];
-    assert_eq!(track_id1, 1);
+    assert_eq!(track_id1, TrackId::new(1));
     assert!(!sample1.flags.is_sync, "the second access unit was non-IDR");
 
     server.await.expect("server task");

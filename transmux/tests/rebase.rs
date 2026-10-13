@@ -30,6 +30,7 @@
 //!    timestamp by any transform.
 
 use broadcast_common::{Package, Unpackage};
+use transmux::TrackId;
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use transmux::media::{CmafMux, Fmp4Demux, Media, Track};
 use transmux::nalu_types::{AvcPps, AvcSps};
@@ -58,7 +59,7 @@ fn avc_spec() -> TrackSpec {
         sps_ext: vec![],
     };
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         90_000,
         CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),
@@ -127,7 +128,7 @@ fn fmp4_demux_populates_start_decode_time_from_tfdt() {
 
     // Build a real init + media segment at a KNOWN non-zero tfdt.
     let mut fmp4 = build_init_segment(std::slice::from_ref(&spec), 90_000).expect("init");
-    let frag = FragmentTrackData::new(1, KNOWN_BASE, &samples);
+    let frag = FragmentTrackData::new(TrackId::new(1), KNOWN_BASE, &samples);
     let media_seg = build_media_segment(1, &[frag]).expect("media segment");
     fmp4.extend_from_slice(&media_seg);
 

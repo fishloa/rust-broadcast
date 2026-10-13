@@ -22,6 +22,7 @@
 //! test documents and applies that constant.
 
 use broadcast_common::Package;
+use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::webm_demux::WebmDemux;
 use transmux::{CmafMux, Media, parse_box};
@@ -783,7 +784,7 @@ fn laced_blocks_are_unlaced_like_the_unlaced_fixture() {
     let reference_audio = reference
         .tracks
         .iter()
-        .find(|t| u64::from(t.spec.track_id) == audio_track)
+        .find(|t| u64::from(t.spec.track_id.value()) == audio_track)
         .expect("audio track");
     assert!(
         reference_audio.samples.len() > 20,
@@ -1106,7 +1107,7 @@ fn timing_holds_for_every_lacing_mode() {
         let audio = media
             .tracks
             .iter()
-            .find(|t| t.spec.track_id == 1)
+            .find(|t| t.spec.track_id == TrackId::new(1))
             .expect("audio track");
 
         let rows: Vec<(i64, i64, u32)> = audio
@@ -1167,7 +1168,7 @@ fn default_duration_is_rounded_not_truncated() {
     let audio = media
         .tracks
         .iter()
-        .find(|t| t.spec.track_id == 1)
+        .find(|t| t.spec.track_id == TrackId::new(1))
         .expect("audio track");
 
     let dts: Vec<i64> = audio.samples.iter().map(|s| s.dts.unwrap()).collect();

@@ -20,6 +20,7 @@
 
 use broadcast_common::{Package, Unpackage};
 use std::collections::HashSet;
+use transmux::TrackId;
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::RtpMediaKind;
 use transmux::rtp_sdp::{aac_config_from_asc_hex, avc_config_from_sprop};
@@ -122,7 +123,7 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     // Feed the packetised RTP for the video stream through the streaming depayloader.
     let video_stream = video_stream(&out);
     let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
-        1,
+        TrackId::new(1),
         RtpMediaKind::H264,
         CodecConfig::Avc {
             config: avc.clone(),
@@ -134,9 +135,9 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     let mut recovered = Vec::new();
     for pkt in &video_stream.packets {
         let c = pkt.as_contiguous();
-        recovered.extend(d.push(1, &c).unwrap());
+        recovered.extend(d.push(TrackId::new(1), &c).unwrap());
     }
-    recovered.extend(d.flush(1).unwrap());
+    recovered.extend(d.flush(TrackId::new(1)).unwrap());
 
     // Recovered sample count within 1 of the original (last-AU flush edge).
     assert!(
@@ -212,14 +213,17 @@ fn ts_round_trip_recovers_timing_config_and_builds_fmp4() {
     // multi-segment (part) build, as CMAF/LL-* tests in this crate do.
     let mid = recovered.len() / 2;
     let (part1, part2) = recovered.split_at(mid);
-    let seg1 = build_media_segment(1, &[FragmentTrackData::new(1, 0, part1)])
+    let seg1 = build_media_segment(1, &[FragmentTrackData::new(TrackId::new(1), 0, part1)])
         .expect("build_media_segment (part 1) must succeed");
     let part1_total: u64 = part1
         .iter()
         .map(|s| u64::from(s.duration.unwrap_or(0)))
         .sum();
-    let seg2 = build_media_segment(2, &[FragmentTrackData::new(1, part1_total, part2)])
-        .expect("build_media_segment (part 2) must succeed");
+    let seg2 = build_media_segment(
+        2,
+        &[FragmentTrackData::new(TrackId::new(1), part1_total, part2)],
+    )
+    .expect("build_media_segment (part 2) must succeed");
 
     for (label, seg) in [("part 1", &seg1), ("part 2", &seg2)] {
         assert!(!seg.is_empty(), "{label} segment non-empty");
@@ -312,14 +316,14 @@ fn run_video(
     reorder_depth: usize,
 ) -> (Vec<bytes::Bytes>, bool) {
     let mut d = RtpStreamDepacketiser::new(vec![
-        RtpStreamTrack::new(1, RtpMediaKind::H264, config.clone(), 90_000)
+        RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, config.clone(), 90_000)
             .with_reorder_depth(reorder_depth),
     ]);
     let mut out = Vec::new();
     for pkt in pkts {
-        out.extend(d.push(1, pkt).unwrap());
+        out.extend(d.push(TrackId::new(1), pkt).unwrap());
     }
-    out.extend(d.flush(1).unwrap());
+    out.extend(d.flush(TrackId::new(1)).unwrap());
     let mut had_loss = false;
     while let Some(e) = d.poll_loss_event() {
         if matches!(
@@ -461,22 +465,22 @@ fn clean_capture_emits_zero_loss_signals() {
         .clone();
 
     let mut d = RtpStreamDepacketiser::new(vec![
-        RtpStreamTrack::new(1, RtpMediaKind::H264, vconfig, 90_000),
+        RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, vconfig, 90_000),
         // Clock rate is irrelevant to sequence-gate correctness (only
         // timing derivation, not under test here).
-        RtpStreamTrack::new(2, RtpMediaKind::Aac, aconfig, 48_000),
+        RtpStreamTrack::new(TrackId::new(2), RtpMediaKind::Aac, aconfig, 48_000),
     ]);
 
     for pkt in &video_stream(&out).packets {
         let c = pkt.as_contiguous();
-        d.push(1, &c).unwrap();
+        d.push(TrackId::new(1), &c).unwrap();
     }
-    d.flush(1).unwrap();
+    d.flush(TrackId::new(1)).unwrap();
     for pkt in &audio_stream(&out).packets {
         let c = pkt.as_contiguous();
-        d.push(2, &c).unwrap();
+        d.push(TrackId::new(2), &c).unwrap();
     }
-    d.flush(2).unwrap();
+    d.flush(TrackId::new(2)).unwrap();
 
     // Zero *loss* signals end to end. The fixture's presentation timestamps
     // are reordered (it is a real B-frame encode), so
@@ -541,7 +545,7 @@ fn wrap_vpkt(seq: u16, ts: u32, nal: &[u8]) -> Vec<u8> {
 fn sequence_wrap_is_not_treated_as_a_gap() {
     let config = tiny_avc_config();
     let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
-        1,
+        TrackId::new(1),
         RtpMediaKind::H264,
         config,
         90_000,
@@ -558,9 +562,12 @@ fn sequence_wrap_is_not_treated_as_a_gap() {
     let mut recovered = Vec::new();
     for (i, seq) in seqs.iter().enumerate() {
         let ts = 1000 + i as u32 * 3000;
-        recovered.extend(d.push(1, &wrap_vpkt(*seq, ts, &nals[i])).unwrap());
+        recovered.extend(
+            d.push(TrackId::new(1), &wrap_vpkt(*seq, ts, &nals[i]))
+                .unwrap(),
+        );
     }
-    recovered.extend(d.flush(1).unwrap());
+    recovered.extend(d.flush(TrackId::new(1)).unwrap());
 
     assert!(
         d.poll_loss_event().is_none(),
@@ -589,15 +596,18 @@ fn reorder_buffer_is_bounded_under_a_flood_of_out_of_order_packets() {
 
     let config = tiny_avc_config();
     let mut d = RtpStreamDepacketiser::new(vec![
-        RtpStreamTrack::new(1, RtpMediaKind::H264, config, 90_000).with_reorder_depth(DEPTH),
+        RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, config, 90_000)
+            .with_reorder_depth(DEPTH),
     ]);
 
     // Establish `expected` with one in-order packet (seq 0).
-    d.push(1, &wrap_vpkt(0, 1000, &[0x65, 0xAA])).unwrap();
+    d.push(TrackId::new(1), &wrap_vpkt(0, 1000, &[0x65, 0xAA]))
+        .unwrap();
 
     for k in 1..=FLOOD_LEN {
         let seq = 1000u16.wrapping_add(k.wrapping_mul(50));
-        d.push(1, &wrap_vpkt(seq, 1000, &[0x41, 0xBB])).unwrap();
+        d.push(TrackId::new(1), &wrap_vpkt(seq, 1000, &[0x41, 0xBB]))
+            .unwrap();
     }
 
     let mut gap_events = 0usize;
@@ -727,16 +737,16 @@ fn seq_pkt(seq: u16, ts: u32, byte: u8) -> Vec<u8> {
 /// emission order and the loss/reorder signals raised.
 fn run_seqs(pairs: &[(u16, u32)]) -> (Vec<Vec<u8>>, Vec<RtpLossEvent>) {
     let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
-        1,
+        TrackId::new(1),
         RtpMediaKind::H264,
         tiny_avc_config(),
         90_000,
     )]);
     let mut out = Vec::new();
     for (i, &(seq, ts)) in pairs.iter().enumerate() {
-        out.extend(d.push(1, &seq_pkt(seq, ts, i as u8)).unwrap());
+        out.extend(d.push(TrackId::new(1), &seq_pkt(seq, ts, i as u8)).unwrap());
     }
-    out.extend(d.flush(1).unwrap());
+    out.extend(d.flush(TrackId::new(1)).unwrap());
     let mut events = Vec::new();
     while let Some(e) = d.poll_loss_event() {
         events.push(e);

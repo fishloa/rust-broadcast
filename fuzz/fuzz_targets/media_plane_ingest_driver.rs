@@ -12,7 +12,7 @@ use media_plane::{
     SessionEvent, TrunkConfig,
 };
 use transmux::pipeline::DataCarriage;
-use transmux::{CodecConfig, Sample, TrackSpec};
+use transmux::{CodecConfig, Sample, TrackId, TrackSpec};
 
 /// A session whose entire event stream is fuzzer-controlled: `feed` decodes
 /// its input into zero or more [`SessionEvent`]s and never fails. This
@@ -42,7 +42,7 @@ impl Stage for FuzzSession {
                 1 => self.pending.push_back(SessionEvent::NewProgram {
                     program,
                     tracks: vec![TrackSpec::new(
-                        rec[3] as u32,
+                        TrackId::new(u32::from(rec[3])),
                         90_000,
                         CodecConfig::Data {
                             stream_type: 0x06,
@@ -53,7 +53,7 @@ impl Stage for FuzzSession {
                 }),
                 _ => self.pending.push_back(SessionEvent::Sample {
                     program,
-                    track_id: rec[3] as u32,
+                    track_id: TrackId::new(u32::from(rec[3])),
                     retention: if rec[4] % 2 == 0 {
                         RetentionClass::Timed
                     } else {

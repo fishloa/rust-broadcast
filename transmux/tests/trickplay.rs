@@ -17,6 +17,7 @@
 
 use std::fs;
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::Unpackage;
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -41,7 +42,7 @@ const SYNTHETIC_GOP_SIZE: usize = 4;
 
 fn synthetic_spec() -> TrackSpec {
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         90000,
         CodecConfig::Avc {
             config: AVCConfigurationBox {

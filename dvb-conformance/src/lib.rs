@@ -76,27 +76,27 @@ use mpeg_ts::ts::{SectionReassembler, TsPacket};
 // ── Named PID constants ─────────────────────────────────────────────────────
 
 /// PID 0x0000 — Program Association Table (ISO/IEC 13818-1 §2.4.4.3).
-const PID_PAT: u16 = 0x0000;
+const PID_PAT: Pid = Pid::new(0x0000);
 /// PID 0x0001 — Conditional Access Table (ISO/IEC 13818-1 §2.4.4.5).
-const PID_CAT: u16 = 0x0001;
+const PID_CAT: Pid = Pid::new(0x0001);
 /// PID 0x0010 — Network Information Table (EN 300 468 §5.2.1).
-const PID_NIT: u16 = 0x0010;
+const PID_NIT: Pid = Pid::new(0x0010);
 /// PID 0x0011 — SDT/BAT (EN 300 468 §5.2.2 / §5.2.3).
-const PID_SDT_BAT: u16 = 0x0011;
+const PID_SDT_BAT: Pid = Pid::new(0x0011);
 /// PID 0x0012 — Event Information Table (EN 300 468 §5.2.4).
-const PID_EIT: u16 = 0x0012;
+const PID_EIT: Pid = Pid::new(0x0012);
 /// PID 0x0013 — Running Status Table (EN 300 468 §5.2.8).
-const PID_RST: u16 = 0x0013;
+const PID_RST: Pid = Pid::new(0x0013);
 /// PID 0x0014 — TDT/TOT (EN 300 468 §5.2.5 / §5.2.6).
-const PID_TDT_TOT: u16 = 0x0014;
+const PID_TDT_TOT: Pid = Pid::new(0x0014);
 /// PID 0x1FFF — Null/padding packets (ISO/IEC 13818-1 §2.4.3.3).
-const PID_NULL: u16 = 0x1FFF;
+const PID_NULL: Pid = Pid::new(0x1FFF);
 
 /// Sync byte value (ISO/IEC 13818-1 §2.4.3.3).
 const SYNC_BYTE: u8 = 0x47;
 
 /// Well-known SI/PSI PIDs on which CRC-checked long-form sections appear.
-const SI_PIDS: [u16; 7] = [
+const SI_PIDS: [Pid; 7] = [
     PID_PAT,
     PID_CAT,
     PID_NIT,
@@ -747,7 +747,7 @@ struct UnreferencedPidTracking {
 /// flagged).
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 struct MinGapKey {
-    pid: u16,
+    pid: Pid,
     table_id: u8,
     table_id_extension: u16,
 }
@@ -807,7 +807,7 @@ pub struct ConformanceMonitor {
     bad_run: u8,
 
     // Per-PID continuity counter (1.4)
-    cc_states: BTreeMap<u16, CcState>,
+    cc_states: BTreeMap<Pid, CcState>,
 
     // PAT section reassembly + timing (1.3.a)
     pat_reassembler: SectionReassembler,
@@ -820,19 +820,19 @@ pub struct ConformanceMonitor {
     tstd_anchored: bool,
 
     // PMT section reassembly + timing per program_map_PID (1.5.a)
-    pmt_trackings: BTreeMap<u16, PmtTracking>,
+    pmt_trackings: BTreeMap<Pid, PmtTracking>,
 
     // Referenced ES PID timing (1.6)
-    es_trackings: BTreeMap<u16, EsTracking>,
+    es_trackings: BTreeMap<Pid, EsTracking>,
 
     // Well-known SI/PSI section reassembly + CRC checking (2.2)
-    si_reassemblies: BTreeMap<u16, SiReassembly>,
+    si_reassemblies: BTreeMap<Pid, SiReassembly>,
 
     // Per-PID PCR tracking (2.3a, 2.3b)
-    pcr_states: BTreeMap<u16, PcrState>,
+    pcr_states: BTreeMap<Pid, PcrState>,
 
     // Per-PID PTS tracking (2.5)
-    pts_states: BTreeMap<u16, PtsState>,
+    pts_states: BTreeMap<Pid, PtsState>,
 
     // CAT tracking (2.6)
     cat_seen: bool,
@@ -842,7 +842,7 @@ pub struct ConformanceMonitor {
     si_timers: BTreeMap<u8, SiRepetitionTimer>,
 
     // Unreferenced_PID candidate tracking (3.4)
-    unreferenced_pid_timers: BTreeMap<u16, UnreferencedPidTracking>,
+    unreferenced_pid_timers: BTreeMap<Pid, UnreferencedPidTracking>,
 
     // Per-sub-table `(pid, table_id, table_id_extension)` min-gap tracking
     // (25 ms minimum-gap dimension of 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8)
@@ -955,7 +955,7 @@ impl ConformanceMonitor {
             Err(_) => return &self.events,
         };
         let header = &packet.header;
-        let pid = header.pid.value();
+        let pid = header.pid;
 
         // ── 2.1 Transport_error (Table 5.0b indicator 2.1) ──────────────
         if header.tei {
@@ -1174,14 +1174,14 @@ impl ConformanceMonitor {
     fn emit(
         &mut self,
         indicator: Indicator,
-        pid: Option<u16>,
+        pid: Option<Pid>,
         at: Duration,
         detail: impl Into<String>,
     ) {
         let event = ConformanceEvent {
             indicator,
             priority: indicator.priority(),
-            pid: pid.map(Pid::new),
+            pid,
             at,
             detail: detail.into(),
         };
@@ -1192,7 +1192,7 @@ impl ConformanceMonitor {
     /// Continuity_count_error (1.4) check.
     fn check_cc(
         &mut self,
-        pid: u16,
+        pid: Pid,
         cc: u8,
         has_payload: bool,
         t: Duration,
@@ -1318,7 +1318,7 @@ impl ConformanceMonitor {
     }
 
     /// CRC-check a completed section and, if on PID_PAT, process it.
-    fn check_crc_and_process_pat(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+    fn check_crc_and_process_pat(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
         // 2.2: CRC check on PAT section.
         self.check_crc_for_section(section_bytes, pid, t);
 
@@ -1339,7 +1339,7 @@ impl ConformanceMonitor {
     }
 
     /// CRC-check a completed section and, if on a PMT PID, process it.
-    fn check_crc_and_process_pmt(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+    fn check_crc_and_process_pmt(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
         // 2.2: CRC check on PMT section.
         self.check_crc_for_section(section_bytes, pid, t);
 
@@ -1365,7 +1365,7 @@ impl ConformanceMonitor {
     /// mismatch, emit `CrcError`. TBsys `Buffer_error` tracking (indicator
     /// 3.3) is fed separately, per TS packet, not here — see
     /// [`feed_tbsys_bytes`](Self::feed_tbsys_bytes).
-    fn check_crc_for_section(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+    fn check_crc_for_section(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
         let section = match Section::parse(section_bytes) {
             Ok(s) => s,
             Err(_) => return,
@@ -1395,7 +1395,7 @@ impl ConformanceMonitor {
     /// packets, and TBsys must drain between them, not receive the whole
     /// section's length in one instant (issue #1035). Drains at 1 Mbit/s
     /// (125 000 bytes/s). Overflow fires Buffer_error (3.3).
-    fn feed_tbsys_bytes(&mut self, n_bytes: u64, pid: u16, t: Duration) {
+    fn feed_tbsys_bytes(&mut self, n_bytes: u64, pid: Pid, t: Duration) {
         // Drain TBsys to current time using the fixed 1 Mbit/s leak rate.
         self.tstd.drain_tb_sys(t);
 
@@ -1454,13 +1454,13 @@ impl ConformanceMonitor {
     }
 
     /// CRC-check for SI PIDs that are not PAT/PMT (handled via si_reassemblies).
-    fn check_crc_for_si(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+    fn check_crc_for_si(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
         self.check_crc_for_section(section_bytes, pid, t);
     }
 
     /// TR 101 290 v1.4.1 Table 5.0b indicator 2.6 — CAT_error, condition 1:
     /// section with `table_id != 0x01` on PID_CAT.
-    fn check_cat_table_id(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+    fn check_cat_table_id(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
         if pid != PID_CAT {
             return;
         }
@@ -1493,7 +1493,7 @@ impl ConformanceMonitor {
     /// (0x72). The absence dimension (NIT_actual missing for the
     /// EN 300 468 §5.1.4 repetition interval) is raised from the shared 3.2
     /// SI timer in `check_presence_timeouts`.
-    fn check_nit_table_id(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+    fn check_nit_table_id(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
         if pid != PID_NIT {
             return;
         }
@@ -1522,7 +1522,7 @@ impl ConformanceMonitor {
     /// PID 0x0011 are SDT_actual (0x42), SDT_other (0x46), BAT (0x4A),
     /// stuffing/ST (0x72). The absence dimension (SDT_actual missing) is
     /// raised from the shared 3.2 SI timer in `check_presence_timeouts`.
-    fn check_sdt_table_id(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+    fn check_sdt_table_id(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
         if pid != PID_SDT_BAT {
             return;
         }
@@ -1553,7 +1553,7 @@ impl ConformanceMonitor {
     /// schedule actual (0x50..=0x5F), EIT schedule other (0x60..=0x6F),
     /// stuffing/ST (0x72). The absence dimension (EIT P/F actual missing) is
     /// raised from the shared 3.2 SI timer in `check_presence_timeouts`.
-    fn check_eit_table_id(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+    fn check_eit_table_id(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
         if pid != PID_EIT {
             return;
         }
@@ -1587,7 +1587,7 @@ impl ConformanceMonitor {
     /// dimension. `docs/tr_101_290.md` clause 3.7: allowed table_ids on
     /// PID 0x0013 are RST (0x71), stuffing/ST (0x72). RST has no documented
     /// absence threshold in Table 5.0c, so there is no presence dimension.
-    fn check_rst_table_id(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+    fn check_rst_table_id(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
         if pid != PID_RST {
             return;
         }
@@ -1614,7 +1614,7 @@ impl ConformanceMonitor {
     /// PID 0x0014 are TDT (0x70), stuffing/ST (0x72), TOT (0x73). The
     /// absence dimension (TDT missing) is raised from the shared 3.2 SI
     /// timer in `check_presence_timeouts`.
-    fn check_tdt_table_id(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+    fn check_tdt_table_id(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
         if pid != PID_TDT_TOT {
             return;
         }
@@ -1648,7 +1648,7 @@ impl ConformanceMonitor {
     /// descriptors) and PIDs "user defined as private data streams" (the
     /// spec's own carve-out — not distinguishable from the wire alone). Both
     /// are documented limitations; see the crate `//!` and README.
-    fn is_referenced_or_reserved_pid(&self, pid: u16) -> bool {
+    fn is_referenced_or_reserved_pid(&self, pid: Pid) -> bool {
         pid == PID_PAT
             || pid == PID_CAT
             || pid == PID_NIT
@@ -1657,7 +1657,7 @@ impl ConformanceMonitor {
             || pid == PID_RST
             || pid == PID_TDT_TOT
             || pid == PID_NULL
-            || (RESERVED_PID_MIN..=RESERVED_PID_MAX).contains(&pid)
+            || (RESERVED_PID_MIN..=RESERVED_PID_MAX).contains(&pid.value())
             || self.pmt_trackings.contains_key(&pid)
             || self.es_trackings.contains_key(&pid)
     }
@@ -1669,7 +1669,7 @@ impl ConformanceMonitor {
     /// evaluation happens in `check_presence_timeouts`; a PID that later
     /// becomes referenced (see `process_pat_section` / `process_pmt_section`)
     /// has its entry removed there.
-    fn track_unreferenced_pid(&mut self, pid: u16, t: Duration) {
+    fn track_unreferenced_pid(&mut self, pid: Pid, t: Duration) {
         if self.is_referenced_or_reserved_pid(pid) {
             self.unreferenced_pid_timers.remove(&pid);
             return;
@@ -1723,8 +1723,8 @@ impl ConformanceMonitor {
         // longer references, and 3.4 (Unreferenced_PID) never fired for that
         // PID because it still looked referenced. Lineup changes are routine
         // (regional opt-outs, event channels).
-        let referenced: BTreeSet<u16> = pat.programmes().map(|entry| entry.pid).collect();
-        let stale: Vec<u16> = self
+        let referenced: BTreeSet<Pid> = pat.programmes().map(|entry| entry.pid).collect();
+        let stale: Vec<Pid> = self
             .pmt_trackings
             .keys()
             .copied()
@@ -1763,7 +1763,7 @@ impl ConformanceMonitor {
     }
 
     /// Process a completed section on a program_map_PID.
-    fn process_pmt_section(&mut self, section_bytes: &[u8], _pid: u16, t: Duration) {
+    fn process_pmt_section(&mut self, section_bytes: &[u8], _pid: Pid, t: Duration) {
         let section = match Section::parse(section_bytes) {
             Ok(s) => s,
             Err(_) => return,
@@ -1790,14 +1790,14 @@ impl ConformanceMonitor {
         // tracking it, otherwise 1.6 (PID_error) keeps firing for a PID the
         // current lineup no longer references and 3.4 (Unreferenced_PID) never
         // fires for it.
-        let mut referenced: BTreeSet<u16> = BTreeSet::new();
+        let mut referenced: BTreeSet<Pid> = BTreeSet::new();
         if pmt.pcr_pid != PID_NULL {
             referenced.insert(pmt.pcr_pid);
         }
         for stream in &pmt.streams {
             referenced.insert(stream.elementary_pid);
         }
-        let stale: Vec<u16> = self
+        let stale: Vec<Pid> = self
             .es_trackings
             .keys()
             .copied()
@@ -1834,7 +1834,7 @@ impl ConformanceMonitor {
     }
 
     /// TR 101 290 v1.4.1 Table 5.0b indicators 2.3a / 2.3b — PCR checks.
-    fn check_pcr(&mut self, pid: u16, pcr_27mhz: u64, discontinuity: bool, t: Duration) {
+    fn check_pcr(&mut self, pid: Pid, pcr_27mhz: u64, discontinuity: bool, t: Duration) {
         let state = self.pcr_states.entry(pid).or_insert_with(|| PcrState {
             last_pcr_27mhz: 0,
             last_pcr_time: Duration::ZERO,
@@ -1900,7 +1900,7 @@ impl ConformanceMonitor {
     ///
     /// Peeks the PES header on an elementary-stream PID for PTS_DTS_flags.
     /// Only checks PIDs that have been "armed" by seeing at least one PTS.
-    fn check_pts(&mut self, pid: u16, payload: &[u8], t: Duration) {
+    fn check_pts(&mut self, pid: Pid, payload: &[u8], t: Duration) {
         // PES start-code prefix: 00 00 01.
         if payload.len() < PES_FLAGS_OFFSET + 2 {
             return;
@@ -2002,7 +2002,7 @@ impl ConformanceMonitor {
     /// PIDs is not conflated.
     ///
     /// Called for every completed section on the well-known SI PIDs.
-    fn check_si_min_gap(&mut self, section: &Section<'_>, pid: u16, t: Duration) {
+    fn check_si_min_gap(&mut self, section: &Section<'_>, pid: Pid, t: Duration) {
         let table_id = section.table_id;
 
         // Only the tracked table_ids participate in the min-gap check.
@@ -2049,7 +2049,7 @@ impl ConformanceMonitor {
     /// Only checks once the sub-table's presence is **established** (observed
     /// at least twice). A stream that legitimately carries no `_other` table
     /// is never flagged.
-    fn check_other_repetition(&mut self, table_id: u8, section_number: u8, pid: u16, t: Duration) {
+    fn check_other_repetition(&mut self, table_id: u8, section_number: u8, pid: Pid, t: Duration) {
         // Only the three `_other` table_ids.
         if table_id != NIT_OTHER_TABLE_ID
             && table_id != SDT_OTHER_TABLE_ID
@@ -2217,7 +2217,7 @@ impl ConformanceMonitor {
     /// Dispatch `_other` repetition tracking for completed SI sections on
     /// the well-known PIDs. Only sections with `table_id` NIT_other (0x41),
     /// SDT_other (0x46), or EIT P/F other (0x4F) are tracked.
-    fn check_si_other_section(&mut self, section_bytes: &[u8], pid: u16, t: Duration) {
+    fn check_si_other_section(&mut self, section_bytes: &[u8], pid: Pid, t: Duration) {
         let section = match Section::parse(section_bytes) {
             Ok(s) => s,
             Err(_) => return,
@@ -2258,7 +2258,7 @@ impl ConformanceMonitor {
     /// actual transport rate. The monitor documents this: the caller is
     /// responsible for supplying realistic timestamps.
     fn process_tstd(&mut self, header: &mpeg_ts::ts::TsHeader, ts_packet: &[u8], t: Duration) {
-        let pid = header.pid.value();
+        let pid = header.pid;
 
         // Periodic TBsys drain and empty-interval check. TBsys feeds at
         // section-completion, but we must drain it on every packet to
@@ -2448,7 +2448,7 @@ impl ConformanceMonitor {
         // that discovery (W-CONF-4); anything else is armed here so the
         // absence window never runs back to `Duration::ZERO` on an
         // epoch-based caller clock.
-        let mut to_anchor: Vec<u16> = Vec::new();
+        let mut to_anchor: Vec<Pid> = Vec::new();
         for (&pid, tracking) in self.pmt_trackings.iter_mut() {
             if !tracking.timer.armed {
                 tracking.timer.anchor(t);
@@ -2460,7 +2460,7 @@ impl ConformanceMonitor {
                 }
             }
         }
-        let pmt_timeouts: Vec<(u16, u64)> = to_anchor
+        let pmt_timeouts: Vec<(Pid, u64)> = to_anchor
             .iter()
             .map(|&pid| (pid, self.config.pmt_max_interval.as_millis() as u64))
             .collect();
@@ -2477,7 +2477,7 @@ impl ConformanceMonitor {
         }
 
         // 1.6: PID_error — referenced PID absence
-        let pid_timeouts: Vec<(u16, u64)> = self
+        let pid_timeouts: Vec<(Pid, u64)> = self
             .es_trackings
             .iter()
             .filter_map(|(&pid, tracking)| {
@@ -2510,7 +2510,7 @@ impl ConformanceMonitor {
 
         // 3.2: SI_repetition_error — maximum interval for tracked SI tables.
         // Collect table_ids that need events, then emit outside the iteration.
-        let si_timeouts: Vec<(u8, u64, u16, u64)> = self
+        let si_timeouts: Vec<(u8, u64, Pid, u64)> = self
             .si_timers
             .iter()
             .filter_map(|(&table_id, timer)| {
@@ -2576,7 +2576,7 @@ impl ConformanceMonitor {
         // 3.4: Unreferenced_PID — a PID persisting beyond the presence
         // threshold without being referenced by the PAT/CAT/a PMT or one of
         // the well-known SI PIDs.
-        let unref_timeouts: Vec<(u16, u64)> = self
+        let unref_timeouts: Vec<(Pid, u64)> = self
             .unreferenced_pid_timers
             .iter()
             .filter_map(|(&pid, timer)| {

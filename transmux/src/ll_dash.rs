@@ -58,6 +58,7 @@
 //! samples-in IR does not carry. A caller with that timing can add it out of
 //! band; its absence does not affect the availability signalling above.
 
+use crate::TrackId;
 use alloc::collections::VecDeque;
 use alloc::vec;
 use alloc::vec::Vec;
@@ -144,7 +145,7 @@ struct TrackState {
 /// #         bit_depth_chroma_minus8: None,
 /// #         sps_ext: vec![],
 /// #     };
-/// #     TrackSpec::new(1, 90_000, CodecConfig::Avc {
+/// #     TrackSpec::new(transmux::TrackId::new(1), 90_000, CodecConfig::Avc {
 /// #         config: AVCConfigurationBox::new(record),
 /// #         width: 16,
 /// #         height: 16,
@@ -160,8 +161,8 @@ struct TrackState {
 /// let mut seg = LlSegmenter::new(vec![spec()], 1000, 2.0, 1).unwrap();
 /// let init = seg.init_segment().unwrap();       // ftyp + moov
 /// assert_eq!(&init[4..8], b"ftyp");
-/// seg.push(1, au(true)).unwrap();               // keyframe
-/// seg.push(1, au(false)).unwrap();
+/// seg.push(transmux::TrackId::new(1), au(true)).unwrap();               // keyframe
+/// seg.push(transmux::TrackId::new(1), au(false)).unwrap();
 /// let chunks = seg.take_ready();                // write chunk.data over HTTP
 /// assert_eq!(chunks.len(), 2);                  // one chunk per pushed frame
 /// assert!(chunks[0].is_segment_start);
@@ -304,7 +305,7 @@ impl LlSegmenter {
     /// fails, or this track already holds [`MAX_PENDING_SAMPLES_PER_TRACK`]
     /// un-cut samples (no anchor sync sample to cut on — call
     /// [`flush`](Self::flush) to close a trailing partial segment).
-    pub fn push(&mut self, track_id: u32, sample: Sample) -> Result<()> {
+    pub fn push(&mut self, track_id: TrackId, sample: Sample) -> Result<()> {
         let idx = self
             .tracks
             .iter()
@@ -510,7 +511,7 @@ fn take_span(t: &TrackState, target_ticks: u64) -> usize {
 /// delivered exactly once no matter which API — inherent, `Stage`, or a mix
 /// of both on the same instance — the caller uses to retrieve it.
 impl Stage for LlSegmenter {
-    type In<'a> = (u32, Sample);
+    type In<'a> = (TrackId, Sample);
     type Out = Chunk;
     type Error = Error;
 
@@ -580,7 +581,7 @@ impl Package for LlSegmenter {
         // *seconds* (cross-track comparable despite differing timescales),
         // accumulated from sample durations.
         struct Cursor<'a> {
-            track_id: u32,
+            track_id: TrackId,
             timescale: u64,
             samples: &'a [Sample],
             idx: usize,

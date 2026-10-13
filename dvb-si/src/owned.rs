@@ -137,6 +137,7 @@ pub mod doc {
     pub fn pmt_section() -> Vec<u8> {
         use crate::tables::pmt::{PmtSection, PmtStream};
         use broadcast_common::Serialize;
+        use mpeg_ts::pid::Pid;
 
         let pmt = PmtSection::new(
             1,
@@ -144,11 +145,11 @@ pub mod doc {
             true,
             0,
             0,
-            0x0100,
+            Pid::new(0x0100),
             crate::descriptors::DescriptorLoop::new(&[]),
             vec![PmtStream::new(
                 crate::tables::pmt::StreamType::H264, // H.264 video
-                0x0101,
+                Pid::new(0x0101),
                 crate::descriptors::DescriptorLoop::new(&[]),
             )],
         );

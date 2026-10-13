@@ -35,6 +35,7 @@
 #![cfg(feature = "cenc")]
 
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Encrypt, Unpackage};
 use bytes::Bytes;
@@ -651,7 +652,7 @@ fn avc_spec(track_id: u32) -> transmux::TrackSpec {
         sps_ext: vec![],
     };
     transmux::TrackSpec::new(
-        track_id,
+        TrackId::new(track_id),
         90_000,
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox::new(record),

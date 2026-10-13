@@ -16,6 +16,7 @@
 
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use transmux::pipeline::CodecConfig;
@@ -292,11 +293,11 @@ fn streaming_demux_track_added_matches_batch_provenance() {
     demux.feed(&ts);
     demux.finish();
 
-    let mut streamed: BTreeMap<u32, (Option<Pid>, Vec<u8>)> = BTreeMap::new();
+    let mut streamed: BTreeMap<TrackId, (Option<Pid>, Vec<u8>)> = BTreeMap::new();
     while let Some(event) = demux.poll_event() {
         if let DemuxEvent::TrackAdded(spec) = event {
             streamed.insert(
-                spec.track_id,
+                TrackId::new(spec.track_id.value()),
                 (spec.source_pid, spec.es_info_descriptors.clone()),
             );
         }

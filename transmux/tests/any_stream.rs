@@ -45,6 +45,7 @@
 use mpeg_ts::pid::Pid;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::PathBuf;
+use transmux::TrackId;
 
 use broadcast_common::{Package, Unpackage};
 use mpeg_ts::ts::{SectionReassembler, TsPacket};
@@ -589,7 +590,11 @@ fn ts_to_fmp4_errors_naming_data_track_then_succeeds_once_filtered() {
     let mut data_track = find_data_track(&data_media, section_es).clone();
 
     let mut tracks = av_media.tracks.clone();
-    let data_track_id = tracks.iter().map(|t| t.spec.track_id).max().unwrap_or(0) + 1;
+    let data_track_id = tracks
+        .iter()
+        .map(|t| t.spec.track_id)
+        .max()
+        .map_or(TrackId::new(1), TrackId::next);
     data_track.spec.track_id = data_track_id;
     let data_stream_type = match &data_track.spec.config {
         CodecConfig::Data { stream_type, .. } => *stream_type,

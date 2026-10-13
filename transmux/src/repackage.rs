@@ -454,6 +454,7 @@ impl RepackageOutput {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TrackId;
     use crate::ir::CodecConfig;
     use crate::pipeline::Sample;
     use alloc::vec;
@@ -468,7 +469,7 @@ mod tests {
             .collect();
         Track::new(
             TrackSpec::new(
-                1,
+                TrackId::new(1),
                 timescale,
                 CodecConfig::Aac {
                     esds: crate::mp4esds::EsdsBox::new(crate::mp4esds::ESDescriptor::new(

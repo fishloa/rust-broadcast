@@ -11,6 +11,7 @@
 //! `ir2 = TsDemux(ts2)`.
 
 use broadcast_common::{Package, Serialize, Unpackage};
+use transmux::TrackId;
 use transmux::media::{CmafMux, Media};
 use transmux::pipeline::CodecConfig;
 use transmux::{TsDemux, TsMux};
@@ -511,7 +512,7 @@ fn oversized_audio_sample_is_rejected_not_clamped() {
     // A PES-carried Data stream: this muxer re-emits its samples verbatim in a
     // PES, so the sample length is exactly the PES payload length.
     let spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         48_000,
         CodecConfig::Data {
             stream_type: 0x06,
@@ -596,7 +597,7 @@ fn pcr_pid_is_audio_not_a_sparse_data_pid() {
         0,
         transmux::media::Track::new(
             TrackSpec::new(
-                99,
+                TrackId::new(99),
                 90_000,
                 CodecConfig::Data {
                     stream_type: 0x06,
@@ -721,7 +722,7 @@ fn too_many_elementary_streams_is_refused() {
         (0..n)
             .map(|i| {
                 let mut c = t.clone();
-                c.spec.track_id = u32::try_from(i + 1).unwrap();
+                c.spec.track_id = TrackId::new(u32::try_from(i + 1).unwrap());
                 c
             })
             .collect()

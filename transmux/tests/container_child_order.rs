@@ -16,6 +16,7 @@
 //! `tests/fixtures/mp4/cmaf/PROVENANCE.md`.
 
 use broadcast_common::{Parse, Serialize};
+use transmux::TrackId;
 use transmux::{Error, MovieBox, OpaqueBox};
 
 /// Find a top-level box by type and return its full bytes (header + body).
@@ -215,7 +216,7 @@ fn largesize_moov_child_does_not_drop_its_siblings() {
         1,
         "the largesize trak must not be dropped"
     );
-    assert_eq!(parsed.tracks[0].tkhd.track_id, 7);
+    assert_eq!(parsed.tracks[0].tkhd.track_id, TrackId::new(7));
 }
 
 /// A child whose declared `size` runs one byte past the end of its container

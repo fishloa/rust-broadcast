@@ -11,6 +11,7 @@
 //! on the wire. The serializer recomputes every size from the logical fields
 //! (no `self.raw`).
 
+use crate::TrackId;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
@@ -84,7 +85,7 @@ pub(crate) struct MediaRunSample {
 /// placeholder `data_offset` of 0 for the caller to patch once the `moof` size
 /// is known. One copy of what had been three (audit r05-O6).
 pub(crate) fn media_fragment_run(
-    track_id: u32,
+    track_id: TrackId,
     samples: impl Iterator<Item = MediaRunSample> + Clone,
 ) -> Result<(TrackFragmentHeaderBox, TrackFragmentRunBox)> {
     let any_cts = samples.clone().any(|s| s.composition_offset != 0);
@@ -199,7 +200,7 @@ impl Serialize for MovieFragmentHeaderBox {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct TrackFragmentHeaderBox {
     pub flags: u32,
-    pub track_id: u32,
+    pub track_id: TrackId,
     pub base_data_offset: Option<u64>,
     pub sample_description_index: Option<u32>,
     pub default_sample_duration: Option<u32>,
@@ -302,7 +303,7 @@ impl TrackFragmentHeaderBox {
         };
         Ok(TrackFragmentHeaderBox {
             flags,
-            track_id: tid,
+            track_id: TrackId::new(tid),
             base_data_offset: v_bdo,
             sample_description_index: v_sdi,
             default_sample_duration: v_dsd,
@@ -401,7 +402,7 @@ impl Serialize for TrackFragmentHeaderBox {
         buf[c + 2] = fb[2];
         buf[c + 3] = fb[3];
         c += 4;
-        buf[c..c + 4].copy_from_slice(&self.track_id.to_be_bytes());
+        buf[c..c + 4].copy_from_slice(&self.track_id.value().to_be_bytes());
         c += 4;
         if let Some(v) = self.base_data_offset {
             buf[c..c + 8].copy_from_slice(&v.to_be_bytes());
@@ -1435,7 +1436,7 @@ fn aux_info_type_of(payload: &[u8], box_type: &[u8; 4]) -> Option<[u8; 4]> {
 /// is the init-segment half).
 pub struct FragmentProtection<'a> {
     /// The `tfhd.track_id` of the `traf` to protect.
-    pub track_id: u32,
+    pub track_id: TrackId,
     /// Per-sample IV + subsample map for **this fragment's samples only**, in
     /// decode order. Must have exactly as many entries as the matching
     /// `traf`'s total `trun` sample count (checked). A `Media` muxed across
@@ -1781,7 +1782,7 @@ mod tests {
     fn tfhd_minimal() {
         let t = TrackFragmentHeaderBox {
             flags: 0,
-            track_id: 1,
+            track_id: TrackId::new(1),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: None,
@@ -1790,14 +1791,14 @@ mod tests {
         };
         let b = t.to_bytes();
         let p = TrackFragmentHeaderBox::parse_body(&b[8..]).unwrap();
-        assert_eq!(p.track_id, 1);
+        assert_eq!(p.track_id, TrackId::new(1));
         assert_eq!(b, p.to_bytes());
     }
     #[test]
     fn tfhd_subset() {
         let t = TrackFragmentHeaderBox {
             flags: TFHD_DEFAULT_SAMPLE_DURATION_PRESENT | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT,
-            track_id: 7,
+            track_id: TrackId::new(7),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: Some(512),
@@ -1821,7 +1822,7 @@ mod tests {
             | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT;
         let t = TrackFragmentHeaderBox {
             flags,
-            track_id: 2,
+            track_id: TrackId::new(2),
             base_data_offset: Some(0x1234567890ABCDEF),
             sample_description_index: Some(1),
             default_sample_duration: Some(1024),
@@ -1848,7 +1849,7 @@ mod tests {
         let t = TrackFragmentHeaderBox {
             // No presence bits at all, but every value is present.
             flags: 0,
-            track_id: 4,
+            track_id: TrackId::new(4),
             base_data_offset: Some(0x1000),
             sample_description_index: Some(1),
             default_sample_duration: Some(512),
@@ -1874,7 +1875,7 @@ mod tests {
         // The reverse direction: a presence bit with no value emits nothing.
         let t = TrackFragmentHeaderBox {
             flags: TFHD_SAMPLE_DESCRIPTION_INDEX_PRESENT,
-            track_id: 4,
+            track_id: TrackId::new(4),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: None,
@@ -2106,7 +2107,7 @@ mod tests {
         let flags = TFHD_DEFAULT_BASE_IS_MOOF | TFHD_BASE_DATA_OFFSET_PRESENT;
         let t = TrackFragmentHeaderBox {
             flags,
-            track_id: 1,
+            track_id: TrackId::new(1),
             base_data_offset: Some(0x40),
             sample_description_index: None,
             default_sample_duration: None,
@@ -2243,7 +2244,7 @@ mod tests {
                 | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT
                 | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT
                 | TFHD_DEFAULT_BASE_IS_MOOF,
-            track_id: 1,
+            track_id: TrackId::new(1),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: Some(512),
@@ -2269,7 +2270,7 @@ mod tests {
         let traf = TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]);
         let b = traf.to_bytes();
         let p = TrackFragmentBox::parse_body(&b[8..]).unwrap();
-        assert_eq!(p.tfhd.track_id, 1);
+        assert_eq!(p.tfhd.track_id, TrackId::new(1));
         assert!(p.tfdt.is_some());
         assert_eq!(p.trun.len(), 1);
         assert_eq!(b, p.to_bytes());
@@ -2283,7 +2284,7 @@ mod tests {
                 | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT
                 | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT
                 | TFHD_DEFAULT_BASE_IS_MOOF,
-            track_id: 1,
+            track_id: TrackId::new(1),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: Some(512),
@@ -2333,7 +2334,7 @@ mod tests {
             0, 0, 0, 7, // track_ID
         ];
         let traf = TrackFragmentBox::parse_body(body).expect("trun is optional");
-        assert_eq!(traf.tfhd.track_id, 7);
+        assert_eq!(traf.tfhd.track_id, TrackId::new(7));
         assert_eq!(traf.tfhd.flags, TFHD_DURATION_IS_EMPTY);
         assert!(traf.trun.is_empty());
         let out = traf.to_bytes();
@@ -2356,7 +2357,7 @@ mod tests {
             0, 0, 16, b't', b'r', b'u', b'n', 0, 0, 0, 0, 0, 0, 0, 0,
         ];
         let traf = TrackFragmentBox::parse_body(body).expect("parses");
-        assert_eq!(traf.tfhd.track_id, 1);
+        assert_eq!(traf.tfhd.track_id, TrackId::new(1));
         assert_eq!(traf.trun.len(), 1);
         assert_eq!(traf.order.len(), 3);
         let out = traf.to_bytes();
@@ -2397,8 +2398,8 @@ mod tests {
                 let parsed = MovieFragmentBox::parse_body(bx.body).unwrap();
                 assert_eq!(parsed.mfhd.sequence_number, 1);
                 assert_eq!(parsed.traf.len(), 2);
-                assert_eq!(parsed.traf[0].tfhd.track_id, 1);
-                assert_eq!(parsed.traf[1].tfhd.track_id, 2);
+                assert_eq!(parsed.traf[0].tfhd.track_id, TrackId::new(1));
+                assert_eq!(parsed.traf[1].tfhd.track_id, TrackId::new(2));
                 assert!(parsed.traf[0].tfdt.is_some());
                 assert_eq!(parsed.traf[0].tfdt.unwrap().base_media_decode_time(), 0);
                 assert_eq!(parsed.traf[0].trun.len(), 1);
@@ -2461,7 +2462,7 @@ mod tests {
             },
         ];
         let protection = FragmentProtection {
-            track_id: 1,
+            track_id: TrackId::new(1),
             entries: &entries,
             per_sample_iv_size: 0,
         };
@@ -2485,7 +2486,7 @@ mod tests {
 
         let tfhd = TrackFragmentHeaderBox {
             flags: 0,
-            track_id: TRACK_ID,
+            track_id: TrackId::new(TRACK_ID),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: None,
@@ -2527,7 +2528,7 @@ mod tests {
             },
         ];
         let protection = FragmentProtection {
-            track_id: TRACK_ID,
+            track_id: TrackId::new(TRACK_ID),
             entries: &entries,
             per_sample_iv_size: 0,
         };

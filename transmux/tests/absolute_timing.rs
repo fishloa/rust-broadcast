@@ -25,6 +25,7 @@
 //! never against the demuxer's own bookkeeping.
 
 use broadcast_common::{Package, Unpackage};
+use transmux::TrackId;
 
 use transmux::pipeline::CodecConfig;
 use transmux::rtp::{RtpInput, RtpInputStream, RtpMediaKind};
@@ -902,7 +903,7 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
         sps_ext: vec![],
     };
     let spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         90_000,
         CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),

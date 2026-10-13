@@ -83,6 +83,8 @@
 use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::Duration;
+#[cfg(test)]
+use transmux::TrackId;
 
 use broadcast_common::Timestamp;
 use media_plane::ingress::{Dialer, HandshakePolicy, IngestDriver};
@@ -535,7 +537,7 @@ mod tests {
                 connect: IngestTimeouts::default().connect,
                 read: Duration::from_millis(300),
             });
-        let ts_bytes = build_ts_bytes(1, 0xAA, 40);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAA, 40);
 
         let client = tokio::spawn(async move {
             let cfg = HandshakeConfig::default();
@@ -614,7 +616,7 @@ mod tests {
             .expect("listener bind");
         let bound_addr = listener.local_addr().expect("listener local addr");
 
-        let ts_bytes = build_ts_bytes(1, 0xBB, 40);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xBB, 40);
         let server = tokio::spawn(async move {
             let mut sock = listener.accept().await.expect("listener accept");
             for chunk in ts_bytes.chunks(7 * 188) {
@@ -684,7 +686,7 @@ mod tests {
             .expect("listener bind");
         let bound_addr = listener.local_addr().expect("listener local addr");
 
-        let ts_bytes = build_ts_bytes(1, 0xCC, 10);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xCC, 10);
         let server = tokio::spawn(async move {
             let mut sock = listener.accept().await.expect("listener accept");
             for chunk in ts_bytes.chunks(7 * 188) {

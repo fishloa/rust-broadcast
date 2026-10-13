@@ -19,6 +19,7 @@
 //!   `urn:scte:scte35:2013:bin`.
 
 use mp4_emsg::{EMSG_BOX_TYPE, EmsgBox, EmsgVersion, PresentationTime};
+use transmux::TrackId;
 use transmux::{FragmentTrackData, Sample, build_media_segment, build_media_segment_with_events};
 
 /// The SCTE 35 scheme URI for binary `splice_info_section` delivery
@@ -48,7 +49,7 @@ fn minimal_tracks() -> Vec<Sample> {
 }
 
 fn minimal_frag(samples: &[Sample]) -> Vec<FragmentTrackData<'_>> {
-    vec![FragmentTrackData::new(1, 0, samples)]
+    vec![FragmentTrackData::new(TrackId::new(1), 0, samples)]
 }
 
 /// Walk the box list in `data` and return a vec of `(start, end, fourcc)` for

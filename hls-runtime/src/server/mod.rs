@@ -49,8 +49,10 @@
 //! [`crate::client`] but not `server`.
 
 mod engine;
+mod ids;
 
 pub use engine::{
     BlockingQuery, ClosedSegment, Container, DEFAULT_TRACK_ID, HlsBody, HlsMasterError, HlsOrigin,
     HlsOriginBuildError, HlsOriginBuilder, HlsRequest, master_playlist_m3u8,
 };
+pub use ids::{Generation, PartIndex, SegmentSeq};

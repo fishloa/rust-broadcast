@@ -12,11 +12,12 @@ use crate::descriptors::ca::CaDescriptor;
 use crate::error::{Error, Result};
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
+use mpeg_ts::pid::Pid;
 
 /// CAT table_id (ISO/IEC 13818-1 Table 2-30).
 pub const TABLE_ID: u8 = 0x01;
 /// CAT well-known PID.
-pub const PID: u16 = 0x0001;
+pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0001);
 /// The 16 reserved bits in place of `table_id_extension` (all ones).
 const RESERVED_EXTENSION: u16 = 0xFFFF;
 
@@ -27,14 +28,14 @@ const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 
 /// One CA descriptor entry from the CAT, in owned form so it
 /// outlives the source section bytes.
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CatCaEntry {
     /// CA System ID — the CAID. e.g. 0x0500 Viaccess, 0x0650
     /// Irdeto ORF-ICE, 0x0100 Seca/Mediaguard.
     pub ca_system_id: u16,
     /// EMM PID for this CA system.
-    pub ca_pid: u16,
+    pub ca_pid: Pid,
     /// Optional private data after the standard CA fields.
     pub private_data: Vec<u8>,
 }
@@ -276,7 +277,7 @@ mod tests {
         let cas = cat.ca_descriptors().unwrap();
         assert_eq!(cas.len(), 1);
         assert_eq!(cas[0].ca_system_id, 0x0500);
-        assert_eq!(cas[0].ca_pid, 0x0050);
+        assert_eq!(cas[0].ca_pid, Pid::new(0x0050));
         assert!(cas[0].private_data.is_empty());
     }
 
@@ -293,7 +294,7 @@ mod tests {
         assert_eq!(cas[0].ca_system_id, 0x0500);
         assert_eq!(cas[1].ca_system_id, 0x0650);
         assert_eq!(cas[2].ca_system_id, 0x0100);
-        assert_eq!(cas[1].ca_pid, 0x0062);
+        assert_eq!(cas[1].ca_pid, Pid::new(0x0062));
     }
 
     #[test]
@@ -350,7 +351,7 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x01);
-        assert_eq!(PID, 0x0001);
+        assert_eq!(PID.value(), 0x0001);
     }
 
     /// CAT borrows its descriptor loop (3.0): the loop serializes as the

@@ -45,6 +45,7 @@
 //! (not a TS PID — there is none for this input).
 
 use broadcast_common::Unpackage;
+use transmux::TrackId;
 use transmux::{CodecConfig, Fmp4Demux, Media, ProgressiveDemux, iter_length_prefixed_nals_with};
 
 use crate::report::{Finding, Location, Report, Severity};
@@ -178,7 +179,7 @@ fn check_media(media: &Media, report: &mut Report) {
 }
 
 fn check_avc_track(
-    track_id: u32,
+    track_id: TrackId,
     record: &transmux::AVCDecoderConfigurationRecord,
     width: u16,
     height: u16,
@@ -261,7 +262,7 @@ fn check_avc_track(
 }
 
 fn check_hevc_track(
-    track_id: u32,
+    track_id: TrackId,
     record: &transmux::HEVCDecoderConfigurationRecord,
     width: u16,
     height: u16,

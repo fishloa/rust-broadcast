@@ -5,6 +5,7 @@
 //! config box, and asserts byte-exact match with ffmpeg's output.
 
 use broadcast_common::{Parse, Serialize};
+use transmux::TrackId;
 
 use transmux::{
     Ac3SpecificBox, Ac3SyncframeInfo, CodecConfig, Ec3SpecificBox, Ec3SyncframeInfo, TrackSpec,
@@ -176,7 +177,7 @@ fn ac3_init_segment_sample_entry() {
     let sample_rate: u32 = 44100;
 
     let tracks = vec![TrackSpec::new(
-        1,
+        TrackId::new(1),
         sample_rate,
         CodecConfig::Ac3 {
             config: dac3,
@@ -198,7 +199,7 @@ fn ec3_init_segment_sample_entry() {
     let sample_rate: u32 = 44100;
 
     let tracks = vec![TrackSpec::new(
-        1,
+        TrackId::new(1),
         sample_rate,
         CodecConfig::Eac3 {
             config: dec3,
