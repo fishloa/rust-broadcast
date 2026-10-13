@@ -235,7 +235,7 @@ mod tests {
     fn reserved_bits_preserved_for_every_combination() {
         for r1 in 0u8..=1 {
             for r3 in 0u8..=7 {
-                let bytes = [TAG, 3, (r1 << 7) | 0x00, 0x10, (r3 << 5) | 0x03];
+                let bytes = [TAG, 3, r1 << 7, 0x10, (r3 << 5) | 0x03];
                 let d = ApplicationSignallingDescriptor::parse(&bytes).unwrap();
                 assert_eq!(d.entries[0].reserved_future_use_1, r1);
                 assert_eq!(d.entries[0].reserved_future_use_3, r3);

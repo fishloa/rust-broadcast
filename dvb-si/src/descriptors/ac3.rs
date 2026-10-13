@@ -599,8 +599,10 @@ mod tests {
     /// A hand-built descriptor takes the spec value: all editions say 0.
     #[test]
     fn default_reserved_flags_is_zero() {
-        let mut d = Ac3Descriptor::default();
-        d.component_type = Some(0x42);
+        let d = Ac3Descriptor {
+            component_type: Some(0x42),
+            ..Ac3Descriptor::default()
+        };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(buf, [TAG, 2, FLAG_COMPONENT_TYPE, 0x42]);
