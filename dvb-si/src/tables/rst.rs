@@ -30,6 +30,7 @@ const ENTRY_LEN: usize = 9;
 /// 5 service off-air, 6–7 reserved.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct RstEntry {
     /// Transport stream carrying the event.
     pub transport_stream_id: u16,
@@ -41,14 +42,61 @@ pub struct RstEntry {
     pub event_id: u16,
     /// 3-bit running_status code (EN 300 468 Table 6).
     pub running_status: RunningStatus,
+    /// `reserved_future_use(5)` before `running_status` (`11111`);
+    /// preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: u8,
 }
+
+impl RstEntry {
+    /// Construct an entry with the spec `reserved_future_use` fill.
+    #[must_use]
+    pub const fn new(
+        transport_stream_id: u16,
+        original_network_id: u16,
+        service_id: u16,
+        event_id: u16,
+        running_status: RunningStatus,
+    ) -> Self {
+        Self {
+            transport_stream_id,
+            original_network_id,
+            service_id,
+            event_id,
+            running_status,
+            reserved_future_use: RESERVED_FUTURE_USE_5,
+        }
+    }
+}
+
+/// All-ones `reserved_future_use(5)` before `running_status`.
+const RESERVED_FUTURE_USE_5: u8 = 0x1F;
+/// Shift of `reserved_future_use(5)` above `running_status(3)`.
+const RESERVED_SHIFT: u32 = 3;
 
 /// Running Status Table (§5.2.8, Table 10).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct RstSection {
     /// Entries in wire order.
     pub entries: Vec<RstEntry>,
+    /// Header bit fields: `reserved_future_use` and `reserved(2)` of byte 1
+    /// (default [`SectionBits::dvb`](super::SectionBits::dvb)); `reserved_b5`
+    /// is unused (short-form section).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+}
+
+impl RstSection {
+    /// Construct an RST section with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(entries: Vec<RstEntry>) -> Self {
+        Self {
+            entries,
+            bits: super::SectionBits::dvb(),
+        }
+    }
 }
 
 impl<'a> Parse<'a> for RstSection {
@@ -93,11 +141,15 @@ impl<'a> Parse<'a> for RstSection {
                 original_network_id: crate::wire::be_u16(entry, 2, "rst")?,
                 service_id: crate::wire::be_u16(entry, 4, "rst")?,
                 event_id: crate::wire::be_u16(entry, 6, "rst")?,
-                running_status: RunningStatus::from_u8(entry[8] & 0x07),
+                running_status: RunningStatus::from_u8(entry[8] & super::RUNNING_STATUS_MASK),
+                reserved_future_use: entry[8] >> RESERVED_SHIFT,
             });
             off += ENTRY_LEN;
         }
-        Ok(RstSection { entries })
+        Ok(RstSection {
+            entries,
+            bits: super::SectionBits::parse(bytes[1], None),
+        })
     }
 }
 
@@ -119,7 +171,7 @@ impl Serialize for RstSection {
         buf[0] = TABLE_ID;
         // section_syntax_indicator=0 (short form), reserved_future_use=1,
         // reserved=11, section_length high nibble.
-        buf[1] = super::SECTION_B1_FLAGS_SHORT;
+        buf[1] = self.bits.b1(false);
         super::write_section_length(buf, len - HEADER_LEN)?;
         let mut off = HEADER_LEN;
         for e in &self.entries {
@@ -128,7 +180,7 @@ impl Serialize for RstSection {
             buf[off + 4..off + 6].copy_from_slice(&e.service_id.to_be_bytes());
             buf[off + 6..off + 8].copy_from_slice(&e.event_id.to_be_bytes());
             // reserved_future_use(5)=1, running_status(3).
-            buf[off + 8] = super::RESERVED_FUTURE_USE_5
+            buf[off + 8] = ((e.reserved_future_use & RESERVED_FUTURE_USE_5) << RESERVED_SHIFT)
                 | (e.running_status.to_u8() & super::RUNNING_STATUS_MASK);
             off += ENTRY_LEN;
         }

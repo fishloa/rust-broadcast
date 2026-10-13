@@ -42,6 +42,7 @@ pub enum SdtKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct SdtService<'a> {
     /// service_id (matches `program_number` in the PAT).
     pub service_id: u16,
@@ -56,12 +57,47 @@ pub struct SdtService<'a> {
     /// Descriptor loop for this service (service_descriptor etc.). Serializes
     /// as the typed descriptor sequence; `.raw()` yields the wire bytes.
     pub descriptors: DescriptorLoop<'a>,
+    /// `reserved_future_use(6)` before `EIT_schedule_flag` (EN 300 468
+    /// §5.2.3, `111111`); preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: u8,
 }
+
+impl<'a> SdtService<'a> {
+    /// Construct a service entry with the spec `reserved_future_use` fill.
+    #[must_use]
+    pub fn new(
+        service_id: u16,
+        eit_schedule_flag: bool,
+        eit_present_following_flag: bool,
+        running_status: RunningStatus,
+        free_ca_mode: bool,
+        descriptors: DescriptorLoop<'a>,
+    ) -> Self {
+        Self {
+            service_id,
+            eit_schedule_flag,
+            eit_present_following_flag,
+            running_status,
+            free_ca_mode,
+            descriptors,
+            reserved_future_use: RESERVED_FUTURE_USE_6,
+        }
+    }
+}
+
+/// All-ones `reserved_future_use(6)` before the EIT flags.
+const RESERVED_FUTURE_USE_6: u8 = 0x3F;
+/// All-ones `reserved_future_use(8)` after `original_network_id`.
+const RESERVED_FUTURE_USE_8: u8 = 0xFF;
+/// Shift of `reserved_future_use(6)` in the EIT-flags byte.
+const EIT_FLAGS_RESERVED_SHIFT: u32 = 2;
 
 /// Service Description Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct SdtSection<'a> {
     /// Variant discriminator (table_id 0x42 vs 0x46).
     pub kind: SdtKind,
@@ -79,6 +115,41 @@ pub struct SdtSection<'a> {
     pub original_network_id: u16,
     /// Services in wire order.
     pub services: Vec<SdtService<'a>>,
+    /// Header bit fields (`reserved_future_use`, `reserved(2)` x2; default
+    /// [`SectionBits::dvb`](super::SectionBits::dvb)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+    /// `reserved_future_use(8)` after `original_network_id` (`0xFF`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: u8,
+}
+
+impl<'a> SdtSection<'a> {
+    /// Construct an SDT section with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        kind: SdtKind,
+        transport_stream_id: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        original_network_id: u16,
+        services: Vec<SdtService<'a>>,
+    ) -> Self {
+        Self {
+            kind,
+            transport_stream_id,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            original_network_id,
+            services,
+            bits: super::SectionBits::dvb(),
+            reserved_future_use: RESERVED_FUTURE_USE_8,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for SdtSection<'a> {
@@ -156,6 +227,7 @@ impl<'a> Parse<'a> for SdtSection<'a> {
                 running_status,
                 free_ca_mode,
                 descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
+                reserved_future_use: flags >> EIT_FLAGS_RESERVED_SHIFT,
             });
             pos = desc_end;
         }
@@ -177,6 +249,8 @@ impl<'a> Parse<'a> for SdtSection<'a> {
             last_section_number,
             original_network_id,
             services,
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
+            reserved_future_use: bytes[10],
         })
     }
 }
@@ -204,19 +278,20 @@ impl Serialize for SdtSection<'_> {
             SdtKind::Actual => TABLE_ID_ACTUAL,
             SdtKind::Other => TABLE_ID_OTHER,
         };
-        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.transport_stream_id.to_be_bytes());
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.original_network_id.to_be_bytes());
-        buf[10] = 0xFF; // reserved_future_use
+        buf[10] = self.reserved_future_use;
 
         let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         for svc in &self.services {
             buf[pos..pos + 2].copy_from_slice(&svc.service_id.to_be_bytes());
-            let flags = 0xFC
+            let flags = ((svc.reserved_future_use & RESERVED_FUTURE_USE_6)
+                << EIT_FLAGS_RESERVED_SHIFT)
                 | (u8::from(svc.eit_schedule_flag) << 1)
                 | u8::from(svc.eit_present_following_flag);
             buf[pos + 2] = flags;

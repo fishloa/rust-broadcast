@@ -96,6 +96,7 @@ pub struct EitEvent<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct EitSection<'a> {
     /// Variant based on table_id.
     pub kind: EitKind,
@@ -121,6 +122,46 @@ pub struct EitSection<'a> {
     pub last_table_id: u8,
     /// Events in wire order.
     pub events: Vec<EitEvent<'a>>,
+    /// Header bit fields (`reserved_future_use`, `reserved(2)` x2; default
+    /// [`SectionBits::dvb`](super::SectionBits::dvb)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+}
+
+impl<'a> EitSection<'a> {
+    /// Construct an EIT section with the spec `reserved` fill.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        kind: EitKind,
+        table_id: u8,
+        service_id: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        transport_stream_id: u16,
+        original_network_id: u16,
+        segment_last_section_number: u8,
+        last_table_id: u8,
+        events: Vec<EitEvent<'a>>,
+    ) -> Self {
+        Self {
+            kind,
+            table_id,
+            service_id,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            transport_stream_id,
+            original_network_id,
+            segment_last_section_number,
+            last_table_id,
+            events,
+            bits: super::SectionBits::dvb(),
+        }
+    }
 }
 
 impl<'a> Parse<'a> for EitSection<'a> {
@@ -234,6 +275,7 @@ impl<'a> Parse<'a> for EitSection<'a> {
             segment_last_section_number,
             last_table_id,
             events,
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
         })
     }
 }
@@ -258,10 +300,10 @@ impl Serialize for EitSection<'_> {
             });
         }
         buf[0] = self.table_id;
-        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.transport_stream_id.to_be_bytes());

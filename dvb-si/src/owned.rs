@@ -138,20 +138,20 @@ pub mod doc {
         use crate::tables::pmt::{PmtSection, PmtStream};
         use broadcast_common::Serialize;
 
-        let pmt = PmtSection {
-            program_number: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            section_number: 0,
-            last_section_number: 0,
-            pcr_pid: 0x0100,
-            program_info: crate::descriptors::DescriptorLoop::new(&[]),
-            streams: vec![PmtStream {
-                stream_type: crate::tables::pmt::StreamType::H264, // H.264 video
-                elementary_pid: 0x0101,
-                es_info: crate::descriptors::DescriptorLoop::new(&[]),
-            }],
-        };
+        let pmt = PmtSection::new(
+            1,
+            0,
+            true,
+            0,
+            0,
+            0x0100,
+            crate::descriptors::DescriptorLoop::new(&[]),
+            vec![PmtStream::new(
+                crate::tables::pmt::StreamType::H264, // H.264 video
+                0x0101,
+                crate::descriptors::DescriptorLoop::new(&[]),
+            )],
+        );
         let mut section = vec![0u8; pmt.serialized_len()];
         pmt.serialize_into(&mut section).unwrap();
         section

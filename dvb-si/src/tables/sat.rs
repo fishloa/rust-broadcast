@@ -1641,6 +1641,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
 /// from the input buffer.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct SatSection {
     /// 6-bit discriminant selecting the body structure (see [`SatTableId`]).
     pub satellite_table_id: u8,
@@ -1658,9 +1659,47 @@ pub struct SatSection {
     pub last_section_number: u8,
     /// Typed body — interpret per `satellite_table_id`.
     pub body: SatBody,
+    /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_b1: u8,
+    /// `reserved(2)` in front of `version_number` (`11`); preserved.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_b5: u8,
+    /// `reserved_zero_future_use(8)` at byte 8 (`0x00`, EN 300 468 Table 11a);
+    /// preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_zero_future_use: u8,
 }
 
 impl SatSection {
+    /// Construct a SAT section with the spec `reserved` fill.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        satellite_table_id: u8,
+        private_indicator: bool,
+        table_count: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        body: SatBody,
+    ) -> Self {
+        Self {
+            satellite_table_id,
+            private_indicator,
+            table_count,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            body,
+            reserved_b1: super::RESERVED_2,
+            reserved_b5: super::RESERVED_2,
+            reserved_zero_future_use: 0,
+        }
+    }
+
     /// Typed view of `satellite_table_id`, or `None` if reserved (5–63).
     #[must_use]
     pub fn kind(&self) -> Option<SatTableId> {
@@ -1711,6 +1750,9 @@ impl<'a> Parse<'a> for SatSection {
             section_number,
             last_section_number,
             body,
+            reserved_b1: super::b1_reserved_of(bytes[1]),
+            reserved_b5: super::b5_reserved_of(bytes[5]),
+            reserved_zero_future_use: bytes[8],
         })
     }
 }
@@ -1747,17 +1789,19 @@ impl Serialize for SatSection {
             }
         }
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_SSI
-            | (u8::from(self.private_indicator) << 6)
-            | super::SECTION_B1_RESERVED_HI
+        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)
             | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         buf[3] = (self.satellite_table_id << 2) | ((self.table_count >> 8) as u8 & 0x03);
         buf[4] = (self.table_count & 0xFF) as u8;
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = super::b5_of(
+            self.reserved_b5,
+            self.version_number,
+            self.current_next_indicator,
+        );
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
-        buf[8] = 0x00;
+        buf[8] = self.reserved_zero_future_use;
         let body_start = HEADER_LEN;
         match &self.body {
             SatBody::Raw(v) => {

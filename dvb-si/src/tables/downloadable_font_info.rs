@@ -70,6 +70,10 @@ const STYLE_MASK: u8 = 0x07;
 const WEIGHT_MASK: u8 = 0x0F;
 /// `format(4)` field mask of a FileUri font-info type byte.
 const FORMAT_MASK: u8 = 0x0F;
+/// `reserved_zero_future_use(1)` mask in the StyleWeight byte (bit 0).
+const RESERVED_ZERO_1: u8 = 0x01;
+/// Shift of the `reserved_zero_future_use(4)` above `font_file_format(4)`.
+const RESERVED_ZERO_4_SHIFT: u32 = 4;
 
 /// One entry in the DFIS font_info loop (§5.3.2.3.1 Table 22).
 ///
@@ -85,6 +89,10 @@ pub enum FontInfo<'a> {
         style: u8,
         /// `font_weight` (Table 25): 0 undefined, 1 normal, 2 bold.
         weight: u8,
+        /// `reserved_zero_future_use(1)` after `weight` (`0`); preserved from
+        /// the wire.
+        #[cfg_attr(feature = "serde", serde(skip))]
+        reserved_zero_future_use: u8,
     },
     /// `font_info_type == 0x01`: reserved(4) + font_file_format(4) + uri_length(8) + uri.
     FileUri {
@@ -92,6 +100,10 @@ pub enum FontInfo<'a> {
         format: u8,
         /// DVB URI string (UTF-8), `uri_length` bytes.
         uri: &'a [u8],
+        /// `reserved_zero_future_use(4)` before `font_file_format` (`0000`);
+        /// preserved from the wire.
+        #[cfg_attr(feature = "serde", serde(skip))]
+        reserved_zero_future_use: u8,
     },
     /// `font_info_type == 0x02`: font_size(16) followed by the length-delimited block.
     FontSize {
@@ -113,6 +125,7 @@ pub enum FontInfo<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct DownloadableFontInfoSection<'a> {
     /// 9-bit `font_id_extension` — spec-mandated all-zero; together with
     /// `font_id` forms the 16-bit table_id_extension.
@@ -129,6 +142,35 @@ pub struct DownloadableFontInfoSection<'a> {
     pub last_section_number: u8,
     /// font_info loop entries in wire order.
     pub font_info: Vec<FontInfo<'a>>,
+    /// Header bit fields (`reserved_future_use`, `reserved(2)` x2; default
+    /// [`SectionBits::dvb`](super::SectionBits::dvb)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+}
+
+impl<'a> DownloadableFontInfoSection<'a> {
+    /// Construct a section with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        font_id_extension: u16,
+        font_id: u8,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        font_info: Vec<FontInfo<'a>>,
+    ) -> Self {
+        Self {
+            font_id_extension,
+            font_id,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            font_info,
+            bits: super::SectionBits::dvb(),
+        }
+    }
 }
 
 impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
@@ -185,6 +227,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                     font_info.push(FontInfo::StyleWeight {
                         style: b >> 5,
                         weight: (b >> 1) & WEIGHT_MASK,
+                        reserved_zero_future_use: b & RESERVED_ZERO_1,
                     });
                 }
                 FONT_INFO_TYPE_FILE_URI => {
@@ -195,6 +238,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                         });
                     }
                     let format = bytes[pos] & FORMAT_MASK;
+                    let reserved_zero_future_use = bytes[pos] >> RESERVED_ZERO_4_SHIFT;
                     let uri_length = bytes[pos + 1] as usize;
                     let uri_start = pos + 2;
                     let uri_end = uri_start + uri_length;
@@ -207,6 +251,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
                     font_info.push(FontInfo::FileUri {
                         format,
                         uri: &bytes[uri_start..uri_end],
+                        reserved_zero_future_use,
                     });
                     pos = uri_end;
                 }
@@ -275,6 +320,7 @@ impl<'a> Parse<'a> for DownloadableFontInfoSection<'a> {
             section_number,
             last_section_number,
             font_info,
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
         })
     }
 }
@@ -303,13 +349,13 @@ impl Serialize for DownloadableFontInfoSection<'_> {
             });
         }
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;
         // font_id_extension(9) | font_id(7); spec mandates extension all-zero.
         let id_word = ((self.font_id_extension & 0x01FF) << 7) | (self.font_id as u16 & 0x7F);
         buf[3..5].copy_from_slice(&id_word.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -328,17 +374,28 @@ impl Serialize for DownloadableFontInfoSection<'_> {
         let mut pos = HEADER_LEN;
         for f in &self.font_info {
             match f {
-                FontInfo::StyleWeight { style, weight } => {
+                FontInfo::StyleWeight {
+                    style,
+                    weight,
+                    reserved_zero_future_use,
+                } => {
                     buf[pos] = FONT_INFO_TYPE_STYLE_WEIGHT;
-                    // style(3) | weight(4) | reserved_zero_future_use(1)=0.
-                    buf[pos + 1] = ((style & STYLE_MASK) << 5) | ((weight & WEIGHT_MASK) << 1);
+                    // style(3) | weight(4) | reserved_zero_future_use(1).
+                    buf[pos + 1] = ((style & STYLE_MASK) << 5)
+                        | ((weight & WEIGHT_MASK) << 1)
+                        | (reserved_zero_future_use & RESERVED_ZERO_1);
                     pos += 2;
                 }
-                FontInfo::FileUri { format, uri } => {
+                FontInfo::FileUri {
+                    format,
+                    uri,
+                    reserved_zero_future_use,
+                } => {
                     guard_u8(uri.len())?;
                     buf[pos] = FONT_INFO_TYPE_FILE_URI;
-                    // reserved_zero_future_use(4)=0 | font_file_format(4).
-                    buf[pos + 1] = format & FORMAT_MASK;
+                    // reserved_zero_future_use(4) | font_file_format(4).
+                    buf[pos + 1] = ((reserved_zero_future_use & FORMAT_MASK) << RESERVED_ZERO_4_SHIFT)
+                        | (format & FORMAT_MASK);
                     buf[pos + 2] = broadcast_common::len::fit_u8(uri.len(), "uri")?;
                     let s = pos + 3;
                     buf[s..s + uri.len()].copy_from_slice(uri);

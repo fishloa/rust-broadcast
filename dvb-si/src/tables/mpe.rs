@@ -120,6 +120,7 @@ const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct MpeDatagramSection<'a> {
     /// `section_syntax_indicator` bit. When `true` the trailer is a computed
     /// `CRC_32`; when `false` it is an ISO/IEC 13818-6 checksum preserved
@@ -165,6 +166,42 @@ pub struct MpeDatagramSection<'a> {
     /// ISO/IEC 13818-6 checksum we cannot recompute). Ignored when SSI is
     /// `true`, where the trailer is a computed `CRC_32`.
     pub checksum: Checksum,
+
+    /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_b1: u8,
+
+    /// `reserved(2)` in byte 5 bits `[7:6]` (`11`); preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_b5: u8,
+}
+
+impl<'a> MpeDatagramSection<'a> {
+    /// Construct a CRC-protected MPE section with the spec `reserved` fill and
+    /// `private_indicator` = 0, no scrambling, no LLC/SNAP, `current_next` = 1.
+    #[must_use]
+    pub fn new(
+        mac_address: MacAddress,
+        section_number: u8,
+        last_section_number: u8,
+        payload: &'a [u8],
+    ) -> Self {
+        Self {
+            section_syntax_indicator: true,
+            private_indicator: false,
+            mac_address,
+            payload_scrambling_control: 0,
+            address_scrambling_control: 0,
+            llc_snap_flag: false,
+            current_next_indicator: true,
+            section_number,
+            last_section_number,
+            payload,
+            checksum: Checksum([0; 4]),
+            reserved_b1: super::RESERVED_2,
+            reserved_b5: super::RESERVED_2,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for MpeDatagramSection<'a> {
@@ -236,6 +273,8 @@ impl<'a> Parse<'a> for MpeDatagramSection<'a> {
             last_section_number,
             payload,
             checksum,
+            reserved_b1: super::b1_reserved_of(bytes[1]),
+            reserved_b5: super::b5_reserved_of(bytes[5]),
         })
     }
 }
@@ -273,9 +312,11 @@ impl Serialize for MpeDatagramSection<'_> {
 
         buf[0] = TABLE_ID;
         // Byte 1: SSI(1) | private(1) | reserved(2)=11 | section_length[11:8].
-        buf[1] = (u8::from(self.section_syntax_indicator) << 7)
-            | (u8::from(self.private_indicator) << 6)
-            | 0x30; // reserved bits set to 1
+        buf[1] = super::b1_of(
+            self.section_syntax_indicator,
+            self.private_indicator,
+            self.reserved_b1,
+        );
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         // MAC scatter: byte 3 = MAC_6 (mac_address[5]), byte 4 = MAC_5.
@@ -283,7 +324,7 @@ impl Serialize for MpeDatagramSection<'_> {
         buf[4] = self.mac_address.0[4];
 
         // Byte 5: reserved(2)=11 | payload_sc(2) | address_sc(2) | LLC_SNAP(1) | cni(1).
-        buf[5] = super::B5_RESERVED_HI
+        buf[5] = ((self.reserved_b5 & super::RESERVED_2) << 6)
             | ((self.payload_scrambling_control & 0x03) << 4)
             | ((self.address_scrambling_control & 0x03) << 2)
             | (u8::from(self.llc_snap_flag) << 1)

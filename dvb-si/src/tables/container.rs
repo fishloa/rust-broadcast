@@ -60,6 +60,7 @@ const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct ContainerSection<'a> {
     /// `private_indicator` bit from byte 1 (this is a private section).
     pub private_indicator: bool,
@@ -76,6 +77,38 @@ pub struct ContainerSection<'a> {
     /// Raw `container_data` bytes (everything between the extension header and
     /// the CRC-32 trailer). Internal structure is not parsed.
     pub container_data: &'a [u8],
+    /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_b1: u8,
+    /// `reserved(2)` in front of `version_number` (`11`); preserved.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_b5: u8,
+}
+
+impl<'a> ContainerSection<'a> {
+    /// Construct a Container section with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        private_indicator: bool,
+        container_id: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        container_data: &'a [u8],
+    ) -> Self {
+        Self {
+            private_indicator,
+            container_id,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            container_data,
+            reserved_b1: super::RESERVED_2,
+            reserved_b5: super::RESERVED_2,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for ContainerSection<'a> {
@@ -127,6 +160,8 @@ impl<'a> Parse<'a> for ContainerSection<'a> {
             section_number,
             last_section_number,
             container_data,
+            reserved_b1: super::b1_reserved_of(bytes[1]),
+            reserved_b5: super::b5_reserved_of(bytes[5]),
         })
     }
 }
@@ -151,13 +186,17 @@ impl Serialize for ContainerSection<'_> {
         buf[0] = TABLE_ID;
         // Byte 1: section_syntax_indicator(1)=1 | private_indicator(1)
         //         | reserved(2)=11 | private_section_length[11:8](4).
-        buf[1] = super::private_section_b1(self.private_indicator, 0);
+        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1);
         // Byte 2: private_section_length[7:0].
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         // Extension header.
         buf[3..5].copy_from_slice(&self.container_id.to_be_bytes());
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = super::b5_of(
+            self.reserved_b5,
+            self.version_number,
+            self.current_next_indicator,
+        );
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 

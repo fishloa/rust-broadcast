@@ -44,6 +44,7 @@ pub enum NitKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct NitTransportStream<'a> {
     /// transport_stream_id of the described TS.
     pub transport_stream_id: u16,
@@ -53,12 +54,34 @@ pub struct NitTransportStream<'a> {
     /// Per-TS descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub descriptors: DescriptorLoop<'a>,
+    /// `reserved_future_use(4)` before `transport_descriptors_length`
+    /// (EN 300 468 §5.2.1, `1111`); preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: u8,
+}
+
+impl<'a> NitTransportStream<'a> {
+    /// Construct a transport-stream entry with the spec `reserved_future_use` fill.
+    #[must_use]
+    pub fn new(
+        transport_stream_id: u16,
+        original_network_id: u16,
+        descriptors: DescriptorLoop<'a>,
+    ) -> Self {
+        Self {
+            transport_stream_id,
+            original_network_id,
+            descriptors,
+            reserved_future_use: super::RESERVED_4,
+        }
+    }
 }
 
 /// Network Information Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct NitSection<'a> {
     /// Variant discriminator (table_id 0x40 vs 0x41).
     pub kind: NitKind,
@@ -78,6 +101,46 @@ pub struct NitSection<'a> {
     pub network_descriptors: DescriptorLoop<'a>,
     /// Transport-stream loop entries in wire order.
     pub transport_streams: Vec<NitTransportStream<'a>>,
+    /// Header bit fields (`reserved_future_use`, `reserved(2)` x2; default
+    /// [`SectionBits::dvb`](super::SectionBits::dvb)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+    /// `reserved_future_use(4)` before `network_descriptors_length` (`1111`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_network_descriptors_length: u8,
+    /// `reserved_future_use(4)` before `transport_stream_loop_length` (`1111`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_transport_stream_loop_length: u8,
+}
+
+impl<'a> NitSection<'a> {
+    /// Construct a NIT section with the spec `reserved` fill.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        kind: NitKind,
+        network_id: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        network_descriptors: DescriptorLoop<'a>,
+        transport_streams: Vec<NitTransportStream<'a>>,
+    ) -> Self {
+        Self {
+            kind,
+            network_id,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            network_descriptors,
+            transport_streams,
+            bits: super::SectionBits::dvb(),
+            reserved_network_descriptors_length: super::RESERVED_4,
+            reserved_transport_stream_loop_length: super::RESERVED_4,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for NitSection<'a> {
@@ -197,6 +260,7 @@ impl<'a> Parse<'a> for NitSection<'a> {
                 transport_stream_id,
                 original_network_id,
                 descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
+                reserved_future_use: super::len_reserved_of(bytes[pos + 4]),
             });
 
             pos = desc_end;
@@ -211,6 +275,9 @@ impl<'a> Parse<'a> for NitSection<'a> {
             last_section_number,
             network_descriptors,
             transport_streams,
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
+            reserved_network_descriptors_length: super::len_reserved_of(bytes[8]),
+            reserved_transport_stream_loop_length: super::len_reserved_of(bytes[ts_loop_start]),
         })
     }
 }
@@ -246,7 +313,7 @@ impl Serialize for NitSection<'_> {
             NitKind::Actual => TABLE_ID_ACTUAL,
             NitKind::Other => TABLE_ID_OTHER,
         };
-        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
         // Extension header per ETSI EN 300 468 §5.2.1:
@@ -254,7 +321,7 @@ impl Serialize for NitSection<'_> {
         //   bytes[5]    = reserved | version | current_next
         //   bytes[6..8] = section_number + last_section_number
         buf[3..5].copy_from_slice(&self.network_id.to_be_bytes());
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -264,7 +331,11 @@ impl Serialize for NitSection<'_> {
             12,
             "network_descriptors_length",
         )?;
-        super::write_desc_loop_len(&mut buf[8..10], net_dll as usize)?;
+        super::write_desc_loop_len_r(
+            &mut buf[8..10],
+            net_dll as usize,
+            self.reserved_network_descriptors_length,
+        )?;
 
         let net_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         buf[net_desc_start..net_desc_start + self.network_descriptors.len()]
@@ -276,9 +347,10 @@ impl Serialize for NitSection<'_> {
             12,
             "transport_stream_loop_length",
         )?;
-        super::write_desc_loop_len(
+        super::write_desc_loop_len_r(
             &mut buf[ts_loop_start..ts_loop_start + 2],
             ts_loop_length as usize,
+            self.reserved_transport_stream_loop_length,
         )?;
 
         let mut pos = ts_loop_start + 2;
@@ -290,7 +362,11 @@ impl Serialize for NitSection<'_> {
                 12,
                 "transport_descriptors_length",
             )?;
-            super::write_desc_loop_len(&mut buf[pos + 4..pos + 6], ts_dll as usize)?;
+            super::write_desc_loop_len_r(
+                &mut buf[pos + 4..pos + 6],
+                ts_dll as usize,
+                ts.reserved_future_use,
+            )?;
             let desc_start = pos + TS_HEADER_LEN;
             buf[desc_start..desc_start + ts.descriptors.len()]
                 .copy_from_slice(ts.descriptors.raw());

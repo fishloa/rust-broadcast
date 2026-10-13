@@ -9,6 +9,7 @@
 /// tuple (r02-W22).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct TargetOperationalLoop<'a> {
     /// Target descriptor loop — raw descriptor bytes (after the 12-bit length
     /// field).  Serializes as the typed descriptor sequence; `.raw()` yields the
@@ -18,6 +19,30 @@ pub struct TargetOperationalLoop<'a> {
     /// length field).  Serializes as the typed descriptor sequence; `.raw()`
     /// yields the wire bytes.
     pub operational_descriptors: crate::descriptors::DescriptorLoop<'a>,
+    /// `reserved(4)` before `target_descriptor_loop_length` (`1111`);
+    /// preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_target_length: u8,
+    /// `reserved(4)` before `operational_descriptor_loop_length` (`1111`);
+    /// preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_operational_length: u8,
+}
+
+impl<'a> TargetOperationalLoop<'a> {
+    /// Construct a pair with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        target_descriptors: crate::descriptors::DescriptorLoop<'a>,
+        operational_descriptors: crate::descriptors::DescriptorLoop<'a>,
+    ) -> Self {
+        Self {
+            target_descriptors,
+            operational_descriptors,
+            reserved_target_length: super::RESERVED_4,
+            reserved_operational_length: super::RESERVED_4,
+        }
+    }
 }
 
 /// Wire width of the 12-bit descriptor-loop length field.

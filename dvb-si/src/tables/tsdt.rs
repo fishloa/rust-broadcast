@@ -21,6 +21,7 @@ const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct TsdtSection<'a> {
     /// 16-bit table_id_extension.
     pub table_id_extension: u16,
@@ -35,6 +36,33 @@ pub struct TsdtSection<'a> {
     /// Descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub descriptors: DescriptorLoop<'a>,
+    /// Header bit fields (`'0'` after `section_syntax_indicator`, the two
+    /// `reserved(2)`; default [`SectionBits::psi`](super::SectionBits::psi)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+}
+
+impl<'a> TsdtSection<'a> {
+    /// Construct a TSDT section with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        table_id_extension: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        descriptors: DescriptorLoop<'a>,
+    ) -> Self {
+        Self {
+            table_id_extension,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            descriptors,
+            bits: super::SectionBits::psi(),
+        }
+    }
 }
 
 impl<'a> Parse<'a> for TsdtSection<'a> {
@@ -84,6 +112,7 @@ impl<'a> Parse<'a> for TsdtSection<'a> {
             section_number,
             last_section_number,
             descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
         })
     }
 }
@@ -106,10 +135,10 @@ impl Serialize for TsdtSection<'_> {
 
         let section_length = len - MIN_HEADER_LEN;
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_PSI;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, section_length)?;
         buf[3..5].copy_from_slice(&self.table_id_extension.to_be_bytes());
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 

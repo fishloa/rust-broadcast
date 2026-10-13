@@ -55,6 +55,7 @@ pub struct CridEntry<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct CitSection<'a> {
     /// `private_indicator` bit from byte 1.
     pub private_indicator: bool,
@@ -78,6 +79,45 @@ pub struct CitSection<'a> {
     pub prepend_strings: DvbText<'a>,
     /// CRID entry loop — unfolded per Table 119.
     pub crid_entries: Vec<CridEntry<'a>>,
+    /// `reserved(2)` in byte 1 bits `[5:4]` (`11`); preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_b1: u8,
+    /// `reserved(2)` in front of `version_number` (`11`); preserved.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_b5: u8,
+}
+
+impl<'a> CitSection<'a> {
+    /// Construct a CIT section with the spec `reserved` fill.
+    #[must_use]
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        private_indicator: bool,
+        service_id: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        transport_stream_id: u16,
+        original_network_id: u16,
+        prepend_strings: DvbText<'a>,
+        crid_entries: Vec<CridEntry<'a>>,
+    ) -> Self {
+        Self {
+            private_indicator,
+            service_id,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            transport_stream_id,
+            original_network_id,
+            prepend_strings,
+            crid_entries,
+            reserved_b1: super::RESERVED_2,
+            reserved_b5: super::RESERVED_2,
+        }
+    }
 }
 
 impl CitSection<'_> {
@@ -209,6 +249,8 @@ impl<'a> Parse<'a> for CitSection<'a> {
             original_network_id,
             prepend_strings,
             crid_entries,
+            reserved_b1: super::b1_reserved_of(bytes[1]),
+            reserved_b5: super::b5_reserved_of(bytes[5]),
         })
     }
 }
@@ -240,13 +282,15 @@ impl Serialize for CitSection<'_> {
             broadcast_common::len::fit_u8(self.prepend_strings.len(), "prepend_string_count")?;
 
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_SSI
-            | (u8::from(self.private_indicator) << 6)
-            | super::SECTION_B1_RESERVED_HI;
+        buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1);
         super::write_section_length(buf, len - HEADER_LEN)?;
 
         buf[3..5].copy_from_slice(&self.service_id.to_be_bytes());
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = super::b5_of(
+            self.reserved_b5,
+            self.version_number,
+            self.current_next_indicator,
+        );
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
         buf[8..10].copy_from_slice(&self.transport_stream_id.to_be_bytes());

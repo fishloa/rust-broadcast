@@ -22,6 +22,12 @@ pub struct TdtSection {
     /// EN 300 468 Annex C. Private — use [`utc_time_decoded`](Self::utc_time_decoded)
     /// for decoded access.
     pub(crate) utc_time_raw: [u8; 5],
+    /// Header bit fields: `reserved_future_use` and `reserved(2)` of byte 1
+    /// (EN 300 468 §5.2.5, `0x70` with `section_syntax_indicator` = 0;
+    /// default [`SectionBits::dvb`](super::SectionBits::dvb)). `reserved_b5`
+    /// is unused (short-form section).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
 }
 
 impl TdtSection {
@@ -61,7 +67,10 @@ impl TdtSection {
     /// Construct a `TdtSection` from raw wire fields.
     #[must_use]
     pub fn new(utc_time_raw: [u8; 5]) -> Self {
-        Self { utc_time_raw }
+        Self {
+            utc_time_raw,
+            bits: super::SectionBits::dvb(),
+        }
     }
 }
 
@@ -116,7 +125,10 @@ impl<'a> Parse<'a> for TdtSection {
             });
         }
         let utc_time_raw = [bytes[3], bytes[4], bytes[5], bytes[6], bytes[7]];
-        Ok(TdtSection { utc_time_raw })
+        Ok(TdtSection {
+            utc_time_raw,
+            bits: super::SectionBits::parse(bytes[1], None),
+        })
     }
 }
 
@@ -134,7 +146,7 @@ impl Serialize for TdtSection {
             });
         }
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_SHORT;
+        buf[1] = self.bits.b1(false);
         super::write_section_length(buf, UTC_TIME_LEN)?;
         buf[3..8].copy_from_slice(&self.utc_time_raw);
         Ok(len)
@@ -176,9 +188,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let tdt = TdtSection {
-            utc_time_raw: [0xE4, 0x09, 0x12, 0x34, 0x56],
-        };
+        let tdt = TdtSection::new([0xE4, 0x09, 0x12, 0x34, 0x56]);
         let mut buf = vec![0u8; tdt.serialized_len()];
         tdt.serialize_into(&mut buf).unwrap();
         let re = TdtSection::parse(&buf).unwrap();
@@ -188,18 +198,14 @@ mod tests {
     #[cfg(feature = "chrono")]
     #[test]
     fn utc_time_decodes_to_chrono() {
-        let tdt = TdtSection {
-            utc_time_raw: [0xEA, 0x19, 0x12, 0x34, 0x56],
-        };
+        let tdt = TdtSection::new([0xEA, 0x19, 0x12, 0x34, 0x56]);
         let dt = tdt.utc_time();
         assert!(dt.is_some());
     }
 
     #[test]
     fn utc_time_decodes_without_chrono() {
-        let tdt = TdtSection {
-            utc_time_raw: [0xE4, 0x09, 0x12, 0x34, 0x56],
-        };
+        let tdt = TdtSection::new([0xE4, 0x09, 0x12, 0x34, 0x56]);
         let dt = tdt.utc_time_decoded().unwrap();
         assert_eq!(dt.year, 2018);
         assert_eq!(dt.month, 9);

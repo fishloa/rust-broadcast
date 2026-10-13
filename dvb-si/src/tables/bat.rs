@@ -31,6 +31,7 @@ const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTE
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct BatTransportStream<'a> {
     /// transport_stream_id of the described TS.
     pub transport_stream_id: u16,
@@ -40,12 +41,34 @@ pub struct BatTransportStream<'a> {
     /// Per-TS descriptor loop. Serializes as the typed descriptor sequence;
     /// `.raw()` yields the wire bytes.
     pub descriptors: DescriptorLoop<'a>,
+    /// `reserved_future_use(4)` before `transport_descriptors_length`
+    /// (EN 300 468 §5.2.2, `1111`); preserved from the wire.
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_future_use: u8,
+}
+
+impl<'a> BatTransportStream<'a> {
+    /// Construct a transport-stream entry with the spec `reserved_future_use` fill.
+    #[must_use]
+    pub fn new(
+        transport_stream_id: u16,
+        original_network_id: u16,
+        descriptors: DescriptorLoop<'a>,
+    ) -> Self {
+        Self {
+            transport_stream_id,
+            original_network_id,
+            descriptors,
+            reserved_future_use: super::RESERVED_4,
+        }
+    }
 }
 
 /// Bouquet Association Table.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct BatSection<'a> {
     /// Bouquet identifier (table_id_extension at bytes 3-4).
     pub bouquet_id: u16,
@@ -63,6 +86,43 @@ pub struct BatSection<'a> {
     pub bouquet_descriptors: DescriptorLoop<'a>,
     /// Transport-stream loop entries in wire order.
     pub transport_streams: Vec<BatTransportStream<'a>>,
+    /// Header bit fields (`reserved_future_use`, `reserved(2)` x2; default
+    /// [`SectionBits::dvb`](super::SectionBits::dvb)).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub bits: super::SectionBits,
+    /// `reserved_future_use(4)` before `bouquet_descriptors_length` (`1111`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_bouquet_descriptors_length: u8,
+    /// `reserved_future_use(4)` before `transport_stream_loop_length` (`1111`).
+    #[cfg_attr(feature = "serde", serde(skip))]
+    pub reserved_transport_stream_loop_length: u8,
+}
+
+impl<'a> BatSection<'a> {
+    /// Construct a BAT section with the spec `reserved` fill.
+    #[must_use]
+    pub fn new(
+        bouquet_id: u16,
+        version_number: u8,
+        current_next_indicator: bool,
+        section_number: u8,
+        last_section_number: u8,
+        bouquet_descriptors: DescriptorLoop<'a>,
+        transport_streams: Vec<BatTransportStream<'a>>,
+    ) -> Self {
+        Self {
+            bouquet_id,
+            version_number,
+            current_next_indicator,
+            section_number,
+            last_section_number,
+            bouquet_descriptors,
+            transport_streams,
+            bits: super::SectionBits::dvb(),
+            reserved_bouquet_descriptors_length: super::RESERVED_4,
+            reserved_transport_stream_loop_length: super::RESERVED_4,
+        }
+    }
 }
 
 impl BatSection<'_> {
@@ -196,6 +256,7 @@ impl<'a> Parse<'a> for BatSection<'a> {
                 transport_stream_id,
                 original_network_id,
                 descriptors: DescriptorLoop::new(&bytes[desc_start..desc_end]),
+                reserved_future_use: super::len_reserved_of(bytes[pos + 4]),
             });
 
             pos = desc_end;
@@ -214,6 +275,9 @@ impl<'a> Parse<'a> for BatSection<'a> {
             last_section_number,
             bouquet_descriptors,
             transport_streams,
+            bits: super::SectionBits::parse(bytes[1], Some(bytes[5])),
+            reserved_bouquet_descriptors_length: super::len_reserved_of(bytes[8]),
+            reserved_transport_stream_loop_length: super::len_reserved_of(bytes[ts_loop_start]),
         })
     }
 }
@@ -246,12 +310,12 @@ impl Serialize for BatSection<'_> {
         }
 
         buf[0] = TABLE_ID;
-        buf[1] = super::SECTION_B1_FLAGS_DVB;
+        buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
 
         // Extension header.
         buf[3..5].copy_from_slice(&self.bouquet_id.to_be_bytes());
-        buf[5] = super::version_byte(self.version_number, self.current_next_indicator);
+        buf[5] = self.bits.b5(self.version_number, self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;
 
@@ -261,7 +325,11 @@ impl Serialize for BatSection<'_> {
             12,
             "bouquet_descriptors_length",
         )?;
-        super::write_desc_loop_len(&mut buf[8..10], bdl as usize)?;
+        super::write_desc_loop_len_r(
+            &mut buf[8..10],
+            bdl as usize,
+            self.reserved_bouquet_descriptors_length,
+        )?;
 
         let bouquet_desc_start = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         buf[bouquet_desc_start..bouquet_desc_start + self.bouquet_descriptors.len()]
@@ -273,9 +341,10 @@ impl Serialize for BatSection<'_> {
             12,
             "transport_stream_loop_length",
         )?;
-        super::write_desc_loop_len(
+        super::write_desc_loop_len_r(
             &mut buf[ts_loop_start..ts_loop_start + 2],
             ts_loop_length as usize,
+            self.reserved_transport_stream_loop_length,
         )?;
 
         let mut pos = ts_loop_start + 2;
@@ -287,7 +356,11 @@ impl Serialize for BatSection<'_> {
                 12,
                 "transport_descriptors_length",
             )?;
-            super::write_desc_loop_len(&mut buf[pos + 4..pos + 6], tdl as usize)?;
+            super::write_desc_loop_len_r(
+                &mut buf[pos + 4..pos + 6],
+                tdl as usize,
+                ts.reserved_future_use,
+            )?;
             let desc_start = pos + TS_HEADER_LEN;
             buf[desc_start..desc_start + ts.descriptors.len()]
                 .copy_from_slice(ts.descriptors.raw());
