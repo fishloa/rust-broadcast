@@ -2180,6 +2180,7 @@ dependencies = [
  "serde_json",
  "socket2",
  "ssai-runtime",
+ "test-alloc",
  "test-bounded",
  "thiserror 2.0.21",
  "timed-metadata",
