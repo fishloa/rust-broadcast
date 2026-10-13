@@ -19,6 +19,7 @@
 //! exercising the real PMT-declaration-order promotion path
 //! (`StreamingTsDemux::try_promote_ready`), not a shortcut around it.
 
+use transmux::TrackId;
 use broadcast_common::{Unpackage, crc32_mpeg2};
 use mpeg_ts::pid::Pid;
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsHeader};
@@ -320,7 +321,7 @@ fn track_added_specs(events: &[DemuxEvent]) -> Vec<TrackSpec> {
         .collect()
 }
 
-fn track_id_for_pid(specs: &[TrackSpec], pid: Pid) -> u32 {
+fn track_id_for_pid(specs: &[TrackSpec], pid: Pid) -> TrackId {
     specs
         .iter()
         .find(|s| s.source_pid == Some(pid))
@@ -487,7 +488,7 @@ fn removal_and_update_and_rearm_from_one_version_bump() {
         1,
         "exactly one TrackUpdated, got {updated:?}"
     );
-    assert_eq!(updated[0].track_id, track_id_a);
+    assert_eq!(updated[0].track_id, TrackId::new(track_id_a.value()));
     assert_eq!(
         updated[0].es_info_descriptors,
         lang_descriptor(b"qaa", 0),
@@ -516,7 +517,7 @@ fn removal_and_update_and_rearm_from_one_version_bump() {
     assert!(
         !trailing
             .iter()
-            .any(|e| matches!(e, DemuxEvent::Sample { track_id, .. } if *track_id == track_id_b)),
+            .any(|e| matches!(e, DemuxEvent::Sample { track_id, .. } if *track_id == TrackId::new(track_id_b.value()))),
         "no Sample for the removed track_id may ever follow its TrackRemoved, got {trailing:?}"
     );
 }
@@ -1004,7 +1005,7 @@ fn corrupt_crc_pat_cannot_hijack_a_live_es_pid() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, DemuxEvent::Sample { track_id, .. } if *track_id == track_id_b)),
+            .any(|e| matches!(e, DemuxEvent::Sample { track_id, .. } if *track_id == TrackId::new(track_id_b.value()))),
         "a CRC-failing PAT must not divert a live ES PID into PMT reassembly; got {events:?}"
     );
 }
@@ -1036,7 +1037,7 @@ fn next_pat_cni_zero_cannot_hijack_a_live_es_pid() {
     assert!(
         events
             .iter()
-            .any(|e| matches!(e, DemuxEvent::Sample { track_id, .. } if *track_id == track_id_b)),
+            .any(|e| matches!(e, DemuxEvent::Sample { track_id, .. } if *track_id == TrackId::new(track_id_b.value()))),
         "a current_next_indicator=0 PAT must never be applied; got {events:?}"
     );
 }
@@ -1125,7 +1126,7 @@ fn post_removal_payload_is_not_replayed_into_the_re_added_track() {
     assert!(
         removal
             .iter()
-            .any(|e| matches!(e, DemuxEvent::TrackRemoved { track_id, .. } if *track_id == old_track_id_b)),
+            .any(|e| matches!(e, DemuxEvent::TrackRemoved { track_id, .. } if *track_id == TrackId::new(old_track_id_b.value()))),
         "sanity: audioB must have been removed; got {removal:?}"
     );
 
@@ -1288,7 +1289,7 @@ fn es_pid_declared_by_two_programs_survives_one_program_dropping_it() {
     let events = drain(&mut demux);
     assert!(
         events.iter().any(
-            |e| matches!(e, DemuxEvent::Sample { track_id, .. } if *track_id == shared_track_id)
+            |e| matches!(e, DemuxEvent::Sample { track_id, .. } if *track_id == TrackId::new(shared_track_id.value()))
         ),
         "the surviving shared track must keep producing samples; got {events:?}"
     );

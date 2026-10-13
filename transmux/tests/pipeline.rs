@@ -7,6 +7,7 @@
 //! byte-exact sample survival. A raw-passthrough or wrong-offset implementation
 //! cannot pass this.
 
+use transmux::TrackId;
 use broadcast_common::Parse;
 use transmux::{
     CodecConfig, EsdsBox, FragmentTrackData, MediaDataBox, MovieBox, MovieFragmentBox, Sample,
@@ -98,7 +99,7 @@ fn track_specs(moov: &MovieBox) -> (Vec<TrackSpec>, EsdsBox) {
 
     let specs = vec![
         TrackSpec::new(
-            1,
+            TrackId::new(1),
             track_timescale(moov, 0),
             CodecConfig::Avc {
                 config: avc.config.clone(),
@@ -107,7 +108,7 @@ fn track_specs(moov: &MovieBox) -> (Vec<TrackSpec>, EsdsBox) {
             },
         ),
         TrackSpec::new(
-            2,
+            TrackId::new(2),
             track_timescale(moov, 1),
             CodecConfig::Aac {
                 esds: esds.clone(),
@@ -154,7 +155,7 @@ fn extract_samples(
         ));
         next_dts += i64::from(dur);
     }
-    (track_id, samples)
+    (track_id.value(), samples)
 }
 
 #[test]
@@ -178,8 +179,8 @@ fn init_segment_from_real_config_reparses() {
         .as_ref()
         .expect("fragmented init must have mvex");
     assert_eq!(mvex.trex.len(), 2, "one trex per track");
-    assert_eq!(mvex.trex[0].track_id, 1);
-    assert_eq!(mvex.trex[1].track_id, 2);
+    assert_eq!(mvex.trex[0].track_id, TrackId::new(1));
+    assert_eq!(mvex.trex[1].track_id, TrackId::new(2));
 
     // Video stsd survived with a real avcC (SPS present).
     match track_stsd_entry(&out_moov, 0) {
@@ -231,8 +232,8 @@ fn media_segment_offsets_and_samples_are_correct() {
     let base_a = moof.traf[1].tfdt.as_ref().unwrap().base_media_decode_time();
 
     let tracks = [
-        FragmentTrackData::new(vid_id, base_v, &vid_samples),
-        FragmentTrackData::new(aud_id, base_a, &aud_samples),
+        FragmentTrackData::new(TrackId::new(vid_id), base_v, &vid_samples),
+        FragmentTrackData::new(TrackId::new(aud_id), base_a, &aud_samples),
     ];
     let seg = build_media_segment(7, &tracks).expect("build media segment");
 

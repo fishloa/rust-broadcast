@@ -1027,7 +1027,7 @@ mod tests {
         let b = ProducerReferenceTimeBox {
             version: 0,
             flags: 0,
-            reference_track_id: 1,
+            reference_track_id: TrackId::new(1),
             ntp_timestamp: 0x1234_5678_9abc_def0,
             media_time: 0x0000_0000_0000_1234,
         };
@@ -1042,7 +1042,7 @@ mod tests {
         let b = ProducerReferenceTimeBox {
             version: 1,
             flags: 0x000018,
-            reference_track_id: 1,
+            reference_track_id: TrackId::new(1),
             ntp_timestamp: 0xedefe3e3_a7ae147a,
             media_time: 0x0000_0000_0000_1c20,
         };

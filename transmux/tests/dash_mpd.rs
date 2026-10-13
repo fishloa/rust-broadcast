@@ -22,6 +22,7 @@
 //! compile this test rather than skipping it.
 #![cfg(feature = "cenc")]
 
+use transmux::TrackId;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 
@@ -75,7 +76,7 @@ fn segment_via_segmenter(media: &Media, target_secs: f64) -> (Vec<u8>, Vec<Vec<u
         .tracks
         .iter()
         .map(|t| Cursor {
-            track_id: t.spec.track_id,
+            track_id: t.spec.track_id.value(),
             timescale: (t.spec.timescale as u64).max(1),
             samples: &t.samples,
             idx: 0,
@@ -111,7 +112,7 @@ fn segment_via_segmenter(media: &Media, target_secs: f64) -> (Vec<u8>, Vec<Vec<u
             c.idx += 1;
             (c.track_id, s)
         };
-        seg.push(track_id, sample).expect("push sample");
+        seg.push(TrackId::new(track_id), sample).expect("push sample");
     }
     seg.flush().expect("flush trailing segment");
     (init, seg.take_ready())
@@ -137,7 +138,7 @@ fn recover_segment_timing(
                 .iter()
                 .map(|s| s.duration.unwrap_or(0) as u64)
                 .sum();
-            let entry = out.entry(t.spec.track_id).or_default();
+            let entry = out.entry(t.spec.track_id.value()).or_default();
             entry.0.push(dur);
             entry.1.push(t.start_decode_time);
         }
@@ -262,7 +263,7 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
     let segments: Vec<TrackSegments> = recovered
         .iter()
         .map(|(&track_id, (durations, _tfdt))| TrackSegments {
-            track_id,
+            track_id: TrackId::new(track_id),
             durations: durations.clone(),
         })
         .collect();
@@ -325,7 +326,7 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
         let track_total: u64 = media
             .tracks
             .iter()
-            .find(|t| t.spec.track_id == track_id)
+            .find(|t| t.spec.track_id == TrackId::new(track_id))
             .expect("track")
             .samples
             .iter()
@@ -350,7 +351,7 @@ fn static_mpd_structure_codecs_and_number_duration_math() {
             let ts = media
                 .tracks
                 .iter()
-                .find(|t| t.spec.track_id == track_id)
+                .find(|t| t.spec.track_id == TrackId::new(track_id))
                 .unwrap()
                 .spec
                 .timescale as u64;
@@ -392,7 +393,7 @@ fn segment_timeline_time_addressing_matches_tfdt() {
     let segments: Vec<TrackSegments> = recovered
         .iter()
         .map(|(&track_id, (durations, _tfdt))| TrackSegments {
-            track_id,
+            track_id: TrackId::new(track_id),
             durations: durations.clone(),
         })
         .collect();

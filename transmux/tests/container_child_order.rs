@@ -15,6 +15,7 @@
 //! The fixture is real, tool-generated media — see
 //! `tests/fixtures/mp4/cmaf/PROVENANCE.md`.
 
+use transmux::TrackId;
 use broadcast_common::{Parse, Serialize};
 use transmux::{Error, MovieBox, OpaqueBox};
 
@@ -215,7 +216,7 @@ fn largesize_moov_child_does_not_drop_its_siblings() {
         1,
         "the largesize trak must not be dropped"
     );
-    assert_eq!(parsed.tracks[0].tkhd.track_id, 7);
+    assert_eq!(parsed.tracks[0].tkhd.track_id, TrackId::new(7));
 }
 
 /// A child whose declared `size` runs one byte past the end of its container

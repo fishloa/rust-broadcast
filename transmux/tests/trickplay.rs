@@ -15,6 +15,7 @@
 //! 3. **No-sync error**: a track with no sync samples returns
 //!    [`Error::InvalidInput`] rather than producing an empty track.
 
+use transmux::TrackId;
 use std::fs;
 use std::path::PathBuf;
 
@@ -41,7 +42,7 @@ const SYNTHETIC_GOP_SIZE: usize = 4;
 
 fn synthetic_spec() -> TrackSpec {
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         90000,
         CodecConfig::Avc {
             config: AVCConfigurationBox {

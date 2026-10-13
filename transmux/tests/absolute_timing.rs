@@ -24,6 +24,7 @@
 //! walk, a WebM cluster/block-timecode walk, or the RTP header timestamps),
 //! never against the demuxer's own bookkeeping.
 
+use transmux::TrackId;
 use broadcast_common::{Package, Unpackage};
 
 use transmux::pipeline::CodecConfig;
@@ -902,7 +903,7 @@ fn fmp4_ir_fmp4_is_byte_identical_with_nonzero_tfdt_and_ctts() {
         sps_ext: vec![],
     };
     let spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         90_000,
         CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),

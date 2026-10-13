@@ -25,6 +25,7 @@
 
 #![cfg(feature = "std")]
 
+use transmux::TrackId;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 
@@ -204,16 +205,16 @@ fn es_of(ts: &[u8], pid: u16) -> Vec<u8> {
 type Sample = (Vec<u8>, Option<i64>, Option<i64>, Option<u32>);
 
 /// Samples per track id, driving [`StreamingTsDemux`] in `chunk`-byte feeds.
-fn observe(ts: &[u8], chunk: usize) -> BTreeMap<u32, Vec<Sample>> {
+fn observe(ts: &[u8], chunk: usize) -> BTreeMap<TrackId, Vec<Sample>> {
     let mut d = StreamingTsDemux::new();
-    let mut out: BTreeMap<u32, Vec<Sample>> = BTreeMap::new();
+    let mut out: BTreeMap<TrackId, Vec<Sample>> = BTreeMap::new();
     let mut drain = |d: &mut StreamingTsDemux| {
         while let Some(e) = d.poll_event() {
             if let DemuxEvent::Sample {
                 track_id, sample, ..
             } = e
             {
-                out.entry(track_id).or_default().push((
+                out.entry(TrackId::new(track_id.value())).or_default().push((
                     sample.data.to_vec(),
                     sample.dts,
                     sample.pts,
@@ -232,7 +233,7 @@ fn observe(ts: &[u8], chunk: usize) -> BTreeMap<u32, Vec<Sample>> {
 }
 
 /// Batch demux, as the same per-track sample lists.
-fn batch(ts: &[u8]) -> BTreeMap<u32, Vec<Sample>> {
+fn batch(ts: &[u8]) -> BTreeMap<TrackId, Vec<Sample>> {
     let media = TsDemux::new().unpackage(ts).expect("batch demux");
     media
         .tracks
@@ -257,7 +258,7 @@ const CHUNKS: &[usize] = &[
 /// Aligned and straddling streams must demux to the *same* samples per track —
 /// bytes, timing and count — through the batch demuxer and the streaming one
 /// at every feed size.
-fn assert_straddle_invariant(label: &str, aligned: &[u8]) -> BTreeMap<u32, Vec<Sample>> {
+fn assert_straddle_invariant(label: &str, aligned: &[u8]) -> BTreeMap<TrackId, Vec<Sample>> {
     let split = straddle_audio_pes(aligned, TAIL);
     assert_ne!(aligned, split.as_slice(), "{label}: the split must differ");
     let want = batch(aligned);
@@ -420,7 +421,7 @@ fn first_pes_starting_mid_syncframe_still_resolves_ac3_and_eac3() {
     // mid-frame.
     let got = batch(&split);
     // Track ids follow PMT order: 258 (AC-3) then 259 (E-AC-3).
-    let ids: Vec<u32> = want.keys().copied().collect();
+    let ids: Vec<TrackId> = want.keys().copied().collect();
     assert_eq!(ids.len(), 2);
     for (id, lost_frames) in [(ids[0], 1usize), (ids[1], 2usize)] {
         let g: Vec<&[u8]> = got[&id].iter().map(|s| s.0.as_slice()).collect();

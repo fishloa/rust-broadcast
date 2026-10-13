@@ -4536,7 +4536,7 @@ mod tests {
             flags: 0x000003, // track_enabled | track_in_movie
             creation_time: 0,
             modification_time: 0,
-            track_id: 1,
+            track_id: TrackId::new(1),
             duration: 2000,
             layer: 0,
             alternate_group: 0,
@@ -4823,7 +4823,7 @@ mod tests {
                     flags: 0x000007,
                     creation_time: 1,
                     modification_time: 2,
-                    track_id: 1,
+                    track_id: TrackId::new(1),
                     duration: 1000,
                     layer: 0,
                     alternate_group: 0,

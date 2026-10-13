@@ -58,6 +58,7 @@
 //! and inspect the printed summary plus the manifest/segment files written to
 //! the temp directory it reports.
 
+use transmux::TrackId;
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use std::error::Error;
@@ -353,7 +354,7 @@ pub fn run() -> Result<Demo, Box<dyn Error>> {
     // ------------------------------------------------------------------
     let result = splice_insert(&base_media, &ad_media, at_ticks)?;
 
-    let mut points_by_track: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
+    let mut points_by_track: BTreeMap<TrackId, Vec<usize>> = BTreeMap::new();
     for p in &result.discontinuity_points {
         points_by_track
             .entry(p.track_id)

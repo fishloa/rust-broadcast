@@ -25,6 +25,7 @@
 //! reused here to get a real `avcC` config for the single-track skip test
 //! without hand-fabricating one).
 
+use transmux::TrackId;
 use std::fs;
 use std::path::PathBuf;
 
@@ -188,7 +189,7 @@ fn ac4_round_trips_through_cmaf_mux_then_demux() {
     let config = Ac4SpecificBox::parse(DAC4_ORACLE).expect("parse dac4 oracle");
 
     let spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         48_000,
         CodecConfig::Ac4 {
             config: config.clone(),

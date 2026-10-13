@@ -6,6 +6,7 @@
 //! crate's own [`Fmp4Demux`] and compares coded sample bytes against that oracle
 //! — no hardcoded offsets, no raw-passthrough shortcuts.
 
+use transmux::TrackId;
 use std::path::PathBuf;
 
 use broadcast_common::Unpackage;
@@ -64,7 +65,7 @@ fn first_sample_flags(segment: &[u8], track_id: u32) -> Option<u32> {
         if &bx.header.box_type.0 == b"moof" {
             let moof = MovieFragmentBox::parse_body(bx.body).expect("parse moof");
             for traf in &moof.traf {
-                if traf.tfhd.track_id != track_id {
+                if traf.tfhd.track_id != TrackId::new(track_id) {
                     continue;
                 }
                 let trun = traf.trun.first()?;
@@ -230,7 +231,7 @@ fn trim_selects_window_and_snaps_to_keyframe() {
     //     from base 0), verified structurally by the identity of sample[0].
     let vid_tid = round.tracks[0].spec.track_id;
     let first_seg = out.media_segments.first().expect("at least one segment");
-    let flags = first_sample_flags(first_seg, vid_tid).expect("video in first seg");
+    let flags = first_sample_flags(first_seg, vid_tid.value()).expect("video in first seg");
     assert_eq!(
         flags & SAMPLE_FLAG_IS_NON_SYNC,
         0,
@@ -265,7 +266,7 @@ fn resegment_cut_count_and_keyframe_starts() {
     );
 
     for (i, seg) in out.media_segments.iter().enumerate() {
-        let flags = first_sample_flags(seg, vid_tid)
+        let flags = first_sample_flags(seg, vid_tid.value())
             .unwrap_or_else(|| panic!("video track absent from segment {i}"));
         assert_eq!(
             flags & SAMPLE_FLAG_IS_NON_SYNC,
@@ -347,7 +348,7 @@ fn minimal_hevc_config() -> HEVCConfigurationBox {
 
 fn hevc_video_track(track_id: u32) -> TrackSpec {
     TrackSpec::new(
-        track_id,
+        TrackId::new(track_id),
         90_000,
         CodecConfig::Hevc {
             config: minimal_hevc_config(),
@@ -378,7 +379,7 @@ fn aac_audio_track(track_id: u32) -> TrackSpec {
         Some(SLConfigDescriptor::predefined_two()),
     ));
     TrackSpec::new(
-        track_id,
+        TrackId::new(track_id),
         48_000,
         CodecConfig::Aac {
             esds,
@@ -563,7 +564,7 @@ const BIG_TIMESCALES: [u32; 3] = [4_294_967_291, 4_294_967_279, 4_294_967_231];
 
 /// Every `track_id` a `trun` sample belongs to, in output order — the interleave
 /// read back from the muxed bytes.
-fn sample_track_order(segments: &[Vec<u8>]) -> Vec<u32> {
+fn sample_track_order(segments: &[Vec<u8>]) -> Vec<TrackId> {
     let mut out = Vec::new();
     for segment in segments {
         let mut off = 0usize;
@@ -602,7 +603,7 @@ fn one_second_track(
             Sample::new(vec![tag; 8], Some(dts), Some(dts), Some(timescale), true)
         })
         .collect();
-    Track::new(TrackSpec::new(track_id, timescale, config), samples)
+    Track::new(TrackSpec::new(TrackId::new(track_id), timescale, config), samples)
 }
 
 /// The resegmenter interleaves the three tracks' samples by decode time. With
@@ -646,7 +647,7 @@ fn resegment_interleaves_huge_coprime_timescales() {
     );
     for id in [1u32, 2, 3] {
         assert_eq!(
-            order.iter().filter(|&&t| t == id).count(),
+            order.iter().filter(|&&t| t == TrackId::new(id)).count(),
             2,
             "track {id} must contribute both of its samples to the same segment"
         );

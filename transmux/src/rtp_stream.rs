@@ -1388,7 +1388,7 @@ mod tests {
     #[test]
     fn video_stream_recovers_durations_and_sync() {
         let mut d = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
-            1,
+            TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
             90_000,
@@ -1398,20 +1398,20 @@ mod tests {
         let idr = [0x65u8, 0xAA];
         let non = [0x41u8, 0xBB];
         // AU0: emits nothing yet (duration needs AU1).
-        assert!(d.push(1, &vpkt(1, 1000, true, &idr)).unwrap().is_empty());
+        assert!(d.push(TrackId::new(1), &vpkt(1, 1000, true, &idr)).unwrap().is_empty());
         // AU1 arrives → AU0 emitted with duration 3000, is_sync=true.
-        let s0 = d.push(1, &vpkt(2, 4000, true, &non)).unwrap();
+        let s0 = d.push(TrackId::new(1), &vpkt(2, 4000, true, &non)).unwrap();
         assert_eq!(s0.len(), 1);
         assert_eq!(s0[0].duration, Some(3000));
         assert!(s0[0].flags.is_sync);
         assert_eq!(s0[0].composition_offset(), 0);
         // AU2 arrives → AU1 emitted, duration 3000, is_sync=false.
-        let s1 = d.push(1, &vpkt(3, 7000, true, &non)).unwrap();
+        let s1 = d.push(TrackId::new(1), &vpkt(3, 7000, true, &non)).unwrap();
         assert_eq!(s1.len(), 1);
         assert_eq!(s1[0].duration, Some(3000));
         assert!(!s1[0].flags.is_sync);
         // flush → AU2 emitted with the last-known duration (3000).
-        let s2 = d.flush(1).unwrap();
+        let s2 = d.flush(TrackId::new(1)).unwrap();
         assert_eq!(s2.len(), 1);
         assert_eq!(s2[0].duration, Some(3000));
     }
@@ -1433,20 +1433,20 @@ mod tests {
 
         // Oracle: drive the inherent push/flush API directly.
         let mut oracle = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
-            1,
+            TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
             90_000,
         )]);
         let mut oracle_samples: Vec<Sample> = Vec::new();
         for pkt in &packets {
-            oracle_samples.extend(oracle.push(1, pkt).unwrap());
+            oracle_samples.extend(oracle.push(TrackId::new(1), pkt).unwrap());
         }
-        oracle_samples.extend(oracle.flush(1).unwrap());
+        oracle_samples.extend(oracle.flush(TrackId::new(1)).unwrap());
 
         // Same input, driven through Stage instead.
         let mut staged = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
-            1,
+            TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
             90_000,
@@ -1479,8 +1479,8 @@ mod tests {
     #[test]
     fn stage_feed_errors_on_multi_track_construction() {
         let mut d = RtpStreamDepacketiser::new(alloc::vec![
-            RtpStreamTrack::new(1, RtpMediaKind::H264, dummy_avc(), 90_000),
-            RtpStreamTrack::new(2, RtpMediaKind::H264, dummy_avc(), 90_000),
+            RtpStreamTrack::new(TrackId::new(1), RtpMediaKind::H264, dummy_avc(), 90_000),
+            RtpStreamTrack::new(TrackId::new(2), RtpMediaKind::H264, dummy_avc(), 90_000),
         ]);
         let err = Stage::feed(&mut d, &vpkt(1, 1000, true, &[0x65]), Timestamp::ZERO).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)));
@@ -1515,7 +1515,7 @@ mod tests {
     #[test]
     fn runaway_fu_a_without_end_bit_is_bounded_not_unbounded() {
         let mut d = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
-            1,
+            TrackId::new(1),
             RtpMediaKind::H264,
             dummy_avc(),
             90_000,
@@ -1529,7 +1529,7 @@ mod tests {
         let mut resume_seq: u16 = 0;
         for i in 0..4096u16 {
             match d.push(
-                1,
+                TrackId::new(1),
                 &vpkt(i, 1000, false, &fu_a_fragment(i == 0, FRAGMENT_FILLER)),
             ) {
                 Ok(samples) => assert!(
@@ -1566,12 +1566,12 @@ mod tests {
         let idr = [0x65u8, 0xAA];
         let non = [0x41u8, 0xBB];
         assert!(
-            d.push(1, &vpkt(resume_seq, 4000, true, &idr))
+            d.push(TrackId::new(1), &vpkt(resume_seq, 4000, true, &idr))
                 .unwrap()
                 .is_empty()
         );
         let s = d
-            .push(1, &vpkt(resume_seq.wrapping_add(1), 7000, true, &non))
+            .push(TrackId::new(1), &vpkt(resume_seq.wrapping_add(1), 7000, true, &non))
             .unwrap();
         assert_eq!(s.len(), 1);
         assert_eq!(s[0].duration, Some(3000));
@@ -1587,14 +1587,14 @@ mod tests {
     #[test]
     fn track_specs_use_clock_rate_as_timescale() {
         let d = RtpStreamDepacketiser::new(alloc::vec![RtpStreamTrack::new(
-            7,
+            TrackId::new(7),
             RtpMediaKind::H264,
             dummy_avc(),
             90_000,
         )]);
         let specs = d.track_specs();
         assert_eq!(specs.len(), 1);
-        assert_eq!(specs[0].track_id, 7);
+        assert_eq!(specs[0].track_id, TrackId::new(7));
         assert_eq!(specs[0].timescale, 90_000);
     }
 }

@@ -10,6 +10,7 @@
 //! Fixtures: `fixtures/mp4/{av1,opus,flac,vp9}.mp4`, `fixtures/ts/heaac/heaac_v{1,2}.mp4`.
 //! Oracle refs: `fixtures/mp4/FMP4-GAPS-ORACLE.md`, `fixtures/ts/ac4/DAC4-ORACLE.md`.
 
+use transmux::TrackId;
 use broadcast_common::{Parse, Serialize};
 use transmux::{
     Ac4SpecificBox, AudioSpecificConfig, Av1ConfigurationBox, EsdsBox, FlacSpecificBox,
@@ -286,7 +287,7 @@ fn dac4_round_trip_and_fields() {
 
     // Wrapping in the ac-4 sample entry and re-parsing must preserve the dac4 body.
     let track = transmux::TrackSpec::new(
-        1,
+        TrackId::new(1),
         48000,
         transmux::CodecConfig::Ac4 {
             config: cfg.clone(),

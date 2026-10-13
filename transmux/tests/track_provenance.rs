@@ -14,6 +14,7 @@
 //! internal `parse_pmt` — it re-implements the byte-level walk from scratch so
 //! the comparison is a real oracle, not a tautology.
 
+use transmux::TrackId;
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 
@@ -292,11 +293,11 @@ fn streaming_demux_track_added_matches_batch_provenance() {
     demux.feed(&ts);
     demux.finish();
 
-    let mut streamed: BTreeMap<u32, (Option<Pid>, Vec<u8>)> = BTreeMap::new();
+    let mut streamed: BTreeMap<TrackId, (Option<Pid>, Vec<u8>)> = BTreeMap::new();
     while let Some(event) = demux.poll_event() {
         if let DemuxEvent::TrackAdded(spec) = event {
             streamed.insert(
-                spec.track_id,
+                TrackId::new(spec.track_id.value()),
                 (spec.source_pid, spec.es_info_descriptors.clone()),
             );
         }

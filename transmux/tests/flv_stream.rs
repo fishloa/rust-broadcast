@@ -20,6 +20,7 @@
 //! `poll_event` in a loop — the uniform pull idiom shared with
 //! [`transmux::StreamingTsDemux`].
 
+use transmux::TrackId;
 use broadcast_common::Unpackage;
 use bytes::Bytes;
 use transmux::{CodecConfig, DemuxEvent, FlvDemux, FlvError, StreamingFlvDemux};
@@ -422,7 +423,7 @@ fn resent_sequence_header_updates_the_track() {
                 let CodecConfig::Avc { width, height, .. } = &spec.config else {
                     panic!("video track must be AVC");
                 };
-                updated.push((spec.track_id, *width, *height));
+                updated.push((spec.track_id.value(), *width, *height));
             }
             _ => {}
         }
@@ -451,7 +452,7 @@ fn resent_aac_sequence_header_updates_the_track() {
 
     let mut demux = StreamingFlvDemux::new();
     let events = feed_and_drain(&mut demux, &out).expect("feed");
-    let updated: Vec<(u32, u16, u32)> = events
+    let updated: Vec<(TrackId, u16, u32)> = events
         .iter()
         .filter_map(|ev| match ev {
             DemuxEvent::TrackUpdated(spec) => {
@@ -470,7 +471,7 @@ fn resent_aac_sequence_header_updates_the_track() {
         .collect();
     assert_eq!(
         updated,
-        vec![(1, 1, 48_000)],
+        vec![(TrackId::new(1), 1, 48_000)],
         "the re-sent ASC reports mono 48000 on the same track"
     );
 }
@@ -510,7 +511,7 @@ fn corrupt_tag_is_drained_and_the_stream_continues() {
     // Bites: before the fix the same corrupt tag was re-parsed here and this
     // returned the identical error again (and forever after).
     let events = feed_and_drain(&mut demux, &[]).expect("the next feed must make progress");
-    let resumed: Vec<u32> = events
+    let resumed: Vec<TrackId> = events
         .iter()
         .filter_map(|ev| match ev {
             DemuxEvent::TrackAdded(spec) => Some(spec.track_id),
@@ -519,7 +520,7 @@ fn corrupt_tag_is_drained_and_the_stream_continues() {
         .collect();
     assert_eq!(
         resumed,
-        vec![1],
+        vec![TrackId::new(1)],
         "the good sequence header after the corrupt tag resolves the track"
     );
 }

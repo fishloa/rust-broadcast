@@ -298,7 +298,7 @@ mod tests {
     fn tfhd(flags: u32, track_id: TrackId, base: Option<u64>) -> Vec<u8> {
         let mut p = Vec::new();
         p.extend_from_slice(&flags.to_be_bytes());
-        p.extend_from_slice(&track_id.to_be_bytes());
+        p.extend_from_slice(&track_id.value().to_be_bytes());
         if let Some(b) = base {
             p.extend_from_slice(&b.to_be_bytes());
         }
@@ -368,7 +368,7 @@ mod tests {
         let probe = container(
             b"traf",
             &[
-                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, 1, None),
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None),
                 trun(&[2, 2], Some(0)),
                 trun(&[2, 2], Some(0)),
             ],
@@ -380,14 +380,14 @@ mod tests {
         let traf = container(
             b"traf",
             &[
-                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, 1, None),
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None),
                 trun(&[2, 2], Some(off)),
                 trun(&[2, 2], Some(off)),
             ],
         );
         let (file, moof_off) = file_with(&[traf], &mdat_body);
         let moof = parse_moof(&file, moof_off);
-        let r = sample_ranges(&file, moof_off, &moof, 1).expect("ranges");
+        let r = sample_ranges(&file, moof_off, &moof, TrackId::new(1)).expect("ranges");
         assert_eq!(r.len(), 4);
         assert_eq!(r[0].start, mdat_payload);
         assert_eq!(
@@ -407,7 +407,7 @@ mod tests {
         let probe = container(
             b"traf",
             &[
-                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, 1, None),
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None),
                 trun(&[2, 2], Some(0)),
                 trun(&[2, 2], None),
             ],
@@ -417,14 +417,14 @@ mod tests {
         let traf = container(
             b"traf",
             &[
-                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, 1, None),
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None),
                 trun(&[2, 2], Some(off)),
                 trun(&[2, 2], None),
             ],
         );
         let (file, moof_off) = file_with(&[traf], &mdat_body);
         let moof = parse_moof(&file, moof_off);
-        let r = sample_ranges(&file, moof_off, &moof, 1).expect("ranges");
+        let r = sample_ranges(&file, moof_off, &moof, TrackId::new(1)).expect("ranges");
         assert_eq!(r[2].start, r[1].end);
     }
 
@@ -435,27 +435,27 @@ mod tests {
         let traf = container(
             b"traf",
             &[
-                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, 1, None),
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None),
                 trun(&[2], Some(0)),
             ],
         );
         let (file, moof_off) = file_with(&[traf], &mdat_body);
         let moof = parse_moof(&file, moof_off);
-        assert!(sample_ranges(&file, moof_off, &moof, 1).is_err());
+        assert!(sample_ranges(&file, moof_off, &moof, TrackId::new(1)).is_err());
     }
 
     /// Total handed-out bytes are capped: 10k overlapping runs cannot amplify.
     #[test]
     fn many_overlapping_runs_are_capped() {
         let mdat_body: Vec<u8> = alloc::vec![0xAA; 8];
-        let mut kids = alloc::vec![tfhd(TFHD_DEFAULT_BASE_IS_MOOF, 1, None)];
+        let mut kids = alloc::vec![tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None)];
         for _ in 0..10_000 {
             kids.push(trun(&[8], Some(40)));
         }
         let traf = container(b"traf", &kids);
         let (file, moof_off) = file_with(&[traf], &mdat_body);
         let moof = parse_moof(&file, moof_off);
-        let err = sample_ranges(&file, moof_off, &moof, 1).unwrap_err();
+        let err = sample_ranges(&file, moof_off, &moof, TrackId::new(1)).unwrap_err();
         assert!(
             matches!(err, Error::InvalidInput(_)),
             "10k overlapping runs must be capped, got {err:?}"
@@ -494,7 +494,7 @@ mod tests {
         let probe = container(
             b"traf",
             &[
-                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, 1, None),
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None),
                 trun(&[2, 2], Some(0)),
             ],
         );
@@ -503,7 +503,7 @@ mod tests {
         let traf = container(
             b"traf",
             &[
-                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, 1, None),
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None),
                 trun(&[2, 2], Some(off)),
             ],
         );
@@ -520,20 +520,20 @@ mod tests {
                 end: cut.len()
             }]
         );
-        let r = sample_ranges(cut, moof_off, &moof, 1).expect("early samples resolve");
+        let r = sample_ranges(cut, moof_off, &moof, TrackId::new(1)).expect("early samples resolve");
         assert_eq!((r[0].start, r[0].end), (payload, payload + 2));
         assert_eq!((r[1].start, r[1].end), (payload + 2, payload + 4));
         // A sample past the cut is still rejected.
         let traf = container(
             b"traf",
             &[
-                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, 1, None),
+                tfhd(TFHD_DEFAULT_BASE_IS_MOOF, TrackId::new(1), None),
                 trun(&[2, 2, 2], Some(off)),
             ],
         );
         let (full3, moof_off3) = file_with(&[traf], &mdat_body);
         let moof3 = parse_moof(&full3, moof_off3);
-        assert!(sample_ranges(&full3[..payload + 5], moof_off3, &moof3, 1).is_err());
+        assert!(sample_ranges(&full3[..payload + 5], moof_off3, &moof3, TrackId::new(1)).is_err());
     }
 
     /// `Fmp4Demux` scans the file's `mdat`s exactly once however many

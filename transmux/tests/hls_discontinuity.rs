@@ -14,6 +14,7 @@
 //! 4. **Placement** — the tag immediately precedes `#EXTINF` (and any
 //!    `EXT-X-MAP`-like prefix), never appears after it.
 
+use transmux::TrackId;
 use broadcast_hls::{DecimalSeconds, MediaPlaylist, MediaSegment, mark_init_discontinuities};
 use transmux::{
     AVCConfigurationBox, AVCDecoderConfigurationRecord, CodecConfig, Sample, SegmentMeta,
@@ -59,7 +60,7 @@ fn dummy_avc_config_b() -> AVCConfigurationBox {
 
 fn video_track_a() -> TrackSpec {
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         90_000,
         CodecConfig::Avc {
             config: dummy_avc_config(),
@@ -71,7 +72,7 @@ fn video_track_a() -> TrackSpec {
 
 fn video_track_b() -> TrackSpec {
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         90_000,
         CodecConfig::Avc {
             config: dummy_avc_config_b(),
@@ -280,8 +281,8 @@ fn explicit_mark_discontinuity_bites() {
     let fill = |s: &mut Segmenter| {
         let sync = Sample::new(vec![0u8; 4], None, None, Some(45_000), true);
         let non_sync = Sample::new(vec![0u8; 4], None, None, Some(45_000), false);
-        s.push(1, sync).unwrap();
-        s.push(1, non_sync).unwrap();
+        s.push(TrackId::new(1), sync).unwrap();
+        s.push(TrackId::new(1), non_sync).unwrap();
     };
 
     // Trigger sample (sync that causes the preceding buffer to be cut).
@@ -290,7 +291,7 @@ fn explicit_mark_discontinuity_bites() {
     // Fill segment 0's buffer (90_000 ticks pending).
     fill(&mut seg);
     // Trigger the cut for segment 0; this sync starts segment 1's buffer.
-    seg.push(1, trigger()).unwrap();
+    seg.push(TrackId::new(1), trigger()).unwrap();
 
     let batch0 = seg.take_ready_with_meta();
     assert_eq!(batch0.len(), 1, "expected 1 segment after first cut");
@@ -301,9 +302,9 @@ fn explicit_mark_discontinuity_bites() {
 
     // Fill segment 1's buffer; the anchor already has 45_000 ticks from the trigger.
     let non_sync = Sample::new(vec![0u8; 4], None, None, Some(45_000), false);
-    seg.push(1, non_sync).unwrap();
+    seg.push(TrackId::new(1), non_sync).unwrap();
     // Now trigger the cut for segment 1 — must be discontinuous.
-    seg.push(1, trigger()).unwrap();
+    seg.push(TrackId::new(1), trigger()).unwrap();
 
     let batch1 = seg.take_ready_with_meta();
     assert_eq!(batch1.len(), 1, "expected 1 segment after mark + cut");

@@ -9,6 +9,7 @@
 //! inspector (`MP4Box -diso`), never derived from this crate's own
 //! serializer.
 
+use transmux::TrackId;
 use broadcast_common::{Parse, Serialize};
 use transmux::cenc::SampleAuxInfoSizesBox;
 use transmux::init_segment::{MovieHeaderBox, Mp4aSampleEntry, SampleSizeBox, TrackHeaderBox};
@@ -161,7 +162,7 @@ fn mvhd_v1_matches_mp4box_diso() {
     assert_eq!(mvhd.timescale, 2_000_000_000);
     assert_eq!(mvhd.duration, 6_000_000_000);
     assert_eq!(
-        mvhd.next_track_id, 2,
+        mvhd.next_track_id, TrackId::new(2),
         "next_track_id must be read from byte 116, not 120 (issue #1015)"
     );
 
@@ -186,7 +187,7 @@ fn tkhd_v1_matches_mp4box_diso() {
 
     let tkhd = TrackHeaderBox::parse(tkhd_bytes).expect("parse v1 tkhd");
     assert_eq!(tkhd.version, 1);
-    assert_eq!(tkhd.track_id, 1);
+    assert_eq!(tkhd.track_id, TrackId::new(1));
     assert_eq!(
         tkhd.duration, 6_000_000_000,
         "duration must be read from byte 36, not 40 (issue #1016)"

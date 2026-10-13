@@ -12,6 +12,7 @@
 //! (below) — no hardcoded offsets — so the tables must be internally consistent
 //! with the real mdat layout for the assertions to hold.
 
+use transmux::TrackId;
 use std::path::PathBuf;
 
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
@@ -894,7 +895,7 @@ fn duration_version_boundary_is_exact() {
         rate: 0x0001_0000,
         volume: 0x0100,
         matrix: [0x0001_0000, 0, 0, 0, 0x0001_0000, 0, 0, 0, 0x4000_0000],
-        next_track_id: 2,
+        next_track_id: TrackId::new(2),
     };
     let b = at_limit.try_to_bytes().expect("serialize at the limit");
     assert_eq!(b.len(), 108, "u32::MAX fits version 0");

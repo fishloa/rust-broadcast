@@ -7,6 +7,7 @@
 //! When a real DTS-in-MP4 fixture becomes available, add a byte-exact
 //! `real_fixture_round_trip` test here and remove this note.
 
+use transmux::TrackId;
 use broadcast_common::{Parse, Serialize};
 use transmux::{
     CodecConfig, DDTS_BODY_LEN, DTSC_FOURCC, DtsSpecificBox, SampleEntryVariant, TrackSpec,
@@ -259,7 +260,7 @@ fn dtsc_init_segment_ddts_round_trip() {
     let sample_rate: u32 = 48_000;
 
     let tracks = vec![TrackSpec::new(
-        1,
+        TrackId::new(1),
         sample_rate,
         CodecConfig::Dts {
             config: ddts.clone(),
@@ -302,7 +303,7 @@ fn stsd_round_trip_dts_entry() {
     let sample_rate: u32 = 48_000;
 
     let tracks = vec![TrackSpec::new(
-        1,
+        TrackId::new(1),
         sample_rate,
         CodecConfig::Dts {
             config: ddts.clone(),

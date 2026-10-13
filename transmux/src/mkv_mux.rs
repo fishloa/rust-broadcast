@@ -971,7 +971,7 @@ mod tests {
             width: 640,
             height: 480,
         };
-        assert!(build_track_entry(1, 1, &config).is_err());
+        assert!(build_track_entry(1, TrackId::new(1), &config).is_err());
     }
 
     #[test]

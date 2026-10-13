@@ -1268,8 +1268,8 @@ mod tests {
         CencDecryptor {
             file: bytes::Bytes::new(),
             tracks: alloc::vec![
-                crypto(VIDEO_TRACK_ID, &VIDEO_IV),
-                crypto(AUDIO_TRACK_ID, &AUDIO_IV),
+                crypto(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV),
+                crypto(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV),
             ],
         }
     }
@@ -1335,7 +1335,7 @@ mod tests {
     fn narrowed_media_decrypts_with_its_own_tracks_ivs() {
         let dec = decryptor();
         let keys = KeyMap::new().with_key(KID, KEY);
-        let mut media = encrypted_media(AUDIO_TRACK_ID, &AUDIO_IV);
+        let mut media = encrypted_media(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
 
         dec.decrypt(&mut media, &keys).expect("decrypt");
 
@@ -1355,7 +1355,7 @@ mod tests {
     fn first_track_still_decrypts_with_its_own_ivs() {
         let dec = decryptor();
         let keys = KeyMap::new().with_key(KID, KEY);
-        let mut media = encrypted_media(VIDEO_TRACK_ID, &VIDEO_IV);
+        let mut media = encrypted_media(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV);
         dec.decrypt(&mut media, &keys).expect("decrypt");
         for (i, sample) in media.tracks[0].samples.iter().enumerate() {
             assert_eq!(&sample.data[..], &plaintext(i)[..]);
@@ -1366,8 +1366,8 @@ mod tests {
     /// `senc` has the wrong sample count — so the failure is only discovered
     /// once the loop reaches track 2.
     fn two_track_media_second_bad() -> Media {
-        let video = encrypted_media(VIDEO_TRACK_ID, &VIDEO_IV);
-        let audio = encrypted_media(AUDIO_TRACK_ID, &AUDIO_IV);
+        let video = encrypted_media(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV);
+        let audio = encrypted_media(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
         Media::new(
             alloc::vec![video.tracks[0].clone(), audio.tracks[0].clone()],
             90_000,
@@ -1377,11 +1377,11 @@ mod tests {
     /// A decryptor whose second track's `senc` has one fewer entry than the
     /// media track's sample count.
     fn decryptor_second_track_count_mismatch() -> CencDecryptor {
-        let mut second = crypto(AUDIO_TRACK_ID, &AUDIO_IV);
+        let mut second = crypto(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
         second.samples.pop();
         CencDecryptor {
             file: bytes::Bytes::new(),
-            tracks: alloc::vec![crypto(VIDEO_TRACK_ID, &VIDEO_IV), second],
+            tracks: alloc::vec![crypto(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV), second],
         }
     }
 
@@ -1423,7 +1423,7 @@ mod tests {
     /// than the sample has, so `validate_subsample_map` rejects it.
     #[test]
     fn decrypt_is_atomic_on_bad_subsample_map_track2() {
-        let mut second = crypto(AUDIO_TRACK_ID, &AUDIO_IV);
+        let mut second = crypto(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
         // 64-byte samples (see `plaintext`): claim 100 protected bytes.
         second.samples[0].subsamples = alloc::vec![crate::cenc::SubSampleEntry {
             bytes_of_clear_data: 0,
@@ -1431,7 +1431,7 @@ mod tests {
         }];
         let dec = CencDecryptor {
             file: bytes::Bytes::new(),
-            tracks: alloc::vec![crypto(VIDEO_TRACK_ID, &VIDEO_IV), second],
+            tracks: alloc::vec![crypto(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV), second],
         };
         let mut media = two_track_media_second_bad();
         let before: Vec<Vec<u8>> = media
@@ -1467,7 +1467,7 @@ mod tests {
         t.default_crypt_byte_block = 1;
         t.default_skip_byte_block = 9;
         let mk = |id: u32, iv: u8, count: usize| TrackCrypto {
-            track_id: id,
+            track_id: TrackId::new(id),
             tenc: t.clone(),
             original_format: *b"avc1",
             scheme: CencScheme::Cbcs,
@@ -1513,11 +1513,11 @@ mod tests {
     #[test]
     fn decrypt_is_atomic_when_a_key_is_missing() {
         // Second track uses a different KID, which the key map will not hold.
-        let mut second = crypto(AUDIO_TRACK_ID, &AUDIO_IV);
+        let mut second = crypto(TrackId::new(AUDIO_TRACK_ID), &AUDIO_IV);
         second.tenc.default_kid = [0xBB; KEY_LEN];
         let dec = CencDecryptor {
             file: bytes::Bytes::new(),
-            tracks: alloc::vec![crypto(VIDEO_TRACK_ID, &VIDEO_IV), second],
+            tracks: alloc::vec![crypto(TrackId::new(VIDEO_TRACK_ID), &VIDEO_IV), second],
         };
         let mut media = two_track_media_second_bad();
         let before: Vec<Vec<u8>> = media
@@ -1547,7 +1547,7 @@ mod tests {
     fn unknown_track_id_errors() {
         let dec = decryptor();
         let keys = KeyMap::new().with_key(KID, KEY);
-        let mut media = encrypted_media(99, &AUDIO_IV);
+        let mut media = encrypted_media(TrackId::new(99), &AUDIO_IV);
         let err = dec.decrypt(&mut media, &keys).unwrap_err();
         assert!(matches!(err, Error::InvalidInput(_)), "got {err:?}");
     }
@@ -1626,7 +1626,7 @@ mod tests {
         let clear_audio: Vec<Vec<u8>> = clear_media
             .tracks
             .iter()
-            .find(|t| t.spec.track_id == 2)
+            .find(|t| t.spec.track_id == TrackId::new(2))
             .expect("clear.mp4 must carry track 2 (audio)")
             .samples
             .iter()
@@ -1660,7 +1660,7 @@ mod tests {
             // Ciphertext samples for track 2, resolved by the shared
             // §8.8.7/§8.8.8 walker (the same code the decryptor and Fmp4Demux
             // use).
-            let cipher = collect_fragment_samples(&bytes::Bytes::from(bytes.clone()), 2)
+            let cipher = collect_fragment_samples(&bytes::Bytes::from(bytes.clone()), TrackId::new(2))
                 .unwrap_or_else(|e| panic!("{f}: collect audio: {e}"));
             assert_eq!(
                 cipher.len(),
@@ -1672,7 +1672,7 @@ mod tests {
             let crypto = dec
                 .tracks
                 .iter()
-                .find(|c| c.track_id == 2)
+                .find(|c| c.track_id == TrackId::new(2))
                 .unwrap_or_else(|| panic!("{f}: no audio crypto record"));
             let key = keys
                 .get(&crypto.tenc.default_kid)

@@ -4,6 +4,7 @@
 //! The test demuxes real TS fixtures, parses the syncframe BSI, builds the
 //! config box, and asserts byte-exact match with ffmpeg's output.
 
+use transmux::TrackId;
 use broadcast_common::{Parse, Serialize};
 
 use transmux::{
@@ -176,7 +177,7 @@ fn ac3_init_segment_sample_entry() {
     let sample_rate: u32 = 44100;
 
     let tracks = vec![TrackSpec::new(
-        1,
+        TrackId::new(1),
         sample_rate,
         CodecConfig::Ac3 {
             config: dac3,
@@ -198,7 +199,7 @@ fn ec3_init_segment_sample_entry() {
     let sample_rate: u32 = 44100;
 
     let tracks = vec![TrackSpec::new(
-        1,
+        TrackId::new(1),
         sample_rate,
         CodecConfig::Eac3 {
             config: dec3,

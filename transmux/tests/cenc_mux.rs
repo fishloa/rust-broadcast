@@ -16,6 +16,7 @@
 
 #![cfg(feature = "cenc")]
 
+use transmux::TrackId;
 use std::path::PathBuf;
 
 use broadcast_common::{Decrypt, Encrypt, Package, Parse, Serialize, Unpackage};
@@ -117,7 +118,7 @@ fn find_traf_for_track(moof_body: &[u8], track_id: u32) -> Option<(usize, &[u8])
             if let Some((_, tfhd)) = find_child_box(traf_body, b"tfhd")
                 && let Ok(parsed) =
                     transmux::movie_fragment::TrackFragmentHeaderBox::parse_body(&tfhd[8..])
-                && parsed.track_id == track_id
+                && parsed.track_id == TrackId::new(track_id)
             {
                 return Some((off, &moof_body[off..end]));
             }
@@ -155,10 +156,10 @@ fn protect(media: &Media, track_id: u32) -> Vec<u8> {
         .expect("track.encryption populated by CencEncryptor");
 
     let with_protected_init =
-        protect_init_segment(&raw, track_id, enc).expect("protect_init_segment");
+        protect_init_segment(&raw, TrackId::new(track_id), enc).expect("protect_init_segment");
 
     let fragment_protection = FragmentProtection {
-        track_id,
+        track_id: TrackId::new(track_id),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
@@ -180,7 +181,7 @@ fn protect_init_segment_emits_encv_sinf() {
         .expect("encrypt");
     let track_id = media.tracks[0].spec.track_id;
 
-    let protected = protect(&media, track_id);
+    let protected = protect(&media, track_id.value());
 
     let (_, moov_bytes) = find_top_box(&protected, b"moov").expect("moov present");
     let moov = MovieBox::parse(moov_bytes).expect("parse moov");
@@ -258,7 +259,7 @@ fn protect_media_segment_emits_senc_saiz_saio() {
     let sample_count = media.tracks[0].samples.len();
     assert!(sample_count > 1, "fixture must carry more than one sample");
 
-    let protected = protect(&media, track_id);
+    let protected = protect(&media, track_id.value());
     let enc = media.tracks[0].encryption.as_ref().unwrap();
 
     let (moof_file_off, moof_bytes) = find_top_box(&protected, b"moof").expect("moof present");
@@ -280,7 +281,7 @@ fn protect_media_segment_emits_senc_saiz_saio() {
 
     let moof_body = &moof_bytes[8..];
     let (traf_off_in_body, traf_bytes) =
-        find_traf_for_track(moof_body, track_id).expect("traf for track present");
+        find_traf_for_track(moof_body, track_id.value()).expect("traf for track present");
     let traf_body = &traf_bytes[8..];
 
     let moof = MovieFragmentBox::parse_body(moof_body).expect("parse moof");
@@ -356,10 +357,10 @@ fn protect_media_segment_sets_subsample_flag() {
         "fixture must produce at least one subsampled entry to bite"
     );
 
-    let protected = protect(&media, track_id);
+    let protected = protect(&media, track_id.value());
     let (_, moof_bytes) = find_top_box(&protected, b"moof").expect("moof present");
     let moof_body = &moof_bytes[8..];
-    let (_, traf_bytes) = find_traf_for_track(moof_body, track_id).expect("traf present");
+    let (_, traf_bytes) = find_traf_for_track(moof_body, track_id.value()).expect("traf present");
     let traf_body = &traf_bytes[8..];
     let (_, senc_bytes) = find_child_box(traf_body, b"senc").expect("senc present");
 
@@ -391,7 +392,7 @@ fn protect_media_segment_unknown_track_errors() {
 
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let bogus_protection = FragmentProtection {
-        track_id: 9999,
+        track_id: TrackId::new(9999),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
@@ -556,7 +557,7 @@ fn protect_media_segment_keeps_a_moof_level_opaque_child() {
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let enc = media.tracks[0].encryption.as_ref().expect("encryption");
 
-    let with_protected_init = protect_init_segment(&raw, 1, enc).expect("protect_init_segment");
+    let with_protected_init = protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
     // A real moof-level opaque child: a `pssh` (ISO/IEC 23001-7 §8.1.1) —
     // 8-byte header + FullBox(4) + system_id(16) + data_size(4) + no data.
     let mut pssh = Vec::new();
@@ -568,7 +569,7 @@ fn protect_media_segment_keeps_a_moof_level_opaque_child() {
     let spliced = splice_into_moof(&with_protected_init, &pssh);
 
     let fp = FragmentProtection {
-        track_id: 1,
+        track_id: TrackId::new(1),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
@@ -640,7 +641,7 @@ fn protect_media_segment_rejects_a_traf_that_already_carries_senc() {
         .expect("encrypt");
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let enc = media.tracks[0].encryption.as_ref().expect("encryption");
-    let with_protected_init = protect_init_segment(&raw, 1, enc).expect("protect_init_segment");
+    let with_protected_init = protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
 
     // A 16-byte `senc` FullBox declaring zero samples.
     let mut senc = Vec::new();
@@ -651,7 +652,7 @@ fn protect_media_segment_rejects_a_traf_that_already_carries_senc() {
     let spliced = splice_into_traf(&with_protected_init, &senc);
 
     let fp = FragmentProtection {
-        track_id: 1,
+        track_id: TrackId::new(1),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
@@ -676,7 +677,7 @@ fn protect_media_segment_rejects_a_data_offset_that_would_overflow() {
         .expect("encrypt");
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let enc = media.tracks[0].encryption.as_ref().expect("encryption");
-    let with_protected_init = protect_init_segment(&raw, 1, enc).expect("protect_init_segment");
+    let with_protected_init = protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
 
     // Push the `data_offset` to `i32::MAX` so the added `delta` overflows.
     // The `trun` is nested (`moof` → `traf` → `trun`), so scan every level.
@@ -707,7 +708,7 @@ fn protect_media_segment_rejects_a_data_offset_that_would_overflow() {
     buf[at..at + 4].copy_from_slice(&i32::MAX.to_be_bytes());
 
     let fp = FragmentProtection {
-        track_id: 1,
+        track_id: TrackId::new(1),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
@@ -744,7 +745,7 @@ fn protected_segment_with_an_opaque_moof_child_decrypts_to_the_clear_samples() {
         .expect("encrypt");
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let enc = media.tracks[0].encryption.as_ref().expect("encryption");
-    let with_protected_init = protect_init_segment(&raw, 1, enc).expect("protect_init_segment");
+    let with_protected_init = protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
 
     // A `pssh` as a moof-level opaque child.
     let mut pssh = Vec::new();
@@ -756,7 +757,7 @@ fn protected_segment_with_an_opaque_moof_child_decrypts_to_the_clear_samples() {
     let spliced = splice_into_moof(&with_protected_init, &pssh);
 
     let fp = FragmentProtection {
-        track_id: 1,
+        track_id: TrackId::new(1),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
@@ -810,7 +811,7 @@ fn protected_segment_with_an_opaque_moof_child_matches_mp4decrypt() {
         .expect("encrypt");
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let enc = media.tracks[0].encryption.as_ref().expect("encryption");
-    let with_protected_init = protect_init_segment(&raw, 1, enc).expect("protect_init_segment");
+    let with_protected_init = protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
 
     let mut pssh = Vec::new();
     pssh.extend_from_slice(&32u32.to_be_bytes());
@@ -821,7 +822,7 @@ fn protected_segment_with_an_opaque_moof_child_matches_mp4decrypt() {
     let spliced = splice_into_moof(&with_protected_init, &pssh);
 
     let fp = FragmentProtection {
-        track_id: 1,
+        track_id: TrackId::new(1),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };
@@ -1026,9 +1027,9 @@ fn non_cenc_typed_saiz_is_not_treated_as_an_existing_cenc_triple() {
         .expect("encrypt");
     let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
     let enc = media.tracks[0].encryption.as_ref().expect("encryption");
-    let with_init = protect_init_segment(&raw, 1, enc).expect("protect_init_segment");
+    let with_init = protect_init_segment(&raw, TrackId::new(1), enc).expect("protect_init_segment");
     let fp = || FragmentProtection {
-        track_id: 1,
+        track_id: TrackId::new(1),
         entries: &enc.samples,
         per_sample_iv_size: enc.tenc.default_per_sample_iv_size,
     };

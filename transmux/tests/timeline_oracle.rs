@@ -12,6 +12,7 @@
 #[cfg(feature = "cli")]
 mod common;
 
+use transmux::TrackId;
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -382,7 +383,7 @@ fn first_presentation(file: &[u8], media: &Media) -> (f64, f64) {
         media
             .tracks
             .iter()
-            .find(|t| t.spec.track_id == id)
+            .find(|t| t.spec.track_id == TrackId::new(id))
             .unwrap()
             .spec
             .timescale as f64
@@ -405,7 +406,7 @@ fn first_presentation(file: &[u8], media: &Media) -> (f64, f64) {
         let trun = child(traf, b"trun").unwrap();
         let cto = trun_first_cto(trun);
         let t = (base + cto as f64) / ts_of(id);
-        if id == video_id {
+        if id == video_id.value() {
             v = Some(t)
         } else {
             a = Some(t)
@@ -472,8 +473,8 @@ fn smooth_trun_durations_are_in_manifest_timescale() {
         .spec
         .track_id;
 
-    let mut totals = std::collections::HashMap::<u32, i64>::new();
-    let mut first_t = std::collections::HashMap::<u32, (i64, i64)>::new();
+    let mut totals = std::collections::HashMap::<TrackId, i64>::new();
+    let mut first_t = std::collections::HashMap::<TrackId, (i64, i64)>::new();
     for f in &out.fragments {
         let moof = child(&f.data, b"moof").expect("moof");
         let traf = child(moof, b"traf").expect("traf");

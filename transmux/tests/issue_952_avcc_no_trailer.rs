@@ -14,6 +14,7 @@
 //!
 //! This test must FAIL on pre-fix code with `tracks=0, skipped=1`.
 
+use transmux::TrackId;
 use broadcast_common::Unpackage;
 use transmux::Fmp4Demux;
 use transmux::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
@@ -109,7 +110,7 @@ fn genuinely_malformed_stsd_names_the_real_reason() {
         sps_ext: vec![],
     };
     let spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         90_000,
         CodecConfig::Avc {
             config: AVCConfigurationBox::new(record),

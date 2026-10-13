@@ -11,6 +11,7 @@
 //! 4. Sample fidelity + FLV round-trip: demux→mux→demux byte-identical AUs.
 //! 5. Cross-hub: FLV → IR → CmafMux carries avc1/avcC + mp4a and matching NALs.
 
+use transmux::TrackId;
 use broadcast_common::{Package, Parse, Serialize, Unpackage};
 use bytes::Bytes;
 use transmux::init_segment::{MovieBox, SampleEntryVariant, StblChild};
@@ -519,7 +520,7 @@ fn package_rescales_non_ms_timescales() {
         .collect();
     let track = transmux::Track::new(
         transmux::TrackSpec::new(
-            1,
+            TrackId::new(1),
             VIDEO_TIMESCALE,
             CodecConfig::Avc {
                 config,
@@ -595,7 +596,7 @@ fn package_rejects_oversized_composition_time() {
     let sample = transmux::Sample::new(alloc_body(4), Some(0), Some(9_000_000), Some(1_000), true);
     let track = transmux::Track::new(
         transmux::TrackSpec::new(
-            1,
+            TrackId::new(1),
             1000,
             CodecConfig::Avc {
                 config,
@@ -996,7 +997,7 @@ fn zero_timescale_is_rejected_not_flattened_to_zero() {
         .collect();
     let track = transmux::Track::new(
         transmux::TrackSpec::new(
-            1,
+            TrackId::new(1),
             0, // no timescale at all
             CodecConfig::Avc {
                 config,

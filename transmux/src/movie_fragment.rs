@@ -1782,7 +1782,7 @@ mod tests {
     fn tfhd_minimal() {
         let t = TrackFragmentHeaderBox {
             flags: 0,
-            track_id: 1,
+            track_id: TrackId::new(1),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: None,
@@ -1791,14 +1791,14 @@ mod tests {
         };
         let b = t.to_bytes();
         let p = TrackFragmentHeaderBox::parse_body(&b[8..]).unwrap();
-        assert_eq!(p.track_id, 1);
+        assert_eq!(p.track_id, TrackId::new(1));
         assert_eq!(b, p.to_bytes());
     }
     #[test]
     fn tfhd_subset() {
         let t = TrackFragmentHeaderBox {
             flags: TFHD_DEFAULT_SAMPLE_DURATION_PRESENT | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT,
-            track_id: 7,
+            track_id: TrackId::new(7),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: Some(512),
@@ -1822,7 +1822,7 @@ mod tests {
             | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT;
         let t = TrackFragmentHeaderBox {
             flags,
-            track_id: 2,
+            track_id: TrackId::new(2),
             base_data_offset: Some(0x1234567890ABCDEF),
             sample_description_index: Some(1),
             default_sample_duration: Some(1024),
@@ -1849,7 +1849,7 @@ mod tests {
         let t = TrackFragmentHeaderBox {
             // No presence bits at all, but every value is present.
             flags: 0,
-            track_id: 4,
+            track_id: TrackId::new(4),
             base_data_offset: Some(0x1000),
             sample_description_index: Some(1),
             default_sample_duration: Some(512),
@@ -1875,7 +1875,7 @@ mod tests {
         // The reverse direction: a presence bit with no value emits nothing.
         let t = TrackFragmentHeaderBox {
             flags: TFHD_SAMPLE_DESCRIPTION_INDEX_PRESENT,
-            track_id: 4,
+            track_id: TrackId::new(4),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: None,
@@ -2107,7 +2107,7 @@ mod tests {
         let flags = TFHD_DEFAULT_BASE_IS_MOOF | TFHD_BASE_DATA_OFFSET_PRESENT;
         let t = TrackFragmentHeaderBox {
             flags,
-            track_id: 1,
+            track_id: TrackId::new(1),
             base_data_offset: Some(0x40),
             sample_description_index: None,
             default_sample_duration: None,
@@ -2244,7 +2244,7 @@ mod tests {
                 | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT
                 | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT
                 | TFHD_DEFAULT_BASE_IS_MOOF,
-            track_id: 1,
+            track_id: TrackId::new(1),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: Some(512),
@@ -2270,7 +2270,7 @@ mod tests {
         let traf = TrackFragmentBox::new(tfhd, Some(tfdt), vec![trun]);
         let b = traf.to_bytes();
         let p = TrackFragmentBox::parse_body(&b[8..]).unwrap();
-        assert_eq!(p.tfhd.track_id, 1);
+        assert_eq!(p.tfhd.track_id, TrackId::new(1));
         assert!(p.tfdt.is_some());
         assert_eq!(p.trun.len(), 1);
         assert_eq!(b, p.to_bytes());
@@ -2284,7 +2284,7 @@ mod tests {
                 | TFHD_DEFAULT_SAMPLE_SIZE_PRESENT
                 | TFHD_DEFAULT_SAMPLE_FLAGS_PRESENT
                 | TFHD_DEFAULT_BASE_IS_MOOF,
-            track_id: 1,
+            track_id: TrackId::new(1),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: Some(512),
@@ -2334,7 +2334,7 @@ mod tests {
             0, 0, 0, 7, // track_ID
         ];
         let traf = TrackFragmentBox::parse_body(body).expect("trun is optional");
-        assert_eq!(traf.tfhd.track_id, 7);
+        assert_eq!(traf.tfhd.track_id, TrackId::new(7));
         assert_eq!(traf.tfhd.flags, TFHD_DURATION_IS_EMPTY);
         assert!(traf.trun.is_empty());
         let out = traf.to_bytes();
@@ -2357,7 +2357,7 @@ mod tests {
             0, 0, 16, b't', b'r', b'u', b'n', 0, 0, 0, 0, 0, 0, 0, 0,
         ];
         let traf = TrackFragmentBox::parse_body(body).expect("parses");
-        assert_eq!(traf.tfhd.track_id, 1);
+        assert_eq!(traf.tfhd.track_id, TrackId::new(1));
         assert_eq!(traf.trun.len(), 1);
         assert_eq!(traf.order.len(), 3);
         let out = traf.to_bytes();
@@ -2398,8 +2398,8 @@ mod tests {
                 let parsed = MovieFragmentBox::parse_body(bx.body).unwrap();
                 assert_eq!(parsed.mfhd.sequence_number, 1);
                 assert_eq!(parsed.traf.len(), 2);
-                assert_eq!(parsed.traf[0].tfhd.track_id, 1);
-                assert_eq!(parsed.traf[1].tfhd.track_id, 2);
+                assert_eq!(parsed.traf[0].tfhd.track_id, TrackId::new(1));
+                assert_eq!(parsed.traf[1].tfhd.track_id, TrackId::new(2));
                 assert!(parsed.traf[0].tfdt.is_some());
                 assert_eq!(parsed.traf[0].tfdt.unwrap().base_media_decode_time(), 0);
                 assert_eq!(parsed.traf[0].trun.len(), 1);
@@ -2462,7 +2462,7 @@ mod tests {
             },
         ];
         let protection = FragmentProtection {
-            track_id: 1,
+            track_id: TrackId::new(1),
             entries: &entries,
             per_sample_iv_size: 0,
         };
@@ -2486,7 +2486,7 @@ mod tests {
 
         let tfhd = TrackFragmentHeaderBox {
             flags: 0,
-            track_id: TRACK_ID,
+            track_id: TrackId::new(TRACK_ID),
             base_data_offset: None,
             sample_description_index: None,
             default_sample_duration: None,
@@ -2528,7 +2528,7 @@ mod tests {
             },
         ];
         let protection = FragmentProtection {
-            track_id: TRACK_ID,
+            track_id: TrackId::new(TRACK_ID),
             entries: &entries,
             per_sample_iv_size: 0,
         };

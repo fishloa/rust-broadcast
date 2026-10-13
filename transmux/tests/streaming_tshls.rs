@@ -10,6 +10,7 @@
 //! raw-passthrough implementation, since it requires correct keyframe-aligned
 //! cutting *and* correct non-anchor (audio) time-partitioning at each cut.
 
+use transmux::TrackId;
 use broadcast_common::{Package, Unpackage};
 use transmux::media::Media;
 use transmux::{
@@ -248,7 +249,7 @@ fn dummy_avc_config() -> AVCConfigurationBox {
 
 fn single_video_track() -> TrackSpec {
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         90_000,
         CodecConfig::Avc {
             config: dummy_avc_config(),
@@ -283,56 +284,56 @@ fn build_worked_example(window: usize) -> (StreamingTsHlsSegmenter, Vec<String>)
     let mut snapshots = Vec::new();
 
     // sync -> opens s0 (45_000 ticks buffered)
-    seg.push(1, nal_sample(true, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(true, 45_000)).unwrap();
     assert!(
         seg.take_ready().is_empty(),
         "opening sync sample must not cut"
     );
     // non-sync -> 90_000 ticks buffered (>= target)
-    seg.push(1, nal_sample(false, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(false, 45_000)).unwrap();
     assert!(
         seg.take_ready().is_empty(),
         "buffering non-sync sample must not cut"
     );
 
     // sync -> cuts s0 (continuous); opens s1
-    seg.push(1, nal_sample(true, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(true, 45_000)).unwrap();
     assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s0");
-    seg.push(1, nal_sample(false, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(false, 45_000)).unwrap();
     assert!(
         seg.take_ready().is_empty(),
         "buffering non-sync sample must not cut"
     );
 
     // sync -> cuts s1 (continuous); opens s2
-    seg.push(1, nal_sample(true, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(true, 45_000)).unwrap();
     assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s1");
     snapshots.push(seg.playlist().unwrap());
     // Mark s2 (currently buffering) as the next segment to be cut discontinuous.
     seg.mark_discontinuity();
-    seg.push(1, nal_sample(false, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(false, 45_000)).unwrap();
     assert!(
         seg.take_ready().is_empty(),
         "buffering non-sync sample must not cut"
     );
 
     // sync -> cuts s2 (discontinuous); opens s3
-    seg.push(1, nal_sample(true, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(true, 45_000)).unwrap();
     let s2 = seg.take_ready();
     assert_eq!(s2.len(), 1, "sync sample must cut s2 singly");
     assert!(s2[0].discontinuous, "s2 must be discontinuous");
     snapshots.push(seg.playlist().unwrap());
-    seg.push(1, nal_sample(false, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(false, 45_000)).unwrap();
     assert!(
         seg.take_ready().is_empty(),
         "buffering non-sync sample must not cut"
     );
 
     // sync -> cuts s3 (continuous); opens s4
-    seg.push(1, nal_sample(true, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(true, 45_000)).unwrap();
     assert_eq!(seg.take_ready().len(), 1, "sync sample must cut s3");
     snapshots.push(seg.playlist().unwrap());
-    seg.push(1, nal_sample(false, 45_000)).unwrap();
+    seg.push(TrackId::new(1), nal_sample(false, 45_000)).unwrap();
     assert!(
         seg.take_ready().is_empty(),
         "buffering non-sync sample must not cut"

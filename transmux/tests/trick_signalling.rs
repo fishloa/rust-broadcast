@@ -23,6 +23,7 @@
 //!    track, not hardcoded.
 #![cfg(feature = "std")]
 
+use transmux::TrackId;
 use std::fs;
 use std::path::PathBuf;
 
@@ -420,7 +421,7 @@ fn ir_trick_track_wired_to_signalling() {
 fn minimal_video_media() -> transmux::media::Media {
     use transmux::media::Media;
     let spec = TrackSpec::new(
-        1,
+        TrackId::new(1),
         90000,
         CodecConfig::Avc {
             config: AVCConfigurationBox {

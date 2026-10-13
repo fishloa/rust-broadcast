@@ -11,6 +11,7 @@
 //! `dvb-si/tests/fixtures/`) in this checkout — `transmux/tests/ir_timing.rs`
 //! already reads it from that path.
 
+use transmux::TrackId;
 use mpeg_ts::pid::Pid;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -61,7 +62,7 @@ fn equivalence_fixture_files() -> Vec<PathBuf> {
 
 fn assemble(mut demux: StreamingTsDemux) -> Media {
     let mut tracks: Vec<Track> = Vec::new();
-    let mut index_by_id: BTreeMap<u32, usize> = BTreeMap::new();
+    let mut index_by_id: BTreeMap<TrackId, usize> = BTreeMap::new();
     let mut pcr: Vec<PcrSample> = Vec::new();
     while let Some(event) = demux.poll_event() {
         match event {

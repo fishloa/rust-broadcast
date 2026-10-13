@@ -5173,7 +5173,7 @@ mod tests {
         const ES_PID: Pid = Pid::new(0x0100);
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let spec = TrackSpec::new(
-            1,
+            TrackId::new(1),
             VIDEO_TIMESCALE,
             CodecConfig::Avc {
                 config: avc,
@@ -5288,7 +5288,7 @@ mod tests {
         // would on a keyframe. This probe can never resolve.
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let video_spec = TrackSpec::new(
-            1,
+            TrackId::new(1),
             VIDEO_TIMESCALE,
             CodecConfig::Avc {
                 config: avc,
@@ -5313,7 +5313,7 @@ mod tests {
         // so it goes straight to `Parked` and stays there for as long as PID
         // A blocks it.
         let data_spec = TrackSpec::new(
-            2,
+            TrackId::new(2),
             VIDEO_TIMESCALE,
             CodecConfig::Data {
                 stream_type: 0x7F,
@@ -5419,7 +5419,7 @@ mod tests {
         let frame_dur = VIDEO_TIMESCALE / 30;
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let video_spec = TrackSpec::new(
-            1,
+            TrackId::new(1),
             VIDEO_TIMESCALE,
             CodecConfig::Avc {
                 config: avc,
@@ -6265,7 +6265,7 @@ mod tests {
         demux.feed(&input);
         demux.finish();
         let events: Vec<DemuxEvent> = std::iter::from_fn(|| demux.poll_event()).collect();
-        let ids: BTreeMap<u32, Pid> = events
+        let ids: BTreeMap<TrackId, Pid> = events
             .iter()
             .filter_map(|e| match e {
                 DemuxEvent::TrackAdded(spec) => spec.source_pid.map(|pid| (spec.track_id, pid)),
@@ -7371,12 +7371,12 @@ mod tests {
             match event {
                 DemuxEvent::TrackAdded(spec) => {
                     if let CodecConfig::Avc { width, height, .. } = spec.config {
-                        added = Some((spec.track_id, width, height));
+                        added = Some((spec.track_id.value(), width, height));
                     }
                 }
                 DemuxEvent::TrackUpdated(spec) => {
                     if let CodecConfig::Avc { width, height, .. } = spec.config {
-                        updates.push((spec.track_id, width, height));
+                        updates.push((spec.track_id.value(), width, height));
                     }
                 }
                 _ => {}
@@ -7971,7 +7971,7 @@ mod tests {
         let frame_dur = VIDEO_TIMESCALE / 25;
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         let spec = TrackSpec::new(
-            1,
+            TrackId::new(1),
             VIDEO_TIMESCALE,
             CodecConfig::Avc {
                 config: avc,
@@ -8393,7 +8393,7 @@ mod tests {
                 &au,
                 ts,
                 ts,
-                1,
+                TrackId::new(1),
                 &mut events,
             );
         }
@@ -8439,7 +8439,7 @@ mod tests {
         let mut anchor = AudioAnchor::default();
         let mut events: VecDeque<DemuxEvent> = VecDeque::new();
         let emit = |ts: i128, anchor: &mut AudioAnchor, events: &mut VecDeque<DemuxEvent>| {
-            emit_audio_au(&AudioKind::Aac, SAMPLE_RATE, anchor, &au, ts, ts, 1, events);
+            emit_audio_au(&AudioKind::Aac, SAMPLE_RATE, anchor, &au, ts, ts, TrackId::new(1), events);
         };
         for n in 0..FRAMES_BEFORE {
             emit(n * PES_INCREMENT_TICKS, &mut anchor, &mut events);
@@ -8627,7 +8627,7 @@ mod tests {
                 &au,
                 dts_uw as u64 as i128,
                 dts_uw,
-                1,
+                TrackId::new(1),
                 &mut events,
             );
             dts_uw += AAC_SAMPLES_PER_FRAME as i128;
@@ -8680,7 +8680,7 @@ mod tests {
             &au,
             0,
             0,
-            1,
+            TrackId::new(1),
             &mut events,
         );
 

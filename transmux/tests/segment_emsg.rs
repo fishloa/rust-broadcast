@@ -18,6 +18,7 @@
 //! - ANSI/SCTE 214-3 §8.3.3: SCTE 35 binary scheme for the inband `emsg`
 //!   `urn:scte:scte35:2013:bin`.
 
+use transmux::TrackId;
 use mp4_emsg::{EMSG_BOX_TYPE, EmsgBox, EmsgVersion, PresentationTime};
 use transmux::{FragmentTrackData, Sample, build_media_segment, build_media_segment_with_events};
 
@@ -48,7 +49,7 @@ fn minimal_tracks() -> Vec<Sample> {
 }
 
 fn minimal_frag(samples: &[Sample]) -> Vec<FragmentTrackData<'_>> {
-    vec![FragmentTrackData::new(1, 0, samples)]
+    vec![FragmentTrackData::new(TrackId::new(1), 0, samples)]
 }
 
 /// Walk the box list in `data` and return a vec of `(start, end, fourcc)` for

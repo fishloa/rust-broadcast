@@ -6,6 +6,7 @@
 //! fails here.
 #![cfg(feature = "std")]
 
+use transmux::TrackId;
 use std::path::PathBuf;
 
 use broadcast_common::Unpackage;
@@ -213,16 +214,16 @@ fn rtp_stream_depacketiser_output_is_unchanged() {
         .find(|s| s.kind == RtpMediaKind::H264)
         .unwrap();
     let mut d = RtpStreamDepacketiser::new(vec![RtpStreamTrack::new(
-        1,
+        TrackId::new(1),
         RtpMediaKind::H264,
         config,
         90_000,
     )]);
     let mut samples = Vec::new();
     for p in &stream.packets {
-        samples.extend(d.push(1, &p.as_contiguous()).unwrap());
+        samples.extend(d.push(TrackId::new(1), &p.as_contiguous()).unwrap());
     }
-    samples.extend(d.flush(1).unwrap());
+    samples.extend(d.flush(TrackId::new(1)).unwrap());
     let mut bad = Vec::new();
     check(
         &mut bad,
