@@ -469,20 +469,42 @@ impl SmoothPackager {
             ],
         );
 
+        // [MS-SSTR] §2.2.2.3: the Url template names the stream by its `Name`
+        // (falling back to `Type`), so two same-type tracks (e.g. two audio
+        // languages) need distinct names or their fragment URLs collide
+        // (issue #1022). The first of a type keeps the bare type (no `Name` attribute).
+        let mut seen: Vec<(SmoothStreamType, usize)> = Vec::new();
         for s in streams {
             let ty = s.stream_type.name();
-            let url = format!("QualityLevels({{bitrate}})/Fragments({ty}={{start time}})");
-            open(
-                w,
-                "StreamIndex",
-                &[
-                    ("Type", ty.to_string()),
-                    ("Subtype", String::new()),
-                    ("Chunks", s.fragments.len().to_string()),
-                    ("QualityLevels", "1".to_string()),
-                    ("Url", url),
-                ],
-            );
+            let ordinal = match seen.iter_mut().find(|(t, _)| *t == s.stream_type) {
+                Some((_, n)) => {
+                    *n += 1;
+                    *n
+                }
+                None => {
+                    seen.push((s.stream_type, 1));
+                    1
+                }
+            };
+            let name = if ordinal == 1 {
+                ty.to_string()
+            } else {
+                format!("{ty}_{ordinal}")
+            };
+            let url = format!("QualityLevels({{bitrate}})/Fragments({name}={{start time}})");
+            let mut attrs = alloc::vec![("Type", ty.to_string())];
+            // The first stream of a type is addressed by its `Type` (the
+            // `Name` default), so only the 2nd and later need an explicit one.
+            if ordinal > 1 {
+                attrs.push(("Name", name));
+            }
+            attrs.extend([
+                ("Subtype", String::new()),
+                ("Chunks", s.fragments.len().to_string()),
+                ("QualityLevels", "1".to_string()),
+                ("Url", url),
+            ]);
+            open(w, "StreamIndex", &attrs);
 
             // QualityLevel
             let mut ql = alloc::vec![

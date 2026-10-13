@@ -1074,6 +1074,8 @@ Fixes for twelve security issues. Upgrade if transmux parses or encrypts untrust
   `tfdt`, so audio no longer plays early by the keyframe snap distance (#1021).
 - `SmoothPackager` writes `trun` sample durations and composition offsets, and the `c@t`/`tfxd`
   times, in the 10 MHz manifest `TimeScale` instead of the track's media timescale (#1022).
+  The 2nd and later `StreamIndex` of a type now carry a unique `Name` (`audio_2`, ...) and a `Url` template
+  keyed by it, so two same-type tracks no longer share one fragment URL (#1022).
 - `HlsPackager` emits one `#EXTINF` covering the presentation span of all tracks instead of one
   sequential entry per track, and the CLI's `-f hls` writes the single segment it names (#1023).
 - `ProgressiveMux` (and the Smooth fragment builder) derive the `mdat` header length from the

@@ -1057,3 +1057,44 @@ fn non_cenc_typed_saiz_is_not_treated_as_an_existing_cenc_triple() {
         "expected InvalidInput, got {err:?}"
     );
 }
+
+/// #1017: protecting audio and THEN video through two `protect_init_segment`
+/// calls re-parses the moov in between. The audio `enca` entry used to come
+/// back out as clear `mp4a` (the serializer hard-coded the four-CC), so a
+/// player fed ciphertext to the AAC decoder. Both entries must stay protected.
+#[test]
+fn two_protect_calls_keep_both_enca_and_encv_entries() {
+    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts");
+    if !path.exists() {
+        eprintln!("cenc_mux tests: SKIPPED — {path:?} not found.");
+        return;
+    }
+    let bytes = std::fs::read(&path).expect("read fixture");
+    let media = TsDemux::new()
+        .unpackage(bytes.as_slice())
+        .expect("demux h264_aac.ts");
+    let mut media = media
+        .select_tracks_by(|t| {
+            matches!(t.spec.config, CodecConfig::Avc { .. })
+                || matches!(t.spec.config, CodecConfig::Aac { .. })
+        })
+        .expect("AVC + AAC tracks present");
+    CencEncryptor::new(KEY)
+        .encrypt(&mut media, &cenc_cfg(SubsamplePolicy::WholeSample))
+        .expect("encrypt");
+    let raw = CmafMux::new(1).package(&media).expect("CmafMux::package");
+
+    // Audio first, video second: the second call re-parses the moov that
+    // already holds the protected audio entry.
+    let mut tracks: Vec<_> = media.tracks.iter().collect();
+    tracks.sort_by_key(|t| matches!(t.spec.config, CodecConfig::Avc { .. }));
+    let mut with_init = raw;
+    for track in tracks {
+        let enc = track.encryption.as_ref().expect("encryption");
+        with_init = protect_init_segment(&with_init, track.spec.track_id, enc)
+            .expect("protect_init_segment");
+    }
+    let has = |cc: &[u8; 4]| with_init.windows(4).any(|w| w == cc);
+    assert!(has(b"enca"), "the audio entry must stay enca");
+    assert!(has(b"encv"), "the video entry must be encv");
+}
