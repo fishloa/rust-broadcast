@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- SDES item text and BYE reason are UTF-8 validated before the `String` is allocated, so a long invalid text field no longer costs a copy of itself (#1123/RTCP-O1). `test-alloc` added as a dev-dependency for the allocation-count test.
+
 ## [0.5.0] - 2026-10-13
 ### BREAKING
 - `SenderReport` / `ReceiverReport` gain `profile_extensions: Vec<u8>`

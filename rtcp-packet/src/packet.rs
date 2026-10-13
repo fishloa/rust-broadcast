@@ -892,11 +892,13 @@ fn parse_sdes_chunk(bytes: &[u8]) -> Result<(SdesChunk, usize)> {
             have: bytes.len(),
             what: "SDES item text",
         })?;
-        let text = String::from_utf8(text_bytes.to_vec()).map_err(|_| Error::InvalidValue {
-            field: "sdes_item_text",
-            value: 0,
-            reason: "not valid UTF-8",
-        })?;
+        let text = core::str::from_utf8(text_bytes)
+            .map(String::from)
+            .map_err(|_| Error::InvalidValue {
+                field: "sdes_item_text",
+                value: 0,
+                reason: "not valid UTF-8",
+            })?;
         items.push(SdesItem {
             item_type: SdesItemType::from_type(t),
             text,
@@ -1047,8 +1049,9 @@ impl<'a> Parse<'a> for Bye {
                     what: "RTCP BYE reason text",
                 });
             }
-            let text =
-                String::from_utf8(body[off..end].to_vec()).map_err(|_| Error::InvalidValue {
+            let text = core::str::from_utf8(&body[off..end])
+                .map(String::from)
+                .map_err(|_| Error::InvalidValue {
                     field: "bye_reason",
                     value: 0,
                     reason: "not valid UTF-8",

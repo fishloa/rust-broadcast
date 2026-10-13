@@ -52,7 +52,10 @@ fn p_bit_with_bad_count_is_rejected() {
         let mut b = padded_generic_nack();
         *b.last_mut().unwrap() = count;
         assert!(
-            matches!(GenericNack::parse(&b), Err(Error::InvalidPaddingCount { .. })),
+            matches!(
+                GenericNack::parse(&b),
+                Err(Error::InvalidPaddingCount { .. })
+            ),
             "count {count}"
         );
         let mut b = padded_range_nack();

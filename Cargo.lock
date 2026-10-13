@@ -3327,6 +3327,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-alloc",
  "thiserror 2.0.21",
 ]
 

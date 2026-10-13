@@ -23,6 +23,7 @@ serde      = { version = "1", optional = true, features = ["derive"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+test-alloc = { path = "../test-alloc" }
 
 [features]
 default = ["std"]

@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `OneByteElements`/`TwoByteElements::serialize_into` validate every element before writing, so an invalid element leaves the output buffer untouched instead of half-serialized (#1128/RTP-O1).
+
 ## [0.4.0] - 2026-08-11
 
 ### Changed
