@@ -233,11 +233,10 @@ async fn push_over_srt(media: &Media, samples: &[(usize, Sample)]) -> Vec<u8> {
         egress.send(&item).expect("encode");
         egress.flush_transmit().await.expect("flush");
     }
-    let got = tokio::time::timeout(GUARD, receiver)
+    tokio::time::timeout(GUARD, receiver)
         .await
         .expect("receiver must finish")
-        .expect("receiver task");
-    got
+        .expect("receiver task")
 }
 
 /// Source timeline in 90 kHz relative to the earliest first DTS.

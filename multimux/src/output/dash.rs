@@ -18,7 +18,7 @@
 //! which would not match those filenames. `$Number$` substitution is a
 //! literal, caller-chosen integer per segment (this module sets
 //! [`DashPackager::start_number`] to the **first** `segment_seq` the program
-//! ever published ([`FIRST_SEGMENT_NUMBER`], `1`), constant for its life, and relies on `$Number$` counting up
+//! ever published (`FIRST_SEGMENT_NUMBER`, `1`), constant for its life, and relies on `$Number$` counting up
 //! from there — NOT the window's oldest, which would make a client's
 //! `availabilityStartTime`-derived live edge point at segments that do not
 //! exist once the window slides, issue #1058) — that *is* `segment_seq`,
