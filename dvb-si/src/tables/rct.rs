@@ -37,9 +37,8 @@ impl IdentifierType {
             0x00 => Self::None,
             0x01 => Self::EventId,
             0x02 => Self::TvaIdEit,
-            0x03 => Self::TvaIdPes,
-            // unreachable after masking to 2 bits, but the compiler requires it
-            _ => unreachable!(),
+            // The mask leaves exactly 0..=3, so the last arm is `0x03`.
+            _ => Self::TvaIdPes,
         }
     }
 
