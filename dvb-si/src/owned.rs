@@ -19,7 +19,16 @@
 //! use dvb_si::tables::pmt::PmtSection;
 //! use broadcast_common::Parse;
 //!
-//! # let section: Vec<u8> = dvb_si::owned::doc::pmt_section();
+//! # use broadcast_common::Serialize;
+//! # use dvb_si::descriptors::DescriptorLoop;
+//! # use dvb_si::tables::pmt::{StreamType, PmtStream};
+//! # use mpeg_ts::pid::Pid;
+//! # // A minimal one-stream PMT built through the serializer (doctest only —
+//! # // nothing of this ships in the library).
+//! # let pmt = PmtSection::new(1, 0, true, 0, 0, Pid::new(0x0100), DescriptorLoop::new(&[]),
+//! #     vec![PmtStream::new(StreamType::H264, Pid::new(0x0101), DescriptorLoop::new(&[]))]);
+//! # let mut section = vec![0u8; pmt.serialized_len()];
+//! # pmt.serialize_into(&mut section).unwrap();
 //! // `section` is the complete PMT section bytes (e.g. straight off the demux).
 //! let bytes: Arc<[u8]> = Arc::from(section);
 //!
@@ -124,37 +133,5 @@ where
 {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Owned").field("view", self.get()).finish()
-    }
-}
-
-#[doc(hidden)]
-pub mod doc {
-    //! Hidden helpers for the module-level doctest. Not part of the public API.
-
-    /// Build a minimal one-stream PMT section via the serializer, so the
-    /// doctest is self-contained and actually round-trips through the parser.
-    #[must_use]
-    pub fn pmt_section() -> Vec<u8> {
-        use crate::tables::pmt::{PmtSection, PmtStream};
-        use broadcast_common::Serialize;
-        use mpeg_ts::pid::Pid;
-
-        let pmt = PmtSection::new(
-            1,
-            0,
-            true,
-            0,
-            0,
-            Pid::new(0x0100),
-            crate::descriptors::DescriptorLoop::new(&[]),
-            vec![PmtStream::new(
-                crate::tables::pmt::StreamType::H264, // H.264 video
-                Pid::new(0x0101),
-                crate::descriptors::DescriptorLoop::new(&[]),
-            )],
-        );
-        let mut section = vec![0u8; pmt.serialized_len()];
-        pmt.serialize_into(&mut section).unwrap();
-        section
     }
 }
