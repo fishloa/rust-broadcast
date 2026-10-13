@@ -153,6 +153,33 @@ macro_rules! declare_descriptors {
                 }
             }
 
+            /// Re-serialize the typed descriptor to its full wire form
+            /// (2-byte header included). `None` for [`AnyDescriptor::Other`]
+            /// (type-erased); `Unknown` re-emits its raw bytes. Used by the
+            /// real-capture byte-identity survey.
+            #[doc(hidden)]
+            pub fn reserialize(&self) -> Option<core::result::Result<alloc::vec::Vec<u8>, alloc::string::String>> {
+                use broadcast_common::Serialize;
+                fn go<S: Serialize>(d: &S) -> core::result::Result<alloc::vec::Vec<u8>, alloc::string::String>
+                where
+                    S::Error: core::fmt::Debug,
+                {
+                    let mut out = alloc::vec![0u8; d.serialized_len()];
+                    d.serialize_into(&mut out).map_err(|e| alloc::format!("{e:?}"))?;
+                    Ok(out)
+                }
+                match self {
+                    $( Self::$variant(d) => Some(go(d)), )+
+                    $($( Self::$nd_variant(d) => Some(go(d)), )+)?
+                    Self::Other { .. } => None,
+                    Self::Unknown { tag, body } => {
+                        let mut v = alloc::vec![*tag, body.len() as u8];
+                        v.extend_from_slice(body);
+                        Some(Ok(v))
+                    }
+                }
+            }
+
             /// Parse one full descriptor (2-byte header included) by its tag.
             ///
             /// `None` means no typed implementation exists for `tag` (the
