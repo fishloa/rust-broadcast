@@ -8,7 +8,7 @@ connection: close
 content-type: application/sdp
 date: {date}
 etag: {etag}
-location: /whip/session
+location: /whip/session/{id}
 OPTIONS /whip 204
 HTTP/1.1 204 No Content
 access-control-allow-headers: Authorization, Content-Type, If-Match

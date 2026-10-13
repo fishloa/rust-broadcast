@@ -94,7 +94,7 @@
 
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use broadcast_auth::Verifier;
@@ -113,6 +113,9 @@ use webrtc_runtime::media::{
     parse_remote_fingerprint,
 };
 use webrtc_runtime::whep::content_type;
+use webrtc_runtime::whep::server::{Event as WhepEvent, WhepSession};
+
+use crate::webrtc_session::{Resource, ResourceGuard, ResourceTable, SessionControl};
 
 use crate::error::{MultimuxError, Result};
 use axum::response::IntoResponse as _;
@@ -223,6 +226,12 @@ struct AdmittedWhep {
     pt: u8,
     /// Fixed SSRC for this session's one outbound video stream.
     ssrc: u32,
+    /// How the session resource's `PATCH`/`DELETE` handlers reach this
+    /// session's task.
+    control: Arc<SessionControl>,
+    /// Keeps the session's resource registered while the session lives;
+    /// dropped when the session task ends, whatever ended it.
+    resource: ResourceGuard<WhepSession>,
 }
 
 /// One parsed WHEP SDP offer — the viewer-side analogue of
@@ -518,6 +527,8 @@ struct WhepServeState {
     tx: mpsc::Sender<AdmittedWhep>,
     active_sessions: Arc<AtomicUsize>,
     max_sessions: usize,
+    /// Live session resources, keyed by the id in the `Location` URL.
+    resources: Arc<ResourceTable<WhepSession>>,
 }
 
 impl WhepServeState {
@@ -535,6 +546,7 @@ impl WhepServeState {
             tx,
             active_sessions: Arc::new(AtomicUsize::new(0)),
             max_sessions,
+            resources: ResourceTable::new(),
         }
     }
 }
@@ -562,7 +574,10 @@ fn whep_router_with_cap(
 
     axum::Router::new()
         .route("/whep", post(whep_post).options(whep_options))
-        .route("/whep/session", patch(whep_patch).delete(whep_delete))
+        .route(
+            "/whep/session/{id}",
+            patch(whep_patch).delete(whep_delete),
+        )
         .layer(axum::middleware::from_fn(move |req, next| {
             let auth = output_auth.clone();
             async move { whep_auth_middleware(auth, req, next).await }
@@ -820,51 +835,112 @@ async fn whep_post_inner(
         &config.config,
     );
 
+    // The typed state machine builds the 201 (Content-Type, Location, ETag).
+    // The `Location` is this session's own resource, so `PATCH`/`DELETE`
+    // address exactly this session.
+    let resource_id = crate::webrtc_session::new_resource_id();
+    let mut machine = WhepSession::new(format!("/whep/session/{resource_id}"));
+    let _ = machine.on_post(Vec::new());
+    let response = machine.accept(answer.into_bytes(), rand_token(16));
+    if response.status != axum::http::StatusCode::CREATED {
+        // The state machine could not build the 201 (an unsendable header):
+        // nothing was admitted, `slot` releases on drop.
+        return Ok(crate::webrtc_session::to_axum(response));
+    }
+
+    let control = SessionControl::new();
+    // Registered before the 201 is written (a client may `DELETE` the instant
+    // it reads it); the guard rides in `AdmittedWhep`, so a failed hand-off
+    // below unregisters it again.
+    let resource = state.resources.insert(
+        resource_id,
+        Resource {
+            machine: parking_lot::Mutex::new(machine),
+            control: Arc::clone(&control),
+            remote_ufrag: parsed.remote_ufrag.clone(),
+        },
+    );
+
     let admitted = AdmittedWhep {
         socket: Arc::new(socket),
         media,
         spec,
         pt: parsed.payload_type,
         ssrc: rand_ssrc(),
+        control,
+        resource,
     };
     if state.tx.send(admitted).await.is_ok() {
         slot.disarm();
     }
-
-    let mut resp = axum::response::Response::new(axum::body::Body::from(answer));
-    *resp.status_mut() = axum::http::StatusCode::CREATED;
-    resp.headers_mut().insert(
-        axum::http::header::CONTENT_TYPE,
-        axum::http::HeaderValue::from_static(content_type::SDP),
-    );
-    resp.headers_mut().insert(
-        axum::http::header::LOCATION,
-        axum::http::HeaderValue::from_static("/whep/session"),
-    );
-    Ok(resp)
+    Ok(crate::webrtc_session::to_axum(response))
 }
 
-/// `PATCH /whep/session`: not implemented in this cut (no trickle-ICE /
-/// ICE-restart handling). Main answered every non-POST method `405 Method Not
-/// Allowed`; keep that parity rather than a stub that acks without effect.
-async fn whep_patch() -> axum::response::Response {
-    let mut resp = axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response();
-    resp.headers_mut().insert(
-        axum::http::header::ALLOW,
-        axum::http::HeaderValue::from_static("POST, OPTIONS"),
-    );
-    resp
+/// `PATCH /whep/session/<id>` (draft-ietf-wish-whep section 4, as RFC 9725
+/// section 4.3): a Trickle ICE SDP fragment adds remote candidates (`204`);
+/// `If-Match: *` asks for an ICE restart, which this transport cannot perform
+/// (`422`). Unknown resource `404`, a body that is not
+/// `application/trickle-ice-sdpfrag` `415`, an `If-Match` that does not match
+/// the resource's `ETag` `412`.
+async fn whep_patch(
+    axum::extract::State(state): axum::extract::State<Arc<WhepServeState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    let Some(resource) = state.resources.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !crate::webrtc_session::content_type_is(&headers, content_type::TRICKLE_ICE) {
+        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+    }
+    let event = resource.machine.lock().on_patch(body.to_vec(), &headers);
+    match event {
+        Ok(WhepEvent::TrickleIce { sdp_fragment, .. }) => {
+            let fragment = match crate::webrtc_session::parse_ice_fragment(&sdp_fragment)
+                .and_then(|f| {
+                    crate::webrtc_session::validate_trickle(&f, &resource.remote_ufrag)?;
+                    Ok(f)
+                }) {
+                Ok(f) => f,
+                Err(reason) => {
+                    tracing::debug!(%reason, "whep: trickle fragment rejected");
+                    return StatusCode::BAD_REQUEST.into_response();
+                }
+            };
+            if !resource.control.push_candidates(fragment.candidates) {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            crate::webrtc_session::to_axum(resource.machine.lock().ack_trickle())
+        }
+        // The `MediaTransport` has no ICE-restart operation (its remote ICE
+        // credentials are fixed at construction).
+        Ok(WhepEvent::IceRestart { .. }) => StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+        Ok(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Err(e) => crate::webrtc_session::patch_error_status(&e).into_response(),
+    }
 }
 
-/// `DELETE /whep/session`: not implemented in this cut (no session teardown
-/// path). Main answered `405` for every non-POST method; keep parity.
-async fn whep_delete() -> axum::response::Response {
-    let mut resp = axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response();
-    resp.headers_mut().insert(
-        axum::http::header::ALLOW,
-        axum::http::HeaderValue::from_static("POST, OPTIONS"),
-    );
-    resp
+/// `DELETE /whep/session/<id>` (draft-ietf-wish-whep section 5): ends the
+/// session. The resource is gone from this point (a second `DELETE` is `404`);
+/// the session task is woken to drop the transport and its `Trunk` cursor and
+/// free the capacity slot.
+async fn whep_delete(
+    axum::extract::State(state): axum::extract::State<Arc<WhepServeState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> axum::response::Response {
+    let Some(resource) = state.resources.remove(&id) else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    let mut machine = resource.machine.lock();
+    let response = match machine.on_delete() {
+        Ok(_) => machine.ack_delete(),
+        Err(e) => return crate::webrtc_session::patch_error_status(&e).into_response(),
+    };
+    drop(machine);
+    resource.control.terminate();
+    crate::webrtc_session::to_axum(response)
 }
 
 /// The local IP to advertise as this session's ICE host candidate: the
@@ -933,6 +1009,7 @@ pub async fn serve_whep_for_test_with_trunk(
         tx,
         active_sessions: Arc::new(AtomicUsize::new(0)),
         max_sessions: 64,
+        resources: ResourceTable::new(),
     });
     (whep_router(state, verifier), CancellationToken::new())
 }
@@ -1251,12 +1328,14 @@ async fn run_whep_session(
     trunk: Arc<Trunk>,
     cancel: CancellationToken,
     active_sessions: Arc<AtomicUsize>,
+    trickled_candidates: Arc<AtomicU64>,
 ) {
     run_whep_session_with_silence_timeout(
         admitted,
         trunk,
         cancel,
         active_sessions,
+        trickled_candidates,
         WHEP_INBOUND_SILENCE_TIMEOUT,
     )
     .await;
@@ -1271,6 +1350,7 @@ async fn run_whep_session_with_silence_timeout(
     trunk: Arc<Trunk>,
     cancel: CancellationToken,
     active_sessions: Arc<AtomicUsize>,
+    trickled_candidates: Arc<AtomicU64>,
     silence_timeout: Duration,
 ) {
     let AdmittedWhep {
@@ -1279,6 +1359,9 @@ async fn run_whep_session_with_silence_timeout(
         spec,
         pt,
         ssrc,
+        control,
+        // Held for the whole session: unregisters the resource on drop.
+        resource: _resource,
     } = admitted;
     let session = SessionMedia {
         pt,
@@ -1317,6 +1400,22 @@ async fn run_whep_session_with_silence_timeout(
     loop {
         if cancel.is_cancelled() {
             break;
+        }
+        // Resource control: a `DELETE` ends the session before anything else
+        // is read; trickled candidates reach the transport (owned by this
+        // task) before its next deadline is computed.
+        let ctl = control.take();
+        if ctl.terminated {
+            tracing::info!("whep: session ended by DELETE");
+            break;
+        }
+        for candidate in &ctl.candidates {
+            match media.add_remote_candidate(candidate) {
+                Ok(()) => {
+                    trickled_candidates.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(e) => tracing::debug!(error = %e, "whep: trickled candidate rejected"),
+            }
         }
         // The transport's own next ICE/DTLS deadline (defect 1, WHEP): drive
         // it directly instead of only on the fixed poll tick so retransmits
@@ -1370,7 +1469,7 @@ async fn run_whep_session_with_silence_timeout(
             // floor the sleep from the previous fire so a stuck deadline cannot
             // spin `handle_timeout` core-to-core or starve the silence tick,
             // and end the session on a fatal TimerError.
-            () = crate::webrtc_session::sleep_until_timer(poll_deadline, last_timer_fire) => {
+            () = crate::webrtc_session::sleep_until_timer(poll_deadline, Some(last_timer_fire)) => {
                 last_timer_fire = Instant::now();
                 let events = media.handle_timeout(Instant::now());
                 while let Some(Datagram { peer, bytes }) = media.poll_transmit() {
@@ -1384,6 +1483,8 @@ async fn run_whep_session_with_silence_timeout(
                     break;
                 }
             }
+            // A `PATCH`/`DELETE` landed: loop back, the top applies it.
+            () = control.notified() => {}
             // The poll tick (silence reap + sample drain): NOT a transport
             // timer driver, only the bound at which a vanished viewer is
             // checked for. Uses an absolute deadline advanced only on fire, so
@@ -1490,8 +1591,54 @@ pub async fn run_whep_on(
     max_sessions: usize,
     sessions: tokio_util::task::TaskTracker,
 ) {
+    run_whep_on_probed(
+        listener,
+        trunk,
+        cancel,
+        output_auth,
+        max_sessions,
+        sessions,
+        WhepProbes::default(),
+    )
+    .await;
+}
+
+/// The live counters of one running WHEP route, handed in by a caller that
+/// wants to observe them (tests); [`run_whep_on`] passes fresh ones nobody
+/// reads.
+#[doc(hidden)]
+#[derive(Clone, Default)]
+pub struct WhepProbes {
+    /// Admitted-and-not-yet-ended sessions (the capacity counter).
+    pub active_sessions: Arc<AtomicUsize>,
+    /// Trickled remote candidates a session task has handed to its transport.
+    pub trickled_candidates: Arc<AtomicU64>,
+    resources: Arc<std::sync::OnceLock<Arc<ResourceTable<WhepSession>>>>,
+}
+
+impl WhepProbes {
+    /// Live session resources (`/whep/session/<id>`); 0 before the route runs.
+    pub fn live_resources(&self) -> usize {
+        self.resources.get().map_or(0, |r| r.len())
+    }
+}
+
+/// [`run_whep_on`] with caller-observable counters (see [`WhepProbes`]).
+#[doc(hidden)]
+pub async fn run_whep_on_probed(
+    listener: TcpListener,
+    trunk: Arc<Trunk>,
+    cancel: CancellationToken,
+    output_auth: Option<Arc<Verifier>>,
+    max_sessions: usize,
+    sessions: tokio_util::task::TaskTracker,
+    probes: WhepProbes,
+) {
     let (admit_tx, mut admit_rx) = mpsc::channel::<AdmittedWhep>(ACCEPT_QUEUE_CAPACITY);
-    let active_sessions = Arc::new(AtomicUsize::new(0));
+    let active_sessions = Arc::clone(&probes.active_sessions);
+    let trickled_candidates = Arc::clone(&probes.trickled_candidates);
+    let resources = ResourceTable::new();
+    let _ = probes.resources.set(Arc::clone(&resources));
 
     // SP2.1: the signalling server is an axum router on `serve_hyper_util`
     // (header-read timeout, connection cap, graceful drain). The server task
@@ -1503,6 +1650,7 @@ pub async fn run_whep_on(
         tx: admit_tx.clone(),
         active_sessions: Arc::clone(&active_sessions),
         max_sessions,
+        resources,
     });
     let serve_cancel = cancel.clone();
     let serve_task = tokio::spawn(async move {
@@ -1526,8 +1674,9 @@ pub async fn run_whep_on(
                         let trunk = Arc::clone(&trunk);
                         let session_cancel = cancel.clone();
                         let active = Arc::clone(&active_sessions);
+                        let trickled = Arc::clone(&trickled_candidates);
                         sessions.spawn(run_whep_session(
-                            a, trunk, session_cancel, active,
+                            a, trunk, session_cancel, active, trickled,
                         ));
                     }
                     None => break,
@@ -1756,6 +1905,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             tx,
             active_sessions: Arc::clone(&active),
             max_sessions,
+            resources: ResourceTable::new(),
         });
         (whep_router(state, verifier), active, rx)
     }
@@ -1959,12 +2109,22 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             Instant::now(),
         )
         .unwrap();
+        let control = SessionControl::new();
         AdmittedWhep {
             socket: Arc::new(UdpSocket::from_std(s).unwrap()),
             media,
             spec: test_track_spec(),
             pt: 96,
             ssrc: rand_ssrc(),
+            control: Arc::clone(&control),
+            resource: ResourceTable::new().insert(
+                "test".to_string(),
+                Resource {
+                    machine: parking_lot::Mutex::new(WhepSession::new("/whep/session/test".into())),
+                    control,
+                    remote_ufrag: "abcd".to_string(),
+                },
+            ),
         }
     }
 
@@ -2030,6 +2190,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             trunk,
             cancel,
             Arc::clone(&active_sessions),
+            Arc::new(AtomicU64::new(0)),
             silence_timeout,
         ));
 
@@ -2068,6 +2229,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             trunk,
             cancel,
             Arc::clone(&active_sessions),
+            Arc::new(AtomicU64::new(0)),
             silence_timeout,
         ));
 
@@ -2104,6 +2266,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             trunk,
             cancel,
             Arc::clone(&active_sessions),
+            Arc::new(AtomicU64::new(0)),
             silence_timeout,
         ));
 
@@ -2374,6 +2537,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             trunk,
             cancel,
             Arc::clone(&active_sessions),
+            Arc::new(AtomicU64::new(0)),
             silence_timeout,
         ));
 
@@ -2446,6 +2610,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 tx,
                 active_sessions: Arc::new(AtomicUsize::new(0)),
                 max_sessions: 64,
+                resources: ResourceTable::new(),
             });
             let cancel = CancellationToken::new();
             let serve_cancel = cancel.clone();

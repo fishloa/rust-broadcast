@@ -30,21 +30,39 @@ pub(crate) const HTTP_READ_TIMEOUT: std::time::Duration = std::time::Duration::f
 pub(crate) const MIN_TIMER_INTERVAL: std::time::Duration = std::time::Duration::from_millis(1);
 
 /// Absolute instant at which a transport timer with `deadline` should fire:
-/// `max(deadline, last_fire + MIN_TIMER_INTERVAL)`. `None` means never.
+/// `max(deadline, last_fire + MIN_TIMER_INTERVAL)` (just `deadline` when the
+/// timer has never fired). `None` means never.
 /// Absolute (not a duration measured from `last_fire`), so rebuilding the
 /// sleep on every loop iteration (each inbound datagram) cannot push the fire
-/// time back.
+/// time back — provided `last_fire` is the REAL previous fire, carried across
+/// iterations (issue #1150), not "now".
 pub(crate) fn timer_fire_at(
     deadline: Option<std::time::Instant>,
-    last_fire: std::time::Instant,
+    last_fire: Option<std::time::Instant>,
 ) -> Option<tokio::time::Instant> {
-    deadline.map(|d| tokio::time::Instant::from_std(d.max(last_fire + MIN_TIMER_INTERVAL)))
+    deadline.map(|d| {
+        let at = last_fire.map_or(d, |l| d.max(l + MIN_TIMER_INTERVAL));
+        tokio::time::Instant::from_std(at)
+    })
+}
+
+/// Whether the transport timer is due AT `now`: its deadline has passed and
+/// the [`MIN_TIMER_INTERVAL`] floor from the previous fire has elapsed. A loop
+/// checks this before reading another datagram, so a datagram flood cannot
+/// postpone an overdue timer (issue #1150).
+pub(crate) fn timer_due(
+    deadline: Option<std::time::Instant>,
+    last_fire: Option<std::time::Instant>,
+    now: std::time::Instant,
+) -> bool {
+    timer_fire_at(deadline, last_fire)
+        .is_some_and(|at| at <= tokio::time::Instant::from_std(now))
 }
 
 /// Sleep until [`timer_fire_at`], or forever when there is no deadline.
 pub(crate) fn sleep_until_timer(
     deadline: Option<std::time::Instant>,
-    last_fire: std::time::Instant,
+    last_fire: Option<std::time::Instant>,
 ) -> std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send>> {
     match timer_fire_at(deadline, last_fire) {
         None => Box::pin(std::future::pending()),
@@ -96,6 +114,268 @@ impl Drop for SessionSlot<'_> {
             self.counter.fetch_sub(1, Ordering::SeqCst);
         }
     }
+}
+
+/// Length of a session resource id (the last path segment of the `Location`
+/// the `201` returns). RFC 9725 §8 asks for unguessable session URLs; this is
+/// 32 characters of a 62-symbol alphabet (~190 bits) drawn from OS-seeded
+/// `RandomState` SipHash output, the same source `rand_token` uses for ICE
+/// credentials.
+const RESOURCE_ID_LEN: usize = 32;
+
+/// Ceiling on remote candidates queued for the media task between two of its
+/// loop iterations; matches the transport's own cap so a PATCH flood cannot
+/// buffer more than the transport would ever admit.
+const MAX_PENDING_CANDIDATES: usize = webrtc_runtime::media::MAX_REMOTE_CANDIDATES;
+
+/// A fresh unguessable resource id for a WHIP/WHEP session URL.
+pub(crate) fn new_resource_id() -> String {
+    use std::collections::hash_map::RandomState;
+    use std::hash::BuildHasher;
+    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+    let state = RandomState::new();
+    (0..RESOURCE_ID_LEN)
+        .map(|i| CHARS[(state.hash_one(i) as usize) % CHARS.len()] as char)
+        .collect()
+}
+
+/// The channel from the HTTP resource handlers (`PATCH`/`DELETE`) to the one
+/// task that owns the session's `MediaTransport`: that task takes the
+/// transport by value (SP6.3), so a handler never touches it — it leaves a
+/// message here and wakes the task.
+///
+/// `terminated` is sticky (a `DELETE` is never lost, even if it lands before
+/// the media task has started reading); queued candidates are drained by
+/// [`Self::take`].
+#[derive(Debug, Default)]
+pub(crate) struct SessionControl {
+    wake: tokio::sync::Notify,
+    inner: parking_lot::Mutex<ControlInner>,
+}
+
+#[derive(Debug, Default)]
+struct ControlInner {
+    terminated: bool,
+    candidates: Vec<String>,
+}
+
+/// What a media task finds when it drains its [`SessionControl`].
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct ControlTake {
+    /// A `DELETE` ended the session resource.
+    pub terminated: bool,
+    /// Remote candidates a `PATCH` trickled in, in arrival order.
+    pub candidates: Vec<String>,
+}
+
+impl SessionControl {
+    pub(crate) fn new() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self::default())
+    }
+
+    /// Ends the session: sticky, and wakes the media task.
+    pub(crate) fn terminate(&self) {
+        self.inner.lock().terminated = true;
+        self.wake.notify_one();
+    }
+
+    /// Queues trickled remote candidates. `false` (nothing queued) when they
+    /// would push the pending queue past [`MAX_PENDING_CANDIDATES`].
+    pub(crate) fn push_candidates(&self, candidates: Vec<String>) -> bool {
+        {
+            let mut inner = self.inner.lock();
+            if inner.candidates.len() + candidates.len() > MAX_PENDING_CANDIDATES {
+                return false;
+            }
+            inner.candidates.extend(candidates);
+        }
+        self.wake.notify_one();
+        true
+    }
+
+    /// Drains the queued candidates and reports the sticky terminated flag.
+    pub(crate) fn take(&self) -> ControlTake {
+        let mut inner = self.inner.lock();
+        ControlTake {
+            terminated: inner.terminated,
+            candidates: std::mem::take(&mut inner.candidates),
+        }
+    }
+
+    /// Resolves on the next [`Self::terminate`] / [`Self::push_candidates`]
+    /// (a notification that arrived with no waiter is kept, so none is lost).
+    pub(crate) fn notified(&self) -> tokio::sync::futures::Notified<'_> {
+        self.wake.notified()
+    }
+}
+
+/// One live WHIP/WHEP session resource (`M` is the protocol's sans-IO state
+/// machine, `webrtc_runtime::whip::server::WhipSession` or
+/// `webrtc_runtime::whep::server::WhepSession`).
+pub(crate) struct Resource<M> {
+    /// The RFC 9725 / draft-ietf-wish-whep resource state machine: owns the
+    /// `ETag` and decides which `PATCH` is a trickle update and which an ICE
+    /// restart.
+    pub machine: parking_lot::Mutex<M>,
+    /// How a handler reaches the media task.
+    pub control: std::sync::Arc<SessionControl>,
+    /// The ICE `ufrag` the offer carried: a trickle fragment naming another
+    /// one belongs to a different ICE generation.
+    pub remote_ufrag: String,
+}
+
+/// The live session resources of one WHIP/WHEP listener, keyed by the id in
+/// the `Location` URL. An entry exists exactly while its session does: it is
+/// removed by `DELETE`, or by the [`ResourceGuard`] the session owns when it
+/// ends for any other reason (idle reap, transport error, shutdown) — so a
+/// resource that no longer has a session answers `404`, never a stale `200`.
+pub(crate) struct ResourceTable<M> {
+    map: parking_lot::Mutex<std::collections::HashMap<String, std::sync::Arc<Resource<M>>>>,
+}
+
+impl<M> ResourceTable<M> {
+    pub(crate) fn new() -> std::sync::Arc<Self> {
+        std::sync::Arc::new(Self {
+            map: parking_lot::Mutex::new(std::collections::HashMap::new()),
+        })
+    }
+
+    /// Registers `resource` under `id`; the returned guard unregisters it on drop.
+    pub(crate) fn insert(
+        self: &std::sync::Arc<Self>,
+        id: String,
+        resource: Resource<M>,
+    ) -> ResourceGuard<M> {
+        self.map
+            .lock()
+            .insert(id.clone(), std::sync::Arc::new(resource));
+        ResourceGuard {
+            table: std::sync::Arc::clone(self),
+            id,
+        }
+    }
+
+    pub(crate) fn get(&self, id: &str) -> Option<std::sync::Arc<Resource<M>>> {
+        self.map.lock().get(id).cloned()
+    }
+
+    pub(crate) fn remove(&self, id: &str) -> Option<std::sync::Arc<Resource<M>>> {
+        self.map.lock().remove(id)
+    }
+
+    /// Number of live resources (test observable).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub(crate) fn len(&self) -> usize {
+        self.map.lock().len()
+    }
+}
+
+/// Unregisters a session's resource when the session is dropped.
+pub(crate) struct ResourceGuard<M> {
+    table: std::sync::Arc<ResourceTable<M>>,
+    id: String,
+}
+
+impl<M> Drop for ResourceGuard<M> {
+    fn drop(&mut self) {
+        self.table.remove(&self.id);
+    }
+}
+
+/// True when `headers` carries exactly one `Content-Type` whose media type
+/// (parameters ignored, RFC 9110 §8.3.1) is `expected`.
+pub(crate) fn content_type_is(headers: &axum::http::HeaderMap, expected: &str) -> bool {
+    use headers::HeaderMapExt as _;
+    headers
+        .get_all(axum::http::header::CONTENT_TYPE)
+        .iter()
+        .count()
+        == 1
+        && headers
+            .typed_get::<headers::ContentType>()
+            .map(headers::Mime::from)
+            .is_some_and(|m| m.essence_str().eq_ignore_ascii_case(expected))
+}
+
+/// The ICE information of a Trickle ICE SDP fragment (RFC 8840 §4.4; RFC 9725
+/// §4.3): the candidates to add and the generation (`ufrag`) they belong to.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct IceFragment {
+    pub ufrag: Option<String>,
+    pub candidates: Vec<String>,
+    pub end_of_candidates: bool,
+}
+
+/// Parses a Trickle ICE SDP fragment with `sdp-types`: the fragment has no
+/// session-header lines, so it is appended to a typed, `Session::write`-
+/// rendered prelude and parsed as one session. Candidates are taken from the
+/// session level and every media section.
+pub(crate) fn parse_ice_fragment(body: &[u8]) -> Result<IceFragment, String> {
+    use sdp_types::{Origin, Session};
+    let text = std::str::from_utf8(body).map_err(|_| "fragment is not UTF-8".to_string())?;
+    let mut doc = Vec::new();
+    Session::new(
+        Origin::with_ip_addr("0", 0, std::net::Ipv4Addr::UNSPECIFIED),
+        "-",
+    )
+    .write(&mut doc)
+    .map_err(|e| format!("render prelude: {e}"))?;
+    for line in text.lines().filter(|l| !l.is_empty()) {
+        doc.extend_from_slice(line.as_bytes());
+        doc.extend_from_slice(b"\r\n");
+    }
+    let session = Session::parse(&doc).map_err(|e| format!("parse fragment: {e}"))?;
+    let mut out = IceFragment::default();
+    let attrs = session
+        .attributes
+        .iter()
+        .chain(session.medias.iter().flat_map(|m| m.attributes.iter()));
+    for a in attrs {
+        match (a.attribute.as_str(), a.value.as_deref()) {
+            ("candidate", Some(v)) => out.candidates.push(v.to_string()),
+            ("ice-ufrag", Some(v)) if out.ufrag.is_none() => out.ufrag = Some(v.to_string()),
+            ("end-of-candidates", _) => out.end_of_candidates = true,
+            _ => {}
+        }
+    }
+    Ok(out)
+}
+
+/// Whether a parsed fragment is an acceptable trickle update for a session
+/// whose ICE generation is `remote_ufrag`.
+pub(crate) fn validate_trickle(fragment: &IceFragment, remote_ufrag: &str) -> Result<(), String> {
+    if let Some(u) = &fragment.ufrag
+        && u != remote_ufrag
+    {
+        return Err(format!(
+            "fragment ice-ufrag {u:?} is not this session's ICE generation"
+        ));
+    }
+    if fragment.candidates.is_empty() && !fragment.end_of_candidates {
+        return Err("fragment carries no candidate and no end-of-candidates".to_string());
+    }
+    Ok(())
+}
+
+/// The HTTP status for a state-machine error raised by a `PATCH`.
+pub(crate) fn patch_error_status(err: &webrtc_runtime::Error) -> axum::http::StatusCode {
+    use axum::http::StatusCode;
+    use webrtc_runtime::Error;
+    match err {
+        Error::ETagMismatch { .. } => StatusCode::PRECONDITION_FAILED,
+        Error::WrongState { .. } => StatusCode::CONFLICT,
+        _ => StatusCode::BAD_REQUEST,
+    }
+}
+
+/// An `HttpResponse` from `webrtc-runtime` as an axum response.
+pub(crate) fn to_axum(
+    resp: webrtc_runtime::whip::server::HttpResponse,
+) -> axum::response::Response {
+    let mut out = axum::response::Response::new(axum::body::Body::from(resp.body));
+    *out.status_mut() = resp.status;
+    *out.headers_mut() = resp.headers;
+    out
 }
 
 #[cfg(test)]
@@ -156,7 +436,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn a_real_deadline_fires_on_time_regardless_of_the_last_fire() {
         let start = tokio::time::Instant::now();
-        let last_fire = std_now() - Duration::from_secs(10);
+        let last_fire = Some(std_now() - Duration::from_secs(10));
         sleep_until_timer(Some(std_now() + Duration::from_millis(500)), last_fire).await;
         assert_eq!(start.elapsed(), Duration::from_millis(500));
     }
@@ -166,7 +446,7 @@ mod tests {
     #[tokio::test(start_paused = true)]
     async fn steady_inbound_datagrams_do_not_starve_the_transport_timer() {
         let start = tokio::time::Instant::now();
-        let last_fire = std_now() - Duration::from_secs(10);
+        let last_fire = Some(std_now() - Duration::from_secs(10));
         let deadline = std_now() + Duration::from_millis(500);
         let mut datagrams = tokio::time::interval(Duration::from_millis(10));
         datagrams.tick().await;
@@ -185,7 +465,7 @@ mod tests {
     async fn an_overdue_deadline_is_floored_from_the_last_fire() {
         let start = tokio::time::Instant::now();
         let now = std_now();
-        sleep_until_timer(Some(now - Duration::from_secs(1)), now).await;
+        sleep_until_timer(Some(now - Duration::from_secs(1)), Some(now)).await;
         assert_eq!(start.elapsed(), MIN_TIMER_INTERVAL);
     }
 }
