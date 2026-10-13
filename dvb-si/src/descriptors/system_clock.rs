@@ -10,16 +10,20 @@ use broadcast_common::{Parse, Serialize};
 pub const TAG: u8 = 0x0B;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 2;
-/// `reserved(1)` after `external_clock_reference_indicator` (Table 2-64),
-/// emitted as 1 (r03-W7; confirmed by the TSDuck oracle PMT).
-const RESERVED_1_BIT: u8 = 0x40;
-/// Trailing `reserved(5)`, emitted as `11111`.
-const RESERVED_5_BITS: u8 = 0x1F;
+/// Default of the 1-bit `reserved` after `external_clock_reference_indicator`
+/// (H.222.0 Table 2-64): clause 2.1 "reserved" = `1` (all 9 editions
+/// 07/1995-08/2023, audit §5; layout unchanged; confirmed by the TSDuck oracle PMT).
+pub const RESERVED_1_DEFAULT: u8 = 0b1;
+/// Default of the trailing 5-bit `reserved` (same rule): `11111`.
+pub const RESERVED_5_DEFAULT: u8 = 0b1_1111;
+const RESERVED_1_MASK: u8 = 0x01;
+const RESERVED_5_MASK: u8 = 0x1F;
 
 /// System Clock Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct SystemClockDescriptor {
     /// External clock reference indicator.
     pub external_clock_reference_indicator: bool,
@@ -27,6 +31,32 @@ pub struct SystemClockDescriptor {
     pub clock_accuracy_integer: u8,
     /// Clock accuracy exponent (3 bits).
     pub clock_accuracy_exponent: u8,
+    /// `reserved(1)` after the indicator (1 bit, right-aligned). Captured on
+    /// parse, re-emitted verbatim; [`SystemClockDescriptor::new`] uses
+    /// [`RESERVED_1_DEFAULT`].
+    pub reserved_1: u8,
+    /// Trailing `reserved(5)` (5 bits, right-aligned). Captured on parse,
+    /// re-emitted verbatim; [`SystemClockDescriptor::new`] uses
+    /// [`RESERVED_5_DEFAULT`].
+    pub reserved_5: u8,
+}
+
+impl SystemClockDescriptor {
+    /// Build with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(
+        external_clock_reference_indicator: bool,
+        clock_accuracy_integer: u8,
+        clock_accuracy_exponent: u8,
+    ) -> Self {
+        Self {
+            external_clock_reference_indicator,
+            clock_accuracy_integer,
+            clock_accuracy_exponent,
+            reserved_1: RESERVED_1_DEFAULT,
+            reserved_5: RESERVED_5_DEFAULT,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for SystemClockDescriptor {
@@ -54,6 +84,8 @@ impl<'a> Parse<'a> for SystemClockDescriptor {
             external_clock_reference_indicator,
             clock_accuracy_integer,
             clock_accuracy_exponent,
+            reserved_1: (b0 >> 6) & RESERVED_1_MASK,
+            reserved_5: b1 & RESERVED_5_MASK,
         })
     }
 }
@@ -76,9 +108,9 @@ impl Serialize for SystemClockDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         buf[HEADER_LEN] = ((self.external_clock_reference_indicator as u8) << 7)
-            | RESERVED_1_BIT
+            | ((self.reserved_1 & RESERVED_1_MASK) << 6)
             | (self.clock_accuracy_integer & 0x3F);
-        buf[HEADER_LEN + 1] = ((self.clock_accuracy_exponent & 0x07) << 5) | RESERVED_5_BITS;
+        buf[HEADER_LEN + 1] = ((self.clock_accuracy_exponent & 0x07) << 5) | (self.reserved_5 & RESERVED_5_MASK);
         Ok(len)
     }
 }
@@ -107,11 +139,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = SystemClockDescriptor {
-            external_clock_reference_indicator: false,
-            clock_accuracy_integer: 42,
-            clock_accuracy_exponent: 2,
-        };
+        let d = SystemClockDescriptor::new(false, 42, 2);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = SystemClockDescriptor::parse(&buf).unwrap();
@@ -132,33 +160,38 @@ mod tests {
 
     #[test]
     fn serialize_rejects_small_buffer() {
-        let d = SystemClockDescriptor {
-            external_clock_reference_indicator: false,
-            clock_accuracy_integer: 0,
-            clock_accuracy_exponent: 0,
-        };
+        let d = SystemClockDescriptor::new(false, 0, 0);
         let mut tiny = vec![0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
     }
 
-    /// r03-W7 — H.222.0 Table 2-64 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the TSDuck-compiled oracle
-    /// PMT `tsduck-mpeg-simple-pmt.bin` (TSDuck only; no real broadcast capture carries it). (1) conformant bytes (reserved=1) round-trip byte-exactly;
-    /// (2) the same descriptor with reserved=0 (non-conformant sender) parses to
-    /// equal typed fields and re-serializes to the normalized reserved=1 form.
+    /// H.222.0 Table 2-64 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the
+    /// TSDuck-compiled oracle PMT `tsduck-mpeg-simple-pmt.bin`. Parsed bytes are
+    /// preserved verbatim now (a zero-reserved sender is no longer normalized);
+    /// only a default-constructed value carries the spec fill.
     #[test]
-    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
-        let conformant: &[u8] = &[TAG, 2, 0xFF, 0xBF];
-        let zeroed: &[u8] = &[TAG, 2, 0xBF, 0xA0];
-        let d = SystemClockDescriptor::parse(conformant).unwrap();
+    fn system_clock_reserved_preserved() {
+        for r1 in 0u8..=1 {
+            for r5 in [0u8, 1, 0x0A, 0x15, 0x1F] {
+                let bytes = [TAG, 2, 0x80 | (r1 << 6) | 0x3F, 0xA0 | r5];
+                let d = SystemClockDescriptor::parse(&bytes).unwrap();
+                assert_eq!((d.reserved_1, d.reserved_5), (r1, r5));
+                let mut out = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut out).unwrap();
+                assert_eq!(out, bytes);
+            }
+        }
+    }
+
+    #[test]
+    fn system_clock_default_is_spec_value() {
+        let d = SystemClockDescriptor::new(true, 63, 5);
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, conformant);
-
-        let dz = SystemClockDescriptor::parse(zeroed).unwrap();
-        assert_eq!(dz, d, "typed fields must not depend on reserved bits");
-        let mut outz = vec![0u8; dz.serialized_len()];
-        dz.serialize_into(&mut outz).unwrap();
-        assert_eq!(outz, conformant);
+        assert_eq!(out, [TAG, 2, 0xFF, 0xBF]);
+        let dz = SystemClockDescriptor::parse(&[TAG, 2, 0xBF, 0xA0]).unwrap();
+        assert_eq!(dz.reserved_1, 0);
+        assert_ne!(dz, d);
     }
 }

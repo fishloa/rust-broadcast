@@ -9,15 +9,18 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for audio_stream_descriptor.
 pub const TAG: u8 = 0x03;
 const HEADER_LEN: usize = 2;
-/// `reserved(3)` tail of the single body byte — ISO/IEC 13818-1 Table
-/// 2-3: '1's (r03-W7).
-const TAIL_RESERVED_BITS: u8 = 0x07;
+/// Default of the 3-bit `reserved` tail of the body byte: H.222.0 clause
+/// 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023; audit §5 — layout
+/// unchanged in every edition). Parse keeps whatever a sender wrote.
+pub const RESERVED_DEFAULT: u8 = 0b111;
+const TAIL_RESERVED_MASK: u8 = 0x07;
 const BODY_LEN: u8 = 1;
 
 /// Audio Stream Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct AudioStreamDescriptor {
     /// Free format flag.
     pub free_format_flag: bool,
@@ -27,6 +30,29 @@ pub struct AudioStreamDescriptor {
     pub layer: u8,
     /// Variable rate audio indicator.
     pub variable_rate_audio_indicator: bool,
+    /// `reserved(3)` tail (3 bits, right-aligned). Captured on parse,
+    /// re-emitted verbatim; [`AudioStreamDescriptor::new`] uses
+    /// [`RESERVED_DEFAULT`].
+    pub reserved: u8,
+}
+
+impl AudioStreamDescriptor {
+    /// Build with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(
+        free_format_flag: bool,
+        id: bool,
+        layer: u8,
+        variable_rate_audio_indicator: bool,
+    ) -> Self {
+        Self {
+            free_format_flag,
+            id,
+            layer,
+            variable_rate_audio_indicator,
+            reserved: RESERVED_DEFAULT,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for AudioStreamDescriptor {
@@ -51,6 +77,7 @@ impl<'a> Parse<'a> for AudioStreamDescriptor {
             id: (b & 0x40) != 0,
             layer: (b >> 4) & 0x03,
             variable_rate_audio_indicator: (b & 0x08) != 0,
+            reserved: b & TAIL_RESERVED_MASK,
         })
     }
 }
@@ -76,7 +103,7 @@ impl Serialize for AudioStreamDescriptor {
             | ((self.id as u8) << 6)
             | ((self.layer & 0x03) << 4)
             | ((self.variable_rate_audio_indicator as u8) << 3)
-            | TAIL_RESERVED_BITS;
+            | (self.reserved & TAIL_RESERVED_MASK);
         Ok(len)
     }
 }
@@ -105,12 +132,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = AudioStreamDescriptor {
-            free_format_flag: false,
-            id: true,
-            layer: 3,
-            variable_rate_audio_indicator: false,
-        };
+        let d = AudioStreamDescriptor::new(false, true, 3, false);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = AudioStreamDescriptor::parse(&buf).unwrap();
@@ -131,14 +153,30 @@ mod tests {
 
     #[test]
     fn serialize_rejects_small_buffer() {
-        let d = AudioStreamDescriptor {
-            free_format_flag: false,
-            id: false,
-            layer: 0,
-            variable_rate_audio_indicator: false,
-        };
+        let d = AudioStreamDescriptor::new(false, false, 0, false);
         let mut tiny = vec![0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+    }
+
+    #[test]
+    fn audio_stream_reserved_preserved() {
+        for r in 0u8..=7 {
+            let bytes = [TAG, 1, 0b1110_1000 | r];
+            let d = AudioStreamDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes);
+        }
+    }
+
+    /// Default-constructed values carry the H.222.0 `reserved` = 1 fill.
+    #[test]
+    fn audio_stream_default_is_spec_value() {
+        let d = AudioStreamDescriptor::new(true, true, 2, true);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 1, 0b1110_1111]);
     }
 }

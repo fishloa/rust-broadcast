@@ -9,18 +9,36 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for STD_descriptor.
 pub const TAG: u8 = 0x11;
 const HEADER_LEN: usize = 2;
-/// `reserved(7)` ahead of `leak_valid_flag` (Table 2-70), emitted as ones
-/// (r03-W7; confirmed by the TSDuck oracle PMT).
-const RESERVED_7_BITS: u8 = 0xFE;
+/// Default of the 7-bit `reserved` ahead of `leak_valid_flag` (H.222.0 Table
+/// 2-70): clause 2.1 "reserved" = `1` (all 9 editions 07/1995-08/2023, audit
+/// §5; confirmed by the TSDuck oracle PMT).
+pub const RESERVED_DEFAULT: u8 = 0x7F;
+const RESERVED_MASK: u8 = 0x7F;
 const BODY_LEN: u8 = 1;
 
 /// STD Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct StdDescriptor {
     /// Leak valid flag — 1 means the leak method is applicable.
     pub leak_valid_flag: bool,
+    /// `reserved(7)` ahead of the flag (7 bits, right-aligned). Captured on
+    /// parse, re-emitted verbatim; [`StdDescriptor::new`] uses
+    /// [`RESERVED_DEFAULT`].
+    pub reserved: u8,
+}
+
+impl StdDescriptor {
+    /// Build with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(leak_valid_flag: bool) -> Self {
+        Self {
+            leak_valid_flag,
+            reserved: RESERVED_DEFAULT,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for StdDescriptor {
@@ -40,7 +58,10 @@ impl<'a> Parse<'a> for StdDescriptor {
             });
         }
         let leak_valid_flag = (body[0] & 0x01) != 0;
-        Ok(Self { leak_valid_flag })
+        Ok(Self {
+            leak_valid_flag,
+            reserved: body[0] >> 1,
+        })
     }
 }
 
@@ -61,7 +82,7 @@ impl Serialize for StdDescriptor {
         }
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] = RESERVED_7_BITS | self.leak_valid_flag as u8;
+        buf[HEADER_LEN] = ((self.reserved & RESERVED_MASK) << 1) | self.leak_valid_flag as u8;
         Ok(len)
     }
 }
@@ -90,9 +111,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = StdDescriptor {
-            leak_valid_flag: true,
-        };
+        let d = StdDescriptor::new(true);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = StdDescriptor::parse(&buf).unwrap();
@@ -113,31 +132,33 @@ mod tests {
 
     #[test]
     fn serialize_rejects_small_buffer() {
-        let d = StdDescriptor {
-            leak_valid_flag: false,
-        };
+        let d = StdDescriptor::new(false);
         let mut tiny = vec![0u8; 2];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
     }
 
-    /// r03-W7 — H.222.0 Table 2-70 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the TSDuck-compiled oracle
-    /// PMT `tsduck-mpeg-simple-pmt.bin` (TSDuck only; no real broadcast capture carries it). (1) conformant bytes (reserved=1) round-trip byte-exactly;
-    /// (2) the same descriptor with reserved=0 (non-conformant sender) parses to
-    /// equal typed fields and re-serializes to the normalized reserved=1 form.
+    /// H.222.0 Table 2-70. Parsed reserved bits are preserved (zero-reserved
+    /// senders are no longer normalized to ones); defaults carry the spec fill.
     #[test]
-    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
-        let conformant: &[u8] = &[TAG, 1, 0xFF];
-        let zeroed: &[u8] = &[TAG, 1, 0x01];
-        let d = StdDescriptor::parse(conformant).unwrap();
+    fn std_reserved_preserved() {
+        for r in 0u8..=0x7F {
+            for flag in 0u8..=1 {
+                let bytes = [TAG, 1, (r << 1) | flag];
+                let d = StdDescriptor::parse(&bytes).unwrap();
+                assert_eq!(d.reserved, r);
+                let mut out = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut out).unwrap();
+                assert_eq!(out, bytes);
+            }
+        }
+    }
+
+    #[test]
+    fn std_default_is_spec_value() {
+        let d = StdDescriptor::new(true);
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, conformant);
-
-        let dz = StdDescriptor::parse(zeroed).unwrap();
-        assert_eq!(dz, d, "typed fields must not depend on reserved bits");
-        let mut outz = vec![0u8; dz.serialized_len()];
-        dz.serialize_into(&mut outz).unwrap();
-        assert_eq!(outz, conformant);
+        assert_eq!(out, [TAG, 1, 0xFF]);
     }
 }

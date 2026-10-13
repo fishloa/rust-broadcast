@@ -21,15 +21,20 @@ const PROFILE_SPACE_MASK: u8 = 0x03;
 const PROFILE_IDC_MASK: u8 = 0x1F;
 /// `temporal_id_min(3)` / `temporal_id_max(3)`.
 const TEMPORAL_ID_MASK: u8 = 0x07;
-/// `reserved(2)` bits `[3:2]` of byte 12 — Table 2-113 gives a single
-/// 2-bit `reserved` field, so both bits are '1'. Real captures confirm it:
-/// every HEVC_video_descriptor in the local archive (9, from TSDuck-compiled
-/// and re-muxed encoder output) carries `0x9F`/`0x7B`-style flag bytes with
-/// bits `[3:2]` = `11`. (An earlier reading cleared bit 3 on the strength of
-/// ISO/IEC 23001-2; that contradicted both the H.222.0 table and the data.)
-const BYTE12_RESERVED_BITS: u8 = 0x0C;
-/// `reserved(5)` in each temporal-sub-block byte (low 5 bits), '1' bits.
-const TEMPORAL_RESERVED_BITS: u8 = 0x1F;
+/// Default of the 2-bit `reserved` at bits `[3:2]` of byte 12 (H.222.0 Table
+/// 2-113, editions 03/2017-08/2023, audit §4 row 10 / §9): a single 2-bit
+/// `reserved` field, clause 2.1 "reserved" = `1`, so both bits are `1`.
+/// Real captures confirm it: every HEVC_video_descriptor in the local archive
+/// (9, from TSDuck-compiled and re-muxed encoder output) carries
+/// `0x9F`/`0x7B`-style flag bytes with bits `[3:2]` = `11`. (An earlier
+/// reading cleared bit 3 on the strength of ISO/IEC 23001-2; that contradicted
+/// both the H.222.0 table and the data.) Parse preserves whatever is read.
+pub const RESERVED_DEFAULT: u8 = 0b11;
+const RESERVED_MASK: u8 = 0x03;
+/// Default of the 5-bit `reserved` in each temporal-sub-block byte (same
+/// rule): `11111`.
+pub const TEMPORAL_RESERVED_DEFAULT: u8 = 0b1_1111;
+const TEMPORAL_RESERVED_MASK: u8 = 0x1F;
 /// Fixed body length without temporal_id sub-block.
 const FIXED_BODY_LEN: u8 = 12;
 /// Temporal sub-block length when present.
@@ -38,17 +43,40 @@ const TEMPORAL_SUB_LEN: u8 = 2;
 /// Temporal layer subset sub-block — present when `temporal_layer_subset_flag` is true.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct HevcTemporalSub {
     /// Minimum temporal_id value.
     pub temporal_id_min: u8,
     /// Maximum temporal_id value.
     pub temporal_id_max: u8,
+    /// `reserved(5)` after `temporal_id_min` (5 bits, right-aligned). Captured
+    /// on parse, re-emitted verbatim; defaults to
+    /// [`TEMPORAL_RESERVED_DEFAULT`].
+    pub reserved_min: u8,
+    /// `reserved(5)` after `temporal_id_max` (5 bits, right-aligned). Captured
+    /// on parse, re-emitted verbatim; defaults to
+    /// [`TEMPORAL_RESERVED_DEFAULT`].
+    pub reserved_max: u8,
+}
+
+impl HevcTemporalSub {
+    /// Build with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(temporal_id_min: u8, temporal_id_max: u8) -> Self {
+        Self {
+            temporal_id_min,
+            temporal_id_max,
+            reserved_min: TEMPORAL_RESERVED_DEFAULT,
+            reserved_max: TEMPORAL_RESERVED_DEFAULT,
+        }
+    }
 }
 
 /// HEVC Video Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct HevcVideoDescriptor {
     /// Profile space (2 bits).
     pub profile_space: u8,
@@ -80,8 +108,52 @@ pub struct HevcVideoDescriptor {
     pub sub_pic_hrd_params_not_present_flag: bool,
     /// HDR/WCG indication (Table 2-114).
     pub hdr_wcg_idc: HdrWcgIdc,
+    /// `reserved(2)` at bits `[3:2]` of byte 12 (2 bits, right-aligned).
+    /// Captured on parse, re-emitted verbatim; [`HevcVideoDescriptor::new`] /
+    /// [`Default`] use [`RESERVED_DEFAULT`] (`0b11`, the H.222.0 value).
+    pub reserved: u8,
     /// Temporal layer sub-block, when present.
     pub temporal_sub: Option<HevcTemporalSub>,
+}
+
+impl HevcVideoDescriptor {
+    /// Build with the identifying fields; every flag clear, `copied_44bits` 0,
+    /// no HDR/WCG indication, no temporal sub-block and the spec-default
+    /// reserved bits. Set the remaining fields directly.
+    #[must_use]
+    pub const fn new(
+        profile_space: u8,
+        tier_flag: bool,
+        profile_idc: u8,
+        profile_compatibility_indication: u32,
+        level_idc: u8,
+    ) -> Self {
+        Self {
+            profile_space,
+            tier_flag,
+            profile_idc,
+            profile_compatibility_indication,
+            progressive_source_flag: false,
+            interlaced_source_flag: false,
+            non_packed_constraint_flag: false,
+            frame_only_constraint_flag: false,
+            copied_44bits: 0,
+            level_idc,
+            temporal_layer_subset_flag: false,
+            hevc_still_present_flag: false,
+            hevc_24hr_picture_present_flag: false,
+            sub_pic_hrd_params_not_present_flag: false,
+            hdr_wcg_idc: HdrWcgIdc::NoIndication,
+            reserved: RESERVED_DEFAULT,
+            temporal_sub: None,
+        }
+    }
+}
+
+impl Default for HevcVideoDescriptor {
+    fn default() -> Self {
+        Self::new(0, false, 0, 0, 0)
+    }
 }
 
 impl<'a> Parse<'a> for HevcVideoDescriptor {
@@ -157,6 +229,8 @@ impl<'a> Parse<'a> for HevcVideoDescriptor {
             Some(HevcTemporalSub {
                 temporal_id_min: b13 >> 5,
                 temporal_id_max: b14 >> 5,
+                reserved_min: b13 & TEMPORAL_RESERVED_MASK,
+                reserved_max: b14 & TEMPORAL_RESERVED_MASK,
             })
         } else {
             if body.len() != (FIXED_BODY_LEN as usize) + 1 {
@@ -184,6 +258,7 @@ impl<'a> Parse<'a> for HevcVideoDescriptor {
             hevc_24hr_picture_present_flag,
             sub_pic_hrd_params_not_present_flag,
             hdr_wcg_idc,
+            reserved: (b12 >> 2) & RESERVED_MASK,
             temporal_sub,
         })
     }
@@ -257,7 +332,7 @@ impl Serialize for HevcVideoDescriptor {
             | ((self.hevc_still_present_flag as u8) << 6)
             | ((self.hevc_24hr_picture_present_flag as u8) << 5)
             | ((self.sub_pic_hrd_params_not_present_flag as u8) << 4)
-            | BYTE12_RESERVED_BITS
+            | ((self.reserved & RESERVED_MASK) << 2)
             | (self.hdr_wcg_idc.to_u8() & 0x03);
 
         if self.temporal_layer_subset_flag != self.temporal_sub.is_some() {
@@ -278,10 +353,10 @@ impl Serialize for HevcVideoDescriptor {
                     reason: "exceeds 3-bit field",
                 });
             }
-            buf[HEADER_LEN + 13] =
-                ((ts.temporal_id_min & TEMPORAL_ID_MASK) << 5) | TEMPORAL_RESERVED_BITS;
-            buf[HEADER_LEN + 14] =
-                ((ts.temporal_id_max & TEMPORAL_ID_MASK) << 5) | TEMPORAL_RESERVED_BITS;
+            buf[HEADER_LEN + 13] = ((ts.temporal_id_min & TEMPORAL_ID_MASK) << 5)
+                | (ts.reserved_min & TEMPORAL_RESERVED_MASK);
+            buf[HEADER_LEN + 14] = ((ts.temporal_id_max & TEMPORAL_ID_MASK) << 5)
+                | (ts.reserved_max & TEMPORAL_RESERVED_MASK);
         }
 
         Ok(len)
@@ -315,6 +390,7 @@ mod tests {
             hevc_24hr_picture_present_flag: false,
             sub_pic_hrd_params_not_present_flag: true,
             hdr_wcg_idc: HdrWcgIdc::HdrAndWcg,
+            reserved: RESERVED_DEFAULT,
             temporal_sub: None,
         };
         let mut buf = vec![0u8; orig.serialized_len()];
@@ -382,10 +458,8 @@ mod tests {
             hevc_24hr_picture_present_flag: true,
             sub_pic_hrd_params_not_present_flag: false,
             hdr_wcg_idc: HdrWcgIdc::Sdr,
-            temporal_sub: Some(HevcTemporalSub {
-                temporal_id_min: 5,
-                temporal_id_max: 7,
-            }),
+            reserved: RESERVED_DEFAULT,
+            temporal_sub: Some(HevcTemporalSub::new(5, 7)),
         };
         let mut buf = vec![0u8; orig.serialized_len()];
         orig.serialize_into(&mut buf).unwrap();
@@ -412,6 +486,7 @@ mod tests {
             hevc_24hr_picture_present_flag: false,
             sub_pic_hrd_params_not_present_flag: false,
             hdr_wcg_idc: HdrWcgIdc::NoIndication,
+            reserved: RESERVED_DEFAULT,
             temporal_sub: None,
         };
         let mut buf = vec![0u8; orig.serialized_len()];
@@ -457,6 +532,7 @@ mod tests {
             hevc_24hr_picture_present_flag: false,
             sub_pic_hrd_params_not_present_flag: false,
             hdr_wcg_idc: HdrWcgIdc::Sdr,
+            reserved: RESERVED_DEFAULT,
             temporal_sub: None,
         };
         let mut d = base.clone();
@@ -481,10 +557,7 @@ mod tests {
         ));
         let mut d = base.clone();
         d.temporal_layer_subset_flag = true;
-        d.temporal_sub = Some(HevcTemporalSub {
-            temporal_id_min: 8,
-            temporal_id_max: 0,
-        });
+        d.temporal_sub = Some(HevcTemporalSub::new(8, 0));
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -512,6 +585,7 @@ mod tests {
             hevc_24hr_picture_present_flag: false,
             sub_pic_hrd_params_not_present_flag: false,
             hdr_wcg_idc: HdrWcgIdc::Sdr,
+            reserved: RESERVED_DEFAULT,
             temporal_sub: None,
         };
         let mut buf = vec![0u8; d.serialized_len()];
@@ -523,10 +597,7 @@ mod tests {
             }
         ));
         d.temporal_layer_subset_flag = false;
-        d.temporal_sub = Some(HevcTemporalSub {
-            temporal_id_min: 0,
-            temporal_id_max: 1,
-        });
+        d.temporal_sub = Some(HevcTemporalSub::new(0, 1));
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(d.serialize_into(&mut buf).is_err());
     }
@@ -555,5 +626,54 @@ mod tests {
             HevcVideoDescriptor::parse(&bytes).unwrap_err(),
             Error::InvalidDescriptor { tag: TAG, .. }
         ));
+    }
+
+    /// H.222.0 Table 2-113. Every reserved region (byte-12 `reserved(2)` and
+    /// both temporal-sub `reserved(5)`) is preserved verbatim, incl. the
+    /// zero-bit-3 form the pre-fix serializer used to emit.
+    #[test]
+    fn hevc_video_reserved_preserved() {
+        for r in 0u8..=3 {
+            for rt in [0u8, 1, 0x0A, 0x15, 0x1F] {
+                let bytes = [
+                    TAG,
+                    15,
+                    0x02,
+                    0x20,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0xB0,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x00,
+                    0x99,
+                    0x82 | (r << 2) | 0x90,
+                    rt,
+                    0x60 | rt,
+                ];
+                let d = HevcVideoDescriptor::parse(&bytes).unwrap();
+                assert_eq!(d.reserved, r);
+                let ts = d.temporal_sub.as_ref().unwrap();
+                assert_eq!((ts.reserved_min, ts.reserved_max), (rt, rt));
+                let mut out = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut out).unwrap();
+                assert_eq!(out, bytes);
+            }
+        }
+    }
+
+    #[test]
+    fn hevc_video_default_is_spec_value() {
+        let mut d = HevcVideoDescriptor::new(0, false, 2, 0x2000_0000, 0x99);
+        d.temporal_layer_subset_flag = true;
+        d.temporal_sub = Some(HevcTemporalSub::new(0, 3));
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out[14], 0x80 | 0x0C, "reserved(2) default is 11 at [3:2]");
+        assert_eq!(out[15], 0x1F);
+        assert_eq!(out[16], 0x60 | 0x1F);
     }
 }

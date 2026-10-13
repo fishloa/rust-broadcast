@@ -10,14 +10,19 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for MVC_extension_descriptor.
 pub const TAG: u8 = 0x31;
 const HEADER_LEN: usize = 2;
-/// `reserved(2)` before `view_order_index_min` (Table 2-100), bits `[5:4]` of
-/// byte 4, emitted as `11` (r03-W7; confirmed by the TSDuck oracle PMT).
-const RESERVED_2_BITS: u8 = 0x30;
+/// Default of the 2-bit `reserved` before `view_order_index_min` (H.222.0
+/// Table 2-100), bits `[5:4]` of byte 4: clause 2.1 "reserved" = `1` (editions
+/// 10/2014-08/2023, audit §4 row 9 / §5; the 2014 edition carved the two view
+/// flags out of the older `reserved(4)`, typed here; confirmed by the TSDuck
+/// oracle PMT).
+pub const RESERVED_DEFAULT: u8 = 0b11;
+const RESERVED_MASK: u8 = 0x03;
 const BODY_LEN: u8 = 8;
 
 /// MVC Extension Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct MvcExtensionDescriptor {
     /// Average bit rate in kbit/s (`0` means unspecified).
     pub average_bit_rate: u16,
@@ -39,6 +44,37 @@ pub struct MvcExtensionDescriptor {
     pub no_sei_nal_unit_present: bool,
     /// No prefix NAL unit present flag.
     pub no_prefix_nal_unit_present: bool,
+    /// `reserved(2)` before `view_order_index_min` (2 bits, right-aligned).
+    /// Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_DEFAULT`].
+    pub reserved: u8,
+}
+
+impl MvcExtensionDescriptor {
+    /// Build with the bitrates; every flag clear, indices 0 and the
+    /// spec-default reserved bits. Set the remaining fields directly.
+    #[must_use]
+    pub const fn new(average_bit_rate: u16, maximum_bitrate: u16) -> Self {
+        Self {
+            average_bit_rate,
+            maximum_bitrate,
+            view_association_not_present: false,
+            base_view_is_left_eyeview: false,
+            view_order_index_min: 0,
+            view_order_index_max: 0,
+            temporal_id_start: 0,
+            temporal_id_end: 0,
+            no_sei_nal_unit_present: false,
+            no_prefix_nal_unit_present: false,
+            reserved: RESERVED_DEFAULT,
+        }
+    }
+}
+
+impl Default for MvcExtensionDescriptor {
+    fn default() -> Self {
+        Self::new(0, 0)
+    }
 }
 
 impl<'a> Parse<'a> for MvcExtensionDescriptor {
@@ -83,6 +119,7 @@ impl<'a> Parse<'a> for MvcExtensionDescriptor {
             temporal_id_end,
             no_sei_nal_unit_present,
             no_prefix_nal_unit_present,
+            reserved: (b4 >> 4) & RESERVED_MASK,
         })
     }
 }
@@ -110,7 +147,7 @@ impl Serialize for MvcExtensionDescriptor {
         let vmax = self.view_order_index_max & 0x03FF;
         buf[HEADER_LEN + 4] = ((self.view_association_not_present as u8) << 7)
             | ((self.base_view_is_left_eyeview as u8) << 6)
-            | RESERVED_2_BITS
+            | ((self.reserved & RESERVED_MASK) << 4)
             | ((vmin >> 6) as u8 & 0x0F);
         buf[HEADER_LEN + 5] = (((vmin & 0x3F) << 2) as u8) | ((vmax >> 8) as u8 & 0x03);
         buf[HEADER_LEN + 6] = (vmax & 0xFF) as u8;
@@ -191,18 +228,13 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = MvcExtensionDescriptor {
-            average_bit_rate: 5000,
-            maximum_bitrate: 10000,
-            view_association_not_present: false,
-            base_view_is_left_eyeview: true,
-            view_order_index_min: 512,
-            view_order_index_max: 256,
-            temporal_id_start: 3,
-            temporal_id_end: 5,
-            no_sei_nal_unit_present: true,
-            no_prefix_nal_unit_present: false,
-        };
+        let mut d = MvcExtensionDescriptor::new(5000, 10000);
+        d.base_view_is_left_eyeview = true;
+        d.view_order_index_min = 512;
+        d.view_order_index_max = 256;
+        d.temporal_id_start = 3;
+        d.temporal_id_end = 5;
+        d.no_sei_nal_unit_present = true;
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = MvcExtensionDescriptor::parse(&buf).unwrap();
@@ -210,60 +242,37 @@ mod tests {
     }
 
     #[test]
-    fn serialize_round_trip_reserved_preserved() {
-        // Reserved bits in byte 4 are not part of any field that the struct
-        // can round-trip; the serializer writes zero for those bits.
-        // This test confirms we parse and re-serialize deterministically
-        // with the reserved bits wiped.
-        let bytes_with_reserved = [
-            TAG, 8, 0, 0, 0, 0, 0, 0, 0, 0, 0x30, // reserved bits non-zero (bits 5-4 = 11)
-        ];
-        let d = MvcExtensionDescriptor::parse(&bytes_with_reserved).unwrap();
-        let mut buf = vec![0u8; d.serialized_len()];
-        d.serialize_into(&mut buf).unwrap();
-        // Re-parse the serialized output and verify it's stable
-        let reparsed = MvcExtensionDescriptor::parse(&buf).unwrap();
-        let mut buf2 = vec![0u8; reparsed.serialized_len()];
-        reparsed.serialize_into(&mut buf2).unwrap();
-        assert_eq!(buf, buf2);
-    }
-
-    #[test]
     fn serialize_rejects_small_buffer() {
-        let d = MvcExtensionDescriptor {
-            average_bit_rate: 0,
-            maximum_bitrate: 0,
-            view_association_not_present: false,
-            base_view_is_left_eyeview: false,
-            view_order_index_min: 0,
-            view_order_index_max: 0,
-            temporal_id_start: 0,
-            temporal_id_end: 0,
-            no_sei_nal_unit_present: false,
-            no_prefix_nal_unit_present: false,
-        };
+        let d = MvcExtensionDescriptor::default();
         let mut tiny = vec![0u8; 5];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
     }
 
-    /// r03-W7 — H.222.0 Table 2-100 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the TSDuck-compiled oracle
-    /// PMT `tsduck-mpeg-simple-pmt.bin` (TSDuck only; no real broadcast capture carries it). (1) conformant bytes (reserved=1) round-trip byte-exactly;
-    /// (2) the same descriptor with reserved=0 (non-conformant sender) parses to
-    /// equal typed fields and re-serializes to the normalized reserved=1 form.
+    /// H.222.0 Table 2-100. The reserved(2) is preserved verbatim (replaces the
+    /// earlier wipe/normalize tests).
     #[test]
-    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
-        let conformant: &[u8] = &[TAG, 8, 0x00, 0x64, 0x00, 0xC8, 0x3F, 0xFC, 0xE8, 0x4A];
-        let zeroed: &[u8] = &[TAG, 8, 0x00, 0x64, 0x00, 0xC8, 0x0F, 0xFC, 0xE8, 0x4A];
-        let d = MvcExtensionDescriptor::parse(conformant).unwrap();
+    fn mvc_extension_reserved_preserved() {
+        for r in 0u8..=3 {
+            let bytes = [TAG, 8, 0x00, 0x64, 0x00, 0xC8, (r << 4) | 0x0F, 0xFC, 0xE8, 0x4A];
+            let d = MvcExtensionDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved, r);
+            let mut out = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut out).unwrap();
+            assert_eq!(out, bytes);
+        }
+    }
+
+    #[test]
+    fn mvc_extension_default_is_spec_value() {
+        let mut d = MvcExtensionDescriptor::new(0x64, 0xC8);
+        d.view_order_index_min = (15 << 6) | 63;
+        d.view_order_index_max = 232;
+        d.temporal_id_start = 2;
+        d.temporal_id_end = 2;
+        d.no_sei_nal_unit_present = true;
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
-        assert_eq!(out, conformant);
-
-        let dz = MvcExtensionDescriptor::parse(zeroed).unwrap();
-        assert_eq!(dz, d, "typed fields must not depend on reserved bits");
-        let mut outz = vec![0u8; dz.serialized_len()];
-        dz.serialize_into(&mut outz).unwrap();
-        assert_eq!(outz, conformant);
+        assert_eq!(out, [TAG, 8, 0x00, 0x64, 0x00, 0xC8, 0x3F, 0xFC, 0xE8, 0x4A]);
     }
 }

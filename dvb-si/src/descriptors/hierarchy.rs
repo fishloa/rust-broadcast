@@ -17,13 +17,16 @@ const BODY_LEN: u8 = 4;
 /// `[3:0]`; masks the `Reserved11To14(v)` payload so it cannot bleed into
 /// the four scalability flags (r03-W2).
 const HIERARCHY_TYPE_MASK: u8 = 0x0F;
-/// The 2 wire bits above the 6-bit `hierarchy_layer_index`/
-/// `hierarchy_channel`. DVB practice (ETSI EN 300 468 §6.1, mirroring the
-/// `reserved_future_use` = '1's convention used for `ca_descriptor` and
-/// `ac3_descriptor`) emits them as '1's (r03-W7).
-const INDEX_RESERVED_BITS: u8 = 0xC0;
-/// `reserved(1)` between tref_present_flag and the embedded layer index.
-const EMBEDDED_RESERVED_BIT: u8 = 0x40;
+/// Default of the 2-bit `reserved` above `hierarchy_layer_index` and above
+/// `hierarchy_channel` (H.222.0 Table 2-49): clause 2.1 "reserved" = `1` (all
+/// 9 editions 07/1995-08/2023, audit §4 row 7 / §5).
+pub const RESERVED_2_DEFAULT: u8 = 0b11;
+/// Default of the 1-bit `reserved` between `tref_present_flag` and
+/// `hierarchy_embedded_layer_index` (same rule; carved from `reserved(2)` in
+/// the 06/2012 edition, the remaining bit stays reserved = `1`).
+pub const RESERVED_1_DEFAULT: u8 = 0b1;
+const RESERVED_2_MASK: u8 = 0x03;
+const RESERVED_1_MASK: u8 = 0x01;
 
 /// Hierarchy type — ISO/IEC 13818-1 Table 2-50.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -138,6 +141,7 @@ broadcast_common::impl_spec_display!(HierarchyType, Reserved11To14);
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct HierarchyDescriptor {
     /// No view scalability flag.
     pub no_view_scalability_flag: bool,
@@ -157,6 +161,52 @@ pub struct HierarchyDescriptor {
     pub hierarchy_embedded_layer_index: u8,
     /// Hierarchy channel.
     pub hierarchy_channel: u8,
+    /// `reserved(2)` above `hierarchy_layer_index` (2 bits, right-aligned).
+    /// Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_2_DEFAULT`].
+    pub reserved_layer_index: u8,
+    /// `reserved(1)` after `tref_present_flag` (1 bit, right-aligned).
+    /// Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_1_DEFAULT`].
+    pub reserved_embedded: u8,
+    /// `reserved(2)` above `hierarchy_channel` (2 bits, right-aligned).
+    /// Captured on parse, re-emitted verbatim; defaults to
+    /// [`RESERVED_2_DEFAULT`].
+    pub reserved_channel: u8,
+}
+
+impl HierarchyDescriptor {
+    /// Build with the identifying fields; the four `no_*_scalability_flag`s
+    /// and `tref_present_flag` clear and the spec-default reserved bits. Set
+    /// the flag fields directly.
+    #[must_use]
+    pub const fn new(
+        hierarchy_type: HierarchyType,
+        hierarchy_layer_index: u8,
+        hierarchy_embedded_layer_index: u8,
+        hierarchy_channel: u8,
+    ) -> Self {
+        Self {
+            no_view_scalability_flag: false,
+            no_temporal_scalability_flag: false,
+            no_spatial_scalability_flag: false,
+            no_quality_scalability_flag: false,
+            hierarchy_type,
+            hierarchy_layer_index,
+            tref_present_flag: false,
+            hierarchy_embedded_layer_index,
+            hierarchy_channel,
+            reserved_layer_index: RESERVED_2_DEFAULT,
+            reserved_embedded: RESERVED_1_DEFAULT,
+            reserved_channel: RESERVED_2_DEFAULT,
+        }
+    }
+}
+
+impl Default for HierarchyDescriptor {
+    fn default() -> Self {
+        Self::new(HierarchyType::Reserved0, 0, 0, 0)
+    }
 }
 
 impl<'a> Parse<'a> for HierarchyDescriptor {
@@ -198,6 +248,9 @@ impl<'a> Parse<'a> for HierarchyDescriptor {
             tref_present_flag,
             hierarchy_embedded_layer_index,
             hierarchy_channel,
+            reserved_layer_index: (b1 >> 6) & RESERVED_2_MASK,
+            reserved_embedded: (b2 >> 6) & RESERVED_1_MASK,
+            reserved_channel: (b3 >> 6) & RESERVED_2_MASK,
         })
     }
 }
@@ -224,11 +277,13 @@ impl Serialize for HierarchyDescriptor {
             | ((self.no_spatial_scalability_flag as u8) << 5)
             | ((self.no_quality_scalability_flag as u8) << 4)
             | (self.hierarchy_type.to_u8() & HIERARCHY_TYPE_MASK);
-        buf[HEADER_LEN + 1] = INDEX_RESERVED_BITS | (self.hierarchy_layer_index & 0x3F);
+        buf[HEADER_LEN + 1] =
+            ((self.reserved_layer_index & RESERVED_2_MASK) << 6) | (self.hierarchy_layer_index & 0x3F);
         buf[HEADER_LEN + 2] = ((self.tref_present_flag as u8) << 7)
-            | EMBEDDED_RESERVED_BIT
+            | ((self.reserved_embedded & RESERVED_1_MASK) << 6)
             | (self.hierarchy_embedded_layer_index & 0x3F);
-        buf[HEADER_LEN + 3] = INDEX_RESERVED_BITS | (self.hierarchy_channel & 0x3F);
+        buf[HEADER_LEN + 3] =
+            ((self.reserved_channel & RESERVED_2_MASK) << 6) | (self.hierarchy_channel & 0x3F);
         Ok(len)
     }
 }
@@ -265,17 +320,9 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = HierarchyDescriptor {
-            no_view_scalability_flag: false,
-            no_temporal_scalability_flag: true,
-            no_spatial_scalability_flag: false,
-            no_quality_scalability_flag: true,
-            hierarchy_type: HierarchyType::DataPartitioning,
-            hierarchy_layer_index: 42,
-            tref_present_flag: false,
-            hierarchy_embedded_layer_index: 7,
-            hierarchy_channel: 63,
-        };
+        let mut d = HierarchyDescriptor::new(HierarchyType::DataPartitioning, 42, 7, 63);
+        d.no_temporal_scalability_flag = true;
+        d.no_quality_scalability_flag = true;
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let reparsed = HierarchyDescriptor::parse(&buf).unwrap();
@@ -329,19 +376,44 @@ mod tests {
 
     #[test]
     fn serialize_rejects_small_buffer() {
-        let d = HierarchyDescriptor {
-            no_view_scalability_flag: false,
-            no_temporal_scalability_flag: false,
-            no_spatial_scalability_flag: false,
-            no_quality_scalability_flag: false,
-            hierarchy_type: HierarchyType::from_u8(0),
-            hierarchy_layer_index: 0,
-            tref_present_flag: false,
-            hierarchy_embedded_layer_index: 0,
-            hierarchy_channel: 0,
-        };
+        let d = HierarchyDescriptor::default();
         let mut tiny = vec![0u8; 3];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+    }
+
+    /// H.222.0 Table 2-49. All three reserved regions are preserved verbatim.
+    #[test]
+    fn hierarchy_reserved_preserved() {
+        for r_layer in 0u8..=3 {
+            for r_emb in 0u8..=1 {
+                for r_chan in 0u8..=3 {
+                    let bytes = [
+                        TAG,
+                        4,
+                        0b1010_0011,
+                        (r_layer << 6) | 0x05,
+                        0x80 | (r_emb << 6) | 0x13,
+                        (r_chan << 6) | 0x32,
+                    ];
+                    let d = HierarchyDescriptor::parse(&bytes).unwrap();
+                    assert_eq!(
+                        (d.reserved_layer_index, d.reserved_embedded, d.reserved_channel),
+                        (r_layer, r_emb, r_chan)
+                    );
+                    let mut out = vec![0u8; d.serialized_len()];
+                    d.serialize_into(&mut out).unwrap();
+                    assert_eq!(out, bytes);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn hierarchy_default_is_spec_value() {
+        let d = HierarchyDescriptor::new(HierarchyType::TemporalScalability, 5, 19, 50);
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, [TAG, 4, 0b0000_0011, 0xC5, 0x53, 0xF2]);
     }
 }
