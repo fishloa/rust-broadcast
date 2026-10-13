@@ -39,10 +39,17 @@ const FULL_HDR: usize = 4;
 /// allocation is allowed to be.
 pub(crate) fn bounded_entry_count(remaining: usize, entry_len: usize, count: usize) -> usize {
     if entry_len == 0 {
-        return count;
+        // Zero-width entries: the buffer length bounds nothing, so never size
+        // an up-front allocation from the wire count (#1130). The `Vec` still
+        // grows normally if the entries really are that many.
+        return count.min(ZERO_WIDTH_PREALLOC);
     }
     count.min(remaining / entry_len)
 }
+
+/// Largest up-front allocation (in entries) for a table whose entries are zero
+/// bytes wide; see [`bounded_entry_count`].
+const ZERO_WIDTH_PREALLOC: usize = 1024;
 
 /// Reject a declared `count` that the body cannot hold, before its loop runs.
 ///
@@ -4743,6 +4750,12 @@ mod tests {
     /// legitimately-sized body: exactly as many entries fit as the remaining
     /// bytes can hold, and a genuinely smaller count is passed through
     /// untouched.
+    #[test]
+    fn bounded_entry_count_never_preallocates_a_zero_width_count() {
+        assert_eq!(bounded_entry_count(0, 0, 0xFFFF_FFFF), ZERO_WIDTH_PREALLOC);
+        assert_eq!(bounded_entry_count(0, 0, 7), 7);
+    }
+
     #[test]
     fn bounded_entry_count_allows_exactly_what_fits() {
         assert_eq!(bounded_entry_count(40, 8, 0xFFFF_FFFF), 5);
