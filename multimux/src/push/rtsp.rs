@@ -90,6 +90,8 @@ pub struct RtspTransport {
     ssrc: u32,
     /// Wall-clock origin for the RTP timestamp (90 kHz, RFC 2250 §2).
     started: Instant,
+    /// The connection's long-lived TS muxer (issue #1024).
+    ts_mux: transmux::StreamingTsMux,
     /// The bounded best-effort `TEARDOWN` task spawned by [`Self::close`],
     /// kept so the task is owned (its `JoinHandle` is not dropped
     /// fire-and-forget) and so a later `close` can abort a superseded one. It
@@ -177,6 +179,7 @@ impl PushTransport for RtspTransport {
             seq: 0,
             ssrc: rand_ssrc(),
             started: Instant::now(),
+            ts_mux: transmux::StreamingTsMux::new(),
             teardown: None,
         })
     }
@@ -214,6 +217,10 @@ impl PushTransport for RtspTransport {
             }
         }
         Ok(())
+    }
+
+    fn ts_mux(&mut self) -> Option<&mut transmux::StreamingTsMux> {
+        Some(&mut self.ts_mux)
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), Self::Error> {

@@ -59,7 +59,7 @@ pub use egress::PushTransportEgress;
 
 use crate::config::PushFormat;
 use broadcast_common::Package;
-use transmux::TsMux;
+use transmux::{StreamingTsMux, TsMux};
 use transmux::ir::{Media, TrackSpec};
 
 pub use rtmp::{RtmpTransport, RtmpTransportConfig};
@@ -173,19 +173,38 @@ pub trait PushTransport: Send + 'static {
     /// messages, and hands them to an external async driver through
     /// [`media_plane::PushEgress::poll_transmit`].
     ///
-    /// Default: one message, the whole batch MPEG-2 TS-muxed via [`TsMux`]
-    /// — exactly [`send_media`](Self::send_media)'s own default encode step,
-    /// just without the `.await` that used to immediately follow it. RTMP
-    /// overrides this (issue #934/#942): RTMP messages carry FLV
+    /// Default: one message, the whole batch MPEG-2 TS-muxed. When the
+    /// transport exposes a per-connection [`ts_mux`](Self::ts_mux) (SRT and
+    /// RTSP do) the batch goes through that long-lived
+    /// [`StreamingTsMux`], so continuity counters, PCR and PTS/DTS continue
+    /// across batches and PAT/PMT repeat on a media-time interval rather than
+    /// before every sample (issue #1024; the push egress hands this method ONE
+    /// sample at a time). A transport without one falls back to a fresh
+    /// one-shot [`TsMux`] per call, which is only correct for whole-stream
+    /// batches. RTMP overrides this (issue #934/#942): RTMP messages carry FLV
     /// `VIDEODATA`/`AUDIODATA` bodies, not TS, so it splits `media` into
     /// per-frame, chunk-stream-framed messages via `rtmp_runtime::client::
     /// ClientSession::send_video`/`send_audio` — themselves sans-IO calls,
     /// so this really is a clean split, not a workaround.
     fn encode_media(&mut self, media: &Media) -> Result<Vec<bytes::Bytes>, SendMediaError> {
-        let bytes = TsMux::new()
-            .package(media)
-            .map_err(|e| SendMediaError::Mux(e.to_string()))?;
+        let bytes = match self.ts_mux() {
+            Some(mux) => mux.package(media),
+            None => TsMux::new().package(media),
+        }
+        .map_err(|e| SendMediaError::Mux(e.to_string()))?;
+        if bytes.is_empty() {
+            return Ok(Vec::new());
+        }
         Ok(vec![bytes::Bytes::from(bytes)])
+    }
+
+    /// The per-connection streaming TS muxer the default
+    /// [`encode_media`](Self::encode_media) feeds (issue #1024). `None`
+    /// (default) keeps the legacy stateless one-shot mux. The state lives and
+    /// dies with the transport, so a reconnect (a new transport) starts a
+    /// fresh stream with fresh PSI and counters.
+    fn ts_mux(&mut self) -> Option<&mut StreamingTsMux> {
+        None
     }
 
     /// Mux one drained batch of samples into this transport's native wire

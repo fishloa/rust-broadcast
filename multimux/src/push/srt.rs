@@ -29,6 +29,8 @@ pub struct SrtTransportConfig {
 /// SRT driver task) rather than only dropping at the enclosing scope.
 pub struct SrtTransport {
     socket: Option<SrtSocket>,
+    /// The connection's long-lived TS muxer (issue #1024).
+    ts_mux: transmux::StreamingTsMux,
 }
 
 // (No URL is stored, so nothing here can leak one.)
@@ -207,7 +209,12 @@ impl PushTransport for SrtTransport {
         let socket = SrtSocket::connect(addr, srt_config).await?;
         Ok(Self {
             socket: Some(socket),
+            ts_mux: transmux::StreamingTsMux::new(),
         })
+    }
+
+    fn ts_mux(&mut self) -> Option<&mut transmux::StreamingTsMux> {
+        Some(&mut self.ts_mux)
     }
 
     async fn send(&mut self, data: &[u8]) -> Result<(), Self::Error> {
