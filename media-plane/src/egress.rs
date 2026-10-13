@@ -549,7 +549,7 @@ mod tests {
     fn segment_entry(seq: u32) -> SegmentEntry {
         SegmentEntry::new(
             bytes::Bytes::from(vec![seq as u8; 8]),
-            seq,
+            crate::ids::SegmentSeq::new(seq),
             Duration::from_secs(2),
             Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
             transmux::SegmentMeta {
@@ -585,7 +585,7 @@ mod tests {
                 self.segments
                     .lock()
                     .unwrap()
-                    .insert(entry.sequence_number, entry.bytes.to_vec());
+                    .insert(entry.sequence_number.value(), entry.bytes.to_vec());
             }
         }
     }
@@ -850,7 +850,7 @@ mod tests {
 
         fn on_segment(&mut self, item: &SegmentCursorItem) -> Result<(), Self::Error> {
             match item {
-                SegmentCursorItem::Segment(entry) => self.written.push(entry.sequence_number),
+                SegmentCursorItem::Segment(entry) => self.written.push(entry.sequence_number.value()),
                 // MUTATION TARGET: dropping this arm (not recording `Gap`)
                 // is exactly the "DVR silently has a hole nobody is told
                 // about" bug this test's mutation proves is caught.

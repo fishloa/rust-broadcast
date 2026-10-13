@@ -147,6 +147,7 @@ use std::time::Duration;
 
 use broadcast_common::Timestamp;
 
+use crate::ids::SegmentSeq;
 use crate::trunk::{ArchiveOverrun, SegmentCursor, SegmentCursorItem, SegmentEntry, Trunk};
 
 /// What happened when [`RetentionDriver::drive`] offered one [`SegmentEntry`]
@@ -261,7 +262,7 @@ pub enum SegmentLocation {
 /// than `cold_window`; see
 /// [Bounding the cold tier](self#bounding-the-cold-tier-by-time-not-by-a-second-count-knob).
 struct ColdEntry {
-    sequence_number: u32,
+    sequence_number: SegmentSeq,
     handed_off_at: Timestamp,
 }
 
@@ -294,7 +295,7 @@ pub struct RetentionDriver<S> {
     /// hot ring — using `last_closed_segment` there conflated "produced" with
     /// "this driver has decided its fate", fabricating `Evicted` for a
     /// segment that is, in fact, still `Hot`.
-    drained_up_to: Option<u32>,
+    drained_up_to: Option<SegmentSeq>,
 }
 
 impl<S: SegmentSink> RetentionDriver<S> {
@@ -429,7 +430,7 @@ impl<S: SegmentSink> RetentionDriver<S> {
     ///    pin-protected in the hot ring — using that field here previously
     ///    fabricated `Evicted` for a segment this driver had not yet made
     ///    any decision about at all).
-    pub fn locate(&mut self, sequence_number: u32, now: Timestamp) -> SegmentLocation {
+    pub fn locate(&mut self, sequence_number: SegmentSeq, now: Timestamp) -> SegmentLocation {
         self.expire_cold(now);
         if self
             .cold
@@ -486,10 +487,14 @@ mod tests {
         NonZeroUsize::new(n).expect("test capacity must be non-zero")
     }
 
+    fn seqs(raw: &[u32]) -> Vec<SegmentSeq> {
+        raw.iter().copied().map(SegmentSeq::new).collect()
+    }
+
     fn segment_entry(seq: u32) -> SegmentEntry {
         SegmentEntry::new(
             bytes::Bytes::from(vec![seq as u8; 4]),
-            seq,
+            SegmentSeq::new(seq),
             Duration::from_secs(2),
             Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
             SegmentMeta {
@@ -503,8 +508,8 @@ mod tests {
     /// so a test can assert exactly what was (or was not) handed off.
     struct ScriptedSink {
         always_busy: bool,
-        offered: Vec<u32>,
-        taken: Vec<u32>,
+        offered: Vec<SegmentSeq>,
+        taken: Vec<SegmentSeq>,
     }
 
     impl ScriptedSink {
@@ -535,7 +540,7 @@ mod tests {
     /// MUTATION VERIFIED: changing `RetentionDriver::expire_cold`'s
     /// condition from `<= now` to `< now` (off-by-one: an entry exactly at
     /// its expiry instant stays one tick longer than documented) makes this
-    /// test's final `assert_eq!(driver.locate(1, at_expiry), SegmentLocation::Evicted)`
+    /// test's final `assert_eq!(driver.locate(SegmentSeq::new(1), at_expiry), SegmentLocation::Evicted)`
     /// fail — `locate` returns `SegmentLocation::Cold` instead, because the
     /// entry is still in `self.cold` at exactly `handed_off_at + cold_window`.
     /// Recompiled and re-run to confirm the failure, then reverted.
@@ -554,21 +559,21 @@ mod tests {
         writer.publish_segment(segment_entry(1)).unwrap();
         driver.drive(handed_off_at);
 
-        assert_eq!(driver.sink.offered, vec![1]);
-        assert_eq!(driver.sink.taken, vec![1]);
+        assert_eq!(driver.sink.offered, seqs(&[1]));
+        assert_eq!(driver.sink.taken, seqs(&[1]));
         assert_eq!(
-            driver.locate(1, handed_off_at),
+            driver.locate(SegmentSeq::new(1), handed_off_at),
             SegmentLocation::Cold,
             "just handed off: must be Cold, not Hot or Evicted"
         );
 
         // Strictly before the window elapses: still Cold.
         let before_expiry = handed_off_at.saturating_add(Duration::from_secs(9));
-        assert_eq!(driver.locate(1, before_expiry), SegmentLocation::Cold);
+        assert_eq!(driver.locate(SegmentSeq::new(1), before_expiry), SegmentLocation::Cold);
 
         // At/after the window elapses: released.
         let at_expiry = handed_off_at.saturating_add(Duration::from_secs(10));
-        assert_eq!(driver.locate(1, at_expiry), SegmentLocation::Evicted);
+        assert_eq!(driver.locate(SegmentSeq::new(1), at_expiry), SegmentLocation::Evicted);
     }
 
     // --- 2. A failing sink does not stall `publish_segment` ---------------
@@ -604,7 +609,7 @@ mod tests {
         driver.drive(Timestamp::from_nanos(0));
         // Only the oldest surviving segment was ever offered — the driver
         // stopped polling further the instant it saw `Busy`.
-        assert_eq!(driver.sink.offered, vec![5]);
+        assert_eq!(driver.sink.offered, seqs(&[5]));
         assert!(driver.sink.taken.is_empty());
     }
 
@@ -648,7 +653,7 @@ mod tests {
         );
         assert_eq!(
             driver.sink.offered,
-            vec![1],
+            seqs(&[1]),
             "only the single in-flight entry is ever offered while it is stuck; \
              a flood behind it must not grow the hand-off queue"
         );
@@ -661,7 +666,7 @@ mod tests {
         driver.drive(Timestamp::from_nanos(2));
         assert_eq!(driver.pending_len(), 1);
         assert!(
-            driver.sink.offered.iter().all(|&seq| seq == 1),
+            driver.sink.offered.iter().all(|&seq| seq == SegmentSeq::new(1)),
             "only ever retries the single stuck entry, never advances to \
              the next queued segment while it is stuck: {:?}",
             driver.sink.offered
@@ -701,14 +706,14 @@ mod tests {
         driver.drive(Timestamp::from_nanos(0));
 
         // seq 1 was gapped, never offered; seq 2 and 3 made it to cold.
-        assert_eq!(driver.sink.taken, vec![2, 3]);
+        assert_eq!(driver.sink.taken, seqs(&[2, 3]));
         assert_eq!(
-            driver.locate(1, Timestamp::from_nanos(0)),
+            driver.locate(SegmentSeq::new(1), Timestamp::from_nanos(0)),
             SegmentLocation::Evicted,
             "gapped before hand-off: genuinely gone, not Cold"
         );
         assert_eq!(
-            driver.locate(2, Timestamp::from_nanos(0)),
+            driver.locate(SegmentSeq::new(2), Timestamp::from_nanos(0)),
             SegmentLocation::Cold
         );
     }
@@ -792,7 +797,7 @@ mod tests {
         // which a generous timeout could never have fixed.
         assert_eq!(
             driver.sink.taken.first().copied(),
-            Some(1),
+            Some(SegmentSeq::new(1)),
             "seq 1 must reach the sink first — it is what the driver drained \
              to release the pin"
         );
@@ -804,7 +809,7 @@ mod tests {
         driver.drive(Timestamp::from_nanos(1));
         assert_eq!(
             driver.sink.taken,
-            vec![1, 2],
+            seqs(&[1, 2]),
             "both segments must reach the sink in order once the stall clears"
         );
     }
@@ -817,7 +822,7 @@ mod tests {
     /// MUTATION VERIFIED: changing `RetentionDriver::locate`'s
     /// `if self.terminated` check to `if false` (i.e. never treating a
     /// terminated driver specially) makes this test's final assertion
-    /// fail: `driver.locate(3, ..)` — queried for a sequence number that
+    /// fail: `driver.locate(SegmentSeq::new(3), ..)` — queried for a sequence number that
     /// has *not yet been produced*, so the fallback `last_closed_segment`
     /// branch alone would say `Hot` — returns `SegmentLocation::Hot`
     /// instead of the expected `SegmentLocation::Evicted`, a fabricated
@@ -847,7 +852,7 @@ mod tests {
         // that into an honest `Evicted`, since this driver's pin is no
         // longer protecting *anything*, produced or not.
         assert_eq!(
-            driver.locate(3, Timestamp::from_nanos(0)),
+            driver.locate(SegmentSeq::new(3), Timestamp::from_nanos(0)),
             SegmentLocation::Evicted,
             "once terminated, this driver cannot honestly claim Hot for \
              anything it is no longer protecting, produced or not"
@@ -860,7 +865,7 @@ mod tests {
     /// MUTATION VERIFIED: reverting `RetentionDriver::locate`'s fallback
     /// branch from comparing against `self.drained_up_to` to comparing
     /// against `self.trunk.last_closed_segment()` (the pre-fix behaviour)
-    /// makes the first assertion fail: `driver.locate(1, ..)`, called
+    /// makes the first assertion fail: `driver.locate(SegmentSeq::new(1), ..)`, called
     /// *before* `drive` has ever run, returns `SegmentLocation::Evicted`
     /// instead of `SegmentLocation::Hot` — `last_closed_segment()` reports
     /// 1 the instant it is published, so the old fallback treated "produced
@@ -882,7 +887,7 @@ mod tests {
 
         // Produced, but this driver's `drive` has not run yet: still Hot.
         assert_eq!(
-            driver.locate(1, Timestamp::from_nanos(0)),
+            driver.locate(SegmentSeq::new(1), Timestamp::from_nanos(0)),
             SegmentLocation::Hot,
             "produced but not yet drained by this driver: still Hot, not Evicted"
         );
@@ -891,7 +896,7 @@ mod tests {
 
         // Now handed off to the sink: Cold.
         assert_eq!(
-            driver.locate(1, Timestamp::from_nanos(0)),
+            driver.locate(SegmentSeq::new(1), Timestamp::from_nanos(0)),
             SegmentLocation::Cold
         );
     }
@@ -918,7 +923,7 @@ mod tests {
         assert_eq!(driver.pending_len(), 1);
         for seq in 1..=3u32 {
             assert_eq!(
-                driver.locate(seq, Timestamp::from_nanos(0)),
+                driver.locate(SegmentSeq::new(seq), Timestamp::from_nanos(0)),
                 SegmentLocation::Hot,
                 "segment {seq} is stuck/queued behind a Busy sink, not gone"
             );
@@ -952,9 +957,9 @@ mod tests {
 
         driver.drive(Timestamp::from_nanos(0));
 
-        assert_eq!(driver.sink.taken, vec![2]);
+        assert_eq!(driver.sink.taken, seqs(&[2]));
         assert_eq!(
-            driver.locate(1, Timestamp::from_nanos(0)),
+            driver.locate(SegmentSeq::new(1), Timestamp::from_nanos(0)),
             SegmentLocation::Evicted,
             "gapped before hand-off: genuinely gone, not Hot or Cold"
         );
@@ -1002,17 +1007,17 @@ mod tests {
         assert_eq!(
             err,
             NonMonotonicSequenceNumber {
-                attempted: 1,
-                last_published: Some(5),
+                attempted: SegmentSeq::new(1),
+                last_published: Some(SegmentSeq::new(5)),
             }
         );
 
         // The correct resumption point, and what a correctly re-issued
         // writer must use instead:
-        assert_eq!(w2.next_sequence_number(), 6);
+        assert_eq!(w2.next_sequence_number(), SegmentSeq::new(6));
         w2.publish_segment(segment_entry(6)).unwrap();
 
-        let loc = driver.locate(6, Timestamp::from_nanos(0));
+        let loc = driver.locate(SegmentSeq::new(6), Timestamp::from_nanos(0));
         assert_eq!(
             loc,
             SegmentLocation::Hot,
