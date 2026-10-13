@@ -171,8 +171,6 @@ impl EitCollector {
             version_number: eit.version_number,
             last_section_number: eit.last_section_number,
         };
-        let bytes: Arc<[u8]> = Arc::from(raw);
-
         // Cap check: sections map — evict the least-recently-touched key if
         // `key` is new and the map is already full (issue #1002).
         self.sections_tick = self.sections_tick.wrapping_add(1).max(1);
@@ -200,7 +198,11 @@ impl EitCollector {
         partial.last_touch = sections_now;
         self.sections_touch_order.insert(sections_now, key);
 
-        partial.insert(eit.section_number, eit.segment_last_section_number, bytes)?;
+        partial.insert(
+            eit.section_number,
+            eit.segment_last_section_number,
+            raw,
+        )?;
         let complete = match partial.to_complete() {
             Some(complete) => complete,
             None => return Ok(None),
@@ -468,11 +470,11 @@ impl PartialEitSectionSet {
         &mut self,
         section_number: u8,
         segment_last_section_number: u8,
-        bytes: Arc<[u8]>,
+        bytes: &[u8],
     ) -> CollectResult<bool> {
         let index = section_number as usize;
         if let Some(existing) = &self.slots[index] {
-            if existing.as_ref() == bytes.as_ref() {
+            if existing.as_ref() == bytes {
                 return Ok(false);
             }
             return Err(CollectError::ConflictingSection {
@@ -481,7 +483,10 @@ impl PartialEitSectionSet {
             });
         }
 
-        self.slots[index] = Some(bytes);
+        // Allocate only for a section that is actually retained: a repeating
+        // carousel re-sends identical sections every cycle, and copying each
+        // one just to compare and drop it was pure waste (audit r02-O1).
+        self.slots[index] = Some(Arc::from(bytes));
         self.filled += 1;
         self.emitted = false;
         self.segment_ends.insert(

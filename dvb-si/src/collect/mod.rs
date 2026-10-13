@@ -171,10 +171,10 @@ impl PartialSectionSet {
         self.last_touch = last_touch;
     }
 
-    fn insert(&mut self, section_number: u8, bytes: Arc<[u8]>) -> CollectResult<bool> {
+    fn insert(&mut self, section_number: u8, bytes: &[u8]) -> CollectResult<bool> {
         let index = section_number as usize;
         if let Some(existing) = &self.slots[index] {
-            if existing.as_ref() == bytes.as_ref() {
+            if existing.as_ref() == bytes {
                 return Ok(false);
             }
             return Err(CollectError::ConflictingSection {
@@ -183,7 +183,10 @@ impl PartialSectionSet {
             });
         }
 
-        self.slots[index] = Some(bytes);
+        // Allocate only for a section that is actually retained: a repeating
+        // carousel re-sends identical sections every cycle, and copying each
+        // one just to compare and drop it was pure waste (audit r02-O1).
+        self.slots[index] = Some(Arc::from(bytes));
         self.filled += 1;
         self.emitted = false;
         Ok(true)
@@ -356,8 +359,6 @@ impl SectionSetCollector {
             version_number: section.version_number,
             last_section_number: section.last_section_number,
         };
-        let bytes: Arc<[u8]> = Arc::from(raw);
-
         // Cap check: evict the least-recently-touched key if `key` is new
         // and the map is already full (see the type-level docs).
         if !self.touch_or_evict(key) {
@@ -383,7 +384,7 @@ impl SectionSetCollector {
         partial.last_touch = now;
         self.touch_order.insert(now, key);
 
-        partial.insert(section.section_number, bytes)?;
+        partial.insert(section.section_number, raw)?;
         let complete = partial.to_complete();
         if complete.is_some() {
             partial.emitted = true;
