@@ -23,7 +23,7 @@ const EXTENSION_HEADER_LEN: usize = 5;
 /// Bytes after the extension header and before the first service entry:
 /// 2 bytes of original_network_id + 1 reserved_future_use byte.
 const POST_EXTENSION_LEN: usize = 3;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN + CRC_LEN;
 const SERVICE_HEADER_LEN: usize = 5;
 
@@ -317,8 +317,7 @@ impl Serialize for SdtSection<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
-        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, crc_pos);
         Ok(len)
     }
 }

@@ -96,8 +96,7 @@ broadcast_common::impl_spec_display!(ReferenceType, Unallocated);
 const HEADER_LEN: usize = 8;
 /// `section_length` counts from just after the field (byte 3) to end of section.
 const SECTION_LENGTH_PREFIX: usize = 3;
-/// CRC_32 trailer.
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 
 /// Authentication-message fixed body bytes after the common header, before the
 /// hash loop: section_hash_algorithm_identifier(1) + section_hash_length(1)
@@ -633,8 +632,7 @@ impl Serialize for ProtectionMessageSection<'_> {
         buf[7] = self.last_section_number;
         let body_written = self.body.write_into(&mut buf[HEADER_LEN..])?;
         let body_end = HEADER_LEN + body_written;
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..body_end]);
-        buf[body_end..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, body_end);
         Ok(len)
     }
 }

@@ -23,7 +23,7 @@ pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x001B);
 
 const HEADER_LEN: usize = 9;
 const SECTION_LENGTH_PREFIX: usize = 3;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 
 fn pad_to_byte(bits: usize) -> usize {
     (8 - (bits % 8)) % 8
@@ -1817,8 +1817,7 @@ impl Serialize for SatSection {
             }
         }
         let body_end = HEADER_LEN + sat_body_serialized_len(&self.body);
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..body_end]);
-        buf[body_end..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, body_end);
         Ok(len)
     }
 }

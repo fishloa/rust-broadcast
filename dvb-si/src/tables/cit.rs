@@ -25,7 +25,7 @@ pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0012);
 
 const HEADER_LEN: usize = 3;
 const EXTENSION_LEN: usize = 10;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
 
 const CRID_REF_LEN: usize = 2;
@@ -313,8 +313,7 @@ impl Serialize for CitSection<'_> {
             pos += entry.unique_string.len();
         }
 
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..pos]);
-        buf[pos..pos + CRC_LEN].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, pos);
         Ok(len)
     }
 }

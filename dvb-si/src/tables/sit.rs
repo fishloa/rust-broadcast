@@ -24,7 +24,7 @@ pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x001F);
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;
 const DESC_LOOP_LEN_FIELD: usize = 2;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 /// Per-service fixed header: service_id(16) + reserved(1)/running_status(3)/
 /// service_descriptors_length(12) = 2 + 2 bytes.
 const SERVICE_HEADER_LEN: usize = 4;

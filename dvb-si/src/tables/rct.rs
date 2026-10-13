@@ -82,7 +82,7 @@ const EXTENSION_HEADER_LEN: usize = 5;
 const POST_EXT_FIXED_LEN: usize = 3;
 const LINK_ENTRY_HEADER_LEN: usize = 2;
 const DESC_LOOP_LEN_FIELD: usize = 2;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize =
     MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXT_FIXED_LEN + DESC_LOOP_LEN_FIELD + CRC_LEN;
 
@@ -1194,8 +1194,7 @@ impl Serialize for RctSection<'_> {
         buf[pos..pos + self.descriptors.len()].copy_from_slice(self.descriptors.raw());
         pos += self.descriptors.len();
 
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..pos]);
-        buf[pos..pos + CRC_LEN].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, pos);
         Ok(len)
     }
 }

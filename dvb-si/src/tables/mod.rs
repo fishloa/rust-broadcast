@@ -323,6 +323,22 @@ pub(crate) fn check_section_length(
     Ok(total)
 }
 
+/// Length of the CRC-32 trailer of a long-form section (ISO/IEC 13818-1
+/// Annex A); one definition for every table module.
+pub(crate) const CRC_LEN: usize = 4;
+
+/// Write the MPEG-2 CRC-32 trailer of a long-form section: the CRC of
+/// `buf[..crc_pos]` goes into `buf[crc_pos..crc_pos + 4]`
+/// (ISO/IEC 13818-1 Annex A / ETSI EN 300 468 §5.1.1). The one definition of
+/// "serializer ends by sealing the section", previously repeated in about 25
+/// table modules (audit r02-W10).
+///
+/// The caller has already checked `buf.len() >= crc_pos + CRC_LEN`.
+pub(crate) fn write_crc(buf: &mut [u8], crc_pos: usize) {
+    let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
+    buf[crc_pos..crc_pos + CRC_LEN].copy_from_slice(&crc.to_be_bytes());
+}
+
 /// Write a checked 12-bit `section_length` into `buf[1..3]`, preserving
 /// whatever flag bits the caller already wrote into the top nibble of
 /// `buf[1]` (set `buf[1]` to the section's flags constant, bottom nibble

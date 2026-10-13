@@ -96,8 +96,7 @@ const HEADER_LEN: usize = 3;
 /// + last_section_number(1) + MAC_4(1) + MAC_3(1) + MAC_2(1) + MAC_1(1).
 const EXTENSION_LEN: usize = 9;
 
-/// Bytes occupied by the trailing CRC_32 / checksum field.
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 
 /// Minimum total encoded length: header + extension + trailer (empty payload).
 const MIN_SECTION_LEN: usize = HEADER_LEN + EXTENSION_LEN + CRC_LEN;
@@ -345,8 +344,7 @@ impl Serialize for MpeDatagramSection<'_> {
 
         if self.section_syntax_indicator {
             // SSI=1 → recompute CRC_32 over the whole section up to the trailer.
-            let crc = broadcast_common::crc32_mpeg2::compute(&buf[..trailer_start]);
-            buf[trailer_start..len].copy_from_slice(&crc.to_be_bytes());
+            super::write_crc(buf, trailer_start);
         } else {
             // SSI=0 → ISO/IEC 13818-6 checksum we cannot recompute; re-emit
             // the preserved trailer bytes verbatim.

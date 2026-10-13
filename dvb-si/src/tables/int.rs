@@ -70,7 +70,7 @@ broadcast_common::impl_spec_display!(IntActionType, DvbReserved);
 const OUTER_HEADER_LEN: usize = 3;
 const INT_FIXED_LEN: usize = 9;
 const LOOP_LEN_FIELD: usize = 2;
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 const MIN_SECTION_LEN: usize = OUTER_HEADER_LEN + INT_FIXED_LEN + LOOP_LEN_FIELD + CRC_LEN;
 
 const OFF_ACTION_TYPE: usize = 3;
@@ -376,8 +376,7 @@ impl Serialize for IntSection<'_> {
         }
 
         let crc_pos = len - CRC_LEN;
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..crc_pos]);
-        buf[crc_pos..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, crc_pos);
         Ok(len)
     }
 }

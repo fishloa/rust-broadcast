@@ -47,8 +47,7 @@ const HEADER_LEN: usize = 3;
 /// + last_section_number(1).
 const EXTENSION_HEADER_LEN: usize = 5;
 
-/// Bytes occupied by the trailing CRC-32 field.
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 
 /// Minimum total encoded length: header + extension + CRC.
 const MIN_LEN: usize = HEADER_LEN + EXTENSION_HEADER_LEN + CRC_LEN;
@@ -206,8 +205,7 @@ impl Serialize for ContainerSection<'_> {
         buf[data_start..data_end].copy_from_slice(self.container_data);
 
         // CRC-32 over everything up to (but not including) the CRC slot.
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..data_end]);
-        buf[data_end..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, data_end);
 
         Ok(len)
     }

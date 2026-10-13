@@ -60,8 +60,7 @@ pub const FONT_INFO_TYPE_FONT_SIZE: u8 = 0x02;
 const HEADER_LEN: usize = 8;
 /// `section_length` counts from just after the field (byte 3) to end of section.
 const SECTION_LENGTH_PREFIX: usize = 3;
-/// CRC_32 trailer.
-const CRC_LEN: usize = 4;
+use super::CRC_LEN;
 
 /// `style(3)` field mask inside a StyleWeight style/weight byte: bits `[7:5]`
 /// (ETSI TS 103 283 §5.3.2.3.1 Table 22).
@@ -463,8 +462,7 @@ impl Serialize for DownloadableFontInfoSection<'_> {
             }
         }
 
-        let crc = broadcast_common::crc32_mpeg2::compute(&buf[..pos]);
-        buf[pos..len].copy_from_slice(&crc.to_be_bytes());
+        super::write_crc(buf, pos);
         Ok(len)
     }
 }
