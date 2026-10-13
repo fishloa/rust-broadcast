@@ -496,6 +496,12 @@ impl TrackFragmentBaseMediaDecodeTimeBox {
     }
 }
 
+/// Ceiling on a `trun`'s `sample_count` when it carries no per-sample fields
+/// (every entry is then zero bytes wide, so the buffer length cannot bound
+/// it). 2^20 samples is ~10x any real single-fragment sample count (a 2-hour
+/// 60 fps movie in one `moof` is ~432 000) and costs at most ~40 MiB.
+pub const MAX_ZERO_WIDTH_TRUN_SAMPLES: usize = 1 << 20;
+
 impl Serialize for TrackFragmentBaseMediaDecodeTimeBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
@@ -628,6 +634,16 @@ impl TrackFragmentRunBox {
             .filter(|&&present| present)
             .count()
             * 4;
+        // With no per-sample field present every entry is ZERO bytes wide, so
+        // the remaining-bytes bound above cannot limit `sc` at all: a 20-byte
+        // `trun` declaring 2^32-1 samples would push ~170 GB of `TrunSample`s
+        // (#1130). Such a `trun` is legal (sizes/durations come from `tfhd`),
+        // so cap the count at a generous real-world ceiling instead.
+        if entry_size == 0 && sc > MAX_ZERO_WIDTH_TRUN_SAMPLES {
+            return Err(Error::InvalidInput(
+                "trun sample_count with no per-sample fields exceeds MAX_ZERO_WIDTH_TRUN_SAMPLES",
+            ));
+        }
         let mut samples = Vec::with_capacity(crate::init_segment::bounded_entry_count(
             payload.len().saturating_sub(c),
             entry_size,
