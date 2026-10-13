@@ -7,6 +7,11 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-10-13
+
+### Changed
+- Dependency epoch bump: `transmux` 0.25 → 0.26 and `media-plane` 0.5 → 0.6. No other change.
+
 
 ## [0.7.0] - 2026-10-05
 

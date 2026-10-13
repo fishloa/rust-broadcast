@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-10-13
+
+### Changed
+- Dependency epoch bump: optional `transmux` 0.25 → 0.26 (the `transmux` feature). No other change.
+
 ## [0.5.0] - 2026-10-05
 
 ### Added

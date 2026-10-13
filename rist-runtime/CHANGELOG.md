@@ -4,6 +4,11 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-13
+
+### Changed
+- Dependency epoch bump: `rtcp-packet` 0.4 → 0.5 (BREAKING upstream: `SenderReport`/`ReceiverReport` are `#[non_exhaustive]` with constructors and carry `profile_extensions`). `ReportPart::Sr`/`Rr` therefore expose the new types; tests migrated to the constructors. No other behaviour change.
+
 
 ## [0.2.0] - 2026-10-05
 
