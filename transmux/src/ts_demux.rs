@@ -2428,31 +2428,73 @@ fn reprobe_if_config_changed(
 /// SPS/PPS split across access units still compares as a whole (r04-W51).
 #[derive(Default, Clone)]
 struct ParameterSets {
-    vps: Option<Vec<u8>>,
-    sps: Option<Vec<u8>>,
-    pps: Option<Vec<u8>>,
+    vps: ParamSlot,
+    sps: ParamSlot,
+    pps: ParamSlot,
+}
+
+/// Upper bound on distinct NALs remembered per parameter-set type. The id
+/// spaces are small (16 VPS, 16/32 SPS, 64/256 PPS), so a real stream never
+/// reaches it; it only bounds a hostile one.
+const MAX_SEEN_PARAMETER_SETS: usize = 64;
+
+/// One parameter-set type's state: the NAL the track's config is built from
+/// (`current`) and every distinct NAL seen so far (`seen`).
+///
+/// Encoders routinely carry several parameter sets of one type at once —
+/// multiple PPS ids (issue #1166: orf1 cycles three), or several SPS ids — and
+/// re-send them in a rotating order (PPS only; SPS/VPS use
+/// [`ParamSlot::record_current`]). A single "last seen" slot compared against
+/// each arrival reads every rotation step as a change (A, B, A, B, ...), so an
+/// arrival counts as a change only when its bytes were **never seen** before.
+#[derive(Default, Clone)]
+struct ParamSlot {
+    current: Option<Vec<u8>>,
+    seen: Vec<Vec<u8>>,
+}
+
+impl ParamSlot {
+    /// Fold in one NAL of a type that does **not** rotate (SPS, VPS): any
+    /// difference from the current set is a change, so switching A -> B -> A
+    /// (a resolution change and back) is reported at every switch.
+    fn record_current(&mut self, bytes: &[u8]) -> bool {
+        if self.current.as_deref() == Some(bytes) {
+            return false;
+        }
+        self.current = Some(bytes.to_vec());
+        true
+    }
+
+    /// Fold in one NAL; `true` if its bytes had not been seen before (it then
+    /// becomes the `current` set the config is built from).
+    fn record(&mut self, bytes: &[u8]) -> bool {
+        if self.seen.iter().any(|s| s.as_slice() == bytes) {
+            return false;
+        }
+        if self.seen.len() >= MAX_SEEN_PARAMETER_SETS {
+            self.seen.remove(0);
+        }
+        self.seen.push(bytes.to_vec());
+        self.current = Some(bytes.to_vec());
+        true
+    }
 }
 
 impl ParameterSets {
     /// Fold in `data`'s parameter sets, reporting whether any of them
-    /// **changed**: a set that was absent and is now present, or present with
-    /// different bytes. A set that was already present identically — which is
-    /// what an encoder repeating its headers on every keyframe produces — is not
-    /// a change.
+    /// **changed**: a NAL whose bytes this track has never carried before
+    /// (a set that was absent and is now present, a new id, or a replaced
+    /// one). A NAL already seen — which is what an encoder repeating its
+    /// headers on every keyframe, in any rotation of its PPS/SPS ids, produces
+    /// — is not a change.
     fn observe(&mut self, codec: Codec, data: &[u8]) -> bool {
         let mut changed = false;
-        let mut record = |slot: &mut Option<Vec<u8>>, bytes: &[u8]| {
-            if slot.as_deref() != Some(bytes) {
-                *slot = Some(bytes.to_vec());
-                changed = true;
-            }
-        };
         match codec {
             Codec::H264 => {
                 for nal in iter_annexb_nals(data) {
                     match nal[0] & H264_NAL_TYPE_MASK {
-                        H264_NAL_SPS => record(&mut self.sps, nal),
-                        H264_NAL_PPS => record(&mut self.pps, nal),
+                        H264_NAL_SPS => changed |= self.sps.record_current(nal),
+                        H264_NAL_PPS => changed |= self.pps.record(nal),
                         _ => {}
                     }
                 }
@@ -2460,9 +2502,9 @@ impl ParameterSets {
             Codec::Hevc => {
                 for nal in iter_annexb_nals(data) {
                     match nal_unit_type(NalCodec::Hevc, nal) {
-                        Some(H265_NAL_VPS) => record(&mut self.vps, nal),
-                        Some(H265_NAL_SPS) => record(&mut self.sps, nal),
-                        Some(H265_NAL_PPS) => record(&mut self.pps, nal),
+                        Some(H265_NAL_VPS) => changed |= self.vps.record_current(nal),
+                        Some(H265_NAL_SPS) => changed |= self.sps.record_current(nal),
+                        Some(H265_NAL_PPS) => changed |= self.pps.record(nal),
                         _ => {}
                     }
                 }
@@ -2484,13 +2526,13 @@ fn observe_parameter_sets(codec: Codec, data: &[u8], sets: &mut ParameterSets) -
 fn seed_probe_parameter_sets(probe: &mut ConfigProbe, sets: &ParameterSets) {
     match probe {
         ConfigProbe::H264 { sps, pps } => {
-            sps.clone_from(&sets.sps);
-            pps.clone_from(&sets.pps);
+            sps.clone_from(&sets.sps.current);
+            pps.clone_from(&sets.pps.current);
         }
         ConfigProbe::Hevc { vps, sps, pps } => {
-            vps.clone_from(&sets.vps);
-            sps.clone_from(&sets.sps);
-            pps.clone_from(&sets.pps);
+            vps.clone_from(&sets.vps.current);
+            sps.clone_from(&sets.sps.current);
+            pps.clone_from(&sets.pps.current);
         }
         _ => {}
     }
@@ -6880,6 +6922,222 @@ mod tests {
             updates, 0,
             "the configuration never changes, so no TrackUpdated may be raised; a per-access-unit snapshot loses the SPS during the PPS-only units and reports each following full set as a change"
         );
+    }
+
+    /// Distinct PPS NALs (different ids / bytes) for the #1166 rotation tests.
+    fn rotating_pps_set(pps: &[u8]) -> Vec<Vec<u8>> {
+        (0u8..3)
+            .map(|i| {
+                let mut p = pps.to_vec();
+                let last = p.len() - 1;
+                p[last] ^= i * 0x11; // i = 0 is the original
+                p
+            })
+            .collect()
+    }
+
+    /// Updates + the whole event log (Debug lines) for `bytes` fed in `chunk`s.
+    fn events_chunked(bytes: &[u8], chunk: usize) -> (usize, Vec<String>) {
+        let mut demux = StreamingTsDemux::new();
+        let mut log = Vec::new();
+        let mut updates = 0;
+        for c in bytes.chunks(chunk) {
+            demux.feed(c);
+            while let Some(e) = demux.poll_event() {
+                if matches!(e, DemuxEvent::TrackUpdated(_)) {
+                    updates += 1;
+                }
+                log.push(format!("{e:?}"));
+            }
+        }
+        demux.finish();
+        while let Some(e) = demux.poll_event() {
+            if matches!(e, DemuxEvent::TrackUpdated(_)) {
+                updates += 1;
+            }
+            log.push(format!("{e:?}"));
+        }
+        (updates, log)
+    }
+
+    /// Issue #1166: an encoder carrying several PPS ids and re-sending them in a
+    /// rotating order (orf1 cycles three, one per access unit) must not raise a
+    /// `TrackUpdated` per rotation step. The old single "last seen PPS" slot
+    /// read every step as a change.
+    #[test]
+    fn rotating_pps_ids_emit_no_update_and_are_chunk_invariant() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let set = rotating_pps_set(&pps);
+        let mut aus = vec![annexb_au(&[&sps, &set[0], &[0x65, 0x88, 0x84, 0x01]])];
+        for i in 0..12usize {
+            aus.push(annexb_au(&[
+                &set[(i + 1) % 3],
+                &[0x65, 0x88, 0x84, 0x10 + i as u8],
+            ]));
+        }
+        let bytes = avc_ts_over(&aus);
+        let (baseline, base_log) = events_chunked(&bytes, bytes.len());
+        // First sight of PPS 1 and PPS 2 is two updates (their bytes are new);
+        // the 12 rotation steps after that add none (the old code gave ~13).
+        assert!(
+            baseline == 2,
+            "rotation must not flap: got {baseline} updates"
+        );
+        let all_in_first_unit: Vec<Vec<u8>> = vec![annexb_au(&[
+            &sps,
+            &set[0],
+            &set[1],
+            &set[2],
+            &[0x65, 0x88, 0x84, 0x01],
+        ])]
+        .into_iter()
+        .chain(
+            (0..12usize)
+                .map(|i| annexb_au(&[&set[(i + 1) % 3], &[0x65, 0x88, 0x84, 0x10 + i as u8]])),
+        )
+        .collect();
+        let bytes2 = avc_ts_over(&all_in_first_unit);
+        for chunk in [1usize, 7, 187, 188, 189, 1000] {
+            let (u, log) = events_chunked(&bytes2, chunk);
+            assert_eq!(u, 0, "chunk {chunk}: all ids announced up front, so none");
+            let (_, ref_log) = events_chunked(&bytes2, bytes2.len());
+            assert_eq!(log, ref_log, "chunk {chunk}: event sequence differs");
+            let (ub, lb) = events_chunked(&bytes, chunk);
+            assert_eq!(ub, baseline, "chunk {chunk}: update count differs");
+            assert_eq!(lb, base_log, "chunk {chunk}: event sequence differs");
+        }
+    }
+
+    /// A genuinely new PPS (same length, different bytes) after a rotation has
+    /// settled is still exactly one `TrackUpdated`.
+    #[test]
+    fn same_length_pps_change_after_rotation_raises_exactly_one_update() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let set = rotating_pps_set(&pps);
+        let mut changed = pps.clone();
+        let last = changed.len() - 1;
+        changed[last] ^= 0xA5;
+        assert!(!set.contains(&changed) && changed.len() == pps.len());
+        let mut aus = vec![annexb_au(&[
+            &sps,
+            &set[0],
+            &set[1],
+            &set[2],
+            &[0x65, 0x88, 0x84, 0x01],
+        ])];
+        for i in 0..6usize {
+            aus.push(annexb_au(&[
+                &set[i % 3],
+                &[0x65, 0x88, 0x84, 0x10 + i as u8],
+            ]));
+        }
+        aus.push(annexb_au(&[&changed, &[0x65, 0x88, 0x84, 0x40]]));
+        for i in 0..6usize {
+            aus.push(annexb_au(&[
+                &set[i % 3],
+                &[0x65, 0x88, 0x84, 0x50 + i as u8],
+            ]));
+            aus.push(annexb_au(&[&changed, &[0x65, 0x88, 0x84, 0x60 + i as u8]]));
+        }
+        let bytes = avc_ts_over(&aus);
+        let (updates, base) = events_chunked(&bytes, bytes.len());
+        assert_eq!(updates, 1, "exactly one update for the one real change");
+        for chunk in [1usize, 188, 1000] {
+            assert_eq!(events_chunked(&bytes, chunk).1, base, "chunk {chunk}");
+        }
+    }
+
+    /// The same PPS remembering applies to HEVC; VPS/SPS still compare to the current set.
+    #[test]
+    fn hevc_rotating_parameter_sets_are_not_changes() {
+        let hdr = |t: u8| [t << 1, 0x01];
+        let nal = |t: u8, tag: u8| {
+            let mut n = hdr(t).to_vec();
+            n.push(tag);
+            n
+        };
+        let (v, s) = (nal(H265_NAL_VPS, 1), nal(H265_NAL_SPS, 2));
+        let ppss = [nal(H265_NAL_PPS, 3), nal(H265_NAL_PPS, 4)];
+        let mut sets = ParameterSets::default();
+        let au = |p: &Vec<u8>| annexb_au(&[&v, &s, p]);
+        assert!(sets.observe(Codec::Hevc, &au(&ppss[0])));
+        assert!(
+            sets.observe(Codec::Hevc, &au(&ppss[1])),
+            "first sight of PPS 2"
+        );
+        for i in 0..8 {
+            assert!(
+                !sets.observe(Codec::Hevc, &au(&ppss[i % 2])),
+                "rotation step {i} is a repeat"
+            );
+        }
+        assert!(sets.observe(Codec::Hevc, &au(&nal(H265_NAL_PPS, 9))));
+        let sps2 = nal(H265_NAL_SPS, 7);
+        assert!(sets.observe(Codec::Hevc, &annexb_au(&[&sps2])), "SPS B");
+        assert!(
+            sets.observe(Codec::Hevc, &annexb_au(&[&s])),
+            "SPS back to A"
+        );
+    }
+
+    /// The (SPS, PPS, width) of the fixture's first and second resolution.
+    fn two_resolution_sets() -> [(Vec<u8>, Vec<u8>, u16); 2] {
+        let mut path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+        path.push("tests/fixtures/ts/h264-two-resolutions.ts");
+        let bytes = std::fs::read(&path).unwrap();
+        let mut demux = StreamingTsDemux::new();
+        demux.feed(&bytes);
+        demux.finish();
+        let mut out = Vec::new();
+        while let Some(e) = demux.poll_event() {
+            let spec = match e {
+                DemuxEvent::TrackAdded(s) | DemuxEvent::TrackUpdated(s) => s,
+                _ => continue,
+            };
+            if let CodecConfig::Avc { config, width, .. } = spec.config {
+                let r = &config.config;
+                out.push((r.sps[0].0.clone(), r.pps[0].0.clone(), width));
+            }
+        }
+        assert!(out.len() >= 2 && out[0].2 != out[1].2, "two resolutions");
+        [out[0].clone(), out[1].clone()]
+    }
+
+    /// SPS A -> B -> A (a resolution change and back) is a real config change
+    /// at EVERY switch, even though A was seen before; PPS rotation tolerance
+    /// must not leak into the SPS.
+    #[test]
+    fn sps_switch_a_b_a_raises_an_update_per_switch() {
+        let [a, b] = two_resolution_sets();
+        let au =
+            |x: &(Vec<u8>, Vec<u8>, u16), t: u8| annexb_au(&[&x.0, &x.1, &[0x65, 0x88, 0x84, t]]);
+        let aus = vec![au(&a, 1), au(&b, 2), slice_only_au(3), au(&a, 4), au(&b, 5)];
+        let bytes = avc_ts_over(&aus);
+        let (n, base) = events_chunked(&bytes, bytes.len());
+        assert_eq!(n, 3, "one update for each of the three switches");
+        for chunk in [1usize, 7, 187, 188, 189, 1000] {
+            assert_eq!(events_chunked(&bytes, chunk).1, base, "chunk {chunk}");
+        }
+    }
+
+    /// A same-length, different-bytes SPS is exactly one update.
+    #[test]
+    fn same_length_sps_change_raises_exactly_one_update() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        let mut other = sps.clone();
+        let last = other.len() - 1;
+        other[last] ^= 0x01;
+        let aus = vec![
+            annexb_au(&[&sps, &pps, &[0x65, 0x88, 0x84, 1]]),
+            annexb_au(&[&other, &pps, &[0x65, 0x88, 0x84, 2]]),
+            annexb_au(&[&other, &pps, &[0x65, 0x88, 0x84, 3]]),
+        ];
+        let bytes = avc_ts_over(&aus);
+        let (n, base) = events_chunked(&bytes, bytes.len());
+        assert_eq!(n, 1);
+        for chunk in [1usize, 7, 187, 188, 189, 1000] {
+            assert_eq!(events_chunked(&bytes, chunk).1, base, "chunk {chunk}");
+        }
     }
 
     /// A PPS-only change is also a real config change and must raise one.
