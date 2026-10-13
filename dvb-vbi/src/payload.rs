@@ -548,6 +548,44 @@ impl<'a> DataUnitPayload<'a> {
         }
     }
 
+    /// Whether `id` is a valid `data_unit_id` for this payload kind
+    /// (ETSI EN 301 775 §4.4.2, Table 3 / Table 1 dispatch): the inverse of
+    /// [`DataUnitPayload::parse`]'s dispatch.
+    pub fn is_consistent_with(&self, id: DataUnitId) -> bool {
+        match self {
+            DataUnitPayload::Teletext(_) => matches!(
+                id,
+                DataUnitId::EbuTeletextNonSubtitle
+                    | DataUnitId::EbuTeletextSubtitle
+                    | DataUnitId::InvertedTeletext
+            ),
+            DataUnitPayload::Vps(_) => id == DataUnitId::Vps,
+            DataUnitPayload::Wss(_) => id == DataUnitId::Wss,
+            DataUnitPayload::ClosedCaptioning(_) => id == DataUnitId::ClosedCaptioning,
+            DataUnitPayload::Monochrome(_) => id == DataUnitId::Monochrome422Samples,
+            DataUnitPayload::Stuffing { .. } => id == DataUnitId::Stuffing,
+            // Opaque carries reserved / user-defined ids only, and the id
+            // must be the canonical decode of its own byte (a hand-built
+            // `Reserved(0xC3)` would be a mislabelled VPS unit).
+            DataUnitPayload::Opaque(_) => {
+                matches!(id, DataUnitId::Reserved(_) | DataUnitId::UserDefined(_))
+                    && DataUnitId::from_u8(id.to_u8()) == id
+            }
+        }
+    }
+
+    fn kind_name(&self) -> &'static str {
+        match self {
+            DataUnitPayload::Teletext(_) => "Teletext",
+            DataUnitPayload::Vps(_) => "VPS",
+            DataUnitPayload::Wss(_) => "WSS",
+            DataUnitPayload::ClosedCaptioning(_) => "ClosedCaptioning",
+            DataUnitPayload::Monochrome(_) => "Monochrome",
+            DataUnitPayload::Stuffing { .. } => "Stuffing",
+            DataUnitPayload::Opaque(_) => "Opaque",
+        }
+    }
+
     /// Serialize the body into `out`, returning the number of bytes written.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
         match self {
@@ -690,7 +728,18 @@ impl<'a> DataUnit<'a> {
     }
 
     /// Serialize the data unit into `out`, returning bytes written.
+    ///
+    /// Fails with [`Error::DataUnitIdPayloadMismatch`] when `id` is not a
+    /// valid Table 3 id for the payload kind (e.g. `{ id: Vps, payload:
+    /// Teletext }`), rather than writing a mislabelled unit. `parse` always
+    /// yields consistent pairs.
     pub fn serialize_into(&self, out: &mut [u8]) -> Result<usize> {
+        if !self.payload.is_consistent_with(self.id) {
+            return Err(Error::DataUnitIdPayloadMismatch {
+                id: self.id.to_u8(),
+                payload: self.payload.kind_name(),
+            });
+        }
         let total = self.serialized_len();
         if out.len() < total {
             return Err(Error::OutputBufferTooSmall {
@@ -1028,6 +1077,95 @@ mod tests {
         let mut out2 = vec![0u8; parsed.serialized_len()];
         parsed.serialize_into(&mut out2).unwrap();
         assert_eq!(out, out2);
+    }
+
+    // Table 3: every (id, payload) pair. Only the consistent ones serialize.
+    #[test]
+    fn id_payload_consistency_matrix() {
+        let hdr = LineHeader::new(true, 16);
+        let txt = TeletextDataField {
+            header: hdr,
+            framing_code: FRAMING_CODE_EBU,
+            txt_data_block: [0x42; TXT_DATA_BLOCK_LEN],
+        };
+        let opaque_body = [1u8, 2, 3];
+        let payloads: Vec<(DataUnitPayload, Vec<u8>)> = vec![
+            (
+                DataUnitPayload::Teletext(txt),
+                vec![
+                    crate::data_unit_id::ID_EBU_TELETEXT_NON_SUBTITLE,
+                    crate::data_unit_id::ID_EBU_TELETEXT_SUBTITLE,
+                    crate::data_unit_id::ID_INVERTED_TELETEXT,
+                ],
+            ),
+            (
+                DataUnitPayload::Vps(VpsDataField {
+                    header: hdr,
+                    vps_data_block: [0; VPS_DATA_BLOCK_LEN],
+                }),
+                vec![crate::data_unit_id::ID_VPS],
+            ),
+            (
+                DataUnitPayload::Wss(WssDataField {
+                    header: hdr,
+                    wss_data_block: 0x123,
+                }),
+                vec![crate::data_unit_id::ID_WSS],
+            ),
+            (
+                DataUnitPayload::ClosedCaptioning(ClosedCaptioningDataField {
+                    header: hdr,
+                    closed_captioning_data_block: 0,
+                }),
+                vec![crate::data_unit_id::ID_CLOSED_CAPTIONING],
+            ),
+            (
+                DataUnitPayload::Stuffing { length: 3 },
+                vec![crate::data_unit_id::ID_STUFFING],
+            ),
+            (
+                DataUnitPayload::Opaque(&opaque_body),
+                // Every Table 3 reserved / user-defined id.
+                (0u16..=255)
+                    .map(|r| r as u8)
+                    .filter(|r| {
+                        matches!(
+                            DataUnitId::from_u8(*r),
+                            DataUnitId::Reserved(_) | DataUnitId::UserDefined(_)
+                        )
+                    })
+                    .collect(),
+            ),
+        ];
+        for (payload, good) in &payloads {
+            for raw in 0u16..=255 {
+                let raw = raw as u8;
+                let unit = DataUnit {
+                    id: DataUnitId::from_u8(raw),
+                    payload: payload.clone(),
+                };
+                let mut out = vec![0u8; unit.serialized_len()];
+                let r = unit.serialize_into(&mut out);
+                if good.contains(&raw) {
+                    assert_eq!(r.unwrap(), unit.serialized_len(), "id {raw:#04X}");
+                    assert_eq!(out[0], raw);
+                    let (re, _) = DataUnit::parse(&out).unwrap();
+                    assert_eq!(re.id, unit.id, "parse yields the same id {raw:#04X}");
+                } else {
+                    assert!(
+                        matches!(r, Err(Error::DataUnitIdPayloadMismatch { id, .. }) if id == raw),
+                        "id {raw:#04X} with {payload:?} must be rejected"
+                    );
+                }
+            }
+        }
+        // A hand-built non-canonical Reserved(0xC3) must not smuggle a VPS id.
+        let unit = DataUnit {
+            id: DataUnitId::Reserved(crate::data_unit_id::ID_VPS),
+            payload: DataUnitPayload::Opaque(&opaque_body),
+        };
+        let mut out = vec![0u8; unit.serialized_len()];
+        assert!(unit.serialize_into(&mut out).is_err());
     }
 
     #[test]
