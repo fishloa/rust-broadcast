@@ -7,6 +7,10 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING (#1159):** `DEFAULT_TRACK_ID` is a `transmux::TrackId`; `HlsOrigin::render_playlist` and the client `Output::Samples { track_id }` take/return `TrackId`. New `server::{Generation, SegmentSeq, PartIndex}` newtypes: `HlsOrigin::init_name(track_id, generation)` takes a `Generation` and `ClosedSegment::init_generation`/`with_init_generation` are `Generation`; the private `segment_name`/`part_name`/`resident_part_specs` take `SegmentSeq`/`PartIndex`, so a swapped argument is a compile error. Wire names (`seg-1-5-7.m4s`, `init-1-5-2.mp4`, `part-..`) are unchanged and pinned by `resource_names_place_every_distinct_id_in_its_own_slot`.
+
 ## [0.8.0] - 2026-10-13
 
 ### Changed

@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **BREAKING (#1159): typed track and program ids.** New `TrackId(u32)` and `ProgramNumber(u16)` newtypes (re-exported at the crate root and from `ir`; `new`/`value`, no silent `From`, `Debug`/`Display` render the bare number and serde is `transparent`, so every golden, JSON and manifest is byte-identical). Every public `track_id: u32` is now `TrackId`: `TrackSpec::{track_id, new}`, `Track::track_id()`, `FragmentTrackData`, `DemuxEvent` track fields (`Sample`, `TrackRemoved`, `TrackAbandoned`, `Discontinuity`, `InputDegraded`), the `push(track_id, ..)` of the segmenters, `RtpInputStream`/`RtpTrackInit`, the ISOBMFF box structs (`tkhd`/`tfhd`/`trex`/`mvhd.next_track_id`/`prft.reference_track_id`), `Error::UnmuxableDataTrack`, the Smooth/DASH track descriptors, and `TrackSpec::program_number` (now `Option<ProgramNumber>`, `with_program(ProgramNumber)`). `TrackId::next()` hands out consecutive ids. Migrate with `TrackId::new(n)` / `.value()`.
+- Test: `tests/track_id_baseline.rs` demuxes every committed fixture (and every `.test-streams` capture up to 40 MB when present) and compares per-track ids and sample counts with `tests/golden/track_ids.txt`, captured while `track_id` was a bare `u32`.
+
 ### Changed (BREAKING)
 
 - **BREAKING (#1159, typed PIDs):** `TrackSpec::source_pid` is `Option<Pid>` and `TrackSpec::with_source` takes a `Pid`; `PcrSample::{pid,new}` and `EventProvenance::pid` are `Pid`. `Debug` of the IR now renders a PID as `Pid(0x0100)` instead of `256` (the `sweep_output_golden` hashes normalise this and are unchanged: the demux output itself is identical). `TsMux` reports `Error::InvalidInput` if a track would be assigned an elementary PID above `0x1FFF`.
