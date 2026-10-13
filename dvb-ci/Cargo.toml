@@ -19,6 +19,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 dvb-si     = { path = "../dvb-si", version = "11.1", default-features = false }
+mpeg-ts    = { path = "../mpeg-ts", version = "0.5", default-features = false }
 thiserror  = { version = "2", default-features = false }
 serde      = { version = "1", optional = true, features = ["derive"] }
 
@@ -29,8 +30,8 @@ serde_json = { workspace = true }
 
 [features]
 default = ["std"]
-std = ["broadcast-common/std", "dvb-si/std", "thiserror/std"]
-serde = ["dep:serde"]
+std = ["broadcast-common/std", "dvb-si/std", "mpeg-ts/std", "thiserror/std"]
+serde = ["dep:serde", "mpeg-ts/serde"]
 
 [lints]
 workspace = true

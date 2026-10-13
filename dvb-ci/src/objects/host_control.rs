@@ -9,6 +9,7 @@ use crate::error::{Error, Result};
 use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use broadcast_common::{Parse, Serialize};
+use mpeg_ts::pid::Pid;
 
 /// `tune()` object (Table 27): retune to a different service. Parameters are the
 /// EN 300 468 identifiers, each 16 bits.
@@ -78,15 +79,13 @@ pub struct Replace {
     /// `replacement_ref` — application-allocated reference matched by Clear Replace.
     pub replacement_ref: u8,
     /// 13-bit `replaced_PID` — PID of the component to replace.
-    pub replaced_pid: u16,
+    pub replaced_pid: Pid,
     /// 13-bit `replacement_PID` — PID to replace it with.
-    pub replacement_pid: u16,
+    pub replacement_pid: Pid,
 }
 
 // replacement_ref(1) + reserved/replaced_PID(2) + reserved/replacement_PID(2).
 const REPLACE_BODY: usize = 5;
-/// Maximum value the 13-bit `replaced_PID`/`replacement_PID` fields can hold.
-const MAX_PID: u16 = 0x1FFF;
 
 impl<'a> Parse<'a> for Replace {
     type Error = Error;
@@ -101,8 +100,8 @@ impl<'a> Parse<'a> for Replace {
         }
         super::reject_trailing_body(body, REPLACE_BODY, "replace")?;
         let replacement_ref = body[0];
-        let replaced_pid = (((body[1] & 0x1F) as u16) << 8) | body[2] as u16;
-        let replacement_pid = (((body[3] & 0x1F) as u16) << 8) | body[4] as u16;
+        let replaced_pid = Pid::new((((body[1] & 0x1F) as u16) << 8) | body[2] as u16);
+        let replacement_pid = Pid::new((((body[3] & 0x1F) as u16) << 8) | body[4] as u16);
         Ok(Self {
             replacement_ref,
             replaced_pid,
@@ -117,20 +116,14 @@ impl Serialize for Replace {
         super::apdu_len(REPLACE_BODY)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        if self.replaced_pid > MAX_PID || self.replacement_pid > MAX_PID {
-            return Err(Error::InvalidObject {
-                what: "replace",
-                reason: "PID exceeds 13-bit range (0x1FFF)",
-            });
-        }
         let mut pos = super::write_apdu_header(tag::REPLACE, REPLACE_BODY, buf)?;
         buf[pos] = self.replacement_ref;
         // reserved(3)='111', replaced_PID(13).
-        buf[pos + 1] = 0xE0 | ((self.replaced_pid >> 8) as u8 & 0x1F);
-        buf[pos + 2] = self.replaced_pid as u8;
+        buf[pos + 1] = 0xE0 | ((self.replaced_pid.value() >> 8) as u8 & 0x1F);
+        buf[pos + 2] = self.replaced_pid.value() as u8;
         // reserved(3)='111', replacement_PID(13).
-        buf[pos + 3] = 0xE0 | ((self.replacement_pid >> 8) as u8 & 0x1F);
-        buf[pos + 4] = self.replacement_pid as u8;
+        buf[pos + 3] = 0xE0 | ((self.replacement_pid.value() >> 8) as u8 & 0x1F);
+        buf[pos + 4] = self.replacement_pid.value() as u8;
         pos += REPLACE_BODY;
         Ok(pos)
     }
@@ -238,8 +231,8 @@ mod tests {
     fn replace_round_trips_and_bites() {
         let r = Replace {
             replacement_ref: 0x07,
-            replaced_pid: 0x0123,    // 13-bit
-            replacement_pid: 0x01FF, // 13-bit
+            replaced_pid: Pid::new(0x0123),    // 13-bit
+            replacement_pid: Pid::new(0x01FF), // 13-bit
         };
         let bytes = r.to_bytes();
         // body: 07, reserved(111)+0x0123 => 0xE1 0x23, reserved+0x01FF => 0xE1 0xFF
@@ -250,27 +243,16 @@ mod tests {
         let parsed = Replace::parse(&bytes).unwrap();
         assert_eq!(parsed, r);
         let mut other = r;
-        other.replacement_pid = 0x0001;
+        other.replacement_pid = Pid::new(0x0001);
         assert_ne!(bytes, other.to_bytes());
     }
 
     #[test]
-    fn replace_oversized_pid_rejected_not_truncated() {
-        let r = Replace {
-            replacement_ref: 0x01,
-            replaced_pid: 0x2010, // 14-bit value, out of 13-bit range
-            replacement_pid: 0x0001,
-        };
-        let err = r.serialize_into(&mut [0u8; 32]).unwrap_err();
-        assert!(matches!(err, Error::InvalidObject { .. }));
-
-        let r2 = Replace {
-            replacement_ref: 0x01,
-            replaced_pid: 0x0001,
-            replacement_pid: 0x2010, // 14-bit value, out of 13-bit range
-        };
-        let err2 = r2.serialize_into(&mut [0u8; 32]).unwrap_err();
-        assert!(matches!(err2, Error::InvalidObject { .. }));
+    fn replace_oversized_pid_is_unrepresentable() {
+        // Both PID fields are typed 13-bit `Pid`s: 14-bit values are refused
+        // at construction instead of at serialize time.
+        assert!(Pid::try_new(0x2010).is_err());
+        assert!(Pid::try_new(0x1FFF).is_ok());
     }
 
     #[test]

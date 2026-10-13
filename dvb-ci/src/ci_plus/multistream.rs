@@ -15,6 +15,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Multi-stream resource (Table 2).
@@ -30,7 +31,7 @@ pub mod tag {
 
 /// The reserved PID value `0x1FFF` — the Host shall ignore a request for it
 /// (§6.4.2.3, Table 4 semantics).
-pub const NULL_PID: u16 = 0x1FFF;
+pub const NULL_PID: Pid = Pid::new(0x1FFF);
 
 // --- CICAM_multistream_capability (Table 3) ---
 
@@ -100,7 +101,7 @@ pub struct PidSelectRequest {
     /// descrambling.
     pub critical_for_descrambling: bool,
     /// `PID` (13) — requested PID value (the Host ignores [`NULL_PID`]).
-    pub pid: u16,
+    pub pid: Pid,
 }
 
 /// `PID_select_req()` (Table 4): CICAM → Host. PIDs are listed in descending
@@ -146,7 +147,7 @@ impl<'a> Parse<'a> for PidSelectReq {
         let mut pids = Vec::with_capacity(num_pid);
         for chunk in loop_bytes[..num_pid * PID_ENTRY_LEN].chunks_exact(PID_ENTRY_LEN) {
             let critical = chunk[0] & CRITICAL_FLAG_BIT != 0;
-            let pid = u16::from_be_bytes([chunk[0], chunk[1]]) & PID_MASK;
+            let pid = Pid::new(u16::from_be_bytes([chunk[0], chunk[1]]) & PID_MASK);
             pids.push(PidSelectRequest {
                 critical_for_descrambling: critical,
                 pid,
@@ -162,21 +163,18 @@ impl Serialize for PidSelectReq {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         objects::fit_bits(self.pids.len() as u64, 8, "PID_select_req num_PID")?;
-        for entry in &self.pids {
-            objects::fit_bits(u64::from(entry.pid), 13, "PID_select_req PID")?;
-        }
         let body_len = 2 + self.pids.len() * PID_ENTRY_LEN;
         let mut pos = objects::write_apdu_header(tag::PID_SELECT_REQ, body_len, buf)?;
         buf[pos] = self.lts_id;
         buf[pos + 1] = self.pids.len() as u8;
         pos += 2;
         for entry in &self.pids {
-            let mut hi = (entry.pid >> 8) as u8;
+            let mut hi = (entry.pid.value() >> 8) as u8;
             if entry.critical_for_descrambling {
                 hi |= CRITICAL_FLAG_BIT;
             }
             buf[pos] = hi;
-            buf[pos + 1] = entry.pid as u8;
+            buf[pos + 1] = entry.pid.value() as u8;
             pos += PID_ENTRY_LEN;
         }
         Ok(pos)
@@ -193,7 +191,7 @@ pub struct PidSelectedEntry {
     /// `PID_selected_flag` (1) — `true` if the PID could be selected successfully.
     pub pid_selected: bool,
     /// `PID` (13) — PID value to which `PID_selected_flag` applies.
-    pub pid: u16,
+    pub pid: Pid,
 }
 
 /// `PID_select_reply()` (Table 5): Host → CICAM.
@@ -240,7 +238,7 @@ impl<'a> Parse<'a> for PidSelectReply {
         let mut pids = Vec::with_capacity(num_pid);
         for chunk in loop_bytes[..num_pid * PID_ENTRY_LEN].chunks_exact(PID_ENTRY_LEN) {
             let selected = chunk[0] & PID_SELECTED_FLAG_BIT != 0;
-            let pid = u16::from_be_bytes([chunk[0], chunk[1]]) & PID_MASK;
+            let pid = Pid::new(u16::from_be_bytes([chunk[0], chunk[1]]) & PID_MASK);
             pids.push(PidSelectedEntry {
                 pid_selected: selected,
                 pid,
@@ -260,9 +258,6 @@ impl Serialize for PidSelectReply {
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         objects::fit_bits(self.pids.len() as u64, 8, "PID_select_reply num_PID")?;
-        for entry in &self.pids {
-            objects::fit_bits(u64::from(entry.pid), 13, "PID_select_reply PID")?;
-        }
         let body_len = 3 + self.pids.len() * PID_ENTRY_LEN;
         let mut pos = objects::write_apdu_header(tag::PID_SELECT_REPLY, body_len, buf)?;
         buf[pos] = self.lts_id;
@@ -274,12 +269,12 @@ impl Serialize for PidSelectReply {
         buf[pos + 2] = self.pids.len() as u8;
         pos += 3;
         for entry in &self.pids {
-            let mut hi = (entry.pid >> 8) as u8;
+            let mut hi = (entry.pid.value() >> 8) as u8;
             if entry.pid_selected {
                 hi |= PID_SELECTED_FLAG_BIT;
             }
             buf[pos] = hi;
-            buf[pos + 1] = entry.pid as u8;
+            buf[pos + 1] = entry.pid.value() as u8;
             pos += PID_ENTRY_LEN;
         }
         Ok(pos)
@@ -327,11 +322,11 @@ mod tests {
             pids: alloc::vec![
                 PidSelectRequest {
                     critical_for_descrambling: true,
-                    pid: 0x0123,
+                    pid: Pid::new(0x0123),
                 },
                 PidSelectRequest {
                     critical_for_descrambling: false,
-                    pid: 0x1FFE,
+                    pid: Pid::new(0x1FFE),
                 },
             ],
         };
@@ -370,11 +365,11 @@ mod tests {
             pids: alloc::vec![
                 PidSelectedEntry {
                     pid_selected: true,
-                    pid: 0x0064,
+                    pid: Pid::new(0x0064),
                 },
                 PidSelectedEntry {
                     pid_selected: false,
-                    pid: 0x00C8,
+                    pid: Pid::new(0x00C8),
                 },
             ],
         };
@@ -431,30 +426,12 @@ mod tests {
     }
 
     #[test]
-    fn oversized_req_pid_is_rejected_not_wrapped() {
-        // Before the fix, 0x2064 (exceeds 13 bits) silently wrapped to wire PID
-        // 0x0064 and returned Ok.
-        let req = PidSelectReq {
-            lts_id: 0,
-            pids: alloc::vec![PidSelectRequest {
-                critical_for_descrambling: false,
-                pid: 0x2064,
-            }],
-        };
-        let mut buf = [0u8; 32];
-        assert!(matches!(
-            req.serialize_into(&mut buf),
-            Err(Error::InvalidObject { .. })
-        ));
-    }
-
-    #[test]
     fn max_req_pid_still_serializes_and_round_trips() {
         let req = PidSelectReq {
             lts_id: 0,
             pids: alloc::vec![PidSelectRequest {
                 critical_for_descrambling: false,
-                pid: 0x1FFF,
+                pid: Pid::new(0x1FFF),
             }],
         };
         let bytes = req.to_bytes();
@@ -469,7 +446,7 @@ mod tests {
             pids: (0..256)
                 .map(|_| PidSelectRequest {
                     critical_for_descrambling: false,
-                    pid: 0x0100,
+                    pid: Pid::new(0x0100),
                 })
                 .collect(),
         };
@@ -480,20 +457,12 @@ mod tests {
         ));
     }
 
+
     #[test]
-    fn oversized_reply_pid_is_rejected_not_wrapped() {
-        let reply = PidSelectReply {
-            lts_id: 0,
-            pid_selection: false,
-            pids: alloc::vec![PidSelectedEntry {
-                pid_selected: false,
-                pid: 0x2064,
-            }],
-        };
-        let mut buf = [0u8; 32];
-        assert!(matches!(
-            reply.serialize_into(&mut buf),
-            Err(Error::InvalidObject { .. })
-        ));
+    fn oversized_pids_are_unrepresentable() {
+        // The 13-bit PID fields are typed `Pid`: a value that previously had
+        // to be rejected at serialize time cannot be constructed at all.
+        assert!(Pid::try_new(0x2064).is_err());
+        assert!(Pid::try_new(0x1FFF).is_ok());
     }
 }

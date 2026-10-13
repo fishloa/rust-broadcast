@@ -21,6 +21,7 @@ use crate::objects::ca_pmt::{
 };
 use alloc::vec::Vec;
 use broadcast_common::Serialize;
+use mpeg_ts::pid::Pid;
 use dvb_si::descriptors::DescriptorLoop;
 use dvb_si::tables::pmt::PmtSection;
 
@@ -40,7 +41,7 @@ pub struct CaPmtBuilt {
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BuiltStream {
     stream_type: u8,
-    elementary_pid: u16,
+    elementary_pid: Pid,
     ca_descriptors: Vec<u8>,
 }
 
@@ -141,7 +142,7 @@ fn build(
         .iter()
         .map(|s| BuiltStream {
             stream_type: s.stream_type.to_u8(),
-            elementary_pid: s.elementary_pid,
+            elementary_pid: Pid::new(s.elementary_pid),
             ca_descriptors: ca_descriptors_filtered(&s.es_info, allowed),
         })
         .collect();

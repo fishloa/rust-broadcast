@@ -11,6 +11,7 @@ use crate::tag::{self, ApduTag};
 use crate::traits::ApduDef;
 use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
+use mpeg_ts::pid::Pid;
 
 /// `CA_enable` 7-bit value (Table, p. 32).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -76,7 +77,7 @@ broadcast_common::impl_spec_display!(CaEnable, Rfu);
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CaPmtReplyStream {
     /// 13-bit `elementary_PID`.
-    pub elementary_pid: u16,
+    pub elementary_pid: Pid,
     /// ES-level `CA_enable` — `Some` iff the `CA_enable_flag` bit was set.
     pub ca_enable: Option<CaEnable>,
 }
@@ -132,7 +133,8 @@ impl<'a> Parse<'a> for CaPmtReply {
                     what: "ca_pmt_reply ES",
                 });
             }
-            let elementary_pid = (((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16;
+            let elementary_pid =
+                Pid::new((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
             let es_flag = (body[pos + 2] & 0x80) != 0;
             let es_enable = if es_flag {
                 Some(CaEnable::from_u8(body[pos + 2] & 0x7F))
@@ -167,13 +169,6 @@ impl Serialize for CaPmtReply {
             5,
             "ca_pmt_reply version_number",
         )?;
-        for s in &self.streams {
-            super::fit_bits(
-                u64::from(s.elementary_pid),
-                13,
-                "ca_pmt_reply ES elementary_PID",
-            )?;
-        }
         let body = REPLY_PREFIX + self.streams.len() * ES_LEN;
         let mut pos = super::write_apdu_header(tag::CA_PMT_REPLY, body, buf)?;
         buf[pos..pos + 2].copy_from_slice(&self.program_number.to_be_bytes());
@@ -183,8 +178,8 @@ impl Serialize for CaPmtReply {
         pos += REPLY_PREFIX;
         for s in &self.streams {
             // reserved(3)='111', elementary_PID(13). Range-checked above.
-            buf[pos] = 0xE0 | (s.elementary_pid >> 8) as u8;
-            buf[pos + 1] = s.elementary_pid as u8;
+            buf[pos] = 0xE0 | (s.elementary_pid.value() >> 8) as u8;
+            buf[pos + 1] = s.elementary_pid.value() as u8;
             buf[pos + 2] = encode_enable_byte(s.ca_enable);
             pos += ES_LEN;
         }
@@ -220,11 +215,11 @@ mod tests {
             ca_enable: Some(CaEnable::Possible),
             streams: alloc::vec![
                 CaPmtReplyStream {
-                    elementary_pid: 0x0200,
+                    elementary_pid: Pid::new(0x0200),
                     ca_enable: Some(CaEnable::Possible),
                 },
                 CaPmtReplyStream {
-                    elementary_pid: 0x0201,
+                    elementary_pid: Pid::new(0x0201),
                     ca_enable: Some(CaEnable::NotPossibleNoEntitlement),
                 },
             ],
@@ -245,7 +240,7 @@ mod tests {
             current_next_indicator: true,
             ca_enable: None,
             streams: alloc::vec![CaPmtReplyStream {
-                elementary_pid: 0x00FF,
+                elementary_pid: Pid::new(0x00FF),
                 ca_enable: None,
             }],
         };
@@ -257,19 +252,9 @@ mod tests {
     }
 
     #[test]
-    fn oversized_pid_rejected_not_truncated() {
-        let r = CaPmtReply {
-            program_number: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            ca_enable: None,
-            streams: alloc::vec![CaPmtReplyStream {
-                elementary_pid: 0x2001, // 14-bit value, out of 13-bit range
-                ca_enable: None,
-            }],
-        };
-        let err = r.serialize_into(&mut [0u8; 32]).unwrap_err();
-        assert!(matches!(err, Error::InvalidObject { .. }));
+    fn oversized_pid_is_unrepresentable() {
+        // A 14-bit value cannot become the typed 13-bit `elementary_pid`.
+        assert!(Pid::try_new(0x2001).is_err());
     }
 
     #[test]

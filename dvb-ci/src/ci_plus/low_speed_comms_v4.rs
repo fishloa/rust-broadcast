@@ -36,6 +36,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
 
 /// New LSC v4 `apdu_tag`s (§10), in the `0x9F8Cxx` namespace.
@@ -194,7 +195,7 @@ pub struct CommsInfoReply {
     pub source_port: u16,
     /// `inputDeliveryPID` (13) — TS-interface delivery PID for hybrid connections
     /// (`0x0020`–`0x1FFE`); `0x0000` if not a hybrid connection.
-    pub input_delivery_pid: u16,
+    pub input_delivery_pid: Pid,
 }
 
 // LTS_id(1) + reserved/status(1) + source_IPaddress(16) + source_port(2) +
@@ -221,8 +222,9 @@ impl<'a> Parse<'a> for CommsInfoReply {
         source_ip_address.copy_from_slice(&body[2..2 + IP_ADDR_LEN]);
         let p = 2 + IP_ADDR_LEN;
         let source_port = u16::from_be_bytes([body[p], body[p + 1]]);
-        let input_delivery_pid =
-            u16::from_be_bytes([body[p + 2], body[p + 3]]) & INPUT_DELIVERY_PID_MASK;
+        let input_delivery_pid = Pid::new(
+            u16::from_be_bytes([body[p + 2], body[p + 3]]) & INPUT_DELIVERY_PID_MASK,
+        );
         Ok(Self {
             lts_id,
             status,
@@ -238,11 +240,6 @@ impl Serialize for CommsInfoReply {
         objects::apdu_len(INFO_REPLY_BODY)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::fit_bits(
-            u64::from(self.input_delivery_pid),
-            13,
-            "comms_info_reply inputDeliveryPID",
-        )?;
         let pos = objects::write_apdu_header(tag::COMMS_INFO_REPLY, INFO_REPLY_BODY, buf)?;
         buf[pos] = self.lts_id;
         // reserved(7)='0000000' + status(1).
@@ -251,7 +248,7 @@ impl Serialize for CommsInfoReply {
         let p = pos + 2 + IP_ADDR_LEN;
         buf[p..p + 2].copy_from_slice(&self.source_port.to_be_bytes());
         // reserved(3)='000' + inputDeliveryPID(13). Range-checked above.
-        buf[p + 2..p + 4].copy_from_slice(&self.input_delivery_pid.to_be_bytes());
+        buf[p + 2..p + 4].copy_from_slice(&self.input_delivery_pid.value().to_be_bytes());
         Ok(pos + INFO_REPLY_BODY)
     }
 }
@@ -773,7 +770,7 @@ mod tests {
             status: true,
             source_ip_address: IP_A,
             source_port: 0x1234,
-            input_delivery_pid: 0x0100,
+            input_delivery_pid: Pid::new(0x0100),
         };
         let bytes = r.to_bytes();
         // body=22=0x16. LTS(07) status(01) IP(16) port(12 34) pid(01 00).
@@ -798,7 +795,7 @@ mod tests {
             0x00, 0x00, 0xFF, 0xFE,
         ];
         let r = CommsInfoReply::parse(&bytes).unwrap();
-        assert_eq!(r.input_delivery_pid, 0x1FFE);
+        assert_eq!(r.input_delivery_pid, Pid::new(0x1FFE));
     }
 
     #[test]
@@ -956,7 +953,7 @@ mod tests {
             status: false,
             source_ip_address: [0; IP_ADDR_LEN],
             source_port: 0,
-            input_delivery_pid: 0,
+            input_delivery_pid: Pid::new(0),
         };
         assert!(matches!(
             LscV4Apdu::parse(&reply.to_bytes()).unwrap(),
@@ -986,31 +983,13 @@ mod tests {
     }
 
     #[test]
-    fn oversized_input_delivery_pid_is_rejected_not_wrapped() {
-        // Before the fix, 0x2064 (exceeds 13 bits) silently wrapped to wire PID
-        // 0x0064 and returned Ok.
-        let reply = CommsInfoReply {
-            lts_id: 0,
-            status: false,
-            source_ip_address: [0; IP_ADDR_LEN],
-            source_port: 0,
-            input_delivery_pid: 0x2064,
-        };
-        let mut buf = [0u8; 32];
-        assert!(matches!(
-            reply.serialize_into(&mut buf),
-            Err(Error::InvalidObject { .. })
-        ));
-    }
-
-    #[test]
     fn max_input_delivery_pid_still_serializes_and_round_trips() {
         let reply = CommsInfoReply {
             lts_id: 0,
             status: false,
             source_ip_address: [0; IP_ADDR_LEN],
             source_port: 0,
-            input_delivery_pid: 0x1FFF,
+            input_delivery_pid: Pid::new(0x1FFF),
         };
         let bytes = reply.to_bytes();
         assert_eq!(CommsInfoReply::parse(&bytes).unwrap(), reply);
@@ -1035,5 +1014,13 @@ mod tests {
             r.serialize_into(&mut buf),
             Err(Error::InvalidObject { .. })
         ));
+    }
+
+    #[test]
+    fn oversized_pids_are_unrepresentable() {
+        // The 13-bit PID fields are typed `Pid`: a value that previously had
+        // to be rejected at serialize time cannot be constructed at all.
+        assert!(Pid::try_new(0x2064).is_err());
+        assert!(Pid::try_new(0x1FFF).is_ok());
     }
 }

@@ -1067,6 +1067,7 @@ version = "0.9.1"
 dependencies = [
  "broadcast-common",
  "dvb-si",
+ "mpeg-ts",
  "serde",
  "serde_json",
  "test-alloc",

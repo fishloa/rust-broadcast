@@ -33,6 +33,7 @@ use crate::objects::ca_pmt::{
 use crate::objects::ca_pmt_reply::{CaEnable, encode_enable_byte};
 use crate::tag::{CA_PMT, CA_PMT_REPLY};
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
 
 // Re-export the shared value enums so callers needn't reach into `objects`.
@@ -52,7 +53,7 @@ pub struct MsCaPmtStream<'a> {
     /// MPEG-2 `stream_type`.
     pub stream_type: u8,
     /// 13-bit `elementary_PID`.
-    pub elementary_pid: u16,
+    pub elementary_pid: Pid,
     /// `ca_pmt_cmd_id` for this ES — present only when `ES_info_length != 0`.
     pub cmd_id: Option<CaPmtCmdId>,
     /// ES-level `CA_descriptor()` loop, verbatim wire bytes (no `cmd_id`).
@@ -72,7 +73,7 @@ pub struct MsCaPmt<'a> {
     /// `program_number` (16).
     pub program_number: u16,
     /// `PMT_PID` (13) — PID of the selected service's PMT.
-    pub pmt_pid: u16,
+    pub pmt_pid: Pid,
     /// 5-bit `version_number`.
     pub version_number: u8,
     /// `current_next_indicator`.
@@ -108,7 +109,7 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
         let list_management = CaPmtListManagement::from_u8(body[1]);
         let program_number = u16::from_be_bytes([body[2], body[3]]);
         // reserved(3) + PMT_PID(13).
-        let pmt_pid = (((body[4] & 0x1F) as u16) << 8) | body[5] as u16;
+        let pmt_pid = Pid::new((((body[4] & 0x1F) as u16) << 8) | body[5] as u16);
         // reserved(2) + version(5) + cni(1).
         let version_number = (body[6] >> 1) & 0x1F;
         let current_next_indicator = (body[6] & 0x01) != 0;
@@ -133,7 +134,7 @@ impl<'a> Parse<'a> for MsCaPmt<'a> {
                 });
             }
             let stream_type = body[pos];
-            let elementary_pid = (((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16;
+            let elementary_pid = Pid::new((((body[pos + 1] & 0x1F) as u16) << 8) | body[pos + 2] as u16);
             let es_info_length = (((body[pos + 3] & 0x0F) as usize) << 8) | body[pos + 4] as usize;
             pos += MS_ES_PREFIX;
             let (es_cmd, ca_descriptors) =
@@ -170,7 +171,6 @@ impl Serialize for MsCaPmt<'_> {
         crate::objects::apdu_len(body)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        objects::fit_bits(u64::from(self.pmt_pid), 13, "ms ca_pmt PMT_PID")?;
         objects::fit_bits(
             u64::from(self.version_number),
             5,
@@ -184,11 +184,6 @@ impl Serialize for MsCaPmt<'_> {
         )?;
         let mut body = MS_CA_PMT_PREFIX + program_info_length;
         for s in &self.streams {
-            objects::fit_bits(
-                u64::from(s.elementary_pid),
-                13,
-                "ms ca_pmt ES elementary_PID",
-            )?;
             let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
             objects::fit_bits(es_info_length as u64, 12, "ms ca_pmt ES_info_length")?;
             body += MS_ES_PREFIX + es_info_length;
@@ -198,8 +193,8 @@ impl Serialize for MsCaPmt<'_> {
         buf[pos + 1] = self.list_management.to_u8();
         buf[pos + 2..pos + 4].copy_from_slice(&self.program_number.to_be_bytes());
         // reserved(3)='111', PMT_PID(13). Range-checked above.
-        buf[pos + 4] = 0xE0 | (self.pmt_pid >> 8) as u8;
-        buf[pos + 5] = self.pmt_pid as u8;
+        buf[pos + 4] = 0xE0 | (self.pmt_pid.value() >> 8) as u8;
+        buf[pos + 5] = self.pmt_pid.value() as u8;
         // reserved(2)='11', version(5), current_next(1). Range-checked above.
         buf[pos + 6] = 0xC0 | (self.version_number << 1) | u8::from(self.current_next_indicator);
         // reserved(4)='1111', program_info_length(12). Range-checked above.
@@ -212,8 +207,8 @@ impl Serialize for MsCaPmt<'_> {
             let es_info_length = info_block_len(s.cmd_id, s.ca_descriptors);
             buf[pos] = s.stream_type;
             // reserved(3)='111', elementary_PID(13). Range-checked above.
-            buf[pos + 1] = 0xE0 | (s.elementary_pid >> 8) as u8;
-            buf[pos + 2] = s.elementary_pid as u8;
+            buf[pos + 1] = 0xE0 | (s.elementary_pid.value() >> 8) as u8;
+            buf[pos + 2] = s.elementary_pid.value() as u8;
             buf[pos + 3] = 0xF0 | (es_info_length >> 8) as u8;
             buf[pos + 4] = es_info_length as u8;
             pos += MS_ES_PREFIX;
@@ -232,7 +227,7 @@ impl Serialize for MsCaPmt<'_> {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct MsCaPmtReplyStream {
     /// 13-bit `elementary_PID`.
-    pub elementary_pid: u16,
+    pub elementary_pid: Pid,
     /// ES-level `CA_enable` — `Some` iff the `CA_enable_flag` bit was set.
     pub ca_enable: Option<CaEnable>,
 }
@@ -293,7 +288,7 @@ impl<'a> Parse<'a> for MsCaPmtReply {
                     what: "ms ca_pmt_reply ES",
                 });
             }
-            let elementary_pid = (((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16;
+            let elementary_pid = Pid::new((((body[pos] & 0x1F) as u16) << 8) | body[pos + 1] as u16);
             let es_flag = (body[pos + 2] & 0x80) != 0;
             let es_enable = if es_flag {
                 Some(CaEnable::from_u8(body[pos + 2] & 0x7F))
@@ -329,13 +324,6 @@ impl Serialize for MsCaPmtReply {
             5,
             "ms ca_pmt_reply version_number",
         )?;
-        for s in &self.streams {
-            objects::fit_bits(
-                u64::from(s.elementary_pid),
-                13,
-                "ms ca_pmt_reply ES elementary_PID",
-            )?;
-        }
         let body = MS_REPLY_PREFIX + self.streams.len() * MS_REPLY_ES_LEN;
         let mut pos = crate::objects::write_apdu_header(CA_PMT_REPLY, body, buf)?;
         buf[pos] = self.lts_id;
@@ -346,8 +334,8 @@ impl Serialize for MsCaPmtReply {
         pos += MS_REPLY_PREFIX;
         for s in &self.streams {
             // reserved(3)='111', elementary_PID(13). Range-checked above.
-            buf[pos] = 0xE0 | (s.elementary_pid >> 8) as u8;
-            buf[pos + 1] = s.elementary_pid as u8;
+            buf[pos] = 0xE0 | (s.elementary_pid.value() >> 8) as u8;
+            buf[pos + 1] = s.elementary_pid.value() as u8;
             buf[pos + 2] = encode_enable_byte(s.ca_enable);
             pos += MS_REPLY_ES_LEN;
         }
@@ -401,14 +389,14 @@ mod tests {
             lts_id: 0x02,
             list_management: CaPmtListManagement::Only,
             program_number: 0x0001,
-            pmt_pid: 0x0064,
+            pmt_pid: Pid::new(0x0064),
             version_number: 1,
             current_next_indicator: true,
             cmd_id: Some(CaPmtCmdId::OkDescrambling),
             program_ca_descriptors: &prog,
             streams: alloc::vec![MsCaPmtStream {
                 stream_type: 0x02,
-                elementary_pid: 0x0200,
+                elementary_pid: Pid::new(0x0200),
                 cmd_id: Some(CaPmtCmdId::OkDescrambling),
                 ca_descriptors: &es_desc,
             }],
@@ -442,7 +430,7 @@ mod tests {
         assert_eq!(MsCaPmt::parse(&bytes).unwrap(), pmt);
         // Field-mutation: change PMT_PID.
         let mut other = pmt.clone();
-        other.pmt_pid = 0x0065;
+        other.pmt_pid = Pid::new(0x0065);
         assert_ne!(bytes, other.to_bytes());
     }
 
@@ -452,7 +440,7 @@ mod tests {
             lts_id: 0x00,
             list_management: CaPmtListManagement::Update,
             program_number: 0x0009,
-            pmt_pid: 0x1FFF,
+            pmt_pid: Pid::new(0x1FFF),
             version_number: 0,
             current_next_indicator: true,
             cmd_id: None,
@@ -480,11 +468,11 @@ mod tests {
             ca_enable: Some(CaEnable::Possible),
             streams: alloc::vec![
                 MsCaPmtReplyStream {
-                    elementary_pid: 0x0200,
+                    elementary_pid: Pid::new(0x0200),
                     ca_enable: Some(CaEnable::Possible),
                 },
                 MsCaPmtReplyStream {
-                    elementary_pid: 0x0201,
+                    elementary_pid: Pid::new(0x0201),
                     ca_enable: None,
                 },
             ],
@@ -515,7 +503,7 @@ mod tests {
             lts_id: 0,
             list_management: CaPmtListManagement::Only,
             program_number: 1,
-            pmt_pid: 0x64,
+            pmt_pid: Pid::new(0x64),
             version_number: 0,
             current_next_indicator: true,
             cmd_id: None,
@@ -543,34 +531,12 @@ mod tests {
     }
 
     #[test]
-    fn oversized_pmt_pid_is_rejected_not_wrapped() {
-        // Before the fix, 0x2064 (exceeds 13 bits) silently wrapped to wire PID
-        // 0x0064 and returned Ok.
-        let pmt = MsCaPmt {
-            lts_id: 0,
-            list_management: CaPmtListManagement::Only,
-            program_number: 1,
-            pmt_pid: 0x2064,
-            version_number: 0,
-            current_next_indicator: true,
-            cmd_id: None,
-            program_ca_descriptors: &[],
-            streams: Vec::new(),
-        };
-        let mut buf = [0u8; 32];
-        assert!(matches!(
-            pmt.serialize_into(&mut buf),
-            Err(Error::InvalidObject { .. })
-        ));
-    }
-
-    #[test]
     fn max_pmt_pid_still_serializes_and_round_trips() {
         let pmt = MsCaPmt {
             lts_id: 0,
             list_management: CaPmtListManagement::Only,
             program_number: 1,
-            pmt_pid: 0x1FFF,
+            pmt_pid: Pid::new(0x1FFF),
             version_number: 0,
             current_next_indicator: true,
             cmd_id: None,
@@ -581,23 +547,12 @@ mod tests {
         assert_eq!(MsCaPmt::parse(&bytes).unwrap(), pmt);
     }
 
+
     #[test]
-    fn oversized_reply_elementary_pid_is_rejected_not_wrapped() {
-        let reply = MsCaPmtReply {
-            lts_id: 0,
-            program_number: 1,
-            version_number: 0,
-            current_next_indicator: true,
-            ca_enable: None,
-            streams: alloc::vec![MsCaPmtReplyStream {
-                elementary_pid: 0x2064,
-                ca_enable: None,
-            }],
-        };
-        let mut buf = [0u8; 32];
-        assert!(matches!(
-            reply.serialize_into(&mut buf),
-            Err(Error::InvalidObject { .. })
-        ));
+    fn oversized_pids_are_unrepresentable() {
+        // The 13-bit PID fields are typed `Pid`: a value that previously had
+        // to be rejected at serialize time cannot be constructed at all.
+        assert!(Pid::try_new(0x2064).is_err());
+        assert!(Pid::try_new(0x1FFF).is_ok());
     }
 }

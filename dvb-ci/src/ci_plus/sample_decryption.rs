@@ -19,6 +19,7 @@
 use crate::error::{Error, Result};
 use crate::objects;
 use alloc::vec::Vec;
+use mpeg_ts::pid::Pid;
 use broadcast_common::{Parse, Serialize};
 
 /// Resource-scoped `apdu_tag`s for the Sample decryption resource (Table 30).
@@ -209,7 +210,7 @@ impl<'a> DrmMetadataRecord<'a> {
 pub struct SampleTrack<'a> {
     /// `track_PID` (13) — PID on which the Samples for this Sample Track are sent.
     /// Values `0x0000`–`0x001F` are reserved.
-    pub track_pid: u16,
+    pub track_pid: Pid,
     /// The DRM metadata records for this track.
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub records: Vec<DrmMetadataRecord<'a>>,
@@ -253,7 +254,7 @@ impl<'a> SamplePayload<'a> {
             let mut tracks = Vec::with_capacity(n);
             for _ in 0..n {
                 let pid_word = r.u16()?;
-                let track_pid = pid_word & TRACK_PID_MASK;
+                let track_pid = Pid::new(pid_word & TRACK_PID_MASK);
                 let m = r.u8()? as usize;
                 let mut records = Vec::with_capacity(m);
                 for _ in 0..m {
@@ -311,11 +312,6 @@ impl<'a> SamplePayload<'a> {
                 )?;
                 for track in tracks {
                     objects::fit_bits(
-                        u64::from(track.track_pid),
-                        13,
-                        "sd_start/sd_update track_PID",
-                    )?;
-                    objects::fit_bits(
                         track.records.len() as u64,
                         8,
                         "sd_start/sd_update number_of_metadata_records",
@@ -342,7 +338,7 @@ impl<'a> SamplePayload<'a> {
                 for track in tracks {
                     // reserved(3)='000' + track_PID(13). Range-checked by
                     // validate(), so no mask is needed to fit the field.
-                    w.u16(track.track_pid);
+                    w.u16(track.track_pid.value());
                     w.u8(track.records.len() as u8);
                     for rec in &track.records {
                         rec.write_into(w);
@@ -850,7 +846,7 @@ mod tests {
             program_number: 0x1000,
             payload: SamplePayload::Tracks(alloc::vec![
                 SampleTrack {
-                    track_pid: 0x0100,
+                    track_pid: Pid::new(0x0100),
                     records: alloc::vec![DrmMetadataRecord {
                         drm_metadata_source: 0x01,
                         drm_system_id: 0x4AD4,
@@ -859,7 +855,7 @@ mod tests {
                     }],
                 },
                 SampleTrack {
-                    track_pid: 0x0101,
+                    track_pid: Pid::new(0x0101),
                     records: Vec::new(),
                 },
             ]),
@@ -874,8 +870,8 @@ mod tests {
         // 13-bit PID masking: top 3 bits ignored on the wire.
         let parsed = SdStart::parse(&bytes).unwrap();
         if let SamplePayload::Tracks(t) = &parsed.payload {
-            assert_eq!(t[0].track_pid, 0x0100);
-            assert_eq!(t[1].track_pid, 0x0101);
+            assert_eq!(t[0].track_pid, Pid::new(0x0100));
+            assert_eq!(t[1].track_pid, Pid::new(0x0101));
             assert_eq!(t.len(), 2);
         } else {
             panic!("expected Tracks");
@@ -916,7 +912,7 @@ mod tests {
             lts_id: 0x09,
             payload: SamplePayload::Tracks(alloc::vec![
                 SampleTrack {
-                    track_pid: 0x0200,
+                    track_pid: Pid::new(0x0200),
                     records: alloc::vec![DrmMetadataRecord {
                         drm_metadata_source: 0x05,
                         drm_system_id: 0xFFFF,
@@ -925,7 +921,7 @@ mod tests {
                     }],
                 },
                 SampleTrack {
-                    track_pid: 0x0201,
+                    track_pid: Pid::new(0x0201),
                     records: Vec::new(),
                 },
             ]),
@@ -976,31 +972,12 @@ mod tests {
     }
 
     #[test]
-    fn oversized_track_pid_is_rejected_not_wrapped() {
-        // Before the fix, 0x2100 (exceeds 13 bits) silently wrapped to wire PID
-        // 0x0100 and returned Ok.
-        let s = SdStart {
-            lts_id: 0,
-            program_number: 0,
-            payload: SamplePayload::Tracks(alloc::vec![SampleTrack {
-                track_pid: 0x2100,
-                records: Vec::new(),
-            }]),
-        };
-        let mut buf = [0u8; 64];
-        assert!(matches!(
-            s.serialize_into(&mut buf),
-            Err(Error::InvalidObject { .. })
-        ));
-    }
-
-    #[test]
     fn max_track_pid_still_serializes_and_round_trips() {
         let s = SdStart {
             lts_id: 0,
             program_number: 0,
             payload: SamplePayload::Tracks(alloc::vec![SampleTrack {
-                track_pid: 0x1FFF,
+                track_pid: Pid::new(0x1FFF),
                 records: Vec::new(),
             }]),
         };
@@ -1043,5 +1020,13 @@ mod tests {
             r.serialize_into(&mut buf),
             Err(Error::InvalidObject { .. })
         ));
+    }
+
+    #[test]
+    fn oversized_pids_are_unrepresentable() {
+        // The 13-bit PID fields are typed `Pid`: a value that previously had
+        // to be rejected at serialize time cannot be constructed at all.
+        assert!(Pid::try_new(0x2064).is_err());
+        assert!(Pid::try_new(0x1FFF).is_ok());
     }
 }
