@@ -13,7 +13,7 @@ use dvb_si::descriptors::{
 };
 use dvb_si::tables::AnyTableSection;
 
-use crate::util::{for_each_packet, read_file};
+use crate::util::PacketReader;
 
 /// Label for an `AnyTableSection` — the macro-generated `name()`, with the
 /// `table_id` appended for unknowns.
@@ -46,8 +46,8 @@ fn print_descriptors(loop_: &DescriptorLoop<'_>, reg: &DescriptorRegistry, inden
 
 /// `dvb-tools dump <FILE> [--json]` — returns success on a clean run.
 pub fn run(path: &str, json: bool) -> ExitCode {
-    let data = match read_file(path, "dvb-tools dump") {
-        Ok(d) => d,
+    let mut packets = match PacketReader::open(path, "dvb-tools dump") {
+        Ok(p) => p,
         Err(code) => return code,
     };
 
@@ -59,7 +59,7 @@ pub fn run(path: &str, json: bool) -> ExitCode {
         .with_logical_channel_for_pds(PDS_NORDIG);
 
     let mut demux = SiDemux::builder().build();
-    for packet in for_each_packet(&data) {
+    for packet in packets.by_ref() {
         for event in demux.feed(&packet) {
             match event.table_section() {
                 Ok(table) => {
@@ -119,6 +119,10 @@ pub fn run(path: &str, json: bool) -> ExitCode {
                 Err(e) => eprintln!("pid={} parse error: {e}", event.pid()),
             }
         }
+    }
+
+    if let Err(code) = packets.finish() {
+        return code;
     }
 
     let s = demux.stats();

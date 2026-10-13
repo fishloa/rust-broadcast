@@ -25,7 +25,7 @@ use dvb_si::demux::SiDemux;
 use dvb_si::descriptors::{AnyDescriptor, DescriptorRegistry, PDS_EACEM, PDS_NORDIG};
 use dvb_si::tables::RunningStatus;
 
-use crate::util::{for_each_packet, read_file};
+use crate::util::PacketReader;
 
 /// `table_id`s carrying a Service Description Table (actual + other transport).
 const SDT_TABLE_IDS: [u8; 2] = [
@@ -112,8 +112,8 @@ fn print_row(row: &ServiceRow, lcn: Option<u16>) {
 }
 
 pub fn run(path: &str) -> ExitCode {
-    let data = match read_file(path, "dvb-tools services") {
-        Ok(d) => d,
+    let mut packets = match PacketReader::open(path, "dvb-tools services") {
+        Ok(p) => p,
         Err(code) => return code,
     };
 
@@ -133,7 +133,7 @@ pub fn run(path: &str) -> ExitCode {
     let mut sdt_seen = 0u32;
     let mut nit_seen = 0u32;
 
-    for packet in for_each_packet(&data) {
+    for packet in packets.by_ref() {
         for event in demux.feed(&packet) {
             let table_id = event.table_id();
             let bytes = event.bytes().to_vec();
@@ -155,6 +155,10 @@ pub fn run(path: &str) -> ExitCode {
                 }
             }
         }
+    }
+
+    if let Err(code) = packets.finish() {
+        return code;
     }
 
     if sdt_seen == 0 {

@@ -15,7 +15,7 @@ use dvb_si::collect::SectionSetCollector;
 use dvb_si::demux::SiDemux;
 use dvb_si::epg::EpgStore;
 
-use crate::util::{for_each_packet, read_file};
+use crate::util::PacketReader;
 
 /// `table_id`s carrying a Service Description Table (actual + other transport).
 /// SDT sections are routed to [`EpgStore::feed_sdt`] so service names attach to
@@ -26,8 +26,8 @@ const SDT_TABLE_IDS: [u8; 2] = [
 ];
 
 pub fn run(path: &str, json: bool) -> ExitCode {
-    let data = match read_file(path, "dvb-tools epg") {
-        Ok(d) => d,
+    let mut packets = match PacketReader::open(path, "dvb-tools epg") {
+        Ok(p) => p,
         Err(code) => return code,
     };
 
@@ -36,7 +36,7 @@ pub fn run(path: &str, json: bool) -> ExitCode {
     // `EpgStore::feed_with_pid` ingests EIT only; SDT must be reassembled
     // separately and handed to `feed_sdt` to attach service names.
     let mut sdt_collector = SectionSetCollector::new();
-    for packet in for_each_packet(&data) {
+    for packet in packets.by_ref() {
         for event in demux.feed(&packet) {
             let pid = event.pid();
             let table_id = event.table_id();
@@ -52,6 +52,10 @@ pub fn run(path: &str, json: bool) -> ExitCode {
                 store.feed_sdt(&sdt);
             }
         }
+    }
+
+    if let Err(code) = packets.finish() {
+        return code;
     }
 
     if json {
