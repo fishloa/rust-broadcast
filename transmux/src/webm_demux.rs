@@ -404,12 +404,10 @@ impl<'a> WebmDemux<'a> {
                 }
             };
             match id {
-                INFO => {
-                    if Self::walk_info(child, timestamp_scale_ns).is_err() {
-                        degraded.push(InputDegradation::MalformedUnit {
-                            position: offset_in(root, child),
-                        });
-                    }
+                INFO if Self::walk_info(child, timestamp_scale_ns).is_err() => {
+                    degraded.push(InputDegradation::MalformedUnit {
+                        position: offset_in(root, child),
+                    });
                 }
                 TRACKS => Self::walk_tracks(root, child, tracks, degraded),
                 CLUSTER => Self::walk_cluster(root, child, *timestamp_scale_ns, blocks, degraded),
@@ -1779,11 +1777,19 @@ mod tests {
         file.extend_from_slice(&segment_body);
 
         let mut demux = WebmDemux::new();
-        let result = demux.demux(&file);
+        // Skip-and-report (audit T16, #1144) replaced fail-the-file: the
+        // malformed block must still never materialise frames, and the damage
+        // must be visible.
+        let media = demux.demux(&file).expect("a damaged block is skipped");
         assert!(
-            result.is_err(),
-            "a block declaring more frames than the file has bytes must not demux              (got {:?} tracks)",
-            result.map(|m| m.tracks.len())
+            media.tracks.iter().all(|t| t.samples.is_empty()),
+            "a block declaring more frames than the file has bytes yields no frames"
+        );
+        assert_eq!(
+            media.degraded.len(),
+            1,
+            "and is reported: {:?}",
+            media.degraded
         );
 
         // The same block, but with a count the file can actually carry, parses
