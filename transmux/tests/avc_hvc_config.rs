@@ -165,7 +165,7 @@ fn test_avcc_real_fixture_round_trip() {
     assert_eq!(record.sps_ext.len(), 0, "no SPSExt");
 
     // Round-trip: serialize → byte-identical
-    let serialized = record.to_bytes();
+    let serialized = record.try_to_bytes().unwrap();
     assert_eq!(
         serialized.len(),
         avcc_body.len(),
@@ -188,9 +188,9 @@ fn test_avcc_mutation_changes_bytes() {
 
     let mut record = AVCDecoderConfigurationRecord::parse(&avcc_body).expect("should parse avcC");
 
-    let original = record.to_bytes();
+    let original = record.try_to_bytes().unwrap();
     record.level_indication = 50;
-    let mutated = record.to_bytes();
+    let mutated = record.try_to_bytes().unwrap();
     assert_ne!(
         mutated, original,
         "mutating level_indication must change serialized bytes"
@@ -227,7 +227,7 @@ fn test_hvcc_real_fixture_round_trip() {
     assert!(record.arrays.len() >= 3, "at least VPS/SPS/PPS arrays");
 
     // Round-trip: serialize → byte-identical
-    let serialized = record.to_bytes();
+    let serialized = record.try_to_bytes().unwrap();
     assert_eq!(
         serialized.len(),
         hvcc_body.len(),
@@ -258,9 +258,9 @@ fn test_hvcc_mutation_changes_bytes() {
 
     let mut record = HEVCDecoderConfigurationRecord::parse(&hvcc_body).expect("should parse hvcC");
 
-    let original = record.to_bytes();
+    let original = record.try_to_bytes().unwrap();
     record.general_level_idc = 90;
-    let mutated = record.to_bytes();
+    let mutated = record.try_to_bytes().unwrap();
     assert_ne!(
         mutated, original,
         "mutating general_level_idc must change serialized bytes"

@@ -144,14 +144,14 @@ mod tests {
 
     #[test]
     fn profile_enq_round_trip() {
-        let bytes = ProfileEnq::default().to_bytes();
+        let bytes = ProfileEnq::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x10, 0x00]);
         assert_eq!(ProfileEnq::parse(&bytes).unwrap(), ProfileEnq::default());
     }
 
     #[test]
     fn profile_change_round_trip() {
-        let bytes = ProfileChange::default().to_bytes();
+        let bytes = ProfileChange::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x12, 0x00]);
         assert_eq!(
             ProfileChange::parse(&bytes).unwrap(),
@@ -169,7 +169,7 @@ mod tests {
                 CONDITIONAL_ACCESS_SUPPORT,
             ],
         };
-        let bytes = p.to_bytes();
+        let bytes = p.try_to_bytes().unwrap();
         // header(3) + length(1) + 3*4 = 16
         assert_eq!(bytes.len(), 16);
         assert_eq!(&bytes[..4], &[0x9F, 0x80, 0x11, 0x0C]); // length 12
@@ -184,10 +184,10 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             resources: alloc::vec![RESOURCE_MANAGER],
         };
-        let bytes = p.to_bytes();
+        let bytes = p.try_to_bytes().unwrap();
         let mut other = p.clone();
         other.resources[0] = MMI_RES;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     const MMI_RES: ResourceId = crate::resource::MMI;

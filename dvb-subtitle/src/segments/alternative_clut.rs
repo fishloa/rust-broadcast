@@ -346,13 +346,13 @@ mod tests {
         assert_eq!(seg.clut_id, 3);
         assert_eq!(seg.entries.len(), 1);
         assert_eq!(seg.entries[0].luma_value, 128);
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test
         let mut seg2 = seg.clone();
         seg2.entries[0].luma_value = 200;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = AlternativeClutSegment::parse(&out2).unwrap();
         assert_eq!(reparse.entries[0].luma_value, 200);
@@ -367,13 +367,13 @@ mod tests {
         let seg = AlternativeClutSegment::parse(&bytes).unwrap();
         assert_eq!(seg.clut_parameters.output_bit_depth, 1);
         assert_eq!(seg.entries.len(), 1);
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test
         let mut seg2 = seg.clone();
         seg2.clut_id = 7;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = AlternativeClutSegment::parse(&out2).unwrap();
         assert_eq!(reparse.clut_id, 7);

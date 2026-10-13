@@ -441,7 +441,7 @@ mod tests {
             app_domain_identifier: &[0x01, 0x02, 0x03],
             initial_object: &[0xAA, 0xBB],
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         // tag(3) + len(1) + domLen(1=3) + objLen(1=2) + dom(3) + obj(2); body = 7 = 0x07.
         assert_eq!(
             bytes,
@@ -455,7 +455,7 @@ mod tests {
             app_domain_identifier: &[0x01, 0x02, 0x04],
             initial_object: &[0xAA, 0xBB],
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -465,7 +465,7 @@ mod tests {
             app_domain_identifier: &[],
             initial_object: &[],
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x00, 0x02, 0x00, 0x00]);
         assert_eq!(RequestStart::parse(&bytes).unwrap(), req);
     }
@@ -485,7 +485,7 @@ mod tests {
                 ack_code: AckCode::from_u8(byte),
             };
             assert_eq!(ack.ack_code, code);
-            let bytes = ack.to_bytes();
+            let bytes = ack.try_to_bytes().unwrap();
             assert_eq!(bytes, [0x9F, 0x80, 0x01, 0x01, byte]);
             assert_eq!(RequestStartAck::parse(&bytes).unwrap(), ack);
         }
@@ -497,7 +497,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             file_name: b"app.bin",
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         assert_eq!(bytes[..4], [0x9F, 0x80, 0x02, 0x07]);
         assert_eq!(&bytes[4..], b"app.bin");
         assert_eq!(FileReq::parse(&bytes).unwrap(), req);
@@ -510,7 +510,7 @@ mod tests {
             file_ok: true,
             file: &[0xDE, 0xAD, 0xBE, 0xEF],
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         // tag(3) + len(1=5) + flag(1=0x01) + 4 file bytes.
         assert_eq!(
             bytes,
@@ -523,7 +523,7 @@ mod tests {
             file_ok: false,
             file: &[],
         };
-        let bytes = unavailable.to_bytes();
+        let bytes = unavailable.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x03, 0x01, 0x00]);
         assert_eq!(FileAck::parse(&bytes).unwrap(), unavailable);
         // reserved upper bits ignored on parse (0xFF -> file_ok true).
@@ -537,7 +537,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             abort_req_code: &[0x11, 0x22],
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x04, 0x02, 0x11, 0x22]);
         assert_eq!(AppAbortReq::parse(&bytes).unwrap(), req);
 
@@ -545,7 +545,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             abort_ack_code: &[0x33],
         };
-        let bytes = ack.to_bytes();
+        let bytes = ack.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x05, 0x01, 0x33]);
         assert_eq!(AppAbortAck::parse(&bytes).unwrap(), ack);
     }
@@ -557,7 +557,8 @@ mod tests {
             app_domain_identifier: &[0x01],
             initial_object: &[],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert!(matches!(
             ApplicationMmiApdu::parse(&rs).unwrap(),
             ApplicationMmiApdu::RequestStart(_)
@@ -566,9 +567,10 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             abort_ack_code: &[0x01],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = ApplicationMmiApdu::parse(&aaa).unwrap();
         assert!(matches!(parsed, ApplicationMmiApdu::AppAbortAck(_)));
-        assert_eq!(parsed.to_bytes(), aaa);
+        assert_eq!(parsed.try_to_bytes().unwrap(), aaa);
     }
 }

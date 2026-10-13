@@ -1353,7 +1353,7 @@ mod tests {
             cmd: DisplayControlCmd::SetMmiMode,
             mmi_mode: Some(MmiMode::HighLevel),
         };
-        let bytes = dc.to_bytes();
+        let bytes = dc.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x88, 0x01, 0x02, 0x01, 0x01]);
         assert_eq!(DisplayControl::parse(&bytes).unwrap(), dc);
 
@@ -1362,13 +1362,13 @@ mod tests {
             cmd: DisplayControlCmd::GetDisplayCharacterTableList,
             mmi_mode: None,
         };
-        let qb = q.to_bytes();
+        let qb = q.try_to_bytes().unwrap();
         assert_eq!(qb, [0x9F, 0x88, 0x01, 0x01, 0x02]);
         assert_eq!(DisplayControl::parse(&qb).unwrap(), q);
 
         let mut other = dc;
         other.mmi_mode = Some(MmiMode::LowLevelFullScreenGraphics);
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1400,7 +1400,7 @@ mod tests {
             reply_id: DisplayReplyId::ListGraphicOverlayCharacteristics,
             body: DisplayReplyBody::Graphics(g),
         };
-        let bytes = dr.to_bytes();
+        let bytes = dr.try_to_bytes().unwrap();
         let parsed = DisplayReply::parse(&bytes).unwrap();
         assert_eq!(parsed, dr);
         if let DisplayReplyBody::Graphics(gg) = &parsed.body {
@@ -1424,7 +1424,7 @@ mod tests {
         if let DisplayReplyBody::Graphics(gg) = &mut other.body {
             gg.depths[0].region_overhead = 0xFF;
         }
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     fn base_graphics() -> GraphicsCharacteristics {
@@ -1468,7 +1468,7 @@ mod tests {
             reply_id: DisplayReplyId::ListGraphicOverlayCharacteristics,
             body: DisplayReplyBody::Graphics(g),
         };
-        let bytes = dr.to_bytes();
+        let bytes = dr.try_to_bytes().unwrap();
         assert_eq!(DisplayReply::parse(&bytes).unwrap(), dr);
     }
 
@@ -1503,7 +1503,7 @@ mod tests {
             reply_id: DisplayReplyId::ListDisplayCharacterTables,
             body: DisplayReplyBody::CharacterTables(alloc::vec![0x00, 0x01, 0x02]),
         };
-        let bytes = ct.to_bytes();
+        let bytes = ct.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x88, 0x02, 0x04, 0x02, 0x00, 0x01, 0x02]);
         assert_eq!(DisplayReply::parse(&bytes).unwrap(), ct);
 
@@ -1512,7 +1512,7 @@ mod tests {
             reply_id: DisplayReplyId::MmiModeAck,
             body: DisplayReplyBody::MmiModeAck(MmiMode::HighLevel),
         };
-        let ab = ack.to_bytes();
+        let ab = ack.try_to_bytes().unwrap();
         assert_eq!(ab, [0x9F, 0x88, 0x02, 0x02, 0x01, 0x01]);
         assert_eq!(DisplayReply::parse(&ab).unwrap(), ack);
 
@@ -1521,7 +1521,7 @@ mod tests {
             reply_id: DisplayReplyId::UnknownMmiMode,
             body: DisplayReplyBody::None,
         };
-        let ub = unknown.to_bytes();
+        let ub = unknown.try_to_bytes().unwrap();
         assert_eq!(ub, [0x9F, 0x88, 0x02, 0x01, 0xF1]);
         assert_eq!(DisplayReply::parse(&ub).unwrap(), unknown);
     }
@@ -1533,7 +1533,7 @@ mod tests {
             cmd: KeypadControlCmd::InterceptSelectedKeypress,
             key_codes: alloc::vec![0x00, 0x01, 0x0A], // 0, 1, menu
         };
-        let bytes = kc.to_bytes();
+        let bytes = kc.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x88, 0x05, 0x04, 0x03, 0x00, 0x01, 0x0A]);
         let parsed = KeypadControl::parse(&bytes).unwrap();
         assert_eq!(parsed, kc);
@@ -1545,14 +1545,14 @@ mod tests {
             cmd: KeypadControlCmd::InterceptAllKeypresses,
             key_codes: Vec::new(),
         };
-        let ab = all.to_bytes();
+        let ab = all.try_to_bytes().unwrap();
         assert_eq!(ab, [0x9F, 0x88, 0x05, 0x01, 0x01]);
         assert_eq!(KeypadControl::parse(&ab).unwrap(), all);
 
         // bite.
         let mut other = kc.clone();
         other.key_codes[1] = 0x09;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1561,14 +1561,14 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             key_code: 0x0A,
         };
-        let bytes = k.to_bytes();
+        let bytes = k.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x88, 0x06, 0x01, 0x0A]);
         assert_eq!(Keypress::parse(&bytes).unwrap(), k);
         let other = Keypress {
             length_form: crate::length::LengthForm::Minimal,
             key_code: 0x0B,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1578,12 +1578,12 @@ mod tests {
             more: false,
             segment: &[0x0F, 0x10, 0x00, 0x01, 0x00, 0x05],
         };
-        let bytes = s.to_bytes();
+        let bytes = s.try_to_bytes().unwrap();
         assert_eq!(bytes[2], 0x0E);
         assert_eq!(SubtitleSegment::parse(&bytes).unwrap(), s);
         let mut more = s.clone();
         more.more = true;
-        let mb = more.to_bytes();
+        let mb = more.try_to_bytes().unwrap();
         assert_eq!(mb[2], 0x0F);
         assert_ne!(bytes, mb);
         assert_eq!(SubtitleSegment::parse(&mb).unwrap(), more);
@@ -1595,7 +1595,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             message_id: DisplayMessageId::DvbSubtitlingSyntaxError,
         };
-        let bytes = m.to_bytes();
+        let bytes = m.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x88, 0x10, 0x01, 0x03]);
         assert_eq!(DisplayMessage::parse(&bytes).unwrap(), m);
         assert_eq!(m.message_id.name(), "DVB Subtitling syntax error");
@@ -1603,7 +1603,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             message_id: DisplayMessageId::DisplayOk,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1615,13 +1615,13 @@ mod tests {
             send_scene_done: true,
             scene_tag: 0x05,
         };
-        let bytes = s.to_bytes();
+        let bytes = s.try_to_bytes().unwrap();
         // 1_0_1_1_0101 = 0xB5
         assert_eq!(bytes, [0x9F, 0x88, 0x11, 0x01, 0xB5]);
         assert_eq!(SceneEndMark::parse(&bytes).unwrap(), s);
         let mut other = s;
         other.scene_tag = 0x06;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1632,13 +1632,13 @@ mod tests {
             scene_reveal_flag: true,
             scene_tag: 0x0A,
         };
-        let bytes = s.to_bytes();
+        let bytes = s.try_to_bytes().unwrap();
         // 0_1_11_1010 = 0x7A
         assert_eq!(bytes, [0x9F, 0x88, 0x12, 0x01, 0x7A]);
         assert_eq!(SceneDoneMessage::parse(&bytes).unwrap(), s);
         let mut other = s;
         other.decoder_continue_flag = true;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -1649,7 +1649,7 @@ mod tests {
             scene_reveal_flag: true,
             scene_tag: 0x03,
         };
-        let bytes = s.to_bytes();
+        let bytes = s.try_to_bytes().unwrap();
         // 1_1_11_0011 = 0xF3
         assert_eq!(bytes, [0x9F, 0x88, 0x13, 0x01, 0xF3]);
         assert_eq!(SceneControl::parse(&bytes).unwrap(), s);
@@ -1662,19 +1662,19 @@ mod tests {
             more: true,
             segment: &[0x0F, 0x13, 0x00, 0x01],
         };
-        let bytes = s.to_bytes();
+        let bytes = s.try_to_bytes().unwrap();
         assert_eq!(bytes[2], 0x15);
         assert_eq!(SubtitleDownload::parse(&bytes).unwrap(), s);
         let mut last = s.clone();
         last.more = false;
-        let lb = last.to_bytes();
+        let lb = last.try_to_bytes().unwrap();
         assert_eq!(lb[2], 0x14);
         assert_ne!(bytes, lb);
     }
 
     #[test]
     fn flush_download_round_trips() {
-        let bytes = FlushDownload::default().to_bytes();
+        let bytes = FlushDownload::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x88, 0x16, 0x00]);
         assert_eq!(
             FlushDownload::parse(&bytes).unwrap(),
@@ -1689,11 +1689,11 @@ mod tests {
             object_id: 0xFFFF,
             reply_id: DownloadReplyId::NotAnObjectDataSegment,
         };
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x88, 0x17, 0x03, 0xFF, 0xFF, 0x01]);
         assert_eq!(DownloadReply::parse(&bytes).unwrap(), d);
         let mut other = d;
         other.object_id = 0x0001;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 }

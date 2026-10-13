@@ -108,7 +108,7 @@ mod tests {
             provider_avail_ids: alloc::vec![0xAAAA_BBBB, 0xCCCC_DDDD],
         };
         assert_eq!(op.num_provider_avails(), 2);
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 9);
         assert_eq!(bytes[0], 2);
         let back = InsertAvailDescriptor::parse(&bytes).unwrap();
@@ -120,7 +120,7 @@ mod tests {
         let op = InsertAvailDescriptor {
             provider_avail_ids: alloc::vec![],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 1);
         let back = InsertAvailDescriptor::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -131,10 +131,10 @@ mod tests {
         let op = InsertAvailDescriptor {
             provider_avail_ids: alloc::vec![0xAAAA_BBBB],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op.clone();
         op2.provider_avail_ids[0] = 0x1111_2222;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 
     /// S4-W1/S4-W3 (#1103): `num_provider_avails` is derived from

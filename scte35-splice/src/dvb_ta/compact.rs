@@ -574,11 +574,11 @@ mod tests {
     fn time_signal_round_trip_and_dispatch() {
         let ts = sample_time_signal();
         let compact = CompactScte35::TimeSignal(ts.clone());
-        let bytes = compact.to_bytes();
+        let bytes = compact.try_to_bytes().unwrap();
         assert_eq!(bytes[0], MESSAGE_TYPE_TIME_SIGNAL);
         let back = CompactScte35::parse(&bytes).unwrap();
         assert_eq!(compact, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     /// Table 6 is packed with no padding: `cw_index` straddles bytes 0/1 and
@@ -592,7 +592,7 @@ mod tests {
         ts.cw_index = 0xA5;
         ts.segmentation_upid = b"AB".to_vec();
         ts.e_crc_32 = Some(0x1122_3344);
-        let bytes = ts.to_bytes();
+        let bytes = ts.try_to_bytes().unwrap();
         // enc(1)=1, alg(6)=010101, cw[7]=1 -> 1010_1011
         assert_eq!(bytes[0], 0xAB);
         // cw[6:0]=0100101, pts[32]=1 -> 0100_1011
@@ -626,7 +626,7 @@ mod tests {
 
     #[test]
     fn time_signal_truncated_is_an_error() {
-        let bytes = sample_time_signal().to_bytes();
+        let bytes = sample_time_signal().try_to_bytes().unwrap();
         for cut in 0..bytes.len() {
             assert!(
                 CompactTimeSignal::parse(&bytes[..cut]).is_err(),
@@ -640,10 +640,10 @@ mod tests {
         let a = sample_time_signal();
         let mut b = a.clone();
         b.segmentation_type_id = 0x36;
-        assert_ne!(a.to_bytes(), b.to_bytes());
+        assert_ne!(a.try_to_bytes().unwrap(), b.try_to_bytes().unwrap());
         let mut c = a.clone();
         c.pts_time = a.pts_time ^ 1;
-        assert_ne!(a.to_bytes(), c.to_bytes());
+        assert_ne!(a.try_to_bytes().unwrap(), c.try_to_bytes().unwrap());
     }
 
     fn sample_splice_insert(das: Option<CompactDas>) -> CompactSpliceInsert {
@@ -720,8 +720,8 @@ mod tests {
             fields.push((u64::from(b), 8));
         }
         fields.push((0xCAFE_F00D, 32));
-        assert_eq!(si.to_bytes(), pack(&fields));
-        let back = CompactSpliceInsert::parse(&si.to_bytes()).unwrap();
+        assert_eq!(si.try_to_bytes().unwrap(), pack(&fields));
+        let back = CompactSpliceInsert::parse(&si.try_to_bytes().unwrap()).unwrap();
         assert_eq!(si, back);
     }
 
@@ -729,12 +729,12 @@ mod tests {
     fn splice_insert_round_trip_no_das() {
         let si = sample_splice_insert(None);
         let compact = CompactScte35::SpliceInsert(si.clone());
-        let bytes = compact.to_bytes();
+        let bytes = compact.try_to_bytes().unwrap();
         assert_eq!(bytes[0], MESSAGE_TYPE_SPLICE_INSERT);
         assert_eq!(bytes.len(), 1 + 19);
         let back = CompactScte35::parse(&bytes).unwrap();
         assert_eq!(compact, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     /// The reserved rows are typed fields: whatever a sender put there
@@ -750,11 +750,11 @@ mod tests {
         };
         let mut si = sample_splice_insert(Some(das));
         si.reserved = 0x00;
-        let bytes = si.to_bytes();
+        let bytes = si.try_to_bytes().unwrap();
         let back = CompactSpliceInsert::parse(&bytes).unwrap();
         assert_eq!(back.reserved, 0);
         assert_eq!(back.das.as_ref().unwrap().reserved, 0);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -762,7 +762,7 @@ mod tests {
         let a = sample_splice_insert(None);
         let mut b = a.clone();
         b.unique_program_id = 0x0001;
-        assert_ne!(a.to_bytes(), b.to_bytes());
+        assert_ne!(a.try_to_bytes().unwrap(), b.try_to_bytes().unwrap());
         let c = sample_splice_insert(Some(CompactDas {
             break_num: 0,
             breaks_expected: 0,
@@ -770,7 +770,7 @@ mod tests {
             reserved: DAS_RESERVED_DEFAULT,
             upid: Vec::new(),
         }));
-        assert_ne!(a.to_bytes(), c.to_bytes());
+        assert_ne!(a.try_to_bytes().unwrap(), c.try_to_bytes().unwrap());
     }
 
     #[test]

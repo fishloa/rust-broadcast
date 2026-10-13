@@ -550,7 +550,7 @@ mod tests {
     fn test_hevc_config_round_trip_minimal() {
         let body = make_minimal_hvcc_body();
         let record = HEVCDecoderConfigurationRecord::parse(&body).unwrap();
-        let serialized = record.to_bytes();
+        let serialized = record.try_to_bytes().unwrap();
         assert_eq!(serialized, body, "hvcC round-trip must be byte-identical");
     }
 
@@ -575,7 +575,7 @@ mod tests {
         let body = make_minimal_hvcc_body();
         let mut record = HEVCDecoderConfigurationRecord::parse(&body).unwrap();
         record.general_level_idc = 120;
-        let serialized = record.to_bytes();
+        let serialized = record.try_to_bytes().unwrap();
         // level_idc is at offset 12 (1+1+4+6=12)
         assert_eq!(serialized[12], 120);
     }
@@ -629,7 +629,7 @@ mod tests {
         assert_eq!(record.arrays[2].nal_unit_type, 34);
         assert_eq!(record.arrays[2].nalus.len(), 0);
 
-        let serialized = record.to_bytes();
+        let serialized = record.try_to_bytes().unwrap();
         assert_eq!(serialized, body);
     }
 
@@ -644,7 +644,7 @@ mod tests {
         record.parallelism_type = 2;
         record.chroma_format_idc = 2;
 
-        let serialized = record.to_bytes();
+        let serialized = record.try_to_bytes().unwrap();
         let re = HEVCDecoderConfigurationRecord::parse(&serialized).unwrap();
         assert!(re.temporal_id_nested);
         assert_eq!(re.num_temporal_layers, 3);

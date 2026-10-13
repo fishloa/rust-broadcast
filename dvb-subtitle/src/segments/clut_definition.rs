@@ -326,7 +326,7 @@ mod tests {
             suffix: alloc::vec::Vec::new(),
         };
         let max = seg(entry(0x3F, 0x0F, 0x0F, 0x03));
-        let bytes = max.to_bytes();
+        let bytes = max.try_to_bytes().unwrap();
         assert_eq!(ClutDefinitionSegment::parse(&bytes).unwrap(), max);
         for bad in [
             entry(0x40, 0, 0, 0),
@@ -360,13 +360,13 @@ mod tests {
         assert_eq!(seg.entries[0].y_value, 128);
         assert_eq!(seg.entries[1].clut_entry_id, 1);
         assert!(seg.entries[1].flag_4bit);
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test
         let mut seg2 = seg.clone();
         seg2.clut_id = 5;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = ClutDefinitionSegment::parse(&out2).unwrap();
         assert_eq!(reparse.clut_id, 5);
@@ -396,14 +396,14 @@ mod tests {
         assert!(seg.entries[0].flag_2bit);
         assert!(!seg.entries[0].full_range_flag);
         assert_eq!(seg.entries[0].y_value, 0);
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test
         let mut seg2 = seg.clone();
         seg2.entries[0].flag_2bit = false;
         seg2.entries[0].flag_8bit = true;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = ClutDefinitionSegment::parse(&out2).unwrap();
         assert!(reparse.entries[0].flag_8bit);
@@ -423,7 +423,7 @@ mod tests {
         assert_eq!(seg.entries.len(), 1);
         assert_eq!(seg.entries[0].reserved_flags, 0x0A);
         assert!(seg.entries[0].flag_2bit);
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
         let seg2 = ClutDefinitionSegment::parse(&out).unwrap();
         assert_eq!(seg2.reserved, 0x0A);

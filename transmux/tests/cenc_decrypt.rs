@@ -529,7 +529,7 @@ fn cenc_mp4_with_seig_sgpd() -> Vec<u8> {
         // an opaque placeholder payload is enough here.
         entries: vec![SgpdEntry::Unknown(vec![0u8; 20])],
     };
-    let sgpd_bytes = sgpd.to_bytes();
+    let sgpd_bytes = sgpd.try_to_bytes().unwrap();
 
     insert_growing_ancestors(&file, insert_at, &sgpd_bytes)
 }

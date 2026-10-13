@@ -1880,13 +1880,16 @@ mod tests {
         // string followed by a properties object (§7.1's Data Message
         // shape), same as e.g. width/height/framerate metadata a real
         // encoder sends.
-        let mut payload = Amf0Value::String("onMetaData".to_string()).to_bytes();
+        let mut payload = Amf0Value::String("onMetaData".to_string())
+            .try_to_bytes()
+            .unwrap();
         payload.extend(
             Amf0Value::Object(vec![
                 ("width".to_string(), Amf0Value::Number(1920.0)),
                 ("height".to_string(), Amf0Value::Number(1080.0)),
             ])
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
         );
 
         let (_out, events) = session

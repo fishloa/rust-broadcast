@@ -205,7 +205,7 @@ mod tests {
             ict: false,
             emi_data: EmiData::NoMoreCopies { dot: false, rl: 0 },
         };
-        let bytes = u.to_bytes();
+        let bytes = u.try_to_bytes().unwrap();
         // protocol_version 0x03; aps(00) emi(11) -> first field byte top:
         //   bits: aps=00, emi=11, ict=0, ... => 0b00_11_0_..  high byte = 0x30.
         assert_eq!(bytes.len(), 8);
@@ -222,7 +222,7 @@ mod tests {
             ict: true,
             emi_data: EmiData::OneGenerationCopy { trick_mode: true },
         };
-        let bytes = u.to_bytes();
+        let bytes = u.try_to_bytes().unwrap();
         assert_eq!(bytes[0], 0x03);
         // aps=10, emi=10, ict=1 => byte1 = 0b10_10_1_000 = 0xA8.
         assert_eq!(bytes[1], 0b1010_1000);
@@ -239,8 +239,8 @@ mod tests {
             ict: true,
             emi_data: EmiData::OneGenerationCopy { trick_mode: false },
         };
-        assert_ne!(bytes, off.to_bytes());
-        assert_eq!(off.to_bytes()[3] & 0x80, 0x00);
+        assert_ne!(bytes, off.try_to_bytes().unwrap());
+        assert_eq!(off.try_to_bytes().unwrap()[3] & 0x80, 0x00);
     }
 
     #[test]
@@ -251,7 +251,7 @@ mod tests {
             ict: false,
             emi_data: EmiData::CopyingNotRestricted { rct: true },
         };
-        let bytes = u.to_bytes();
+        let bytes = u.try_to_bytes().unwrap();
         // emi=00, ict=0, rct at bit position 5 => byte1 = 0b00_00_0_1_0_0 = 0x04.
         assert_eq!(bytes[1], 0b0000_0100);
         assert_eq!(UriMessage::parse(&bytes).unwrap(), u);
@@ -268,7 +268,7 @@ mod tests {
                 rl: 0xA5,
             },
         };
-        let bytes = u.to_bytes();
+        let bytes = u.try_to_bytes().unwrap();
         let parsed = UriMessage::parse(&bytes).unwrap();
         assert_eq!(parsed, u);
         // Mutation: change rl.
@@ -277,7 +277,7 @@ mod tests {
             dot: true,
             rl: 0xA4,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -288,7 +288,7 @@ mod tests {
             ict: false,
             emi_data: EmiData::CopyOnce,
         };
-        let bytes = u.to_bytes();
+        let bytes = u.try_to_bytes().unwrap();
         // aps=11, emi=01, ict=0 => byte1 = 0b11_01_0_000 = 0xD0; rest reserved 0.
         assert_eq!(bytes[1], 0b1101_0000);
         assert_eq!(&bytes[2..8], &[0u8; 6]);
@@ -306,7 +306,7 @@ mod tests {
             ict: false,
             emi_data: EmiData::CopyOnce,
         };
-        let bytes = u.to_bytes();
+        let bytes = u.try_to_bytes().unwrap();
         assert_eq!(UriMessage::parse(&bytes).unwrap(), u);
     }
 

@@ -808,41 +808,41 @@ mod tests {
     #[test]
     fn xml_subtitle_sample_entry_round_trip() {
         let entry = XmlSubtitleSampleEntry::new("http://www.w3.org/ns/ttml");
-        let bytes = entry.to_bytes();
+        let bytes = entry.try_to_bytes().unwrap();
         assert_eq!(&bytes[4..8], b"stpp");
         let parsed = XmlSubtitleSampleEntry::bare_parse(&bytes).unwrap();
         assert_eq!(parsed, entry);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn wvtt_sample_entry_round_trip() {
         let entry = WvttSampleEntry::new("WEBVTT");
-        let bytes = entry.to_bytes();
+        let bytes = entry.try_to_bytes().unwrap();
         assert_eq!(&bytes[4..8], b"wvtt");
         let parsed = WvttSampleEntry::bare_parse(&bytes).unwrap();
         assert_eq!(parsed, entry);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn vtt_cue_box_round_trip() {
         let cue = VttCueBox::new("Hello World");
-        let bytes = cue.to_bytes();
+        let bytes = cue.try_to_bytes().unwrap();
         assert_eq!(&bytes[4..8], b"vttc");
         let parsed = VttCueBox::bare_parse(&bytes).unwrap();
         assert_eq!(parsed.payload.cue_text, "Hello World");
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn vtte_round_trip() {
         let vtte = VttEmptyCueBox;
-        let bytes = vtte.to_bytes();
+        let bytes = vtte.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 8);
         assert_eq!(&bytes[4..8], b"vtte");
         let parsed = VttEmptyCueBox::bare_parse(&bytes).unwrap();
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     /// r04-W45: the `stpp`/`wvtt` SampleEntry reserved 6 bytes must be written
@@ -855,7 +855,7 @@ mod tests {
         where
             <T as Serialize>::Error: core::fmt::Debug,
         {
-            let clean = value.to_bytes();
+            let clean = value.try_to_bytes().unwrap();
             let mut dirty = alloc::vec![0xFFu8; clean.len()];
             value
                 .serialize_into(&mut dirty)

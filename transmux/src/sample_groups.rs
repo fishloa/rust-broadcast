@@ -1039,7 +1039,7 @@ mod tests {
             ntp_timestamp: 0x1234_5678_9abc_def0,
             media_time: 0x0000_0000_0000_1234,
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 8 + 4 + 4 + 8 + 4);
         let parsed = ProducerReferenceTimeBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
@@ -1054,7 +1054,7 @@ mod tests {
             ntp_timestamp: 0xedefe3e3_a7ae147a,
             media_time: 0x0000_0000_0000_1c20,
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 8 + 4 + 4 + 8 + 8);
         let parsed = ProducerReferenceTimeBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
@@ -1146,11 +1146,11 @@ mod tests {
             default_sample_description_index: None,
             entries: vec![SgpdEntry::Roll { roll_distance: -1 }],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = SampleGroupDescriptionBox::parse(&bytes).unwrap();
         assert_eq!(parsed.entries.len(), 1);
         assert_eq!(parsed.entries[0], SgpdEntry::Roll { roll_distance: -1 });
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -1166,10 +1166,10 @@ mod tests {
                 SgpdEntry::Roll { roll_distance: -1 },
             ],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = SampleGroupDescriptionBox::parse(&bytes).unwrap();
         assert_eq!(parsed.entries.len(), 2);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     // -----------------------------------------------------------------------
@@ -1194,7 +1194,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = SampleToGroupBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
     }
@@ -1211,7 +1211,7 @@ mod tests {
                 group_description_index: 1,
             }],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = SampleToGroupBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
     }
@@ -1243,10 +1243,10 @@ mod tests {
                 ],
             }],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = SubSampleInformationBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -1264,10 +1264,10 @@ mod tests {
                 }],
             }],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = SubSampleInformationBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -1277,7 +1277,7 @@ mod tests {
             flags: 0,
             entries: vec![],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = SubSampleInformationBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
     }

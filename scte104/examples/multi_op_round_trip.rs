@@ -49,7 +49,7 @@ fn main() {
     );
 
     // Serialize.
-    let bytes = msg.to_bytes();
+    let bytes = msg.try_to_bytes().unwrap();
     println!(
         "Serialized {} bytes with {} ops",
         bytes.len(),
@@ -70,6 +70,6 @@ fn main() {
     // Demonstrate mutation detection.
     let mut msg2 = msg.clone();
     msg2.message_number = 99;
-    assert_ne!(msg.to_bytes(), msg2.to_bytes());
+    assert_ne!(msg.try_to_bytes().unwrap(), msg2.try_to_bytes().unwrap());
     println!("Mutation changes output: OK");
 }

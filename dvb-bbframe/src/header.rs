@@ -1006,7 +1006,7 @@ mod tests {
             mode: Mode::Normal,
             issy_in_header: None,
         };
-        let v = <Bbheader as Serialize>::to_bytes(&orig);
+        let v = <Bbheader as Serialize>::try_to_bytes(&orig).unwrap();
         let parsed = <Bbheader as Parse>::parse(&v).unwrap();
         assert_eq!(orig.matype, parsed.matype);
         assert_eq!(orig.upl, parsed.upl);
@@ -1040,7 +1040,7 @@ mod tests {
         };
 
         // Reference: to_bytes() zero-inits so those bytes come out 0.
-        let clean = <Bbheader as Serialize>::to_bytes(&hdr);
+        let clean = <Bbheader as Serialize>::try_to_bytes(&hdr).unwrap();
 
         // Dirty buffer pre-filled with 0xFF — buf[2], buf[3], buf[6] would keep
         // 0xFF if the else-branch doesn't explicitly zero them.
@@ -1284,7 +1284,7 @@ mod tests {
             issy_in_header: Some([0xAA, 0xBB, 0xCC]),
         };
 
-        let v = <Bbheader as Serialize>::to_bytes(&orig);
+        let v = <Bbheader as Serialize>::try_to_bytes(&orig).unwrap();
         let parsed = <Bbheader as Parse>::parse(&v).unwrap();
         assert_eq!(parsed.mode, Mode::HighEfficiency);
         assert_eq!(parsed.dfl, 24000);
@@ -1313,7 +1313,7 @@ mod tests {
             issy_in_header: None,
         };
 
-        let v = <Bbheader as Serialize>::to_bytes(&orig);
+        let v = <Bbheader as Serialize>::try_to_bytes(&orig).unwrap();
         let parsed = <Bbheader as Parse>::parse(&v).unwrap();
         assert_eq!(parsed.mode, Mode::Normal);
         assert_eq!(parsed.upl, 1024);

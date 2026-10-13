@@ -46,6 +46,9 @@ mod tests {
     fn round_trip_empty() {
         let cmd = BandwidthReservation;
         assert_eq!(cmd.serialized_len(), 0);
-        assert_eq!(BandwidthReservation::parse(&cmd.to_bytes()).unwrap(), cmd);
+        assert_eq!(
+            BandwidthReservation::parse(&cmd.try_to_bytes().unwrap()).unwrap(),
+            cmd
+        );
     }
 }

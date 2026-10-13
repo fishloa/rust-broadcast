@@ -42,7 +42,7 @@
 //!     0x0101, 0, 1, 42, 0,
 //!     scte104::operations::AnySingleOperation::Unknown { op_id: 0x0101, body: &[] },
 //! );
-//! let bytes = msg.to_bytes();
+//! let bytes = msg.try_to_bytes().unwrap();
 //!
 //! // Build a multiple_operation_message with splice + insert_descriptor
 //! let ops = vec![
@@ -66,7 +66,7 @@
 //!     scte104::time::Timestamp::None,
 //!     ops,
 //! );
-//! let bytes = mom.to_bytes();
+//! let bytes = mom.try_to_bytes().unwrap();
 //! ```
 //!
 //! ## Examples

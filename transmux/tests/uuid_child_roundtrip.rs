@@ -53,7 +53,7 @@ fn moov_uuid_child_round_trips_byte_exact() {
         uuid_child.data.len() >= 16,
         "the usertype must be carried with the opaque body"
     );
-    let out = moov.to_bytes();
+    let out = moov.try_to_bytes().unwrap();
     assert_eq!(out, moov_bytes, "moov round-trip must be byte-identical");
 }
 
@@ -96,7 +96,7 @@ fn moof_and_traf_uuid_children_are_preserved_on_parse() {
             });
             assert!(traf_has_uuid, "the traf-level uuid child is preserved");
             assert_eq!(
-                moof.to_bytes(),
+                moof.try_to_bytes().unwrap(),
                 moof_bytes,
                 "moof round-trip must be byte-identical with uuid children"
             );
@@ -125,7 +125,7 @@ fn round_tripped_uuid_is_mp4dump_readable() {
     let moov_bytes = find_top_box(&data, b"moov");
     let offset = moov_bytes.as_ptr() as usize - data.as_ptr() as usize;
     let moov = MovieBox::parse(moov_bytes).expect("parses");
-    let out = moov.to_bytes();
+    let out = moov.try_to_bytes().unwrap();
     assert_eq!(out.as_slice(), moov_bytes, "moov round-trip");
 
     let mut rebuilt = data.clone();
@@ -199,7 +199,7 @@ fn largesize_uuid_child_round_trips_in_every_container() {
         "the payload is the usertype + body, with no largesize bytes"
     );
     assert_eq!(uuid_child.data[..16], usertype, "the usertype is kept");
-    let out = parsed.to_bytes();
+    let out = parsed.try_to_bytes().unwrap();
     assert_eq!(out, moov, "moov round-trip must be byte-identical");
 
     // --- a plain largesize child (not a uuid) ---
@@ -218,7 +218,7 @@ fn largesize_uuid_child_round_trips_in_every_container() {
     moov2.extend_from_slice(&body2);
     let parsed = MovieBox::parse(&moov2).expect("a largesize free parses");
     assert_eq!(
-        parsed.to_bytes(),
+        parsed.try_to_bytes().unwrap(),
         moov2,
         "a largesize non-uuid child must round-trip too"
     );

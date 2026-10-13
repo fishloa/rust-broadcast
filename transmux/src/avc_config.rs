@@ -477,7 +477,7 @@ mod tests {
     fn test_avc_config_round_trip_minimal() {
         let body = make_minimal_avcc_body();
         let record = AVCDecoderConfigurationRecord::parse(&body).unwrap();
-        let serialized = record.to_bytes();
+        let serialized = record.try_to_bytes().unwrap();
         assert_eq!(serialized, body, "avcC round-trip must be byte-identical");
     }
 
@@ -519,7 +519,7 @@ mod tests {
         assert_eq!(record.sps_ext.len(), 1);
         assert_eq!(record.sps_ext[0].0, [0xF0, 0x00, 0x10]);
 
-        let serialized = record.to_bytes();
+        let serialized = record.try_to_bytes().unwrap();
         assert_eq!(serialized, body, "high-profile avcC round-trip");
     }
 
@@ -552,7 +552,7 @@ mod tests {
         assert_eq!(record.bit_depth_chroma_minus8, None);
         assert!(record.sps_ext.is_empty());
 
-        let serialized = record.to_bytes();
+        let serialized = record.try_to_bytes().unwrap();
         assert_eq!(
             serialized, body,
             "a trailer-less High-profile avcC must round-trip without growing one back"
@@ -588,7 +588,7 @@ mod tests {
         let body = make_minimal_avcc_body();
         let mut record = AVCDecoderConfigurationRecord::parse(&body).unwrap();
         record.level_indication = 50;
-        let serialized = record.to_bytes();
+        let serialized = record.try_to_bytes().unwrap();
         // Level is at offset 3
         assert_eq!(
             serialized[3], 50,

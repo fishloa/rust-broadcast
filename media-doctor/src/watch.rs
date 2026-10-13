@@ -1182,7 +1182,7 @@ pub(crate) mod tests {
             }),
             &[],
         );
-        let out_bytes = splice_out.to_bytes();
+        let out_bytes = splice_out.try_to_bytes().unwrap();
 
         let mut state = WatchState::new();
         let mut clock = Duration::ZERO;
@@ -1274,7 +1274,8 @@ pub(crate) mod tests {
                 }),
                 &[],
             )
-            .to_bytes()
+            .try_to_bytes()
+            .unwrap()
         }
 
         let pat = PatSection::new(1, 0, true, 0, 0, alloc::vec![PatEntry::new(1, PMT_PID)]);

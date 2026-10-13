@@ -54,16 +54,16 @@ mod tests {
         let cmd = TimeSignal {
             splice_time: SpliceTime::with_pts(0x0_1234_5678),
         };
-        let bytes = cmd.to_bytes();
+        let bytes = cmd.try_to_bytes().unwrap();
         let back = TimeSignal::parse(&bytes).unwrap();
         assert_eq!(cmd, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn round_trip_immediate() {
         let cmd = TimeSignal::default();
-        let bytes = cmd.to_bytes();
+        let bytes = cmd.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 1);
         assert_eq!(TimeSignal::parse(&bytes).unwrap(), cmd);
     }

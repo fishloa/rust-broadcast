@@ -89,7 +89,7 @@ fn main() {
     );
 
     let section = to_section(insert);
-    let bytes = section.to_bytes();
+    let bytes = section.try_to_bytes().unwrap();
     println!("emitted splice_info_section: {} bytes", bytes.len());
     println!(
         "hex: {}",

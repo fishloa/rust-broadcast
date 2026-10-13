@@ -65,7 +65,7 @@ mod tests {
     #[test]
     fn round_trip() {
         let op = InsertTier { tier_data: 0x0FFF };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), LEN);
         let back = InsertTier::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -74,9 +74,9 @@ mod tests {
     #[test]
     fn mutate_field_changes_output() {
         let op = InsertTier { tier_data: 0x0FFF };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op;
         op2.tier_data = 0x0001;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 }

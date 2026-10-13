@@ -62,7 +62,7 @@ fn wraps_real_eac3_frame_and_parses_back() {
     );
 
     let frame = build_frame(&payload);
-    let bytes = frame.to_bytes();
+    let bytes = frame.try_to_bytes().unwrap();
 
     let parsed = AtmosFrame::parse(&bytes).expect("parse the wrapped real frame");
     assert_eq!(parsed.elements.len(), 2);
@@ -103,14 +103,14 @@ fn mutating_meta_id_changes_only_bed_definition_bytes() {
     // echoing a stored raw buffer (guards against a `self.raw` passthrough).
     let payload = real_eac3_frame();
     let mut frame = build_frame(&payload);
-    let original = frame.to_bytes();
+    let original = frame.try_to_bytes().unwrap();
 
     let AnyElement::BedDefinition1(bed) = &mut frame.elements[0] else {
         panic!("expected BedDefinition1 as the first element");
     };
     bed.meta_id = 200; // still Plex(8)-direct, same wire width as 1
 
-    let mutated = frame.to_bytes();
+    let mutated = frame.try_to_bytes().unwrap();
     assert_ne!(
         original, mutated,
         "changing meta_id must change the wire bytes"

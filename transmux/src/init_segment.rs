@@ -4561,7 +4561,7 @@ mod tests {
     #[test]
     fn mvhd_v0_round_trip() {
         let m = sample_mvhd_v0();
-        let bytes = m.to_bytes();
+        let bytes = m.try_to_bytes().unwrap();
         let parsed = MovieHeaderBox::parse(&bytes).unwrap();
         assert_eq!(parsed, m);
     }
@@ -4569,10 +4569,10 @@ mod tests {
     #[test]
     fn mvhd_v0_mutation_changes_bytes() {
         let m = sample_mvhd_v0();
-        let orig = m.to_bytes();
+        let orig = m.try_to_bytes().unwrap();
         let mut m2 = m.clone();
         m2.timescale = 30000;
-        let mutated = m2.to_bytes();
+        let mutated = m2.try_to_bytes().unwrap();
         assert_ne!(orig, mutated);
         // Verify the right field changed
         assert_ne!(orig[20..24], mutated[20..24]);
@@ -4594,7 +4594,7 @@ mod tests {
             width: 0,
             height: 0,
         };
-        let bytes = t.to_bytes();
+        let bytes = t.try_to_bytes().unwrap();
         let parsed = TrackHeaderBox::parse(&bytes).unwrap();
         assert_eq!(parsed, t);
     }
@@ -4610,7 +4610,7 @@ mod tests {
                 sample_description_index: 1
             },],
         };
-        let bytes = s.to_bytes();
+        let bytes = s.try_to_bytes().unwrap();
         let parsed = SampleToChunkBox::parse(&bytes).unwrap();
         assert_eq!(parsed, s);
     }
@@ -4629,7 +4629,7 @@ mod tests {
             sample_count: 88,
             entries: alloc::vec![],
         };
-        let bytes = s.to_bytes();
+        let bytes = s.try_to_bytes().unwrap();
         let parsed = SampleSizeBox::parse(&bytes).unwrap();
         assert_eq!(parsed, s);
         assert_eq!(
@@ -4645,7 +4645,7 @@ mod tests {
             flags: 0,
             entries: alloc::vec![0, 1024, 2048, 4096],
         };
-        let bytes = s.to_bytes();
+        let bytes = s.try_to_bytes().unwrap();
         let parsed = ChunkOffsetBox::parse(&bytes).unwrap();
         assert_eq!(parsed, s);
     }
@@ -4662,7 +4662,7 @@ mod tests {
             flags: 0,
             entries: alloc::vec![url],
         };
-        let bytes = dref.to_bytes();
+        let bytes = dref.try_to_bytes().unwrap();
         let parsed = DataReferenceBox::parse(&bytes).unwrap();
         assert_eq!(parsed, dref);
     }
@@ -4814,7 +4814,7 @@ mod tests {
         where
             <T as Serialize>::Error: core::fmt::Debug,
         {
-            let clean = value.to_bytes();
+            let clean = value.try_to_bytes().unwrap();
             let mut dirty = alloc::vec![0xFFu8; clean.len()];
             let written = value
                 .serialize_into(&mut dirty)

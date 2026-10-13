@@ -316,7 +316,7 @@ mod tests {
             event_type: EventType::Timer,
             event_desc: &desc,
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         // tag(3) + len(1) + type(1) + 8 = 13; body len = 9 = 0x09.
         assert_eq!(
             bytes,
@@ -333,7 +333,7 @@ mod tests {
             event_type: EventType::Timer,
             event_desc: &desc2,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -343,7 +343,7 @@ mod tests {
             event_type: EventType::Timer,
             event_desc: &[],
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x00, 0x01, 0x00]);
         assert_eq!(EventRequest::parse(&bytes).unwrap(), r);
     }
@@ -355,13 +355,13 @@ mod tests {
             event_type: EventType::Timer,
             reply: EventReply::ResourcesConsumed,
         };
-        let bytes = a.to_bytes();
+        let bytes = a.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x01, 0x02, 0x00, 0x02]);
         assert_eq!(EventRequestAck::parse(&bytes).unwrap(), a);
         assert_eq!(a.reply.name(), "Event resources consumed");
         let mut other = a;
         other.reply = EventReply::BookedOk;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -370,7 +370,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             event_type: EventType::Timer,
         };
-        let bytes = n.to_bytes();
+        let bytes = n.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x02, 0x01, 0x00]);
         assert_eq!(EventNotification::parse(&bytes).unwrap(), n);
     }
@@ -382,7 +382,8 @@ mod tests {
             event_type: EventType::Timer,
             event_desc: &[],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert!(matches!(
             EventManagerApdu::parse(&req).unwrap(),
             EventManagerApdu::EventRequest(_)
@@ -391,9 +392,10 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             event_type: EventType::Timer,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = EventManagerApdu::parse(&notif).unwrap();
         assert!(matches!(parsed, EventManagerApdu::EventNotification(_)));
-        assert_eq!(parsed.to_bytes(), notif);
+        assert_eq!(parsed.try_to_bytes().unwrap(), notif);
     }
 }

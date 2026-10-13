@@ -148,7 +148,7 @@ fn every_committed_init_segment_round_trips_byte_identically() {
                 continue;
             }
         };
-        let out = moov.to_bytes();
+        let out = moov.try_to_bytes().unwrap();
         if out != moov_bytes {
             failures.push(format!(
                 "{rel}: round trip differs ({} vs {} bytes)",
@@ -277,7 +277,7 @@ fn vp09_child_order_is_preserved_around_the_config_box() {
     stsd.extend_from_slice(&stsd_body);
 
     let boxed = SampleDescriptionBox::parse(&stsd).expect("parses stsd");
-    let out = boxed.to_bytes();
+    let out = boxed.try_to_bytes().unwrap();
     assert_eq!(out, stsd, "the entry's child order must round-trip exactly");
     // And directly: the emitted bytes put `pasp` before `vpcC`.
     let pasp_at = out.windows(4).position(|w| w == b"pasp").expect("pasp");

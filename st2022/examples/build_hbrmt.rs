@@ -35,7 +35,7 @@ fn main() {
     println!("  Clock freq: {}", header.clock_frequency.name());
     println!("  Timestamp: 0x{:08x}", header.video_timestamp.unwrap());
 
-    let bytes = header.to_bytes();
+    let bytes = header.try_to_bytes().unwrap();
     println!("Serialized to {} bytes", bytes.len());
 
     match PayloadHeader::parse(&bytes) {

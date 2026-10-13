@@ -61,7 +61,7 @@
 //!     ],
 //! );
 //!
-//! let bytes = frame.to_bytes();
+//! let bytes = frame.try_to_bytes().unwrap();
 //! assert_eq!(AtmosFrame::parse(&bytes).unwrap(), frame);
 //! ```
 #![cfg_attr(not(feature = "std"), no_std)]

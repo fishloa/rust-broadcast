@@ -197,7 +197,7 @@ mod tests {
         let (_, insert) =
             build_splice_insert(BreakEdge::Enter, 42, 1_000, &[1_000], 0, Some(900_000)).unwrap();
         let section = to_section(insert);
-        let bytes = section.to_bytes();
+        let bytes = section.try_to_bytes().unwrap();
         assert_eq!(bytes[0], scte35_splice::section::TABLE_ID);
 
         let parsed = SpliceInfoSection::parse(&bytes).unwrap();

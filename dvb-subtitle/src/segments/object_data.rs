@@ -1041,13 +1041,13 @@ mod tests {
             }
             _ => panic!("expected InterlacedPixels"),
         }
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test
         let mut seg2 = seg.clone();
         seg2.object_id = 20;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = ObjectDataSegment::parse(&out2).unwrap();
         assert_eq!(reparse.object_id, 20);
@@ -1073,7 +1073,7 @@ mod tests {
             }
             _ => panic!("expected InterlacedPixels"),
         }
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes, "2 trailing stuffing bytes must round-trip");
     }
 
@@ -1140,7 +1140,7 @@ mod tests {
             }
             _ => panic!("expected InterlacedPixels"),
         }
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
     }
 
@@ -1250,7 +1250,7 @@ mod tests {
             }
             _ => panic!("expected Characters"),
         }
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test: `number_of_codes` (Table 20) is derived from
@@ -1261,7 +1261,7 @@ mod tests {
         if let ObjectDataPayload::Characters { character_codes } = &mut seg2.payload {
             character_codes.push(0x0043);
         }
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         assert_eq!(
             out2[HEADER_LEN + FIXED_LEN],
@@ -1296,7 +1296,7 @@ mod tests {
             }
             _ => panic!("expected ProgressivePixels"),
         }
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test
@@ -1304,7 +1304,7 @@ mod tests {
         if let ObjectDataPayload::ProgressivePixels(pp) = &mut seg2.payload {
             pp.bitmap_width = 200;
         }
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = ObjectDataSegment::parse(&out2).unwrap();
         match &reparse.payload {

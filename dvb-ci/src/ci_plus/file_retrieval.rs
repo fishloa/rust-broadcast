@@ -326,7 +326,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             domain_identifier: &[0x61, 0x62],
         };
-        let bytes = o.to_bytes();
+        let bytes = o.try_to_bytes().unwrap();
         // tag(9F 94 00) len(03) DomainIdentifierLength(02) 61 62.
         assert_eq!(bytes, [0x9F, 0x94, 0x00, 0x03, 0x02, 0x61, 0x62]);
         assert_eq!(FileSystemOffer::parse(&bytes).unwrap(), o);
@@ -334,7 +334,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             domain_identifier: &[0x61, 0x63],
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -343,7 +343,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             domain_identifier: &[],
         };
-        let bytes = o.to_bytes();
+        let bytes = o.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x94, 0x00, 0x01, 0x00]);
         assert_eq!(FileSystemOffer::parse(&bytes).unwrap(), o);
     }
@@ -354,14 +354,14 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             ack_code: AckCode::UnknownDomainIdentifier,
         };
-        let bytes = a.to_bytes();
+        let bytes = a.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x94, 0x01, 0x01, 0x02]);
         assert_eq!(FileSystemAck::parse(&bytes).unwrap(), a);
         let ok = FileSystemAck {
             length_form: crate::length::LengthForm::Minimal,
             ack_code: AckCode::Ok,
         };
-        assert_eq!(ok.to_bytes()[4], 0x01);
+        assert_eq!(ok.try_to_bytes().unwrap()[4], 0x01);
     }
 
     #[test]
@@ -370,7 +370,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             body: &[0x01, 0x02, 0x03],
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x94, 0x02, 0x03, 0x01, 0x02, 0x03]);
         assert_eq!(FileRequest::parse(&bytes).unwrap(), r);
     }
@@ -381,7 +381,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             body: &[0xAA, 0xBB],
         };
-        let bytes = a.to_bytes();
+        let bytes = a.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x94, 0x03, 0x02, 0xAA, 0xBB]);
         assert_eq!(FileAcknowledge::parse(&bytes).unwrap(), a);
     }
@@ -393,25 +393,32 @@ mod tests {
                 length_form: crate::length::LengthForm::Minimal,
                 domain_identifier: &[0x61]
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             FileSystemAck {
                 length_form: crate::length::LengthForm::Minimal,
                 ack_code: AckCode::Ok
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             FileRequest {
                 length_form: crate::length::LengthForm::Minimal,
                 body: &[0x00]
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
             FileAcknowledge {
                 length_form: crate::length::LengthForm::Minimal,
                 body: &[0x00]
             }
-            .to_bytes(),
+            .try_to_bytes()
+            .unwrap(),
         ];
         for c in &cases {
-            assert_eq!(&FileRetrievalApdu::parse(c).unwrap().to_bytes(), c);
+            assert_eq!(
+                &FileRetrievalApdu::parse(c).unwrap().try_to_bytes().unwrap(),
+                c
+            );
         }
         assert!(matches!(
             FileRetrievalApdu::parse(&[0x9F, 0x94, 0x7E, 0x00]),
@@ -442,7 +449,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             domain_identifier: &data,
         };
-        let bytes = offer.to_bytes();
+        let bytes = offer.try_to_bytes().unwrap();
         assert_eq!(FileSystemOffer::parse(&bytes).unwrap(), offer);
     }
 }

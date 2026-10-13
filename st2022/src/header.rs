@@ -1259,7 +1259,7 @@ mod tests {
     #[test]
     fn round_trips_the_minimal_4_byte_header() {
         let header = minimal_header();
-        let bytes = header.to_bytes();
+        let bytes = header.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), FIXED_HEADER_LEN);
         let reparsed = PayloadHeader::parse(&bytes).unwrap();
         assert_eq!(reparsed, header);
@@ -1287,7 +1287,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let bytes = header.to_bytes();
+        let bytes = header.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 8);
         let reparsed = PayloadHeader::parse(&bytes).unwrap();
         assert_eq!(reparsed, header);
@@ -1315,7 +1315,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let bytes = header.to_bytes();
+        let bytes = header.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 12);
         let reparsed = PayloadHeader::parse(&bytes).unwrap();
         assert_eq!(reparsed, header);
@@ -1357,7 +1357,7 @@ mod tests {
                 ExtensionItem::Pad,
             ]
         );
-        let bytes = header.to_bytes();
+        let bytes = header.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 4 + 4 + 8);
         let reparsed = PayloadHeader::parse(&bytes).unwrap();
         assert_eq!(reparsed, header);
@@ -1379,7 +1379,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let bytes = header.to_bytes();
+        let bytes = header.try_to_bytes().unwrap();
         let reparsed = PayloadHeader::parse(&bytes).unwrap();
         assert_eq!(reparsed, header);
         assert_eq!(reparsed.reserve, 0x1F);
@@ -1496,7 +1496,7 @@ mod tests {
                             let header =
                                 PayloadHeader::new(vsid, 0, r, s, fec, cf, 0, None, ts, None)
                                     .unwrap();
-                            let bytes = header.to_bytes();
+                            let bytes = header.try_to_bytes().unwrap();
                             let reparsed = PayloadHeader::parse(&bytes).unwrap();
                             assert_eq!(reparsed, header);
                         }
@@ -1612,7 +1612,7 @@ mod tests {
         // Ext=1, no F, no timestamp; tag 0x05 claims 200 value octets.
         let wire = [0x10, 0x00, 0x00, 0x00, 0x05, 0xC8, 0x01, 0x02];
         let header = PayloadHeader::parse(&wire).unwrap();
-        assert_eq!(header.to_bytes()[..], wire[..]);
+        assert_eq!(header.try_to_bytes().unwrap()[..], wire[..]);
         let items: alloc::vec::Vec<_> = header.extension_items().collect();
         assert_eq!(items.len(), 1);
         assert!(matches!(items[0], Err(Error::BufferTooShort { .. })));
@@ -1742,7 +1742,7 @@ mod tests {
             None,
         )
         .unwrap();
-        let bytes = header.to_bytes();
+        let bytes = header.try_to_bytes().unwrap();
         assert_eq!(&bytes[..], &expected[..], "golden wire bytes mismatch");
         let reparsed = PayloadHeader::parse(&expected).unwrap();
         assert_eq!(reparsed, header);
@@ -1756,7 +1756,7 @@ mod tests {
         // Bytes 2-3: all zeros → 0x0000
         let expected: [u8; 4] = [0x00, 0x00, 0x00, 0x00];
         let header = minimal_header();
-        let bytes = header.to_bytes();
+        let bytes = header.try_to_bytes().unwrap();
         assert_eq!(&bytes[..], &expected[..]);
         let reparsed = PayloadHeader::parse(&expected).unwrap();
         assert_eq!(reparsed, header);

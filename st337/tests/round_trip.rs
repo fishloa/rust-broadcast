@@ -27,7 +27,7 @@ use st337::{
 fn zero_length_payload_round_trips() {
     let burst = Burst::new(0, DataMode::Mode16, false, 0, 0, None, &[]).unwrap();
     assert_eq!(burst.preamble.length_code, 0);
-    let bytes = burst.to_bytes();
+    let bytes = burst.try_to_bytes().unwrap();
     assert_eq!(bytes.len(), 8, "four-word preamble, no payload bytes");
     let parsed = Burst::parse(&bytes).unwrap();
     assert_eq!(parsed.payload, &[] as &[u8]);
@@ -42,7 +42,7 @@ fn maximum_length_code_round_trips() {
     let payload = vec![0x5Au8; (MAX_LENGTH_CODE_BITS / 8) as usize];
     let burst = Burst::new(0, DataMode::Mode16, false, 0, 0, None, &payload).unwrap();
     assert_eq!(burst.preamble.length_code, 65528);
-    let bytes = burst.to_bytes();
+    let bytes = burst.try_to_bytes().unwrap();
     let parsed = Burst::parse(&bytes).unwrap();
     assert_eq!(parsed, burst);
 }
@@ -61,7 +61,7 @@ fn every_non_extended_data_type_value_round_trips() {
     for data_type in 0u8..EXTENDED_DATA_TYPE_MARKER {
         let payload = [data_type]; // trivial 1-byte payload, value = data_type for visibility
         let burst = Burst::new(data_type, DataMode::Mode16, false, 0, 0, None, &payload).unwrap();
-        let bytes = burst.to_bytes();
+        let bytes = burst.try_to_bytes().unwrap();
         let parsed = Burst::parse(&bytes).unwrap();
         assert_eq!(parsed.preamble.data_type, data_type);
         assert_eq!(parsed, burst);
@@ -82,7 +82,7 @@ fn data_type_dependent_and_data_stream_number_full_ranges_round_trip() {
                 &[0xAB],
             )
             .unwrap();
-            let bytes = burst.to_bytes();
+            let bytes = burst.try_to_bytes().unwrap();
             let parsed = Burst::parse(&bytes).unwrap();
             assert_eq!(parsed, burst);
         }
@@ -112,7 +112,7 @@ fn extended_preamble_length_code_includes_pe_pf_bits() {
     .unwrap();
     assert_eq!(burst.preamble.length_code, 112);
 
-    let bytes = burst.to_bytes();
+    let bytes = burst.try_to_bytes().unwrap();
     assert_eq!(bytes.len(), 12 + 10, "six-word preamble + 10 payload bytes");
     let parsed = Burst::parse(&bytes).unwrap();
     assert_eq!(parsed, burst);
@@ -141,7 +141,7 @@ fn extended_preamble_nonzero_reserved_pf_is_preserved_verbatim() {
         &[1, 2, 3, 4],
     )
     .unwrap();
-    let bytes = burst.to_bytes();
+    let bytes = burst.try_to_bytes().unwrap();
     let parsed = Burst::parse(&bytes).unwrap();
     assert_eq!(parsed.preamble.extended.unwrap().reserved_pf, 0xFFFF);
 }

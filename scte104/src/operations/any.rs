@@ -284,7 +284,8 @@ mod tests {
             auto_return_flag: 1,
             not_an_entry_flag: 0,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let op = AnyOperation::dispatch(0x0101, &body).unwrap();
         assert_eq!(op.name(), "SPLICE_REQUEST");
         assert_eq!(op.op_id(), 0x0101);

@@ -44,7 +44,7 @@ mod tests {
     fn round_trip() {
         let op = SpliceNullRequest;
         assert_eq!(op.serialized_len(), 0);
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert!(bytes.is_empty());
         assert_eq!(SpliceNullRequest::parse(&bytes).unwrap(), op);
     }

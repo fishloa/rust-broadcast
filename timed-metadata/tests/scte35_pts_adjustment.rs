@@ -68,7 +68,7 @@ fn time_signal_without_id_errors_on_daterange_conversion() {
         }),
         &[],
     );
-    let raw = broadcast_common::traits::Serialize::to_bytes(&section);
+    let raw = broadcast_common::traits::Serialize::try_to_bytes(&section).unwrap();
     let ev = TimedEvent::from_scte35(&section, &raw).unwrap();
     assert_eq!(ev.id, None);
 

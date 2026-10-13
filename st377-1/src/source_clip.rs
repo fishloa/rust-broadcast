@@ -179,20 +179,20 @@ mod tests {
     #[test]
     fn round_trip() {
         let sc = sample();
-        let bytes = sc.to_bytes();
+        let bytes = sc.try_to_bytes().unwrap();
         let parsed = SourceClip::parse(&bytes).unwrap();
         assert_eq!(parsed, sc);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn no_duration_round_trip() {
         let mut sc = sample();
         sc.duration = None;
-        let bytes = sc.to_bytes();
+        let bytes = sc.try_to_bytes().unwrap();
         let parsed = SourceClip::parse(&bytes).unwrap();
         assert_eq!(parsed.duration, None);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -200,7 +200,7 @@ mod tests {
         let mut sc = sample();
         sc.source_package_id = PackageId::NULL;
         sc.source_track_id = 0;
-        let bytes = sc.to_bytes();
+        let bytes = sc.try_to_bytes().unwrap();
         let parsed = SourceClip::parse(&bytes).unwrap();
         assert!(parsed.source_package_id.is_null());
     }
@@ -209,7 +209,7 @@ mod tests {
     fn dark_preserved() {
         let mut sc = sample();
         sc.dark = alloc::vec![(0x9003, alloc::vec![0xDE, 0xAD])];
-        let bytes = sc.to_bytes();
+        let bytes = sc.try_to_bytes().unwrap();
         let parsed = SourceClip::parse(&bytes).unwrap();
         assert_eq!(parsed.dark, sc.dark);
     }
@@ -225,7 +225,7 @@ mod tests {
             items: Vec::new(),
             ..Default::default()
         };
-        let bytes = set.to_bytes();
+        let bytes = set.try_to_bytes().unwrap();
         assert!(matches!(
             SourceClip::parse(&bytes),
             Err(Error::KeyPrefixMismatch { .. })
@@ -235,9 +235,9 @@ mod tests {
     #[test]
     fn mutation_changes_serialized_bytes() {
         let mut sc = sample();
-        let before = sc.to_bytes();
+        let before = sc.try_to_bytes().unwrap();
         sc.start_position = 100;
-        let after = sc.to_bytes();
+        let after = sc.try_to_bytes().unwrap();
         assert_ne!(before, after);
         assert_eq!(SourceClip::parse(&after).unwrap().start_position, 100);
     }

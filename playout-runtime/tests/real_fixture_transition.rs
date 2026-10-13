@@ -143,7 +143,7 @@ fn transition_into_a_real_non_idr_aligned_cue_plans_a_continuous_timeline() {
     // own Serialize/Parse — proving this crate emits a real, wire-valid
     // splice_info_section, not just an in-memory struct.
     let section = to_section(insert);
-    let bytes = section.to_bytes();
+    let bytes = section.try_to_bytes().unwrap();
     let reparsed = SpliceInfoSection::parse(&bytes).expect("reparse emitted section");
     match reparsed.clear.unwrap().command {
         AnyCommand::SpliceInsert(reparsed_insert) => {

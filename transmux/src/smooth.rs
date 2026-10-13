@@ -861,7 +861,7 @@ fn splice_tfxd_into_traf(moof: &[u8], tfxd: &TfxdBox) -> Result<Vec<u8>> {
         moof[traf_off + 3],
     ]) as usize;
 
-    let tfxd_bytes = tfxd.to_bytes();
+    let tfxd_bytes = tfxd.try_to_bytes()?;
     let mut out = Vec::with_capacity(moof.len() + tfxd_bytes.len());
     out.extend_from_slice(moof);
     // The traf is the last child (mfhd then traf), so the tfxd goes at the end.
@@ -969,7 +969,7 @@ mod tests {
     #[test]
     fn tfxd_round_trip() {
         let t = TfxdBox::new(0x0011_2233_4455_6677, 0x0089_ABCD);
-        let bytes = t.to_bytes();
+        let bytes = t.try_to_bytes().unwrap();
         // 8 (box hdr) + 16 (usertype) + 4 (fullbox) + 16 (payload) = 44.
         assert_eq!(bytes.len(), 44);
         assert_eq!(&bytes[4..8], b"uuid");
@@ -977,7 +977,7 @@ mod tests {
         // body = everything after box header(8) + usertype(16) = offset 24.
         let p = TfxdBox::parse_body(&bytes[24..]).unwrap();
         assert_eq!(p, t);
-        assert_eq!(p.to_bytes(), bytes);
+        assert_eq!(p.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]

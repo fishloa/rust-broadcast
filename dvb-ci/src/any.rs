@@ -218,12 +218,12 @@ mod tests {
             program_ca_descriptors: &[],
             streams: alloc::vec::Vec::new(),
         };
-        let bytes = pmt.to_bytes();
+        let bytes = pmt.try_to_bytes().unwrap();
         let any = AnyApdu::parse(&bytes).unwrap();
         assert_eq!(any.name(), "CA_PMT");
         assert_eq!(any.tag(), crate::tag::CA_PMT);
         // round-trips through AnyApdu.
-        assert_eq!(any.to_bytes(), bytes);
+        assert_eq!(any.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -233,7 +233,7 @@ mod tests {
         let any = AnyApdu::parse(&bytes).unwrap();
         assert!(matches!(any, AnyApdu::Unknown { .. }));
         assert_eq!(any.name(), "UNKNOWN");
-        assert_eq!(any.to_bytes(), bytes);
+        assert_eq!(any.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -245,11 +245,11 @@ mod tests {
             more: true,
             text_chars: b"HI",
         };
-        let bytes = t.to_bytes();
+        let bytes = t.try_to_bytes().unwrap();
         assert_eq!(bytes[2], 0x04);
         let any = AnyApdu::parse(&bytes).unwrap();
         assert_eq!(any.name(), "TEXT");
-        assert_eq!(any.to_bytes(), bytes);
+        assert_eq!(any.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]

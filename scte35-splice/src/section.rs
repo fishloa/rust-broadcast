@@ -488,9 +488,9 @@ mod tests {
             &[],
         );
         assert_eq!(section.serialized_len() - 3, 4093);
-        let bytes = section.to_bytes();
+        let bytes = section.try_to_bytes().unwrap();
         let back = SpliceInfoSection::parse(&bytes).unwrap();
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     /// SC-C1: `splice_command_length` is a 12-bit field; a command body of
@@ -552,11 +552,15 @@ mod tests {
             encrypted_payload: None,
             encrypted_splice_command_length: None,
         };
-        let bytes = section.to_bytes();
+        let bytes = section.try_to_bytes().unwrap();
 
         let parsed = SpliceInfoSection::parse(&bytes).unwrap();
         let clear = parsed.clear.as_ref().expect("clear section");
         assert_eq!(clear.alignment_stuffing, &[0xFF, 0xFF, 0xFF]);
-        assert_eq!(parsed.to_bytes(), bytes, "byte-identical round-trip");
+        assert_eq!(
+            parsed.try_to_bytes().unwrap(),
+            bytes,
+            "byte-identical round-trip"
+        );
     }
 }

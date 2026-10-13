@@ -2475,7 +2475,9 @@ fn reprobe_if_config_changed(
         }
         Codec::Aac => {
             let (_, hdr) = find_adts_sync(data)?;
-            let asc = AudioSpecificConfig::from_adts_header(&hdr).to_bytes();
+            let asc = AudioSpecificConfig::from_adts_header(&hdr)
+                .try_to_bytes()
+                .unwrap();
             if live.config_header.as_deref() == Some(asc.as_slice()) {
                 false
             } else {
@@ -3017,7 +3019,7 @@ fn finalize_probe(
                     0,
                     0,
                     0,
-                    Some(DecoderSpecificInfo::new(asc.to_bytes())),
+                    Some(DecoderSpecificInfo::new(asc.try_to_bytes().unwrap())),
                 )),
                 Some(SLConfigDescriptor::predefined_two()),
             ));
@@ -4791,8 +4793,11 @@ impl StreamingTsDemux {
                         && let Some(au) = backlog.last()
                         && let Some((_, hdr)) = find_adts_sync(&au.data)
                     {
-                        live.config_header =
-                            Some(AudioSpecificConfig::from_adts_header(&hdr).to_bytes());
+                        live.config_header = Some(
+                            AudioSpecificConfig::from_adts_header(&hdr)
+                                .try_to_bytes()
+                                .unwrap(),
+                        );
                     }
                     for au in backlog {
                         push_live_au(&mut live, &au.data, au.pts_uw, au.dts_uw, &mut self.events);

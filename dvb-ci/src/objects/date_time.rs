@@ -144,7 +144,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             response_interval: 10,
         };
-        let bytes = e.to_bytes();
+        let bytes = e.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x84, 0x40, 0x01, 0x0A]);
         assert_eq!(DateTimeEnq::parse(&bytes).unwrap(), e);
     }
@@ -156,7 +156,7 @@ mod tests {
             utc_time: [0xC0, 0x79, 0x12, 0x34, 0x56],
             local_offset: None,
         };
-        let bytes = dt.to_bytes();
+        let bytes = dt.try_to_bytes().unwrap();
         assert_eq!(&bytes[..4], &[0x9F, 0x84, 0x41, 0x05]); // len 5
         assert_eq!(DateTime::parse(&bytes).unwrap(), dt);
     }
@@ -168,7 +168,7 @@ mod tests {
             utc_time: [0xC0, 0x79, 0x12, 0x34, 0x56],
             local_offset: Some(-60),
         };
-        let bytes = dt.to_bytes();
+        let bytes = dt.try_to_bytes().unwrap();
         assert_eq!(&bytes[..4], &[0x9F, 0x84, 0x41, 0x07]); // len 7
         let parsed = DateTime::parse(&bytes).unwrap();
         assert_eq!(parsed, dt);
@@ -182,10 +182,10 @@ mod tests {
             utc_time: [0; 5],
             local_offset: None,
         };
-        let a = dt.to_bytes();
+        let a = dt.try_to_bytes().unwrap();
         let mut other = dt;
         other.local_offset = Some(120);
-        let b = other.to_bytes();
+        let b = other.try_to_bytes().unwrap();
         assert_ne!(a, b);
         assert_eq!(a.len(), 9);
         assert_eq!(b.len(), 11);

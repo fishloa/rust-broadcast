@@ -141,7 +141,7 @@ mod tests {
         let d = CiplusInitializationVectorDescriptor {
             iv_data: &[0x00, 0x11, 0x22, 0x33],
         };
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes, [0xD0, 0x04, 0x00, 0x11, 0x22, 0x33]);
         assert_eq!(
             CiplusInitializationVectorDescriptor::parse(&bytes).unwrap(),
@@ -150,13 +150,13 @@ mod tests {
         let other = CiplusInitializationVectorDescriptor {
             iv_data: &[0x00, 0x11, 0x22, 0x34],
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
     fn iv_descriptor_zero_byte_body() {
         let d = CiplusInitializationVectorDescriptor { iv_data: &[] };
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes, [0xD0, 0x00]);
         let parsed = CiplusInitializationVectorDescriptor::parse(&bytes).unwrap();
         assert_eq!(parsed, d);
@@ -168,7 +168,7 @@ mod tests {
         let d = CiplusKeyIdentifierDescriptor {
             key_id_data: &[0xDE, 0xAD],
         };
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes, [0xD1, 0x02, 0xDE, 0xAD]);
         assert_eq!(CiplusKeyIdentifierDescriptor::parse(&bytes).unwrap(), d);
     }
@@ -176,7 +176,7 @@ mod tests {
     #[test]
     fn key_id_descriptor_zero_byte_body() {
         let d = CiplusKeyIdentifierDescriptor { key_id_data: &[] };
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes, [0xD1, 0x00]);
         assert_eq!(CiplusKeyIdentifierDescriptor::parse(&bytes).unwrap(), d);
     }

@@ -236,7 +236,7 @@ fn two_moofs_before_one_mdat_keeps_both_fragments() {
         // first pass fixes the moof's own size; the base then points at the
         // mdat payload, which starts after both moofs.
         let _ = &mut moof;
-        moofs.push(moof.to_bytes());
+        moofs.push(moof.try_to_bytes().unwrap());
     }
 
     // `mdat`: 8-byte header + both samples, and both moofs come first (after

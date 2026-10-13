@@ -177,7 +177,7 @@ mod tests {
             sub_segment_num: 0,
             sub_segments_expected: 0,
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let back = InsertSegmentationDescriptor::parse(&bytes).unwrap();
         assert_eq!(op, back);
     }
@@ -188,7 +188,7 @@ mod tests {
             segmentation_upid: &[],
             ..InsertSegmentationDescriptor::default()
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let back = InsertSegmentationDescriptor::parse(&bytes).unwrap();
         assert_eq!(op, back);
     }
@@ -212,9 +212,9 @@ mod tests {
             segmentation_event_id: 0x42,
             ..InsertSegmentationDescriptor::default()
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op.clone();
         op2.segmentation_event_id = 999;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 }

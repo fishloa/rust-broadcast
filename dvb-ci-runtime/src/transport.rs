@@ -233,7 +233,10 @@ impl Transport {
         self.awaiting = Some(Duration::ZERO);
         let obj: TcObject = create_t_c(self.tcid);
         Out {
-            writes: vec![obj.to_bytes()],
+            writes: vec![
+                obj.try_to_bytes()
+                    .expect("Create_T_C is a fixed 5-byte TPDU, serialization cannot fail"),
+            ],
             timer: Some(self.reply_timeout),
             ..Out::default()
         }
@@ -738,7 +741,8 @@ mod tests {
             sb_value: SbValue::new(false),
             block: Some(DataBlock::More),
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let mut overflowed = false;
         for _ in 0..40 {
             let out = t.on_frame(&frame);

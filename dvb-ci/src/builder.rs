@@ -205,7 +205,7 @@ impl CaPmtBuilt {
     /// untrusted input.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
-        self.as_ca_pmt().to_bytes()
+        self.as_ca_pmt().try_to_bytes().unwrap()
     }
 
     /// Serialize like [`to_bytes`](Self::to_bytes), but return the wire

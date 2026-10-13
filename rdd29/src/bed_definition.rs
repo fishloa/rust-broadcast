@@ -368,18 +368,18 @@ mod tests {
     #[test]
     fn round_trips() {
         let bed = sample();
-        let bytes = bed.to_bytes();
+        let bytes = bed.try_to_bytes().unwrap();
         let parsed = BedDefinition1::parse(&bytes).unwrap();
         assert_eq!(parsed, bed);
 
-        let bytes2 = parsed.to_bytes();
+        let bytes2 = parsed.try_to_bytes().unwrap();
         assert_eq!(bytes, bytes2);
     }
 
     #[test]
     fn trailer_constants_are_validated() {
         let bed = sample();
-        let mut bytes = bed.to_bytes();
+        let mut bytes = bed.try_to_bytes().unwrap();
         let last = bytes.len() - 2;
         bytes[last] = 0xAA; // corrupt "Reserved (set to 0x5)"
         let err = BedDefinition1::parse(&bytes).unwrap_err();
@@ -389,7 +389,7 @@ mod tests {
     #[test]
     fn empty_bed_round_trips() {
         let bed = BedDefinition1::new(0, Vec::new());
-        let bytes = bed.to_bytes();
+        let bytes = bed.try_to_bytes().unwrap();
         let parsed = BedDefinition1::parse(&bytes).unwrap();
         assert_eq!(parsed, bed);
     }
@@ -397,9 +397,9 @@ mod tests {
     #[test]
     fn mutating_meta_id_changes_only_meta_id_bytes() {
         let mut bed = sample();
-        let original = bed.to_bytes();
+        let original = bed.try_to_bytes().unwrap();
         bed.meta_id = 200; // still Plex(8)-direct (<=0xFE)
-        let mutated = bed.to_bytes();
+        let mutated = bed.try_to_bytes().unwrap();
         assert_ne!(original[0], mutated[0]);
         assert_eq!(&original[1..], &mutated[1..]);
     }
@@ -416,11 +416,11 @@ mod tests {
     fn nonzero_align_bits_round_trip() {
         let mut bed = sample();
         bed.align_bits = 0b1010; // this fixture needs exactly 4 padding bits
-        let bytes = bed.to_bytes();
+        let bytes = bed.try_to_bytes().unwrap();
         let parsed = BedDefinition1::parse(&bytes).unwrap();
         assert_eq!(parsed, bed);
         assert_eq!(
-            parsed.to_bytes(),
+            parsed.try_to_bytes().unwrap(),
             bytes,
             "AlignBits must round-trip byte-exactly"
         );

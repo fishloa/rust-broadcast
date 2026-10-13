@@ -142,10 +142,10 @@ mod tests {
     #[test]
     fn construct_serialize_parse_round_trip() {
         let ecd = sample();
-        let bytes = ecd.to_bytes();
+        let bytes = ecd.try_to_bytes().unwrap();
         let parsed = EssenceContainerData::parse(&bytes).unwrap();
         assert_eq!(parsed, ecd);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -154,7 +154,7 @@ mod tests {
         ecd.linked_package_uid = PackageId::NULL;
         ecd.index_sid = None;
         ecd.body_sid = 0;
-        let bytes = ecd.to_bytes();
+        let bytes = ecd.try_to_bytes().unwrap();
         let parsed = EssenceContainerData::parse(&bytes).unwrap();
         assert!(parsed.linked_package_uid.is_null());
         assert_eq!(parsed.index_sid, None);
@@ -166,7 +166,7 @@ mod tests {
         // Simulate a real file's dynamically-allocated `IsSparse` tag,
         // e.g. resolved via that Partition's own Primer Pack.
         ecd.dark = alloc::vec![(0x8010, alloc::vec![0x01])];
-        let bytes = ecd.to_bytes();
+        let bytes = ecd.try_to_bytes().unwrap();
         let parsed = EssenceContainerData::parse(&bytes).unwrap();
         assert_eq!(parsed.dark, ecd.dark);
     }

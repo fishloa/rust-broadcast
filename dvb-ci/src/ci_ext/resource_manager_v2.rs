@@ -340,14 +340,14 @@ mod tests {
 
     #[test]
     fn profile_enq_round_trips() {
-        let bytes = ProfileEnq::default().to_bytes();
+        let bytes = ProfileEnq::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x10, 0x00]);
         assert_eq!(ProfileEnq::parse(&bytes).unwrap(), ProfileEnq::default());
     }
 
     #[test]
     fn profile_changed_round_trips() {
-        let bytes = ProfileChanged::default().to_bytes();
+        let bytes = ProfileChanged::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x12, 0x00]);
         assert_eq!(
             ProfileChanged::parse(&bytes).unwrap(),
@@ -361,7 +361,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             resources: alloc::vec![ResourceId(0x0001_0042), ResourceId(0x0002_0042)],
         };
-        let bytes = p.to_bytes();
+        let bytes = p.try_to_bytes().unwrap();
         // tag(3) + len(1) + 2*4 = 12; len = 0x08.
         assert_eq!(
             bytes,
@@ -372,7 +372,7 @@ mod tests {
         assert_eq!(ProfileReply::parse(&bytes).unwrap(), p);
         let mut other = p.clone();
         other.resources[1] = ResourceId(0x0022_0041);
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -381,7 +381,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             module_id: 0x03,
         };
-        let bytes = m.to_bytes();
+        let bytes = m.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x13, 0x01, 0x03]);
         assert_eq!(ModuleIdSend::parse(&bytes).unwrap(), m);
         // top 2 bits ignored on read.
@@ -391,7 +391,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             module_id: 0x04,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -401,18 +401,18 @@ mod tests {
             command: ModuleIdCommandKind::SetModuleId,
             module_id: 0x05,
         };
-        let bytes = m.to_bytes();
+        let bytes = m.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x14, 0x02, 0x02, 0x05]);
         assert_eq!(ModuleIdCommand::parse(&bytes).unwrap(), m);
         assert_eq!(m.command.name(), "Set_ModuleID");
         let mut other = m;
         other.command = ModuleIdCommandKind::Acknowledgement;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
     fn dispatch_routes_each_tag() {
-        let enq = ProfileEnq::default().to_bytes();
+        let enq = ProfileEnq::default().try_to_bytes().unwrap();
         assert!(matches!(
             ResourceManagerV2Apdu::parse(&enq).unwrap(),
             ResourceManagerV2Apdu::ProfileEnq(_)
@@ -422,11 +422,12 @@ mod tests {
             command: ModuleIdCommandKind::Acknowledgement,
             module_id: 1,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = ResourceManagerV2Apdu::parse(&mic).unwrap();
         assert!(matches!(parsed, ResourceManagerV2Apdu::ModuleIdCommand(_)));
         // dispatch enum round-trips.
-        assert_eq!(parsed.to_bytes(), mic);
+        assert_eq!(parsed.try_to_bytes().unwrap(), mic);
     }
 
     #[test]
@@ -450,7 +451,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             module_id: 0x3F,
         }; // the 6-bit maximum
-        let bytes = m.to_bytes();
+        let bytes = m.try_to_bytes().unwrap();
         assert_eq!(ModuleIdSend::parse(&bytes).unwrap(), m);
     }
 

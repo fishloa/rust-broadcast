@@ -45,7 +45,7 @@ mod tests {
     fn round_trip_empty() {
         let cmd = SpliceNull;
         assert_eq!(cmd.serialized_len(), 0);
-        let bytes = cmd.to_bytes();
+        let bytes = cmd.try_to_bytes().unwrap();
         assert!(bytes.is_empty());
         assert_eq!(SpliceNull::parse(&bytes).unwrap(), cmd);
     }

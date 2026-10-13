@@ -127,7 +127,7 @@ mod tests {
             ],
         };
         assert_eq!(op.descriptor_count(), 2);
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(
             bytes[0], 2,
             "descriptor_count byte must match the vec length"
@@ -141,10 +141,10 @@ mod tests {
         let op = InsertDescriptor {
             descriptor_images: alloc::vec![&[0xAB, 0x04, 0x01, 0x02, 0x03, 0x04][..]],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op.clone();
         op2.descriptor_images.push(&[0xCD, 0x02, 0xAA, 0xBB][..]);
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 
     /// S4-W1/S4-W3 (#1103): `descriptor_count` is derived from

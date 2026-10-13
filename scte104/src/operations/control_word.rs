@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn delete_round_trip() {
         let op = DeleteControlWord { cw_index: 5 };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), DELETE_LEN);
         let back = DeleteControlWord::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -151,7 +151,7 @@ mod tests {
             cw_b: 0,
             cw_c: 0,
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), UPDATE_LEN);
         let back = UpdateControlWord::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -160,18 +160,18 @@ mod tests {
     #[test]
     fn delete_mutate_field_changes_output() {
         let op = DeleteControlWord { cw_index: 5 };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op;
         op2.cw_index = 99;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn update_mutate_field_changes_output() {
         let op = UpdateControlWord::default();
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op;
         op2.cw_a = 1;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 }

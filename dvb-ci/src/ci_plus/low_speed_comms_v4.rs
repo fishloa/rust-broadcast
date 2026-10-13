@@ -795,7 +795,7 @@ mod tests {
 
     #[test]
     fn info_req_round_trips() {
-        let bytes = CommsInfoReq::default().to_bytes();
+        let bytes = CommsInfoReq::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x8C, 0x07, 0x00]);
         assert_eq!(
             CommsInfoReq::parse(&bytes).unwrap(),
@@ -813,7 +813,7 @@ mod tests {
             source_port: 0x1234,
             input_delivery_pid: Pid::new(0x0100),
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         // body=22=0x16. LTS(07) status(01) IP(16) port(12 34) pid(01 00).
         assert_eq!(bytes[0..4], [0x9F, 0x8C, 0x08, 0x16]);
         assert_eq!(bytes[4], 0x07);
@@ -824,8 +824,8 @@ mod tests {
         assert_eq!(CommsInfoReply::parse(&bytes).unwrap(), r);
         let mut other = r;
         other.status = false;
-        assert_eq!(other.to_bytes()[5], 0x00);
-        assert_ne!(bytes, other.to_bytes());
+        assert_eq!(other.try_to_bytes().unwrap()[5], 0x00);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -841,7 +841,7 @@ mod tests {
 
     #[test]
     fn ip_config_req_round_trips() {
-        let bytes = CommsIpConfigReq::default().to_bytes();
+        let bytes = CommsIpConfigReq::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x8C, 0x09, 0x00]);
         assert_eq!(
             CommsIpConfigReq::parse(&bytes).unwrap(),
@@ -857,7 +857,7 @@ mod tests {
             physical_address: [0x00, 0x11, 0x22, 0x33, 0x44, 0x55],
             ip_config: None,
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         // body=7: conn_state(00) MAC(6). connection_state 0 in high 2 bits => 0x00.
         assert_eq!(
             bytes,
@@ -882,7 +882,7 @@ mod tests {
                 dns_server_addresses: alloc::vec![IP_A, IP_B],
             }),
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         // connection_state Connected(01) in high 2 bits => 0x40.
         assert_eq!(bytes[0..4], [0x9F, 0x8C, 0x0A, (7 + 65 + 32) as u8]);
         assert_eq!(bytes[4], 0x40);
@@ -894,7 +894,7 @@ mod tests {
         if let Some(c) = &mut other.ip_config {
             c.dns_server_addresses.pop();
         }
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     /// r10-W-15: `connection_state` and `ip_config` are independently public
@@ -942,13 +942,13 @@ mod tests {
             ip_connection_type: IpConnectionType::IpDescriptor,
             inner: &[0xDE, 0xAD],
         };
-        let bytes = h.to_bytes();
+        let bytes = h.try_to_bytes().unwrap();
         // tag(05) len(04) LTS(05) conn_type(03) inner(DE AD).
         assert_eq!(bytes, [0x05, 0x04, 0x05, 0x03, 0xDE, 0xAD]);
         assert_eq!(HybridDescriptor::parse(&bytes).unwrap(), h);
         let mut other = h;
         other.lts_id = 0x06;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -960,7 +960,7 @@ mod tests {
             include_sources: true,
             source_addresses: alloc::vec![IP_A, IP_B],
         };
-        let bytes = m.to_bytes();
+        let bytes = m.try_to_bytes().unwrap();
         // data = 1 + 16 + 2 + 1 + 1 + 2*16 = 53. total = 55.
         assert_eq!(bytes[0], MULTICAST_DESCRIPTOR_TAG);
         assert_eq!(bytes[1], 53);
@@ -972,8 +972,8 @@ mod tests {
         assert_eq!(MulticastDescriptor::parse(&bytes).unwrap(), m);
         let mut other = m.clone();
         other.include_sources = false;
-        assert_eq!(other.to_bytes()[21], 0x00);
-        assert_ne!(bytes, other.to_bytes());
+        assert_eq!(other.try_to_bytes().unwrap()[21], 0x00);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -985,7 +985,7 @@ mod tests {
             include_sources: false,
             source_addresses: Vec::new(),
         };
-        let bytes = m.to_bytes();
+        let bytes = m.try_to_bytes().unwrap();
         assert_eq!(bytes[1], 21); // data = 1+16+2+1+1 = 21
         assert_eq!(MulticastDescriptor::parse(&bytes).unwrap(), m);
     }
@@ -993,7 +993,7 @@ mod tests {
     #[test]
     fn dispatch_routes_fixed_tags() {
         assert!(matches!(
-            LscV4Apdu::parse(&CommsInfoReq::default().to_bytes()).unwrap(),
+            LscV4Apdu::parse(&CommsInfoReq::default().try_to_bytes().unwrap()).unwrap(),
             LscV4Apdu::CommsInfoReq(_)
         ));
         let reply = CommsInfoReply {
@@ -1005,11 +1005,11 @@ mod tests {
             input_delivery_pid: Pid::new(0),
         };
         assert!(matches!(
-            LscV4Apdu::parse(&reply.to_bytes()).unwrap(),
+            LscV4Apdu::parse(&reply.try_to_bytes().unwrap()).unwrap(),
             LscV4Apdu::CommsInfoReply(_)
         ));
         assert!(matches!(
-            LscV4Apdu::parse(&CommsIpConfigReq::default().to_bytes()).unwrap(),
+            LscV4Apdu::parse(&CommsIpConfigReq::default().try_to_bytes().unwrap()).unwrap(),
             LscV4Apdu::CommsIpConfigReq(_)
         ));
         // comms_IP_config_reply is dispatched by the same enum (r10-O-7).
@@ -1019,12 +1019,15 @@ mod tests {
             physical_address: [0; MAC_LEN],
             ip_config: None,
         };
-        let cb = cfg.to_bytes();
+        let cb = cfg.try_to_bytes().unwrap();
         assert_eq!(
             LscV4Apdu::parse(&cb).unwrap(),
             LscV4Apdu::CommsIpConfigReply(cfg.clone())
         );
-        assert_eq!(LscV4Apdu::CommsIpConfigReply(cfg).to_bytes(), cb);
+        assert_eq!(
+            LscV4Apdu::CommsIpConfigReply(cfg).try_to_bytes().unwrap(),
+            cb
+        );
         // An unknown tag is still rejected.
         assert!(matches!(
             LscV4Apdu::parse(&[0x9F, 0x8C, 0x0B, 0x00]),
@@ -1042,7 +1045,7 @@ mod tests {
             source_port: 0,
             input_delivery_pid: Pid::new(0x1FFF),
         };
-        let bytes = reply.to_bytes();
+        let bytes = reply.try_to_bytes().unwrap();
         assert_eq!(CommsInfoReply::parse(&bytes).unwrap(), reply);
     }
 

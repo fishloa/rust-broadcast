@@ -661,7 +661,7 @@ mod tests {
             delivery_system_descriptor_tag: 0x44,
             descriptor_tag_extension: None,
         };
-        let bytes = t.to_bytes();
+        let bytes = t.try_to_bytes().unwrap();
         // tag(3) + len(0x09) + flags(background|keep = 0x04|0x01 = 0x05)
         //   + onid(11 22) + tsid(33 44) + sid(55 66) + dsd_tag(44) + reserved(00).
         assert_eq!(
@@ -673,8 +673,8 @@ mod tests {
         assert_eq!(TuneTripletReq::parse(&bytes).unwrap(), t);
         let mut other = t;
         other.background_tune = false;
-        assert_eq!(other.to_bytes()[4], 0x01);
-        assert_ne!(bytes, other.to_bytes());
+        assert_eq!(other.try_to_bytes().unwrap()[4], 0x01);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -690,7 +690,7 @@ mod tests {
             delivery_system_descriptor_tag: 0x7F,
             descriptor_tag_extension: Some(0x79),
         };
-        let bytes = t.to_bytes();
+        let bytes = t.try_to_bytes().unwrap();
         // flags = quietly = 0x02; dsd_tag=0x7F; ext=0x79.
         assert_eq!(
             bytes,
@@ -710,17 +710,17 @@ mod tests {
             keep_app_running: false,
             logical_channel_number: 0x0123,
         };
-        let bytes = t.to_bytes();
+        let bytes = t.try_to_bytes().unwrap();
         // tag(3) + len(0x03) + byte0(background = 0x01)
         //   + byte1(quietly=0x80 | lcn[13:8]=0x01 = 0x81) + byte2(lcn lo = 0x23).
         assert_eq!(bytes, [0x9F, 0x84, 0x07, 0x03, 0x01, 0x81, 0x23]);
         assert_eq!(TuneLcnReq::parse(&bytes).unwrap(), t);
         let mut other = t;
         other.logical_channel_number = 0x3FFE;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
         // 14-bit value preserved.
         assert_eq!(
-            TuneLcnReq::parse(&other.to_bytes())
+            TuneLcnReq::parse(&other.try_to_bytes().unwrap())
                 .unwrap()
                 .logical_channel_number,
             0x3FFE
@@ -747,7 +747,7 @@ mod tests {
             logical_channel_number: 0x3FFF,
             ..lcn
         };
-        let bytes = max.to_bytes();
+        let bytes = max.try_to_bytes().unwrap();
         assert_eq!(bytes[bytes.len() - 2..], [0x3F, 0xFF]);
         // BaseV3 has no background_tune bit: `true` used to be dropped silently.
         let v3 = TuneIpReq {
@@ -784,8 +784,8 @@ mod tests {
             keep_app_running: false,
             service_location_data: data,
         };
-        let ms_bytes = ms.to_bytes();
-        let v3_bytes = v3.to_bytes();
+        let ms_bytes = ms.try_to_bytes().unwrap();
+        let v3_bytes = v3.try_to_bytes().unwrap();
         // Multi-stream byte0: background(0x40) | quietly(0x20) | sll_hi(0) = 0x60.
         assert_eq!(ms_bytes, [0x9F, 0x84, 0x08, 0x04, 0x60, 0x02, 0xAA, 0xBB]);
         // Base v3 byte0: quietly(0x20) | sll_hi(0) = 0x20 (no background bit).
@@ -815,7 +815,7 @@ mod tests {
             keep_app_running: false,
             service_location_data: &[],
         };
-        let bytes = ms.to_bytes();
+        let bytes = ms.try_to_bytes().unwrap();
         // byte0 = 0x40 (background only).
         assert_eq!(bytes[4], 0x40);
         let as_v3 = TuneIpReq::parse_mode(&bytes, HostControlMode::BaseV3).unwrap();
@@ -834,7 +834,7 @@ mod tests {
             keep_app_running: false,
             service_location_data: &[],
         };
-        let bytes = t.to_bytes();
+        let bytes = t.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x84, 0x08, 0x02, 0x00, 0x00]);
         assert_eq!(
             TuneIpReq::parse_mode(&bytes, HostControlMode::MultiStream).unwrap(),
@@ -844,7 +844,7 @@ mod tests {
 
     #[test]
     fn tuner_status_req_round_trips() {
-        let bytes = TunerStatusReq::default().to_bytes();
+        let bytes = TunerStatusReq::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x84, 0x0A, 0x00]);
         assert_eq!(
             TunerStatusReq::parse(&bytes).unwrap(),
@@ -870,7 +870,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         // tag(3) + len(0x07) + byte0(ip_capable=0x80 | num_dsd=2 = 0x82)
         //   dsd0: connected=1 -> 0x01, tag=0x44, reserved=0x00
         //   dsd1: connected=0 -> 0x00, tag=0x7F, ext=0x79.
@@ -883,8 +883,8 @@ mod tests {
         assert_eq!(TunerStatusReply::parse(&bytes).unwrap(), r);
         let mut other = r.clone();
         other.ip_tune_capable = false;
-        assert_eq!(other.to_bytes()[4], 0x02);
-        assert_ne!(bytes, other.to_bytes());
+        assert_eq!(other.try_to_bytes().unwrap()[4], 0x02);
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -894,7 +894,7 @@ mod tests {
             ip_tune_capable: false,
             dsds: Vec::new(),
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x84, 0x0B, 0x01, 0x00]);
         assert_eq!(TunerStatusReply::parse(&bytes).unwrap(), r);
     }
@@ -912,7 +912,8 @@ mod tests {
             delivery_system_descriptor_tag: 0,
             descriptor_tag_extension: None,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert!(matches!(
             MultistreamHostControlApdu::parse_mode(&triplet, HostControlMode::MultiStream).unwrap(),
             MultistreamHostControlApdu::TuneTripletReq(_)
@@ -925,11 +926,12 @@ mod tests {
             keep_app_running: false,
             service_location_data: &[0x01],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed =
             MultistreamHostControlApdu::parse_mode(&ip, HostControlMode::MultiStream).unwrap();
         assert!(matches!(parsed, MultistreamHostControlApdu::TuneIpReq(_)));
-        assert_eq!(parsed.to_bytes(), ip);
+        assert_eq!(parsed.try_to_bytes().unwrap(), ip);
         // Unknown tag rejected.
         assert!(matches!(
             MultistreamHostControlApdu::parse_mode(
@@ -971,7 +973,7 @@ mod tests {
             keep_app_running: false,
             service_location_data: &data,
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         assert_eq!(
             TuneIpReq::parse_mode(&bytes, HostControlMode::MultiStream).unwrap(),
             req

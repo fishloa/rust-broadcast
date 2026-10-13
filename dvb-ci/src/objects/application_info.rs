@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn enq_round_trip() {
-        let bytes = ApplicationInfoEnq::default().to_bytes();
+        let bytes = ApplicationInfoEnq::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x20, 0x00]);
         assert_eq!(
             ApplicationInfoEnq::parse(&bytes).unwrap(),
@@ -233,7 +233,7 @@ mod tests {
 
     #[test]
     fn enter_menu_round_trip() {
-        let bytes = EnterMenu::default().to_bytes();
+        let bytes = EnterMenu::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x22, 0x00]);
         assert_eq!(EnterMenu::parse(&bytes).unwrap(), EnterMenu::default());
     }
@@ -247,7 +247,7 @@ mod tests {
             manufacturer_code: 0x5678,
             menu_string: b"CA Module",
         };
-        let bytes = info.to_bytes();
+        let bytes = info.try_to_bytes().unwrap();
         // tag(3)+len(1)+prefix(6)+9
         assert_eq!(bytes.len(), 19);
         assert_eq!(&bytes[..4], &[0x9F, 0x80, 0x21, 0x0F]); // len 15
@@ -265,10 +265,10 @@ mod tests {
             manufacturer_code: 0x5678,
             menu_string: b"abc",
         };
-        let a = info.to_bytes();
+        let a = info.try_to_bytes().unwrap();
         let mut other = info.clone();
         other.application_manufacturer = 0x9999;
-        assert_ne!(a, other.to_bytes());
+        assert_ne!(a, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -280,7 +280,7 @@ mod tests {
             manufacturer_code: 0,
             menu_string: b"",
         };
-        let bytes = info.to_bytes();
+        let bytes = info.try_to_bytes().unwrap();
         assert_eq!(ApplicationInfo::parse(&bytes).unwrap(), info);
     }
 }

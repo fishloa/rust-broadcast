@@ -181,7 +181,7 @@ mod tests {
             avail_num: 0,
             avails_expected: 0,
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), LEN);
         let back = ScheduleDefinition::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -193,9 +193,9 @@ mod tests {
             splice_event_id: 1,
             ..ScheduleDefinition::default()
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op;
         op2.splice_event_id = 999;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 }

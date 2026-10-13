@@ -118,28 +118,28 @@ mod tests {
     #[test]
     fn construct_serialize_parse_round_trip() {
         let cs = sample();
-        let bytes = cs.to_bytes();
+        let bytes = cs.try_to_bytes().unwrap();
         let parsed = ContentStorage::parse(&bytes).unwrap();
         assert_eq!(parsed, cs);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn optional_essence_container_data_omitted_round_trips() {
         let mut cs = sample();
         cs.essence_container_data = None;
-        let bytes = cs.to_bytes();
+        let bytes = cs.try_to_bytes().unwrap();
         let parsed = ContentStorage::parse(&bytes).unwrap();
         assert_eq!(parsed.essence_container_data, None);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn mutation_changes_serialized_bytes() {
         let mut cs = sample();
-        let before = cs.to_bytes();
+        let before = cs.try_to_bytes().unwrap();
         cs.packages.push([0x55; 16]);
-        let after = cs.to_bytes();
+        let after = cs.try_to_bytes().unwrap();
         assert_ne!(before, after);
     }
 }

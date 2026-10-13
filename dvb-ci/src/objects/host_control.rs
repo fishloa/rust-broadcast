@@ -245,7 +245,7 @@ mod tests {
             transport_stream_id: 0x5566,
             service_id: 0x7788,
         };
-        let bytes = t.to_bytes();
+        let bytes = t.try_to_bytes().unwrap();
         assert_eq!(
             bytes,
             [
@@ -255,7 +255,7 @@ mod tests {
         assert_eq!(Tune::parse(&bytes).unwrap(), t);
         let mut other = t;
         other.service_id = 0x9999;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -266,7 +266,7 @@ mod tests {
             replaced_pid: Pid::new(0x0123),    // 13-bit
             replacement_pid: Pid::new(0x01FF), // 13-bit
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         // body: 07, reserved(111)+0x0123 => 0xE1 0x23, reserved+0x01FF => 0xE1 0xFF
         assert_eq!(
             bytes,
@@ -276,7 +276,7 @@ mod tests {
         assert_eq!(parsed, r);
         let mut other = r;
         other.replacement_pid = Pid::new(0x0001);
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -293,19 +293,19 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             replacement_ref: 0x42,
         };
-        let bytes = c.to_bytes();
+        let bytes = c.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x84, 0x02, 0x01, 0x42]);
         assert_eq!(ClearReplace::parse(&bytes).unwrap(), c);
         let other = ClearReplace {
             length_form: crate::length::LengthForm::Minimal,
             replacement_ref: 0x43,
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
     fn ask_release_round_trips() {
-        let bytes = AskRelease::default().to_bytes();
+        let bytes = AskRelease::default().try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x84, 0x03, 0x00]);
         assert_eq!(AskRelease::parse(&bytes).unwrap(), AskRelease::default());
     }

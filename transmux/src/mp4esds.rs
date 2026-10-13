@@ -1662,13 +1662,13 @@ mod tests {
             Some(SLConfigDescriptor::predefined_two()),
         ));
 
-        let original = es.to_bytes();
+        let original = es.try_to_bytes().unwrap();
 
         // Mutate objectTypeIndication
         let mut es2 = es.clone();
         let dc = es2.es_descriptor.decoder_config.as_mut().unwrap();
         dc.object_type_indication = ObjectTypeIndication(0x21); // AVC
-        let mutated = es2.to_bytes();
+        let mutated = es2.try_to_bytes().unwrap();
         assert_ne!(mutated, original, "mutating OTI must change bytes");
     }
 

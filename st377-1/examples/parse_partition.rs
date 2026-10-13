@@ -32,7 +32,7 @@ fn main() {
         len_size: BerLength::Minimal,
     };
 
-    let bytes = pack.to_bytes();
+    let bytes = pack.try_to_bytes().unwrap();
     println!("serialized {} bytes:", bytes.len());
     println!(
         "{}",

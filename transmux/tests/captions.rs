@@ -89,7 +89,7 @@ fn stpp_parse_and_round_trip() {
     assert_eq!(parsed.namespace, entry.namespace);
 
     // Byte-exact round-trip
-    let serialized = parsed.to_bytes();
+    let serialized = parsed.try_to_bytes().unwrap();
     assert_eq!(
         serialized.as_slice(),
         stpp_bytes,
@@ -99,7 +99,7 @@ fn stpp_parse_and_round_trip() {
     // Mutation proof: changing namespace changes the serialized bytes
     let mut mutated = parsed.clone();
     mutated.namespace = String::from("http://example.com/mutated");
-    let mutated_bytes = mutated.to_bytes();
+    let mutated_bytes = mutated.try_to_bytes().unwrap();
     assert_ne!(
         mutated_bytes.as_slice(),
         stpp_bytes,
@@ -141,7 +141,7 @@ fn wvtt_spec_vector_round_trip() {
     let entry = WvttSampleEntry::new("WEBVTT");
 
     // Serialize and verify box structure
-    let bytes = entry.to_bytes();
+    let bytes = entry.try_to_bytes().unwrap();
     assert_eq!(&bytes[4..8], b"wvtt", "fourcc must be wvtt");
 
     // Parse back and assert equality
@@ -151,7 +151,7 @@ fn wvtt_spec_vector_round_trip() {
     assert!(parsed.extra_boxes.is_empty());
 
     // Byte-exact round-trip
-    let reser = parsed.to_bytes();
+    let reser = parsed.try_to_bytes().unwrap();
     assert_eq!(
         reser.as_slice(),
         bytes.as_slice(),
@@ -161,7 +161,7 @@ fn wvtt_spec_vector_round_trip() {
     // Mutation proof: changing config changes bytes
     let mut mutated = parsed.clone();
     mutated.config.config = String::from("WEBVTT\n\nNOTE mutated");
-    let mutated_bytes = mutated.to_bytes();
+    let mutated_bytes = mutated.try_to_bytes().unwrap();
     assert_ne!(
         mutated_bytes.as_slice(),
         bytes.as_slice(),
@@ -177,7 +177,7 @@ fn wvtt_spec_vector_round_trip() {
 fn vttc_payl_spec_vector_round_trip() {
     // Build a vttc cue box: vttC "WEBVTT" in sample entry, cue in vttc box
     let cue = VttCueBox::new("Hello, World!");
-    let bytes = cue.to_bytes();
+    let bytes = cue.try_to_bytes().unwrap();
     assert_eq!(&bytes[4..8], b"vttc", "fourcc must be vttc");
 
     let parsed = VttCueBox::bare_parse(&bytes).expect("vttc must parse");
@@ -185,7 +185,7 @@ fn vttc_payl_spec_vector_round_trip() {
     assert!(parsed.settings.is_none());
     assert!(parsed.cue_id.is_none());
 
-    let reser = parsed.to_bytes();
+    let reser = parsed.try_to_bytes().unwrap();
     assert_eq!(
         reser.as_slice(),
         bytes.as_slice(),
@@ -200,13 +200,13 @@ fn vttc_payl_spec_vector_round_trip() {
 #[test]
 fn vtte_spec_vector_round_trip() {
     let vtte = VttEmptyCueBox;
-    let bytes = vtte.to_bytes();
+    let bytes = vtte.try_to_bytes().unwrap();
     assert_eq!(bytes.len(), 8, "vtte must be exactly 8 bytes");
     assert_eq!(&bytes[4..8], b"vtte", "fourcc must be vtte");
 
     // Parse back
     let parsed = VttEmptyCueBox::bare_parse(&bytes).expect("vtte must parse");
-    let reser = parsed.to_bytes();
+    let reser = parsed.try_to_bytes().unwrap();
     assert_eq!(
         reser.as_slice(),
         bytes.as_slice(),
@@ -223,7 +223,7 @@ fn wvtt_complete_spec_vector() {
     // Build a complete wvtt sample entry (the init-segment part)
     let mut entry = WvttSampleEntry::new("WEBVTT");
     entry.data_reference_index = 1;
-    let se_bytes = entry.to_bytes();
+    let se_bytes = entry.try_to_bytes().unwrap();
 
     // Verify wvtt structure:
     //   [0..4]  size
@@ -240,19 +240,25 @@ fn wvtt_complete_spec_vector() {
 
     // Now build a sample payload: a vttc box with a payl child
     let cue = VttCueBox::new("00:00:01.000 --> 00:00:03.000\nHello WebVTT!");
-    let sample_bytes = cue.to_bytes();
+    let sample_bytes = cue.try_to_bytes().unwrap();
 
     // Parse the sample payload back
     let parsed_cue = VttCueBox::bare_parse(&sample_bytes).unwrap();
     assert!(parsed_cue.payload.cue_text.contains("Hello WebVTT!"));
 
     // Byte-exact round-trip of sample payload
-    assert_eq!(parsed_cue.to_bytes().as_slice(), sample_bytes.as_slice());
+    assert_eq!(
+        parsed_cue.try_to_bytes().unwrap().as_slice(),
+        sample_bytes.as_slice()
+    );
 
     // Parse the sample entry back
     let parsed_se = WvttSampleEntry::bare_parse(&se_bytes).unwrap();
     assert_eq!(parsed_se.config.config, "WEBVTT");
-    assert_eq!(parsed_se.to_bytes().as_slice(), se_bytes.as_slice());
+    assert_eq!(
+        parsed_se.try_to_bytes().unwrap().as_slice(),
+        se_bytes.as_slice()
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -262,14 +268,14 @@ fn wvtt_complete_spec_vector() {
 #[test]
 fn vttc_config_box_round_trip() {
     let cfg = WebVttConfigurationBox::new("WEBVTT");
-    let bytes = cfg.to_bytes();
+    let bytes = cfg.try_to_bytes().unwrap();
     assert_eq!(&bytes[4..8], b"vttC");
     // body is "WEBVTT" (6 bytes), so total = 8 + 6 = 14
     assert_eq!(bytes.len(), 14);
 
     let parsed = WebVttConfigurationBox::bare_parse(&bytes).unwrap();
     assert_eq!(parsed.config, "WEBVTT");
-    assert_eq!(parsed.to_bytes().as_slice(), bytes.as_slice());
+    assert_eq!(parsed.try_to_bytes().unwrap().as_slice(), bytes.as_slice());
 }
 
 // ---------------------------------------------------------------------------
@@ -279,10 +285,10 @@ fn vttc_config_box_round_trip() {
 #[test]
 fn cue_payload_box_round_trip() {
     let payl = CuePayloadBox::new("Test subtitle text");
-    let bytes = payl.to_bytes();
+    let bytes = payl.try_to_bytes().unwrap();
     assert_eq!(&bytes[4..8], b"payl");
 
     let parsed = CuePayloadBox::bare_parse(&bytes).unwrap();
     assert_eq!(parsed.cue_text, "Test subtitle text");
-    assert_eq!(parsed.to_bytes().as_slice(), bytes.as_slice());
+    assert_eq!(parsed.try_to_bytes().unwrap().as_slice(), bytes.as_slice());
 }

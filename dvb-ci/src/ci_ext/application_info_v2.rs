@@ -259,10 +259,13 @@ mod tests {
     #[test]
     fn enq_and_enter_menu_round_trip() {
         assert_eq!(
-            ApplicationInfoEnq::default().to_bytes(),
+            ApplicationInfoEnq::default().try_to_bytes().unwrap(),
             [0x9F, 0x80, 0x20, 0x00]
         );
-        assert_eq!(EnterMenu::default().to_bytes(), [0x9F, 0x80, 0x22, 0x00]);
+        assert_eq!(
+            EnterMenu::default().try_to_bytes().unwrap(),
+            [0x9F, 0x80, 0x22, 0x00]
+        );
         assert_eq!(
             ApplicationInfoEnq::parse(&[0x9F, 0x80, 0x20, 0x00]).unwrap(),
             ApplicationInfoEnq::default()
@@ -278,7 +281,7 @@ mod tests {
             manufacturer_code: 0x5678,
             menu_string: b"Audio",
         };
-        let bytes = info.to_bytes();
+        let bytes = info.try_to_bytes().unwrap();
         // tag(3) + len(1) + prefix(6) + 5 = 15; body len = 11 = 0x0B.
         assert_eq!(
             bytes,
@@ -291,7 +294,7 @@ mod tests {
         assert_eq!(info.application_type.name(), "Accessibility_aids");
         let mut other = info.clone();
         other.application_type = ApplicationTypeV2::Unclassified;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -312,7 +315,8 @@ mod tests {
             manufacturer_code: 0,
             menu_string: b"",
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert!(matches!(
             ApplicationInfoV2Apdu::parse(&info).unwrap(),
             ApplicationInfoV2Apdu::ApplicationInfo(_)

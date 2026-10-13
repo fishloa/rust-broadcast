@@ -434,13 +434,13 @@ mod tests {
         assert_eq!(seg.regions.len(), 1);
         assert_eq!(seg.regions[0].region_id, 1);
         assert_eq!(seg.regions[0].subregions.len(), 1);
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test
         let mut seg2 = seg.clone();
         seg2.regions[0].region_id = 5;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = DisparitySignallingSegment::parse(&out2).unwrap();
         assert_eq!(reparse.regions[0].region_id, 5);
@@ -499,13 +499,13 @@ mod tests {
         assert_eq!(seg.dss_version_number, 8);
         assert!(seg.update_sequence_page_flag);
         assert_eq!(seg.regions.len(), 0);
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test
         let mut seg2 = seg.clone();
         seg2.page_default_disparity_shift = 10;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = DisparitySignallingSegment::parse(&out2).unwrap();
         assert_eq!(reparse.page_default_disparity_shift, 10);
@@ -527,13 +527,13 @@ mod tests {
         assert_eq!(seg.regions[0].region_id, 1);
         assert!(seg.regions[0].update_sequence_region_flag);
         assert_eq!(seg.regions[0].subregions.len(), 1);
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test
         let mut seg2 = seg.clone();
         seg2.dss_version_number = 3;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = DisparitySignallingSegment::parse(&out2).unwrap();
         assert_eq!(reparse.dss_version_number, 3);
@@ -558,7 +558,7 @@ mod tests {
                 interval_count: 5,
                 disparity_shift_integer: -1,
             });
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         // division_period_count is body[4] of the update sequence, which
         // starts right after the 8-byte fixed header (offset HEADER_LEN+FIXED_LEN).

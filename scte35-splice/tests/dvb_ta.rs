@@ -27,16 +27,16 @@ fn das_descriptor_rides_in_a_real_splice_info_section() {
         EquivalentSegmentationType::ProviderPlacementOpportunity,
         EXAMPLE_UPID,
     );
-    let loop_bytes = das.to_bytes();
+    let loop_bytes = das.try_to_bytes().unwrap();
 
     let cmd = AnyCommand::SpliceInsert(SpliceInsert::default());
     let section = SpliceInfoSection::new_clear(cmd, &loop_bytes);
-    let on_wire = section.to_bytes();
+    let on_wire = section.try_to_bytes().unwrap();
 
     // table_id 0xFC, parses back byte-exact.
     assert_eq!(on_wire[0], 0xFC);
     let parsed = SpliceInfoSection::parse(&on_wire).unwrap();
-    assert_eq!(parsed.to_bytes(), on_wire);
+    assert_eq!(parsed.try_to_bytes().unwrap(), on_wire);
 
     // The descriptor loop dispatches the DVB DAS descriptor by tag 0xF0.
     let descs: Vec<_> = parsed.descriptors().collect::<Result<_, _>>().unwrap();
@@ -80,17 +80,17 @@ fn compact_splice_insert_with_das_round_trips() {
         e_crc_32: None,
     };
     let compact = CompactScte35::SpliceInsert(si.clone());
-    let bytes = compact.to_bytes();
+    let bytes = compact.try_to_bytes().unwrap();
     let back = CompactScte35::parse(&bytes).unwrap();
     assert_eq!(compact, back);
-    assert_eq!(back.to_bytes(), bytes);
+    assert_eq!(back.try_to_bytes().unwrap(), bytes);
 }
 
 #[test]
 fn stream_event_wraps_section_and_base64_inflates_by_4_3() {
     let inner =
         SpliceInfoSection::new_clear(AnyCommand::SpliceInsert(SpliceInsert::default()), &[]);
-    let inner_bytes = inner.to_bytes();
+    let inner_bytes = inner.try_to_bytes().unwrap();
     let inner = SpliceInfoSection::parse(&inner_bytes).unwrap();
 
     let payload = StreamEventPayload {
@@ -99,10 +99,10 @@ fn stream_event_wraps_section_and_base64_inflates_by_4_3() {
         private_data: None,
         carriage: Scte35Carriage::Inline(inner),
     };
-    let bin = payload.to_bytes();
+    let bin = payload.try_to_bytes().unwrap();
     let back = StreamEventPayload::parse(&bin).unwrap();
     assert_eq!(payload, back);
-    assert_eq!(back.to_bytes(), bin);
+    assert_eq!(back.try_to_bytes().unwrap(), bin);
 
     // base-64 (RFC 4648) inflates 3 bytes → 4 chars.
     let b64 = base64_encode(&bin);

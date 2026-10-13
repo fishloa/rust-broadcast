@@ -217,7 +217,7 @@ mod tests {
             EquivalentSegmentationType::ProviderPlacementOpportunity,
             upid,
         );
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
 
         // Hand-computed wire layout:
         //   tag = 0xF0
@@ -237,7 +237,7 @@ mod tests {
 
         let back = DvbDasDescriptor::parse(&bytes).unwrap();
         assert_eq!(d, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
         assert_eq!(back.identifier, DVB_IDENTIFIER);
     }
 
@@ -246,23 +246,23 @@ mod tests {
         let upid = b"urn:tv.acme:abc";
         let a = DvbDasDescriptor::new(0, 0, EquivalentSegmentationType::NoEquivalent, upid);
         let b = DvbDasDescriptor::new(1, 0, EquivalentSegmentationType::NoEquivalent, upid);
-        assert_ne!(a.to_bytes(), b.to_bytes());
+        assert_ne!(a.try_to_bytes().unwrap(), b.try_to_bytes().unwrap());
         let c = DvbDasDescriptor::new(
             0,
             0,
             EquivalentSegmentationType::DistributorAdvertisement,
             upid,
         );
-        assert_ne!(a.to_bytes(), c.to_bytes());
+        assert_ne!(a.try_to_bytes().unwrap(), c.try_to_bytes().unwrap());
         // A different UPID changes the wire too.
         let d = DvbDasDescriptor::new(0, 0, EquivalentSegmentationType::NoEquivalent, b"urn:x:y");
-        assert_ne!(a.to_bytes(), d.to_bytes());
+        assert_ne!(a.try_to_bytes().unwrap(), d.try_to_bytes().unwrap());
     }
 
     #[test]
     fn empty_upid_round_trips() {
         let d = DvbDasDescriptor::new(0, 0, EquivalentSegmentationType::NoEquivalent, &[]);
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes[1] as usize, 4 + FIXED_BODY_LEN);
         let back = DvbDasDescriptor::parse(&bytes).unwrap();
         assert_eq!(d, back);
@@ -313,7 +313,7 @@ mod tests {
     fn serialize_accepts_max_valid_upid() {
         let max_upid = vec![b'x'; 248];
         let d = DvbDasDescriptor::new(0, 0, EquivalentSegmentationType::NoEquivalent, &max_upid);
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes[1], 255u8); // descriptor_length = 4 (identifier) + 3 (fixed) + 248 (upid)
         let back = DvbDasDescriptor::parse(&bytes).unwrap();
         assert_eq!(back.upid, max_upid.as_slice());

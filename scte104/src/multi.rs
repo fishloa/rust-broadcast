@@ -245,7 +245,7 @@ mod tests {
             }),
         }];
         let msg = MultipleOperationMessage::new(0, 1, 42, 0, 0, Timestamp::None, ops);
-        let bytes = msg.to_bytes();
+        let bytes = msg.try_to_bytes().unwrap();
         let back = MultipleOperationMessage::parse(&bytes).unwrap();
         assert_eq!(msg, back);
     }
@@ -281,7 +281,7 @@ mod tests {
             },
         ];
         let msg = MultipleOperationMessage::new(0, 1, 42, 0, 0, Timestamp::None, ops);
-        let bytes = msg.to_bytes();
+        let bytes = msg.try_to_bytes().unwrap();
         let back = MultipleOperationMessage::parse(&bytes).unwrap();
         assert_eq!(msg, back);
         assert_eq!(back.operations.len(), 3);
@@ -380,7 +380,7 @@ mod tests {
              header (SpliceNullRequest has an empty body), not stay stale"
         );
         // And it must actually match what serialize_into needs.
-        let bytes = msg.to_bytes();
+        let bytes = msg.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), len_after);
     }
 
@@ -401,9 +401,9 @@ mod tests {
             }),
         }];
         let msg = MultipleOperationMessage::new(0, 1, 42, 0, 0, Timestamp::None, ops);
-        let bytes = msg.to_bytes();
+        let bytes = msg.try_to_bytes().unwrap();
         let mut msg2 = msg.clone();
         msg2.message_number = 99;
-        assert_ne!(msg2.to_bytes(), bytes);
+        assert_ne!(msg2.try_to_bytes().unwrap(), bytes);
     }
 }

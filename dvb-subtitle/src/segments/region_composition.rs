@@ -514,13 +514,13 @@ mod tests {
             seg.objects[1].object_provider_flag,
             ObjectProviderFlag::InRom
         );
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test: mutate a field and re-parse
         let mut seg2 = seg.clone();
         seg2.region_width = 1280;
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = RegionCompositionSegment::parse(&out2).unwrap();
         assert_eq!(reparse.region_width, 1280);
@@ -550,13 +550,13 @@ mod tests {
         assert_eq!(seg.objects[0].object_type, ObjectType::BasicCharacter);
         assert_eq!(seg.objects[0].foreground_pixel_code, Some(0xAA));
         assert_eq!(seg.objects[0].background_pixel_code, Some(0xBB));
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
 
         // Biting test
         let mut seg2 = seg.clone();
         seg2.objects[0].foreground_pixel_code = Some(0xCC);
-        let out2 = seg2.to_bytes();
+        let out2 = seg2.try_to_bytes().unwrap();
         assert_ne!(out2, bytes);
         let reparse = RegionCompositionSegment::parse(&out2).unwrap();
         assert_eq!(reparse.objects[0].foreground_pixel_code, Some(0xCC));
@@ -580,7 +580,7 @@ mod tests {
         // the audit's failure scenario.
         seg.objects[1].object_vertical_position = 0x384;
 
-        let out = seg.to_bytes();
+        let out = seg.try_to_bytes().unwrap();
         // object index 1 is the last (and, per the fixture, fg/bg-less 6-byte)
         // entry in the loop, so its `object_vertical_position` bytes are the
         // final 2 bytes of the whole serialized segment. They must be

@@ -320,7 +320,7 @@ fn provisioning_request_typed_construction_matches_vector() {
             }),
         }],
     };
-    assert_eq!(pr.to_bytes(), PROVISIONING_REQUEST_VECTOR);
+    assert_eq!(pr.try_to_bytes().unwrap(), PROVISIONING_REQUEST_VECTOR);
 }
 
 // ── insert_segmentation_descriptor_request_data() — §9.8.7, Table 9-29

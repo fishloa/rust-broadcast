@@ -84,11 +84,11 @@ fn full_frame(frame_rate: FrameRate, large_payload_len: usize) -> AtmosFrame<'st
 #[test]
 fn full_frame_round_trips_with_plex_escalated_element_size() {
     let frame = full_frame(FrameRate::Fps48, 300); // > 0xFE forces Plex(8) -> 16-bit escalation
-    let bytes = frame.to_bytes();
+    let bytes = frame.try_to_bytes().unwrap();
     let parsed = AtmosFrame::parse(&bytes).expect("parse");
     assert_eq!(parsed, frame);
 
-    let bytes2 = parsed.to_bytes();
+    let bytes2 = parsed.try_to_bytes().unwrap();
     assert_eq!(
         bytes, bytes2,
         "serialize(parse(serialize(frame))) is byte-identical"
@@ -109,7 +109,7 @@ fn full_frame_round_trips_at_every_frame_rate() {
         FrameRate::Fps120,
     ] {
         let frame = full_frame(fr, 16);
-        let bytes = frame.to_bytes();
+        let bytes = frame.try_to_bytes().unwrap();
         let parsed = AtmosFrame::parse(&bytes).unwrap_or_else(|e| panic!("frame_rate {fr:?}: {e}"));
         assert_eq!(parsed, frame, "frame_rate {fr:?}");
     }
@@ -118,7 +118,7 @@ fn full_frame_round_trips_at_every_frame_rate() {
 #[test]
 fn reserved_element_id_round_trips_verbatim() {
     let frame = full_frame(FrameRate::Fps24, 8);
-    let bytes = frame.to_bytes();
+    let bytes = frame.try_to_bytes().unwrap();
     let parsed = AtmosFrame::parse(&bytes).unwrap();
     let last = parsed.elements.last().unwrap();
     match last {

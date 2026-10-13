@@ -612,7 +612,7 @@ mod tests {
             lts_id: Some(0x07),
             pincode_status: 0x42,
         };
-        let bytes = r.to_bytes();
+        let bytes = r.try_to_bytes().unwrap();
         // tag(3) + len(0x03) + flag-byte(0x01) + LTS_id(0x07) + status(0x42).
         assert_eq!(bytes, [0x9F, 0x90, 0x14, 0x03, 0x01, 0x07, 0x42]);
         assert_eq!(CcPinReply::parse(&bytes).unwrap(), r);
@@ -622,7 +622,7 @@ mod tests {
             lts_id: None,
             pincode_status: 0x42,
         };
-        let ob = other.to_bytes();
+        let ob = other.try_to_bytes().unwrap();
         assert_eq!(ob, [0x9F, 0x90, 0x14, 0x03, 0x00, 0x00, 0x42]);
         assert_ne!(bytes, ob);
         assert_eq!(CcPinReply::parse(&ob).unwrap(), other);
@@ -643,7 +643,7 @@ mod tests {
                 0x1E,
             ],
         };
-        let bytes = e.to_bytes();
+        let bytes = e.try_to_bytes().unwrap();
         let expected = [
             0x9F, 0x90, 0x15, 0x1A, // tag + len (0x1A = 26 body bytes)
             0x03, // LTS_id
@@ -660,7 +660,7 @@ mod tests {
         // Field-mutation: bump utc.
         let mut other = e;
         other.pin_event_time_utc += 1;
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -731,10 +731,11 @@ mod tests {
             lts_id: None,
             pincode_status: 0,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = ContentControlApdu::parse(&r).unwrap();
         assert!(matches!(parsed, ContentControlApdu::CcPinReply(_)));
-        assert_eq!(parsed.to_bytes(), r);
+        assert_eq!(parsed.try_to_bytes().unwrap(), r);
         // An unprinted Table 6 tag (cc_open_req 9F9001) is not encoded here.
         let cc_open = [0x9F, 0x90, 0x01, 0x00];
         assert!(matches!(

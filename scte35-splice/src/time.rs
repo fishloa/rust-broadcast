@@ -324,17 +324,17 @@ mod tests {
             SpliceTime::with_pts(0x1_2345_6789 & PTS_MAX),
             SpliceTime::default(),
         ] {
-            let bytes = st.to_bytes();
+            let bytes = st.try_to_bytes().unwrap();
             let back = SpliceTime::parse(&bytes).unwrap();
             assert_eq!(st, back);
-            assert_eq!(back.to_bytes(), bytes);
+            assert_eq!(back.try_to_bytes().unwrap(), bytes);
         }
     }
 
     #[test]
     fn splice_time_max_pts_round_trips() {
         let st = SpliceTime::with_pts(PTS_MAX);
-        let bytes = st.to_bytes();
+        let bytes = st.try_to_bytes().unwrap();
         assert_eq!(SpliceTime::parse(&bytes).unwrap().pts_time, Some(PTS_MAX));
     }
 
@@ -366,10 +366,10 @@ mod tests {
             auto_return: true,
             duration: PTS_MAX,
         };
-        let bytes = bd.to_bytes();
+        let bytes = bd.try_to_bytes().unwrap();
         let back = BreakDuration::parse(&bytes).unwrap();
         assert_eq!(bd, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]

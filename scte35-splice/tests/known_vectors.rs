@@ -59,7 +59,7 @@ fn splice_insert_4800008f() {
     }
 
     // Round-trips byte-for-byte (recomputes the CRC).
-    assert_eq!(s.to_bytes(), bytes);
+    assert_eq!(s.try_to_bytes().unwrap(), bytes);
 }
 
 /// Provenance: a `splice_null()` "heartbeat" section, a widely reproduced
@@ -81,7 +81,7 @@ fn splice_null_heartbeat() {
     assert!(matches!(clear.command, AnyCommand::SpliceNull(_)));
     assert_eq!(s.descriptors().count(), 0);
 
-    assert_eq!(s.to_bytes(), bytes);
+    assert_eq!(s.try_to_bytes().unwrap(), bytes);
 }
 
 /// Provenance: **ANSI/SCTE 35 2023r1 §14.1** (PDF p.113) — the spec's own worked
@@ -135,7 +135,7 @@ fn time_signal_segmentation_placement_opportunity_start_s14_1() {
         other => panic!("expected Segmentation, got {other:?}"),
     }
 
-    assert_eq!(s.to_bytes(), bytes);
+    assert_eq!(s.try_to_bytes().unwrap(), bytes);
 }
 
 /// The parser must reject a section whose CRC_32 does not validate (corrupt one

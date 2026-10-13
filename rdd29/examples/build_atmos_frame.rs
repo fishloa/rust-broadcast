@@ -72,7 +72,7 @@ fn main() {
         ],
     );
 
-    let bytes = frame.to_bytes();
+    let bytes = frame.try_to_bytes().unwrap();
     println!("serialized ATMOSFrame: {} bytes", bytes.len());
     println!(
         "version={} sample_rate={} bit_depth={} frame_rate={} max_rendered={}",

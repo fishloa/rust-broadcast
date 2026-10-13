@@ -71,7 +71,7 @@ mod tests {
         let op = InsertAlternateBreakDuration {
             alternate_break_duration: 30_000,
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x00, 0x00, 0x75, 0x30]);
         assert_eq!(InsertAlternateBreakDuration::parse(&bytes).unwrap(), op);
     }

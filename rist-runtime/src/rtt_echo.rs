@@ -318,7 +318,7 @@ mod tests {
             processing_delay_us: 0,
             padding: Vec::new(),
         };
-        let bytes = echo.to_bytes();
+        let bytes = echo.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), RTT_ECHO_MIN_LEN);
         // V=2, P=0, Subtype=2 -> 0x82
         assert_eq!(bytes[0], 0x82);
@@ -339,7 +339,7 @@ mod tests {
             processing_delay_us: 42_000,
             padding: alloc::vec![0u8; 8],
         };
-        let bytes = echo.to_bytes();
+        let bytes = echo.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), RTT_ECHO_MIN_LEN + 8);
         // V=2, P=0, Subtype=3 -> 0x83
         assert_eq!(bytes[0], 0x83);
@@ -356,7 +356,7 @@ mod tests {
             processing_delay_us: 0,
             padding: Vec::new(),
         };
-        let mut bytes = echo.to_bytes();
+        let mut bytes = echo.try_to_bytes().unwrap();
         // Change subtype to 5.
         bytes[0] = (RTCP_VERSION << 6) | 5;
         let err = RttEcho::parse(&bytes).unwrap_err();

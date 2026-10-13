@@ -284,7 +284,8 @@ fn build_rtp_packet(payload: &[u8]) -> Vec<u8> {
         padding: None,
         payload,
     }
-    .to_bytes()
+    .try_to_bytes()
+    .unwrap()
 }
 
 #[test]
@@ -412,7 +413,8 @@ fn build_sender_report(ssrc: u32) -> Vec<u8> {
         Vec::new(),
     ))])
     .expect("compound packet starting with SR")
-    .to_bytes()
+    .try_to_bytes()
+    .unwrap()
 }
 
 #[test]

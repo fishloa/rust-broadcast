@@ -893,7 +893,7 @@ mod tests {
     #[test]
     fn hevc_entry_keeps_every_sibling_box() {
         let entry = HEVCSampleEntry::new_hvc1(make_hevc_config());
-        let mut bytes = entry.to_bytes();
+        let mut bytes = entry.try_to_bytes().unwrap();
         // Append a `colr` (nclx) and a `dvcC` box after the entry's hvcC.
         let colr: [u8; 19] = [
             0x00, 0x00, 0x00, 0x13, b'c', b'o', b'l', b'r', b'n', b'c', b'l', b'x', 0x00, 0x09,
@@ -915,7 +915,7 @@ mod tests {
             "colr and dvcC must be captured, got {types:?}"
         );
         // And the whole entry re-serializes byte-for-byte.
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     /// The same for the VVC sample entry.
@@ -938,7 +938,7 @@ mod tests {
                 avg_frame_rate: 0,
                 arrays: alloc::vec![],
             }));
-        let mut bytes = entry.to_bytes();
+        let mut bytes = entry.try_to_bytes().unwrap();
         let colr: [u8; 19] = [
             0x00, 0x00, 0x00, 0x13, b'c', b'o', b'l', b'r', b'n', b'c', b'l', b'x', 0x00, 0x09,
             0x00, 0x10, 0x00, 0x09, 0x80,
@@ -952,7 +952,7 @@ mod tests {
             parsed.extra_boxes.iter().any(|b| b.box_type == *b"colr"),
             "vvc1 must capture colr"
         );
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     /// A malformed trailing child box ends the walk and is dropped, keeping
@@ -992,7 +992,7 @@ mod tests {
     #[test]
     fn avc_entry_keeps_boxes_before_the_config() {
         let entry = AVCSampleEntry::new_avc1(make_avc_config());
-        let bytes = entry.to_bytes();
+        let bytes = entry.try_to_bytes().unwrap();
         // Rebuild with a `pasp` box inserted before the avcC.
         let avcc_at = bytes.windows(4).position(|w| w == b"avcC").unwrap() - 4;
         let pasp: [u8; 16] = [
@@ -1013,7 +1013,7 @@ mod tests {
         );
         // The re-serialized entry still carries exactly one `pasp`, with the
         // same body, and parses back to the same struct.
-        let re = parsed.to_bytes();
+        let re = parsed.try_to_bytes().unwrap();
         let pasp_at = re.windows(4).position(|w| w == b"pasp").unwrap();
         assert_eq!(&re[pasp_at..pasp_at + 12], &pasp[4..]);
         assert_eq!(AVCSampleEntry::bare_parse(&re).unwrap(), parsed);
@@ -1054,7 +1054,7 @@ mod tests {
     fn test_avc1_serialize() {
         let config = make_avc_config();
         let entry = AVCSampleEntry::new_avc1(config);
-        let bytes = entry.to_bytes();
+        let bytes = entry.try_to_bytes().unwrap();
         assert!(bytes.len() > 8);
         assert_eq!(&bytes[4..8], b"avc1");
         assert!(bytes.windows(4).any(|w| w == b"avcC"));
@@ -1064,7 +1064,7 @@ mod tests {
     fn test_avc3_serialize() {
         let config = make_avc_config();
         let entry = AVCSampleEntry::new_avc3(config);
-        let bytes = entry.to_bytes();
+        let bytes = entry.try_to_bytes().unwrap();
         assert_eq!(&bytes[4..8], b"avc3");
     }
 
@@ -1072,7 +1072,7 @@ mod tests {
     fn test_hvc1_serialize() {
         let config = make_hevc_config();
         let entry = HEVCSampleEntry::new_hvc1(config);
-        let bytes = entry.to_bytes();
+        let bytes = entry.try_to_bytes().unwrap();
         assert_eq!(&bytes[4..8], b"hvc1");
         assert!(bytes.windows(4).any(|w| w == b"hvcC"));
     }
@@ -1081,7 +1081,7 @@ mod tests {
     fn test_hev1_serialize() {
         let config = make_hevc_config();
         let entry = HEVCSampleEntry::new_hev1(config);
-        let bytes = entry.to_bytes();
+        let bytes = entry.try_to_bytes().unwrap();
         assert_eq!(&bytes[4..8], b"hev1");
     }
 
@@ -1093,7 +1093,7 @@ mod tests {
     #[test]
     fn reserved_fields_written_as_zeros_into_a_dirty_buffer() {
         let entry = AVCSampleEntry::new_avc1(make_avc_config());
-        let clean = entry.to_bytes();
+        let clean = entry.try_to_bytes().unwrap();
         let mut dirty = vec![0xFFu8; clean.len()];
         let written = entry
             .serialize_into(&mut dirty)

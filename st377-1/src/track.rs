@@ -473,27 +473,27 @@ mod tests {
     #[test]
     fn timeline_track_round_trip() {
         let tt = sample_timeline_track();
-        let bytes = tt.to_bytes();
+        let bytes = tt.try_to_bytes().unwrap();
         let parsed = TimelineTrack::parse(&bytes).unwrap();
         assert_eq!(parsed, tt);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn timeline_track_no_name_round_trip() {
         let mut tt = sample_timeline_track();
         tt.track_name = None;
-        let bytes = tt.to_bytes();
+        let bytes = tt.try_to_bytes().unwrap();
         let parsed = TimelineTrack::parse(&bytes).unwrap();
         assert_eq!(parsed.track_name, None);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn timeline_track_dark_preserved() {
         let mut tt = sample_timeline_track();
         tt.dark = alloc::vec![(0x8001, alloc::vec![0xAB])];
-        let bytes = tt.to_bytes();
+        let bytes = tt.try_to_bytes().unwrap();
         let parsed = TimelineTrack::parse(&bytes).unwrap();
         assert_eq!(parsed.dark, tt.dark);
     }
@@ -501,35 +501,35 @@ mod tests {
     #[test]
     fn event_track_round_trip() {
         let et = sample_event_track();
-        let bytes = et.to_bytes();
+        let bytes = et.try_to_bytes().unwrap();
         let parsed = EventTrack::parse(&bytes).unwrap();
         assert_eq!(parsed, et);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn event_track_no_origin_round_trip() {
         let mut et = sample_event_track();
         et.event_origin = None;
-        let bytes = et.to_bytes();
+        let bytes = et.try_to_bytes().unwrap();
         let parsed = EventTrack::parse(&bytes).unwrap();
         assert_eq!(parsed.event_origin, None);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn static_track_round_trip() {
         let st = sample_static_track();
-        let bytes = st.to_bytes();
+        let bytes = st.try_to_bytes().unwrap();
         let parsed = StaticTrack::parse(&bytes).unwrap();
         assert_eq!(parsed, st);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn wrong_kind_rejected_timeline() {
         let st = sample_static_track();
-        let bytes = st.to_bytes();
+        let bytes = st.try_to_bytes().unwrap();
         assert!(matches!(
             TimelineTrack::parse(&bytes),
             Err(Error::KeyPrefixMismatch { .. })
@@ -539,7 +539,7 @@ mod tests {
     #[test]
     fn wrong_kind_rejected_event() {
         let tt = sample_timeline_track();
-        let bytes = tt.to_bytes();
+        let bytes = tt.try_to_bytes().unwrap();
         assert!(matches!(
             EventTrack::parse(&bytes),
             Err(Error::KeyPrefixMismatch { .. })
@@ -549,7 +549,7 @@ mod tests {
     #[test]
     fn wrong_kind_rejected_static() {
         let et = sample_event_track();
-        let bytes = et.to_bytes();
+        let bytes = et.try_to_bytes().unwrap();
         assert!(matches!(
             StaticTrack::parse(&bytes),
             Err(Error::KeyPrefixMismatch { .. })
@@ -559,9 +559,9 @@ mod tests {
     #[test]
     fn mutation_changes_serialized_bytes() {
         let mut tt = sample_timeline_track();
-        let before = tt.to_bytes();
+        let before = tt.try_to_bytes().unwrap();
         tt.origin = 42;
-        let after = tt.to_bytes();
+        let after = tt.try_to_bytes().unwrap();
         assert_ne!(before, after);
         assert_eq!(TimelineTrack::parse(&after).unwrap().origin, 42);
     }

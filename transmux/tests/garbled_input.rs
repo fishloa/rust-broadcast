@@ -90,7 +90,11 @@ fn assert_serializable(cfg: &CodecConfig, what: &str) {
             let tb = b
                 .try_to_bytes()
                 .unwrap_or_else(|e| panic!("{what}: try_to_bytes failed: {e:?}"));
-            assert_eq!(b.to_bytes(), tb, "{what}: to_bytes != try_to_bytes");
+            assert_eq!(
+                b.try_to_bytes().unwrap(),
+                tb,
+                "{what}: to_bytes != try_to_bytes"
+            );
         }};
     }
     match cfg {

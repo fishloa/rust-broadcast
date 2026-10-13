@@ -32,7 +32,7 @@ fn fixture_bytes() -> Vec<u8> {
 /// type whose `Parse` impl expects the full Key+Length+Value span (every
 /// type in this crate) can be handed exactly the bytes for just that item.
 fn klv_bytes(item: &KlvItem<'_>) -> Vec<u8> {
-    item.to_bytes()
+    item.try_to_bytes().unwrap()
 }
 
 #[test]
@@ -102,7 +102,7 @@ fn synthetic_fixture_every_top_level_klv_item_identifies_and_parses() {
 fn synthetic_fixture_header_partition_pack_fields() {
     let bytes = fixture_bytes();
     let (item, _) = KlvItem::parse_prefix(&bytes).unwrap();
-    let pack = PartitionPack::parse(&item.to_bytes()).unwrap();
+    let pack = PartitionPack::parse(&item.try_to_bytes().unwrap()).unwrap();
 
     assert_eq!(pack.kind, PartitionKind::Header);
     assert_eq!(pack.status, PartitionStatus::ClosedComplete);
@@ -123,10 +123,11 @@ fn synthetic_fixture_preface_fields_decode_correctly() {
         .map(|(_, i)| i)
         .find(|i| {
             st377_1::is_local_set_key(&i.key)
-                && LocalSet::parse(&i.to_bytes()).unwrap().kind() == StructuralSetKind::Preface
+                && LocalSet::parse(&i.try_to_bytes().unwrap()).unwrap().kind()
+                    == StructuralSetKind::Preface
         })
         .expect("Preface item present");
-    let preface = Preface::parse(&preface_item.to_bytes()).unwrap();
+    let preface = Preface::parse(&preface_item.try_to_bytes().unwrap()).unwrap();
 
     assert_eq!(preface.version, st377_1::VERSION_1_3);
     assert_eq!(preface.object_model_version, Some(1));
@@ -138,7 +139,10 @@ fn synthetic_fixture_preface_fields_decode_correctly() {
     assert_eq!(preface.last_modified_date.day, 12);
 
     // Byte-identical reserialize.
-    assert_eq!(preface.to_bytes(), preface_item.to_bytes());
+    assert_eq!(
+        preface.try_to_bytes().unwrap(),
+        preface_item.try_to_bytes().unwrap()
+    );
 }
 
 #[test]
@@ -150,11 +154,11 @@ fn synthetic_fixture_identification_fields_decode_correctly() {
         .map(|(_, i)| i)
         .find(|i| {
             st377_1::is_local_set_key(&i.key)
-                && LocalSet::parse(&i.to_bytes()).unwrap().kind()
+                && LocalSet::parse(&i.try_to_bytes().unwrap()).unwrap().kind()
                     == StructuralSetKind::Identification
         })
         .expect("Identification item present");
-    let ident = Identification::parse(&ident_item.to_bytes()).unwrap();
+    let ident = Identification::parse(&ident_item.try_to_bytes().unwrap()).unwrap();
 
     assert_eq!(ident.company_name, "Acme Broadcast Tools");
     assert_eq!(ident.product_name, "st377-1 fixture builder");
@@ -163,7 +167,10 @@ fn synthetic_fixture_identification_fields_decode_correctly() {
     let pv = ident.product_version.expect("Product Version present");
     assert_eq!((pv.major, pv.minor, pv.tertiary, pv.patch), (0, 1, 0, 0));
 
-    assert_eq!(ident.to_bytes(), ident_item.to_bytes());
+    assert_eq!(
+        ident.try_to_bytes().unwrap(),
+        ident_item.try_to_bytes().unwrap()
+    );
 }
 
 #[test]
@@ -175,16 +182,19 @@ fn synthetic_fixture_essence_container_data_fields() {
         .map(|(_, i)| i)
         .find(|i| {
             st377_1::is_local_set_key(&i.key)
-                && LocalSet::parse(&i.to_bytes()).unwrap().kind()
+                && LocalSet::parse(&i.try_to_bytes().unwrap()).unwrap().kind()
                     == StructuralSetKind::EssenceContainerData
         })
         .expect("Essence Container Data item present");
-    let ecd = EssenceContainerData::parse(&ecd_item.to_bytes()).unwrap();
+    let ecd = EssenceContainerData::parse(&ecd_item.try_to_bytes().unwrap()).unwrap();
 
     assert_eq!(ecd.body_sid, 1);
     assert_eq!(ecd.index_sid, Some(0));
     assert!(!ecd.linked_package_uid.is_null());
-    assert_eq!(ecd.to_bytes(), ecd_item.to_bytes());
+    assert_eq!(
+        ecd.try_to_bytes().unwrap(),
+        ecd_item.try_to_bytes().unwrap()
+    );
 }
 
 #[test]
@@ -196,15 +206,15 @@ fn synthetic_fixture_content_storage_fields() {
         .map(|(_, i)| i)
         .find(|i| {
             st377_1::is_local_set_key(&i.key)
-                && LocalSet::parse(&i.to_bytes()).unwrap().kind()
+                && LocalSet::parse(&i.try_to_bytes().unwrap()).unwrap().kind()
                     == StructuralSetKind::ContentStorage
         })
         .expect("Content Storage item present");
-    let cs = ContentStorage::parse(&cs_item.to_bytes()).unwrap();
+    let cs = ContentStorage::parse(&cs_item.try_to_bytes().unwrap()).unwrap();
 
     assert_eq!(cs.packages.len(), 1);
     assert_eq!(cs.essence_container_data.as_ref().map(Vec::len), Some(1));
-    assert_eq!(cs.to_bytes(), cs_item.to_bytes());
+    assert_eq!(cs.try_to_bytes().unwrap(), cs_item.try_to_bytes().unwrap());
 }
 
 #[test]
@@ -215,7 +225,7 @@ fn synthetic_fixture_random_index_pack_lists_every_partition() {
         .iter()
         .find(|(_, i)| RandomIndexPack::is_rip_key(&i.key))
         .expect("Random Index Pack present");
-    let rip = RandomIndexPack::parse(&rip_item.to_bytes()).unwrap();
+    let rip = RandomIndexPack::parse(&rip_item.try_to_bytes().unwrap()).unwrap();
 
     assert_eq!(rip.partitions.len(), 3);
     assert_eq!(rip.partitions[0].byte_offset, 0);

@@ -72,7 +72,7 @@ mod tests {
             encryption_algorithm: 1,
             cw_index: 5,
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), LEN);
         let back = EncryptedDpi::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -84,9 +84,9 @@ mod tests {
             encryption_algorithm: 1,
             cw_index: 5,
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op;
         op2.cw_index = 99;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 }

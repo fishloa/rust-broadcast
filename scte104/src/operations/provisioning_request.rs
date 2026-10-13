@@ -358,7 +358,7 @@ mod tests {
     #[test]
     fn round_trip_no_services() {
         let op = ProvisioningRequest::default();
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes, vec![0]);
         let back = ProvisioningRequest::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -380,10 +380,10 @@ mod tests {
                 injector_component_list: None,
             }],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let back = ProvisioningRequest::parse(&bytes).unwrap();
         assert_eq!(op, back);
-        let b2 = back.to_bytes();
+        let b2 = back.try_to_bytes().unwrap();
         assert_eq!(bytes, b2);
     }
 
@@ -424,10 +424,10 @@ mod tests {
                 },
             ],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let back = ProvisioningRequest::parse(&bytes).unwrap();
         assert_eq!(op, back);
-        let b2 = back.to_bytes();
+        let b2 = back.try_to_bytes().unwrap();
         assert_eq!(bytes, b2);
     }
 
@@ -506,10 +506,10 @@ mod tests {
                 injector_component_list: None,
             }],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op.clone();
         op2.services[0].injector_ip_address = 999;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -528,7 +528,7 @@ mod tests {
                 injector_component_list: None,
             }],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert!(matches!(
             ProvisioningRequest::parse(&bytes[..bytes.len() - 1]),
             Err(Error::BufferTooShort { .. })

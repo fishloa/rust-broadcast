@@ -358,7 +358,7 @@ mod tests {
             seconds: 0x1234_5678,
             microseconds: 0x000F_4240, // 1_000_000
         };
-        let bytes = t.to_bytes();
+        let bytes = t.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), TIME_LEN);
         let back = Time::parse(&bytes).unwrap();
         assert_eq!(t, back);
@@ -368,7 +368,7 @@ mod tests {
     fn timestamp_none() {
         let ts = Timestamp::None;
         assert_eq!(ts.serialized_len(), 1);
-        let bytes = ts.to_bytes();
+        let bytes = ts.try_to_bytes().unwrap();
         assert_eq!(bytes, [0]);
         let back = Timestamp::parse(&bytes).unwrap();
         assert!(matches!(back, Timestamp::None));
@@ -380,7 +380,7 @@ mod tests {
             seconds: 0x6000_0000,
             microseconds: 50_000,
         });
-        let bytes = ts.to_bytes();
+        let bytes = ts.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 7);
         let back = Timestamp::parse(&bytes).unwrap();
         match back {
@@ -396,7 +396,7 @@ mod tests {
             Timestamp::Utc(u) => u.seconds = 1,
             _ => unreachable!(),
         }
-        assert_ne!(ts2.to_bytes(), bytes);
+        assert_ne!(ts2.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -407,7 +407,7 @@ mod tests {
             seconds: 45,
             frames: 15,
         });
-        let bytes = ts.to_bytes();
+        let bytes = ts.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 5);
         assert_eq!(bytes[0], 2);
         let back = Timestamp::parse(&bytes).unwrap();
@@ -428,7 +428,7 @@ mod tests {
             gpi_number: 5,
             gpi_edge: 1,
         });
-        let bytes = ts.to_bytes();
+        let bytes = ts.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 3);
         assert_eq!(bytes[0], 3);
         let back = Timestamp::parse(&bytes).unwrap();
@@ -446,7 +446,7 @@ mod tests {
         let t = SpliceScheduleTime {
             seconds: 0x6000_0000,
         };
-        let bytes = t.to_bytes();
+        let bytes = t.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), SCHEDULE_TIME_LEN);
         let back = SpliceScheduleTime::parse(&bytes).unwrap();
         assert_eq!(t, back);

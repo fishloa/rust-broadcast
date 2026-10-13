@@ -43,7 +43,7 @@
 //!     splice_time: scte35_splice::time::SpliceTime::with_pts(0x0_0012_3456),
 //! };
 //! let section = SpliceInfoSection::new_clear(AnyCommand::TimeSignal(ts), &[]);
-//! let bytes = section.to_bytes();
+//! let bytes = section.try_to_bytes().unwrap();
 //! assert_eq!(bytes[0], 0xFC); // table_id
 //!
 //! // ...and parsed straight back.
@@ -67,7 +67,7 @@
 //!     scte35_splice::commands::AnyCommand::SpliceNull(Default::default()),
 //!     &[],
 //! );
-//! let on_the_wire = section.to_bytes();
+//! let on_the_wire = section.try_to_bytes().unwrap();
 //!
 //! // table_id 0xFC marks it as a splice_info_section; parse it.
 //! assert_eq!(on_the_wire[0], scte35_splice::section::TABLE_ID);

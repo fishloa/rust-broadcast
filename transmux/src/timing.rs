@@ -917,7 +917,7 @@ mod tests {
             flags: 0,
             entries: vec![],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = TimeToSampleBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
     }
@@ -932,7 +932,7 @@ mod tests {
                 sample_delta: 512,
             }],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 8 + 4 + 4 + 8);
         let parsed = TimeToSampleBox::parse(&bytes).unwrap();
         assert_eq!(parsed.entries.len(), 1);
@@ -950,7 +950,7 @@ mod tests {
                 sample_delta: 300,
             }],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = TimeToSampleBox::parse_body(&bytes[8..]).unwrap();
         assert_eq!(parsed, b);
     }
@@ -969,7 +969,7 @@ mod tests {
                 sample_offset: 1024,
             }],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = CompositionOffsetBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
     }
@@ -990,7 +990,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = CompositionOffsetBox::parse_body(&bytes[8..]).unwrap();
         assert_eq!(parsed.entries.len(), 2);
         assert_eq!(parsed.entries[1].sample_offset, 512);
@@ -1018,7 +1018,7 @@ mod tests {
             composition_start_time: 0,
             composition_end_time: 25500,
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 8 + 4 + 4 * 5);
         let parsed = CompositionToDecodeBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
@@ -1035,7 +1035,7 @@ mod tests {
             composition_start_time: 0,
             composition_end_time: 9999999999,
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 8 + 4 + 8 * 5);
         let parsed = CompositionToDecodeBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
@@ -1057,7 +1057,7 @@ mod tests {
                 media_rate_fraction: 0,
             }],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 8 + 4 + 4 + 12); // header + fullbox + ec + entry
         let parsed = EditListBox::parse(&bytes).unwrap();
         assert_eq!(parsed.entries.len(), 1);
@@ -1087,7 +1087,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = EditListBox::parse(&bytes).unwrap();
         assert_eq!(parsed.entries.len(), 2);
         assert_eq!(parsed.entries[0].media_time, -1);
@@ -1107,7 +1107,7 @@ mod tests {
                 media_rate_fraction: 0,
             }],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 8 + 4 + 4 + 20); // header + fullbox + ec + v1 entry
         let parsed = EditListBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
@@ -1125,7 +1125,7 @@ mod tests {
                 media_rate_fraction: 0,
             }],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = EditListBox::parse_body(&bytes[8..]).unwrap();
         assert_eq!(parsed, b);
     }
@@ -1198,7 +1198,7 @@ mod tests {
                 },
             ],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = SegmentIndexBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
     }
@@ -1299,7 +1299,7 @@ mod tests {
                 sap_delta_time: 0,
             }],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = SegmentIndexBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
     }
@@ -1323,7 +1323,7 @@ mod tests {
                 sap_delta_time: 0x0FFF_FFFF, // max 28-bit
             }],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = SegmentIndexBox::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
     }
@@ -1339,7 +1339,7 @@ mod tests {
             first_offset: 0,
             references: vec![],
         };
-        let bytes = b.to_bytes();
+        let bytes = b.try_to_bytes().unwrap();
         let parsed = SegmentIndexBox::parse_body(&bytes[8..]).unwrap();
         assert_eq!(parsed, b);
     }

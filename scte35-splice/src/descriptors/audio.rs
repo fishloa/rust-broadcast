@@ -159,16 +159,19 @@ mod tests {
                 },
             ],
         };
-        let bytes = d.to_bytes();
+        let bytes = d.try_to_bytes().unwrap();
         assert_eq!(bytes[0], TAG);
         let back = AudioDescriptor::parse(&bytes).unwrap();
         assert_eq!(d, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
     fn round_trip_empty() {
         let d = AudioDescriptor::default();
-        assert_eq!(AudioDescriptor::parse(&d.to_bytes()).unwrap(), d);
+        assert_eq!(
+            AudioDescriptor::parse(&d.try_to_bytes().unwrap()).unwrap(),
+            d
+        );
     }
 }

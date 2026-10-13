@@ -541,7 +541,7 @@ mod tests {
         let payload = [0xAAu8, 0xBB, 0xCC];
         let burst = Burst::new(1, DataMode::Mode16, false, 0, 0, None, &payload).unwrap();
         assert_eq!(burst.preamble.length_code, 24);
-        let bytes = burst.to_bytes();
+        let bytes = burst.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 8 + 3);
         let reparsed = Burst::parse(&bytes).unwrap();
         assert_eq!(reparsed, burst);
@@ -566,7 +566,7 @@ mod tests {
         .unwrap();
         // 4 payload bytes = 32 bits, + 32 extended-preamble bits = 64.
         assert_eq!(burst.preamble.length_code, 64);
-        let bytes = burst.to_bytes();
+        let bytes = burst.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 12 + 4);
         let reparsed = Burst::parse(&bytes).unwrap();
         assert_eq!(reparsed, burst);
@@ -667,7 +667,7 @@ mod tests {
         let payload = vec![0xFFu8; 8191];
         let burst = Burst::new(0, DataMode::Mode16, false, 0, 0, None, &payload).unwrap();
         assert_eq!(burst.preamble.length_code, 65528); // 8191*8, still <= 65535
-        let bytes = burst.to_bytes();
+        let bytes = burst.try_to_bytes().unwrap();
         let reparsed = Burst::parse(&bytes).unwrap();
         assert_eq!(reparsed, burst);
     }
@@ -695,7 +695,7 @@ mod tests {
     #[test]
     fn buffer_too_short_for_payload() {
         let burst = Burst::new(0, DataMode::Mode16, false, 0, 0, None, &[1, 2, 3]).unwrap();
-        let bytes = burst.to_bytes();
+        let bytes = burst.try_to_bytes().unwrap();
         let err = Burst::parse(&bytes[..bytes.len() - 1]).unwrap_err();
         assert!(matches!(
             err,

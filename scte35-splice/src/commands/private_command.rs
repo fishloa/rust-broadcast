@@ -79,11 +79,11 @@ mod tests {
             identifier: 0x43554549,
             private_bytes: &[0xDE, 0xAD, 0xBE, 0xEF],
         };
-        let bytes = cmd.to_bytes();
+        let bytes = cmd.try_to_bytes().unwrap();
         assert_eq!(&bytes[0..4], &[0x43, 0x55, 0x45, 0x49]);
         let back = PrivateCommand::parse(&bytes).unwrap();
         assert_eq!(cmd, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -92,7 +92,7 @@ mod tests {
             identifier: 0x01020304,
             private_bytes: &[],
         };
-        let bytes = cmd.to_bytes();
+        let bytes = cmd.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 4);
         assert_eq!(PrivateCommand::parse(&bytes).unwrap(), cmd);
     }

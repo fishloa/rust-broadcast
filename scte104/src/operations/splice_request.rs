@@ -195,11 +195,11 @@ mod tests {
             auto_return_flag: 1,
             not_an_entry_flag: 0,
         };
-        let bytes = sr.to_bytes();
+        let bytes = sr.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), LEN);
         let back = SpliceRequest::parse(&bytes).unwrap();
         assert_eq!(sr, back);
-        let b2 = back.to_bytes();
+        let b2 = back.try_to_bytes().unwrap();
         assert_eq!(bytes, b2);
     }
 
@@ -216,10 +216,10 @@ mod tests {
             auto_return_flag: 0,
             not_an_entry_flag: 0,
         };
-        let bytes = sr.to_bytes();
+        let bytes = sr.try_to_bytes().unwrap();
         let mut sr2 = sr;
         sr2.splice_event_id = 999;
-        assert_ne!(sr2.to_bytes(), bytes);
+        assert_ne!(sr2.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]

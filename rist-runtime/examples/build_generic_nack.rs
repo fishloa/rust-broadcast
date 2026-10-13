@@ -21,7 +21,7 @@ fn main() {
         ],
     };
 
-    let bytes = nack.to_bytes();
+    let bytes = nack.try_to_bytes().unwrap();
     println!("Serialized {} bytes", bytes.len());
     println!("Wire: {bytes:02X?}");
 

@@ -27,7 +27,7 @@ let msg = SingleOperationMessage::new_response(
         scte104::operations::InjectResponse { message_number: 42 },
     ),
 );
-let bytes = msg.to_bytes();
+let bytes = msg.try_to_bytes().unwrap();
 let parsed = SingleOperationMessage::parse(&bytes).unwrap();
 assert_eq!(msg, parsed);
 
@@ -53,7 +53,7 @@ let mom = MultipleOperationMessage::new(
     Timestamp::None,
     ops,
 );
-let bytes = mom.to_bytes();
+let bytes = mom.try_to_bytes().unwrap();
 let parsed = MultipleOperationMessage::parse(&bytes).unwrap();
 assert_eq!(mom, parsed);
 ```

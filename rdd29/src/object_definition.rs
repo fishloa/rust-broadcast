@@ -811,10 +811,10 @@ mod tests {
             FrameRate::Fps120,
         ] {
             let obj = sample(fr);
-            let bytes = obj.to_bytes();
+            let bytes = obj.try_to_bytes().unwrap();
             let parsed = ObjectDefinition1::parse_with_frame_rate(&bytes, fr).unwrap();
             assert_eq!(parsed, obj, "frame rate {fr:?}");
-            assert_eq!(parsed.to_bytes(), bytes);
+            assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
         }
     }
 
@@ -833,7 +833,7 @@ mod tests {
             AudioDescription::none(),
         )
         .unwrap();
-        let bytes = obj.to_bytes();
+        let bytes = obj.try_to_bytes().unwrap();
         let parsed = ObjectDefinition1::parse_with_frame_rate(&bytes, FrameRate::Fps120).unwrap();
         assert_eq!(parsed, obj);
     }
@@ -858,7 +858,7 @@ mod tests {
     #[test]
     fn reserved_frame_rate_is_rejected() {
         let obj = sample(FrameRate::Fps24);
-        let bytes = obj.to_bytes();
+        let bytes = obj.try_to_bytes().unwrap();
         let err =
             ObjectDefinition1::parse_with_frame_rate(&bytes, FrameRate::Reserved(0x9)).unwrap_err();
         assert!(matches!(err, Error::InvalidValue { .. }));
@@ -867,9 +867,9 @@ mod tests {
     #[test]
     fn mutating_pos_x_changes_only_that_sub_blocks_bytes() {
         let mut obj = sample(FrameRate::Fps120);
-        let original = obj.to_bytes();
+        let original = obj.try_to_bytes().unwrap();
         obj.pan_sub_blocks[0].pan.as_mut().unwrap().pos_x ^= 0xFFFF;
-        let mutated = obj.to_bytes();
+        let mutated = obj.try_to_bytes().unwrap();
         assert_ne!(original, mutated, "flipping pos_x must change wire bytes");
     }
 
@@ -998,11 +998,11 @@ mod tests {
     fn nonzero_align_bits_round_trip() {
         let mut obj = sample(FrameRate::Fps120);
         obj.align_bits = 0b10101; // fits in 5 bits
-        let bytes = obj.to_bytes();
+        let bytes = obj.try_to_bytes().unwrap();
         let parsed = ObjectDefinition1::parse_with_frame_rate(&bytes, FrameRate::Fps120).unwrap();
         assert_eq!(parsed, obj);
         assert_eq!(
-            parsed.to_bytes(),
+            parsed.try_to_bytes().unwrap(),
             bytes,
             "AlignBits must round-trip byte-exactly"
         );

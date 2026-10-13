@@ -167,7 +167,7 @@ mod tests {
         ];
         let field = PesDataField::parse(&bytes).unwrap();
         assert_eq!(field.segments.len(), 1);
-        let out = field.to_bytes();
+        let out = field.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
     }
 
@@ -186,7 +186,7 @@ mod tests {
         assert_eq!(field.segments[0].name(), "DISPLAY_DEFINITION");
         assert_eq!(field.segments[1].name(), "PAGE_COMPOSITION");
         assert_eq!(field.segments[2].name(), "END_OF_DISPLAY_SET");
-        let out = field.to_bytes();
+        let out = field.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
     }
 
@@ -199,7 +199,7 @@ mod tests {
         let field = PesDataField::parse(&bytes).unwrap();
         assert_eq!(field.segments.len(), 1);
         assert_eq!(field.segments[0].name(), "UNKNOWN");
-        let out = field.to_bytes();
+        let out = field.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
     }
 
@@ -231,7 +231,7 @@ mod tests {
             }
         ));
         // Still round-trips byte-exact, same as Unknown.
-        let out = field.to_bytes();
+        let out = field.try_to_bytes().unwrap();
         assert_eq!(out, bytes);
     }
 

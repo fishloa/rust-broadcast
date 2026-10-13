@@ -293,7 +293,9 @@ impl ProtocolControl {
             timestamp: 0,
             message_type_id: self.message_type_id(),
             message_stream_id: CONTROL_MESSAGE_STREAM_ID,
-            payload: self.to_bytes(),
+            payload: self
+                .try_to_bytes()
+                .expect("documented panic: see `# Panics`; use try_to_message"),
         }
     }
 
@@ -467,7 +469,9 @@ impl UserControl {
             timestamp: 0,
             message_type_id: msg_type::USER_CONTROL,
             message_stream_id: CONTROL_MESSAGE_STREAM_ID,
-            payload: self.to_bytes(),
+            payload: self
+                .try_to_bytes()
+                .expect("UserControl serialize_into only fails on a short buffer; try_to_bytes sizes it exactly"),
         }
     }
 }
@@ -636,7 +640,7 @@ mod tests {
     // ── ProtocolControl round-trips ──────────────────────────────────────
 
     fn protocol_control_round_trip(pc: ProtocolControl) {
-        let bytes = pc.to_bytes();
+        let bytes = pc.try_to_bytes().unwrap();
         let parsed = ProtocolControl::from_payload(pc.message_type_id(), &bytes)
             .unwrap()
             .expect("known protocol control type id");
@@ -646,7 +650,7 @@ mod tests {
         let msg = message(pc.message_type_id(), bytes.clone());
         let via_message = ProtocolControl::from_message(&msg).unwrap().unwrap();
         assert_eq!(via_message, pc);
-        assert_eq!(via_message.to_bytes(), bytes);
+        assert_eq!(via_message.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -704,7 +708,7 @@ mod tests {
     #[test]
     fn set_chunk_size_serialize_layout_matches_spec() {
         // §5.4.1: reserved bit 0, 31-bit chunk size, big-endian.
-        let bytes = ProtocolControl::SetChunkSize(1).to_bytes();
+        let bytes = ProtocolControl::SetChunkSize(1).try_to_bytes().unwrap();
         assert_eq!(bytes, vec![0x00, 0x00, 0x00, 0x01]);
     }
 
@@ -714,7 +718,8 @@ mod tests {
             ack_window_size: 0x0002_5000,
             limit_type: LimitType::Dynamic,
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert_eq!(bytes, vec![0x00, 0x02, 0x50, 0x00, 0x02]);
     }
 
@@ -760,10 +765,10 @@ mod tests {
     // ── UserControl round-trips ──────────────────────────────────────────
 
     fn user_control_round_trip(uc: UserControl) {
-        let bytes = uc.to_bytes();
+        let bytes = uc.try_to_bytes().unwrap();
         let parsed = UserControl::parse(&bytes).unwrap();
         assert_eq!(parsed, uc);
-        assert_eq!(parsed.to_bytes(), bytes);
+        assert_eq!(parsed.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]
@@ -774,7 +779,7 @@ mod tests {
     #[test]
     fn stream_begin_serialize_layout_matches_spec() {
         // §6.7: event type 0x0000 + 4-byte stream id, big-endian.
-        let bytes = UserControl::StreamBegin(1).to_bytes();
+        let bytes = UserControl::StreamBegin(1).try_to_bytes().unwrap();
         assert_eq!(bytes, vec![0x00, 0x00, 0x00, 0x00, 0x00, 0x01]);
     }
 

@@ -118,7 +118,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[0xAA, 0xBB, 0xCC],
         };
-        let bytes = req.to_bytes();
+        let bytes = req.try_to_bytes().unwrap();
         // tag(3) + len(1=0x03) + 3 data.
         assert_eq!(bytes, [0x9F, 0x80, 0x00, 0x03, 0xAA, 0xBB, 0xCC]);
         assert_eq!(CaPipelineRequest::parse(&bytes).unwrap(), req);
@@ -126,7 +126,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[0xAA, 0xBB, 0xCD],
         };
-        assert_ne!(bytes, other.to_bytes());
+        assert_ne!(bytes, other.try_to_bytes().unwrap());
     }
 
     #[test]
@@ -135,7 +135,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[0x01],
         };
-        let bytes = resp.to_bytes();
+        let bytes = resp.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x01, 0x01, 0x01]);
         assert_eq!(CaPipelineResponse::parse(&bytes).unwrap(), resp);
 
@@ -143,7 +143,7 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[],
         };
-        let bytes = note.to_bytes();
+        let bytes = note.try_to_bytes().unwrap();
         assert_eq!(bytes, [0x9F, 0x80, 0x02, 0x00]);
         assert_eq!(CaPipelineNotification::parse(&bytes).unwrap(), note);
     }
@@ -154,7 +154,8 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[0x10],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert!(matches!(
             CaPipelineApdu::parse(&req).unwrap(),
             CaPipelineApdu::Request(_)
@@ -163,7 +164,8 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[0x20],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         assert!(matches!(
             CaPipelineApdu::parse(&resp).unwrap(),
             CaPipelineApdu::Response(_)
@@ -172,10 +174,11 @@ mod tests {
             length_form: crate::length::LengthForm::Minimal,
             ca_specific_data: &[0x30],
         }
-        .to_bytes();
+        .try_to_bytes()
+        .unwrap();
         let parsed = CaPipelineApdu::parse(&note).unwrap();
         assert!(matches!(parsed, CaPipelineApdu::Notification(_)));
-        assert_eq!(parsed.to_bytes(), note);
+        assert_eq!(parsed.try_to_bytes().unwrap(), note);
     }
 
     #[test]

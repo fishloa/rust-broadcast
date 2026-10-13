@@ -279,11 +279,11 @@ mod tests {
     use super::*;
 
     fn rt(cmd: &SpliceInsert) {
-        let bytes = cmd.to_bytes();
+        let bytes = cmd.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), cmd.serialized_len());
         let back = SpliceInsert::parse(&bytes).unwrap();
         assert_eq!(*cmd, back);
-        assert_eq!(back.to_bytes(), bytes);
+        assert_eq!(back.try_to_bytes().unwrap(), bytes);
     }
 
     #[test]

@@ -86,7 +86,7 @@ mod tests {
             pre_roll: 30,
             dtmf_chars: chars,
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 5);
         let back = InsertDtmfDescriptor::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -98,7 +98,7 @@ mod tests {
             pre_roll: 0,
             dtmf_chars: &[],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         assert_eq!(bytes.len(), 2);
         let back = InsertDtmfDescriptor::parse(&bytes).unwrap();
         assert_eq!(op, back);
@@ -122,9 +122,9 @@ mod tests {
             pre_roll: 30,
             dtmf_chars: &[0x31],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op;
         op2.pre_roll = 60;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 }

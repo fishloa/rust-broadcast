@@ -2142,7 +2142,9 @@ mod tests {
             test_crypto().crypto(),
         )
         .unwrap();
-        let expected = oracle_ctx.encrypt_rtp(&packet.to_bytes()).unwrap();
+        let expected = oracle_ctx
+            .encrypt_rtp(&packet.try_to_bytes().unwrap())
+            .unwrap();
         assert_eq!(protected, expected.to_vec());
 
         // And it must decrypt back to the original plaintext.
@@ -2157,7 +2159,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             dec_ctx.decrypt_rtp(&protected).unwrap().to_vec(),
-            packet.to_bytes()
+            packet.try_to_bytes().unwrap()
         );
     }
 
@@ -2207,7 +2209,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             dec_ctx.decrypt_rtcp(&protected).unwrap().to_vec(),
-            compound.to_bytes()
+            compound.try_to_bytes().unwrap()
         );
     }
 
@@ -2372,7 +2374,7 @@ mod tests {
         let (mut mt, peer) = transport_with_completed_handshake(SetupRole::Passive);
         let mut oracle = b3_srtp_context();
         let ciphertext = oracle
-            .encrypt_rtp(&rtp_test_packet(0).to_bytes())
+            .encrypt_rtp(&rtp_test_packet(0).try_to_bytes().unwrap())
             .unwrap()
             .to_vec();
 
@@ -2401,7 +2403,10 @@ mod tests {
             profile_id: 0xBEDE,
             data: &[0xDE, 0xAD, 0xBE, 0xEF],
         });
-        let ciphertext = oracle.encrypt_rtp(&pkt.to_bytes()).unwrap().to_vec();
+        let ciphertext = oracle
+            .encrypt_rtp(&pkt.try_to_bytes().unwrap())
+            .unwrap()
+            .to_vec();
 
         let events = mt
             .handle_datagram(Instant::now(), peer, &ciphertext)
@@ -2591,7 +2596,7 @@ mod tests {
 
         let mut oracle = b3_srtp_context();
         let packet = oracle
-            .encrypt_rtp(&rtp_test_packet(0).to_bytes())
+            .encrypt_rtp(&rtp_test_packet(0).try_to_bytes().unwrap())
             .unwrap()
             .to_vec();
         let events = mt
@@ -2647,7 +2652,7 @@ mod tests {
         // The "in-flight when the rekey happened" packet: encrypted under
         // the about-to-be-retired key, arrives only after `rekey` below.
         let reordered_packet = oracle
-            .encrypt_rtp(&rtp_test_packet(0).to_bytes())
+            .encrypt_rtp(&rtp_test_packet(0).try_to_bytes().unwrap())
             .unwrap()
             .to_vec();
 
@@ -2684,7 +2689,7 @@ mod tests {
         );
 
         let another_reordered_packet = oracle
-            .encrypt_rtp(&rtp_test_packet(1).to_bytes())
+            .encrypt_rtp(&rtp_test_packet(1).try_to_bytes().unwrap())
             .unwrap()
             .to_vec();
         let events_after_expiry = mt
@@ -2716,7 +2721,7 @@ mod tests {
 
         let mut oracle = b3_srtp_context();
         let old_keyed_packet = oracle
-            .encrypt_rtp(&rtp_test_packet(0).to_bytes())
+            .encrypt_rtp(&rtp_test_packet(0).try_to_bytes().unwrap())
             .unwrap()
             .to_vec();
 

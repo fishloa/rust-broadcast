@@ -99,7 +99,7 @@ mod tests {
             scte35_command_type: 0x05,
             scte35_command_contents: &[0xAA, 0xBB, 0xCC, 0xDD],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let back = InjectSectionData::parse(&bytes).unwrap();
         assert_eq!(op, back);
     }
@@ -111,9 +111,9 @@ mod tests {
             scte35_command_type: 0,
             scte35_command_contents: &[0x01, 0x02],
         };
-        let bytes = op.to_bytes();
+        let bytes = op.try_to_bytes().unwrap();
         let mut op2 = op.clone();
         op2.scte35_command_type = 0xFF;
-        assert_ne!(op2.to_bytes(), bytes);
+        assert_ne!(op2.try_to_bytes().unwrap(), bytes);
     }
 }
