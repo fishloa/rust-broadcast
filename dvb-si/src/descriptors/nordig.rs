@@ -24,6 +24,8 @@ const V1_VISIBLE_MASK: u8 = 0x80;
 const V1_RESERVED_MASK: u8 = 0x40;
 const V1_RESERVED_SHIFT: u8 = 6;
 const V1_LCN_HI_MASK: u8 = 0x3F;
+/// Largest 14-bit V1 `logical_channel_number`.
+const V1_LCN_MAX: u16 = ((V1_LCN_HI_MASK as u16) << 8) | 0xFF;
 
 /// Default of the 1-bit per-entry `reserved` of the v1 descriptor: `1`.
 /// NorDig Unified Requirements v3.1.1 §12.2.9.2 (a D-Book/NorDig layout, not
@@ -123,6 +125,14 @@ impl Serialize for NordigLogicalChannelV1 {
         crate::descriptors::write_descriptor_header(buf, TAG_V1, len - V1_HEADER_LEN)?;
         let mut offset = V1_HEADER_LEN;
         for entry in &self.entries {
+            // A number wider than the field used to be masked down silently
+            // into a different, valid-looking channel (audit r03-W3 class).
+            if entry.logical_channel_number > V1_LCN_MAX {
+                return Err(Error::ValueOutOfRange {
+                    field: "logical_channel_number",
+                    reason: "exceeds 14-bit field",
+                });
+            }
             buf[offset..offset + 2].copy_from_slice(&entry.service_id.to_be_bytes());
             let visible_byte = if entry.visible_service_flag {
                 V1_VISIBLE_MASK
@@ -157,6 +167,8 @@ const V2_VISIBLE_MASK: u8 = 0x80;
 const V2_RESERVED_MASK: u8 = 0x7C;
 const V2_RESERVED_SHIFT: u8 = 2;
 const V2_LCN_HI_MASK: u8 = 0x03;
+/// Largest 10-bit V2 `logical_channel_number`.
+const V2_LCN_MAX: u16 = ((V2_LCN_HI_MASK as u16) << 8) | 0xFF;
 
 /// Default of the 5-bit per-service `reserved` of the v2 descriptor: all ones
 /// (`0x1F`). NorDig Unified Requirements v3.1.1 §12.2.9.3 (not in the
@@ -336,6 +348,12 @@ impl Serialize for NordigLogicalChannelV2 {
                 broadcast_common::len::fit_u8(desc_len, "channel_list_descriptor_length")?;
             offset += 1;
             for svc in &cl.services {
+                if svc.logical_channel_number > V2_LCN_MAX {
+                    return Err(Error::ValueOutOfRange {
+                        field: "logical_channel_number",
+                        reason: "exceeds 10-bit field",
+                    });
+                }
                 buf[offset..offset + 2].copy_from_slice(&svc.service_id.to_be_bytes());
                 let visible_byte = if svc.visible_service_flag {
                     V2_VISIBLE_MASK
@@ -465,6 +483,21 @@ mod tests {
         let bytes = [TAG_V1, 0];
         let d = NordigLogicalChannelV1::parse(&bytes).unwrap();
         assert!(d.entries.is_empty());
+    }
+
+    #[test]
+    fn v1_serialize_rejects_lcn_wider_than_14_bits() {
+        let d = NordigLogicalChannelV1 {
+            entries: vec![NordigLogicalChannelV1Entry::new(1, true, 0x4000)],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf),
+            Err(Error::ValueOutOfRange {
+                field: "logical_channel_number",
+                ..
+            })
+        ));
     }
 
     #[test]
@@ -610,6 +643,26 @@ mod tests {
     fn v2_parse_rejects_wrong_tag() {
         let err = NordigLogicalChannelV2::parse(&[0x88, 0]).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { tag: 0x88, .. }));
+    }
+
+    #[test]
+    fn v2_serialize_rejects_lcn_wider_than_10_bits() {
+        let d = NordigLogicalChannelV2 {
+            channel_lists: vec![NordigLogicalChannelV2ChannelList {
+                channel_list_id: 1,
+                channel_list_name: vec![],
+                country_code: LangCode(*b"GBR"),
+                services: vec![NordigLogicalChannelV2Service::new(1, true, 0x0400)],
+            }],
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf),
+            Err(Error::ValueOutOfRange {
+                field: "logical_channel_number",
+                ..
+            })
+        ));
     }
 
     #[test]
