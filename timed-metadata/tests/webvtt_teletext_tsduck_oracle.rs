@@ -95,7 +95,7 @@ fn decode_via_this_crate(ts_bytes: &[u8]) -> Vec<timed_metadata::webvtt::Cue> {
         .tracks
         .iter()
         .find(|t| {
-            t.spec.source_pid == Some(Pid::new(TELETEXT_PID))
+            t.spec.source_pid.map(|p| p.value()) == Some(TELETEXT_PID)
                 && matches!(t.config(), CodecConfig::Data { .. })
         })
         .expect("fixture must contain an opaque Data track on the Teletext PID");
