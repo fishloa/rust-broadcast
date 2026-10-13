@@ -20,6 +20,10 @@
   - Tail bytes that parse used to drop silently are now kept in typed `trailing` fields and re-emitted: `video_stream`, `protection_message`, `related_content`, `c2_delivery_system`, `s2_satellite_delivery_system`.
   - New per-descriptor tests (parse non-default reserved -> byte-identical re-serialize; default-constructed -> spec value), mutation-verified; `real_capture_byte_identity` `TOLERATED` no longer lists any descriptor.
 
+
+### Changed (BREAKING)
+
+- **BREAKING (#1159):** `TsHeader::pid` (re-exported via `mpeg-ts`) is now `Pid`; `collect::*::pid` / `epg::EpgStore::feed_with_pid` take `Option<Pid>` instead of `Option<u16>`.
 ### Fixed
 
 - `hevc_video`: byte 12's `reserved(2)` (bits `[3:2]`) and the temporal sub-block's two `reserved(5)` fields are now all ones per H.222.0 Table 2-113. Real captures (9 HEVC_video_descriptors in the local TSDuck archive carry `0x9F` + `1F 1F`) contradicted the earlier r03-W7 reading that cleared bit 3 and the sub-block reserved bits, so they did not re-serialize byte-identically. Parse unaffected.

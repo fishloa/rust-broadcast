@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **BREAKING (#1159, typed PIDs):** `TrackSpec::source_pid` is `Option<Pid>` and `TrackSpec::with_source` takes a `Pid`; `PcrSample::{pid,new}` and `EventProvenance::pid` are `Pid`. `Debug` of the IR now renders a PID as `Pid(0x0100)` instead of `256` (the `sweep_output_golden` hashes normalise this and are unchanged: the demux output itself is identical). `TsMux` reports `Error::InvalidInput` if a track would be assigned an elementary PID above `0x1FFF`.
+
 ### Fixed
 
 - ISOBMFF box sizes past `u32::MAX` use the `size = 1` + 64-bit `largesize` form (ISO/IEC 14496-12 §4.2) instead of silently wrapping (#1147). Every variable-size box writer (sample tables `stts`/`ctts`/`stsc`/`stsz`/`stco`/`co64`/`stss`/`elst`, `stsd` and every sample entry, `hdlr`/`dref`/`url `, `esds`/`avcC`/`hvcC`/`vvcC`, CENC `senc`/`pssh`/`saiz`/`saio`/`schm`/`schi`/`sinf`, `sgpd`/`sbgp`/`subs`, the subtitle entries, `trun`, and the `moov`/`trak`/`mdia`/`minf`/`stbl`/`dinf`/`edts`/`mvex`/`traf`/`moof` containers) now derives its header through one shared helper, and its `serialized_len` counts the extra 8 `largesize` bytes, so the two stay consistent. `OpaqueBox`/`OpaqueChild` switch to `largesize` on their own when their payload no longer fits. Fixed-layout boxes (`mvhd`, `tkhd`, `mdhd`, `vmhd`, `smhd`, `mfhd`, `tfdt`, `prft`, `cslg`, `tenc`, `sidx`) and the brand-list `ftyp`/`styp` and the compact-only sample-entry `OpaqueBox` return a typed `FieldOverflow` error rather than a wrapped size. The typed readers (stsd/dref children, sample-entry config and extra-box scanners, `parse_body` slicing in every typed box) accept the `largesize` form. Output for every real fixture is byte-identical.

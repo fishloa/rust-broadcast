@@ -161,7 +161,9 @@ fn try_new_rejects_out_of_range_and_new_masks_wire_values() {
 
 /// A minimal valid long-form section (table_id 0x42, empty body) with CRC.
 fn tiny_section() -> Vec<u8> {
-    let mut s = vec![0x42, 0xF0, 0x09, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+    let mut s = vec![
+        0x42, 0xF0, 0x09, 0x00, 0x01, 0xC1, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
     // section_length counts the bytes after the 3-byte header, including CRC.
     let crc = broadcast_common::crc32_mpeg2::compute(&s[..s.len() - 4]);
     let n = s.len();
@@ -210,5 +212,8 @@ fn pusi_reassembler_filters_on_a_typed_pid() {
     let mut r = PusiReassembler::new(pid);
     assert!(r.push(other, true, b"ignored").is_none());
     assert!(r.push(pid, true, b"unit-a").is_none());
-    assert_eq!(r.push(pid, true, b"unit-b").as_deref(), Some(&b"unit-a"[..]));
+    assert_eq!(
+        r.push(pid, true, b"unit-b").as_deref(),
+        Some(&b"unit-a"[..])
+    );
 }

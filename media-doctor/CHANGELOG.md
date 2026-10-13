@@ -2,6 +2,10 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **BREAKING (#1159):** `WatchSnapshot` `PidFlag::pid` is `mpeg_ts::pid::Pid`. `Location::pid` stays `u32` (it also carries a 32-bit media `track_ID`, so narrowing it to a PID would alias track ids); new `Location::at_pid(packet, Pid)` / `Location::at_track(packet, track_id)` constructors make the kind explicit and all TS diagnostics use `at_pid`.
+
 ## [0.10.0] - 2026-10-13
 ### Changed
 

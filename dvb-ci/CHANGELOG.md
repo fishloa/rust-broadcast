@@ -6,6 +6,10 @@ versioning.
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+
+- **BREAKING (#1159, typed PIDs):** every 13-bit PID field is `mpeg_ts::pid::Pid` instead of `u16`: `CaPmtStream::elementary_pid`, `CaPmtReplyStream::elementary_pid`, `Replace::{replaced_pid,replacement_pid}`, the CI+ `MsCaPmt*`/`PidSelect*`/`SampleTrack::track_pid`/`CommsInfoReply::input_delivery_pid` fields and `multistream::NULL_PID`. The serialize-time "PID exceeds 13-bit range" checks are gone (unrepresentable); the former `oversized_*_rejected` tests now assert `Pid::try_new` refuses the value. New dependency: `mpeg-ts`.
+
 ## [0.9.1] - 2026-10-13
 ### Documentation
 
