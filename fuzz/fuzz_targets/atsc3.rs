@@ -9,10 +9,10 @@ fuzz_target!(|data: &[u8]| {
 
     // Test 1: LLS envelope binary parse + round-trip
     if let Ok(envelope) = atsc3::LlsEnvelope::parse(data) {
-        let reserialized = envelope.to_bytes();
+        let reserialized = envelope.try_to_bytes().unwrap();
         if let Ok(reparsed) = atsc3::LlsEnvelope::parse(&reserialized) {
             assert_eq!(
-                reserialized, reparsed.to_bytes(),
+                reserialized, reparsed.try_to_bytes().unwrap(),
                 "LlsEnvelope roundtrip mismatch"
             );
         }

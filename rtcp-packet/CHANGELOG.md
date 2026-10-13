@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
+
 ### Fixed
 
 - **`ReportBlock::cumulative_lost` outside the 24-bit signed range is rejected (#1129).** It was masked with `& 0x00FF_FFFF`, so `0x80_0000` serialized as a different loss count; `serialize_into` now returns `Error::InvalidValue`.

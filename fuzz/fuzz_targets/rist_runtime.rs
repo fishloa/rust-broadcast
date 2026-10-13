@@ -10,10 +10,10 @@ fuzz_target!(|data: &[u8]| {
 
     // Test 1: GenericNack (RFC 4585 §6.2.1)
     if let Ok(nack) = rist_runtime::GenericNack::parse(data) {
-        let reserialized = nack.to_bytes();
+        let reserialized = nack.try_to_bytes().unwrap();
         if let Ok(reparsed) = rist_runtime::GenericNack::parse(&reserialized) {
             assert_eq!(
-                reserialized, reparsed.to_bytes(),
+                reserialized, reparsed.try_to_bytes().unwrap(),
                 "GenericNack roundtrip mismatch"
             );
         }
@@ -21,10 +21,10 @@ fuzz_target!(|data: &[u8]| {
 
     // Test 2: RangeNack (RIST-specific RTCP APP)
     if let Ok(nack) = rist_runtime::RangeNack::parse(data) {
-        let reserialized = nack.to_bytes();
+        let reserialized = nack.try_to_bytes().unwrap();
         if let Ok(reparsed) = rist_runtime::RangeNack::parse(&reserialized) {
             assert_eq!(
-                reserialized, reparsed.to_bytes(),
+                reserialized, reparsed.try_to_bytes().unwrap(),
                 "RangeNack roundtrip mismatch"
             );
         }
@@ -32,9 +32,9 @@ fuzz_target!(|data: &[u8]| {
 
     // Test 3: RttEcho (RTCP APP for round-trip time measurement)
     if let Ok(echo) = rist_runtime::RttEcho::parse(data) {
-        let reserialized = echo.to_bytes();
+        let reserialized = echo.try_to_bytes().unwrap();
         if let Ok(reparsed) = rist_runtime::RttEcho::parse(&reserialized) {
-            assert_eq!(reserialized, reparsed.to_bytes(), "RttEcho roundtrip mismatch");
+            assert_eq!(reserialized, reparsed.try_to_bytes().unwrap(), "RttEcho roundtrip mismatch");
         }
     }
 });

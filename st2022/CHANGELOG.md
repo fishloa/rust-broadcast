@@ -2,6 +2,7 @@
 
 ## [Unreleased]
 ### Changed
+- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 - **BREAKING:** `PayloadHeader::extension` is now `Option<HeaderExtension<'a>>`
   (typed TLV view: `HeaderExtension::new`, `items()`, `ExtensionItem::{Pad, Tlv}`,
   `PayloadHeader::extension_items()`), not a raw `&[u8]`; a malformed TLV chain

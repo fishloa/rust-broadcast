@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
+
 ### Fixed
 
 - `--no-default-features --features chrono` now builds for bare-metal (`thumbv7em-none-eabi`): `epg` was missing `alloc::vec` and carried a serde-only `format`/`ServiceData` unconditionally (#1181).

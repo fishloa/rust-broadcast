@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143). `TransportConnection::init` uses an explicit justified `expect` for the fixed-size `Create_T_C` TPDU.
+
 ### Changed (BREAKING)
 - **BREAKING (r10-W-4, #1091):** follows `dvb-ci`'s `length_form` fields: the `dvb-ci` objects built or matched in this crate's APIs and tests carry the new field (`Default`/`Minimal` for host-built values).
 

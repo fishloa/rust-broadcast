@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
+
 ### Changed (BREAKING)
 - `dvb_ta::compact`: `compact_time_signal()` / `compact_splice_insert()` now use
   the bit packing of ETSI TS 103 752-1 V1.2.1 Tables 6 and 8 as re-aligned from

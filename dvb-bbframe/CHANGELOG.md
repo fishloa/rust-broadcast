@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Changed
+- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 - **BREAKING**: `Bbheader::serialize()` now returns
   `Result<[u8; BBHEADER_LEN], Error>` (was a bare array that panicked, via
   `to_bytes()`, on a hand-built header violating a wire constraint such as

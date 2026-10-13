@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Removed (BREAKING)
+- `Serialize::to_bytes()`, the default method that panicked when `serialize_into` failed, is removed (umbrella #1143 / T15). `Serialize::try_to_bytes() -> Result<Vec<u8>, Self::Error>` is the only allocate-and-serialize entry point; production code propagates the error, tests use `.try_to_bytes().unwrap()`. No infallible replacement is provided (no `Infallible` marker): a panic-free default cannot be offered for a trait whose implementers may fail. Guarded by `tests/no_panicking_to_bytes_guard.rs`. Inherent `to_bytes` methods on concrete types (fixed-size arrays, `Result`-returning ones) are unaffected. Major bump of `broadcast-common`; every dependent crate's `broadcast-common` caret moves with it.
+
 ### Fixed
 - `time::encode_mjd_bcd` rejects calendar-impossible days (31 Feb, 31 Apr, 29 Feb in a non-leap year): they used to encode silently as a later day that decode would not return (audit r01-W16, #1073).
 ### Added

@@ -14,13 +14,13 @@ fuzz_target!(|data: &[u8]| {
     let Ok((item, _consumed)) = KlvItem::parse_prefix(data) else {
         return;
     };
-    let full = item.to_bytes();
+    let full = item.try_to_bytes().unwrap();
 
     if PartitionPack::is_partition_key(&item.key) {
         if let Ok(pp) = PartitionPack::parse(&full) {
-            let reserialized = pp.to_bytes();
+            let reserialized = pp.try_to_bytes().unwrap();
             if let Ok(reparsed) = PartitionPack::parse(&reserialized) {
-                assert_eq!(reserialized, reparsed.to_bytes(), "PartitionPack roundtrip mismatch");
+                assert_eq!(reserialized, reparsed.try_to_bytes().unwrap(), "PartitionPack roundtrip mismatch");
             }
         }
         return;
@@ -28,9 +28,9 @@ fuzz_target!(|data: &[u8]| {
 
     if PrimerPack::is_primer_key(&item.key) {
         if let Ok(pp) = PrimerPack::parse(&full) {
-            let reserialized = pp.to_bytes();
+            let reserialized = pp.try_to_bytes().unwrap();
             if let Ok(reparsed) = PrimerPack::parse(&reserialized) {
-                assert_eq!(reserialized, reparsed.to_bytes(), "PrimerPack roundtrip mismatch");
+                assert_eq!(reserialized, reparsed.try_to_bytes().unwrap(), "PrimerPack roundtrip mismatch");
             }
         }
         return;
@@ -38,11 +38,11 @@ fuzz_target!(|data: &[u8]| {
 
     if RandomIndexPack::is_rip_key(&item.key) {
         if let Ok(rip) = RandomIndexPack::parse(&full) {
-            let reserialized = rip.to_bytes();
+            let reserialized = rip.try_to_bytes().unwrap();
             if let Ok(reparsed) = RandomIndexPack::parse(&reserialized) {
                 assert_eq!(
                     reserialized,
-                    reparsed.to_bytes(),
+                    reparsed.try_to_bytes().unwrap(),
                     "RandomIndexPack roundtrip mismatch"
                 );
             }
@@ -58,41 +58,41 @@ fuzz_target!(|data: &[u8]| {
         let Ok(set) = LocalSet::parse(&full) else {
             return;
         };
-        let reserialized = set.to_bytes();
+        let reserialized = set.try_to_bytes().unwrap();
         if let Ok(reparsed) = LocalSet::parse(&reserialized) {
-            assert_eq!(reserialized, reparsed.to_bytes(), "LocalSet roundtrip mismatch");
+            assert_eq!(reserialized, reparsed.try_to_bytes().unwrap(), "LocalSet roundtrip mismatch");
         }
 
         match set.kind() {
             StructuralSetKind::Preface => {
                 if let Ok(p) = Preface::parse(&full) {
-                    let s = p.to_bytes();
+                    let s = p.try_to_bytes().unwrap();
                     if let Ok(rp) = Preface::parse(&s) {
-                        assert_eq!(s, rp.to_bytes(), "Preface roundtrip mismatch");
+                        assert_eq!(s, rp.try_to_bytes().unwrap(), "Preface roundtrip mismatch");
                     }
                 }
             }
             StructuralSetKind::Identification => {
                 if let Ok(p) = Identification::parse(&full) {
-                    let s = p.to_bytes();
+                    let s = p.try_to_bytes().unwrap();
                     if let Ok(rp) = Identification::parse(&s) {
-                        assert_eq!(s, rp.to_bytes(), "Identification roundtrip mismatch");
+                        assert_eq!(s, rp.try_to_bytes().unwrap(), "Identification roundtrip mismatch");
                     }
                 }
             }
             StructuralSetKind::ContentStorage => {
                 if let Ok(p) = ContentStorage::parse(&full) {
-                    let s = p.to_bytes();
+                    let s = p.try_to_bytes().unwrap();
                     if let Ok(rp) = ContentStorage::parse(&s) {
-                        assert_eq!(s, rp.to_bytes(), "ContentStorage roundtrip mismatch");
+                        assert_eq!(s, rp.try_to_bytes().unwrap(), "ContentStorage roundtrip mismatch");
                     }
                 }
             }
             StructuralSetKind::EssenceContainerData => {
                 if let Ok(p) = EssenceContainerData::parse(&full) {
-                    let s = p.to_bytes();
+                    let s = p.try_to_bytes().unwrap();
                     if let Ok(rp) = EssenceContainerData::parse(&s) {
-                        assert_eq!(s, rp.to_bytes(), "EssenceContainerData roundtrip mismatch");
+                        assert_eq!(s, rp.try_to_bytes().unwrap(), "EssenceContainerData roundtrip mismatch");
                     }
                 }
             }

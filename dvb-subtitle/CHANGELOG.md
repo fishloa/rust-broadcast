@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
+
 ### Fixed
 
 - **`disparity_shift_update_sequence` `interval_duration` over 24 bits is rejected (#1129)** (was `as u8` of its three bytes, silently dropping the top byte); returns `Error::FieldOverflow`.
