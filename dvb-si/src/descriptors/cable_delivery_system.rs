@@ -12,8 +12,12 @@ pub const TAG: u8 = 0x44;
 const HEADER_LEN: usize = 2;
 const BODY_LEN: u8 = 11;
 
-/// Reserved future use bits (top 12 bits of bytes 6+7 in the descriptor body).
-const RESERVED_FU_MASK: u16 = 0xFFF0;
+/// Width mask of `reserved_future_use` (12 bits, top of body bytes 4-5).
+const RESERVED_FU_MASK: u16 = 0x0FFF;
+
+/// Spec default of the 12-bit `reserved_future_use` ahead of `FEC_outer`:
+/// all ones (EN 300 468 Table 33, V1.3.1-V1.20.1, audit §6.1 class A).
+pub const RESERVED_FUTURE_USE_DEFAULT: u16 = 0x0FFF;
 
 /// FEC outer coding scheme — ETSI EN 300 468 Table 34.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -176,9 +180,15 @@ broadcast_common::impl_spec_display!(FecInner, Reserved);
 /// Cable Delivery System Descriptor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct CableDeliverySystemDescriptor {
     /// 32-bit BCD frequency in 100 kHz (e.g. 0x03460000 = 346.0000 MHz).
     pub frequency_bcd: u32,
+    /// `reserved_future_use(12)` ahead of `FEC_outer` (12 bits, right-aligned).
+    /// Captured on parse and re-emitted verbatim;
+    /// [`CableDeliverySystemDescriptor::new`] defaults to
+    /// [`RESERVED_FUTURE_USE_DEFAULT`] (`0xFFF`).
+    pub reserved_future_use: u16,
     /// FEC outer coding scheme.
     pub fec_outer: FecOuter,
     /// Modulation scheme.
@@ -190,6 +200,25 @@ pub struct CableDeliverySystemDescriptor {
 }
 
 impl CableDeliverySystemDescriptor {
+    /// Build a descriptor with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(
+        frequency_bcd: u32,
+        fec_outer: FecOuter,
+        modulation: Modulation,
+        symbol_rate_bcd: u32,
+        fec_inner: FecInner,
+    ) -> Self {
+        Self {
+            frequency_bcd,
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
+            fec_outer,
+            modulation,
+            symbol_rate_bcd,
+            fec_inner,
+        }
+    }
+
     /// Decode the 32-bit BCD `frequency` to Hz (100 Hz field resolution).
     /// `None` if the BCD nibbles are out of range.
     ///
@@ -316,7 +345,8 @@ impl<'a> Parse<'a> for CableDeliverySystemDescriptor {
         let frequency_bcd = u32::from_be_bytes([hdr[0], hdr[1], hdr[2], hdr[3]]);
 
         let bytes_4_5 = u16::from_be_bytes([hdr[4], hdr[5]]);
-        let fec_outer_raw = (bytes_4_5 & !RESERVED_FU_MASK) as u8;
+        let reserved_future_use = bytes_4_5 >> 4;
+        let fec_outer_raw = (bytes_4_5 & 0x000F) as u8;
 
         let modulation_byte = hdr[6];
 
@@ -327,6 +357,7 @@ impl<'a> Parse<'a> for CableDeliverySystemDescriptor {
 
         Ok(Self {
             frequency_bcd,
+            reserved_future_use,
             fec_outer: parse_fec_outer(fec_outer_raw),
             modulation: parse_modulation(modulation_byte),
             symbol_rate_bcd,
@@ -355,8 +386,8 @@ impl Serialize for CableDeliverySystemDescriptor {
 
         buf[2..6].copy_from_slice(&self.frequency_bcd.to_be_bytes());
 
-        let reserved_fu = RESERVED_FU_MASK;
-        let fec_outer_byte = reserved_fu | serialize_fec_outer(self.fec_outer) as u16;
+        let reserved_fu = (self.reserved_future_use & RESERVED_FU_MASK) << 4;
+        let fec_outer_byte = reserved_fu | (serialize_fec_outer(self.fec_outer) & 0x0F) as u16;
         let [fu_hi, fec_lo] = fec_outer_byte.to_be_bytes();
         buf[6] = fu_hi;
         buf[7] = fec_lo;
@@ -481,13 +512,13 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = CableDeliverySystemDescriptor {
-            frequency_bcd: 0x03460000,
-            fec_outer: FecOuter::ReedSolomon204_188,
-            modulation: Modulation::Qam256,
-            symbol_rate_bcd: 0x0687500,
-            fec_inner: FecInner::Rate3_4,
-        };
+        let d = CableDeliverySystemDescriptor::new(
+            0x03460000,
+            FecOuter::ReedSolomon204_188,
+            Modulation::Qam256,
+            0x0687500,
+            FecInner::Rate3_4,
+        );
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let parsed = CableDeliverySystemDescriptor::parse(&buf).unwrap();
@@ -539,13 +570,13 @@ mod tests {
         // `FecInner::Reserved` stores a raw `u8` but the wire field is the low
         // nibble of the last body byte; pre-fix the high nibble of e.g. 0x3F
         // bled into `symbol_rate_bcd`'s low nibble (r03-W2).
-        let d = CableDeliverySystemDescriptor {
-            frequency_bcd: 0x0001_2345,
-            fec_outer: FecOuter::NoOuterFec,
-            modulation: Modulation::Qam256,
-            symbol_rate_bcd: 0x0069_0000,
-            fec_inner: FecInner::Reserved(0x3E),
-        };
+        let d = CableDeliverySystemDescriptor::new(
+            0x0001_2345,
+            FecOuter::NoOuterFec,
+            Modulation::Qam256,
+            0x0069_0000,
+            FecInner::Reserved(0x3E),
+        );
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         // Last body byte: symbol_rate low nibble (0) << 4 | masked fec_inner.
@@ -553,5 +584,53 @@ mod tests {
         let parsed = CableDeliverySystemDescriptor::parse(&buf).unwrap();
         assert_eq!(parsed.symbol_rate_bcd, d.symbol_rate_bcd);
         assert_eq!(parsed.fec_inner, FecInner::Reserved(0x0E));
+    }
+
+    /// `reserved_future_use(12)` of every shape (all-zeros, all-ones, mixed,
+    /// each single bit) re-serializes byte-identically; real senders write
+    /// non-`0xFFF` here, the spec value is all ones.
+    #[test]
+    fn reserved_future_use_preserved() {
+        let mut values: Vec<u16> = vec![0x000, 0xFFF, 0xAAA, 0x555, 0x123];
+        values.extend((0..12).map(|b| 1u16 << b));
+        for r in values {
+            let w = (r << 4) | 0x0002;
+            let raw: [u8; 13] = [
+                TAG,
+                BODY_LEN,
+                0x03,
+                0x46,
+                0x00,
+                0x00,
+                (w >> 8) as u8,
+                w as u8,
+                0x05,
+                0x06,
+                0x87,
+                0x50,
+                0x03,
+            ];
+            let d = CableDeliverySystemDescriptor::parse(&raw).unwrap();
+            assert_eq!(d.reserved_future_use, r);
+            assert_eq!(d.fec_outer, FecOuter::ReedSolomon204_188);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, raw, "reserved_future_use {r:#05x}");
+        }
+    }
+
+    /// `new()` carries the spec value (all ones) in the 12-bit region.
+    #[test]
+    fn default_reserved_is_spec_value() {
+        let d = CableDeliverySystemDescriptor::new(
+            0x03460000,
+            FecOuter::NoOuterFec,
+            Modulation::Qam64,
+            0x0687500,
+            FecInner::Rate3_4,
+        );
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(&buf[6..8], &[0xFF, 0xF1]);
     }
 }

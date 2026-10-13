@@ -570,8 +570,26 @@ broadcast_common::impl_spec_display!(ShTransmissionMode, Reserved);
 
 /// `diversity_mode(4)` in the selector byte (Table 120).
 const DIVERSITY_MODE_VALUE_MASK: u8 = 0x0F;
-/// Low-nibble reserved bits of the selector byte (Table 120).
-const DIVERSITY_RESERVED_LOW_NIBBLE: u8 = 0x0F;
+/// Width mask of the 4-bit `reserved_future_use` in the selector byte.
+const DIVERSITY_RESERVED_MASK: u8 = 0x0F;
+/// Width mask of the 5-bit `reserved_future_use` in the modulation flags byte.
+const FLAGS_RESERVED_MASK: u8 = 0x1F;
+/// Width mask of the 2-bit `reserved_future_use` of a type-1 interleaver byte.
+const INTERLEAVER_RESERVED_MASK: u8 = 0x03;
+
+/// Spec default of the 4-bit `reserved_future_use` after `diversity_mode`:
+/// all ones (EN 300 468 Table 119; `reserved` in V1.10.1-V1.16.1,
+/// `reserved_future_use` in V1.17.1+, value 1 throughout; audit §6.1 class B).
+pub const DIVERSITY_RESERVED_FUTURE_USE_DEFAULT: u8 = 0x0F;
+/// Spec default of the 5-bit `reserved_future_use` of a modulation entry's
+/// flags byte: all ones (Table 119; audit §6.1 class B).
+pub const MODULATION_RESERVED_FUTURE_USE_DEFAULT: u8 = 0x1F;
+/// Spec default of the 1-bit `reserved_future_use` after `symbol_rate` of a
+/// TDM modulation: `1` (Table 119; audit §6.1 class B).
+pub const TDM_RESERVED_FUTURE_USE_DEFAULT: u8 = 0x01;
+/// Spec default of the 2-bit `reserved_future_use` after the type-1
+/// interleaver `common_multiplier`: `11` (Table 119; audit §6.1 class B).
+pub const INTERLEAVER_RESERVED_FUTURE_USE_DEFAULT: u8 = 0x03;
 /// `polarization(2)` (Table 123).
 const POLARIZATION_VALUE_MASK: u8 = 0x03;
 /// `bandwidth(3)` (Table 128).
@@ -595,22 +613,58 @@ const GUARD_TRANSMISSION_VALUE_MASK: u8 = 0x03;
 /// `interleaver_type` selects its layout. Diversity mode: Table 120.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct ShDeliverySystem {
     /// `diversity_mode` — Table 120.
     pub diversity_mode: ShDiversityMode,
+    /// `reserved_future_use(4)` after `diversity_mode` (4 bits,
+    /// right-aligned). Captured on parse, re-emitted verbatim;
+    /// [`ShDeliverySystem::new`] defaults to
+    /// [`DIVERSITY_RESERVED_FUTURE_USE_DEFAULT`] (`0xF`).
+    pub reserved_future_use: u8,
     /// Modulation entries (the loop to end of body).
     pub modulations: Vec<ShModulation>,
+}
+
+impl ShDeliverySystem {
+    /// Build a body with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(diversity_mode: ShDiversityMode, modulations: Vec<ShModulation>) -> Self {
+        Self {
+            diversity_mode,
+            reserved_future_use: DIVERSITY_RESERVED_FUTURE_USE_DEFAULT,
+            modulations,
+        }
+    }
 }
 
 /// One modulation entry in the SH_delivery_system loop.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct ShModulation {
     /// Modulation parameters; the variant encodes `modulation_type` (Table 121).
     pub modulation: ShModulationMode,
+    /// `reserved_future_use(5)` after `interleaver_type` in the flags byte
+    /// (5 bits, right-aligned). Captured on parse, re-emitted verbatim;
+    /// [`ShModulation::new`] defaults to
+    /// [`MODULATION_RESERVED_FUTURE_USE_DEFAULT`] (`0x1F`).
+    pub reserved_future_use: u8,
     /// Interleaver block; `Some` encodes `interleaver_presence==1`, the variant
     /// encodes `interleaver_type`.
     pub interleaver: Option<ShInterleaver>,
+}
+
+impl ShModulation {
+    /// Build an entry with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(modulation: ShModulationMode, interleaver: Option<ShInterleaver>) -> Self {
+        Self {
+            modulation,
+            reserved_future_use: MODULATION_RESERVED_FUTURE_USE_DEFAULT,
+            interleaver,
+        }
+    }
 }
 
 /// Modulation mode for an SH delivery system entry (Table 121).
@@ -619,6 +673,7 @@ pub struct ShModulation {
 #[non_exhaustive]
 pub enum ShModulationMode {
     /// `modulation_type == 0` — Time-Domain Multiplex.
+    #[non_exhaustive]
     Tdm {
         /// polarization (2 bits) — Table 123.
         polarization: ShPolarization,
@@ -630,6 +685,10 @@ pub enum ShModulationMode {
         code_rate: ShCodeRate,
         /// symbol_rate (5 bits) — Table 127 (raw).
         symbol_rate: u8,
+        /// `reserved_future_use(1)` after `symbol_rate` (1 bit, right-aligned).
+        /// Captured on parse, re-emitted verbatim; constructors default to
+        /// [`TDM_RESERVED_FUTURE_USE_DEFAULT`] (`1`).
+        reserved_future_use: u8,
     },
     /// `modulation_type == 1` — OFDM.
     Ofdm {
@@ -648,6 +707,27 @@ pub enum ShModulationMode {
         /// common_frequency (1 bit).
         common_frequency: bool,
     },
+}
+
+impl ShModulationMode {
+    /// Build a `Tdm` modulation with the spec-default reserved bit.
+    #[must_use]
+    pub const fn tdm(
+        polarization: ShPolarization,
+        roll_off: ShRollOff,
+        modulation_mode: ShModulationModeType,
+        code_rate: ShCodeRate,
+        symbol_rate: u8,
+    ) -> Self {
+        Self::Tdm {
+            polarization,
+            roll_off,
+            modulation_mode,
+            code_rate,
+            symbol_rate,
+            reserved_future_use: TDM_RESERVED_FUTURE_USE_DEFAULT,
+        }
+    }
 }
 
 /// Interleaver block for an SH modulation entry (Table 122).
@@ -669,10 +749,27 @@ pub enum ShInterleaver {
         non_late_increments: u8,
     },
     /// `interleaver_type == 1` — common_multiplier only.
+    #[non_exhaustive]
     Type1 {
         /// common_multiplier (6 bits).
         common_multiplier: u8,
+        /// `reserved_future_use(2)` after `common_multiplier` (2 bits,
+        /// right-aligned). Captured on parse, re-emitted verbatim;
+        /// [`ShInterleaver::type1`] defaults to
+        /// [`INTERLEAVER_RESERVED_FUTURE_USE_DEFAULT`] (`0b11`).
+        reserved_future_use: u8,
     },
+}
+
+impl ShInterleaver {
+    /// Build a `Type1` interleaver with the spec-default reserved bits.
+    #[must_use]
+    pub const fn type1(common_multiplier: u8) -> Self {
+        Self::Type1 {
+            common_multiplier,
+            reserved_future_use: INTERLEAVER_RESERVED_FUTURE_USE_DEFAULT,
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -690,6 +787,7 @@ impl<'a> Parse<'a> for ShDeliverySystem {
             });
         }
         let diversity_mode = ShDiversityMode::from_u8(sel[0] >> 4);
+        let diversity_reserved = sel[0] & DIVERSITY_RESERVED_MASK;
         let mut pos = 1;
         let mut modulations = Vec::new();
         while pos < sel.len() {
@@ -704,6 +802,7 @@ impl<'a> Parse<'a> for ShDeliverySystem {
             let modulation_type = (flags >> 7) & 0x01;
             let interleaver_presence = (flags >> 6) & 0x01;
             let interleaver_type = (flags >> 5) & 0x01;
+            let flags_reserved = flags & FLAGS_RESERVED_MASK;
             let mb0 = sel[pos + 1];
             let mb1 = sel[pos + 2];
             pos += 3;
@@ -721,6 +820,7 @@ impl<'a> Parse<'a> for ShDeliverySystem {
                     modulation_mode,
                     code_rate,
                     symbol_rate,
+                    reserved_future_use: mb1 & 0x01,
                 }
             } else {
                 let bandwidth = ShBandwidth::from_u8(mb0 >> 5);
@@ -778,8 +878,12 @@ impl<'a> Parse<'a> for ShDeliverySystem {
                         });
                     }
                     let common_multiplier = sel[pos] >> 2;
+                    let reserved_future_use = sel[pos] & INTERLEAVER_RESERVED_MASK;
                     pos += 1;
-                    Some(ShInterleaver::Type1 { common_multiplier })
+                    Some(ShInterleaver::Type1 {
+                        common_multiplier,
+                        reserved_future_use,
+                    })
                 }
             } else {
                 None
@@ -787,11 +891,13 @@ impl<'a> Parse<'a> for ShDeliverySystem {
 
             modulations.push(ShModulation {
                 modulation,
+                reserved_future_use: flags_reserved,
                 interleaver,
             });
         }
         Ok(ShDeliverySystem {
             diversity_mode,
+            reserved_future_use: diversity_reserved,
             modulations,
         })
     }
@@ -821,7 +927,7 @@ impl Serialize for ShDeliverySystem {
             });
         }
         buf[0] = ((self.diversity_mode.to_u8() & DIVERSITY_MODE_VALUE_MASK) << 4)
-            | DIVERSITY_RESERVED_LOW_NIBBLE;
+            | (self.reserved_future_use & DIVERSITY_RESERVED_MASK);
         let mut p = 1;
         for m in &self.modulations {
             let modulation_type_bit = matches!(m.modulation, ShModulationMode::Ofdm { .. }) as u8;
@@ -831,7 +937,7 @@ impl Serialize for ShDeliverySystem {
             buf[p] = (modulation_type_bit << 7)
                 | (interleaver_presence_bit << 6)
                 | (interleaver_type_bit << 5)
-                | 0x1F;
+                | (m.reserved_future_use & FLAGS_RESERVED_MASK);
             p += 1;
 
             match &m.modulation {
@@ -841,14 +947,16 @@ impl Serialize for ShDeliverySystem {
                     modulation_mode,
                     code_rate,
                     symbol_rate,
+                    reserved_future_use,
                 } => {
                     let cr = code_rate.to_u8();
                     buf[p] = ((polarization.to_u8() & POLARIZATION_VALUE_MASK) << 6)
                         | ((roll_off.to_u8() & 0x03) << 4)
                         | ((modulation_mode.to_u8() & MODULATION_MODE_VALUE_MASK) << 2)
                         | ((cr >> 2) & 0x03);
-                    buf[p + 1] =
-                        ((cr & 0x03) << 6) | ((symbol_rate & SYMBOL_RATE_VALUE_MASK) << 1) | 0x01;
+                    buf[p + 1] = ((cr & 0x03) << 6)
+                        | ((symbol_rate & SYMBOL_RATE_VALUE_MASK) << 1)
+                        | (reserved_future_use & 0x01);
                 }
                 ShModulationMode::Ofdm {
                     bandwidth,
@@ -893,8 +1001,12 @@ impl Serialize for ShDeliverySystem {
                     buf[p + 3] = ((sd & 0x03) << 6) | nli;
                     p += 4;
                 }
-                Some(ShInterleaver::Type1 { common_multiplier }) => {
-                    buf[p] = ((common_multiplier & 0x3F) << 2) | 0x03;
+                Some(ShInterleaver::Type1 {
+                    common_multiplier,
+                    reserved_future_use,
+                }) => {
+                    buf[p] = ((common_multiplier & 0x3F) << 2)
+                        | (reserved_future_use & INTERLEAVER_RESERVED_MASK);
                     p += 1;
                 }
                 None => {}
@@ -1008,6 +1120,7 @@ mod tests {
                         modulation_mode,
                         code_rate,
                         symbol_rate,
+                        ..
                     } => {
                         assert_eq!(*polarization, ShPolarization::CircularLeft);
                         assert_eq!(*roll_off, ShRollOff::Alpha025);
@@ -1057,7 +1170,9 @@ mod tests {
                     other => panic!("expected Ofdm, got {other:?}"),
                 }
                 match &m.interleaver {
-                    Some(ShInterleaver::Type1 { common_multiplier }) => {
+                    Some(ShInterleaver::Type1 {
+                        common_multiplier, ..
+                    }) => {
                         assert_eq!(*common_multiplier, 21);
                     }
                     other => panic!("expected Type1 interleaver, got {other:?}"),
@@ -1085,6 +1200,7 @@ mod tests {
                         modulation_mode,
                         code_rate,
                         symbol_rate,
+                        ..
                     } => {
                         assert_eq!(*polarization, ShPolarization::LinearHorizontal);
                         assert_eq!(*roll_off, ShRollOff::Reserved(3));
@@ -1210,10 +1326,10 @@ mod tests {
     fn serde_serialize_sh_delivery_system() {
         let d = ExtensionDescriptor {
             tag_extension: 0x05,
-            body: ExtensionBody::ShDeliverySystem(ShDeliverySystem {
-                diversity_mode: ShDiversityMode::FecAtLink,
-                modulations: vec![ShModulation {
-                    modulation: ShModulationMode::Ofdm {
+            body: ExtensionBody::ShDeliverySystem(ShDeliverySystem::new(
+                ShDiversityMode::FecAtLink,
+                vec![ShModulation::new(
+                    ShModulationMode::Ofdm {
                         bandwidth: ShBandwidth::Mhz7,
                         priority: true,
                         constellation_and_hierarchy: ShConstellationAndHierarchy::Qam16Alpha1,
@@ -1222,14 +1338,73 @@ mod tests {
                         transmission_mode: ShTransmissionMode::Mode4k,
                         common_frequency: true,
                     },
-                    interleaver: Some(ShInterleaver::Type1 {
-                        common_multiplier: 21,
-                    }),
-                }],
-            }),
+                    Some(ShInterleaver::type1(21)),
+                )],
+            )),
         };
         let json = serde_json::to_string(&d).unwrap();
         assert!(json.contains("\"tag_extension\":5"));
         assert!(json.contains("\"shDeliverySystem\""));
+    }
+
+    /// Every reserved region of the SH body (4-bit diversity rfu, 5-bit flags
+    /// rfu, 1-bit TDM rfu, 2-bit type-1 interleaver rfu) re-serializes
+    /// byte-identically over its whole value range.
+    #[test]
+    fn reserved_preserved() {
+        // Selector byte: diversity_mode FecAtLink(0xD) | rfu(4).
+        for r4 in 0u8..=0x0F {
+            let sel = [0xD0 | r4];
+            let bytes = wrap(0x05, &sel);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "diversity rfu {r4:#x}");
+        }
+        // Modulation flags byte (TDM, interleaver type-1 present):
+        // type(0)=0, presence=1, itype=1 -> 0x60 | rfu(5); TDM byte 2 rfu(1);
+        // interleaver byte rfu(2).
+        for r5 in 0u8..=0x1F {
+            for r1 in 0u8..=1 {
+                for r2 in 0u8..=3 {
+                    let sel = [0xD0, 0x60 | r5, 0x35, 0x54 | r1, (21 << 2) | r2];
+                    let bytes = wrap(0x05, &sel);
+                    let d = ExtensionDescriptor::parse(&bytes).unwrap();
+                    match &d.body {
+                        ExtensionBody::ShDeliverySystem(b) => {
+                            assert_eq!(b.modulations[0].reserved_future_use, r5);
+                        }
+                        other => panic!("expected ShDeliverySystem, got {other:?}"),
+                    }
+                    let mut buf = vec![0u8; d.serialized_len()];
+                    d.serialize_into(&mut buf).unwrap();
+                    assert_eq!(buf, bytes, "r5 {r5:#x} r1 {r1} r2 {r2}");
+                }
+            }
+        }
+    }
+
+    /// Constructors serialize the spec values (all ones).
+    #[test]
+    fn default_reserved_is_spec_value() {
+        let d = ShDeliverySystem::new(
+            ShDiversityMode::FecAtLink,
+            vec![ShModulation::new(
+                ShModulationMode::tdm(
+                    ShPolarization::LinearHorizontal,
+                    ShRollOff::Alpha035,
+                    ShModulationModeType::Psk8,
+                    ShCodeRate::Rate1_3Complementary,
+                    10,
+                ),
+                Some(ShInterleaver::type1(21)),
+            )],
+        );
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[0] & 0x0F, 0x0F);
+        assert_eq!(buf[1] & 0x1F, 0x1F);
+        assert_eq!(buf[3] & 0x01, 0x01);
+        assert_eq!(buf[4] & 0x03, 0x03);
     }
 }

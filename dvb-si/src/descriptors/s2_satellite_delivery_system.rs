@@ -25,6 +25,7 @@
 
 use super::descriptor_body;
 use crate::error::{Error, Result};
+use alloc::vec::Vec;
 use broadcast_common::{Parse, Serialize};
 
 /// Descriptor tag for s2_satellite_delivery_system_descriptor.
@@ -40,12 +41,28 @@ const FLAG_MULTIPLE_INPUT_STREAM: u8 = 0x40;
 const FLAG_NOT_TIMESLICE: u8 = 0x10;
 /// TS_GS_mode occupies the bottom 2 bits of the flags byte.
 const TS_GS_MODE_MASK: u8 = 0x03;
-/// Reserved flag bits set to 1 on serialize. Per §6.2.13.3 Table 42, bit 5 is
-/// `reserved_zero_future_use` (MUST be 0); only bits 3..2 (`reserved_future_use`)
-/// are set, giving 0x0C. All reserved bits are ignored on parse (§5.1).
-const FLAG_RESERVED_BITS: u8 = 0x0C;
+/// Bit 5 of the flags byte: `reserved_zero_future_use` (V1.16.1+; in
+/// V1.7.1-V1.15.1 it was `backwards_compatibility_indicator`).
+const FLAG_RESERVED_ZERO: u8 = 0x20;
+/// Bits 3..2 of the flags byte: `reserved_future_use(2)`.
+const FLAG_RESERVED_FU_MASK: u8 = 0x0C;
+const FLAG_RESERVED_FU_SHIFT: u8 = 2;
+/// `reserved(6)` ahead of `scrambling_sequence_index`: top 6 bits of its first byte.
+const SCRAMBLING_RESERVED_SHIFT: u8 = 2;
+const SCRAMBLING_RESERVED_WIDTH_MASK: u8 = 0x3F;
 
-const SCRAMBLING_RESERVED_MASK: u8 = 0xFC;
+/// Spec default of the 1-bit `reserved_zero_future_use` (bit 5): `0`
+/// (EN 300 468 Table 42, V1.16.1-V1.20.1, audit §4 row 4). Editions
+/// V1.7.1-V1.15.1 defined this bit as `backwards_compatibility_indicator`
+/// (1 = low-priority stream of a backward-compatible carrier); it is kept
+/// verbatim on parse so such a sender round-trips.
+pub const RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0;
+/// Spec default of `reserved_future_use(2)` (bits 3..2): `11` (all editions).
+pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0b11;
+/// Default of the 6-bit `reserved` ahead of `scrambling_sequence_index`:
+/// all ones (EN 300 468 Table 42, global "reserved = 1" rule).
+pub const RESERVED_6_DEFAULT: u8 = 0x3F;
+
 const SCRAMBLING_INDEX_HI_MASK: u8 = 0x03;
 const SCRAMBLING_INDEX_MAX: u32 = 0x3FFFF;
 
@@ -103,7 +120,23 @@ broadcast_common::impl_spec_display!(TsGsMode, Reserved);
 /// S2 Satellite Delivery System Descriptor (§6.2.13.3, Table 42).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct S2SatelliteDeliverySystemDescriptor {
+    /// `reserved_zero_future_use(1)` (flags bit 5, right-aligned 1 bit).
+    /// Parsed verbatim and re-emitted (an old `backwards_compatibility_indicator`
+    /// survives); `Default` is [`RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
+    pub reserved_zero_future_use: u8,
+    /// `reserved_future_use(2)` (flags bits 3..2, right-aligned). Parsed
+    /// verbatim; `Default` is [`RESERVED_FUTURE_USE_DEFAULT`] (`0b11`).
+    pub reserved_future_use: u8,
+    /// `reserved(6)` ahead of `scrambling_sequence_index` (6 bits,
+    /// right-aligned); only on the wire when `scrambling_sequence_selector`
+    /// is set. Parsed verbatim; `Default` is [`RESERVED_6_DEFAULT`] (`0x3F`).
+    pub reserved_6: u8,
+    /// Bytes after the last defined field inside the descriptor body
+    /// (tolerated and previously dropped); re-emitted verbatim. Empty for a
+    /// conformant descriptor.
+    pub trailing: Vec<u8>,
     /// When set, `scrambling_sequence_index` is present.
     pub scrambling_sequence_selector: bool,
     /// When set, `input_stream_identifier` is present.
@@ -118,6 +151,26 @@ pub struct S2SatelliteDeliverySystemDescriptor {
     pub input_stream_identifier: Option<u8>,
     /// 8-bit timeslice_number, present when `not_timeslice_flag` is false.
     pub timeslice_number: Option<u8>,
+}
+
+impl Default for S2SatelliteDeliverySystemDescriptor {
+    /// No scrambling selector / ISI / timeslicing (`not_timeslice_flag` set),
+    /// generic-packetized TS/GS mode, spec-default reserved bits.
+    fn default() -> Self {
+        Self {
+            reserved_zero_future_use: RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
+            reserved_6: RESERVED_6_DEFAULT,
+            trailing: Vec::new(),
+            scrambling_sequence_selector: false,
+            multiple_input_stream_flag: false,
+            not_timeslice_flag: true,
+            ts_gs_mode: TsGsMode::GenericPacketized,
+            scrambling_sequence_index: None,
+            input_stream_identifier: None,
+            timeslice_number: None,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
@@ -143,8 +196,10 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
             });
         }
 
-        // Reserved bits are ignored on parse (EN 300 468 §5.1).
+        // Reserved bits are captured (EN 300 468 §5.1 tolerance) and re-emitted.
         let flags = body[0];
+        let reserved_zero_future_use = (flags & FLAG_RESERVED_ZERO) >> 5;
+        let reserved_future_use = (flags & FLAG_RESERVED_FU_MASK) >> FLAG_RESERVED_FU_SHIFT;
         let scrambling_sequence_selector = (flags & FLAG_SCRAMBLING_SELECTOR) != 0;
         let multiple_input_stream_flag = (flags & FLAG_MULTIPLE_INPUT_STREAM) != 0;
         let not_timeslice_flag = (flags & FLAG_NOT_TIMESLICE) != 0;
@@ -152,6 +207,7 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
 
         let mut pos = FLAGS_LEN;
 
+        let mut reserved_6 = RESERVED_6_DEFAULT;
         let scrambling_sequence_index = if scrambling_sequence_selector {
             if pos + SCRAMBLING_FIELD_LEN > body.len() {
                 return Err(Error::BufferTooShort {
@@ -161,6 +217,7 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
                 });
             }
             let b0 = body[pos];
+            reserved_6 = b0 >> SCRAMBLING_RESERVED_SHIFT;
             let index = (u32::from(b0 & SCRAMBLING_INDEX_HI_MASK) << 16)
                 | (u32::from(body[pos + 1]) << 8)
                 | u32::from(body[pos + 2]);
@@ -194,12 +251,17 @@ impl<'a> Parse<'a> for S2SatelliteDeliverySystemDescriptor {
                     what: "S2SatelliteDeliverySystemDescriptor timeslice_number",
                 });
             }
-            Some(body[pos])
+            pos += TIMESLICE_FIELD_LEN;
+            Some(body[pos - TIMESLICE_FIELD_LEN])
         } else {
             None
         };
 
         Ok(Self {
+            reserved_zero_future_use,
+            reserved_future_use,
+            reserved_6,
+            trailing: body[pos..].to_vec(),
             scrambling_sequence_selector,
             multiple_input_stream_flag,
             not_timeslice_flag,
@@ -231,6 +293,7 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
             } else {
                 TIMESLICE_FIELD_LEN
             }
+            + self.trailing.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -243,7 +306,9 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
         }
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
-        let mut flags = FLAG_RESERVED_BITS | (self.ts_gs_mode.to_u8() & TS_GS_MODE_MASK);
+        let mut flags = ((self.reserved_zero_future_use & 1) << 5)
+            | ((self.reserved_future_use & 0b11) << FLAG_RESERVED_FU_SHIFT)
+            | (self.ts_gs_mode.to_u8() & TS_GS_MODE_MASK);
         if self.scrambling_sequence_selector {
             flags |= FLAG_SCRAMBLING_SELECTOR;
         }
@@ -266,7 +331,9 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
                     reason: "required when scrambling_sequence_selector is set",
                 })?
                 & SCRAMBLING_INDEX_MAX;
-            buf[pos] = SCRAMBLING_RESERVED_MASK | ((index >> 16) as u8 & SCRAMBLING_INDEX_HI_MASK);
+            buf[pos] = ((self.reserved_6 & SCRAMBLING_RESERVED_WIDTH_MASK)
+                << SCRAMBLING_RESERVED_SHIFT)
+                | ((index >> 16) as u8 & SCRAMBLING_INDEX_HI_MASK);
             buf[pos + 1] = (index >> 8) as u8;
             buf[pos + 2] = index as u8;
             pos += SCRAMBLING_FIELD_LEN;
@@ -285,7 +352,9 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
                 reason: "required when not_timeslice_flag is clear",
             })?;
             buf[pos] = ts;
+            pos += TIMESLICE_FIELD_LEN;
         }
+        buf[pos..pos + self.trailing.len()].copy_from_slice(&self.trailing);
         Ok(len)
     }
 }
@@ -390,6 +459,7 @@ mod tests {
             scrambling_sequence_index: Some(0x2BCDE),
             input_stream_identifier: Some(0x42),
             timeslice_number: Some(0x11),
+            ..Default::default()
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -406,6 +476,7 @@ mod tests {
             scrambling_sequence_index: None,
             input_stream_identifier: None,
             timeslice_number: None,
+            ..Default::default()
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -423,6 +494,7 @@ mod tests {
             scrambling_sequence_index: None,
             input_stream_identifier: None,
             timeslice_number: None,
+            ..Default::default()
         };
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
@@ -432,5 +504,53 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Every reserved region (`reserved_zero_future_use(1)`,
+    /// `reserved_future_use(2)`, `reserved(6)`) and the trailing tail
+    /// re-serialize byte-identically, for all values of the narrow regions.
+    #[test]
+    fn reserved_preserved() {
+        for rz in 0u8..=1 {
+            for rfu in 0u8..=3 {
+                for r6 in [0u8, 0x3F, 0x15, 0x2A, 1] {
+                    // selector + not_timeslice, ts_gs_mode 1
+                    let flags = 0x80 | 0x10 | (rz << 5) | (rfu << 2) | 0x01;
+                    let raw = [TAG, 4, flags, (r6 << 2) | 0x01, 0x23, 0x45];
+                    let d = S2SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
+                    assert_eq!(d.reserved_zero_future_use, rz);
+                    assert_eq!(d.reserved_future_use, rfu);
+                    assert_eq!(d.reserved_6, r6);
+                    let mut buf = vec![0u8; d.serialized_len()];
+                    d.serialize_into(&mut buf).unwrap();
+                    assert_eq!(buf, raw, "rz {rz} rfu {rfu} r6 {r6:#x}");
+                }
+            }
+        }
+    }
+
+    /// Bytes past the last defined field are kept and re-emitted.
+    #[test]
+    fn trailing_bytes_preserved() {
+        let raw = [TAG, 4, 0x3C, 0xDE, 0xAD, 0xBE];
+        let d = S2SatelliteDeliverySystemDescriptor::parse(&raw).unwrap();
+        assert_eq!(d.trailing, [0xDE, 0xAD, 0xBE]);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, raw);
+    }
+
+    /// `Default` serializes the spec values: bit 5 = 0, rfu = 11, reserved(6) = all ones.
+    #[test]
+    fn default_reserved_is_spec_value() {
+        let d = S2SatelliteDeliverySystemDescriptor {
+            scrambling_sequence_selector: true,
+            scrambling_sequence_index: Some(0x12345),
+            ..Default::default()
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        // flags: selector(0x80) | not_timeslice(0x10) | rfu(0x0C), bit5 = 0.
+        assert_eq!(buf, [TAG, 4, 0x80 | 0x10 | 0x0C, 0xFD, 0x23, 0x45]);
     }
 }

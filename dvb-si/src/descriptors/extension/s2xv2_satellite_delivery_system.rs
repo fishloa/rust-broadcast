@@ -29,6 +29,21 @@ const S2XV2_SUPERFRAME_MIN_LEN: usize = 8;
 /// Superframe block with beamhopping: 8 + 4 = 12 bytes.
 const S2XV2_SUPERFRAME_BH_LEN: usize = 12;
 
+/// Spec default of every `reserved_zero_future_use` region of the S2Xv2
+/// descriptor (Tables 144a-144b; `reserved_zero_future_use` since its
+/// introduction in V1.18.1, audit §6.1 row C): all zeros. (V1.19.1 carved
+/// `NCR_reference` out of a 3-bit region; that bit is typed, the remaining 2
+/// bits are `reserved_zero_future_use_2`.)
+pub const S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0;
+/// Width mask of the 2-bit region (byte 5 top bits; superframe byte 1 bits 5:4).
+const RZFU_2_MASK: u8 = 0x03;
+/// Width mask of the 6-bit region ahead of the scrambling index.
+const RZFU_6_MASK: u8 = 0x3F;
+/// Width mask of the 7-bit region ahead of `num_channel_bonds_minus_one`.
+const RZFU_7_MASK: u8 = 0x7F;
+/// Width mask of the 4-bit region taking the `SFFI` nibble's place.
+const RZFU_4_MASK: u8 = 0x0F;
+
 /// S2Xv2 mode — ETSI EN 300 468 Table 144c.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -119,6 +134,7 @@ broadcast_common::impl_spec_display!(S2Xv2Mode, Reserved);
 /// Superframe block present in S2Xv2_mode 4 and 5 (Table 144b §6.4.6.5.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct S2Xv2Superframe {
     /// `SOSF_WH_sequence_number` (8 bits).
     pub sosf_wh_sequence_number: u8,
@@ -126,10 +142,18 @@ pub struct S2Xv2Superframe {
     pub sffi_selector: bool,
     /// `beam_hopping_time_plan_selector` (1 bit) — gates `beamhopping_time_plan_id`.
     pub beam_hopping_time_plan_selector: bool,
+    /// `reserved_zero_future_use(2)` after the two selectors (2 bits,
+    /// right-aligned). Captured on parse, re-emitted verbatim; `Default` is
+    /// [`S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
+    pub reserved_zero_future_use_2: u8,
     /// `reference_scrambling_index` (20 bits).
     pub reference_scrambling_index: u32,
     /// `SFFI` (4 bits), present iff `sffi_selector == 1`; stored as raw nibble.
     pub sffi: Option<u8>,
+    /// `reserved_zero_future_use(4)` taking the `SFFI` nibble's place when
+    /// `sffi_selector == 0` (4 bits); ignored on serialize when `sffi` is
+    /// present. Same policy as above.
+    pub reserved_zero_future_use_4: u8,
     /// `payload_scrambling_index` (20 bits).
     pub payload_scrambling_index: u32,
     /// `beamhopping_time_plan_id` (32 bits), present iff
@@ -139,6 +163,25 @@ pub struct S2Xv2Superframe {
     pub superframe_pilots_wh_sequence_number: u8,
     /// `postamble_PLI` (3 bits) — `[2:0]` of the final byte.
     pub postamble_pli: u8,
+}
+
+impl Default for S2Xv2Superframe {
+    /// Zero/`None` field values with the spec-default reserved bits.
+    fn default() -> Self {
+        Self {
+            sosf_wh_sequence_number: 0,
+            sffi_selector: false,
+            beam_hopping_time_plan_selector: false,
+            reserved_zero_future_use_2: S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            reference_scrambling_index: 0,
+            sffi: None,
+            reserved_zero_future_use_4: S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            payload_scrambling_index: 0,
+            beamhopping_time_plan_id: None,
+            superframe_pilots_wh_sequence_number: 0,
+            postamble_pli: 0,
+        }
+    }
 }
 
 impl S2Xv2Superframe {
@@ -157,6 +200,7 @@ impl S2Xv2Superframe {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct S2Xv2SatelliteDeliverySystem<'a> {
     /// `delivery_system_id` (32 bits).
     pub delivery_system_id: u32,
@@ -166,6 +210,10 @@ pub struct S2Xv2SatelliteDeliverySystem<'a> {
     pub multiple_input_stream_flag: bool,
     /// `roll_off` (3 bits) — EN 300 468 Table 144 (same table as S2X).
     pub roll_off: RollOff,
+    /// `reserved_zero_future_use(2)` at the top of byte 5 (2 bits,
+    /// right-aligned). Captured on parse, re-emitted verbatim; `Default` is
+    /// [`S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT`] (`0`).
+    pub reserved_zero_future_use_2: u8,
     /// `NCR_reference` (1 bit) — Table 144c1.
     pub ncr_reference: bool,
     /// `NCR_version` (1 bit).
@@ -177,6 +225,11 @@ pub struct S2Xv2SatelliteDeliverySystem<'a> {
     /// `scrambling_sequence_selector` (1 bit), present (and parsed) iff
     /// `s2xv2_mode ∈ {1, 2}`; `None` means the bit was `reserved_zero_future_use`.
     pub scrambling_sequence_selector: Option<bool>,
+    /// `reserved_zero_future_use(1)`: the top bit of byte 6 when it is NOT
+    /// `scrambling_sequence_selector` (i.e. `scrambling_sequence_selector` is
+    /// `None`, `s2xv2_mode` outside `{1, 2}`); ignored on serialize when the
+    /// selector is `Some`. Same policy as above.
+    pub reserved_zero_future_use_1: u8,
     /// `TS_GS_S2X_mode` (2 bits) — Table 143 (raw value).
     pub ts_gs_s2x_mode: u8,
     /// `receiver_profiles` (5 bits) — raw bitmask (Table 141 semantics apply).
@@ -189,11 +242,17 @@ pub struct S2Xv2SatelliteDeliverySystem<'a> {
     pub symbol_rate: u32,
     /// `input_stream_identifier` (8 bits), present iff `multiple_input_stream_flag`.
     pub input_stream_identifier: Option<u8>,
+    /// `reserved_zero_future_use(6)` ahead of `scrambling_sequence_index`
+    /// (6 bits); on the wire only together with the index. Same policy as above.
+    pub reserved_zero_future_use_6: u8,
     /// `scrambling_sequence_index` (18 bits), present iff
     /// `s2xv2_mode ∈ {1, 2}` **and** `scrambling_sequence_selector == 1`.
     pub scrambling_sequence_index: Option<u32>,
     /// `timeslice_number` (8 bits), present iff `s2xv2_mode ∈ {2, 5}`.
     pub timeslice_number: Option<u8>,
+    /// `reserved_zero_future_use(7)` ahead of `num_channel_bonds_minus_one`
+    /// (7 bits); on the wire only when `channel_bond == 1`. Same policy as above.
+    pub reserved_zero_future_use_7: u8,
     /// Secondary delivery system IDs from the `channel_bond` loop (one per
     /// entry, 32 bits each), present iff `channel_bond == 1`.
     pub secondary_delivery_system_ids: Vec<u32>,
@@ -202,6 +261,38 @@ pub struct S2Xv2SatelliteDeliverySystem<'a> {
     /// Trailing `reserved_zero_future_use` bytes (verbatim from the closing `for` loop).
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub reserved_tail: &'a [u8],
+}
+
+impl Default for S2Xv2SatelliteDeliverySystem<'_> {
+    /// Zero/first-variant field values with the spec-default reserved bits.
+    fn default() -> Self {
+        Self {
+            delivery_system_id: 0,
+            s2xv2_mode: S2Xv2Mode::from_u8(0),
+            multiple_input_stream_flag: false,
+            roll_off: RollOff::from_u8(0),
+            reserved_zero_future_use_2: S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            ncr_reference: false,
+            ncr_version: false,
+            channel_bond: 0,
+            polarization: Polarization::from_u8(0),
+            scrambling_sequence_selector: None,
+            reserved_zero_future_use_1: S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            ts_gs_s2x_mode: 0,
+            receiver_profiles: 0,
+            satellite_id: 0,
+            frequency: 0,
+            symbol_rate: 0,
+            input_stream_identifier: None,
+            reserved_zero_future_use_6: S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            scrambling_sequence_index: None,
+            timeslice_number: None,
+            reserved_zero_future_use_7: S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            secondary_delivery_system_ids: Vec::new(),
+            superframe: None,
+            reserved_tail: &[],
+        }
+    }
 }
 
 impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
@@ -228,6 +319,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         let roll_off = RollOff::from_u8(b4 & 0x07);
         // Byte 5: reserved(2) | NCR_reference(1) | NCR_version(1) | channel_bond(2) | polarization(2).
         let b5 = sel[5];
+        let reserved_zero_future_use_2 = b5 >> 6;
         let ncr_reference = (b5 & 0x20) != 0;
         let ncr_version = (b5 & 0x10) != 0;
         let channel_bond = (b5 >> 2) & 0x03;
@@ -241,6 +333,13 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
             Some(raw_scrambling_bit != 0)
         } else {
             None
+        };
+        // The top bit of byte 6 is `reserved_zero_future_use` unless the mode
+        // gives it the selector meaning.
+        let reserved_zero_future_use_1 = if scrambling_sequence_selector.is_none() {
+            raw_scrambling_bit
+        } else {
+            S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT
         };
         // Bytes 7–9: satellite_id (24 bits, big-endian).
         let satellite_id = (u32::from(sel[7]) << 16) | (u32::from(sel[8]) << 8) | u32::from(sel[9]);
@@ -281,6 +380,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         };
 
         // Conditional: scrambling_sequence_index (mode 1 or 2, selector == 1).
+        let mut reserved_zero_future_use_6 = S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT;
         let scrambling_sequence_index = if scrambling_sequence_selector == Some(true) {
             if sel.len() < pos + S2XV2_SCRAMBLING_LEN {
                 return Err(Error::BufferTooShort {
@@ -290,6 +390,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
                 });
             }
             // reserved(6) | scrambling_sequence_index(18).
+            reserved_zero_future_use_6 = sel[pos] >> 2;
             let idx = (u32::from(sel[pos] & 0x03) << 16)
                 | (u32::from(sel[pos + 1]) << 8)
                 | u32::from(sel[pos + 2]);
@@ -316,6 +417,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
         };
 
         // Conditional: channel_bond loop.
+        let mut reserved_zero_future_use_7 = S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT;
         let secondary_delivery_system_ids = if channel_bond == 1 {
             if sel.len() < pos + 1 {
                 return Err(Error::BufferTooShort {
@@ -327,6 +429,7 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
             let bond_byte = sel[pos];
             pos += 1;
             // reserved(7) | num_channel_bonds_minus_one(1).
+            reserved_zero_future_use_7 = bond_byte >> 1;
             let n = (bond_byte & 0x01) as usize + 1;
             let mut ids = Vec::with_capacity(n);
             for _ in 0..n {
@@ -368,12 +471,18 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
             let b1 = sel[pos + 1];
             let sffi_selector = (b1 & 0x80) != 0;
             let beam_hopping_time_plan_selector = (b1 & 0x40) != 0;
+            let sf_reserved_zero_future_use_2 = (b1 >> 4) & RZFU_2_MASK;
             let ref_scram_hi = u32::from(b1 & 0x0F);
             let reference_scrambling_index =
                 (ref_scram_hi << 16) | (u32::from(sel[pos + 2]) << 8) | u32::from(sel[pos + 3]);
             // pos+4: SFFI_or_reserved(4) | psi_hi(4).
             let b4s = sel[pos + 4];
             let sffi = if sffi_selector { Some(b4s >> 4) } else { None };
+            let sf_reserved_zero_future_use_4 = if sffi_selector {
+                S2XV2_RESERVED_ZERO_FUTURE_USE_DEFAULT
+            } else {
+                b4s >> 4
+            };
             let psi_hi = u32::from(b4s & 0x0F);
             let payload_scrambling_index =
                 (psi_hi << 16) | (u32::from(sel[pos + 5]) << 8) | u32::from(sel[pos + 6]);
@@ -417,8 +526,10 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
                 sosf_wh_sequence_number,
                 sffi_selector,
                 beam_hopping_time_plan_selector,
+                reserved_zero_future_use_2: sf_reserved_zero_future_use_2,
                 reference_scrambling_index,
                 sffi,
+                reserved_zero_future_use_4: sf_reserved_zero_future_use_4,
                 payload_scrambling_index,
                 beamhopping_time_plan_id,
                 superframe_pilots_wh_sequence_number,
@@ -433,19 +544,23 @@ impl<'a> Parse<'a> for S2Xv2SatelliteDeliverySystem<'a> {
             s2xv2_mode,
             multiple_input_stream_flag,
             roll_off,
+            reserved_zero_future_use_2,
             ncr_reference,
             ncr_version,
             channel_bond,
             polarization,
             scrambling_sequence_selector,
+            reserved_zero_future_use_1,
             ts_gs_s2x_mode,
             receiver_profiles,
             satellite_id,
             frequency,
             symbol_rate,
             input_stream_identifier,
+            reserved_zero_future_use_6,
             scrambling_sequence_index,
             timeslice_number,
+            reserved_zero_future_use_7,
             secondary_delivery_system_ids,
             superframe,
             reserved_tail: &sel[pos..],
@@ -487,15 +602,18 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
         buf[4] = ((self.s2xv2_mode.to_u8() & 0x0F) << 4)
             | (u8::from(self.multiple_input_stream_flag) << 3)
             | (self.roll_off.to_u8() & 0x07);
-        // Byte 5: reserved(2)=0 | NCR_reference(1) | NCR_version(1) | channel_bond(2) | polarization(2).
-        buf[5] = (u8::from(self.ncr_reference) << 5)
+        // Byte 5: reserved(2) | NCR_reference(1) | NCR_version(1) | channel_bond(2) | polarization(2).
+        buf[5] = ((self.reserved_zero_future_use_2 & RZFU_2_MASK) << 6)
+            | (u8::from(self.ncr_reference) << 5)
             | (u8::from(self.ncr_version) << 4)
             | ((self.channel_bond & 0x03) << 2)
             | (self.polarization.to_u8() & 0x03);
         // Byte 6: scrambling_or_reserved(1) | TS_GS_S2X_mode(2) | receiver_profiles(5).
         let scram_bit: u8 = match self.scrambling_sequence_selector {
             Some(true) => 1,
-            _ => 0,
+            Some(false) => 0,
+            // The bit is reserved_zero_future_use for this mode.
+            None => self.reserved_zero_future_use_1 & 1,
         };
         buf[6] = (scram_bit << 7)
             | ((self.ts_gs_s2x_mode & 0x03) << 5)
@@ -523,7 +641,8 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                     reason: "required when scrambling_sequence_selector is set",
                 })?
                 & 0x0003_FFFF;
-            buf[p] = (idx >> 16) as u8 & 0x03;
+            buf[p] =
+                ((self.reserved_zero_future_use_6 & RZFU_6_MASK) << 2) | ((idx >> 16) as u8 & 0x03);
             buf[p + 1] = (idx >> 8) as u8;
             buf[p + 2] = idx as u8;
             p += S2XV2_SCRAMBLING_LEN;
@@ -535,12 +654,12 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
         }
         // Conditional: channel bond loop.
         if self.channel_bond == 1 {
-            // reserved(7)=0 | num_channel_bonds_minus_one(1). Wraps to u64::MAX for a
+            // reserved(7) | num_channel_bonds_minus_one(1). Wraps to u64::MAX for a
             // zero-length list, which `fit_bits` rejects rather than masking to 0.
             let minus_one = (self.secondary_delivery_system_ids.len() as u64).wrapping_sub(1);
             let n =
                 broadcast_common::len::fit_bits(minus_one, 1, "num_channel_bonds_minus_one")? as u8;
-            buf[p] = n;
+            buf[p] = ((self.reserved_zero_future_use_7 & RZFU_7_MASK) << 1) | n;
             p += 1;
             for &id in &self.secondary_delivery_system_ids {
                 buf[p..p + 4].copy_from_slice(&id.to_be_bytes());
@@ -553,6 +672,7 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
             let ref_hi = (sf.reference_scrambling_index >> 16) as u8 & 0x0F;
             buf[p + 1] = (u8::from(sf.sffi_selector) << 7)
                 | (u8::from(sf.beam_hopping_time_plan_selector) << 6)
+                | ((sf.reserved_zero_future_use_2 & RZFU_2_MASK) << 4)
                 | ref_hi;
             buf[p + 2] = (sf.reference_scrambling_index >> 8) as u8;
             buf[p + 3] = sf.reference_scrambling_index as u8;
@@ -564,7 +684,8 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                     reason: "required when sffi_selector is set",
                 })? & 0x0F
             } else {
-                0
+                // The nibble is reserved_zero_future_use when SFFI is absent.
+                sf.reserved_zero_future_use_4 & RZFU_4_MASK
             };
             let psi_hi = (sf.payload_scrambling_index >> 16) as u8 & 0x0F;
             buf[p + 4] = (sffi_nibble << 4) | psi_hi;
@@ -921,37 +1042,14 @@ mod tests {
         // writer keyed on the Option, so `Some(selector) + None(id)` panicked
         // (or misframed) instead of erroring.
         let superframe = S2Xv2Superframe {
-            sosf_wh_sequence_number: 0,
-            sffi_selector: false,
             beam_hopping_time_plan_selector: true,
-            reference_scrambling_index: 0,
-            sffi: None,
-            payload_scrambling_index: 0,
-            beamhopping_time_plan_id: None,
-            superframe_pilots_wh_sequence_number: 0,
-            postamble_pli: 0,
+            ..Default::default()
         };
         let d = S2Xv2SatelliteDeliverySystem {
             delivery_system_id: 1,
             s2xv2_mode: S2Xv2Mode::from_u8(4),
-            multiple_input_stream_flag: false,
-            roll_off: RollOff::from_u8(0),
-            ncr_reference: false,
-            ncr_version: false,
-            channel_bond: 0,
-            polarization: Polarization::from_u8(0),
-            scrambling_sequence_selector: None,
-            ts_gs_s2x_mode: 0,
-            receiver_profiles: 0,
-            satellite_id: 0,
-            frequency: 0,
-            symbol_rate: 0,
-            input_stream_identifier: None,
-            scrambling_sequence_index: None,
-            timeslice_number: None,
-            secondary_delivery_system_ids: vec![],
             superframe: Some(superframe),
-            reserved_tail: &[],
+            ..Default::default()
         };
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
@@ -961,5 +1059,98 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    /// Every reserved_zero_future_use region of the S2Xv2 body re-serializes
+    /// byte-identically: byte-5 rzfu(2), byte-6 top bit (rzfu when the mode has
+    /// no selector), scrambling rzfu(6), bond-count rzfu(7), superframe
+    /// rzfu(2) and rzfu(4) (when SFFI is absent).
+    #[test]
+    fn reserved_preserved() {
+        // mode 4 (superframe, no scrambling selector), channel_bond=1.
+        for (r2, r1, r7, sf2, sf4) in [
+            (0u8, 0u8, 0u8, 0u8, 0u8),
+            (3, 1, 0x7F, 3, 0x0F),
+            (2, 1, 0x2A, 1, 0x05),
+            (1, 0, 0x40, 2, 0x0A),
+        ] {
+            let mut sel = Vec::new();
+            sel.extend_from_slice(&0x0000_0002u32.to_be_bytes());
+            sel.push(0x40); // mode 4
+            sel.push((r2 << 6) | 0x04); // rzfu(2) | channel_bond=1
+            sel.push((r1 << 7) | 0x23); // rzfu(1) (mode 4: no selector) | ts_gs=1 | profiles=3
+            sel.extend_from_slice(&[0x01, 0x02, 0x03]);
+            sel.extend_from_slice(&0x1234_5678u32.to_be_bytes());
+            sel.extend_from_slice(&0x0000_0001u32.to_be_bytes());
+            sel.push(r7 << 1); // bond count: rzfu(7) | minus_one=0
+            sel.extend_from_slice(&0x1111_1111u32.to_be_bytes());
+            // superframe: sffi_selector=0, bh=0
+            sel.push(0xAB);
+            sel.push((sf2 << 4) | 0x05);
+            sel.extend_from_slice(&[0x12, 0x34]);
+            sel.push((sf4 << 4) | 0x06);
+            sel.extend_from_slice(&[0x78, 0x90]);
+            sel.push(0xD3);
+            let bytes = wrap(0x24, &sel);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            match &d.body {
+                ExtensionBody::S2Xv2SatelliteDeliverySystem(b) => {
+                    assert_eq!(b.reserved_zero_future_use_2, r2);
+                    assert_eq!(b.reserved_zero_future_use_1, r1);
+                    assert_eq!(b.reserved_zero_future_use_7, r7);
+                    let sf = b.superframe.as_ref().unwrap();
+                    assert_eq!(sf.reserved_zero_future_use_2, sf2);
+                    assert_eq!(sf.reserved_zero_future_use_4, sf4);
+                }
+                other => panic!("expected S2Xv2, got {other:?}"),
+            }
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes);
+        }
+        // mode 1 with scrambling selector: rzfu(6) ahead of the index.
+        for r6 in [0u8, 0x3F, 0x2A, 0x01] {
+            let mut sel = Vec::new();
+            sel.extend_from_slice(&0xDEAD_BEEFu32.to_be_bytes());
+            sel.push(0x10);
+            sel.push(0x01);
+            sel.push(0x80 | 0x07); // scrambling selector = 1
+            sel.extend_from_slice(&[0xAA, 0xBB, 0xCC]);
+            sel.extend_from_slice(&1u32.to_be_bytes());
+            sel.extend_from_slice(&2u32.to_be_bytes());
+            sel.extend_from_slice(&[(r6 << 2) | 0x01, 0xAB, 0xCD]);
+            let bytes = wrap(0x24, &sel);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            match &d.body {
+                ExtensionBody::S2Xv2SatelliteDeliverySystem(b) => {
+                    assert_eq!(b.reserved_zero_future_use_6, r6);
+                    assert_eq!(b.reserved_zero_future_use_1, 0);
+                }
+                other => panic!("expected S2Xv2, got {other:?}"),
+            }
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes);
+        }
+    }
+
+    /// `Default`-constructed values serialize every reserved region as zero.
+    #[test]
+    fn default_reserved_is_spec_value() {
+        let d = S2Xv2SatelliteDeliverySystem {
+            s2xv2_mode: S2Xv2Mode::from_u8(4),
+            channel_bond: 1,
+            secondary_delivery_system_ids: vec![0x1111_1111],
+            superframe: Some(S2Xv2Superframe::default()),
+            ..Default::default()
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[5] & 0xC0, 0); // byte-5 rzfu(2)
+        assert_eq!(buf[6] & 0x80, 0); // byte-6 rzfu(1)
+        assert_eq!(buf[18], 0x00); // bond count: rzfu(7)=0 | minus_one=0
+        // superframe starts after the 4-byte bond id: [sosf, rzfu/ref, ref, ref, rzfu4/psi, ..]
+        assert_eq!(buf[23 + 1] & 0x30, 0);
+        assert_eq!(buf[23 + 4] & 0xF0, 0);
     }
 }

@@ -19,8 +19,11 @@ pub const CODING_BYTE_LEN: usize = 1;
 pub const ENTRY_LEN: usize = 4;
 /// Mask for the coding_type bits (bottom 2 bits); the top 6 bits are reserved.
 pub const CODING_TYPE_MASK: u8 = 0x03;
-/// Reserved bits (top 6 of the coding byte). Ignored on parse, set to 1 on serialize.
-pub const RESERVED_BITS_MASK: u8 = 0xFC;
+/// Shift of `reserved_future_use(6)` in the coding byte (top 6 bits).
+const RESERVED_SHIFT: u8 = 2;
+/// Spec default of the 6-bit `reserved_future_use` ahead of `coding_type`:
+/// all ones (EN 300 468 Table 31, V1.3.1-V1.20.1, audit §6.1 class A).
+pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0x3F;
 
 /// Coding type selects the interpretation of each 4-byte frequency entry.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -54,7 +57,13 @@ broadcast_common::impl_spec_display!(CodingType);
 /// Frequency List Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct FrequencyListDescriptor {
+    /// `reserved_future_use(6)` ahead of `coding_type` (6 bits, right-aligned).
+    /// Captured on parse and re-emitted verbatim;
+    /// [`FrequencyListDescriptor::new`] defaults to
+    /// [`RESERVED_FUTURE_USE_DEFAULT`] (`0x3F`).
+    pub reserved_future_use: u8,
     /// Interpretation of every `centre_frequencies_bcd` entry.
     pub coding_type: CodingType,
     /// Raw 4-byte centre_frequency entries in wire order. Interpretation
@@ -63,6 +72,16 @@ pub struct FrequencyListDescriptor {
 }
 
 impl FrequencyListDescriptor {
+    /// Build a descriptor with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(coding_type: CodingType, centre_frequencies_bcd: Vec<[u8; 4]>) -> Self {
+        Self {
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
+            coding_type,
+            centre_frequencies_bcd,
+        }
+    }
+
     /// Hz per BCD-decoded unit for Satellite or Cable, or `None` for
     /// Undefined / Terrestrial (Terrestrial uses binary encoding, not BCD).
     fn hz_per_unit_bcd(&self) -> Option<u64> {
@@ -172,8 +191,8 @@ impl<'a> Parse<'a> for FrequencyListDescriptor {
         }
 
         let coding_byte = body[0];
-        // Top 6 bits are reserved_future_use — ignored on parse
-        // (EN 300 468 §5.1: decoders shall ignore reserved bits).
+        // Top 6 bits are reserved_future_use: captured and re-emitted.
+        let reserved_future_use = coding_byte >> RESERVED_SHIFT;
         let coding_type_value = coding_byte & CODING_TYPE_MASK;
         let coding_type = match coding_type_value {
             0b00 => CodingType::Undefined,
@@ -194,6 +213,7 @@ impl<'a> Parse<'a> for FrequencyListDescriptor {
         }
 
         Ok(FrequencyListDescriptor {
+            reserved_future_use,
             coding_type,
             centre_frequencies_bcd,
         })
@@ -225,7 +245,9 @@ impl Serialize for FrequencyListDescriptor {
         let body_length = CODING_BYTE_LEN + self.centre_frequencies_bcd.len() * ENTRY_LEN;
 
         crate::descriptors::write_descriptor_header(buf, TAG, body_length)?;
-        buf[HEADER_LEN] = RESERVED_BITS_MASK | coding_type_bits;
+        buf[HEADER_LEN] = ((self.reserved_future_use & RESERVED_FUTURE_USE_DEFAULT)
+            << RESERVED_SHIFT)
+            | coding_type_bits;
 
         let mut offset = HEADER_LEN + CODING_BYTE_LEN;
         for entry in &self.centre_frequencies_bcd {
@@ -304,7 +326,7 @@ mod tests {
         );
     }
 
-    /// Reserved bits set to zero must be ignored, not rejected (EN 300 468 §5.1).
+    /// Reserved bits set to zero are accepted (EN 300 468 §5.1) and kept.
     #[test]
     fn parse_ignores_reserved_bits() {
         // coding byte 0x03: top 6 reserved bits = 0, coding_type = 0b11 (terrestrial).
@@ -333,10 +355,7 @@ mod tests {
     /// Serialize a descriptor with zero entries, re-parse, compare.
     #[test]
     fn serialize_round_trip_empty() {
-        let desc = FrequencyListDescriptor {
-            coding_type: CodingType::Satellite,
-            centre_frequencies_bcd: vec![],
-        };
+        let desc = FrequencyListDescriptor::new(CodingType::Satellite, vec![]);
         let raw: Vec<u8> = vec![TAG, 0x01, 0xFD];
         let mut buf = vec![0u8; desc.serialized_len()];
         let written = desc.serialize_into(&mut buf).unwrap();
@@ -351,15 +370,15 @@ mod tests {
     /// Serialize a descriptor with many entries, re-parse, compare.
     #[test]
     fn serialize_round_trip_many_entries() {
-        let desc = FrequencyListDescriptor {
-            coding_type: CodingType::Cable,
-            centre_frequencies_bcd: vec![
+        let desc = FrequencyListDescriptor::new(
+            CodingType::Cable,
+            vec![
                 [0x03, 0x46, 0x00, 0x00],
                 [0x04, 0x74, 0x00, 0x10],
                 [0x01, 0x15, 0x50, 0x00],
                 [0x04, 0x90, 0x25, 0x00],
             ],
-        };
+        );
         let mut buf = vec![0u8; desc.serialized_len()];
         desc.serialize_into(&mut buf).unwrap();
         let reparsed = FrequencyListDescriptor::parse(&buf).unwrap();
@@ -369,38 +388,27 @@ mod tests {
 
     #[test]
     fn satellite_frequency_hz_decodes_correctly() {
-        let desc = FrequencyListDescriptor {
-            coding_type: CodingType::Satellite,
-            centre_frequencies_bcd: vec![[0x01, 0x17, 0x25, 0x00]], // 11.72500 GHz
-        };
+        let desc =
+            FrequencyListDescriptor::new(CodingType::Satellite, vec![[0x01, 0x17, 0x25, 0x00]]);
         assert_eq!(desc.centre_frequencies_hz(), vec![Some(11_725_000_000)]);
     }
 
     #[test]
     fn cable_frequency_hz_decodes_correctly() {
-        let desc = FrequencyListDescriptor {
-            coding_type: CodingType::Cable,
-            centre_frequencies_bcd: vec![[0x03, 0x46, 0x00, 0x00]], // 346.0000 MHz
-        };
+        let desc = FrequencyListDescriptor::new(CodingType::Cable, vec![[0x03, 0x46, 0x00, 0x00]]);
         assert_eq!(desc.centre_frequencies_hz(), vec![Some(346_000_000)]);
     }
 
     #[test]
     fn terrestrial_frequency_hz_decodes_binary() {
-        let desc = FrequencyListDescriptor {
-            coding_type: CodingType::Terrestrial,
-            // binary 0x04A858F0 = 78_141_680 × 10 Hz = 781_416_800 Hz
-            centre_frequencies_bcd: vec![[0x04, 0xA8, 0x58, 0xF0]],
-        };
+        let desc =
+            FrequencyListDescriptor::new(CodingType::Terrestrial, vec![[0x04, 0xA8, 0x58, 0xF0]]);
         assert_eq!(desc.centre_frequencies_hz(), vec![Some(781_416_800)]);
     }
 
     #[test]
     fn set_satellite_frequencies_hz_round_trips() {
-        let mut desc = FrequencyListDescriptor {
-            coding_type: CodingType::Satellite,
-            centre_frequencies_bcd: vec![],
-        };
+        let mut desc = FrequencyListDescriptor::new(CodingType::Satellite, vec![]);
         desc.set_centre_frequencies_hz(&[11_725_000_000]).unwrap();
         assert_eq!(desc.centre_frequencies_hz(), vec![Some(11_725_000_000)]);
         assert_eq!(desc.centre_frequencies_bcd[0], [0x01, 0x17, 0x25, 0x00]);
@@ -408,10 +416,7 @@ mod tests {
 
     #[test]
     fn set_terrestrial_frequencies_hz_round_trips() {
-        let mut desc = FrequencyListDescriptor {
-            coding_type: CodingType::Terrestrial,
-            centre_frequencies_bcd: vec![],
-        };
+        let mut desc = FrequencyListDescriptor::new(CodingType::Terrestrial, vec![]);
         desc.set_centre_frequencies_hz(&[781_416_800]).unwrap();
         assert_eq!(desc.centre_frequencies_hz(), vec![Some(781_416_800)]);
         assert_eq!(desc.centre_frequencies_bcd[0], [0x04, 0xA8, 0x58, 0xF0]);
@@ -419,11 +424,33 @@ mod tests {
 
     #[test]
     fn set_cable_frequencies_hz_round_trips() {
-        let mut desc = FrequencyListDescriptor {
-            coding_type: CodingType::Cable,
-            centre_frequencies_bcd: vec![],
-        };
+        let mut desc = FrequencyListDescriptor::new(CodingType::Cable, vec![]);
         desc.set_centre_frequencies_hz(&[346_000_000]).unwrap();
         assert_eq!(desc.centre_frequencies_hz(), vec![Some(346_000_000)]);
+    }
+
+    /// Every `reserved_future_use(6)` value x every coding_type re-serializes
+    /// byte-identically (real senders write non-`0x3F`).
+    #[test]
+    fn reserved_preserved() {
+        for r in 0u8..=0x3F {
+            for ct in 0u8..=3 {
+                let raw = [TAG, 5, (r << 2) | ct, 0x01, 0x17, 0x25, 0x00];
+                let d = FrequencyListDescriptor::parse(&raw).unwrap();
+                assert_eq!(d.reserved_future_use, r);
+                let mut buf = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut buf).unwrap();
+                assert_eq!(buf, raw, "r {r:#x} ct {ct}");
+            }
+        }
+    }
+
+    /// `new()` serializes the spec value (all ones) in the 6-bit region.
+    #[test]
+    fn default_reserved_is_spec_value() {
+        let d = FrequencyListDescriptor::new(CodingType::Cable, vec![]);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 1, 0xFE]);
     }
 }

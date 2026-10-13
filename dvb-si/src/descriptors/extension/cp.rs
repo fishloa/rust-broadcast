@@ -12,19 +12,44 @@ impl<'a> ExtensionBodyDef<'a> for Cp<'a> {
 const CP_HEADER_LEN: usize = 4; // CP_system_id(2) + reserved(3)/CP_PID(13)
 /// Maximum 13-bit PID value.
 const MAX_PID: u16 = 0x1FFF;
+/// Shift of `reserved_future_use(3)` in the CP_PID word.
+const RESERVED_SHIFT: u16 = 13;
+
+/// Spec default of `reserved_future_use(3)` ahead of `CP_PID`: `111`
+/// (EN 300 468 Table 113; `reserved` in V1.9.1-V1.15.1, `reserved_future_use`
+/// in V1.17.1+, value 1 throughout; audit §6.1 class B).
+pub const CP_RESERVED_FUTURE_USE_DEFAULT: u8 = 0b111;
 
 /// CP descriptor body (Table 113, §6.4.3).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct Cp<'a> {
     /// CP_system_id(16).
     pub cp_system_id: u16,
+    /// `reserved_future_use(3)` ahead of `CP_PID` (3 bits, right-aligned).
+    /// Captured on parse, re-emitted verbatim; [`Cp::new`] defaults to
+    /// [`CP_RESERVED_FUTURE_USE_DEFAULT`] (`0b111`).
+    pub reserved_future_use: u8,
     /// CP_PID(13) — the PID carrying the CP stream.
     pub cp_pid: u16,
     /// private_data_byte run (the rest of the descriptor).
     #[cfg_attr(feature = "serde", serde(borrow))]
     pub private_data: &'a [u8],
+}
+
+impl<'a> Cp<'a> {
+    /// Build a body with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(cp_system_id: u16, cp_pid: u16, private_data: &'a [u8]) -> Self {
+        Self {
+            cp_system_id,
+            reserved_future_use: CP_RESERVED_FUTURE_USE_DEFAULT,
+            cp_pid,
+            private_data,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for Cp<'a> {
@@ -39,6 +64,7 @@ impl<'a> Parse<'a> for Cp<'a> {
         }
         Ok(Cp {
             cp_system_id: u16::from_be_bytes([sel[0], sel[1]]),
+            reserved_future_use: sel[2] >> 5,
             cp_pid: u16::from_be_bytes([sel[2], sel[3]]) & MAX_PID,
             private_data: &sel[CP_HEADER_LEN..],
         })
@@ -59,9 +85,10 @@ impl Serialize for Cp<'_> {
             });
         }
         buf[0..2].copy_from_slice(&self.cp_system_id.to_be_bytes());
-        // reserved_future_use(3) set to '1' per DVB convention, then CP_PID(13).
+        // reserved_future_use(3), then CP_PID(13).
         let cp_pid = broadcast_common::len::fit_bits(u64::from(self.cp_pid), 13, "CP_PID")? as u16;
-        buf[2..4].copy_from_slice(&(0xE000 | cp_pid).to_be_bytes());
+        let reserved = u16::from(self.reserved_future_use & 0b111) << RESERVED_SHIFT;
+        buf[2..4].copy_from_slice(&(reserved | cp_pid).to_be_bytes());
         buf[CP_HEADER_LEN..len].copy_from_slice(self.private_data);
         Ok(len)
     }
@@ -100,15 +127,37 @@ mod tests {
     #[test]
     fn serialize_rejects_over_13bit_pid() {
         // Pre-fix `cp_pid & MAX_PID` silently clipped bits 13..16 (r03-W3).
-        let d = Cp {
-            cp_system_id: 0x1234,
-            cp_pid: 0x2000,
-            private_data: &[],
-        };
+        let d = Cp::new(0x1234, 0x2000, &[]);
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
             Error::FieldOverflow(_)
         ));
+    }
+
+    /// Every `reserved_future_use(3)` value re-serializes byte-identically.
+    #[test]
+    fn reserved_preserved() {
+        for r in 0u8..=7 {
+            let sel = [0x12, 0x34, (r << 5) | 0x01, 0x00, 0xAA, 0xBB];
+            let bytes = wrap(0x02, &sel);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            match &d.body {
+                ExtensionBody::Cp(b) => assert_eq!(b.reserved_future_use, r),
+                other => panic!("expected Cp, got {other:?}"),
+            }
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "r {r}");
+        }
+    }
+
+    /// `new()` serializes the spec value `111`.
+    #[test]
+    fn default_reserved_is_spec_value() {
+        let c = Cp::new(0x1234, 0x0100, &[]);
+        let mut buf = vec![0u8; c.serialized_len()];
+        c.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [0x12, 0x34, 0xE1, 0x00]);
     }
 }

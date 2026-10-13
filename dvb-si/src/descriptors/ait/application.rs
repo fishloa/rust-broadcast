@@ -16,6 +16,12 @@ const HEADER_LEN: usize = 2;
 const PROFILE_ENTRY_LEN: usize = 5;
 const FLAGS_LEN: usize = 1;
 const PRIORITY_LEN: usize = 1;
+/// Width mask of the 5-bit `reserved_future_use` in the flags byte.
+const RESERVED_FU_MASK: u8 = 0x1F;
+
+/// Spec default of `reserved_future_use(5)` in the flags byte: all ones
+/// (TS 102 809 V1.1.1-V1.3.1 Table 20, clause 5.3.3.2; audit §6.3 class A).
+pub const RESERVED_FUTURE_USE_DEFAULT: u8 = 0x1F;
 
 /// 2-bit visibility field — ETSI TS 102 809 §5.2.6.1 Table 5.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +96,7 @@ pub struct ApplicationProfile {
 /// Application Descriptor (AIT tag 0x00).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct ApplicationDescriptor {
     /// Profile/version entries.
     pub profiles: Vec<ApplicationProfile>,
@@ -97,10 +104,36 @@ pub struct ApplicationDescriptor {
     pub service_bound_flag: bool,
     /// 2-bit visibility (Table 5).
     pub visibility: Visibility,
+    /// `reserved_future_use(5)` after `visibility` (5 bits, right-aligned).
+    /// Captured on parse and re-emitted verbatim;
+    /// [`ApplicationDescriptor::new`] defaults to
+    /// [`RESERVED_FUTURE_USE_DEFAULT`] (`0x1F`).
+    pub reserved_future_use: u8,
     /// Application priority.
     pub application_priority: u8,
     /// Transport protocol labels (one per transport protocol descriptor).
     pub transport_protocol_labels: Vec<u8>,
+}
+
+impl ApplicationDescriptor {
+    /// Build a descriptor with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(
+        profiles: Vec<ApplicationProfile>,
+        service_bound_flag: bool,
+        visibility: Visibility,
+        application_priority: u8,
+        transport_protocol_labels: Vec<u8>,
+    ) -> Self {
+        Self {
+            profiles,
+            service_bound_flag,
+            visibility,
+            reserved_future_use: RESERVED_FUTURE_USE_DEFAULT,
+            application_priority,
+            transport_protocol_labels,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for ApplicationDescriptor {
@@ -156,6 +189,7 @@ impl<'a> Parse<'a> for ApplicationDescriptor {
         let flags_byte = body[profiles_end];
         let service_bound_flag = (flags_byte & 0x80) != 0;
         let visibility = Visibility::from_u8((flags_byte >> 5) & 0x03);
+        let reserved_future_use = flags_byte & RESERVED_FU_MASK;
         let application_priority = body[profiles_end + FLAGS_LEN];
         let labels_start = profiles_end + FLAGS_LEN + PRIORITY_LEN;
         let transport_protocol_labels = body[labels_start..].to_vec();
@@ -163,6 +197,7 @@ impl<'a> Parse<'a> for ApplicationDescriptor {
             profiles,
             service_bound_flag,
             visibility,
+            reserved_future_use,
             application_priority,
             transport_protocol_labels,
         })
@@ -214,7 +249,7 @@ impl Serialize for ApplicationDescriptor {
         }
         let flags_byte = (u8::from(self.service_bound_flag) << 7)
             | ((self.visibility.to_u8() & 0x03) << 5)
-            | 0x1F;
+            | (self.reserved_future_use & RESERVED_FU_MASK);
         buf[pos] = flags_byte;
         buf[pos + 1] = self.application_priority;
         pos += FLAGS_LEN + PRIORITY_LEN;
@@ -284,18 +319,18 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = ApplicationDescriptor {
-            profiles: alloc::vec![ApplicationProfile {
+        let d = ApplicationDescriptor::new(
+            alloc::vec![ApplicationProfile {
                 profile: 0x0010,
                 version_major: 1,
                 version_minor: 2,
                 version_micro: 3,
             }],
-            service_bound_flag: true,
-            visibility: Visibility::VisibleAll,
-            application_priority: 5,
-            transport_protocol_labels: alloc::vec![0x01],
-        };
+            true,
+            Visibility::VisibleAll,
+            5,
+            alloc::vec![0x01],
+        );
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         let re = ApplicationDescriptor::parse(&buf).unwrap();
@@ -322,5 +357,29 @@ mod tests {
         ] {
             assert_eq!(Visibility::from_u8(v.to_u8()), v);
         }
+    }
+
+    /// Every `reserved_future_use(5)` value re-serializes byte-identically
+    /// (real senders write non-ones here).
+    #[test]
+    fn reserved_preserved() {
+        for r in 0u8..=0x1F {
+            let bytes = [TAG, 9, 5, 0x00, 0x10, 1, 0, 0, 0x60 | r, 0x07, 0x42];
+            let d = ApplicationDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved_future_use, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "r {r:#x}");
+        }
+    }
+
+    /// `new()` serializes the spec value (all ones).
+    #[test]
+    fn default_reserved_is_spec_value() {
+        let d =
+            ApplicationDescriptor::new(Vec::new(), false, Visibility::VisibleAll, 1, Vec::new());
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 3, 0, 0x7F, 1]);
     }
 }

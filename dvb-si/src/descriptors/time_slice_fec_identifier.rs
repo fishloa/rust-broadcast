@@ -19,6 +19,14 @@ pub const TAG: u8 = 0x77;
 const HEADER_LEN: usize = 2;
 const FIXED_LEN: usize = 3;
 
+/// Shift of `reserved_for_future_use(2)` in byte 0 (bits 4..3).
+const RESERVED_SHIFT: u8 = 3;
+/// Width mask of the 2-bit `reserved_for_future_use`.
+const RESERVED_MASK: u8 = 0x03;
+/// Spec default of `reserved_for_future_use(2)`: `11` (EN 301 192 V1.4.1-V1.8.1
+/// Table 40, TS 102 772 Table 4; audit §6.3 class A).
+pub const RESERVED_FOR_FUTURE_USE_DEFAULT: u8 = 0b11;
+
 /// Largest representable 2-bit mpe_fec.
 const MPE_FEC_MAX: u8 = 0x03;
 /// Largest representable 3-bit frame_size.
@@ -32,11 +40,17 @@ const TIME_SLICE_FEC_ID_MAX: u8 = 0x0F;
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct TimeSliceFecIdentifierDescriptor<'a> {
     /// 1-bit time_slicing flag (1 = time slicing used).
     pub time_slicing: bool,
     /// 2-bit mpe_fec algorithm selector (Table 41: 0=none, 1=RS(255,191,64)).
     pub mpe_fec: u8,
+    /// `reserved_for_future_use(2)` (byte 0 bits 4..3, right-aligned).
+    /// Captured on parse and re-emitted verbatim;
+    /// [`TimeSliceFecIdentifierDescriptor::new`] defaults to
+    /// [`RESERVED_FOR_FUTURE_USE_DEFAULT`] (`0b11`).
+    pub reserved_for_future_use: u8,
     /// 3-bit frame_size code (Table 42).
     pub frame_size: u8,
     /// 8-bit max_burst_duration.
@@ -49,6 +63,31 @@ pub struct TimeSliceFecIdentifierDescriptor<'a> {
     /// Kept raw deliberately; interpretation is registry-dependent per
     /// EN 301 192 / TS 102 772.
     pub id_selector: &'a [u8],
+}
+
+impl<'a> TimeSliceFecIdentifierDescriptor<'a> {
+    /// Build a descriptor with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(
+        time_slicing: bool,
+        mpe_fec: u8,
+        frame_size: u8,
+        max_burst_duration: u8,
+        max_average_rate: u8,
+        time_slice_fec_id: u8,
+        id_selector: &'a [u8],
+    ) -> Self {
+        Self {
+            time_slicing,
+            mpe_fec,
+            reserved_for_future_use: RESERVED_FOR_FUTURE_USE_DEFAULT,
+            frame_size,
+            max_burst_duration,
+            max_average_rate,
+            time_slice_fec_id,
+            id_selector,
+        }
+    }
 }
 
 impl<'a> Parse<'a> for TimeSliceFecIdentifierDescriptor<'a> {
@@ -69,7 +108,7 @@ impl<'a> Parse<'a> for TimeSliceFecIdentifierDescriptor<'a> {
         let b0 = body[0];
         let time_slicing = (b0 & 0x80) != 0;
         let mpe_fec = (b0 >> 5) & MPE_FEC_MAX;
-        // reserved_for_future_use(2) at bits 4..3 ignored on parse.
+        let reserved_for_future_use = (b0 >> RESERVED_SHIFT) & RESERVED_MASK;
         let frame_size = b0 & FRAME_SIZE_MAX;
         let max_burst_duration = body[1];
         let max_average_rate = (body[2] >> 4) & MAX_AVERAGE_RATE_MAX;
@@ -78,6 +117,7 @@ impl<'a> Parse<'a> for TimeSliceFecIdentifierDescriptor<'a> {
         Ok(Self {
             time_slicing,
             mpe_fec,
+            reserved_for_future_use,
             frame_size,
             max_burst_duration,
             max_average_rate,
@@ -132,10 +172,9 @@ impl Serialize for TimeSliceFecIdentifierDescriptor<'_> {
             });
         }
         crate::descriptors::write_descriptor_header(buf, TAG, FIXED_LEN + self.id_selector.len())?;
-        // reserved_for_future_use(2) emitted as 1s.
         buf[2] = (u8::from(self.time_slicing) << 7)
             | ((self.mpe_fec & MPE_FEC_MAX) << 5)
-            | 0x18
+            | ((self.reserved_for_future_use & RESERVED_MASK) << RESERVED_SHIFT)
             | (self.frame_size & FRAME_SIZE_MAX);
         buf[3] = self.max_burst_duration;
         buf[4] = ((self.max_average_rate & MAX_AVERAGE_RATE_MAX) << 4)
@@ -205,15 +244,7 @@ mod tests {
 
     #[test]
     fn serialize_round_trip() {
-        let d = TimeSliceFecIdentifierDescriptor {
-            time_slicing: true,
-            mpe_fec: 1,
-            frame_size: 2,
-            max_burst_duration: 0x10,
-            max_average_rate: 6,
-            time_slice_fec_id: 0,
-            id_selector: &[0x01, 0x02, 0x03],
-        };
+        let d = TimeSliceFecIdentifierDescriptor::new(true, 1, 2, 0x10, 6, 0, &[0x01, 0x02, 0x03]);
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(TimeSliceFecIdentifierDescriptor::parse(&buf).unwrap(), d);
@@ -221,15 +252,7 @@ mod tests {
 
     #[test]
     fn serialize_rejects_frame_size_over_range() {
-        let d = TimeSliceFecIdentifierDescriptor {
-            time_slicing: false,
-            mpe_fec: 0,
-            frame_size: 0x08,
-            max_burst_duration: 0,
-            max_average_rate: 0,
-            time_slice_fec_id: 0,
-            id_selector: &[],
-        };
+        let d = TimeSliceFecIdentifierDescriptor::new(false, 0, 0x08, 0, 0, 0, &[]);
         let mut buf = vec![0u8; d.serialized_len()];
         assert!(matches!(
             d.serialize_into(&mut buf).unwrap_err(),
@@ -242,19 +265,34 @@ mod tests {
     fn serde_serializes_to_stable_json() {
         // Borrowed `&[u8]` cannot deserialize from a JSON number array, so we
         // assert the Serialize impl is wired and emits stable JSON.
-        let d = TimeSliceFecIdentifierDescriptor {
-            time_slicing: true,
-            mpe_fec: 1,
-            frame_size: 3,
-            max_burst_duration: 0x44,
-            max_average_rate: 7,
-            time_slice_fec_id: 0xF,
-            id_selector: &[0xDE, 0xAD],
-        };
+        let d = TimeSliceFecIdentifierDescriptor::new(true, 1, 3, 0x44, 7, 0xF, &[0xDE, 0xAD]);
         let j = serde_json::to_string(&d).unwrap();
         // Valid, re-parseable JSON (key order is map-defined, so we do not
         // assert byte-for-byte string stability).
         let _v: serde_json::Value = serde_json::from_str(&j).unwrap();
         assert!(j.contains("time_slice_fec_id"));
+    }
+
+    /// Every `reserved_for_future_use(2)` value re-serializes byte-identically.
+    #[test]
+    fn reserved_preserved() {
+        for r in 0u8..=3 {
+            let b0 = 0x80 | (1 << 5) | (r << 3) | 0x03;
+            let bytes = [TAG, 5, b0, 0x2A, (5 << 4) | 0x0A, 0xAA, 0xBB];
+            let d = TimeSliceFecIdentifierDescriptor::parse(&bytes).unwrap();
+            assert_eq!(d.reserved_for_future_use, r);
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "r {r}");
+        }
+    }
+
+    /// `new()` serializes the spec value `11`.
+    #[test]
+    fn default_reserved_is_spec_value() {
+        let d = TimeSliceFecIdentifierDescriptor::new(false, 0, 0, 0, 0, 0, &[]);
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[2], 0x18);
     }
 }

@@ -19,6 +19,13 @@ const T2_BANDWIDTH_VALUE_MASK: u8 = 0x0F;
 const T2_GUARD_INTERVAL_VALUE_MASK: u8 = 0x07;
 /// `transmission_mode(3)` (Table 137).
 const T2_TRANSMISSION_MODE_VALUE_MASK: u8 = 0x07;
+/// Width mask of `reserved_future_use(2)` (low 2 bits of the first flags byte).
+const T2_RESERVED_MASK: u8 = 0x03;
+
+/// Spec default of `reserved_future_use(2)` after `bandwidth`: `11`
+/// (EN 300 468 Table 133, V1.13.1-V1.20.1, audit §6.1 class E: same layout in
+/// every edition).
+pub const T2_RESERVED_FUTURE_USE_DEFAULT: u8 = 0b11;
 
 // ---------------------------------------------------------------------------
 //  T2-specific enums (Tables 134-137)
@@ -322,11 +329,17 @@ impl T2Subcell {
 /// T2_delivery_system body (Table 133). The cell loop is unfolded.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct T2DeliverySystem {
     /// PLP identifier.
     pub plp_id: u8,
     /// T2 system identifier.
     pub t2_system_id: u16,
+    /// `reserved_future_use(2)` after `bandwidth` (2 bits, right-aligned);
+    /// on the wire only when the flags block is present (`siso_miso` etc.
+    /// are `Some`). Captured on parse, re-emitted verbatim; defaults to
+    /// [`T2_RESERVED_FUTURE_USE_DEFAULT`] (`0b11`).
+    pub reserved_future_use: u8,
     /// SISO_MISO, present iff `descriptor_length > 4` (flags block present).
     pub siso_miso: Option<T2SisoMiso>,
     /// bandwidth, present with `siso_miso`.
@@ -341,6 +354,32 @@ pub struct T2DeliverySystem {
     pub tfs_flag: Option<bool>,
     /// Cell loop entries (present only when flags block is present).
     pub cells: Vec<T2Cell>,
+}
+
+impl T2DeliverySystem {
+    /// Build a body without the optional flags block/cells, with the
+    /// spec-default reserved bits.
+    #[must_use]
+    pub const fn new(plp_id: u8, t2_system_id: u16) -> Self {
+        Self {
+            plp_id,
+            t2_system_id,
+            reserved_future_use: T2_RESERVED_FUTURE_USE_DEFAULT,
+            siso_miso: None,
+            bandwidth: None,
+            guard_interval: None,
+            transmission_mode: None,
+            other_frequency_flag: None,
+            tfs_flag: None,
+            cells: Vec::new(),
+        }
+    }
+}
+
+impl Default for T2DeliverySystem {
+    fn default() -> Self {
+        Self::new(0, 0)
+    }
 }
 
 impl<'a> Parse<'a> for T2DeliverySystem {
@@ -363,6 +402,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
             })?;
         let t2_system_id = u16::from_be_bytes(*t2_id_bytes);
         let mut pos = T2_FIXED_PREFIX_LEN;
+        let mut reserved_future_use = T2_RESERVED_FUTURE_USE_DEFAULT;
         let (
             siso_miso,
             bandwidth,
@@ -381,6 +421,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
             let b0 = sel[pos];
             let b1 = sel[pos + 1];
             pos += T2_FLAGS_BLOCK_LEN;
+            reserved_future_use = b0 & T2_RESERVED_MASK;
             (
                 Some(T2SisoMiso::from_u8(b0 >> 6)),
                 Some(T2Bandwidth::from_u8((b0 >> 2) & 0x0F)),
@@ -521,6 +562,7 @@ impl<'a> Parse<'a> for T2DeliverySystem {
         Ok(T2DeliverySystem {
             plp_id,
             t2_system_id,
+            reserved_future_use,
             siso_miso,
             bandwidth,
             guard_interval,
@@ -575,7 +617,7 @@ impl Serialize for T2DeliverySystem {
         ) {
             buf[p] = ((sm.to_u8() & T2_SISO_MISO_VALUE_MASK) << 6)
                 | ((bw.to_u8() & T2_BANDWIDTH_VALUE_MASK) << 2)
-                | 0x03;
+                | (self.reserved_future_use & T2_RESERVED_MASK);
             buf[p + 1] = ((gi.to_u8() & T2_GUARD_INTERVAL_VALUE_MASK) << 5)
                 | ((tm.to_u8() & T2_TRANSMISSION_MODE_VALUE_MASK) << 2)
                 | (u8::from(off) << 1)
@@ -782,5 +824,40 @@ mod tests {
             bytes[..],
             "byte-exact re-serialize for tsduck T2 reference"
         );
+    }
+
+    /// Every `reserved_future_use(2)` value re-serializes byte-identically
+    /// (spec value `11`).
+    #[test]
+    fn reserved_preserved() {
+        for r in 0u8..=3 {
+            let b0 = ((0x04u8 & 0x0F) << 2) | r;
+            let b1 = (0x06u8 << 5) | (0x03 << 2) | 0x01;
+            let sel = [0x07, 0x12, 0x34, b0, b1, 0x12, 0x34, 0x00, 0x00];
+            let bytes = wrap(0x04, &sel);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            match &d.body {
+                ExtensionBody::T2DeliverySystem(t) => assert_eq!(t.reserved_future_use, r),
+                other => panic!("expected T2DeliverySystem, got {other:?}"),
+            }
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "r {r}");
+        }
+    }
+
+    /// Default-constructed value with a flags block serializes `11`.
+    #[test]
+    fn default_reserved_is_spec_value() {
+        let mut t = T2DeliverySystem::new(7, 0x1234);
+        t.siso_miso = Some(T2SisoMiso::Siso);
+        t.bandwidth = Some(T2Bandwidth::Mhz10);
+        t.guard_interval = Some(T2GuardInterval::G19_256);
+        t.transmission_mode = Some(T2TransmissionMode::Mode1k);
+        t.other_frequency_flag = Some(false);
+        t.tfs_flag = Some(false);
+        let mut buf = vec![0u8; t.serialized_len()];
+        t.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf[3] & 0x03, 0x03);
     }
 }
