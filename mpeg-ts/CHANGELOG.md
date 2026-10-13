@@ -2,6 +2,29 @@
 
 ## [Unreleased]
 
+### Changed (breaking, umbrella #1139 T11 / audit r01-W2)
+- `AdaptationFieldExtension` now carries every bit of ISO/IEC 13818-1 Table 2-6
+  so parse -> serialize is byte-exact: new `piecewise_rate_reserved` (2 bits),
+  `af_descriptor_not_present_flag`, `reserved_flags` (4 bits) and
+  `trailing: &'a [u8]` (the `af_descriptor()` loop or `reserved` bytes after the
+  optional fields). Previously these were dropped, so a packet with trailing
+  extension bytes re-serialized with a shorter extension and a shifted payload.
+  The type is now `AdaptationFieldExtension<'a>`, `#[non_exhaustive]`, with
+  `AdaptationFieldExtension::new()` / `Default` (spec-convention reserved bits =
+  all `1`); `AdaptationField::extension` is `Option<AdaptationFieldExtension<'a>>`.
+  The writer no longer forces the flags-byte reserved bits to `0`.
+- `AdaptationField::stuffing_len: usize` is replaced by
+  `AdaptationField::stuffing: &'a [u8]` (the stuffing bytes verbatim; use `&[]`
+  for none), so non-`0xFF` filler also round-trips. Migration:
+  `stuffing_len: n` -> `stuffing: &[0xFF; n]`, `af.stuffing_len` ->
+  `af.stuffing.len()`.
+
+### Added
+- `tests/af_extension_roundtrip.rs`: spec-built Table 2-6 extension vectors plus
+  an exhaustive gate asserting every adaptation field of every committed `.ts`
+  fixture re-serializes byte-exactly. (No committed capture carries
+  `adaptation_field_extension_flag == 1`; a test pins that fact.)
+
 ## [0.5.0] - 2026-10-05
 
 ### Security

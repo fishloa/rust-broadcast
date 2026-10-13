@@ -109,23 +109,12 @@ fn extension_all_fields_with_reserved_and_stuffing_round_trip() {
     let body = [
         0x01, // AF flags: extension only
         // extension length: flags(1) + ltw(2) + piecewise(3) + splice(5) + trailing(2)
-        13,
-        ext_flags,
-        0x81,
-        0x23, // ltw_valid=1, ltw_offset=0x0123
-        0x01,
-        0x02,
-        0x03, // piecewise: reserved '00', rate = 0x010203 & 0x3FFFFF
-        0x2B,
-        0x00,
-        0x01,
-        0x00,
+        13, ext_flags, 0x81, 0x23, // ltw_valid=1, ltw_offset=0x0123
+        0x01, 0x02, 0x03, // piecewise: reserved '00', rate = 0x010203 & 0x3FFFFF
+        0x2B, 0x00, 0x01, 0x00,
         0x01, // seamless splice: type 2, DTS[32:30]=5, rest 0, markers 1
-        0xDE,
-        0xAD, // trailing reserved bytes
-        0x00,
-        0x5A,
-        0xFF, // AF stuffing, deliberately not all 0xFF
+        0xDE, 0xAD, // trailing reserved bytes
+        0x00, 0x5A, 0xFF, // AF stuffing, deliberately not all 0xFF
     ];
     let pkt = packet_with_af(&body);
     let af = parse_af(&pkt);

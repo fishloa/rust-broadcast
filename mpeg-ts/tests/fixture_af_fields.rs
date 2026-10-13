@@ -31,7 +31,8 @@
 //! "candidates" are scrambled or structurally-impossible packets whose bytes
 //! merely *parse* as misinterpreted fields and never round-trip byte-identical).
 //! These fields are covered by the build-from-fields round-trip unit tests in
-//! `mpeg-ts/src/ts.rs`.
+//! `mpeg-ts/src/ts.rs` and the spec-built Table 2-6 vectors in
+//! `af_extension_roundtrip.rs` (which also holds the exhaustive all-fixtures gate).
 
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 use std::fs;
@@ -81,7 +82,7 @@ fn assert_all_byte_identical(buf: &[u8]) -> (usize, usize) {
             continue;
         };
         total += 1;
-        if af.stuffing.len() > 0 {
+        if !af.stuffing.is_empty() {
             stuffed += 1;
         }
         let orig = af_body(pkt);
@@ -150,7 +151,7 @@ fn pcr_and_stuffing_byte_identical() {
             continue;
         };
         max_stuffing = max_stuffing.max(af.stuffing.len());
-        if af.pcr.is_some() && af.stuffing.len() > 0 {
+        if af.pcr.is_some() && !af.stuffing.is_empty() {
             pcr_stuffed += 1;
         }
     }

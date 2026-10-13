@@ -1105,7 +1105,8 @@ mod tests {
         let h = pkt.header.as_ref().unwrap();
         assert!(h.pts.is_some());
         assert_eq!(
-            h.header_stuffing, &[0xFF, 0xFF, 0xFF],
+            h.header_stuffing,
+            &[0xFF, 0xFF, 0xFF],
             "3 stuffing bytes after the 5-byte PTS"
         );
         // serialized_len must account for the stuffing.
@@ -1331,8 +1332,8 @@ mod tests {
             program_packet_sequence_counter: Some(ppsc),
             p_std_buffer: None,
             pes_extension_field: None,
-..PesExtension::new()
-};
+            ..PesExtension::new()
+        };
         let h = PesHeader {
             pes_extension: Some(ext),
             ..empty_header()
@@ -1356,8 +1357,8 @@ mod tests {
             program_packet_sequence_counter: None,
             p_std_buffer: Some(pstd),
             pes_extension_field: None,
-..PesExtension::new()
-};
+            ..PesExtension::new()
+        };
         let h = PesHeader {
             pes_extension: Some(ext),
             ..empty_header()
@@ -1386,8 +1387,8 @@ mod tests {
             program_packet_sequence_counter: None,
             p_std_buffer: None,
             pes_extension_field: None,
-..PesExtension::new()
-};
+            ..PesExtension::new()
+        };
         let mut buf = vec![0u8; ext.serialized_len()];
         assert!(ext.serialize_into(&mut buf).is_err());
     }
@@ -1410,8 +1411,8 @@ mod tests {
                 low_bits: 0,
                 rest: &data,
             }),
-..PesExtension::new()
-};
+            ..PesExtension::new()
+        };
         let mut buf = vec![0u8; ext.serialized_len()];
         assert!(matches!(
             ext.serialize_into(&mut buf).unwrap_err(),
@@ -1432,8 +1433,8 @@ mod tests {
             program_packet_sequence_counter: None,
             p_std_buffer: None,
             pes_extension_field: None,
-..PesExtension::new()
-};
+            ..PesExtension::new()
+        };
         let h = PesHeader {
             pes_extension: Some(ext),
             ..empty_header()
@@ -1461,8 +1462,8 @@ mod tests {
                 size: 100,
             }),
             pes_extension_field: None,
-..PesExtension::new()
-};
+            ..PesExtension::new()
+        };
         let h = PesHeader {
             scrambling_control: 0,
             pes_priority: true,
