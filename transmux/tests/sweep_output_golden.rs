@@ -19,6 +19,13 @@ fn fnv1a(bytes: &[u8]) -> u64 {
         .fold(OFFSET, |h, &b| (h ^ u64::from(b)).wrapping_mul(PRIME))
 }
 
+/// `Debug` of a `Media` minus the always-empty `degraded` field added by
+/// #1144, so the goldens captured before that field keep proving the demux
+/// output itself is unchanged (a non-empty `degraded` still shows).
+fn media_debug(media: &transmux::Media) -> String {
+    format!("{media:?}").replace(", degraded: []", "")
+}
+
 fn fixture(rel: &str) -> Option<Vec<u8>> {
     let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../fixtures")
@@ -52,7 +59,7 @@ fn ps_demux_output_is_unchanged() {
             continue;
         };
         let media = PsDemux::new().unpackage(bytes.as_slice()).expect(rel);
-        check(&mut bad, rel, fnv1a(format!("{media:?}").as_bytes()), want);
+        check(&mut bad, rel, fnv1a(media_debug(&media).as_bytes()), want);
     }
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }
@@ -80,7 +87,7 @@ fn webm_demux_output_is_unchanged() {
             continue;
         };
         let media = WebmDemux::new().unpackage(bytes.as_slice()).expect(rel);
-        check(&mut bad, rel, fnv1a(format!("{media:?}").as_bytes()), want);
+        check(&mut bad, rel, fnv1a(media_debug(&media).as_bytes()), want);
     }
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }
@@ -118,7 +125,7 @@ fn ts_demux_output_is_unchanged() {
             continue;
         };
         let media = TsDemux::new().unpackage(bytes.as_slice()).expect(rel);
-        check(&mut bad, rel, fnv1a(format!("{media:?}").as_bytes()), want);
+        check(&mut bad, rel, fnv1a(media_debug(&media).as_bytes()), want);
     }
     assert!(bad.is_empty(), "output changed: {bad:?}");
 }
@@ -418,7 +425,7 @@ fn cenc_decrypted_output_is_unchanged() {
     check(
         &mut bad,
         "cenc-demux-encrypted",
-        fnv1a(format!("{media:?}").as_bytes()),
+        fnv1a(media_debug(&media).as_bytes()),
         CENC_GOLDEN[0],
     );
     dec.decrypt(&mut media, &KeyMap::new().with_key(KID, KEY))
@@ -438,7 +445,7 @@ fn cenc_decrypted_output_is_unchanged() {
     check(
         &mut bad,
         "cenc-decrypted-media",
-        fnv1a(format!("{media:?}").as_bytes()),
+        fnv1a(media_debug(&media).as_bytes()),
         CENC_GOLDEN[2],
     );
     assert!(bad.is_empty(), "output changed: {bad:?}");
