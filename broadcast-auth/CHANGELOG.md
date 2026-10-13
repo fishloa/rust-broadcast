@@ -6,6 +6,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- `Verifier`: the Basic/Bearer/Digest constant-time compare now uses `subtle::ConstantTimeEq` (one implementation, shared with `signed_url`) instead of a hand-rolled `fold` (audit r09-O1).
+
 ## [0.4.0] - 2026-10-05
 
 ### Security
