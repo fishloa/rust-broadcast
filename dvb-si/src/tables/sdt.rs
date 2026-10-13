@@ -127,6 +127,8 @@ pub struct SdtSection<'a> {
 impl<'a> SdtSection<'a> {
     /// Construct an SDT section with the spec `reserved` fill.
     #[must_use]
+    // The eight arguments mirror the table's wire fields (EN 300 468 §5.2.3); a builder would only rename them.
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         kind: SdtKind,
         transport_stream_id: u16,

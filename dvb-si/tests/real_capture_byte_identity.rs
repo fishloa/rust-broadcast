@@ -60,8 +60,6 @@ const TOLERATED: &[(&str, &str)] = &[
     ("test-062.", "MPE_FEC (tid 0x78)"),
     ("test-062.", "MPE_IFEC (tid 0x7A)"),
     ("test-062.", "PROTECTION_MESSAGE (tid 0x7B)"),
-    // test-062.ts random bits in a descriptor (other agent's scope).
-    ("test-062.", "0x75 TVA_ID"),
 ];
 
 fn walk(dir: &Path, out: &mut Vec<PathBuf>) {

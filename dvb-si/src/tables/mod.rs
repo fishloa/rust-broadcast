@@ -494,9 +494,6 @@ pub(crate) fn desc_loop_len_of(hi: u8, lo: u8) -> usize {
     (((hi & !DESC_LOOP_LEN_HI_RESERVED_BITS) as usize) << 8) | usize::from(lo)
 }
 
-/// Write a 12-bit descriptor-loop length carrying the four
-/// `reserved='1111'` bits; errors instead of silently wrapping (cf. #1129).
-
 /// Mask of the low nibble of a byte: a sub-byte field's width when the byte
 /// also carries reserved bits above it (r02-W16).
 pub(crate) const LOW_NIBBLE_MASK: u8 = 0x0F;
