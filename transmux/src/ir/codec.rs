@@ -88,6 +88,18 @@ impl SubtitleFormat {
 
 broadcast_common::impl_spec_display!(SubtitleFormat);
 
+/// The ISOBMFF subtitle sample entry a [`CodecConfig::Subtitle`] track was
+/// demuxed from (ISO/IEC 14496-30), carried whole so the track can be re-muxed
+/// (issue #1186, ex-`TODO(#753)`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum SubtitleSampleEntry {
+    /// `stpp` XMLSubtitleSampleEntry (TTML/IMSC), ISO/IEC 14496-30 §7.2.
+    Ttml(crate::subtitle_entries::XmlSubtitleSampleEntry),
+    /// `wvtt` WVTTSampleEntry (WebVTT), ISO/IEC 14496-30 §9.2.
+    WebVtt(crate::subtitle_entries::WvttSampleEntry),
+}
+
 /// Per-track codec configuration for the initialization segment.
 #[derive(Debug, Clone)]
 #[non_exhaustive]
@@ -308,18 +320,26 @@ pub enum CodecConfig {
     /// boxes) — this crate never parses cue contents, only the sample
     /// entry's format tag.
     ///
-    /// There is currently no re-mux path: reconstructing the sample entry
-    /// (the TTML namespace/`stpp` config, or the WebVTT header block/`vttC`)
-    /// needs more than the format tag alone, so every fMP4/CMAF mux entry
-    /// point rejects a `Subtitle` track — naming it with
+    /// A track demuxed from ISOBMFF carries its full sample entry
+    /// (`sample_entry`) and so re-muxes; a track with no sample entry
+    /// (`sample_entry: None`) cannot be reconstructed, so every fMP4/CMAF mux
+    /// entry point rejects it — naming it with
     /// [`Error::UnmuxableSubtitleTrack`](crate::error::Error::UnmuxableSubtitleTrack)
     /// (media plane step-2 fix wave 1, B1) — rather than silently dropping or
     /// mis-emitting it; a caller must pre-filter with
-    /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by) —
-    /// see `TODO(#753)` on `build_trak`.
+    /// [`Media::select_tracks_by`](crate::media::Media::select_tracks_by).
     Subtitle {
         /// Which subtitle wire format this track carries.
         format: SubtitleFormat,
+        /// The ISOBMFF sample entry (`stpp` / `wvtt`) the track was demuxed
+        /// from, carried whole (namespace / `vttC` header block / trailing
+        /// boxes) so `build_trak` can re-emit it byte-for-byte (issue #1186,
+        /// ex-`TODO(#753)`). `None` for a subtitle track with no ISOBMFF
+        /// origin (a TS DVB/Teletext stream): such a track has no sample
+        /// entry to reconstruct and is rejected by every fMP4/CMAF mux entry
+        /// point with
+        /// [`Error::UnmuxableSubtitleTrack`](crate::error::Error::UnmuxableSubtitleTrack).
+        sample_entry: Option<SubtitleSampleEntry>,
     },
     /// Opaque data track (issue #557/#576): a PMT-listed elementary stream
     /// whose `stream_type` is not a codec this crate decodes (DVB subtitles
@@ -453,15 +473,21 @@ impl CodecConfig {
     /// built on it) rejects such a track, naming it, rather than silently
     /// omitting it — mirrors how the TS mux path, unlike this one, *can*
     /// carry them verbatim. See [`CodecConfig::is_muxable_in_bmff`], which
-    /// also covers [`CodecConfig::Subtitle`] (B1).
+    /// also covers an entry-less [`CodecConfig::Subtitle`] (B1).
     pub(crate) fn is_opaque_data(&self) -> bool {
         matches!(self, CodecConfig::Data { .. })
     }
 
-    /// True for [`CodecConfig::Subtitle`]: this crate has no re-mux sample
-    /// entry for it yet (`TODO(#753)`, see that variant's doc comment).
-    pub(crate) fn is_subtitle(&self) -> bool {
-        matches!(self, CodecConfig::Subtitle { .. })
+    /// True for a [`CodecConfig::Subtitle`] with no `sample_entry`: this
+    /// crate has no ISOBMFF sample entry to re-emit for it (issue #1186).
+    pub(crate) fn is_subtitle_without_entry(&self) -> bool {
+        matches!(
+            self,
+            CodecConfig::Subtitle {
+                sample_entry: None,
+                ..
+            }
+        )
     }
 
     /// True when `self` can be placed into an ISOBMFF `trak` by this crate —
@@ -486,7 +512,7 @@ impl CodecConfig {
     /// caller-facing filter predicate the `Unmuxable*Track` errors point to,
     /// e.g. `media.select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())`.
     pub fn is_muxable_in_bmff(&self) -> bool {
-        !(self.is_opaque_data() || self.is_subtitle())
+        !(self.is_opaque_data() || self.is_subtitle_without_entry())
     }
 
     /// True if `self` is a video codec (issue #628) — codec-family-complete

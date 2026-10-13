@@ -60,6 +60,7 @@ const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
 /// `crate::pipeline::`/`transmux::pipeline::` path keeps resolving unchanged.
 pub use crate::ir::{
     CodecConfig, DataCarriage, FragmentTrackData, Provenance, Sample, SampleFlags, SubtitleFormat,
+    SubtitleSampleEntry,
     TrackSpec,
 };
 
@@ -97,7 +98,7 @@ pub fn build_init_segment(tracks: &[TrackSpec], movie_timescale: u32) -> Result<
         // MUX = strict but filterable (media plane step-2 fix wave 1,
         // B1-B4): a track this crate cannot place into an ISOBMFF `trak`
         // (opaque `CodecConfig::Data` — issue #557/#576 — or
-        // `CodecConfig::Subtitle`, `TODO(#753)`) is rejected, naming it,
+        // `CodecConfig::Subtitle` with no sample entry) is rejected, naming it,
         // rather than silently omitted — every mux entry point built on this
         // function (`CmafMux`, `ProgressiveMux`, `Segmenter`,
         // `LlSegmenter`, `LlHlsSegmenter`) shares this one check, so a
@@ -143,7 +144,7 @@ fn unmuxable_track_error(t: &TrackSpec) -> crate::error::Error {
             track_id: t.track_id,
             stream_type: *stream_type,
         },
-        CodecConfig::Subtitle { format } => crate::error::Error::UnmuxableSubtitleTrack {
+        CodecConfig::Subtitle { format, .. } => crate::error::Error::UnmuxableSubtitleTrack {
             track_id: t.track_id,
             format: *format,
         },
@@ -226,6 +227,7 @@ fn srat_opaque(rate: crate::init_segment::SamplingRateBox) -> Result<OpaqueBox> 
 fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
     let audio = t.config.is_audio();
 
+    let mut minf_header: Option<OpaqueBox> = None;
     let (stsd_entry, vmhd, smhd, handler_type, handler_name, tkhd_w, tkhd_h) = match &t.config {
         CodecConfig::Avc {
             config,
@@ -778,14 +780,36 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
         CodecConfig::Data { .. } => {
             return Err(crate::error::Error::UnsupportedCodec { codec: "Data" });
         }
-        // Subtitle track (media plane step 2d): `Fmp4Demux` now demuxes
-        // `stpp`/`wvtt` into this variant (issue: media plane step 2d), but
-        // only the format tag is carried — reconstructing the sample entry
-        // needs the TTML namespace / WebVTT header block the tag alone
-        // doesn't retain. TODO(#753): thread those through `CodecConfig` (or
-        // a side-channel) so a `Subtitle` track can round-trip through the
-        // fMP4 mux path instead of erroring here.
-        CodecConfig::Subtitle { .. } => {
+        // Subtitle track: re-emit the ISOBMFF sample entry carried whole in
+        // `sample_entry` (issue #1186, ex-`TODO(#753)`). The media header is
+        // `sthd` for `stpp`/`subt` (ISO/IEC 14496-12 §12.6.2, as in the real
+        // ffmpeg fixture) and `nmhd` for `wvtt`/`text` (§8.4.5.2); both are
+        // headerless FullBoxes, preserved as the first `minf` child (§6.2.3).
+        CodecConfig::Subtitle {
+            sample_entry: Some(se),
+            ..
+        } => {
+            let (entry, media_header, handler, name): (_, &[u8; 4], &[u8; 4], &[u8]) = match se {
+                SubtitleSampleEntry::Ttml(e) => (
+                    SampleEntryVariant::Stpp(Box::new(e.clone())),
+                    b"sthd",
+                    b"subt",
+                    b"SubtitleHandler\0",
+                ),
+                SubtitleSampleEntry::WebVtt(e) => (
+                    SampleEntryVariant::Wvtt(Box::new(e.clone())),
+                    b"nmhd",
+                    b"text",
+                    b"TextHandler\0",
+                ),
+            };
+            // FullBox version(8)+flags(24), no further fields.
+            minf_header = Some(OpaqueBox::new(*media_header, vec![0u8; 4]));
+            (entry, None, None, *handler, name.to_vec(), 0, 0)
+        }
+        CodecConfig::Subtitle {
+            sample_entry: None, ..
+        } => {
             return Err(crate::error::Error::UnsupportedCodec { codec: "Subtitle" });
         }
     };
@@ -836,7 +860,10 @@ fn build_trak(t: &TrackSpec) -> Result<TrackBox> {
         vec![],
     );
 
-    let minf = MediaInformationBox::new(vmhd, smhd, Some(dinf), Some(stbl), vec![]);
+    let mut minf = MediaInformationBox::new(vmhd, smhd, Some(dinf), Some(stbl), vec![]);
+    if let Some(h) = minf_header {
+        minf.set_leading_opaque_header(h);
+    }
 
     let mdhd = MediaHeaderBox {
         version: 0,
