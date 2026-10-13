@@ -141,3 +141,25 @@ pub enum UnknownNode {
     /// A text node (character data).
     Text(String),
 }
+
+// Iterative `Drop` (#1146): the generated drop glue recurses once per nesting
+// level, which overflows the stack for a deep tree built through the struct
+// API. Nested elements' children are moved onto an explicit work stack so each
+// element is dropped with an already-empty child list.
+impl Drop for UnknownElement {
+    fn drop(&mut self) {
+        if !self
+            .children
+            .iter()
+            .any(|c| matches!(c, UnknownNode::Element(_)))
+        {
+            return;
+        }
+        let mut stack: Vec<UnknownNode> = core::mem::take(&mut self.children);
+        while let Some(node) = stack.pop() {
+            if let UnknownNode::Element(mut el) = node {
+                stack.append(&mut el.children);
+            }
+        }
+    }
+}

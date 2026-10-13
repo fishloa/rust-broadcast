@@ -45,6 +45,7 @@ The v7.7.0 **partial-publish incident** (a stale `"7.4.0"` inter-crate ref didn'
 
 Run an adversarial, read-only auditor per new crate AND per new module added to an existing crate (skeptical framing: a PASS must be earned with file:line evidence). These dimensions have caught a real bug nearly every release. Per [[never-leave-found-bugs-unfixed]], fix everything surfaced in the same pass.
 
+- **A0. Test-integrity gates (T3/T11)** — round-trip compares against the ORIGINAL fixture slice byte-exactly (never parsed-AST equality or re-canonicalised bytes); an independent oracle (libsrt, ffmpeg/GPAC, `mediastreamvalidator`, libebur128/EBU Tech 3341/3342, libzvbi, TSDuck) backs each protocol and self-produced expected values do not count; a fixture exists per spec branch (v0/v1, each flag combo) and >= 2 entities where a uniqueness invariant exists; reserved-bit/trailing-byte policy followed (CRATE-ACCEPTANCE section 1). See also 3.6 Bug classes.
 - **A. Round-trip symmetry** — every `Parse` has a symmetric `Serialize` that rebuilds from **typed fields**, never echoes a stored `raw`/`bytes` slice (a passthrough serialize is gameable and silently wrong). Round-trip test must *bite*: construct-from-fields → hand-computed wire bytes, mutate a field → assert the bytes change, ≥2-element boundary, plus a **real-fixture** parse + byte-exact round-trip. A plain round-trip test alone is gameable by raw passthrough.
   - **One-way decoders** (e.g. CEA-608/708 caption decode) are exempt from round-trip — instead require **known-spec-vector decode tests** that bite (a worked example from the spec) AND a `no_panic_on_arbitrary_input` test feeding truncated/random bytes.
 - **B. No raw-byte public API** — structured wire data the spec gives a layout to must be fully typed (typed structs/enums/`Vec`/accessors); never `pub field: &[u8]` "decode it yourself". Only genuinely opaque/reserved/private/crypto/FEC payloads may stay `&[u8]`.
@@ -72,6 +73,28 @@ The gate suite proves docs *compile* (examples build, doctests run, rustdoc is w
 Fix everything found in the staging PR (per [[never-leave-found-bugs-unfixed]]) — a stale README is a release defect, not a nicety.
 
 ---
+
+## 3.6 Bug classes seen (sibling-grep register)
+
+Every fix greps the whole workspace for siblings of its class and adds a regression test per sibling ([`CRATE-ACCEPTANCE.md`](CRATE-ACCEPTANCE.md) section 3). Classes come from the 2026-09-24 full-read audit (`audit(systemic)` issues). The last column is the guard/fix pattern that exists in this repo today; "none yet" means the class is recorded but has no repo-wide guard, so the audit greps for it by hand.
+
+| ID | Bug class | Guard / fix pattern in this repo |
+|---|---|---|
+| T1 | Serializers narrow a length/count field before the range check (`as u16` wraps) | `broadcast_common::len` `fit_bits`/`fit_u8`/`fit_u16`/`fit_u24`/`fit_u32`; `descriptors::write_descriptor_header` |
+| T2 | Allocation sizes taken from untrusted wire data | Capped accumulators (`broadcast_common::pusi::DEFAULT_MAX_UNIT_SIZE`, used by `mpeg-pes`/`mpeg-ts`); cap before `with_capacity` |
+| T3 | Tests that cannot fail | Byte-exact-vs-original-fixture, independent-oracle and per-branch gates ([`CRATE-ACCEPTANCE.md`](CRATE-ACCEPTANCE.md) section 3); stub-the-impl biting rule |
+| T4 | Timelines rebuilt from zero | none yet (audit by hand; see `timed-metadata` `Timeline`) |
+| T5 | Reconnect mints new state | none yet (audit `multimux` supervised reconnect by hand) |
+| T6 | Mutex poisoning cascades | `parking_lot` locks (`multimux`, `media-plane`) |
+| T7 | Blocking in async | De-hand-roll tripwires flag `thread::sleep`/`sleep(` in non-test async code (`tests/no_handroll_guard.rs`) |
+| T8 | Fix applied to one copy | The sibling-grep rule above; shared helpers in `broadcast-common` |
+| T9 | 33-bit clock wrap | `broadcast_common::clock33` (`add`, `add_signed`, `signed_distance`, `unwrap_delta`) + per-crate `tests/clock33_guard.rs` |
+| T10 | Invalid states representable | Typed enums/fields, `#[non_exhaustive]` coverage guard (`tests/non_exhaustive_coverage.rs`) |
+| T11 | Reserved-bit / trailing-byte policy | Workspace policy in `broadcast-common` crate docs and [`CRATE-ACCEPTANCE.md`](CRATE-ACCEPTANCE.md) section 1 |
+| T12 | Attribute tokenizer duplicated | Consolidate on one shared tokenizer; the de-hand-roll tripwires catch re-introduced hand-rolled parsing |
+| T13 | Drifted duplicate implementations | Hoist into `broadcast-common` (`pusi`, `seq`, `clock33`, `ts_dup`) so there is one copy |
+| T15 | Panicking `to_bytes` on fallible serializers | `Serialize::try_to_bytes` (use for anything derived from untrusted input) |
+| T16 | One bad packet aborts the stream | Resync/skip paths in `mpeg-ts` (`resync`) and `dvb-stream`; in-band `Lagged` in `media-plane` instead of an error |
 
 ## 4. Per-release checklist (the staging steps after audits are green)
 

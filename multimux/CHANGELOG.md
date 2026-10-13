@@ -1,6 +1,20 @@
 # Changelog
 
 ## [Unreleased]
+### Changed (BREAKING)
+- **WHIP/WHEP session resources are real.** The `201 Created` `Location` is now a per-session resource, `/whip/session/<id>` / `/whep/session/<id>` (a 32-character unguessable id, RFC 9725 section 8), instead of the constant `/whip/session` / `/whep/session`; the id-less paths no longer exist (`404`). `DELETE` on the resource ends the session (`200`, RFC 9725 section 4.2 / draft-ietf-wish-whep section 5): the media task drops the transport (WHIP also releases the published program), the `Trunk` cursor (WHEP) and the capacity slot, and a repeated `DELETE` (or one for a session that already ended by idle reap / error) is `404`. `PATCH` carries Trickle ICE (RFC 9725 section 4.3): `application/trickle-ice-sdpfrag` with an optional `If-Match` adds the fragment's candidates to the live transport (`204`); a wrong `Content-Type` is `415`, an `If-Match` naming another entity-tag `412`, a fragment for another ICE generation / with nothing to add / unparsable `400`, an unknown resource `404`,. `If-Match: *` is an **ICE restart** (RFC 9725 section 4.3.2): the PATCH carries the client's new `ice-ufrag`/`ice-pwd` (and candidates); the server restarts ICE in place under new credentials of its own (DTLS/SRTP untouched, media keeps flowing), and answers `200` with a new `ETag` and an `application/trickle-ice-sdpfrag` body holding its new credentials and candidates. A restart fragment that keeps the current ufrag or lacks a pwd is `400`; after a restart the old `ETag` is stale (`412`). Previously both methods answered `405` (#1149). Any client that hard-coded `/whip/session` instead of following `Location` must follow the header. The WHEP `201` now also carries the `ETag` the state machine owns (as WHIP's always did).
+
+### Fixed
+- WHIP: an overdue transport (ICE/DTLS) timer could be postponed indefinitely by a datagram flood with sub-millisecond gaps, because the floor was re-measured from "now" on every datagram. The per-session last fire is now carried across reads and an already-overdue deadline is serviced before the next datagram is read (at most one datagram is handled per loop turn). Pinned by a paused-clock test with a 2 kHz flood (#1150).
+
+### Added
+- `whip_session_resource` / `whep_session_resource` integration tests (real HTTP against the real routes, including a real ICE + DTLS loopback peer for WHIP), and `#[doc(hidden)]` test seams for them.
+
+### Fixed
+- An RTSP interleaved frame whose RTP payload does not parse no longer ends the ingest session (audit T16, #1144): it is skipped, logged and counted (`RtspIngestSession::malformed_media_frames`), and the frames after it are still depayloaded. Events decoded before a terminal RTSP protocol error are now handled before the error is raised (rtsp-runtime `HandleOutcome`).
+
+### Changed
+- Adapted to rtsp-runtime's breaking `ClientSession::handle_data` return type (`HandleOutcome`); caret epoch of `rtsp-runtime` moves 0.7 -> 0.8.
 
 ## [0.12.0] - 2026-10-13
 ### Fixed

@@ -108,7 +108,9 @@ use crate::source::SessionClocks;
 #[cfg(feature = "test-hooks")]
 use crate::source::handshake_policy;
 use crate::source::{DriverProgress, IngestTimeouts, Source};
+use crate::webrtc_session::{Resource, ResourceGuard, ResourceTable, SessionControl};
 use axum::response::IntoResponse as _;
+use webrtc_runtime::whip::server::{Event as WhipEvent, WhipSession};
 
 /// Unknown coded dimensions — the SDP/RTP path gives no frame geometry at
 /// all, matching `crate::source::sdp`'s own `UNKNOWN_DIMENSION` placeholder
@@ -168,6 +170,13 @@ struct AdmittedWhip {
     socket: Arc<UdpSocket>,
     media: MediaTransport,
     tracks: Vec<WhipTrack>,
+    /// How the session resource's `PATCH`/`DELETE` handlers reach this
+    /// session's read loop.
+    control: Arc<SessionControl>,
+    /// Keeps the session's resource registered while the session lives;
+    /// dropping the session (reaped, or the admit channel closed) unregisters
+    /// it, so the resource then answers `404`.
+    resource: ResourceGuard<WhipSession>,
 }
 
 /// One `m=video` track resolved from a WHIP offer.
@@ -182,6 +191,16 @@ struct WhipTrack {
 /// and `crate::source::rtmp::RtmpInfra`'s identical shape.
 struct WhipInfra {
     accept_rx: Arc<StdMutex<mpsc::Receiver<AdmittedWhip>>>,
+    /// The live session resources (`/whip/session/<id>`), shared with the
+    /// signalling handlers.
+    resources: Arc<ResourceTable<WhipSession>>,
+    /// Remote candidates a `PATCH` trickled in that the read loop has handed
+    /// to a session's transport (test observable).
+    trickled_candidates: Arc<AtomicU64>,
+    /// ICE restarts applied to a session's transport (test observable).
+    ice_restarts: Arc<AtomicU64>,
+    /// Decrypted RTP packets read from any session (test observable).
+    rtp_packets: Arc<AtomicU64>,
     /// Sessions admitted (SDP answered, media socket bound) but not yet
     /// reaped — checked against `max_sessions` in `whip_post`
     /// *before* any of that per-connection work happens (issue r07-C11):
@@ -337,11 +356,13 @@ impl WhipRoute {
                 // timeout, connection cap, graceful drain) rather than
                 // `axum::serve`. The `WhipInfra` holds the cancel token so
                 // dropping the route stops the listener and releases the port.
+                let resources = ResourceTable::new();
                 let state = Arc::new(WhipServeState {
                     tx,
                     active_sessions: Arc::clone(&active_sessions),
                     max_sessions,
                     admit_notify: Arc::clone(&admit_notify),
+                    resources: Arc::clone(&resources),
                 });
                 let cancel = tokio_util::sync::CancellationToken::new();
                 let serve_cancel = cancel.clone();
@@ -356,6 +377,10 @@ impl WhipRoute {
                 });
                 Ok::<Arc<WhipInfra>, MultimuxError>(Arc::new(WhipInfra {
                     accept_rx: Arc::new(StdMutex::new(rx)),
+                    resources,
+                    trickled_candidates: Arc::new(AtomicU64::new(0)),
+                    ice_restarts: Arc::new(AtomicU64::new(0)),
+                    rtp_packets: Arc::new(AtomicU64::new(0)),
                     active_sessions,
                     cancel,
                     tracker: tracked,
@@ -385,6 +410,27 @@ impl WhipRouteShared {
     /// The live admitted-session count.
     pub fn active_sessions(&self) -> usize {
         self.infra.active_sessions.load(Ordering::SeqCst)
+    }
+
+    /// The number of live session resources (`/whip/session/<id>`).
+    pub fn live_resources(&self) -> usize {
+        self.infra.resources.len()
+    }
+
+    /// The number of trickled remote candidates (`PATCH`) the read loop has
+    /// handed to a session's transport.
+    pub fn trickled_candidates(&self) -> u64 {
+        self.infra.trickled_candidates.load(Ordering::Relaxed)
+    }
+
+    /// The number of ICE restarts a session's transport has applied.
+    pub fn ice_restarts(&self) -> u64 {
+        self.infra.ice_restarts.load(Ordering::Relaxed)
+    }
+
+    /// The number of decrypted RTP packets the read loops have received.
+    pub fn rtp_packets(&self) -> u64 {
+        self.infra.rtp_packets.load(Ordering::Relaxed)
     }
 
     /// The number of `handle_timeout` fires driven by the transport-deadline
@@ -538,10 +584,43 @@ pub async fn serve_for_test_with_read_load_timeout_and_policy(
     WhipRouteShared,
     tokio_util::sync::CancellationToken,
 ) {
+    serve_read_load_inner(read, handshake_timeout, DEFAULT_WHIP_MAX_SESSIONS).await
+}
+
+/// [`serve_for_test_with_read_load`] with an explicit concurrent-session cap
+/// (test-only): a cap of 1 lets a test prove a `DELETE`d session's capacity
+/// slot is reusable.
+#[doc(hidden)]
+#[cfg(feature = "test-hooks")]
+pub async fn serve_for_test_with_read_load_and_max_sessions(
+    max_sessions: usize,
+) -> (
+    std::net::SocketAddr,
+    WhipRouteShared,
+    tokio_util::sync::CancellationToken,
+) {
+    serve_read_load_inner(
+        IngestTimeouts::default().read,
+        Duration::from_secs(10_000),
+        max_sessions,
+    )
+    .await
+}
+
+#[cfg(feature = "test-hooks")]
+async fn serve_read_load_inner(
+    read: Duration,
+    handshake_timeout: Duration,
+    max_sessions: usize,
+) -> (
+    std::net::SocketAddr,
+    WhipRouteShared,
+    tokio_util::sync::CancellationToken,
+) {
     use std::num::NonZeroUsize;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
-    let mut route = WhipRoute::with_listener("cam", listener, DEFAULT_WHIP_MAX_SESSIONS);
+    let mut route = WhipRoute::with_listener("cam", listener, max_sessions);
     route.timeouts.read = read;
     let route = Arc::new(route);
     let infra = route.ensure_infra().await.expect("ensure_infra");
@@ -861,10 +940,13 @@ struct WhipServeState {
     /// drains it immediately rather than waiting out a fixed poll interval a
     /// steady publish load can starve (defect 2 — the I2 fix).
     admit_notify: Arc<Notify>,
+    /// Live session resources, keyed by the id in the `Location` URL.
+    resources: Arc<ResourceTable<WhipSession>>,
 }
 
 /// The WHIP signalling router: `POST /whip` (offer), `OPTIONS /whip`
-/// (preflight) and the session resource's `PATCH`/`DELETE` (`/whip/session`).
+/// (preflight) and the session resource's `PATCH`/`DELETE`
+/// (`/whip/session/<id>`, the `Location` of the `201`).
 /// The tower layers give it the concurrency bound, the 64 KiB body cap, the
 /// 10 s request timeout and the `CorsLayer` the raw reader used to hand-roll
 /// (SP2.1).
@@ -880,7 +962,7 @@ fn whip_router_with_cap(state: Arc<WhipServeState>, max_pending: usize) -> axum:
 
     axum::Router::new()
         .route("/whip", post(whip_post).options(whip_options))
-        .route("/whip/session", patch(whip_patch).delete(whip_delete))
+        .route("/whip/session/{id}", patch(whip_patch).delete(whip_delete))
         // Mirror `output::whep`'s `ensure_connect_info`: a test harness driving
         // the router with `oneshot` has no accepted stream, so `ConnectInfo`
         // (and the `LocalAddr` extension) is absent and `whip_post`'s
@@ -924,6 +1006,7 @@ pub fn whip_router_for_test(max_sessions: usize, max_pending: usize) -> axum::Ro
         active_sessions: Arc::new(AtomicUsize::new(0)),
         max_sessions,
         admit_notify: Arc::new(Notify::new()),
+        resources: ResourceTable::new(),
     });
     whip_router_with_cap(state, max_pending)
 }
@@ -986,16 +1069,6 @@ async fn ensure_connect_info(
             .insert(None::<crate::origin::LocalAddr>);
     }
     next.run(req).await
-}
-
-/// Convert a `webrtc_runtime` [`HttpResponse`](webrtc_runtime::whip::server::HttpResponse)
-/// into an axum response. The typed status line and headers are already on
-/// the wire form `webrtc-runtime` produced; only the body needs wrapping.
-fn to_axum(resp: webrtc_runtime::whip::server::HttpResponse) -> axum::response::Response {
-    let mut out = axum::response::Response::new(axum::body::Body::from(resp.body));
-    *out.status_mut() = resp.status;
-    *out.headers_mut() = resp.headers;
-    out
 }
 
 /// Which IP [`whip_post_inner`] binds this session's media socket on: the
@@ -1106,6 +1179,7 @@ async fn whip_post_inner(
         let _ = media.add_remote_candidate(raw);
     }
 
+    let local_candidates = media.local_candidates();
     let answer = build_answer(
         &parsed,
         &media,
@@ -1115,11 +1189,33 @@ async fn whip_post_inner(
     );
 
     // The typed state machine owns the 201's Location/ETag/Content-Type over
-    // `http`/`headers` (SP2.2), not a hand-formatted response string.
-    let mut session = webrtc_runtime::whip::server::WhipSession::new("/whip/session".to_string());
+    // `http`/`headers` (SP2.2), not a hand-formatted response string. The
+    // `Location` is this session's own resource (RFC 9725 section 4.2), so
+    // `PATCH`/`DELETE` address exactly this session.
+    let resource_id = crate::webrtc_session::new_resource_id();
+    let mut session = WhipSession::new(format!("/whip/session/{resource_id}"));
     let _ = session.on_post(Vec::new());
     let etag = rand_token(16);
     let response = session.accept(answer.into_bytes(), etag);
+    if response.status != axum::http::StatusCode::CREATED {
+        // The state machine could not build the 201 (an unsendable header):
+        // nothing was admitted, `slot` releases on drop.
+        return Ok(crate::webrtc_session::to_axum(response));
+    }
+
+    let control = SessionControl::new();
+    // Registered before the 201 is written (a client may `DELETE` the instant
+    // it reads it); the guard rides in `AdmittedWhip`, so a failed hand-off
+    // below unregisters it again.
+    let resource = state.resources.insert(
+        resource_id,
+        Resource {
+            machine: parking_lot::Mutex::new(session),
+            control: Arc::clone(&control),
+            remote_ufrag: parking_lot::Mutex::new(parsed.remote_ufrag.clone()),
+            local_candidates,
+        },
+    );
 
     let admitted = AdmittedWhip {
         socket: Arc::new(socket),
@@ -1129,6 +1225,8 @@ async fn whip_post_inner(
             payload_type: parsed.payload_type,
             clock_rate: parsed.clock_rate,
         }],
+        control,
+        resource,
     };
     if state.tx.send(admitted).await.is_ok() {
         // Ownership of the slot passes to the admitted session from here.
@@ -1138,31 +1236,96 @@ async fn whip_post_inner(
         state.admit_notify.notify_waiters();
     }
     // If the send failed (channel closed), `slot` drops here and releases it.
-    Ok(to_axum(response))
+    Ok(crate::webrtc_session::to_axum(response))
 }
 
-/// `PATCH /whip/session`: not implemented in this cut (no trickle-ICE /
-/// ICE-restart handling). Main answered every non-POST method `405 Method Not
-/// Allowed`; keep that parity rather than a stub that acks without effect
-/// (RFC 9110 §15.5.6 requires an `Allow` header on a 405).
-async fn whip_patch() -> axum::response::Response {
-    let mut resp = axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response();
-    resp.headers_mut().insert(
-        axum::http::header::ALLOW,
-        axum::http::HeaderValue::from_static("POST, OPTIONS"),
-    );
-    resp
+/// `PATCH /whip/session/<id>` (RFC 9725 section 4.3): a Trickle ICE SDP
+/// fragment adds remote candidates (`204`); `If-Match: *` asks for an ICE
+/// restart, which this transport cannot perform (`422`, the RFC's
+/// "unsupported operation"). Unknown resource `404`, a body that is not
+/// `application/trickle-ice-sdpfrag` `415`, an `If-Match` that does not match
+/// the resource's `ETag` `412`.
+async fn whip_patch(
+    axum::extract::State(state): axum::extract::State<Arc<WhipServeState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+    headers: axum::http::HeaderMap,
+    body: axum::body::Bytes,
+) -> axum::response::Response {
+    use axum::http::StatusCode;
+    let Some(resource) = state.resources.get(&id) else {
+        return StatusCode::NOT_FOUND.into_response();
+    };
+    if !crate::webrtc_session::content_type_is(
+        &headers,
+        webrtc_runtime::whip::content_type::TRICKLE_ICE,
+    ) {
+        return StatusCode::UNSUPPORTED_MEDIA_TYPE.into_response();
+    }
+    let event = resource.machine.lock().on_patch(body.to_vec(), &headers);
+    match event {
+        Ok(WhipEvent::TrickleIce { sdp_fragment, .. }) => {
+            let fragment =
+                match crate::webrtc_session::parse_ice_fragment(&sdp_fragment).and_then(|f| {
+                    crate::webrtc_session::validate_trickle(&f, &resource.remote_ufrag.lock())?;
+                    Ok(f)
+                }) {
+                    Ok(f) => f,
+                    Err(reason) => {
+                        tracing::debug!(%reason, "whip: trickle fragment rejected");
+                        return StatusCode::BAD_REQUEST.into_response();
+                    }
+                };
+            if !resource.control.push_candidates(fragment.candidates) {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            crate::webrtc_session::to_axum(resource.machine.lock().ack_trickle())
+        }
+        // RFC 9725 section 4.3.2: `If-Match: *` with new ICE credentials. The
+        // transport restarts ICE in place (DTLS/SRTP untouched); the `200`
+        // carries this side's new credentials and candidates and a new `ETag`.
+        Ok(WhipEvent::IceRestart { sdp_fragment }) => {
+            let plan = match crate::webrtc_session::plan_restart(
+                &sdp_fragment,
+                &resource.remote_ufrag.lock(),
+                &resource.local_candidates,
+                rand_token,
+            ) {
+                Ok(plan) => plan,
+                Err(reason) => {
+                    tracing::debug!(%reason, "whip: ICE restart fragment rejected");
+                    return StatusCode::BAD_REQUEST.into_response();
+                }
+            };
+            let (answer, etag) = (plan.answer.clone(), plan.etag.clone());
+            if !crate::webrtc_session::commit_restart(&resource, plan) {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            crate::webrtc_session::to_axum(resource.machine.lock().ack_restart(answer, etag))
+        }
+        Ok(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+        Err(e) => crate::webrtc_session::patch_error_status(&e).into_response(),
+    }
 }
 
-/// `DELETE /whip/session`: not implemented in this cut (no session teardown
-/// path). Main answered `405` for every non-POST method; keep parity.
-async fn whip_delete() -> axum::response::Response {
-    let mut resp = axum::http::StatusCode::METHOD_NOT_ALLOWED.into_response();
-    resp.headers_mut().insert(
-        axum::http::header::ALLOW,
-        axum::http::HeaderValue::from_static("POST, OPTIONS"),
-    );
-    resp
+/// `DELETE /whip/session/<id>` (RFC 9725 section 4.2): ends the session. The
+/// resource is gone from this point (a second `DELETE` is `404`); the media
+/// task is woken to drop the transport, release the published program and free
+/// the capacity slot.
+async fn whip_delete(
+    axum::extract::State(state): axum::extract::State<Arc<WhipServeState>>,
+    axum::extract::Path(id): axum::extract::Path<String>,
+) -> axum::response::Response {
+    let Some(resource) = state.resources.remove(&id) else {
+        return axum::http::StatusCode::NOT_FOUND.into_response();
+    };
+    let mut machine = resource.machine.lock();
+    let response = match machine.on_delete() {
+        Ok(_) => machine.ack_delete(),
+        Err(e) => return crate::webrtc_session::patch_error_status(&e).into_response(),
+    };
+    drop(machine);
+    resource.control.terminate();
+    crate::webrtc_session::to_axum(response)
 }
 
 /// A short pseudo-random token for ICE ufrag/pwd — see
@@ -1242,6 +1405,11 @@ pub struct WhipIngestSession {
     buffered: Vec<(u32, Sample)>,
     announced: bool,
     pending: std::collections::VecDeque<SessionEvent>,
+    /// How the session resource's handlers reach the read loop.
+    control: Arc<SessionControl>,
+    /// Unregisters the session's resource when this session is dropped
+    /// (reaped), whatever ended it.
+    _resource: ResourceGuard<WhipSession>,
 }
 
 impl WhipIngestSession {
@@ -1294,7 +1462,14 @@ impl WhipIngestSession {
             buffered: Vec::new(),
             announced: false,
             pending: std::collections::VecDeque::new(),
+            control: admitted.control,
+            _resource: admitted.resource,
         }
+    }
+
+    /// The control channel of this session's resource (`PATCH`/`DELETE`).
+    fn control_handle(&self) -> Arc<SessionControl> {
+        Arc::clone(&self.control)
     }
 
     /// A cheap `Arc` clone of the media socket — [`run_whip`]'s own
@@ -1543,9 +1718,111 @@ enum ReadOutcome {
     TimedOut,
     /// The underlying socket read failed.
     TransportError(String),
+    /// The session resource was `DELETE`d (RFC 9725 section 4.2): the session
+    /// ends now, through the same release-then-reap path as any other end.
+    Terminated,
+    /// A `PATCH` queued trickled candidates: the session stays live, and the
+    /// next [`read_one`] applies them before it reads on.
+    Control,
 }
 
-type BoxedRead = Pin<Box<dyn Future<Output = (SessionId, MediaTransport, ReadOutcome)> + Send>>;
+/// What one [`read_one`] hands back to [`run_whip`]'s loop.
+struct ReadDone {
+    id: SessionId,
+    /// The transport, returned so the next [`read_one`] owns it again (SP6.3).
+    media: MediaTransport,
+    outcome: ReadOutcome,
+    /// When this session's transport timer last fired, carried across
+    /// [`read_one`] calls so the [`crate::webrtc_session::MIN_TIMER_INTERVAL`]
+    /// floor is measured from the real previous fire, never from "now"
+    /// (issue #1150).
+    last_fire: Option<Instant>,
+}
+
+type BoxedRead = Pin<Box<dyn Future<Output = ReadDone> + Send>>;
+
+/// The per-route counters every [`read_one`] bumps.
+#[derive(Clone)]
+struct ReadShared {
+    timer_fires: Arc<AtomicU64>,
+    timer_notify: Arc<Notify>,
+    trickled_candidates: Arc<AtomicU64>,
+    ice_restarts: Arc<AtomicU64>,
+    rtp_packets: Arc<AtomicU64>,
+}
+
+impl ReadShared {
+    fn of(infra: &WhipInfra) -> Self {
+        Self {
+            timer_fires: Arc::clone(&infra.timer_fires),
+            timer_notify: Arc::clone(&infra.timer_notify),
+            trickled_candidates: Arc::clone(&infra.trickled_candidates),
+            ice_restarts: Arc::clone(&infra.ice_restarts),
+            rtp_packets: Arc::clone(&infra.rtp_packets),
+        }
+    }
+}
+
+/// The socket operations [`read_one`] performs, as a seam: production is a
+/// real [`UdpSocket`]; a test substitutes a socket whose reads are always
+/// ready (a datagram flood) so the timer logic is exercised against a paused
+/// virtual clock without kernel I/O scheduling in the way.
+trait DatagramIo: Send + Sync + 'static {
+    fn recv_from<'a>(
+        &'a self,
+        buf: &'a mut [u8],
+    ) -> impl Future<Output = std::io::Result<(usize, std::net::SocketAddr)>> + Send + 'a;
+    fn send_to<'a>(
+        &'a self,
+        buf: &'a [u8],
+        target: std::net::SocketAddr,
+    ) -> impl Future<Output = std::io::Result<usize>> + Send + 'a;
+}
+
+impl DatagramIo for UdpSocket {
+    fn recv_from<'a>(
+        &'a self,
+        buf: &'a mut [u8],
+    ) -> impl Future<Output = std::io::Result<(usize, std::net::SocketAddr)>> + Send + 'a {
+        UdpSocket::recv_from(self, buf)
+    }
+    fn send_to<'a>(
+        &'a self,
+        buf: &'a [u8],
+        target: std::net::SocketAddr,
+    ) -> impl Future<Output = std::io::Result<usize>> + Send + 'a {
+        UdpSocket::send_to(self, buf, target)
+    }
+}
+
+/// The session clock: `std::time::Instant` as the transport wants it, read
+/// through tokio's clock so a paused-time test moves it deterministically
+/// (identical to `Instant::now()` outside a paused runtime).
+fn clock_now() -> Instant {
+    tokio::time::Instant::now().into_std()
+}
+
+/// Runs the transport's `handle_timeout`, sends whatever it queued, and
+/// classifies the result (finding N3: a fatal `TimerError` ends the session).
+async fn fire_timer<S: DatagramIo>(
+    media: &mut MediaTransport,
+    socket: &S,
+    shared: &ReadShared,
+) -> ReadOutcome {
+    let events = media.handle_timeout(clock_now());
+    shared.timer_fires.fetch_add(1, Ordering::Relaxed);
+    shared.timer_notify.notify_waiters();
+    for Datagram { peer, bytes } in drain_transmit(media) {
+        let _ = socket.send_to(&bytes, peer).await;
+    }
+    match first_timer_error(&events) {
+        Some(err) => {
+            tracing::warn!(error = %err, "whip: transport timer failed; ending session");
+            ReadOutcome::TimerError(err)
+        }
+        None => ReadOutcome::Timer,
+    }
+}
 
 /// Awaits the next UDP datagram for session `id`, bounded by `idle_deadline`
 /// (an absolute instant when the session may end for lack of inbound
@@ -1557,24 +1834,65 @@ type BoxedRead = Pin<Box<dyn Future<Output = (SessionId, MediaTransport, ReadOut
 /// next [`read_one`] takes it again (SP6.3). Boxed so [`run_whip`] can hold
 /// many of these, one per admitted session, in one [`FuturesUnordered`] —
 /// mirrors `crate::source::rtmp::read_one`.
-fn read_one(
+fn read_one<S: DatagramIo>(
     id: SessionId,
-    socket: Arc<UdpSocket>,
+    socket: Arc<S>,
     mut media: MediaTransport,
     idle_deadline: Instant,
-    timer_fires: Arc<AtomicU64>,
-    timer_notify: Arc<Notify>,
+    mut last_fire: Option<Instant>,
+    control: Arc<SessionControl>,
+    shared: ReadShared,
 ) -> BoxedRead {
     Box::pin(async move {
         let mut buf = [0u8; MAX_UDP_DATAGRAM];
+
+        // Resource control first: a `DELETE` ends the session before any
+        // further datagram is read; trickled candidates reach the transport
+        // (which this task owns) before its next deadline is computed.
+        let ctl = control.take();
+        if ctl.terminated {
+            return ReadDone {
+                id,
+                media,
+                outcome: ReadOutcome::Terminated,
+                last_fire,
+            };
+        }
+        let applied = crate::webrtc_session::apply_ice_ops(&mut media, ctl.ops, clock_now());
+        shared
+            .trickled_candidates
+            .fetch_add(applied.candidates, Ordering::Relaxed);
+        shared
+            .ice_restarts
+            .fetch_add(applied.restarts, Ordering::Relaxed);
+
         // The transport's own next timer, taken BEFORE the select so a quiet
         // session still gets its ICE/DTLS retransmits (defect 1) — the timer
         // arm fires `handle_timeout` WITHOUT ending the session.
         let deadline = media.poll_timeout();
+
+        // Issue #1150: an already-overdue deadline is serviced BEFORE reading
+        // another datagram. Each datagram returns to the run loop and rebuilds
+        // this future, so a timer that only ever raced the `recv` arm (with
+        // its floor re-measured from "now" each time) could be postponed
+        // indefinitely by a flood with sub-millisecond gaps. This session
+        // handles at most ONE datagram per call, so the loop (and every other
+        // session and admission) regains control between datagrams.
+        let now = clock_now();
+        if crate::webrtc_session::timer_due(deadline, last_fire, now) {
+            let outcome = fire_timer(&mut media, socket.as_ref(), &shared).await;
+            return ReadDone {
+                id,
+                media,
+                outcome,
+                last_fire: Some(now),
+            };
+        }
+
         let outcome = tokio::select! {
             received = socket.recv_from(&mut buf) => match received {
                 Ok((n, peer)) => {
-                    match media.handle_datagram(Instant::now(), peer, &buf[..n]) {
+                    match media.handle_datagram(clock_now(), peer, &buf[..n]) {
                         Ok(events) => {
                             let outbound = drain_transmit(&mut media);
                             for Datagram { peer, bytes } in outbound {
@@ -1587,6 +1905,9 @@ fn read_one(
                                     _ => None,
                                 })
                                 .collect();
+                            shared
+                                .rtp_packets
+                                .fetch_add(wire.len() as u64, Ordering::Relaxed);
                             ReadOutcome::Events(wire)
                         }
                         // A per-datagram failure is NOT session-fatal; an
@@ -1609,7 +1930,7 @@ fn read_one(
             // `idle_deadline` ends. This is the transport-timer-independent
             // "vanished publisher" reap.
             () = sleep_until_opt(Some(idle_deadline)) => {
-                media.handle_timeout(Instant::now());
+                media.handle_timeout(clock_now());
                 let outbound = drain_transmit(&mut media);
                 for Datagram { peer, bytes } in outbound {
                     let _ = socket.send_to(&bytes, peer).await;
@@ -1619,27 +1940,23 @@ fn read_one(
             // Defect 1: the transport's own timer fired. Run `handle_timeout`
             // while the session stays live (a timer wake is NOT a session end,
             // and does NOT reset the idle clock). Finding N3: the sleep is
-            // floored to MIN_TIMER_INTERVAL so a stuck (always-overdue)
-            // deadline cannot fire `handle_timeout` back-to-back and spin a
-            // core, and a fatal TimerError ends the session.
-            () = crate::webrtc_session::sleep_until_timer(deadline, Instant::now()) => {
-                let events = media.handle_timeout(Instant::now());
-                timer_fires.fetch_add(1, Ordering::Relaxed);
-                timer_notify.notify_waiters();
-                let outbound = drain_transmit(&mut media);
-                for Datagram { peer, bytes } in outbound {
-                    let _ = socket.send_to(&bytes, peer).await;
-                }
-                match first_timer_error(&events) {
-                    Some(err) => {
-                        tracing::warn!(error = %err, "whip: transport timer failed; ending session");
-                        ReadOutcome::TimerError(err)
-                    }
-                    None => ReadOutcome::Timer,
-                }
+            // floored to MIN_TIMER_INTERVAL from the PREVIOUS fire (carried in
+            // `last_fire`), so a stuck (always-overdue) deadline cannot fire
+            // `handle_timeout` back-to-back and spin a core.
+            () = crate::webrtc_session::sleep_until_timer(deadline, last_fire) => {
+                last_fire = Some(clock_now());
+                fire_timer(&mut media, socket.as_ref(), &shared).await
             }
+            // A `PATCH`/`DELETE` landed: re-arm (the top of the next call
+            // applies it).
+            () = control.notified() => ReadOutcome::Control,
         };
-        (id, media, outcome)
+        ReadDone {
+            id,
+            media,
+            outcome,
+            last_fire,
+        }
     })
 }
 
@@ -1723,12 +2040,34 @@ impl IdleClockMap {
 /// must be treated as ready, or the transport's timer would be delayed until
 /// the read timeout.
 fn sleep_until_opt(deadline: Option<Instant>) -> Pin<Box<dyn Future<Output = ()> + Send>> {
-    let now = Instant::now();
+    let now = clock_now();
     match deadline {
         None => Box::pin(std::future::pending()),
         Some(d) if d <= now => Box::pin(std::future::ready(())),
         Some(d) => Box::pin(tokio::time::sleep(d.saturating_duration_since(now))),
     }
+}
+
+/// Builds session `id`'s next [`read_one`] (or `None` when the driver no
+/// longer holds it).
+fn rearm(
+    driver: &ListenDriver<WhipListener>,
+    infra: &WhipInfra,
+    id: SessionId,
+    media: MediaTransport,
+    idle_deadline: Instant,
+    last_fire: Option<Instant>,
+) -> Option<BoxedRead> {
+    let session = driver.driver(id)?.session();
+    Some(read_one(
+        id,
+        session.socket_handle(),
+        media,
+        idle_deadline,
+        last_fire,
+        session.control_handle(),
+        ReadShared::of(infra),
+    ))
 }
 
 /// Per-session [`DriverProgress`] bookkeeping — mirrors
@@ -1829,7 +2168,7 @@ pub(crate) async fn run_whip_with_clock(
             () = infra.admit_notify.notified() => {
                 clocks.retain(|id| progress.contains_key(id));
             }
-            Some((id, media, outcome)) = reads.next(), if !reads.is_empty() => {
+            Some(ReadDone { id, media, outcome, last_fire }) = reads.next(), if !reads.is_empty() => {
                 let now = clocks.now(id, clock());
                 match outcome {
                     ReadOutcome::Events(events) => {
@@ -1852,22 +2191,34 @@ pub(crate) async fn run_whip_with_clock(
                             // The session is gone: drop its idle-clock entry, or
                             // the map leaks one entry per reaped session.
                             last_datagram.remove(&id);
-                        } else if let Some(d) = driver.driver(id) {
-                            let socket = d.session().socket_handle();
+                        } else {
                             let idle_deadline = last_datagram.get(&id).unwrap_or_else(clock) + read_timeout;
-                            reads.push(read_one(id, socket, media, idle_deadline, Arc::clone(&infra.timer_fires), Arc::clone(&infra.timer_notify)));
+                            if let Some(next) = rearm(&driver, &infra, id, media, idle_deadline, last_fire) {
+                                reads.push(next);
+                            }
                         }
                     }
                     // A transport-timer wake (defect 1): the session stays live
                     // and its idle clock is NOT reset.
-                    ReadOutcome::Timer => {
-                        if progress.contains_key(&id)
-                            && let Some(d) = driver.driver(id)
-                        {
-                            let socket = d.session().socket_handle();
+                    // A trickle `PATCH` wake is the same: the session stays
+                    // live and the idle clock is untouched.
+                    ReadOutcome::Timer | ReadOutcome::Control => {
+                        if progress.contains_key(&id) {
                             let idle_deadline = last_datagram.get(&id).unwrap_or_else(clock) + read_timeout;
-                            reads.push(read_one(id, socket, media, idle_deadline, Arc::clone(&infra.timer_fires), Arc::clone(&infra.timer_notify)));
+                            if let Some(next) = rearm(&driver, &infra, id, media, idle_deadline, last_fire) {
+                                reads.push(next);
+                            }
                         }
+                    }
+                    // The session resource was `DELETE`d: end the session
+                    // through the same release-then-reap path as a timeout.
+                    ReadOutcome::Terminated => {
+                        tracing::info!("whip: session ended by DELETE");
+                        if let Some(d) = driver.driver_mut(id) {
+                            d.finish();
+                        }
+                        last_datagram.remove(&id);
+                        report_and_maybe_reap(&mut driver, id, route_handle, &mut progress, &active_sessions).await;
                     }
                     ReadOutcome::TimedOut => {
                         tracing::warn!("whip: session idle past read timeout");
@@ -1909,14 +2260,14 @@ pub(crate) async fn run_whip_with_clock(
                 }
                 AcceptOutcome::Error(e) => return e,
                 AcceptOutcome::Admitted(id) => {
-                    #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
-                    let (socket, taken) = {
+                    let (socket, control, taken) = {
                         let s = driver
                             .driver(id)
                             .expect("just admitted by poll_accept")
                             .session();
-                        (s.socket_handle(), s.take_transport())
+                        (s.socket_handle(), s.control_handle(), s.take_transport())
                     };
+                    #[cfg_attr(not(feature = "test-hooks"), allow(unused_mut))]
                     let Some(mut media) = taken else {
                         tracing::error!(
                             "whip: media transport of a just-admitted session was already taken; skipping its read loop"
@@ -1947,8 +2298,9 @@ pub(crate) async fn run_whip_with_clock(
                         socket,
                         media,
                         idle_deadline + read_timeout,
-                        Arc::clone(&infra.timer_fires),
-                        Arc::clone(&infra.timer_notify),
+                        None,
+                        control,
+                        ReadShared::of(&infra),
                     ));
                 }
                 _ => break,
@@ -1988,6 +2340,32 @@ a=rtcp-mux\r\n\
 a=rtpmap:96 H264/90000\r\n\
 a=fmtp:96 level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f\r\n\
 a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
+
+    fn test_shared() -> ReadShared {
+        ReadShared {
+            timer_fires: Arc::new(AtomicU64::new(0)),
+            timer_notify: Arc::new(Notify::new()),
+            trickled_candidates: Arc::new(AtomicU64::new(0)),
+            ice_restarts: Arc::new(AtomicU64::new(0)),
+            rtp_packets: Arc::new(AtomicU64::new(0)),
+        }
+    }
+
+    /// A control channel plus a registered resource, for tests that build an
+    /// [`AdmittedWhip`] by hand.
+    fn test_control_and_resource() -> (Arc<SessionControl>, ResourceGuard<WhipSession>) {
+        let control = SessionControl::new();
+        let resource = ResourceTable::new().insert(
+            "test".to_string(),
+            Resource {
+                machine: parking_lot::Mutex::new(WhipSession::new("/whip/session/test".into())),
+                control: Arc::clone(&control),
+                remote_ufrag: parking_lot::Mutex::new("abcd".to_string()),
+                local_candidates: Vec::new(),
+            },
+        );
+        (control, resource)
+    }
 
     #[test]
     fn local_bind_ip_uses_the_signalling_local_address_not_the_peer() {
@@ -2085,8 +2463,8 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
             "a transport with a STUN gatherer must have a pending timer"
         );
 
-        let timer_fires = Arc::new(AtomicU64::new(0));
-        let timer_notify = Arc::new(Notify::new());
+        let shared = test_shared();
+        let timer_fires = Arc::clone(&shared.timer_fires);
         // Idle deadline far in the future so the transport-timer arm, not the
         // read-timeout arm, is what completes. No datagram is sent, so only
         // the timer arm can fire.
@@ -2096,13 +2474,14 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
             socket,
             media,
             idle_deadline,
-            Arc::clone(&timer_fires),
-            Arc::clone(&timer_notify),
+            None,
+            SessionControl::new(),
+            shared,
         );
 
         // Bound the wait generously; the STUN gatherer's first retransmit is
         // the arm that fires (real time, sub-second).
-        let (_id, _media, outcome) = tokio::time::timeout(Duration::from_secs(10), fut)
+        let ReadDone { outcome, .. } = tokio::time::timeout(Duration::from_secs(10), fut)
             .await
             .expect("the timer arm must fire (no inbound datagram)");
         assert!(
@@ -2112,6 +2491,116 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
         assert!(
             timer_fires.load(Ordering::Relaxed) > 0,
             "the timer counter must observe the fire"
+        );
+    }
+
+    /// A socket whose reads are ALWAYS ready: a datagram flood with no gaps.
+    #[derive(Default)]
+    struct FloodSocket {
+        reads: AtomicU64,
+    }
+
+    impl DatagramIo for FloodSocket {
+        fn recv_from<'a>(
+            &'a self,
+            buf: &'a mut [u8],
+        ) -> impl Future<Output = std::io::Result<(usize, std::net::SocketAddr)>> + Send + 'a
+        {
+            self.reads.fetch_add(1, Ordering::Relaxed);
+            buf[..8].fill(0xAB);
+            std::future::ready(Ok((8, "127.0.0.1:9".parse().unwrap())))
+        }
+        fn send_to<'a>(
+            &'a self,
+            buf: &'a [u8],
+            _target: std::net::SocketAddr,
+        ) -> impl Future<Output = std::io::Result<usize>> + Send + 'a {
+            std::future::ready(Ok(buf.len()))
+        }
+    }
+
+    /// Issue #1150, on a paused (virtual) clock: a datagram flood with
+    /// sub-millisecond gaps (2 kHz here, a datagram per virtual 500 us) must not
+    /// postpone the transport's ICE/DTLS timer. The first deadline is already
+    /// overdue when the flood starts; it must fire BEFORE the first datagram is
+    /// read, and every later deadline must fire within one flood tick of itself.
+    ///
+    /// Revert-verified against the old logic (no overdue-deadline check before
+    /// the read, floor re-measured from "now" on every call): the timer then
+    /// never fires during the flood, so `fires` stays 0 and the first call
+    /// reads a datagram instead of firing.
+    #[tokio::test(start_paused = true)]
+    async fn a_datagram_flood_cannot_postpone_the_transport_timer() {
+        const TICK: Duration = Duration::from_micros(500);
+        let t0 = clock_now();
+        let mut media = MediaTransport::new(
+            MediaTransportConfig {
+                local_addr: "127.0.0.1:0".parse().unwrap(),
+                local_ice_ufrag: rand_token(8),
+                local_ice_pwd: rand_token(24),
+                remote_ice_ufrag: rand_token(8),
+                remote_ice_pwd: rand_token(24),
+                remote_fingerprint: OFFER_FINGERPRINT.into(),
+                is_controlling: false,
+                local_setup: SetupRole::Passive,
+                // A STUN gatherer arms a retransmit schedule: a chain of
+                // timer deadlines with no inbound datagram at all.
+                stun_server: Some("127.0.0.1:9".parse().unwrap()),
+                max_remote_candidates: MAX_REMOTE_CANDIDATES,
+            },
+            t0,
+        )
+        .unwrap();
+        let first = media.poll_timeout().expect("a STUN gatherer has a timer");
+        // The first deadline is already overdue by 5 ms when the flood starts.
+        tokio::time::advance(first.saturating_duration_since(t0) + Duration::from_millis(5)).await;
+
+        let socket = Arc::new(FloodSocket::default());
+        let shared = test_shared();
+        let control = SessionControl::new();
+        let idle_deadline = clock_now() + Duration::from_secs(3600);
+        let mut last_fire = None;
+        let mut max_lateness = Duration::ZERO;
+        for i in 0..4000 {
+            let deadline = media.poll_timeout();
+            let done = read_one(
+                SessionId(0),
+                Arc::clone(&socket),
+                media,
+                idle_deadline,
+                last_fire,
+                Arc::clone(&control),
+                shared.clone(),
+            )
+            .await;
+            media = done.media;
+            last_fire = done.last_fire;
+            if i == 0 {
+                assert!(
+                    matches!(done.outcome, ReadOutcome::Timer),
+                    "the overdue timer must fire before any datagram is read: {:?}",
+                    done.outcome
+                );
+                assert_eq!(
+                    socket.reads.load(Ordering::Relaxed),
+                    0,
+                    "no datagram may be read ahead of an overdue timer"
+                );
+            } else if matches!(done.outcome, ReadOutcome::Timer)
+                && let Some(d) = deadline
+            {
+                max_lateness = max_lateness.max(clock_now().saturating_duration_since(d));
+            }
+            tokio::time::advance(TICK).await;
+        }
+        let fires = shared.timer_fires.load(Ordering::Relaxed);
+        assert!(
+            fires >= 3,
+            "the retransmit chain must keep firing through the flood, fired {fires}x"
+        );
+        assert!(
+            max_lateness <= crate::webrtc_session::MIN_TIMER_INTERVAL * 2,
+            "a deadline fired {max_lateness:?} late: the flood postponed it"
         );
     }
 
@@ -2141,7 +2630,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
             let before = tokio::time::Instant::now();
             {
                 let now = tokio::time::Instant::now().into_std();
-                crate::webrtc_session::sleep_until_timer(Some(now), now).await;
+                crate::webrtc_session::sleep_until_timer(Some(now), Some(now)).await;
             }
             let elapsed = before.elapsed();
             assert!(
@@ -2291,6 +2780,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
     /// restoring the `&&`-equivalent guard makes it pass again.
     #[tokio::test]
     async fn try_capture_config_requires_both_sps_and_pps() {
+        let (control, resource) = test_control_and_resource();
         let admitted = AdmittedWhip {
             socket: {
                 let s = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
@@ -2322,6 +2812,8 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 payload_type: 96,
                 clock_rate: 90_000,
             }],
+            control,
+            resource,
         };
         let mut session = WhipIngestSession::new(admitted);
 
@@ -2382,6 +2874,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             active_sessions: Arc::clone(&active_sessions),
             max_sessions,
             admit_notify: Arc::new(Notify::new()),
+            resources: ResourceTable::new(),
         });
         let cancel = tokio_util::sync::CancellationToken::new();
         let serve_cancel = cancel.clone();
@@ -2553,6 +3046,14 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                         "date: {date}".to_string()
                     } else if lower.starts_with("etag:") {
                         "etag: {etag}".to_string()
+                    } else if let Some(rest) = lower.strip_prefix("location: /whip/session/") {
+                        // The resource id is a fresh random token; pin its shape.
+                        assert_eq!(
+                            rest.len(),
+                            crate::webrtc_session::new_resource_id().len(),
+                            "the Location carries a full-length resource id: {l}"
+                        );
+                        "location: /whip/session/{id}".to_string()
                     } else {
                         l.to_string()
                     }

@@ -135,33 +135,28 @@ fn basic_verifier(username: &str, password: &str) -> std::sync::Arc<broadcast_au
     ))
 }
 
-/// I7: main answered every non-POST/non-OPTIONS method `405 Method Not
-/// Allowed` (no PATCH/DELETE teardown in this cut), so the session routes must
-/// NOT return a success without effect. PATCH and DELETE keep that parity
-/// with an `Allow` header.
+/// Issue #1149: PATCH and DELETE are real operations on the per-session
+/// resource, so against a resource that does not exist they are `404` (the old
+/// `405 Method Not Allowed` stub is gone), and the id-less `/whep/session`
+/// path is no resource at all. Full behaviour: `whep_session_resource.rs`.
 #[tokio::test]
-async fn whep_patch_and_delete_are_405_with_allow() {
+async fn whep_patch_and_delete_on_an_unknown_resource_are_404() {
     let (app, _token) = multimux::output::whep::serve_whep_for_test(None).await;
     for method in ["PATCH", "DELETE"] {
-        let resp = app
-            .clone()
-            .oneshot(
-                Request::builder()
-                    .method(method)
-                    .uri("/whep/session")
-                    .body(Body::empty())
-                    .unwrap(),
-            )
-            .await
-            .unwrap();
-        assert_eq!(
-            resp.status(),
-            StatusCode::METHOD_NOT_ALLOWED,
-            "{method} must be 405, not a stub 200/204"
-        );
-        assert!(
-            resp.headers().contains_key("allow"),
-            "{method} 405 must carry an Allow header"
-        );
+        for path in ["/whep/session/nope", "/whep/session"] {
+            let resp = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header("content-type", "application/trickle-ice-sdpfrag")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(resp.status(), StatusCode::NOT_FOUND, "{method} {path}");
+        }
     }
 }

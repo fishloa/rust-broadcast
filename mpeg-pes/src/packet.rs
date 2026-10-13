@@ -7,8 +7,6 @@ use crate::timestamp::{self, Dts, Pts};
 
 const MIN_LEN: usize = 6; // start_code(3) + stream_id(1) + PES_packet_length(2)
 const HEADER_FIXED: usize = 3; // 2 flag bytes + PES_header_data_length
-/// PES header stuffing byte (ISO/IEC 13818-1:2007 §2.4.3.7 — `0xFF`).
-const PES_HEADER_STUFFING_BYTE: u8 = 0xFF;
 
 // ── PES header flag bits (ISO/IEC 13818-1 §2.4.3.7, Table 2-21) ──────────────
 // First flag byte (`'10' | PES_scrambling_control(2) | PES_priority |
@@ -33,10 +31,24 @@ const EXT_PACK_HEADER: u8 = 0x40;
 const EXT_PROGRAM_PACKET_SEQUENCE_COUNTER: u8 = 0x20;
 const EXT_P_STD_BUFFER: u8 = 0x10;
 const EXT_FLAG_2: u8 = 0x01;
+/// The 3 `reserved` bits between `P-STD_buffer_flag` and `PES_extension_flag_2`.
+const EXT_RESERVED_MASK: u8 = 0x0E;
+const EXT_RESERVED_SHIFT: u32 = 1;
+/// Spec-convention value of those reserved bits (`'111'`).
+const EXT_RESERVED_VALUE: u8 = 0x07;
 
 /// Table 2-21: `marker_bit` / `stream_id_extension_flag` is the MSB of the
 /// byte; the remaining 7 bits carry the length / extension value.
 const MSB_FLAG: u8 = 0x80;
+/// The two fixed `'10'` marker bits at the top of the first PES header flag
+/// byte (Table 2-21).
+const F1_MARKER_MASK: u8 = 0xC0;
+const F1_MARKER_VALUE: u8 = 0x80;
+/// `ES_rate` is `marker_bit(1) | ES_rate(22) | marker_bit(1)`; both markers
+/// are `1` per Table 2-21.
+const ES_RATE_MARKERS_VALUE: u8 = 0b11;
+const ES_RATE_LEADING_MARKER: u8 = 0x80;
+const ES_RATE_TRAILING_MARKER: u8 = 0x01;
 /// Mask of those low 7 bits (`PES_extension_field_length`, `stream_id_extension`).
 const LOW7_MASK: u8 = 0x7F;
 
@@ -279,6 +291,10 @@ pub struct PesExtensionField<'a> {
 
 /// Typed PES header extension sub-structure
 /// (ISO/IEC 13818-1 §2.4.3.7, Table 2-21, `PES_extension_flag = 1`).
+///
+/// `#[non_exhaustive]`: build with [`PesExtension::new`] and set fields, so
+/// further additions are not a breaking change again.
+#[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct PesExtension<'a> {
@@ -292,9 +308,32 @@ pub struct PesExtension<'a> {
     pub p_std_buffer: Option<PStdBuffer>,
     /// `PES_extension_field()` payload, if `PES_extension_flag_2` is set.
     pub pes_extension_field: Option<PesExtensionField<'a>>,
+    /// The 3 `reserved` bits of the extension flags byte (Table 2-21; spec
+    /// convention `0b111`), kept so a real stream's value round-trips.
+    pub reserved_bits: u8,
+}
+
+impl Default for PesExtension<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<'a> PesExtension<'a> {
+    /// An extension with no optional sub-fields and the spec-convention
+    /// reserved bits (`0b111`).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            pes_private_data: None,
+            pack_header: None,
+            program_packet_sequence_counter: None,
+            p_std_buffer: None,
+            pes_extension_field: None,
+            reserved_bits: EXT_RESERVED_VALUE,
+        }
+    }
+
     fn parse(data: &'a [u8]) -> Result<Self> {
         if data.is_empty() {
             return Err(Error::BufferTooShort {
@@ -420,6 +459,7 @@ impl<'a> PesExtension<'a> {
             program_packet_sequence_counter,
             p_std_buffer,
             pes_extension_field,
+            reserved_bits: (flags & EXT_RESERVED_MASK) >> EXT_RESERVED_SHIFT,
         })
     }
 
@@ -455,7 +495,7 @@ impl<'a> PesExtension<'a> {
             });
         }
 
-        let mut flags = 0u8;
+        let mut flags = (self.reserved_bits & EXT_RESERVED_VALUE) << EXT_RESERVED_SHIFT;
         if self.pes_private_data.is_some() {
             flags |= EXT_PES_PRIVATE_DATA;
         }
@@ -548,6 +588,12 @@ pub struct PesHeader<'a> {
     pub escr: Option<Escr>,
     /// 22-bit ES rate (bytes/second × 50), if `ES_rate_flag` is set.
     pub es_rate: Option<u32>,
+    /// The two `marker_bit`s around `ES_rate` (Table 2-21), packed as
+    /// `0b<leading><trailing>`; the spec fixes both to `1` (`0b11`) but a real
+    /// stream (TSDuck `test-002.ts`) carries a `0` leading marker, so they are
+    /// kept for a byte-exact round trip. Only meaningful when `es_rate` is
+    /// `Some`.
+    pub es_rate_marker_bits: u8,
     /// DSM trick-mode control byte (typed), if `DSM_trick_mode_flag` is set.
     pub dsm_trick_mode: Option<TrickMode>,
     /// 7-bit `additional_copy_info`, if `additional_copy_info_flag` is set.
@@ -556,16 +602,48 @@ pub struct PesHeader<'a> {
     pub pes_crc: Option<u16>,
     /// PES extension sub-structure, if `PES_extension_flag` is set.
     pub pes_extension: Option<PesExtension<'a>>,
-    /// Number of trailing `0xFF` stuffing bytes inside the `PES_header_data_length`
-    /// region, after the typed optional fields (ISO/IEC 13818-1:2007 §2.4.3.7 —
+    /// The `stuffing_byte`s inside the `PES_header_data_length` region, after
+    /// the typed optional fields (ISO/IEC 13818-1 Table 2-21 —
     /// "stuffing_byte: fixed 8-bit value `0xFF`").
     ///
     /// Encoders pad the optional-header block (often so the elementary stream
-    /// starts at a fixed offset). These bytes are part of the wire image;
-    /// capturing the count lets [`PesPacket::serialize_into`] reproduce the
-    /// header byte-for-byte. Set to `0` when constructing a header with no
-    /// stuffing.
-    pub header_stuffing_len: usize,
+    /// starts at a fixed offset). These bytes are part of the wire image and
+    /// are kept verbatim (not just counted), so a non-`0xFF` filler from a
+    /// non-conforming encoder round-trips byte-for-byte too. Use `&[]` for a
+    /// header with no stuffing.
+    pub header_stuffing: &'a [u8],
+}
+
+impl<'a> PesHeader<'a> {
+    /// A header with `PES_scrambling_control = 0`, every flag clear, no
+    /// optional fields, no stuffing and spec-conformant marker bits. Set
+    /// fields on the result (the struct is `#[non_exhaustive]`).
+    #[must_use]
+    pub const fn new() -> Self {
+        Self {
+            scrambling_control: 0,
+            pes_priority: false,
+            data_alignment_indicator: false,
+            copyright: false,
+            original_or_copy: false,
+            pts: None,
+            dts: None,
+            escr: None,
+            es_rate: None,
+            es_rate_marker_bits: ES_RATE_MARKERS_VALUE,
+            dsm_trick_mode: None,
+            additional_copy_info: None,
+            pes_crc: None,
+            pes_extension: None,
+            header_stuffing: &[],
+        }
+    }
+}
+
+impl Default for PesHeader<'_> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl PesHeader<'_> {
@@ -597,7 +675,7 @@ impl PesHeader<'_> {
         if let Some(ref ext) = self.pes_extension {
             n += ext.serialized_len();
         }
-        n += self.header_stuffing_len;
+        n += self.header_stuffing.len();
         n
     }
 }
@@ -659,6 +737,12 @@ impl<'a> PesPacket<'a> {
         }
         let f1 = b[6];
         let f2 = b[7];
+        // Table 2-21: the first two bits are the fixed `'10'`. Anything else
+        // is not an MPEG-2 PES header (MPEG-1 PES, or damage) and would be
+        // misparsed as one.
+        if f1 & F1_MARKER_MASK != F1_MARKER_VALUE {
+            return Err(Error::BadHeaderMarker);
+        }
         let hdl = usize::from(b[8]);
         let hdr_start = MIN_LEN + HEADER_FIXED; // = 9
         let hdr_end = hdr_start + hdl;
@@ -667,6 +751,16 @@ impl<'a> PesPacket<'a> {
                 need: hdr_end,
                 have: b.len(),
                 what: "PES_header_data_length",
+            });
+        }
+        // The header lies inside a bounded packet: a `PES_packet_length` too
+        // small to hold `PES_header_data_length` is malformed (and would make
+        // serialize write header bytes beyond the declared length).
+        if pes_packet_length != 0 && hdr_end > payload_end {
+            return Err(Error::BufferTooShort {
+                need: hdr_end,
+                have: payload_end,
+                what: "PES_header_data_length exceeds PES_packet_length",
             });
         }
         let opt = &b[hdr_start..hdr_end];
@@ -728,6 +822,7 @@ impl<'a> PesPacket<'a> {
         };
 
         // ES_rate (3 bytes: 1 marker + 22-bit rate + 1 marker).
+        let mut es_rate_marker_bits = ES_RATE_MARKERS_VALUE;
         let es_rate = if f2 & F2_ES_RATE != 0 {
             if opt.len() < cursor + 3 {
                 return Err(Error::BufferTooShort {
@@ -736,6 +831,7 @@ impl<'a> PesPacket<'a> {
                     what: "ES_rate",
                 });
             }
+            es_rate_marker_bits = ((opt[cursor] >> 7) << 1) | (opt[cursor + 2] & 1);
             let rate = (((opt[cursor] & 0x7F) as u32) << 15)
                 | ((opt[cursor + 1] as u32) << 7)
                 | ((opt[cursor + 2] >> 1) as u32);
@@ -805,7 +901,7 @@ impl<'a> PesPacket<'a> {
         // Bytes remaining in the `PES_header_data_length` region after the typed
         // optional fields are `0xFF` stuffing (ISO/IEC 13818-1:2007 §2.4.3.7).
         // Record the count so serialization reproduces the header byte-for-byte.
-        let header_stuffing_len = hdl.saturating_sub(cursor);
+        let header_stuffing = opt.get(cursor..).unwrap_or(&[]);
 
         let header = PesHeader {
             scrambling_control: (f1 >> 4) & 0x03,
@@ -817,11 +913,12 @@ impl<'a> PesPacket<'a> {
             dts,
             escr,
             es_rate,
+            es_rate_marker_bits,
             dsm_trick_mode,
             additional_copy_info,
             pes_crc,
             pes_extension,
-            header_stuffing_len,
+            header_stuffing,
         };
 
         Ok(PesPacket {
@@ -919,9 +1016,15 @@ impl<'a> PesPacket<'a> {
                 }
                 // ES_rate: marker(1) | rate(22) | marker(1) = 3 bytes.
                 if let Some(rate) = h.es_rate {
-                    buf[cursor] = 0x80 | ((rate >> 15) as u8 & 0x7F);
+                    let leading = if h.es_rate_marker_bits & 0b10 != 0 {
+                        ES_RATE_LEADING_MARKER
+                    } else {
+                        0
+                    };
+                    buf[cursor] = leading | ((rate >> 15) as u8 & 0x7F);
                     buf[cursor + 1] = ((rate >> 7) & 0xFF) as u8;
-                    buf[cursor + 2] = (((rate & 0x7F) as u8) << 1) | 0x01;
+                    buf[cursor + 2] = (((rate & 0x7F) as u8) << 1)
+                        | (h.es_rate_marker_bits & ES_RATE_TRAILING_MARKER);
                     cursor += 3;
                 }
                 // DSM trick mode.
@@ -945,12 +1048,10 @@ impl<'a> PesPacket<'a> {
                     cursor += written;
                 }
 
-                // Trailing `0xFF` stuffing inside the header_data_length region
-                // (ISO/IEC 13818-1:2007 §2.4.3.7), reproducing the encoder's pad.
-                for b in buf[cursor..cursor + h.header_stuffing_len].iter_mut() {
-                    *b = PES_HEADER_STUFFING_BYTE;
-                }
-                cursor += h.header_stuffing_len;
+                // Trailing stuffing inside the header_data_length region
+                // (ISO/IEC 13818-1 Table 2-21), reproducing the encoder's pad.
+                buf[cursor..cursor + h.header_stuffing.len()].copy_from_slice(h.header_stuffing);
+                cursor += h.header_stuffing.len();
 
                 cursor
             }
@@ -1043,11 +1144,12 @@ mod tests {
             dts: Some(Dts(0)),
             escr: None,
             es_rate: None,
+            es_rate_marker_bits: 0b11,
             dsm_trick_mode: None,
             additional_copy_info: None,
             pes_crc: None,
             pes_extension: None,
-            header_stuffing_len: 0,
+            header_stuffing: &[],
         };
         let pkt = PesPacket {
             stream_id: StreamId(0xE0),
@@ -1076,7 +1178,8 @@ mod tests {
         let h = pkt.header.as_ref().unwrap();
         assert!(h.pts.is_some());
         assert_eq!(
-            h.header_stuffing_len, 3,
+            h.header_stuffing,
+            &[0xFF, 0xFF, 0xFF],
             "3 stuffing bytes after the 5-byte PTS"
         );
         // serialized_len must account for the stuffing.
@@ -1154,11 +1257,12 @@ mod tests {
             dts: None,
             escr: None,
             es_rate: None,
+            es_rate_marker_bits: 0b11,
             dsm_trick_mode: None,
             additional_copy_info: None,
             pes_crc: None,
             pes_extension: None,
-            header_stuffing_len: 0,
+            header_stuffing: &[],
         }
     }
 
@@ -1211,6 +1315,7 @@ mod tests {
     fn pes_header_es_rate_round_trip() {
         let h = PesHeader {
             es_rate: Some(0x3FFFFF),
+            es_rate_marker_bits: 0b11,
             ..empty_header()
         };
         let bytes = build_pes(h, &[]);
@@ -1302,6 +1407,7 @@ mod tests {
             program_packet_sequence_counter: Some(ppsc),
             p_std_buffer: None,
             pes_extension_field: None,
+            ..PesExtension::new()
         };
         let h = PesHeader {
             pes_extension: Some(ext),
@@ -1326,6 +1432,7 @@ mod tests {
             program_packet_sequence_counter: None,
             p_std_buffer: Some(pstd),
             pes_extension_field: None,
+            ..PesExtension::new()
         };
         let h = PesHeader {
             pes_extension: Some(ext),
@@ -1355,6 +1462,7 @@ mod tests {
             program_packet_sequence_counter: None,
             p_std_buffer: None,
             pes_extension_field: None,
+            ..PesExtension::new()
         };
         let mut buf = vec![0u8; ext.serialized_len()];
         assert!(ext.serialize_into(&mut buf).is_err());
@@ -1378,6 +1486,7 @@ mod tests {
                 low_bits: 0,
                 rest: &data,
             }),
+            ..PesExtension::new()
         };
         let mut buf = vec![0u8; ext.serialized_len()];
         assert!(matches!(
@@ -1399,6 +1508,7 @@ mod tests {
             program_packet_sequence_counter: None,
             p_std_buffer: None,
             pes_extension_field: None,
+            ..PesExtension::new()
         };
         let h = PesHeader {
             pes_extension: Some(ext),
@@ -1427,6 +1537,7 @@ mod tests {
                 size: 100,
             }),
             pes_extension_field: None,
+            ..PesExtension::new()
         };
         let h = PesHeader {
             scrambling_control: 0,
@@ -1441,11 +1552,12 @@ mod tests {
                 extension: 0,
             }),
             es_rate: Some(50_000),
+            es_rate_marker_bits: 0b11,
             dsm_trick_mode: Some(TrickMode::SlowMotion { rep_cntrl: 3 }),
             additional_copy_info: Some(5),
             pes_crc: Some(0xCAFE),
             pes_extension: Some(ext),
-            header_stuffing_len: 0,
+            header_stuffing: &[],
         };
         let bytes = build_pes(h, &[0xFF]);
         let pkt = PesPacket::parse(&bytes).unwrap();

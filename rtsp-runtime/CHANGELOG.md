@@ -6,6 +6,12 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING:** `ClientSession::handle_data` now returns `HandleOutcome { events, error }` instead of `Result<Vec<ClientEvent>>` (audit T16, #1144). A terminal protocol error (an unparseable message head, an over-long header, an unfulfillable `Content-Length`: TCP framing is lost) used to discard every event already decoded in the same call, including media frames and responses that preceded the damage; they are now returned alongside the error. Migrate: `session.handle_data(b)?` becomes `session.handle_data(b).into_result()?` (identical all-or-nothing behaviour; also available as the new `handle_data_strict`), or read `outcome.events` first and then act on `outcome.error`. The tokio `ClientCodec` delivers the events decoded before the error and raises the error on the next `decode`.
+
+### Added
+- `HandleOutcome` (exported at the crate root), `HandleOutcome::into_result` and `ClientSession::handle_data_strict`.
+
 ## [0.7.1] - 2026-10-13
 ### Fixed
 - `AsyncRtspClient::send_interleaved` no longer parks ~1.5 ms per frame. Its

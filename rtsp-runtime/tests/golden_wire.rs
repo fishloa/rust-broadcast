@@ -38,7 +38,8 @@ fn exchange(
         "--- {label} response ---\n{}",
         String::from_utf8_lossy(&resp)
     ));
-    c.handle_data(&resp).expect("client handles response");
+    c.handle_data_strict(&resp)
+        .expect("client handles response");
 }
 
 #[test]

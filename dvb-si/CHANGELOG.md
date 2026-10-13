@@ -1,6 +1,13 @@
 # Changelog
 
 ## [Unreleased]
+### Fixed
+
+- `hevc_video`: byte 12's `reserved(2)` (bits `[3:2]`) and the temporal sub-block's two `reserved(5)` fields are now all ones per H.222.0 Table 2-113. Real captures (9 HEVC_video_descriptors in the local TSDuck archive carry `0x9F` + `1F 1F`) contradicted the earlier r03-W7 reading that cleared bit 3 and the sub-block reserved bits, so they did not re-serialize byte-identically. Parse unaffected.
+
+### Added
+
+- `tests/real_capture_byte_identity.rs`: re-serializes every table section and every descriptor in every PMT/SDT/NIT/BAT/EIT/CAT/TSDT/TOT loop of every capture under the local `.test-streams/` archive (skips when absent) and asserts byte-identity, with an explicit `TOLERATED` allowlist of reserved-bit deviations by real senders keyed by (capture, descriptor/table). Backed by a `#[doc(hidden)]` `AnyDescriptor::reserialize()`.
 
 ## [11.1.0] - 2026-10-13
 ### Fixed

@@ -845,6 +845,52 @@ impl MediaTransport {
         Ok(())
     }
 
+    /// ICE restart (RFC 8445 §9, as driven by RFC 9725 §4.3.2 / RFC 8840):
+    /// installs new local and remote ICE credentials, discards the previous
+    /// remote candidates and candidate pairs, and starts new connectivity
+    /// checks, **without touching DTLS or SRTP**: the DTLS association, its
+    /// keys and `srtp_read`/`srtp_write` carry on, so media sent over the old
+    /// pair keeps flowing until the new pair is nominated. The local
+    /// candidates are kept (the socket is unchanged); the caller adds the
+    /// peer's new remote candidates afterwards with
+    /// [`Self::add_remote_candidate`], whose
+    /// [`MediaTransportConfig::max_remote_candidates`] budget starts over.
+    ///
+    /// `local_ufrag`/`local_pwd` are the credentials this side now
+    /// advertises; `remote_ufrag`/`remote_pwd` are the peer's new ones.
+    ///
+    /// # Errors
+    ///
+    /// [`Error::Media`] if a credential is empty or too short for RFC 8445
+    /// §5.4 (a `ufrag` of at least 24 bits, a `pwd` of at least 128 bits).
+    /// The transport is left unchanged on error.
+    pub fn restart_ice(
+        &mut self,
+        now: Instant,
+        local_ufrag: &str,
+        local_pwd: &str,
+        remote_ufrag: &str,
+        remote_pwd: &str,
+    ) -> Result<(), Error> {
+        if remote_ufrag.is_empty() || remote_pwd.is_empty() {
+            return Err(Error::Media(
+                "ice restart: remote ufrag/pwd must not be empty".to_string(),
+            ));
+        }
+        self.ice
+            .generate_restart_credentials(local_ufrag.to_string(), local_pwd.to_string())
+            .map_err(|e| Error::Media(format!("ice restart credentials: {e}")))?;
+        self.ice
+            .apply_restart(now, true)
+            .map_err(|e| Error::Media(format!("apply ice restart: {e}")))?;
+        self.ice
+            .set_remote_credentials(remote_ufrag.to_string(), remote_pwd.to_string())
+            .map_err(|e| Error::Media(format!("ice restart remote credentials: {e}")))?;
+        self.remote_candidate_count = 0;
+        self.known_remote_addrs.clear();
+        Ok(())
+    }
+
     /// The next outbound datagram to send, if any. Drains the ICE agent's,
     /// the DTLS endpoint's, and (while gathering) the STUN client's write
     /// queues, in that order.
@@ -2868,6 +2914,106 @@ mod tests {
             matches!(&events[..], [MediaEvent::Rtp(rtp)] if rtp.sequence_number == 8),
             "A must decrypt B's RTP: {events:?}"
         );
+    }
+
+    /// ICE restart mid-session (RFC 8445 §9): both sides install new
+    /// credentials, ICE re-nominates a pair under them, and the DTLS/SRTP
+    /// session is untouched — no new handshake, the same keys keep decrypting
+    /// in both directions, before, during and after the restart.
+    #[test]
+    fn ice_restart_renominates_a_pair_and_keeps_the_dtls_srtp_session() {
+        let mut pair = loopback_pair();
+        pump_until_both_complete(&mut pair, Duration::from_secs(8));
+        let before = pair.a.encrypt_rtp(&rtp_test_packet(1)).unwrap();
+
+        let t0 = Instant::now();
+        let (a_u, a_p) = ("newa0ufrag", "newa-ice-password-0000000");
+        let (b_u, b_p) = ("newb0ufrag", "newb-ice-password-0000000");
+        pair.a.restart_ice(t0, a_u, a_p, b_u, b_p).unwrap();
+        pair.b.restart_ice(t0, b_u, b_p, a_u, a_p).unwrap();
+        assert_eq!(
+            pair.a.remote_candidate_count, 0,
+            "the remote budget restarts"
+        );
+        let (cand_a, cand_b) = (
+            pair.a.local_candidates()[0].clone(),
+            pair.b.local_candidates()[0].clone(),
+        );
+        pair.a.add_remote_candidate(&cand_b).unwrap();
+        pair.b.add_remote_candidate(&cand_a).unwrap();
+
+        // Pump on virtual time until each side reports ICE connected again.
+        let mut now = t0;
+        let (mut a_ice, mut b_ice) = (false, false);
+        while now - t0 <= Duration::from_secs(8) && !(a_ice && b_ice) {
+            let mut progressed = false;
+            while let Some(d) = pair.a.poll_transmit() {
+                for e in pair.b.handle_datagram(now, pair.a_addr, &d.bytes).unwrap() {
+                    assert!(
+                        !matches!(e, MediaEvent::DtlsHandshakeComplete),
+                        "no new handshake"
+                    );
+                    b_ice |= matches!(&e, MediaEvent::IceStateChanged(s) if s == "Connected");
+                }
+                progressed = true;
+            }
+            while let Some(d) = pair.b.poll_transmit() {
+                for e in pair.a.handle_datagram(now, pair.b_addr, &d.bytes).unwrap() {
+                    assert!(
+                        !matches!(e, MediaEvent::DtlsHandshakeComplete),
+                        "no new handshake"
+                    );
+                    a_ice |= matches!(&e, MediaEvent::IceStateChanged(s) if s == "Connected");
+                }
+                progressed = true;
+            }
+            if !(progressed || a_ice && b_ice) {
+                let next = [pair.a.poll_timeout(), pair.b.poll_timeout()]
+                    .into_iter()
+                    .flatten()
+                    .min()
+                    .expect("a pending timer while checking");
+                now = next.max(now + Duration::from_millis(1));
+                a_ice |= pair
+                    .a
+                    .handle_timeout(now)
+                    .iter()
+                    .any(|e| matches!(e, MediaEvent::IceStateChanged(s) if s == "Connected"));
+                b_ice |= pair
+                    .b
+                    .handle_timeout(now)
+                    .iter()
+                    .any(|e| matches!(e, MediaEvent::IceStateChanged(s) if s == "Connected"));
+            }
+        }
+        assert!(
+            a_ice && b_ice,
+            "ICE must reconnect under the new credentials"
+        );
+
+        // The pre-restart ciphertext still decrypts (same SRTP session), and
+        // fresh media flows both ways.
+        let events = pair.b.handle_datagram(now, pair.a_addr, &before).unwrap();
+        assert!(
+            matches!(&events[..], [MediaEvent::Rtp(r)] if r.sequence_number == 1),
+            "{events:?}"
+        );
+        let p = pair.a.encrypt_rtp(&rtp_test_packet(2)).unwrap();
+        let events = pair.b.handle_datagram(now, pair.a_addr, &p).unwrap();
+        assert!(
+            matches!(&events[..], [MediaEvent::Rtp(r)] if r.sequence_number == 2),
+            "{events:?}"
+        );
+        let p = pair.b.encrypt_rtp(&rtp_test_packet(3)).unwrap();
+        let events = pair.a.handle_datagram(now, pair.b_addr, &p).unwrap();
+        assert!(
+            matches!(&events[..], [MediaEvent::Rtp(r)] if r.sequence_number == 3),
+            "{events:?}"
+        );
+
+        // Credentials too short for RFC 8445 §5.4 are refused, state intact.
+        assert!(pair.a.restart_ice(now, "x", "y", b_u, b_p).is_err());
+        assert!(pair.a.restart_ice(now, a_u, a_p, "", b_p).is_err());
     }
 
     #[test]

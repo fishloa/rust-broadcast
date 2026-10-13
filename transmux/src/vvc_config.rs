@@ -616,7 +616,7 @@ impl Serialize for VvcConfigurationBox {
 
     fn serialized_len(&self) -> usize {
         // 8-byte box header + 4-byte FullBox header + record.
-        8 + 4 + self.config.serialized_len()
+        crate::box_types::box_len(8 + 4 + self.config.serialized_len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -629,10 +629,7 @@ impl Serialize for VvcConfigurationBox {
             });
         }
         let mut cursor = 0usize;
-        buf[cursor..cursor + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        cursor += 4;
-        buf[cursor..cursor + 4].copy_from_slice(b"vvcC");
-        cursor += 4;
+        cursor += crate::box_types::write_box_header(buf, b"vvcC", need)?;
         // FullBox version + flags.
         buf[cursor] = self.version;
         cursor += 1;

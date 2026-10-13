@@ -6,7 +6,7 @@
 use alloc::string::String;
 use alloc::vec::Vec;
 
-use super::Track;
+use super::{InputDegradation, Track};
 
 /// One PCR observation from a TS adaptation field (ISO/IEC 13818-1 §2.4.3.4).
 ///
@@ -98,6 +98,11 @@ pub struct Media {
     /// (media plane step-2 fix wave 1, B2/B3) — always empty unless the
     /// producing demuxer actually skipped something; see [`SkippedTrack`].
     pub skipped: Vec<SkippedTrack>,
+    /// Damage a one-shot demuxer skipped over instead of failing the whole
+    /// input (audit T16, #1144): one entry per skipped container unit (see
+    /// [`InputDegradation::MalformedUnit`]), in input order. Empty for a clean
+    /// input and for every demuxer that never resynchronises.
+    pub degraded: Vec<InputDegradation>,
 }
 
 impl Media {
@@ -109,6 +114,7 @@ impl Media {
             movie_timescale,
             pcr: Vec::new(),
             skipped: Vec::new(),
+            degraded: Vec::new(),
         }
     }
 

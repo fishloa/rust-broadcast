@@ -396,7 +396,7 @@ impl Serialize for AVCConfigurationBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        8 + self.config.serialized_len()
+        crate::box_types::box_len(8 + self.config.serialized_len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -408,11 +408,7 @@ impl Serialize for AVCConfigurationBox {
             });
         }
         let mut cursor = 0usize;
-        let size32 = need as u32;
-        buf[cursor..cursor + 4].copy_from_slice(&size32.to_be_bytes());
-        cursor += 4;
-        buf[cursor..cursor + 4].copy_from_slice(b"avcC");
-        cursor += 4;
+        cursor += crate::box_types::write_box_header(buf, b"avcC", need)?;
         cursor += self.config.serialize_into(&mut buf[cursor..])?;
         Ok(cursor)
     }

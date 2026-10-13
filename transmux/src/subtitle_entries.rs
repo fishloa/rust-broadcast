@@ -114,7 +114,7 @@ impl XmlSubtitleSampleEntry {
             });
         }
         // body starts past the 8-byte box header
-        let body = &bytes[8..];
+        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         // SampleEntry: reserved(6) + data_reference_index(2)
         let data_reference_index = u16::from_be_bytes([body[6], body[7]]);
         let pos = 8usize; // into body
@@ -169,7 +169,7 @@ impl Serialize for XmlSubtitleSampleEntry {
         for eb in &self.extra_boxes {
             n += eb.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -182,10 +182,7 @@ impl Serialize for XmlSubtitleSampleEntry {
         }
         let mut c = 0usize;
         // box header: size(32) + fourcc(32)
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"stpp");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"stpp", need)?;
         // SampleEntry: reserved(6) zeros + data_reference_index(16). The zeros
         // are written, not skipped: a reused/dirty caller buffer would
         // otherwise keep garbage there (r04-W45).
@@ -249,7 +246,7 @@ impl WebVttConfigurationBox {
                 what: "vttC",
             });
         }
-        let body = &bytes[BOX_HDR..];
+        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let config = core::str::from_utf8(body).map_err(|_| Error::InvalidValue {
             field: "vttC config",
             value: 0,
@@ -272,7 +269,7 @@ impl Serialize for WebVttConfigurationBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        BOX_HDR + self.config.len()
+        crate::box_types::box_len(BOX_HDR + self.config.len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -284,10 +281,7 @@ impl Serialize for WebVttConfigurationBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"vttC");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"vttC", need)?;
         buf[c..c + self.config.len()].copy_from_slice(self.config.as_bytes());
         c += self.config.len();
         Ok(c)
@@ -321,7 +315,7 @@ impl CuePayloadBox {
                 what: "payl",
             });
         }
-        let body = &bytes[BOX_HDR..];
+        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let s = core::str::from_utf8(body).map_err(|_| Error::InvalidValue {
             field: "payl cue_text",
             value: 0,
@@ -344,7 +338,7 @@ impl Serialize for CuePayloadBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        BOX_HDR + self.cue_text.len()
+        crate::box_types::box_len(BOX_HDR + self.cue_text.len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -356,10 +350,7 @@ impl Serialize for CuePayloadBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"payl");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"payl", need)?;
         buf[c..c + self.cue_text.len()].copy_from_slice(self.cue_text.as_bytes());
         c += self.cue_text.len();
         Ok(c)
@@ -393,7 +384,7 @@ impl CueSettingsBox {
                 what: "sttg",
             });
         }
-        let body = &bytes[BOX_HDR..];
+        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let s = core::str::from_utf8(body).map_err(|_| Error::InvalidValue {
             field: "sttg settings",
             value: 0,
@@ -416,7 +407,7 @@ impl Serialize for CueSettingsBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        BOX_HDR + self.settings.len()
+        crate::box_types::box_len(BOX_HDR + self.settings.len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -428,10 +419,7 @@ impl Serialize for CueSettingsBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"sttg");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"sttg", need)?;
         buf[c..c + self.settings.len()].copy_from_slice(self.settings.as_bytes());
         c += self.settings.len();
         Ok(c)
@@ -465,7 +453,7 @@ impl CueIdBox {
                 what: "iden",
             });
         }
-        let body = &bytes[BOX_HDR..];
+        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let s = core::str::from_utf8(body).map_err(|_| Error::InvalidValue {
             field: "iden cue_id",
             value: 0,
@@ -488,7 +476,7 @@ impl Serialize for CueIdBox {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        BOX_HDR + self.cue_id.len()
+        crate::box_types::box_len(BOX_HDR + self.cue_id.len())
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -500,10 +488,7 @@ impl Serialize for CueIdBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"iden");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"iden", need)?;
         buf[c..c + self.cue_id.len()].copy_from_slice(self.cue_id.as_bytes());
         c += self.cue_id.len();
         Ok(c)
@@ -545,7 +530,7 @@ impl VttCueBox {
                 what: "vttc",
             });
         }
-        let body = &bytes[BOX_HDR..];
+        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let mut payload: Option<CuePayloadBox> = None;
         let mut settings: Option<CueSettingsBox> = None;
         let mut cue_id: Option<CueIdBox> = None;
@@ -598,7 +583,7 @@ impl Serialize for VttCueBox {
         if let Some(i) = &self.cue_id {
             n += i.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -610,10 +595,7 @@ impl Serialize for VttCueBox {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"vttc");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"vttc", need)?;
         c += self.payload.serialize_into(&mut buf[c..])?;
         if let Some(s) = &self.settings {
             c += s.serialize_into(&mut buf[c..])?;
@@ -723,7 +705,7 @@ impl WvttSampleEntry {
                 what: "wvtt",
             });
         }
-        let body = &bytes[BOX_HDR..];
+        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
         let data_reference_index = u16::from_be_bytes([body[6], body[7]]);
 
         // Walk child boxes in body[8..]
@@ -747,7 +729,7 @@ impl WvttSampleEntry {
                     bt.copy_from_slice(fourcc);
                     extra_boxes.push(crate::init_segment::OpaqueBox::new(
                         bt,
-                        child[BOX_HDR..].to_vec(),
+                        child[crate::box_types::box_header_len(child)?..].to_vec(),
                     ));
                 }
             }
@@ -784,7 +766,7 @@ impl Serialize for WvttSampleEntry {
         for eb in &self.extra_boxes {
             n += eb.serialized_len();
         }
-        n
+        crate::box_types::box_len(n)
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -796,10 +778,7 @@ impl Serialize for WvttSampleEntry {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"wvtt");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"wvtt", need)?;
         // SampleEntry: reserved(6) zeros + data_reference_index(16). Written
         // explicitly so a reused/dirty caller buffer cannot leave garbage in the
         // reserved bytes (r04-W45).

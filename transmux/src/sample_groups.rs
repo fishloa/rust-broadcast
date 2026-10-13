@@ -182,7 +182,7 @@ impl<'a> Parse<'a> for ProducerReferenceTimeBox {
                 reason: "expected prft",
             });
         }
-        Self::parse_body(&bytes[BOX_HEADER_SIZE..])
+        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
 }
 
@@ -201,10 +201,7 @@ impl Serialize for ProducerReferenceTimeBox {
             });
         }
         let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"prft");
-        c += 4;
+        c += crate::box_types::write_compact_box_header(buf, b"prft", need)?;
         buf[c] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[c + 1] = fb[1];
@@ -498,7 +495,7 @@ impl<'a> Parse<'a> for SampleGroupDescriptionBox {
                 reason: "expected sgpd",
             });
         }
-        Self::parse_body(&bytes[BOX_HEADER_SIZE..])
+        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
 }
 
@@ -519,7 +516,9 @@ impl Serialize for SampleGroupDescriptionBox {
         // omitting it re-framed the whole box (audit r05-W15).
         let dl_field = if self.version >= 1 { 4 } else { 0 };
         let _ = use_default_len;
-        BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + dl_field + 4 + entries_size
+        crate::box_types::box_len(
+            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + dl_field + 4 + entries_size,
+        )
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -532,10 +531,7 @@ impl Serialize for SampleGroupDescriptionBox {
         }
         let (effective_dl, per_entry_prefix) = self.effective_default_length();
         let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"sgpd");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"sgpd", need)?;
         buf[c] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[c + 1] = fb[1];
@@ -732,7 +728,7 @@ impl<'a> Parse<'a> for SampleToGroupBox {
                 reason: "expected sbgp",
             });
         }
-        Self::parse_body(&bytes[BOX_HEADER_SIZE..])
+        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
 }
 
@@ -740,7 +736,9 @@ impl Serialize for SampleToGroupBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let gtp_size = if self.version == 1 { 4 } else { 0 };
-        BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + gtp_size + 4 + self.entries.len() * 8
+        crate::box_types::box_len(
+            BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + gtp_size + 4 + self.entries.len() * 8,
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -751,10 +749,7 @@ impl Serialize for SampleToGroupBox {
             });
         }
         let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"sbgp");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"sbgp", need)?;
         buf[c] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[c + 1] = fb[1];
@@ -955,7 +950,7 @@ impl<'a> Parse<'a> for SubSampleInformationBox {
                 reason: "expected subs",
             });
         }
-        Self::parse_body(&bytes[BOX_HEADER_SIZE..])
+        Self::parse_body(&bytes[crate::box_types::box_header_len(bytes)?..])
     }
 }
 
@@ -963,7 +958,7 @@ impl Serialize for SubSampleInformationBox {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let entries_size: usize = self.entries.iter().map(|e| e.wire_len(self.version)).sum();
-        BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + entries_size
+        crate::box_types::box_len(BOX_HEADER_SIZE + FULLBOX_EXTRA_SIZE + 4 + entries_size)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -974,10 +969,7 @@ impl Serialize for SubSampleInformationBox {
             });
         }
         let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"subs");
-        c += 4;
+        c += crate::box_types::write_box_header(buf, b"subs", need)?;
         buf[c] = self.version;
         let fb = self.flags.to_be_bytes();
         buf[c + 1] = fb[1];

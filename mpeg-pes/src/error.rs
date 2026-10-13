@@ -34,6 +34,10 @@ pub enum Error {
     /// (see `broadcast_common::len`, #1129).
     #[error(transparent)]
     FieldOverflow(#[from] broadcast_common::len::FieldOverflow),
+    /// The two fixed marker bits of the first PES header flag byte were not
+    /// `'10'` (ISO/IEC 13818-1 Table 2-21): not an MPEG-2 PES header.
+    #[error("PES header marker bits are not '10'")]
+    BadHeaderMarker,
     /// `PTS_DTS_flags` on the wire was `01` (ISO/IEC 13818-1 Table 2-21
     /// reserves this combination — only `00`/`10`/`11` are defined), or a
     /// `PesHeader` had `dts.is_some()` with `pts.is_none()` (the same

@@ -798,6 +798,67 @@ pub struct MetadataElement {
     pub scoped_namespaces: Option<Vec<(String, String)>>,
 }
 
+// Iterative `Drop` for the self-recursive element types (#1146). The
+// compiler-generated drop glue recurses once per nesting level, so a tree
+// built through the struct API (parsing caps depth at `MAX_NESTING_DEPTH`)
+// with tens of thousands of levels would overflow the stack when dropped.
+// Each impl moves the same-type grandchildren onto an explicit work stack,
+// so every node is dropped with an already-empty child list.
+
+impl Drop for SpanElement {
+    fn drop(&mut self) {
+        if !self
+            .content
+            .iter()
+            .any(|c| matches!(c, InlineContent::Span(_)))
+        {
+            return;
+        }
+        let mut stack: Vec<InlineContent> = core::mem::take(&mut self.content);
+        while let Some(node) = stack.pop() {
+            if let InlineContent::Span(mut span) = node {
+                stack.append(&mut span.content);
+            }
+        }
+    }
+}
+
+/// Move the nested metadata children of `child` (if any) onto `stack`.
+fn drain_metadata_children(child: &mut MetadataChild, stack: &mut Vec<MetadataChild>) {
+    match child {
+        MetadataChild::Metadata(m) => stack.append(&mut m.children),
+        MetadataChild::EbuttmDocumentMetadata(e) => stack.append(&mut e.children),
+        _ => {}
+    }
+}
+
+fn drop_metadata_children(children: &mut Vec<MetadataChild>) {
+    if !children.iter().any(|c| {
+        matches!(
+            c,
+            MetadataChild::Metadata(_) | MetadataChild::EbuttmDocumentMetadata(_)
+        )
+    }) {
+        return;
+    }
+    let mut stack: Vec<MetadataChild> = core::mem::take(children);
+    while let Some(mut node) = stack.pop() {
+        drain_metadata_children(&mut node, &mut stack);
+    }
+}
+
+impl Drop for MetadataElement {
+    fn drop(&mut self) {
+        drop_metadata_children(&mut self.children);
+    }
+}
+
+impl Drop for EbuttmElement {
+    fn drop(&mut self) {
+        drop_metadata_children(&mut self.children);
+    }
+}
+
 /// A text-only metadata element (`ttm:title`, `ttm:desc`, `ttm:copyright`).
 #[derive(Debug, Clone, PartialEq, Default)]
 #[non_exhaustive]

@@ -238,7 +238,7 @@ impl Vp9SampleEntry {
                 what: "vp09 missing vpcC",
             },
         )?;
-        let config = Vp9ConfigurationBox::parse(&vpcc[BOX_HDR..])?;
+        let config = Vp9ConfigurationBox::parse(&vpcc[crate::box_types::box_header_len(vpcc)?..])?;
         let children = crate::sample_entries::entry_children(region, &VPCC_FOURCC)?;
         Ok(Self {
             visual,
@@ -252,9 +252,11 @@ impl Serialize for Vp9SampleEntry {
     type Error = Error;
     fn serialized_len(&self) -> usize {
         let config_len = BOX_HDR + self.config.serialized_len();
-        BOX_HDR
-            + VisualSampleEntryFields::serialized_len()
-            + crate::sample_entries::entry_children_len(&self.children, config_len)
+        crate::box_types::box_len(
+            BOX_HDR
+                + VisualSampleEntryFields::serialized_len()
+                + crate::sample_entries::entry_children_len(&self.children, config_len),
+        )
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -265,10 +267,7 @@ impl Serialize for Vp9SampleEntry {
             });
         }
         let mut c = 0usize;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(&VP09_FOURCC);
-        c += 4;
+        c += crate::box_types::write_box_header(buf, &VP09_FOURCC, need)?;
         c += self.visual.serialize_body_into(&mut buf[c..])?;
         // The config box keeps its wire position: a real `vp09`/`av01` entry
         // often carries `pasp` *before* it (audit item 3, round 3).

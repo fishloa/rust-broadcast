@@ -2,6 +2,31 @@
 
 ## [Unreleased]
 
+### Changed (breaking, umbrella #1139 T11 / audit r01-W2)
+- `PesHeader::header_stuffing_len: usize` is replaced by
+  `PesHeader::header_stuffing: &'a [u8]` (the stuffing bytes verbatim; use `&[]`
+  for none), so non-`0xFF` stuffing is no longer rewritten to `0xFF`.
+  Migration: `header_stuffing_len: n` -> `header_stuffing: &[0xFF; n]`.
+- `PesExtension` gains `reserved_bits` (the 3 `reserved` bits of the extension
+  flags byte, ISO/IEC 13818-1 Table 2-21), preserved on parse and written back
+  (previously always written as `000`). It is now `#[non_exhaustive]` with
+  `PesExtension::new()` / `Default` (spec-convention `0b111`).
+
+- `PesHeader` gains `es_rate_marker_bits` (the two `ES_rate` marker bits; a real
+  stream, TSDuck `test-002.ts`, has a `0` leading marker the writer used to
+  force to `1`) and `PesHeader::new()` / `Default`.
+- `PesPacket::parse` now rejects (new `Error::BadHeaderMarker`) a header whose
+  first flag byte is not `'10'` (Table 2-21; MPEG-1 PES or damage was silently
+  misparsed), and rejects a `PES_header_data_length` that does not fit inside a
+  bounded `PES_packet_length` (it re-serialized beyond the declared length).
+
+### Added
+- `tests/pes_header_roundtrip_exhaustive.rs`: every PES packet reassembled from
+  every committed `.ts` fixture re-serializes byte-exactly; real evidence for
+  header stuffing (`pes-pts-dts-stuffing.ts`) and for `reserved == 0b000`
+  (`dirac-vc2-extended-stream-id.ts`); spec-built vectors for non-`0xFF`
+  stuffing and all 8 reserved values.
+
 ## [0.5.0] - 2026-10-05
 ### Changed (breaking)
 - `PesExtension::pes_extension_field` is now `Option<PesExtensionField<'a>>`

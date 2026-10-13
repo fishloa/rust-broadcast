@@ -80,28 +80,76 @@ def caret(version: str) -> str:
     return f"{parts[0]}.{parts[1]}"
 
 
-def update_sibling_refs(crate: str, new: str, apply: bool) -> list[str]:
-    """Point every other workspace crate's dependency on `crate` at `new`."""
-    out: list[str] = []
-    want = caret(new)
-    dep_re = re.compile(
-        rf'(^{re.escape(crate)}\s*=\s*\{{[^}}]*?version\s*=\s*)"([^"]+)"',
+def manifests() -> list[Path]:
+    """Every workspace-member manifest plus the fuzz/ and demo/ manifests that
+    sit beside or under a member (they carry dependency requirements too)."""
+    found: set[Path] = set()
+    for pat in ("*/Cargo.toml", "fuzz/Cargo.toml", "demo/Cargo.toml", "*/fuzz/Cargo.toml", "*/demo/Cargo.toml"):
+        found.update(ROOT.glob(pat))
+    return sorted(found)
+
+
+def dep_regex(crate: str) -> re.Pattern[str]:
+    return re.compile(
+        rf'(^[ \t]*{re.escape(crate)}\s*=\s*\{{[^}}]*?version\s*=\s*)"([^"]+)"',
         re.M,
     )
-    for manifest in sorted(ROOT.glob("*/Cargo.toml")):
-        if manifest.parent.name == crate:
+
+
+def update_sibling_refs(crate: str, new: str, apply: bool) -> list[str]:
+    """Point EVERY dependency entry on `crate` (in every table of every
+    manifest -- [dependencies], [dev-dependencies], [build-dependencies],
+    [target.*.*]) at `new`.
+
+    The 2026-10-13 wave left stale refs (media-doctor's `transmux`, multimux's
+    dev-dependency `webrtc-runtime`) because this used `search()` on the first
+    match only and skipped the whole file when THAT match was already current,
+    so a second entry in a later table was never looked at."""
+    out: list[str] = []
+    want = caret(new)
+    dep_re = dep_regex(crate)
+    for manifest in manifests():
+        if manifest.parent.name == crate and manifest.parent.parent == ROOT:
             continue
         text = manifest.read_text()
-        m = dep_re.search(text)
-        if not m or m.group(2) == want:
+        stale = [m for m in dep_re.finditer(text) if m.group(2) != want]
+        if not stale:
             continue
         if apply:
-            manifest.write_text(dep_re.sub(lambda mm: f'{mm.group(1)}"{want}"', text, count=1))
-        out.append(f"  {manifest.parent.name}: dep {crate} {m.group(2)} -> {want}")
+            manifest.write_text(dep_re.sub(lambda mm: f'{mm.group(1)}"{want}"', text))
+        label = manifest.relative_to(ROOT).parent
+        for m in stale:
+            out.append(f"  {label}: dep {crate} {m.group(2)} -> {want}")
     return out
 
 
-def cut_changelog(crate: str, new: str, apply: bool) -> tuple[str, str]:
+def depends_on_any(crate: str, bumped: list[str]) -> list[str]:
+    """Which of the `bumped` crates does `crate`'s manifest depend on?"""
+    text = crate_manifest(crate).read_text()
+    return [b for b in bumped if b != crate and dep_regex(b).search(text)]
+
+
+def verify_resolution(root: Path | None = None) -> int:
+    """After the edits, make sure the workspace still resolves, offline and
+    against the committed lock. A stale sibling requirement shows up here."""
+    r = subprocess.run(
+        ["cargo", "metadata", "--locked", "--offline", "--format-version", "1"],
+        cwd=root or ROOT,
+        capture_output=True,
+        text=True,
+    )
+    if r.returncode != 0:
+        print(
+            "\nERROR: `cargo metadata --locked --offline` failed after the edits -- "
+            "a dependency requirement or Cargo.lock is inconsistent:\n" + r.stderr,
+            file=sys.stderr,
+        )
+        return 1
+    print("\nResolution check: cargo metadata --locked --offline OK")
+    return 0
+
+
+def cut_changelog(crate: str, new: str, apply: bool, default_note: str = "") -> tuple[str, str]:
     """Turn `## [Unreleased]` into a dated version heading. Returns
     (status, the section body that was cut) for the release note."""
     path = ROOT / crate / "CHANGELOG.md"
@@ -127,8 +175,17 @@ def cut_changelog(crate: str, new: str, apply: bool) -> tuple[str, str]:
     start = m.end()
     nxt = re.search(r"^## ", text[start:], re.M)
     body = text[start : start + nxt.start()] if nxt else text[start:]
-    if not body.strip():
-        return (f"  {crate}: [Unreleased] is EMPTY — nothing to release", "")
+    empty = not body.strip()
+    if empty:
+        # An empty [Unreleased] on a crate that is being released (a dependency
+        # or epoch bump) still needs a dated section and a release note, or the
+        # release lane's "release note exists" gate fails (2026-10-13 wave).
+        note = default_note or "Dependency/epoch bump only; no functional change."
+        body = f"\n\n### Changed\n- {note}\n\n"
+        replacement = f"## [Unreleased]\n\n## [{new}] - {TODAY}{body}"
+        if apply:
+            path.write_text(text[: m.start()] + replacement + text[start:].lstrip("\n"))
+        return (f"  {crate}: [Unreleased] was EMPTY -- cut [{new}] with a default `### Changed` line", f"### Changed\n- {note}")
 
     replacement = f"## [Unreleased]\n\n## [{new}] - {TODAY}"
     if apply:
@@ -316,14 +373,24 @@ def main(argv: list[str]) -> int:
 
     print("\nCHANGELOGs:")
     bodies: dict[str, str] = {}
+    bumped = [c for c, _ in pairs]
     for c, v in pairs:
-        status, body = cut_changelog(c, v, apply)
+        via = depends_on_any(c, bumped)
+        note = (
+            f"Dependency/epoch bump only (follows {', '.join(via)}); no functional change."
+            if via
+            else ""
+        )
+        status, body = cut_changelog(c, v, apply, note)
         print(status)
         bodies[c] = body
 
     print("\nRelease notes:")
     for c, v in pairs:
         print(scaffold_release_note(c, v, bodies.get(c, ""), apply))
+
+    if apply and verify_resolution() != 0:
+        return 1
 
     print("\nTag order (dependencies first — a crate must be LIVE before its dependents tag):")
     for i, c in enumerate(dependency_order([c for c, _ in pairs]), 1):

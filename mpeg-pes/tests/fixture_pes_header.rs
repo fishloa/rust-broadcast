@@ -5,7 +5,7 @@
 //! The whole PES header block (`packet_start_code_prefix` … end of the
 //! `PES_header_data_length` region) must round-trip parse → serialize →
 //! byte-identical, the workspace's hard wire-codec invariant.
-//! `PesHeader::header_stuffing_len` captures the trailing stuffing so the
+//! `PesHeader::header_stuffing` captures the trailing stuffing so the
 //! serializer reproduces the header exactly.
 //!
 //! ## Fixture: `pes-pts-dts-stuffing.ts`
@@ -86,7 +86,7 @@ fn pes_pts_dts_and_stuffing_byte_identical() {
 
         // Real header stuffing must be captured.
         assert!(
-            hdr.header_stuffing_len > 0,
+            !hdr.header_stuffing.is_empty(),
             "pkt {i}: this fixture's headers carry stuffing"
         );
 

@@ -187,10 +187,7 @@ impl Serialize for MovieFragmentHeaderBox {
             });
         }
         let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"mfhd");
-        c += 4;
+        c += crate::box_types::write_compact_box_header(buf, b"mfhd", need)?;
         buf[c..c + 4].copy_from_slice(&[0, 0, 0, 0]);
         c += 4;
         buf[c..c + 4].copy_from_slice(&self.sequence_number.to_be_bytes());
@@ -512,10 +509,7 @@ impl Serialize for TrackFragmentBaseMediaDecodeTimeBox {
             });
         }
         let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&(need as u32).to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"tfdt");
-        c += 4;
+        c += crate::box_types::write_compact_box_header(buf, b"tfdt", need)?;
         buf[c] = self.version;
         buf[c + 1] = 0;
         buf[c + 2] = 0;
@@ -852,7 +846,7 @@ impl Serialize for TrackFragmentRunBox {
         if flags & TRUN_FIRST_SAMPLE_FLAGS_PRESENT != 0 {
             n += 4;
         }
-        n + self.samples.len() * Self::record_stride(flags)
+        crate::box_types::box_len(n + self.samples.len() * Self::record_stride(flags))
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let flags = self.effective_flags();
@@ -864,12 +858,7 @@ impl Serialize for TrackFragmentRunBox {
                 have: buf.len(),
             });
         }
-        let len = broadcast_common::len::fit_u32(need, "trun size")?;
-        let mut c = 0;
-        buf[c..c + 4].copy_from_slice(&len.to_be_bytes());
-        c += 4;
-        buf[c..c + 4].copy_from_slice(b"trun");
-        c += 4;
+        let mut c = crate::box_types::write_box_header(buf, b"trun", need)?;
         // §8.8.8.2: version 1 makes `sample_composition_time_offset` *signed*.
         // Writing version 0 with a negative offset would reinterpret it as a
         // huge positive one (a two's-complement wrap in most readers), so any
@@ -1022,7 +1011,7 @@ impl OpaqueChild {
             c += 4;
             buf[c..c + 4].copy_from_slice(&self.box_type);
             c += 4;
-        } else if self.largesize {
+        } else if self.wide() {
             buf[c..c + 4].copy_from_slice(&1u32.to_be_bytes());
             c += 4;
             buf[c..c + 4].copy_from_slice(&self.box_type);
@@ -1045,7 +1034,14 @@ impl OpaqueChild {
     /// The header this child writes: 8 bytes, or 16 under
     /// [`OpaqueChild::largesize`] (§4.2).
     fn header_len(&self) -> usize {
-        BOX_HEADER_SIZE + if self.largesize { LARGESIZE_SIZE } else { 0 }
+        BOX_HEADER_SIZE + if self.wide() { LARGESIZE_SIZE } else { 0 }
+    }
+
+    /// Whether the header uses the 64-bit `largesize` form: the wire had it
+    /// ([`OpaqueChild::largesize`]) or the box is too big for the 32-bit
+    /// `size` field (§4.2, #1147) — never a silently wrapped size.
+    fn wide(&self) -> bool {
+        self.largesize || (BOX_HEADER_SIZE as u64 + self.data.len() as u64) > u64::from(u32::MAX)
     }
 }
 
@@ -1210,7 +1206,7 @@ impl Serialize for TrackFragmentBox {
                 TrafChild::Opaque(ref o) => o.serialized_len(),
             };
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1220,10 +1216,8 @@ impl Serialize for TrackFragmentBox {
                 have: buf.len(),
             });
         }
-        let len = broadcast_common::len::fit_u32(need, "traf size")?;
-        buf[..4].copy_from_slice(&len.to_be_bytes());
-        buf[4..8].copy_from_slice(b"traf");
-        let mut c = BOX_HEADER_SIZE;
+        let hdr_len = crate::box_types::write_box_header(buf, b"traf", need)?;
+        let mut c = hdr_len;
         let order = self.child_order();
         for (i, child) in order.iter().enumerate() {
             let is_last = i + 1 == order.len();
@@ -1335,7 +1329,7 @@ impl Serialize for MovieFragmentBox {
                 MoofChild::Opaque(ref o) => o.serialized_len(),
             };
         }
-        n
+        crate::box_types::box_len(n)
     }
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
         let need = self.serialized_len();
@@ -1345,10 +1339,8 @@ impl Serialize for MovieFragmentBox {
                 have: buf.len(),
             });
         }
-        let len = broadcast_common::len::fit_u32(need, "moof size")?;
-        buf[..4].copy_from_slice(&len.to_be_bytes());
-        buf[4..8].copy_from_slice(b"moof");
-        let mut c = BOX_HEADER_SIZE;
+        let hdr_len = crate::box_types::write_box_header(buf, b"moof", need)?;
+        let mut c = hdr_len;
         let order = self.child_order();
         for (i, child) in order.iter().enumerate() {
             let is_last = i + 1 == order.len();
@@ -1601,7 +1593,8 @@ pub fn protect_media_segment(
     let moof_bytes = &media_segment[prefix_len..prefix_len + moof_len];
     let suffix = &media_segment[prefix_len + moof_len..];
 
-    let mut moof = MovieFragmentBox::parse_body(&moof_bytes[BOX_HEADER_SIZE..])?;
+    let mut moof =
+        MovieFragmentBox::parse_body(&moof_bytes[crate::box_types::box_header_len(moof_bytes)?..])?;
 
     // Build senc/saiz/saio for each protected traf, index-aligned with
     // `moof.traf`.

@@ -75,7 +75,7 @@ pub mod state;
 pub mod transport;
 
 pub use auth::{Authenticator, Credentials};
-pub use client::{ClientEvent, ClientSession};
+pub use client::{ClientEvent, ClientSession, HandleOutcome};
 pub use error::{Error, Result};
 pub use interleaved::InterleavedFrame;
 #[cfg(feature = "tokio")]

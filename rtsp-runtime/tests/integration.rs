@@ -30,7 +30,7 @@ fn gate1_client_full_session_replay() {
     let out = c.options(base).unwrap();
     assert!(cseq_line(&out, 1), "OPTIONS must carry CSeq: 1");
     let ev = c
-        .handle_data(&wire(
+        .handle_data_strict(&wire(
             "RTSP/1.0 200 OK\nCSeq: 1\nPublic: OPTIONS, DESCRIBE, SETUP, PLAY, PAUSE, TEARDOWN\n\n",
         ))
         .unwrap();
@@ -41,7 +41,7 @@ fn gate1_client_full_session_replay() {
     let out = c.describe(base).unwrap();
     assert!(cseq_line(&out, 2));
     let ev = c
-        .handle_data(&wire(
+        .handle_data_strict(&wire(
             "RTSP/1.0 200 OK\nCSeq: 2\nContent-Type: application/sdp\nContent-Length: 53\n\nv=0\no=- 1 1 IN IP4 192.0.2.1\nm=video 0 RTP/AVP 96\n",
         ))
         .unwrap();
@@ -56,7 +56,7 @@ fn gate1_client_full_session_replay() {
         "SETUP must carry the interleaved transport"
     );
     let ev = c
-        .handle_data(&wire(
+        .handle_data_strict(&wire(
             "RTSP/1.0 200 OK\nCSeq: 3\nSession: 12345678\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\n\n",
         ))
         .unwrap();
@@ -72,7 +72,7 @@ fn gate1_client_full_session_replay() {
         "PLAY must echo the SETUP session id"
     );
     let ev = c
-        .handle_data(&wire(
+        .handle_data_strict(&wire(
             "RTSP/1.0 200 OK\nCSeq: 4\nSession: 12345678\nRTP-Info: url=rtsp://video.example.com/stream/trackID=0;seq=10001;rtptime=0\n\n",
         ))
         .unwrap();
@@ -84,7 +84,7 @@ fn gate1_client_full_session_replay() {
     assert!(cseq_line(&out, 5));
     assert!(String::from_utf8_lossy(&out).contains("Session: 12345678"));
     let ev = c
-        .handle_data(&wire("RTSP/1.0 200 OK\nCSeq: 5\n\n"))
+        .handle_data_strict(&wire("RTSP/1.0 200 OK\nCSeq: 5\n\n"))
         .unwrap();
     assert_response(&ev, 5, Method::Teardown, StatusCode::Ok);
     assert_eq!(c.state(), SessionState::Init, "TEARDOWN 2xx -> Init");
@@ -106,7 +106,7 @@ fn gate2_illegal_method_in_state_bites() {
     // Drive to Ready via SETUP, then pause() must be rejected.
     let t = Transport::single(TransportSpec::rtp_avp_tcp_interleaved(0, 1));
     c.setup("rtsp://h/s", &t).unwrap();
-    c.handle_data(&wire(
+    c.handle_data_strict(&wire(
         "RTSP/1.0 200 OK\nCSeq: 1\nSession: 42\nTransport: RTP/AVP/TCP;interleaved=0-1\n\n",
     ))
     .unwrap();
@@ -119,7 +119,7 @@ fn gate2_illegal_method_in_state_bites() {
     // setup() is allowed in both Init and Ready.
     let mut c2 = ClientSession::new();
     assert!(c2.setup("rtsp://h/s", &t).is_ok(), "SETUP allowed in Init");
-    c2.handle_data(&wire(
+    c2.handle_data_strict(&wire(
         "RTSP/1.0 200 OK\nCSeq: 1\nSession: 42\nTransport: RTP/AVP/TCP;interleaved=0-1\n\n",
     ))
     .unwrap();
@@ -144,7 +144,7 @@ fn gate3_digest_auth_bites() {
 
     // Feed the 401 Digest challenge -> engine emits a NEW authed DESCRIBE.
     let events = c
-        .handle_data(&wire(
+        .handle_data_strict(&wire(
             "RTSP/1.0 401 Unauthorized\nCSeq: 1\nWWW-Authenticate: Digest realm=\"IP Camera\",nonce=\"dcd98b7102dd2f0e8b11d0f600bfb0c093\",qop=\"auth\",algorithm=MD5\n\n",
         ))
         .unwrap();
@@ -183,7 +183,7 @@ fn gate3_digest_auth_bites() {
 
     // Feed the 200 -> DESCRIBE completes.
     let events = c
-        .handle_data(&wire(
+        .handle_data_strict(&wire(
             "RTSP/1.0 200 OK\nCSeq: 2\nContent-Type: application/sdp\nContent-Length: 5\n\nv=0\n",
         ))
         .unwrap();
@@ -200,7 +200,7 @@ fn gate3b_stale_rechallenge_refreshes_nonce() {
 
     // First 401.
     let ev1 = c
-        .handle_data(&wire(
+        .handle_data_strict(&wire(
             "RTSP/1.0 401 Unauthorized\nCSeq: 1\nWWW-Authenticate: Digest realm=\"IP Camera\",nonce=\"AAAA0000\",qop=\"auth\",algorithm=MD5\n\n",
         ))
         .unwrap();
@@ -209,7 +209,7 @@ fn gate3b_stale_rechallenge_refreshes_nonce() {
 
     // Stale re-challenge with a NEW nonce -> retry must use the new nonce.
     let ev2 = c
-        .handle_data(&wire(
+        .handle_data_strict(&wire(
             "RTSP/1.0 401 Unauthorized\nCSeq: 2\nWWW-Authenticate: Digest realm=\"IP Camera\",nonce=\"BBBB1111\",qop=\"auth\",stale=true,algorithm=MD5\n\n",
         ))
         .unwrap();
@@ -255,7 +255,7 @@ fn gate4_interleaved_framing_bites() {
 fn gate4b_client_emits_media_data_for_interleaved() {
     let mut c = ClientSession::new();
     let f = InterleavedFrame::new(0, vec![0xDE, 0xAD, 0xBE, 0xEF]);
-    let events = c.handle_data(&f.to_bytes().unwrap()).unwrap();
+    let events = c.handle_data_strict(&f.to_bytes().unwrap()).unwrap();
     assert_eq!(
         events,
         vec![ClientEvent::MediaData {
@@ -409,4 +409,86 @@ fn rand_ish_ids() -> impl FnMut() -> u64 + Send + 'static {
     use std::sync::atomic::{AtomicU64, Ordering};
     static NEXT: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
     || NEXT.fetch_add(0x2545_f491_4f6c_dd1d, Ordering::Relaxed)
+}
+
+// ---------------------------------------------------------------------------
+// Audit T16 (#1144) — a terminal protocol error must not discard the events
+// already decoded in the same `handle_data` call.
+// ---------------------------------------------------------------------------
+
+/// A client session replayed through the `session_tcp_interleaved.md`
+/// handshake up to a pending PLAY (CSeq 3).
+fn session_awaiting_play() -> ClientSession {
+    let base = "rtsp://video.example.com/stream";
+    let track = "rtsp://video.example.com/stream/trackID=0";
+    let mut c = ClientSession::new();
+    c.describe(base).unwrap();
+    c.handle_data_strict(&wire(
+        "RTSP/1.0 200 OK\nCSeq: 1\nContent-Type: application/sdp\nContent-Length: 53\n\nv=0\no=- 1 1 IN IP4 192.0.2.1\nm=video 0 RTP/AVP 96\n",
+    ))
+    .unwrap();
+    c.setup(
+        track,
+        &Transport::single(TransportSpec::rtp_avp_tcp_interleaved(0, 1)),
+    )
+    .unwrap();
+    c.handle_data_strict(&wire(
+        "RTSP/1.0 200 OK\nCSeq: 2\nSession: 12345678\nTransport: RTP/AVP/TCP;unicast;interleaved=0-1\n\n",
+    ))
+    .unwrap();
+    c.play(base).unwrap();
+    c
+}
+
+/// One chunk: the PLAY response, two interleaved media frames, an unparseable
+/// message head (framing lost), and a trailing media frame that can no longer
+/// be framed. The events before the damage must come back with the error.
+#[test]
+fn terminal_error_still_returns_the_events_decoded_before_it() {
+    let mut stream = wire("RTSP/1.0 200 OK\nCSeq: 3\nSession: 12345678\n\n");
+    stream.extend(
+        InterleavedFrame::new(0, vec![0x80, 1, 2, 3])
+            .to_bytes()
+            .unwrap(),
+    );
+    stream.extend(
+        InterleavedFrame::new(1, vec![0x81, 4, 5])
+            .to_bytes()
+            .unwrap(),
+    );
+    stream.extend_from_slice(b"\x01\x02 this is not RTSP\r\nat all\r\n\r\n");
+    stream.extend(InterleavedFrame::new(0, vec![0x80, 9]).to_bytes().unwrap());
+
+    let out = session_awaiting_play().handle_data(&stream);
+    assert!(out.error.is_some(), "the unparseable head is terminal");
+    assert_eq!(out.events.len(), 3, "{:?}", out.events);
+    assert_response(&out.events[..1], 3, Method::Play, StatusCode::Ok);
+    assert!(matches!(
+        &out.events[1],
+        ClientEvent::MediaData { channel: 0, data } if data == &[0x80, 1, 2, 3]
+    ));
+    assert!(matches!(
+        &out.events[2],
+        ClientEvent::MediaData { channel: 1, data } if data == &[0x81, 4, 5]
+    ));
+
+    // The all-or-nothing form keeps its documented behaviour: the error, and
+    // no events.
+    assert!(session_awaiting_play().handle_data_strict(&stream).is_err());
+
+    // Chunk-size invariance: byte-at-a-time yields the same events, then the
+    // same terminal error.
+    let mut c = session_awaiting_play();
+    let mut events = Vec::new();
+    let mut err = None;
+    for b in &stream {
+        let o = c.handle_data(std::slice::from_ref(b));
+        events.extend(o.events);
+        if o.error.is_some() {
+            err = o.error;
+            break;
+        }
+    }
+    assert!(err.is_some());
+    assert_eq!(events, out.events);
 }

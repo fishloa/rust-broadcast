@@ -21,13 +21,15 @@ const PROFILE_SPACE_MASK: u8 = 0x03;
 const PROFILE_IDC_MASK: u8 = 0x1F;
 /// `temporal_id_min(3)` / `temporal_id_max(3)`.
 const TEMPORAL_ID_MASK: u8 = 0x07;
-/// `reserved_future_use` bit [2] of byte 12 — ISO/IEC 13818-1 says
-/// '1' (r03-W7).
-const BYTE12_RESERVED_BITS: u8 = 0x04;
-/// Bit [3] of byte 12: ISO/IEC 13818-1 groups it with `reserved_future_use`,
-/// but ISO/IEC 23001-2 (which defines this descriptor) leaves it unspecified,
-/// so the parser ignores it and the serializer writes 0 (r03-W7).
-const BYTE12_UNRESERVED_BIT: u8 = 0x00;
+/// `reserved(2)` bits `[3:2]` of byte 12 — Table 2-113 gives a single
+/// 2-bit `reserved` field, so both bits are '1'. Real captures confirm it:
+/// every HEVC_video_descriptor in the local archive (9, from TSDuck-compiled
+/// and re-muxed encoder output) carries `0x9F`/`0x7B`-style flag bytes with
+/// bits `[3:2]` = `11`. (An earlier reading cleared bit 3 on the strength of
+/// ISO/IEC 23001-2; that contradicted both the H.222.0 table and the data.)
+const BYTE12_RESERVED_BITS: u8 = 0x0C;
+/// `reserved(5)` in each temporal-sub-block byte (low 5 bits), '1' bits.
+const TEMPORAL_RESERVED_BITS: u8 = 0x1F;
 /// Fixed body length without temporal_id sub-block.
 const FIXED_BODY_LEN: u8 = 12;
 /// Temporal sub-block length when present.
@@ -256,7 +258,6 @@ impl Serialize for HevcVideoDescriptor {
             | ((self.hevc_24hr_picture_present_flag as u8) << 5)
             | ((self.sub_pic_hrd_params_not_present_flag as u8) << 4)
             | BYTE12_RESERVED_BITS
-            | BYTE12_UNRESERVED_BIT
             | (self.hdr_wcg_idc.to_u8() & 0x03);
 
         if self.temporal_layer_subset_flag != self.temporal_sub.is_some() {
@@ -277,8 +278,10 @@ impl Serialize for HevcVideoDescriptor {
                     reason: "exceeds 3-bit field",
                 });
             }
-            buf[HEADER_LEN + 13] = (ts.temporal_id_min & TEMPORAL_ID_MASK) << 5;
-            buf[HEADER_LEN + 14] = (ts.temporal_id_max & TEMPORAL_ID_MASK) << 5;
+            buf[HEADER_LEN + 13] =
+                ((ts.temporal_id_min & TEMPORAL_ID_MASK) << 5) | TEMPORAL_RESERVED_BITS;
+            buf[HEADER_LEN + 14] =
+                ((ts.temporal_id_max & TEMPORAL_ID_MASK) << 5) | TEMPORAL_RESERVED_BITS;
         }
 
         Ok(len)
@@ -331,15 +334,34 @@ mod tests {
         ];
         let d = HevcVideoDescriptor::parse(&buf).unwrap();
         assert_eq!(d.hdr_wcg_idc, HdrWcgIdc::HdrAndWcg);
-        // Reserved bits must not leak into any field; ISO/IEC 13818-1 says
-        // reserved_future_use is emitted '1', so the unambiguously reserved
-        // bit [2] serializes as 1 and parse ignores both bits (r03-W7).
+        // Reserved bits must not leak into any field; Table 2-113 `reserved(2)`
+        // is emitted '11' and parse ignores both bits.
         let mut out = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut out).unwrap();
         // body byte 12 sits at buffer index HEADER_LEN + 12 = 14.
         assert_eq!(out[14] & 0x03, 0b10, "HDR_WCG_idc must occupy bits [1:0]");
-        assert_eq!(out[14] & 0x04, 0x04, "reserved bit [2] must serialize as 1");
-        assert_eq!(out[14] & 0x08, 0, "bit [3] must not leak into any field");
+        assert_eq!(
+            out[14] & 0x0C,
+            0x0C,
+            "reserved bits [3:2] must serialize as 11"
+        );
+    }
+
+    /// Real HEVC_video_descriptor bytes from the TSDuck test captures
+    /// (`test-010.ts`, `test-083.ts`, ...): the flag byte is `0x9F` (reserved
+    /// bits `[3:2]` = `11`) and the temporal sub-block is `1F 1F`
+    /// (`reserved(5)` all ones). The serializer used to clear bit 3 and the
+    /// sub-block reserved bits, so these did not re-serialize byte-identically.
+    #[test]
+    fn real_capture_bytes_round_trip_identically() {
+        let real = [
+            0x38, 0x0F, 0x02, 0x20, 0x00, 0x00, 0x00, 0xB0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x99,
+            0x9F, 0x1F, 0x1F,
+        ];
+        let d = HevcVideoDescriptor::parse(&real).unwrap();
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, real);
     }
 
     #[test]

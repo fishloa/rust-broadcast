@@ -59,7 +59,7 @@ use alloc::vec::Vec;
 use core::marker::PhantomData;
 
 use broadcast_common::Unpackage;
-use mpeg_ps::program_stream::parse_all_packs;
+use mpeg_ps::program_stream::scan_packs;
 
 use crate::ac3::{AC3_SAMPLES_PER_SYNCFRAME, Ac3SyncframeInfo};
 use crate::annexb::iter_annexb_nals;
@@ -408,7 +408,24 @@ impl<'a> PsDemux<'a> {
     /// This is the inherent form of [`Unpackage::unpackage`]; both produce the
     /// same result. See the type-level docs for the pipeline.
     pub fn demux(&mut self, input: &'a [u8]) -> Result<Media> {
-        let (packs, _trailing) = parse_all_packs(input).map_err(Error::Ps)?;
+        // Resynchronise past a damaged pack instead of failing the whole
+        // stream (audit T16, #1144): the failed span is reported in
+        // `Media::degraded`, scanning resumes at the next pack_start_code.
+        // Only input with *no* recoverable pack at all is an error.
+        let scan = scan_packs(input);
+        if scan.packs.is_empty()
+            && let Some(first) = scan.skipped.first()
+        {
+            return Err(Error::Ps(first.error.clone()));
+        }
+        let degraded: Vec<crate::ir::InputDegradation> = scan
+            .skipped
+            .iter()
+            .map(|r| crate::ir::InputDegradation::MalformedUnit {
+                position: r.offset as u64,
+            })
+            .collect();
+        let packs = scan.packs;
 
         // ── Pass 1: per-elementary-stream PES reassembly ──────────────────
         // A stream is keyed by `(stream_id, substream_id)`: a
@@ -561,7 +578,9 @@ impl<'a> PsDemux<'a> {
             }
         }
 
-        Ok(Media::new(tracks, VIDEO_TIMESCALE))
+        let mut media = Media::new(tracks, VIDEO_TIMESCALE);
+        media.degraded = degraded;
+        Ok(media)
     }
 }
 

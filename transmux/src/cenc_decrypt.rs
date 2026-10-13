@@ -600,7 +600,9 @@ fn harvest_fragment_senc(file: &[u8], tracks: &mut [TrackCrypto]) -> Result<()> 
                     what: "tfhd header",
                 });
             }
-            let tfhd_parsed = TrackFragmentHeaderBox::parse_body(&tfhd[BOX_HEADER_MIN_SIZE..])?;
+            let tfhd_parsed = TrackFragmentHeaderBox::parse_body(
+                &tfhd[crate::box_types::box_header_len(tfhd)?..],
+            )?;
 
             let Some(crypto) = tracks
                 .iter_mut()
@@ -661,7 +663,8 @@ fn traf_trun_sample_count(traf: &[u8]) -> Result<usize> {
                 what: "trun header",
             });
         }
-        let parsed = TrackFragmentRunBox::parse_body(&trun[BOX_HEADER_MIN_SIZE..])?;
+        let parsed =
+            TrackFragmentRunBox::parse_body(&trun[crate::box_types::box_header_len(trun)?..])?;
         total += parsed.samples.len();
     }
     Ok(total)
@@ -985,7 +988,9 @@ fn find_avcc_config(stsd: &[u8]) -> Result<crate::avc_config::AVCDecoderConfigur
                 && let Some(avcc) = box_slices(&entry[child_start..]).find(|b| &b[4..8] == b"avcC")
             {
                 // avcC full bytes → body after the 8-byte box header.
-                let cfg = crate::AVCConfigurationBox::parse_body(&avcc[BOX_HEADER_MIN_SIZE..])?;
+                let cfg = crate::AVCConfigurationBox::parse_body(
+                    &avcc[crate::box_types::box_header_len(avcc)?..],
+                )?;
                 return Ok(cfg.config);
             }
         }
