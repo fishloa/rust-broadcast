@@ -430,7 +430,7 @@ dependencies = [
 
 [[package]]
 name = "broadcast-hls"
-version = "0.3.0"
+version = "0.3.1"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "compliance-probe"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1050,7 +1050,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "dvb-bbframe"
-version = "11.0.1"
+version = "11.1.0"
 dependencies = [
  "broadcast-common",
  "criterion",
@@ -1063,7 +1063,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-ci"
-version = "0.9.0"
+version = "0.9.1"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -1075,7 +1075,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-ci-runtime"
-version = "0.17.1"
+version = "0.17.2"
 dependencies = [
  "broadcast-common",
  "clap",
@@ -1089,7 +1089,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-conformance"
-version = "11.0.1"
+version = "11.1.0"
 dependencies = [
  "broadcast-common",
  "dvb-si",
@@ -1119,7 +1119,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-si"
-version = "11.0.1"
+version = "11.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1178,7 +1178,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-t2mi"
-version = "11.0.1"
+version = "11.1.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -1196,7 +1196,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-tools"
-version = "11.0.1"
+version = "11.1.0"
 dependencies = [
  "clap",
  "dvb-si",
@@ -1207,7 +1207,7 @@ dependencies = [
 
 [[package]]
 name = "dvb-vbi"
-version = "0.4.1"
+version = "0.4.2"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -1558,7 +1558,7 @@ checksum = "7f24254aa9a54b5c858eaee2f5bccdb46aaf0e486a595ed5fd8f86ba55232a70"
 
 [[package]]
 name = "hls-runtime"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "axum",
  "backon",
@@ -2154,7 +2154,7 @@ dependencies = [
 
 [[package]]
 name = "media-doctor"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -2184,7 +2184,7 @@ dependencies = [
 
 [[package]]
 name = "media-plane"
-version = "0.5.0"
+version = "0.6.0"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -2331,7 +2331,7 @@ dependencies = [
 
 [[package]]
 name = "multimux"
-version = "0.11.1"
+version = "0.12.0"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2343,6 +2343,7 @@ dependencies = [
  "broadcast-hls",
  "bytes",
  "container-probe",
+ "dvb-conformance",
  "dvb-si",
  "futures-util",
  "headers",
@@ -2352,6 +2353,7 @@ dependencies = [
  "hyper-util",
  "jiff",
  "md-5 0.11.0",
+ "media-doctor",
  "media-plane",
  "metrics",
  "metrics-exporter-prometheus",
@@ -2388,7 +2390,7 @@ dependencies = [
 
 [[package]]
 name = "multimux-cli"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "clap",
  "multimux",
@@ -2630,7 +2632,7 @@ checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
 name = "playout-runtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "broadcast-common",
  "mp4-emsg",
@@ -3115,7 +3117,7 @@ dependencies = [
 
 [[package]]
 name = "rist-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "rtcp-packet",
@@ -3315,7 +3317,7 @@ dependencies = [
 
 [[package]]
 name = "rtcp-packet"
-version = "0.4.0"
+version = "0.5.0"
 dependencies = [
  "broadcast-common",
  "serde",
@@ -3325,7 +3327,7 @@ dependencies = [
 
 [[package]]
 name = "rtmp-runtime"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "broadcast-common",
  "bytes",
@@ -3558,7 +3560,7 @@ dependencies = [
 
 [[package]]
 name = "scte35-splice"
-version = "3.0.0"
+version = "3.0.1"
 dependencies = [
  "base64 0.23.1",
  "broadcast-common",
@@ -3819,7 +3821,7 @@ dependencies = [
 
 [[package]]
 name = "ssai-runtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -4041,7 +4043,7 @@ dependencies = [
 
 [[package]]
 name = "timed-metadata"
-version = "0.6.0"
+version = "0.6.1"
 dependencies = [
  "broadcast-common",
  "broadcast-hls",
@@ -4304,7 +4306,7 @@ dependencies = [
 
 [[package]]
 name = "transmux"
-version = "0.25.6"
+version = "0.26.0"
 dependencies = [
  "aes 0.9.3",
  "base64 0.23.1",
@@ -4609,7 +4611,7 @@ dependencies = [
 
 [[package]]
 name = "webrtc-runtime"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "aes 0.9.3",
  "axum",

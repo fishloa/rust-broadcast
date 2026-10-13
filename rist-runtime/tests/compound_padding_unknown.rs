@@ -44,19 +44,8 @@ fn rr_bytes(padded: bool) -> Vec<u8> {
 /// `ReportPart::name()`/`ssrc()` project the variant identity (RIST-W3).
 #[test]
 fn report_part_names_and_ssrc() {
-    let sr = SenderReport {
-        ssrc: SSRC,
-        ntp_msw: 0,
-        ntp_lsw: 0,
-        rtp_timestamp: 0,
-        packet_count: 0,
-        octet_count: 0,
-        report_blocks: vec![],
-    };
-    let rr = ReceiverReport {
-        ssrc: SSRC | 1,
-        report_blocks: vec![],
-    };
+    let sr = SenderReport::new(SSRC, 0, 0, 0, 0, 0, vec![]);
+    let rr = ReceiverReport::new(SSRC | 1, vec![]);
     let part_sr = ReportPart::Sr(sr);
     let part_rr = ReportPart::Rr(rr);
     assert_eq!(part_sr.name(), "SR");
@@ -149,10 +138,7 @@ fn unknown_sub_packet_with_padding_round_trip() {
 #[test]
 fn hand_built_unknown_appends_last() {
     let compound = RistSenderCompound {
-        report: ReportPart::Rr(ReceiverReport {
-            ssrc: SSRC,
-            report_blocks: vec![],
-        }),
+        report: ReportPart::Rr(ReceiverReport::new(SSRC, vec![])),
         report_padding: vec![],
         cname: String::from(CNAME),
         rtt_echo: None,

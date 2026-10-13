@@ -50,6 +50,21 @@ pub trait CaDevice {
     /// Reset the interface / slot (ioctl `CA_RESET`).
     fn reset(&mut self) -> io::Result<()>;
 
+    /// How long the module needs after [`reset`](Self::reset) returns before
+    /// it accepts `Create_T_C` (the DD/cxd2099 class of drivers only
+    /// re-initialise the slot seconds after `CA_RESET`).
+    ///
+    /// `reset` itself must not sleep for this: the sans-IO
+    /// [`Driver`](crate::Driver) reads this value after `reset` and holds the
+    /// transport quiet until it elapses on its injectable clock, so a CAM
+    /// hot-plug edge no longer freezes `pump` (audit r10-O-10). Defaults to
+    /// [`Duration::ZERO`](std::time::Duration::ZERO) — an implementation whose
+    /// `reset` already blocks until the module is usable keeps working
+    /// unchanged.
+    fn reset_settle(&self) -> std::time::Duration {
+        std::time::Duration::ZERO
+    }
+
     /// Query slot status (ioctl `CA_GET_SLOT_INFO`).
     fn slot_info(&mut self) -> io::Result<SlotInfo>;
 

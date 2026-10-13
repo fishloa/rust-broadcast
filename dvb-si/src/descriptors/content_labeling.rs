@@ -43,7 +43,11 @@ pub struct ContentLabelingDescriptor<'a> {
     pub metadata_application_format: u16,
     /// Metadata application format identifier — present when `metadata_application_format == 0xFFFF`.
     pub metadata_application_format_identifier: Option<u32>,
-    /// Content reference ID record present flag.
+    /// Content reference ID record present flag, as parsed from the wire.
+    ///
+    /// Informational only: [`Serialize`] derives the wire flag from
+    /// `content_reference_id_record.is_some()`, so this field can never make
+    /// the serializer emit a flag with no record (r03-W5).
     pub content_reference_id_record_flag: bool,
     /// Time base indicator (4-bit; Table 2-85).
     pub content_time_base_indicator: ContentTimeBaseIndicator,
@@ -264,6 +268,28 @@ impl Serialize for ContentLabelingDescriptor<'_> {
                 have: buf.len(),
             });
         }
+        // The indicator selects which optional blocks are on the wire; a
+        // disagreement with the Options would misframe on re-parse (r03-W5).
+        let ind = self.content_time_base_indicator.to_u8() & 0x0F;
+        let want_time_base = ind == 1 || ind == 2;
+        let want_content_id = ind == 2;
+        let want_assoc = (3..=7).contains(&ind);
+        for (field, want, have) in [
+            ("time_base", want_time_base, self.time_base.is_some()),
+            ("content_id", want_content_id, self.content_id.is_some()),
+            (
+                "time_base_association",
+                want_assoc,
+                self.time_base_association.is_some(),
+            ),
+        ] {
+            if want != have {
+                return Err(Error::ValueOutOfRange {
+                    field,
+                    reason: "presence must match content_time_base_indicator",
+                });
+            }
+        }
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
         buf[HEADER_LEN] = (self.metadata_application_format >> 8) as u8;
@@ -276,7 +302,8 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         }
 
         let mut flags = (self.content_time_base_indicator.to_u8() & 0x0F) << 3;
-        if self.content_reference_id_record_flag {
+        // Derived from the Option, never the stored flag (r03-W5).
+        if self.content_reference_id_record.is_some() {
             flags |= 0x80;
         }
         buf[pos] = flags;
@@ -291,10 +318,10 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         }
 
         if let Some(ref tb) = self.time_base {
-            // 7 reserved bits (0) + 33-bit content_time_base_value
+            // 7 reserved bits (1) + 33-bit content_time_base_value
             write_33bit(buf, pos, tb.content_time_base_value);
             pos += 5;
-            // 7 reserved bits (0) + 33-bit metadata_time_base_value
+            // 7 reserved bits (1) + 33-bit metadata_time_base_value
             write_33bit(buf, pos, tb.metadata_time_base_value);
             pos += 5;
         }
@@ -468,5 +495,65 @@ mod tests {
     fn parse_rejects_too_short() {
         let err = ContentLabelingDescriptor::parse(&[TAG, 0]).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
+    }
+
+    fn minimal<'a>() -> ContentLabelingDescriptor<'a> {
+        ContentLabelingDescriptor {
+            metadata_application_format: 0x0010,
+            metadata_application_format_identifier: None,
+            content_reference_id_record_flag: false,
+            content_time_base_indicator: ContentTimeBaseIndicator::None,
+            content_reference_id_record: None,
+            time_base: None,
+            content_id: None,
+            time_base_association: None,
+            private_data: &[],
+        }
+    }
+
+    /// r03-W5: the wire flag follows `content_reference_id_record`, not the
+    /// stored bool, in both mismatch directions.
+    #[test]
+    fn serialize_derives_record_flag_from_option() {
+        let mut d = minimal();
+        d.content_reference_id_record_flag = true; // lies: no record
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        let re = ContentLabelingDescriptor::parse(&buf).unwrap();
+        assert!(!re.content_reference_id_record_flag);
+        assert!(re.content_reference_id_record.is_none());
+
+        let mut d = minimal();
+        d.content_reference_id_record = Some(&[0xAA, 0xBB]); // flag stays false
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        let re = ContentLabelingDescriptor::parse(&buf).unwrap();
+        assert!(re.content_reference_id_record_flag);
+        assert_eq!(re.content_reference_id_record, Some(&[0xAA, 0xBB][..]));
+    }
+
+    /// An indicator whose required block is absent (or present when not
+    /// allowed) is rejected rather than misframed.
+    #[test]
+    fn serialize_rejects_indicator_option_mismatch() {
+        let mut d = minimal();
+        d.content_time_base_indicator = ContentTimeBaseIndicator::Stc; // needs time_base
+        let mut buf = vec![0u8; 64];
+        assert!(matches!(
+            d.serialize_into(&mut buf),
+            Err(Error::ValueOutOfRange {
+                field: "time_base",
+                ..
+            })
+        ));
+        let mut d = minimal();
+        d.content_id = Some(1); // indicator None forbids content_id
+        assert!(matches!(
+            d.serialize_into(&mut buf),
+            Err(Error::ValueOutOfRange {
+                field: "content_id",
+                ..
+            })
+        ));
     }
 }

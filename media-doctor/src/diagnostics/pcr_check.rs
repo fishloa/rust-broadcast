@@ -57,7 +57,7 @@ const TICKS_27MHZ_PER_MS: u64 = CLOCK_27MHZ / 1000;
 
 /// PCR modulus on the 27 MHz clock: 2³³ × 300.
 /// ISO/IEC 13818-1 §2.4.3.5 — 33-bit base wraps modulo this value.
-const PCR_MODULUS_27MHZ: u64 = (1u64 << 33) * 300;
+const PCR_MODULUS_27MHZ: u64 = broadcast_common::clock33::WRAP_33BIT * 300;
 
 /// PCR repetition error threshold: 100 ms (TR 101 290 Table 5.0b indicator
 /// 2.3a / note 2).

@@ -402,6 +402,19 @@ fn parse_report_blocks(bytes: &[u8], count: usize) -> Result<Vec<ReportBlock>> {
     Ok(blocks)
 }
 
+/// Validate that profile-specific extension bytes are a whole number of
+/// 32-bit words (RFC 3550 §6.4.1/§6.4.2: the packet length is in words).
+fn check_profile_extensions(ext: &[u8]) -> Result<()> {
+    if !ext.len().is_multiple_of(WORD_LEN) {
+        return Err(Error::InvalidValue {
+            field: "profile_extensions_len",
+            value: ext.len() as u64,
+            reason: "must be a multiple of 4 bytes (32-bit words)",
+        });
+    }
+    Ok(())
+}
+
 /// Validate a report-block list fits the 5-bit `RC` count field.
 fn check_report_count(blocks: &[ReportBlock]) -> Result<u8> {
     if blocks.len() > MAX_COUNT {
@@ -421,6 +434,7 @@ fn check_report_count(blocks: &[ReportBlock]) -> Result<u8> {
 /// RTCP Sender Report (RFC 3550 §6.4.1, PT 200).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct SenderReport {
     /// SSRC of the sender originating this report.
     pub ssrc: u32,
@@ -436,6 +450,40 @@ pub struct SenderReport {
     pub octet_count: u32,
     /// Reception report blocks (`RC` of them).
     pub report_blocks: Vec<ReportBlock>,
+    /// Profile-specific extensions (RFC 3550 §6.4.1): the bytes after the
+    /// report blocks, retained verbatim. Must be a multiple of 4 bytes.
+    pub profile_extensions: Vec<u8>,
+}
+
+impl SenderReport {
+    /// Build an SR with no profile-specific extensions.
+    pub fn new(
+        ssrc: u32,
+        ntp_msw: u32,
+        ntp_lsw: u32,
+        rtp_timestamp: u32,
+        packet_count: u32,
+        octet_count: u32,
+        report_blocks: Vec<ReportBlock>,
+    ) -> Self {
+        SenderReport {
+            ssrc,
+            ntp_msw,
+            ntp_lsw,
+            rtp_timestamp,
+            packet_count,
+            octet_count,
+            report_blocks,
+            profile_extensions: Vec::new(),
+        }
+    }
+
+    /// Set the profile-specific extension bytes (RFC 3550 §6.4.1).
+    #[must_use]
+    pub fn with_profile_extensions(mut self, ext: Vec<u8>) -> Self {
+        self.profile_extensions = ext;
+        self
+    }
 }
 
 impl<'a> Parse<'a> for SenderReport {
@@ -478,6 +526,9 @@ impl<'a> Parse<'a> for SenderReport {
         let octet_count = be_u32(body, 20, "SR octet count")?;
         let blocks_off = WORD_LEN + SR_SENDER_INFO_LEN;
         let report_blocks = parse_report_blocks(&body[blocks_off..], hdr.count as usize)?;
+        let ext_off = blocks_off + report_blocks.len() * REPORT_BLOCK_LEN;
+        let profile_extensions = body[ext_off..].to_vec();
+        check_profile_extensions(&profile_extensions)?;
         Ok(SenderReport {
             ssrc,
             ntp_msw,
@@ -486,6 +537,7 @@ impl<'a> Parse<'a> for SenderReport {
             packet_count,
             octet_count,
             report_blocks,
+            profile_extensions,
         })
     }
 }
@@ -498,6 +550,7 @@ impl Serialize for SenderReport {
             + WORD_LEN
             + SR_SENDER_INFO_LEN
             + self.report_blocks.len() * REPORT_BLOCK_LEN
+            + self.profile_extensions.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -509,6 +562,7 @@ impl Serialize for SenderReport {
             });
         }
         let rc = check_report_count(&self.report_blocks)?;
+        check_profile_extensions(&self.profile_extensions)?;
         let hdr = CommonHeader::new(rc, PT_SENDER_REPORT, length_words_minus_one(len)?);
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
@@ -523,6 +577,7 @@ impl Serialize for SenderReport {
             block.serialize_into(&mut buf[off..off + REPORT_BLOCK_LEN])?;
             off += REPORT_BLOCK_LEN;
         }
+        buf[off..off + self.profile_extensions.len()].copy_from_slice(&self.profile_extensions);
         Ok(len)
     }
 }
@@ -534,11 +589,33 @@ impl Serialize for SenderReport {
 /// RTCP Receiver Report (RFC 3550 §6.4.2, PT 201).
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+#[non_exhaustive]
 pub struct ReceiverReport {
     /// SSRC of the packet sender originating this report.
     pub ssrc: u32,
     /// Reception report blocks (`RC` of them).
     pub report_blocks: Vec<ReportBlock>,
+    /// Profile-specific extensions (RFC 3550 §6.4.2): the bytes after the
+    /// report blocks, retained verbatim. Must be a multiple of 4 bytes.
+    pub profile_extensions: Vec<u8>,
+}
+
+impl ReceiverReport {
+    /// Build an RR with no profile-specific extensions.
+    pub fn new(ssrc: u32, report_blocks: Vec<ReportBlock>) -> Self {
+        ReceiverReport {
+            ssrc,
+            report_blocks,
+            profile_extensions: Vec::new(),
+        }
+    }
+
+    /// Set the profile-specific extension bytes (RFC 3550 §6.4.2).
+    #[must_use]
+    pub fn with_profile_extensions(mut self, ext: Vec<u8>) -> Self {
+        self.profile_extensions = ext;
+        self
+    }
 }
 
 impl<'a> Parse<'a> for ReceiverReport {
@@ -568,9 +645,13 @@ impl<'a> Parse<'a> for ReceiverReport {
         )?;
         let ssrc = be_u32(body, 0, "RR ssrc")?;
         let report_blocks = parse_report_blocks(&body[WORD_LEN..], hdr.count as usize)?;
+        let ext_off = WORD_LEN + report_blocks.len() * REPORT_BLOCK_LEN;
+        let profile_extensions = body[ext_off..].to_vec();
+        check_profile_extensions(&profile_extensions)?;
         Ok(ReceiverReport {
             ssrc,
             report_blocks,
+            profile_extensions,
         })
     }
 }
@@ -579,7 +660,10 @@ impl Serialize for ReceiverReport {
     type Error = Error;
 
     fn serialized_len(&self) -> usize {
-        RTCP_HEADER_LEN + WORD_LEN + self.report_blocks.len() * REPORT_BLOCK_LEN
+        RTCP_HEADER_LEN
+            + WORD_LEN
+            + self.report_blocks.len() * REPORT_BLOCK_LEN
+            + self.profile_extensions.len()
     }
 
     fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
@@ -591,6 +675,7 @@ impl Serialize for ReceiverReport {
             });
         }
         let rc = check_report_count(&self.report_blocks)?;
+        check_profile_extensions(&self.profile_extensions)?;
         let hdr = CommonHeader::new(rc, PT_RECEIVER_REPORT, length_words_minus_one(len)?);
         hdr.write(&mut buf[0..RTCP_HEADER_LEN]);
         let mut off = RTCP_HEADER_LEN;
@@ -600,6 +685,7 @@ impl Serialize for ReceiverReport {
             block.serialize_into(&mut buf[off..off + REPORT_BLOCK_LEN])?;
             off += REPORT_BLOCK_LEN;
         }
+        buf[off..off + self.profile_extensions.len()].copy_from_slice(&self.profile_extensions);
         Ok(len)
     }
 }
@@ -1442,6 +1528,7 @@ mod tests {
                 sample_block(0xAAAA_AAAA, 500, 17),
                 sample_block(0xBBBB_BBBB, 750, -3),
             ],
+            profile_extensions: Vec::new(),
         }
     }
 
@@ -1501,11 +1588,83 @@ mod tests {
         );
     }
 
+    // RFC 3550 §6.4.1/§6.4.2: profile-specific extensions follow the blocks.
+    #[test]
+    fn sr_rr_profile_extensions_round_trip() {
+        let ext = vec![0xDE, 0xAD, 0xBE, 0xEF, 1, 2, 3, 4];
+        let sr = sample_sr().with_profile_extensions(ext.clone());
+        let bytes = sr.to_bytes();
+        assert_eq!(bytes.len(), 4 + 24 + 2 * REPORT_BLOCK_LEN + 8);
+        assert_eq!(&bytes[bytes.len() - 8..], &ext[..]);
+        assert_eq!(
+            u16::from_be_bytes([bytes[2], bytes[3]]) as usize,
+            bytes.len() / 4 - 1
+        );
+        let parsed = SenderReport::parse(&bytes).unwrap();
+        assert_eq!(parsed.profile_extensions, ext);
+        assert_eq!(parsed, sr);
+        assert_eq!(parsed.to_bytes(), bytes);
+
+        let rr = ReceiverReport::new(0x0102_0304, vec![sample_block(1, 2, 3)])
+            .with_profile_extensions(ext.clone());
+        let bytes = rr.to_bytes();
+        let parsed = ReceiverReport::parse(&bytes).unwrap();
+        assert_eq!(parsed.profile_extensions, ext);
+        assert_eq!(parsed.to_bytes(), bytes);
+
+        // RR with zero blocks and only extensions (count 0).
+        let rr = ReceiverReport::new(9, vec![]).with_profile_extensions(vec![7; 4]);
+        let bytes = rr.to_bytes();
+        assert_eq!(ReceiverReport::parse(&bytes).unwrap(), rr);
+    }
+
+    #[test]
+    fn profile_extensions_not_word_multiple_rejected() {
+        let sr = sample_sr().with_profile_extensions(vec![1, 2, 3]);
+        let mut buf = vec![0u8; 256];
+        assert!(matches!(
+            sr.serialize_into(&mut buf),
+            Err(Error::InvalidValue {
+                field: "profile_extensions_len",
+                ..
+            })
+        ));
+        let rr = ReceiverReport::new(1, vec![]).with_profile_extensions(vec![1; 5]);
+        assert!(rr.serialize_into(&mut buf).is_err());
+
+        // Parse side: a well-formed packet whose trailing bytes are not a
+        // multiple of 4 after padding strip (P=1, 4 trailing bytes with the
+        // last = pad count 3 leaves 1 byte).
+        let mut bytes = ReceiverReport::new(1, vec![]).to_bytes();
+        bytes.extend_from_slice(&[0xAA, 0, 0, 3]);
+        bytes[0] |= 0x20; // P bit
+        bytes[3] += 1; // length in words
+        assert!(matches!(
+            ReceiverReport::parse(&bytes),
+            Err(Error::InvalidValue {
+                field: "profile_extensions_len",
+                ..
+            })
+        ));
+    }
+
+    #[test]
+    fn trailing_bytes_after_blocks_are_kept_not_dropped() {
+        // RC=0 RR with 4 trailing "garbage" bytes: preserved verbatim.
+        let mut bytes = ReceiverReport::new(1, vec![]).to_bytes();
+        bytes.extend_from_slice(&[0x13, 0x37, 0xC0, 0xDE]);
+        bytes[3] += 1;
+        let rr = ReceiverReport::parse(&bytes).unwrap();
+        assert_eq!(rr.profile_extensions, [0x13, 0x37, 0xC0, 0xDE]);
+        assert_eq!(rr.to_bytes(), bytes);
+    }
+
     #[test]
     fn rr_round_trip() {
         let rr = ReceiverReport {
             ssrc: 0x0102_0304,
             report_blocks: vec![sample_block(0xCAFE_BABE, 33, -7)],
+            profile_extensions: Vec::new(),
         };
         let bytes = rr.to_bytes();
         assert_eq!(bytes[1], PT_RECEIVER_REPORT);

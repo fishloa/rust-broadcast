@@ -240,9 +240,14 @@ impl CaDevice for LinuxCaDevice {
 
     fn reset(&mut self) -> io::Result<()> {
         ioctl::ca_reset(self.file.as_fd())?;
-        // The module needs a moment to re-initialise before Create_T_C.
-        std::thread::sleep(RESET_SETTLE);
+        // The module needs a moment to re-initialise before Create_T_C; the
+        // driver waits that out via `reset_settle` on its own clock rather
+        // than this call blocking the pump (audit r10-O-10).
         Ok(())
+    }
+
+    fn reset_settle(&self) -> Duration {
+        RESET_SETTLE
     }
 
     fn slot_info(&mut self) -> io::Result<SlotInfo> {

@@ -207,15 +207,15 @@ fn rtt_echo_large_timestamp_round_trip() {
 #[test]
 fn sender_compound_sr_sdes_round_trip() {
     let compound = RistSenderCompound {
-        report: ReportPart::Sr(SenderReport {
-            ssrc: 0x1122_3344,
-            ntp_msw: 0xE0E1_E2E3,
-            ntp_lsw: 0x1020_3040,
-            rtp_timestamp: 0x0009_0000,
-            packet_count: 100,
-            octet_count: 50_000,
-            report_blocks: vec![],
-        }),
+        report: ReportPart::Sr(SenderReport::new(
+            0x1122_3344,
+            0xE0E1_E2E3,
+            0x1020_3040,
+            0x0009_0000,
+            100,
+            50_000,
+            vec![],
+        )),
         report_padding: vec![],
         cname: "sender@example.com".to_string(),
         rtt_echo: None,
@@ -233,15 +233,15 @@ fn sender_compound_sr_sdes_round_trip() {
 #[test]
 fn sender_compound_with_rtt_echo_round_trip() {
     let compound = RistSenderCompound {
-        report: ReportPart::Sr(SenderReport {
-            ssrc: 0x1122_3344,
-            ntp_msw: 0xE0E1_E2E3,
-            ntp_lsw: 0x1020_3040,
-            rtp_timestamp: 0x0009_0000,
-            packet_count: 100,
-            octet_count: 50_000,
-            report_blocks: vec![],
-        }),
+        report: ReportPart::Sr(SenderReport::new(
+            0x1122_3344,
+            0xE0E1_E2E3,
+            0x1020_3040,
+            0x0009_0000,
+            100,
+            50_000,
+            vec![],
+        )),
         report_padding: vec![],
         cname: "s@e.com".to_string(),
         rtt_echo: Some(RttEcho {
@@ -265,9 +265,9 @@ fn sender_compound_with_rtt_echo_round_trip() {
 #[test]
 fn receiver_compound_rr_sdes_nack_round_trip() {
     let compound = RistReceiverCompound {
-        report: ReportPart::Rr(ReceiverReport {
-            ssrc: 0xAAAA_BBBB,
-            report_blocks: vec![ReportBlock {
+        report: ReportPart::Rr(ReceiverReport::new(
+            0xAAAA_BBBB,
+            vec![ReportBlock {
                 ssrc: 0xCCCC_DDDD,
                 fraction_lost: 10,
                 cumulative_lost: 5,
@@ -276,7 +276,7 @@ fn receiver_compound_rr_sdes_nack_round_trip() {
                 lsr: 0,
                 dlsr: 0,
             }],
-        }),
+        )),
         report_padding: vec![],
         cname: "receiver@example.com".to_string(),
         nacks: vec![GenericNack {
@@ -300,10 +300,7 @@ fn receiver_compound_rr_sdes_nack_round_trip() {
 #[test]
 fn receiver_compound_empty_rr_round_trip() {
     let compound = RistReceiverCompound {
-        report: ReportPart::Rr(ReceiverReport {
-            ssrc: 0x0000_0001,
-            report_blocks: vec![],
-        }),
+        report: ReportPart::Rr(ReceiverReport::new(0x0000_0001, vec![])),
         report_padding: vec![],
         cname: "r@e.com".to_string(),
         nacks: vec![],
@@ -325,9 +322,9 @@ fn receiver_compound_full_round_trip() {
     // multiple Range NACKs, and a trailing RTT Echo — the parser must
     // classify and consume each in wire order.
     let compound = RistReceiverCompound {
-        report: ReportPart::Rr(ReceiverReport {
-            ssrc: 0xAAAA_BBBB,
-            report_blocks: vec![ReportBlock {
+        report: ReportPart::Rr(ReceiverReport::new(
+            0xAAAA_BBBB,
+            vec![ReportBlock {
                 ssrc: 0xCCCC_DDDD,
                 fraction_lost: 10,
                 cumulative_lost: 5,
@@ -336,7 +333,7 @@ fn receiver_compound_full_round_trip() {
                 lsr: 0,
                 dlsr: 0,
             }],
-        }),
+        )),
         report_padding: vec![],
         cname: "full@example.com".to_string(),
         nacks: vec![

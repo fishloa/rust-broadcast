@@ -14,6 +14,8 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for metadata_pointer_descriptor.
 pub const TAG: u8 = 0x25;
 const HEADER_LEN: usize = 2;
+/// `reserved(5)` tail of the flags byte (Table 2-86).
+const RESERVED_5_BITS: u8 = 0x1F;
 
 /// Metadata Pointer Descriptor.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,7 +251,9 @@ impl Serialize for MetadataPointerDescriptor<'_> {
 
         // The record flag is derived from the Option, so it can never claim
         // a record that is not written (r03-W5).
-        let mut flags = (self.mpeg_carriage_flags.to_u8() & 0x03) << 5;
+        // `reserved(5)` (Table 2-86) is emitted as `11111` (H.222.0 reserved
+        // bits are 1; r03-W7, owner-approved; no fixture carries it).
+        let mut flags = ((self.mpeg_carriage_flags.to_u8() & 0x03) << 5) | RESERVED_5_BITS;
         if self.metadata_locator_record.is_some() {
             flags |= 0x80;
         }
@@ -469,5 +473,24 @@ mod tests {
         assert_eq!(flags_byte & 0x80, 0, "flag must be derived, not stored");
         let re = MetadataPointerDescriptor::parse(&buf).unwrap();
         assert!(!re.metadata_locator_record_flag);
+    }
+
+    /// r03-W7 sweep — H.222.0 Table 2-86. No committed capture or TSDuck fixture carries this
+    /// descriptor, so reserved=1 rests on the spec convention only (owner
+    /// decision). Conformant bytes round-trip exactly; reserved=0 input parses
+    /// to equal typed fields and is normalized to reserved=1.
+    #[test]
+    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
+        let conformant: &[u8] = &[TAG, 6, 0x00, 0x01, 0x3F, 0x02, 0x7F, 0xEE];
+        let zeroed: &[u8] = &[TAG, 6, 0x00, 0x01, 0x3F, 0x02, 0x60, 0xEE];
+        let d = MetadataPointerDescriptor::parse(conformant).unwrap();
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, conformant);
+        let dz = MetadataPointerDescriptor::parse(zeroed).unwrap();
+        assert_eq!(dz, d);
+        let mut outz = vec![0u8; dz.serialized_len()];
+        dz.serialize_into(&mut outz).unwrap();
+        assert_eq!(outz, conformant);
     }
 }

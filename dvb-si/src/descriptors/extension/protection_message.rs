@@ -37,6 +37,11 @@ impl<'a> Parse<'a> for ProtectionMessage<'a> {
                 have: sel.len(),
                 what: "protection_message component_tags",
             })?;
+        // Table 40 ends with the component_tag loop. Bytes after it have no
+        // defined meaning and are deliberately IGNORED, not rejected: real
+        // streams carry slack and rejection would break them (r03-W9; the
+        // no-reject policy of the fixture-checked table parsers). They are not
+        // re-emitted, so such input is not byte-identical on re-serialize.
         Ok(ProtectionMessage {
             reserved,
             component_tags,
@@ -100,6 +105,18 @@ mod tests {
             other => panic!("expected ProtectionMessage, got {other:?}"),
         }
         round_trip(&d);
+    }
+
+    /// r03-W9: slack after the component_tag loop is tolerated (ignored),
+    /// never an error; the tags themselves still parse.
+    #[test]
+    fn parse_tolerates_trailing_bytes() {
+        let bytes = wrap(0x18, &[0xF1, 0x10, 0xEE]);
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        match &d.body {
+            ExtensionBody::ProtectionMessage(b) => assert_eq!(b.component_tags, &[0x10]),
+            other => panic!("expected ProtectionMessage, got {other:?}"),
+        }
     }
 
     #[test]

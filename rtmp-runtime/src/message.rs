@@ -280,6 +280,12 @@ impl ProtocolControl {
     /// [`CONTROL_CHUNK_STREAM_ID`], message stream id
     /// [`CONTROL_MESSAGE_STREAM_ID`], timestamp `0` (protocol control
     /// messages take effect immediately; timestamps are not meaningful).
+    ///
+    /// # Panics
+    ///
+    /// On a value `serialize_into` rejects (`SetChunkSize` of 0 or with the
+    /// top bit set); use [`try_to_message`](Self::try_to_message) for
+    /// untrusted values.
     #[must_use]
     pub fn to_message(&self) -> Message {
         Message {
@@ -289,6 +295,23 @@ impl ProtocolControl {
             message_stream_id: CONTROL_MESSAGE_STREAM_ID,
             payload: self.to_bytes(),
         }
+    }
+
+    /// Like [`to_message`](Self::to_message) but returns the serializer's
+    /// error instead of panicking — e.g. `SetChunkSize(0)` or a size with
+    /// the reserved top bit set is not a valid wire value (§5.4.1).
+    ///
+    /// # Errors
+    ///
+    /// [`RtmpError::Malformed`] for an out-of-range chunk size.
+    pub fn try_to_message(&self) -> Result<Message> {
+        Ok(Message {
+            chunk_stream_id: CONTROL_CHUNK_STREAM_ID,
+            timestamp: 0,
+            message_type_id: self.message_type_id(),
+            message_stream_id: CONTROL_MESSAGE_STREAM_ID,
+            payload: self.try_to_bytes()?,
+        })
     }
 }
 
@@ -567,6 +590,25 @@ mod tests {
     }
 
     // ── LimitType ────────────────────────────────────────────────────────
+
+    #[test]
+    fn try_to_message_rejects_invalid_chunk_size() {
+        assert!(matches!(
+            ProtocolControl::SetChunkSize(0).try_to_message(),
+            Err(RtmpError::Malformed { .. })
+        ));
+        assert!(
+            ProtocolControl::SetChunkSize(0x8000_0000)
+                .try_to_message()
+                .is_err()
+        );
+        assert_eq!(
+            ProtocolControl::SetChunkSize(4096)
+                .try_to_message()
+                .unwrap(),
+            ProtocolControl::SetChunkSize(4096).to_message()
+        );
+    }
 
     #[test]
     fn limit_type_round_trip_and_name() {

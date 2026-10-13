@@ -10,6 +10,9 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for multiplex_buffer_utilization_descriptor.
 pub const TAG: u8 = 0x0C;
 const HEADER_LEN: usize = 2;
+/// `reserved(1)` ahead of `LTW_offset_upper_bound` (Table 2-65), emitted as 1
+/// (H.222.0 reserved bits are 1; r03-W7, owner-approved; no fixture carries it).
+const RESERVED_1_BIT: u8 = 0x80;
 const BODY_LEN: u8 = 4;
 
 /// Multiplex Buffer Utilization Descriptor.
@@ -72,7 +75,7 @@ impl Serialize for MultiplexBufferUtilizationDescriptor {
         buf[HEADER_LEN] = ((self.bound_valid_flag as u8) << 7)
             | ((self.ltw_offset_lower_bound >> 8) as u8 & 0x7F);
         buf[HEADER_LEN + 1] = (self.ltw_offset_lower_bound & 0xFF) as u8;
-        buf[HEADER_LEN + 2] = (self.ltw_offset_upper_bound >> 8) as u8 & 0x7F;
+        buf[HEADER_LEN + 2] = RESERVED_1_BIT | ((self.ltw_offset_upper_bound >> 8) as u8 & 0x7F);
         buf[HEADER_LEN + 3] = (self.ltw_offset_upper_bound & 0xFF) as u8;
         Ok(len)
     }
@@ -137,5 +140,24 @@ mod tests {
         let mut tiny = vec![0u8; 3];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+    }
+
+    /// r03-W7 sweep — H.222.0 Table 2-65. No committed capture or TSDuck fixture carries this
+    /// descriptor, so reserved=1 rests on the spec convention only (owner
+    /// decision). Conformant bytes round-trip exactly; reserved=0 input parses
+    /// to equal typed fields and is normalized to reserved=1.
+    #[test]
+    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
+        let conformant: &[u8] = &[TAG, 4, 0x12, 0x34, 0xD6, 0x78];
+        let zeroed: &[u8] = &[TAG, 4, 0x12, 0x34, 0x56, 0x78];
+        let d = MultiplexBufferUtilizationDescriptor::parse(conformant).unwrap();
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, conformant);
+        let dz = MultiplexBufferUtilizationDescriptor::parse(zeroed).unwrap();
+        assert_eq!(dz, d);
+        let mut outz = vec![0u8; dz.serialized_len()];
+        dz.serialize_into(&mut outz).unwrap();
+        assert_eq!(outz, conformant);
     }
 }

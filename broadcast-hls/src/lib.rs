@@ -1761,6 +1761,20 @@ impl MediaPlaylist {
         for report in &self.rendition_reports {
             validate_uri(&report.uri, "EXT-X-RENDITION-REPORT URI")?;
         }
+        if let Some(skip) = &self.skip {
+            // RFC 8216bis §4.4.5.2: the ids are one quoted-string, tab (0x9)
+            // delimited — so a tab inside an id would split it into two ids.
+            for id in &skip.recently_removed_daterange_ids {
+                validate_quoted_string(id, "EXT-X-SKIP RECENTLY-REMOVED-DATERANGES id")?;
+                if id.contains('\t') {
+                    return Err(Error::InvalidQuotedString {
+                        what: "EXT-X-SKIP RECENTLY-REMOVED-DATERANGES id".to_string(),
+                        bad_char: '\t',
+                        value: id.clone(),
+                    });
+                }
+            }
+        }
         Ok(())
     }
 
@@ -5077,6 +5091,27 @@ fileSequence1997.mp4\n";
         let ll = pl.low_latency.as_ref().expect("LL config must be present");
         assert_eq!(ll.can_skip_until, Some(DecimalSeconds::new(24.0).unwrap()));
         assert!(!pl.endlist);
+    }
+
+    /// Audit T12: a RECENTLY-REMOVED-DATERANGES id with `"`, CR, LF or the
+    /// tab separator must be rejected, not injected into the tag line.
+    #[test]
+    fn skip_recently_removed_ids_reject_injection() {
+        let text = "#EXTM3U\n#EXT-X-VERSION:10\n#EXT-X-TARGETDURATION:4\n#EXT-X-MEDIA-SEQUENCE:0\n\
+#EXT-X-SKIP:SKIPPED-SEGMENTS=3,RECENTLY-REMOVED-DATERANGES=\"ad-1\\tad-2\"\n\
+#EXTINF:4,\na.mp4\n"
+            .replace("\\t", "\t");
+        let good = MediaPlaylist::parse(&text).unwrap();
+        // multi-id list round-trips byte-exact
+        assert_eq!(good.to_m3u8().unwrap(), text);
+        for bad in ["a\"b", "a\rb", "a\nb", "a\tb"] {
+            let mut pl = good.clone();
+            pl.skip.as_mut().unwrap().recently_removed_daterange_ids = vec![bad.to_string()];
+            assert!(
+                matches!(pl.to_m3u8(), Err(Error::InvalidQuotedString { .. })),
+                "{bad:?}"
+            );
+        }
     }
 
     /// Issue #717 slice 1 fix: an origin that advertises LL-HLS tags but

@@ -296,8 +296,9 @@ const STUFFING_BYTE: u8 = 0xFF;
 
 /// Media timescale of a Transport Stream / PES clock (90 kHz).
 const TS_CLOCK_HZ: u64 = 90_000;
-/// 33-bit PTS/DTS modulus (90 kHz clock, §2.4.3.7).
-const TS_TIMESTAMP_MOD: u64 = 1 << 33;
+/// 33-bit PTS/DTS modulus (90 kHz clock, §2.4.3.7) — alias of
+/// [`broadcast_common::clock33::WRAP_33BIT`], the shared owner.
+const TS_TIMESTAMP_MOD: u64 = broadcast_common::clock33::WRAP_33BIT;
 /// PCR lead time ahead of the first DTS, ~100 ms of 90 kHz ticks — keeps the PCR
 /// slightly ahead of the earliest presentation so a decoder's STC is primed.
 const PCR_LEAD_TICKS: u64 = 9_000;
@@ -574,6 +575,110 @@ impl Package for TsMux {
     }
 }
 
+/// A long-lived, **incremental** MPEG-2 TS muxer for a live/continuing feed
+/// (issue #1024): the streaming counterpart of [`TsMux`].
+///
+/// [`TsMux::package`] is one-shot — every call writes a leading PAT/PMT, starts
+/// every continuity counter at 0 and re-bases time to the call's first sample,
+/// so calling it once per sample (what a push output does) yields a stream with
+/// PSI before every frame, a CC that restarts at 0, and the same PTS/PCR on
+/// every frame. `StreamingTsMux` keeps that state across
+/// [`package`](Package::package) calls instead:
+///
+/// - **Continuity counters** (ISO/IEC 13818-1 §2.4.3.3) continue on every PID.
+/// - **One time origin**: the earliest first-sample [`Sample::dts`] in the first
+///   call that carries one; every later sample is stamped from its own absolute
+///   `dts`/`pts` shifted by that same origin, so successive calls continue one
+///   monotonic timeline and inter-track offsets survive. A sample decoding
+///   *before* the origin clamps to it, so feed samples in (roughly) decode
+///   order. Samples without a `dts` are not supported on this path.
+/// - **PSI**: the PAT/PMT are written once at the start and then repeated every
+///   [`psi_interval_ms`](Self::psi_interval_ms) of media time across calls
+///   (default [`DEFAULT_PSI_INTERVAL_MS`]), never inside a PES packet.
+///
+/// The track set must not change between calls (the PMT is fixed by the first
+/// call). The same samples fed one-by-one or as one `Media` yield byte-identical
+/// packets per PID; only the PAT/PMT placement differs.
+#[derive(Debug, Clone)]
+pub struct StreamingTsMux {
+    psi_interval_ms: Option<u32>,
+    origin: Option<TimelineOrigin>,
+    continuity: TsContinuity,
+    psi: PsiState,
+}
+
+impl Default for StreamingTsMux {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StreamingTsMux {
+    /// A fresh streaming muxer repeating PAT/PMT every
+    /// [`DEFAULT_PSI_INTERVAL_MS`] ms of media time.
+    pub fn new() -> Self {
+        Self::with_psi_interval_ms(Some(DEFAULT_PSI_INTERVAL_MS))
+    }
+
+    /// A fresh streaming muxer with an explicit PAT/PMT repetition interval
+    /// (`None`/`Some(0)` writes the PSI once only).
+    pub fn with_psi_interval_ms(interval_ms: Option<u32>) -> Self {
+        let interval_ms = interval_ms.filter(|&ms| ms > 0);
+        Self {
+            psi_interval_ms: interval_ms,
+            origin: None,
+            continuity: TsContinuity::new(),
+            psi: PsiState::new(interval_ms.map(|ms| u64::from(ms) * TS_CLOCK_HZ / MS_PER_SECOND)),
+        }
+    }
+
+    /// The configured PAT/PMT repetition interval (`None` = written once).
+    pub fn psi_interval_ms(&self) -> Option<u32> {
+        self.psi_interval_ms
+    }
+}
+
+impl Package for StreamingTsMux {
+    type Media = Media;
+    type Output = Vec<u8>;
+    type Error = Error;
+
+    /// Mux `media` as the next chunk of the continuing stream. A `Media` with
+    /// no tracks is an error; one with no timestamped sample before the origin
+    /// is fixed yields an empty chunk and leaves the state untouched.
+    fn package(&mut self, media: &Media) -> Result<Vec<u8>> {
+        if media.tracks.is_empty() {
+            return Err(Error::InvalidInput("cannot package a Media with no tracks"));
+        }
+        let has_dts = media
+            .tracks
+            .iter()
+            .any(|t| t.samples.iter().any(|s| s.dts.is_some()));
+        if !has_dts && self.origin.is_none() {
+            // Nothing to anchor the timeline on yet; emit nothing rather than
+            // fixing a bogus origin of 0.
+            return Ok(Vec::new());
+        }
+        let origin = *self
+            .origin
+            .get_or_insert_with(|| TimelineOrigin::of(&media.tracks));
+        let times: Vec<Vec<i64>> = media
+            .tracks
+            .iter()
+            .map(|t| relative_decode_times(t, &origin))
+            .collect();
+        let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
+        let samples: Vec<&[Sample]> = media.tracks.iter().map(|t| t.samples.as_slice()).collect();
+        mux_tracks_timed_with_cc(
+            &media.tracks,
+            &samples,
+            &times,
+            &mut self.continuity,
+            &mut self.psi,
+        )
+    }
+}
+
 /// Plan the carriable elementary streams of `tracks` (PID + `stream_type` +
 /// per-codec framing state), skipping tracks whose codec the TS layer cannot
 /// carry. Shared by [`TsMux`] and the classic-HLS segmenter
@@ -822,7 +927,8 @@ pub(crate) fn mux_tracks(
         .collect();
     let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
     let mut cc = TsContinuity::default();
-    mux_tracks_timed_with_cc(tracks, samples, &times, &mut cc, psi_interval_ticks)
+    let mut psi = PsiState::new(psi_interval_ticks);
+    mux_tracks_timed_with_cc(tracks, samples, &times, &mut cc, &mut psi)
 }
 
 /// Mux one more segment of a continuing stream: each track's first sample is
@@ -868,7 +974,27 @@ pub(crate) fn mux_tracks_at_continuing(
         })
         .collect();
     let times: Vec<&[i64]> = times.iter().map(Vec::as_slice).collect();
-    mux_tracks_timed_with_cc(tracks, samples, &times, cc, None)
+    mux_tracks_timed_with_cc(tracks, samples, &times, cc, &mut PsiState::new(None))
+}
+
+/// PAT/PMT scheduling state threaded through [`mux_tracks_timed_with_cc`]
+/// calls: the repetition interval, whether the leading PSI was already
+/// written, and the media time (interleave key) the next repeat is due.
+#[derive(Debug, Clone)]
+struct PsiState {
+    interval_ticks: Option<u64>,
+    started: bool,
+    due: Option<u64>,
+}
+
+impl PsiState {
+    fn new(interval_ticks: Option<u64>) -> Self {
+        Self {
+            interval_ticks,
+            started: false,
+            due: None,
+        }
+    }
 }
 
 /// Per-PID transport-stream continuity-counter state
@@ -929,8 +1055,9 @@ fn mux_tracks_timed_with_cc(
     samples: &[&[Sample]],
     dts_ticks: &[&[i64]],
     continuity: &mut TsContinuity,
-    psi_interval_ticks: Option<u64>,
+    psi: &mut PsiState,
 ) -> Result<Vec<u8>> {
+    let psi_interval_ticks = psi.interval_ticks;
     debug_assert_eq!(tracks.len(), samples.len());
     debug_assert_eq!(tracks.len(), dts_ticks.len());
 
@@ -960,19 +1087,23 @@ fn mux_tracks_timed_with_cc(
     // ── 2. Build the PSI (PAT + PMT) and packetise it first (PUSI order) ──
     let mut out: Vec<u8> = Vec::new();
     let pat = build_pat_section(PMT_PID)?;
-    let pat_pkts = packetise_section(PAT_PID, &pat, continuity.next_for(PAT_PID));
-    let pat_last_cc = pat_pkts.last().map(|p| p[3] & 0x0F).unwrap_or(0);
-    for pkt in pat_pkts {
-        out.extend_from_slice(&pkt);
-    }
-    continuity.advance(PAT_PID, pat_last_cc);
     let pmt = build_pmt_section(pcr_pid, &plans)?;
-    let pmt_pkts = packetise_section(PMT_PID, &pmt, continuity.next_for(PMT_PID));
-    let pmt_last_cc = pmt_pkts.last().map(|p| p[3] & 0x0F).unwrap_or(0);
-    for pkt in pmt_pkts {
-        out.extend_from_slice(&pkt);
+    // A continuing stream (`PsiState::started`) already wrote its leading PSI
+    // in an earlier call; only the periodic repeats below apply.
+    if !psi.started {
+        let pat_pkts = packetise_section(PAT_PID, &pat, continuity.next_for(PAT_PID));
+        let pat_last_cc = pat_pkts.last().map(|p| p[3] & 0x0F).unwrap_or(0);
+        for pkt in pat_pkts {
+            out.extend_from_slice(&pkt);
+        }
+        continuity.advance(PAT_PID, pat_last_cc);
+        let pmt_pkts = packetise_section(PMT_PID, &pmt, continuity.next_for(PMT_PID));
+        let pmt_last_cc = pmt_pkts.last().map(|p| p[3] & 0x0F).unwrap_or(0);
+        for pkt in pmt_pkts {
+            out.extend_from_slice(&pkt);
+        }
+        continuity.advance(PMT_PID, pmt_last_cc);
     }
-    continuity.advance(PMT_PID, pmt_last_cc);
 
     // ── 3. Elementary-stream PES → TS packets, tagged by DTS ──
     // Base DTS = PCR_LEAD_TICKS so the first PCR (DTS − lead) is non-negative.
@@ -1081,6 +1212,9 @@ fn mux_tracks_timed_with_cc(
     let mut pat_cc = continuity.next_for(PAT_PID);
     let mut pmt_cc = continuity.next_for(PMT_PID);
     let mut psi_due = match (psi_interval_ticks, tagged.first()) {
+        // A continuing stream carries its schedule across calls; a fresh one
+        // counts the leading PSI as the first occurrence.
+        (Some(_), Some(_)) if psi.due.is_some() => psi.due,
         (Some(iv), Some(first)) => Some(first.sort_key.saturating_add(iv)),
         _ => None,
     };
@@ -1118,6 +1252,8 @@ fn mux_tracks_timed_with_cc(
     }
     continuity.set_next_for(PAT_PID, pat_cc);
     continuity.set_next_for(PMT_PID, pmt_cc);
+    psi.started = true;
+    psi.due = psi_due.or(psi.due);
 
     debug_assert_eq!(out.len() % TS_PACKET_SIZE, 0);
     Ok(out)

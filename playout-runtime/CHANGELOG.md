@@ -4,6 +4,11 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-10-13
+### Changed
+
+- Added `TransitionPlan::rebase_wrapped` (unrolls a raw 33-bit source PTS via `clock33::unwrap_delta` before rebasing; non-breaking); added `tests/clock33_guard.rs`.
+
 ## [0.2.0] - 2026-10-05
 ### Fixed
 - `scte35::build_splice_insert` conditions on the 33-bit SCTE-35 circle

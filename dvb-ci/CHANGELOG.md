@@ -6,6 +6,11 @@ versioning.
 
 ## [Unreleased]
 
+## [0.9.1] - 2026-10-13
+### Documentation
+
+- `CaPmtBuilt::to_bytes` documents its panic; `try_to_bytes` is the fallible form.
+
 ## [0.9.0] - 2026-10-05
 ### Added
 - `TcObject::is_tc_tag`, and an associated `TAGS: &[ApduTag]` list on each of

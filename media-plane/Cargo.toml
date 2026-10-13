@@ -1,6 +1,6 @@
 [package]
 name         = "media-plane"
-version      = "0.5.0"
+version      = "0.6.0"
 edition      = "2024"
 license      = "MIT OR Apache-2.0"
 repository   = "https://github.com/fishloa/rust-broadcast"
@@ -14,7 +14,7 @@ readme       = "README.md"
 broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 bytes            = { version = "1", default-features = false }
 thiserror        = { version = "2", default-features = false }
-transmux         = { path = "../transmux", version = "0.25", default-features = false, optional = true }
+transmux         = { path = "../transmux", version = "0.26", default-features = false, optional = true }
 timed-metadata   = { path = "../timed-metadata", version = "0.6", default-features = false, optional = true }
 # Only pulled in by the `std` feature: `Trunk`'s reader-wake primitive
 # (step 3b-iv) needs a runtime-agnostic wakeup a `ServedEgress` can wait on

@@ -194,6 +194,13 @@ impl CaPmtBuilt {
     }
 
     /// Serialize the finished `ca_pmt` APDU (tag `9F 80 32` + length + body).
+    ///
+    /// # Panics
+    ///
+    /// Panics when a descriptor loop has no valid `ca_pmt` encoding (e.g. a
+    /// `program_info_length` exceeding its 12-bit field). Use
+    /// [`try_to_bytes`](Self::try_to_bytes) for anything derived from
+    /// untrusted input.
     #[must_use]
     pub fn to_bytes(&self) -> Vec<u8> {
         self.as_ca_pmt().to_bytes()

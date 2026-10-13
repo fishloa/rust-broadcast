@@ -90,6 +90,13 @@ pub struct Driver<D: CaDevice> {
     /// reporting (a corrupt service must not silently swallow the healthy
     /// services' resend); drained with priority on the next tick.
     requery_pending: Option<CaError>,
+    /// r10-O-10: deadline until which the slot is settling after a
+    /// `CA_RESET` ([`CaDevice::reset_settle`]); no transport traffic is sent
+    /// or read before it. `None` = not settling.
+    settle_until: Option<Instant>,
+    /// Link-layer writes the stack emitted after the reset (the `Create_T_C`),
+    /// held back until `settle_until` passes.
+    deferred_writes: Vec<Vec<u8>>,
 }
 
 impl<D: CaDevice> Driver<D> {
@@ -110,6 +117,8 @@ impl<D: CaDevice> Driver<D> {
             last_pump: None,
             clock: default_clock(),
             requery_pending: None,
+            settle_until: None,
+            deferred_writes: Vec::new(),
         }
     }
 
@@ -431,10 +440,28 @@ impl<D: CaDevice> Driver<D> {
         // `None` (first call) has no previous point to measure from, so
         // `timeout` is used as a reasonable initial estimate, same as before.
         let now = (self.clock)();
-        let elapsed = self
+        let mut elapsed = self
             .last_pump
             .map_or(timeout, |prev| now.saturating_duration_since(prev));
         self.last_pump = Some(now);
+
+        // r10-O-10: a slot still settling after `CA_RESET` gets no transport
+        // traffic and no timer advance — only the slot-status sample, so a
+        // hot-plug edge (which restarts the settle) is still seen. Returns
+        // immediately; the caller's loop owns pacing.
+        if let Some(until) = self.settle_until {
+            if now < until {
+                self.run(vec![Action::QuerySlot])?;
+                return Ok(false);
+            }
+            self.settle_until = None;
+            for w in std::mem::take(&mut self.deferred_writes) {
+                self.device.write(&w)?;
+            }
+            // The settle period must not count against the transport's
+            // reply timeout.
+            elapsed = Duration::ZERO;
+        }
 
         self.run(vec![Action::QuerySlot])?;
         if self.device.poll(timeout)? {
@@ -587,8 +614,21 @@ impl<D: CaDevice> Driver<D> {
     fn run(&mut self, actions: Vec<Action>) -> io::Result<()> {
         for action in actions {
             match action {
-                Action::Write(bytes) => self.device.write(&bytes)?,
-                Action::Reset => self.device.reset()?,
+                Action::Write(bytes) => {
+                    if self.settle_until.is_some() {
+                        self.deferred_writes.push(bytes);
+                    } else {
+                        self.device.write(&bytes)?;
+                    }
+                }
+                Action::Reset => {
+                    self.device.reset()?;
+                    // r10-O-10: a (re)reset restarts the settle window and
+                    // discards writes queued for the previous incarnation.
+                    self.deferred_writes.clear();
+                    let settle = self.device.reset_settle();
+                    self.settle_until = (!settle.is_zero()).then(|| (self.clock)() + settle);
+                }
                 Action::QuerySlot => {
                     let info = self.device.slot_info()?;
                     self.handle_slot_info(info)?;
@@ -644,6 +684,8 @@ impl<D: CaDevice> Driver<D> {
     /// scratch (the next `add_service` then correctly picks `Only` again).
     fn reset_module_state(&mut self) {
         self.stack = CiStack::new();
+        self.settle_until = None;
+        self.deferred_writes.clear();
         self.next_timer = None;
         self.last_caids = None;
         self.last_descrambling_ok = None;
@@ -1073,6 +1115,145 @@ pub(crate) mod tests {
                 _ => false,
             })
             .count()
+    }
+
+    /// A [`MockCaDevice`] that reports a non-zero [`CaDevice::reset_settle`],
+    /// like the Linux device (r10-O-10).
+    struct SettleDevice {
+        inner: MockCaDevice,
+        settle: Duration,
+    }
+
+    impl CaDevice for SettleDevice {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(buf)
+        }
+        fn write(&mut self, buf: &[u8]) -> io::Result<()> {
+            self.inner.write(buf)
+        }
+        fn reset(&mut self) -> io::Result<()> {
+            self.inner.reset()
+        }
+        fn reset_settle(&self) -> Duration {
+            self.settle
+        }
+        fn slot_info(&mut self) -> io::Result<SlotInfo> {
+            self.inner.slot_info()
+        }
+        fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
+            self.inner.poll(timeout)
+        }
+    }
+
+    const SETTLE: Duration = Duration::from_secs(3);
+
+    fn settling_driver(clock: &TestClock) -> Driver<SettleDevice> {
+        Driver::new(SettleDevice {
+            inner: MockCaDevice::new([]),
+            settle: SETTLE,
+        })
+        .with_clock(clock.as_fn())
+    }
+
+    fn create_tc_writes(d: &Driver<SettleDevice>) -> usize {
+        d.device()
+            .inner
+            .ops
+            .iter()
+            .filter(|o| matches!(o, DeviceOp::Write(w) if w[0] == tags::CREATE_T_C))
+            .count()
+    }
+
+    /// r10-O-10 (a): a reset no longer blocks — `init` and `pump` return
+    /// at once while the slot settles (the pre-fix `reset` slept 3 s).
+    #[test]
+    fn reset_does_not_block_pump() {
+        let clock = TestClock::new();
+        let mut d = settling_driver(&clock);
+        let t = std::time::Instant::now();
+        d.init().unwrap();
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert!(t.elapsed() < Duration::from_secs(1), "reset/pump blocked");
+        assert_eq!(d.device().inner.ops[0], DeviceOp::Reset);
+    }
+
+    /// r10-O-10 (b): no transport traffic before the deadline; the normal
+    /// sequence (exactly one Create_T_C, same bytes as a zero-settle
+    /// device) after it.
+    #[test]
+    fn no_transport_traffic_until_settle_elapsed() {
+        let clock = TestClock::new();
+        let mut d = settling_driver(&clock);
+        d.device_mut()
+            .inner
+            .inbound
+            .push_back(vec![tags::C_T_C_REPLY, 0x01, 0x01]);
+        d.init().unwrap();
+        for _ in 0..5 {
+            clock.advance(Duration::from_millis(500));
+            d.pump(Duration::from_millis(10)).unwrap();
+        }
+        // t = 2.5 s < 3 s: still quiet, and the module frame is unread.
+        assert_eq!(create_tc_writes(&d), 0);
+        assert_eq!(
+            d.device().inner.inbound.len(),
+            1,
+            "frame read while settling"
+        );
+
+        clock.advance(Duration::from_millis(600));
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert_eq!(create_tc_writes(&d), 1);
+
+        let mut z = Driver::new(MockCaDevice::new([]));
+        z.init().unwrap();
+        assert_eq!(
+            d.device().inner.written()[..3],
+            z.device().written()[..3],
+            "post-settle Create_T_C differs from the zero-settle sequence"
+        );
+        // And the pump then proceeds normally: the queued reply was consumed
+        // by that same post-settle pump.
+        assert!(d.device().inner.inbound.is_empty());
+    }
+
+    /// r10-O-10 (c): a second reset during settling restarts the deadline
+    /// and drops the stale queued Create_T_C (still exactly one afterwards).
+    #[test]
+    fn second_reset_restarts_settle() {
+        let clock = TestClock::new();
+        let mut d = settling_driver(&clock);
+        d.init().unwrap();
+        clock.advance(Duration::from_secs(2));
+        d.pump(Duration::from_millis(10)).unwrap();
+        d.init().unwrap(); // second reset at t = 2 s -> deadline 5 s
+        clock.advance(Duration::from_secs(2)); // t = 4 s: past the first deadline
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert_eq!(create_tc_writes(&d), 0, "first deadline wrongly honoured");
+        clock.advance(Duration::from_millis(1500)); // t = 5.5 s
+        d.pump(Duration::from_millis(10)).unwrap();
+        assert_eq!(create_tc_writes(&d), 1);
+    }
+
+    /// r10-O-10 (d): slot sampling (hot-plug detection) keeps working while
+    /// the transport is held back.
+    #[test]
+    fn slot_sampling_continues_while_settling() {
+        let clock = TestClock::new();
+        let mut d = settling_driver(&clock);
+        d.init().unwrap();
+        d.take_notifications();
+        d.device_mut().inner.slot.module_present = false;
+        clock.advance(Duration::from_millis(500));
+        d.pump(Duration::from_millis(10)).unwrap();
+        let notes = d.take_notifications();
+        assert!(
+            notes
+                .iter()
+                .any(|n| matches!(n, Notification::HotPlug(HotPlug::CamRemoved))),
+            "{notes:?}"
+        );
+        assert_eq!(create_tc_writes(&d), 0);
     }
 
     #[test]

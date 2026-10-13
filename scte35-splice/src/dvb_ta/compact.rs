@@ -43,7 +43,7 @@ pub const MESSAGE_TYPE_TIME_SIGNAL: u8 = 0x00;
 pub const MESSAGE_TYPE_SPLICE_INSERT: u8 = 0x01;
 
 /// Mask for the 33-bit `pts_time` / `duration` fields.
-const MASK_33: u64 = (1 << 33) - 1;
+const MASK_33: u64 = broadcast_common::clock33::WRAP_33BIT - 1;
 
 /// Read a big-endian 33-bit field starting at `bits[0]`'s low bit being the top
 /// of `pts_time`. Helper for the compact bit layouts: the 33-bit field occupies

@@ -56,4 +56,14 @@ pub enum Error {
         /// Why it is invalid.
         reason: &'static str,
     },
+    /// A [`DataUnit`](crate::DataUnit)'s `data_unit_id` does not match the
+    /// kind of its typed payload (ETSI EN 301 775 §4.4.2, Table 3), so
+    /// serializing it would write a mislabelled data unit.
+    #[error("data_unit_id {id:#04X} is inconsistent with the {payload} payload")]
+    DataUnitIdPayloadMismatch {
+        /// The `data_unit_id` byte the unit would have been written with.
+        id: u8,
+        /// The payload kind that was supplied.
+        payload: &'static str,
+    },
 }

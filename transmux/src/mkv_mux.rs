@@ -474,7 +474,7 @@ fn build_track_entry(
                 height,
             } => (
                 CODEC_V_AVC,
-                Some(config.config.to_bytes()),
+                Some(config.config.try_to_bytes()?),
                 video_elem(*width, *height),
             ),
             CodecConfig::Hevc {
@@ -483,7 +483,7 @@ fn build_track_entry(
                 height,
             } => (
                 CODEC_V_HEVC,
-                Some(config.config.to_bytes()),
+                Some(config.config.try_to_bytes()?),
                 video_elem(*width, *height),
             ),
             CodecConfig::Vp9 { width, height, .. } => {
@@ -496,7 +496,7 @@ fn build_track_entry(
                 height,
             } => (
                 CODEC_V_AV1,
-                Some(config.to_bytes()),
+                Some(config.try_to_bytes()?),
                 video_elem(*width, *height),
             ),
             CodecConfig::Aac {
@@ -944,6 +944,34 @@ impl Package for MkvMux {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// T15: an `avcC` with more than 31 SPS cannot be encoded (5-bit count);
+    /// the Matroska CodecPrivate build must return `Err`, not panic.
+    #[test]
+    fn avc_codec_private_over_range_errors_not_panics() {
+        use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
+        use crate::nalu_types::AvcSps;
+        let config = CodecConfig::Avc {
+            config: AVCConfigurationBox {
+                config: AVCDecoderConfigurationRecord {
+                    configuration_version: 1,
+                    profile_indication: 0x42,
+                    profile_compatibility: 0,
+                    level_indication: 0x1F,
+                    length_size_minus_one: 3,
+                    sps: vec![AvcSps(vec![0x67, 0x42]); 32],
+                    pps: vec![],
+                    chroma_format: None,
+                    bit_depth_luma_minus8: None,
+                    bit_depth_chroma_minus8: None,
+                    sps_ext: vec![],
+                },
+            },
+            width: 640,
+            height: 480,
+        };
+        assert!(build_track_entry(1, 1, &config).is_err());
+    }
 
     #[test]
     fn vint_size_widths() {

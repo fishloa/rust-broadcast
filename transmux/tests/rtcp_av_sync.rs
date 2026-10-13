@@ -134,15 +134,7 @@ fn to_ntp(wall_seconds: f64) -> (u32, u32) {
 /// zeroed).
 fn sender_report(rtp_timestamp: u32, wall_seconds: f64) -> SenderReport {
     let (ntp_msw, ntp_lsw) = to_ntp(wall_seconds);
-    SenderReport {
-        ssrc: 0,
-        ntp_msw,
-        ntp_lsw,
-        rtp_timestamp,
-        packet_count: 0,
-        octet_count: 0,
-        report_blocks: Vec::new(),
-    }
+    SenderReport::new(0, ntp_msw, ntp_lsw, rtp_timestamp, 0, 0, Vec::new())
 }
 
 /// Feed `count` uniformly RTP-timestamp-spaced AUs for one track and return

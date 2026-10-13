@@ -6,6 +6,15 @@ to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.7.2] - 2026-10-13
+### Added
+
+- `ProtocolControl::try_to_message` (fallible `to_message`).
+
+### Fixed
+
+- `ClientSession::send_metadata` and the server's connect reply (configured `chunk_size` of 0) return `Err` instead of panicking on an unserializable value.
+
 ## [0.7.1] - 2026-10-11
 ### Fixed
 - `chunk::ChunkWriter::write` returns the new `RtmpError::InvalidChunkStreamId { chunk_stream_id }` for a `Message::chunk_stream_id` outside `2..=65599` instead of panicking. Not breaking: the signature is unchanged and `RtmpError` is `#[non_exhaustive]`.

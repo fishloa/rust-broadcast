@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-10-13
+### Fixed
+- `DataUnit::serialize_into` now validates that `id` is a valid Table 3
+  `data_unit_id` for the payload kind and returns the new
+  `Error::DataUnitIdPayloadMismatch` instead of writing a mislabelled unit
+  (e.g. `{ id: Vps, payload: Teletext }`). Added
+  `DataUnitPayload::is_consistent_with`. Fields stay public; `parse` always
+  yields consistent pairs. Non-breaking (`Error` is `#[non_exhaustive]`).
+
 ## [0.4.1] - 2026-10-05
 ### Added
 - `TeletextDataField::txt_data_block_logical()` (issue #1106): a typed

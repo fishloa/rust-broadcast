@@ -17,8 +17,11 @@
 //! (ISO/IEC 23009-1 §5.3.9.4.4 / §5.3.9.6) is the segment's *start time*,
 //! which would not match those filenames. `$Number$` substitution is a
 //! literal, caller-chosen integer per segment (this module sets
-//! [`DashPackager::start_number`] to the window's oldest `segment_seq` and
-//! relies on `$Number$` counting up from there) — that *is* `segment_seq`,
+//! [`DashPackager::start_number`] to the **first** `segment_seq` the program
+//! ever published (`FIRST_SEGMENT_NUMBER`, `1`), constant for its life, and relies on `$Number$` counting up
+//! from there — NOT the window's oldest, which would make a client's
+//! `availabilityStartTime`-derived live edge point at segments that do not
+//! exist once the window slides, issue #1058) — that *is* `segment_seq`,
 //! so [`transmux::Addressing::Number`] is the only mode that produces URIs
 //! the shared resource route actually resolves.
 //!
@@ -147,6 +150,16 @@ impl ServedEgress for DashOrigin {
     }
 }
 
+/// `SegmentTemplate@startNumber` of every DASH/LL-DASH MPD: the number of the
+/// first segment a program publishes. A `Trunk` numbers its segments from `1`
+/// for the life of the program and never renumbers
+/// ([`media_plane::trunk::SegmentWriter::next_sequence_number`] resumes from the
+/// last accepted number, or `1` for a fresh `Trunk`), so this is the same number
+/// the segment at timeline position `0` carries -- constant however far the
+/// window has slid, which the live-edge arithmetic of ISO/IEC 23009-1
+/// §5.3.9.5.3 requires (issue #1058).
+pub(crate) const FIRST_SEGMENT_NUMBER: u64 = 1;
+
 /// Select the first of `specs` that produces a derivable RFC 6381 codec
 /// string, preferring a video-shaped codec over any other kind (audio,
 /// or a future codec this classifier doesn't recognise) — see this
@@ -220,20 +233,27 @@ pub fn render_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<String> {
     let timescale = spec.timescale.max(1);
 
     let window = route.window_segments(crate::route::SPTS_PROGRAM_ID);
-    let start_number = window
-        .first()
-        .map(|s| u64::from(s.segment_seq))
-        .unwrap_or(1);
-    let duration_ticks: Vec<u64> = window
-        .iter()
-        .map(|s| (s.duration_secs * f64::from(timescale)).round() as u64)
-        .collect();
-    let segments = if duration_ticks.is_empty() {
+    // `@startNumber` is the number of the first segment this program EVER
+    // published ([`FIRST_SEGMENT_NUMBER`]), fixed for its life -- never the
+    // window's oldest. ISO/IEC 23009-1 §5.3.9.5.3:
+    // with `@duration` addressing segment N starts at
+    // `(N - startNumber) * @duration` from the period start (and is available
+    // `AST + (N - startNumber + 1) * @duration`), so a client computes the
+    // live edge from `availabilityStartTime` + `startNumber`. A startNumber
+    // that slid with the window while AST stayed fixed made it request
+    // segments that do not exist (404) once the window slid (issue #1058).
+    let start_number = FIRST_SEGMENT_NUMBER;
+    // `@duration` is the nominal target, constant across MPD refreshes (the
+    // window's own first-segment duration changes as it slides, which would
+    // change the client's whole number<->time mapping).
+    let nominal_ticks =
+        ((route.target_duration_secs() * f64::from(timescale)).round() as u64).max(1);
+    let segments = if window.is_empty() {
         Vec::new()
     } else {
         vec![TrackSegments {
             track_id: DEFAULT_TRACK_ID,
-            durations: duration_ticks,
+            durations: vec![nominal_ticks],
         }]
     };
 
@@ -805,7 +825,7 @@ mod tests {
     }
 
     #[test]
-    fn render_mpd_number_addressing_and_start_number_track_window() {
+    fn render_mpd_number_addressing_and_start_number_is_fixed_at_first_segment() {
         let route = RouteHandle::new(4.0, 500, 2);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
@@ -821,9 +841,15 @@ mod tests {
 
         let mpd = render_mpd(&route).unwrap();
         assert!(
-            mpd.contains("startNumber=\"2\""),
-            "startNumber must track the window's oldest retained segment_seq (2, \
-             since seq 1 was evicted): {mpd}"
+            mpd.contains("startNumber=\"1\""),
+            "startNumber must stay at the stream's FIRST segment (1) even though seq 1 \
+             was evicted from the window: with availabilityStartTime fixed, a startNumber \
+             that slid to the window's oldest (2) made players compute a live edge of \
+             segments that do not exist (issue #1058): {mpd}"
+        );
+        assert!(
+            !mpd.contains("startNumber=\"2\""),
+            "startNumber must not slide with the window: {mpd}"
         );
         assert!(
             mpd.contains("$Number$"),

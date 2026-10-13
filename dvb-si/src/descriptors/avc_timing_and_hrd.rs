@@ -13,6 +13,13 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for AVC_timing_and_HRD_descriptor.
 pub const TAG: u8 = 0x2A;
 const HEADER_LEN: usize = 2;
+/// `reserved(6)` in byte 0 (Table 2-93), emitted as ones (r03-W7; confirmed by
+/// the TSDuck oracle PMT).
+const RESERVED_6_BITS: u8 = 0x7E;
+/// `reserved(7)` after `90kHz_flag`, emitted as ones.
+const RESERVED_7_BITS: u8 = 0x7F;
+/// Trailing `reserved(5)` after the frame-rate flags, emitted as ones.
+const RESERVED_5_BITS: u8 = 0x1F;
 const FIXED_BODY_LEN: u8 = 1; // first byte always present (hrd_management_valid_flag..picture_and_timing_info_present)
 
 /// Picture and timing info block — present when `picture_and_timing_info_present` is true.
@@ -172,6 +179,7 @@ impl Serialize for AvcTimingAndHrdDescriptor {
 
         let picture_and_timing_info_present = self.picture_timing.is_some();
         buf[HEADER_LEN] = ((self.hrd_management_valid_flag as u8) << 7)
+            | RESERVED_6_BITS
             | (if picture_and_timing_info_present {
                 1
             } else {
@@ -180,7 +188,7 @@ impl Serialize for AvcTimingAndHrdDescriptor {
 
         let mut pos = HEADER_LEN + 1;
         if let Some(ref pt) = self.picture_timing {
-            buf[pos] = if pt._90khz_flag { 0x80 } else { 0x00 };
+            buf[pos] = if pt._90khz_flag { 0x80 } else { 0x00 } | RESERVED_7_BITS;
             pos += 1;
             if !pt._90khz_flag {
                 // N and K are both on the wire whenever the 90 kHz flag is
@@ -203,7 +211,8 @@ impl Serialize for AvcTimingAndHrdDescriptor {
 
         buf[pos] = ((self.fixed_frame_rate_flag as u8) << 7)
             | ((self.temporal_poc_flag as u8) << 6)
-            | ((self.picture_to_display_conversion_flag as u8) << 5);
+            | ((self.picture_to_display_conversion_flag as u8) << 5)
+            | RESERVED_5_BITS;
         Ok(len)
     }
 }
@@ -317,5 +326,29 @@ mod tests {
             AvcTimingAndHrdDescriptor::parse(&bytes).unwrap_err(),
             Error::InvalidDescriptor { tag: TAG, .. }
         ));
+    }
+
+    /// r03-W7 — H.222.0 Table 2-93 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the TSDuck-compiled oracle
+    /// PMT `tsduck-mpeg-simple-pmt.bin` (TSDuck only; no real broadcast capture carries it). (1) conformant bytes (reserved=1) round-trip byte-exactly;
+    /// (2) the same descriptor with reserved=0 (non-conformant sender) parses to
+    /// equal typed fields and re-serializes to the normalized reserved=1 form.
+    #[test]
+    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
+        let conformant: &[u8] = &[
+            TAG, 15, 0xFF, 0x7F, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0xBF,
+        ];
+        let zeroed: &[u8] = &[
+            TAG, 15, 0x81, 0x00, 0, 0, 0, 1, 0, 0, 0, 2, 0, 0, 0, 3, 0xA0,
+        ];
+        let d = AvcTimingAndHrdDescriptor::parse(conformant).unwrap();
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, conformant);
+
+        let dz = AvcTimingAndHrdDescriptor::parse(zeroed).unwrap();
+        assert_eq!(dz, d, "typed fields must not depend on reserved bits");
+        let mut outz = vec![0u8; dz.serialized_len()];
+        dz.serialize_into(&mut outz).unwrap();
+        assert_eq!(outz, conformant);
     }
 }

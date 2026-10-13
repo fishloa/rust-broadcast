@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-10-13
+### Changed
+
+- PCR modulus derived from `clock33::WRAP_33BIT`; added `tests/clock33_guard.rs` lexical tripwire.
+
 ## [0.2.0] - 2026-10-05
 ### Fixed
 - `scte35::check_section` now applies `pts_adjustment` (ANSI/SCTE 35 §9.6.1)

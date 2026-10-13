@@ -24,7 +24,7 @@ const PCR_HZ: u64 = 27_000_000;
 /// 9-bit `program_clock_reference_extension` (ISO/IEC 13818-1 §2.4.2.2)
 /// together count `base * 300 + extension` 27 MHz ticks, wrapping at
 /// `2^33 * 300`.
-const PCR_MODULUS: u64 = (1u64 << 33) * 300;
+const PCR_MODULUS: u64 = broadcast_common::clock33::WRAP_33BIT * 300;
 
 /// A discontinuity guard, not a spec value: an inter-PCR gap this large
 /// (wall-clock or PCR-derived) is treated as a legitimate discontinuity

@@ -11,6 +11,9 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for smoothing_buffer_descriptor.
 pub const TAG: u8 = 0x10;
 const HEADER_LEN: usize = 2;
+/// `reserved(2)` ahead of each 22-bit field (Table 2-69), emitted as `11`
+/// (r03-W7; confirmed by the TSDuck oracle PMT).
+const RESERVED_2: u8 = 0xC0;
 const BODY_LEN: u8 = 6;
 
 /// Smoothing Buffer Descriptor.
@@ -69,11 +72,11 @@ impl Serialize for SmoothingBufferDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         let slr = self.sb_leak_rate;
-        buf[HEADER_LEN] = ((slr >> 16) & 0x3F) as u8;
+        buf[HEADER_LEN] = RESERVED_2 | ((slr >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 1] = ((slr >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 2] = (slr & 0xFF) as u8;
         let ss = self.sb_size;
-        buf[HEADER_LEN + 3] = ((ss >> 16) & 0x3F) as u8;
+        buf[HEADER_LEN + 3] = RESERVED_2 | ((ss >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 4] = ((ss >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 5] = (ss & 0xFF) as u8;
         Ok(len)
@@ -138,5 +141,25 @@ mod tests {
         let mut tiny = vec![0u8; 4];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+    }
+
+    /// r03-W7 — H.222.0 Table 2-69 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the TSDuck-compiled oracle
+    /// PMT `tsduck-mpeg-simple-pmt.bin` (TSDuck only; no real broadcast capture carries it). (1) conformant bytes (reserved=1) round-trip byte-exactly;
+    /// (2) the same descriptor with reserved=0 (non-conformant sender) parses to
+    /// equal typed fields and re-serializes to the normalized reserved=1 form.
+    #[test]
+    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
+        let conformant: &[u8] = &[TAG, 6, 0xFF, 0xAB, 0xCD, 0xC2, 0x34, 0x56];
+        let zeroed: &[u8] = &[TAG, 6, 0x3F, 0xAB, 0xCD, 0x02, 0x34, 0x56];
+        let d = SmoothingBufferDescriptor::parse(conformant).unwrap();
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, conformant);
+
+        let dz = SmoothingBufferDescriptor::parse(zeroed).unwrap();
+        assert_eq!(dz, d, "typed fields must not depend on reserved bits");
+        let mut outz = vec![0u8; dz.serialized_len()];
+        dz.serialize_into(&mut outz).unwrap();
+        assert_eq!(outz, conformant);
     }
 }

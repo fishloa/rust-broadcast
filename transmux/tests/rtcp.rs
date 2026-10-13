@@ -24,15 +24,15 @@ fn block(ssrc: u32, jitter: u32, cumulative: i32) -> ReportBlock {
 }
 
 fn sr_two_blocks() -> SenderReport {
-    SenderReport {
-        ssrc: 0x1122_3344,
-        ntp_msw: 0xE1E2_E3E4,
-        ntp_lsw: 0x5060_7080,
-        rtp_timestamp: 0x000A_0000,
-        packet_count: 12345,
-        octet_count: 6_789_012,
-        report_blocks: vec![block(0xAAAA_0001, 111, 42), block(0xBBBB_0002, 222, -9)],
-    }
+    SenderReport::new(
+        0x1122_3344,
+        0xE1E2_E3E4,
+        0x5060_7080,
+        0x000A_0000,
+        12345,
+        6_789_012,
+        vec![block(0xAAAA_0001, 111, 42), block(0xBBBB_0002, 222, -9)],
+    )
 }
 
 // --- Gate 1: round-trip each type from fields, both directions. ------------
@@ -46,10 +46,7 @@ fn round_trip_sr_rr_sdes_bye_app() {
     assert_eq!(SenderReport::parse(&sr_bytes).unwrap().to_bytes(), sr_bytes);
 
     // RR.
-    let rr = ReceiverReport {
-        ssrc: 0x0A0B_0C0D,
-        report_blocks: vec![block(0xCCCC_0003, 33, -1)],
-    };
+    let rr = ReceiverReport::new(0x0A0B_0C0D, vec![block(0xCCCC_0003, 33, -1)]);
     let rr_bytes = rr.to_bytes();
     assert_eq!(ReceiverReport::parse(&rr_bytes).unwrap(), rr);
     assert_eq!(

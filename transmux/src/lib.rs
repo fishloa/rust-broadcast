@@ -404,7 +404,7 @@ pub use ts_demux::{
     StreamingTsDemux, TsDemux,
 };
 pub use ts_hls::{StreamingTsHlsSegmenter, TsHlsOutput, TsHlsPackager, TsSegment};
-pub use ts_mux::{DEFAULT_PSI_INTERVAL_MS, TsContinuity, TsMux};
+pub use ts_mux::{DEFAULT_PSI_INTERVAL_MS, StreamingTsMux, TsContinuity, TsMux};
 pub use validate::{
     ConformanceIssue, Severity, validate_cmaf_track, validate_init_segment, validate_media_segment,
 };

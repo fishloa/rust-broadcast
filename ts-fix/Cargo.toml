@@ -15,8 +15,8 @@ readme       = "README.md"
 broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 mpeg-ts   = { path = "../mpeg-ts",  version = "0.5", default-features = false }
 mpeg-pes  = { path = "../mpeg-pes", version = "0.5", default-features = false }
-dvb-si    = { path = "../dvb-si",   version = "11.0",   default-features = false }
-dvb-conformance = { path = "../dvb-conformance", version = "11.0", default-features = false }
+dvb-si    = { path = "../dvb-si",   version = "11.1",   default-features = false }
+dvb-conformance = { path = "../dvb-conformance", version = "11.1", default-features = false }
 thiserror = { version = "2",        default-features = false }
 # Only the `ts-fix` binary uses clap; the library uses no `std` path at all.
 # Unconditional, it made `#![no_std]` unreachable — the crate root carried the

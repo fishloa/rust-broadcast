@@ -10,6 +10,11 @@ use broadcast_common::{Parse, Serialize};
 /// Descriptor tag for SVC_extension_descriptor.
 pub const TAG: u8 = 0x30;
 const HEADER_LEN: usize = 2;
+/// Trailing `reserved(5)` after `dependency_id` (Table 2-99), emitted as ones
+/// (r03-W7; confirmed by the TSDuck oracle PMT).
+const RESERVED_5_BITS: u8 = 0x1F;
+/// Trailing `reserved(1)` after `no_sei_nal_unit_present`, emitted as 1.
+const RESERVED_1_BIT: u8 = 0x01;
 const BODY_LEN: u8 = 13;
 
 /// SVC Extension Descriptor.
@@ -110,11 +115,12 @@ impl Serialize for SvcExtensionDescriptor {
         buf[HEADER_LEN + 4..HEADER_LEN + 6].copy_from_slice(&self.frame_rate.to_be_bytes());
         buf[HEADER_LEN + 6..HEADER_LEN + 8].copy_from_slice(&self.average_bitrate.to_be_bytes());
         buf[HEADER_LEN + 8..HEADER_LEN + 10].copy_from_slice(&self.maximum_bitrate.to_be_bytes());
-        buf[HEADER_LEN + 10] = (self.dependency_id & 0x07) << 5;
+        buf[HEADER_LEN + 10] = ((self.dependency_id & 0x07) << 5) | RESERVED_5_BITS;
         buf[HEADER_LEN + 11] = ((self.quality_id_start & 0x0F) << 4) | (self.quality_id_end & 0x0F);
         buf[HEADER_LEN + 12] = ((self.temporal_id_start & 0x07) << 5)
             | ((self.temporal_id_end & 0x07) << 2)
-            | ((self.no_sei_nal_unit_present as u8) << 1);
+            | ((self.no_sei_nal_unit_present as u8) << 1)
+            | RESERVED_1_BIT;
         Ok(len)
     }
 }
@@ -242,5 +248,29 @@ mod tests {
         let mut tiny = vec![0u8; 5];
         let err = d.serialize_into(&mut tiny).unwrap_err();
         assert!(matches!(err, Error::OutputBufferTooSmall { .. }));
+    }
+
+    /// r03-W7 — H.222.0 Table 2-99 (ISO/IEC 13818-1:2021). Evidence for reserved=1 is the TSDuck-compiled oracle
+    /// PMT `tsduck-mpeg-simple-pmt.bin` (TSDuck only; no real broadcast capture carries it). (1) conformant bytes (reserved=1) round-trip byte-exactly;
+    /// (2) the same descriptor with reserved=0 (non-conformant sender) parses to
+    /// equal typed fields and re-serializes to the normalized reserved=1 form.
+    #[test]
+    fn reserved_bits_one_on_serialize_and_zero_input_normalized() {
+        let conformant: &[u8] = &[
+            TAG, 13, 0x07, 0x80, 0x04, 0x38, 0x00, 0x3C, 0x00, 0x64, 0x00, 0xC8, 0x3F, 0x01, 0x07,
+        ];
+        let zeroed: &[u8] = &[
+            TAG, 13, 0x07, 0x80, 0x04, 0x38, 0x00, 0x3C, 0x00, 0x64, 0x00, 0xC8, 0x20, 0x01, 0x06,
+        ];
+        let d = SvcExtensionDescriptor::parse(conformant).unwrap();
+        let mut out = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut out).unwrap();
+        assert_eq!(out, conformant);
+
+        let dz = SvcExtensionDescriptor::parse(zeroed).unwrap();
+        assert_eq!(dz, d, "typed fields must not depend on reserved bits");
+        let mut outz = vec![0u8; dz.serialized_len()];
+        dz.serialize_into(&mut outz).unwrap();
+        assert_eq!(outz, conformant);
     }
 }

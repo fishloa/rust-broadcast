@@ -262,3 +262,38 @@ fn rejects_wrong_packet_type_for_typed_parse() {
         })
     ));
 }
+
+// RFC 3550 §6.4.1/§6.4.2: bytes after the report blocks are profile-specific
+// extensions. Built from the spec-derived SR/RR vectors by appending one
+// word and bumping the header length field.
+fn with_extension(vector: &[u8], ext: &[u8]) -> Vec<u8> {
+    let mut v = vector.to_vec();
+    v.extend_from_slice(ext);
+    let words = u16::from_be_bytes([v[2], v[3]]) + (ext.len() / 4) as u16;
+    v[2..4].copy_from_slice(&words.to_be_bytes());
+    v
+}
+
+#[test]
+fn sr_rr_vectors_with_profile_extensions_round_trip() {
+    let ext = [0xCA, 0xFE, 0xF0, 0x0D, 0, 0, 0, 1];
+    for (vector, is_sr) in [(&SR_VECTOR[..], true), (&RR_VECTOR[..], false)] {
+        let bytes = with_extension(vector, &ext);
+        if is_sr {
+            let sr = SenderReport::parse(&bytes).unwrap();
+            assert_eq!(sr.profile_extensions, ext);
+            assert_eq!(sr.to_bytes(), bytes);
+        } else {
+            let rr = ReceiverReport::parse(&bytes).unwrap();
+            assert_eq!(rr.profile_extensions, ext);
+            assert_eq!(rr.to_bytes(), bytes);
+        }
+    }
+    // Without extensions the vectors still round-trip with an empty field.
+    assert!(
+        SenderReport::parse(&SR_VECTOR)
+            .unwrap()
+            .profile_extensions
+            .is_empty()
+    );
+}

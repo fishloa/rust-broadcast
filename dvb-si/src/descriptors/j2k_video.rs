@@ -108,7 +108,12 @@ pub struct J2kExtendedCapability {
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
 pub struct J2kVideoDescriptor<'a> {
-    /// Extended capability flag.
+    /// Extended capability flag, as parsed from the wire.
+    ///
+    /// Informational only: [`Serialize`] derives the wire flag from
+    /// `extended_capability.is_some()` (and likewise the stripe/block/mdm
+    /// flags from their sub-blocks), so a stale value here can never
+    /// misframe the descriptor (r03-W5).
     pub extended_capability_flag: bool,
     /// Profile and level (15-bit, from least significant 15 bits of Rsiz).
     pub profile_and_level: u16,
@@ -309,14 +314,16 @@ fn serialize_extended_capability(
     buf: &mut [u8],
     mut pos: usize,
 ) -> usize {
+    // The three sub-block flags are derived from which sub-blocks exist, so a
+    // stored flag can never promise bytes that are not written (r03-W5).
     let mut sb = 0u8;
-    if ext.stripe_flag {
+    if ext.stripe.is_some() {
         sb |= 0x80;
     }
-    if ext.block_flag {
+    if ext.block.is_some() {
         sb |= 0x40;
     }
-    if ext.mdm_flag {
+    if ext.mdm.is_some() {
         sb |= 0x20;
     }
     buf[pos] = sb;
@@ -493,8 +500,9 @@ impl Serialize for J2kVideoDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
 
         // extended_capability_flag(1) | profile_and_level(15)
+        // Derived from the Option, never the stored flag (r03-W5).
         let mut b01 = self.profile_and_level & 0x7FFF;
-        if self.extended_capability_flag {
+        if self.extended_capability.is_some() {
             b01 |= 0x8000;
         }
         buf[HEADER_LEN] = (b01 >> 8) as u8;
@@ -515,7 +523,13 @@ impl Serialize for J2kVideoDescriptor<'_> {
                 buf,
                 pos,
             );
-        } else if let Some(cs) = self.color_specification {
+        } else {
+            // serialized_len reserves color_specification + the still/interlaced
+            // byte on this branch, so the byte must exist (r03-W5/W6).
+            let cs = self.color_specification.ok_or(Error::ValueOutOfRange {
+                field: "color_specification",
+                reason: "required when extended_capability is absent",
+            })?;
             buf[pos] = cs;
             pos += 1;
 
@@ -790,5 +804,84 @@ mod tests {
     fn parse_rejects_too_short() {
         let err = J2kVideoDescriptor::parse(&[TAG, 0]).unwrap_err();
         assert!(matches!(err, Error::InvalidDescriptor { tag: TAG, .. }));
+    }
+
+    fn plain<'a>() -> J2kVideoDescriptor<'a> {
+        J2kVideoDescriptor {
+            extended_capability_flag: false,
+            profile_and_level: 0x0102,
+            horizontal_size: 1920,
+            vertical_size: 1080,
+            max_bit_rate: 1,
+            max_buffer_size: 2,
+            den_frame_rate: 1001,
+            num_frame_rate: 24000,
+            extended_capability: None,
+            color_specification: Some(0x03),
+            still_mode: false,
+            interlaced_video: false,
+            private_data: &[],
+        }
+    }
+
+    /// r03-W5: the wire flags follow the Options, never the stored bools.
+    #[test]
+    fn serialize_derives_flags_from_options() {
+        // Stored flag says extended, but no block exists -> legacy form.
+        let mut d = plain();
+        d.extended_capability_flag = true;
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        let re = J2kVideoDescriptor::parse(&buf).unwrap();
+        assert!(!re.extended_capability_flag);
+        assert_eq!(re.color_specification, Some(0x03));
+
+        // Extended block present but flag false, and stored sub-block flags
+        // lie in both directions (stripe_flag without stripe, stripe without flag).
+        let mut d = plain();
+        d.color_specification = None;
+        d.extended_capability = Some(J2kExtendedCapability {
+            stripe_flag: true,
+            block_flag: false,
+            mdm_flag: true,
+            colour_primaries: 1,
+            transfer_characteristics: 2,
+            matrix_coefficients: 3,
+            video_full_range_flag: false,
+            stripe: None,
+            block: Some(J2kBlock {
+                full_horizontal_size: 1,
+                full_vertical_size: 2,
+                blk_width: 3,
+                blk_height: 4,
+                max_blk_idx_h: 5,
+                max_blk_idx_v: 6,
+                blk_idx_h: 7,
+                blk_idx_v: 8,
+            }),
+            mdm: None,
+        });
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        let re = J2kVideoDescriptor::parse(&buf).unwrap();
+        assert!(re.extended_capability_flag);
+        let ext = re.extended_capability.unwrap();
+        assert!(!ext.stripe_flag && ext.block_flag && !ext.mdm_flag);
+        assert!(ext.stripe.is_none() && ext.block.is_some() && ext.mdm.is_none());
+    }
+
+    /// Legacy form with no color_specification used to leave a stale byte.
+    #[test]
+    fn serialize_rejects_missing_color_specification() {
+        let mut d = plain();
+        d.color_specification = None;
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(matches!(
+            d.serialize_into(&mut buf),
+            Err(Error::ValueOutOfRange {
+                field: "color_specification",
+                ..
+            })
+        ));
     }
 }
