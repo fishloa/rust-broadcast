@@ -746,6 +746,15 @@ trait FrameSync {
     fn folds_into_previous(_hdr: &Self::Hdr) -> bool {
         false
     }
+    /// The sample bytes of a whole frame, given the `header_len` bytes the
+    /// caller's shape says to strip. `None` when nothing follows the header.
+    fn payload<'a>(
+        _hdr: &Self::Hdr,
+        frame: &'a [u8],
+        header_len: usize,
+    ) -> Option<std::borrow::Cow<'a, [u8]>> {
+        (frame.len() > header_len).then(|| frame[header_len..].into())
+    }
 }
 
 /// Is `prefix` a leading part of (or equal to) `sync`?
@@ -785,6 +794,13 @@ struct AdtsSync;
 impl FrameSync for AdtsSync {
     type Hdr = AdtsHeader;
     const MIN_FRAME_LEN: usize = ADTS_HEADER_SIZE;
+    fn payload<'a>(
+        hdr: &Self::Hdr,
+        frame: &'a [u8],
+        _header_len: usize,
+    ) -> Option<std::borrow::Cow<'a, [u8]>> {
+        adts_frame_payload(hdr, frame)
+    }
     fn parse(data: &[u8]) -> SyncParse<Self::Hdr> {
         if data.len() < ADTS_HEADER_SIZE {
             return SyncParse::NeedMore;
@@ -986,19 +1002,68 @@ fn split_adts_frames(payload: &[u8]) -> Vec<(&[u8], AdtsHeader)> {
 /// 0`.
 const ADTS_CRC_SIZE: usize = 2;
 
-/// Bytes to strip from the front of a whole ADTS frame to reach its raw
-/// audio payload: the header, plus the 2-byte CRC when present (C11,
-/// #1012). For `number_of_raw_data_blocks_in_frame > 0` with a CRC present,
-/// the spec also inserts one CRC per raw data block between them
-/// (`adts_header_error_check()` / `adts_raw_data_block_error_check()`) —
-/// those are not removed; only the single header-level CRC is, matching the
-/// documented, intentionally-partial fix for the rare multi-block+CRC case.
+/// `raw_data_block_position[i]` (ISO/IEC 13818-7 §6.2, Table 6): 16 bits.
+const ADTS_BLOCK_POSITION_SIZE: usize = 2;
+
+/// Bytes to strip from the front of a whole ADTS frame to reach its first raw
+/// data block: the header, plus (when `protection_absent == 0`) the
+/// `raw_data_block_position[1..=n]` table (`n` =
+/// `number_of_raw_data_blocks_in_frame`, only when `n > 0`) and the 16-bit
+/// `crc_check` (`adts_error_check()` for `n == 0`, `adts_header_error_check()`
+/// otherwise — ISO/IEC 13818-7 §6.2, Tables 5/6/10; C11, #1012). See
+/// `transmux/docs/codec/adts-error-check.md`.
 fn adts_header_len(hdr: &AdtsHeader) -> usize {
     if hdr.protection_absent {
         ADTS_HEADER_SIZE
     } else {
-        ADTS_HEADER_SIZE + ADTS_CRC_SIZE
+        ADTS_HEADER_SIZE
+            + ADTS_BLOCK_POSITION_SIZE * hdr.num_raw_data_blocks as usize
+            + ADTS_CRC_SIZE
     }
+}
+
+/// The AAC sample bytes of one whole ADTS frame: every `raw_data_block()`
+/// with the position table and CRC words removed. Single-block and
+/// `protection_absent == 1` frames are a plain slice (byte-identical to the
+/// pre-#1012 behaviour). A CRC-protected multi-block frame is
+/// `hdr | positions | crc | blk0 | crc | blk1 | crc | ...`; block `i` starts
+/// at `first_block + raw_data_block_position[i]` (a byte offset within the
+/// frame), so block `i-1` ends 2 bytes (its `crc_check`) before it and the
+/// last block ends 2 bytes before the frame end. The blocks are concatenated
+/// into one sample, as `protection_absent == 1` multi-block frames already
+/// are. A malformed position table (non-monotonic or out of range) never
+/// rejects the frame: it degrades to everything after the header-level CRC.
+fn adts_frame_payload<'a>(hdr: &AdtsHeader, frame: &'a [u8]) -> Option<std::borrow::Cow<'a, [u8]>> {
+    let header_len = adts_header_len(hdr);
+    if frame.len() <= header_len {
+        return None;
+    }
+    let n = hdr.num_raw_data_blocks as usize;
+    let plain = &frame[header_len..];
+    if hdr.protection_absent || n == 0 {
+        return Some(plain.into());
+    }
+    let positions = &frame[ADTS_HEADER_SIZE..ADTS_HEADER_SIZE + ADTS_BLOCK_POSITION_SIZE * n];
+    let mut starts = vec![0usize];
+    starts.extend(
+        positions
+            .chunks_exact(ADTS_BLOCK_POSITION_SIZE)
+            .map(|c| u16::from_be_bytes([c[0], c[1]]) as usize),
+    );
+    // Block i occupies plain[starts[i] .. end_i - CRC]; end_i = starts[i+1].
+    let ends = starts[1..].iter().copied().chain([plain.len()]);
+    let mut out = Vec::with_capacity(plain.len());
+    let mut prev = 0usize;
+    for (i, end) in ends.enumerate() {
+        let start = starts[i];
+        let ok = start >= prev && end >= start + ADTS_CRC_SIZE && end <= plain.len();
+        if !ok {
+            return Some(plain.into());
+        }
+        out.extend_from_slice(&plain[start..end - ADTS_CRC_SIZE]);
+        prev = end;
+    }
+    Some(out.into())
 }
 
 /// Parse a PAT section, returning every `(program_number, program_map_PID)`
@@ -1943,7 +2008,7 @@ fn video_sample_bytes(codec: VideoCodec, au_data: &[u8]) -> (Vec<u8>, bool) {
 struct PlannedFrame<'a> {
     /// Sample bytes to emit; `None` for a frame with no payload after its
     /// header (still advances the cursor by its duration).
-    data: Option<&'a [u8]>,
+    data: Option<std::borrow::Cow<'a, [u8]>>,
     /// Intrinsic duration in track-timescale ticks (= samples).
     duration: u32,
     /// The frame *began* in the carried bytes, i.e. in the previous PES.
@@ -1992,7 +2057,7 @@ fn plan_with<'a, F: FrameSync>(
         .map(|&(start, f, ref h)| {
             let (header_len, duration) = shape(h);
             PlannedFrame {
-                data: (f.len() > header_len).then(|| &f[header_len..]),
+                data: F::payload(h, f, header_len),
                 duration,
                 from_carry: start < carry_len,
             }
@@ -2216,7 +2281,7 @@ fn emit_audio_au(
         | AudioKind::Dts => {
             if let Some(plan) = &plan {
                 for f in &plan.frames {
-                    if let Some(payload) = f.data {
+                    if let Some(payload) = &f.data {
                         events.push_back(DemuxEvent::Sample {
                             track_id,
                             sample: audio_sample(payload.to_vec(), f.duration, elapsed),
@@ -8714,6 +8779,141 @@ mod tests {
             Some(AAC_SAMPLES_PER_FRAME * 2),
             "duration must be (num_raw_data_blocks + 1) * AAC_SAMPLES_PER_FRAME, not just 1024"
         );
+    }
+
+    /// Build an ADTS frame per ISO/IEC 13818-7 Tables 5-9 from `blocks`
+    /// (`blocks.len() - 1` = `number_of_raw_data_blocks_in_frame`), laying the
+    /// bytes out independently of the demuxer (`adts_frame_payload`): header,
+    /// then with `crc` the position table + header CRC + a per-block CRC word
+    /// after every block. CRC words are non-zero junk so any leak shows.
+    fn build_adts_frame(base: &[u8; 7], blocks: &[&[u8]], crc: bool) -> Vec<u8> {
+        let n = blocks.len() - 1;
+        let mut body = Vec::new();
+        let mut positions = Vec::new();
+        for (i, b) in blocks.iter().enumerate() {
+            if i > 0 {
+                positions.push(body.len() as u16); // offset from first block
+            }
+            body.extend_from_slice(b);
+            if crc && n > 0 {
+                body.extend_from_slice(&[0xC0 | i as u8, 0xDE]); // crc_check
+            }
+        }
+        let mut tail = Vec::new();
+        if crc {
+            if n > 0 {
+                for p in &positions {
+                    tail.extend_from_slice(&p.to_be_bytes());
+                }
+            }
+            tail.extend_from_slice(&[0xBE, 0xEF]); // header-level crc_check
+        }
+        tail.extend_from_slice(&body);
+        let frame_length = 7 + tail.len();
+        assert!(frame_length < (1 << 13));
+        let mut h = *base;
+        if crc {
+            h[1] &= !0x01; // protection_absent = 0
+        } else {
+            h[1] |= 0x01;
+        }
+        // frame_length: bits 30..43 of the header = h[3][1:0], h[4], h[5][7:5].
+        h[3] = (h[3] & !0x03) | ((frame_length >> 11) & 0x03) as u8;
+        h[4] = ((frame_length >> 3) & 0xFF) as u8;
+        h[5] = (h[5] & 0x1F) | (((frame_length & 0x07) as u8) << 5);
+        h[6] = (h[6] & !0x03) | n as u8;
+        let mut out = h.to_vec();
+        out.extend_from_slice(&tail);
+        out
+    }
+
+    fn demux_one_adts_frame(au: &[u8]) -> Vec<(Vec<u8>, Option<u32>)> {
+        let mut events: VecDeque<DemuxEvent> = VecDeque::new();
+        let mut anchor = AudioAnchor::default();
+        emit_audio_au(
+            &AudioKind::Aac,
+            44_100,
+            &mut anchor,
+            au,
+            0,
+            0,
+            TrackId::new(1),
+            &mut events,
+        );
+        events
+            .iter()
+            .filter_map(|e| match e {
+                DemuxEvent::Sample { sample, .. } => Some((sample.data.to_vec(), sample.duration)),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// #1012: multi-raw-data-block ADTS frames, with and without CRC
+    /// (ISO/IEC 13818-7 §6.2 Tables 5-7), spec-laid-out synthetic blocks of
+    /// different lengths: the position table and every CRC word must be
+    /// stripped, leaving only the concatenated raw_data_block payloads.
+    #[test]
+    fn adts_multi_block_with_crc_strips_positions_and_crcs() {
+        let (asc, _) = real_aac_asc_and_samples();
+        let base = asc.to_adts_header(7).expect("base header");
+        let all: [&[u8]; 4] = [
+            &[0x11; 5],
+            &[0x22, 0x23, 0x24, 0x25, 0x26, 0x27, 0x28],
+            &[0x33; 3],
+            &[0x44; 9],
+        ];
+        for n_blocks in 1..=4usize {
+            for crc in [false, true] {
+                let blocks = &all[..n_blocks];
+                let au = build_adts_frame(&base, blocks, crc);
+                let got = demux_one_adts_frame(&au);
+                assert_eq!(got.len(), 1, "n_blocks={n_blocks} crc={crc}");
+                let want: Vec<u8> = blocks.concat();
+                assert_eq!(got[0].0, want, "n_blocks={n_blocks} crc={crc}");
+                assert_eq!(
+                    got[0].1,
+                    Some(AAC_SAMPLES_PER_FRAME * n_blocks as u32),
+                    "n_blocks={n_blocks} crc={crc}"
+                );
+            }
+        }
+    }
+
+    /// #1012: real AAC frames from `h264_aac.ts` re-framed as multi-block
+    /// CRC-protected ADTS frames must demux to exactly the same bytes as the
+    /// original single-block frames, concatenated.
+    #[test]
+    fn adts_multi_block_crc_reframed_real_aac_is_byte_identical() {
+        let (asc, samples) = real_aac_asc_and_samples();
+        let base = asc.to_adts_header(7).expect("base header");
+        for n_blocks in 2..=4usize {
+            let mut checked = 0;
+            for chunk in samples.chunks_exact(n_blocks).take(20) {
+                let blocks: Vec<&[u8]> = chunk.iter().map(|v| v.as_slice()).collect();
+                let au = build_adts_frame(&base, &blocks, true);
+                let got = demux_one_adts_frame(&au);
+                assert_eq!(got.len(), 1);
+                assert_eq!(got[0].0, chunk.concat(), "n_blocks={n_blocks}");
+                checked += 1;
+            }
+            assert!(checked >= 5, "fixture too small ({checked} groups)");
+        }
+    }
+
+    /// #1012: a malformed position table never rejects the frame; it degrades
+    /// to stripping only the header-level CRC and position table.
+    #[test]
+    fn adts_multi_block_crc_bad_position_table_degrades_not_rejects() {
+        let (asc, _) = real_aac_asc_and_samples();
+        let base = asc.to_adts_header(7).expect("base header");
+        let mut au = build_adts_frame(&base, &[&[0x11; 6], &[0x22; 6]], true);
+        // position[1] (bytes 7..9) -> out of range
+        au[7] = 0x7F;
+        au[8] = 0xFF;
+        let got = demux_one_adts_frame(&au);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].0.len(), au.len() - (7 + 2 + 2));
     }
 
     /// Every DVB descriptor-disambiguated `stream_type` (`0x06`/`0x15`) with
