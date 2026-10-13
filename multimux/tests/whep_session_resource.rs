@@ -238,7 +238,7 @@ async fn patch_trickles_a_candidate_and_rejections_follow_the_rfc() {
     .await;
     assert_eq!(ok.status, 204, "{}", ok.body);
     wait_until("candidate handed to the transport", || {
-        h.probes.trickled_candidates.load(Ordering::Relaxed) == 1
+        h.probes.ice.candidates.load(Ordering::Relaxed) == 1
     })
     .await;
 
@@ -266,19 +266,24 @@ async fn patch_trickles_a_candidate_and_rejections_follow_the_rfc() {
         .status,
         412
     );
-    // 422: ICE restart is unsupported by this transport.
-    assert_eq!(
-        http(
-            h.addr,
-            "PATCH",
-            &loc,
-            &[("Content-Type", TRICKLE), ("If-Match", "*")],
-            &good
-        )
-        .await
-        .status,
-        422
-    );
+    // `If-Match: *` is an ICE restart: a fragment that keeps the current
+    // ice-ufrag, or has no ice-pwd, restarts nothing (400).
+    for body in [good.as_str(), "a=ice-ufrag:brandnew\r\n"] {
+        assert_eq!(
+            http(
+                h.addr,
+                "PATCH",
+                &loc,
+                &[("Content-Type", TRICKLE), ("If-Match", "*")],
+                body
+            )
+            .await
+            .status,
+            400,
+            "{body:?}"
+        );
+    }
+    assert_eq!(h.probes.ice.restarts.load(Ordering::Relaxed), 0);
     // 400: other ICE generation, empty fragment, garbage.
     for body in [
         fragment("zzzz", CANDIDATE).as_str(),
@@ -300,9 +305,113 @@ async fn patch_trickles_a_candidate_and_rejections_follow_the_rfc() {
         );
     }
     // Only the one good candidate ever reached the transport.
-    assert_eq!(h.probes.trickled_candidates.load(Ordering::Relaxed), 1);
+    assert_eq!(h.probes.ice.candidates.load(Ordering::Relaxed), 1);
     assert_eq!(http(h.addr, "DELETE", &loc, &[], "").await.status, 200);
 
+    h.cancel.cancel();
+    let _ = tokio::time::timeout(Duration::from_secs(10), h.handle).await;
+}
+
+/// ICE restart (`If-Match: *`) on a live viewer session: `200` with the new
+/// `ETag`, a `trickle-ice-sdpfrag` body carrying the server's NEW ice-ufrag /
+/// ice-pwd and its candidates, and the restart reaches the session's
+/// transport. The old `ETag` is then stale (`412`), the new one trickles.
+/// (Media continuing across a restart with a real peer is exercised on the
+/// WHIP side and in `webrtc-runtime`'s transport tests; the WHEP session task
+/// uses the same `restart_ice`.)
+#[tokio::test]
+async fn ice_restart_answers_new_credentials_and_etag() {
+    let h = multimux::output::whep::serve_whep_run_probed_for_test(4).await;
+    let created = post_offer(h.addr).await;
+    let loc = resource_path(&created);
+    let etag = etag_of(&created);
+    let old_ufrag = created
+        .body
+        .lines()
+        .find_map(|l| l.strip_prefix("a=ice-ufrag:"))
+        .expect("answer ufrag")
+        .trim()
+        .to_string();
+    wait_until("viewer admitted", || {
+        h.probes.active_sessions.load(Ordering::SeqCst) == 1
+    })
+    .await;
+
+    let restart = format!(
+        "a=ice-ufrag:viewernew\r\na=ice-pwd:viewernewpassword0000000\r\n\
+         m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=candidate:{CANDIDATE}\r\n"
+    );
+    let r = http(
+        h.addr,
+        "PATCH",
+        &loc,
+        &[("Content-Type", TRICKLE), ("If-Match", "*")],
+        &restart,
+    )
+    .await;
+    assert_eq!(r.status, 200, "{}", r.body);
+    assert!(r.header("content-type").unwrap().starts_with(TRICKLE));
+    let new_etag = etag_of(&r);
+    assert_ne!(new_etag, etag);
+    let new_ufrag = r
+        .body
+        .lines()
+        .find_map(|l| l.strip_prefix("a=ice-ufrag:"))
+        .expect("restart answer carries the new ufrag")
+        .trim()
+        .to_string();
+    assert_ne!(new_ufrag, old_ufrag);
+    assert!(r.body.contains("a=ice-pwd:"), "{}", r.body);
+    assert!(r.body.contains("a=candidate:"), "{}", r.body);
+    wait_until("restart applied to the session transport", || {
+        h.probes.ice.restarts.load(Ordering::Relaxed) == 1
+    })
+    .await;
+    // The restart's own candidate was applied after the new credentials.
+    wait_until("restart candidate applied", || {
+        h.probes.ice.candidates.load(Ordering::Relaxed) == 1
+    })
+    .await;
+
+    assert_eq!(
+        http(
+            h.addr,
+            "PATCH",
+            &loc,
+            &[("Content-Type", TRICKLE), ("If-Match", &etag)],
+            &fragment("viewernew", CANDIDATE)
+        )
+        .await
+        .status,
+        412,
+        "the pre-restart ETag is stale"
+    );
+    assert_eq!(
+        http(
+            h.addr,
+            "PATCH",
+            &loc,
+            &[("Content-Type", TRICKLE), ("If-Match", &new_etag)],
+            &fragment("viewernew", CANDIDATE)
+        )
+        .await
+        .status,
+        204
+    );
+    // A restart reusing the new ufrag is no restart.
+    assert_eq!(
+        http(
+            h.addr,
+            "PATCH",
+            &loc,
+            &[("Content-Type", TRICKLE), ("If-Match", "*")],
+            &restart
+        )
+        .await
+        .status,
+        400
+    );
+    assert_eq!(http(h.addr, "DELETE", &loc, &[], "").await.status, 200);
     h.cancel.cancel();
     let _ = tokio::time::timeout(Duration::from_secs(10), h.handle).await;
 }

@@ -822,6 +822,7 @@ async fn whep_post_inner(
         let _ = media.add_remote_candidate(raw);
     }
 
+    let local_candidates = media.local_candidates();
     let answer = build_whep_answer(
         &parsed,
         &media,
@@ -854,7 +855,8 @@ async fn whep_post_inner(
         Resource {
             machine: parking_lot::Mutex::new(machine),
             control: Arc::clone(&control),
-            remote_ufrag: parsed.remote_ufrag.clone(),
+            remote_ufrag: parking_lot::Mutex::new(parsed.remote_ufrag.clone()),
+            local_candidates,
         },
     );
 
@@ -897,7 +899,7 @@ async fn whep_patch(
         Ok(WhepEvent::TrickleIce { sdp_fragment, .. }) => {
             let fragment =
                 match crate::webrtc_session::parse_ice_fragment(&sdp_fragment).and_then(|f| {
-                    crate::webrtc_session::validate_trickle(&f, &resource.remote_ufrag)?;
+                    crate::webrtc_session::validate_trickle(&f, &resource.remote_ufrag.lock())?;
                     Ok(f)
                 }) {
                     Ok(f) => f,
@@ -911,9 +913,29 @@ async fn whep_patch(
             }
             crate::webrtc_session::to_axum(resource.machine.lock().ack_trickle())
         }
-        // The `MediaTransport` has no ICE-restart operation (its remote ICE
-        // credentials are fixed at construction).
-        Ok(WhepEvent::IceRestart { .. }) => StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+        // draft-ietf-wish-whep section 4 / RFC 9725 section 4.3.2: `If-Match:
+        // *` with new ICE credentials. The transport restarts ICE in place
+        // (DTLS/SRTP untouched, so playback continues); the `200` carries this
+        // side's new credentials and candidates and a new `ETag`.
+        Ok(WhepEvent::IceRestart { sdp_fragment }) => {
+            let plan = match crate::webrtc_session::plan_restart(
+                &sdp_fragment,
+                &resource.remote_ufrag.lock(),
+                &resource.local_candidates,
+                rand_token,
+            ) {
+                Ok(plan) => plan,
+                Err(reason) => {
+                    tracing::debug!(%reason, "whep: ICE restart fragment rejected");
+                    return StatusCode::BAD_REQUEST.into_response();
+                }
+            };
+            let (answer, etag) = (plan.answer.clone(), plan.etag.clone());
+            if !crate::webrtc_session::commit_restart(&resource, plan) {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            crate::webrtc_session::to_axum(resource.machine.lock().ack_restart(answer, etag))
+        }
         Ok(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         Err(e) => crate::webrtc_session::patch_error_status(&e).into_response(),
     }
@@ -1379,14 +1401,14 @@ async fn run_whep_session(
     trunk: Arc<Trunk>,
     cancel: CancellationToken,
     active_sessions: Arc<AtomicUsize>,
-    trickled_candidates: Arc<AtomicU64>,
+    ice: Arc<IceCounters>,
 ) {
     run_whep_session_with_silence_timeout(
         admitted,
         trunk,
         cancel,
         active_sessions,
-        trickled_candidates,
+        ice,
         WHEP_INBOUND_SILENCE_TIMEOUT,
     )
     .await;
@@ -1401,7 +1423,7 @@ async fn run_whep_session_with_silence_timeout(
     trunk: Arc<Trunk>,
     cancel: CancellationToken,
     active_sessions: Arc<AtomicUsize>,
-    trickled_candidates: Arc<AtomicU64>,
+    ice: Arc<IceCounters>,
     silence_timeout: Duration,
 ) {
     let AdmittedWhep {
@@ -1460,14 +1482,10 @@ async fn run_whep_session_with_silence_timeout(
             tracing::info!("whep: session ended by DELETE");
             break;
         }
-        for candidate in &ctl.candidates {
-            match media.add_remote_candidate(candidate) {
-                Ok(()) => {
-                    trickled_candidates.fetch_add(1, Ordering::Relaxed);
-                }
-                Err(e) => tracing::debug!(error = %e, "whep: trickled candidate rejected"),
-            }
-        }
+        let applied = crate::webrtc_session::apply_ice_ops(&mut media, ctl.ops, Instant::now());
+        ice.candidates
+            .fetch_add(applied.candidates, Ordering::Relaxed);
+        ice.restarts.fetch_add(applied.restarts, Ordering::Relaxed);
         // The transport's own next ICE/DTLS deadline (defect 1, WHEP): drive
         // it directly instead of only on the fixed poll tick so retransmits
         // fire at the transport's scheduled instant.
@@ -1654,6 +1672,16 @@ pub async fn run_whep_on(
     .await;
 }
 
+/// ICE changes applied to session transports (test observable).
+#[doc(hidden)]
+#[derive(Debug, Default)]
+pub struct IceCounters {
+    /// Trickled remote candidates handed to a transport.
+    pub candidates: AtomicU64,
+    /// ICE restarts applied to a transport.
+    pub restarts: AtomicU64,
+}
+
 /// The live counters of one running WHEP route, handed in by a caller that
 /// wants to observe them (tests); [`run_whep_on`] passes fresh ones nobody
 /// reads.
@@ -1663,7 +1691,7 @@ pub struct WhepProbes {
     /// Admitted-and-not-yet-ended sessions (the capacity counter).
     pub active_sessions: Arc<AtomicUsize>,
     /// Trickled remote candidates a session task has handed to its transport.
-    pub trickled_candidates: Arc<AtomicU64>,
+    pub ice: Arc<IceCounters>,
     resources: Arc<std::sync::OnceLock<Arc<ResourceTable<WhepSession>>>>,
 }
 
@@ -1687,7 +1715,7 @@ pub async fn run_whep_on_probed(
 ) {
     let (admit_tx, mut admit_rx) = mpsc::channel::<AdmittedWhep>(ACCEPT_QUEUE_CAPACITY);
     let active_sessions = Arc::clone(&probes.active_sessions);
-    let trickled_candidates = Arc::clone(&probes.trickled_candidates);
+    let ice = Arc::clone(&probes.ice);
     let resources = ResourceTable::new();
     let _ = probes.resources.set(Arc::clone(&resources));
 
@@ -1725,9 +1753,9 @@ pub async fn run_whep_on_probed(
                         let trunk = Arc::clone(&trunk);
                         let session_cancel = cancel.clone();
                         let active = Arc::clone(&active_sessions);
-                        let trickled = Arc::clone(&trickled_candidates);
+                        let ice = Arc::clone(&ice);
                         sessions.spawn(run_whep_session(
-                            a, trunk, session_cancel, active, trickled,
+                            a, trunk, session_cancel, active, ice,
                         ));
                     }
                     None => break,
@@ -2173,7 +2201,8 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
                 Resource {
                     machine: parking_lot::Mutex::new(WhepSession::new("/whep/session/test".into())),
                     control,
-                    remote_ufrag: "abcd".to_string(),
+                    remote_ufrag: parking_lot::Mutex::new("abcd".to_string()),
+                    local_candidates: Vec::new(),
                 },
             ),
         }
@@ -2241,7 +2270,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             trunk,
             cancel,
             Arc::clone(&active_sessions),
-            Arc::new(AtomicU64::new(0)),
+            Arc::default(),
             silence_timeout,
         ));
 
@@ -2280,7 +2309,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             trunk,
             cancel,
             Arc::clone(&active_sessions),
-            Arc::new(AtomicU64::new(0)),
+            Arc::default(),
             silence_timeout,
         ));
 
@@ -2317,7 +2346,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             trunk,
             cancel,
             Arc::clone(&active_sessions),
-            Arc::new(AtomicU64::new(0)),
+            Arc::default(),
             silence_timeout,
         ));
 
@@ -2588,7 +2617,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             trunk,
             cancel,
             Arc::clone(&active_sessions),
-            Arc::new(AtomicU64::new(0)),
+            Arc::default(),
             silence_timeout,
         ));
 

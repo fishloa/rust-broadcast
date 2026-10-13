@@ -197,6 +197,10 @@ struct WhipInfra {
     /// Remote candidates a `PATCH` trickled in that the read loop has handed
     /// to a session's transport (test observable).
     trickled_candidates: Arc<AtomicU64>,
+    /// ICE restarts applied to a session's transport (test observable).
+    ice_restarts: Arc<AtomicU64>,
+    /// Decrypted RTP packets read from any session (test observable).
+    rtp_packets: Arc<AtomicU64>,
     /// Sessions admitted (SDP answered, media socket bound) but not yet
     /// reaped — checked against `max_sessions` in `whip_post`
     /// *before* any of that per-connection work happens (issue r07-C11):
@@ -375,6 +379,8 @@ impl WhipRoute {
                     accept_rx: Arc::new(StdMutex::new(rx)),
                     resources,
                     trickled_candidates: Arc::new(AtomicU64::new(0)),
+                    ice_restarts: Arc::new(AtomicU64::new(0)),
+                    rtp_packets: Arc::new(AtomicU64::new(0)),
                     active_sessions,
                     cancel,
                     tracker: tracked,
@@ -415,6 +421,16 @@ impl WhipRouteShared {
     /// handed to a session's transport.
     pub fn trickled_candidates(&self) -> u64 {
         self.infra.trickled_candidates.load(Ordering::Relaxed)
+    }
+
+    /// The number of ICE restarts a session's transport has applied.
+    pub fn ice_restarts(&self) -> u64 {
+        self.infra.ice_restarts.load(Ordering::Relaxed)
+    }
+
+    /// The number of decrypted RTP packets the read loops have received.
+    pub fn rtp_packets(&self) -> u64 {
+        self.infra.rtp_packets.load(Ordering::Relaxed)
     }
 
     /// The number of `handle_timeout` fires driven by the transport-deadline
@@ -1163,6 +1179,7 @@ async fn whip_post_inner(
         let _ = media.add_remote_candidate(raw);
     }
 
+    let local_candidates = media.local_candidates();
     let answer = build_answer(
         &parsed,
         &media,
@@ -1195,7 +1212,8 @@ async fn whip_post_inner(
         Resource {
             machine: parking_lot::Mutex::new(session),
             control: Arc::clone(&control),
-            remote_ufrag: parsed.remote_ufrag.clone(),
+            remote_ufrag: parking_lot::Mutex::new(parsed.remote_ufrag.clone()),
+            local_candidates,
         },
     );
 
@@ -1248,7 +1266,7 @@ async fn whip_patch(
         Ok(WhipEvent::TrickleIce { sdp_fragment, .. }) => {
             let fragment =
                 match crate::webrtc_session::parse_ice_fragment(&sdp_fragment).and_then(|f| {
-                    crate::webrtc_session::validate_trickle(&f, &resource.remote_ufrag)?;
+                    crate::webrtc_session::validate_trickle(&f, &resource.remote_ufrag.lock())?;
                     Ok(f)
                 }) {
                     Ok(f) => f,
@@ -1262,9 +1280,28 @@ async fn whip_patch(
             }
             crate::webrtc_session::to_axum(resource.machine.lock().ack_trickle())
         }
-        // The `MediaTransport` has no ICE-restart operation (its remote ICE
-        // credentials are fixed at construction).
-        Ok(WhipEvent::IceRestart { .. }) => StatusCode::UNPROCESSABLE_ENTITY.into_response(),
+        // RFC 9725 section 4.3.2: `If-Match: *` with new ICE credentials. The
+        // transport restarts ICE in place (DTLS/SRTP untouched); the `200`
+        // carries this side's new credentials and candidates and a new `ETag`.
+        Ok(WhipEvent::IceRestart { sdp_fragment }) => {
+            let plan = match crate::webrtc_session::plan_restart(
+                &sdp_fragment,
+                &resource.remote_ufrag.lock(),
+                &resource.local_candidates,
+                rand_token,
+            ) {
+                Ok(plan) => plan,
+                Err(reason) => {
+                    tracing::debug!(%reason, "whip: ICE restart fragment rejected");
+                    return StatusCode::BAD_REQUEST.into_response();
+                }
+            };
+            let (answer, etag) = (plan.answer.clone(), plan.etag.clone());
+            if !crate::webrtc_session::commit_restart(&resource, plan) {
+                return StatusCode::BAD_REQUEST.into_response();
+            }
+            crate::webrtc_session::to_axum(resource.machine.lock().ack_restart(answer, etag))
+        }
         Ok(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
         Err(e) => crate::webrtc_session::patch_error_status(&e).into_response(),
     }
@@ -1710,6 +1747,8 @@ struct ReadShared {
     timer_fires: Arc<AtomicU64>,
     timer_notify: Arc<Notify>,
     trickled_candidates: Arc<AtomicU64>,
+    ice_restarts: Arc<AtomicU64>,
+    rtp_packets: Arc<AtomicU64>,
 }
 
 impl ReadShared {
@@ -1718,6 +1757,8 @@ impl ReadShared {
             timer_fires: Arc::clone(&infra.timer_fires),
             timer_notify: Arc::clone(&infra.timer_notify),
             trickled_candidates: Arc::clone(&infra.trickled_candidates),
+            ice_restarts: Arc::clone(&infra.ice_restarts),
+            rtp_packets: Arc::clone(&infra.rtp_packets),
         }
     }
 }
@@ -1817,16 +1858,13 @@ fn read_one<S: DatagramIo>(
                 last_fire,
             };
         }
-        for candidate in &ctl.candidates {
-            match media.add_remote_candidate(candidate) {
-                Ok(()) => {
-                    shared.trickled_candidates.fetch_add(1, Ordering::Relaxed);
-                }
-                // A candidate this side can't take (unparsable, over the cap)
-                // is skipped, as for the offer's own candidates.
-                Err(e) => tracing::debug!(error = %e, "whip: trickled candidate rejected"),
-            }
-        }
+        let applied = crate::webrtc_session::apply_ice_ops(&mut media, ctl.ops, clock_now());
+        shared
+            .trickled_candidates
+            .fetch_add(applied.candidates, Ordering::Relaxed);
+        shared
+            .ice_restarts
+            .fetch_add(applied.restarts, Ordering::Relaxed);
 
         // The transport's own next timer, taken BEFORE the select so a quiet
         // session still gets its ICE/DTLS retransmits (defect 1) — the timer
@@ -1867,6 +1905,9 @@ fn read_one<S: DatagramIo>(
                                     _ => None,
                                 })
                                 .collect();
+                            shared
+                                .rtp_packets
+                                .fetch_add(wire.len() as u64, Ordering::Relaxed);
                             ReadOutcome::Events(wire)
                         }
                         // A per-datagram failure is NOT session-fatal; an
@@ -2305,6 +2346,8 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
             timer_fires: Arc::new(AtomicU64::new(0)),
             timer_notify: Arc::new(Notify::new()),
             trickled_candidates: Arc::new(AtomicU64::new(0)),
+            ice_restarts: Arc::new(AtomicU64::new(0)),
+            rtp_packets: Arc::new(AtomicU64::new(0)),
         }
     }
 
@@ -2317,7 +2360,8 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
             Resource {
                 machine: parking_lot::Mutex::new(WhipSession::new("/whip/session/test".into())),
                 control: Arc::clone(&control),
-                remote_ufrag: "abcd".to_string(),
+                remote_ufrag: parking_lot::Mutex::new("abcd".to_string()),
+                local_candidates: Vec::new(),
             },
         );
         (control, resource)

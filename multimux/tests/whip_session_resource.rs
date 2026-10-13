@@ -3,7 +3,8 @@
 //! (RFC 9725 sections 4.2/4.3) — `DELETE` ends the session and frees its
 //! capacity slot, `PATCH` trickles ICE candidates — exercised over real HTTP
 //! against the real route (`run_whip` driving a real media socket), and over
-//! a real ICE + DTLS handshake with a loopback WebRTC peer.
+//! a real ICE + DTLS handshake with a loopback WebRTC peer (including an ICE
+//! restart mid-session with media still flowing after it).
 //!
 //! The browser-driven WHIP test (`whip_ingest.rs`) is separate and skips
 //! without Node/Chromium; nothing in this file needs either.
@@ -301,16 +302,20 @@ async fn patch_rejections_follow_rfc_9725() {
     .await;
     assert_eq!(r.status, 412);
 
-    // If-Match: * is an ICE restart, which this transport cannot do: 422.
-    let r = http(
-        addr,
-        "PATCH",
-        &loc,
-        &[("Content-Type", TRICKLE), ("If-Match", "*")],
-        &good,
-    )
-    .await;
-    assert_eq!(r.status, 422);
+    // If-Match: * is an ICE restart (RFC 9725 section 4.3.2). A fragment that
+    // keeps the current ice-ufrag, or has no ice-pwd, restarts nothing: 400.
+    for body in [good.as_str(), "a=ice-ufrag:brandnew\r\n"] {
+        let r = http(
+            addr,
+            "PATCH",
+            &loc,
+            &[("Content-Type", TRICKLE), ("If-Match", "*")],
+            body,
+        )
+        .await;
+        assert_eq!(r.status, 400, "{body:?}");
+    }
+    assert_eq!(route.ice_restarts(), 0);
 
     // A fragment for another ICE generation, an empty fragment, and a garbage
     // body are 400.
@@ -360,6 +365,8 @@ struct ServerSide {
     fingerprint: String,
     candidate: String,
     media_addr: std::net::SocketAddr,
+    ufrag_old: String,
+    pwd_old: String,
 }
 
 fn parse_answer(body: &str) -> ServerSide {
@@ -379,9 +386,18 @@ fn parse_answer(body: &str) -> ServerSide {
     ServerSide {
         ufrag: attr("a=ice-ufrag:"),
         pwd: attr("a=ice-pwd:"),
-        fingerprint: attr("a=fingerprint:"),
+        // Only the initial answer carries a fingerprint; a restart
+        // answer is just credentials + candidates.
+        fingerprint: body
+            .lines()
+            .find_map(|l| l.strip_prefix("a=fingerprint:"))
+            .unwrap_or_default()
+            .trim_end_matches('\r')
+            .to_string(),
         candidate,
         media_addr: format!("127.0.0.1:{port}").parse().unwrap(),
+        ufrag_old: String::new(),
+        pwd_old: String::new(),
     }
 }
 
@@ -433,6 +449,57 @@ async fn drive_client_until_srtp_ready(
     }
 }
 
+/// Drives the client transport until its ICE agent reports `Connected` again
+/// (after a restart): pumps its datagrams to the server's media socket, feeds
+/// back what the server sends, and fires its timers.
+async fn drive_client_until_ice_connected(
+    media: &mut webrtc_runtime::media::MediaTransport,
+    client: &std::net::UdpSocket,
+) {
+    let budget = tokio::time::Instant::now() + Duration::from_secs(15);
+    let mut buf = [0u8; 2048];
+    let connected = |events: &[webrtc_runtime::media::MediaEvent]| {
+        events.iter().any(|e| {
+                matches!(e, webrtc_runtime::media::MediaEvent::IceStateChanged(s) if s == "Connected")
+            })
+    };
+    let mut seen = false;
+    while !seen {
+        assert!(
+            tokio::time::Instant::now() < budget,
+            "ICE did not reconnect after the restart"
+        );
+        while let Some(d) = media.poll_transmit() {
+            client.send_to(&d.bytes, d.peer).unwrap();
+        }
+        let wake = media
+            .poll_timeout()
+            .map(tokio::time::Instant::from_std)
+            .unwrap_or_else(|| tokio::time::Instant::now() + Duration::from_millis(10));
+        loop {
+            match client.recv_from(&mut buf) {
+                Ok((n, peer)) => {
+                    // A datagram the server sent under the pre-restart
+                    // credentials is rejected (a stray, as on the server side).
+                    if let Ok(events) =
+                        media.handle_datagram(std::time::Instant::now(), peer, &buf[..n])
+                    {
+                        seen |= connected(&events);
+                    }
+                }
+                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                Err(e) => panic!("client recv: {e}"),
+            }
+        }
+        if seen {
+            break;
+        }
+        tokio::time::sleep_until(wake.min(tokio::time::Instant::now() + Duration::from_millis(20)))
+            .await;
+        seen |= connected(&media.handle_timeout(std::time::Instant::now()));
+    }
+}
+
 /// The full flow with a real peer: POST (offer carries the peer's genuine DTLS
 /// fingerprint), ICE + DTLS to the live media socket, a trickle PATCH on the
 /// established session, then DELETE ends it.
@@ -470,7 +537,9 @@ async fn a_real_peer_session_is_trickled_and_deleted() {
     let etag = etag_of(&created);
     assert!(route.wait_for_admissions(1, Duration::from_secs(2)).await >= 1);
 
-    let server = parse_answer(&created.body);
+    let mut server = parse_answer(&created.body);
+    server.ufrag_old = server.ufrag.clone();
+    server.pwd_old = server.pwd.clone();
     let client_socket = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
     let client_addr = client_socket.local_addr().unwrap();
     client_socket.set_nonblocking(true).unwrap();
@@ -479,12 +548,12 @@ async fn a_real_peer_session_is_trickled_and_deleted() {
             local_addr: client_addr,
             local_ice_ufrag: client_ufrag.clone(),
             local_ice_pwd: client_pwd,
-            remote_ice_ufrag: server.ufrag,
-            remote_ice_pwd: server.pwd,
+            remote_ice_ufrag: server.ufrag.clone(),
+            remote_ice_pwd: server.pwd.clone(),
             is_controlling: true,
             local_setup: SetupRole::Active,
             stun_server: None,
-            remote_fingerprint: server.fingerprint,
+            remote_fingerprint: server.fingerprint.clone(),
             max_remote_candidates: MAX_REMOTE_CANDIDATES,
         },
         client_cert,
@@ -511,6 +580,131 @@ async fn a_real_peer_session_is_trickled_and_deleted() {
         route.trickled_candidates() == 1
     })
     .await;
+
+    // ICE restart mid-session (RFC 9725 section 4.3.2): the client moves to
+    // new credentials; DTLS/SRTP stay up and media keeps flowing.
+    let rtp_before = {
+        let rtp = rtp_packet::RtpPacket {
+            marker: false,
+            payload_type: 96,
+            sequence_number: 10,
+            timestamp: 1000,
+            ssrc: 0x1234,
+            csrc: vec![],
+            extension: None,
+            padding: None,
+            payload: &[],
+        };
+        let protected = client_media.encrypt_rtp(&rtp).unwrap();
+        client_socket
+            .send_to(&protected, server.media_addr)
+            .unwrap();
+        wait_until("RTP before the restart reaches the read loop", || {
+            route.rtp_packets() >= 1
+        })
+        .await;
+        route.rtp_packets()
+    };
+    let new_ufrag = "clientnew";
+    let new_pwd = "clientnewpwd0000000000000000";
+    let restart_frag = format!(
+        "a=ice-ufrag:{new_ufrag}\r\na=ice-pwd:{new_pwd}\r\n\
+         m=video 9 UDP/TLS/RTP/SAVPF 96\r\na=mid:0\r\na=candidate:{}\r\n",
+        client_media.local_candidates()[0]
+    );
+    let restarted = http(
+        addr,
+        "PATCH",
+        &loc,
+        &[("Content-Type", TRICKLE), ("If-Match", "*")],
+        &restart_frag,
+    )
+    .await;
+    assert_eq!(restarted.status, 200, "{}", restarted.body);
+    assert!(
+        restarted
+            .header("content-type")
+            .is_some_and(|c| c.starts_with(TRICKLE)),
+        "{:?}",
+        restarted.headers
+    );
+    let new_etag = etag_of(&restarted);
+    assert_ne!(new_etag, etag, "a restart issues a new ETag");
+    let answer = parse_answer(&restarted.body);
+    assert_ne!(
+        answer.ufrag, server.ufrag_old,
+        "the server's credentials changed"
+    );
+    assert_ne!(answer.pwd, server.pwd_old);
+    assert!(
+        answer.candidate.contains("127.0.0.1"),
+        "the answer lists the server's candidate again: {}",
+        restarted.body
+    );
+    wait_until("restart applied to the live transport", || {
+        route.ice_restarts() == 1
+    })
+    .await;
+    // The old ETag is stale now; the new one is accepted for trickle.
+    let stale = http(
+        addr,
+        "PATCH",
+        &loc,
+        &[("Content-Type", TRICKLE), ("If-Match", &etag)],
+        &fragment(new_ufrag, CANDIDATE),
+    )
+    .await;
+    assert_eq!(stale.status, 412);
+    let fresh = http(
+        addr,
+        "PATCH",
+        &loc,
+        &[("Content-Type", TRICKLE), ("If-Match", &new_etag)],
+        &fragment(new_ufrag, CANDIDATE),
+    )
+    .await;
+    assert_eq!(fresh.status, 204);
+
+    // The client follows with its own side of the restart and re-connects ICE.
+    client_media
+        .restart_ice(
+            std::time::Instant::now(),
+            new_ufrag,
+            new_pwd,
+            &answer.ufrag,
+            &answer.pwd,
+        )
+        .unwrap();
+    client_media
+        .add_remote_candidate(&answer.candidate)
+        .unwrap();
+    drive_client_until_ice_connected(&mut client_media, &client_socket).await;
+
+    // Media sent after the restart is still decrypted by the same session.
+    let rtp = rtp_packet::RtpPacket {
+        marker: false,
+        payload_type: 96,
+        sequence_number: 11,
+        timestamp: 4000,
+        ssrc: 0x1234,
+        csrc: vec![],
+        extension: None,
+        padding: None,
+        payload: &[],
+    };
+    let protected = client_media.encrypt_rtp(&rtp).unwrap();
+    client_socket
+        .send_to(&protected, server.media_addr)
+        .unwrap();
+    wait_until("RTP after the restart is decrypted", || {
+        route.rtp_packets() > rtp_before
+    })
+    .await;
+    assert_eq!(
+        route.active_sessions(),
+        1,
+        "the session survived the restart"
+    );
 
     // DELETE the established session: it ends and releases everything.
     assert_eq!(route.active_sessions(), 1);

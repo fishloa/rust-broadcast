@@ -128,6 +128,14 @@ const RESOURCE_ID_LEN: usize = 32;
 /// buffer more than the transport would ever admit.
 const MAX_PENDING_CANDIDATES: usize = webrtc_runtime::media::MAX_REMOTE_CANDIDATES;
 
+/// Length of a locally generated ICE `ufrag` (RFC 8445 section 5.4 asks for
+/// at least 24 bits; matches the offer-time credentials).
+pub(crate) const ICE_UFRAG_LEN: usize = 8;
+/// Length of a locally generated ICE `pwd` (at least 128 bits required).
+pub(crate) const ICE_PWD_LEN: usize = 24;
+/// Length of a generated `ETag` opaque tag.
+pub(crate) const ETAG_TOKEN_LEN: usize = 16;
+
 /// A fresh unguessable resource id for a WHIP/WHEP session URL.
 pub(crate) fn new_resource_id() -> String {
     use std::collections::hash_map::RandomState;
@@ -156,7 +164,27 @@ pub(crate) struct SessionControl {
 #[derive(Debug, Default)]
 struct ControlInner {
     terminated: bool,
-    candidates: Vec<String>,
+    ops: Vec<IceOp>,
+}
+
+/// One ICE change a `PATCH` asks the media task to make on its transport.
+/// Kept in arrival order: a restart's own candidates and any trickle sent
+/// after it must apply after the new credentials, never before.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum IceOp {
+    /// Add a remote candidate (Trickle ICE).
+    Candidate(String),
+    /// Restart ICE under new credentials (RFC 9725 section 4.3.2).
+    Restart(IceRestart),
+}
+
+/// The four credentials of an ICE restart.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct IceRestart {
+    pub local_ufrag: String,
+    pub local_pwd: String,
+    pub remote_ufrag: String,
+    pub remote_pwd: String,
 }
 
 /// What a media task finds when it drains its [`SessionControl`].
@@ -164,8 +192,8 @@ struct ControlInner {
 pub(crate) struct ControlTake {
     /// A `DELETE` ended the session resource.
     pub terminated: bool,
-    /// Remote candidates a `PATCH` trickled in, in arrival order.
-    pub candidates: Vec<String>,
+    /// ICE changes a `PATCH` queued, in arrival order.
+    pub ops: Vec<IceOp>,
 }
 
 impl SessionControl {
@@ -182,23 +210,35 @@ impl SessionControl {
     /// Queues trickled remote candidates. `false` (nothing queued) when they
     /// would push the pending queue past [`MAX_PENDING_CANDIDATES`].
     pub(crate) fn push_candidates(&self, candidates: Vec<String>) -> bool {
+        self.push_ops(candidates.into_iter().map(IceOp::Candidate).collect())
+    }
+
+    /// Queues an ICE restart followed by the candidates the same `PATCH`
+    /// carried. `false` (nothing queued) when the queue would overflow.
+    pub(crate) fn push_restart(&self, restart: IceRestart, candidates: Vec<String>) -> bool {
+        let mut ops = vec![IceOp::Restart(restart)];
+        ops.extend(candidates.into_iter().map(IceOp::Candidate));
+        self.push_ops(ops)
+    }
+
+    fn push_ops(&self, ops: Vec<IceOp>) -> bool {
         {
             let mut inner = self.inner.lock();
-            if inner.candidates.len() + candidates.len() > MAX_PENDING_CANDIDATES {
+            if inner.ops.len() + ops.len() > MAX_PENDING_CANDIDATES {
                 return false;
             }
-            inner.candidates.extend(candidates);
+            inner.ops.extend(ops);
         }
         self.wake.notify_one();
         true
     }
 
-    /// Drains the queued candidates and reports the sticky terminated flag.
+    /// Drains the queued ICE changes and reports the sticky terminated flag.
     pub(crate) fn take(&self) -> ControlTake {
         let mut inner = self.inner.lock();
         ControlTake {
             terminated: inner.terminated,
-            candidates: std::mem::take(&mut inner.candidates),
+            ops: std::mem::take(&mut inner.ops),
         }
     }
 
@@ -219,9 +259,13 @@ pub(crate) struct Resource<M> {
     pub machine: parking_lot::Mutex<M>,
     /// How a handler reaches the media task.
     pub control: std::sync::Arc<SessionControl>,
-    /// The ICE `ufrag` the offer carried: a trickle fragment naming another
-    /// one belongs to a different ICE generation.
-    pub remote_ufrag: String,
+    /// The peer's current ICE `ufrag` (the offer's, then each restart's): a
+    /// trickle fragment naming another one belongs to a different ICE
+    /// generation.
+    pub remote_ufrag: parking_lot::Mutex<String>,
+    /// This side's local candidates, as `candidate` attribute bodies: the
+    /// restart answer lists them again (the socket does not change).
+    pub local_candidates: Vec<String>,
 }
 
 /// The live session resources of one WHIP/WHEP listener, keyed by the id in
@@ -302,6 +346,7 @@ pub(crate) fn content_type_is(headers: &axum::http::HeaderMap, expected: &str) -
 #[derive(Debug, Default, PartialEq, Eq)]
 pub(crate) struct IceFragment {
     pub ufrag: Option<String>,
+    pub pwd: Option<String>,
     pub candidates: Vec<String>,
     pub end_of_candidates: bool,
 }
@@ -334,6 +379,7 @@ pub(crate) fn parse_ice_fragment(body: &[u8]) -> Result<IceFragment, String> {
         match (a.attribute.as_str(), a.value.as_deref()) {
             ("candidate", Some(v)) => out.candidates.push(v.to_string()),
             ("ice-ufrag", Some(v)) if out.ufrag.is_none() => out.ufrag = Some(v.to_string()),
+            ("ice-pwd", Some(v)) if out.pwd.is_none() => out.pwd = Some(v.to_string()),
             ("end-of-candidates", _) => out.end_of_candidates = true,
             _ => {}
         }
@@ -355,6 +401,156 @@ pub(crate) fn validate_trickle(fragment: &IceFragment, remote_ufrag: &str) -> Re
         return Err("fragment carries no candidate and no end-of-candidates".to_string());
     }
     Ok(())
+}
+
+/// The credentials an ICE-restart fragment (RFC 9725 section 4.3.2) must
+/// carry: the peer's new `ice-ufrag` and `ice-pwd`, which must differ from its
+/// current ufrag (otherwise nothing restarted).
+pub(crate) fn validate_restart(
+    fragment: &IceFragment,
+    current_remote_ufrag: &str,
+) -> Result<(String, String), String> {
+    match (&fragment.ufrag, &fragment.pwd) {
+        (Some(u), Some(p)) if u != current_remote_ufrag => Ok((u.clone(), p.clone())),
+        (Some(_), Some(_)) => Err("restart fragment reuses the current ice-ufrag".to_string()),
+        _ => Err("restart fragment needs both ice-ufrag and ice-pwd".to_string()),
+    }
+}
+
+/// Renders the ICE-restart answer fragment (RFC 9725 section 4.3.2: this
+/// side's new credentials and its candidates, as an RFC 8840 section 4.4
+/// `application/trickle-ice-sdpfrag` body). Built with `sdp-types` and cut
+/// down to the fragment lines (the session header lines are not part of a
+/// fragment).
+pub(crate) fn render_restart_fragment(
+    ufrag: &str,
+    pwd: &str,
+    candidates: &[String],
+) -> Result<Vec<u8>, String> {
+    use sdp_types::{Media, Origin, Session};
+    let mut session = Session::new(
+        Origin::with_ip_addr("0", 0, std::net::Ipv4Addr::UNSPECIFIED),
+        "-",
+    );
+    session.add_attribute_with_value("ice-ufrag", ufrag);
+    session.add_attribute_with_value("ice-pwd", pwd);
+    let mut media = Media {
+        media: "video".to_string(),
+        port: 9,
+        num_ports: None,
+        proto: "UDP/TLS/RTP/SAVPF".to_string(),
+        fmt: "0".to_string(),
+        media_title: None,
+        connections: Vec::new(),
+        bandwidths: Vec::new(),
+        key: None,
+        attributes: Vec::new(),
+    };
+    for c in candidates {
+        media.add_attribute_with_value("candidate", c);
+    }
+    session.medias.push(media);
+    let mut full = Vec::new();
+    session
+        .write(&mut full)
+        .map_err(|e| format!("render restart fragment: {e}"))?;
+    // Keep the attribute and media lines; drop the header lines.
+    let text = String::from_utf8(full).map_err(|e| e.to_string())?;
+    let mut out = String::new();
+    for line in text.lines() {
+        if matches!(line.as_bytes().first(), Some(b'a' | b'm')) {
+            out.push_str(line);
+            out.push_str("\r\n");
+        }
+    }
+    Ok(out.into_bytes())
+}
+
+/// An ICE restart worked out from a `PATCH`, not yet applied.
+pub(crate) struct RestartPlan {
+    restart: IceRestart,
+    candidates: Vec<String>,
+    /// The `200` body: this side's new credentials and candidates.
+    pub answer: Vec<u8>,
+    /// The resource's new `ETag` (RFC 9725 section 4.3.2).
+    pub etag: String,
+}
+
+/// Plans an ICE restart from the client's fragment: validates it, draws this
+/// side's new credentials and `ETag` from `token` (a random-token source of
+/// the given length) and renders the answer fragment.
+pub(crate) fn plan_restart(
+    fragment: &[u8],
+    current_remote_ufrag: &str,
+    local_candidates: &[String],
+    token: fn(usize) -> String,
+) -> Result<RestartPlan, String> {
+    let parsed = parse_ice_fragment(fragment)?;
+    let (remote_ufrag, remote_pwd) = validate_restart(&parsed, current_remote_ufrag)?;
+    let local_ufrag = token(ICE_UFRAG_LEN);
+    let local_pwd = token(ICE_PWD_LEN);
+    let answer = render_restart_fragment(&local_ufrag, &local_pwd, local_candidates)?;
+    Ok(RestartPlan {
+        restart: IceRestart {
+            local_ufrag,
+            local_pwd,
+            remote_ufrag,
+            remote_pwd,
+        },
+        candidates: parsed.candidates,
+        answer,
+        etag: token(ETAG_TOKEN_LEN),
+    })
+}
+
+/// Queues `plan` for the media task and records the peer's new `ufrag` as the
+/// resource's current ICE generation. `false` (nothing changed) when the
+/// task's pending queue is full.
+pub(crate) fn commit_restart<M>(resource: &Resource<M>, plan: RestartPlan) -> bool {
+    let new_ufrag = plan.restart.remote_ufrag.clone();
+    if !resource.control.push_restart(plan.restart, plan.candidates) {
+        return false;
+    }
+    *resource.remote_ufrag.lock() = new_ufrag;
+    true
+}
+
+/// What [`apply_ice_ops`] did.
+#[derive(Debug, Default, PartialEq, Eq)]
+pub(crate) struct AppliedOps {
+    pub candidates: u64,
+    pub restarts: u64,
+}
+
+/// Applies the queued ICE changes to the transport the calling task owns, in
+/// order. A change the transport refuses (an unparsable or over-cap candidate,
+/// bad restart credentials) is logged and skipped, like the offer's own
+/// candidates.
+pub(crate) fn apply_ice_ops(
+    media: &mut webrtc_runtime::media::MediaTransport,
+    ops: Vec<IceOp>,
+    now: std::time::Instant,
+) -> AppliedOps {
+    let mut done = AppliedOps::default();
+    for op in ops {
+        match op {
+            IceOp::Candidate(c) => match media.add_remote_candidate(&c) {
+                Ok(()) => done.candidates += 1,
+                Err(e) => tracing::debug!(error = %e, "webrtc: trickled candidate rejected"),
+            },
+            IceOp::Restart(r) => match media.restart_ice(
+                now,
+                &r.local_ufrag,
+                &r.local_pwd,
+                &r.remote_ufrag,
+                &r.remote_pwd,
+            ) {
+                Ok(()) => done.restarts += 1,
+                Err(e) => tracing::warn!(error = %e, "webrtc: ICE restart refused"),
+            },
+        }
+    }
+    done
 }
 
 /// The HTTP status for a state-machine error raised by a `PATCH`.
@@ -454,13 +650,13 @@ mod tests {
         c.terminate();
         let first = c.take();
         assert!(first.terminated);
-        assert_eq!(first.candidates, ["a", "b"]);
+        assert_eq!(
+            first.ops,
+            [IceOp::Candidate("a".into()), IceOp::Candidate("b".into())]
+        );
         let second = c.take();
         assert!(second.terminated, "DELETE is never forgotten");
-        assert!(
-            second.candidates.is_empty(),
-            "candidates drain exactly once"
-        );
+        assert!(second.ops.is_empty(), "ops drain exactly once");
         let over = vec![String::new(); MAX_PENDING_CANDIDATES + 1];
         assert!(
             !SessionControl::new().push_candidates(over),
@@ -476,7 +672,8 @@ mod tests {
             Resource {
                 machine: parking_lot::Mutex::new(0),
                 control: SessionControl::new(),
-                remote_ufrag: "u".into(),
+                remote_ufrag: parking_lot::Mutex::new("u".into()),
+                local_candidates: Vec::new(),
             },
         );
         assert!(table.get("id").is_some());
