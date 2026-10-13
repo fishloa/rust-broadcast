@@ -597,11 +597,15 @@ mod tests {
             ProtocolControl::SetChunkSize(0).try_to_message(),
             Err(RtmpError::Malformed { .. })
         ));
-        assert!(ProtocolControl::SetChunkSize(0x8000_0000)
-            .try_to_message()
-            .is_err());
+        assert!(
+            ProtocolControl::SetChunkSize(0x8000_0000)
+                .try_to_message()
+                .is_err()
+        );
         assert_eq!(
-            ProtocolControl::SetChunkSize(4096).try_to_message().unwrap(),
+            ProtocolControl::SetChunkSize(4096)
+                .try_to_message()
+                .unwrap(),
             ProtocolControl::SetChunkSize(4096).to_message()
         );
     }
