@@ -28,10 +28,9 @@ use broadcast_common::{Parse, Serialize};
 
 /// table_id for all protection messages (TS 102 809 §9.3.4; coded per EN 300 468 §5.1.3).
 pub const TABLE_ID: u8 = 0x7B;
-/// Protection messages have no well-known PID — they are carried on the PID(s)
-/// of the protectable elementary stream, signalled via the protection message
-/// descriptor (§9.3.3). Mirrors the `dsmcc.rs` "no fixed PID" convention.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 /// `table_id_extension` value (inclusive) of the first authentication message (§9.3.4 Table 41).
 pub const AUTH_EXTENSION_FIRST: u16 = 0x0000;
@@ -870,7 +869,6 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x7B);
-        assert_eq!(PID.value(), 0x0000);
     }
 
     #[test]

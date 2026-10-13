@@ -74,8 +74,9 @@ use broadcast_common::{Parse, Serialize};
 /// `table_id` for Related Content Table.
 pub const TABLE_ID: u8 = 0x76;
 
-/// Well-known PID on which RCT is carried: none (signalled via PMT).
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;

@@ -10,8 +10,9 @@ use broadcast_common::{Parse, Serialize};
 
 /// AIT table_id (ETSI TS 102 809 §5.3.4).
 pub const TABLE_ID: u8 = 0x74;
-/// AIT has no well-known PID — it is service-specific.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 const MIN_HEADER_LEN: usize = 3;
 const EXTENSION_HEADER_LEN: usize = 5;

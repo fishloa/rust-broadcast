@@ -36,8 +36,9 @@ use broadcast_common::{Parse, Serialize};
 /// (ISO/IEC 13818-6); see [`crate::tables::dsmcc`] for the raw view.
 pub const TABLE_ID: u8 = 0x3E;
 
-/// MPE has no well-known PID — the elementary PID comes from the PMT.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 /// 48-bit MAC address in network order (most-significant byte first).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -645,7 +646,6 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x3E);
-        assert_eq!(PID.value(), 0x0000);
     }
 
     #[cfg(feature = "serde")]

@@ -20,8 +20,9 @@ use broadcast_common::{Parse, Serialize};
 /// `table_id` for the Update Notification Table.
 pub const TABLE_ID: u8 = 0x4B;
 
-/// Well-known PID for UNT: **none** — the UNT has no fixed PID.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 /// Action type coding — ETSI TS 102 006 §9.4.2 Table 12.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

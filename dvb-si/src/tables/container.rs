@@ -36,9 +36,9 @@ use broadcast_common::{Parse, Serialize};
 /// table_id for the Container table.
 pub const TABLE_ID: u8 = 0x75;
 
-/// The Container table has no well-known PID — its carriage is signalled via
-/// descriptors. `0x0000` is a placeholder following the DSM-CC precedent.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 /// Bytes 0-2: table_id (1) + flags + private_section_length (2).
 const HEADER_LEN: usize = 3;
@@ -319,7 +319,6 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x75);
-        assert_eq!(PID.value(), 0x0000);
     }
 
     #[test]

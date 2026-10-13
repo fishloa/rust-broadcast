@@ -43,9 +43,9 @@ use broadcast_common::{Parse, Serialize};
 /// table_id for the MPE-FEC section.
 pub const TABLE_ID: u8 = 0x78;
 
-/// MPE-FEC has no well-known PID — its carriage is signalled via the
-/// time_slice_fec_identifier_descriptor. `0x0000` follows the DSM-CC precedent.
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 /// Bytes 0-2: table_id (1) + flags + section_length (2).
 const HEADER_LEN: usize = 3;
@@ -423,7 +423,6 @@ mod tests {
     #[test]
     fn table_trait_constants() {
         assert_eq!(TABLE_ID, 0x78);
-        assert_eq!(PID.value(), 0x0000);
     }
 
     #[test]

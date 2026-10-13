@@ -14,12 +14,9 @@ use broadcast_common::{Parse, Serialize};
 /// `table_id` for IP/MAC Notification Table.
 pub const TABLE_ID: u8 = 0x4C;
 
-/// PID on which INT is carried.
-///
-/// INT does not have a fixed PID.  It is discovered through a
-/// `data_broadcast_id_descriptor` (data_broadcast_id 0x000B) inside the PMT
-/// ES_info loop.  This constant is therefore 0x0000 (unknown/variable).
-pub const PID: mpeg_ts::pid::Pid = mpeg_ts::pid::Pid::new(0x0000);
+// No fixed PID: this table's PID is signalled (PMT / descriptors). A `PID`
+// constant of `0x0000` used to sit here, which is the real PAT PID, so a
+// caller filtering on it would pick up PAT traffic (audit r02-W15/O12).
 
 /// Action type coding — ETSI EN 301 192 §8.4.4.1 Table 14.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
