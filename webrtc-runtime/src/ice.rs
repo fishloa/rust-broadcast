@@ -15,7 +15,7 @@ use alloc::vec::Vec;
 /// Link: <turn:turn.example.com?transport=udp>; rel="ice-server";
 ///       username="user"; credential="pass"
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct IceServer {
     /// URI of the ICE server (e.g. `stun:stun.example.com`,
@@ -26,6 +26,20 @@ pub struct IceServer {
     pub username: Option<String>,
     /// Optional credential for TURN authentication.
     pub credential: Option<String>,
+}
+
+/// Manual `Debug`: the TURN `credential` never renders (issue #1142).
+impl core::fmt::Debug for IceServer {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("IceServer")
+            .field("url", &self.url)
+            .field("username", &self.username)
+            .field(
+                "credential",
+                &self.credential.as_ref().map(|_| "<redacted>"),
+            )
+            .finish()
+    }
 }
 
 /// ICE server Link header relation value (RFC 9725 section 4.4).

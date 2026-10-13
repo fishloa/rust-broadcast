@@ -147,18 +147,11 @@ fn parse_fingerprint_value(value: &str) -> Result<[u8; FINGERPRINT_LEN], String>
     })
 }
 
-/// Equality of two digests without an early-exit loop: fold the XOR of every
-/// byte pair into one accumulator and test it only at the end, so the time
-/// taken cannot reveal how many leading bytes of a guess were right.
+/// Equality of two digests in constant time (`subtle::ConstantTimeEq`), so the
+/// time taken cannot reveal how many leading bytes of a guess were right. The
+/// lengths are not secret.
 fn digests_equal(a: &[u8], b: &[u8]) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-    let mut accumulator = 0u8;
-    for (x, y) in a.iter().zip(b) {
-        accumulator |= x ^ y;
-    }
-    accumulator == 0
+    a.len() == b.len() && bool::from(subtle::ConstantTimeEq::ct_eq(a, b))
 }
 
 /// True iff `peer_certs` is non-empty and the SHA-256 of its leaf
@@ -308,7 +301,7 @@ broadcast_common::impl_spec_display!(SetupRole);
 /// SDP parsing/generation is out of scope for this crate (see the `media`
 /// module doc): every field is a value the caller already pulled out of a
 /// negotiated SDP offer/answer.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct MediaTransportConfig {
     /// The local UDP socket address media is sent from/received on.
     pub local_addr: SocketAddr,
@@ -347,6 +340,25 @@ pub struct MediaTransportConfig {
     /// [`MAX_REMOTE_CANDIDATES`] for the recommended default and the
     /// amplification concern it bounds).
     pub max_remote_candidates: usize,
+}
+
+/// Manual `Debug`: the ICE passwords authenticate STUN connectivity checks and
+/// never render (issue #1142).
+impl core::fmt::Debug for MediaTransportConfig {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("MediaTransportConfig")
+            .field("local_addr", &self.local_addr)
+            .field("local_ice_ufrag", &self.local_ice_ufrag)
+            .field("local_ice_pwd", &"<redacted>")
+            .field("remote_ice_ufrag", &self.remote_ice_ufrag)
+            .field("remote_ice_pwd", &"<redacted>")
+            .field("is_controlling", &self.is_controlling)
+            .field("local_setup", &self.local_setup)
+            .field("remote_fingerprint", &self.remote_fingerprint)
+            .field("stun_server", &self.stun_server)
+            .field("max_remote_candidates", &self.max_remote_candidates)
+            .finish()
+    }
 }
 
 /// The RFC 3550 §5.3.1 header extension carried by a [`DecryptedRtp`]

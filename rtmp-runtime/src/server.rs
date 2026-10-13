@@ -152,7 +152,7 @@ const FLV_MAX_DATA_SIZE: usize = 0x00FF_FFFF;
 /// `expected_stream_key`). Construct via [`ServerConfig::default`] plus the
 /// `with_*` builder methods rather than a struct literal.
 #[non_exhaustive]
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct ServerConfig {
     /// Outbound chunk size advertised (and adopted) on `connect` (§5.4.1).
@@ -174,6 +174,23 @@ pub struct ServerConfig {
     /// allowed `MAX_MESSAGE_LEN × MAX_CSIDS` (512 MiB) of incomplete,
     /// never-completing bytes per connection; this bounds the product.
     pub max_in_progress_bytes: usize,
+}
+
+/// Manual `Debug`: the expected stream key is the ingest secret and never
+/// renders (issue #1142).
+impl core::fmt::Debug for ServerConfig {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("ServerConfig")
+            .field("chunk_size", &self.chunk_size)
+            .field("window_ack_size", &self.window_ack_size)
+            .field("peer_bandwidth", &self.peer_bandwidth)
+            .field(
+                "expected_stream_key",
+                &self.expected_stream_key.as_ref().map(|_| "<redacted>"),
+            )
+            .field("max_in_progress_bytes", &self.max_in_progress_bytes)
+            .finish()
+    }
 }
 
 impl Default for ServerConfig {
@@ -230,7 +247,7 @@ impl ServerConfig {
 
 /// Typed events [`ServerSession::handle_data`] surfaces to the caller.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone, PartialEq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub enum ServerEvent {
     /// `connect` completed: the publisher's requested `app` name (§7.2.1).
@@ -272,6 +289,34 @@ pub enum ServerEvent {
         /// The message type id that was dropped (§6/§7.1).
         message_type_id: u8,
     },
+}
+
+/// Manual `Debug`: `Publish` carries the publisher's stream key (the ingest
+/// secret) and `Media` carries whole FLV tag runs; neither renders verbatim
+/// (issue #1142).
+impl core::fmt::Debug for ServerEvent {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ServerEvent::Connected { app } => {
+                f.debug_struct("Connected").field("app", app).finish()
+            }
+            ServerEvent::Publish { app, stream_id, .. } => f
+                .debug_struct("Publish")
+                .field("app", app)
+                .field("stream_key", &"<redacted>")
+                .field("stream_id", stream_id)
+                .finish(),
+            ServerEvent::Media { flv } => f
+                .debug_struct("Media")
+                .field("flv_len", &flv.len())
+                .finish(),
+            ServerEvent::Eof => f.write_str("Eof"),
+            ServerEvent::Unsupported { message_type_id } => f
+                .debug_struct("Unsupported")
+                .field("message_type_id", message_type_id)
+                .finish(),
+        }
+    }
 }
 
 /// Session state (`connect`/`publish` progress only — the handshake phase

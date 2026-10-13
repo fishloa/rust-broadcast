@@ -74,7 +74,6 @@ enum PendingRequest {
 }
 
 /// Sans-IO WHEP player state machine.
-#[derive(Debug)]
 pub struct WhepPlayer {
     endpoint_url: String,
     bearer_token: Option<String>,
@@ -82,6 +81,21 @@ pub struct WhepPlayer {
     /// The request awaiting a response while [`State::Established`], if any
     /// — see [`PendingRequest`].
     pending: Option<PendingRequest>,
+}
+
+/// Manual `Debug`: the bearer token never renders (issue #1142).
+impl core::fmt::Debug for WhepPlayer {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("WhepPlayer")
+            .field("endpoint_url", &self.endpoint_url)
+            .field(
+                "bearer_token",
+                &self.bearer_token.as_ref().map(|_| "<redacted>"),
+            )
+            .field("state", &self.state)
+            .field("pending", &self.pending)
+            .finish()
+    }
 }
 
 impl WhepPlayer {
@@ -304,7 +318,11 @@ impl WhepPlayer {
         body: Vec<u8>,
     ) -> Result<HttpRequest, Error> {
         let mut headers = HeaderMap::new();
-        if let Some(token) = &self.bearer_token {
+        // The token is bound to the endpoint it was configured for: a
+        // session URL (`Location`) on another origin never receives it.
+        if let Some(token) = &self.bearer_token
+            && http_util::same_origin(&self.endpoint_url, &url)
+        {
             headers.typed_insert(http_util::bearer(token)?);
         }
         if let Some(ct) = content_type {

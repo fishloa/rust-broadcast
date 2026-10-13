@@ -172,12 +172,24 @@ pub(crate) enum IceOp {
 }
 
 /// The four credentials of an ICE restart.
-#[derive(Debug, PartialEq, Eq)]
+#[derive(PartialEq, Eq)]
 pub(crate) struct IceRestart {
     pub local_ufrag: String,
     pub local_pwd: String,
     pub remote_ufrag: String,
     pub remote_pwd: String,
+}
+
+/// Manual `Debug`: the ICE passwords never render (issue #1142).
+impl std::fmt::Debug for IceRestart {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IceRestart")
+            .field("local_ufrag", &self.local_ufrag)
+            .field("local_pwd", &"<redacted>")
+            .field("remote_ufrag", &self.remote_ufrag)
+            .field("remote_pwd", &"<redacted>")
+            .finish()
+    }
 }
 
 /// What a media task finds when it drains its [`SessionControl`].
@@ -336,12 +348,24 @@ pub(crate) fn content_type_is(headers: &axum::http::HeaderMap, expected: &str) -
 
 /// The ICE information of a Trickle ICE SDP fragment (RFC 8840 §4.4; RFC 9725
 /// §4.3): the candidates to add and the generation (`ufrag`) they belong to.
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Default, PartialEq, Eq)]
 pub(crate) struct IceFragment {
     pub ufrag: Option<String>,
     pub pwd: Option<String>,
     pub candidates: Vec<String>,
     pub end_of_candidates: bool,
+}
+
+/// Manual `Debug`: the ICE password never renders (issue #1142).
+impl std::fmt::Debug for IceFragment {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("IceFragment")
+            .field("ufrag", &self.ufrag)
+            .field("pwd", &self.pwd.as_ref().map(|_| "<redacted>"))
+            .field("candidates", &self.candidates)
+            .field("end_of_candidates", &self.end_of_candidates)
+            .finish()
+    }
 }
 
 /// Parses a Trickle ICE SDP fragment with `sdp-types`: the fragment has no
@@ -571,6 +595,39 @@ pub(crate) fn to_axum(
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    /// ICE passwords never reach `{:?}` (#1142).
+    #[test]
+    fn ice_restart_and_fragment_debug_hide_the_passwords() {
+        let restart = IceRestart {
+            local_ufrag: "lu".into(),
+            local_pwd: "local-pwd-secret-0123456789".into(),
+            remote_ufrag: "ru".into(),
+            remote_pwd: "remote-pwd-secret-0123456789".into(),
+        };
+        let text = format!("{restart:?}");
+        assert!(!text.contains("pwd-secret"), "{text}");
+        assert!(text.contains("lu") && text.contains("ru"), "{text}");
+        let fragment = IceFragment {
+            ufrag: Some("uf".into()),
+            pwd: Some("fragment-pwd-secret-0123456789".into()),
+            ..Default::default()
+        };
+        let text = format!("{fragment:?}");
+        assert!(!text.contains("pwd-secret"), "{text}");
+    }
+
+    /// Resource ids are unguessable: long, drawn from the OS CSPRNG, and
+    /// never repeat (RFC 9725 §8).
+    #[test]
+    fn resource_ids_are_long_and_unique() {
+        let mut seen = std::collections::HashSet::new();
+        for _ in 0..1000 {
+            let id = new_resource_id();
+            assert_eq!(id.len(), RESOURCE_ID_LEN);
+            assert!(seen.insert(id));
+        }
+    }
 
     #[test]
     fn session_slot_releases_on_drop() {

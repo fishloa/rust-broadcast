@@ -53,7 +53,11 @@ bytes       = { version = "1",    optional = true }
 sha2        = { version = "0.11", optional = true }
 # SDP fingerprint via typed attributes (SP4) and `stun:` host formatting (SP3).
 sdp-types   = { workspace = true, optional = true }
-url         = { version = "2", optional = true }
+# Origin comparison (RFC 6454) gating the bearer token to the endpoint it was
+# configured for (issue #1142); also the `stun:` host type in the `media` feature.
+url         = { version = "2" }
+# Constant-time DTLS fingerprint comparison (issue #1142 / audit r09-O1).
+subtle      = { version = "2", default-features = false, optional = true }
 
 [features]
 default = ["std"]
@@ -81,7 +85,7 @@ media = [
     "dep:bytes",
     "dep:sha2",
     "dep:sdp-types",
-    "dep:url",
+    "dep:subtle",
 ]
 
 [dev-dependencies]

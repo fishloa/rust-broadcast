@@ -151,6 +151,28 @@ impl core::fmt::Debug for Credentials {
 mod tests {
     use super::*;
 
+    // Equality is constant-time in the secret (#1142) but must stay exact: a
+    // difference in the last byte, in length, in username, or in variant is
+    // never equal.
+    #[test]
+    fn equality_is_exact_across_secret_username_and_variant() {
+        let base = Credentials::new("admin", "s3cr3t-password");
+        assert_eq!(base, Credentials::new("admin", "s3cr3t-password"));
+        assert_ne!(base, Credentials::new("admin", "s3cr3t-passworD"));
+        assert_ne!(base, Credentials::new("admin", "s3cr3t-passwor"));
+        assert_ne!(base, Credentials::new("admin2", "s3cr3t-password"));
+        assert_ne!(
+            base,
+            Credentials::Basic {
+                username: "admin".into(),
+                password: "s3cr3t-password".into(),
+            }
+        );
+        assert_eq!(Credentials::bearer("tok"), Credentials::bearer("tok"));
+        assert_ne!(Credentials::bearer("tok"), Credentials::bearer("tol"));
+        assert_ne!(Credentials::bearer("tok"), base);
+    }
+
     // Security-blocker regression (pre-release audit): `Credentials` must
     // never render a secret via `{:?}`. Must FAIL if `Debug` reverts to a
     // plain `#[derive(Debug)]`.

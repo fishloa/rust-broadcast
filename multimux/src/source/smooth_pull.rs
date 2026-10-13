@@ -78,7 +78,8 @@ use url::Url;
 
 use crate::error::{MultimuxError, Result};
 use crate::source::http_auth::{
-    authenticated_get, credentials_from_url, resolve_credentials, strip_userinfo,
+    ScopedCredentials, authenticated_get, credentials_from_url, resolve_credentials,
+    scope_credentials, strip_userinfo,
 };
 use crate::source::{IngestTimeouts, Source};
 
@@ -1010,7 +1011,7 @@ enum FetchOne {
 async fn fetch_one_bytes(
     client: &HttpClient,
     url: &str,
-    creds: Option<&Credentials>,
+    creds: Option<&ScopedCredentials>,
     what: &str,
     tolerate_404: bool,
 ) -> Result<FetchOne> {
@@ -1027,7 +1028,7 @@ async fn fetch_one_bytes(
         .map(FetchOne::Bytes)
 }
 
-fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<Credentials>)> {
+fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<ScopedCredentials>)> {
     let parsed = Url::parse(&route.url).map_err(|e| MultimuxError::Connect {
         reason: format!(
             "bad Smooth-pull URL {}: {e}",
@@ -1036,6 +1037,7 @@ fn build_client(route: &SmoothPullRoute) -> Result<(HttpClient, Url, Option<Cred
     })?;
     let credentials = resolve_credentials(route.auth.clone(), credentials_from_url(&parsed)?);
     let clean_url = strip_userinfo(&parsed)?;
+    let credentials = scope_credentials(credentials, &clean_url);
     let http = HttpClient::builder()
         .redirect(crate::source::redirect_policy())
         .build()
@@ -1067,7 +1069,7 @@ type SmoothPendingFetch = crate::source::pull::PendingFetch<SmoothFetch>;
 #[allow(clippy::too_many_arguments)]
 fn pending_fetch(
     http: HttpClient,
-    creds: Option<Credentials>,
+    creds: Option<ScopedCredentials>,
     id: SmoothResourceId,
     t: u64,
     d: u64,
@@ -2223,7 +2225,7 @@ mod tests {
     async fn fetch_bytes(
         http: &HttpClient,
         url: &str,
-        creds: Option<&Credentials>,
+        creds: Option<&ScopedCredentials>,
         what: &str,
         tolerate_404: bool,
     ) -> Result<Vec<u8>> {

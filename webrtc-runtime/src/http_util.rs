@@ -156,6 +156,19 @@ pub(crate) fn etag_of(h: &HeaderMap) -> Option<String> {
         .map(|e| etag_opaque(&e))
 }
 
+/// Whether `target` (an absolute URL, or a relative reference such as a
+/// `Location` value) addresses the same origin (scheme, host, port; RFC 6454
+/// §4) as `endpoint`. A bearer token configured for `endpoint` must never be
+/// sent anywhere else (issue #1142), so anything that does not parse is
+/// treated as a different origin.
+pub(crate) fn same_origin(endpoint: &str, target: &str) -> bool {
+    let Ok(base) = url::Url::parse(endpoint) else {
+        return false;
+    };
+    base.join(target)
+        .is_ok_and(|resolved| resolved.origin() == base.origin())
+}
+
 /// An `Authorization: Bearer <token>` typed header.
 pub(crate) fn bearer(token: &str) -> Result<Authorization<headers::authorization::Bearer>, Error> {
     Authorization::bearer(token).map_err(|_| Error::InvalidHeader {

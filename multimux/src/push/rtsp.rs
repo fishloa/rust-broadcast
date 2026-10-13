@@ -53,7 +53,7 @@ const RTP_VERSION_2_NO_FLAGS: u8 = 0b1000_0000;
 const TEARDOWN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// Per-connection configuration for the RTSP push transport.
-#[derive(Debug, Clone, Default)]
+#[derive(Clone, Default)]
 pub struct RtspTransportConfig {
     /// Optional credentials for RTSP auth. Takes precedence over any
     /// username/password already present in the push URL's userinfo.
@@ -61,6 +61,19 @@ pub struct RtspTransportConfig {
     /// Bounds on every awaited IO the push performs (SP6.1, defect 4): the
     /// OPTIONS/ANNOUNCE/SETUP/RECORD exchanges and each interleaved write.
     pub timeouts: rtsp_runtime::RtspTimeouts,
+}
+
+/// Manual `Debug`: the username/password pair never renders (issue #1142).
+impl std::fmt::Debug for RtspTransportConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RtspTransportConfig")
+            .field(
+                "credentials",
+                &self.credentials.as_ref().map(|_| "<redacted>"),
+            )
+            .field("timeouts", &self.timeouts)
+            .finish()
+    }
 }
 
 impl RtspTransportConfig {
