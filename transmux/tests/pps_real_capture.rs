@@ -50,7 +50,12 @@ fn head(path: &PathBuf, n: u64) -> Option<Vec<u8>> {
 #[test]
 fn real_captures_track_update_counts() {
     let mut checked = 0usize;
-    for name in ["h264_aac.ts", "gulli-opengop.ts", "france2.ts", "m6-single.ts"] {
+    for name in [
+        "h264_aac.ts",
+        "gulli-opengop.ts",
+        "france2.ts",
+        "m6-single.ts",
+    ] {
         let path = root(&["fixtures", "ts", name]);
         let bytes = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
         // Pinned from the pre-change demuxer over the same bytes: 0.

@@ -38,7 +38,10 @@ fn stpp_track_carries_entry_and_remuxes_through_cmaf() {
         sample_entry: Some(SubtitleSampleEntry::Ttml(entry)),
     } = &orig_sub.spec.config
     else {
-        panic!("stpp must demux with its sample entry: {:?}", orig_sub.spec.config);
+        panic!(
+            "stpp must demux with its sample entry: {:?}",
+            orig_sub.spec.config
+        );
     };
     assert_eq!(*format, SubtitleFormat::Ttml);
     assert!(
@@ -48,7 +51,9 @@ fn stpp_track_carries_entry_and_remuxes_through_cmaf() {
     );
 
     // UNFILTERED mux (previously UnmuxableSubtitleTrack).
-    let out = CmafMux::default().package(&original).expect("CmafMux carries stpp now");
+    let out = CmafMux::default()
+        .package(&original)
+        .expect("CmafMux carries stpp now");
     // sthd must precede stbl inside the subtitle trak (§6.2.3).
     let sthd = find(&out, b"sthd").expect("sthd emitted");
     let stpp = find(&out, b"stpp").expect("stpp sample entry emitted");
@@ -128,5 +133,8 @@ fn entryless_subtitle_is_still_rejected_by_name() {
     );
     let media = Media::new(vec![Track::new(spec, vec![])], 1000);
     let err = CmafMux::default().package(&media).unwrap_err();
-    assert!(matches!(err, transmux::Error::UnmuxableSubtitleTrack { .. }), "{err:?}");
+    assert!(
+        matches!(err, transmux::Error::UnmuxableSubtitleTrack { .. }),
+        "{err:?}"
+    );
 }

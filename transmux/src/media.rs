@@ -49,7 +49,8 @@ use crate::init_segment::{
     sampling_rate_override,
 };
 use crate::ir::{
-    CodecConfig, FragmentTrackData, InputDegradation, Sample, SubtitleFormat, SubtitleSampleEntry, TrackSpec,
+    CodecConfig, FragmentTrackData, InputDegradation, Sample, SubtitleFormat, SubtitleSampleEntry,
+    TrackSpec,
 };
 use crate::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
 use crate::mp4esds::EsdsBox;

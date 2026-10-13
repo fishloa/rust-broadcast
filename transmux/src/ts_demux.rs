@@ -893,7 +893,8 @@ impl FrameSync for Eac3Sync {
     /// the tail is not counted as commencing an access unit: a dependent
     /// substream must not move the timeline anchor (issue #1186).
     fn tail_starts_new_unit(tail: &[u8]) -> bool {
-        tail.len() > AC3_SYNC_BYTES.len() && (tail[AC3_SYNC_BYTES.len()] >> 6) != EAC3_STRMTYP_DEPENDENT
+        tail.len() > AC3_SYNC_BYTES.len()
+            && (tail[AC3_SYNC_BYTES.len()] >> 6) != EAC3_STRMTYP_DEPENDENT
     }
 }
 
@@ -10904,10 +10905,7 @@ mod tests {
 
     /// The real independent frames of the committed Dolby E-AC-3 capture.
     fn real_eac3_independent_frames() -> Vec<Vec<u8>> {
-        let path = concat!(
-            env!("CARGO_MANIFEST_DIR"),
-            "/../fixtures/ts/dolby/eac3.ts"
-        );
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/dolby/eac3.ts");
         let ts = std::fs::read(path).expect("committed Dolby E-AC-3 capture");
         let media = TsDemux::new().demux(&ts).expect("demux real E-AC-3");
         media.tracks[0]
@@ -10992,7 +10990,10 @@ mod tests {
             let CodecConfig::Eac3 { config, .. } = first_track_config(&ts) else {
                 panic!("E-AC-3 track expected");
             };
-            assert!(config.substreams[0].chan_loc.is_some(), "dec3 carries the dependent substream");
+            assert!(
+                config.substreams[0].chan_loc.is_some(),
+                "dec3 carries the dependent substream"
+            );
         }
     }
 

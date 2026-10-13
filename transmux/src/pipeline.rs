@@ -60,8 +60,7 @@ const TKHD_ENABLED_IN_MOVIE: u32 = 0x0000_0007;
 /// `crate::pipeline::`/`transmux::pipeline::` path keeps resolving unchanged.
 pub use crate::ir::{
     CodecConfig, DataCarriage, FragmentTrackData, Provenance, Sample, SampleFlags, SubtitleFormat,
-    SubtitleSampleEntry,
-    TrackSpec,
+    SubtitleSampleEntry, TrackSpec,
 };
 
 /// Build a CMAF initialization segment (`ftyp` + fragmented-init `moov`) for the

@@ -37,7 +37,11 @@ fn check(label: &str, ts: &[u8]) -> Vec<(usize, usize)> {
         let mut prev_dts: Option<i64> = None;
         let mut gaps = 0usize;
         for (i, s) in track.samples.iter().enumerate() {
-            assert_eq!(&s.data[..2], &AC3_SYNC, "{label}: sample {i} starts at a syncword");
+            assert_eq!(
+                &s.data[..2],
+                &AC3_SYNC,
+                "{label}: sample {i} starts at a syncword"
+            );
             let frames = Ec3SyncframeInfo::from_es_all(&s.data);
             assert_eq!(frames.len(), 1, "{label}: sample {i} holds one syncframe");
             let info = frames[0];
@@ -76,7 +80,10 @@ fn committed(name: &str) -> Vec<u8> {
 
 #[test]
 fn committed_real_eac3_captures_unchanged() {
-    assert_eq!(check("dolby/eac3.ts", &committed("dolby/eac3.ts")), [(58, 0)]);
+    assert_eq!(
+        check("dolby/eac3.ts", &committed("dolby/eac3.ts")),
+        [(58, 0)]
+    );
     assert_eq!(
         check("gulli-opengop.ts", &committed("gulli-opengop.ts")),
         [(230, 0)]
