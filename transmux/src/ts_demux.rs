@@ -7585,7 +7585,13 @@ mod tests {
         let mut real_sps_b = real_sps.clone();
         *real_sps_b.last_mut().unwrap() ^= 0x01;
         let (v, s) = (nal(H265_NAL_VPS, 1), real_sps);
-        let ppss = [nal(H265_NAL_PPS, 3), nal(H265_NAL_PPS, 4)];
+        // PPS bodies whose first byte is `ue(pps_pic_parameter_set_id)` followed
+        // by the stop bit (H.265 §7.3.2.3.1): id 1 = `010`, id 2 = `011`, id 3 =
+        // `00100`, each then `1` and zero padding. Distinct ids = rotation.
+        let ppss = [
+            nal(H265_NAL_PPS, 0b0101_0000),
+            nal(H265_NAL_PPS, 0b0111_0000),
+        ];
         let mut sets = ParameterSets::default();
         let au = |p: &Vec<u8>| annexb_au(&[&v, &s, p]);
         assert!(sets.observe(Codec::Hevc, &au(&ppss[0])));
@@ -7599,7 +7605,13 @@ mod tests {
                 "rotation step {i} is a repeat"
             );
         }
-        assert!(sets.observe(Codec::Hevc, &au(&nal(H265_NAL_PPS, 9))));
+        assert!(sets.observe(Codec::Hevc, &au(&nal(H265_NAL_PPS, 0b0010_0100))));
+        // Issue #1186: id 1 re-announced with different bytes, then back to the
+        // original — a change at BOTH switches (the second is an already-seen
+        // set, which a "never seen before" test would have missed).
+        let id1_other = nal(H265_NAL_PPS, 0b0101_1000);
+        assert!(sets.observe(Codec::Hevc, &au(&id1_other)), "id 1 content B");
+        assert!(sets.observe(Codec::Hevc, &au(&ppss[0])), "id 1 back to A");
         let sps2 = real_sps_b;
         assert!(sets.observe(Codec::Hevc, &annexb_au(&[&sps2])), "SPS B");
         assert!(
