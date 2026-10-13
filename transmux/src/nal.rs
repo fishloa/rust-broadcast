@@ -678,6 +678,118 @@ pub(crate) fn parameter_set_is_valid(codec: NalCodec, kind: ParamKind, nal: &[u8
 mod tests {
     use super::*;
 
+    /// Verbatim H.264 High SPS NAL from a real stream (see `sps.rs` tests).
+    const REAL_AVC_SPS: &[u8] = &[
+        0x67, 0x64, 0x00, 0x0D, 0xAC, 0xD9, 0x41, 0x41, 0xFB, 0x01, 0x10, 0x00, 0x00, 0x03, 0x00,
+        0x10, 0x00, 0x00, 0x03, 0x03, 0x20, 0xF1, 0x42, 0x99, 0x60,
+    ];
+    /// Verbatim H.265 Main SPS NAL from a real stream (see `sps.rs` tests).
+    const REAL_HEVC_SPS: &[u8] = &[
+        0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00, 0x03, 0x00, 0x00,
+        0x03, 0x00, 0x3c, 0xa0, 0x0a, 0x08, 0x0f, 0x16, 0x59, 0x59, 0xa4, 0x93, 0x2b, 0xc0, 0x5a,
+        0x02, 0x00, 0x00, 0x03, 0x00, 0x02, 0x00, 0x00, 0x03, 0x00, 0x32, 0x10,
+    ];
+
+    #[test]
+    fn real_parameter_sets_are_valid() {
+        use ParamKind::*;
+        assert!(parameter_set_is_valid(NalCodec::Avc, Sps, REAL_AVC_SPS));
+        assert!(parameter_set_is_valid(
+            NalCodec::Avc,
+            Pps,
+            &[0x68, 0xCE, 0x3C, 0x80]
+        ));
+        assert!(parameter_set_is_valid(NalCodec::Hevc, Sps, REAL_HEVC_SPS));
+        assert!(parameter_set_is_valid(
+            NalCodec::Hevc,
+            Vps,
+            &[0x40, 0x01, 0x0C]
+        ));
+        assert!(parameter_set_is_valid(
+            NalCodec::Hevc,
+            Pps,
+            &[0x44, 0x01, 0xC1]
+        ));
+    }
+
+    /// The #1171 shape: a plausible SPS header followed by a body longer than
+    /// the `u16` record length field. Rejected even if it parsed.
+    #[test]
+    fn oversized_parameter_set_is_invalid() {
+        for (codec, kind, good) in [
+            (NalCodec::Avc, ParamKind::Sps, REAL_AVC_SPS),
+            (NalCodec::Hevc, ParamKind::Sps, REAL_HEVC_SPS),
+        ] {
+            let mut big = good.to_vec();
+            big.resize(MAX_PARAMETER_SET_LEN + 1, 0x55);
+            assert!(!parameter_set_is_valid(codec, kind, &big));
+            assert!(!parameter_set_is_valid(
+                NalCodec::Avc,
+                ParamKind::Pps,
+                &[&[0x68u8][..], &[0x55; MAX_PARAMETER_SET_LEN][..]].concat()
+            ));
+        }
+        // 85 704 bytes, the length observed in the report.
+        let mut garbage = alloc::vec![0x67u8];
+        garbage.resize(85_704, 0xA5);
+        assert!(!parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Sps,
+            &garbage
+        ));
+    }
+
+    #[test]
+    fn empty_wrong_type_and_bad_header_are_invalid() {
+        use ParamKind::*;
+        for codec in [NalCodec::Avc, NalCodec::Hevc] {
+            assert!(!parameter_set_is_valid(codec, Sps, &[]));
+        }
+        // wrong type for the requested role
+        assert!(!parameter_set_is_valid(
+            NalCodec::Avc,
+            Sps,
+            &[0x68, 0xCE, 0x3C, 0x80]
+        ));
+        assert!(!parameter_set_is_valid(NalCodec::Avc, Pps, REAL_AVC_SPS));
+        assert!(!parameter_set_is_valid(
+            NalCodec::Avc,
+            Vps,
+            &[0x40, 0x01, 0x0C]
+        ));
+        assert!(!parameter_set_is_valid(NalCodec::Hevc, Pps, REAL_HEVC_SPS));
+        // forbidden_zero_bit set
+        let mut bad = REAL_AVC_SPS.to_vec();
+        bad[0] |= 0x80;
+        assert!(!parameter_set_is_valid(NalCodec::Avc, Sps, &bad));
+        // nuh_temporal_id_plus1 == 0
+        let mut bad = REAL_HEVC_SPS.to_vec();
+        bad[1] &= !0x07;
+        assert!(!parameter_set_is_valid(NalCodec::Hevc, Sps, &bad));
+        // trailing zero byte: no RBSP stop bit
+        let mut bad = REAL_AVC_SPS.to_vec();
+        *bad.last_mut().unwrap() = 0;
+        assert!(!parameter_set_is_valid(NalCodec::Avc, Sps, &bad));
+        // VVC has no parameter-set record here
+        assert!(!parameter_set_is_valid(NalCodec::Vvc, Sps, REAL_AVC_SPS));
+    }
+
+    /// Right header, but the body is not a decodable SPS.
+    #[test]
+    fn unparseable_sps_is_invalid() {
+        assert!(!parameter_set_is_valid(
+            NalCodec::Avc,
+            ParamKind::Sps,
+            &[0x67, 0x42, 0x00, 0x1E, 0xAB, 0x40]
+        ));
+        let truncated = &REAL_HEVC_SPS[..8];
+        assert!(!parameter_set_is_valid(
+            NalCodec::Hevc,
+            ParamKind::Sps,
+            truncated
+        ));
+    }
+
     #[test]
     fn sei_varint_overflow_is_none_not_a_panic() {
         // 0xFF * (u32::MAX / 255 + 1) exceeds u32::MAX before any terminator.

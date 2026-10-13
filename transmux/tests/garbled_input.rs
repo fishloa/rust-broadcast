@@ -167,6 +167,7 @@ const FIXTURES: &[&str] = &[
 fn garbled_fixtures_never_yield_unserializable_configs() {
     let mut garbled_runs = 0usize;
     let mut config_events = 0usize;
+    let mut rejected_sets = 0usize;
     for rel in FIXTURES {
         let clean = fixture(rel);
         for start in [0usize, 333, 500, 900] {
@@ -178,6 +179,10 @@ fn garbled_fixtures_never_yield_unserializable_configs() {
                     config_events += baseline
                         .iter()
                         .filter(|e| e.starts_with("TrackAdded") || e.starts_with("TrackUpdated"))
+                        .count();
+                    rejected_sets += baseline
+                        .iter()
+                        .filter(|e| e.contains("InvalidParameterSet"))
                         .count();
                     for n in [1usize, 7, 187, 188, 189, 1000] {
                         assert_eq!(run(&ts, n, &what), baseline, "{what}: chunk {n}");
@@ -198,4 +203,7 @@ fn garbled_fixtures_never_yield_unserializable_configs() {
         config_events > 0,
         "no config events at all: test is vacuous"
     );
+    // The damage must actually have produced invalid parameter sets that the
+    // demuxer then ignored — otherwise this test would pass vacuously.
+    assert!(rejected_sets > 0, "no InvalidParameterSet event: vacuous");
 }

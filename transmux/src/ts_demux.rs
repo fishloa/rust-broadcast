@@ -5567,7 +5567,10 @@ mod tests {
         let mut out = Vec::new();
         out.extend_from_slice(&[0x00, 0x00, 0x01, stream_id]);
         let payload_len = au.len() + 3 + header_data_len;
-        out.extend_from_slice(&(payload_len as u16).to_be_bytes());
+        // A video access unit too long for the 16-bit field is sent unbounded
+        // (`PES_packet_length == 0`, ISO/IEC 13818-1 §2.4.3.7) rather than
+        // wrapped, which would silently truncate it.
+        out.extend_from_slice(&u16::try_from(payload_len).unwrap_or(0).to_be_bytes());
         out.push(0x80); // '10' marker, not scrambled
         out.push(if dts.is_some() { 0xC0 } else { 0x80 });
         out.push(header_data_len as u8);
@@ -7154,6 +7157,49 @@ mod tests {
         let (updates, base) = events_chunked(&bytes, bytes.len());
         assert_eq!(updates, 1, "exactly one update for the one real change");
         for chunk in [1usize, 188, 1000] {
+            assert_eq!(events_chunked(&bytes, chunk).1, base, "chunk {chunk}");
+        }
+    }
+
+    /// Issue #1171: parameter sets that are over the `avcC` u16 length limit,
+    /// or whose body does not parse, are ignored — no `TrackUpdated` is
+    /// raised, the track's config stays serializable, each rejection is an
+    /// `InputDegraded::InvalidParameterSet`, and the event sequence is
+    /// identical at every chunk size.
+    #[test]
+    fn invalid_parameter_sets_are_ignored_and_counted() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        // The 85 704-byte "SPS" of the report: real header, garbage body.
+        let mut huge_sps = sps.clone();
+        huge_sps.resize(85_704, 0xA5);
+        // Right type, truncated: cannot parse to a geometry.
+        let stub_sps = vec![0x67u8, 0x42, 0x00, 0x1E, 0xAB, 0x40];
+        let idr = [0x65u8, 0x88, 0x84, 0x01];
+        let aus = vec![
+            annexb_au(&[&sps, &pps, &idr]),
+            annexb_au(&[&huge_sps, &pps, &idr]),
+            annexb_au(&[&stub_sps, &idr]),
+            annexb_au(&[&sps, &pps, &idr]),
+        ];
+        let bytes = avc_ts_over(&aus);
+        let (updates, base) = events_chunked(&bytes, bytes.len());
+        assert_eq!(updates, 0, "invalid sets must not raise TrackUpdated");
+        let added = base.iter().filter(|l| l.starts_with("TrackAdded")).count();
+        assert_eq!(added, 1, "one track, from the valid set only");
+        let rejected = base
+            .iter()
+            .filter(|l| l.contains("InvalidParameterSet"))
+            .count();
+        assert_eq!(rejected, 2, "the huge and the stub SPS: {base:?}");
+        // Every config the demuxer emitted serializes.
+        let media = TsDemux::new().demux(&bytes).expect("demux");
+        for t in &media.tracks {
+            let CodecConfig::Avc { config, .. } = t.config() else {
+                continue;
+            };
+            assert!(config.try_to_bytes().is_ok());
+        }
+        for chunk in [1usize, 7, 187, 188, 189, 1000] {
             assert_eq!(events_chunked(&bytes, chunk).1, base, "chunk {chunk}");
         }
     }

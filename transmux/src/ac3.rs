@@ -1761,18 +1761,21 @@ mod tests {
         let bytes = bx.try_to_bytes().unwrap();
         assert_eq!(Ec3SpecificBox::parse(&bytes).unwrap(), bx);
 
-        // Feeding all three AUs (the pre-fix behaviour) would not serialize.
+        // Feeding all three AUs (the pre-fix behaviour) describes 3 independent
+        // substreams against `num_ind_sub == 0`, a box that could never be
+        // serialized: construction now refuses it (issue #1171) rather than
+        // handing back an unserializable value.
         let all = Ec3SyncframeInfo::from_es_all(&backlog);
         assert_eq!(all.len(), 6);
-        let bad = Ec3SpecificBox::from_syncframes(&all).unwrap();
-        assert_eq!(
-            bad.substreams.len(),
-            3,
-            "one substream per repeated AU frame"
-        );
         assert!(
-            bad.try_to_bytes().is_err(),
-            "a repeated-AU substream list must not serialize as if it were valid"
+            matches!(
+                Ec3SpecificBox::from_syncframes(&all),
+                Err(Error::InvalidValue {
+                    field: "dec3 num_ind_sub",
+                    ..
+                })
+            ),
+            "a repeated-AU substream list must be rejected at construction"
         );
     }
 
