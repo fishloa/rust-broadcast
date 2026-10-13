@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- The CamelCase constant re-exports are now SCREAMING_SNAKE: `DataIdentifier`
+  -> `DATA_IDENTIFIER`, `EndOfPesMarker` -> `END_OF_PES_MARKER`,
+  `SubtitleStreamId` -> `SUBTITLE_STREAM_ID`, `SyncByte` -> `SYNC_BYTE`
+  (#1108 DS-O1).
+- `ClutDefinitionSegment` serialize now rejects a reduced-range CLUT entry whose
+  Y/Cr/Cb/T value is wider than its 6/4/4/2-bit slot, and a `reserved` flags
+  value outside bits `[4:1]`, with the new `Error::InvalidValue`; previously the
+  value was shifted into its neighbour's bits (#1108 DS-O2).
+
 ## [0.5.0] - 2026-10-05
 ### Changed (breaking)
 - **#1108 (DS-W1)**: `AnySegment` gained a `Malformed { segment_type, page_id,

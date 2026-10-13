@@ -69,4 +69,13 @@ pub enum Error {
         /// How many bytes were left over.
         extra: usize,
     },
+    /// A field value does not fit the bits the wire format gives it (e.g. a
+    /// reduced-range CLUT colour component wider than its 6/4/2-bit slot).
+    #[error("invalid value for {field}: {reason}")]
+    InvalidValue {
+        /// The field being serialized.
+        field: &'static str,
+        /// Why the value is rejected.
+        reason: &'static str,
+    },
 }

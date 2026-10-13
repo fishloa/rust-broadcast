@@ -32,7 +32,7 @@ use broadcast_common::Parse;
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::tables::pmt::PmtStream;
 use dvb_subtitle::{
-    AnySegment, ClutDefinitionSegment, ClutEntry, DataIdentifier, DataType, ObjectDataPayload,
+    AnySegment, ClutDefinitionSegment, ClutEntry, DATA_IDENTIFIER, DataType, ObjectDataPayload,
     ObjectDataSegment, PageCompositionSegment, PesDataField, RegionCompositionSegment,
 };
 use mpeg_pes::{PesAssembler, PesPacket, StreamId};
@@ -192,7 +192,7 @@ impl SubtitleState {
         };
         // The same PID commonly multiplexes padding_stream PES too — only
         // private_stream_1 carrying data_identifier 0x20 is DVB subtitle.
-        if pkt.stream_id != PRIVATE_STREAM_1 || pkt.payload.first() != Some(&DataIdentifier) {
+        if pkt.stream_id != PRIVATE_STREAM_1 || pkt.payload.first() != Some(&DATA_IDENTIFIER) {
             return;
         }
         let field = match PesDataField::parse(pkt.payload) {

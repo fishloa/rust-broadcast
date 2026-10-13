@@ -16,6 +16,15 @@ pub const ENTRY_FULL_LEN: usize = 4;
 /// Reduced-range colour: 2 bytes.
 pub const ENTRY_REDUCED_LEN: usize = 2;
 
+/// Bits `[4:1]` of the CLUT-entry flags byte are reserved (Table 16).
+const RESERVED_FLAGS_MASK: u8 = 0x1E;
+/// Largest reduced-range `Y_value` (6 bits, Table 16).
+const REDUCED_Y_MAX: u8 = 0x3F;
+/// Largest reduced-range `Cr_value` / `Cb_value` (4 bits, Table 16).
+const REDUCED_CR_CB_MAX: u8 = 0x0F;
+/// Largest reduced-range `T_value` (2 bits, Table 16).
+const REDUCED_T_MAX: u8 = 0x03;
+
 /// A single CLUT entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
@@ -52,7 +61,29 @@ impl ClutEntry {
             }
     }
 
-    fn serialize_into(&self, buf: &mut [u8]) {
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<()> {
+        // The flags byte's reserved bits are `[4:1]` only; a stray bit there
+        // would corrupt a flag (#1108/DS-O2 class).
+        if self.reserved_flags & !RESERVED_FLAGS_MASK != 0 {
+            return Err(Error::InvalidValue {
+                field: "CLUT_entry.reserved",
+                reason: "reserved bits must lie in bits [4:1] of the flags byte",
+            });
+        }
+        // Reduced-range entries pack Y(6) Cr(4) Cb(4) T(2) into two bytes
+        // (Table 16); a wider value would shift into its neighbour's bits
+        // and silently corrupt it (#1108/DS-O2).
+        if !self.full_range_flag
+            && (self.y_value > REDUCED_Y_MAX
+                || self.cr_value > REDUCED_CR_CB_MAX
+                || self.cb_value > REDUCED_CR_CB_MAX
+                || self.t_value > REDUCED_T_MAX)
+        {
+            return Err(Error::InvalidValue {
+                field: "CLUT_entry colour value",
+                reason: "reduced-range entry needs Y<=63, Cr<=15, Cb<=15, T<=3",
+            });
+        }
         buf[0] = self.clut_entry_id;
         let mut flags: u8 = self.reserved_flags;
         if self.flag_2bit {
@@ -77,6 +108,7 @@ impl ClutEntry {
             buf[2] = (self.y_value << 2) | (self.cr_value >> 2);
             buf[3] = (self.cr_value << 6) | (self.cb_value << 2) | self.t_value;
         }
+        Ok(())
     }
 
     fn parse(bytes: &[u8]) -> Result<(Self, usize)> {
@@ -91,7 +123,7 @@ impl ClutEntry {
         let flag_2bit = (bytes[1] & 0x80) != 0;
         let flag_4bit = (bytes[1] & 0x40) != 0;
         let flag_8bit = (bytes[1] & 0x20) != 0;
-        let reserved_flags = bytes[1] & 0x1E;
+        let reserved_flags = bytes[1] & RESERVED_FLAGS_MASK;
         let full_range_flag = (bytes[1] & 0x01) != 0;
 
         let total = ENTRY_HEADER_LEN
@@ -255,7 +287,7 @@ impl Serialize for ClutDefinitionSegment {
 
         let mut off = HEADER_LEN + FIXED_LEN;
         for entry in &self.entries {
-            entry.serialize_into(&mut buf[off..]);
+            entry.serialize_into(&mut buf[off..])?;
             off += entry.serialized_len();
         }
         buf[off..off + self.suffix.len()].copy_from_slice(&self.suffix);
@@ -267,6 +299,51 @@ impl Serialize for ClutDefinitionSegment {
 mod tests {
     use super::*;
     use broadcast_common::{Parse, Serialize};
+
+    /// DS-O2 (#1108): a reduced-range component wider than its 6/4/4/2-bit slot
+    /// used to be shifted into its neighbour's bits (silent corruption); it
+    /// must be rejected, while the in-range maximum still round-trips.
+    #[test]
+    fn reduced_range_overwide_components_are_rejected() {
+        let entry = |y, cr, cb, t| ClutEntry {
+            clut_entry_id: 1,
+            flag_2bit: true,
+            flag_4bit: false,
+            flag_8bit: false,
+            reserved_flags: 0,
+            full_range_flag: false,
+            y_value: y,
+            cr_value: cr,
+            cb_value: cb,
+            t_value: t,
+        };
+        let seg = |e: ClutEntry| ClutDefinitionSegment {
+            page_id: 1,
+            clut_id: 0,
+            clut_version_number: 0,
+            reserved: 0,
+            entries: alloc::vec![e],
+            suffix: alloc::vec::Vec::new(),
+        };
+        let max = seg(entry(0x3F, 0x0F, 0x0F, 0x03));
+        let bytes = max.to_bytes();
+        assert_eq!(ClutDefinitionSegment::parse(&bytes).unwrap(), max);
+        for bad in [
+            entry(0x40, 0, 0, 0),
+            entry(0, 0x10, 0, 0),
+            entry(0, 0, 0x10, 0),
+            entry(0, 0, 0, 0x04),
+        ] {
+            assert!(matches!(
+                seg(bad).try_to_bytes(),
+                Err(Error::InvalidValue { .. })
+            ));
+        }
+        // Full-range entries keep the full 8 bits.
+        let mut full = entry(0xFF, 0xFF, 0xFF, 0xFF);
+        full.full_range_flag = true;
+        assert!(seg(full).try_to_bytes().is_ok());
+    }
 
     #[test]
     fn round_trip_full_range() {
