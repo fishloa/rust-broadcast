@@ -74,6 +74,13 @@ Lockstep minor alongside `dvb-si` 10.1.0; no source changes in this crate.
   TS packet, as each packet's payload physically arrives (ISO/IEC 13818-1
   §2.4.2.3), so it drains correctly between packets instead of receiving
   the whole section at once (#1035).
+- Indicator 3.3 (`Buffer_error`), second half of #1035: TBsys is now fed only
+  by PSI (PAT, CAT, PMT, NIT — H.222.0 §2.4.2.1 "system information for the
+  program being decoded"), not by DVB SI (SDT/BAT, EIT, RST, TDT/TOT), whose
+  back-to-back packets overflowed it seven times in 20 s of a real conformant
+  multiplex (france-tnt-uhf32, PCR-timed; PID 0x0012). The report is also
+  latched per overflow episode (re-armed when TBsys drains empty) instead of
+  one event per packet while the buffer stays full.
 
 ## [10.0.1] - 2026-08-30
 Lockstep patch alongside `dvb-si` 10.0.1; no source changes in this crate.

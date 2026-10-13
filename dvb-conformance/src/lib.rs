@@ -1087,8 +1087,16 @@ impl ConformanceMonitor {
             if let Some(payload) = packet.payload {
                 // TBsys (indicator 3.3) is fed per TS packet, as bytes
                 // physically arrive — not once with the whole section's
-                // length once it has fully reassembled (issue #1035).
-                self.feed_tbsys_bytes(payload.len() as u64, pid, t);
+                // length once it has fully reassembled (issue #1035) — and
+                // only for PSI (H.222.0 §2.4.2.1: "system information for
+                // the program being decoded"). Of the well-known SI PIDs
+                // reaching this branch only CAT and NIT are PSI; SDT/BAT,
+                // EIT, RST and TDT/TOT are DVB SI (EN 300 468) the T-STD
+                // does not model, and a real multiplex bursts EIT packets
+                // back-to-back far faster than 1 Mbit/s (#1035).
+                if pid == PID_CAT || pid == PID_NIT {
+                    self.feed_tbsys_bytes(payload.len() as u64, pid, t);
+                }
                 if let Some(si_ra) = self.si_reassemblies.get_mut(&pid) {
                     si_ra.reassembler.feed(payload, header.pusi);
                 }
@@ -1402,6 +1410,13 @@ impl ConformanceMonitor {
         // Drain TBsys to current time using the fixed 1 Mbit/s leak rate.
         self.tstd.drain_tb_sys(t);
 
+        // A new overflow episode may be reported once the buffer has fully
+        // drained (latched per buffer, like 3.9/3.10 below): a burst that
+        // keeps it full must not flood one event per packet.
+        if self.tstd.tb_sys.occupancy() == 0 {
+            self.tstd.tb_sys_overflow_reported = false;
+        }
+
         // Check if adding this packet's payload bytes would overflow TBsys.
         // TBsys has 512 bytes capacity at 1 Mbit/s drain. Checked (and fed)
         // per TS packet, not per whole reassembled section: the bytes of a
@@ -1410,7 +1425,8 @@ impl ConformanceMonitor {
         // full section length in one instant would flag `Buffer_error` on
         // any legally-paced section over 512 bytes, which every long-form
         // SDT/NIT/EIT section routinely is.
-        if self.tstd.tb_sys.would_overflow(n_bytes, t) {
+        if self.tstd.tb_sys.would_overflow(n_bytes, t) && !self.tstd.tb_sys_overflow_reported {
+            self.tstd.tb_sys_overflow_reported = true;
             self.emit(
                 Indicator::BufferError,
                 Some(pid),

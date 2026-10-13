@@ -350,6 +350,9 @@ pub(crate) struct TstdModel {
     pub(crate) pid_buffers: alloc::collections::BTreeMap<mpeg_ts::pid::Pid, PidStdState>,
     /// TBsys empty-interval check (indicator 3.9).
     pub(crate) tb_sys_empty_reported: bool,
+    /// Whether a Buffer_error (3.3) has been reported for the current TBsys
+    /// overflow episode; cleared when TBsys next drains empty.
+    pub(crate) tb_sys_overflow_reported: bool,
 }
 
 impl TstdModel {
@@ -358,6 +361,7 @@ impl TstdModel {
             tb_sys: StdBuffer::new(TB_SYS_SIZE, TB_SYS_LEAK_RATE, now),
             pid_buffers: alloc::collections::BTreeMap::new(),
             tb_sys_empty_reported: false,
+            tb_sys_overflow_reported: false,
         }
     }
 
