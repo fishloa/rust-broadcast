@@ -3,6 +3,13 @@
 All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
+
+### Security (secrets and identity handling, #1142)
+
+- **BREAKING (behaviour):** `WhipClient`/`WhepPlayer` send the bearer token only to the origin of the configured endpoint. A session URL (`Location`) on another scheme, host or port gets no `Authorization` header. `url` is now a non-optional dependency (it was `media`-only).
+- `Debug` of `WhipClient`, `WhepPlayer`, `IceServer` (TURN credential) and `MediaTransportConfig` (ICE passwords) no longer prints the secret.
+- The DTLS certificate-fingerprint comparison uses `subtle::ConstantTimeEq` (new optional `subtle` dependency under `media`) instead of a hand-written fold.
+- New `tests/secret_hygiene.rs`, `tests/secret_debug_guard.rs`.
 ### Changed
 - **BREAKING (behaviour):** `WhipSession::on_patch` now rejects a PATCH whose `Content-Type` is missing or is not `application/trickle-ice-sdpfrag` (RFC 9725 section 4; parameters such as `charset` are ignored) with `Error::InvalidSdpFragment`, matching `WhepSession::on_patch` (audit r09-W21). Migrate: send the trickle-ICE media type on every WHIP PATCH.
 ### Added

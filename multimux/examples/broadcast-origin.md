@@ -47,6 +47,12 @@ RFC 8216bis §4.4.3.8 requires `PART-HOLD-BACK >= 2×` the part target and recom
 | `upstream-hls` | HLS pull | re-packages someone else's HLS |
 | `upstream-dash` | DASH pull | |
 
+**Ingest authentication.** A listener that admits a publisher with no authentication is refused
+on a non-loopback address unless the config says `"allow_open_ingest": true`. This example sets it
+because the SRT listener has no passphrase support; the RTMP listener is protected by
+`stream_key`. Drop the flag (and bind SRT to a loopback address or put it behind a trusted
+network) for anything exposed to the internet.
+
 **Note the direction difference.** RTSP, TS-HTTP, HLS-pull and DASH-pull *dial out*; SRT and
 RTMP *listen*. The listening ones bind ports on this host — check they do not collide with each
 other or with `bind`/`admin.bind`.

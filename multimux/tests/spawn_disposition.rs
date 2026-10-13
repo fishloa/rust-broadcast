@@ -40,7 +40,7 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "push/rtsp.rs",
-        278,
+        291,
         "RTSP push `close` best-effort TEARDOWN: spawned on the current runtime handle (`Handle::try_current`, skipped outside one), the JoinHandle is stored on the transport and an already-running one is aborted on a superseding close, bounded by TEARDOWN_TIMEOUT",
     ),
     ("source/rtmp.rs", 326, "RTMP accept pump TaskTracker"),
@@ -71,27 +71,27 @@ const DISPOSITION: &[(&str, u32, &str)] = &[
     ),
     (
         "output/whep.rs",
-        1012,
+        987,
         "WHEP saturated-accept test harness server; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        1063,
+        1038,
         "serve_whep_run_for_test -> run_whep_with_tracker; cancelled by the returned token",
     ),
     (
         "output/whep.rs",
-        1101,
+        1076,
         "serve_whep_run_probed_for_test -> run_whep_on_probed; cancelled by the returned WhepRunHarness token (test-hooks only)",
     ),
     (
         "output/whep.rs",
-        1736,
+        1711,
         "WHEP signalling server; JOINED before run_whep returns (port-release ordering)",
     ),
     (
         "output/whep.rs",
-        1758,
+        1733,
         "WHEP viewer session on the run's session TaskTracker (close()+wait() on cancel)",
     ),
     (

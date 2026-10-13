@@ -176,7 +176,9 @@ pub enum InputSpec {
     /// `crate::route::RouteHandle::publish_program` — the first connection to
     /// publish wins the route). A startup log line warns when a route is
     /// wired up this way; set `stream_key` for any listener reachable outside
-    /// a trusted network.
+    /// a trusted network. [`Config::validate`] refuses such a route on a
+    /// non-loopback `listen` address unless [`Config::allow_open_ingest`] is
+    /// set.
     Rtmp {
         /// `host:port` to bind the RTMP listen socket to (e.g.
         /// `"0.0.0.0:1935"`, the IANA-assigned RTMP port).
@@ -209,6 +211,8 @@ pub enum InputSpec {
     /// warns every time this input kind is wired up, unconditionally; only
     /// run it behind a trusted network or a fronting proxy that adds auth
     /// until this crate grows a WHIP Bearer-token config knob.
+    /// [`Config::validate`] refuses this input on a non-loopback `listen`
+    /// address unless [`Config::allow_open_ingest`] is set.
     #[cfg(feature = "whip")]
     Whip {
         /// `host:port` to bind the WHIP publish HTTP endpoint to (e.g.
@@ -229,6 +233,8 @@ pub enum InputSpec {
     /// [`crate::source::srt`]'s module doc. In listener mode this means
     /// **any Caller may publish** (only the first, per-route); a startup log
     /// line warns every time a listener-mode SRT route is wired up.
+    /// [`Config::validate`] refuses a listener-mode route on a non-loopback
+    /// address unless [`Config::allow_open_ingest`] is set.
     Srt {
         /// Listener bind address (e.g. `"0.0.0.0:9000"`) — mutually
         /// exclusive with `remote`.

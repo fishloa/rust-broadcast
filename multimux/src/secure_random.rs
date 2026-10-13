@@ -5,9 +5,11 @@
 //! which is a keyed hash seeded once per thread and not a CSPRNG; every call
 //! here reads `getrandom` directly.
 
+#[cfg(any(feature = "whip", feature = "whep"))]
 /// 62-symbol alphanumeric alphabet used for tokens.
 const ALPHABET: &[u8; 62] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
+#[cfg(any(feature = "whip", feature = "whep"))]
 /// Largest multiple of the alphabet length that fits in a byte; bytes at or
 /// above it are rejected so every symbol is equally likely (no modulo bias).
 const REJECT_FROM: u8 = (256 / ALPHABET.len() * ALPHABET.len()) as u8;
@@ -18,6 +20,7 @@ fn fill(buf: &mut [u8]) {
     getrandom::getrandom(buf).expect("OS random source unavailable");
 }
 
+#[cfg(any(feature = "whip", feature = "whep"))]
 /// A uniformly random alphanumeric token of `len` characters.
 pub(crate) fn token(len: usize) -> String {
     let mut out = String::with_capacity(len);
@@ -45,6 +48,7 @@ pub(crate) fn ssrc() -> u32 {
 mod tests {
     use super::*;
 
+    #[cfg(any(feature = "whip", feature = "whep"))]
     #[test]
     fn token_has_requested_length_and_alphabet() {
         for len in [0, 1, 8, 24, 32, 200] {
@@ -54,6 +58,7 @@ mod tests {
         }
     }
 
+    #[cfg(any(feature = "whip", feature = "whep"))]
     #[test]
     fn tokens_do_not_repeat() {
         let mut seen = std::collections::HashSet::new();

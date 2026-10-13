@@ -6,6 +6,12 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Security (secrets and identity handling, #1142)
+
+- **BREAKING:** `Credentials` now implements `Drop` (the password/token is wiped via `zeroize`), so a value can no longer be destructured by move; clone the fields or borrow them. `PartialEq` on `Credentials` compares secrets in constant time (`subtle`).
+- `Verifier`, the Digest nonce-signing key and `SignedUrlKeySet` wipe their secrets when dropped.
+- New `tests/secret_debug_guard.rs`: no derived `Debug` over a secret-named field and no hand-rolled constant-time compare.
+
 ### Changed
 - `Verifier`: the Basic/Bearer/Digest constant-time compare now uses `subtle::ConstantTimeEq` (one implementation, shared with `signed_url`) instead of a hand-rolled `fold` (audit r09-O1).
 

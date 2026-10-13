@@ -40,11 +40,11 @@ pub mod reconnect;
 pub mod redact;
 pub mod registry;
 pub mod route;
-#[cfg(any(feature = "whip", feature = "whep"))]
 mod secure_random;
 pub mod source;
 #[cfg(test)]
 pub(crate) mod testutil;
+#[cfg(any(feature = "whip", feature = "whep"))]
 mod webrtc_session;
 
 pub use error::{MultimuxError, Result};

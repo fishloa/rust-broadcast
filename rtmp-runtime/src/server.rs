@@ -167,6 +167,10 @@ pub struct ServerConfig {
     /// value exactly or the publish is rejected: `onStatus`
     /// `NetStream.Publish.BadName`, and no `Publish`/`Media` events are
     /// emitted for that connection.
+    ///
+    /// **`None` (the default) admits any publisher.** A listener reachable
+    /// from an untrusted network must set a key (or authenticate the
+    /// publisher some other way before handing bytes to this session).
     pub expected_stream_key: Option<String>,
     /// Ceiling on the total payload bytes this session's
     /// [`ChunkAssembler`] may buffer across **all** in-progress messages
