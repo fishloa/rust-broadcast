@@ -26,7 +26,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
-use futures_util::{SinkExt, StreamExt};
+use futures_util::{FutureExt, SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio_util::codec::Framed;
@@ -108,7 +108,7 @@ impl RtspTimeouts {
 const MAX_PENDING_MEDIA_FRAMES: usize = 1024;
 
 /// Maximum items [`AsyncRtspClient::drain_inbound`] will consume from the
-/// socket in a single call. `timeout(Duration::ZERO, framed.next())` returns
+/// socket in a single call. A single poll of `framed.next()` returns
 /// `Ready` for every already-buffered or readable item, so without this cap a
 /// peer streaming interleaved frames faster than we parse (or a hostile
 /// server answering a RECORD session) would keep `drain_inbound` looping
@@ -357,10 +357,11 @@ where
     /// media frames — so a send-only pusher keeps the socket drained without
     /// parking on a read.
     ///
-    /// One `timeout(Duration::ZERO, self.framed.next())` per readiness probe
+    /// One `now_or_never()` poll of `self.framed.next()` per readiness probe
     /// (NOT `next_event`, whose own `read_idle` timeout would nest a second
-    /// timer around every packet): if no bytes are ready it returns
-    /// immediately.
+    /// timer around every packet, and NOT `timeout(Duration::ZERO, ..)`, which
+    /// waits for tokio's next 1 ms timer tick): if no bytes are ready it
+    /// returns immediately.
     ///
     /// A control response that indicates the session is gone — `454 Session
     /// Not Found` (RFC 2326 §11.3.2), the usual answer to a `GET_PARAMETER`
@@ -377,19 +378,23 @@ where
     /// stays buffered for the next call.
     pub(crate) async fn drain_inbound(&mut self) -> Result<()> {
         for _ in 0..MAX_DRAIN_ITEMS {
-            match tokio::time::timeout(Duration::ZERO, self.framed.next()).await {
-                Err(_) => return Ok(()),   // nothing ready — non-blocking
-                Ok(None) => return Ok(()), // EOF
+            // A single poll, not `timeout(Duration::ZERO, ..)`: tokio rounds a
+            // timer deadline up to its next 1 ms tick, so the zero timeout
+            // parked the task ~1.5 ms on EVERY call when nothing was ready —
+            // capping a pusher at ~650 frames/s (~0.85 MB/s).
+            match self.framed.next().now_or_never() {
+                None => return Ok(()),       // nothing ready — non-blocking
+                Some(None) => return Ok(()), // EOF
                 // A read/decode error is not the push path's to report; the
                 // next real read surfaces it, and `send_interleaved`'s write
                 // is what a pusher must see fail.
-                Ok(Some(Err(_))) => return Ok(()),
-                Ok(Some(Ok(ClientEvent::Response { method, status, .. }))) => {
+                Some(Some(Err(_))) => return Ok(()),
+                Some(Some(Ok(ClientEvent::Response { method, status, .. }))) => {
                     if status == rtsp_types::StatusCode::SessionNotFound {
                         return Err(Error::SessionNotFound { method });
                     }
                 }
-                Ok(Some(Ok(event @ ClientEvent::MediaData { .. }))) => {
+                Some(Some(Ok(event @ ClientEvent::MediaData { .. }))) => {
                     if self.pending_media.len() >= MAX_PENDING_MEDIA_FRAMES {
                         self.pending_media.pop_front();
                     }
@@ -397,7 +402,7 @@ where
                 }
                 // `AuthRetry`/any future variant: nothing to do for a
                 // send-only pusher.
-                Ok(Some(Ok(_))) => {}
+                Some(Some(Ok(_))) => {}
             }
         }
         // Hit the per-call cap: leave the remainder buffered, do not spin.

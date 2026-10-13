@@ -423,3 +423,33 @@ async fn a_flooding_peer_does_not_starve_the_send() {
     );
     http_server.abort();
 }
+
+/// `send_interleaved` probes the inbound side once per frame (`drain_inbound`).
+/// That probe must be a single non-blocking poll, NOT a `timeout(ZERO, ..)`:
+/// tokio rounds a timer deadline up to its next 1 ms tick, so a zero timeout
+/// that finds nothing ready parks the task ~1.5 ms per frame, capping a pusher
+/// at ~650 packets/s (~0.85 MB/s of TS). This needs REAL time (paused virtual
+/// time resolves a zero deadline instantly and hides the park): the broken
+/// path costs >= 1.5 s for these 1000 frames, a healthy one tens of ms, so
+/// the 750 ms bound has a >20x margin on the healthy side.
+#[tokio::test]
+async fn send_interleaved_never_parks_on_the_inbound_probe() {
+    const FRAMES: usize = 1000;
+    const BOUND: Duration = Duration::from_millis(750);
+    let (client_io, _server_io) = duplex(8 << 20);
+    let mut client = AsyncRtspClient::with_stream_timeouts(
+        client_io,
+        ClientSession::new(),
+        RtspTimeouts::default(),
+    );
+    let start = std::time::Instant::now();
+    for _ in 0..FRAMES {
+        client.send_interleaved(0, &[0u8; 1316]).await.unwrap();
+    }
+    let took = start.elapsed();
+    assert!(
+        took < BOUND,
+        "{FRAMES} sends against an idle peer took {took:?} (>= {BOUND:?}): the inbound \
+         probe is waiting on a timer tick instead of polling once"
+    );
+}
