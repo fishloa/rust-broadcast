@@ -2353,6 +2353,7 @@ dependencies = [
  "hyper-util",
  "jiff",
  "md-5 0.11.0",
+ "media-doctor",
  "media-plane",
  "metrics",
  "metrics-exporter-prometheus",

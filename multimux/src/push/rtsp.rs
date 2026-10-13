@@ -481,6 +481,7 @@ mod tests {
             seq: 0,
             ssrc: 1,
             started: Instant::now(),
+            ts_mux: transmux::StreamingTsMux::new(),
             teardown: None,
         };
         let shown = format!("{transport:?}");
@@ -546,6 +547,7 @@ mod tests {
             seq: 0xFFFF, // exercise the u16 wraparound.
             ssrc: 0xdead_beef,
             started: Instant::now(),
+            ts_mux: transmux::StreamingTsMux::new(),
             teardown: None,
         };
         let payload = [0x47u8; TS_PACKET_LEN]; // one TS sync-byte-led packet.
@@ -589,6 +591,7 @@ mod tests {
             seq: 0,
             ssrc: 1,
             started: Instant::now(),
+            ts_mux: transmux::StreamingTsMux::new(),
             teardown: None,
         };
         let debug = format!("{transport:?}");
@@ -637,6 +640,7 @@ mod tests {
             seq: 0,
             ssrc: 1,
             started: Instant::now(),
+            ts_mux: transmux::StreamingTsMux::new(),
             teardown: None,
         };
         // No runtime is active here; close() must not panic. (A `None` client

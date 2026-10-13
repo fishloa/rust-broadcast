@@ -331,6 +331,10 @@ test-bounded     = { path = "../test-bounded" }
 # The independent ETSI TR 101 290 monitor `tests/push_ts_stream.rs` runs over
 # the TS a push output actually delivers (#1024). Dev-only; dvb-conformance
 # depends on neither multimux nor transmux, so there is no cycle.
+# The independent DASH MPD validator `tests/dash_sliding_window.rs` runs over
+# every MPD the origin emits as the window slides (#1058). Dev-only;
+# media-doctor does not depend on multimux (no cycle).
+media-doctor     = { path = "../media-doctor", version = "0.9", default-features = false, features = ["std"] }
 dvb-conformance  = { path = "../dvb-conformance", version = "11.0", default-features = false, features = ["std"] }
 # A dependency on ourselves, enabling the tiny `test-seams` feature for every
 # test build. Without it a plain `cargo test -p multimux` (default features)

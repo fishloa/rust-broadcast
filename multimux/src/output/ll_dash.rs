@@ -190,14 +190,16 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<Str
     spec.track_id = DEFAULT_TRACK_ID;
     let timescale = spec.timescale.max(1);
 
-    // `$Number$` addresses whole segments (see module docs) -- startNumber
-    // tracks the window's oldest retained segment, exactly like
-    // `crate::output::dash::render_mpd`.
+    // `$Number$` addresses whole segments (see module docs). startNumber is
+    // the program's FIRST segment, fixed for its life, exactly like
+    // `crate::output::dash::render_mpd` (ISO/IEC 23009-1 §5.3.9.5.3: with a
+    // fixed `availabilityStartTime` a sliding startNumber makes the client
+    // derive a live edge of segments that do not exist -- issue #1058).
     let window = route.window_segments(crate::route::SPTS_PROGRAM_ID);
-    let start_number = window
-        .first()
-        .map(|s| u64::from(s.segment_seq))
-        .unwrap_or(1);
+    let start_number = route
+        .first_segment_seq(crate::route::SPTS_PROGRAM_ID)
+        .or_else(|| window.first().map(|s| s.segment_seq))
+        .map_or(1, u64::from);
 
     let target_duration_secs = route.target_duration_secs();
     let nominal_duration_ticks =
@@ -372,7 +374,7 @@ mod tests {
     }
 
     #[test]
-    fn render_ll_dash_mpd_start_number_tracks_window() {
+    fn render_ll_dash_mpd_start_number_is_fixed_at_first_segment() {
         let route = RouteHandle::new(4.0, 500, 2);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
@@ -388,9 +390,11 @@ mod tests {
 
         let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(
-            mpd.contains("startNumber=\"2\""),
-            "startNumber must track the window's oldest retained segment_seq (2): {mpd}"
+            mpd.contains("startNumber=\"1\""),
+            "startNumber must stay at the stream's first segment (1) after seq 1 left \
+             the window; a sliding startNumber (2) made players 404 (issue #1058): {mpd}"
         );
+        assert!(!mpd.contains("startNumber=\"2\""), "{mpd}");
     }
 
     #[test]

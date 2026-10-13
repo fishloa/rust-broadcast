@@ -299,6 +299,10 @@ pub(crate) struct DashState {
     window: Mutex<VecDeque<DashWindowSegment>>,
     capacity: usize,
     track_specs: Mutex<Vec<TrackSpec>>,
+    /// The sequence number of the first segment this program ever published
+    /// (never reset as the window slides): the fixed `SegmentTemplate@startNumber`
+    /// of the DASH/LL-DASH MPDs (issue #1058).
+    first_segment_seq: Mutex<Option<u32>>,
 }
 
 impl DashState {
@@ -308,6 +312,7 @@ impl DashState {
             window: Mutex::new(VecDeque::new()),
             capacity: window_segments.get(),
             track_specs: Mutex::new(Vec::new()),
+            first_segment_seq: Mutex::new(None),
         }
     }
 
@@ -327,6 +332,9 @@ impl DashState {
         let mut window = self.window.lock();
         while let Some(item) = cursor.poll() {
             if let SegmentCursorItem::Segment(entry) = item {
+                self.first_segment_seq
+                    .lock()
+                    .get_or_insert(entry.sequence_number);
                 if window.len() == self.capacity {
                     window.pop_front();
                 }
@@ -342,6 +350,11 @@ impl DashState {
     fn window_segments(&self) -> Vec<DashWindowSegment> {
         self.drain();
         self.window.lock().iter().copied().collect()
+    }
+
+    fn first_segment_seq(&self) -> Option<u32> {
+        self.drain();
+        *self.first_segment_seq.lock()
     }
 }
 
@@ -515,6 +528,10 @@ impl ProgramServing {
 
     fn window_segments(&self) -> Vec<DashWindowSegment> {
         self.dash.window_segments()
+    }
+
+    fn first_segment_seq(&self) -> Option<u32> {
+        self.dash.first_segment_seq()
     }
 
     /// Runs `f` against this program's `Trunk` segment writer, acquiring it
@@ -1251,6 +1268,13 @@ impl RouteHandle {
         self.serving(program)
             .map(|s| s.window_segments())
             .unwrap_or_default()
+    }
+
+    /// The sequence number of the first segment `program` ever published —
+    /// stable for the program's life, unlike the window's oldest segment.
+    /// The DASH/LL-DASH `SegmentTemplate@startNumber` (issue #1058).
+    pub fn first_segment_seq(&self, program: ProgramId) -> Option<u32> {
+        self.serving(program).and_then(|s| s.first_segment_seq())
     }
 
     /// Configured target full-segment duration, seconds — route-wide (every
