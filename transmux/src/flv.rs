@@ -51,6 +51,7 @@ use crate::aac_asc::AudioSpecificConfig;
 use crate::annexb::{NAL_LENGTH_SIZE, NAL_LENGTH_SIZE_MINUS_ONE, normalise_nal_length_size};
 use crate::avc_config::{AVCConfigurationBox, AVCDecoderConfigurationRecord};
 use crate::error::{Error, Result};
+use crate::ir::InputDegradation;
 use crate::media::{Media, Track};
 use crate::mp4esds::{
     DecoderConfigDescriptor, DecoderSpecificInfo, ESDescriptor, EsdsBox, SLConfigDescriptor,
@@ -345,6 +346,8 @@ impl FlvDemux<'_> {
 
 /// One parsed FLV tag (header fields + body slice).
 struct FlvTag<'a> {
+    /// Byte offset of the tag header in the input (for degradation reports).
+    offset: usize,
     tag_type: u8,
     timestamp: u32,
     body: &'a [u8],
@@ -359,6 +362,47 @@ struct TagWalk<'a> {
     /// before that point are complete and usable; the caller may want to say so
     /// (see [`FlvDemux::last_walk_was_truncated`]).
     truncated_tail: bool,
+    /// Offsets of spans whose tag framing was damaged and skipped (audit T16,
+    /// #1144); the walk resynchronised on the next plausible tag.
+    damaged: Vec<usize>,
+}
+
+/// A tag header at `off` that is structurally plausible: the always-zero
+/// 24-bit StreamID (§E.4.1) and, when `known_type`, one of the tag types this
+/// demuxer knows. Unknown types are legal (skipped leniently), so the chain
+/// check along the stream accepts them; only a *resync candidate* is held to a
+/// known type, since it is picked out of arbitrary bytes.
+fn plausible_tag_header(input: &[u8], off: usize, known_type: bool) -> bool {
+    off + TAG_HEADER_LEN <= input.len()
+        && (!known_type
+            || matches!(
+                input[off],
+                tag_type::AUDIO | tag_type::VIDEO | tag_type::SCRIPT
+            ))
+        && input[off + 8..off + 11] == [0, 0, 0]
+}
+
+/// Whether a tag starting at `off` is followed by a consistent chain: its body
+/// fits and what follows it is the end of the buffer or another plausible tag
+/// header.
+fn tag_chain_holds(input: &[u8], off: usize, known_type: bool) -> bool {
+    if !plausible_tag_header(input, off, known_type) {
+        return false;
+    }
+    let data_size =
+        u32::from_be_bytes([0, input[off + 1], input[off + 2], input[off + 3]]) as usize;
+    let body_end = off + TAG_HEADER_LEN + data_size;
+    if body_end > input.len() {
+        return false;
+    }
+    let next = body_end + PREV_TAG_SIZE_LEN;
+    next + TAG_HEADER_LEN > input.len() || plausible_tag_header(input, next, false)
+}
+
+/// First offset at or after `from` where a consistent chain of known-type tags
+/// starts.
+fn resync_tag(input: &[u8], from: usize) -> Option<usize> {
+    (from..input.len()).find(|&p| tag_chain_holds(input, p, true))
 }
 
 /// Iterate the tags of an FLV stream after its 9-byte header, validating each
@@ -398,7 +442,19 @@ fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
     let mut off = data_offset.max(FLV_HEADER_LEN) + PREV_TAG_SIZE_LEN;
 
     let mut tags = Vec::new();
+    let mut damaged: Vec<usize> = Vec::new();
     while off + TAG_HEADER_LEN <= input.len() {
+        // Framing damage (a corrupt type byte, StreamID or `DataSize`): the
+        // chain from here does not hold, yet a consistent tag starts later.
+        // Skip to it and report; if none does, fall through to the
+        // truncated-tail / tail handling below (a genuinely cut final tag).
+        if !tag_chain_holds(input, off, false)
+            && let Some(next) = resync_tag(input, off + 1)
+        {
+            damaged.push(off);
+            off = next;
+            continue;
+        }
         let tag_type = input[off];
         let data_size =
             u32::from_be_bytes([0, input[off + 1], input[off + 2], input[off + 3]]) as usize;
@@ -431,9 +487,11 @@ fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
             return Ok(TagWalk {
                 tags,
                 truncated_tail: true,
+                damaged,
             });
         }
         tags.push(FlvTag {
+            offset: off,
             tag_type,
             timestamp,
             body: &input[body_start..body_end],
@@ -446,6 +504,7 @@ fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
             return Ok(TagWalk {
                 tags,
                 truncated_tail: false,
+                damaged,
             });
         }
         off = body_end + PREV_TAG_SIZE_LEN;
@@ -453,6 +512,7 @@ fn iter_tags(input: &[u8]) -> Result<TagWalk<'_>> {
     Ok(TagWalk {
         tags,
         truncated_tail: false,
+        damaged,
     })
 }
 
@@ -502,6 +562,11 @@ impl<'a> Unpackage for FlvDemux<'a> {
         let walk = iter_tags(input).map_err(FlvError::Codec)?;
         self.truncated_tail = walk.truncated_tail;
         let tags = walk.tags;
+        let mut degraded: Vec<InputDegradation> = walk
+            .damaged
+            .iter()
+            .map(|&o| InputDegradation::MalformedUnit { position: o as u64 })
+            .collect();
 
         // Video track state.
         let mut avc_config: Option<AVCConfigurationBox> = None;
@@ -540,8 +605,14 @@ impl<'a> Unpackage for FlvDemux<'a> {
                         avc_packet_type::SEQUENCE_HEADER
                             if avc_config.is_none() && !data.is_empty() =>
                         {
-                            let mut record = AVCDecoderConfigurationRecord::parse(data)
-                                .map_err(FlvError::Codec)?;
+                            // A corrupt sequence header is skipped and reported; a
+                            // later intact one can still configure the track.
+                            let Ok(mut record) = AVCDecoderConfigurationRecord::parse(data) else {
+                                degraded.push(InputDegradation::MalformedUnit {
+                                    position: tag.offset as u64,
+                                });
+                                continue;
+                            };
                             // The NALU samples are normalised to 4-byte NAL
                             // prefixes below, so the emitted `avcC` must declare
                             // that size, not the source's (r04-W43).
@@ -552,7 +623,6 @@ impl<'a> Unpackage for FlvDemux<'a> {
                         }
                         avc_packet_type::NALU => {
                             let dts = tag.timestamp;
-                            let duration = delta_duration(&mut last_video_dts, dts);
                             // Absolute dts/pts (media plane step 2c): the FLV
                             // tag timestamp is already an absolute wire clock
                             // (milliseconds, matching `FLV_TIMESCALE`), unlike
@@ -567,8 +637,16 @@ impl<'a> Unpackage for FlvDemux<'a> {
                             // 1, 2 or 4 bytes. The rest of the pipeline is
                             // fixed at 4, so rewrite them (r04-W43).
                             let length_size = avc_source_length_size.unwrap_or(NAL_LENGTH_SIZE);
-                            let data = normalise_nal_length_size(data, length_size)
-                                .map_err(FlvError::Codec)?;
+                            let Ok(data) = normalise_nal_length_size(data, length_size) else {
+                                // Corrupt NAL framing in this tag: drop the
+                                // sample, report it, keep going.
+                                degraded.push(InputDegradation::MalformedUnit {
+                                    position: tag.offset as u64,
+                                });
+                                continue;
+                            };
+                            // Only a good sample advances the duration clock.
+                            let duration = delta_duration(&mut last_video_dts, dts);
                             video_samples.push(Sample {
                                 data: data.into(),
                                 dts: Some(dts_abs),
@@ -604,7 +682,12 @@ impl<'a> Unpackage for FlvDemux<'a> {
                         aac_packet_type::SEQUENCE_HEADER
                             if aac_esds.is_none() && !data.is_empty() =>
                         {
-                            let asc = AudioSpecificConfig::parse(data).map_err(FlvError::Codec)?;
+                            let Ok(asc) = AudioSpecificConfig::parse(data) else {
+                                degraded.push(InputDegradation::MalformedUnit {
+                                    position: tag.offset as u64,
+                                });
+                                continue;
+                            };
                             aac_channels = aac_channel_count(&asc);
                             aac_rate = asc_rate_hz(&asc);
                             aac_esds = Some(build_aac_esds(data.to_vec()));
@@ -685,7 +768,9 @@ impl<'a> Unpackage for FlvDemux<'a> {
         if tracks.is_empty() {
             return Err(FlvError::NoSupportedTrack);
         }
-        Ok(Media::new(tracks, FLV_TIMESCALE))
+        let mut media = Media::new(tracks, FLV_TIMESCALE);
+        media.degraded = degraded;
+        Ok(media)
     }
 }
 
