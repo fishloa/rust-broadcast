@@ -620,6 +620,42 @@ fn package_rejects_oversized_composition_time() {
     );
 }
 
+/// The RTMP payload path (`flv_frame_payloads`) used to narrow the DTS with
+/// `as u32` and the composition offset with `as i32` (then 3 low bytes), so
+/// an out-of-range value was silently truncated. It must reject them exactly
+/// like `FlvMux::package` does (#1129).
+#[test]
+fn frame_payloads_reject_out_of_range_timestamps() {
+    let mut demux = FlvDemux::new();
+    let source = demux.unpackage(FLV).expect("demux av.flv");
+    let CodecConfig::Avc { config, .. } = source.tracks[0].config() else {
+        panic!("fixture track 0 must be AVC");
+    };
+    let config = config.clone();
+    let media_with = |dts: i64, cts: i64| {
+        let sample = transmux::Sample::new(alloc_body(4), Some(dts), Some(cts), Some(1_000), true);
+        let track = transmux::Track::new(
+            transmux::TrackSpec::new(
+                TrackId::new(1),
+                1000,
+                CodecConfig::Avc {
+                    config: config.clone(),
+                    width: 320,
+                    height: 240,
+                },
+            ),
+            vec![sample],
+        );
+        transmux::Media::new(vec![track], 1000)
+    };
+    // Sanity: in-range input is accepted (so the Errs below are the guards).
+    assert!(transmux::flv_frame_payloads(&media_with(0, 0)).is_ok());
+    // 9 000 000 ms composition offset > SI24 (8 388 607).
+    assert!(transmux::flv_frame_payloads(&media_with(0, 9_000_000)).is_err());
+    // DTS 2^32 ms is past the 32-bit millisecond clock.
+    assert!(transmux::flv_frame_payloads(&media_with(1 << 32, 1 << 32)).is_err());
+}
+
 // ---------------------------------------------------------------------------
 // Test 8 — truncated final tag keeps the complete prefix (r04-W15)
 // ---------------------------------------------------------------------------

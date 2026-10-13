@@ -677,6 +677,7 @@ impl Serialize for DecoderConfigDescriptor {
         // streamType(6) + upStream(1) + reserved=1(1) — one byte (14496-1 §7.2.6.6)
         buf[cursor] = ((self.stream_type.0 & 0x3F) << 2) | ((self.up_stream as u8) << 1) | 0x01;
         cursor += 1;
+        broadcast_common::len::fit_bits(u64::from(self.buffer_size_db), 24, "bufferSizeDB")?;
         buf[cursor..cursor + 3].copy_from_slice(&[
             (self.buffer_size_db >> 16) as u8,
             (self.buffer_size_db >> 8) as u8,
@@ -1264,6 +1265,18 @@ impl Serialize for EsdsBox {
 mod tests {
     use super::*;
     use alloc::vec;
+
+    /// #1129: `bufferSizeDB` is 24 bits; a wider value must error, not lose its
+    /// top byte.
+    #[test]
+    fn buffer_size_db_over_24_bits_is_rejected() {
+        let mut d = DecoderConfigDescriptor::new(0x40, 5, false, 0x0100_0000, 0, 0, None);
+        let mut buf = vec![0u8; d.serialized_len()];
+        assert!(d.serialize_into(&mut buf).is_err());
+        d.buffer_size_db = 0x00FF_FFFF;
+        assert!(d.serialize_into(&mut buf).is_ok());
+        assert_eq!(&buf[7..10], &[0xFF, 0xFF, 0xFF][..], "full 24 bits kept");
+    }
 
     #[test]
     fn test_parse_varint_accepts_1_to_4_byte_forms() {

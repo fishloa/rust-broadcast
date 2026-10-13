@@ -618,7 +618,8 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
         buf[6] = (scram_bit << 7)
             | ((self.ts_gs_s2x_mode & 0x03) << 5)
             | (self.receiver_profiles & 0x1F);
-        // Bytes 7–9: satellite_id (24 bits).
+        // Bytes 7–9: satellite_id (24 bits): reject, never drop the top byte.
+        broadcast_common::len::fit_bits(u64::from(self.satellite_id), 24, "satellite_id")?;
         buf[7] = (self.satellite_id >> 16) as u8;
         buf[8] = (self.satellite_id >> 8) as u8;
         buf[9] = self.satellite_id as u8;
@@ -750,6 +751,26 @@ mod tests {
         // symbol_rate = 0xABCD_EF01
         sel.extend_from_slice(&0xABCD_EF01u32.to_be_bytes());
         sel
+    }
+
+    /// #1129: `satellite_id` is 24 bits; a wider value must error rather than
+    /// silently drop its top byte.
+    #[test]
+    fn satellite_id_over_24_bits_is_rejected() {
+        let bytes = wrap(0x24, &minimal_mode1_sel());
+        let d = ExtensionDescriptor::parse(&bytes).unwrap();
+        let ExtensionBody::S2Xv2SatelliteDeliverySystem(b) = &d.body else {
+            panic!("expected S2Xv2");
+        };
+        let mut b = b.clone();
+        b.satellite_id = 0x0100_0000;
+        let mut buf = vec![0u8; b.serialized_len()];
+        assert!(matches!(
+            b.serialize_into(&mut buf),
+            Err(Error::FieldOverflow(_))
+        ));
+        b.satellite_id = 0x00FF_FFFF;
+        assert!(b.serialize_into(&mut buf).is_ok());
     }
 
     #[test]
