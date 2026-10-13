@@ -95,7 +95,8 @@ impl Serialize for SmoothingBufferDescriptor {
         }
         // 22-bit fields: a wider value used to be masked down silently
         // (audit r03-W3 class).
-        let slr = broadcast_common::len::fit_bits(u64::from(self.sb_leak_rate), 22, "sb_leak_rate")? as u32;
+        let slr = broadcast_common::len::fit_bits(u64::from(self.sb_leak_rate), 22, "sb_leak_rate")?
+            as u32;
         let ss = broadcast_common::len::fit_bits(u64::from(self.sb_size), 22, "sb_size")? as u32;
         buf[0] = TAG;
         buf[1] = BODY_LEN;

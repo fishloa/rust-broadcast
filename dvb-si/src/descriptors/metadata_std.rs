@@ -120,9 +120,21 @@ impl Serialize for MetadataStdDescriptor {
         }
         // 22-bit fields: `write_u22` masks, so reject a wider value first
         // (audit r03-W3 class).
-        broadcast_common::len::fit_bits(u64::from(self.metadata_input_leak_rate), 22, "metadata_input_leak_rate")?;
-        broadcast_common::len::fit_bits(u64::from(self.metadata_buffer_size), 22, "metadata_buffer_size")?;
-        broadcast_common::len::fit_bits(u64::from(self.metadata_output_leak_rate), 22, "metadata_output_leak_rate")?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.metadata_input_leak_rate),
+            22,
+            "metadata_input_leak_rate",
+        )?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.metadata_buffer_size),
+            22,
+            "metadata_buffer_size",
+        )?;
+        broadcast_common::len::fit_bits(
+            u64::from(self.metadata_output_leak_rate),
+            22,
+            "metadata_output_leak_rate",
+        )?;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         write_u22(

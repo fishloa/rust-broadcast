@@ -811,11 +811,7 @@ impl<'a> AdaptationFieldExtension<'a> {
         let mut cursor = 2usize;
 
         if let Some(ltw) = self.ltw {
-            let ltw_valid = if ltw.ltw_valid_flag {
-                AFE_LTW_FLAG
-            } else {
-                0
-            };
+            let ltw_valid = if ltw.ltw_valid_flag { AFE_LTW_FLAG } else { 0 };
             buf[cursor] = ltw_valid | ((ltw.ltw_offset >> 8) as u8 & LTW_OFFSET_HI_MASK);
             buf[cursor + 1] = (ltw.ltw_offset & 0xFF) as u8;
             cursor += 2;

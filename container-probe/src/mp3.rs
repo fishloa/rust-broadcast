@@ -131,7 +131,13 @@ fn need_at_least(anchor: usize, frame_len: usize) -> usize {
 /// its anchor offset and first-frame length. Short-circuits at
 /// [`MP3_MIN_CHAIN_STRONG`], bounding the work.
 fn longest_mp3_chain(data: &[u8]) -> crate::chain::Chain {
-    crate::chain::longest_chain(data, id3_skip(data).unwrap_or(0), MP3_HEADER_LEN, MP3_MIN_CHAIN_STRONG, mp3_frame_len)
+    crate::chain::longest_chain(
+        data,
+        id3_skip(data).unwrap_or(0),
+        MP3_HEADER_LEN,
+        MP3_MIN_CHAIN_STRONG,
+        mp3_frame_len,
+    )
 }
 
 /// `frame_length` for a valid MPEG-1 Layer III frame header at `i`, or `None`

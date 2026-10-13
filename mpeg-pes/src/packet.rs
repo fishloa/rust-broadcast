@@ -69,7 +69,6 @@ pub struct Escr {
     pub extension: u16,
 }
 
-
 /// ESCR 33-bit base mask (ISO/IEC 13818-1 §2.4.3.7 `ESCR_base`).
 const ESCR_BASE_MASK: u64 = (1 << 33) - 1;
 /// ESCR 9-bit extension mask (`ESCR_extension`).
@@ -130,7 +129,10 @@ impl Escr {
         let e = (self.extension & ESCR_EXT_MASK) as u64;
         [
             // B0: reserved(2)='11' | base[32:30](3) | marker(1)='1' | base[29:28](2)
-            ESCR_B0_RESERVED | (((b >> 30) & 0x07) as u8) << 3 | ESCR_MARKER_MID | ((b >> 28) & 0x03) as u8,
+            ESCR_B0_RESERVED
+                | (((b >> 30) & 0x07) as u8) << 3
+                | ESCR_MARKER_MID
+                | ((b >> 28) & 0x03) as u8,
             // B1: base[27:20](8)
             ((b >> 20) & 0xFF) as u8,
             // B2: base[19:15](5) | marker(1)='1' | base[14:13](2)

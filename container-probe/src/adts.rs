@@ -126,7 +126,13 @@ fn adts_frame_len(data: &[u8], i: usize) -> Option<usize> {
 /// [`ADTS_MIN_CHAIN_STRONG`] short-circuits to that value, so no buffer forces
 /// more than a bounded number of link steps.
 fn longest_adts_chain(data: &[u8]) -> crate::chain::Chain {
-    crate::chain::longest_chain(data, 0, ADTS_HEADER_LEN, ADTS_MIN_CHAIN_STRONG, adts_frame_len)
+    crate::chain::longest_chain(
+        data,
+        0,
+        ADTS_HEADER_LEN,
+        ADTS_MIN_CHAIN_STRONG,
+        adts_frame_len,
+    )
 }
 
 /// Count the number of valid ADTS frame headers anywhere in `data` — used by

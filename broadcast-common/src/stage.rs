@@ -109,7 +109,10 @@ impl Timestamp {
 
     /// Misnamed: this saturates, it does not check. Use
     /// [`saturating_add_nanos`](Self::saturating_add_nanos).
-    #[deprecated(since = "9.5.0", note = "saturates, not checks; use `saturating_add_nanos`")]
+    #[deprecated(
+        since = "9.5.0",
+        note = "saturates, not checks; use `saturating_add_nanos`"
+    )]
     pub const fn checked_add_nanos(self, nanos: u64) -> Self {
         self.saturating_add_nanos(nanos)
     }
@@ -477,7 +480,10 @@ mod tests {
         );
 
         // Adding past u64::MAX saturates rather than wrapping/panicking.
-        assert_eq!(big.saturating_add_nanos(10), Timestamp::from_nanos(u64::MAX));
+        assert_eq!(
+            big.saturating_add_nanos(10),
+            Timestamp::from_nanos(u64::MAX)
+        );
         assert_eq!(zero.saturating_add_nanos(10), Timestamp::from_nanos(10));
 
         // Duration-based saturating_add, including a Duration whose

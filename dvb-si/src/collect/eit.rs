@@ -198,11 +198,7 @@ impl EitCollector {
         partial.last_touch = sections_now;
         self.sections_touch_order.insert(sections_now, key);
 
-        partial.insert(
-            eit.section_number,
-            eit.segment_last_section_number,
-            raw,
-        )?;
+        partial.insert(eit.section_number, eit.segment_last_section_number, raw)?;
         let complete = match partial.to_complete() {
             Some(complete) => complete,
             None => return Ok(None),

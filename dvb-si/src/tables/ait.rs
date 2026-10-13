@@ -340,7 +340,8 @@ impl<'a> Parse<'a> for AitSection<'a> {
         )?;
 
         let test_application_flag = (bytes[3] & TEST_APPLICATION_FLAG) != 0;
-        let application_type_raw = (((bytes[3] & APPLICATION_TYPE_HI_MASK) as u16) << 8) | (bytes[4] as u16);
+        let application_type_raw =
+            (((bytes[3] & APPLICATION_TYPE_HI_MASK) as u16) << 8) | (bytes[4] as u16);
         let application_type = ApplicationType::from_u16(application_type_raw);
         let version_number = super::version_number_of(bytes[5]);
         let current_next_indicator = super::current_next_of(bytes[5]);
@@ -474,7 +475,8 @@ impl Serialize for AitSection<'_> {
         buf[0] = TABLE_ID;
         buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - MIN_HEADER_LEN)?;
-        buf[3] = (u8::from(self.test_application_flag) << TEST_APPLICATION_FLAG_SHIFT) | ((app_type_raw >> 8) as u8);
+        buf[3] = (u8::from(self.test_application_flag) << TEST_APPLICATION_FLAG_SHIFT)
+            | ((app_type_raw >> 8) as u8);
         buf[4] = (app_type_raw & 0xFF) as u8;
         buf[5] = self
             .bits
