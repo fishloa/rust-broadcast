@@ -384,7 +384,8 @@ mod tests {
         let crc = &one[section_start + section_len - CRC_LEN..section_start + section_len];
         let aliased_pid = (u16::from(crc[2] & PID_HI_MASK) << 8) | u16::from(crc[3]);
         assert_ne!(
-            aliased_pid, TEST_PMT_PID,
+            aliased_pid,
+            TEST_PMT_PID.value(),
             "test setup: the CRC must alias a different PID than the real PMT",
         );
 
