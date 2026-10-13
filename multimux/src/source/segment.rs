@@ -1903,14 +1903,14 @@ mod tests {
         const TS_PACKET_SIZE: usize = 188;
         const PMT_TABLE_ID: u8 = 0x02;
 
-        let mut reassemblers: HashMap<u16, SectionReassembler> = HashMap::new();
+        let mut reassemblers: HashMap<mpeg_ts::pid::Pid, SectionReassembler> = HashMap::new();
         let mut pmt_count = 0usize;
         for chunk in ts_bytes.chunks_exact(TS_PACKET_SIZE) {
             let packet = TsPacket::parse(chunk).expect("a muxed TS segment is well-formed packets");
             let Some(payload) = packet.payload else {
                 continue;
             };
-            let reassembler = reassemblers.entry(packet.header.pid.value()).or_default();
+            let reassembler = reassemblers.entry(packet.header.pid).or_default();
             reassembler.feed(payload, packet.header.pusi);
             while let Some(section_bytes) = reassembler.pop_section() {
                 if let Ok(section) = Section::parse(section_bytes.as_ref())
