@@ -178,13 +178,12 @@ fn narrows_len(line: &str) -> bool {
         if head.ends_with(".len()") || head.ends_with(".count()") {
             let t = tail.trim_start();
             for w in ["as u8", "as u16", "as u32"] {
-                if let Some(r) = t.strip_prefix(w) {
-                    if r.chars()
+                if t.strip_prefix(w).is_some_and(|r| {
+                    r.chars()
                         .next()
                         .is_none_or(|c| !c.is_alphanumeric() && c != '_')
-                    {
-                        return true;
-                    }
+                }) {
+                    return true;
                 }
             }
         }
