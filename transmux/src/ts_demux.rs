@@ -2424,6 +2424,118 @@ fn reprobe_if_config_changed(
     Some((config, timescale))
 }
 
+/// Largest parameter-set NAL a decoder configuration record can carry: the
+/// per-NAL length field is `unsigned int(16)` in both
+/// `AVCDecoderConfigurationRecord` (`sequenceParameterSetLength` /
+/// `pictureParameterSetLength`, ISO/IEC 14496-15 §5.3.3.1.2) and
+/// `HEVCDecoderConfigurationRecord` (`nalUnitLength`, §8.3.3.1.2). A longer
+/// "parameter set" cannot be serialized into an `avcC`/`hvcC`.
+const MAX_PARAMETER_SET_LEN: usize = u16::MAX as usize;
+/// `forbidden_zero_bit` of the first NAL-header byte, H.264 §7.3.1 and H.265
+/// §7.3.1.2 — must be 0 in a conforming NAL unit.
+const NAL_FORBIDDEN_ZERO_BIT: u8 = 0x80;
+/// H.265 NAL header byte 1 low 3 bits: `nuh_temporal_id_plus1`, which shall
+/// not be 0 (ITU-T H.265 §7.4.2.2).
+const H265_TEMPORAL_ID_PLUS1_MASK: u8 = 0x07;
+
+/// Which parameter-set role a NAL plays, for [`parameter_set_is_valid`].
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ParamKind {
+    Vps,
+    Sps,
+    Pps,
+}
+
+/// Whether `nal` (a whole NAL unit including its header, as yielded by
+/// [`iter_annexb_nals`]) is a parameter set the demuxer may build a decoder
+/// configuration from (issue #1171).
+///
+/// Damaged input regularly yields a NAL whose first byte *looks like* an
+/// SPS/PPS header but whose body is garbage that runs to the end of the access
+/// unit (an 85 704-byte "SPS" was observed). Such a set must not become the
+/// track's config: it can overflow the record's `u16` length field, so the
+/// resulting `avcC`/`hvcC` could not be serialized at all. A valid set is
+///
+/// * non-empty and no longer than [`MAX_PARAMETER_SET_LEN`];
+/// * of the right `nal_unit_type` with a clear `forbidden_zero_bit` (and, for
+///   HEVC, a non-zero `nuh_temporal_id_plus1`);
+/// * terminated by an RBSP stop bit — the last byte of any NAL is non-zero
+///   (H.264 §7.4.1.1 / H.265 §7.4.2: `trailing_zero_8bits` are not part of
+///   the NAL unit); and
+/// * for an SPS, one the existing decoder parses to non-zero geometry.
+fn parameter_set_is_valid(codec: Codec, kind: ParamKind, nal: &[u8]) -> bool {
+    if nal.is_empty() || nal.len() > MAX_PARAMETER_SET_LEN {
+        return false;
+    }
+    let Some(&last) = nal.last() else {
+        return false;
+    };
+    if last == 0 || nal[0] & NAL_FORBIDDEN_ZERO_BIT != 0 {
+        return false;
+    }
+    match codec {
+        Codec::H264 => {
+            let want = match kind {
+                ParamKind::Sps => H264_NAL_SPS,
+                ParamKind::Pps => H264_NAL_PPS,
+                ParamKind::Vps => return false,
+            };
+            if nal[0] & H264_NAL_TYPE_MASK != want || nal.len() < 2 {
+                return false;
+            }
+            kind != ParamKind::Sps
+                || crate::sps::decode_avc_sps(nal).is_ok_and(|i| i.width > 0 && i.height > 0)
+        }
+        Codec::Hevc => {
+            let want = match kind {
+                ParamKind::Vps => H265_NAL_VPS,
+                ParamKind::Sps => H265_NAL_SPS,
+                ParamKind::Pps => H265_NAL_PPS,
+            };
+            if nal_unit_type(NalCodec::Hevc, nal) != Some(want)
+                || nal.len() < 3
+                || nal[1] & H265_TEMPORAL_ID_PLUS1_MASK == 0
+            {
+                return false;
+            }
+            kind != ParamKind::Sps
+                || crate::sps::decode_hevc_sps(nal).is_ok_and(|i| i.width > 0 && i.height > 0)
+        }
+        _ => false,
+    }
+}
+
+/// Count the parameter-set NALs in `data` that look like one (header type
+/// SPS/PPS, or VPS/SPS/PPS for HEVC) but fail [`parameter_set_is_valid`].
+fn count_invalid_parameter_sets(codec: Codec, data: &[u8]) -> usize {
+    let mut n = 0;
+    match codec {
+        Codec::H264 => {
+            for nal in iter_annexb_nals(data) {
+                let kind = match nal[0] & H264_NAL_TYPE_MASK {
+                    H264_NAL_SPS => ParamKind::Sps,
+                    H264_NAL_PPS => ParamKind::Pps,
+                    _ => continue,
+                };
+                n += usize::from(!parameter_set_is_valid(codec, kind, nal));
+            }
+        }
+        Codec::Hevc => {
+            for nal in iter_annexb_nals(data) {
+                let kind = match nal_unit_type(NalCodec::Hevc, nal) {
+                    Some(H265_NAL_VPS) => ParamKind::Vps,
+                    Some(H265_NAL_SPS) => ParamKind::Sps,
+                    Some(H265_NAL_PPS) => ParamKind::Pps,
+                    _ => continue,
+                };
+                n += usize::from(!parameter_set_is_valid(codec, kind, nal));
+            }
+        }
+        _ => {}
+    }
+    n
+}
+
 /// The parameter sets a track has seen, each remembered separately so an
 /// SPS/PPS split across access units still compares as a whole (r04-W51).
 #[derive(Default, Clone)]
@@ -2493,8 +2605,12 @@ impl ParameterSets {
             Codec::H264 => {
                 for nal in iter_annexb_nals(data) {
                     match nal[0] & H264_NAL_TYPE_MASK {
-                        H264_NAL_SPS => changed |= self.sps.record_current(nal),
-                        H264_NAL_PPS => changed |= self.pps.record(nal),
+                        H264_NAL_SPS if parameter_set_is_valid(codec, ParamKind::Sps, nal) => {
+                            changed |= self.sps.record_current(nal)
+                        }
+                        H264_NAL_PPS if parameter_set_is_valid(codec, ParamKind::Pps, nal) => {
+                            changed |= self.pps.record(nal)
+                        }
                         _ => {}
                     }
                 }
@@ -2502,9 +2618,21 @@ impl ParameterSets {
             Codec::Hevc => {
                 for nal in iter_annexb_nals(data) {
                     match nal_unit_type(NalCodec::Hevc, nal) {
-                        Some(H265_NAL_VPS) => changed |= self.vps.record_current(nal),
-                        Some(H265_NAL_SPS) => changed |= self.sps.record_current(nal),
-                        Some(H265_NAL_PPS) => changed |= self.pps.record(nal),
+                        Some(H265_NAL_VPS)
+                            if parameter_set_is_valid(codec, ParamKind::Vps, nal) =>
+                        {
+                            changed |= self.vps.record_current(nal)
+                        }
+                        Some(H265_NAL_SPS)
+                            if parameter_set_is_valid(codec, ParamKind::Sps, nal) =>
+                        {
+                            changed |= self.sps.record_current(nal)
+                        }
+                        Some(H265_NAL_PPS)
+                            if parameter_set_is_valid(codec, ParamKind::Pps, nal) =>
+                        {
+                            changed |= self.pps.record(nal)
+                        }
                         _ => {}
                     }
                 }
@@ -2610,8 +2738,16 @@ fn finalize_probe(
             // units ago is what carries it forward.
             for nal in iter_annexb_nals(latest) {
                 match nal[0] & H264_NAL_TYPE_MASK {
-                    H264_NAL_SPS if sps.is_none() => *sps = Some(nal.to_vec()),
-                    H264_NAL_PPS if pps.is_none() => *pps = Some(nal.to_vec()),
+                    H264_NAL_SPS
+                        if sps.is_none() && parameter_set_is_valid(codec, ParamKind::Sps, nal) =>
+                    {
+                        *sps = Some(nal.to_vec())
+                    }
+                    H264_NAL_PPS
+                        if pps.is_none() && parameter_set_is_valid(codec, ParamKind::Pps, nal) =>
+                    {
+                        *pps = Some(nal.to_vec())
+                    }
                     _ => {}
                 }
             }
@@ -2677,9 +2813,21 @@ fn finalize_probe(
             // above (r04-W47: only the newest access unit is scanned).
             for nal in iter_annexb_nals(latest) {
                 match nal_unit_type(NalCodec::Hevc, nal) {
-                    Some(H265_NAL_VPS) if vps.is_none() => *vps = Some(nal.to_vec()),
-                    Some(H265_NAL_SPS) if sps.is_none() => *sps = Some(nal.to_vec()),
-                    Some(H265_NAL_PPS) if pps.is_none() => *pps = Some(nal.to_vec()),
+                    Some(H265_NAL_VPS)
+                        if vps.is_none() && parameter_set_is_valid(codec, ParamKind::Vps, nal) =>
+                    {
+                        *vps = Some(nal.to_vec())
+                    }
+                    Some(H265_NAL_SPS)
+                        if sps.is_none() && parameter_set_is_valid(codec, ParamKind::Sps, nal) =>
+                    {
+                        *sps = Some(nal.to_vec())
+                    }
+                    Some(H265_NAL_PPS)
+                        if pps.is_none() && parameter_set_is_valid(codec, ParamKind::Pps, nal) =>
+                    {
+                        *pps = Some(nal.to_vec())
+                    }
                     _ => {}
                 }
             }
@@ -3033,6 +3181,23 @@ fn advance_track(
     let Some(track) = stream.track.take() else {
         return;
     };
+    // Damaged input (issue #1171): count parameter-set NALs this access unit
+    // carries that were rejected (see `parameter_set_is_valid`), so a consumer
+    // can see the damage without the garbage ever reaching a config.
+    let track_id = match &track {
+        TrackState::Live(live) => Some(live.track_id),
+        _ => None,
+    };
+    for _ in 0..count_invalid_parameter_sets(stream.codec, data) {
+        events.push_back(DemuxEvent::InputDegraded {
+            track: track_id,
+            kind: InputDegradation::InvalidParameterSet,
+            provenance: EventProvenance {
+                pid: Some(pid),
+                packet_index: None,
+            },
+        });
+    }
     let new_track = match track {
         TrackState::Live(mut live) => {
             // A changed in-band codec-config header re-probes the track and
@@ -7056,7 +7221,16 @@ mod tests {
             n.push(tag);
             n
         };
-        let (v, s) = (nal(H265_NAL_VPS, 1), nal(H265_NAL_SPS, 2));
+        // The SPS must be a real, parseable one (invalid sets are ignored,
+        // #1171): a verbatim 320x240 Main SPS from a committed capture.
+        let real_sps: Vec<u8> = alloc::vec![
+            0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00, 0x03, 0x00,
+            0x00, 0x03, 0x00, 0x3c, 0xa0, 0x0a, 0x08, 0x0f, 0x16, 0x59, 0x59, 0xa4, 0x93, 0x2b,
+            0xc0, 0x5a, 0x02, 0x00, 0x00, 0x03, 0x00, 0x02, 0x00, 0x00, 0x03, 0x00, 0x32, 0x10,
+        ];
+        let mut real_sps_b = real_sps.clone();
+        *real_sps_b.last_mut().unwrap() ^= 0x01;
+        let (v, s) = (nal(H265_NAL_VPS, 1), real_sps);
         let ppss = [nal(H265_NAL_PPS, 3), nal(H265_NAL_PPS, 4)];
         let mut sets = ParameterSets::default();
         let au = |p: &Vec<u8>| annexb_au(&[&v, &s, p]);
@@ -7072,7 +7246,7 @@ mod tests {
             );
         }
         assert!(sets.observe(Codec::Hevc, &au(&nal(H265_NAL_PPS, 9))));
-        let sps2 = nal(H265_NAL_SPS, 7);
+        let sps2 = real_sps_b;
         assert!(sets.observe(Codec::Hevc, &annexb_au(&[&sps2])), "SPS B");
         assert!(
             sets.observe(Codec::Hevc, &annexb_au(&[&s])),
