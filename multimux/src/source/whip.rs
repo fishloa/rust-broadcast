@@ -568,10 +568,43 @@ pub async fn serve_for_test_with_read_load_timeout_and_policy(
     WhipRouteShared,
     tokio_util::sync::CancellationToken,
 ) {
+    serve_read_load_inner(read, handshake_timeout, DEFAULT_WHIP_MAX_SESSIONS).await
+}
+
+/// [`serve_for_test_with_read_load`] with an explicit concurrent-session cap
+/// (test-only): a cap of 1 lets a test prove a `DELETE`d session's capacity
+/// slot is reusable.
+#[doc(hidden)]
+#[cfg(feature = "test-hooks")]
+pub async fn serve_for_test_with_read_load_and_max_sessions(
+    max_sessions: usize,
+) -> (
+    std::net::SocketAddr,
+    WhipRouteShared,
+    tokio_util::sync::CancellationToken,
+) {
+    serve_read_load_inner(
+        IngestTimeouts::default().read,
+        Duration::from_secs(10_000),
+        max_sessions,
+    )
+    .await
+}
+
+#[cfg(feature = "test-hooks")]
+async fn serve_read_load_inner(
+    read: Duration,
+    handshake_timeout: Duration,
+    max_sessions: usize,
+) -> (
+    std::net::SocketAddr,
+    WhipRouteShared,
+    tokio_util::sync::CancellationToken,
+) {
     use std::num::NonZeroUsize;
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
     let addr = listener.local_addr().expect("addr");
-    let mut route = WhipRoute::with_listener("cam", listener, DEFAULT_WHIP_MAX_SESSIONS);
+    let mut route = WhipRoute::with_listener("cam", listener, max_sessions);
     route.timeouts.read = read;
     let route = Arc::new(route);
     let infra = route.ensure_infra().await.expect("ensure_infra");

@@ -119,24 +119,27 @@ async fn a_chunked_request_body_is_accepted() {
     );
 }
 
-/// I7: the session routes must not return a success without effect — main
-/// answered non-POST/non-OPTIONS with `405`.
+/// Issue #1149: PATCH and DELETE are real operations on the per-session
+/// resource, so against a resource that does not exist they are `404` (the old
+/// `405 Method Not Allowed` stub is gone), and the id-less `/whip/session`
+/// path is no resource at all. Full behaviour: `whip_session_resource.rs`.
 #[tokio::test]
-async fn whip_patch_and_delete_are_405_with_allow() {
+async fn whip_patch_and_delete_on_an_unknown_resource_are_404() {
     let (addr, _route, _token) = multimux::source::whip::serve_for_test().await;
     for method in ["PATCH", "DELETE"] {
-        let resp = raw(
-            addr,
-            &format!("{method} /whip/session HTTP/1.1\nHost: x\nConnection: close\n\n"),
-        )
-        .await;
-        assert!(
-            resp.starts_with("HTTP/1.1 405"),
-            "{method} must be 405, not a stub 200/204: {resp}"
-        );
-        assert!(
-            resp.to_ascii_lowercase().contains("allow:"),
-            "{method} 405 must carry an Allow header: {resp}"
-        );
+        for path in ["/whip/session/nope", "/whip/session"] {
+            let resp = raw(
+                addr,
+                &format!(
+                    "{method} {path} HTTP/1.1\nHost: x\nContent-Type: \
+                     application/trickle-ice-sdpfrag\nConnection: close\n\n"
+                ),
+            )
+            .await;
+            assert!(
+                resp.starts_with("HTTP/1.1 404"),
+                "{method} {path} must be 404: {resp}"
+            );
+        }
     }
 }

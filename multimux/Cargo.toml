@@ -254,6 +254,15 @@ required-features = ["whep", "test-hooks"]
 name = "whep_http"
 required-features = ["whep", "test-hooks"]
 
+# Issue #1149: the WHIP/WHEP `Location` resources (`DELETE`, trickle `PATCH`).
+[[test]]
+name = "whip_session_resource"
+required-features = ["whip", "test-hooks"]
+
+[[test]]
+name = "whep_session_resource"
+required-features = ["whep", "test-hooks"]
+
 [[test]]
 name = "accept_lifecycle"
 required-features = ["whip", "whep", "test-hooks"]

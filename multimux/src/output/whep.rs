@@ -1046,6 +1046,60 @@ pub async fn serve_whep_run_for_test() -> (
     (addr, sessions, handle, cancel)
 }
 
+/// Handle over a running WHEP route built by [`serve_whep_run_probed_for_test`].
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub struct WhepRunHarness {
+    /// The signalling listener's address.
+    pub addr: std::net::SocketAddr,
+    /// The route's `Trunk` (an AVC track already announced). A live session
+    /// holds one `Arc` clone of it plus one cursor, so `Arc::strong_count`
+    /// falling back after a `DELETE` shows the session's subscription is gone.
+    pub trunk: Arc<Trunk>,
+    /// Live counters of the running route.
+    pub probes: WhepProbes,
+    /// Cancels the route.
+    pub cancel: CancellationToken,
+    /// The `run_whep_on_probed` task.
+    pub handle: tokio::task::JoinHandle<()>,
+}
+
+/// Test harness: run the REAL WHEP route over an AVC trunk with
+/// `max_sessions`, exposing its live counters.
+#[cfg(feature = "test-hooks")]
+#[doc(hidden)]
+pub async fn serve_whep_run_probed_for_test(max_sessions: usize) -> WhepRunHarness {
+    let trunk = trunk_with_avc_track();
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    let cancel = CancellationToken::new();
+    let probes = WhepProbes::default();
+    let handle = {
+        let trunk = Arc::clone(&trunk);
+        let cancel = cancel.clone();
+        let probes = probes.clone();
+        tokio::spawn(async move {
+            run_whep_on_probed(
+                listener,
+                trunk,
+                cancel,
+                None,
+                max_sessions,
+                tokio_util::task::TaskTracker::new(),
+                probes,
+            )
+            .await;
+        })
+    };
+    WhepRunHarness {
+        addr,
+        trunk,
+        probes,
+        cancel,
+        handle,
+    }
+}
+
 /// A minimal, valid WHEP video-only SDP offer (the same shape the in-crate
 /// tests use) — so an integration test can drive a real session.
 #[cfg(feature = "test-hooks")]
