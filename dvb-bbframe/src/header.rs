@@ -1115,10 +1115,7 @@ mod tests {
             mode: Mode::Normal,
             issy_in_header: None,
         };
-        assert!(matches!(
-            hdr.serialize(),
-            Err(Error::DflOutOfRange { .. })
-        ));
+        assert!(matches!(hdr.serialize(), Err(Error::DflOutOfRange { .. })));
     }
 
     #[test]

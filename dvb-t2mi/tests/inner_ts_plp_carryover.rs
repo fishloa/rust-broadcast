@@ -147,7 +147,8 @@ fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
     };
     let bb_a2 = {
         let mut f = nm_header(STRIDE - SPLIT, STRIDE - SPLIT)
-            .serialize().unwrap()
+            .serialize()
+            .unwrap()
             .to_vec();
         f.extend_from_slice(&chunk_a[SPLIT..]);
         f
@@ -159,7 +160,8 @@ fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
     };
     let bb_b2 = {
         let mut f = nm_header(STRIDE - SPLIT, STRIDE - SPLIT)
-            .serialize().unwrap()
+            .serialize()
+            .unwrap()
             .to_vec();
         f.extend_from_slice(&chunk_b[SPLIT..]);
         f
