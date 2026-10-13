@@ -32,6 +32,10 @@ serde_json = { workspace = true }
 dvb-si     = { path = "../dvb-si", features = ["ts"] }
 criterion  = { workspace = true, features = ["html_reports"] }
 
+[[example]]
+name              = "pump_capture"
+required-features = ["ts"]
+
 [[bench]]
 name              = "t2mi_hot_paths"
 harness           = false

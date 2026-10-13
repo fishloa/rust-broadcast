@@ -98,7 +98,7 @@ pub fn detect_pcr_discontinuities(ts_bytes: &[u8]) -> Vec<PcrDiscontinuity> {
         // the detector's per-PID PCR state synced with the true input.
         if let Some(pid) = detector.feed(packet) {
             found.push(PcrDiscontinuity {
-                pid: pid,
+                pid,
                 packet_index,
                 flagged: false,
             });

@@ -1351,7 +1351,7 @@ fn write_pcr_only_packet(pkt: &mut [u8; TS_PACKET_SIZE], pid: Pid, cc: u8, pcr: 
     let hdr = TsHeader {
         tei: false,
         pusi: false,
-        pid: pid,
+        pid,
         scrambling: 0,
         has_adaptation: true,
         has_payload: false,
@@ -1729,7 +1729,7 @@ fn packetise_section(pid: Pid, section: &[u8], start_cc: u8) -> Vec<[u8; TS_PACK
         let hdr = TsHeader {
             tei: false,
             pusi: first,
-            pid: pid,
+            pid,
             scrambling: 0,
             has_adaptation: false,
             has_payload: true,
@@ -1883,7 +1883,7 @@ fn write_af_packet(
     let hdr = TsHeader {
         tei: false,
         pusi,
-        pid: pid,
+        pid,
         scrambling: 0,
         has_adaptation: true,
         has_payload: true,

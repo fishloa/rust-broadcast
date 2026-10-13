@@ -851,7 +851,7 @@ pub(crate) mod tests {
         let header = TsHeader {
             tei: false,
             pusi: true,
-            pid: pid,
+            pid,
             scrambling: 0,
             has_adaptation: false,
             has_payload: true,
@@ -948,7 +948,7 @@ pub(crate) mod tests {
         let header = TsHeader {
             tei: false,
             pusi: true,
-            pid: pid,
+            pid,
             scrambling: 0,
             has_adaptation: false,
             has_payload: true,
@@ -1136,7 +1136,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid: pid,
+                pid,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1244,7 +1244,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid: pid,
+                pid,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1387,7 +1387,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid: pid,
+                pid,
                 scrambling: 0,
                 has_adaptation: true,
                 has_payload: true,
@@ -1426,7 +1426,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid: pid,
+                pid,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
@@ -1507,7 +1507,7 @@ pub(crate) mod tests {
             let header = TsHeader {
                 tei: false,
                 pusi: true,
-                pid: pid,
+                pid,
                 scrambling: 0,
                 has_adaptation: false,
                 has_payload: true,
