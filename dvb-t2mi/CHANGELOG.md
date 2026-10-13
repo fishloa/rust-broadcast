@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Changed
+- `T2miPump` decodes the TS header/payload through `mpeg_ts::ts::TsPacket` instead of a second hand-rolled bit-mask decode (r11-W-T2-2, #1095); behaviour (TEI drop, duplicate skip) unchanged.
+- `InnerTsRecovery` keeps its 256-slot per-PLP extractor table on the heap: the struct was 66 KB, now under 4 KB (the same stack hazard `BbframePump` boxed away). Pinned by a size test.
+- `dvb-bbframe`'s `Bbheader::serialize()` now returns `Result` (BREAKING there); this crate's in-tree callers are migrated.
+
 ### Changed (BREAKING)
 
 - **BREAKING (#1159):** `T2miPump::new` and `InnerTsRecovery::{new,new_for_plp}` take `mpeg_ts::pid::Pid` instead of `u16` (new optional `mpeg-ts` dependency behind the `ts` feature). A PID above `0x1FFF` can no longer be passed (use `Pid::try_new`).
