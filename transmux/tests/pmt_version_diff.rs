@@ -820,6 +820,27 @@ fn codec_reclassification_rebuilds_the_probe_instead_of_panicking() {
     );
 }
 
+/// The first SPS and PPS of the committed `h264_aac.ts` capture.
+fn real_avc_sps_pps() -> (Vec<u8>, Vec<u8>) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264_aac.ts");
+    let source = std::fs::read(&path).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+    let media = TsDemux::new().unpackage(&source[..]).expect("demux");
+    let video = media
+        .tracks
+        .iter()
+        .find(|t| matches!(t.config(), CodecConfig::Avc { .. }))
+        .expect("AVC track");
+    let nals = transmux::annexb::iter_length_prefixed_nals(&video.samples[0].data)
+        .expect("length-prefixed NALs");
+    let pick = |ty: u8| {
+        nals.iter()
+            .find(|n| n[0] & 0x1F == ty)
+            .unwrap_or_else(|| panic!("NAL type {ty}"))
+            .to_vec()
+    };
+    (pick(7), pick(8))
+}
+
 /// **Carrier reset.** ISO/IEC 13818-1 Table 2-34 splits `stream_type` into
 /// section-carried and PES-carried families, reassembled by completely
 /// different engines. A reclassification across that boundary
@@ -850,10 +871,13 @@ fn carrier_is_rebuilt_when_a_section_carried_pid_becomes_pes_carried() {
     // A minimal but real Annex B access unit: SPS + PPS + IDR slice. The
     // SPS/PPS pair is the Baseline one `avc_config`'s own round-trip test
     // uses; `ConfigProbe::H264` needs both to resolve.
+    // The SPS must parse (invalid parameter sets are ignored, #1171), so it is
+    // the committed capture's own real SPS/PPS rather than a hand-made pair.
+    let (real_sps, real_pps) = real_avc_sps_pps();
     let mut au = Vec::new();
     for nal in [
-        &[0x67u8, 0x42, 0x00, 0x1E, 0xAB, 0x40][..],
-        &[0x68, 0xCE, 0x3C, 0x80][..],
+        &real_sps[..],
+        &real_pps[..],
         &[0x65, 0x88, 0x84, 0x00, 0x11, 0x22][..],
     ] {
         au.extend_from_slice(&[0x00, 0x00, 0x00, 0x01]);

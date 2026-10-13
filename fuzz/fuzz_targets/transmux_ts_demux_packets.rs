@@ -1,9 +1,42 @@
 #![no_main]
 
+use broadcast_common::Serialize;
 use libfuzzer_sys::fuzz_target;
+use transmux::{CodecConfig, DemuxEvent};
 
 const TS_PACKET_SIZE: usize = 188;
 const SYNC_BYTE: u8 = 0x47;
+
+/// Issue #1171 contract: every config the demuxer hands a consumer must
+/// serialize — `to_bytes()` panics on a `FieldOverflow`, so a demuxer-built
+/// value that fails `try_to_bytes()` is a bug in the demuxer, not the caller.
+fn assert_config_serializes(cfg: &CodecConfig) {
+    macro_rules! ok {
+        ($b:expr) => {
+            assert!($b.try_to_bytes().is_ok(), "demuxer emitted an unserializable config")
+        };
+    }
+    match cfg {
+        CodecConfig::Avc { config, .. } => ok!(config),
+        CodecConfig::Hevc { config, .. } => ok!(config),
+        CodecConfig::Aac { esds, .. }
+        | CodecConfig::Mpeg2Video { esds, .. }
+        | CodecConfig::MpegAudio { esds, .. } => ok!(esds),
+        CodecConfig::Ac3 { config, .. } => ok!(config),
+        CodecConfig::Eac3 { config, .. } => ok!(config),
+        CodecConfig::Dts { config, .. } => ok!(config),
+        CodecConfig::MpegH { config, .. } => ok!(config),
+        _ => {}
+    }
+}
+
+fn drain(d: &mut transmux::StreamingTsDemux) {
+    while let Some(ev) = d.poll_event() {
+        if let DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) = &ev {
+            assert_config_serializes(&spec.config);
+        }
+    }
+}
 
 // Fuzz `StreamingTsDemux` with well-formed-ish 188-byte packets (T5): each
 // chunk's sync byte is forced to `0x47` so the packet-boundary resync in
@@ -29,8 +62,8 @@ fuzz_target!(|data: &[u8]| {
             *b = 0xFF;
         }
         d.feed(&packet);
-        while d.poll_event().is_some() {}
+        drain(&mut d);
     }
     d.finish();
-    while d.poll_event().is_some() {}
+    drain(&mut d);
 });

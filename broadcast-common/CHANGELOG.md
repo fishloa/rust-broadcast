@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Docs only: `Serialize::to_bytes` no longer claims it can fail only for hand-constructed values; it can also fail for values a lenient decoder assembled from damaged wire data (transmux #1171). Use `try_to_bytes` for anything derived from untrusted input.
+
 ## [9.4.0] - 2026-10-05
 ### Added
 - **`seq`** — `SeqSpace`: wrap-safe modular sequence-number arithmetic (`add`/`diff`/`lt`/`leq`/`gt`/`geq`/`in_closed_range`) over a `bits`-wide space, the one algorithm behind `rist-runtime` (16-bit) and `srt-runtime` (31-bit) `arq::seq` (audit r08-RIST-O1, #1141).

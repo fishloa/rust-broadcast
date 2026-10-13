@@ -165,7 +165,9 @@ use crate::mp4esds::{
 };
 use crate::mpeg_legacy::{Mpeg2SeqHeader, MpegAudioFrameHeader};
 use crate::mpegh::{MHADecoderConfigurationRecord, find_mpegh3da_config};
-use crate::nal::{NalCodec, access_unit_is_rap, is_keyframe_nal, nal_unit_type};
+use crate::nal::{
+    NalCodec, ParamKind, access_unit_is_rap, is_keyframe_nal, nal_unit_type, parameter_set_is_valid,
+};
 use crate::nalu_types::{AvcPps, AvcSps, HevcNalArray, HevcNalUnit};
 use crate::pipeline::{CodecConfig, DataCarriage, Provenance, Sample, SampleFlags, TrackSpec};
 
@@ -404,6 +406,11 @@ const MPEGH_CHANNEL_COUNT_UNSPECIFIED: u16 = 0;
 /// 90 kHz TS clock ([`VIDEO_TIMESCALE`]) rather than an audio sample count,
 /// so an unknown `sample_rate` here never affects timing.
 const MPEGH_SAMPLE_RATE_UNSPECIFIED: u32 = 0;
+/// Largest `mpegh3daConfig()` the `mhaC` record can carry: its
+/// `mpegh3daConfigLength` field is `unsigned int(16)` (ISO/IEC 23008-3 §20, `MHADecoderConfigurationRecord`).
+/// A damaged MHAS packet may claim a longer payload; it is not a config
+/// (issue #1171).
+const MPEGH_CONFIG_LEN_MAX: usize = u16::MAX as usize;
 /// Video media timescale (90 kHz — the TS/PES timestamp clock).
 const VIDEO_TIMESCALE: u32 = 90_000;
 /// Samples per AAC access unit (ISO/IEC 14496-3 — one frame = 1024 samples).
@@ -2424,6 +2431,45 @@ fn reprobe_if_config_changed(
     Some((config, timescale))
 }
 
+/// The [`NalCodec`] of a video [`Codec`] whose parameter sets are validated.
+fn nal_codec_of(codec: Codec) -> NalCodec {
+    match codec {
+        Codec::Hevc => NalCodec::Hevc,
+        _ => NalCodec::Avc,
+    }
+}
+
+/// Count the parameter-set NALs in `data` that look like one (header type
+/// SPS/PPS, or VPS/SPS/PPS for HEVC) but fail [`parameter_set_is_valid`].
+fn count_invalid_parameter_sets(codec: Codec, data: &[u8]) -> usize {
+    let mut n = 0;
+    match codec {
+        Codec::H264 => {
+            for nal in iter_annexb_nals(data) {
+                let kind = match nal[0] & H264_NAL_TYPE_MASK {
+                    H264_NAL_SPS => ParamKind::Sps,
+                    H264_NAL_PPS => ParamKind::Pps,
+                    _ => continue,
+                };
+                n += usize::from(!parameter_set_is_valid(nal_codec_of(codec), kind, nal));
+            }
+        }
+        Codec::Hevc => {
+            for nal in iter_annexb_nals(data) {
+                let kind = match nal_unit_type(NalCodec::Hevc, nal) {
+                    Some(H265_NAL_VPS) => ParamKind::Vps,
+                    Some(H265_NAL_SPS) => ParamKind::Sps,
+                    Some(H265_NAL_PPS) => ParamKind::Pps,
+                    _ => continue,
+                };
+                n += usize::from(!parameter_set_is_valid(nal_codec_of(codec), kind, nal));
+            }
+        }
+        _ => {}
+    }
+    n
+}
+
 /// The parameter sets a track has seen, each remembered separately so an
 /// SPS/PPS split across access units still compares as a whole (r04-W51).
 #[derive(Default, Clone)]
@@ -2493,8 +2539,16 @@ impl ParameterSets {
             Codec::H264 => {
                 for nal in iter_annexb_nals(data) {
                     match nal[0] & H264_NAL_TYPE_MASK {
-                        H264_NAL_SPS => changed |= self.sps.record_current(nal),
-                        H264_NAL_PPS => changed |= self.pps.record(nal),
+                        H264_NAL_SPS
+                            if parameter_set_is_valid(nal_codec_of(codec), ParamKind::Sps, nal) =>
+                        {
+                            changed |= self.sps.record_current(nal)
+                        }
+                        H264_NAL_PPS
+                            if parameter_set_is_valid(nal_codec_of(codec), ParamKind::Pps, nal) =>
+                        {
+                            changed |= self.pps.record(nal)
+                        }
                         _ => {}
                     }
                 }
@@ -2502,9 +2556,21 @@ impl ParameterSets {
             Codec::Hevc => {
                 for nal in iter_annexb_nals(data) {
                     match nal_unit_type(NalCodec::Hevc, nal) {
-                        Some(H265_NAL_VPS) => changed |= self.vps.record_current(nal),
-                        Some(H265_NAL_SPS) => changed |= self.sps.record_current(nal),
-                        Some(H265_NAL_PPS) => changed |= self.pps.record(nal),
+                        Some(H265_NAL_VPS)
+                            if parameter_set_is_valid(nal_codec_of(codec), ParamKind::Vps, nal) =>
+                        {
+                            changed |= self.vps.record_current(nal)
+                        }
+                        Some(H265_NAL_SPS)
+                            if parameter_set_is_valid(nal_codec_of(codec), ParamKind::Sps, nal) =>
+                        {
+                            changed |= self.sps.record_current(nal)
+                        }
+                        Some(H265_NAL_PPS)
+                            if parameter_set_is_valid(nal_codec_of(codec), ParamKind::Pps, nal) =>
+                        {
+                            changed |= self.pps.record(nal)
+                        }
                         _ => {}
                     }
                 }
@@ -2610,8 +2676,18 @@ fn finalize_probe(
             // units ago is what carries it forward.
             for nal in iter_annexb_nals(latest) {
                 match nal[0] & H264_NAL_TYPE_MASK {
-                    H264_NAL_SPS if sps.is_none() => *sps = Some(nal.to_vec()),
-                    H264_NAL_PPS if pps.is_none() => *pps = Some(nal.to_vec()),
+                    H264_NAL_SPS
+                        if sps.is_none()
+                            && parameter_set_is_valid(nal_codec_of(codec), ParamKind::Sps, nal) =>
+                    {
+                        *sps = Some(nal.to_vec())
+                    }
+                    H264_NAL_PPS
+                        if pps.is_none()
+                            && parameter_set_is_valid(nal_codec_of(codec), ParamKind::Pps, nal) =>
+                    {
+                        *pps = Some(nal.to_vec())
+                    }
                     _ => {}
                 }
             }
@@ -2677,9 +2753,24 @@ fn finalize_probe(
             // above (r04-W47: only the newest access unit is scanned).
             for nal in iter_annexb_nals(latest) {
                 match nal_unit_type(NalCodec::Hevc, nal) {
-                    Some(H265_NAL_VPS) if vps.is_none() => *vps = Some(nal.to_vec()),
-                    Some(H265_NAL_SPS) if sps.is_none() => *sps = Some(nal.to_vec()),
-                    Some(H265_NAL_PPS) if pps.is_none() => *pps = Some(nal.to_vec()),
+                    Some(H265_NAL_VPS)
+                        if vps.is_none()
+                            && parameter_set_is_valid(nal_codec_of(codec), ParamKind::Vps, nal) =>
+                    {
+                        *vps = Some(nal.to_vec())
+                    }
+                    Some(H265_NAL_SPS)
+                        if sps.is_none()
+                            && parameter_set_is_valid(nal_codec_of(codec), ParamKind::Sps, nal) =>
+                    {
+                        *sps = Some(nal.to_vec())
+                    }
+                    Some(H265_NAL_PPS)
+                        if pps.is_none()
+                            && parameter_set_is_valid(nal_codec_of(codec), ParamKind::Pps, nal) =>
+                    {
+                        *pps = Some(nal.to_vec())
+                    }
                     _ => {}
                 }
             }
@@ -2956,6 +3047,9 @@ fn finalize_probe(
             // `mpegh3daConfig()` bitstream's leading byte *is*
             // `mpegh3daProfileLevelIndication` — the same value the
             // `MHADecoderConfigurationRecord` duplicates as its own field.
+            if config_bytes.len() > MPEGH_CONFIG_LEN_MAX {
+                return None;
+            }
             let profile_level_indication = *config_bytes.first()?;
             let config = MHADecoderConfigurationRecord::new(
                 profile_level_indication,
@@ -3033,6 +3127,23 @@ fn advance_track(
     let Some(track) = stream.track.take() else {
         return;
     };
+    // Damaged input (issue #1171): count parameter-set NALs this access unit
+    // carries that were rejected (see [`parameter_set_is_valid`]), so a consumer
+    // can see the damage without the garbage ever reaching a config.
+    let track_id = match &track {
+        TrackState::Live(live) => Some(live.track_id),
+        _ => None,
+    };
+    for _ in 0..count_invalid_parameter_sets(stream.codec, data) {
+        events.push_back(DemuxEvent::InputDegraded {
+            track: track_id,
+            kind: InputDegradation::InvalidParameterSet,
+            provenance: EventProvenance {
+                pid: Some(pid),
+                packet_index: None,
+            },
+        });
+    }
     let new_track = match track {
         TrackState::Live(mut live) => {
             // A changed in-band codec-config header re-probes the track and
@@ -5456,7 +5567,10 @@ mod tests {
         let mut out = Vec::new();
         out.extend_from_slice(&[0x00, 0x00, 0x01, stream_id]);
         let payload_len = au.len() + 3 + header_data_len;
-        out.extend_from_slice(&(payload_len as u16).to_be_bytes());
+        // A video access unit too long for the 16-bit field is sent unbounded
+        // (`PES_packet_length == 0`, ISO/IEC 13818-1 §2.4.3.7) rather than
+        // wrapped, which would silently truncate it.
+        out.extend_from_slice(&u16::try_from(payload_len).unwrap_or(0).to_be_bytes());
         out.push(0x80); // '10' marker, not scrambled
         out.push(if dts.is_some() { 0xC0 } else { 0x80 });
         out.push(header_data_len as u8);
@@ -7047,6 +7161,49 @@ mod tests {
         }
     }
 
+    /// Issue #1171: parameter sets that are over the `avcC` u16 length limit,
+    /// or whose body does not parse, are ignored — no `TrackUpdated` is
+    /// raised, the track's config stays serializable, each rejection is an
+    /// `InputDegraded::InvalidParameterSet`, and the event sequence is
+    /// identical at every chunk size.
+    #[test]
+    fn invalid_parameter_sets_are_ignored_and_counted() {
+        let (sps, pps, _) = real_avc_parameter_sets();
+        // The 85 704-byte "SPS" of the report: real header, garbage body.
+        let mut huge_sps = sps.clone();
+        huge_sps.resize(85_704, 0xA5);
+        // Right type, truncated: cannot parse to a geometry.
+        let stub_sps = vec![0x67u8, 0x42, 0x00, 0x1E, 0xAB, 0x40];
+        let idr = [0x65u8, 0x88, 0x84, 0x01];
+        let aus = vec![
+            annexb_au(&[&sps, &pps, &idr]),
+            annexb_au(&[&huge_sps, &pps, &idr]),
+            annexb_au(&[&stub_sps, &idr]),
+            annexb_au(&[&sps, &pps, &idr]),
+        ];
+        let bytes = avc_ts_over(&aus);
+        let (updates, base) = events_chunked(&bytes, bytes.len());
+        assert_eq!(updates, 0, "invalid sets must not raise TrackUpdated");
+        let added = base.iter().filter(|l| l.starts_with("TrackAdded")).count();
+        assert_eq!(added, 1, "one track, from the valid set only");
+        let rejected = base
+            .iter()
+            .filter(|l| l.contains("InvalidParameterSet"))
+            .count();
+        assert_eq!(rejected, 2, "the huge and the stub SPS: {base:?}");
+        // Every config the demuxer emitted serializes.
+        let media = TsDemux::new().demux(&bytes).expect("demux");
+        for t in &media.tracks {
+            let CodecConfig::Avc { config, .. } = t.config() else {
+                continue;
+            };
+            assert!(config.try_to_bytes().is_ok());
+        }
+        for chunk in [1usize, 7, 187, 188, 189, 1000] {
+            assert_eq!(events_chunked(&bytes, chunk).1, base, "chunk {chunk}");
+        }
+    }
+
     /// The same PPS remembering applies to HEVC; VPS/SPS still compare to the current set.
     #[test]
     fn hevc_rotating_parameter_sets_are_not_changes() {
@@ -7056,7 +7213,16 @@ mod tests {
             n.push(tag);
             n
         };
-        let (v, s) = (nal(H265_NAL_VPS, 1), nal(H265_NAL_SPS, 2));
+        // The SPS must be a real, parseable one (invalid sets are ignored,
+        // #1171): a verbatim 320x240 Main SPS from a committed capture.
+        let real_sps: Vec<u8> = alloc::vec![
+            0x42, 0x01, 0x01, 0x01, 0x60, 0x00, 0x00, 0x03, 0x00, 0x90, 0x00, 0x00, 0x03, 0x00,
+            0x00, 0x03, 0x00, 0x3c, 0xa0, 0x0a, 0x08, 0x0f, 0x16, 0x59, 0x59, 0xa4, 0x93, 0x2b,
+            0xc0, 0x5a, 0x02, 0x00, 0x00, 0x03, 0x00, 0x02, 0x00, 0x00, 0x03, 0x00, 0x32, 0x10,
+        ];
+        let mut real_sps_b = real_sps.clone();
+        *real_sps_b.last_mut().unwrap() ^= 0x01;
+        let (v, s) = (nal(H265_NAL_VPS, 1), real_sps);
         let ppss = [nal(H265_NAL_PPS, 3), nal(H265_NAL_PPS, 4)];
         let mut sets = ParameterSets::default();
         let au = |p: &Vec<u8>| annexb_au(&[&v, &s, p]);
@@ -7072,7 +7238,7 @@ mod tests {
             );
         }
         assert!(sets.observe(Codec::Hevc, &au(&nal(H265_NAL_PPS, 9))));
-        let sps2 = nal(H265_NAL_SPS, 7);
+        let sps2 = real_sps_b;
         assert!(sets.observe(Codec::Hevc, &annexb_au(&[&sps2])), "SPS B");
         assert!(
             sets.observe(Codec::Hevc, &annexb_au(&[&s])),

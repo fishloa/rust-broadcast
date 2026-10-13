@@ -69,7 +69,7 @@ use crate::error::{Error, Result};
 use crate::media::{Media, Track};
 use crate::mp4esds::{DecoderConfigDescriptor, ESDescriptor, EsdsBox, SLConfigDescriptor};
 use crate::mpeg_legacy::Mpeg2SeqHeader;
-use crate::nal::NalCodec;
+use crate::nal::{NalCodec, ParamKind, parameter_set_is_valid};
 use crate::nalu_types::{AvcPps, AvcSps};
 use crate::pipeline::{CodecConfig, Sample, TrackSpec};
 use crate::ts_demux::{
@@ -770,8 +770,20 @@ fn build_h264_track(es: &ElementaryStream, track_id: u32) -> MaybeTrack {
         .map(|(i, &(start, end))| {
             for nal in iter_annexb_nals(&es.es_bytes[start..end]) {
                 match nal[0] & H264_NAL_TYPE_MASK {
-                    H264_NAL_SPS if sps.is_none() => sps = Some(nal.to_vec()),
-                    H264_NAL_PPS if pps.is_none() => pps = Some(nal.to_vec()),
+                    // Only valid parameter sets (issue #1171): a damaged
+                    // "SPS" of garbage must not reach the avcC.
+                    H264_NAL_SPS
+                        if sps.is_none()
+                            && parameter_set_is_valid(NalCodec::Avc, ParamKind::Sps, nal) =>
+                    {
+                        sps = Some(nal.to_vec())
+                    }
+                    H264_NAL_PPS
+                        if pps.is_none()
+                            && parameter_set_is_valid(NalCodec::Avc, ParamKind::Pps, nal) =>
+                    {
+                        pps = Some(nal.to_vec())
+                    }
                     _ => {}
                 }
             }
