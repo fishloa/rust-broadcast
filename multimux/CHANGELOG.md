@@ -2,6 +2,11 @@
 
 ## [Unreleased]
 
+### Fixed (DASH timeline + availabilityStartTime, #1187)
+
+- **BREAKING (behaviour):** the DASH/LL-DASH output's `MPD@availabilityStartTime` is the program's presentation origin (the instant its `Trunk` was minted, new `RouteHandle::presentation_origin(program)`), no longer the route's construction time. The route is built before ingest connects and does not move when a reconnect mints a fresh `Trunk` that restarts at segment 1, so the old value broke `AST + (N - startNumber) * duration` (ISO/IEC 23009-1 §5.3.1.2, §5.3.9.5.3). Before a program is published the MPD is not served (503) instead of carrying a made-up AST. `render_mpd_at`/`render_ll_dash_mpd_at` take the origin explicitly.
+- DASH pull: a live `SegmentTimeline` (`$Time$`) MPD refresh is extended by **time** (`S@t` is absolute; the window slides and the enumerated numbers restart), not by `$Number$`; before, a refreshed `$Time$` MPD with a constant `@startNumber` never added another segment and the route stalled. A negative `S@r` is resolved to the next `@t`/Period end (via `transmux::SegmentTimeline::resolve`) instead of one segment. Tests use real DASH-IF livesim2 MPDs (`fixtures/dash/livesim2/`, BSD-3-Clause).
+
 ### Security (secrets and identity handling, #1142)
 
 - **BREAKING:** `Config::allow_open_ingest` (default `false`). `Config::validate` now refuses an ingest listener that admits a publisher with no authentication (an RTMP route without `stream_key`, a WHIP route, a listener-mode SRT route) on a non-loopback address unless the config opts in with `"allow_open_ingest": true`. Loopback listeners, RTMP routes with a `stream_key` and caller-mode SRT are unaffected. `Config` struct literals must add the field (or use `..Default::default()`).

@@ -46,6 +46,21 @@ authoritative. Events and the `emsg` box are in `emsg-rules.md` (23009-1:2022 ed
   data (L1789).
 - Textual `S` order = time/number order (L1752); `@d ≤ MPD@maxSegmentDuration` (L1750).
 
+### Negative `S@r` and live availability (DASH-IF IOP v4.3 §3.10.2.2.4 / §3.10.2.2.6)
+
+Source: DASH-IF Interoperability Points v4.3 (free, https://dashif.org/docs/DASH-IF-IOP-v4.3.pdf),
+which restates 23009-1 §5.3.9.6.2 normatively. For the `s`-th `S` (`t[s]`, `d[s]`, `r[s]` the repeat
+*count*), `ts` = `@timescale`, `PSwc[i]`/`PEwc[i]` the Period start/end in wall-clock seconds:
+
+- `@r >= 0`: `r[s]` = `@r + 1`.
+- `@r < 0`: if `t[s+1]` (the next `S`'s explicit `@t`) is present, `r[s] = ceil((t[s+1] - t[s]) / d[s])`;
+  else `r[s] = ceil((PEwc[i] - PSwc[i] - t[s]/ts) * ts / d[s])` (the last segment may not exist yet).
+- `S@t` is relative to the Period start and absolute (not 0-based): a live timeline's first `S@t`
+  is typically huge; `$Time$` substitutes it unchanged.
+- Segment availability (dynamic): `SAST[k] = PSwc[i] + (t[s] + d[s] - o[i,r]) / ts`, with
+  `PSwc[i] = AST + Period@start` and `o` = `@presentationTimeOffset` — so `MPD@availabilityStartTime`
+  (AST, §5.3.1.2) is the wall-clock anchor of the whole presentation, mandatory for `type="dynamic"`.
+
 ## SegmentTimeline ↔ `sidx` binding — §5.3.9.6.1 (L1754)
 
 When `SegmentTemplate` + `$Time$` are used, the MPD timing **shall** mirror the in-segment `sidx`

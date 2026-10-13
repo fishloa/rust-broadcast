@@ -219,14 +219,15 @@ fn track_is_representable(spec: &TrackSpec) -> bool {
 /// [`RouteHandle::track_specs`] is [`select_representable_track`]-selectable
 /// (nothing recorded yet, or every recorded track is opaque — issue #776).
 fn render_mpd(route: &RouteHandle) -> Option<String> {
-    render_mpd_at(route, route.created_at())
+    let origin = route.presentation_origin(crate::route::SPTS_PROGRAM_ID)?;
+    render_mpd_at(route, origin)
 }
 
-/// Render the MPD with an explicit `now` for `availabilityStartTime`, so a
+/// Render the MPD with an explicit presentation `origin` for `availabilityStartTime`, so a
 /// golden can freeze the wall-clock value (`render_mpd` delegates with the
-/// route's own `created_at`). `#[doc(hidden)]` and only reachable from tests.
+/// program's own `presentation_origin`). `#[doc(hidden)]` and only reachable from tests.
 #[doc(hidden)]
-pub fn render_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<String> {
+pub fn render_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> {
     let specs = route.track_specs(crate::route::SPTS_PROGRAM_ID);
     // `@id` forced to DEFAULT_TRACK_ID (see module docs' "Single-rendition
     // model") regardless of which track this route's own PMT numbered it.
@@ -281,7 +282,7 @@ pub fn render_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<String> {
         // `init-1.mp4`/`seg-1-<N>.m4s` filenames exactly.
         init_template: "init-$RepresentationID$.mp4".to_string(),
         media_template: "seg-$RepresentationID$-$Number$.m4s".to_string(),
-        availability_start_time: Some(format_iso8601(now)),
+        availability_start_time: Some(format_iso8601(origin)),
         minimum_update_period: Some(xs_duration_secs_checked(
             "minimum_update_period",
             target_duration_secs,
@@ -888,6 +889,43 @@ mod tests {
         );
         assert!(mpd.contains("seg-$RepresentationID$-$Number$.m4s"));
         assert!(mpd.contains("init-$RepresentationID$.mp4"));
+    }
+
+    /// #1187: `availabilityStartTime` is the program's presentation origin
+    /// (ISO/IEC 23009-1 §5.3.1.2: the wall-clock anchor of the Media
+    /// Presentation, from which segment availability is measured), NOT the
+    /// route's construction time. The route here is constructed, then the
+    /// program starts over a second later: the AST must follow the program.
+    /// Reverting `render_mpd` to `route.created_at()` makes this fail.
+    #[test]
+    fn availability_start_time_is_presentation_origin_not_route_creation() {
+        let route = RouteHandle::new(2.0, 500, 4);
+        let created = route.created_at();
+        std::thread::sleep(Duration::from_millis(1_100));
+        route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
+        route.set_track_specs(
+            crate::route::SPTS_PROGRAM_ID,
+            vec![video_spec(TrackId::new(1))],
+        );
+        route
+            .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 2.0))
+            .expect("add_segment");
+        let origin = route
+            .presentation_origin(crate::route::SPTS_PROGRAM_ID)
+            .expect("program registered");
+        assert!(origin >= created + Duration::from_millis(1_000));
+        let mpd = render_mpd(&route).unwrap();
+        let want = format!("availabilityStartTime=\"{}\"", format_iso8601(origin));
+        let stale = format!("availabilityStartTime=\"{}\"", format_iso8601(created));
+        assert!(mpd.contains(&want), "want {want}: {mpd}");
+        assert_ne!(want, stale, "origin must differ from creation time");
+        assert!(!mpd.contains(&stale), "route creation time leaked: {mpd}");
+        // No program, no origin, no MPD (rather than a made-up AST).
+        assert!(
+            route
+                .presentation_origin(media_plane::ingress::ProgramId(99))
+                .is_none()
+        );
     }
 
     #[test]

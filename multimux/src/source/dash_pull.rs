@@ -1356,6 +1356,114 @@ mod tests {
     use std::num::NonZeroUsize;
     use transmux::CodecConfig;
 
+    /// Parse a committed real DASH-IF livesim2 MPD (BSD-3-Clause, see
+    /// `fixtures/PROVENANCE.md`) and return its video template.
+    fn livesim2_video_template(name: &str) -> (Mpd, SegmentTemplate) {
+        let path = format!(
+            "{}/../fixtures/dash/livesim2/{name}",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let text = std::fs::read_to_string(&path).expect("fixture");
+        let mpd = Mpd::parse(&text).expect("parse");
+        let st = mpd.periods[0]
+            .adaptation_sets
+            .iter()
+            .flat_map(|a| a.representations.iter())
+            .find(|r| r.id == "V300")
+            .and_then(|r| r.segment_template.clone())
+            .expect("V300 template");
+        (mpd, st)
+    }
+
+    /// #1187: a real livesim2 `$Time$` SegmentTimeline MPD has an ABSOLUTE first
+    /// `S@t` (161274100320000 ticks, ~21 years of 90 kHz) and a constant
+    /// `@startNumber` (default 1). The live refresh must extend the plan by
+    /// TIME (ISO/IEC 23009-1 §5.3.9.6): the window slid by two segments, so
+    /// exactly two new, gap-free entries are due. Keyed on `$Number$` (the old
+    /// behaviour) the refreshed numbers restart at 1, never exceed
+    /// `last_number`, and a live `$Time$` route stalls forever.
+    #[test]
+    fn timeline_refresh_extends_by_time_not_number() {
+        let (mpd_a, st_a) = livesim2_video_template("segtimeline_time_a.mpd");
+        let (_mpd_b, st_b) = livesim2_video_template("segtimeline_time_b.mpd");
+        assert_eq!(st_a.start_number, 1);
+        let period_len = period_length(&mpd_a.periods[0], &mpd_a);
+
+        let (plan_a, end_a) =
+            plan_timeline(&st_a, period_len, None, Some(LIVE_NUMBER_LOOKAHEAD)).expect("plan a");
+        // Initial plan: only the live edge, with absolute times.
+        assert_eq!(plan_a.len(), LIVE_NUMBER_LOOKAHEAD);
+        let first_t = plan_a[0].1.expect("time");
+        assert!(first_t > 161_274_100_320_000, "{first_t}");
+        assert_eq!(end_a, Some(plan_a[plan_a.len() - 1].1.unwrap() + 180_000));
+
+        let (plan_b, end_b) =
+            plan_timeline(&st_b, period_len, end_a, Some(LIVE_NUMBER_LOOKAHEAD)).expect("plan b");
+        assert_eq!(plan_b.len(), 2, "{plan_b:?}");
+        assert_eq!(
+            plan_b[0].1, end_a,
+            "first new segment starts where the old plan ended"
+        );
+        assert_eq!(plan_b[1].1, end_a.map(|e| e + 180_000));
+        assert_eq!(end_b, end_a.map(|e| e + 2 * 180_000));
+        // Refreshing again with the same MPD adds nothing.
+        let (again, _) =
+            plan_timeline(&st_b, period_len, end_b, Some(LIVE_NUMBER_LOOKAHEAD)).expect("plan");
+        assert!(again.is_empty());
+    }
+
+    /// #1187: `$Number$` + `SegmentTimeline` (livesim2 `segtimelinenr`): the
+    /// server advances `@startNumber` as the window slides, so numbers line up
+    /// with the absolute times across a refresh.
+    #[test]
+    fn timeline_with_number_addressing_keeps_numbers_aligned_across_refresh() {
+        let (mpd_a, st_a) = livesim2_video_template("segtimelinenr_a.mpd");
+        let (_mpd_b, st_b) = livesim2_video_template("segtimelinenr_b.mpd");
+        let period_len = period_length(&mpd_a.periods[0], &mpd_a);
+        let (plan_a, end_a) = plan_timeline(&st_a, period_len, None, None).expect("a");
+        let (plan_b, _) = plan_timeline(&st_b, period_len, end_a, None).expect("b");
+        // a lists 31 segments from #895967208; b (4 segments later, startNumber
+        // 895967212) adds exactly the 4 whose time is >= a's end, numbered
+        // contiguously after a's last.
+        assert_eq!(plan_a.len(), 31);
+        assert_eq!(plan_b.len(), 4);
+        assert_eq!(plan_b[0].0, plan_a[30].0 + 1);
+        assert_eq!(plan_b[0].1, end_a);
+    }
+
+    /// #1187: a negative `S@r` (real DASH-IF Qualcomm MultiRate vector,
+    /// `<S d="24576" r="-1"/>`, static, Period 9:54) repeats to the Period end
+    /// (DASH-IF IOP v4.3 §3.10.2.2.4). Local-only: that vector's licence is
+    /// unstated, so it is not committed — the test skips when absent.
+    #[test]
+    fn negative_r_real_vector_runs_to_period_end() {
+        let path = format!(
+            "{}/../.test-streams/dash/qualcomm-multirate-1c-1.mpd",
+            env!("CARGO_MANIFEST_DIR")
+        );
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            eprintln!("skip: {path} absent (local-only DASH-IF vector)");
+            return;
+        };
+        let mpd = Mpd::parse(&text).expect("parse");
+        let period = &mpd.periods[0];
+        let period_len = period_length(period, &mpd);
+        let counts: Vec<usize> = period
+            .adaptation_sets
+            .iter()
+            .flat_map(|a| a.representations.iter())
+            .map(|r| {
+                let st = r.segment_template.as_ref().expect("template");
+                plan_timeline(st, period_len, None, None)
+                    .expect("plan")
+                    .0
+                    .len()
+            })
+            .collect();
+        // 594 s: video 2 s segments -> 297; audio 94208/48000 s -> ceil(302.65).
+        assert_eq!(counts, vec![297, 297, 297, 303]);
+    }
+
     /// W16: a hostile MPD with a huge `mediaPresentationDuration` and a tiny
     /// `@duration` must not collect an unbounded plan.
     #[test]

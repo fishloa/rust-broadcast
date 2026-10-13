@@ -178,13 +178,14 @@ impl ServedEgress for LlDashOrigin {
 /// segment target (nonsensical config — `LlDashPackager::new` rejects a
 /// chunk duration longer than the segment it chunks).
 fn render_ll_dash_mpd(route: &RouteHandle) -> Option<String> {
-    render_ll_dash_mpd_at(route, route.created_at())
+    let origin = route.presentation_origin(crate::route::SPTS_PROGRAM_ID)?;
+    render_ll_dash_mpd_at(route, origin)
 }
 
-/// Render the LL-DASH MPD with an explicit `now` for `availabilityStartTime`
+/// Render the LL-DASH MPD with an explicit presentation `origin` for `availabilityStartTime`
 /// (same freeze hook as `crate::output::dash::render_mpd_at`).
 #[doc(hidden)]
-pub fn render_ll_dash_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<String> {
+pub fn render_ll_dash_mpd_at(route: &RouteHandle, origin: SystemTime) -> Option<String> {
     let specs = route.track_specs(crate::route::SPTS_PROGRAM_ID);
     // Single-rendition model (see `crate::output::dash`'s module docs):
     // describe exactly one Representation, `@id` forced to DEFAULT_TRACK_ID.
@@ -214,7 +215,7 @@ pub fn render_ll_dash_mpd_at(route: &RouteHandle, now: SystemTime) -> Option<Str
         target_duration_secs,
         chunk_duration_secs,
         latency_target_ms,
-        format_iso8601(now),
+        format_iso8601(origin),
     ) {
         Ok(p) => p,
         Err(e) => {
