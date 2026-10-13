@@ -3,6 +3,7 @@
 //! (writes/ioctls) out, tracks the requested poll timer, and collects
 //! [`Notification`]s for the host application.
 
+use mpeg_ts::pid::Pid;
 use std::collections::BTreeSet;
 use std::io;
 use std::time::{Duration, Instant};
@@ -359,14 +360,14 @@ impl<D: CaDevice> Driver<D> {
     /// CAID → EMM-PID map intersected with the CAM's advertised CAIDs (#763
     /// Task 4).
     #[must_use]
-    pub fn emm_pids(&self) -> &[u16] {
+    pub fn emm_pids(&self) -> &[Pid] {
         self.managed.emm_pids()
     }
 
     /// The PIDs to route into `ci0` for descrambling — the union of every
     /// actively-managed service's elementary-stream PIDs (#763 Task 4).
     #[must_use]
-    pub fn descramble_pids(&self) -> &[u16] {
+    pub fn descramble_pids(&self) -> &[Pid] {
         self.managed.descramble_pids()
     }
 
@@ -375,7 +376,7 @@ impl<D: CaDevice> Driver<D> {
     /// combined) — the control-word channel, without which the module has ES
     /// to descramble but no control words to do it with (#763 Task 7).
     #[must_use]
-    pub fn ca_pids(&self) -> &[u16] {
+    pub fn ca_pids(&self) -> &[Pid] {
         self.managed.ca_pids()
     }
 
@@ -387,7 +388,7 @@ impl<D: CaDevice> Driver<D> {
     /// [`CaDescrambler`](crate::descrambler::CaDescrambler) filters its
     /// `feed_ts` input to exactly this set.
     #[must_use]
-    pub fn required_pids(&self) -> Vec<u16> {
+    pub fn required_pids(&self) -> Vec<Pid> {
         self.managed.required_pids()
     }
 
@@ -1733,14 +1734,14 @@ pub(crate) mod tests {
 
     /// A `CA_descriptor` TLV (ISO/IEC 13818-1 §2.6.16): tag `0x09`, len `4`,
     /// `CA_system_id`(2), `reserved(3)`/`CA_PID`(13).
-    pub(crate) fn ca_descriptor(ca_system_id: u16, pid: u16) -> [u8; 6] {
+    pub(crate) fn ca_descriptor(ca_system_id: u16, pid: Pid) -> [u8; 6] {
         [
             0x09,
             0x04,
             (ca_system_id >> 8) as u8,
             ca_system_id as u8,
-            0xE0 | ((pid >> 8) as u8 & 0x1F),
-            pid as u8,
+            0xE0 | ((pid.value() >> 8) as u8 & 0x1F),
+            pid.value() as u8,
         ]
     }
 
@@ -1762,8 +1763,8 @@ pub(crate) mod tests {
     /// CRC, just not sourced from an off-air capture.
     pub(crate) fn build_ca_pmt_fixture(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
-        let prog_ca = ca_descriptor(VIACCESS, 0x0064);
-        let es0_ca = ca_descriptor(VIACCESS, 0x0065);
+        let prog_ca = ca_descriptor(VIACCESS, Pid::new(0x0064));
+        let es0_ca = ca_descriptor(VIACCESS, Pid::new(0x0065));
 
         let mut body = Vec::new();
         body.push(0x02); // table_id (PMT)
@@ -1808,8 +1809,8 @@ pub(crate) mod tests {
     /// fixture for `required_pids`/`feed_ts` PCR routing.
     pub(crate) fn build_ca_pmt_fixture_dedicated_pcr(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
-        let prog_ca = ca_descriptor(VIACCESS, 0x0064);
-        let es0_ca = ca_descriptor(VIACCESS, 0x0065);
+        let prog_ca = ca_descriptor(VIACCESS, Pid::new(0x0064));
+        let es0_ca = ca_descriptor(VIACCESS, Pid::new(0x0065));
 
         let mut body = Vec::new();
         body.push(0x02); // table_id (PMT)
@@ -2108,8 +2109,8 @@ pub(crate) mod tests {
     fn build_ca_pmt_fixture_two_caids(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
         const NAGRA: u16 = 0x1800;
-        let prog_ca_a = ca_descriptor(VIACCESS, 0x0064);
-        let prog_ca_b = ca_descriptor(NAGRA, 0x0066);
+        let prog_ca_a = ca_descriptor(VIACCESS, Pid::new(0x0064));
+        let prog_ca_b = ca_descriptor(NAGRA, Pid::new(0x0066));
         let mut prog_ca = Vec::new();
         prog_ca.extend_from_slice(&prog_ca_a);
         prog_ca.extend_from_slice(&prog_ca_b);
@@ -2351,8 +2352,8 @@ pub(crate) mod tests {
         // CAT maps 0x0648 -> 0x1FF0 (advertised) and 0x0500 -> 0x1FF1 (not
         // advertised by this CAM).
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, 0x1FF0));
-        descriptors.extend_from_slice(&ca_descriptor(0x0500, 0x1FF1));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0500, Pid::new(0x1FF1)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
 
@@ -2375,8 +2376,8 @@ pub(crate) mod tests {
         d.take_notifications();
 
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, 0x1FF0));
-        descriptors.extend_from_slice(&ca_descriptor(0x0500, 0x1FF1));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0500, Pid::new(0x1FF1)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
 
@@ -2437,8 +2438,8 @@ pub(crate) mod tests {
 
         // CAT maps BOTH CAIDs to the SAME EMM PID.
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, 0x1FF0));
-        descriptors.extend_from_slice(&ca_descriptor(0x0100, 0x1FF0));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
+        descriptors.extend_from_slice(&ca_descriptor(0x0100, Pid::new(0x1FF0)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
 
@@ -2457,8 +2458,8 @@ pub(crate) mod tests {
     /// union rather than one programme's PIDs happening to repeat.
     fn build_ca_pmt_fixture_distinct_pids(program_number: u16) -> Vec<u8> {
         const VIACCESS: u16 = 0x0500;
-        let prog_ca = ca_descriptor(VIACCESS, 0x0074);
-        let es0_ca = ca_descriptor(VIACCESS, 0x0075);
+        let prog_ca = ca_descriptor(VIACCESS, Pid::new(0x0074));
+        let es0_ca = ca_descriptor(VIACCESS, Pid::new(0x0075));
 
         let mut body = Vec::new();
         body.push(0x02); // table_id (PMT)
@@ -3111,7 +3112,7 @@ pub(crate) mod tests {
         );
         d.take_notifications();
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, 0x1FF0));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
         d.set_cat(&cat).unwrap();

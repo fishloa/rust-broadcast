@@ -23,6 +23,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 dvb-ci     = { path = "../dvb-ci", version = "0.9" }
 dvb-si     = { path = "../dvb-si", version = "11.1", default-features = false }
+mpeg-ts    = { path = "../mpeg-ts", version = "0.5", default-features = false, features = ["std"] }
 broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 thiserror  = { version = "2" }
 libc       = { version = "0.2.108", optional = true } # `libc::Ioctl` (used in linux.rs) first appears in 0.2.108

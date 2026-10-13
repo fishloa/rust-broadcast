@@ -1083,6 +1083,7 @@ dependencies = [
  "dvb-ci",
  "dvb-si",
  "libc",
+ "mpeg-ts",
  "rustix",
  "test-alloc",
  "thiserror 2.0.21",

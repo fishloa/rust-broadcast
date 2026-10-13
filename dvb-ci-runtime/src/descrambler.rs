@@ -38,6 +38,7 @@
 //! The 13-bit PID is read inline (named consts below) rather than pulling in
 //! an `mpeg-ts` dependency for one field.
 
+use mpeg_ts::pid::Pid;
 use std::collections::BTreeSet;
 use std::io;
 use std::time::Duration;
@@ -85,7 +86,7 @@ fn packet_pid(packet: &[u8]) -> u16 {
 /// [`TS_PACKET_LEN`]-byte packets — that is a caller framing bug (the input
 /// itself isn't packet-aligned), distinct from one packet's payload being
 /// corrupted.
-fn filter_ts(scrambled: &[u8], allow: &BTreeSet<u16>) -> io::Result<(Vec<u8>, usize)> {
+fn filter_ts(scrambled: &[u8], allow: &BTreeSet<Pid>) -> io::Result<(Vec<u8>, usize)> {
     if !scrambled.len().is_multiple_of(TS_PACKET_LEN) {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -99,7 +100,7 @@ fn filter_ts(scrambled: &[u8], allow: &BTreeSet<u16>) -> io::Result<(Vec<u8>, us
             bad_sync_count += 1;
             continue;
         }
-        if allow.contains(&packet_pid(packet)) {
+        if allow.contains(&Pid::new(packet_pid(packet))) {
             out.extend_from_slice(packet);
         }
     }
@@ -172,7 +173,7 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
     /// of [`TS_PACKET_LEN`]-byte packets; otherwise any I/O error from the
     /// underlying [`CiDataDevice`].
     pub fn feed_ts(&mut self, scrambled: &[u8]) -> io::Result<Vec<u8>> {
-        let allow: BTreeSet<u16> = self.required_pids().into_iter().collect();
+        let allow: BTreeSet<Pid> = self.required_pids().into_iter().collect();
         let (kept, bad_sync_count) = filter_ts(scrambled, &allow)?;
         self.bad_sync_packets += bad_sync_count as u64;
         if !kept.is_empty() {
@@ -194,7 +195,7 @@ impl<D: CaDevice, C: CiDataDevice> CaDescrambler<D, C> {
     /// `descramble_pids ∪ ca_pids ∪ emm_pids ∪ PCR` — the PIDs the CAM needs
     /// on `ci0` (delegates to [`Driver::required_pids`]).
     #[must_use]
-    pub fn required_pids(&self) -> Vec<u16> {
+    pub fn required_pids(&self) -> Vec<Pid> {
         self.driver.required_pids()
     }
 
@@ -250,28 +251,28 @@ mod tests {
     use crate::managed::CaError;
     use broadcast_common::Parse;
 
-    fn packet(pid: u16, fill: u8) -> Vec<u8> {
+    fn packet(pid: Pid, fill: u8) -> Vec<u8> {
         let mut p = vec![fill; TS_PACKET_LEN];
         p[0] = TS_SYNC_BYTE;
         // Set the reserved top bits (transport_error/pusi/priority) to
         // exercise the mask, per the brief's `hi = 0x40 | (pid>>8)`.
-        p[1] = 0x40 | ((pid >> 8) as u8);
-        p[2] = pid as u8;
+        p[1] = 0x40 | ((pid.value() >> 8) as u8);
+        p[2] = pid.value() as u8;
         p
     }
 
     #[test]
     fn filter_ts_keeps_only_allowed_pids() {
-        let p_100 = packet(0x100, 0xAA);
-        let p_64 = packet(0x64, 0xBB);
-        let p_200 = packet(0x200, 0xCC);
+        let p_100 = packet(Pid::new(0x100), 0xAA);
+        let p_64 = packet(Pid::new(0x64), 0xBB);
+        let p_200 = packet(Pid::new(0x200), 0xCC);
 
         let mut scrambled = Vec::new();
         scrambled.extend_from_slice(&p_100);
         scrambled.extend_from_slice(&p_64);
         scrambled.extend_from_slice(&p_200);
 
-        let allow: BTreeSet<u16> = [0x100, 0x64].into_iter().collect();
+        let allow: BTreeSet<Pid> = [0x100, 0x64].into_iter().map(Pid::new).collect();
         let (kept, bad_sync) = filter_ts(&scrambled, &allow).unwrap();
 
         let mut expected = Vec::new();
@@ -285,7 +286,7 @@ mod tests {
 
         // Bite: an empty allow-set drops everything — a reintroduced
         // no-filter passthrough would keep 0x200 and fail this.
-        let empty: BTreeSet<u16> = BTreeSet::new();
+        let empty: BTreeSet<Pid> = BTreeSet::new();
         assert!(filter_ts(&scrambled, &empty).unwrap().0.is_empty());
 
         // Unaligned input is still a hard error (a caller framing bug, not
@@ -347,7 +348,7 @@ mod tests {
         );
         d.take_notifications();
         let mut descriptors = Vec::new();
-        descriptors.extend_from_slice(&ca_descriptor(0x0648, 0x1FF0));
+        descriptors.extend_from_slice(&ca_descriptor(0x0648, Pid::new(0x1FF0)));
         let cat_bytes = build_cat_fixture(&descriptors);
         let cat = CatSection::parse(&cat_bytes).unwrap();
         d.set_cat(&cat).unwrap();
@@ -358,7 +359,7 @@ mod tests {
             "precondition: required_pids = descramble_pids ∪ ca_pids ∪ emm_pids"
         );
 
-        let descrambled_script = packet(0x100, 0xEE);
+        let descrambled_script = packet(Pid::new(0x100), 0xEE);
         let mut descrambler = descrambler_with(d, [descrambled_script.clone()]);
         assert_eq!(
             descrambler.required_pids(),
@@ -368,8 +369,8 @@ mod tests {
 
         // One required-PID packet (0x100, an ES PID) + one junk packet on a
         // PID NOT in required_pids.
-        let required_pkt = packet(0x100, 0x11);
-        let junk_pkt = packet(0x999, 0x22);
+        let required_pkt = packet(Pid::new(0x100), 0x11);
+        let junk_pkt = packet(Pid::new(0x999), 0x22);
         let mut scrambled = Vec::new();
         scrambled.extend_from_slice(&required_pkt);
         scrambled.extend_from_slice(&junk_pkt);
@@ -402,9 +403,9 @@ mod tests {
         let mut descrambler = descrambler_with(d, [Vec::new()]);
         assert_eq!(descrambler.bad_sync_packets(), 0);
 
-        let mut bad = packet(0x100, 0x11);
+        let mut bad = packet(Pid::new(0x100), 0x11);
         bad[0] = 0x00; // corrupt sync byte
-        let good = packet(0x100, 0x33);
+        let good = packet(Pid::new(0x100), 0x33);
         let mut scrambled = Vec::new();
         scrambled.extend_from_slice(&bad);
         scrambled.extend_from_slice(&good);
@@ -437,7 +438,7 @@ mod tests {
         d.add_service(&pmt).unwrap();
 
         assert!(
-            d.required_pids().contains(&0x00FF),
+            d.required_pids().contains(&Pid::new(0x00FF)),
             "precondition: required_pids must include the dedicated PCR PID, got {:?}",
             d.required_pids()
         );
@@ -446,8 +447,8 @@ mod tests {
 
         // One packet on the dedicated PCR PID + one junk packet on a PID not
         // in required_pids.
-        let pcr_pkt = packet(0x00FF, 0x33);
-        let junk_pkt = packet(0x0AAA, 0x44);
+        let pcr_pkt = packet(Pid::new(0x00FF), 0x33);
+        let junk_pkt = packet(Pid::new(0x0AAA), 0x44);
         let mut scrambled = Vec::new();
         scrambled.extend_from_slice(&pcr_pkt);
         scrambled.extend_from_slice(&junk_pkt);
