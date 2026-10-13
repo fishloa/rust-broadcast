@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- `LineHeader` gains `reserved: u8` (the 2-bit `reserved_future_use` prefix),
+  `WssDataField` gains `reserved_tail: u8` (its trailing 2 bits) and
+  `DataUnit` gains `stuffing: u8` (trailing `stuffing_byte` count): reserved
+  and stuffing data are now preserved typed fields, so parse -> serialize is
+  byte-exact for non-conformant input too (#1106). `LineHeader::new` /
+  `WssDataField::new` default the reserved bits to `11`; `DataUnit`'s
+  convenience constructors default `stuffing` to 0.
+- A data unit whose `data_unit_length` exceeds its typed field (the EN 301 775
+  Table 1 trailing `stuffing_byte`s, e.g. a VPS/WSS/CC unit in a
+  `data_identifier` 0x10-0x1F field padded to the mandated 0x2C) now parses,
+  instead of being rejected as a length mismatch (#1106 W3). The stuffing bytes
+  must be `0xFF` (also for a bare `0xFF` stuffing unit), else
+  `Error::InvalidField`.
+
+### Added
+- `DataUnit::padded_to`, and `DataUnit::validate` / `DataField::validate`:
+  the strict EN 301 775 §4.1 / §4.4.2 and Table 4/6/8/10/12 generation
+  constraints (fixed 0x2C unit length for `data_identifier` 0x10-0x1F,
+  per-unit line_offset / parity / framing_code / sample ranges, `11` reserved
+  bits). Parsing stays tolerant; validate is opt-in (#1106 W3).
+
 ## [0.4.2] - 2026-10-13
 ### Fixed
 - `DataUnit::serialize_into` now validates that `id` is a valid Table 3

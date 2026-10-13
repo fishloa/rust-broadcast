@@ -21,6 +21,10 @@ pub const RESERVED_PREFIX: u8 = 0b11;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct LineHeader {
+    /// The 2-bit `reserved_future_use` prefix (`[7:6]`, nominally `11` =
+    /// [`RESERVED_PREFIX`]), preserved as parsed so a non-conformant byte
+    /// round-trips (#1106). [`LineHeader::new`] sets the canonical `11`.
+    pub reserved: u8,
     /// `field_parity` (1 bit): `1` = first field of a frame, `0` = second field.
     pub field_parity: bool,
     /// `line_offset` (5 bits): the VBI line, coded per the unit's line_offset
@@ -32,24 +36,35 @@ impl LineHeader {
     /// Construct a header from its fields.
     pub fn new(field_parity: bool, line_offset: u8) -> Self {
         LineHeader {
+            reserved: RESERVED_PREFIX,
             field_parity,
             line_offset,
         }
     }
 
     /// Decode the header from a single byte. The `reserved_future_use` prefix
-    /// bits `[7:6]` are not validated (decoders ignore RFU); only the typed
-    /// fields are extracted.
+    /// bits `[7:6]` are not validated (decoders ignore RFU) but are kept in
+    /// [`reserved`](Self::reserved) so [`to_byte`](Self::to_byte) reproduces
+    /// the byte.
     pub fn from_byte(byte: u8) -> Self {
         LineHeader {
+            reserved: byte >> 6,
             field_parity: (byte & 0b0010_0000) != 0,
             line_offset: byte & 0b0001_1111,
         }
     }
 
-    /// Encode the header to its single wire byte: `11` | field_parity |
-    /// line_offset. Errors if `line_offset` does not fit in 5 bits.
+    /// Encode the header to its single wire byte: `reserved` | field_parity |
+    /// line_offset. Errors if `line_offset` does not fit in 5 bits or
+    /// `reserved` in 2.
     pub fn to_byte(self) -> Result<u8> {
+        if self.reserved > RESERVED_PREFIX {
+            return Err(Error::FieldTooWide {
+                what: "reserved_future_use",
+                value: self.reserved as u32,
+                bits: 2,
+            });
+        }
         if self.line_offset > 0b0001_1111 {
             return Err(Error::FieldTooWide {
                 what: "line_offset",
@@ -57,7 +72,7 @@ impl LineHeader {
                 bits: 5,
             });
         }
-        let mut b = RESERVED_PREFIX << 6;
+        let mut b = self.reserved << 6;
         if self.field_parity {
             b |= 0b0010_0000;
         }
@@ -72,16 +87,12 @@ mod tests {
 
     #[test]
     fn round_trip_all_bytes() {
-        // The header byte decodes/encodes losslessly for any input whose RFU
-        // prefix is the canonical `11` (the only value the encoder emits).
+        // The header byte decodes/encodes losslessly for EVERY input byte,
+        // including a non-canonical reserved_future_use prefix (#1106).
         for raw in 0u16..=0xFF {
             let raw = raw as u8;
             let h = LineHeader::from_byte(raw);
-            let re = h.to_byte().unwrap();
-            // Re-encode forces the canonical RFU prefix `11`; compare the
-            // non-RFU bits only.
-            assert_eq!(re & 0b0011_1111, raw & 0b0011_1111, "raw={raw:#04X}");
-            assert_eq!(re >> 6, RESERVED_PREFIX);
+            assert_eq!(h.to_byte().unwrap(), raw, "raw={raw:#04X}");
         }
     }
 
