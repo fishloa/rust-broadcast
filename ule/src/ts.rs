@@ -200,9 +200,10 @@ impl UleReceiver {
         }
         if self.expected != 0 && self.partial.len() >= self.expected {
             let total = self.expected;
-            out.push(self.partial[..total].to_vec());
-            let rest: Vec<u8> = self.partial[total..].to_vec();
-            self.partial.clear();
+            // Split the tail off and hand the completed SNDU out by move:
+            // no byte of it is copied (audit ULE-O1, #1120).
+            let rest: Vec<u8> = self.partial.split_off(total);
+            out.push(core::mem::take(&mut self.partial));
             self.expected = 0;
             if !rest.is_empty() {
                 if allow_packing {
