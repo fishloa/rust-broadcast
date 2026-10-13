@@ -76,6 +76,7 @@
 //!   previously-carried one.
 
 use std::collections::VecDeque;
+use transmux::CodecConfig;
 use transmux::TrackId;
 
 use bytes::Bytes;
@@ -108,6 +109,13 @@ pub struct PushTransportEgress<T: PushTransport> {
     /// [`PushEgress::poll_transmit`] has not yet handed to
     /// [`Self::flush_transmit`].
     outbound: VecDeque<Bytes>,
+    /// `true` from the first accepted `negotiate` until the first video sync
+    /// sample is seen (audit r07-W17): a (re)connect lands mid-GOP, and a
+    /// receiver handed non-IDR slices first shows garbage / fails to start.
+    /// Every sample before that first sync sample is dropped (all tracks, so
+    /// audio does not run ahead of video). Never set when the selection has no
+    /// video track.
+    awaiting_sync: bool,
 }
 
 /// How a [`PushTransportEgress::flush_transmit_bounded`] ended.
@@ -136,6 +144,7 @@ impl<T: PushTransport> PushTransportEgress<T> {
             committed: false,
             unsatisfiable_reason,
             outbound: VecDeque::new(),
+            awaiting_sync: false,
         }
     }
 
@@ -209,6 +218,21 @@ impl<T: PushTransport> PushTransportEgress<T> {
     }
 }
 
+/// Whether `config` is a video codec (the track whose sync samples gate the
+/// first send).
+fn is_video(config: &CodecConfig) -> bool {
+    matches!(
+        config,
+        CodecConfig::Avc { .. }
+            | CodecConfig::Hevc { .. }
+            | CodecConfig::Vvc { .. }
+            | CodecConfig::Av1 { .. }
+            | CodecConfig::Vp9 { .. }
+            | CodecConfig::Vp8 { .. }
+            | CodecConfig::Mpeg2Video { .. }
+    )
+}
+
 impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
     type Error = SendMediaError;
 
@@ -220,6 +244,7 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
             ));
         }
         self.selection = TrackSelection::new(carriable.iter().map(|t| t.track_id).collect());
+        self.awaiting_sync = carriable.iter().any(|t| is_video(&t.config));
         self.specs = carriable;
         self.committed = true;
         NegotiationOutcome::Accepted(self.selection.clone())
@@ -282,8 +307,20 @@ impl<T: PushTransport> PushEgress for PushTransportEgress<T> {
             // exactly like `crate::push::drive_push`'s own `_ => {}` arm.
             _ => return Ok(()),
         };
-        if !self.specs.iter().any(|s| s.track_id == track_id) {
+        let Some(carried_video) = self
+            .specs
+            .iter()
+            .find(|s| s.track_id == track_id)
+            .map(|s| is_video(&s.config))
+        else {
             return Ok(());
+        };
+        if self.awaiting_sync {
+            if carried_video && sample.flags.is_sync {
+                self.awaiting_sync = false;
+            } else {
+                return Ok(());
+            }
         }
         // Every carried track rides in EVERY `Media`, the sample only in its
         // own track (the others empty): the TS muxer derives the PIDs, the
@@ -418,6 +455,39 @@ mod tests {
             Some(3_000),
             true,
         )
+    }
+
+    /// Audit r07-W17: a (re)connect lands mid-GOP. Until the first video sync
+    /// sample, every sample (video non-sync, and other tracks) is dropped;
+    /// after it, everything flows.
+    #[test]
+    fn send_waits_for_the_first_video_sync_sample() {
+        let mut egress = PushTransportEgress::new(FakeTransport::default(), "unreachable");
+        egress.negotiate(&[avc_spec(TrackId::new(1)), opaque_spec(TrackId::new(2))]);
+        let non_sync = transmux::ir::Sample::new(
+            bytes::Bytes::copy_from_slice(&[0, 0, 0, 1, 0x41]),
+            Some(0),
+            Some(0),
+            Some(3_000),
+            false,
+        );
+        let item = |track: u32, s: &transmux::ir::Sample| SampleCursorItem::Timed {
+            track_id: TrackId::new(track),
+            sample: s.clone(),
+        };
+        egress.send(&item(1, &non_sync)).unwrap();
+        egress.send(&item(2, &sample())).unwrap();
+        assert!(
+            PushEgress::poll_transmit(&mut egress).is_none(),
+            "nothing may be sent before the first video sync sample"
+        );
+        egress.send(&item(1, &sample())).unwrap();
+        assert!(PushEgress::poll_transmit(&mut egress).is_some());
+        egress.send(&item(1, &non_sync)).unwrap();
+        assert!(
+            PushEgress::poll_transmit(&mut egress).is_some(),
+            "after the sync sample every sample flows"
+        );
     }
 
     /// A transport with no codec restriction (SRT/RTSP's real shape)
