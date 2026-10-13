@@ -138,8 +138,17 @@ fn ymd_to_mjd_nogate(year: i32, month: u32, day: u32) -> Option<u16> {
         return None;
     }
     let mjd = ymd_to_mjd_core(year, month, day);
-    if (0.0..=f64::from(u16::MAX)).contains(&mjd) {
-        Some(mjd as u16)
+    if !(0.0..=f64::from(u16::MAX)).contains(&mjd) {
+        return None;
+    }
+    let mjd = mjd as u16;
+    // The core arithmetic is total over day 1..=31, so `31 Feb` silently
+    // lands on 2 or 3 March. Accept only dates that decode back to the
+    // same calendar day (`encode_mjd_bcd` must not accept what decode
+    // would not return).
+    let (y, m, d) = mjd_to_ymd_nogate(mjd)?;
+    if i32::from(y) == year && u32::from(m) == month && u32::from(d) == day {
+        Some(mjd)
     } else {
         None
     }
@@ -377,6 +386,25 @@ mod tests {
         let dt = decode_mjd_bcd_utc([0xE4, 0x09, 0x12, 0x34, 0x56]).expect("decodes");
         assert_eq!((dt.hour(), dt.minute(), dt.second()), (12, 34, 56));
         assert_eq!(dt.year(), 2018);
+    }
+
+    #[test]
+    fn encode_rejects_calendar_impossible_days() {
+        let mk = |year, month, day| MjdBcdDateTime {
+            year,
+            month,
+            day,
+            hour: 0,
+            minute: 0,
+            second: 0,
+        };
+        // 31 Feb / 31 Apr / 29 Feb in a non-leap year would silently encode
+        // as a different (later) day.
+        assert_eq!(encode_mjd_bcd(mk(2023, 2, 31)), None);
+        assert_eq!(encode_mjd_bcd(mk(2023, 4, 31)), None);
+        assert_eq!(encode_mjd_bcd(mk(2023, 2, 29)), None);
+        assert!(encode_mjd_bcd(mk(2024, 2, 29)).is_some());
+        assert!(encode_mjd_bcd(mk(2023, 1, 31)).is_some());
     }
 
     #[test]

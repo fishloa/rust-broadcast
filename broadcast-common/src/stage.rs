@@ -103,8 +103,15 @@ impl Timestamp {
     }
 
     /// `self + nanos`, saturating at `u64::MAX` instead of overflowing.
-    pub const fn checked_add_nanos(self, nanos: u64) -> Self {
+    pub const fn saturating_add_nanos(self, nanos: u64) -> Self {
         Timestamp(self.0.saturating_add(nanos))
+    }
+
+    /// Misnamed: this saturates, it does not check. Use
+    /// [`saturating_add_nanos`](Self::saturating_add_nanos).
+    #[deprecated(since = "9.5.0", note = "saturates, not checks; use `saturating_add_nanos`")]
+    pub const fn checked_add_nanos(self, nanos: u64) -> Self {
+        self.saturating_add_nanos(nanos)
     }
 
     /// `self + duration`, saturating at `u64::MAX` instead of overflowing.
@@ -112,7 +119,7 @@ impl Timestamp {
     /// A `Duration` in excess of `u64::MAX` nanoseconds saturates the same way.
     pub fn saturating_add(self, duration: Duration) -> Self {
         let nanos = u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX);
-        self.checked_add_nanos(nanos)
+        self.saturating_add_nanos(nanos)
     }
 }
 
@@ -470,8 +477,8 @@ mod tests {
         );
 
         // Adding past u64::MAX saturates rather than wrapping/panicking.
-        assert_eq!(big.checked_add_nanos(10), Timestamp::from_nanos(u64::MAX));
-        assert_eq!(zero.checked_add_nanos(10), Timestamp::from_nanos(10));
+        assert_eq!(big.saturating_add_nanos(10), Timestamp::from_nanos(u64::MAX));
+        assert_eq!(zero.saturating_add_nanos(10), Timestamp::from_nanos(10));
 
         // Duration-based saturating_add, including a Duration whose
         // nanoseconds exceed u64::MAX.
