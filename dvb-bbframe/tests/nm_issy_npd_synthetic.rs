@@ -91,7 +91,7 @@ fn nm_issy_npd_recovers_real_up_and_checks_crc8_chain() {
     assert_eq!(data.len(), STRIDE * 3);
 
     let hdr = nm_issy_npd_header(data.len());
-    let header_bytes = hdr.serialize();
+    let header_bytes = hdr.serialize().unwrap();
 
     let mut extractor = CarryOverExtractor::new();
     let pkts = extractor.feed_nm(&header_bytes, &data);

@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+- **BREAKING**: `Bbheader::serialize()` now returns
+  `Result<[u8; BBHEADER_LEN], Error>` (was a bare array that panicked, via
+  `to_bytes()`, on a hand-built header violating a wire constraint such as
+  `dfl > DFL_MAX_BITS`). It also serializes straight into a stack array
+  (r11-W-BB-2 / r11-O-BB-2, #1094).
+
 ## [11.0.1] - 2026-10-11
 ### Changed
 - Version bump with the lockstep (11.0.1); no functional changes in this crate.

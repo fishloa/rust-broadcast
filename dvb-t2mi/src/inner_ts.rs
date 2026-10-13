@@ -190,7 +190,7 @@ mod tests {
             mode: Mode::Normal,
             issy_in_header: None,
         };
-        let mut frame = hdr.serialize().to_vec();
+        let mut frame = hdr.serialize().unwrap().to_vec();
         let mut data = [0u8; TS_LEN];
         data[0] = crc8(&[0u8; TS_LEN]); // CRC-8 of the (all-zero) previous UP
         data[1..].copy_from_slice(&inner[1..]);

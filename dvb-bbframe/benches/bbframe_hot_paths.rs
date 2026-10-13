@@ -102,7 +102,7 @@ fn nm_bbheader(dfl_bits: u16) -> [u8; BBHEADER_LEN] {
         mode: Mode::Normal,
         issy_in_header: None,
     };
-    hdr.serialize()
+    hdr.serialize().unwrap()
 }
 
 // ── Benchmarks ────────────────────────────────────────────────────────────────

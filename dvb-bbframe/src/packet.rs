@@ -786,7 +786,7 @@ mod tests {
         let mut hdr = make_nm_header(0);
         hdr.upl = 1; // not byte-aligned
         hdr.dfl = (NM_UP_SIZE * 8) as u16;
-        let header_bytes = hdr.serialize();
+        let header_bytes = hdr.serialize().unwrap();
 
         let mut extractor = CarryOverExtractor::new();
         let pkts = extractor.feed_nm(&header_bytes, &[0xAAu8; NM_UP_SIZE]);
@@ -812,7 +812,7 @@ mod tests {
 
         let mut hdr = make_nm_header(0);
         hdr.dfl = (data.len() * 8) as u16;
-        let header_bytes = hdr.serialize();
+        let header_bytes = hdr.serialize().unwrap();
         let mut extractor = CarryOverExtractor::new();
         let pkts = extractor.feed_nm(&header_bytes, &data);
 
@@ -849,7 +849,7 @@ mod tests {
 
         let mut hdr = make_nm_header(0);
         hdr.dfl = (data.len() * 8) as u16;
-        let header_bytes = hdr.serialize();
+        let header_bytes = hdr.serialize().unwrap();
         let mut extractor = CarryOverExtractor::new();
         let pkts = extractor.feed_nm(&header_bytes, &data);
 
@@ -1170,7 +1170,7 @@ mod tests {
             mode: crate::header::Mode::HighEfficiency,
             issy_in_header: None,
         };
-        hdr.serialize()
+        hdr.serialize().unwrap()
     }
 
     #[test]
@@ -1235,13 +1235,13 @@ mod tests {
 
         // Valid HEM header but NPD set: unsupported → no output, counted as a
         // dropped-valid-data event (not wire corruption).
-        let hem = make_hem_header(true).serialize();
+        let hem = make_hem_header(true).serialize().unwrap();
         ext.feed_hem_into(&hem, &[0u8; NM_UP_SIZE], true, &mut out);
         assert!(out.is_empty());
         assert_eq!(ext.stats().npd_unsupported, 1);
 
         // NM header fed to the HEM path → mode mismatch, counted.
-        let nm = make_nm_header(0).serialize();
+        let nm = make_nm_header(0).serialize().unwrap();
         ext.feed_hem_into(&nm, &[0u8; NM_UP_SIZE], false, &mut out);
         assert!(out.is_empty());
         assert_eq!(ext.stats().mode_mismatches, 1);
@@ -1273,7 +1273,7 @@ mod tests {
         let mut hdr = make_nm_header(0);
         hdr.dfl = (data.len() * 8) as u16;
         let mut extractor = CarryOverExtractor::new();
-        let pkts = extractor.feed_nm(&hdr.serialize(), &data);
+        let pkts = extractor.feed_nm(&hdr.serialize().unwrap(), &data);
 
         assert_eq!(pkts.len(), 2);
         // First packet: no CRC predecessor, so no TEI.

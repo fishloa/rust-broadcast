@@ -225,7 +225,7 @@ mod tests {
             mode: Mode::Normal,
             issy_in_header: None,
         };
-        let mut frame = hdr.serialize().to_vec();
+        let mut frame = hdr.serialize().unwrap().to_vec();
         let mut data = [0u8; TS_LEN];
         // For NM, the first byte is the CRC-8 of the data bytes 1..188
         // (the previous packet's trailer, EN 302 755 §5.1.6/§5.1.8 figure 5).
@@ -255,7 +255,7 @@ mod tests {
             mode: Mode::HighEfficiency,
             issy_in_header: None,
         };
-        let mut frame = hdr.serialize().to_vec();
+        let mut frame = hdr.serialize().unwrap().to_vec();
         // HEM data: 187 bytes = inner[1..188] (no sync byte)
         frame.extend_from_slice(&inner[1..]);
         frame
@@ -372,7 +372,7 @@ mod tests {
             mode: Mode::Normal,
             issy_in_header: None,
         };
-        let mut frame = hdr.serialize().to_vec();
+        let mut frame = hdr.serialize().unwrap().to_vec();
         frame.extend_from_slice(&[0u8; 50]);
 
         let mut pump = BbframePump::new();

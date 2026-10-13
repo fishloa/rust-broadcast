@@ -440,12 +440,16 @@ impl Bbheader {
         <Self as Parse>::parse(bytes)
     }
 
-    /// Serialize the BBHEADER back to its 10-byte wire format.
-    pub fn serialize(&self) -> [u8; BBHEADER_LEN] {
-        let v = <Self as Serialize>::to_bytes(self);
+    /// Serialize the BBHEADER back to its 10-byte wire format, on the stack.
+    ///
+    /// Fails (rather than panicking or emitting bytes the parser refuses)
+    /// with [`Error::DflOutOfRange`] / [`Error::InconsistentBbheaderMode`]
+    /// for a hand-built header that violates a wire constraint — see
+    /// [`Serialize::serialize_into`].
+    pub fn serialize(&self) -> Result<[u8; BBHEADER_LEN], Error> {
         let mut buf = [0u8; BBHEADER_LEN];
-        buf.copy_from_slice(&v);
-        buf
+        <Self as Serialize>::serialize_into(self, &mut buf)?;
+        Ok(buf)
     }
 
     /// Decode the ISSY field from the header bytes (HEM only).
@@ -644,7 +648,7 @@ mod tests {
             mode: Mode::Normal,
             issy_in_header: None,
         };
-        let buf = hdr.serialize();
+        let buf = hdr.serialize().unwrap();
 
         let parsed = Bbheader::parse(&buf).unwrap();
         assert_eq!(parsed.matype.ts_gs, TsGs::Ts);
@@ -676,7 +680,7 @@ mod tests {
             mode: Mode::Normal,
             issy_in_header: None,
         };
-        let buf = orig.serialize();
+        let buf = orig.serialize().unwrap();
         let parsed = Bbheader::parse(&buf).unwrap();
         assert_eq!(orig.matype.ts_gs, parsed.matype.ts_gs);
         assert_eq!(orig.matype.sis, parsed.matype.sis);
@@ -711,7 +715,7 @@ mod tests {
             mode: Mode::Normal,
             issy_in_header: None,
         };
-        let buf = orig.serialize();
+        let buf = orig.serialize().unwrap();
         let parsed = Bbheader::parse(&buf).unwrap();
         assert_eq!(orig.matype.ts_gs, parsed.matype.ts_gs);
         assert_eq!(orig.matype.sis, parsed.matype.sis);
@@ -740,7 +744,7 @@ mod tests {
             mode: Mode::Normal,
             issy_in_header: None,
         };
-        let buf = hdr.serialize();
+        let buf = hdr.serialize().unwrap();
         let computed = crc8(&buf[..9]);
         assert_eq!(computed ^ buf[9], 0); // XOR with MODE must give 0 for NM
         assert_eq!(buf[9], computed); // MODE=0 means they must be equal
@@ -891,7 +895,7 @@ mod tests {
             mode: Mode::HighEfficiency,
             issy_in_header: Some([0xA4, 0x28, 0xE2]),
         };
-        let buf = orig.serialize();
+        let buf = orig.serialize().unwrap();
         let parsed = Bbheader::parse(&buf).unwrap();
         assert_eq!(orig.mode, parsed.mode);
         assert_eq!(orig.matype.ts_gs, parsed.matype.ts_gs);
@@ -919,7 +923,7 @@ mod tests {
             mode: Mode::HighEfficiency,
             issy_in_header: Some([0x00, 0x00, 0x00]),
         };
-        let buf = hdr.serialize();
+        let buf = hdr.serialize().unwrap();
         let computed = crc8(&buf[..9]);
         // MODE=1: stored = computed XOR 1
         assert_eq!(buf[9], computed ^ 1);
@@ -944,7 +948,7 @@ mod tests {
             mode: Mode::HighEfficiency,
             issy_in_header: Some([0x00, 0x00, 0x00]),
         };
-        let buf = hdr.serialize();
+        let buf = hdr.serialize().unwrap();
         let parsed = Bbheader::parse(&buf).unwrap();
         assert_eq!(parsed.mode, Mode::HighEfficiency);
         assert_eq!(parsed.issy_in_header, Some([0x00, 0x00, 0x00]));
@@ -1087,6 +1091,34 @@ mod tests {
                 have: small.len(),
             }
         );
+    }
+
+    /// The infallible-looking `serialize()` convenience used to route through
+    /// `to_bytes()`, which panics on an invalid hand-built header. It now
+    /// returns the serializer's error.
+    #[test]
+    fn serialize_returns_error_instead_of_panicking_on_invalid_header() {
+        let hdr = Bbheader {
+            matype: Matype {
+                ts_gs: TsGs::Ts,
+                sis: true,
+                ccm: true,
+                issyi: false,
+                npd: false,
+                ext: 0,
+                isi: 0x00,
+            },
+            upl: 0,
+            sync: 0,
+            dfl: DFL_MAX_BITS + 1,
+            syncd: 0,
+            mode: Mode::Normal,
+            issy_in_header: None,
+        };
+        assert!(matches!(
+            hdr.serialize(),
+            Err(Error::DflOutOfRange { .. })
+        ));
     }
 
     #[test]

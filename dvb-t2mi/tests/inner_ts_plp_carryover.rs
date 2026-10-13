@@ -141,25 +141,25 @@ fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
     // Table 2, SYNCD is only meaningful relative to a stream's OWN prior
     // partial — that is exactly what per-PLP state must preserve).
     let bb_a1 = {
-        let mut f = nm_header(SPLIT, 0).serialize().to_vec();
+        let mut f = nm_header(SPLIT, 0).serialize().unwrap().to_vec();
         f.extend_from_slice(&chunk_a[..SPLIT]);
         f
     };
     let bb_a2 = {
         let mut f = nm_header(STRIDE - SPLIT, STRIDE - SPLIT)
-            .serialize()
+            .serialize().unwrap()
             .to_vec();
         f.extend_from_slice(&chunk_a[SPLIT..]);
         f
     };
     let bb_b1 = {
-        let mut f = nm_header(SPLIT, 0).serialize().to_vec();
+        let mut f = nm_header(SPLIT, 0).serialize().unwrap().to_vec();
         f.extend_from_slice(&chunk_b[..SPLIT]);
         f
     };
     let bb_b2 = {
         let mut f = nm_header(STRIDE - SPLIT, STRIDE - SPLIT)
-            .serialize()
+            .serialize().unwrap()
             .to_vec();
         f.extend_from_slice(&chunk_b[SPLIT..]);
         f
