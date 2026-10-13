@@ -104,6 +104,9 @@ serde_json        = { workspace = true }
 thiserror         = "2"
 url               = "2"
 percent-encoding  = "2"
+# OS CSPRNG for ICE credentials, resource ids and SSRCs (issue #1142); 0.2 is
+# already in the workspace lock.
+getrandom         = "0.2"
 # Dates and durations (DASH `availabilityStartTime`, `@duration`,
 # `EXT-X-PROGRAM-DATE-TIME`, DASH-pull `parse_iso8601_utc`) via `jiff` rather
 # than the hand-rolled `civil_from_days` / manual ISO-8601 parsing this crate

@@ -118,9 +118,8 @@ impl Drop for SessionSlot<'_> {
 
 /// Length of a session resource id (the last path segment of the `Location`
 /// the `201` returns). RFC 9725 §8 asks for unguessable session URLs; this is
-/// 32 characters of a 62-symbol alphabet (~190 bits) drawn from OS-seeded
-/// `RandomState` SipHash output, the same source `rand_token` uses for ICE
-/// credentials.
+/// 32 characters of a 62-symbol alphabet (~190 bits) drawn from the OS CSPRNG
+/// (`crate::secure_random`), the same source ICE credentials use.
 const RESOURCE_ID_LEN: usize = 32;
 
 /// Ceiling on remote candidates queued for the media task between two of its
@@ -138,13 +137,7 @@ pub(crate) const ETAG_TOKEN_LEN: usize = 16;
 
 /// A fresh unguessable resource id for a WHIP/WHEP session URL.
 pub(crate) fn new_resource_id() -> String {
-    use std::collections::hash_map::RandomState;
-    use std::hash::BuildHasher;
-    const CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
-    let state = RandomState::new();
-    (0..RESOURCE_ID_LEN)
-        .map(|i| CHARS[(state.hash_one(i) as usize) % CHARS.len()] as char)
-        .collect()
+    crate::secure_random::token(RESOURCE_ID_LEN)
 }
 
 /// The channel from the HTTP resource handlers (`PATCH`/`DELETE`) to the one

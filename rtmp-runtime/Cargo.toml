@@ -20,6 +20,8 @@ rustdoc-args = ["--cfg", "docsrs"]
 broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 thiserror = "2"
 log       = "0.4"
+# Constant-time stream-key comparison (issue #1142).
+subtle    = { version = "2", default-features = false }
 serde     = { version = "1", optional = true, features = ["derive"] }
 
 # `tokio` adapter (real sockets) — feature-gated; the sans-IO core needs none of it.

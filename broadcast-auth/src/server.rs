@@ -165,6 +165,21 @@ enum VerifierScheme {
     },
 }
 
+/// Wipe the configured password/token on drop (issue #1142). The signed-URL
+/// keys and the Digest nonce secret wipe themselves.
+impl Drop for VerifierScheme {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        match self {
+            VerifierScheme::Basic { password, .. } | VerifierScheme::Digest { password, .. } => {
+                password.zeroize();
+            }
+            VerifierScheme::Bearer { token } => token.zeroize(),
+            VerifierScheme::Forwarded { .. } | VerifierScheme::SignedUrl { .. } => {}
+        }
+    }
+}
+
 /// Challenges + verifies incoming requests against one configured
 /// [`Credentials`] (RFC 7235 origin-side auth) — see the module docs.
 pub struct Verifier {
@@ -211,6 +226,13 @@ const NC_HEX_LEN: usize = 8;
 struct DigestNonces {
     secret: [u8; NONCE_SECRET_LEN],
     seen: Mutex<NcTable>,
+}
+
+impl Drop for DigestNonces {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        self.secret.zeroize();
+    }
 }
 
 /// SHA-256 of `nonce ‖ cnonce` (the nonce has a fixed length, so this is
@@ -436,19 +458,25 @@ impl Verifier {
         // Stored in the form it is rendered in, so the realm a client echoes
         // back (and hashes into HA1) is the realm the server compares.
         let realm = sanitize_realm(&realm.into());
-        let scheme = match credentials {
+        // `Credentials` wipes its secrets on drop, so the secrets are moved
+        // out with `mem::take` (leaving empty strings behind) rather than by
+        // destructuring.
+        let mut credentials = credentials;
+        let scheme = match &mut credentials {
             Credentials::Basic { username, password } => VerifierScheme::Basic {
-                username,
-                password,
+                username: core::mem::take(username),
+                password: core::mem::take(password),
                 realm,
             },
             Credentials::Digest { username, password } => VerifierScheme::Digest {
-                username,
-                password,
+                username: core::mem::take(username),
+                password: core::mem::take(password),
                 realm,
                 nonces: DigestNonces::new(),
             },
-            Credentials::Bearer { token } => VerifierScheme::Bearer { token },
+            Credentials::Bearer { token } => VerifierScheme::Bearer {
+                token: core::mem::take(token),
+            },
         };
         Verifier {
             scheme,

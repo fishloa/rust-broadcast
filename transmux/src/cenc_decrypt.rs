@@ -106,7 +106,7 @@ const KEY_LEN: usize = 16;
 ///
 /// The [`Decrypt::Keys`] material for [`CencDecryptor`]: each protected sample's
 /// KID (from `tenc.default_kid`) selects a 16-byte AES-128 content key.
-#[derive(Clone, Default, PartialEq, Eq)]
+#[derive(Clone, Default)]
 pub struct KeyMap {
     keys: BTreeMap<[u8; KEY_LEN], [u8; KEY_LEN]>,
 }
@@ -121,6 +121,36 @@ impl fmt::Debug for KeyMap {
         f.debug_struct("KeyMap")
             .field("kids", &self.keys.keys().collect::<Vec<_>>())
             .finish()
+    }
+}
+
+/// Constant-time in the key bytes (`subtle`): comparing two key maps must not
+/// leak how long a prefix of a content key matched. The KIDs (not secret) and
+/// the entry count are compared normally.
+impl PartialEq for KeyMap {
+    fn eq(&self, other: &Self) -> bool {
+        use subtle::ConstantTimeEq;
+        if self.keys.len() != other.keys.len() {
+            return false;
+        }
+        let mut all = subtle::Choice::from(1u8);
+        for ((kid_a, key_a), (kid_b, key_b)) in self.keys.iter().zip(other.keys.iter()) {
+            all &= kid_a.ct_eq(kid_b) & key_a.ct_eq(key_b);
+        }
+        bool::from(all)
+    }
+}
+
+impl Eq for KeyMap {}
+
+/// Wipe the content keys on drop (issue #1142) so they do not linger in freed
+/// memory.
+impl Drop for KeyMap {
+    fn drop(&mut self) {
+        use zeroize::Zeroize;
+        for key in self.keys.values_mut() {
+            key.zeroize();
+        }
     }
 }
 

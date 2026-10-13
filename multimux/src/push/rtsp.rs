@@ -177,7 +177,7 @@ impl PushTransport for RtspTransport {
             url: clean_url,
             control_url,
             seq: 0,
-            ssrc: rand_ssrc(),
+            ssrc: crate::secure_random::ssrc(),
             started: Instant::now(),
             ts_mux: transmux::StreamingTsMux::new(),
             teardown: None,
@@ -382,15 +382,6 @@ fn percent_decode(s: &str) -> Result<String, RtspPushError> {
         .decode_utf8()
         .map(|c| c.into_owned())
         .map_err(|e| RtspPushError::Connect(format!("invalid percent-encoded userinfo: {e}")))
-}
-
-/// A pseudo-random 32-bit SSRC — same `RandomState` technique as
-/// `crate::output::whep::rand_ssrc` (OS-random, no `rand` dependency).
-fn rand_ssrc() -> u32 {
-    use std::collections::hash_map::RandomState;
-    use std::hash::BuildHasher;
-    let state = RandomState::new();
-    (state.hash_one(Instant::now()) as u32) | 1
 }
 
 /// Builds the SDP for the push session: one `m=` line for the whole

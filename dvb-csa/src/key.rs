@@ -32,17 +32,14 @@ impl core::fmt::Debug for ControlWord {
     }
 }
 
-/// Constant-time: folds XOR over all 8 bytes rather than a derived
+/// Constant-time (`subtle::ConstantTimeEq`) over all 8 bytes rather than a derived
 /// `PartialEq`'s byte-at-a-time short-circuit, which would turn control-word
 /// comparison into a timing oracle (an early mismatch returns faster than a
 /// near-match).
 impl PartialEq for ControlWord {
     fn eq(&self, other: &Self) -> bool {
-        let mut diff = 0u8;
-        for i in 0..self.0.len() {
-            diff |= self.0[i] ^ other.0[i];
-        }
-        diff == 0
+        use subtle::ConstantTimeEq;
+        bool::from(self.0.as_slice().ct_eq(other.0.as_slice()))
     }
 }
 
