@@ -109,6 +109,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (which reports anything ever produced) instead of this driver's own
   pin-drain progress, so a segment still resident and pin-protected in the
   hot ring, simply not yet looked at by `drive`, was reported gone (issue #1056).
+  The segment stuck in flight behind a `Busy` sink was still reported
+  `Evicted` (its sequence is folded into the drain progress when polled); it
+  is now `Hot` until handed off (#1056).
 - Replaced 25+ `.expect("... poisoned")` call sites in `trunk.rs` (including
   one in a `Drop` impl) with a poison-recovering lock helper: a panic in one
   consumer while it held the trunk's state lock no longer poisons every

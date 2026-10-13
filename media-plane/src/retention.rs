@@ -410,6 +410,8 @@ impl<S: SegmentSink> RetentionDriver<S> {
     ///    [`SegmentLocation::Evicted`] — this driver's guarantee has lapsed,
     ///    so it cannot honestly claim `Hot` for anything it is no longer
     ///    protecting, whether or not the trunk happens to still hold it.
+    /// 2b. The segment currently in flight (offered, sink answered
+    ///    [`SinkOutcome::Busy`], held for retry) ⇒ [`SegmentLocation::Hot`].
     /// 3. Otherwise, if `sequence_number` is at or below
     ///    `drained_up_to` (this driver's own pin-drain progress) ⇒
     ///    [`SegmentLocation::Evicted`] — this driver has already decided
@@ -437,6 +439,16 @@ impl<S: SegmentSink> RetentionDriver<S> {
         }
         if self.terminated {
             return SegmentLocation::Evicted;
+        }
+        // The segment stuck in flight (sink `Busy`) is not yet handed off nor
+        // gapped: it is still held (and pinned) here, so it is `Hot`, not
+        // `Evicted` (issue #1056).
+        if self
+            .in_flight
+            .as_ref()
+            .is_some_and(|e| e.sequence_number == sequence_number)
+        {
+            return SegmentLocation::Hot;
         }
         match self.drained_up_to {
             Some(drained) if sequence_number <= drained => SegmentLocation::Evicted,
@@ -881,6 +893,35 @@ mod tests {
             driver.locate(1, Timestamp::from_nanos(0)),
             SegmentLocation::Cold
         );
+    }
+
+    /// Issue #1056: a segment the driver has polled but the sink answered
+    /// `Busy` for is still in flight (held and pinned), so `locate` must say
+    /// `Hot`; the ones queued behind it are `Hot` too. Reverting the
+    /// `in_flight` check in `locate` makes the first assertion report
+    /// `Evicted`.
+    #[test]
+    fn locate_is_hot_for_the_segment_stuck_in_flight_behind_a_busy_sink() {
+        let trunk = Trunk::new(TrunkConfig::new(nz(10), nz(10), nz(8), nz(8), nz(8)));
+        let writer = trunk.segment_writer().unwrap();
+        let retention = Retention::Tiered {
+            on_overrun: ArchiveOverrun::Gap,
+            cold_window: Duration::from_secs(10),
+        };
+        let mut driver = RetentionDriver::new(&trunk, retention, ScriptedSink::new(true))
+            .expect("Tiered must build a driver");
+        for seq in 1..=3u32 {
+            writer.publish_segment(segment_entry(seq)).unwrap();
+        }
+        driver.drive(Timestamp::from_nanos(0));
+        assert_eq!(driver.pending_len(), 1);
+        for seq in 1..=3u32 {
+            assert_eq!(
+                driver.locate(seq, Timestamp::from_nanos(0)),
+                SegmentLocation::Hot,
+                "segment {seq} is stuck/queued behind a Busy sink, not gone"
+            );
+        }
     }
 
     // --- 7. A segment gapped before hand-off is Evicted even when no -----
