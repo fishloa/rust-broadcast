@@ -214,7 +214,11 @@ impl<'a> Unpackage for Fmp4Demux<'a> {
                 // segment carrying several `moof`s before one `mdat` resolves
                 // them in order.
                 for (moof_off, moof) in pending_moofs.drain(..) {
-                    absorb_fragment(input, &mdats, moof_off, &moof, &mut builders)?;
+                    for _ in 0..absorb_fragment(input, &mdats, moof_off, &moof, &mut builders) {
+                        degraded.push(InputDegradation::MalformedUnit {
+                            position: moof_off as u64,
+                        });
+                    }
                 }
             }
             if consumed == 0 {
@@ -259,8 +263,28 @@ fn absorb_fragment(
     moof_off: usize,
     moof: &MovieFragmentBox,
     builders: &mut [TrackBuilder],
-) -> Result<()> {
+) -> usize {
+    // A `traf` whose `trun` addressing or timing is invalid is skipped whole
+    // and counted (audit T16, #1144); each `traf` is committed atomically so a
+    // failure leaves its track exactly as it was.
+    let mut bad = 0usize;
     for traf in &moof.traf {
+        if absorb_traf(file, mdats, moof_off, moof, traf, builders).is_err() {
+            bad += 1;
+        }
+    }
+    bad
+}
+
+fn absorb_traf(
+    file: &[u8],
+    mdats: &[crate::frag_offsets::MdatRange],
+    moof_off: usize,
+    moof: &MovieFragmentBox,
+    traf: &crate::movie_fragment::TrackFragmentBox,
+    builders: &mut [TrackBuilder],
+) -> Result<()> {
+    {
         let tfhd = &traf.tfhd;
         let Some(builder) = builders
             .iter_mut()
@@ -268,7 +292,7 @@ fn absorb_fragment(
         else {
             // A track present in a fragment but absent from the init movie:
             // skip it (well-formed CMAF declares every track in the init moov).
-            continue;
+            return Ok(());
         };
         // `tfdt` is authoritative for **every** fragment that carries one, not
         // just the first (ISO/IEC 14496-12:2015 §8.8.12: it *is* the absolute
@@ -287,19 +311,24 @@ fn absorb_fragment(
         //
         // `start_decode_time` still records the FIRST fragment's anchor: it is
         // the track's start time, not a running cursor.
+        // Resolve and validate everything first; the builder is only touched
+        // once the whole `traf` is known good.
+        let mut start_decode_time = builder.start_decode_time;
+        let mut next_dts = builder.next_dts;
         if let Some(tfdt) = &traf.tfdt {
             let base = tfdt.base_media_decode_time();
-            if builder.start_decode_time.is_none() {
-                builder.start_decode_time = Some(base);
+            if start_decode_time.is_none() {
+                start_decode_time = Some(base);
             }
-            builder.next_dts = crate::frag_offsets::tfdt_as_i64(base)?;
+            next_dts = crate::frag_offsets::tfdt_as_i64(base)?;
         }
+        let mut samples = Vec::new();
         for r in crate::frag_offsets::sample_ranges_in(file, mdats, moof_off, moof, tfhd.track_id)?
         {
             let is_sync = r.flags & SAMPLE_FLAG_IS_NON_SYNC == 0;
-            let dts = builder.next_dts;
+            let dts = next_dts;
             let pts = crate::frag_offsets::add_offset(dts, r.composition_offset)?;
-            builder.samples.push(Sample {
+            samples.push(Sample {
                 data: file[r.start..r.end].to_vec().into(),
                 dts: Some(dts),
                 pts: Some(pts),
@@ -310,8 +339,11 @@ fn absorb_fragment(
                 // timing (see `Sample::provenance`).
                 provenance: None,
             });
-            builder.next_dts = crate::frag_offsets::add_duration(dts, r.duration)?;
+            next_dts = crate::frag_offsets::add_duration(dts, r.duration)?;
         }
+        builder.start_decode_time = start_decode_time;
+        builder.next_dts = next_dts;
+        builder.samples.extend(samples);
     }
     Ok(())
 }

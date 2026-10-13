@@ -255,3 +255,50 @@ fn fmp4_corrupt_moof_in_the_middle_is_skipped_and_reported() {
         assert_eq!(d.samples[0].data, c.samples[0].data);
     }
 }
+
+#[test]
+fn fmp4_trun_pointing_outside_the_file_skips_that_traf_and_reports() {
+    use transmux::media::Fmp4Demux;
+    let clean_bytes = fixture("mp4/cmaf/av_frag.mp4");
+    let clean = Fmp4Demux::new().unpackage(&clean_bytes[..]).unwrap();
+
+    let mut moofs = Vec::new();
+    let mut off = 0usize;
+    while off + 8 <= clean_bytes.len() {
+        let size = u32::from_be_bytes(clean_bytes[off..off + 4].try_into().unwrap()) as usize;
+        if &clean_bytes[off + 4..off + 8] == b"moof" {
+            moofs.push((off, size));
+        }
+        off += size;
+    }
+    let (victim, size) = moofs[moofs.len() / 2];
+    // First trun in the victim moof: box header(8) + version/flags(4) +
+    // sample_count(4) + data_offset(4, flag 0x000001 set).
+    let rel = clean_bytes[victim..victim + size]
+        .windows(4)
+        .position(|w| w == b"trun")
+        .expect("trun");
+    let at = victim + rel;
+    assert_eq!(clean_bytes[at + 7] & 1, 1, "data_offset present");
+    let mut bytes = clean_bytes.clone();
+    bytes[at + 12..at + 16].copy_from_slice(&0x7fff_fff0u32.to_be_bytes());
+
+    let damaged = Fmp4Demux::new()
+        .unpackage(&bytes[..])
+        .expect("a bad trun must not fail the file");
+    assert_eq!(
+        damaged.degraded,
+        vec![InputDegradation::MalformedUnit {
+            position: victim as u64
+        }]
+    );
+    let count = |m: &Media| m.tracks.iter().map(|t| t.samples.len()).sum::<usize>();
+    assert!(count(&damaged) < count(&clean));
+    for (d, c) in damaged.tracks.iter().zip(&clean.tracks) {
+        assert_eq!(
+            d.samples.last().unwrap().data,
+            c.samples.last().unwrap().data
+        );
+        assert_eq!(d.samples[0].data, c.samples[0].data);
+    }
+}
