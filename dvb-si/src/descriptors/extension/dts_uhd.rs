@@ -255,6 +255,24 @@ mod tests {
         round_trip(&d);
     }
 
+    /// `DTS_reserved`(2) was already typed; pin that every value re-serializes
+    /// byte-identically.
+    #[test]
+    fn dts_uhd_reserved_preserved() {
+        for r in 0u8..=3 {
+            let sel = [0x06, 0x43 | (r << 3), 0xAB];
+            let bytes = wrap(0x21, &sel);
+            let d = ExtensionDescriptor::parse(&bytes).unwrap();
+            match &d.body {
+                ExtensionBody::DtsUhd(b) => assert_eq!(b.dts_reserved, r),
+                other => panic!("expected DtsUhd, got {other:?}"),
+            }
+            let mut buf = vec![0u8; d.serialized_len()];
+            d.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes, "r={r}");
+        }
+    }
+
     #[test]
     fn parse_dts_uhd_no_codec_selector() {
         let sel = [0x06, 0x43];

@@ -22,8 +22,12 @@ const HEADER_LEN: usize = 2;
 
 const FLAG_AAC_TYPE: u8 = 0x80;
 const FLAG_SAOC_DE: u8 = 0x40;
-/// reserved_zero_future_use(6) — the spec mandates these are zero.
+/// Width mask of `reserved_zero_future_use` (6 bits).
 const RESERVED_ZERO_MASK: u8 = 0x3F;
+/// Spec default of the 6-bit `reserved_zero_future_use` field: EN 300 468
+/// V1.16.1+ Table H.1 says 0 (V1.15.1 `reserved_future_use`, V1.11-V1.14
+/// `reserved`(7) = 1 with `SAOC_DE_flag` inside it; audit §4 row 1 carve-out).
+pub const RESERVED_ZERO_FUTURE_USE_DEFAULT: u8 = 0x00;
 
 /// Decoded AAC component_type — ETSI EN 300 468 Table 26 / Annex H.
 ///
@@ -102,14 +106,32 @@ impl AacComponentType {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 #[cfg_attr(feature = "yoke", derive(yoke::Yokeable))]
+#[non_exhaustive]
 pub struct AacExtension<'a> {
     /// SAOC_DE_flag — embedded SAOC-DE parametric data present (Table H.2).
     pub saoc_de_flag: bool,
+    /// `reserved_zero_future_use` (6 bits, right-aligned) after
+    /// `AAC_type_flag`/`SAOC_DE_flag`. Captured on parse and re-emitted verbatim;
+    /// [`AacExtension::new`] defaults to [`RESERVED_ZERO_FUTURE_USE_DEFAULT`].
+    pub reserved_zero_future_use: u8,
     /// AAC_type — component_type when stream_content is 0x06 (Table 26).
     /// `Some` iff AAC_type_flag was set.
     pub aac_type: Option<u8>,
     /// Trailing additional_info bytes.
     pub additional_info: &'a [u8],
+}
+
+impl<'a> AacExtension<'a> {
+    /// Build an extension block with the spec-default reserved bits.
+    #[must_use]
+    pub const fn new(saoc_de_flag: bool, aac_type: Option<u8>, additional_info: &'a [u8]) -> Self {
+        Self {
+            saoc_de_flag,
+            reserved_zero_future_use: RESERVED_ZERO_FUTURE_USE_DEFAULT,
+            aac_type,
+            additional_info,
+        }
+    }
 }
 
 impl AacExtension<'_> {
@@ -297,6 +319,7 @@ impl<'a> Parse<'a> for AacDescriptor<'a> {
             let additional_info = &body[pos..];
             Some(AacExtension {
                 saoc_de_flag,
+                reserved_zero_future_use: flags & RESERVED_ZERO_MASK,
                 aac_type,
                 additional_info,
             })
@@ -346,8 +369,8 @@ impl Serialize for AacDescriptor<'_> {
             if ext.saoc_de_flag {
                 flags |= FLAG_SAOC_DE;
             }
-            // reserved_zero_future_use(6) emitted as zeros per spec.
-            buf[pos] = flags & !RESERVED_ZERO_MASK;
+            // reserved_zero_future_use(6): preserved from parse, 0 when constructed.
+            buf[pos] = flags | (ext.reserved_zero_future_use & RESERVED_ZERO_MASK);
             pos += 1;
             if let Some(t) = ext.aac_type {
                 buf[pos] = t;
@@ -410,11 +433,7 @@ mod tests {
     fn decode_aac_component_type_he_aac_stereo() {
         let d = AacDescriptor {
             profile_and_level: 0x50,
-            extension: Some(AacExtension {
-                saoc_de_flag: false,
-                aac_type: Some(0x03),
-                additional_info: &[],
-            }),
+            extension: Some(AacExtension::new(false, Some(0x03), &[])),
         };
         let ct = d.extension.unwrap().decoded_component_type().unwrap();
         assert!(!ct.mono);
@@ -427,11 +446,7 @@ mod tests {
     fn decode_aac_component_type_saoc_de() {
         let d = AacDescriptor {
             profile_and_level: 0x50,
-            extension: Some(AacExtension {
-                saoc_de_flag: true,
-                aac_type: Some(0xA0),
-                additional_info: &[],
-            }),
+            extension: Some(AacExtension::new(true, Some(0xA0), &[])),
         };
         let ct = d.extension.unwrap().decoded_component_type().unwrap();
         assert!(ct.saoc_de);
@@ -442,11 +457,7 @@ mod tests {
     fn decode_aac_component_type_unknown() {
         let d = AacDescriptor {
             profile_and_level: 0x50,
-            extension: Some(AacExtension {
-                saoc_de_flag: false,
-                aac_type: Some(0xFF),
-                additional_info: &[],
-            }),
+            extension: Some(AacExtension::new(false, Some(0xFF), &[])),
         };
         assert!(d.extension.unwrap().decoded_component_type().is_none());
     }
@@ -495,26 +506,45 @@ mod tests {
     fn serialize_round_trip_full() {
         let d = AacDescriptor {
             profile_and_level: 0x52,
-            extension: Some(AacExtension {
-                saoc_de_flag: true,
-                aac_type: Some(0x40),
-                additional_info: &[0xFE, 0xED],
-            }),
+            extension: Some(AacExtension::new(true, Some(0x40), &[0xFE, 0xED])),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
         assert_eq!(AacDescriptor::parse(&buf).unwrap(), d);
     }
 
+    /// Every `reserved_zero_future_use` value (a pre-1.16 sender may write all
+    /// ones) re-serializes byte-identically.
+    #[test]
+    fn aac_reserved_preserved() {
+        for r in 0u8..=RESERVED_ZERO_MASK {
+            for flags in [0u8, FLAG_SAOC_DE] {
+                let bytes = [TAG, 3, 0x50, flags | r, 0xEE];
+                let d = AacDescriptor::parse(&bytes).unwrap();
+                assert_eq!(d.extension.as_ref().unwrap().reserved_zero_future_use, r);
+                let mut buf = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut buf).unwrap();
+                assert_eq!(buf, bytes, "r={r:#x} flags={flags:#x}");
+            }
+        }
+    }
+
+    #[test]
+    fn aac_default_is_spec_value() {
+        let d = AacDescriptor {
+            profile_and_level: 0x50,
+            extension: Some(AacExtension::new(true, Some(0x03), &[])),
+        };
+        let mut buf = vec![0u8; d.serialized_len()];
+        d.serialize_into(&mut buf).unwrap();
+        assert_eq!(buf, [TAG, 3, 0x50, FLAG_AAC_TYPE | FLAG_SAOC_DE, 0x03]);
+    }
+
     #[test]
     fn serialize_emits_reserved_bits_zero() {
         let d = AacDescriptor {
             profile_and_level: 0x50,
-            extension: Some(AacExtension {
-                saoc_de_flag: false,
-                aac_type: None,
-                additional_info: &[],
-            }),
+            extension: Some(AacExtension::new(false, None, &[])),
         };
         let mut buf = vec![0u8; d.serialized_len()];
         d.serialize_into(&mut buf).unwrap();
@@ -530,11 +560,7 @@ mod tests {
         // assert the Serialize impl is wired and emits stable JSON.
         let d = AacDescriptor {
             profile_and_level: 0x52,
-            extension: Some(AacExtension {
-                saoc_de_flag: true,
-                aac_type: Some(0x03),
-                additional_info: &[0x11],
-            }),
+            extension: Some(AacExtension::new(true, Some(0x03), &[0x11])),
         };
         let j = serde_json::to_string(&d).unwrap();
         // Valid, re-parseable JSON (key order is map-defined, so we do not

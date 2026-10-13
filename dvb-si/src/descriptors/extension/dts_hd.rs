@@ -613,6 +613,35 @@ mod tests {
         round_trip(&d);
     }
 
+    /// All three reserved_future_use regions (3-bit flags byte, 2-bit
+    /// substream byte, 2-bit asset byte) were already typed (`reserved`); pin
+    /// that every value re-serializes byte-identically.
+    #[test]
+    fn dts_hd_reserved_preserved() {
+        for r3 in 0u8..=7 {
+            for r2 in 0u8..=3 {
+                let sel = [
+                    0x80 | r3, // core present
+                    0x09,
+                    0x06,
+                    0xE4 | r2, // lfe=1, sf=12, sample_res=1, rsv=r2
+                    0x09,
+                    0x8B,
+                    0xFC | r2, // asset: br low bits kept, rsv=r2
+                    0x42,
+                    b'e',
+                    b'n',
+                    b'g',
+                ];
+                let bytes = wrap(0x0E, &sel);
+                let d = ExtensionDescriptor::parse(&bytes).unwrap();
+                let mut buf = vec![0u8; d.serialized_len()];
+                d.serialize_into(&mut buf).unwrap();
+                assert_eq!(buf, bytes, "r3={r3} r2={r2}");
+            }
+        }
+    }
+
     #[test]
     fn serialize_rejects_more_than_eight_assets() {
         // num_assets is 3 bits encoding count-1; 9 assets used to silently
