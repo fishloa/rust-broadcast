@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+### Fixed
+- An RTSP interleaved frame whose RTP payload does not parse no longer ends the ingest session (audit T16, #1144): it is skipped, logged and counted (`RtspIngestSession::malformed_media_frames`), and the frames after it are still depayloaded. Events decoded before a terminal RTSP protocol error are now handled before the error is raised (rtsp-runtime `HandleOutcome`).
+
+### Changed
+- Adapted to rtsp-runtime's breaking `ClientSession::handle_data` return type (`HandleOutcome`); caret epoch of `rtsp-runtime` moves 0.7 -> 0.8.
+
 ## [0.12.0] - 2026-10-13
 ### Fixed
 - SRT and RTSP push now deliver one continuous MPEG-2 TS (#1024, audit r07-C1). The default `PushTransport::encode_media` ran a fresh one-shot `TsMux::package` per sample, so the receiver saw PAT/PMT before every frame, continuity counters restarting at 0 and the same PTS/PCR on every frame. `SrtTransport`/`RtspTransport` now own a per-connection `transmux::StreamingTsMux` (new hook `PushTransport::ts_mux`, default `None` = the old stateless path, so out-of-tree transports are unaffected): continuity counters, PCR and one shared DTS/PTS origin continue across samples, and PAT/PMT repeat on a media-time interval. `PushTransportEgress` also hands the muxer the full carried track set with every sample (a one-track `Media` per sample mapped every track onto the first ES PID and flipped the PMT).
