@@ -671,14 +671,14 @@ mod tests {
     fn serde_serialize_is_stable_owned_body() {
         let typed = ExtensionDescriptor {
             tag_extension: 0x0D,
-            body: ExtensionBody::C2DeliverySystem(C2DeliverySystem {
-                plp_id: 1,
-                data_slice_id: 2,
-                c2_system_tuning_frequency: 0xDEAD_BEEF,
-                c2_system_tuning_frequency_type: C2TuningFrequencyType::C2SystemCentreFrequency,
-                active_ofdm_symbol_duration: ActiveOfdmSymbolDuration::Reserved(2),
-                guard_interval: C2GuardInterval::Reserved(3),
-            }),
+            body: ExtensionBody::C2DeliverySystem(C2DeliverySystem::new(
+                1,
+                2,
+                0xDEAD_BEEF,
+                C2TuningFrequencyType::C2SystemCentreFrequency,
+                ActiveOfdmSymbolDuration::Reserved(2),
+                C2GuardInterval::Reserved(3),
+            )),
         };
         let json = serde_json::to_string(&typed).unwrap();
         assert_eq!(json, serde_json::to_string(&typed.clone()).unwrap());
