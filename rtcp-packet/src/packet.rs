@@ -326,8 +326,21 @@ impl ReportBlock {
     }
 
     /// Encode a signed `cumulative_lost` back to its 24-bit field.
-    fn encode_cumulative_lost(&self) -> u32 {
-        (self.cumulative_lost as u32) & 0x00FF_FFFF
+    ///
+    /// The field is a 24-bit two's-complement value (`-0x80_0000..=0x7F_FFFF`);
+    /// anything outside that range is an error rather than silently wrapped
+    /// into a different loss count (#1129).
+    fn encode_cumulative_lost(&self) -> Result<u32> {
+        const MIN: i32 = -0x80_0000;
+        const MAX: i32 = 0x7F_FFFF;
+        if !(MIN..=MAX).contains(&self.cumulative_lost) {
+            return Err(Error::InvalidValue {
+                field: "cumulative_lost",
+                value: i64::from(self.cumulative_lost) as u64,
+                reason: "outside the 24-bit signed range -8388608..=8388607",
+            });
+        }
+        Ok((self.cumulative_lost as u32) & 0x00FF_FFFF)
     }
 }
 
@@ -373,7 +386,7 @@ impl Serialize for ReportBlock {
         }
         buf[0..4].copy_from_slice(&self.ssrc.to_be_bytes());
         buf[4] = self.fraction_lost;
-        let cum = self.encode_cumulative_lost().to_be_bytes();
+        let cum = self.encode_cumulative_lost()?.to_be_bytes();
         buf[5..8].copy_from_slice(&cum[1..4]);
         buf[8..12].copy_from_slice(&self.ext_highest_seq.to_be_bytes());
         buf[12..16].copy_from_slice(&self.jitter.to_be_bytes());
@@ -1543,6 +1556,19 @@ mod tests {
         let parsed = ReportBlock::parse(&bytes).unwrap();
         assert_eq!(parsed, b);
         assert_eq!(parsed.to_bytes(), bytes);
+    }
+
+    /// #1129: an out-of-range `cumulative_lost` is rejected, not wrapped.
+    #[test]
+    fn report_block_cumulative_lost_out_of_range_rejected() {
+        for v in [0x80_0000_i32, -0x80_0001, i32::MAX, i32::MIN] {
+            let b = sample_block(1, 0, v);
+            let mut buf = [0u8; REPORT_BLOCK_LEN];
+            assert!(
+                matches!(b.serialize_into(&mut buf), Err(Error::InvalidValue { .. })),
+                "cumulative_lost {v}"
+            );
+        }
     }
 
     #[test]

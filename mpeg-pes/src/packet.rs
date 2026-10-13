@@ -550,8 +550,14 @@ impl<'a> PesExtension<'a> {
         }
         if let Some(ps) = self.p_std_buffer {
             // '01' | scale(1) | size(13)
-            buf[cursor] = 0x40 | ((ps.scale as u8) << 5) | ((ps.size >> 8) as u8 & 0x1F);
-            buf[cursor + 1] = (ps.size & 0xFF) as u8;
+            // size is 13 bits: reject, never mask, an over-range value (#1129).
+            let size = broadcast_common::len::fit_bits(
+                u64::from(ps.size),
+                13,
+                "PES_extension.P-STD_buffer_size",
+            )? as u16;
+            buf[cursor] = 0x40 | ((ps.scale as u8) << 5) | ((size >> 8) as u8 & 0x1F);
+            buf[cursor + 1] = (size & 0xFF) as u8;
             cursor += 2;
         }
         if let Some(ef) = &self.pes_extension_field {
@@ -1507,6 +1513,27 @@ mod tests {
             ext.serialize_into(&mut buf).unwrap_err(),
             Error::FieldOverflow(_)
         ));
+    }
+
+    /// #1129: a P-STD buffer size over 13 bits is an error, not masked.
+    #[test]
+    fn p_std_buffer_size_over_13_bits_rejected_not_masked() {
+        let mut ext = PesExtension::new();
+        ext.p_std_buffer = Some(PStdBuffer {
+            scale: false,
+            size: 0x2000,
+        });
+        let mut buf = vec![0u8; ext.serialized_len()];
+        assert!(matches!(
+            ext.serialize_into(&mut buf).unwrap_err(),
+            Error::FieldOverflow(_)
+        ));
+        ext.p_std_buffer = Some(PStdBuffer {
+            scale: true,
+            size: 0x1FFF,
+        });
+        let mut buf = vec![0u8; ext.serialized_len()];
+        assert!(ext.serialize_into(&mut buf).is_ok());
     }
 
     /// PesExtension with private data (16 bytes).

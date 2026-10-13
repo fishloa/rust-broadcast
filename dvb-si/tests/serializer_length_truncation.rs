@@ -67,7 +67,7 @@ fn test_module_start(body: &str) -> Option<usize> {
 #[test]
 fn no_unchecked_len_narrowing_in_descriptor_serializers() {
     let mut files = Vec::new();
-    for dir in ["src/descriptors", "src/tables", "src/carousel"] {
+    for dir in ["src"] {
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join(dir);
         let before = files.len();
         read_rs(&root, &mut files);

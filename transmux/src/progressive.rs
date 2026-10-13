@@ -188,12 +188,15 @@ fn build_stbl_children(
     samples_per_chunk: &[u32],
     use_co64: bool,
 ) -> Result<Vec<StblChild>> {
-    let stsz_entries: Vec<u32> = samples.iter().map(|s| s.data.len() as u32).collect();
+    let stsz_entries: Vec<u32> = samples
+        .iter()
+        .map(|s| broadcast_common::len::fit_u32(s.data.len(), "stsz entry_size"))
+        .collect::<core::result::Result<_, _>>()?;
     let stsz = SampleSizeBox {
         version: 0,
         flags: 0,
         sample_size: 0,
-        sample_count: stsz_entries.len() as u32,
+        sample_count: broadcast_common::len::fit_u32(stsz_entries.len(), "stsz sample_count")?,
         entries: stsz_entries,
     };
     // `stsc` runs: one entry per distinct `samples_per_chunk`, keyed by the

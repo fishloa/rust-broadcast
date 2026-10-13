@@ -218,7 +218,10 @@ impl Serialize for ProducerReferenceTimeBox {
         buf[c..c + 8].copy_from_slice(&self.ntp_timestamp.to_be_bytes());
         c += 8;
         if self.version == 0 {
-            buf[c..c + 4].copy_from_slice(&(self.media_time as u32).to_be_bytes());
+            buf[c..c + 4].copy_from_slice(
+                &(broadcast_common::len::fit_bits(self.media_time, 32, "prft media_time")? as u32)
+                    .to_be_bytes(),
+            );
             c += 4;
         } else {
             buf[c..c + 8].copy_from_slice(&self.media_time.to_be_bytes());
