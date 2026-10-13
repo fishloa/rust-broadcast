@@ -1844,7 +1844,10 @@ fn buffer_error_is_latched_per_overflow_episode() {
 
     let section = build_large_pat_section();
     let packets = packetise_section(PID_PAT, &section);
-    assert!(packets.len() >= 5, "precondition: enough packets to overflow repeatedly");
+    assert!(
+        packets.len() >= 5,
+        "precondition: enough packets to overflow repeatedly"
+    );
     let events = feed_all(&mut monitor, &packets, ms(1), ms(1));
     let n = events
         .iter()
@@ -1858,7 +1861,12 @@ fn buffer_error_is_latched_per_overflow_episode() {
         .iter()
         .filter(|e| e.indicator == Indicator::BufferError)
         .count();
-    assert_eq!(n2, 1, "a new episode after a drain is reported once; got {n2}; {:?}", events2.iter().map(|e| e.indicator).collect::<Vec<_>>());
+    assert_eq!(
+        n2,
+        1,
+        "a new episode after a drain is reported once; got {n2}; {:?}",
+        events2.iter().map(|e| e.indicator).collect::<Vec<_>>()
+    );
 }
 
 #[test]

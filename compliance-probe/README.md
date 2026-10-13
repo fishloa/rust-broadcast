@@ -63,18 +63,19 @@ result*, not bookkeeping.
 `tests/wasm_analyzer_equivalence.rs` pins a measured instance of this against
 the `demo/` WASM analyzer over the same fixture. Both tools use the identical
 default `dvb_conformance::Config` — there is no threshold difference — yet
-they report 911 vs. 876 events on `fixtures/ts/m6-single.ts`. The reason:
+they report 877 vs. 876 events on `fixtures/ts/m6-single.ts`. The reason:
 that analyzer anchors its clock on observed PCR values with a `+1 ns`
 per-packet fallback, and **the fixture contains no PCR at all**, so it models
 1264 packets as spanning 1.264 µs (~1.5 Tbit/s). At that implied rate TBsys
-cannot drain, so indicator 3.3 `Buffer_error` fires 35 times; at any realistic
-bitrate it fires zero times. That accounts for the entire gap:
+cannot drain, so indicator 3.3 `Buffer_error` fires once (latched per overflow
+episode); at a realistic bitrate it fires zero times. That accounts for the
+entire gap:
 
-| Indicator | Degenerate clock (analyzer) | Realistic clock (40 µs/pkt) |
+| Indicator | Degenerate clock (analyzer) | Realistic clock (100 µs/pkt) |
 |---|---|---|
 | `Continuity_count_error` | 876 | 876 |
-| `Buffer_error` (T-STD 3.3) | 35 | 0 |
-| **Total** | **911** | **876** |
+| `Buffer_error` (T-STD 3.3) | 1 | 0 |
+| **Total** | **877** | **876** |
 
 So: **feed real arrival time** (`Probe::drain_byte_tap` does, using the
 `ByteTap`'s recorded `Timestamp`), and treat

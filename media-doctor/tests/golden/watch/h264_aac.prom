@@ -15,7 +15,7 @@ media_doctor_dropped_bytes_total 0
 media_doctor_conformance_in_sync 1
 # HELP media_doctor_conformance_events_total ETSI TR 101 290 indicator events observed, by indicator and priority tier.
 # TYPE media_doctor_conformance_events_total counter
-media_doctor_conformance_events_total{indicator="Buffer_error",priority="third priority"} 53
+media_doctor_conformance_events_total{indicator="Buffer_error",priority="third priority"} 1
 media_doctor_conformance_events_total{indicator="SI_min_gap_error",priority="third priority"} 4
 # clauses: Buffer_error=TR 101 290 v1.4.1 Table 5.0c indicator 3.3, SI_min_gap_error=TR 101 290 v1.4.1 Table 5.0c (25 ms minimum-gap dimension of 3.1.a / 3.2 / 3.5.a / 3.6.a / 3.7 / 3.8)
 # HELP media_doctor_scte35_events_total Total SCTE-35 splice_insert events observed (ANSI/SCTE 35 section 9.7.3.1), excluding cancelled events.

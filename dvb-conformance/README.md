@@ -69,7 +69,7 @@ max intervals, PCR repetition and discontinuity limits, SI repetition intervals,
 | Priority | Clause | Indicator | Notes |
 |----------|--------|-----------|-------|
 | 2 | 2.4 | `PcrAccuracyError` | **Not implemented** — requires hardware arrival timing with ±500 ns resolution (ISO/IEC 13818-1 §2.4.2.2); the variant exists for documentation completeness only; never emitted |
-| 3 | 3.3 | `BufferError` | TBsys overflow (512-byte buffer, 1 Mbit/s drain); TBn overflow deferred (needs coded bitrate Rxn from descriptors) |
+| 3 | 3.3 | `BufferError` | TBsys overflow (512-byte buffer, 1 Mbit/s drain, fed per packet by PSI only, latched per episode); TBn overflow deferred (needs coded bitrate Rxn from descriptors) |
 | 3 | 3.9 | `EmptyBufferError` | TBn/TBsys empty at least once per second; MBn check deferred (needs leak-method parameters from descriptors) |
 | 3 | 3.10 | `DataDelayError` | Data delay through T-STD transport buffers > 1 s; still-picture 60 s threshold NOT implemented — requires PMT stream_type detection from descriptors |
 

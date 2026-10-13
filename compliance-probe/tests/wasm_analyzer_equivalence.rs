@@ -4,7 +4,7 @@
 //! # Why this test exists
 //!
 //! Two independent tools in this repository run ETSI TR 101 290 over the same
-//! fixture and report **different total event counts** — 876 here, 921 there.
+//! fixture and report **different total event counts** — 876 here, 877 there (921 before the #1035 Buffer_error latch).
 //! That is exactly the shape of an under-reporting defect in a compliance
 //! probe (a probe that silently misses 45 events is indistinguishable from a
 //! clean stream), so the difference is pinned here as an executable fact
@@ -33,7 +33,7 @@
 //!
 //! At that implied rate the T-STD system transport buffer TBsys (512 bytes,
 //! draining at 1 Mbit/s per ISO/IEC 13818-1 §2.4.2.4) cannot possibly keep
-//! up, so it overflows — and *every one* of the 45 extra events is
+//! up, so it overflows — and the one extra event is
 //! `Buffer_error` (TR 101 290 Table 5.0c indicator 3.3). Nothing else
 //! differs.
 //!
@@ -163,7 +163,7 @@ fn fixture_carries_no_pcr_so_the_analyzer_clock_degenerates() {
     );
 }
 
-/// Reproduce the WASM analyzer's reading **exactly**: 921 total, and the
+/// Reproduce the WASM analyzer's reading **exactly**: 877 total, and the
 /// per-indicator split showing where every one of those events comes from.
 #[test]
 fn reproduces_the_wasm_analyzer_reading_exactly() {
@@ -171,11 +171,11 @@ fn reproduces_the_wasm_analyzer_reading_exactly() {
 
     assert_eq!(
         total(&acc),
-        921,
+        877,
         "must reproduce the demo WASM analyzer's total exactly; got {acc:?}"
     );
     assert_eq!(acc.get("Continuity_count_error").copied(), Some(876));
-    assert_eq!(acc.get("Buffer_error").copied(), Some(45));
+    assert_eq!(acc.get("Buffer_error").copied(), Some(1));
     assert_eq!(
         acc.len(),
         2,
@@ -184,7 +184,7 @@ fn reproduces_the_wasm_analyzer_reading_exactly() {
 }
 
 /// Under a *physically plausible* arrival clock, the reading is 876 — and the
-/// entire 35-event difference is `Buffer_error`, nothing else. This is the
+/// entire 1-event difference is `Buffer_error`, nothing else. This is the
 /// assertion that would fail if this crate were genuinely under-reporting
 /// some other indicator.
 #[test]
@@ -215,7 +215,7 @@ fn under_a_real_arrival_clock_the_only_difference_is_the_tstd_buffer_indicator()
     }
     assert_eq!(
         diff,
-        vec![("Buffer_error", 45)],
+        vec![("Buffer_error", 1)],
         "the whole cross-tool gap must be the T-STD buffer indicator and \
          nothing else — any other entry here is a real indicator-logic \
          divergence, not a clock artefact"
@@ -242,8 +242,8 @@ fn continuity_count_is_identical_at_every_clock_rate() {
     }
 }
 
-/// The T-STD `Buffer_error` count is a monotone function of the assumed
-/// arrival rate, decaying to zero once TBsys can drain — documenting that
+/// The T-STD `Buffer_error` is raised only while TBsys overflows (latched per
+/// episode), and is absent once the assumed arrival rate lets TBsys drain — documenting that
 /// indicator 3.3 answers a question about *arrival timing*, so it is only as
 /// meaningful as the clock it is given.
 #[test]
@@ -254,8 +254,12 @@ fn tstd_buffer_error_decays_as_the_assumed_arrival_rate_becomes_realistic() {
     let multiplex = run_fixed_rate(&data, 40_000);
     let realistic = run_fixed_rate(&data, 100_000);
 
-    assert_eq!(frozen.get("Buffer_error").copied(), Some(45));
-    assert_eq!(slow.get("Buffer_error").copied(), Some(44));
-    assert_eq!(multiplex.get("Buffer_error").copied(), Some(42));
+    // Latched per overflow episode (#1035): at every rate where TBsys never
+    // drains empty between this SI-only extract's packets the whole capture is
+    // one overflow episode, so one event (it was 45/44/42 before the latch,
+    // one per overflowing packet).
+    assert_eq!(frozen.get("Buffer_error").copied(), Some(1));
+    assert_eq!(slow.get("Buffer_error").copied(), Some(1));
+    assert_eq!(multiplex.get("Buffer_error").copied(), Some(1));
     assert_eq!(realistic.get("Buffer_error").copied(), None);
 }
