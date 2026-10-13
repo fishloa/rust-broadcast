@@ -254,12 +254,6 @@ impl<'a> Binding<'a> {
         pos += BINDING_TYPE_FIELD;
         let written = self.ior.serialize_into(&mut buf[pos..])?;
         pos += written;
-        if self.object_info.len() > u16::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: self.object_info.len(),
-                available: u16::MAX as usize,
-            });
-        }
         buf[pos..pos + 2].copy_from_slice(
             &broadcast_common::len::fit_u16(self.object_info.len(), "self.object_info")?
                 .to_be_bytes(),
@@ -591,22 +585,13 @@ impl<'a> DirectoryMessage<'a> {
                 have: buf.len(),
             });
         }
-        if inner_len > u32::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: inner_len,
-                available: u32::MAX as usize,
-            });
-        }
-        write_biop_header(buf, inner_len as u32);
+        write_biop_header(
+            buf,
+            broadcast_common::len::fit_u32(inner_len, "messageSize")?,
+        );
         let mut pos = BIOP_HEADER_LEN;
 
         // objectKey
-        if self.object_key.len() > u8::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: self.object_key.len(),
-                available: u8::MAX as usize,
-            });
-        }
         buf[pos] = broadcast_common::len::fit_u8(self.object_key.len(), "self.object_key")?;
         pos += OBJECT_KEY_LEN_FIELD;
         buf[pos..pos + self.object_key.len()].copy_from_slice(self.object_key);
@@ -638,22 +623,11 @@ impl<'a> DirectoryMessage<'a> {
 
         // messageBody
         let body_len = self.body_len();
-        if body_len > u32::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: body_len,
-                available: u32::MAX as usize,
-            });
-        }
-        buf[pos..pos + 4].copy_from_slice(&(body_len as u32).to_be_bytes());
+        let body_len = broadcast_common::len::fit_u32(body_len, "messageBody_length")?;
+        buf[pos..pos + 4].copy_from_slice(&body_len.to_be_bytes());
         pos += MESSAGE_BODY_LEN_FIELD;
 
         // bindings_count
-        if self.bindings.len() > u16::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: self.bindings.len(),
-                available: u16::MAX as usize,
-            });
-        }
         buf[pos..pos + 2].copy_from_slice(
             &broadcast_common::len::fit_u16(self.bindings.len(), "self.bindings")?.to_be_bytes(),
         );
@@ -1096,12 +1070,6 @@ impl<'a> StreamMessage<'a> {
         let mut pos = BIOP_HEADER_LEN;
 
         // objectKey
-        if self.object_key.len() > u8::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: self.object_key.len(),
-                available: u8::MAX as usize,
-            });
-        }
         buf[pos] = broadcast_common::len::fit_u8(self.object_key.len(), "self.object_key")?;
         pos += OBJECT_KEY_LEN_FIELD;
         buf[pos..pos + self.object_key.len()].copy_from_slice(self.object_key);
@@ -1114,14 +1082,8 @@ impl<'a> StreamMessage<'a> {
         pos += OBJECT_KIND_DATA_LEN;
 
         // objectInfo_length
-        let oi_len = self.obj_info_len();
-        if oi_len > u16::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: oi_len,
-                available: u16::MAX as usize,
-            });
-        }
-        buf[pos..pos + 2].copy_from_slice(&(oi_len as u16).to_be_bytes());
+        let oi_len = broadcast_common::len::fit_u16(self.obj_info_len(), "objectInfo_length")?;
+        buf[pos..pos + 2].copy_from_slice(&oi_len.to_be_bytes());
         pos += OBJECT_INFO_LEN_FIELD;
 
         // Info_T
@@ -1382,12 +1344,6 @@ impl<'a> StreamEventMessage<'a> {
         let mut pos = BIOP_HEADER_LEN;
 
         // objectKey
-        if self.object_key.len() > u8::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: self.object_key.len(),
-                available: u8::MAX as usize,
-            });
-        }
         buf[pos] = broadcast_common::len::fit_u8(self.object_key.len(), "self.object_key")?;
         pos += OBJECT_KEY_LEN_FIELD;
         buf[pos..pos + self.object_key.len()].copy_from_slice(self.object_key);
@@ -1400,14 +1356,8 @@ impl<'a> StreamEventMessage<'a> {
         pos += OBJECT_KIND_DATA_LEN;
 
         // objectInfo_length
-        let oi_len = self.obj_info_len();
-        if oi_len > u16::MAX as usize {
-            return Err(Error::SectionLengthOverflow {
-                declared: oi_len,
-                available: u16::MAX as usize,
-            });
-        }
-        buf[pos..pos + 2].copy_from_slice(&(oi_len as u16).to_be_bytes());
+        let oi_len = broadcast_common::len::fit_u16(self.obj_info_len(), "objectInfo_length")?;
+        buf[pos..pos + 2].copy_from_slice(&oi_len.to_be_bytes());
         pos += OBJECT_INFO_LEN_FIELD;
 
         // Info_T
