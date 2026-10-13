@@ -22,6 +22,7 @@
 
 #![cfg(feature = "ts")]
 
+use mpeg_ts::pid::Pid;
 use std::fs;
 
 use broadcast_common::crc32_mpeg2;
@@ -92,7 +93,7 @@ fn t2mi_packet_for_plp(bbframe: &[u8], plp_id: u8) -> Vec<u8> {
 }
 
 /// Wrap T2-MI data in outer 188-byte TS packets on `pid`.
-fn outer_ts(pid: u16, data: &[u8]) -> Vec<[u8; TS_LEN]> {
+fn outer_ts(pid: Pid, data: &[u8]) -> Vec<[u8; TS_LEN]> {
     let mut out = Vec::new();
     let first_cap = TS_LEN - 5;
     let cont_cap = TS_LEN - 4;
@@ -102,8 +103,8 @@ fn outer_ts(pid: u16, data: &[u8]) -> Vec<[u8; TS_LEN]> {
         let mut pkt = [0xFFu8; TS_LEN];
         pkt[0] = 0x47;
         let cap = if first { first_cap } else { cont_cap };
-        pkt[1] = (if first { 0x40 } else { 0x00 }) | (((pid >> 8) as u8) & 0x1F);
-        pkt[2] = (pid & 0xFF) as u8;
+        pkt[1] = (if first { 0x40 } else { 0x00 }) | (((pid.value() >> 8) as u8) & 0x1F);
+        pkt[2] = (pid.value() & 0xFF) as u8;
         pkt[3] = 0x10;
         let hdr_len = if first {
             pkt[4] = 0x00;
@@ -173,9 +174,9 @@ fn two_plps_interleaved_across_a_split_up_both_recover_intact() {
     t2mi_stream.extend_from_slice(&t2mi_packet_for_plp(&bb_a2, 0));
     t2mi_stream.extend_from_slice(&t2mi_packet_for_plp(&bb_b2, 1));
 
-    let outer = outer_ts(pid, &t2mi_stream);
+    let outer = outer_ts(Pid::new(pid), &t2mi_stream);
 
-    let mut rec = InnerTsRecovery::new(pid); // no --plp filter: the buggy shared path
+    let mut rec = InnerTsRecovery::new(Pid::new(pid)); // no --plp filter: the buggy shared path
     let mut recovered: Vec<[u8; TS_LEN]> = Vec::new();
     for pkt in &outer {
         recovered.extend_from_slice(rec.feed(pkt));

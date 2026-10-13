@@ -34,6 +34,7 @@
 //! `dvb-si` dependency is introduced; the TS header reader is a private
 //! helper below.
 
+use mpeg_ts::pid::Pid;
 use alloc::vec::Vec;
 use bytes::Bytes;
 
@@ -63,7 +64,7 @@ const CC_MASK: u8 = 0x0F;
 
 /// Minimal result of TS header parsing needed by the pump.
 struct TsInfo {
-    pid: u16,
+    pid: Pid,
     pusi: bool,
     /// Transport Error Indicator — set by the demodulator when an
     /// uncorrectable error is present in the packet (W-T2-2).
@@ -119,7 +120,7 @@ fn parse_ts_header(buf: &[u8]) -> Option<TsInfo> {
     }
 
     Some(TsInfo {
-        pid,
+        pid: Pid::new(pid),
         pusi,
         tei,
         cc,
@@ -344,7 +345,7 @@ const RAW_HUNT_CAP: usize = 8202 * 4;
 
 enum PumpMode {
     /// TS-encapsulated: filter packets to this PID.
-    Ts { pid: u16 },
+    Ts { pid: Pid },
     /// Un-encapsulated raw byte stream.
     Raw,
 }
@@ -360,7 +361,7 @@ impl T2miPump {
     /// Valid MPEG-TS PIDs are 13-bit (0x0000–0x1FFF); this parameter is `u16`.
     /// No newtype is introduced to keep the API lightweight.
     #[must_use]
-    pub fn new(pid: u16) -> Self {
+    pub fn new(pid: Pid) -> Self {
         Self {
             mode: PumpMode::Ts { pid },
             reasm: PacketReassembler::new(),
@@ -807,7 +808,7 @@ mod tests {
     /// Sets PUSI=true and pointer_field=0 so the reassembler treats
     /// the T2-MI data as starting at byte 0 of the payload.
     /// The T2-MI bytes must fit in 183 bytes (188 − 4 header − 1 pointer).
-    fn ts_packet(pid: u16, t2mi_data: &[u8], pusi: bool, pointer_field: u8) -> [u8; 188] {
+    fn ts_packet(pid: Pid, t2mi_data: &[u8], pusi: bool, pointer_field: u8) -> [u8; 188] {
         ts_packet_cc(pid, t2mi_data, pusi, pointer_field, 0)
     }
 
@@ -815,7 +816,7 @@ mod tests {
     /// exercise the W-T2-2 duplicate-vs-distinct-packet distinction, which
     /// `ts_packet`'s fixed `cc = 0` cannot).
     fn ts_packet_cc(
-        pid: u16,
+        pid: Pid,
         t2mi_data: &[u8],
         pusi: bool,
         pointer_field: u8,
@@ -824,8 +825,8 @@ mod tests {
         let mut pkt = [0xFFu8; 188];
         pkt[0] = TS_SYNC_BYTE;
         pkt[1] = if pusi { PUSI_MASK } else { 0 };
-        pkt[1] |= ((pid >> 8) as u8) & PID_MASK_HI;
-        pkt[2] = (pid & 0xFF) as u8;
+        pkt[1] |= ((pid.value() >> 8) as u8) & PID_MASK_HI;
+        pkt[2] = (pid.value() & 0xFF) as u8;
         pkt[3] = PAYLOAD_FLAG | (cc & CC_MASK); // payload present, no adaptation field
         if pusi {
             pkt[4] = pointer_field;
@@ -855,8 +856,8 @@ mod tests {
         let bbframe_payload = [0x01u8, 0x02, 0x00];
         let t2mi = make_t2mi_packet(0x00, &bbframe_payload);
 
-        let pkt = ts_packet(0x0006, &t2mi, true, 0);
-        let mut pump = T2miPump::new(0x0006);
+        let pkt = ts_packet(Pid::new(0x0006), &t2mi, true, 0);
+        let mut pump = T2miPump::new(Pid::new(0x0006));
         let events: Vec<_> = pump.feed_ts(&pkt).collect();
 
         assert_eq!(events.len(), 1, "expected exactly one event");
@@ -884,8 +885,8 @@ mod tests {
         // Corrupt the last CRC byte.
         *t2mi.last_mut().unwrap() ^= 0xFF;
 
-        let pkt = ts_packet(0x0006, &t2mi, true, 0);
-        let mut pump = T2miPump::new(0x0006);
+        let pkt = ts_packet(Pid::new(0x0006), &t2mi, true, 0);
+        let mut pump = T2miPump::new(Pid::new(0x0006));
         let events: Vec<_> = pump.feed_ts(&pkt).collect();
 
         assert_eq!(events.len(), 0, "corrupted packet must not emit");
@@ -1060,7 +1061,7 @@ mod tests {
 
     #[test]
     fn garbage_ts_packet_counted_no_panic() {
-        let mut pump = T2miPump::new(0x0006);
+        let mut pump = T2miPump::new(Pid::new(0x0006));
         let garbage = [0x00u8; 188]; // bad sync byte
         let events: Vec<_> = pump.feed_ts(&garbage).collect();
         assert_eq!(events.len(), 0);
@@ -1074,9 +1075,9 @@ mod tests {
     fn wrong_pid_ts_packet_ignored() {
         let payload = [0x00u8, 0x00, 0x00];
         let t2mi = make_t2mi_packet(0x00, &payload);
-        let pkt = ts_packet(0x0100, &t2mi, true, 0); // PID 0x0100, pump listens on 0x0006
+        let pkt = ts_packet(Pid::new(0x0100), &t2mi, true, 0); // PID 0x0100, pump listens on 0x0006
 
-        let mut pump = T2miPump::new(0x0006);
+        let mut pump = T2miPump::new(Pid::new(0x0006));
         let events: Vec<_> = pump.feed_ts(&pkt).collect();
 
         assert_eq!(events.len(), 0, "wrong-PID packet must not emit");
@@ -1094,9 +1095,9 @@ mod tests {
     fn event_header_lazy_parse_matches_packet_type() {
         let payload = [0x00u8; 11]; // Timestamp payload
         let t2mi = make_t2mi_packet(0x20, &payload);
-        let pkt = ts_packet(0x0010, &t2mi, true, 0);
+        let pkt = ts_packet(Pid::new(0x0010), &t2mi, true, 0);
 
-        let mut pump = T2miPump::new(0x0010);
+        let mut pump = T2miPump::new(Pid::new(0x0010));
         let events: Vec<_> = pump.feed_ts(&pkt).collect();
         assert_eq!(events.len(), 1);
 
@@ -1114,10 +1115,10 @@ mod tests {
         // Distinct continuity_counter values: two genuinely different TS
         // packets, not the one legal repeat (W-T2-2) — see
         // `cc_duplicate_packet_is_skipped_not_double_counted` below for that.
-        let pkt0 = ts_packet_cc(0x0006, &t2mi, true, 0, 0);
-        let pkt1 = ts_packet_cc(0x0006, &t2mi, true, 0, 1);
+        let pkt0 = ts_packet_cc(Pid::new(0x0006), &t2mi, true, 0, 0);
+        let pkt1 = ts_packet_cc(Pid::new(0x0006), &t2mi, true, 0, 1);
 
-        let mut pump = T2miPump::new(0x0006);
+        let mut pump = T2miPump::new(Pid::new(0x0006));
         pump.feed_ts(&pkt0).for_each(drop);
         pump.feed_ts(&pkt1).for_each(drop);
 
@@ -1138,9 +1139,9 @@ mod tests {
     fn cc_duplicate_packet_is_skipped_not_double_counted() {
         let payload = [0x00u8, 0x00, 0x00];
         let t2mi = make_t2mi_packet(0x00, &payload);
-        let pkt = ts_packet_cc(0x0006, &t2mi, true, 0, 5);
+        let pkt = ts_packet_cc(Pid::new(0x0006), &t2mi, true, 0, 5);
 
-        let mut pump = T2miPump::new(0x0006);
+        let mut pump = T2miPump::new(Pid::new(0x0006));
         let first: Vec<_> = pump.feed_ts(&pkt).collect();
         let second: Vec<_> = pump.feed_ts(&pkt).collect(); // same CC: legal repeat
 
@@ -1193,9 +1194,9 @@ mod tests {
 
         let private_payload = [0x42u8, 0x02, 0x00];
         let t2mi = make_t2mi_packet(0x00, &private_payload);
-        let pkt = ts_packet(0x0006, &t2mi, true, 0);
+        let pkt = ts_packet(Pid::new(0x0006), &t2mi, true, 0);
 
-        let mut pump = T2miPump::new(0x0006);
+        let mut pump = T2miPump::new(Pid::new(0x0006));
         let events: Vec<_> = pump.feed_ts(&pkt).collect();
         assert_eq!(events.len(), 1, "expected one event");
 
@@ -1257,9 +1258,9 @@ mod tests {
 
         let private_body = [0xABu8];
         let t2mi = make_t2mi_packet(0x42, &private_body);
-        let pkt = ts_packet(0x0006, &t2mi, true, 0);
+        let pkt = ts_packet(Pid::new(0x0006), &t2mi, true, 0);
 
-        let mut pump = T2miPump::new(0x0006);
+        let mut pump = T2miPump::new(Pid::new(0x0006));
         let events: Vec<_> = pump.feed_ts(&pkt).collect();
         assert_eq!(events.len(), 1, "expected one event");
 

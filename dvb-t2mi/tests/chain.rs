@@ -29,6 +29,7 @@
 
 #![cfg(feature = "ts")]
 
+use mpeg_ts::pid::Pid;
 use broadcast_common::crc32_mpeg2;
 use dvb_si::demux::SiDemux;
 use dvb_si::tables::AnyTableSection;
@@ -61,15 +62,15 @@ fn build_pat_section() -> Vec<u8> {
 
 /// Wrap `section` in a 188-byte MPEG-TS packet on `pid` with PUSI set,
 /// pointer_field=0, 0xFF padding.
-fn inner_ts_packet(pid: u16, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
+fn inner_ts_packet(pid: Pid, section: &[u8]) -> [u8; TS_PACKET_SIZE] {
     assert!(
         section.len() <= TS_PACKET_SIZE - 5,
         "section too large to fit in one TS packet"
     );
     let mut pkt = [0xFFu8; TS_PACKET_SIZE];
     pkt[0] = TS_SYNC;
-    pkt[1] = PUSI_MASK | (((pid >> 8) as u8) & PID_HI_MASK);
-    pkt[2] = (pid & 0xFF) as u8;
+    pkt[1] = PUSI_MASK | (((pid.value() >> 8) as u8) & PID_HI_MASK);
+    pkt[2] = (pid.value() & 0xFF) as u8;
     pkt[3] = PAYLOAD_FLAG;
     pkt[4] = 0x00; // pointer_field
     pkt[5..5 + section.len()].copy_from_slice(section);
@@ -186,7 +187,7 @@ const MAX_T2MI_IN_CONT: usize = TS_PACKET_SIZE - 4;
 /// packet a second continuation packet (PUSI=0) carries the remainder.  The
 /// combined payload capacity (183 + 184 = 367 bytes) is sufficient for the
 /// synthetic chain fixture (≈211 bytes).
-fn outer_ts_packets(pid: u16, t2mi_data: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
+fn outer_ts_packets(pid: Pid, t2mi_data: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
     assert!(
         t2mi_data.len() <= MAX_T2MI_IN_PUSI + MAX_T2MI_IN_CONT,
         "T2-MI data too large ({} bytes) to fit in two outer TS packets",
@@ -200,8 +201,8 @@ fn outer_ts_packets(pid: u16, t2mi_data: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
         let chunk = &t2mi_data[..t2mi_data.len().min(MAX_T2MI_IN_PUSI)];
         let mut pkt = [0xFFu8; TS_PACKET_SIZE];
         pkt[0] = TS_SYNC;
-        pkt[1] = PUSI_MASK | (((pid >> 8) as u8) & PID_HI_MASK);
-        pkt[2] = (pid & 0xFF) as u8;
+        pkt[1] = PUSI_MASK | (((pid.value() >> 8) as u8) & PID_HI_MASK);
+        pkt[2] = (pid.value() & 0xFF) as u8;
         pkt[3] = PAYLOAD_FLAG;
         pkt[4] = 0x00; // pointer_field = 0: T2-MI packet starts immediately
         pkt[5..5 + chunk.len()].copy_from_slice(chunk);
@@ -213,8 +214,8 @@ fn outer_ts_packets(pid: u16, t2mi_data: &[u8]) -> Vec<[u8; TS_PACKET_SIZE]> {
         let remainder = &t2mi_data[MAX_T2MI_IN_PUSI..];
         let mut pkt = [0xFFu8; TS_PACKET_SIZE];
         pkt[0] = TS_SYNC;
-        pkt[1] = ((pid >> 8) as u8) & PID_HI_MASK; // PUSI=0
-        pkt[2] = (pid & 0xFF) as u8;
+        pkt[1] = ((pid.value() >> 8) as u8) & PID_HI_MASK; // PUSI=0
+        pkt[2] = (pid.value() & 0xFF) as u8;
         pkt[3] = PAYLOAD_FLAG;
         // No pointer_field for continuation packets.
         pkt[4..4 + remainder.len()].copy_from_slice(remainder);
@@ -234,7 +235,7 @@ fn chain_t2mi_bbframe_si_pat() {
     let pat_section = build_pat_section();
 
     // Layer 2: inner TS packet (PID 0x0000, PUSI)
-    let inner_ts = inner_ts_packet(0x0000, &pat_section);
+    let inner_ts = inner_ts_packet(Pid::new(0x0000), &pat_section);
 
     // Layer 3: NM BBFrame
     let bbframe = build_nm_bbframe(&inner_ts);
@@ -246,10 +247,10 @@ fn chain_t2mi_bbframe_si_pat() {
     // The fixture's T2-MI packet is ~211 bytes (6 header + 3 sub-hdr + 10 BBHEADER
     // + 188 data + 4 CRC) — larger than the 183-byte PUSI payload capacity of one
     // TS packet, so we emit two packets (PUSI + continuation).
-    let outer_ts_pkts = outer_ts_packets(0x0006, &t2mi_pkt);
+    let outer_ts_pkts = outer_ts_packets(Pid::new(0x0006), &t2mi_pkt);
 
     // ── Step A: T2miPump → T2miEvent ─────────────────────────────────────────
-    let mut pump = T2miPump::new(0x0006);
+    let mut pump = T2miPump::new(Pid::new(0x0006));
     let mut all_events: Vec<_> = Vec::new();
     for pkt in &outer_ts_pkts {
         all_events.extend(pump.feed_ts(pkt));
@@ -311,7 +312,7 @@ impl Lcg {
 /// Feed 10 000 × 188-byte seeded-LCG garbage into T2miPump::feed_ts — no panic.
 #[test]
 fn hostility_t2mi_garbage_feed_ts() {
-    let mut pump = T2miPump::new(0x0006);
+    let mut pump = T2miPump::new(Pid::new(0x0006));
     let mut lcg = Lcg::new(0xDEAD_BEEF_CAFE_BABEu64);
 
     for _ in 0..10_000u32 {
@@ -357,7 +358,7 @@ fn hostility_t2mi_garbage_feed_raw() {
 #[test]
 fn hostility_t2mi_truncation_feed_raw() {
     let pat_section = build_pat_section();
-    let inner_ts = inner_ts_packet(0x0000, &pat_section);
+    let inner_ts = inner_ts_packet(Pid::new(0x0000), &pat_section);
     let bbframe = build_nm_bbframe(&inner_ts);
     let t2mi_pkt = build_t2mi_packet(&bbframe);
 

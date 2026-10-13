@@ -1189,6 +1189,7 @@ dependencies = [
  "dvb-bbframe",
  "dvb-si",
  "erased-serde",
+ "mpeg-ts",
  "num_enum",
  "serde",
  "serde_json",

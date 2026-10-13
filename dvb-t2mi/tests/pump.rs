@@ -5,6 +5,7 @@
 
 #![cfg(feature = "ts")]
 
+use mpeg_ts::pid::Pid;
 use broadcast_common::crc32_mpeg2;
 use dvb_t2mi::payload::AnyPayload;
 use dvb_t2mi::pump::{Stats, T2miPump};
@@ -34,12 +35,12 @@ fn make_t2mi_packet(packet_type: u8, payload: &[u8]) -> Vec<u8> {
 }
 
 /// Wrap T2-MI bytes in a single 188-byte MPEG-TS packet.
-fn ts_packet(pid: u16, t2mi_data: &[u8], pusi: bool, pointer_field: u8) -> [u8; 188] {
+fn ts_packet(pid: Pid, t2mi_data: &[u8], pusi: bool, pointer_field: u8) -> [u8; 188] {
     let mut pkt = [0xFFu8; 188];
     pkt[0] = TS_SYNC;
     pkt[1] = if pusi { PUSI_MASK } else { 0 };
-    pkt[1] |= ((pid >> 8) as u8) & PID_HI_MASK;
-    pkt[2] = (pid & 0xFF) as u8;
+    pkt[1] |= ((pid.value() >> 8) as u8) & PID_HI_MASK;
+    pkt[2] = (pid.value() & 0xFF) as u8;
     pkt[3] = PAYLOAD_FLAG;
     if pusi {
         pkt[4] = pointer_field;
@@ -69,9 +70,9 @@ fn ts_valid_packet_emits_one_event_with_typed_payload() {
     // BbframePayload: frame_idx(1) + plp_id(1) + intl_frame_start+rfu(1) = 3 bytes.
     let bbframe_payload = [0x00u8, 0x05, 0x00]; // frame_idx=0, plp_id=5, no intl
     let t2mi = make_t2mi_packet(0x00, &bbframe_payload);
-    let pkt = ts_packet(0x0006, &t2mi, true, 0);
+    let pkt = ts_packet(Pid::new(0x0006), &t2mi, true, 0);
 
-    let mut pump = T2miPump::new(0x0006);
+    let mut pump = T2miPump::new(Pid::new(0x0006));
     let events: Vec<_> = pump.feed_ts(&pkt).collect();
 
     assert_eq!(events.len(), 1);
@@ -100,8 +101,8 @@ fn corrupted_crc_produces_no_event() {
     let mut t2mi = make_t2mi_packet(0x00, &payload);
     *t2mi.last_mut().unwrap() ^= 0xFF; // flip one CRC byte
 
-    let pkt = ts_packet(0x0006, &t2mi, true, 0);
-    let mut pump = T2miPump::new(0x0006);
+    let pkt = ts_packet(Pid::new(0x0006), &t2mi, true, 0);
+    let mut pump = T2miPump::new(Pid::new(0x0006));
     let events: Vec<_> = pump.feed_ts(&pkt).collect();
 
     assert_eq!(events.len(), 0, "corrupted packet must not emit");
@@ -143,7 +144,7 @@ fn feed_raw_packet_split_yields_one_event() {
 /// as malformed and does not panic.
 #[test]
 fn garbage_ts_packet_counted_no_panic() {
-    let mut pump = T2miPump::new(0x0006);
+    let mut pump = T2miPump::new(Pid::new(0x0006));
     let garbage = [0x00u8; 188]; // 0x00 ≠ 0x47 → bad sync
     let events: Vec<_> = pump.feed_ts(&garbage).collect();
     assert_eq!(events.len(), 0);
@@ -158,9 +159,9 @@ fn garbage_ts_packet_counted_no_panic() {
 fn wrong_pid_packet_ignored_no_stats_movement() {
     let payload = [0x00u8, 0x00, 0x00];
     let t2mi = make_t2mi_packet(0x00, &payload);
-    let pkt = ts_packet(0x0200, &t2mi, true, 0); // pump listens on 0x0006
+    let pkt = ts_packet(Pid::new(0x0200), &t2mi, true, 0); // pump listens on 0x0006
 
-    let mut pump = T2miPump::new(0x0006);
+    let mut pump = T2miPump::new(Pid::new(0x0006));
     let events: Vec<_> = pump.feed_ts(&pkt).collect();
 
     assert_eq!(events.len(), 0);
@@ -175,7 +176,7 @@ fn wrong_pid_packet_ignored_no_stats_movement() {
 
 #[test]
 fn stats_default_is_zero() {
-    let pump = T2miPump::new(0x0100);
+    let pump = T2miPump::new(Pid::new(0x0100));
     assert_eq!(pump.stats(), Stats::default());
 }
 
@@ -187,9 +188,9 @@ fn event_header_and_payload_agree() {
     // L1Current payload: frame_idx(1) + freq_source(2bits)+rfu(6bits)(1) = 2 bytes.
     let l1_payload = [0x07u8, 0x00]; // frame_idx=7, no freq_source, rfu=0
     let t2mi = make_t2mi_packet(0x10, &l1_payload);
-    let pkt = ts_packet(0x0006, &t2mi, true, 0);
+    let pkt = ts_packet(Pid::new(0x0006), &t2mi, true, 0);
 
-    let mut pump = T2miPump::new(0x0006);
+    let mut pump = T2miPump::new(Pid::new(0x0006));
     let events: Vec<_> = pump.feed_ts(&pkt).collect();
     assert_eq!(events.len(), 1);
 
@@ -216,8 +217,8 @@ fn two_t2mi_packets_in_one_ts_payload_both_emit() {
     combined.extend_from_slice(&p1);
     combined.extend_from_slice(&p2);
 
-    let pkt = ts_packet(0x0006, &combined, true, 0);
-    let mut pump = T2miPump::new(0x0006);
+    let pkt = ts_packet(Pid::new(0x0006), &combined, true, 0);
+    let mut pump = T2miPump::new(Pid::new(0x0006));
     let events: Vec<_> = pump.feed_ts(&pkt).collect();
 
     assert_eq!(events.len(), 2, "both packets must emit");
@@ -230,7 +231,7 @@ fn two_t2mi_packets_in_one_ts_payload_both_emit() {
 /// TS-mode pump counts as malformed and does not panic.
 #[test]
 fn truncated_ts_input_counted_no_panic() {
-    let mut pump = T2miPump::new(0x0006);
+    let mut pump = T2miPump::new(Pid::new(0x0006));
     let truncated = [0x47u8; 10]; // good sync but too short
     let events: Vec<_> = pump.feed_ts(&truncated).collect();
 

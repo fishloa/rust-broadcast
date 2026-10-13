@@ -18,6 +18,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 [dependencies]
 broadcast-common   = { path = "../broadcast-common", version = "9.4", default-features = false }
 dvb-bbframe  = { path = "../dvb-bbframe", version = "11.1", optional = true, default-features = false }
+mpeg-ts      = { path = "../mpeg-ts", version = "0.5", optional = true, default-features = false }
 chrono       = { workspace = true, optional = true, features = ["alloc"] }
 erased-serde = { version = "0.4", optional = true }
 thiserror = { version = "2", default-features = false }
@@ -40,11 +41,11 @@ required-features = ["ts"]
 default = ["std", "ts"]
 # `std` links the standard library. Without it the crate is `#![no_std]` and
 # needs only `alloc`.
-std     = ["broadcast-common/std", "dvb-bbframe?/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std"]
+std     = ["broadcast-common/std", "dvb-bbframe?/std", "mpeg-ts?/std", "chrono?/std", "chrono?/clock", "thiserror/std", "num_enum/std"]
 # `ts`: the feed-and-iterate pump (feed_ts) and the InnerTsRecovery driver,
 # which pulls in `bytes` and the `dvb-bbframe` BBFrame extractor.
-ts      = ["dep:bytes", "dep:dvb-bbframe"]
-serde   = ["dep:serde", "dep:erased-serde"]
+ts      = ["dep:bytes", "dep:dvb-bbframe", "dep:mpeg-ts"]
+serde   = ["dep:serde", "dep:erased-serde", "mpeg-ts?/serde"]
 
 # `chrono`: decoded UTC emission-time accessor on T2TimestampPayload.
 # Mirrors dvb-si's chrono feature; OFF by default.
