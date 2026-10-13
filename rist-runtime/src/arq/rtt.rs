@@ -43,7 +43,7 @@ impl RttEstimator {
         let sample_us = sample.as_micros().min(u128::from(u64::MAX)) as u64;
         self.eight_times_us = Some(match self.eight_times_us {
             None => sample_us.saturating_mul(8),
-            Some(acc) => acc - acc / 8 + sample_us,
+            Some(acc) => (acc - acc / 8).saturating_add(sample_us),
         });
     }
 
@@ -89,6 +89,17 @@ mod tests {
     fn no_estimate_until_first_sample() {
         let est = RttEstimator::new();
         assert_eq!(est.smoothed(), None);
+    }
+
+    /// RIST-O3 (#1086): an extreme sample used to overflow the accumulator
+    /// (a debug-build panic, a wrap in release); it now saturates.
+    #[test]
+    fn extreme_samples_saturate_instead_of_overflowing() {
+        let mut e = RttEstimator::new();
+        e.update(Duration::MAX);
+        e.update(Duration::MAX);
+        e.update(Duration::MAX);
+        assert!(e.smoothed().unwrap() >= Duration::from_secs(1));
     }
 
     #[test]

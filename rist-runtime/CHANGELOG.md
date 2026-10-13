@@ -4,6 +4,13 @@ All notable changes to this crate will be documented in this file.
 
 ## [Unreleased]
 
+### Changed (breaking)
+- `Error` gains `PaddingBitSet` (`#[non_exhaustive]`, so additive for matchers): `RttEcho::parse` rejects a set P bit (TR-06-1 §5.2.6 fixes `P = 0`; its padding is the message's own field) instead of silently clearing it on re-serialize (#1086/RIST-W5).
+
+### Fixed
+- `GenericNack::parse` / `RangeNack::parse` honour the RFC 3550 §6.4.1 P bit: padding is validated and stripped (a zero or over-long count is `InvalidPaddingCount`), so padding words no longer parse as FCI / range entries, and a P-bit NACK inside a compound no longer fails with `BufferTooShort` (#1086/RIST-W5).
+- `arq::rtt::RttEstimator::update` saturates instead of overflowing on an extreme sample (#1086/RIST-O3).
+
 ## [0.3.0] - 2026-10-13
 
 ### Changed

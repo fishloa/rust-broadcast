@@ -18,8 +18,27 @@ use broadcast_common::{Parse, Serialize};
 use crate::error::{Error, Result};
 use crate::{
     FMT_GENERIC_NACK, PT_RTPFB, RIST_APP_NAME, RIST_APP_NAME_U32, RTCP_COUNT_MASK,
-    SUBTYPE_RANGE_NACK,
+    RTCP_PADDING_MASK, SUBTYPE_RANGE_NACK,
 };
+
+/// The end of the unpadded body of the `total_len`-byte sub-packet at the
+/// front of `bytes` (RFC 3550 §6.4.1): `total_len` when the P bit is clear,
+/// otherwise `total_len` minus the padding count carried in the sub-packet's
+/// last byte. A set P bit with a zero count, or a count larger than the body
+/// (everything after the common header), is [`Error::InvalidPaddingCount`]
+/// (RIST-W5, #1086: the bit used to be ignored, so padding words parsed as
+/// FCI entries).
+fn unpadded_end(bytes: &[u8], total_len: usize) -> Result<usize> {
+    if bytes[0] & RTCP_PADDING_MASK == 0 {
+        return Ok(total_len);
+    }
+    let body = total_len - RTCP_HEADER_LEN;
+    let count = usize::from(bytes[total_len - 1]);
+    if count == 0 || count > body {
+        return Err(Error::InvalidPaddingCount { count, body });
+    }
+    Ok(total_len - count)
+}
 
 // ---------------------------------------------------------------------------
 // Wire constants
@@ -165,7 +184,14 @@ impl<'a> Parse<'a> for GenericNack {
         let ssrc_media = u32::from_be_bytes([bytes[8], bytes[9], bytes[10], bytes[11]]);
 
         // Parse FCI entries.
-        let fci_bytes = total_len - GENERIC_NACK_MIN_LEN;
+        let end = unpadded_end(bytes, total_len)?;
+        if end < GENERIC_NACK_MIN_LEN {
+            return Err(Error::BufferTooShort {
+                need: GENERIC_NACK_MIN_LEN,
+                have: end,
+            });
+        }
+        let fci_bytes = end - GENERIC_NACK_MIN_LEN;
         let fci_count = fci_bytes / NACK_FCI_LEN;
         let mut nacks = Vec::with_capacity(fci_count);
         let mut off = GENERIC_NACK_MIN_LEN;
@@ -328,7 +354,14 @@ impl<'a> Parse<'a> for RangeNack {
         }
 
         // Parse range entries.
-        let data_bytes = total_len - RANGE_NACK_MIN_LEN;
+        let end = unpadded_end(bytes, total_len)?;
+        if end < RANGE_NACK_MIN_LEN {
+            return Err(Error::BufferTooShort {
+                need: RANGE_NACK_MIN_LEN,
+                have: end,
+            });
+        }
+        let data_bytes = end - RANGE_NACK_MIN_LEN;
         let range_count = data_bytes / RANGE_ENTRY_LEN;
         if range_count > MAX_RANGE_ENTRIES {
             return Err(Error::TooManyRanges {

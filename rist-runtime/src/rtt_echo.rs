@@ -14,7 +14,7 @@ use broadcast_common::{Parse, Serialize};
 
 use crate::error::{Error, Result};
 use crate::{
-    RIST_APP_NAME, RIST_APP_NAME_U32, RTCP_COUNT_MASK, SUBTYPE_RTT_ECHO_REQUEST,
+    RIST_APP_NAME, RIST_APP_NAME_U32, RTCP_COUNT_MASK, RTCP_PADDING_MASK, SUBTYPE_RTT_ECHO_REQUEST,
     SUBTYPE_RTT_ECHO_RESPONSE,
 };
 
@@ -141,6 +141,12 @@ impl<'a> Parse<'a> for RttEcho {
         let version = bytes[0] >> 6;
         if version != RTCP_VERSION {
             return Err(Error::InvalidVersion(version));
+        }
+
+        // TR-06-1 §5.2.6 fixes P = 0: the packet's padding is its own opaque
+        // field, so a set P bit would be silently cleared on re-serialize.
+        if bytes[0] & RTCP_PADDING_MASK != 0 {
+            return Err(Error::PaddingBitSet);
         }
 
         // Subtype from low 5 bits of byte 0.
