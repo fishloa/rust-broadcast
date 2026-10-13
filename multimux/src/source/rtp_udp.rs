@@ -33,6 +33,7 @@
 //! <port> RTP/AVP <pt>`, captured as [`crate::source::TrackInit::payload_type`]).
 //! A packet whose PT does not match any configured track is silently dropped.
 
+use transmux::TrackId;
 use std::collections::HashMap;
 use std::time::Duration;
 
@@ -131,7 +132,7 @@ impl Source for RtpUdpRoute {
 /// multimux-side adapter that owns the real `UdpSocket` and feeds it.
 pub struct RtpUdpIngestSession {
     depacketiser: RtpStreamDepacketiser,
-    pt_to_track: HashMap<u8, u32>,
+    pt_to_track: HashMap<u8, TrackId>,
     pending: std::collections::VecDeque<SessionEvent>,
     announced: bool,
     /// Packets dropped for failing depayload (malformed RTP header, CSRC
@@ -148,7 +149,7 @@ impl RtpUdpIngestSession {
                 .map(|t| RtpStreamTrack::new(t.track_id, t.kind, t.config.clone(), t.clock_rate))
                 .collect(),
         );
-        let pt_to_track: HashMap<u8, u32> = tracks
+        let pt_to_track: HashMap<u8, TrackId> = tracks
             .iter()
             .map(|t| (t.payload_type, t.track_id))
             .collect();
@@ -200,11 +201,11 @@ impl Stage for RtpUdpIngestSession {
         else {
             return Ok(());
         };
-        let samples = match self.depacketiser.push(track_id, input) {
+        let samples = match self.depacketiser.push(TrackId::new(track_id.value()), input) {
             Ok(samples) => samples,
             Err(e) => {
                 self.depay_dropped += 1;
-                tracing::debug!(track_id, error = %e, "rtp/udp depayload failed; dropping packet");
+                tracing::debug!(%track_id, error = %e, "rtp/udp depayload failed; dropping packet");
                 return Ok(());
             }
         };

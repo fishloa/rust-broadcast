@@ -590,6 +590,7 @@
 //! executor timeout around the `Future` impl) — see
 //! [`ProgressListener::wait_deadline`]'s own doc.
 
+use transmux::TrackId;
 use std::collections::{HashMap, VecDeque};
 use std::future::Future;
 use std::num::NonZeroUsize;
@@ -762,7 +763,7 @@ impl TrunkConfig {
 /// this class is computed purely from `base` vs. how much of it the cursor
 /// has consumed — see [`SampleCursor::poll`].
 struct ClassLog {
-    entries: VecDeque<(u32, Sample)>,
+    entries: VecDeque<(TrackId, Sample)>,
     base: u64,
     published: u64,
     capacity: usize,
@@ -782,7 +783,7 @@ impl ClassLog {
     /// `capacity`. Never rejects, never blocks — this is what lets
     /// [`TrunkWriter::publish`] complete unconditionally regardless of how
     /// far behind any reader has fallen.
-    fn push(&mut self, track_id: u32, sample: Sample) {
+    fn push(&mut self, track_id: TrackId, sample: Sample) {
         if self.entries.len() == self.capacity {
             self.entries.pop_front();
             self.base += 1;
@@ -2177,7 +2178,7 @@ pub struct TrunkWriter {
 
 impl TrunkWriter {
     /// Publish one sample for `track_id` under `retention`.
-    pub fn publish(&self, track_id: u32, retention: RetentionClass, sample: Sample) {
+    pub fn publish(&self, track_id: TrackId, retention: RetentionClass, sample: Sample) {
         let mut state = self.trunk.lock_state();
         match retention {
             RetentionClass::Timed => state.timed.push(track_id, sample),
@@ -2646,7 +2647,7 @@ pub enum SampleCursorItem {
     /// A [`RetentionClass::Timed`] sample for `track_id`.
     Timed {
         /// The publishing track.
-        track_id: u32,
+        track_id: TrackId,
         /// The sample itself. Cloned from the ring's stored copy —
         /// `Sample.data: Bytes` is shared, not copied; see
         /// [Zero-copy fan-out](self#zero-copy-fan-out-honestly).
@@ -2655,7 +2656,7 @@ pub enum SampleCursorItem {
     /// A [`RetentionClass::Sparse`] sample for `track_id`.
     Sparse {
         /// The publishing track.
-        track_id: u32,
+        track_id: TrackId,
         /// The sample itself; see the `Timed` variant's doc for the
         /// zero-copy note.
         sample: Sample,
@@ -3103,7 +3104,7 @@ mod tests {
     /// identically-named test helper (same shape, so a track built here and
     /// one built there compare equal field-for-field for any given
     /// `track_id`).
-    fn opaque_track(track_id: u32) -> TrackSpec {
+    fn opaque_track(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
             90_000,
@@ -3129,7 +3130,7 @@ mod tests {
         Sample::new(Bytes::from(vec![byte; len]), Some(0), Some(0), None, true)
     }
 
-    fn timed_data(item: &SampleCursorItem) -> Option<(u32, &Sample)> {
+    fn timed_data(item: &SampleCursorItem) -> Option<(TrackId, &Sample)> {
         match item {
             SampleCursorItem::Timed { track_id, sample } => Some((*track_id, sample)),
             _ => None,
@@ -3204,7 +3205,7 @@ mod tests {
         let writer = trunk.writer().unwrap();
 
         for i in 0u8..5 {
-            writer.publish(7, RetentionClass::Timed, sample(i, 16));
+            writer.publish(TrackId::new(7), RetentionClass::Timed, sample(i, 16));
         }
 
         for cursor in [&mut c1, &mut c2, &mut c3] {
@@ -3251,12 +3252,10 @@ mod tests {
             "precondition: the lock is free (and, being parking_lot, unpoisoned) after the holder unwound"
         );
 
-        writer.publish(7, RetentionClass::Timed, sample(5, 4));
+        writer.publish(TrackId::new(7), RetentionClass::Timed, sample(5, 4));
         match samples.poll() {
-            Some(SampleCursorItem::Timed {
-                track_id: 7,
-                sample,
-            }) => {
+            Some(SampleCursorItem::Timed { track_id, sample }) => {
+                assert_eq!(track_id, TrackId::new(7));
                 assert_eq!(sample.data.as_ref(), &[5u8; 4]);
             }
             other => panic!("expected the published sample, got {other:?}"),
@@ -3308,7 +3307,7 @@ mod tests {
         // equivalent test uses the same reasoning).
         for i in 0u8..=255u8 {
             for _ in 0..4 {
-                writer.publish(1, RetentionClass::Timed, sample(i, 8));
+                writer.publish(TrackId::new(1), RetentionClass::Timed, sample(i, 8));
             }
         }
         // 256 * 4 = 1024 published; ring capacity is 4.
@@ -3341,7 +3340,7 @@ mod tests {
 
         // Capacity 3, publish 9: 6 evicted before the cursor ever reads.
         for i in 0u8..9 {
-            writer.publish(2, RetentionClass::Timed, sample(i, 4));
+            writer.publish(TrackId::new(2), RetentionClass::Timed, sample(i, 4));
         }
 
         let first = cursor.poll().unwrap();
@@ -3376,11 +3375,11 @@ mod tests {
 
         // Overflow the Timed ring (cap 2) with 5 publishes: ordinary loss.
         for i in 0u8..5 {
-            writer.publish(3, RetentionClass::Timed, sample(i, 4));
+            writer.publish(TrackId::new(3), RetentionClass::Timed, sample(i, 4));
         }
         // Overflow the Sparse ring (cap 2) with 4 publishes: escalated loss.
         for i in 0u8..4 {
-            writer.publish(9, RetentionClass::Sparse, sample(100 + i, 4));
+            writer.publish(TrackId::new(9), RetentionClass::Sparse, sample(100 + i, 4));
         }
 
         let timed_loss = cursor.poll().unwrap();
@@ -3416,13 +3415,13 @@ mod tests {
         let writer = trunk.writer().unwrap();
 
         for i in 0u32..50_000 {
-            writer.publish(5, RetentionClass::Timed, sample((i % 256) as u8, 2));
+            writer.publish(TrackId::new(5), RetentionClass::Timed, sample((i % 256) as u8, 2));
             assert!(
                 trunk.timed_len() <= 4,
                 "Timed ring exceeded its cap mid-flood"
             );
             if i % 7 == 0 {
-                writer.publish(6, RetentionClass::Sparse, sample((i % 256) as u8, 2));
+                writer.publish(TrackId::new(6), RetentionClass::Sparse, sample((i % 256) as u8, 2));
                 assert!(
                     trunk.sparse_len() <= 3,
                     "Sparse ring exceeded its cap mid-flood"
@@ -3460,10 +3459,10 @@ mod tests {
         // any of this; subscribe_from_backlog() must replay all of it, since
         // ring capacity (100) is nowhere near exhausted.
         for i in 10u8..13 {
-            writer.publish(1, RetentionClass::Timed, sample(i, 4));
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample(i, 4));
         }
         for i in 20u8..22 {
-            writer.publish(2, RetentionClass::Sparse, sample(i, 4));
+            writer.publish(TrackId::new(2), RetentionClass::Sparse, sample(i, 4));
         }
 
         let mut cursor = trunk.subscribe_from_backlog();
@@ -3499,7 +3498,7 @@ mod tests {
         // New samples published after subscribing still flow through
         // normally, proving this cursor is a real live cursor afterwards,
         // not a one-shot snapshot.
-        writer.publish(1, RetentionClass::Timed, sample(99, 4));
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample(99, 4));
         let live = cursor.poll().unwrap();
         assert_eq!(timed_data(&live).unwrap().1.data[0], 99);
     }
@@ -3532,7 +3531,7 @@ mod tests {
         // its backlog to miss), which is exactly why it anchors at `base`
         // (6), not `0`.
         for i in 0u8..9 {
-            writer.publish(1, RetentionClass::Timed, sample(i, 4));
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample(i, 4));
         }
         let mut cursor = trunk.subscribe_from_backlog();
 
@@ -3542,7 +3541,7 @@ mod tests {
         // cursor is responsible for (it subscribed to a live cursor at 6,
         // then fell behind by 6 before its first poll).
         for i in 9u8..15 {
-            writer.publish(1, RetentionClass::Timed, sample(i, 4));
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample(i, 4));
         }
 
         let first = cursor.poll().unwrap();
@@ -3581,7 +3580,7 @@ mod tests {
         let mut c3 = trunk.subscribe();
         let writer = trunk.writer().unwrap();
 
-        writer.publish(4, RetentionClass::Timed, sample(0xAB, 65536));
+        writer.publish(TrackId::new(4), RetentionClass::Timed, sample(0xAB, 65536));
 
         let i1 = c1.poll().unwrap();
         let i2 = c2.poll().unwrap();
@@ -3670,7 +3669,7 @@ mod tests {
 
         // Both are simultaneously live and independently usable — not merely
         // both `Some` a moment apart.
-        samples.publish(1, RetentionClass::Timed, sample(1, 4));
+        samples.publish(TrackId::new(1), RetentionClass::Timed, sample(1, 4));
         segments.publish_segment(segment_entry(1, 1)).unwrap();
         assert_eq!(trunk.timed_len(), 1);
         assert_eq!(trunk.segment_len(), 1);
@@ -3714,7 +3713,7 @@ mod tests {
         let mut seg_cursor = trunk.subscribe_segments();
 
         for i in 0u8..3 {
-            ingest.publish(1, RetentionClass::Timed, sample(i, 4));
+            ingest.publish(TrackId::new(1), RetentionClass::Timed, sample(i, 4));
         }
 
         // The segmenter consumes exactly the samples it is about to derive
@@ -3753,14 +3752,14 @@ mod tests {
     fn subscribe_starts_from_now_not_from_history() {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
-        writer.publish(1, RetentionClass::Timed, sample(1, 4));
-        writer.publish(1, RetentionClass::Timed, sample(2, 4));
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample(1, 4));
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample(2, 4));
 
         // Subscribing after two publishes must not see either of them.
         let mut cursor = trunk.subscribe();
         assert!(cursor.poll().is_none());
 
-        writer.publish(1, RetentionClass::Timed, sample(3, 4));
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample(3, 4));
         let item = cursor.poll().unwrap();
         assert_eq!(timed_data(&item).unwrap().1.data[0], 3);
     }
@@ -4076,7 +4075,7 @@ mod tests {
         let handle = thread::spawn(move || bg.publish_segment(segment_entry(2, 2)).unwrap());
         wait_until_stalled(&trunk, 1);
 
-        writer.publish(1, RetentionClass::Timed, sample(7, 4)); // must not deadlock
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample(7, 4)); // must not deadlock
         assert_eq!(trunk.timed_len(), 1);
 
         assert!(pin.poll().is_some());
@@ -5396,28 +5395,28 @@ mod tests {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
 
-        writer.set_tracks(vec![opaque_track(1)]);
+        writer.set_tracks(vec![opaque_track(TrackId::new(1))]);
         assert_eq!(
             trunk
                 .tracks()
                 .iter()
                 .map(|t| t.track_id)
                 .collect::<Vec<_>>(),
-            vec![1]
+            vec![TrackId::new(1)]
         );
         assert_eq!(trunk.track_generation(), 1);
 
         // A completely different, larger set: if this were a merge/append
         // rather than a replacement, the old track_id 1 would still be
         // present alongside the two new ones.
-        writer.set_tracks(vec![opaque_track(7), opaque_track(9)]);
+        writer.set_tracks(vec![opaque_track(TrackId::new(7)), opaque_track(TrackId::new(9))]);
         assert_eq!(
             trunk
                 .tracks()
                 .iter()
                 .map(|t| t.track_id)
                 .collect::<Vec<_>>(),
-            vec![7, 9],
+            vec![TrackId::new(7), TrackId::new(9)],
             "set_tracks must replace the set wholesale, not append to it"
         );
         assert_eq!(
@@ -5443,11 +5442,11 @@ mod tests {
         let trunk = Trunk::new(TrunkConfig::new(nz(4), nz(4), nz(4), nz(8), nz(8)));
         let writer = trunk.writer().unwrap();
 
-        writer.set_tracks(vec![opaque_track(1)]);
+        writer.set_tracks(vec![opaque_track(TrackId::new(1))]);
         assert_eq!(trunk.track_generation(), 1);
 
         for i in 0u8..10 {
-            writer.publish(1, RetentionClass::Timed, sample(i, 4));
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample(i, 4));
         }
         writer.publish_event(basic_event(1), EventAnchor::Media(MediaTime(0)));
 
@@ -5480,7 +5479,7 @@ mod tests {
 
         let bg_writer = Arc::clone(&writer);
         let handle = thread::spawn(move || {
-            bg_writer.set_tracks(vec![opaque_track(1)]);
+            bg_writer.set_tracks(vec![opaque_track(TrackId::new(1))]);
         });
 
         // Same generous, machine-independent bound as this module's other
@@ -5513,7 +5512,7 @@ mod tests {
             "setup: the thread must have panicked"
         );
 
-        writer.publish(1, RetentionClass::Timed, sample(1, 4));
+        writer.publish(TrackId::new(1), RetentionClass::Timed, sample(1, 4));
         assert_eq!(
             trunk.timed_len(),
             1,
@@ -5540,7 +5539,7 @@ mod tests {
 
         let ingest = thread::spawn(move || {
             for i in 0..ROUNDS {
-                writer.publish(1, RetentionClass::Timed, sample((i % 251) as u8, 4));
+                writer.publish(TrackId::new(1), RetentionClass::Timed, sample((i % 251) as u8, 4));
             }
         });
         // The "segmenter": publishes segment k only after polling k samples.
@@ -5718,15 +5717,15 @@ mod tests {
 
         {
             let writer_a = trunk.writer().expect("first take succeeds");
-            writer_a.publish(1, RetentionClass::Timed, sample(0xAA, 4));
-            writer_a.publish(1, RetentionClass::Timed, sample(0xAB, 4));
+            writer_a.publish(TrackId::new(1), RetentionClass::Timed, sample(0xAA, 4));
+            writer_a.publish(TrackId::new(1), RetentionClass::Timed, sample(0xAB, 4));
         } // A dropped here — its slot must be released.
 
         let writer_b = trunk
             .writer()
             .expect("re-issue after the first writer was dropped must succeed");
-        writer_b.publish(1, RetentionClass::Timed, sample(0xBA, 4));
-        writer_b.publish(1, RetentionClass::Timed, sample(0xBB, 4));
+        writer_b.publish(TrackId::new(1), RetentionClass::Timed, sample(0xBA, 4));
+        writer_b.publish(TrackId::new(1), RetentionClass::Timed, sample(0xBB, 4));
 
         for expected in [0xAAu8, 0xAB] {
             match cursor.poll() {
@@ -5778,12 +5777,12 @@ mod tests {
         let mut cursor = trunk.subscribe();
         {
             let a = trunk.writer().expect("first take succeeds");
-            a.publish(1, RetentionClass::Timed, sample(0xAA, 4));
+            a.publish(TrackId::new(1), RetentionClass::Timed, sample(0xAA, 4));
         }
         let b = trunk
             .writer()
             .expect("re-issue after the first writer was dropped must succeed");
-        b.publish(2, RetentionClass::Sparse, sample(0xBB, 4));
+        b.publish(TrackId::new(2), RetentionClass::Sparse, sample(0xBB, 4));
 
         let mut seq = Vec::new();
         while let Some(it) = cursor.poll() {
@@ -5881,7 +5880,7 @@ mod tests {
         let total_takes = WRITER_HANDOVER_LOG_CAPACITY + 5;
         for _ in 0..total_takes {
             let w = trunk.writer().expect("reissue must keep succeeding");
-            w.publish(1, RetentionClass::Timed, sample(0x01, 4));
+            w.publish(TrackId::new(1), RetentionClass::Timed, sample(0x01, 4));
         } // each writer dropped at the end of its own iteration
 
         // The first take never records a `WriterHandover` (nothing to

@@ -11,6 +11,7 @@
 //! (b) never even attempt to carry a track FLV cannot hold, rather than
 //! either refusing the whole push or crashing trying to frame it?
 
+use transmux::TrackId;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -41,7 +42,7 @@ fn nz(n: usize) -> std::num::NonZeroUsize {
 /// fallback `crate::push::mod`'s pre-#942 `media_from_samples` used to
 /// synthesize for an unmatched track, now instead a genuinely *declared*
 /// track this test asserts gets refused rather than silently mis-framed.
-fn opaque_spec(track_id: u32) -> TrackSpec {
+fn opaque_spec(track_id: TrackId) -> TrackSpec {
     TrackSpec::new(
         track_id,
         90_000,
@@ -65,7 +66,7 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
     let trunk: Arc<Trunk> = Trunk::new(TrunkConfig::new(nz(256), nz(64), nz(8), nz(64), nz(64)));
     let opaque_track_id = 99;
     let mut specs: Vec<TrackSpec> = media.tracks.iter().map(|t| t.spec.clone()).collect();
-    specs.push(opaque_spec(opaque_track_id));
+    specs.push(opaque_spec(TrackId::new(opaque_track_id)));
     let writer = trunk
         .writer()
         .expect("trunk has a writer (nothing else holds it yet)");
@@ -175,7 +176,7 @@ async fn drive_push_negotiates_and_carries_only_flv_compatible_tracks() {
                 }
             }
             writer.publish(
-                opaque_track_id,
+                TrackId::new(opaque_track_id),
                 RetentionClass::Timed,
                 opaque_sample.clone(),
             );

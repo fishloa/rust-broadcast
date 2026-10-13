@@ -44,6 +44,7 @@
 //! for track-level findings) and [`Location::pid`] holds the MP4 track_id
 //! (not a TS PID — there is none for this input).
 
+use transmux::TrackId;
 use broadcast_common::Unpackage;
 use transmux::{CodecConfig, Fmp4Demux, Media, ProgressiveDemux, iter_length_prefixed_nals_with};
 
@@ -178,7 +179,7 @@ fn check_media(media: &Media, report: &mut Report) {
 }
 
 fn check_avc_track(
-    track_id: u32,
+    track_id: TrackId,
     record: &transmux::AVCDecoderConfigurationRecord,
     width: u16,
     height: u16,
@@ -261,7 +262,7 @@ fn check_avc_track(
 }
 
 fn check_hevc_track(
-    track_id: u32,
+    track_id: TrackId,
     record: &transmux::HEVCDecoderConfigurationRecord,
     width: u16,
     height: u16,

@@ -48,6 +48,7 @@
 //! PMT resolving is a per-*program* one that `NewProgram` already carries
 //! (see `SessionEvent::Established`'s "Why not called `TracksResolved`").
 
+use transmux::{ProgramNumber, TrackId};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::convert::Infallible;
 
@@ -79,12 +80,12 @@ pub(crate) struct ProgramTracker {
     pending: VecDeque<SessionEvent>,
     /// Tracks buffered before the first `TracksResolved`, grouped by
     /// `program_number`.
-    resolving: HashMap<Option<u16>, Vec<TrackSpec>>,
+    resolving: HashMap<Option<ProgramNumber>, Vec<TrackSpec>>,
     resolved_once: bool,
     /// Resolved programs keyed by `program_number`.
-    programs: HashMap<Option<u16>, PerProgram>,
+    programs: HashMap<Option<ProgramNumber>, PerProgram>,
     /// Reverse map: `track_id → ProgramId` (for `Sample` routing).
-    track_program: HashMap<u32, ProgramId>,
+    track_program: HashMap<TrackId, ProgramId>,
     /// Programs whose track set changed since last `TracksResolved`.
     changed: HashSet<ProgramId>,
     next_program_id: u32,
@@ -93,7 +94,7 @@ pub(crate) struct ProgramTracker {
 struct PerProgram {
     program_id: ProgramId,
     /// Complete current track specs for this program, keyed by `track_id`.
-    track_specs: HashMap<u32, TrackSpec>,
+    track_specs: HashMap<TrackId, TrackSpec>,
 }
 
 impl ProgramTracker {
@@ -239,7 +240,7 @@ impl ProgramTracker {
     }
 
     /// Find or create the `ProgramId` for a given `program_number`.
-    fn find_or_create_program(&mut self, pn: Option<u16>) -> ProgramId {
+    fn find_or_create_program(&mut self, pn: Option<ProgramNumber>) -> ProgramId {
         if let Some(prog) = self.programs.get(&pn) {
             return prog.program_id;
         }
@@ -261,7 +262,7 @@ impl ProgramTracker {
         program
     }
 
-    fn track_specs_for_program(&mut self, program: ProgramId) -> &mut HashMap<u32, TrackSpec> {
+    fn track_specs_for_program(&mut self, program: ProgramId) -> &mut HashMap<TrackId, TrackSpec> {
         &mut self
             .program_for_program_id_mut(program)
             .expect("program must exist")
@@ -349,6 +350,7 @@ impl IngestSession for TsIngestSession {
 /// one-copy reason the session itself does.
 #[cfg(test)]
 pub(crate) mod test_support {
+    use transmux::TrackId;
     use media_plane::ingress::HandshakePolicy;
     use media_plane::trunk::TrunkConfig;
 
@@ -372,7 +374,7 @@ pub(crate) mod test_support {
         HandshakePolicy::establish_by(Timestamp::from_nanos(u64::MAX))
     }
 
-    pub(crate) fn track_spec(track_id: u32) -> TrackSpec {
+    pub(crate) fn track_spec(track_id: TrackId) -> TrackSpec {
         let avc = transmux::avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==")
             .expect("valid sprop");
         TrackSpec::new(
@@ -390,7 +392,7 @@ pub(crate) mod test_support {
     /// the workspace's own `transmux::TsMux` packager — the "real fixture,
     /// not inline bytes" discipline this project requires, since a
     /// hand-built TS risks missing real PSI/PES framing quirks.
-    pub(crate) fn build_ts_bytes(track_id: u32, nal_byte: u8, count: u32) -> Vec<u8> {
+    pub(crate) fn build_ts_bytes(track_id: TrackId, nal_byte: u8, count: u32) -> Vec<u8> {
         use broadcast_common::Package;
         let spec = track_spec(track_id);
         let frame_dur = 90_000 / 30;
@@ -427,7 +429,7 @@ mod tests {
     #[test]
     fn first_tracks_resolved_mints_program_zero() {
         let mut tracker = ProgramTracker::new();
-        tracker.handle(DemuxEvent::TrackAdded(track_spec(1)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
         tracker.handle(DemuxEvent::tracks_resolved(0));
         assert!(matches!(tracker.poll(), Some(SessionEvent::Established)));
         match tracker.poll() {
@@ -454,7 +456,7 @@ mod tests {
     #[test]
     fn late_track_added_joins_the_same_program_not_a_new_one() {
         let mut tracker = ProgramTracker::new();
-        tracker.handle(DemuxEvent::TrackAdded(track_spec(1)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
         tracker.handle(DemuxEvent::tracks_resolved(0));
         let _established = tracker.poll();
         let first = match tracker.poll() {
@@ -463,7 +465,7 @@ mod tests {
         };
 
         // Mid-stream TrackAdded: emitted only when TracksResolved follows.
-        tracker.handle(DemuxEvent::TrackAdded(track_spec(9)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(9))));
         assert!(
             tracker.poll().is_none(),
             "TrackAdded alone must not emit anything — TracksChanged waits for TracksResolved"
@@ -475,21 +477,21 @@ mod tests {
             Some(SessionEvent::TracksChanged { program, tracks }) => {
                 assert_eq!(program, first, "TracksChanged must go to the same program");
                 assert_eq!(tracks.len(), 2, "complete current set: both tracks");
-                let ids: Vec<u32> = tracks.iter().map(|t| t.track_id).collect();
-                assert!(ids.contains(&1));
-                assert!(ids.contains(&9));
+                let ids: Vec<TrackId> = tracks.iter().map(|t| t.track_id).collect();
+                assert!(ids.contains(&TrackId::new(1)));
+                assert!(ids.contains(&TrackId::new(9)));
             }
             other => panic!("expected TracksChanged, got {other:?}"),
         }
 
         // Sample for the new track routes to the same program.
-        tracker.handle(DemuxEvent::sample(9, sample_at(0xAA)));
+        tracker.handle(DemuxEvent::sample(TrackId::new(9), sample_at(0xAA)));
         match tracker.poll() {
             Some(SessionEvent::Sample {
                 program, track_id, ..
             }) => {
                 assert_eq!(program, first);
-                assert_eq!(track_id, 9);
+                assert_eq!(track_id, TrackId::new(9));
             }
             other => panic!("expected Sample routed to the first program, got {other:?}"),
         }
@@ -500,7 +502,7 @@ mod tests {
     #[test]
     fn sample_for_unannounced_track_is_dropped() {
         let mut tracker = ProgramTracker::new();
-        tracker.handle(DemuxEvent::sample(42, sample_at(0x01)));
+        tracker.handle(DemuxEvent::sample(TrackId::new(42), sample_at(0x01)));
         assert!(matches!(tracker.poll(), Some(SessionEvent::Established)));
         assert!(
             tracker.poll().is_none(),
@@ -514,15 +516,15 @@ mod tests {
     #[test]
     fn removed_track_vanishes_from_tracks_changed() {
         let mut tracker = ProgramTracker::new();
-        tracker.handle(DemuxEvent::TrackAdded(track_spec(1)));
-        tracker.handle(DemuxEvent::TrackAdded(track_spec(2)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(2))));
         tracker.handle(DemuxEvent::tracks_resolved(0));
         let _established = tracker.poll();
         let _new_program = tracker.poll();
 
         // Remove track 2.
         tracker.handle(DemuxEvent::track_removed(
-            2,
+            TrackId::new(2),
             transmux::EventProvenance::default(),
         ));
         // TracksResolved after the removal.
@@ -530,13 +532,13 @@ mod tests {
         match tracker.poll() {
             Some(SessionEvent::TracksChanged { tracks, .. }) => {
                 assert_eq!(tracks.len(), 1);
-                assert_eq!(tracks[0].track_id, 1);
+                assert_eq!(tracks[0].track_id, TrackId::new(1));
             }
             other => panic!("expected TracksChanged with track 1 only, got {other:?}"),
         }
 
         // Sample for the removed track is dropped.
-        tracker.handle(DemuxEvent::sample(2, sample_at(0xBB)));
+        tracker.handle(DemuxEvent::sample(TrackId::new(2), sample_at(0xBB)));
         assert!(
             tracker.poll().is_none(),
             "sample for removed track must be dropped"
@@ -589,7 +591,7 @@ mod tests {
 
         // Feed a real muxed TS stream; the driver mints program 0's Trunk
         // and takes its TrunkWriter internally.
-        let ts_bytes = build_ts_bytes(1, 0xAB, 90);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
         driver.feed(&ts_bytes, Timestamp::ZERO);
         let trunk = driver
             .trunk(ProgramId(0))
@@ -620,7 +622,7 @@ mod tests {
         // single-digit-readers-by-design contract.
         let mut cursor = trunk.subscribe();
         let mut seg = LlHlsSegmenter::with_part_target(
-            vec![track_spec(1)],
+            vec![track_spec(TrackId::new(1))],
             transmux::VIDEO_CLOCK_RATE,
             1.0,
             250,
@@ -629,7 +631,7 @@ mod tests {
 
         // Drive more media through so the cursor (which starts from *now*)
         // actually observes samples.
-        let more = build_ts_bytes(1, 0xCD, 90);
+        let more = build_ts_bytes(TrackId::new(1), 0xCD, 90);
         driver.feed(&more, Timestamp::from_nanos(1));
 
         let mut pushed = 0usize;
@@ -693,7 +695,7 @@ mod tests {
 
     /// A copy of [`track_spec`] with a different coded size, so a config
     /// change is observable in the announced spec.
-    fn track_spec_sized(track_id: u32, width: u16, height: u16) -> TrackSpec {
+    fn track_spec_sized(track_id: TrackId, width: u16, height: u16) -> TrackSpec {
         let avc = transmux::avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==")
             .expect("valid sprop");
         TrackSpec::new(
@@ -721,19 +723,19 @@ mod tests {
     #[test]
     fn track_updated_announces_the_new_config() {
         let mut tracker = ProgramTracker::new();
-        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(1, 640, 360)));
-        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(2, 0, 0)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(TrackId::new(1), 640, 360)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(TrackId::new(2), 0, 0)));
         tracker.handle(DemuxEvent::tracks_resolved(0));
         let _established = tracker.poll();
         let _new_program = tracker.poll();
 
-        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(1, 1920, 1080)));
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(TrackId::new(1), 1920, 1080)));
         match tracker.poll() {
             Some(SessionEvent::TracksChanged { program, tracks }) => {
                 assert_eq!(program, ProgramId(0));
                 assert_eq!(
                     tracks.iter().map(|t| t.track_id).collect::<Vec<_>>(),
-                    vec![1, 2],
+                    vec![TrackId::new(1), TrackId::new(2)],
                     "the complete track set, in track-id order"
                 );
                 assert_eq!(video_size(&tracks[0]), (1920, 1080));
@@ -748,7 +750,7 @@ mod tests {
         assert!(tracker.poll().is_none());
 
         // An update for a track nothing announced is ignored.
-        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(9, 1, 1)));
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(TrackId::new(9), 1, 1)));
         assert!(tracker.poll().is_none());
     }
 
@@ -757,8 +759,8 @@ mod tests {
     #[test]
     fn track_updated_before_resolution_replaces_the_buffered_spec() {
         let mut tracker = ProgramTracker::new();
-        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(1, 640, 360)));
-        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(1, 1280, 720)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec_sized(TrackId::new(1), 640, 360)));
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec_sized(TrackId::new(1), 1280, 720)));
         tracker.handle(DemuxEvent::tracks_resolved(0));
         let _established = tracker.poll();
         match tracker.poll() {
@@ -779,17 +781,17 @@ mod tests {
     #[test]
     fn removed_track_stops_routing_its_samples() {
         let mut tracker = ProgramTracker::new();
-        tracker.handle(DemuxEvent::TrackAdded(track_spec(1)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
         tracker.handle(DemuxEvent::tracks_resolved(0));
         let _established = tracker.poll();
         let _new_program = tracker.poll();
 
         // Before removal: the sample routes.
-        tracker.handle(DemuxEvent::sample(1, sample_at(0xAA)));
+        tracker.handle(DemuxEvent::sample(TrackId::new(1), sample_at(0xAA)));
         assert!(matches!(tracker.poll(), Some(SessionEvent::Sample { .. })));
 
-        tracker.handle(DemuxEvent::track_removed(1, Default::default()));
-        tracker.handle(DemuxEvent::sample(1, sample_at(0xBB)));
+        tracker.handle(DemuxEvent::track_removed(TrackId::new(1), Default::default()));
+        tracker.handle(DemuxEvent::sample(TrackId::new(1), sample_at(0xBB)));
         assert!(
             tracker.poll().is_none(),
             "a removed track's samples must no longer be routed"
@@ -803,12 +805,12 @@ mod tests {
     fn mpts_two_programmes_produce_two_program_ids() {
         let mut tracker = ProgramTracker::new();
         // Program 1: track 1
-        let mut spec1 = track_spec(1);
-        spec1.program_number = Some(100);
+        let mut spec1 = track_spec(TrackId::new(1));
+        spec1.program_number = Some(ProgramNumber::new(100));
         tracker.handle(DemuxEvent::TrackAdded(spec1));
         // Program 2: track 2
-        let mut spec2 = track_spec(2);
-        spec2.program_number = Some(200);
+        let mut spec2 = track_spec(TrackId::new(2));
+        spec2.program_number = Some(ProgramNumber::new(200));
         tracker.handle(DemuxEvent::TrackAdded(spec2));
         // Resolve
         tracker.handle(DemuxEvent::tracks_resolved(0));
@@ -831,16 +833,16 @@ mod tests {
     fn mpts_mid_stream_track_joins_correct_programme() {
         let mut tracker = ProgramTracker::new();
         // Program 100: track 1
-        let mut spec1 = track_spec(1);
-        spec1.program_number = Some(100);
+        let mut spec1 = track_spec(TrackId::new(1));
+        spec1.program_number = Some(ProgramNumber::new(100));
         tracker.handle(DemuxEvent::TrackAdded(spec1));
         // Program 200: track 2
-        let mut spec2 = track_spec(2);
-        spec2.program_number = Some(200);
+        let mut spec2 = track_spec(TrackId::new(2));
+        spec2.program_number = Some(ProgramNumber::new(200));
         tracker.handle(DemuxEvent::TrackAdded(spec2));
         tracker.handle(DemuxEvent::tracks_resolved(0));
         let _established = tracker.poll();
-        let mut programs: HashMap<u16, ProgramId> = HashMap::new();
+        let mut programs: HashMap<ProgramNumber, ProgramId> = HashMap::new();
         while let Some(event) = tracker.poll() {
             if let SessionEvent::NewProgram { program, tracks } = event
                 && let Some(t) = tracks.first()
@@ -851,15 +853,15 @@ mod tests {
         }
 
         // Mid-stream: add track 3 to programme 100
-        let mut spec3 = track_spec(3);
-        spec3.program_number = Some(100);
+        let mut spec3 = track_spec(TrackId::new(3));
+        spec3.program_number = Some(ProgramNumber::new(100));
         tracker.handle(DemuxEvent::TrackAdded(spec3));
         tracker.handle(DemuxEvent::tracks_resolved(1));
 
         // TracksChanged for programme 100 must include both tracks;
         // programme 200 must NOT get a spurious TracksChanged.
-        let prog100 = programs[&100];
-        let prog200 = programs[&200];
+        let prog100 = programs[&ProgramNumber::new(100)];
+        let prog200 = programs[&ProgramNumber::new(200)];
         let mut saw_tracks_changed_100 = false;
         while let Some(event) = tracker.poll() {
             if let SessionEvent::TracksChanged { program, tracks } = event {
@@ -869,9 +871,9 @@ mod tests {
                 );
                 if program == prog100 {
                     assert_eq!(tracks.len(), 2, "both tracks in programme 100");
-                    let ids: Vec<u32> = tracks.iter().map(|t| t.track_id).collect();
-                    assert!(ids.contains(&1));
-                    assert!(ids.contains(&3));
+                    let ids: Vec<TrackId> = tracks.iter().map(|t| t.track_id).collect();
+                    assert!(ids.contains(&TrackId::new(1)));
+                    assert!(ids.contains(&TrackId::new(3)));
                     saw_tracks_changed_100 = true;
                 }
             }
@@ -882,14 +884,14 @@ mod tests {
         );
 
         // Sample for track 3 routes to programme 100
-        tracker.handle(DemuxEvent::sample(3, sample_at(0xCC)));
+        tracker.handle(DemuxEvent::sample(TrackId::new(3), sample_at(0xCC)));
         let sample_event = tracker.poll();
         match sample_event {
             Some(SessionEvent::Sample {
                 program, track_id, ..
             }) => {
                 assert_eq!(program, prog100);
-                assert_eq!(track_id, 3);
+                assert_eq!(track_id, TrackId::new(3));
             }
             other => panic!("expected Sample routed to programme 100, got {other:?}"),
         }
@@ -900,8 +902,8 @@ mod tests {
     #[test]
     fn spts_none_programme_works_as_before() {
         let mut tracker = ProgramTracker::new();
-        tracker.handle(DemuxEvent::TrackAdded(track_spec(1)));
-        tracker.handle(DemuxEvent::TrackAdded(track_spec(2)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(2))));
         tracker.handle(DemuxEvent::tracks_resolved(0));
         let _established = tracker.poll();
         match tracker.poll() {
@@ -913,7 +915,7 @@ mod tests {
         }
 
         // Mid-stream addition joins the same None programme
-        let mut spec3 = track_spec(3);
+        let mut spec3 = track_spec(TrackId::new(3));
         spec3.program_number = None;
         tracker.handle(DemuxEvent::TrackAdded(spec3));
         tracker.handle(DemuxEvent::tracks_resolved(1));

@@ -1,5 +1,6 @@
 //! Output events — [`Output`] out of [`crate::client::HlsClient::next_output`].
 
+use transmux::TrackId;
 use alloc::vec::Vec;
 
 use transmux::Sample;
@@ -27,7 +28,7 @@ pub enum Output {
     Samples {
         /// Track ID, matching the `moov`'s `trak.tkhd.track_ID` (ISO/IEC
         /// 14496-12 §8.3.2) carried by the preceding [`Output::Init`].
-        track_id: u32,
+        track_id: TrackId,
         /// The samples, in decode order.
         samples: Vec<Sample>,
     },

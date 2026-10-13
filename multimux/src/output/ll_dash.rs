@@ -68,6 +68,8 @@
 //! (and does) advertise a real `timeShiftBufferDepth` — unlike the old
 //! parts-only design, which covered only the live edge.
 
+#[cfg(test)]
+use transmux::TrackId;
 use std::sync::Arc;
 use std::time::SystemTime;
 
@@ -272,7 +274,7 @@ mod tests {
     use transmux::TrackSpec;
     use transmux::ll_hls::PartInfo;
 
-    fn video_spec(track_id: u32) -> TrackSpec {
+    fn video_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
             90_000,
@@ -315,7 +317,7 @@ mod tests {
     fn render_ll_dash_mpd_valid_before_any_segment_closes() {
         let route = RouteHandle::new(4.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(7)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(7))]);
         let mpd = render_ll_dash_mpd(&route).expect("must render even with an empty window");
         assert!(mpd.contains("<MPD"));
         assert!(mpd.contains("type=\"dynamic\""));
@@ -325,7 +327,7 @@ mod tests {
     fn render_ll_dash_mpd_carries_required_ll_dash_elements() {
         let route = RouteHandle::new(4.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(1, 0));
         let mpd = render_ll_dash_mpd(&route).unwrap();
 
@@ -355,7 +357,7 @@ mod tests {
     fn render_ll_dash_mpd_addresses_whole_segments_not_parts() {
         let route = RouteHandle::new(4.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(5, 0));
         let mpd = render_ll_dash_mpd(&route).unwrap();
 
@@ -374,7 +376,7 @@ mod tests {
     fn render_ll_dash_mpd_start_number_is_fixed_at_first_segment() {
         let route = RouteHandle::new(4.0, 500, 2);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
             .expect("add_segment");
@@ -400,7 +402,7 @@ mod tests {
         // the window -- a real DVR window can be advertised.
         let route = RouteHandle::new(2.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 2.0))
             .expect("add_segment");
@@ -414,7 +416,7 @@ mod tests {
     fn render_ll_dash_mpd_matches_frozen_now_golden() {
         let route = RouteHandle::new(4.0, 500, 2);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
             .expect("add_segment");
@@ -440,7 +442,7 @@ mod tests {
     fn render_ll_dash_mpd_forces_representation_id_to_default_track() {
         let route = RouteHandle::new(4.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(7)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(7))]);
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(1, 0));
         let mpd = render_ll_dash_mpd(&route).unwrap();
         assert!(
@@ -466,7 +468,7 @@ mod tests {
     async fn manifest_handler_200_with_dash_content_type() {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         route.add_part(crate::route::SPTS_PROGRAM_ID, part(1, 0));
         let resp = manifest(State(route)).await;
         assert_eq!(resp.status(), StatusCode::OK);

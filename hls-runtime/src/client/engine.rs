@@ -1,5 +1,6 @@
 //! [`HlsClient`] — the sans-IO caller-driven engine.
 
+use transmux::TrackId;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -204,7 +205,7 @@ pub struct HlsClient {
     /// boundary. Replaced by a fresh one at `EXT-X-DISCONTINUITY`.
     ts_demux: Option<TsDemuxState>,
     /// The track specs `ts_demux` has reported, by track id.
-    ts_specs: BTreeMap<u32, TrackSpec>,
+    ts_specs: BTreeMap<TrackId, TrackSpec>,
     /// The init segment last synthesized from `ts_specs`; a new
     /// [`Output::Init`] goes out only when a re-synthesis differs from it.
     last_ts_init: Option<Vec<u8>>,
@@ -908,7 +909,7 @@ impl HlsClient {
         let Some(TsDemuxState(demux)) = self.ts_demux.as_mut() else {
             return Ok(());
         };
-        let mut per_track: BTreeMap<u32, Vec<Sample>> = BTreeMap::new();
+        let mut per_track: BTreeMap<TrackId, Vec<Sample>> = BTreeMap::new();
         while let Some(event) = demux.poll_event() {
             match event {
                 DemuxEvent::TrackAdded(spec) | DemuxEvent::TrackUpdated(spec) => {

@@ -54,6 +54,7 @@
 //! Unchanged: one `QualityLevel` per `StreamIndex` (the first);
 //! `StreamType::Text` `StreamIndex`es are skipped.
 
+use transmux::TrackId;
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -554,7 +555,7 @@ impl SmoothIngestSession {
             };
             let quality = p.stream.qualities.first().expect("checked above");
             let local_spec = track_spec_from_quality_level(
-                local_track_id,
+                TrackId::new(local_track_id),
                 effective_timescale,
                 p.stream_type,
                 quality,
@@ -563,7 +564,7 @@ impl SmoothIngestSession {
                 build_init_segment(std::slice::from_ref(&local_spec), SYNTHETIC_MOVIE_TIMESCALE)?;
 
             let mut global_spec = local_spec.clone();
-            global_spec.track_id = global_id;
+            global_spec.track_id = TrackId::new(global_id);
             specs.push(global_spec);
 
             first_emits.push((global_id, first_bytes));
@@ -622,11 +623,11 @@ impl SmoothIngestSession {
         let local_track_id = stream.local_track_id;
         let media = Fmp4Demux::new().unpackage(combined.as_slice())?;
         for track in media.tracks {
-            if track.spec.track_id == local_track_id {
+            if track.spec.track_id == TrackId::new(local_track_id) {
                 for sample in track.samples {
                     self.pending_events.push_back(SessionEvent::Sample {
                         program: ProgramId(0),
-                        track_id: global_track_id,
+                        track_id: TrackId::new(global_track_id),
                         retention: RetentionClass::Timed,
                         sample,
                     });
@@ -822,7 +823,7 @@ fn discover_moof_track_id(fragment_bytes: &[u8]) -> Result<u32> {
             let traf = moof.traf.first().ok_or_else(|| MultimuxError::Connect {
                 reason: "smooth-pull: fragment moof has no traf".into(),
             })?;
-            return Ok(traf.tfhd.track_id);
+            return Ok(traf.tfhd.track_id.value());
         }
         if consumed == 0 {
             break;
@@ -1491,7 +1492,7 @@ mod tests {
         (media, out)
     }
 
-    fn video_track_id(media: &Media) -> u32 {
+    fn video_track_id(media: &Media) -> TrackId {
         media
             .tracks
             .iter()
@@ -1501,7 +1502,7 @@ mod tests {
             .track_id
     }
 
-    fn audio_track_id(media: &Media) -> u32 {
+    fn audio_track_id(media: &Media) -> TrackId {
         media
             .tracks
             .iter()
@@ -1554,9 +1555,9 @@ mod tests {
 
         let mut fragments = HashMap::new();
         for frag in &out.fragments {
-            let kind = if frag.track_id == video_id {
+            let kind = if frag.track_id == TrackId::new(video_id.value()) {
                 "video"
-            } else if frag.track_id == audio_id {
+            } else if frag.track_id == TrackId::new(audio_id.value()) {
                 "audio"
             } else {
                 continue;
@@ -1611,7 +1612,7 @@ mod tests {
     fn oracle_sample_count(
         media: &Media,
         out: &SmoothOutput,
-        track_id: u32,
+        track_id: TrackId,
         timescale: u32,
     ) -> usize {
         let track = media
@@ -1665,12 +1666,12 @@ mod tests {
     /// separately, below.
     async fn drive_session_and_count(
         route: &SmoothPullRoute,
-    ) -> Result<(Vec<TrackSpec>, HashMap<u32, usize>)> {
+    ) -> Result<(Vec<TrackSpec>, HashMap<TrackId, usize>)> {
         let (http, clean_url, credentials) = build_client(route)?;
         let mut session = SmoothIngestSession::new(clean_url);
         let mut backlog: VecDeque<SmoothAction> = VecDeque::new();
         let mut specs: Vec<TrackSpec> = Vec::new();
-        let mut per_track: HashMap<u32, usize> = HashMap::new();
+        let mut per_track: HashMap<TrackId, usize> = HashMap::new();
         // HANG GUARD (issue #826): ceiling on the whole session-drive loop.
         // Each HTTP fetch (manifest + first fragments + follow-up fragments)
         // completes in ~ms over loopback. Raised to 60s for load tolerance
@@ -1755,10 +1756,10 @@ mod tests {
         let want_video = oracle_sample_count(
             &media,
             &out,
-            video_track_id(&media),
+            TrackId::new(video_track_id(&media).value()),
             transmux::VIDEO_CLOCK_RATE,
         );
-        let want_audio = oracle_sample_count(&media, &out, audio_track_id(&media), audio_timescale);
+        let want_audio = oracle_sample_count(&media, &out, TrackId::new(audio_track_id(&media).value()), audio_timescale);
         assert!(
             want_video > 0 && want_audio > 0,
             "sanity: fixture must carry real samples for both streams"
@@ -1777,7 +1778,7 @@ mod tests {
                 .expect("drive");
 
         assert_eq!(specs.len(), 2, "one video + one audio track: {specs:?}");
-        let mut ids: Vec<u32> = specs.iter().map(|s| s.track_id).collect();
+        let mut ids: Vec<TrackId> = specs.iter().map(|s| s.track_id).collect();
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), 2, "track ids must be unique global ids");
@@ -1926,7 +1927,7 @@ mod tests {
         let audio_frags: Vec<_> = out
             .fragments
             .iter()
-            .filter(|f| f.track_id == audio_id)
+            .filter(|f| f.track_id == TrackId::new(audio_id.value()))
             .collect();
         assert!(
             audio_frags.len() >= 2,
@@ -2188,16 +2189,16 @@ mod tests {
         let video_frag = out
             .fragments
             .iter()
-            .find(|f| f.track_id == video_id)
+            .find(|f| f.track_id == TrackId::new(video_id.value()))
             .unwrap();
-        assert_eq!(discover_moof_track_id(&video_frag.data).unwrap(), video_id);
+        assert_eq!(discover_moof_track_id(&video_frag.data).unwrap(), video_id.value());
 
         let audio_frag = out
             .fragments
             .iter()
-            .find(|f| f.track_id == audio_id)
+            .find(|f| f.track_id == TrackId::new(audio_id.value()))
             .unwrap();
-        assert_eq!(discover_moof_track_id(&audio_frag.data).unwrap(), audio_id);
+        assert_eq!(discover_moof_track_id(&audio_frag.data).unwrap(), audio_id.value());
     }
 
     #[test]

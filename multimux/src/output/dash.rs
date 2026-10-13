@@ -58,6 +58,8 @@
 //! `timeShiftBufferDepth`/`availabilityStartTime`), **not** LL-DASH — see
 //! [`crate::output::ll_dash`] for that (issue #663 P4.2 / #721).
 
+#[cfg(test)]
+use transmux::TrackId;
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -441,7 +443,7 @@ mod tests {
     }
     use transmux::ll_hls::SegmentInfo;
 
-    fn video_spec(track_id: u32) -> TrackSpec {
+    fn video_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
             90_000,
@@ -455,7 +457,7 @@ mod tests {
     /// A teletext-shaped opaque track — no derivable RFC 6381 codec string
     /// (issue #776's regression case: a routine DVB multiplex's first
     /// elementary stream, ahead of the video/audio tracks in PMT order).
-    fn teletext_spec(track_id: u32) -> TrackSpec {
+    fn teletext_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
             90_000,
@@ -501,7 +503,7 @@ mod tests {
     fn render_mpd_matches_frozen_now_golden() {
         let route = RouteHandle::new(4.0, 500, 2);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
             .expect("add_segment");
@@ -534,7 +536,7 @@ mod tests {
     fn render_mpd_window_over_60s_matches_frozen_now_golden() {
         let route = RouteHandle::new(4.0, 500, 15);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         for seq in 1..=15u32 {
             route
                 .add_segment(crate::route::SPTS_PROGRAM_ID, seg(seq, 4.0))
@@ -577,7 +579,7 @@ mod tests {
     fn the_fractional_target_differs_from_main_by_exactly_the_rounded_token() {
         let route = RouteHandle::new(0.1, 30, 3);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         for seq in 1..=3u32 {
             route
                 .add_segment(crate::route::SPTS_PROGRAM_ID, seg(seq, 0.1))
@@ -628,7 +630,7 @@ mod tests {
         // regression to `PT60S` fails here, not just a golden edit.
         let route = RouteHandle::new(4.0, 500, 15);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         for seq in 1..=15u32 {
             route
                 .add_segment(crate::route::SPTS_PROGRAM_ID, seg(seq, 4.0))
@@ -669,7 +671,7 @@ mod tests {
     fn the_over_an_hour_window_differs_from_main_by_exactly_the_balanced_token() {
         let route = RouteHandle::new(4.0, 500, 900);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         for seq in 1..=900u32 {
             route
                 .add_segment(crate::route::SPTS_PROGRAM_ID, seg(seq, 4.0))
@@ -794,7 +796,7 @@ mod tests {
         // degenerate SegmentTemplate@duration=0), not None/panic.
         let route = RouteHandle::new(4.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(7)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(7))]);
         let mpd = render_mpd(&route).expect("must render even with an empty window");
         assert!(mpd.contains("<MPD"));
         assert!(mpd.contains("type=\"dynamic\""));
@@ -808,7 +810,7 @@ mod tests {
         // route's init-1.mp4/seg-1-<N>.m4s filenames.
         let route = RouteHandle::new(4.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(7)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(7))]);
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
             .expect("add_segment");
@@ -828,7 +830,7 @@ mod tests {
     fn render_mpd_number_addressing_and_start_number_is_fixed_at_first_segment() {
         let route = RouteHandle::new(4.0, 500, 2);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
             .expect("add_segment");
@@ -868,7 +870,7 @@ mod tests {
     fn render_mpd_carries_live_attributes() {
         let route = RouteHandle::new(2.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 2.0))
             .expect("add_segment");
@@ -882,10 +884,10 @@ mod tests {
 
     #[test]
     fn select_representable_track_skips_leading_opaque_track() {
-        let specs = vec![teletext_spec(1), video_spec(2)];
+        let specs = vec![teletext_spec(TrackId::new(1)), video_spec(TrackId::new(2))];
         let selected =
             select_representable_track(&specs).expect("the video track must be selected");
-        assert_eq!(selected.track_id, 2);
+        assert_eq!(selected.track_id, TrackId::new(2));
     }
 
     /// MUTATION VERIFIED: reverting `render_mpd` to `specs.remove(0)`
@@ -901,7 +903,7 @@ mod tests {
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
-            vec![teletext_spec(1), video_spec(2)],
+            vec![teletext_spec(TrackId::new(1)), video_spec(TrackId::new(2))],
         );
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
@@ -920,7 +922,7 @@ mod tests {
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
         route.set_track_specs(
             crate::route::SPTS_PROGRAM_ID,
-            vec![teletext_spec(1), teletext_spec(2)],
+            vec![teletext_spec(TrackId::new(1)), teletext_spec(TrackId::new(2))],
         );
         assert!(
             render_mpd(&route).is_none(),
@@ -947,7 +949,7 @@ mod tests {
     async fn manifest_handler_200_with_dash_content_type() {
         let route = Arc::new(RouteHandle::new(4.0, 500, 4));
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
             .expect("add_segment");
@@ -981,7 +983,7 @@ mod tests {
         // this scheme (ANSI/SCTE 214-3 §8.3.3).
         let route = RouteHandle::new(4.0, 500, 4);
         route.publish_new_program(crate::route::SPTS_PROGRAM_ID);
-        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(1)]);
+        route.set_track_specs(crate::route::SPTS_PROGRAM_ID, vec![video_spec(TrackId::new(1))]);
         route
             .add_segment(crate::route::SPTS_PROGRAM_ID, seg(1, 4.0))
             .expect("add_segment");

@@ -92,6 +92,7 @@
 //! 5-tuple once connectivity checks pick it, so one learned address is
 //! sufficient (no candidate-pair migration handling in this cut).
 
+use transmux::TrackId;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
@@ -1145,7 +1146,7 @@ a=candidate:1 1 udp 2130706431 10.0.0.5 54321 typ host\r\n";
 #[cfg(feature = "test-hooks")]
 fn whep_avc_track_spec() -> TrackSpec {
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         VIDEO_CLOCK_RATE,
         CodecConfig::Avc {
             config: transmux::AVCConfigurationBox::new(transmux::AVCDecoderConfigurationRecord {
@@ -2145,7 +2146,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
 
     fn test_track_spec() -> TrackSpec {
         TrackSpec::new(
-            1,
+            TrackId::new(1),
             VIDEO_CLOCK_RATE,
             CodecConfig::Avc {
                 config: transmux::AVCConfigurationBox::new(

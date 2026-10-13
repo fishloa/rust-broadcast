@@ -16,6 +16,7 @@
 //! every one must be served; the MPD must also pass `media-doctor`'s DASH
 //! validator and keep `startNumber`/`@duration` constant as it refreshes.
 
+use transmux::TrackId;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -107,7 +108,7 @@ async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
         .find(|t| matches!(t.spec.config, transmux::CodecConfig::Avc { .. }))
         .expect("video track");
     // The single-rendition outputs name the track DEFAULT_TRACK_ID (1).
-    track.spec.track_id = 1;
+    track.spec.track_id = TrackId::new(1);
     let specs = vec![track.spec.clone()];
 
     let store = Arc::new(RouteHandle::new(TARGET_SECS, PART_MS, WINDOW));
@@ -134,7 +135,7 @@ async fn slide(output: Arc<dyn Output>, manifest_path: &str) {
         let s = samples
             .next()
             .expect("fixture has enough video for the run");
-        seg.push(1, s).expect("push");
+        seg.push(TrackId::new(1), s).expect("push");
         for part in seg.take_ready_parts() {
             store.add_part(program, part);
         }

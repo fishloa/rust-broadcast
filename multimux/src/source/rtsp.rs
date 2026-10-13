@@ -57,6 +57,7 @@
 //! with a clear runtime error naming the missing feature, never falling back
 //! to an unencrypted socket (issue #804).
 
+use transmux::TrackId;
 use std::collections::VecDeque;
 use std::time::Duration;
 
@@ -91,7 +92,7 @@ const RTSPS_DEFAULT_PORT: u16 = rtsp_runtime::RTSPS_DEFAULT_PORT;
 
 /// Map an interleaved RTP channel to its track id (even channels only; RTCP
 /// odd channels return `None`).
-pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<u32> {
+pub fn route_channel(channel: u8, tracks: &[TrackInit]) -> Option<TrackId> {
     if !channel.is_multiple_of(2) {
         return None;
     }
@@ -955,7 +956,7 @@ mod tests {
     fn video_track(channel: u8) -> TrackInit {
         let avc = avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==").unwrap();
         TrackInit {
-            track_id: 1,
+            track_id: TrackId::new(1),
             kind: RtpMediaKind::H264,
             config: CodecConfig::Avc {
                 config: avc,
@@ -972,7 +973,7 @@ mod tests {
     #[test]
     fn routes_even_channel_to_track_ignores_rtcp() {
         let tracks = vec![video_track(0)];
-        assert_eq!(route_channel(0, &tracks), Some(1));
+        assert_eq!(route_channel(0, &tracks), Some(TrackId::new(1)));
         assert_eq!(route_channel(1, &tracks), None);
         assert_eq!(route_channel(4, &tracks), None);
     }
@@ -980,7 +981,7 @@ mod tests {
     #[test]
     fn routes_second_media_even_channel() {
         let tracks = vec![video_track(0), video_track(2)];
-        assert_eq!(route_channel(2, &tracks), Some(1));
+        assert_eq!(route_channel(2, &tracks), Some(TrackId::new(1)));
         assert_eq!(route_channel(3, &tracks), None);
     }
 
@@ -1336,7 +1337,7 @@ mod tests {
             .expect("a depayloaded sample must reach the Trunk");
         match item {
             media_plane::trunk::SampleCursorItem::Timed { track_id, sample } => {
-                assert_eq!(track_id, 1);
+                assert_eq!(track_id, TrackId::new(1));
                 assert!(sample.flags.is_sync, "the IDR NAL must be marked sync");
             }
             other => panic!("expected Timed, got {other:?}"),
@@ -1972,7 +1973,7 @@ mod tests {
                             // Record only the FIRST sample: the assertion below is
                             // about the first access unit, and one poll batch may
                             // carry several (depends on read chunking).
-                            sample_track.get_or_insert((track_id, sample.flags.is_sync));
+                            sample_track.get_or_insert((track_id.value(), sample.flags.is_sync));
                         }
                     }
                 }

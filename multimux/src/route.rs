@@ -109,6 +109,8 @@
 //! minted — out of scope here, recorded so a future MPTS-addressing task
 //! does not have to rediscover it.
 
+#[cfg(test)]
+use transmux::TrackId;
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, VecDeque};
 use std::num::NonZeroUsize;
@@ -1739,7 +1741,7 @@ mod program_registry_tests {
         }
     }
 
-    fn video_spec(track_id: u32) -> TrackSpec {
+    fn video_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
             90_000,
@@ -1794,8 +1796,8 @@ mod program_registry_tests {
 
         route.set_init(program_a, &b"init-1"[..]);
         route.set_init(program_b, &b"init-2"[..]);
-        route.set_track_specs(program_a, vec![video_spec(1)]);
-        route.set_track_specs(program_b, vec![video_spec(2)]);
+        route.set_track_specs(program_a, vec![video_spec(TrackId::new(1))]);
+        route.set_track_specs(program_b, vec![video_spec(TrackId::new(2))]);
         route
             .add_segment(program_a, seg(10, 2.0))
             .expect("add_segment");
@@ -1836,7 +1838,7 @@ mod program_registry_tests {
                 .iter()
                 .map(|s| s.track_id)
                 .collect::<Vec<_>>(),
-            vec![1],
+            vec![TrackId::new(1)],
             "program 1's own track spec"
         );
         assert_eq!(
@@ -1845,7 +1847,7 @@ mod program_registry_tests {
                 .iter()
                 .map(|s| s.track_id)
                 .collect::<Vec<_>>(),
-            vec![2],
+            vec![TrackId::new(2)],
             "program 2's own, DIFFERENT track spec"
         );
     }

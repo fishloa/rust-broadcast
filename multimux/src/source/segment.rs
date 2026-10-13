@@ -75,6 +75,7 @@
 //! all) is the addressing question `crate::route`'s own module doc records
 //! options for.
 
+use transmux::TrackId;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -153,7 +154,7 @@ enum AnySegmenter {
 }
 
 impl AnySegmenter {
-    fn push(&mut self, track_id: u32, sample: Sample) -> transmux::Result<()> {
+    fn push(&mut self, track_id: TrackId, sample: Sample) -> transmux::Result<()> {
         match self {
             AnySegmenter::Fmp4(seg) => seg.push(track_id, sample),
             AnySegmenter::Ts(seg) => seg.push(track_id, sample),
@@ -232,7 +233,7 @@ impl AnySegmenter {
             AnySegmenter::Ts(seg) => match seg.add_track(spec.clone()) {
                 Ok(()) => {
                     tracing::info!(
-                        track_id = spec.track_id,
+                        track_id = %spec.track_id,
                         "admitted new track into running TS-HLS segmenter"
                     );
                     true
@@ -240,7 +241,7 @@ impl AnySegmenter {
                 Err(e) => {
                     tracing::warn!(
                         error = %e,
-                        track_id = spec.track_id,
+                        track_id = %spec.track_id,
                         "failed to admit new track into TS-HLS segmenter"
                     );
                     false
@@ -1245,7 +1246,7 @@ mod tests {
         let mut track_generations = HashMap::new();
 
         // First feed: resolves the PMT, mints program 0's driver-side Trunk.
-        let ts_bytes = build_ts_bytes(1, 0xAB, 90);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
         driver.feed(&ts_bytes, Timestamp::ZERO);
         report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
@@ -1254,7 +1255,7 @@ mod tests {
         // (subscribed just above via `subscribe_from_backlog` — issue #808)
         // keeps observing new samples live *in addition to* replaying the
         // first feed's own backlog, not merely as a substitute for it.
-        let more = build_ts_bytes(1, 0xCD, 90);
+        let more = build_ts_bytes(TrackId::new(1), 0xCD, 90);
         driver.feed(&more, Timestamp::from_nanos(1));
         report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
@@ -1335,11 +1336,11 @@ mod tests {
             "segment-metrics-probe-route",
         );
 
-        let ts_bytes = build_ts_bytes(1, 0xAB, 90);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
         driver.feed(&ts_bytes, Timestamp::ZERO);
         report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
-        let more = build_ts_bytes(1, 0xCD, 90);
+        let more = build_ts_bytes(TrackId::new(1), 0xCD, 90);
         driver.feed(&more, Timestamp::from_nanos(1));
         report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
@@ -1391,7 +1392,7 @@ mod tests {
         // subscribes from the backlog; a small ring would evict the head).
         let trunk = Trunk::new(TrunkConfig::new(nz(512), nz(16), nz(8), nz(16), nz(16)));
         let writer = trunk.writer().expect("first trunk writer");
-        writer.set_tracks(vec![track_spec(1)]);
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
 
         // A real SCTE-35 splice_insert (event_id 2002) at pts 0.
         let hex = "FC302100000000000000FFF01005000007D27FEF7F7E0020F580C0000000000088B9661D";
@@ -1406,7 +1407,7 @@ mod tests {
         // Write enough frames into the trunk to cut a few real segments (a
         // sync frame every 45 frames == 0.5 s, target 1.0 s).
         for i in 0..200u32 {
-            writer.publish(1, RetentionClass::Timed, sample_at(i, i.is_multiple_of(45)));
+            writer.publish(TrackId::new(1), RetentionClass::Timed, sample_at(i, i.is_multiple_of(45)));
         }
 
         let route = RouteHandle::new(1.0, 250, 8);
@@ -1452,7 +1453,7 @@ mod tests {
         trunk
             .writer()
             .expect("writer")
-            .set_tracks(vec![track_spec(1)]);
+            .set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8);
         let mut segmenter =
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("segmenter builds");
@@ -1558,7 +1559,7 @@ mod tests {
         // and every one of those samples in this single call — exactly the
         // "ordinary MPEG-TS" shape issue #808 describes, not a contrived
         // edge case.
-        let ts_bytes = build_ts_bytes(1, 0xAB, 90);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
         driver.feed(&ts_bytes, Timestamp::ZERO);
         report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
@@ -1607,12 +1608,12 @@ mod tests {
         let mut segmenters = HashMap::new();
         let mut track_generations = HashMap::new();
 
-        let ts_bytes = build_ts_bytes(1, 0xAB, 90);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 90);
         driver.feed(&ts_bytes, Timestamp::ZERO);
         report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
 
-        let more = build_ts_bytes(1, 0xCD, 90);
+        let more = build_ts_bytes(TrackId::new(1), 0xCD, 90);
         driver.feed(&more, Timestamp::from_nanos(1));
         report_driver_progress(&driver, &route, &mut published, &mut track_generations);
         drive_program_segmenters(&driver, &route, &mut segmenters);
@@ -1700,24 +1701,24 @@ mod tests {
             if self.feed_count == 2 {
                 self.pending.push_back(SessionEvent::NewProgram {
                     program: ProgramId(0),
-                    tracks: vec![track_spec(1)],
+                    tracks: vec![track_spec(TrackId::new(1))],
                 });
                 self.pending.push_back(SessionEvent::NewProgram {
                     program: ProgramId(1),
-                    tracks: vec![track_spec(2)],
+                    tracks: vec![track_spec(TrackId::new(2))],
                 });
             } else if self.feed_count >= 3 {
                 let i = self.feed_count - 3;
                 let is_sync = i == 0 || i == 45;
                 self.pending.push_back(SessionEvent::Sample {
                     program: ProgramId(0),
-                    track_id: 1,
+                    track_id: TrackId::new(1),
                     retention: media_plane::trunk::RetentionClass::Timed,
                     sample: sample_at(i, is_sync),
                 });
                 self.pending.push_back(SessionEvent::Sample {
                     program: ProgramId(1),
-                    track_id: 2,
+                    track_id: TrackId::new(2),
                     retention: media_plane::trunk::RetentionClass::Timed,
                     sample: sample_at(i, is_sync),
                 });
@@ -2160,7 +2161,7 @@ mod tests {
                 .borrow_mut()
                 .push_back(SessionEvent::TracksChanged {
                     program: ProgramId(0),
-                    tracks: vec![track_spec(1), track_spec(9)],
+                    tracks: vec![track_spec(TrackId::new(1)), track_spec(TrackId::new(9))],
                 });
             self.added_track_9.set(true);
         }
@@ -2182,21 +2183,21 @@ mod tests {
                     .borrow_mut()
                     .push_back(SessionEvent::NewProgram {
                         program: ProgramId(0),
-                        tracks: vec![track_spec(1)],
+                        tracks: vec![track_spec(TrackId::new(1))],
                     });
             } else if self.feed_count >= 3 {
                 let i = self.feed_count - 3;
                 let is_sync = i.is_multiple_of(45);
                 self.pending.borrow_mut().push_back(SessionEvent::Sample {
                     program: ProgramId(0),
-                    track_id: 1,
+                    track_id: TrackId::new(1),
                     retention: media_plane::trunk::RetentionClass::Timed,
                     sample: sample_at(i, is_sync),
                 });
                 if self.added_track_9.get() {
                     self.pending.borrow_mut().push_back(SessionEvent::Sample {
                         program: ProgramId(0),
-                        track_id: 9,
+                        track_id: TrackId::new(9),
                         retention: media_plane::trunk::RetentionClass::Timed,
                         sample: sample_at(i, is_sync),
                     });
@@ -2504,14 +2505,14 @@ mod tests {
         use crate::source::ts_program::ProgramTracker;
 
         let mut tracker = ProgramTracker::new();
-        tracker.handle(DemuxEvent::TrackAdded(track_spec(1)));
-        tracker.handle(DemuxEvent::TrackAdded(track_spec(2)));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(1))));
+        tracker.handle(DemuxEvent::TrackAdded(track_spec(TrackId::new(2))));
         tracker.handle(DemuxEvent::tracks_resolved(0));
         let _established = tracker.poll();
         let _new_program = tracker.poll();
 
         tracker.handle(DemuxEvent::track_removed(
-            2,
+            TrackId::new(2),
             transmux::EventProvenance::default(),
         ));
         tracker.handle(DemuxEvent::tracks_resolved(1));
@@ -2519,17 +2520,17 @@ mod tests {
         match tracker.poll() {
             Some(SessionEvent::TracksChanged { tracks, .. }) => {
                 assert_eq!(tracks.len(), 1);
-                assert_eq!(tracks[0].track_id, 1);
+                assert_eq!(tracks[0].track_id, TrackId::new(1));
             }
             other => panic!("expected TracksChanged with track 1 only, got {other:?}"),
         }
 
-        tracker.handle(DemuxEvent::sample(2, sample_at(0, true)));
+        tracker.handle(DemuxEvent::sample(TrackId::new(2), sample_at(0, true)));
         assert!(tracker.poll().is_none(), "sample for removed track dropped");
 
         // An update for the removed track 2 is for a track nothing routes
         // on: ignored.
-        tracker.handle(DemuxEvent::TrackUpdated(track_spec(2)));
+        tracker.handle(DemuxEvent::TrackUpdated(track_spec(TrackId::new(2))));
         assert!(
             tracker.poll().is_none(),
             "TrackUpdated for a removed track emits no event"
@@ -2603,7 +2604,7 @@ mod tests {
     fn bare_segmenter(trunk: &Arc<Trunk>) -> ProgramSegmenter {
         let segment_writer = trunk.segment_writer().expect("first take succeeds");
         let seg = AnySegmenter::Ts(
-            StreamingTsHlsSegmenter::new(vec![track_spec(1)], 1, 8)
+            StreamingTsHlsSegmenter::new(vec![track_spec(TrackId::new(1))], 1, 8)
                 .expect("valid placeholder TS segmenter"),
         );
         ProgramSegmenter {
@@ -2662,7 +2663,7 @@ mod tests {
         trunk
             .writer()
             .expect("first take succeeds")
-            .set_tracks(vec![track_spec(1)]);
+            .set_tracks(vec![track_spec(TrackId::new(1))]);
         pre_seed_five_segments(&trunk);
 
         let route = RouteHandle::new(1.0, 250, 8).with_container(Container::MpegTs);
@@ -2674,7 +2675,7 @@ mod tests {
         for i in 0..90u32 {
             segmenter
                 .seg
-                .push(1, sample_at(i, i.is_multiple_of(45)))
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
                 .expect("push");
         }
         segmenter.publish_ready();
@@ -2713,7 +2714,7 @@ mod tests {
         trunk
             .writer()
             .expect("first take succeeds")
-            .set_tracks(vec![track_spec(1)]);
+            .set_tracks(vec![track_spec(TrackId::new(1))]);
         pre_seed_five_segments(&trunk);
 
         // `bare_segmenter` already builds its placeholder Ts segmenter over
@@ -2728,7 +2729,7 @@ mod tests {
         for i in 0..90u32 {
             segmenter
                 .seg
-                .push(1, sample_at(i, i.is_multiple_of(45)))
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(45)))
                 .expect("push");
         }
         segmenter.publish_ready();
@@ -2742,7 +2743,7 @@ mod tests {
     }
 
     /// A Data track (a DVB SCTE-35/teletext PID) that cannot ride in fMP4.
-    fn data_track_spec(track_id: u32) -> TrackSpec {
+    fn data_track_spec(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
             90_000,
@@ -2760,7 +2761,7 @@ mod tests {
         for i in first_frame..first_frame + 75 {
             segmenter
                 .seg
-                .push(1, sample_at(i, i.is_multiple_of(25)))
+                .push(TrackId::new(1), sample_at(i, i.is_multiple_of(25)))
                 .expect("push");
         }
         segmenter.publish_ready();
@@ -2777,7 +2778,7 @@ mod tests {
 
         let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(64)));
         let writer = trunk.writer().expect("first take succeeds");
-        writer.set_tracks(vec![track_spec(1)]);
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8);
         let mut segmenter =
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("fMP4 segmenter builds");
@@ -2786,7 +2787,7 @@ mod tests {
         let before = trunk.last_closed_segment().expect("a segment closed");
 
         // A routine PMT version bump adds a Data PID.
-        writer.set_tracks(vec![track_spec(1), data_track_spec(2)]);
+        writer.set_tracks(vec![track_spec(TrackId::new(1)), data_track_spec(TrackId::new(2))]);
         segmenter.apply_track_change(ProgramId(0), &trunk, &route);
         let AnySegmenter::Fmp4(rebuilt) = &segmenter.seg else {
             panic!("an fMP4 route must keep producing fMP4 after a track change");
@@ -2834,12 +2835,12 @@ mod tests {
 
         let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(16), nz(8), nz(64)));
         let writer = trunk.writer().expect("first take succeeds");
-        writer.set_tracks(vec![track_spec(1)]);
+        writer.set_tracks(vec![track_spec(TrackId::new(1))]);
         let route = RouteHandle::new(1.0, 250, 8);
         let mut segmenter =
             ProgramSegmenter::try_new(&trunk, &route, 1.0, 250).expect("fMP4 segmenter builds");
 
-        writer.set_tracks(vec![data_track_spec(2)]);
+        writer.set_tracks(vec![data_track_spec(TrackId::new(2))]);
         segmenter.apply_track_change(ProgramId(0), &trunk, &route);
         assert!(matches!(segmenter.seg, AnySegmenter::Fmp4(_)));
 

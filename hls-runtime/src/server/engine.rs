@@ -70,6 +70,7 @@
 //! `Trunk`'s four rings. [`HlsOrigin::set_init`] is the (small, honest) side
 //! channel for it — not a duplicate of anything `Trunk` holds.
 
+use transmux::TrackId;
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -131,7 +132,7 @@ fn locked<T>(m: &Mutex<T>) -> MutexGuard<'_, T> {
 
 /// Track id for the single rendition served per stream (no multi-track/
 /// multi-rendition support yet).
-pub const DEFAULT_TRACK_ID: u32 = 1;
+pub const DEFAULT_TRACK_ID: TrackId = TrackId::new(1);
 
 /// Which container [`HlsOrigin`] serves segments/parts as — orthogonal to
 /// whether LL-HLS is enabled ([`HlsOriginBuilder::low_latency`]); issue #873.
@@ -280,7 +281,7 @@ pub enum HlsRequest {
     Playlist {
         /// The track id to render the playlist for (a naming parameter only —
         /// see [`DEFAULT_TRACK_ID`]).
-        track_id: u32,
+        track_id: TrackId,
         /// The blocking-reload query parameters, if any.
         query: BlockingQuery,
     },
@@ -1045,11 +1046,11 @@ impl HlsOrigin {
     }
 
     /// The wire name of init generation `generation` for `track_id`.
-    pub fn init_name(&self, track_id: u32, generation: u32) -> String {
+    pub fn init_name(&self, track_id: TrackId, generation: u32) -> String {
         format!("init-{track_id}-{}-{generation}.mp4", self.instance)
     }
 
-    fn segment_name(&self, track_id: u32, seq: u32, ext: &str) -> String {
+    fn segment_name(&self, track_id: TrackId, seq: u32, ext: &str) -> String {
         format!(
             "seg-{track_id}-{}-{}.{ext}",
             self.instance,
@@ -1057,7 +1058,7 @@ impl HlsOrigin {
         )
     }
 
-    fn part_name(&self, track_id: u32, seq: u32, idx: u32, ext: &str) -> String {
+    fn part_name(&self, track_id: TrackId, seq: u32, idx: u32, ext: &str) -> String {
         format!(
             "part-{track_id}-{}-{}.{idx}.{ext}",
             self.instance,
@@ -1235,7 +1236,7 @@ impl HlsOrigin {
     /// parts cannot back the playlist's promise that they stay downloadable
     /// (RFC 8216bis §6.2.2), and a run with a hole would number the parts
     /// wrongly.
-    fn resident_part_specs(&self, track_id: u32, seq: u32, ext: &str) -> Vec<PartSpec> {
+    fn resident_part_specs(&self, track_id: TrackId, seq: u32, ext: &str) -> Vec<PartSpec> {
         // Keyed by index: a stale entry reusing a number is overwritten by
         // the newer one (publish order).
         let by_index: BTreeMap<u32, PartEntry> = self
@@ -1283,7 +1284,7 @@ impl HlsOrigin {
     /// forbidden in an HLS quoted-string/URI — audit BH-W7, issue
     /// #1111; unreachable for this origin, which only ever supplies
     /// its own generated URIs).
-    fn render_playlist(&self, track_id: u32) -> core::result::Result<String, String> {
+    fn render_playlist(&self, track_id: TrackId) -> core::result::Result<String, String> {
         self.drain();
         // Snapshot the window and release its lock before any `Trunk` call:
         // `live_edge`, the part lookups and the event lookups below take the
@@ -1483,7 +1484,7 @@ impl HlsOrigin {
 
     fn resolve_playlist(
         &self,
-        track_id: u32,
+        track_id: TrackId,
         query: BlockingQuery,
         now: Timestamp,
         await_policy: AwaitPolicy,

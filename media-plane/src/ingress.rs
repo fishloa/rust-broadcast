@@ -352,6 +352,7 @@
 //! so a permanently-failing dialer cannot spin the attempt count or allocate
 //! per call, however many times it is polled.
 
+use transmux::TrackId;
 use std::collections::HashMap;
 use std::num::{NonZeroU32, NonZeroUsize};
 use std::sync::Arc;
@@ -457,7 +458,7 @@ pub enum SessionEvent {
         program: ProgramId,
         /// Track id within that program, matching
         /// [`TrunkWriter::publish`]'s own `track_id`.
-        track_id: u32,
+        track_id: TrackId,
         /// Which ring this sample's track publishes into — the publisher
         /// (ultimately, the `IngestSession` implementor) decides this, same
         /// as any other [`TrunkWriter::publish`] caller.
@@ -1522,7 +1523,7 @@ mod tests {
         Sample::new(Bytes::from(vec![byte; 4]), Some(0), Some(0), Some(1), true)
     }
 
-    fn opaque_track(track_id: u32) -> TrackSpec {
+    fn opaque_track(track_id: TrackId) -> TrackSpec {
         TrackSpec::new(
             track_id,
             90_000,
@@ -1663,11 +1664,11 @@ mod tests {
         let session = ScriptedSession::new(vec![
             FeedOutcome::Events(vec![SessionEvent::NewProgram {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(7)],
+                tracks: vec![opaque_track(TrackId::new(7))],
             }]),
             FeedOutcome::Events(vec![SessionEvent::Sample {
                 program: ProgramId(1),
-                track_id: 7,
+                track_id: TrackId::new(7),
                 retention: RetentionClass::Timed,
                 sample: sample(0xAB),
             }]),
@@ -1697,7 +1698,7 @@ mod tests {
         let item = cursor.poll().expect("the published sample is on the ring");
         match item {
             crate::SampleCursorItem::Timed { track_id, sample } => {
-                assert_eq!(track_id, 7);
+                assert_eq!(track_id, TrackId::new(7));
                 assert_eq!(sample.data.as_ref(), &[0xAB; 4]);
             }
             other => panic!("expected Timed, got {other:?}"),
@@ -1723,7 +1724,7 @@ mod tests {
         let session =
             ScriptedSession::new(vec![FeedOutcome::Events(vec![SessionEvent::NewProgram {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(3), opaque_track(9)],
+                tracks: vec![opaque_track(TrackId::new(3)), opaque_track(TrackId::new(9))],
             }])]);
         let mut dialer = ScriptedDialer {
             sessions: VecDeque::from(vec![session]),
@@ -1738,10 +1739,10 @@ mod tests {
             .trunk(ProgramId(1))
             .cloned()
             .expect("NewProgram announced a Trunk for program 1");
-        let track_ids: Vec<u32> = trunk.tracks().iter().map(|t| t.track_id).collect();
+        let track_ids: Vec<TrackId> = trunk.tracks().iter().map(|t| t.track_id).collect();
         assert_eq!(
             track_ids,
-            vec![3, 9],
+            vec![TrackId::new(3), TrackId::new(9)],
             "the Trunk must expose exactly the tracks NewProgram carried"
         );
     }
@@ -1763,11 +1764,11 @@ mod tests {
         let session = ScriptedSession::new(vec![
             FeedOutcome::Events(vec![SessionEvent::NewProgram {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(1)],
+                tracks: vec![opaque_track(TrackId::new(1))],
             }]),
             FeedOutcome::Events(vec![SessionEvent::TracksChanged {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(1), opaque_track(2)],
+                tracks: vec![opaque_track(TrackId::new(1)), opaque_track(TrackId::new(2))],
             }]),
         ]);
         let mut dialer = ScriptedDialer {
@@ -1786,10 +1787,10 @@ mod tests {
         );
 
         driver.feed(b"pmt-bump", Timestamp::from_nanos(1));
-        let track_ids: Vec<u32> = trunk.tracks().iter().map(|t| t.track_id).collect();
+        let track_ids: Vec<TrackId> = trunk.tracks().iter().map(|t| t.track_id).collect();
         assert_eq!(
             track_ids,
-            vec![1, 2],
+            vec![TrackId::new(1), TrackId::new(2)],
             "TracksChanged must replace the set with the new complete snapshot"
         );
         assert_eq!(
@@ -1814,7 +1815,7 @@ mod tests {
         let session = ScriptedSession::new(vec![FeedOutcome::Events(vec![
             SessionEvent::TracksChanged {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(1)],
+                tracks: vec![opaque_track(TrackId::new(1))],
             },
         ])]);
         let mut driver = IngestDriver::new(session, trunk_config(), handshake(), max_programs());
@@ -1849,11 +1850,11 @@ mod tests {
         let session = ScriptedSession::new(vec![
             FeedOutcome::Events(vec![SessionEvent::NewProgram {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(1)],
+                tracks: vec![opaque_track(TrackId::new(1))],
             }]),
             FeedOutcome::Events(vec![SessionEvent::Sample {
                 program: ProgramId(1),
-                track_id: 1,
+                track_id: TrackId::new(1),
                 retention: RetentionClass::Timed,
                 sample: sample(0xAB),
             }]),
@@ -1905,18 +1906,18 @@ mod tests {
         let session = ScriptedSession::new(vec![
             FeedOutcome::Events(vec![SessionEvent::NewProgram {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(7)],
+                tracks: vec![opaque_track(TrackId::new(7))],
             }]),
             // The same program announced again, with a grown track set --
             // what a session that re-states its program on a PMT change
             // emits, rather than using `TracksChanged`.
             FeedOutcome::Events(vec![SessionEvent::NewProgram {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(7), opaque_track(8)],
+                tracks: vec![opaque_track(TrackId::new(7)), opaque_track(TrackId::new(8))],
             }]),
             FeedOutcome::Events(vec![SessionEvent::Sample {
                 program: ProgramId(1),
-                track_id: 7,
+                track_id: TrackId::new(7),
                 retention: RetentionClass::Timed,
                 sample: sample(0xCD),
             }]),
@@ -1943,10 +1944,10 @@ mod tests {
             1,
             "a repeat announcement must not add a program"
         );
-        let track_ids: Vec<u32> = trunk.tracks().iter().map(|t| t.track_id).collect();
+        let track_ids: Vec<TrackId> = trunk.tracks().iter().map(|t| t.track_id).collect();
         assert_eq!(
             track_ids,
-            vec![7, 8],
+            vec![TrackId::new(7), TrackId::new(8)],
             "the re-announcement's track set must land on the SAME Trunk the \
              subscriber already holds"
         );
@@ -1958,7 +1959,7 @@ mod tests {
             .expect("a cursor subscribed before the re-announcement must still receive samples");
         match item {
             crate::SampleCursorItem::Timed { track_id, sample } => {
-                assert_eq!(track_id, 7);
+                assert_eq!(track_id, TrackId::new(7));
                 assert_eq!(sample.data.as_ref(), &[0xCD; 4]);
             }
             other => panic!("expected Timed, got {other:?}"),
@@ -2027,7 +2028,7 @@ mod tests {
         let session = ScriptedSession::new(vec![FeedOutcome::EventsThenErr(
             vec![SessionEvent::NewProgram {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(1)],
+                tracks: vec![opaque_track(TrackId::new(1))],
             }],
             FakeError("bad continuity"),
         )]);
@@ -2056,7 +2057,7 @@ mod tests {
         let session = ScriptedSession::new(vec![]).failing_finish_with_events(
             vec![SessionEvent::NewProgram {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(1)],
+                tracks: vec![opaque_track(TrackId::new(1))],
             }],
             FakeError("truncated tail"),
         );
@@ -2096,11 +2097,11 @@ mod tests {
             FeedOutcome::Events(vec![
                 SessionEvent::NewProgram {
                     program: ProgramId(1),
-                    tracks: vec![opaque_track(1)],
+                    tracks: vec![opaque_track(TrackId::new(1))],
                 },
                 SessionEvent::Sample {
                     program: ProgramId(1),
-                    track_id: 1,
+                    track_id: TrackId::new(1),
                     retention: RetentionClass::Timed,
                     sample: sample(0x01),
                 },
@@ -2114,11 +2115,11 @@ mod tests {
             FeedOutcome::Events(vec![
                 SessionEvent::NewProgram {
                     program: ProgramId(2),
-                    tracks: vec![opaque_track(9)],
+                    tracks: vec![opaque_track(TrackId::new(9))],
                 },
                 SessionEvent::Sample {
                     program: ProgramId(2),
-                    track_id: 9,
+                    track_id: TrackId::new(9),
                     retention: RetentionClass::Timed,
                     sample: sample(0x02),
                 },
@@ -2174,16 +2175,16 @@ mod tests {
         let session = ScriptedSession::new(vec![FeedOutcome::Events(vec![
             SessionEvent::NewProgram {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(1)],
+                tracks: vec![opaque_track(TrackId::new(1))],
             },
             SessionEvent::NewProgram {
                 program: ProgramId(2),
-                tracks: vec![opaque_track(2)],
+                tracks: vec![opaque_track(TrackId::new(2))],
             },
             // The (cap+1)th distinct program in the same drain() call.
             SessionEvent::NewProgram {
                 program: ProgramId(3),
-                tracks: vec![opaque_track(3)],
+                tracks: vec![opaque_track(TrackId::new(3))],
             },
         ])]);
         let mut driver = IngestDriver::new(session, trunk_config(), handshake(), nz(cap));
@@ -2220,11 +2221,11 @@ mod tests {
         let session = ScriptedSession::new(vec![FeedOutcome::Events(vec![
             SessionEvent::NewProgram {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(1)],
+                tracks: vec![opaque_track(TrackId::new(1))],
             },
             SessionEvent::NewProgram {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(1)],
+                tracks: vec![opaque_track(TrackId::new(1))],
             },
         ])]);
         let mut driver = IngestDriver::new(session, trunk_config(), handshake(), nz(cap));
@@ -2245,7 +2246,7 @@ mod tests {
         let session = ScriptedSession::new(vec![
             FeedOutcome::Events(vec![SessionEvent::NewProgram {
                 program: ProgramId(1),
-                tracks: vec![opaque_track(1)],
+                tracks: vec![opaque_track(TrackId::new(1))],
             }]),
             // In the SAME drain() call: program 2 is refused, and a sample
             // for the already-admitted program 1 is published — proving the
@@ -2255,11 +2256,11 @@ mod tests {
             FeedOutcome::Events(vec![
                 SessionEvent::NewProgram {
                     program: ProgramId(2),
-                    tracks: vec![opaque_track(2)],
+                    tracks: vec![opaque_track(TrackId::new(2))],
                 },
                 SessionEvent::Sample {
                     program: ProgramId(1),
-                    track_id: 1,
+                    track_id: TrackId::new(1),
                     retention: RetentionClass::Timed,
                     sample: sample(0x01),
                 },
@@ -2289,7 +2290,7 @@ mod tests {
             .expect("program 1's sample must still land despite program 2 being refused")
         {
             crate::SampleCursorItem::Timed { track_id, sample } => {
-                assert_eq!(track_id, 1);
+                assert_eq!(track_id, TrackId::new(1));
                 assert_eq!(sample.data.as_ref(), &[0x01; 4]);
             }
             other => panic!("expected Timed, got {other:?}"),
@@ -2308,7 +2309,7 @@ mod tests {
         for i in 0..10_000u32 {
             events.push(SessionEvent::NewProgram {
                 program: ProgramId(i),
-                tracks: vec![opaque_track(i)],
+                tracks: vec![opaque_track(TrackId::new(i))],
             });
         }
         let session = ScriptedSession::new(vec![FeedOutcome::Events(events)]);
@@ -2619,7 +2620,7 @@ mod tests {
                 // Post-handshake media.
                 self.pending.push_back(SessionEvent::Sample {
                     program: ProgramId(1),
-                    track_id: 7,
+                    track_id: TrackId::new(7),
                     retention: RetentionClass::Timed,
                     sample: sample(0xAB),
                 });
@@ -2644,7 +2645,7 @@ mod tests {
                     self.pending.push_back(SessionEvent::Established);
                     self.pending.push_back(SessionEvent::NewProgram {
                         program: ProgramId(1),
-                        tracks: vec![opaque_track(7)],
+                        tracks: vec![opaque_track(TrackId::new(7))],
                     });
                 }
             }
@@ -2752,7 +2753,7 @@ mod tests {
         let mut cursor = trunk.subscribe();
         driver.feed(b"media", Timestamp::from_nanos(now + 1));
         match cursor.poll().expect("post-handshake sample on the ring") {
-            crate::SampleCursorItem::Timed { track_id, .. } => assert_eq!(track_id, 7),
+            crate::SampleCursorItem::Timed { track_id, .. } => assert_eq!(track_id, TrackId::new(7)),
             other => panic!("expected Timed, got {other:?}"),
         }
     }

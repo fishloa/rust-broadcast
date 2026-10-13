@@ -64,6 +64,7 @@
 //! every built-in source's own loopback tests.
 #![cfg(feature = "test-seams")]
 
+use transmux::TrackId;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -744,7 +745,7 @@ mod custom_dispatch_driver_backed {
                 if !self.announced {
                     self.announced = true;
                     let track_1 = TrackSpec::new(
-                        1,
+                        TrackId::new(1),
                         90_000,
                         CodecConfig::Avc {
                             config: transmux::avc_config_from_sprop(
@@ -756,7 +757,7 @@ mod custom_dispatch_driver_backed {
                         },
                     );
                     let track_7 = TrackSpec::new(
-                        7,
+                        TrackId::new(7),
                         90_000,
                         CodecConfig::Avc {
                             config: transmux::avc_config_from_sprop(
@@ -915,7 +916,7 @@ mod custom_dispatch_driver_backed {
             "ProgramId(0) must carry its own track spec (track_id=1), not empty: {specs_p0:?}"
         );
         assert!(
-            specs_p0.iter().any(|s| s.track_id == 1),
+            specs_p0.iter().any(|s| s.track_id == TrackId::new(1)),
             "ProgramId(0) must name track_id=1 — its assigned track, not the other's: {specs_p0:?}"
         );
 
@@ -926,7 +927,7 @@ mod custom_dispatch_driver_backed {
              a per-ProgramId bug that syncs only SPTS_PROGRAM_ID would leave this empty: {specs_p1:?}"
         );
         assert!(
-            specs_p1.iter().any(|s| s.track_id == 7),
+            specs_p1.iter().any(|s| s.track_id == TrackId::new(7)),
             "ProgramId(1) must name track_id=7 — its assigned track, not the other's: {specs_p1:?}"
         );
 

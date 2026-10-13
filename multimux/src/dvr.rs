@@ -180,6 +180,8 @@
 //! is unaffected: the recorder never holds a lock the live path needs,
 //! and it never mutates `Trunk` state.
 
+#[cfg(test)]
+use transmux::TrackId;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Seek, SeekFrom, Write};
 use std::path::PathBuf;
@@ -2787,8 +2789,8 @@ mod tests {
 
         let mut progress = DriverProgress::new();
 
-        let ts1 = build_ts_bytes(1, 0xAB, 90);
-        let ts2 = build_ts_bytes(1, 0xCD, 90);
+        let ts1 = build_ts_bytes(TrackId::new(1), 0xAB, 90);
+        let ts2 = build_ts_bytes(TrackId::new(1), 0xCD, 90);
         driver.feed(&ts1, broadcast_common::Timestamp::ZERO);
         advance_route(&driver, &route, &mut progress).await;
         driver.feed(&ts2, broadcast_common::Timestamp::from_nanos(1));

@@ -84,6 +84,7 @@
 //! tolerated (retried) on a dynamic MPD; a static MPD treats the same `404`
 //! as a hard error.
 
+use transmux::TrackId;
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
@@ -234,7 +235,7 @@ struct RepState {
     media_template: Option<String>,
     bandwidth: u64,
     init_bytes: Vec<u8>,
-    local_to_global: HashMap<u32, u32>,
+    local_to_global: HashMap<TrackId, TrackId>,
     plan: VecDeque<(u64, Option<u64>)>,
     last_number: u64,
     /// At most one outstanding segment fetch per Representation at a time —
@@ -513,7 +514,7 @@ impl DashIngestSession {
         else {
             unreachable!("caller only invokes this from Phase::AwaitingInits");
         };
-        let mut next_track_id: u32 = 1;
+        let mut next_track_id = TrackId::new(1);
         let mut specs = Vec::new();
         let mut reps = Vec::new();
         for p in pending {
@@ -522,7 +523,7 @@ impl DashIngestSession {
             let mut local_to_global = HashMap::new();
             for spec in &local_tracks {
                 let global_id = next_track_id;
-                next_track_id += 1;
+                next_track_id = next_track_id.next();
                 local_to_global.insert(spec.track_id, global_id);
                 let mut remapped = spec.clone();
                 remapped.track_id = global_id;
@@ -617,7 +618,7 @@ impl DashIngestSession {
                 for sample in track.samples {
                     self.pending_events.push_back(SessionEvent::Sample {
                         program: ProgramId(0),
-                        track_id: global_id,
+                        track_id: TrackId::new(global_id.value()),
                         retention: RetentionClass::Timed,
                         sample,
                     });
@@ -1472,12 +1473,12 @@ mod tests {
     /// the recovered `TrackSpec`s and the per-`track_id` counts seen so far.
     async fn drive_until_samples(
         route: &DashPullRoute,
-    ) -> Result<(Vec<TrackSpec>, HashMap<u32, usize>)> {
+    ) -> Result<(Vec<TrackSpec>, HashMap<TrackId, usize>)> {
         let (http, clean_url, credentials) = build_client(route)?;
         let mut session = DashIngestSession::new(clean_url);
         let mut backlog: VecDeque<DashAction> = VecDeque::new();
         let mut specs: Vec<TrackSpec> = Vec::new();
-        let mut per_track: HashMap<u32, usize> = HashMap::new();
+        let mut per_track: HashMap<TrackId, usize> = HashMap::new();
         let deadline = tokio::time::Instant::now() + Duration::from_secs(20);
 
         loop {
@@ -1559,12 +1560,12 @@ mod tests {
     /// Returns the recovered `TrackSpec`s and a per-`track_id` sample count.
     async fn drive_and_collect(
         route: &DashPullRoute,
-    ) -> Result<(Vec<TrackSpec>, HashMap<u32, usize>)> {
+    ) -> Result<(Vec<TrackSpec>, HashMap<TrackId, usize>)> {
         let (http, clean_url, credentials) = build_client(route)?;
         let mut session = DashIngestSession::new(clean_url);
         let mut backlog: VecDeque<DashAction> = VecDeque::new();
         let mut specs: Vec<TrackSpec> = Vec::new();
-        let mut per_track: HashMap<u32, usize> = HashMap::new();
+        let mut per_track: HashMap<TrackId, usize> = HashMap::new();
         // HANG GUARD (issue #826): ceiling on the whole session-drive loop.
         // Each HTTP fetch (MPD + inits + segments) completes in ~ms over
         // loopback. Raised to 60s for load tolerance — only job is to fail
@@ -1690,7 +1691,7 @@ mod tests {
                 .expect("drive_and_collect");
 
         assert_eq!(specs.len(), 2, "one video + one audio track: {specs:?}");
-        let mut ids: Vec<u32> = specs.iter().map(|s| s.track_id).collect();
+        let mut ids: Vec<TrackId> = specs.iter().map(|s| s.track_id).collect();
         ids.sort_unstable();
         ids.dedup();
         assert_eq!(ids.len(), 2, "track ids must be remapped to unique values");

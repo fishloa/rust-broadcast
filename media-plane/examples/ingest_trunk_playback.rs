@@ -157,7 +157,7 @@ fn main() {
             while let Some(item) = c.poll() {
                 match item {
                     SampleCursorItem::Timed { track_id, .. } => {
-                        *per_track.entry(track_id).or_insert(0) += 1;
+                        *per_track.entry(track_id.value()).or_insert(0) += 1;
                     }
                     SampleCursorItem::Lagged { skipped } => *lagged += skipped,
                     other => println!("ingest_trunk_playback: other cursor item: {other:?}"),

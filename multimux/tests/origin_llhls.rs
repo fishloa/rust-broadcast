@@ -17,6 +17,7 @@
 //! `RouteHandle`'s own doc), and this test exists precisely to drive it
 //! directly and publish it.
 
+use transmux::TrackId;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -52,7 +53,7 @@ const PART_TARGET_MS: u32 = 500;
 fn video_track_spec() -> TrackSpec {
     let config = avc_config_from_sprop(SPROP).expect("valid sprop");
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         VIDEO_TIMESCALE,
         CodecConfig::Avc {
             config,
@@ -139,7 +140,7 @@ fn feed_via_segmenter(
 
     for batch in batches {
         for (track_id, sample) in batch {
-            seg.push(track_id, sample).expect("push succeeds");
+            seg.push(TrackId::new(track_id), sample).expect("push succeeds");
         }
         for part in seg.take_ready_parts() {
             store.add_part(program, part);

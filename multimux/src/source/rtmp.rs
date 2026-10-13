@@ -124,6 +124,7 @@
 //!   preserved, only the "reads don't hang forever" property), freeing its
 //!   `max_sessions` slot for the next publisher.
 
+use transmux::TrackId;
 use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::convert::Infallible;
 use std::future::Future;
@@ -426,7 +427,7 @@ struct FlvEvents {
     /// established (see the module doc's "`Established` gates on the first
     /// `Sample`" note).
     specs: Vec<TrackSpec>,
-    known_track_ids: BTreeSet<u32>,
+    known_track_ids: BTreeSet<TrackId>,
     established: bool,
     pending: VecDeque<SessionEvent>,
 }
@@ -468,7 +469,7 @@ impl FlvEvents {
     /// Translate one batch of demux events (see the struct's owner for the
     /// "`Established` gates on the first `Sample`" rules).
     fn ingest(&mut self, batch: Vec<DemuxEvent>) {
-        let mut newly_seen_samples: Vec<(u32, Sample)> = Vec::new();
+        let mut newly_seen_samples: Vec<(TrackId, Sample)> = Vec::new();
         for ev in batch {
             match ev {
                 DemuxEvent::TrackAdded(spec) if !self.established => {
@@ -1094,7 +1095,7 @@ mod tests {
         run_task.abort();
     }
 
-    fn flv_spec(track_id: u32, width: u16, height: u16) -> TrackSpec {
+    fn flv_spec(track_id: TrackId, width: u16, height: u16) -> TrackSpec {
         let avc = transmux::avc_config_from_sprop("Z0IAKeKQFAe2AtwEBAaQeJEV,aM48gA==")
             .expect("valid sprop");
         TrackSpec::new(
@@ -1128,8 +1129,8 @@ mod tests {
     fn a_changed_sequence_header_announces_the_new_track_set() {
         let mut flv = FlvEvents::default();
         flv.ingest(vec![
-            DemuxEvent::TrackAdded(flv_spec(1, 640, 360)),
-            DemuxEvent::sample(1, flv_sample(0)),
+            DemuxEvent::TrackAdded(flv_spec(TrackId::new(1), 640, 360)),
+            DemuxEvent::sample(TrackId::new(1), flv_sample(0)),
         ]);
         let mut seen = Vec::new();
         while let Some(ev) = flv.pending.pop_front() {
@@ -1140,9 +1141,9 @@ mod tests {
         assert!(matches!(seen[2], SessionEvent::Sample { .. }));
 
         flv.ingest(vec![
-            DemuxEvent::sample(1, flv_sample(40)),
-            DemuxEvent::TrackUpdated(flv_spec(1, 1920, 1080)),
-            DemuxEvent::sample(1, flv_sample(80)),
+            DemuxEvent::sample(TrackId::new(1), flv_sample(40)),
+            DemuxEvent::TrackUpdated(flv_spec(TrackId::new(1), 1920, 1080)),
+            DemuxEvent::sample(TrackId::new(1), flv_sample(80)),
         ]);
         assert!(matches!(
             flv.pending.pop_front(),
@@ -1164,9 +1165,9 @@ mod tests {
         // Not yet established: the buffered spec is replaced instead.
         let mut early = FlvEvents::default();
         early.ingest(vec![
-            DemuxEvent::TrackAdded(flv_spec(1, 640, 360)),
-            DemuxEvent::TrackUpdated(flv_spec(1, 1280, 720)),
-            DemuxEvent::sample(1, flv_sample(0)),
+            DemuxEvent::TrackAdded(flv_spec(TrackId::new(1), 640, 360)),
+            DemuxEvent::TrackUpdated(flv_spec(TrackId::new(1), 1280, 720)),
+            DemuxEvent::sample(TrackId::new(1), flv_sample(0)),
         ]);
         match early.pending.pop_front() {
             Some(SessionEvent::NewProgram { tracks, .. }) => {
@@ -1176,7 +1177,7 @@ mod tests {
         }
         // An update for a track never announced is ignored.
         early.pending.clear();
-        early.ingest(vec![DemuxEvent::TrackUpdated(flv_spec(7, 1, 1))]);
+        early.ingest(vec![DemuxEvent::TrackUpdated(flv_spec(TrackId::new(7), 1, 1))]);
         assert!(early.pending.is_empty());
     }
 

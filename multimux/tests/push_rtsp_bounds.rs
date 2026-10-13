@@ -1,4 +1,5 @@
 //! RTSP push: every awaited IO is bounded (SP6.1, defect 4).
+use transmux::TrackId;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -230,7 +231,7 @@ async fn a_stalled_interleaved_write_fails_send_at_the_write_bound() {
     );
 }
 
-fn avc_spec(track_id: u32) -> transmux::ir::TrackSpec {
+fn avc_spec(track_id: TrackId) -> transmux::ir::TrackSpec {
     transmux::ir::TrackSpec::new(
         track_id,
         90_000,
@@ -295,7 +296,7 @@ async fn drive_push_reconnects_at_the_transport_write_bound_not_the_ten_second_f
     let nz = |n| std::num::NonZeroUsize::new(n).unwrap();
     let trunk = Trunk::new(TrunkConfig::new(nz(64), nz(64), nz(64), nz(64), nz(64)));
     let writer = trunk.writer().expect("writer is free");
-    writer.set_tracks(vec![avc_spec(1)]);
+    writer.set_tracks(vec![avc_spec(TrackId::new(1))]);
 
     let (url, accepted, connected) = peer(AfterRecord::StopReading).await;
     let cancel = tokio_util::sync::CancellationToken::new();
@@ -328,7 +329,7 @@ async fn drive_push_reconnects_at_the_transport_write_bound_not_the_ten_second_f
     // reconnect (a condition wait, not a ticker): once the socket is full the
     // transport's own write bound will trip without further publishing.
     for _ in 0..32 {
-        writer.publish(1, RetentionClass::Timed, big_sample());
+        writer.publish(TrackId::new(1), RetentionClass::Timed, big_sample());
     }
     let reconnected = tokio::time::timeout(
         RECONNECT_GUARD,

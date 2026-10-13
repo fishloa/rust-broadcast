@@ -51,6 +51,8 @@
 //! `HealthState` fix plan step 3c made producible, and this is the first
 //! ported source that can actually produce both.
 
+#[cfg(test)]
+use transmux::TrackId;
 use std::convert::Infallible;
 use std::time::Duration;
 
@@ -387,7 +389,7 @@ mod tests {
     /// set and yields real depayloaded samples.
     #[tokio::test]
     async fn loopback_http_ts_yields_samples_after_pmt_resolves() {
-        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 10);
         let (url, server) = start_chunked_ts_server(ts_bytes).await;
 
         let route = TsHttpRoute::new("cam-ts-http", url);
@@ -506,7 +508,7 @@ mod tests {
     async fn read_times_out_against_a_server_that_stalls_mid_body() {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
-        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 10);
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
             .expect("bind ephemeral loopback port");
@@ -635,7 +637,7 @@ mod tests {
     /// come out.
     #[tokio::test]
     async fn basic_auth_from_url_userinfo_authenticates_and_pulls_samples() {
-        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 10);
         let (url, server) = start_chunked_ts_server_with_auth(
             ts_bytes,
             Some(crate::testutil::MockAuthScheme::Basic {
@@ -664,7 +666,7 @@ mod tests {
     /// echoed something Digest-shaped.
     #[tokio::test]
     async fn digest_auth_from_url_userinfo_authenticates_and_pulls_samples() {
-        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 10);
         let (url, server) = start_chunked_ts_server_with_auth(
             ts_bytes,
             Some(crate::testutil::MockAuthScheme::Digest {
@@ -690,7 +692,7 @@ mod tests {
     /// (bare, no-userinfo) connect URL.
     #[tokio::test]
     async fn bearer_auth_config_supplied_authenticates_and_pulls_samples() {
-        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 10);
         let (url, server) = start_chunked_ts_server_with_auth(
             ts_bytes,
             Some(crate::testutil::MockAuthScheme::Bearer {
@@ -716,7 +718,7 @@ mod tests {
     /// back.
     #[tokio::test]
     async fn config_auth_overrides_wrong_url_userinfo() {
-        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 10);
         let (url, server) = start_chunked_ts_server_with_auth(
             ts_bytes,
             Some(crate::testutil::MockAuthScheme::Digest {
@@ -747,7 +749,7 @@ mod tests {
     /// password gets rejected exactly like a client with none).
     #[tokio::test]
     async fn wrong_credentials_stay_401_and_connect_errors() {
-        let ts_bytes = build_ts_bytes(1, 0xAB, 10);
+        let ts_bytes = build_ts_bytes(TrackId::new(1), 0xAB, 10);
         let (url, server) = start_chunked_ts_server_with_auth(
             ts_bytes,
             Some(crate::testutil::MockAuthScheme::Digest {

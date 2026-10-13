@@ -13,6 +13,7 @@
 //! section: exact demuxer selection, the timeline and loop invariants
 //! (including a recorded mutation proof), pacing, and the robustness cases.
 
+use transmux::TrackId;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -186,7 +187,7 @@ fn unsupported_fixtures_yield_distinct_format_errors() {
 /// in that same order (DTS is the intra-track key; PTS only interleaves across
 /// tracks). The "source's own" timeline a per-track deltas assertion is held
 /// against is this decode order, unsorted.
-fn source_track_dts(rel: &str, track_id: u32) -> Vec<i64> {
+fn source_track_dts(rel: &str, track_id: TrackId) -> Vec<i64> {
     let bytes = std::fs::read(fixture(rel)).unwrap();
     let mut demux = StreamingTsDemux::new();
     demux.feed(&bytes);
@@ -212,7 +213,7 @@ fn source_track_dts(rel: &str, track_id: u32) -> Vec<i64> {
 }
 
 /// Drain a Trunk into a flat list of `(track_id, dts)` in publish order.
-fn drain_samples(trunk: &Arc<Trunk>) -> Vec<(u32, i64)> {
+fn drain_samples(trunk: &Arc<Trunk>) -> Vec<(TrackId, i64)> {
     let mut cursor = trunk.subscribe_from_backlog();
     let mut out = Vec::new();
     loop {
@@ -262,7 +263,7 @@ async fn timeline_dts_is_monotonic_and_matches_source_decode_order() {
     // the pass while DTS stays monotonic), and it must equal the source's own
     // decode-order DTS sequence exactly. Group the drained samples by track_id,
     // preserving publish order.
-    let mut by_track: std::collections::BTreeMap<u32, Vec<i64>> = Default::default();
+    let mut by_track: std::collections::BTreeMap<TrackId, Vec<i64>> = Default::default();
     for (track_id, dts) in &drained {
         by_track.entry(*track_id).or_default().push(*dts);
     }
@@ -333,7 +334,7 @@ async fn loop_preserves_dts_monotonicity_across_boundary() {
     // the loop offset is what keeps it from stepping backwards across the
     // boundary, and the mutation kills it. (The fixture's video has B-frames,
     // so PTS reorders within a pass; DTS is the decode-order invariant.)
-    let mut by_track: std::collections::BTreeMap<u32, Vec<i64>> = Default::default();
+    let mut by_track: std::collections::BTreeMap<TrackId, Vec<i64>> = Default::default();
     for (track_id, dts) in &drained {
         by_track.entry(*track_id).or_default().push(*dts);
     }
@@ -525,7 +526,7 @@ fn fixture_content_duration_secs(rel: &str) -> f64 {
     let bytes = std::fs::read(fixture(rel)).unwrap();
     let mut demux = StreamingTsDemux::new();
     demux.feed(&bytes);
-    let mut spans: std::collections::HashMap<u32, (i64, i64, u32)> =
+    let mut spans: std::collections::HashMap<TrackId, (i64, i64, u32)> =
         std::collections::HashMap::new(); // track_id -> (first, last, timescale)
     while let Some(ev) = demux.poll_event() {
         match ev {
@@ -735,7 +736,7 @@ async fn b_frame_fixture_publishes_decode_order_dts() {
         drained.len()
     );
 
-    let mut by_track: std::collections::BTreeMap<u32, Vec<i64>> = Default::default();
+    let mut by_track: std::collections::BTreeMap<TrackId, Vec<i64>> = Default::default();
     for (track_id, dts) in &drained {
         by_track.entry(*track_id).or_default().push(*dts);
     }

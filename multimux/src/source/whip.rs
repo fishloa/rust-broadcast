@@ -72,6 +72,7 @@
 //! split RTMP draws between `RtmpConnection::next_events` (I/O) and
 //! `RtmpIngestSession::feed` (sans-IO translation).
 
+use transmux::TrackId;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -182,7 +183,7 @@ struct AdmittedWhip {
 /// One `m=video` track resolved from a WHIP offer.
 #[derive(Clone)]
 struct WhipTrack {
-    track_id: u32,
+    track_id: TrackId,
     payload_type: u8,
     clock_rate: u32,
 }
@@ -1221,7 +1222,7 @@ async fn whip_post_inner(
         socket: Arc::new(socket),
         media,
         tracks: vec![WhipTrack {
-            track_id: 1,
+            track_id: TrackId::new(1),
             payload_type: parsed.payload_type,
             clock_rate: parsed.clock_rate,
         }],
@@ -1397,12 +1398,12 @@ pub struct WhipIngestSession {
     /// is taken within a single synchronous `take`, never across an await.
     media: parking_lot::Mutex<Option<MediaTransport>>,
     depacketiser: RtpStreamDepacketiser,
-    pt_to_track: HashMap<u8, u32>,
-    clock_rate_by_track: HashMap<u32, u32>,
-    captured: HashMap<u32, CapturedConfig>,
+    pt_to_track: HashMap<u8, TrackId>,
+    clock_rate_by_track: HashMap<TrackId, u32>,
+    captured: HashMap<TrackId, CapturedConfig>,
     /// Samples observed before every track's config was captured — replayed
     /// immediately once the establishment gate fires. See the module doc.
-    buffered: Vec<(u32, Sample)>,
+    buffered: Vec<(TrackId, Sample)>,
     announced: bool,
     pending: std::collections::VecDeque<SessionEvent>,
     /// How the session resource's handlers reach the read loop.
@@ -1493,7 +1494,7 @@ impl WhipIngestSession {
     /// Scans `sample`'s length-prefixed NAL data (see [`NAL_LENGTH_PREFIX`])
     /// for a real SPS/PPS pair and, if found, captures the real `avcC` for
     /// `track_id` — see the module doc.
-    fn try_capture_config(&mut self, track_id: u32, sample: &Sample) {
+    fn try_capture_config(&mut self, track_id: TrackId, sample: &Sample) {
         if self.captured.get(&track_id).cloned().flatten().is_some() {
             return;
         }
@@ -1538,7 +1539,7 @@ impl WhipIngestSession {
     /// every buffered sample — see the module doc.
     fn announce(&mut self) {
         self.announced = true;
-        let mut track_ids: Vec<u32> = self.clock_rate_by_track.keys().copied().collect();
+        let mut track_ids: Vec<TrackId> = self.clock_rate_by_track.keys().copied().collect();
         track_ids.sort_unstable();
         let specs: Vec<TrackSpec> = track_ids
             .iter()
@@ -1571,7 +1572,7 @@ impl WhipIngestSession {
         }
     }
 
-    fn observe_sample(&mut self, track_id: u32, sample: Sample) {
+    fn observe_sample(&mut self, track_id: TrackId, sample: Sample) {
         if !self.announced {
             self.try_capture_config(track_id, &sample);
             self.buffered.push((track_id, sample));
@@ -1606,12 +1607,12 @@ impl Stage for WhipIngestSession {
         };
         let samples =
             self.depacketiser
-                .push(track_id, input)
+                .push(TrackId::new(track_id.value()), input)
                 .map_err(|e| MultimuxError::Depay {
                     reason: e.to_string(),
                 })?;
         for sample in samples {
-            self.observe_sample(track_id, sample);
+            self.observe_sample(TrackId::new(track_id.value()), sample);
         }
         Ok(())
     }
@@ -2808,7 +2809,7 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             )
             .unwrap(),
             tracks: vec![WhipTrack {
-                track_id: 1,
+                track_id: TrackId::new(1),
                 payload_type: 96,
                 clock_rate: 90_000,
             }],
@@ -2830,9 +2831,9 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
             None,
             true,
         );
-        session.try_capture_config(1, &sample);
+        session.try_capture_config(TrackId::new(1), &sample);
         assert!(
-            session.captured.get(&1).cloned().flatten().is_none(),
+            session.captured.get(&TrackId::new(1)).cloned().flatten().is_none(),
             "SPS alone must not capture a config"
         );
 
@@ -2843,9 +2844,9 @@ m=audio 9 UDP/TLS/RTP/SAVPF 111\r\na=ice-ufrag:x\r\na=ice-pwd:xxxxxxxxxxxxxxxxxx
         both.extend_from_slice(&2u32.to_be_bytes());
         both.extend_from_slice(&[0x68, 0xCE]);
         let sample = Sample::new(bytes::Bytes::copy_from_slice(&both), None, None, None, true);
-        session.try_capture_config(1, &sample);
+        session.try_capture_config(TrackId::new(1), &sample);
         assert!(
-            session.captured.get(&1).cloned().flatten().is_some(),
+            session.captured.get(&TrackId::new(1)).cloned().flatten().is_some(),
             "SPS+PPS must capture a config"
         );
     }

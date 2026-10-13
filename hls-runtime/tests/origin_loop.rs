@@ -16,6 +16,7 @@
 //! - a non-LL playlist (no PART tags at all) still plays via the full-segment
 //!   fallback path.
 
+use transmux::TrackId;
 use broadcast_hls::{
     DecimalSeconds, LowLatencyConfig, MapTag, MediaPlaylist, MediaSegment, OpenSegment, PartSpec,
 };
@@ -48,7 +49,7 @@ fn dummy_avc_config() -> AVCConfigurationBox {
 
 fn video_track() -> TrackSpec {
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         90_000,
         CodecConfig::Avc {
             config: dummy_avc_config(),
@@ -237,12 +238,12 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     for i in 0..30u8 {
         let s = vsample(i == 0, i);
         fed_samples.push(s.clone());
-        seg.push(1, s).unwrap();
+        seg.push(TrackId::new(1), s).unwrap();
     }
     // Keyframe past target closes segment 1 (3 parts @ ~334ms).
     let s = vsample(true, 200);
     fed_samples.push(s.clone());
-    seg.push(1, s).unwrap();
+    seg.push(TrackId::new(1), s).unwrap();
     // Exactly 10 more samples: together with the keyframe above that's 11
     // samples since the last part flush, which (at 334ms/30060-tick parts)
     // crosses the part-target boundary with zero remainder — segment 2's
@@ -251,7 +252,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     for i in 0..10u8 {
         let s = vsample(false, 100 + i);
         fed_samples.push(s.clone());
-        seg.push(1, s).unwrap();
+        seg.push(TrackId::new(1), s).unwrap();
     }
     // 11 more (again exactly hitting the part-target boundary with zero
     // remainder): this becomes segment 2's *second* part. The playlist built
@@ -262,7 +263,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
     for i in 0..11u8 {
         let s = vsample(false, 120 + i);
         fed_samples.push(s.clone());
-        seg.push(1, s).unwrap();
+        seg.push(TrackId::new(1), s).unwrap();
     }
     let init_bytes = seg.init_segment().unwrap();
     let part_target_secs = seg.part_target_secs();
@@ -445,7 +446,7 @@ fn origin_client_loop_blocking_reload_prefetch_dedup_and_ordered_output() {
             }
             Output::Samples { track_id, samples } => {
                 assert!(got_init, "samples must follow init");
-                assert_eq!(track_id, 1);
+                assert_eq!(track_id, TrackId::new(1));
                 got_samples.extend(samples);
             }
             other => panic!("unexpected output: {other:?}"),
@@ -604,14 +605,14 @@ fn non_ll_playlist_plays_via_full_segment_fallback() {
     for i in 0..30u8 {
         let s = vsample(i == 0, i);
         fed_samples.push(s.clone());
-        seg.push(1, s).unwrap();
+        seg.push(TrackId::new(1), s).unwrap();
     }
     // NOTE: this trailing keyframe closes segment 1 (30 samples) and, since
     // it is itself pushed as the first sample of segment 2, `flush()` then
     // closes that (tiny, 1-sample) segment 2 too — so `take_ready_segments()`
     // below returns *two* segments. Only segment 1 (the 30 fed_samples) is
     // exercised by this playlist/test; segment 2 is deliberately ignored.
-    seg.push(1, vsample(true, 200)).unwrap();
+    seg.push(TrackId::new(1), vsample(true, 200)).unwrap();
     seg.flush().unwrap();
     let init_bytes = seg.init_segment().unwrap();
     let segments = seg.take_ready_segments();

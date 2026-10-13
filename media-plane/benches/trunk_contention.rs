@@ -4,6 +4,7 @@
 //! the worst case; real readers park on `listen()`. Decision rule and
 //! recorded numbers: `benches/RESULTS.md`.
 
+use transmux::TrackId;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -48,7 +49,7 @@ fn publish_with_readers(readers: usize, iters: u64) -> Duration {
     );
     let start = Instant::now();
     for _ in 0..iters {
-        writer.publish(TRACK, RetentionClass::Timed, sample.clone());
+        writer.publish(TrackId::new(TRACK), RetentionClass::Timed, sample.clone());
     }
     let elapsed = start.elapsed();
     stop.store(true, Ordering::Relaxed);

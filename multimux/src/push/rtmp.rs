@@ -11,6 +11,7 @@
 //! (`transmux::flv_frame_payloads`) dispatched through `send_video`/`send_audio`
 //! — see `transmux::flv` for the tag-body layout this reuses.
 
+use transmux::TrackId;
 use crate::push::{PushTransport, SendMediaError};
 use rtmp_runtime::amf0::Amf0Value;
 use rtmp_runtime::target::RtmpTarget;
@@ -272,7 +273,7 @@ impl PushTransport for RtmpTransport {
         let refused = media.tracks.len() - flv_tracks.len();
         if refused > 0 && !self.warned_refused_tracks {
             self.warned_refused_tracks = true;
-            let refused_track_ids: Vec<u32> = media
+            let refused_track_ids: Vec<TrackId> = media
                 .tracks
                 .iter()
                 .filter(|t| !is_flv_codec(&t.spec.config))

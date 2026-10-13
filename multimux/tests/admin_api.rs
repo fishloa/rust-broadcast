@@ -20,6 +20,7 @@
 //! exactly the ones the issue calls out as "what distinguishes this from
 //! restart with extra steps".
 
+use transmux::TrackId;
 use std::collections::VecDeque;
 use std::convert::Infallible;
 use std::net::SocketAddr;
@@ -85,7 +86,7 @@ const SYNC_INTERVAL_FRAMES: u32 = 8;
 fn instant_track_spec() -> TrackSpec {
     let config = transmux::avc_config_from_sprop(SPROP).expect("valid sprop");
     TrackSpec::new(
-        1,
+        TrackId::new(1),
         VIDEO_TIMESCALE,
         CodecConfig::Avc {
             config,
@@ -141,7 +142,7 @@ impl Stage for InstantSession {
                 );
                 self.pending.push_back(SessionEvent::Sample {
                     program: ProgramId(0),
-                    track_id: 1,
+                    track_id: TrackId::new(1),
                     retention: RetentionClass::Timed,
                     sample,
                 });
