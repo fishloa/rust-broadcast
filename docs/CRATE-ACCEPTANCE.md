@@ -25,9 +25,9 @@ Byte-identical round-trip for text formats **requires** storing and re-emitting 
 ### Reserved-bit / trailing-byte policy (workspace-wide; issue #1139)
 One rule for every wire crate; the authoritative statement is the `broadcast-common` crate-level docs ("Reserved-bit and trailing-byte policy").
 - **Parse is tolerant.** A non-conformant reserved bit or a trailing byte that real senders emit is accepted, never an error (stricter validation is a documented per-crate choice, e.g. `dvb-t2mi` rejects non-zero RFU).
-- **Serialize writes the spec value** for reserved bits: `1` for `reserved_future_use` / H.222.0 "reserved", `0` for `reserved_zero_future_use`. So re-serializing a stream with non-standard reserved bits **normalizes** them and is deliberately not byte-identical (`dvb-si`, `mpeg-pes`, `transmux`).
-- **Exception: preserve-on-parse.** A crate whose structs carry the reserved/trailing bytes as explicit typed fields re-emits them verbatim (`mpeg-ps`, `rmt-flute`, `cc-data` fixed bits, `rtcp-packet` `profile_extensions`, `mp4-emsg` flags). Such a crate's real-fixture round-trip must be byte-exact including those bits.
-- A caller that needs byte-for-byte preservation of arbitrary reserved bits **keeps the original bytes**.
+- **Serialize preserves what was parsed.** Reserved bits are captured on parse in typed, spec-named fields (right-aligned to their width, documented with the spec + edition table) and re-emitted verbatim; never a raw passthrough blob (`self.raw` stays banned). A real sender that deviates from the governing edition therefore re-serializes **byte-identically** (`dvb-si` descriptors, `mpeg-ps`, `rmt-flute`, `cc-data` fixed bits, `rtcp-packet` `profile_extensions`, `mp4-emsg` flags). Such a crate's real-fixture round-trip must be byte-exact including those bits, and an allowlist of tolerated real-sender deviations is only for genuinely unparseable sender bugs, never for reserved-bit differences.
+- **Constructed values default to the edition value**: `new(..)` / `Default` give `1` for `reserved_future_use` / H.222.0 "reserved", `0` for `reserved_zero_future_use`, with explicit per-field exceptions (e.g. AC-3 `reserved_flags` = `0000`) documented on the field. Each preserved-reserved type needs a test that parsed non-default bits round-trip and a test that the default-constructed value serializes the edition value. (Crates not yet migrated — `mpeg-pes`, `transmux` — still normalize on serialize.)
+- A caller that needs byte-for-byte preservation of reserved bits in a not-yet-migrated crate **keeps the original bytes**.
 - **Trailing bytes inside a descriptor/section body are never silently dropped without a documented decision**: keep them in a typed field, or document the field/struct as "ignored".
 - **Reserved bytes are always written explicitly** by `serialize_into`, never skipped on the assumption of a pre-zeroed buffer.
 
@@ -86,7 +86,7 @@ Independent crates version on their own cadence; lockstep crates move together. 
 - [ ] No `self.raw` passthrough · no raw-byte public API · no magic numbers · `#[non_exhaustive]`
 - [ ] Spec-cited modules; sources verified (no fabrication; pdf2md exit 0 / cross-checked)
 - [ ] Round-trip is **byte-exact against the original fixture slice**; an **independent oracle** is named; a fixture per spec branch and >= 2 entities for uniqueness invariants (section 3 test-integrity gates)
-- [ ] Reserved-bit / trailing-byte policy followed (section 1): tolerant parse, spec-value serialize or documented preserve-on-parse, explicit reserved writes
+- [ ] Reserved-bit / trailing-byte policy followed (section 1): tolerant parse, reserved bits preserved on serialize (typed fields), edition-value defaults for constructed values, explicit reserved writes
 - [ ] Committed **real fixture**; per-op **biting** test (fault-inject→assert-known-good for transforms)
 - [ ] 6-gate CI suite + MSRV 1.95.0 (+ thumbv7em if no_std) — run by the orchestrator
 - [ ] #204 labels + label_coverage · fuzz target · ≥2 examples · CLI-STANDARD (if CLI)

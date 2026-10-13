@@ -10,12 +10,14 @@
 //! * every descriptor in every PMT/SDT/NIT/BAT/EIT/CAT/TSDT/TOT loop:
 //!   re-serializes the typed descriptor and compares with the original bytes.
 //!
-//! Policy (owner decision): parse is tolerant, serialize emits the spec
-//! value. A real sender that clears a spec-reserved bit therefore makes a
-//! descriptor differ from the capture; such known deviations are listed in
-//! [`TOLERATED`] keyed by `(file name, descriptor)` so a *new* deviation (or
-//! any genuine serializer bug) fails this test. Set `SURVEY_REPORT=1` to print
-//! the full per-descriptor table (`--nocapture`).
+//! Policy (owner decision): parse is tolerant and serialize PRESERVES the
+//! parsed reserved bits (typed fields; constructed values default to the
+//! edition value), so a real sender's off-spec reserved bits re-serialize
+//! byte-identically. [`TOLERATED`] therefore lists only what cannot be a
+//! reserved-bit preservation: CRC-recompute noise and genuine sender bugs
+//! that cannot parse. A *new* deviation (or any genuine serializer bug) fails
+//! this test. Set `SURVEY_REPORT=1` to print the full per-descriptor table
+//! (`--nocapture`).
 #![cfg(feature = "ts")]
 
 use broadcast_common::Serialize;
@@ -37,9 +39,10 @@ const SECTION_STREAM_TYPES: [u8; 5] = [0x05, 0x0A, 0x0B, 0x0C, 0x0D];
 
 /// Known real-sender deviations, `(capture file-name prefix, survey key)`:
 /// the capture's bytes differ from our spec-reserved-bit re-serialization.
-/// Policy (owner decision): parse tolerantly, serialize the spec value; a
-/// sender that clears a reserved bit is therefore listed here, never "fixed"
-/// by weakening the serializer. A NEW deviation (new file, or a new
+/// Policy (owner decision): parse tolerantly, serialize the parsed reserved
+/// bits; a deviation is listed here only if it is not a preservable reserved
+/// region (e.g. section-level bits still pending preservation, or an
+/// unparseable sender bug). A NEW deviation (new file, or a new
 /// descriptor/table in an old file) fails the test; an entry that no longer
 /// occurs is reported stale. The prefix is matched with `starts_with`
 /// (`test-089.` covers the `test-089.*.ts` family cut from one capture).
