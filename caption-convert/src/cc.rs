@@ -12,10 +12,8 @@
 //! itself.
 
 use crate::error::Error;
-use alloc::string::String;
-use alloc::vec::Vec;
 use cc_data::decode::Cea608Channel;
-use timed_metadata::webvtt::{Cea608CueExtractor, Cea708CueExtractor, Cue};
+use timed_metadata::webvtt::{Cea608CueExtractor, Cea708CueExtractor};
 
 /// Converts a single CEA-608 data channel's `cc_data()` byte stream to
 /// WebVTT/SRT.

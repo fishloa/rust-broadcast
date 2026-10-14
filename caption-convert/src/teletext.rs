@@ -9,10 +9,9 @@
 //! sub-code page selection).
 
 use crate::error::Error;
-use alloc::string::String;
 use alloc::vec::Vec;
 use dvb_vbi::TeletextDataField;
-use timed_metadata::webvtt::{Cue, TeletextCueExtractor};
+use timed_metadata::webvtt::TeletextCueExtractor;
 
 /// Converts a single `(magazine, page)` EBU Teletext subtitle page to
 /// WebVTT/SRT.
