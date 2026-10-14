@@ -86,8 +86,12 @@ impl Serialize for TargetBackgroundGridDescriptor {
         buf[HEADER_LEN] = (hs >> 6) as u8;
         buf[HEADER_LEN + 1] = ((hs & 0x3F) << 2) as u8 | ((self.vertical_size >> 12) as u8 & 0x03);
         buf[HEADER_LEN + 2] = (self.vertical_size >> 4) as u8;
-        buf[HEADER_LEN + 3] =
-            ((self.vertical_size & 0x0F) << 4) as u8 | (self.aspect_ratio_information & 0x0F);
+        buf[HEADER_LEN + 3] = ((self.vertical_size & 0x0F) << 4) as u8
+            | broadcast_common::len::fit_mask(
+                self.aspect_ratio_information,
+                0x0F,
+                "aspect_ratio_information",
+            )?;
         Ok(len)
     }
 }

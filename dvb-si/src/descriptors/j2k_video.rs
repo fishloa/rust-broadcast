@@ -408,10 +408,10 @@ fn serialize_extended_capability(
     reserved_6: u8,
     buf: &mut [u8],
     mut pos: usize,
-) -> usize {
+) -> Result<usize> {
     // The three sub-block flags are derived from which sub-blocks exist, so a
     // stored flag can never promise bytes that are not written (r03-W5).
-    let mut sb = ext.reserved_5 & RESERVED_5_MASK;
+    let mut sb = broadcast_common::len::fit_mask(ext.reserved_5, RESERVED_5_MASK, "reserved_5")?;
     if ext.stripe.is_some() {
         sb |= 0x80;
     }
@@ -425,7 +425,7 @@ fn serialize_extended_capability(
     pos += 1;
 
     // still_mode/interlaced_video precede the colour parameters here (Table 2-101).
-    let mut sm_iv = reserved_6 & RESERVED_6_MASK;
+    let mut sm_iv = broadcast_common::len::fit_mask(reserved_6, RESERVED_6_MASK, "reserved_6")?;
     if still_mode {
         sm_iv |= 0x80;
     }
@@ -438,11 +438,12 @@ fn serialize_extended_capability(
     buf[pos] = ext.colour_primaries;
     buf[pos + 1] = ext.transfer_characteristics;
     buf[pos + 2] = ext.matrix_coefficients;
-    buf[pos + 3] = if ext.video_full_range_flag {
-        0x80
-    } else {
-        0x00
-    } | (ext.reserved_7 & RESERVED_7_MASK);
+    buf[pos + 3] =
+        if ext.video_full_range_flag {
+            0x80
+        } else {
+            0x00
+        } | broadcast_common::len::fit_mask(ext.reserved_7, RESERVED_7_MASK, "reserved_7")?;
     pos += 4;
 
     if let Some(ref s) = ext.stripe {
@@ -479,7 +480,7 @@ fn serialize_extended_capability(
         pos += 28;
     }
 
-    pos
+    Ok(pos)
 }
 
 fn extended_capability_serialized_len(ext: &J2kExtendedCapability) -> usize {
@@ -617,7 +618,8 @@ impl Serialize for J2kVideoDescriptor<'_> {
 
         // extended_capability_flag(1) | profile_and_level(15)
         // Derived from the Option, never the stored flag (r03-W5).
-        let mut b01 = self.profile_and_level & 0x7FFF;
+        let mut b01 =
+            broadcast_common::len::fit_mask(self.profile_and_level, 0x7FFF, "profile_and_level")?;
         if self.extended_capability.is_some() {
             b01 |= 0x8000;
         }
@@ -639,7 +641,7 @@ impl Serialize for J2kVideoDescriptor<'_> {
                 self.reserved_6,
                 buf,
                 pos,
-            );
+            )?;
         } else {
             // serialized_len reserves color_specification + the still/interlaced
             // byte on this branch, so the byte must exist (r03-W5/W6).
@@ -650,7 +652,8 @@ impl Serialize for J2kVideoDescriptor<'_> {
             buf[pos] = cs;
             pos += 1;
 
-            let mut sm_iv = self.reserved_6 & RESERVED_6_MASK;
+            let mut sm_iv =
+                broadcast_common::len::fit_mask(self.reserved_6, RESERVED_6_MASK, "reserved_6")?;
             if self.still_mode {
                 sm_iv |= 0x80;
             }

@@ -457,16 +457,22 @@ fn write_channel_common(
     packed: u8,
     reserved_zero_future_use_4: u8,
     symbol_rate: u32,
-) {
+) -> Result<()> {
     buf[*p..*p + 4].copy_from_slice(&frequency.to_be_bytes());
     buf[*p + 4..*p + 6].copy_from_slice(&orbital_position.to_be_bytes());
     buf[*p + 6] = packed;
-    let sr = symbol_rate & 0x0FFF_FFFF;
-    buf[*p + 7] = ((reserved_zero_future_use_4 & RZFU_4_MASK) << 4) | ((sr >> 24) as u8 & 0x0F);
+    let sr = broadcast_common::len::fit_mask(symbol_rate, 0x0FFF_FFFF, "symbol_rate")?;
+    buf[*p + 7] = (broadcast_common::len::fit_mask(
+        reserved_zero_future_use_4,
+        RZFU_4_MASK,
+        "reserved_zero_future_use_4",
+    )? << 4)
+        | ((sr >> 24) as u8 & 0x0F);
     buf[*p + 8] = (sr >> 16) as u8;
     buf[*p + 9] = (sr >> 8) as u8;
     buf[*p + 10] = sr as u8;
     *p += BOND_BASE_LEN;
+    Ok(())
 }
 
 fn pack_we_pol_mis_ro(
@@ -475,12 +481,12 @@ fn pack_we_pol_mis_ro(
     mis: bool,
     reserved_zero_future_use_1: u8,
     ro: RollOff,
-) -> u8 {
-    (u8::from(we) << 7)
-        | ((pol.to_u8() & 0x03) << 5)
+) -> Result<u8> {
+    Ok((u8::from(we) << 7)
+        | (broadcast_common::len::fit_mask(pol.to_u8(), 0x03, "polarization")? << 5)
         | (u8::from(mis) << 4)
         | ((reserved_zero_future_use_1 & 1) << PACKED_RZFU_1_SHIFT)
-        | (ro.to_u8() & 0x07)
+        | broadcast_common::len::fit_mask(ro.to_u8(), 0x07, "roll_off")?)
 }
 
 impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
@@ -672,12 +678,32 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
         }
         // `receiver_profiles` is a raw 5-bit field and `ts_gs_s2x_mode` a raw
         // 2-bit field; mask at the shift so high bits cannot bleed (r03-W2).
-        buf[0] = ((self.receiver_profiles & RECEIVER_PROFILES_MASK) << 3)
-            | (self.reserved_zero_future_use_3a & RZFU_3_MASK);
-        buf[1] = ((self.s2x_mode.to_u8() & S2X_MODE_VALUE_MASK) << 6)
+        buf[0] = (broadcast_common::len::fit_mask(
+            self.receiver_profiles,
+            RECEIVER_PROFILES_MASK,
+            "receiver_profiles",
+        )? << 3)
+            | broadcast_common::len::fit_mask(
+                self.reserved_zero_future_use_3a,
+                RZFU_3_MASK,
+                "reserved_zero_future_use_3a",
+            )?;
+        buf[1] = (broadcast_common::len::fit_mask(
+            self.s2x_mode.to_u8(),
+            S2X_MODE_VALUE_MASK,
+            "s2x_mode",
+        )? << 6)
             | (u8::from(self.scrambling_sequence_selector) << 5)
-            | ((self.reserved_zero_future_use_3b & RZFU_3_MASK) << RZFU_3B_SHIFT)
-            | (self.ts_gs_s2x_mode.to_u8() & TSGS_S2X_MODE_VALUE_MASK);
+            | (broadcast_common::len::fit_mask(
+                self.reserved_zero_future_use_3b,
+                RZFU_3_MASK,
+                "reserved_zero_future_use_3b",
+            )? << RZFU_3B_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.ts_gs_s2x_mode.to_u8(),
+                TSGS_S2X_MODE_VALUE_MASK,
+                "ts_gs_s2x_mode",
+            )?;
         let mut p = 2;
         if self.scrambling_sequence_selector {
             // The selector reserves 18 wire bits; fabricating 0 would invent
@@ -687,9 +713,17 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
                 .ok_or(Error::ValueOutOfRange {
                     field: "scrambling_sequence_index",
                     reason: "required when scrambling_sequence_selector is set",
-                })?
-                & SCRAMBLING_INDEX_MAX;
-            buf[p] = ((self.reserved_zero_future_use_6 & RZFU_6_MASK) << RZFU_6_SHIFT)
+                })?;
+            let idx = broadcast_common::len::fit_mask(
+                idx,
+                SCRAMBLING_INDEX_MAX,
+                "scrambling_sequence_index",
+            )?;
+            buf[p] = (broadcast_common::len::fit_mask(
+                self.reserved_zero_future_use_6,
+                RZFU_6_MASK,
+                "reserved_zero_future_use_6",
+            )? << RZFU_6_SHIFT)
                 | ((idx >> 16) as u8 & 0x03);
             buf[p + 1] = (idx >> 8) as u8;
             buf[p + 2] = idx as u8;
@@ -706,10 +740,10 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
                 self.multiple_input_stream_flag,
                 self.reserved_zero_future_use_1,
                 self.roll_off,
-            ),
+            )?,
             self.reserved_zero_future_use_4,
             self.symbol_rate,
-        );
+        )?;
         if let Some(isi) = self.input_stream_identifier {
             buf[p] = isi;
             p += 1;
@@ -723,7 +757,11 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
             // u64::MAX for a zero-length list, which `fit_bits` rejects rather than
             // masking to 0.
             let minus_one = (self.channel_bonds.len() as u64).wrapping_sub(1);
-            buf[p] = ((self.reserved_zero_future_use_7 & RZFU_7_MASK) << RZFU_7_SHIFT)
+            buf[p] = (broadcast_common::len::fit_mask(
+                self.reserved_zero_future_use_7,
+                RZFU_7_MASK,
+                "reserved_zero_future_use_7",
+            )? << RZFU_7_SHIFT)
                 | broadcast_common::len::fit_bits(minus_one, 1, "num_channel_bonds_minus_one")?
                     as u8;
             p += 1;
@@ -739,10 +777,10 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
                         bond.multiple_input_stream_flag,
                         bond.reserved_zero_future_use_1,
                         bond.roll_off,
-                    ),
+                    )?,
                     bond.reserved_zero_future_use_4,
                     bond.symbol_rate,
-                );
+                )?;
                 if let Some(isi) = bond.input_stream_identifier {
                     buf[p] = isi;
                     p += 1;

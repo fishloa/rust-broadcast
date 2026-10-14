@@ -194,10 +194,17 @@ impl Serialize for VbiDataDescriptor<'_> {
             match &e.service_descriptor {
                 VbiService::Lines(lines) => {
                     for line in lines {
-                        buf[pos] = ((line.reserved_future_use << LINE_RESERVED_SHIFT)
-                            & LINE_RESERVED_MASK)
+                        buf[pos] = (broadcast_common::len::fit_mask(
+                            line.reserved_future_use,
+                            LINE_RESERVED_MASK >> LINE_RESERVED_SHIFT,
+                            "reserved_future_use",
+                        )? << LINE_RESERVED_SHIFT)
                             | (u8::from(line.field_parity) << 5)
-                            | (line.line_offset & LINE_OFFSET_MASK);
+                            | broadcast_common::len::fit_mask(
+                                line.line_offset,
+                                LINE_OFFSET_MASK,
+                                "line_offset",
+                            )?;
                         pos += 1;
                     }
                 }

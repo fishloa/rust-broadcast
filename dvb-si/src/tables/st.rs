@@ -23,6 +23,12 @@ const HEADER_LEN: usize = 3;
 pub struct StSection {
     /// Raw stuffing bytes — any value, no meaning (§5.2.8).
     pub payload: Vec<u8>,
+    /// `section_syntax_indicator` (byte 1 bit 7). EN 300 468 Table 11 /
+    /// §5.2.8: "This 1-bit field may take either the value 0b1 or 0b0" - the
+    /// one DVB-SI table where the indicator is NOT fixed by the spec, so it is
+    /// captured on parse and re-emitted verbatim. [`StSection::new`] uses
+    /// `false` (0b0, the value every other short-form DVB section carries).
+    pub section_syntax_indicator: bool,
     /// Header bit fields: `reserved_future_use` and `reserved(2)` of byte 1
     /// (default [`SectionBits::dvb`](super::SectionBits::dvb)); `reserved_b5`
     /// is unused (short-form section).
@@ -37,6 +43,7 @@ impl StSection {
     pub fn new(payload: Vec<u8>) -> Self {
         Self {
             payload,
+            section_syntax_indicator: false,
             bits: super::SectionBits::dvb(),
         }
     }
@@ -91,6 +98,7 @@ impl<'a> Parse<'a> for StSection {
         let payload = &bytes[HEADER_LEN..HEADER_LEN + payload_len];
         Ok(Self {
             payload: payload.to_vec(),
+            section_syntax_indicator: bytes[1] & super::SECTION_B1_SSI != 0,
             bits: super::SectionBits::parse(bytes[1], None),
         })
     }
@@ -115,9 +123,11 @@ impl Serialize for StSection {
         // Byte 0: table_id = 0x72
         buf[0] = TABLE_ID;
 
-        // Byte 1: SSI=0, reserved_future_use='1', reserved='11', upper nibble of
-        // section_length. Top nibble 0b0111 = 0x70, matching DIT/RST/TDT/TOT.
-        buf[1] = self.bits.b1(false);
+        // Byte 1: section_syntax_indicator (preserved: "may take either the
+        // value 0b1 or 0b0", Table 11), reserved_future_use='1', reserved='11',
+        // upper nibble of section_length. Default top nibble 0b0111 = 0x70,
+        // matching DIT/RST/TDT/TOT.
+        buf[1] = self.bits.b1(self.section_syntax_indicator);
         super::write_section_length(buf, self.payload.len())?;
 
         // Payload: stuffing bytes
@@ -178,6 +188,21 @@ mod tests {
         assert_eq!(buf[0], TABLE_ID);
         assert_eq!(buf[1], 0x70 | ((2 >> 8) as u8 & 0x0F));
         assert_eq!(buf[2], 2);
+    }
+
+    /// Table 11: the stuffing section's `section_syntax_indicator` "may take
+    /// either the value 0b1 or 0b0" - both round-trip byte-identically (no
+    /// capture carries a stuffing section, so this is spec-derived).
+    #[test]
+    fn section_syntax_indicator_is_preserved_either_value() {
+        for (b1, ssi) in [(0x70u8, false), (0xF0, true)] {
+            let bytes = [TABLE_ID, b1, 0x02, 0xFF, 0xFF];
+            let st = StSection::parse(&bytes).unwrap();
+            assert_eq!(st.section_syntax_indicator, ssi);
+            let mut buf = vec![0u8; st.serialized_len()];
+            st.serialize_into(&mut buf).unwrap();
+            assert_eq!(buf, bytes);
+        }
     }
 
     #[test]

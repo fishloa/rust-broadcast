@@ -392,8 +392,16 @@ impl MobileHandOverInfo {
                 have: buf.len(),
             });
         }
-        let flags_byte = ((self.hand_over_type.to_u8() & HANDOVER_TYPE_VALUE_MASK) << 4)
-            | ((self.reserved_future_use << RESERVED_HANDOVER_SHIFT) & RESERVED_HANDOVER_MASK)
+        let flags_byte = (broadcast_common::len::fit_mask(
+            self.hand_over_type.to_u8(),
+            HANDOVER_TYPE_VALUE_MASK,
+            "hand_over_type",
+        )? << 4)
+            | (broadcast_common::len::fit_mask(
+                self.reserved_future_use,
+                RESERVED_HANDOVER_MASK >> RESERVED_HANDOVER_SHIFT,
+                "reserved_future_use",
+            )? << RESERVED_HANDOVER_SHIFT)
             | u8::from(self.origin_type);
         buf[0] = flags_byte;
         let mut pos = 1;
@@ -451,7 +459,11 @@ impl EventLinkageInfo {
             });
         }
         buf[0..2].copy_from_slice(&self.target_event_id.to_be_bytes());
-        let mut byte2: u8 = self.reserved_future_use & RESERVED_EVENT_MASK;
+        let mut byte2: u8 = broadcast_common::len::fit_mask(
+            self.reserved_future_use,
+            RESERVED_EVENT_MASK,
+            "reserved_future_use",
+        )?;
         if self.target_listed {
             byte2 |= TARGET_LISTED_MASK;
         }
@@ -611,8 +623,12 @@ impl ExtendedEventLinkageEntry {
         if self.event_simulcast {
             byte2 |= EXT_EVENT_SIMULCAST_MASK;
         }
-        byte2 |= (self.link_type.to_u8() & 0x03) << 4;
-        byte2 |= (self.target_id.target_id_type().to_u8() & 0x03) << 2;
+        byte2 |= broadcast_common::len::fit_mask(self.link_type.to_u8(), 0x03, "link_type")? << 4;
+        byte2 |= broadcast_common::len::fit_mask(
+            self.target_id.target_id_type().to_u8(),
+            0x03,
+            "target_id_type",
+        )? << 2;
         if self.target_id.target_original_network_id().is_some() {
             byte2 |= EXT_ONID_FLAG_MASK;
         }

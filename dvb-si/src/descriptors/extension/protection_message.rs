@@ -94,7 +94,8 @@ impl Serialize for ProtectionMessage<'_> {
             4,
             "component_count",
         )? as u8;
-        buf[0] = ((self.reserved & RESERVED_MASK) << 4) | component_count;
+        buf[0] = (broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")? << 4)
+            | component_count;
         let tags_end = 1 + self.component_tags.len();
         buf[1..tags_end].copy_from_slice(self.component_tags);
         buf[tags_end..len].copy_from_slice(self.trailing);

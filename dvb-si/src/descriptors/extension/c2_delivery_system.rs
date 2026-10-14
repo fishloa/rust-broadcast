@@ -245,9 +245,17 @@ impl Serialize for C2DeliverySystem {
         buf[0] = self.plp_id;
         buf[1] = self.data_slice_id;
         buf[2..6].copy_from_slice(&self.c2_system_tuning_frequency.to_be_bytes());
-        buf[6] = (self.c2_system_tuning_frequency_type.to_u8() << 6)
-            | ((self.active_ofdm_symbol_duration.to_u8() & 0x07) << 3)
-            | (self.guard_interval.to_u8() & 0x07);
+        buf[6] = (broadcast_common::len::fit_mask(
+            self.c2_system_tuning_frequency_type.to_u8(),
+            0x03,
+            "c2_system_tuning_frequency_type",
+        )? << 6)
+            | (broadcast_common::len::fit_mask(
+                self.active_ofdm_symbol_duration.to_u8(),
+                0x07,
+                "active_ofdm_symbol_duration",
+            )? << 3)
+            | broadcast_common::len::fit_mask(self.guard_interval.to_u8(), 0x07, "guard_interval")?;
         buf[C2_LEN..len].copy_from_slice(&self.trailing);
         Ok(len)
     }

@@ -354,9 +354,13 @@ impl Serialize for NetworkChangeNotify {
                 buf[pos + 7] = (dur >> 16) as u8;
                 buf[pos + 8] = (dur >> 8) as u8;
                 buf[pos + 9] = dur as u8;
-                let packed = ((receiver_category & 0x07) << 5)
+                let packed = (broadcast_common::len::fit_mask(
+                    receiver_category,
+                    0x07,
+                    "receiver_category",
+                )? << 5)
                     | ((ch.invariant_ts.is_some() as u8) << 4)
-                    | (ch.change_type.to_u8() & 0x0F);
+                    | broadcast_common::len::fit_mask(ch.change_type.to_u8(), 0x0F, "change_type")?;
                 buf[pos + 10] = packed;
                 buf[pos + 11] = ch.message_id;
                 pos += CHANGE_BASE_LEN;

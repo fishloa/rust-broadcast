@@ -643,7 +643,11 @@ impl Serialize for CpcmUsi {
         buf[0] = body_len;
 
         // ── byte 1 ─────────────────────────────────────────────────────────
-        buf[1] = ((self.copy_control.to_u8() & COPY_CONTROL_MASK) << 5)
+        buf[1] = (broadcast_common::len::fit_mask(
+            self.copy_control.to_u8(),
+            COPY_CONTROL_MASK,
+            "copy_control",
+        )? << 5)
             | ((u8::from(self.do_not_cpcm_scramble)) << 4)
             | ((u8::from(self.viewable)) << 3)
             | ((u8::from(self.view_window_activated)) << 2)
@@ -653,8 +657,16 @@ impl Serialize for CpcmUsi {
         // ── byte 2 ─────────────────────────────────────────────────────────
         buf[2] = ((u8::from(self.move_local)) << 7)
             | ((u8::from(self.view_local)) << 6)
-            | ((self.move_and_copy_propagation_information.to_u8() & 0x03) << 4)
-            | ((self.view_propagation_information.to_u8() & 0x03) << 2)
+            | (broadcast_common::len::fit_mask(
+                self.move_and_copy_propagation_information.to_u8(),
+                0x03,
+                "move_and_copy_propagation_information",
+            )? << 4)
+            | (broadcast_common::len::fit_mask(
+                self.view_propagation_information.to_u8(),
+                0x03,
+                "view_propagation_information",
+            )? << 2)
             | ((u8::from(self.remote_access_date_moving_window_flag)) << 1)
             | u8::from(self.remote_access_date_immediate_flag);
 

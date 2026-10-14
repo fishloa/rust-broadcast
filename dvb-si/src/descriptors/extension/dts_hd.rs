@@ -240,11 +240,20 @@ impl Serialize for SubstreamInfo {
             });
         }
         let na = (num_assets - 1) as u8;
-        buf[1] = (na << 5) | (self.channel_count & MAX_CHANNEL_COUNT);
+        buf[1] = (na << 5)
+            | broadcast_common::len::fit_mask(
+                self.channel_count,
+                MAX_CHANNEL_COUNT,
+                "channel_count",
+            )?;
         buf[2] = ((u8::from(self.lfe_flag)) << 7)
-            | ((self.sampling_frequency.to_u8() & 0x0F) << 3)
+            | (broadcast_common::len::fit_mask(
+                self.sampling_frequency.to_u8(),
+                0x0F,
+                "sampling_frequency",
+            )? << 3)
             | ((u8::from(self.sample_resolution)) << 2)
-            | (self.reserved & 0x03);
+            | broadcast_common::len::fit_mask(self.reserved, 0x03, "reserved")?;
         let mut pos = SUBSTREAM_HEADER_LEN;
         for a in &self.assets {
             if a.bit_rate_or_scaled > MAX_BIT_RATE {
@@ -255,13 +264,18 @@ impl Serialize for SubstreamInfo {
             }
             // `asset_construction` is a raw 5-bit field; mask at the shift so
             // a wider value cannot bleed into the three flag bits (r03-W2).
-            buf[pos] = ((a.asset_construction & ASSET_CONSTRUCTION_MASK) << 3)
+            buf[pos] = (broadcast_common::len::fit_mask(
+                a.asset_construction,
+                ASSET_CONSTRUCTION_MASK,
+                "asset_construction",
+            )? << 3)
                 | ((u8::from(a.vbr_flag)) << 2)
                 | ((u8::from(a.post_encode_br_scaling_flag)) << 1)
                 | u8::from(a.component_type_flag);
             buf[pos + 1] =
                 (u8::from(a.language_code_flag) << 7) | ((a.bit_rate_or_scaled >> 6) as u8 & 0x7F);
-            buf[pos + 2] = ((a.bit_rate_or_scaled as u8 & 0x3F) << 2) | (a.reserved & 0x03);
+            buf[pos + 2] = ((a.bit_rate_or_scaled as u8 & 0x3F) << 2)
+                | broadcast_common::len::fit_mask(a.reserved, 0x03, "reserved")?;
             pos += ASSET_FIXED_LEN;
             if a.component_type_flag {
                 // The flag promises a wire byte; inventing `0` would emit a
@@ -466,7 +480,7 @@ impl Serialize for DtsHd<'_> {
             | ((u8::from(self.substream_1_flag)) << 5)
             | ((u8::from(self.substream_2_flag)) << 4)
             | ((u8::from(self.substream_3_flag)) << 3)
-            | (self.reserved & 0x07);
+            | broadcast_common::len::fit_mask(self.reserved, 0x07, "reserved")?;
 
         let flags = [
             self.substream_core_flag,

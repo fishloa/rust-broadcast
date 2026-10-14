@@ -386,10 +386,21 @@ impl Serialize for AnnouncementSupportDescriptor {
         let mut pos = HEADER_LEN + INDICATOR_LEN;
         for e in &self.entries {
             // reserved_future_use preserved from parse (default 1).
-            let flags = ((e.announcement_type.to_u8() << ANNOUNCEMENT_TYPE_SHIFT)
-                & ANNOUNCEMENT_TYPE_MASK)
-                | ((e.reserved_future_use << RESERVED_BIT_SHIFT) & RESERVED_BIT_MASK)
-                | (e.reference_type.to_u8() & REFERENCE_TYPE_MASK);
+            let flags = (broadcast_common::len::fit_mask(
+                e.announcement_type.to_u8(),
+                ANNOUNCEMENT_TYPE_MASK >> ANNOUNCEMENT_TYPE_SHIFT,
+                "announcement_type",
+            )? << ANNOUNCEMENT_TYPE_SHIFT)
+                | (broadcast_common::len::fit_mask(
+                    e.reserved_future_use,
+                    RESERVED_BIT_MASK >> RESERVED_BIT_SHIFT,
+                    "reserved_future_use",
+                )? << RESERVED_BIT_SHIFT)
+                | broadcast_common::len::fit_mask(
+                    e.reference_type.to_u8(),
+                    REFERENCE_TYPE_MASK,
+                    "reference_type",
+                )?;
             buf[pos] = flags;
             pos += TYPE_BYTE_LEN;
             if let Some(r) = &e.reference {

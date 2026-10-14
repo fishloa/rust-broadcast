@@ -162,7 +162,8 @@ fn write_33bit(buf: &mut [u8], pos: usize, reserved: u8, value: u64) -> Result<(
     // A value wider than 33 bits used to be masked down silently (audit
     // r03-W3 class).
     let v = broadcast_common::len::fit_bits(value, 33, "time_base_value")?;
-    buf[pos] = ((reserved & RESERVED_7_MASK) << 1) | ((v >> 32) as u8 & 0x01);
+    buf[pos] = (broadcast_common::len::fit_mask(reserved, RESERVED_7_MASK, "reserved")? << 1)
+        | ((v >> 32) as u8 & 0x01);
     buf[pos + 1..pos + 5].copy_from_slice(&(v as u32).to_be_bytes());
     Ok(())
 }
@@ -359,7 +360,11 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         }
         // The indicator selects which optional blocks are on the wire; a
         // disagreement with the Options would misframe on re-parse (r03-W5).
-        let ind = self.content_time_base_indicator.to_u8() & 0x0F;
+        let ind = broadcast_common::len::fit_mask(
+            self.content_time_base_indicator.to_u8(),
+            0x0F,
+            "content_time_base_indicator",
+        )?;
         let want_time_base = ind == 1 || ind == 2;
         let want_content_id = ind == 2;
         let want_assoc = (3..=7).contains(&ind);
@@ -390,8 +395,12 @@ impl Serialize for ContentLabelingDescriptor<'_> {
             pos += 4;
         }
 
-        let mut flags = ((self.content_time_base_indicator.to_u8() & 0x0F) << 3)
-            | (self.reserved & RESERVED_3_MASK);
+        let mut flags = (broadcast_common::len::fit_mask(
+            self.content_time_base_indicator.to_u8(),
+            0x0F,
+            "content_time_base_indicator",
+        )? << 3)
+            | broadcast_common::len::fit_mask(self.reserved, RESERVED_3_MASK, "reserved")?;
         // Derived from the Option, never the stored flag (r03-W5).
         if self.content_reference_id_record.is_some() {
             flags |= 0x80;
@@ -417,7 +426,12 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         }
 
         if let Some(cid) = self.content_id {
-            buf[pos] = ((self.content_id_reserved & RESERVED_1_MASK) << 7) | (cid & 0x7F);
+            buf[pos] = (broadcast_common::len::fit_mask(
+                self.content_id_reserved,
+                RESERVED_1_MASK,
+                "content_id_reserved",
+            )? << 7)
+                | broadcast_common::len::fit_mask(cid, 0x7F, "cid")?;
             pos += 1;
         }
 

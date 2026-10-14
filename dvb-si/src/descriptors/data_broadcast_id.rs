@@ -364,16 +364,28 @@ impl Serialize for SsuIdSelector<'_> {
         let mut pos = SSU_OUI_DATA_LENGTH_LEN;
         for e in &self.oui_entries {
             buf[pos..pos + 3].copy_from_slice(&e.oui);
-            buf[pos + 3] = ((e.reserved_4 & SSU_RESERVED_4_MASK) << 4)
-                | (e.update_type.to_u8() & SSU_UPDATE_TYPE_MASK);
+            buf[pos + 3] =
+                (broadcast_common::len::fit_mask(e.reserved_4, SSU_RESERVED_4_MASK, "reserved_4")?
+                    << 4)
+                    | broadcast_common::len::fit_mask(
+                        e.update_type.to_u8(),
+                        SSU_UPDATE_TYPE_MASK,
+                        "update_type",
+                    )?;
             let uvf_bit: u8 = if e.update_versioning_flag {
                 SSU_UPDATE_VERSIONING_FLAG_MASK
             } else {
                 0
             };
-            buf[pos + 4] = ((e.reserved_2 & SSU_RESERVED_2_MASK) << 6)
-                | uvf_bit
-                | (e.update_version & SSU_UPDATE_VERSION_MASK);
+            buf[pos + 4] =
+                (broadcast_common::len::fit_mask(e.reserved_2, SSU_RESERVED_2_MASK, "reserved_2")?
+                    << 6)
+                    | uvf_bit
+                    | broadcast_common::len::fit_mask(
+                        e.update_version,
+                        SSU_UPDATE_VERSION_MASK,
+                        "update_version",
+                    )?;
             buf[pos + 5] = broadcast_common::len::fit_u8(e.selector.len(), "selector_length")?;
             pos += SSU_OUI_FIXED_LEN;
             buf[pos..pos + e.selector.len()].copy_from_slice(e.selector);

@@ -173,12 +173,24 @@ impl Serialize for TimeSliceFecIdentifierDescriptor<'_> {
         }
         crate::descriptors::write_descriptor_header(buf, TAG, FIXED_LEN + self.id_selector.len())?;
         buf[2] = (u8::from(self.time_slicing) << 7)
-            | ((self.mpe_fec & MPE_FEC_MAX) << 5)
-            | ((self.reserved_for_future_use & RESERVED_MASK) << RESERVED_SHIFT)
-            | (self.frame_size & FRAME_SIZE_MAX);
+            | (broadcast_common::len::fit_mask(self.mpe_fec, MPE_FEC_MAX, "mpe_fec")? << 5)
+            | (broadcast_common::len::fit_mask(
+                self.reserved_for_future_use,
+                RESERVED_MASK,
+                "reserved_for_future_use",
+            )? << RESERVED_SHIFT)
+            | broadcast_common::len::fit_mask(self.frame_size, FRAME_SIZE_MAX, "frame_size")?;
         buf[3] = self.max_burst_duration;
-        buf[4] = ((self.max_average_rate & MAX_AVERAGE_RATE_MAX) << 4)
-            | (self.time_slice_fec_id & TIME_SLICE_FEC_ID_MAX);
+        buf[4] = (broadcast_common::len::fit_mask(
+            self.max_average_rate,
+            MAX_AVERAGE_RATE_MAX,
+            "max_average_rate",
+        )? << 4)
+            | broadcast_common::len::fit_mask(
+                self.time_slice_fec_id,
+                TIME_SLICE_FEC_ID_MAX,
+                "time_slice_fec_id",
+            )?;
         buf[HEADER_LEN + FIXED_LEN..len].copy_from_slice(self.id_selector);
         Ok(len)
     }

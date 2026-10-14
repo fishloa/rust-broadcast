@@ -109,7 +109,11 @@ impl Serialize for DitSection {
         super::write_section_length(buf, BODY_LEN)?;
         // transition_flag in bit 7; remaining 7 bits reserved (set to 1).
         buf[3] = (u8::from(self.transition_flag) * TRANSITION_FLAG)
-            | (self.reserved_future_use & RESERVED_FUTURE_USE_7);
+            | broadcast_common::len::fit_mask(
+                self.reserved_future_use,
+                RESERVED_FUTURE_USE_7,
+                "reserved_future_use",
+            )?;
         Ok(len)
     }
 }

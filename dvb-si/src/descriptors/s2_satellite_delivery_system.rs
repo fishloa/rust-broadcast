@@ -308,7 +308,11 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
 
         let mut flags = ((self.reserved_zero_future_use & 1) << 5)
             | ((self.reserved_future_use & 0b11) << FLAG_RESERVED_FU_SHIFT)
-            | (self.ts_gs_mode.to_u8() & TS_GS_MODE_MASK);
+            | broadcast_common::len::fit_mask(
+                self.ts_gs_mode.to_u8(),
+                TS_GS_MODE_MASK,
+                "ts_gs_mode",
+            )?;
         if self.scrambling_sequence_selector {
             flags |= FLAG_SCRAMBLING_SELECTOR;
         }
@@ -329,10 +333,17 @@ impl Serialize for S2SatelliteDeliverySystemDescriptor {
                 .ok_or(Error::ValueOutOfRange {
                     field: "scrambling_sequence_index",
                     reason: "required when scrambling_sequence_selector is set",
-                })?
-                & SCRAMBLING_INDEX_MAX;
-            buf[pos] = ((self.reserved_6 & SCRAMBLING_RESERVED_WIDTH_MASK)
-                << SCRAMBLING_RESERVED_SHIFT)
+                })?;
+            let index = broadcast_common::len::fit_mask(
+                index,
+                SCRAMBLING_INDEX_MAX,
+                "scrambling_sequence_index",
+            )?;
+            buf[pos] = (broadcast_common::len::fit_mask(
+                self.reserved_6,
+                SCRAMBLING_RESERVED_WIDTH_MASK,
+                "reserved_6",
+            )? << SCRAMBLING_RESERVED_SHIFT)
                 | ((index >> 16) as u8 & SCRAMBLING_INDEX_HI_MASK);
             buf[pos + 1] = (index >> 8) as u8;
             buf[pos + 2] = index as u8;

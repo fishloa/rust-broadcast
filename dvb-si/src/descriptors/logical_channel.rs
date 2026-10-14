@@ -126,7 +126,11 @@ impl Serialize for LogicalChannelDescriptor {
                 "logical_channel_number",
             )? as u16;
             let flags = visible_byte
-                | ((entry.reserved << RESERVED_SHIFT) & RESERVED_BITS_MASK)
+                | (broadcast_common::len::fit_mask(
+                    entry.reserved,
+                    RESERVED_BITS_MASK >> RESERVED_SHIFT,
+                    "reserved",
+                )? << RESERVED_SHIFT)
                 | ((lcn >> 8) as u8 & LCN_HI_MASK);
             buf[offset + 2] = flags;
             buf[offset + 3] = (lcn & 0xFF) as u8;

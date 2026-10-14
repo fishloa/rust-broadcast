@@ -207,11 +207,27 @@ impl Serialize for DtsUhd<'_> {
                 have: buf.len(),
             });
         }
-        buf[0] = ((self.decoder_profile_code & DTS_UHD_PROFILE_CODE_MASK) << 2)
-            | (self.frame_duration_code.to_u8() & 0x03);
-        buf[1] = ((self.max_payload_code.to_u8() & DTS_UHD_MAX_PAYLOAD_MASK) << 5)
-            | ((self.dts_reserved & 0x03) << 3)
-            | (self.stream_index & DTS_UHD_STREAM_INDEX_MASK);
+        buf[0] = (broadcast_common::len::fit_mask(
+            self.decoder_profile_code,
+            DTS_UHD_PROFILE_CODE_MASK,
+            "decoder_profile_code",
+        )? << 2)
+            | broadcast_common::len::fit_mask(
+                self.frame_duration_code.to_u8(),
+                0x03,
+                "frame_duration_code",
+            )?;
+        buf[1] = (broadcast_common::len::fit_mask(
+            self.max_payload_code.to_u8(),
+            DTS_UHD_MAX_PAYLOAD_MASK,
+            "max_payload_code",
+        )? << 5)
+            | (broadcast_common::len::fit_mask(self.dts_reserved, 0x03, "dts_reserved")? << 3)
+            | broadcast_common::len::fit_mask(
+                self.stream_index,
+                DTS_UHD_STREAM_INDEX_MASK,
+                "stream_index",
+            )?;
         buf[DTS_UHD_FIXED_LEN..len].copy_from_slice(self.codec_selector);
         Ok(len)
     }

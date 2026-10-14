@@ -158,7 +158,9 @@ impl Serialize for TargetRegionName<'_> {
             let raw = region.region_name.raw();
             let region_name_length =
                 broadcast_common::len::fit_bits(raw.len() as u64, 6, "region_name_length")? as u8;
-            buf[pos] = ((region.region_depth & 0x03) << 6) | region_name_length;
+            buf[pos] =
+                (broadcast_common::len::fit_mask(region.region_depth, 0x03, "region_depth")? << 6)
+                    | region_name_length;
             pos += 1;
             buf[pos..pos + raw.len()].copy_from_slice(raw);
             pos += raw.len();

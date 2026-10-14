@@ -242,7 +242,8 @@ impl Serialize for AvcTimingAndHrdDescriptor {
 
         let picture_and_timing_info_present = self.picture_timing.is_some();
         buf[HEADER_LEN] = ((self.hrd_management_valid_flag as u8) << 7)
-            | ((self.reserved_6 & RESERVED_6_MASK) << 1)
+            | (broadcast_common::len::fit_mask(self.reserved_6, RESERVED_6_MASK, "reserved_6")?
+                << 1)
             | (if picture_and_timing_info_present {
                 1
             } else {
@@ -251,7 +252,8 @@ impl Serialize for AvcTimingAndHrdDescriptor {
 
         let mut pos = HEADER_LEN + 1;
         if let Some(ref pt) = self.picture_timing {
-            buf[pos] = if pt._90khz_flag { 0x80 } else { 0x00 } | (pt.reserved_7 & RESERVED_7_MASK);
+            buf[pos] = if pt._90khz_flag { 0x80 } else { 0x00 }
+                | broadcast_common::len::fit_mask(pt.reserved_7, RESERVED_7_MASK, "reserved_7")?;
             pos += 1;
             if !pt._90khz_flag {
                 // N and K are both on the wire whenever the 90 kHz flag is
@@ -275,7 +277,7 @@ impl Serialize for AvcTimingAndHrdDescriptor {
         buf[pos] = ((self.fixed_frame_rate_flag as u8) << 7)
             | ((self.temporal_poc_flag as u8) << 6)
             | ((self.picture_to_display_conversion_flag as u8) << 5)
-            | (self.reserved_5 & RESERVED_5_MASK);
+            | broadcast_common::len::fit_mask(self.reserved_5, RESERVED_5_MASK, "reserved_5")?;
         Ok(len)
     }
 }

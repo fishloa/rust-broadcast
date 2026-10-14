@@ -76,7 +76,8 @@ impl Serialize for ShortSmoothingBufferDescriptor<'_> {
             });
         }
         crate::descriptors::write_descriptor_header(buf, TAG, body)?;
-        buf[HEADER_LEN] = ((self.sb_size & 0x03) << 6) | (self.sb_leak_rate & 0x3F);
+        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(self.sb_size, 0x03, "sb_size")? << 6)
+            | broadcast_common::len::fit_mask(self.sb_leak_rate, 0x3F, "sb_leak_rate")?;
         let tail_start = HEADER_LEN + FIXED_LEN;
         buf[tail_start..tail_start + self.dvb_reserved.len()].copy_from_slice(self.dvb_reserved);
         Ok(len)

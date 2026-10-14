@@ -248,8 +248,12 @@ impl Serialize for ApplicationDescriptor {
             pos += PROFILE_ENTRY_LEN;
         }
         let flags_byte = (u8::from(self.service_bound_flag) << 7)
-            | ((self.visibility.to_u8() & 0x03) << 5)
-            | (self.reserved_future_use & RESERVED_FU_MASK);
+            | (broadcast_common::len::fit_mask(self.visibility.to_u8(), 0x03, "visibility")? << 5)
+            | broadcast_common::len::fit_mask(
+                self.reserved_future_use,
+                RESERVED_FU_MASK,
+                "reserved_future_use",
+            )?;
         buf[pos] = flags_byte;
         buf[pos + 1] = self.application_priority;
         pos += FLAGS_LEN + PRIORITY_LEN;

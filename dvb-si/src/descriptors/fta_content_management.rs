@@ -181,15 +181,22 @@ impl Serialize for FtaContentManagementDescriptor {
             });
         }
         // reserved_future_use(3) preserved from parse (default 111).
-        let mut flags = (self.reserved_future_use << RESERVED_SHIFT) & RESERVED_MASK;
+        let mut flags = broadcast_common::len::fit_mask(
+            self.reserved_future_use,
+            RESERVED_MASK >> RESERVED_SHIFT,
+            "reserved_future_use",
+        )? << RESERVED_SHIFT;
         if self.user_defined {
             flags |= USER_DEFINED_MASK;
         }
         if self.do_not_scramble {
             flags |= DO_NOT_SCRAMBLE_MASK;
         }
-        flags |= (self.control_remote_access_over_internet.to_u8() << CONTROL_REMOTE_ACCESS_SHIFT)
-            & CONTROL_REMOTE_ACCESS_MASK;
+        flags |= broadcast_common::len::fit_mask(
+            self.control_remote_access_over_internet.to_u8(),
+            CONTROL_REMOTE_ACCESS_MASK >> CONTROL_REMOTE_ACCESS_SHIFT,
+            "control_remote_access_over_internet",
+        )? << CONTROL_REMOTE_ACCESS_SHIFT;
         if self.do_not_apply_revocation {
             flags |= DO_NOT_APPLY_REVOCATION_MASK;
         }

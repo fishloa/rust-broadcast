@@ -298,8 +298,11 @@ impl Serialize for SdtSection<'_> {
         let mut pos = MIN_HEADER_LEN + EXTENSION_HEADER_LEN + POST_EXTENSION_LEN;
         for svc in &self.services {
             buf[pos..pos + 2].copy_from_slice(&svc.service_id.to_be_bytes());
-            let flags = ((svc.reserved_future_use & RESERVED_FUTURE_USE_6)
-                << EIT_FLAGS_RESERVED_SHIFT)
+            let flags = (broadcast_common::len::fit_mask(
+                svc.reserved_future_use,
+                RESERVED_FUTURE_USE_6,
+                "reserved_future_use",
+            )? << EIT_FLAGS_RESERVED_SHIFT)
                 | (u8::from(svc.eit_schedule_flag) << 1)
                 | u8::from(svc.eit_present_following_flag);
             buf[pos + 2] = flags;

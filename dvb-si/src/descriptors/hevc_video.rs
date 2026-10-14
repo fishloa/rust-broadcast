@@ -301,16 +301,21 @@ impl Serialize for HevcVideoDescriptor {
                 reason: "exceeds 5-bit field",
             });
         }
-        buf[HEADER_LEN] = ((self.profile_space & PROFILE_SPACE_MASK) << 6)
+        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(
+            self.profile_space,
+            PROFILE_SPACE_MASK,
+            "profile_space",
+        )? << 6)
             | ((self.tier_flag as u8) << 5)
-            | (self.profile_idc & PROFILE_IDC_MASK);
+            | broadcast_common::len::fit_mask(self.profile_idc, PROFILE_IDC_MASK, "profile_idc")?;
 
         // bytes 1..5: profile_compatibility_indication (32 bits big-endian)
         buf[HEADER_LEN + 1..HEADER_LEN + 5]
             .copy_from_slice(&self.profile_compatibility_indication.to_be_bytes());
 
         // byte 5: flags(4) | copied_44bits hi 4 bits
-        let copied = self.copied_44bits & COPIED_44_MASK;
+        let copied =
+            broadcast_common::len::fit_mask(self.copied_44bits, COPIED_44_MASK, "copied_44bits")?;
         buf[HEADER_LEN + 5] = ((self.progressive_source_flag as u8) << 7)
             | ((self.interlaced_source_flag as u8) << 6)
             | ((self.non_packed_constraint_flag as u8) << 5)
@@ -332,8 +337,8 @@ impl Serialize for HevcVideoDescriptor {
             | ((self.hevc_still_present_flag as u8) << 6)
             | ((self.hevc_24hr_picture_present_flag as u8) << 5)
             | ((self.sub_pic_hrd_params_not_present_flag as u8) << 4)
-            | ((self.reserved & RESERVED_MASK) << 2)
-            | (self.hdr_wcg_idc.to_u8() & 0x03);
+            | (broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")? << 2)
+            | broadcast_common::len::fit_mask(self.hdr_wcg_idc.to_u8(), 0x03, "hdr_wcg_idc")?;
 
         if self.temporal_layer_subset_flag != self.temporal_sub.is_some() {
             // serialized_len reserves the 2 temporal-sub bytes from the flag
@@ -353,10 +358,26 @@ impl Serialize for HevcVideoDescriptor {
                     reason: "exceeds 3-bit field",
                 });
             }
-            buf[HEADER_LEN + 13] = ((ts.temporal_id_min & TEMPORAL_ID_MASK) << 5)
-                | (ts.reserved_min & TEMPORAL_RESERVED_MASK);
-            buf[HEADER_LEN + 14] = ((ts.temporal_id_max & TEMPORAL_ID_MASK) << 5)
-                | (ts.reserved_max & TEMPORAL_RESERVED_MASK);
+            buf[HEADER_LEN + 13] = (broadcast_common::len::fit_mask(
+                ts.temporal_id_min,
+                TEMPORAL_ID_MASK,
+                "temporal_id_min",
+            )? << 5)
+                | broadcast_common::len::fit_mask(
+                    ts.reserved_min,
+                    TEMPORAL_RESERVED_MASK,
+                    "reserved_min",
+                )?;
+            buf[HEADER_LEN + 14] = (broadcast_common::len::fit_mask(
+                ts.temporal_id_max,
+                TEMPORAL_ID_MASK,
+                "temporal_id_max",
+            )? << 5)
+                | broadcast_common::len::fit_mask(
+                    ts.reserved_max,
+                    TEMPORAL_RESERVED_MASK,
+                    "reserved_max",
+                )?;
         }
 
         Ok(len)

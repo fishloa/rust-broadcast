@@ -173,11 +173,23 @@ impl Serialize for ApplicationSignallingDescriptor {
         for e in &self.entries {
             // reserved_future_use(1): preserved from parse, default 1.
             let word = (u16::from(e.reserved_future_use_1 & 1) << 15)
-                | (e.application_type.to_u16() & APPLICATION_TYPE_MAX);
+                | broadcast_common::len::fit_mask(
+                    e.application_type.to_u16(),
+                    APPLICATION_TYPE_MAX,
+                    "application_type",
+                )?;
             buf[pos..pos + 2].copy_from_slice(&word.to_be_bytes());
             // reserved_future_use(3): preserved from parse, default 111.
-            buf[pos + 2] =
-                ((e.reserved_future_use_3 & 0x07) << 5) | (e.ait_version_number & AIT_VERSION_MAX);
+            buf[pos + 2] = (broadcast_common::len::fit_mask(
+                e.reserved_future_use_3,
+                0x07,
+                "reserved_future_use_3",
+            )? << 5)
+                | broadcast_common::len::fit_mask(
+                    e.ait_version_number,
+                    AIT_VERSION_MAX,
+                    "ait_version_number",
+                )?;
             pos += ENTRY_LEN;
         }
         Ok(len)

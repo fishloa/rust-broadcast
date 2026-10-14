@@ -211,22 +211,34 @@ impl Serialize for TelephoneDescriptor<'_> {
         let core_number_len =
             broadcast_common::len::fit_bits(self.core_number.raw().len() as u64, 4, "core_number")?
                 as u8;
-        buf[2] = ((self.reserved_future_use_before_foreign_availability << BYTE0_RESERVED_SHIFT)
-            & BYTE0_RESERVED_MASK)
+        buf[2] = (broadcast_common::len::fit_mask(
+            self.reserved_future_use_before_foreign_availability,
+            BYTE0_RESERVED_MASK >> BYTE0_RESERVED_SHIFT,
+            "reserved_future_use_before_foreign_availability",
+        )? << BYTE0_RESERVED_SHIFT)
             | if self.foreign_availability {
                 FOREIGN_AVAIL_MASK
             } else {
                 0
             }
-            | (self.connection_type & CONNECTION_TYPE_MASK);
-        buf[3] = ((self.reserved_future_use_before_country_prefix_length << BYTE1_RESERVED_SHIFT)
-            & BYTE1_RESERVED_MASK)
+            | broadcast_common::len::fit_mask(
+                self.connection_type,
+                CONNECTION_TYPE_MASK,
+                "connection_type",
+            )?;
+        buf[3] = (broadcast_common::len::fit_mask(
+            self.reserved_future_use_before_country_prefix_length,
+            BYTE1_RESERVED_MASK >> BYTE1_RESERVED_SHIFT,
+            "reserved_future_use_before_country_prefix_length",
+        )? << BYTE1_RESERVED_SHIFT)
             | (country_prefix_len << 5)
             | (intl_area_len << 2)
             | operator_code_len;
-        buf[4] = ((self.reserved_future_use_before_national_area_code_length
-            << BYTE2_RESERVED_SHIFT)
-            & BYTE2_RESERVED_MASK)
+        buf[4] = (broadcast_common::len::fit_mask(
+            self.reserved_future_use_before_national_area_code_length,
+            BYTE2_RESERVED_MASK >> BYTE2_RESERVED_SHIFT,
+            "reserved_future_use_before_national_area_code_length",
+        )? << BYTE2_RESERVED_SHIFT)
             | (national_area_len << 4)
             | core_number_len;
         let mut pos = HEADER_LEN + FIXED_LEN;

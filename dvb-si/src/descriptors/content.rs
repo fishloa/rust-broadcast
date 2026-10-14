@@ -372,7 +372,9 @@ impl Serialize for ContentDescriptor {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut pos = HEADER_LEN;
         for entry in &self.entries {
-            buf[pos] = ((entry.nibble_1 & NIBBLE_MASK) << 4) | (entry.nibble_2 & NIBBLE_MASK);
+            buf[pos] = (broadcast_common::len::fit_mask(entry.nibble_1, NIBBLE_MASK, "nibble_1")?
+                << 4)
+                | broadcast_common::len::fit_mask(entry.nibble_2, NIBBLE_MASK, "nibble_2")?;
             buf[pos + 1] = entry.user_byte;
             pos += ENTRY_LEN;
         }

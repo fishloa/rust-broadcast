@@ -758,6 +758,11 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
         });
     }
 
+    broadcast_common::len::fit_mask(
+        loc.start_date,
+        (u16::from(LOCATOR_START_DATE_HI_MASK) << LOCATOR_START_DATE_HI_SHIFT) | 0x3F,
+        "start_date",
+    )?;
     let b0 = (loc.identifier_type().to_u8() << LOCATOR_ID_TYPE_SHIFT)
         | (u8::from(loc.scheduled_time_reliability) << 5)
         | (u8::from(loc.inline_service()) << 4)
@@ -814,8 +819,16 @@ fn serialize_locator(loc: &DvbBinaryLocator, buf: &mut [u8]) -> Result<usize> {
         }
     }
     if let Some(w) = &loc.windows {
-        buf[pos] = ((w.early_start_window & EARLY_START_WINDOW_MASK) << 5)
-            | (w.late_end_window & LATE_END_WINDOW_MASK);
+        buf[pos] = (broadcast_common::len::fit_mask(
+            w.early_start_window,
+            EARLY_START_WINDOW_MASK,
+            "early_start_window",
+        )? << 5)
+            | broadcast_common::len::fit_mask(
+                w.late_end_window,
+                LATE_END_WINDOW_MASK,
+                "late_end_window",
+            )?;
         pos += 1;
     }
     Ok(pos)
@@ -969,13 +982,19 @@ fn parse_link_info(data: &[u8], link_info_length: usize) -> Result<LinkInfo<'_>>
 
 fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
     let lt = li.link_type.to_u8();
-    let hr = li.how_related.to_u8();
-    buf[0] = ((lt & 0x0F) << LINK_TYPE_SHIFT)
+    let hr = broadcast_common::len::fit_mask(li.how_related.to_u8(), 0x3F, "how_related")?;
+    broadcast_common::len::fit_mask(
+        li.term_id,
+        (u16::from(TERM_ID_HI_MASK) << TERM_ID_HI_SHIFT) | 0xFF,
+        "term_id",
+    )?;
+    buf[0] = (broadcast_common::len::fit_mask(lt, 0x0F, "lt")? << LINK_TYPE_SHIFT)
         | ((li.reserved_link_type & super::RESERVED_2) << LINK_INFO_HEADER_RFU_SHIFT)
         | ((hr >> 4) & HOW_RELATED_HI_MASK);
     buf[1] = ((hr & 0x0F) << 4) | ((li.term_id >> TERM_ID_HI_SHIFT) as u8 & TERM_ID_HI_MASK);
     buf[2] = li.term_id as u8;
-    buf[3] = ((li.group_id & 0x0F) << GROUP_ID_SHIFT) | (li.precedence & PRECEDENCE_MASK);
+    buf[3] = (broadcast_common::len::fit_mask(li.group_id, 0x0F, "group_id")? << GROUP_ID_SHIFT)
+        | broadcast_common::len::fit_mask(li.precedence, PRECEDENCE_MASK, "precedence")?;
 
     let mut pos = 4;
     if let Some(uri) = li.media_uri {
@@ -1008,7 +1027,7 @@ fn serialize_link_info(li: &LinkInfo, buf: &mut [u8]) -> Result<usize> {
         "icon_descriptors_length",
     )?;
     buf[pos] = u8::from(li.default_icon_flag) << 7
-        | ((li.icon_id & 0x07) << ICON_ID_SHIFT)
+        | (broadcast_common::len::fit_mask(li.icon_id, 0x07, "icon_id")? << ICON_ID_SHIFT)
         | ((dll >> 8) as u8);
     buf[pos + 1] = dll as u8;
     pos += 2;

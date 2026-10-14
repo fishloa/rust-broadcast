@@ -111,13 +111,29 @@ impl Serialize for T2mi<'_> {
         }
         // Table 158 bytes 0-2:
         // reserved_zero_future_use(5) | t2mi_stream_id(3)
-        buf[0] = ((self.reserved_zero_future_use_stream & RZFU_5_MASK) << RZFU_5_SHIFT)
-            | (self.t2mi_stream_id & 0x07);
+        buf[0] = (broadcast_common::len::fit_mask(
+            self.reserved_zero_future_use_stream,
+            RZFU_5_MASK,
+            "reserved_zero_future_use_stream",
+        )? << RZFU_5_SHIFT)
+            | broadcast_common::len::fit_mask(self.t2mi_stream_id, 0x07, "t2mi_stream_id")?;
         // reserved_zero_future_use(5) | num_t2mi_streams_minus_one(3)
-        buf[1] = ((self.reserved_zero_future_use_num & RZFU_5_MASK) << RZFU_5_SHIFT)
-            | (self.num_t2mi_streams_minus_one & 0x07);
+        buf[1] = (broadcast_common::len::fit_mask(
+            self.reserved_zero_future_use_num,
+            RZFU_5_MASK,
+            "reserved_zero_future_use_num",
+        )? << RZFU_5_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.num_t2mi_streams_minus_one,
+                0x07,
+                "num_t2mi_streams_minus_one",
+            )?;
         // reserved_zero_future_use(7) | pcr_iscr_common_clock_flag(1)
-        buf[2] = ((self.reserved_zero_future_use_flag & RZFU_7_MASK) << RZFU_7_SHIFT)
+        buf[2] = (broadcast_common::len::fit_mask(
+            self.reserved_zero_future_use_flag,
+            RZFU_7_MASK,
+            "reserved_zero_future_use_flag",
+        )? << RZFU_7_SHIFT)
             | u8::from(self.pcr_iscr_common_clock_flag);
         buf[T2MI_MIN_LEN..len].copy_from_slice(self.reserved_tail);
         Ok(len)

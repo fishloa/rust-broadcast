@@ -361,7 +361,11 @@ impl Serialize for NordigLogicalChannelV2 {
                     0
                 };
                 let flags = visible_byte
-                    | ((svc.reserved << V2_RESERVED_SHIFT) & V2_RESERVED_MASK)
+                    | (broadcast_common::len::fit_mask(
+                        svc.reserved,
+                        V2_RESERVED_MASK >> V2_RESERVED_SHIFT,
+                        "reserved",
+                    )? << V2_RESERVED_SHIFT)
                     | ((svc.logical_channel_number >> 8) as u8 & V2_LCN_HI_MASK);
                 buf[offset + 2] = flags;
                 buf[offset + 3] = (svc.logical_channel_number & 0xFF) as u8;

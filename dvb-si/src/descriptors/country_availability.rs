@@ -122,7 +122,12 @@ impl Serialize for CountryAvailabilityDescriptor {
         } else {
             0
         };
-        buf[HEADER_LEN] = flag_bit | (self.reserved_future_use & RESERVED_MASK);
+        buf[HEADER_LEN] = flag_bit
+            | broadcast_common::len::fit_mask(
+                self.reserved_future_use,
+                RESERVED_MASK,
+                "reserved_future_use",
+            )?;
         let mut pos = HEADER_LEN + FLAG_LEN;
         for code in &self.country_codes {
             buf[pos..pos + COUNTRY_CODE_LEN].copy_from_slice(&code.0);

@@ -227,7 +227,7 @@ pub(crate) fn write_region_entries(
     entries: &[TargetRegionEntry],
     buf: &mut [u8],
     mut pos: usize,
-) -> usize {
+) -> Result<usize> {
     let start = pos;
     for region in entries {
         let depth = match &region.region_codes {
@@ -236,7 +236,11 @@ pub(crate) fn write_region_entries(
             RegionCodes::PrimarySecondary { .. } => 2,
             RegionCodes::Full { .. } => 3,
         };
-        buf[pos] = ((region.reserved_future_use & ENTRY_RESERVED_MASK) << ENTRY_RESERVED_SHIFT)
+        buf[pos] = (broadcast_common::len::fit_mask(
+            region.reserved_future_use,
+            ENTRY_RESERVED_MASK,
+            "reserved_future_use",
+        )? << ENTRY_RESERVED_SHIFT)
             | ((region.country_code.is_some() as u8) << 2)
             | depth;
         pos += 1;
@@ -272,7 +276,7 @@ pub(crate) fn write_region_entries(
             }
         }
     }
-    pos - start
+    Ok(pos - start)
 }
 
 impl Serialize for TargetRegion {
@@ -289,7 +293,7 @@ impl Serialize for TargetRegion {
             });
         }
         buf[..ISO_639_LEN].copy_from_slice(&self.country_code.0);
-        write_region_entries(&self.regions, buf, ISO_639_LEN);
+        write_region_entries(&self.regions, buf, ISO_639_LEN)?;
         Ok(len)
     }
 }

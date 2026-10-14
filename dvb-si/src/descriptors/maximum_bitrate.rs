@@ -92,7 +92,9 @@ impl Serialize for MaximumBitrateDescriptor {
         buf[0] = TAG;
         buf[1] = BODY_LEN;
         let mb = mb as u32;
-        buf[HEADER_LEN] = ((self.reserved & RESERVED_MASK) << 6) | ((mb >> 16) & 0x3F) as u8;
+        buf[HEADER_LEN] =
+            (broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")? << 6)
+                | ((mb >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 1] = ((mb >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 2] = (mb & 0xFF) as u8;
         Ok(len)

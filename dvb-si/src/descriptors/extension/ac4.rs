@@ -213,7 +213,11 @@ impl Serialize for Ac4<'_> {
         }
         buf[0] = (u8::from(self.ac4_config_flag) << 7)
             | (u8::from(self.ac4_toc_flag) << 6)
-            | (self.reserved_zero_future_use_6 & AC4_FLAGS_RESERVED_MASK);
+            | broadcast_common::len::fit_mask(
+                self.reserved_zero_future_use_6,
+                AC4_FLAGS_RESERVED_MASK,
+                "reserved_zero_future_use_6",
+            )?;
         let mut p = 1;
         if self.ac4_config_flag {
             // config_flag reserves the config byte; fabricating defaults for
@@ -230,12 +234,16 @@ impl Serialize for Ac4<'_> {
                     field: "ac4_channel_mode",
                     reason: "required when ac4_config_flag is set",
                 })?
-                .to_u8()
-                & 0x03;
+                .to_u8();
+            let cm = broadcast_common::len::fit_mask(cm, 0x03, "ac4_channel_mode")?;
             let rz = self
                 .reserved_zero_future_use_5
-                .unwrap_or(AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT)
-                & AC4_CONFIG_RESERVED_MASK;
+                .unwrap_or(AC4_RESERVED_ZERO_FUTURE_USE_DEFAULT);
+            let rz = broadcast_common::len::fit_mask(
+                rz,
+                AC4_CONFIG_RESERVED_MASK,
+                "reserved_zero_future_use_5",
+            )?;
             buf[p] = (u8::from(de) << 7) | (cm << 5) | rz;
             p += 1;
         }

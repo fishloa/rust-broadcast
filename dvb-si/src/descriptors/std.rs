@@ -82,7 +82,9 @@ impl Serialize for StdDescriptor {
         }
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] = ((self.reserved & RESERVED_MASK) << 1) | self.leak_valid_flag as u8;
+        buf[HEADER_LEN] =
+            (broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")? << 1)
+                | self.leak_valid_flag as u8;
         Ok(len)
     }
 }

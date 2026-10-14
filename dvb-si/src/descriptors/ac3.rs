@@ -382,7 +382,12 @@ impl Serialize for Ac3Descriptor<'_> {
             flags |= FLAG_ASVC;
         }
         // reserved_flags: preserved from parse, spec default 0 when constructed.
-        buf[2] = flags | (self.reserved_flags & RESERVED_FLAGS_MASK);
+        buf[2] = flags
+            | broadcast_common::len::fit_mask(
+                self.reserved_flags,
+                RESERVED_FLAGS_MASK,
+                "reserved_flags",
+            )?;
         let mut pos = 3;
         for b in [self.component_type, self.bsid, self.mainid, self.asvc]
             .into_iter()

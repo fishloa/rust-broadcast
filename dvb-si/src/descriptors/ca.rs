@@ -117,7 +117,8 @@ impl Serialize for CaDescriptor<'_> {
         // ca_pid is a 13-bit field (upper 3 bits reserved); `Pid` is 13-bit by
         // construction, so no out-of-range value can reach the wire.
         let ca_pid = self.ca_pid.value();
-        buf[4] = ((self.reserved & 0x07) << 5) | ((ca_pid >> 8) as u8 & 0x1F);
+        buf[4] = (broadcast_common::len::fit_mask(self.reserved, 0x07, "reserved")? << 5)
+            | ((ca_pid >> 8) as u8 & 0x1F);
         buf[5] = (ca_pid & 0xFF) as u8;
         if !self.private_data.is_empty() {
             buf[HEADER_LEN + MIN_BODY_LEN..len].copy_from_slice(self.private_data);

@@ -103,19 +103,12 @@ impl<'a> BitReader<'a> {
     }
 }
 
-// This writer stays hand-rolled rather than delegating to
-// `broadcast_common::bits::BitWriter`, unlike the `BitReader` above: that
-// writer's `write_bits` validates `value < 2^bits` and returns
-// `BitError::ValueTooWide` instead of truncating, whereas several call sites
-// below intentionally pass a computed count/length (e.g.
-// `frag.delivery_system_ids.len() as u64` into a 10-bit field) that this
-// writer has always silently truncated to width, never validated. Swapping
-// in the shared writer would turn some of those (extremely unlikely, but
-// currently silent) oversize cases into a new `Err` a caller doesn't expect
-// today — a behavioural change this consolidation pass must not make. If
-// that latent truncation is ever tightened into validation, do it here
-// explicitly (spec-cited) rather than by taking on the shared writer's
-// stricter, silent behaviour change.
+// This writer stays hand-rolled (it ORs bits into a zero-initialised buffer
+// at an arbitrary bit offset). Unlike its original form it NEVER silently
+// truncates: `write_u`/`write_i` reject a value wider than the field with
+// `Error::FieldOverflow` (#1129 class), so a count such as
+// `frag.delivery_system_ids.len()` into a 10-bit field, or an over-range
+// reserved run, is an error instead of a wrapped, misframed section.
 struct BitWriter<'a> {
     buf: &'a mut [u8],
     bit_pos: usize,
@@ -129,6 +122,7 @@ impl<'a> BitWriter<'a> {
         self.bit_pos
     }
     fn write_u(&mut self, bits: u8, val: u64) -> Result<()> {
+        broadcast_common::len::fit_bits(val, u32::from(bits), "SatSection field")?;
         let bits = bits as usize;
         if self.bit_pos + bits > self.buf.len() * 8 {
             return Err(Error::BufferTooShort {
@@ -147,6 +141,17 @@ impl<'a> BitWriter<'a> {
         Ok(())
     }
     fn write_i(&mut self, bits: u8, val: i64) -> Result<()> {
+        // Two's-complement range of a `bits`-wide signed field.
+        let max = (1i64 << (bits - 1)) - 1;
+        let min = -(1i64 << (bits - 1));
+        if val < min || val > max {
+            return Err(broadcast_common::len::FieldOverflow {
+                field: "SatSection signed field",
+                value: val.unsigned_abs(),
+                max: max as u64,
+            }
+            .into());
+        }
         self.write_u(bits, val as u64 & ((1u64 << bits) - 1))
     }
     fn write_zero(&mut self, bits: u8) -> Result<()> {
@@ -196,6 +201,10 @@ pub enum PositionSystem {
         orbital_position: u16,
         /// `west_east_flag`.
         west_east_flag: bool,
+        /// `reserved_zero_future_use` (7 bits, right-aligned) after `west_east_flag`. Captured on parse and
+        /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+        /// sender's bits round-trip). Hand-built values default to `0`.
+        reserved_zero_future_use: u8,
     },
     /// `position_system == 1`: SGP4 TLE elements.
     Sgp4 {
@@ -234,6 +243,10 @@ pub struct PositionV2Satellite {
     pub satellite_id: u32,
     /// Position data (orbital or SGP4).
     pub position: PositionSystem,
+    /// `reserved_zero_future_use` (7 bits, right-aligned) after `satellite_id`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use: u8,
 }
 
 /// Position V2 body (Table 11c, §5.2.11.2).
@@ -256,6 +269,18 @@ pub struct CellCenter {
     pub center_longitude: i32,
     /// `max_distance` (24 bits).
     pub max_distance: u32,
+    /// `reserved_zero_future_use` (4 bits, right-aligned) before `center_latitude`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use_4: u8,
+    /// `reserved_zero_future_use` (5 bits, right-aligned) before `center_longitude`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use_5: u8,
+    /// `reserved_zero_future_use` (6 bits, right-aligned) after `max_distance`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use_6: u8,
 }
 
 /// A new delivery system entry in a cell fragment.
@@ -268,6 +293,10 @@ pub struct NewDeliverySystem {
     pub time_of_application_base: u64,
     /// `time_of_application_ext` (9 bits).
     pub time_of_application_ext: u16,
+    /// `reserved_zero_future_use` (6 bits, right-aligned) before `time_of_application_ext`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use: u8,
 }
 
 /// An obsolescent delivery system entry in a cell fragment.
@@ -280,6 +309,10 @@ pub struct ObsolescentDeliverySystem {
     pub time_of_obsolescence_base: u64,
     /// `time_of_obsolescence_ext` (9 bits).
     pub time_of_obsolescence_ext: u16,
+    /// `reserved_zero_future_use` (6 bits, right-aligned) before `time_of_obsolescence_ext`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use: u8,
 }
 
 /// A cell fragment entry (Table 11d, §5.2.11.3).
@@ -300,6 +333,18 @@ pub struct CellFragment {
     pub new_delivery_systems: Vec<NewDeliverySystem>,
     /// Obsolescent delivery system entries.
     pub obsolescent_delivery_systems: Vec<ObsolescentDeliverySystem>,
+    /// `reserved_zero_future_use` (4 bits, right-aligned) of the not-`first_occurence` branch (unused, `0`, when `center` is present). Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use_4: u8,
+    /// `reserved_zero_future_use` (6 bits, right-aligned) before `new_delivery_system_id_loop_count`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use_new: u8,
+    /// `reserved_zero_future_use` (6 bits, right-aligned) before `obsolescent_delivery_system_id_loop_count`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use_obsolescent: u8,
 }
 
 /// Cell Fragment body (Table 11d, §5.2.11.3).
@@ -388,6 +433,14 @@ pub struct TimeAssociationBody {
     pub association_timestamp_seconds: u64,
     /// `association_timestamp_nanoseconds` (32 bits).
     pub association_timestamp_nanoseconds: u32,
+    /// `reserved_zero_future_use` (4 bits, right-aligned) of the non-leap `association_type` branch (unused, `0`, when `leap_info` is present). Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use_4: u8,
+    /// `reserved_zero_future_use` (6 bits, right-aligned) before `ncr_ext`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub ncr_reserved_zero_future_use: u8,
 }
 
 // ── Beamhopping Time Plan (Table 11g) ───────────────────────────────────────
@@ -461,6 +514,14 @@ pub enum BeamhoppingMode {
         on_time_base: u64,
         /// `on_time_ext` (9 bits).
         on_time_ext: u16,
+        /// `reserved_zero_future_use` (6 bits, right-aligned) before `dwell_duration_ext`. Captured on parse and
+        /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+        /// sender's bits round-trip). Hand-built values default to `0`.
+        dwell_duration_reserved_zero_future_use: u8,
+        /// `reserved_zero_future_use` (6 bits, right-aligned) before `on_time_ext`. Captured on parse and
+        /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+        /// sender's bits round-trip). Hand-built values default to `0`.
+        on_time_reserved_zero_future_use: u8,
     },
     /// `time_plan_mode == 1`: bitmap.
     Mode1 {
@@ -470,6 +531,14 @@ pub enum BeamhoppingMode {
         current_slot: u16,
         /// `slot_transmission_on` flags (bit_map_size entries).
         slot_transmission_on: Vec<bool>,
+        /// `reserved_zero_future_use` (1 bits, right-aligned) before `bit_map_size`. Captured on parse and
+        /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+        /// sender's bits round-trip). Hand-built values default to `0`.
+        reserved_zero_future_use_size: u8,
+        /// `reserved_zero_future_use` (1 bits, right-aligned) before `current_slot`. Captured on parse and
+        /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+        /// sender's bits round-trip). Hand-built values default to `0`.
+        reserved_zero_future_use_slot: u8,
     },
     /// `time_plan_mode == 2`: grid/revisit/sleep.
     Mode2 {
@@ -489,6 +558,22 @@ pub enum BeamhoppingMode {
         sleep_duration_base: u64,
         /// `sleep_duration_ext` (9 bits).
         sleep_duration_ext: u16,
+        /// `reserved_zero_future_use` (6 bits, right-aligned) before `grid_size_ext`. Captured on parse and
+        /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+        /// sender's bits round-trip). Hand-built values default to `0`.
+        grid_size_reserved_zero_future_use: u8,
+        /// `reserved_zero_future_use` (6 bits, right-aligned) before `revisit_duration_ext`. Captured on parse and
+        /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+        /// sender's bits round-trip). Hand-built values default to `0`.
+        revisit_duration_reserved_zero_future_use: u8,
+        /// `reserved_zero_future_use` (6 bits, right-aligned) before `sleep_time_ext`. Captured on parse and
+        /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+        /// sender's bits round-trip). Hand-built values default to `0`.
+        sleep_time_reserved_zero_future_use: u8,
+        /// `reserved_zero_future_use` (6 bits, right-aligned) before `sleep_duration_ext`. Captured on parse and
+        /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+        /// sender's bits round-trip). Hand-built values default to `0`.
+        sleep_duration_reserved_zero_future_use: u8,
     },
     /// Reserved `time_plan_mode` (3): raw body bytes between the common
     /// header and the plan boundary, preserved for byte-exact round-trip.
@@ -513,6 +598,22 @@ pub struct BeamhoppingPlan {
     pub cycle_duration_ext: u16,
     /// Mode-specific data.
     pub mode: BeamhoppingMode,
+    /// `reserved_zero_future_use` (4 bits, right-aligned) before `beamhopping_time_plan_length`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use_4: u8,
+    /// `reserved_zero_future_use` (6 bits, right-aligned) before `time_plan_mode`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use_mode: u8,
+    /// `reserved_zero_future_use` (6 bits, right-aligned) before `time_of_application_ext`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub time_of_application_reserved_zero_future_use: u8,
+    /// `reserved_zero_future_use` (6 bits, right-aligned) before `cycle_duration_ext`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub cycle_duration_reserved_zero_future_use: u8,
 }
 
 /// Beamhopping Time Plan body (Table 11g, §5.2.11.5).
@@ -535,6 +636,10 @@ pub struct UsableTime {
     pub day: u16,
     /// `day_fraction` (32 bits, spfmsbf raw).
     pub day_fraction: u32,
+    /// `reserved_zero_future_use` (7 bits, right-aligned) before `day`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use: u8,
 }
 
 /// Metadata block (optional, within a V3 satellite entry).
@@ -563,6 +668,18 @@ pub struct PositionV3Metadata {
     pub usable_start_time: Option<UsableTime>,
     /// Usable stop time (optional).
     pub usable_stop_time: Option<UsableTime>,
+    /// `reserved_zero_future_use` (7 bits, right-aligned) before `total_start_time_day`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub total_start_time_reserved_zero_future_use: u8,
+    /// `reserved_zero_future_use` (7 bits, right-aligned) before `total_stop_time_day`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub total_stop_time_reserved_zero_future_use: u8,
+    /// `reserved_zero_future_use` (1 bits, right-aligned) before `interpolation_flag`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use: u8,
 }
 
 /// Interpolation type coding — ETSI EN 300 468 §5.2.11.6 Table 11i.
@@ -662,6 +779,10 @@ pub struct EphemerisData {
     pub ephemeris_z_dot: u32,
     /// Acceleration (optional).
     pub acceleration: Option<EphemerisAccel>,
+    /// `reserved_zero_future_use` (7 bits, right-aligned) before `epoch_day`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use: u8,
 }
 
 /// Covariance data (21 × 32-bit elements).
@@ -676,6 +797,10 @@ pub struct CovarianceData {
     pub covariance_epoch_day_fraction: u32,
     /// 21 covariance elements (each 32 bits, spfmsbf raw).
     pub covariance_elements: [u32; 21],
+    /// `reserved_zero_future_use` (7 bits, right-aligned) before `covariance_epoch_day`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub covariance_epoch_reserved_zero_future_use: u8,
 }
 
 /// A satellite entry in the PositionV3 body.
@@ -699,6 +824,10 @@ pub struct PositionV3Satellite {
     pub ephemeris_data: Vec<EphemerisData>,
     /// Covariance data (optional).
     pub covariance: Option<CovarianceData>,
+    /// `reserved_zero_future_use` (3 bits, right-aligned) before `metadata_flag`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub reserved_zero_future_use: u8,
 }
 
 /// Position V3 body (Table 11h, §5.2.11.6).
@@ -717,6 +846,10 @@ pub struct PositionV3Body {
     pub creation_date_day_fraction: u32,
     /// Satellite entries.
     pub satellites: Vec<PositionV3Satellite>,
+    /// `reserved_zero_future_use` (7 bits, right-aligned) before `creation_date_day`. Captured on parse and
+    /// re-emitted verbatim (EN 300 468 Table 11x: value `0` by spec; a deviating
+    /// sender's bits round-trip). Hand-built values default to `0`.
+    pub creation_date_reserved_zero_future_use: u8,
 }
 
 // ── SatBody enum ────────────────────────────────────────────────────────────
@@ -792,16 +925,17 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
         SatBody::PositionV2(b) => {
             for sat in &b.satellites {
                 w.write_u(24, sat.satellite_id as u64)?;
-                w.write_zero(7)?;
+                w.write_u(7, u64::from(sat.reserved_zero_future_use))?;
                 match &sat.position {
                     PositionSystem::Orbital {
                         orbital_position,
                         west_east_flag,
+                        reserved_zero_future_use,
                     } => {
                         w.write_u(1, 0)?;
                         w.write_u(16, *orbital_position as u64)?;
                         w.write_u(1, *west_east_flag as u64)?;
-                        w.write_zero(7)?;
+                        w.write_u(7, u64::from(*reserved_zero_future_use))?;
                     }
                     PositionSystem::Sgp4 {
                         epoch_year,
@@ -840,35 +974,39 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
                 w.write_u(1, frag.first_occurrence as u64)?;
                 w.write_u(1, frag.last_occurrence as u64)?;
                 if frag.first_occurrence {
-                    if let Some(ref c) = frag.center {
-                        w.write_zero(4)?;
-                        w.write_i(18, c.center_latitude as i64)?;
-                        w.write_zero(5)?;
-                        w.write_i(19, c.center_longitude as i64)?;
-                        w.write_u(24, c.max_distance as u64)?;
-                        w.write_zero(6)?;
-                    }
+                    let Some(ref c) = frag.center else {
+                        return Err(Error::ValueOutOfRange {
+                            field: "center",
+                            reason: "required when first_occurence is set",
+                        });
+                    };
+                    w.write_u(4, u64::from(c.reserved_zero_future_use_4))?;
+                    w.write_i(18, c.center_latitude as i64)?;
+                    w.write_u(5, u64::from(c.reserved_zero_future_use_5))?;
+                    w.write_i(19, c.center_longitude as i64)?;
+                    w.write_u(24, c.max_distance as u64)?;
+                    w.write_u(6, u64::from(c.reserved_zero_future_use_6))?;
                 } else {
-                    w.write_zero(4)?;
+                    w.write_u(4, u64::from(frag.reserved_zero_future_use_4))?;
                 }
                 w.write_u(10, frag.delivery_system_ids.len() as u64)?;
                 for id in &frag.delivery_system_ids {
                     w.write_u(32, *id as u64)?;
                 }
-                w.write_zero(6)?;
+                w.write_u(6, u64::from(frag.reserved_zero_future_use_new))?;
                 w.write_u(10, frag.new_delivery_systems.len() as u64)?;
                 for nds in &frag.new_delivery_systems {
                     w.write_u(32, nds.new_delivery_system_id as u64)?;
                     w.write_u(33, nds.time_of_application_base)?;
-                    w.write_zero(6)?;
+                    w.write_u(6, u64::from(nds.reserved_zero_future_use))?;
                     w.write_u(9, nds.time_of_application_ext as u64)?;
                 }
-                w.write_zero(6)?;
+                w.write_u(6, u64::from(frag.reserved_zero_future_use_obsolescent))?;
                 w.write_u(10, frag.obsolescent_delivery_systems.len() as u64)?;
                 for ods in &frag.obsolescent_delivery_systems {
                     w.write_u(32, ods.obsolescent_delivery_system_id as u64)?;
                     w.write_u(33, ods.time_of_obsolescence_base)?;
-                    w.write_zero(6)?;
+                    w.write_u(6, u64::from(ods.reserved_zero_future_use))?;
                     w.write_u(9, ods.time_of_obsolescence_ext as u64)?;
                 }
             }
@@ -882,13 +1020,13 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
                     w.write_u(1, li.pastleap59 as u64)?;
                     w.write_u(1, li.pastleap61 as u64)?;
                 } else {
-                    w.write_zero(4)?;
+                    w.write_u(4, u64::from(b.reserved_zero_future_use_4))?;
                 }
             } else {
-                w.write_zero(4)?;
+                w.write_u(4, u64::from(b.reserved_zero_future_use_4))?;
             }
             w.write_u(33, b.ncr_base)?;
-            w.write_zero(6)?;
+            w.write_u(6, u64::from(b.ncr_reserved_zero_future_use))?;
             w.write_u(9, b.ncr_ext as u64)?;
             w.write_u(64, b.association_timestamp_seconds)?;
             w.write_u(32, b.association_timestamp_nanoseconds as u64)?;
@@ -896,7 +1034,7 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
         SatBody::BeamhoppingTimePlan(b) => {
             for plan in &b.plans {
                 w.write_u(32, plan.beamhopping_time_plan_id as u64)?;
-                w.write_zero(4)?;
+                w.write_u(4, u64::from(plan.reserved_zero_future_use_4))?;
                 let mode_bits = match &plan.mode {
                     BeamhoppingMode::Mode0 { .. } => 33 + 6 + 9 + 33 + 6 + 9,
                     BeamhoppingMode::Mode1 { bit_map_size, .. } => {
@@ -912,13 +1050,16 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
                 let total_bits_after_length = 8 + 48 + 48 + mode_bits;
                 let plan_length_bytes = total_bits_after_length / 8;
                 w.write_u(12, plan_length_bytes as u64)?;
-                w.write_zero(6)?;
+                w.write_u(6, u64::from(plan.reserved_zero_future_use_mode))?;
                 w.write_u(2, plan.time_plan_mode.to_u8() as u64)?;
                 w.write_u(33, plan.time_of_application_base)?;
-                w.write_zero(6)?;
+                w.write_u(
+                    6,
+                    u64::from(plan.time_of_application_reserved_zero_future_use),
+                )?;
                 w.write_u(9, plan.time_of_application_ext as u64)?;
                 w.write_u(33, plan.cycle_duration_base)?;
-                w.write_zero(6)?;
+                w.write_u(6, u64::from(plan.cycle_duration_reserved_zero_future_use))?;
                 w.write_u(9, plan.cycle_duration_ext as u64)?;
                 match &plan.mode {
                     BeamhoppingMode::Mode0 {
@@ -926,22 +1067,26 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
                         dwell_duration_ext,
                         on_time_base,
                         on_time_ext,
+                        dwell_duration_reserved_zero_future_use,
+                        on_time_reserved_zero_future_use,
                     } => {
                         w.write_u(33, *dwell_duration_base)?;
-                        w.write_zero(6)?;
+                        w.write_u(6, u64::from(*dwell_duration_reserved_zero_future_use))?;
                         w.write_u(9, *dwell_duration_ext as u64)?;
                         w.write_u(33, *on_time_base)?;
-                        w.write_zero(6)?;
+                        w.write_u(6, u64::from(*on_time_reserved_zero_future_use))?;
                         w.write_u(9, *on_time_ext as u64)?;
                     }
                     BeamhoppingMode::Mode1 {
                         bit_map_size,
                         current_slot,
                         slot_transmission_on,
+                        reserved_zero_future_use_size,
+                        reserved_zero_future_use_slot,
                     } => {
-                        w.write_zero(1)?;
+                        w.write_u(1, u64::from(*reserved_zero_future_use_size))?;
                         w.write_u(15, *bit_map_size as u64)?;
-                        w.write_zero(1)?;
+                        w.write_u(1, u64::from(*reserved_zero_future_use_slot))?;
                         w.write_u(15, *current_slot as u64)?;
                         for &on in slot_transmission_on {
                             w.write_u(1, on as u64)?;
@@ -960,18 +1105,22 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
                         sleep_time_ext,
                         sleep_duration_base,
                         sleep_duration_ext,
+                        grid_size_reserved_zero_future_use,
+                        revisit_duration_reserved_zero_future_use,
+                        sleep_time_reserved_zero_future_use,
+                        sleep_duration_reserved_zero_future_use,
                     } => {
                         w.write_u(33, *grid_size_base)?;
-                        w.write_zero(6)?;
+                        w.write_u(6, u64::from(*grid_size_reserved_zero_future_use))?;
                         w.write_u(9, *grid_size_ext as u64)?;
                         w.write_u(33, *revisit_duration_base)?;
-                        w.write_zero(6)?;
+                        w.write_u(6, u64::from(*revisit_duration_reserved_zero_future_use))?;
                         w.write_u(9, *revisit_duration_ext as u64)?;
                         w.write_u(33, *sleep_time_base)?;
-                        w.write_zero(6)?;
+                        w.write_u(6, u64::from(*sleep_time_reserved_zero_future_use))?;
                         w.write_u(9, *sleep_time_ext as u64)?;
                         w.write_u(33, *sleep_duration_base)?;
-                        w.write_zero(6)?;
+                        w.write_u(6, u64::from(*sleep_duration_reserved_zero_future_use))?;
                         w.write_u(9, *sleep_duration_ext as u64)?;
                     }
                     BeamhoppingMode::Reserved(v) => {
@@ -986,12 +1135,12 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
             w.write_u(4, b.oem_version_major as u64)?;
             w.write_u(4, b.oem_version_minor as u64)?;
             w.write_u(8, b.creation_date_year as u64)?;
-            w.write_zero(7)?;
+            w.write_u(7, u64::from(b.creation_date_reserved_zero_future_use))?;
             w.write_u(9, b.creation_date_day as u64)?;
             w.write_u(32, b.creation_date_day_fraction as u64)?;
             for sat in &b.satellites {
                 w.write_u(24, sat.satellite_id as u64)?;
-                w.write_zero(3)?;
+                w.write_u(3, u64::from(sat.reserved_zero_future_use))?;
                 w.write_u(1, u8::from(sat.metadata.is_some()) as u64)?;
                 w.write_u(1, sat.usable_start_time_flag as u64)?;
                 w.write_u(1, sat.usable_stop_time_flag as u64)?;
@@ -999,21 +1148,21 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
                 w.write_u(1, sat.covariance_flag as u64)?;
                 if let Some(ref md) = sat.metadata {
                     w.write_u(8, md.total_start_time_year as u64)?;
-                    w.write_zero(7)?;
+                    w.write_u(7, u64::from(md.total_start_time_reserved_zero_future_use))?;
                     w.write_u(9, md.total_start_time_day as u64)?;
                     w.write_u(32, md.total_start_time_day_fraction as u64)?;
                     w.write_u(8, md.total_stop_time_year as u64)?;
-                    w.write_zero(7)?;
+                    w.write_u(7, u64::from(md.total_stop_time_reserved_zero_future_use))?;
                     w.write_u(9, md.total_stop_time_day as u64)?;
                     w.write_u(32, md.total_stop_time_day_fraction as u64)?;
-                    w.write_zero(1)?;
+                    w.write_u(1, u64::from(md.reserved_zero_future_use))?;
                     w.write_u(1, md.interpolation_flag as u64)?;
                     w.write_u(3, md.interpolation_type.to_u8() as u64)?;
                     w.write_u(3, md.interpolation_degree as u64)?;
                     if sat.usable_start_time_flag {
                         if let Some(ref ut) = md.usable_start_time {
                             w.write_u(8, ut.year as u64)?;
-                            w.write_zero(7)?;
+                            w.write_u(7, u64::from(ut.reserved_zero_future_use))?;
                             w.write_u(9, ut.day as u64)?;
                             w.write_u(32, ut.day_fraction as u64)?;
                         } else {
@@ -1026,7 +1175,7 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
                     if sat.usable_stop_time_flag {
                         if let Some(ref ut) = md.usable_stop_time {
                             w.write_u(8, ut.year as u64)?;
-                            w.write_zero(7)?;
+                            w.write_u(7, u64::from(ut.reserved_zero_future_use))?;
                             w.write_u(9, ut.day as u64)?;
                             w.write_u(32, ut.day_fraction as u64)?;
                         } else {
@@ -1040,7 +1189,7 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
                 w.write_u(16, sat.ephemeris_data.len() as u64)?;
                 for ed in &sat.ephemeris_data {
                     w.write_u(8, ed.epoch_year as u64)?;
-                    w.write_zero(7)?;
+                    w.write_u(7, u64::from(ed.reserved_zero_future_use))?;
                     w.write_u(9, ed.epoch_day as u64)?;
                     w.write_u(32, ed.epoch_day_fraction as u64)?;
                     w.write_u(32, ed.ephemeris_x as u64)?;
@@ -1064,7 +1213,7 @@ fn sat_body_write(body: &SatBody, w: &mut BitWriter) -> Result<()> {
                 if sat.covariance_flag {
                     if let Some(ref cov) = sat.covariance {
                         w.write_u(8, cov.covariance_epoch_year as u64)?;
-                        w.write_zero(7)?;
+                        w.write_u(7, u64::from(cov.covariance_epoch_reserved_zero_future_use))?;
                         w.write_u(9, cov.covariance_epoch_day as u64)?;
                         w.write_u(32, cov.covariance_epoch_day_fraction as u64)?;
                         for elem in &cov.covariance_elements {
@@ -1112,7 +1261,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
             let mut satellites = Vec::new();
             while r.remaining_bits() > 24 + 7 {
                 let satellite_id = r.read_u(24)? as u32;
-                r.skip(7)?;
+                let sat_reserved = r.read_u(7)? as u8;
                 let position_system = r.read_u(1)?;
                 let position = if position_system == 0 {
                     const ORBITAL_BITS: usize = 16 + 1 + 7;
@@ -1125,10 +1274,11 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                     }
                     let orbital_position = r.read_u(16)? as u16;
                     let west_east_flag = r.read_u(1)? != 0;
-                    r.skip(7)?;
+                    let orbital_reserved = r.read_u(7)? as u8;
                     PositionSystem::Orbital {
                         orbital_position,
                         west_east_flag,
+                        reserved_zero_future_use: orbital_reserved,
                     }
                 } else {
                     const SGP4_BITS: usize = 8 + 16 + 32 * 10;
@@ -1168,6 +1318,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                 };
                 satellites.push(PositionV2Satellite {
                     satellite_id,
+                    reserved_zero_future_use: sat_reserved,
                     position,
                 });
             }
@@ -1179,6 +1330,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                 let cell_fragment_id = r.read_u(32)? as u32;
                 let first_occurrence = r.read_u(1)? != 0;
                 let last_occurrence = r.read_u(1)? != 0;
+                let mut frag_r4 = 0u8;
                 let center = if first_occurrence {
                     const CENTER_BITS: usize = 4 + 18 + 5 + 19 + 24 + 6;
                     if r.remaining_bits() < CENTER_BITS {
@@ -1188,19 +1340,22 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                             what: "SatSection CellFragment center",
                         });
                     }
-                    r.skip(4)?;
+                    let center_r4 = r.read_u(4)? as u8;
                     let center_latitude = r.read_i(18)? as i32;
-                    r.skip(5)?;
+                    let center_r5 = r.read_u(5)? as u8;
                     let center_longitude = r.read_i(19)? as i32;
                     let max_distance = r.read_u(24)? as u32;
-                    r.skip(6)?;
+                    let center_r6 = r.read_u(6)? as u8;
                     Some(CellCenter {
                         center_latitude,
                         center_longitude,
                         max_distance,
+                        reserved_zero_future_use_4: center_r4,
+                        reserved_zero_future_use_5: center_r5,
+                        reserved_zero_future_use_6: center_r6,
                     })
                 } else {
-                    r.skip(4)?;
+                    frag_r4 = r.read_u(4)? as u8;
                     None
                 };
                 let dsid_count = r.read_u(10)? as usize;
@@ -1216,7 +1371,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                 for _ in 0..dsid_count {
                     delivery_system_ids.push(r.read_u(32)? as u32);
                 }
-                r.skip(6)?;
+                let frag_new_r = r.read_u(6)? as u8;
                 let nds_count = r.read_u(10)? as usize;
                 const NDS_ENTRY_BITS: usize = 32 + 33 + 6 + 9;
                 if r.remaining_bits() < nds_count * NDS_ENTRY_BITS {
@@ -1231,15 +1386,16 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                 for _ in 0..nds_count {
                     let new_delivery_system_id = r.read_u(32)? as u32;
                     let time_of_application_base = r.read_u(33)?;
-                    r.skip(6)?;
+                    let nds_r = r.read_u(6)? as u8;
                     let time_of_application_ext = r.read_u(9)? as u16;
                     new_delivery_systems.push(NewDeliverySystem {
                         new_delivery_system_id,
                         time_of_application_base,
                         time_of_application_ext,
+                        reserved_zero_future_use: nds_r,
                     });
                 }
-                r.skip(6)?;
+                let frag_obs_r = r.read_u(6)? as u8;
                 let ods_count = r.read_u(10)? as usize;
                 if r.remaining_bits() < ods_count * NDS_ENTRY_BITS {
                     return Err(Error::BufferTooShort {
@@ -1253,12 +1409,13 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                 for _ in 0..ods_count {
                     let obsolescent_delivery_system_id = r.read_u(32)? as u32;
                     let time_of_obsolescence_base = r.read_u(33)?;
-                    r.skip(6)?;
+                    let ods_r = r.read_u(6)? as u8;
                     let time_of_obsolescence_ext = r.read_u(9)? as u16;
                     obsolescent_delivery_systems.push(ObsolescentDeliverySystem {
                         obsolescent_delivery_system_id,
                         time_of_obsolescence_base,
                         time_of_obsolescence_ext,
+                        reserved_zero_future_use: ods_r,
                     });
                 }
                 fragments.push(CellFragment {
@@ -1269,6 +1426,9 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                     delivery_system_ids,
                     new_delivery_systems,
                     obsolescent_delivery_systems,
+                    reserved_zero_future_use_4: frag_r4,
+                    reserved_zero_future_use_new: frag_new_r,
+                    reserved_zero_future_use_obsolescent: frag_obs_r,
                 });
             }
             Ok(SatBody::CellFragment(CellFragmentBody { fragments }))
@@ -1283,6 +1443,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                 });
             }
             let association_type = AssociationType::from_u8(r.read_u(4)? as u8);
+            let mut assoc_r4 = 0u8;
             let leap_info = if association_type.to_u8() == 1 {
                 Some(LeapInfo {
                     leap59: r.read_u(1)? != 0,
@@ -1291,11 +1452,11 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                     pastleap61: r.read_u(1)? != 0,
                 })
             } else {
-                r.skip(4)?;
+                assoc_r4 = r.read_u(4)? as u8;
                 None
             };
             let ncr_base = r.read_u(33)?;
-            r.skip(6)?;
+            let ncr_r = r.read_u(6)? as u8;
             let ncr_ext = r.read_u(9)? as u16;
             let association_timestamp_seconds = r.read_u(64)?;
             let association_timestamp_nanoseconds = r.read_u(32)? as u32;
@@ -1306,22 +1467,24 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                 ncr_ext,
                 association_timestamp_seconds,
                 association_timestamp_nanoseconds,
+                reserved_zero_future_use_4: assoc_r4,
+                ncr_reserved_zero_future_use: ncr_r,
             }))
         }
         3 => {
             let mut plans = Vec::new();
             while r.remaining_bits() >= 32 + 4 + 12 {
                 let beamhopping_time_plan_id = r.read_u(32)? as u32;
-                r.skip(4)?;
+                let plan_r4 = r.read_u(4)? as u8;
                 let plan_length = r.read_u(12)? as usize;
                 let plan_end_bits = r.bits_consumed() + plan_length * 8;
-                r.skip(6)?;
+                let plan_mode_r = r.read_u(6)? as u8;
                 let time_plan_mode = TimePlanMode::from_u8(r.read_u(2)? as u8);
                 let time_of_application_base = r.read_u(33)?;
-                r.skip(6)?;
+                let toa_r = r.read_u(6)? as u8;
                 let time_of_application_ext = r.read_u(9)? as u16;
                 let cycle_duration_base = r.read_u(33)?;
-                r.skip(6)?;
+                let cycle_r = r.read_u(6)? as u8;
                 let cycle_duration_ext = r.read_u(9)? as u16;
                 let mode = match time_plan_mode {
                     TimePlanMode::DwellOnTime => {
@@ -1334,16 +1497,18 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                             });
                         }
                         let dwell_duration_base = r.read_u(33)?;
-                        r.skip(6)?;
+                        let dwell_r = r.read_u(6)? as u8;
                         let dwell_duration_ext = r.read_u(9)? as u16;
                         let on_time_base = r.read_u(33)?;
-                        r.skip(6)?;
+                        let on_time_r = r.read_u(6)? as u8;
                         let on_time_ext = r.read_u(9)? as u16;
                         BeamhoppingMode::Mode0 {
                             dwell_duration_base,
                             dwell_duration_ext,
                             on_time_base,
                             on_time_ext,
+                            dwell_duration_reserved_zero_future_use: dwell_r,
+                            on_time_reserved_zero_future_use: on_time_r,
                         }
                     }
                     TimePlanMode::Bitmap => {
@@ -1355,9 +1520,9 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                                 what: "SatSection Beamhopping Mode1 header",
                             });
                         }
-                        r.skip(1)?;
+                        let m1_size_r = r.read_u(1)? as u8;
                         let bit_map_size = r.read_u(15)? as u16;
-                        r.skip(1)?;
+                        let m1_slot_r = r.read_u(1)? as u8;
                         let current_slot = r.read_u(15)? as u16;
                         if r.remaining_bits() < bit_map_size as usize {
                             return Err(Error::BufferTooShort {
@@ -1377,6 +1542,8 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                             bit_map_size,
                             current_slot,
                             slot_transmission_on,
+                            reserved_zero_future_use_size: m1_size_r,
+                            reserved_zero_future_use_slot: m1_slot_r,
                         }
                     }
                     TimePlanMode::GridRevisitSleep => {
@@ -1389,16 +1556,16 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                             });
                         }
                         let grid_size_base = r.read_u(33)?;
-                        r.skip(6)?;
+                        let grid_r = r.read_u(6)? as u8;
                         let grid_size_ext = r.read_u(9)? as u16;
                         let revisit_duration_base = r.read_u(33)?;
-                        r.skip(6)?;
+                        let revisit_r = r.read_u(6)? as u8;
                         let revisit_duration_ext = r.read_u(9)? as u16;
                         let sleep_time_base = r.read_u(33)?;
-                        r.skip(6)?;
+                        let sleep_time_r = r.read_u(6)? as u8;
                         let sleep_time_ext = r.read_u(9)? as u16;
                         let sleep_duration_base = r.read_u(33)?;
-                        r.skip(6)?;
+                        let sleep_dur_r = r.read_u(6)? as u8;
                         let sleep_duration_ext = r.read_u(9)? as u16;
                         BeamhoppingMode::Mode2 {
                             grid_size_base,
@@ -1409,6 +1576,10 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                             sleep_time_ext,
                             sleep_duration_base,
                             sleep_duration_ext,
+                            grid_size_reserved_zero_future_use: grid_r,
+                            revisit_duration_reserved_zero_future_use: revisit_r,
+                            sleep_time_reserved_zero_future_use: sleep_time_r,
+                            sleep_duration_reserved_zero_future_use: sleep_dur_r,
                         }
                     }
                     _ => {
@@ -1442,6 +1613,10 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                     cycle_duration_base,
                     cycle_duration_ext,
                     mode,
+                    reserved_zero_future_use_4: plan_r4,
+                    reserved_zero_future_use_mode: plan_mode_r,
+                    time_of_application_reserved_zero_future_use: toa_r,
+                    cycle_duration_reserved_zero_future_use: cycle_r,
                 });
             }
             Ok(SatBody::BeamhoppingTimePlan(BeamhoppingTimePlanBody {
@@ -1460,13 +1635,13 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
             let oem_version_major = r.read_u(4)? as u8;
             let oem_version_minor = r.read_u(4)? as u8;
             let creation_date_year = r.read_u(8)? as u8;
-            r.skip(7)?;
+            let creation_r = r.read_u(7)? as u8;
             let creation_date_day = r.read_u(9)? as u16;
             let creation_date_day_fraction = r.read_u(32)? as u32;
             let mut satellites = Vec::new();
             while r.remaining_bits() >= 24 + 3 + 5 {
                 let satellite_id = r.read_u(24)? as u32;
-                r.skip(3)?;
+                let v3sat_r = r.read_u(3)? as u8;
                 let metadata_flag = r.read_u(1)? != 0;
                 let usable_start_time_flag = r.read_u(1)? != 0;
                 let usable_stop_time_flag = r.read_u(1)? != 0;
@@ -1483,14 +1658,14 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                         });
                     }
                     let total_start_time_year = r.read_u(8)? as u8;
-                    r.skip(7)?;
+                    let start_r = r.read_u(7)? as u8;
                     let total_start_time_day = r.read_u(9)? as u16;
                     let total_start_time_day_fraction = r.read_u(32)? as u32;
                     let total_stop_time_year = r.read_u(8)? as u8;
-                    r.skip(7)?;
+                    let stop_r = r.read_u(7)? as u8;
                     let total_stop_time_day = r.read_u(9)? as u16;
                     let total_stop_time_day_fraction = r.read_u(32)? as u32;
-                    r.skip(1)?;
+                    let interp_r = r.read_u(1)? as u8;
                     let interpolation_flag = r.read_u(1)? != 0;
                     let interpolation_type = InterpolationType::from_u8(r.read_u(3)? as u8);
                     let interpolation_degree = r.read_u(3)? as u8;
@@ -1504,13 +1679,14 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                             });
                         }
                         let year = r.read_u(8)? as u8;
-                        r.skip(7)?;
+                        let ustart_r = r.read_u(7)? as u8;
                         let day = r.read_u(9)? as u16;
                         let day_fraction = r.read_u(32)? as u32;
                         Some(UsableTime {
                             year,
                             day,
                             day_fraction,
+                            reserved_zero_future_use: ustart_r,
                         })
                     } else {
                         None
@@ -1525,13 +1701,14 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                             });
                         }
                         let year = r.read_u(8)? as u8;
-                        r.skip(7)?;
+                        let ustop_r = r.read_u(7)? as u8;
                         let day = r.read_u(9)? as u16;
                         let day_fraction = r.read_u(32)? as u32;
                         Some(UsableTime {
                             year,
                             day,
                             day_fraction,
+                            reserved_zero_future_use: ustop_r,
                         })
                     } else {
                         None
@@ -1548,6 +1725,9 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                         interpolation_degree,
                         usable_start_time,
                         usable_stop_time,
+                        total_start_time_reserved_zero_future_use: start_r,
+                        total_stop_time_reserved_zero_future_use: stop_r,
+                        reserved_zero_future_use: interp_r,
                     })
                 } else {
                     None
@@ -1568,7 +1748,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                         });
                     }
                     let epoch_year = r.read_u(8)? as u8;
-                    r.skip(7)?;
+                    let eph_r = r.read_u(7)? as u8;
                     let epoch_day = r.read_u(9)? as u16;
                     let epoch_day_fraction = r.read_u(32)? as u32;
                     let ephemeris_x = r.read_u(32)? as u32;
@@ -1597,6 +1777,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                         ephemeris_y_dot,
                         ephemeris_z_dot,
                         acceleration,
+                        reserved_zero_future_use: eph_r,
                     });
                 }
                 let covariance = if covariance_flag {
@@ -1611,7 +1792,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                         });
                     }
                     let covariance_epoch_year = r.read_u(8)? as u8;
-                    r.skip(7)?;
+                    let cov_r = r.read_u(7)? as u8;
                     let covariance_epoch_day = r.read_u(9)? as u16;
                     let covariance_epoch_day_fraction = r.read_u(32)? as u32;
                     let mut covariance_elements = [0u32; 21];
@@ -1623,6 +1804,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                         covariance_epoch_day,
                         covariance_epoch_day_fraction,
                         covariance_elements,
+                        covariance_epoch_reserved_zero_future_use: cov_r,
                     })
                 } else {
                     None
@@ -1636,6 +1818,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                     metadata,
                     ephemeris_data,
                     covariance,
+                    reserved_zero_future_use: v3sat_r,
                 });
             }
             Ok(SatBody::PositionV3(PositionV3Body {
@@ -1645,6 +1828,7 @@ fn sat_body_parse(sat_table_id: u8, data: &[u8]) -> Result<SatBody> {
                 creation_date_day,
                 creation_date_day_fraction,
                 satellites,
+                creation_date_reserved_zero_future_use: creation_r,
             }))
         }
         _ => Ok(SatBody::Raw(data.to_vec())),
@@ -1811,8 +1995,15 @@ impl Serialize for SatSection {
         buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)
             | ((section_length >> 8) as u8 & super::SECTION_LENGTH_HI_MASK);
         buf[2] = (section_length & 0xFF) as u8;
-        buf[3] = (self.satellite_table_id << SATELLITE_TABLE_ID_SHIFT)
-            | ((self.table_count >> 8) as u8 & TABLE_COUNT_HI_MASK);
+        broadcast_common::len::fit_mask(
+            self.table_count,
+            (u16::from(TABLE_COUNT_HI_MASK) << 8) | 0xFF,
+            "table_count",
+        )?;
+        buf[3] =
+            (broadcast_common::len::fit_mask(self.satellite_table_id, 0x3F, "satellite_table_id")?
+                << SATELLITE_TABLE_ID_SHIFT)
+                | ((self.table_count >> 8) as u8 & TABLE_COUNT_HI_MASK);
         buf[4] = (self.table_count & 0xFF) as u8;
         buf[5] = super::b5_of(
             self.reserved_b5,
@@ -1883,6 +2074,8 @@ mod tests {
             ncr_ext: 0,
             association_timestamp_seconds: 0,
             association_timestamp_nanoseconds: 0,
+            reserved_zero_future_use_4: 0,
+            ncr_reserved_zero_future_use: 0,
         });
         let bytes = build_sat_private_indicator_false(2, &body);
         let sat = SatSection::parse(&bytes).unwrap();
@@ -1904,6 +2097,7 @@ mod tests {
             creation_date_day: 100,
             creation_date_day_fraction: 0,
             satellites: Vec::new(),
+            creation_date_reserved_zero_future_use: 0,
         });
         let bytes = build_sat(4, 0x1A3, &body);
         let sat = SatSection::parse(&bytes).unwrap();
@@ -1926,6 +2120,8 @@ mod tests {
             ncr_ext: 0x1AA,
             association_timestamp_seconds: 0x12345678_9ABCDEF0,
             association_timestamp_nanoseconds: 0xDEADBEEF,
+            reserved_zero_future_use_4: 0,
+            ncr_reserved_zero_future_use: 0,
         });
         let bytes = build_sat(2, 0, &body);
         let sat = SatSection::parse(&bytes).unwrap();
@@ -1957,7 +2153,9 @@ mod tests {
                 position: PositionSystem::Orbital {
                     orbital_position: 0x1234,
                     west_east_flag: true,
+                    reserved_zero_future_use: 0,
                 },
+                reserved_zero_future_use: 0,
             }],
         });
         let bytes = build_sat(0, 0, &body);
@@ -1970,6 +2168,7 @@ mod tests {
                     PositionSystem::Orbital {
                         orbital_position,
                         west_east_flag,
+                        ..
                     } => {
                         assert_eq!(*orbital_position, 0x1234);
                         assert!(*west_east_flag);
@@ -1998,8 +2197,14 @@ mod tests {
                     dwell_duration_base: 0x0000_1111_1111,
                     dwell_duration_ext: 0x111,
                     on_time_base: 0x0000_2222_2222,
-                    on_time_ext: 0x222,
+                    on_time_ext: 0x022,
+                    dwell_duration_reserved_zero_future_use: 0,
+                    on_time_reserved_zero_future_use: 0,
                 },
+                reserved_zero_future_use_4: 0,
+                reserved_zero_future_use_mode: 0,
+                time_of_application_reserved_zero_future_use: 0,
+                cycle_duration_reserved_zero_future_use: 0,
             }],
         });
         let bytes = build_sat(3, 0, &body);
@@ -2044,8 +2249,14 @@ mod tests {
                     dwell_duration_base: 0x0000_1111_1111,
                     dwell_duration_ext: 0x111,
                     on_time_base: 0x0000_2222_2222,
-                    on_time_ext: 0x222,
+                    on_time_ext: 0x022,
+                    dwell_duration_reserved_zero_future_use: 0,
+                    on_time_reserved_zero_future_use: 0,
                 },
+                reserved_zero_future_use_4: 0,
+                reserved_zero_future_use_mode: 0,
+                time_of_application_reserved_zero_future_use: 0,
+                cycle_duration_reserved_zero_future_use: 0,
             }],
         });
         let mut bytes = build_sat(3, 0, &body);
@@ -2152,22 +2363,34 @@ mod tests {
                         dwell_duration_base: 0x0000_1111_1111,
                         dwell_duration_ext: 0x111,
                         on_time_base: 0x0000_2222_2222,
-                        on_time_ext: 0x222,
+                        on_time_ext: 0x022,
+                        dwell_duration_reserved_zero_future_use: 0,
+                        on_time_reserved_zero_future_use: 0,
                     },
+                    reserved_zero_future_use_4: 0,
+                    reserved_zero_future_use_mode: 0,
+                    time_of_application_reserved_zero_future_use: 0,
+                    cycle_duration_reserved_zero_future_use: 0,
                 },
                 BeamhoppingPlan {
                     beamhopping_time_plan_id: 0x22222222,
                     time_plan_mode: TimePlanMode::DwellOnTime,
                     time_of_application_base: 0x0000_BBBB_BBBB,
-                    time_of_application_ext: 0x200,
+                    time_of_application_ext: 0x000,
                     cycle_duration_base: 0x0000_6666_6666,
                     cycle_duration_ext: 0x090,
                     mode: BeamhoppingMode::Mode0 {
                         dwell_duration_base: 0x0000_3333_3333,
-                        dwell_duration_ext: 0x333,
+                        dwell_duration_ext: 0x133,
                         on_time_base: 0x0000_4444_4444,
-                        on_time_ext: 0x444,
+                        on_time_ext: 0x044,
+                        dwell_duration_reserved_zero_future_use: 0,
+                        on_time_reserved_zero_future_use: 0,
                     },
+                    reserved_zero_future_use_4: 0,
+                    reserved_zero_future_use_mode: 0,
+                    time_of_application_reserved_zero_future_use: 0,
+                    cycle_duration_reserved_zero_future_use: 0,
                 },
             ],
         });
@@ -2214,12 +2437,18 @@ mod tests {
                         year: 26,
                         day: 10,
                         day_fraction: 0,
+                        reserved_zero_future_use: 0,
                     }),
                     usable_stop_time: None,
+                    total_start_time_reserved_zero_future_use: 0,
+                    total_stop_time_reserved_zero_future_use: 0,
+                    reserved_zero_future_use: 0,
                 }),
                 ephemeris_data: Vec::new(),
                 covariance: None,
+                reserved_zero_future_use: 0,
             }],
+            creation_date_reserved_zero_future_use: 0,
         });
         let bytes = build_sat(4, 0, &body);
         let sat = SatSection::parse(&bytes).unwrap();
@@ -2251,18 +2480,26 @@ mod tests {
                     center_latitude: 1000,
                     center_longitude: -2000,
                     max_distance: 500000,
+                    reserved_zero_future_use_4: 0,
+                    reserved_zero_future_use_5: 0,
+                    reserved_zero_future_use_6: 0,
                 }),
                 delivery_system_ids: vec![0x55667788],
                 new_delivery_systems: vec![NewDeliverySystem {
                     new_delivery_system_id: 0xAABBCCDD,
                     time_of_application_base: 0x0000_1234_5678,
                     time_of_application_ext: 0x100,
+                    reserved_zero_future_use: 0,
                 }],
                 obsolescent_delivery_systems: vec![ObsolescentDeliverySystem {
                     obsolescent_delivery_system_id: 0xEEFF0011,
                     time_of_obsolescence_base: 0x0000_9ABC_DEF0,
                     time_of_obsolescence_ext: 0x1FF,
+                    reserved_zero_future_use: 0,
                 }],
+                reserved_zero_future_use_4: 0,
+                reserved_zero_future_use_new: 0,
+                reserved_zero_future_use_obsolescent: 0,
             }],
         });
         let bytes = build_sat(1, 0, &body);
@@ -2298,7 +2535,13 @@ mod tests {
                     bit_map_size: 8,
                     current_slot: 3,
                     slot_transmission_on: vec![true, false, true, true, false, false, true, false],
+                    reserved_zero_future_use_size: 0,
+                    reserved_zero_future_use_slot: 0,
                 },
+                reserved_zero_future_use_4: 0,
+                reserved_zero_future_use_mode: 0,
+                time_of_application_reserved_zero_future_use: 0,
+                cycle_duration_reserved_zero_future_use: 0,
             }],
         });
         let bytes = build_sat(3, 0, &body);
@@ -2312,6 +2555,7 @@ mod tests {
                         bit_map_size,
                         current_slot,
                         slot_transmission_on,
+                        ..
                     } => {
                         assert_eq!(*bit_map_size, 8);
                         assert_eq!(*current_slot, 3);
@@ -2337,19 +2581,27 @@ mod tests {
                 beamhopping_time_plan_id: 0x87654321,
                 time_plan_mode: TimePlanMode::GridRevisitSleep,
                 time_of_application_base: 0x0000_BBBB_BBBB,
-                time_of_application_ext: 0x200,
+                time_of_application_ext: 0x000,
                 cycle_duration_base: 0x0000_6666_6666,
                 cycle_duration_ext: 0x090,
                 mode: BeamhoppingMode::Mode2 {
                     grid_size_base: 0x0000_1111_1111,
                     grid_size_ext: 0x111,
                     revisit_duration_base: 0x0000_2222_2222,
-                    revisit_duration_ext: 0x222,
+                    revisit_duration_ext: 0x022,
                     sleep_time_base: 0x0000_3333_3333,
-                    sleep_time_ext: 0x333,
+                    sleep_time_ext: 0x133,
                     sleep_duration_base: 0x0000_4444_4444,
-                    sleep_duration_ext: 0x444,
+                    sleep_duration_ext: 0x044,
+                    grid_size_reserved_zero_future_use: 0,
+                    revisit_duration_reserved_zero_future_use: 0,
+                    sleep_time_reserved_zero_future_use: 0,
+                    sleep_duration_reserved_zero_future_use: 0,
                 },
+                reserved_zero_future_use_4: 0,
+                reserved_zero_future_use_mode: 0,
+                time_of_application_reserved_zero_future_use: 0,
+                cycle_duration_reserved_zero_future_use: 0,
             }],
         });
         let bytes = build_sat(3, 0, &body);
@@ -2387,17 +2639,27 @@ mod tests {
                         dwell_duration_base: 0x0000_1111_1111,
                         dwell_duration_ext: 0x111,
                         on_time_base: 0x0000_2222_2222,
-                        on_time_ext: 0x222,
+                        on_time_ext: 0x022,
+                        dwell_duration_reserved_zero_future_use: 0,
+                        on_time_reserved_zero_future_use: 0,
                     },
+                    reserved_zero_future_use_4: 0,
+                    reserved_zero_future_use_mode: 0,
+                    time_of_application_reserved_zero_future_use: 0,
+                    cycle_duration_reserved_zero_future_use: 0,
                 },
                 BeamhoppingPlan {
                     beamhopping_time_plan_id: 0x22222222,
                     time_plan_mode: TimePlanMode::Reserved(3),
                     time_of_application_base: 0x0000_CCCC_CCCC,
-                    time_of_application_ext: 0x300,
+                    time_of_application_ext: 0x100,
                     cycle_duration_base: 0x0000_DDDD_DDDD,
-                    cycle_duration_ext: 0x400,
+                    cycle_duration_ext: 0x000,
                     mode: BeamhoppingMode::Reserved(vec![0xAA, 0xBB, 0xCC]),
+                    reserved_zero_future_use_4: 0,
+                    reserved_zero_future_use_mode: 0,
+                    time_of_application_reserved_zero_future_use: 0,
+                    cycle_duration_reserved_zero_future_use: 0,
                 },
             ],
         });
@@ -2433,6 +2695,9 @@ mod tests {
                 delivery_system_ids: vec![0x11111111],
                 new_delivery_systems: Vec::new(),
                 obsolescent_delivery_systems: Vec::new(),
+                reserved_zero_future_use_4: 0,
+                reserved_zero_future_use_new: 0,
+                reserved_zero_future_use_obsolescent: 0,
             }],
         });
         let bytes = build_sat(1, 0, &body);
@@ -2458,6 +2723,9 @@ mod tests {
                     delivery_system_ids: vec![0x11111111; 50],
                     new_delivery_systems: Vec::new(),
                     obsolescent_delivery_systems: Vec::new(),
+                    reserved_zero_future_use_4: 0,
+                    reserved_zero_future_use_new: 0,
+                    reserved_zero_future_use_obsolescent: 0,
                 }],
             }),
         );
@@ -2502,7 +2770,13 @@ mod tests {
                         bit_map_size: 200,
                         current_slot: 0,
                         slot_transmission_on: vec![true; 200],
+                        reserved_zero_future_use_size: 0,
+                        reserved_zero_future_use_slot: 0,
                     },
+                    reserved_zero_future_use_4: 0,
+                    reserved_zero_future_use_mode: 0,
+                    time_of_application_reserved_zero_future_use: 0,
+                    cycle_duration_reserved_zero_future_use: 0,
                 }],
             }),
         );
@@ -2561,11 +2835,14 @@ mod tests {
                             ephemeris_y_dot: 0,
                             ephemeris_z_dot: 0,
                             acceleration: None,
+                            reserved_zero_future_use: 0,
                         };
                         5
                     ],
                     covariance: None,
+                    reserved_zero_future_use: 0,
                 }],
+                creation_date_reserved_zero_future_use: 0,
             }),
         );
         let mut corrupt_buf = vec![0u8; corrupt_sat.serialized_len()];
@@ -2597,6 +2874,8 @@ mod tests {
             ncr_ext: 0x1AA,
             association_timestamp_seconds: 0,
             association_timestamp_nanoseconds: 0,
+            reserved_zero_future_use_4: 0,
+            ncr_reserved_zero_future_use: 0,
         });
         let bytes = build_sat(2, 0, &body);
         let sat = SatSection::parse(&bytes).unwrap();
@@ -2621,7 +2900,9 @@ mod tests {
                 position: PositionSystem::Orbital {
                     orbital_position: 0x1920,
                     west_east_flag: true,
+                    reserved_zero_future_use: 0,
                 },
+                reserved_zero_future_use: 0,
             }],
         });
         let bytes = build_sat(0, 0, &body);
@@ -2654,6 +2935,9 @@ mod tests {
                 delivery_system_ids: Vec::new(),
                 new_delivery_systems: Vec::new(),
                 obsolescent_delivery_systems: Vec::new(),
+                reserved_zero_future_use_4: 0,
+                reserved_zero_future_use_new: 0,
+                reserved_zero_future_use_obsolescent: 0,
             }],
         });
         let bytes = build_sat(1, 0, &body);
@@ -2683,7 +2967,13 @@ mod tests {
                     dwell_duration_ext: 0,
                     on_time_base: 0,
                     on_time_ext: 0,
+                    dwell_duration_reserved_zero_future_use: 0,
+                    on_time_reserved_zero_future_use: 0,
                 },
+                reserved_zero_future_use_4: 0,
+                reserved_zero_future_use_mode: 0,
+                time_of_application_reserved_zero_future_use: 0,
+                cycle_duration_reserved_zero_future_use: 0,
             }],
         });
         let bytes = build_sat(3, 0, &body);
@@ -2707,6 +2997,7 @@ mod tests {
             creation_date_day: 42,
             creation_date_day_fraction: 0,
             satellites: Vec::new(),
+            creation_date_reserved_zero_future_use: 0,
         });
         let bytes = build_sat(4, 0, &body);
         let sat = SatSection::parse(&bytes).unwrap();
@@ -2789,6 +3080,7 @@ mod tests {
                     PositionSystem::Orbital {
                         orbital_position,
                         west_east_flag,
+                        ..
                     } => {
                         assert_eq!(*orbital_position, 0x1234);
                         assert!(*west_east_flag);
@@ -2872,6 +3164,7 @@ mod tests {
                         dwell_duration_ext,
                         on_time_base,
                         on_time_ext,
+                        ..
                     } => {
                         assert_eq!(*dwell_duration_base, 0);
                         assert_eq!(*dwell_duration_ext, 0);
@@ -2929,6 +3222,8 @@ mod tests {
             ncr_ext: 0,
             association_timestamp_seconds: 0,
             association_timestamp_nanoseconds: 0,
+            reserved_zero_future_use_4: 0,
+            ncr_reserved_zero_future_use: 0,
         });
         let bytes = build_sat(2, 0, &body);
         let sat = SatSection::parse(&bytes).unwrap();

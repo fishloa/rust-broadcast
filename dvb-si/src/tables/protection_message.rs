@@ -532,7 +532,11 @@ impl ProtectionMessageBody<'_> {
                             reason: "length must equal section_hash_length",
                         });
                     }
-                    buf[pos] = (h.reference_type.to_u8() << 4)
+                    buf[pos] = (broadcast_common::len::fit_mask(
+                        h.reference_type.to_u8(),
+                        0x0F,
+                        "reference_type",
+                    )? << 4)
                         | broadcast_common::len::fit_bits(
                             h.reference.len() as u64,
                             4,

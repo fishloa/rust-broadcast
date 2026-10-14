@@ -159,12 +159,19 @@ impl Serialize for SvcExtensionDescriptor {
         buf[HEADER_LEN + 6..HEADER_LEN + 8].copy_from_slice(&self.average_bitrate.to_be_bytes());
         buf[HEADER_LEN + 8..HEADER_LEN + 10].copy_from_slice(&self.maximum_bitrate.to_be_bytes());
         buf[HEADER_LEN + 10] =
-            ((self.dependency_id & 0x07) << 5) | (self.reserved_5 & RESERVED_5_MASK);
-        buf[HEADER_LEN + 11] = ((self.quality_id_start & 0x0F) << 4) | (self.quality_id_end & 0x0F);
-        buf[HEADER_LEN + 12] = ((self.temporal_id_start & 0x07) << 5)
-            | ((self.temporal_id_end & 0x07) << 2)
-            | ((self.no_sei_nal_unit_present as u8) << 1)
-            | (self.reserved_1 & RESERVED_1_MASK);
+            (broadcast_common::len::fit_mask(self.dependency_id, 0x07, "dependency_id")? << 5)
+                | broadcast_common::len::fit_mask(self.reserved_5, RESERVED_5_MASK, "reserved_5")?;
+        buf[HEADER_LEN + 11] =
+            (broadcast_common::len::fit_mask(self.quality_id_start, 0x0F, "quality_id_start")?
+                << 4)
+                | broadcast_common::len::fit_mask(self.quality_id_end, 0x0F, "quality_id_end")?;
+        buf[HEADER_LEN + 12] =
+            (broadcast_common::len::fit_mask(self.temporal_id_start, 0x07, "temporal_id_start")?
+                << 5)
+                | (broadcast_common::len::fit_mask(self.temporal_id_end, 0x07, "temporal_id_end")?
+                    << 2)
+                | ((self.no_sei_nal_unit_present as u8) << 1)
+                | broadcast_common::len::fit_mask(self.reserved_1, RESERVED_1_MASK, "reserved_1")?;
         Ok(len)
     }
 }

@@ -236,11 +236,21 @@ impl Serialize for AudioPreselection<'_> {
             5,
             "num_preselections",
         )? as u8;
-        buf[0] =
-            (num_preselections << 3) | (self.reserved_zero_future_use_3 & RESERVED_ZERO_3_MASK);
+        buf[0] = (num_preselections << 3)
+            | broadcast_common::len::fit_mask(
+                self.reserved_zero_future_use_3,
+                RESERVED_ZERO_3_MASK,
+                "reserved_zero_future_use_3",
+            )?;
         let mut p = 1;
         for s in &self.preselections {
-            buf[p] = ((s.preselection_id & 0x1F) << 3) | (s.audio_rendering_indication & 0x07);
+            buf[p] = (broadcast_common::len::fit_mask(s.preselection_id, 0x1F, "preselection_id")?
+                << 3)
+                | broadcast_common::len::fit_mask(
+                    s.audio_rendering_indication,
+                    0x07,
+                    "audio_rendering_indication",
+                )?;
             buf[p + 1] = (u8::from(s.audio_description) << 7)
                 | (u8::from(s.spoken_subtitles) << 6)
                 | (u8::from(s.dialogue_enhancement) << 5)
@@ -265,9 +275,12 @@ impl Serialize for AudioPreselection<'_> {
                     "num_aux_component_tags",
                 )? as u8;
                 buf[p] = (num_aux_component_tags << 5)
-                    | (s.reserved_zero_future_use_5
-                        .unwrap_or(AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT)
-                        & RESERVED_ZERO_5_MASK);
+                    | broadcast_common::len::fit_mask(
+                        s.reserved_zero_future_use_5
+                            .unwrap_or(AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT),
+                        RESERVED_ZERO_5_MASK,
+                        "reserved_zero_future_use_5",
+                    )?;
                 p += 1;
                 buf[p..p + tags.len()].copy_from_slice(tags);
                 p += tags.len();
@@ -278,11 +291,12 @@ impl Serialize for AudioPreselection<'_> {
                     5,
                     "future_extension_length",
                 )? as u8)
-                    | ((s
-                        .reserved_zero_future_use_3
-                        .unwrap_or(AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT)
-                        & RESERVED_ZERO_3_MASK)
-                        << 5);
+                    | (broadcast_common::len::fit_mask(
+                        s.reserved_zero_future_use_3
+                            .unwrap_or(AUDIO_PRESELECTION_RESERVED_ZERO_FUTURE_USE_DEFAULT),
+                        RESERVED_ZERO_3_MASK,
+                        "reserved_zero_future_use_3",
+                    )? << 5);
                 p += 1;
                 buf[p..p + ext.len()].copy_from_slice(ext);
                 p += ext.len();

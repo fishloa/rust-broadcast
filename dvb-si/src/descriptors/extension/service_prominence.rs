@@ -198,7 +198,11 @@ impl Serialize for ServiceProminence<'_> {
             buf[p] = ((e.sogi_flag as u8) << 7)
                 | ((e.target_region_loop.is_some() as u8) << 6)
                 | ((e.service_id.is_some() as u8) << 5)
-                | ((e.reserved_future_use & SOGI_RESERVED_MASK) << 4)
+                | (broadcast_common::len::fit_mask(
+                    e.reserved_future_use,
+                    SOGI_RESERVED_MASK,
+                    "reserved_future_use",
+                )? << 4)
                 | ((priority >> 8) as u8 & 0x0F);
             buf[p + 1] = priority as u8;
             p += 2;
@@ -215,7 +219,7 @@ impl Serialize for ServiceProminence<'_> {
                 )? as usize;
                 buf[p] = entries_len as u8;
                 p += 1;
-                super::target_region::write_region_entries(entries, buf, p);
+                super::target_region::write_region_entries(entries, buf, p)?;
                 p += entries_len;
             }
         }
