@@ -25,7 +25,7 @@ use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
 use srt_runtime::handshake_sm::HandshakeConfig;
-use srt_runtime::io::SrtSocket;
+use srt_runtime::io::{IoConfig, SrtSocket};
 use tokio::net::UdpSocket as TokioUdpSocket;
 
 include!("support/skip.rs");
@@ -34,6 +34,20 @@ const TEST_TIMEOUT: Duration = Duration::from_secs(120);
 const PAYLOAD_LEN: usize = 1316;
 /// Handshake attempts per test (random cookie each, so both roles occur).
 const ITERATIONS: usize = 6;
+
+/// A handshake budget generous enough for a loaded CI/dev host: the default
+/// (12 retransmissions = ~3 s) can be eaten entirely by the time it takes to
+/// spawn the external `srt-live-transmit` process under heavy machine load.
+fn patient_config() -> HandshakeConfig {
+    HandshakeConfig {
+        max_retries: 60,
+        ..HandshakeConfig::default()
+    }
+}
+
+fn patient_io() -> IoConfig {
+    IoConfig::default().with_handshake(Duration::from_secs(20))
+}
 
 fn free_udp_port() -> u16 {
     UdpSocket::bind("127.0.0.1:0")
@@ -122,15 +136,16 @@ async fn our_rendezvous_completes_real_handshake_and_data_with_libsrt() {
             // No wait for the libsrt process to come up: both sides
             // retransmit their WAVEAHAND until the other answers.
             let mut ours = tokio::time::timeout(
-                Duration::from_secs(15),
-                SrtSocket::rendezvous(
+                Duration::from_secs(25),
+                SrtSocket::rendezvous_with(
                     format!("127.0.0.1:{our_port}")
                         .parse::<SocketAddr>()
                         .unwrap(),
                     format!("127.0.0.1:{lib_port}")
                         .parse::<SocketAddr>()
                         .unwrap(),
-                    HandshakeConfig::default(),
+                    patient_config(),
+                    patient_io(),
                 ),
             )
             .await
@@ -174,13 +189,14 @@ async fn real_libsrt_rendezvous_sender_delivers_data_to_our_rendezvous_side() {
             );
 
             let mut ours = tokio::time::timeout(
-                Duration::from_secs(15),
-                SrtSocket::rendezvous(
+                Duration::from_secs(25),
+                SrtSocket::rendezvous_with(
                     format!("127.0.0.1:{our_port}").parse::<SocketAddr>().unwrap(),
                     format!("127.0.0.1:{lib_port}")
                         .parse::<SocketAddr>()
                         .unwrap(),
-                    HandshakeConfig::default(),
+                    patient_config(),
+                    patient_io(),
                 ),
             )
             .await

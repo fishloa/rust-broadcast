@@ -62,8 +62,8 @@ async fn rendezvous_without_a_peer_times_out() {
         IoConfig::default().with_handshake(Duration::from_millis(600)),
     )
     .await
-    .err()
-    .expect("no peer must fail");
+    .map(|_| ())
+    .expect_err("no peer must fail");
     assert!(
         matches!(err, Error::HandshakeTimedOut { .. } | Error::Io { .. }),
         "{err:?}"
