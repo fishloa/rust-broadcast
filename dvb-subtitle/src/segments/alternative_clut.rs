@@ -55,12 +55,23 @@ impl ClutParameters {
         })
     }
 
-    fn serialize_into(&self, buf: &mut [u8]) {
-        buf[0] = (self.entry_max_number << 6)
-            | (self.colour_component_type << 4)
-            | (self.output_bit_depth << 1)
-            | (self.reserved & 0x01);
+    fn serialize_into(&self, buf: &mut [u8]) -> Result<()> {
+        buf[0] =
+            (broadcast_common::len::fit_mask(self.entry_max_number, 0x03, "entry_max_number")?
+                << 6)
+                | (broadcast_common::len::fit_mask(
+                    self.colour_component_type,
+                    0x03,
+                    "colour_component_type",
+                )? << 4)
+                | (broadcast_common::len::fit_mask(
+                    self.output_bit_depth,
+                    0x07,
+                    "output_bit_depth",
+                )? << 1)
+                | broadcast_common::len::fit_mask(self.reserved, 0x01, "reserved")?;
         buf[1] = self.dynamic_range_and_colour_gamut;
+        Ok(())
     }
 }
 
@@ -149,23 +160,28 @@ impl AlternativeClutEntry {
         }
     }
 
-    fn serialize_into(&self, buf: &mut [u8], output_bit_depth: u8) {
+    fn serialize_into(&self, buf: &mut [u8], output_bit_depth: u8) -> Result<()> {
         if output_bit_depth == 1 {
-            let v0 = self.luma_value;
-            let v1 = self.chroma1_value;
-            let v2 = self.chroma2_value;
-            let v3 = self.t_value;
+            // 10-bit entry: each of the four values is 10 bits wide.
+            let v0 = broadcast_common::len::fit_mask(self.luma_value, 0x03FF, "luma_value")?;
+            let v1 = broadcast_common::len::fit_mask(self.chroma1_value, 0x03FF, "chroma1_value")?;
+            let v2 = broadcast_common::len::fit_mask(self.chroma2_value, 0x03FF, "chroma2_value")?;
+            let v3 = broadcast_common::len::fit_mask(self.t_value, 0x03FF, "t_value")?;
             buf[0] = (v0 >> 2) as u8;
             buf[1] = (((v0 & 0x03) << 6) | ((v1 & 0x3FC) >> 4)) as u8;
             buf[2] = (((v1 & 0x0F) << 4) | ((v2 & 0x3F0) >> 6)) as u8;
             buf[3] = (((v2 & 0x3F) << 2) | ((v3 & 0x300) >> 8)) as u8;
             buf[4] = (v3 & 0xFF) as u8;
         } else {
-            buf[0] = self.luma_value as u8;
-            buf[1] = self.chroma1_value as u8;
-            buf[2] = self.chroma2_value as u8;
-            buf[3] = self.t_value as u8;
+            // 8-bit entry: each value is 8 bits wide.
+            buf[0] = broadcast_common::len::fit_mask(self.luma_value, 0x00FF, "luma_value")? as u8;
+            buf[1] =
+                broadcast_common::len::fit_mask(self.chroma1_value, 0x00FF, "chroma1_value")? as u8;
+            buf[2] =
+                broadcast_common::len::fit_mask(self.chroma2_value, 0x00FF, "chroma2_value")? as u8;
+            buf[3] = broadcast_common::len::fit_mask(self.t_value, 0x00FF, "t_value")? as u8;
         }
+        Ok(())
     }
 
     fn parse(bytes: &[u8], output_bit_depth: u8) -> Result<Self> {
@@ -317,8 +333,13 @@ impl Serialize for AlternativeClutSegment {
         buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
 
         buf[6] = self.clut_id;
-        buf[7] = (self.clut_version_number << 4) | (self.reserved & 0x0F);
-        self.clut_parameters.serialize_into(&mut buf[8..10]);
+        buf[7] = (broadcast_common::len::fit_mask(
+            self.clut_version_number,
+            0x0F,
+            "clut_version_number",
+        )? << 4)
+            | broadcast_common::len::fit_mask(self.reserved, 0x0F, "reserved")?;
+        self.clut_parameters.serialize_into(&mut buf[8..10])?;
 
         let entry_len = AlternativeClutEntry::serialized_len(self.clut_parameters.output_bit_depth);
         for (i, entry) in self.entries.iter().enumerate() {
@@ -326,7 +347,7 @@ impl Serialize for AlternativeClutSegment {
             entry.serialize_into(
                 &mut buf[off..off + entry_len],
                 self.clut_parameters.output_bit_depth,
-            );
+            )?;
         }
         Ok(len)
     }

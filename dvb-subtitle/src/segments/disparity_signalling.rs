@@ -157,7 +157,12 @@ impl Subregion {
             off = 4;
         }
         buf[off] = self.subregion_disparity_shift_integer as u8;
-        buf[off + 1] = (self.subregion_disparity_shift_fractional << 4) | (self.reserved & 0x0F);
+        buf[off + 1] = (broadcast_common::len::fit_mask(
+            self.subregion_disparity_shift_fractional,
+            0x0F,
+            "subregion_disparity_shift_fractional",
+        )? << 4)
+            | broadcast_common::len::fit_mask(self.reserved, 0x0F, "reserved")?;
         off += 2;
         if let Some(ref seq) = self.update_sequence {
             seq.serialize_into(&mut buf[off..])?;
@@ -200,7 +205,7 @@ impl DisparityRegion {
         let num = (count - 1) as u8;
         buf[0] = self.region_id;
         buf[1] = (u8::from(self.update_sequence_region_flag) << 7)
-            | (self.reserved_flags & 0x7C)
+            | broadcast_common::len::fit_mask(self.reserved_flags, 0x7C, "reserved_flags")?
             | (num & 0x03);
         // Position fields are present for every subregion, or none, per
         // whether the region itself has more than one (Table 29's
@@ -400,9 +405,11 @@ impl Serialize for DisparitySignallingSegment {
         let seg_len = crate::segments::check_segment_length(len - HEADER_LEN)?;
         buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
 
-        buf[6] = (self.dss_version_number << 4)
-            | (u8::from(self.update_sequence_page_flag) << 3)
-            | (self.reserved & 0x07);
+        buf[6] =
+            (broadcast_common::len::fit_mask(self.dss_version_number, 0x0F, "dss_version_number")?
+                << 4)
+                | (u8::from(self.update_sequence_page_flag) << 3)
+                | broadcast_common::len::fit_mask(self.reserved, 0x07, "reserved")?;
         buf[7] = self.page_default_disparity_shift as u8;
 
         let mut off = HEADER_LEN + FIXED_LEN;

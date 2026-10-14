@@ -54,7 +54,7 @@ impl RegionLevelOfCompatibility {
             Self::Clut2Bit => 0x01,
             Self::Clut4Bit => 0x02,
             Self::Clut8Bit => 0x03,
-            Self::Reserved(v) => v & 0x07,
+            Self::Reserved(v) => v,
         }
     }
 }
@@ -98,7 +98,7 @@ impl RegionDepth {
             Self::Depth2Bit => 0x01,
             Self::Depth4Bit => 0x02,
             Self::Depth8Bit => 0x03,
-            Self::Reserved(v) => v & 0x07,
+            Self::Reserved(v) => v,
         }
     }
 }
@@ -138,7 +138,7 @@ impl ObjectType {
             Self::BasicBitmap => 0x00,
             Self::BasicCharacter => 0x01,
             Self::CompositeString => 0x02,
-            Self::Reserved(v) => v & 0x03,
+            Self::Reserved(v) => v,
         }
     }
 }
@@ -174,7 +174,7 @@ impl ObjectProviderFlag {
         match self {
             Self::InStream => 0x00,
             Self::InRom => 0x01,
-            Self::Reserved(v) => v & 0x03,
+            Self::Reserved(v) => v,
         }
     }
 }
@@ -466,19 +466,36 @@ impl Serialize for RegionCompositionSegment {
         buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
 
         buf[6] = self.region_id;
-        buf[7] = (self.region_version_number << 4)
+        buf[7] = (broadcast_common::len::fit_mask(
+            self.region_version_number,
+            0x0F,
+            "region_version_number",
+        )? << 4)
             | (u8::from(self.region_fill_flag) << 3)
-            | (self.reserved_byte1 & 0x07);
+            | broadcast_common::len::fit_mask(self.reserved_byte1, 0x07, "reserved_byte1")?;
         buf[8..10].copy_from_slice(&self.region_width.to_be_bytes());
         buf[10..12].copy_from_slice(&self.region_height.to_be_bytes());
-        buf[12] = (self.region_level_of_compatibility.to_bits() << 5)
-            | (self.region_depth.to_bits() << 2)
-            | (self.reserved_byte6 & 0x03);
+        buf[12] = (broadcast_common::len::fit_mask(
+            self.region_level_of_compatibility.to_bits(),
+            0x07,
+            "region_level_of_compatibility",
+        )? << 5)
+            | (broadcast_common::len::fit_mask(self.region_depth.to_bits(), 0x07, "region_depth")?
+                << 2)
+            | broadcast_common::len::fit_mask(self.reserved_byte6, 0x03, "reserved_byte6")?;
         buf[13] = self.clut_id;
         buf[14] = self.region_8bit_pixel_code;
-        buf[15] = (self.region_4bit_pixel_code << 4)
-            | (self.region_2bit_pixel_code << 2)
-            | (self.reserved_byte9 & 0x03);
+        buf[15] = (broadcast_common::len::fit_mask(
+            self.region_4bit_pixel_code,
+            0x0F,
+            "region_4bit_pixel_code",
+        )? << 4)
+            | (broadcast_common::len::fit_mask(
+                self.region_2bit_pixel_code,
+                0x03,
+                "region_2bit_pixel_code",
+            )? << 2)
+            | broadcast_common::len::fit_mask(self.reserved_byte9, 0x03, "reserved_byte9")?;
 
         let mut off = HEADER_LEN + FIXED_LEN;
         for obj in &self.objects {
