@@ -738,17 +738,16 @@ impl<'a> AdaptationFieldExtension<'a> {
                 });
             }
             let b = &ext[cursor..cursor + 5];
-            let splice_type = (b[0] >> 4) & 0x0F;
-            // DTS_next_AU uses the same 5-byte marker-bit encoding as PTS/DTS.
-            let hi = u64::from((b[0] >> 1) & 0x07); // [32:30]
-            let mid = (u64::from(b[1]) << 7) | u64::from(b[2] >> 1); // [29:15]
-            let lo = (u64::from(b[3]) << 7) | u64::from(b[4] >> 1); // [14:0]
-            let dts_next_au = (hi << 30) | (mid << 15) | lo;
+            // DTS_next_AU uses the same 5-byte marker-bit encoding as PTS/DTS,
+            // with `splice_type` in the prefix nibble.
+            let field: &[u8; 5] = b.try_into().expect("slice is exactly 5 bytes");
+            let m = broadcast_common::clock33::unpack_marked(field);
+            let (splice_type, dts_next_au) = (m.prefix, m.timestamp);
             cursor += 5;
             Some(SeamlessSplice {
                 splice_type,
                 dts_next_au,
-                marker_bits: ((b[0] & 1) << 2) | ((b[2] & 1) << 1) | (b[4] & 1),
+                marker_bits: m.markers,
             })
         } else {
             None
@@ -820,15 +819,12 @@ impl<'a> AdaptationFieldExtension<'a> {
             cursor += 3;
         }
         if let Some(ss) = self.seamless_splice {
-            let ts = ss.dts_next_au & 0x1_FFFF_FFFF;
-            let st = ss.splice_type & 0x0F;
-            // byte 0: splice_type(4) | DTS[32:30](3) | marker(1)
-            buf[cursor] =
-                (st << 4) | ((((ts >> 30) & 0x07) as u8) << 1) | ((ss.marker_bits >> 2) & 1);
-            buf[cursor + 1] = ((ts >> 22) & 0xFF) as u8;
-            buf[cursor + 2] = ((((ts >> 15) & 0x7F) as u8) << 1) | ((ss.marker_bits >> 1) & 1);
-            buf[cursor + 3] = ((ts >> 7) & 0xFF) as u8;
-            buf[cursor + 4] = (((ts & 0x7F) as u8) << 1) | (ss.marker_bits & 1);
+            // byte 0: splice_type(4) | DTS[32:30](3) | marker(1) ... (5 bytes)
+            buf[cursor..cursor + 5].copy_from_slice(&broadcast_common::clock33::pack_marked_with(
+                ss.dts_next_au,
+                ss.splice_type,
+                ss.marker_bits,
+            ));
             cursor += 5;
         }
         buf[cursor..cursor + self.trailing.len()].copy_from_slice(self.trailing);

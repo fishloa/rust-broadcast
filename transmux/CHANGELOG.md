@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Internal: the 5-byte marker-bit PTS/DTS/`DTS_next_AU` field is encoded/decoded by `broadcast_common::clock33::{pack_marked, pack_marked_with, unpack_marked}` instead of a local copy (each crate keeps its own prefix / marker validation and error variants); no behaviour change (#1208).
+
 ### Fixed (DASH SegmentTimeline, #1187)
 
 - `SegmentTimeline::resolve(start_number, period_end_ticks)` (new, with `TimelineSegment { number, time, duration }`) implements ISO/IEC 23009-1 §5.3.9.6 in full: absolute first `S@t`, explicit `S@t` jumps (timeline gaps) and a **negative `S@r`**, which repeats to the next `S`'s explicit `@t` (`ceil((t_next - t) / d)`) or to the Period end (`ceil((period_end - t) / d)`), as transcribed by DASH-IF IOP v4.3 §3.10.2.2.4 (`specs/rules/dash-mpd-rules.md`). `enumerate` is kept as the no-Period-end wrapper (a negative `r` with no bound is still a single occurrence).

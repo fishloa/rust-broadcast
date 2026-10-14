@@ -54,14 +54,7 @@ const PPS: [u8; 4] = [0x68, 0xce, 0x3c, 0x80];
 /// Encode a 33-bit PTS/DTS into its 5-byte PES field (§2.4.3.7): a 4-bit
 /// `prefix`, then the value split 3 / 15 / 15 bits with marker bits set.
 fn encode_pes_ts(value: i64, prefix: u8) -> [u8; 5] {
-    let v = (value as u64) & ((1u64 << 33) - 1);
-    [
-        (prefix << 4) | ((((v >> 30) & 0x07) as u8) << 1) | 0x01,
-        ((v >> 22) & 0xFF) as u8,
-        ((((v >> 15) & 0x7F) as u8) << 1) | 0x01,
-        ((v >> 7) & 0xFF) as u8,
-        (((v & 0x7F) as u8) << 1) | 0x01,
-    ]
+    broadcast_common::clock33::pack_marked(value as u64, prefix)
 }
 
 /// One Annex B access unit: parameter sets on the first AU (so config

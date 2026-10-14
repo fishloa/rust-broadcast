@@ -237,8 +237,6 @@ const PTS_DTS_FLAGS_BOTH: u8 = 0xC0;
 const TS_PREFIX_PTS_WITH_DTS: u8 = 0b0011;
 /// 4-bit prefix on the DTS field of a PTS+DTS pair (`0001`). §2.4.3.7.
 const TS_PREFIX_DTS: u8 = 0b0001;
-/// 33-bit mask for a PTS/DTS value.
-const TS_VALUE_MASK: u64 = TS_TIMESTAMP_MOD - 1;
 
 // ── H.264 NAL constants (ISO/IEC 14496-10 Table 7-1) ────────────────────────
 
@@ -1976,14 +1974,7 @@ fn build_pes_bytes(plan: &EsPlan, es_payload: &[u8], pts90: u64, dts90: u64) -> 
 /// Encode a 33-bit timestamp into the 5-byte PTS/DTS field with the given 4-bit
 /// `prefix`, interleaving the mandatory `marker_bit`s. ISO/IEC 13818-1 §2.4.3.7.
 fn encode_timestamp(ts: u64, prefix: u8) -> [u8; 5] {
-    let ts = ts & TS_VALUE_MASK;
-    [
-        (prefix << 4) | ((((ts >> 30) & 0x07) as u8) << 1) | 0x01,
-        ((ts >> 22) & 0xFF) as u8,
-        ((((ts >> 15) & 0x7F) as u8) << 1) | 0x01,
-        ((ts >> 7) & 0xFF) as u8,
-        (((ts & 0x7F) as u8) << 1) | 0x01,
-    ]
+    broadcast_common::clock33::pack_marked(ts, prefix)
 }
 
 #[cfg(test)]

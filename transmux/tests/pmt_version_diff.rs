@@ -206,11 +206,7 @@ fn pes_bytes_with_pts(payload: &[u8], pts: u64) -> Vec<u8> {
     b.push(0x80); // '10' marker, no scrambling/priority/copyright
     b.push(0x80); // PTS_DTS_flags = '10' (PTS only)
     b.push(5); // PES_header_data_length
-    b.push(0x21 | ((((pts >> 30) & 0x07) as u8) << 1));
-    b.push(((pts >> 22) & 0xFF) as u8);
-    b.push(((((pts >> 15) & 0x7F) as u8) << 1) | 0x01);
-    b.push(((pts >> 7) & 0xFF) as u8);
-    b.push((((pts & 0x7F) as u8) << 1) | 0x01);
+    b.extend_from_slice(&broadcast_common::clock33::pack_marked(pts, 0b0010));
     b.extend_from_slice(payload);
     b
 }

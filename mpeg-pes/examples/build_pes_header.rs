@@ -12,17 +12,11 @@
 
 use mpeg_pes::{Escr, PACKET_START_CODE_PREFIX, PesPacket, TrickMode};
 
-/// Encode a 33-bit value into a 5-byte PTS field with the given 4-bit prefix.
-/// Duplicated here because `mpeg_pes::timestamp::write` is `pub(crate)`.
+/// Encode a 33-bit value into a 5-byte PTS field with the given 4-bit prefix
+/// (`mpeg_pes::timestamp::write` is `pub(crate)`; the shared encoder lives in
+/// `broadcast_common::clock33`).
 fn encode_ts(ts: u64, prefix: u8) -> [u8; 5] {
-    let ts = ts & 0x1_FFFF_FFFF;
-    [
-        (prefix << 4) | ((((ts >> 30) & 0x07) as u8) << 1) | 0x01,
-        ((ts >> 22) & 0xFF) as u8,
-        ((((ts >> 15) & 0x7F) as u8) << 1) | 0x01,
-        ((ts >> 7) & 0xFF) as u8,
-        (((ts & 0x7F) as u8) << 1) | 0x01,
-    ]
+    broadcast_common::clock33::pack_marked(ts, prefix)
 }
 
 /// Build a complete PES packet (raw bytes) from typed optional-header fields.

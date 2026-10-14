@@ -5827,14 +5827,7 @@ mod tests {
     /// given 4-bit prefix (`0010` for PTS-only, `0011` for PTS in a
     /// both-present pair, `0001` for DTS).
     fn encode_ts_field(prefix: u8, value: i64) -> [u8; 5] {
-        let v = (value as u64) & TS_WRAP_MASK;
-        [
-            (prefix << 4) | ((((v >> 30) & 0x07) as u8) << 1) | 0x01,
-            ((v >> 22) & 0xFF) as u8,
-            ((((v >> 15) & 0x7F) as u8) << 1) | 0x01,
-            ((v >> 7) & 0xFF) as u8,
-            (((v & 0x7F) as u8) << 1) | 0x01,
-        ]
+        broadcast_common::clock33::pack_marked(value as u64, prefix)
     }
 
     /// Wrap `au` in a PES packet with a PTS, and a DTS too when `dts` is
