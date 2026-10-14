@@ -71,6 +71,7 @@ use axum::routing::get;
 use broadcast_common::Package;
 use hls_runtime::server::DEFAULT_TRACK_ID;
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
+use transmux::dash::xs_duration;
 use transmux::{Addressing, DashPackager, Media, Track, TrackSegments, TrackSpec};
 
 use crate::http::{self, BLOCKING_RELOAD_TIMEOUT};
@@ -340,35 +341,6 @@ fn format_iso8601_secs(secs: i64) -> String {
         .unwrap_or_else(|_| "1970-01-01T00:00:00Z".to_string())
 }
 
-/// Format a duration as the DASH `xs:duration` shortest spelling (`PT4S`,
-/// `PT2M`, `PT0.5S`) via `jiff`'s `SpanPrinter` (SP5) — the form
-/// `@minimumUpdatePeriod` and `@timeShiftBufferDepth` use
-/// (ISO/IEC 23009-1 §5.3.9.2).
-///
-/// **One spelling rule, shared with `transmux`'s DASH writer (W1-T):** both
-/// call `jiff`'s `SpanPrinter::duration_to_string`, which balances up to
-/// hours, so a value >= 60 s prints `PT2M` (not `PT120S`) and >= 3600 s prints
-/// `PT1H`. `jiff` cannot print unbalanced seconds, and hand-rolling that
-/// spelling here to match the pre-jiff `PT{secs}S` output would be a second,
-/// divergent rule — so the balanced jiff spelling is kept and the >= 60 s wire
-/// difference is recorded in the CHANGELOG (the pre-migration code printed
-/// `PT{secs}S`, which is why the sub-60 s goldens were byte-identical).
-pub(crate) fn xs_duration(d: Duration) -> String {
-    match jiff::SignedDuration::try_from(d) {
-        Ok(signed) => jiff::fmt::temporal::SpanPrinter::new().duration_to_string(&signed),
-        // `u64` seconds > `i64::MAX` seconds (~292 billion years) — no
-        // realisable media duration; fall back to the whole-second spelling
-        // rather than panic.
-        Err(_) => format!("PT{}S", d.as_secs()),
-    }
-}
-
-/// `#[doc(hidden)]` test seam over [`xs_duration`].
-#[doc(hidden)]
-pub fn xs_duration_for_test(d: Duration) -> String {
-    xs_duration(d)
-}
-
 /// Why [`xs_duration_secs`] could not render an `xs:duration`.
 #[derive(Debug, thiserror::Error)]
 pub(crate) enum DurationError {
@@ -378,7 +350,7 @@ pub(crate) enum DurationError {
     InvalidInput { secs: f64 },
 }
 
-/// A whole/ fractional second count as an `xs:duration` via [`xs_duration`],
+/// A whole/ fractional second count as an `xs:duration` via [`transmux::dash::xs_duration`] (the workspace's one `xs:duration` spelling rule),
 /// without panicking on a bad input.
 ///
 /// `secs` must be finite, strictly positive, and within [`Duration`]'s range
@@ -726,6 +698,17 @@ mod tests {
         assert_eq!(xs_duration_secs(90.0).unwrap(), "PT1M30S");
         assert_eq!(xs_duration_secs(3600.0).unwrap(), "PT1H");
         assert_eq!(xs_duration_secs(3660.0).unwrap(), "PT1H1M");
+    }
+
+    /// A finite `f64` between `i64::MAX` and `u64::MAX` seconds is a valid
+    /// `Duration` but not a `SignedDuration`: it renders the saturated
+    /// maximum (the one shared `transmux::dash::xs_duration` rule), never a
+    /// panic and never a wrapped small value.
+    #[test]
+    fn xs_duration_secs_saturates_beyond_i64_seconds() {
+        let max =
+            jiff::fmt::temporal::SpanPrinter::new().duration_to_string(&jiff::SignedDuration::MAX);
+        assert_eq!(xs_duration_secs(1.0e19).unwrap(), max);
     }
 
     /// `xs_duration_secs` must REJECT NaN / infinite / negative / overflow with

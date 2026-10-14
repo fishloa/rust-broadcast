@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- `output::dash::xs_duration_for_test` (a `#[doc(hidden)]` test seam) is removed; the `xs:duration` spelling is `transmux::dash::xs_duration`, the one shared implementation. For a duration beyond `i64::MAX` seconds (~292 billion years) the manifest value is now the saturated maximum instead of `PT{secs}S` (#1216).
+
 ### Fixed (DASH timeline + availabilityStartTime, #1187)
 
 - **BREAKING (behaviour):** the DASH/LL-DASH output's `MPD@availabilityStartTime` is the program's presentation origin (the instant its `Trunk` was minted, new `RouteHandle::presentation_origin(program)`), no longer the route's construction time. The route is built before ingest connects and does not move when a reconnect mints a fresh `Trunk` that restarts at segment 1, so the old value broke `AST + (N - startNumber) * duration` (ISO/IEC 23009-1 §5.3.1.2, §5.3.9.5.3). Before a program is published the MPD is not served (503) instead of carrying a made-up AST. `render_mpd_at`/`render_ll_dash_mpd_at` take the origin explicitly.

@@ -1122,8 +1122,16 @@ fn div_round(num: u64, den: u64) -> u64 {
 }
 
 /// Format a [`Duration`] as the shortest ISO 8601 / xs:duration (`PT2S`,
-/// `PT2.5S`, `PT1M30S`, `PT1H`), via `jiff`'s span printer.
-fn xs_duration(d: Duration) -> String {
+/// `PT2.5S`, `PT1M30S`, `PT1H`), via `jiff`'s span printer
+/// (ISO/IEC 23009-1 §5.3.9.2 `xs:duration`).
+///
+/// The workspace's one `xs:duration` spelling rule (`multimux`'s DASH/LL-DASH
+/// manifests call this too): `jiff` balances up to hours, so 120 s prints
+/// `PT2M`, not `PT120S`. A duration beyond `i64::MAX` seconds (~292 billion
+/// years - no realisable media duration) saturates to
+/// `jiff::SignedDuration::MAX` rather than panic or wrap.
+#[must_use]
+pub fn xs_duration(d: Duration) -> String {
     let signed = jiff::SignedDuration::try_from(d).unwrap_or(jiff::SignedDuration::MAX);
     jiff::fmt::temporal::SpanPrinter::new().duration_to_string(&signed)
 }
@@ -1329,6 +1337,17 @@ fn finish(w: XmlWriter) -> String {
 mod xs_duration_tests {
     use super::xs_duration;
     use core::time::Duration;
+
+    /// Beyond `i64::MAX` seconds the printer saturates to the largest
+    /// representable duration - it neither panics nor wraps to a small value.
+    #[test]
+    fn xs_duration_saturates_instead_of_panicking_beyond_i64_seconds() {
+        let max =
+            jiff::fmt::temporal::SpanPrinter::new().duration_to_string(&jiff::SignedDuration::MAX);
+        assert_eq!(xs_duration(Duration::MAX), max);
+        assert_eq!(xs_duration(Duration::from_secs(i64::MAX as u64 + 1)), max);
+        assert_ne!(xs_duration(Duration::from_secs(i64::MAX as u64)), "PT0S");
+    }
 
     #[test]
     fn xs_duration_is_the_shortest_iso_8601_form() {
