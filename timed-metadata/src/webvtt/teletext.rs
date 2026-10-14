@@ -127,23 +127,14 @@ pub fn encode_hamming_8_4(nibble: u8) -> u8 {
 /// parity (an even count of set bits).
 #[must_use]
 pub fn decode_odd_parity(byte: u8) -> Option<u8> {
-    if byte.count_ones() % 2 == 1 {
-        Some(byte & 0x7F)
-    } else {
-        None
-    }
+    broadcast_common::parity::strip_parity(byte)
 }
 
 /// Encode a 7-bit data value with odd parity in bit 8 (MSB), per ETSI
 /// EN 300 706 §8.1. Only the low 7 bits of `data7` are used.
 #[must_use]
 pub fn encode_odd_parity(data7: u8) -> u8 {
-    let d = data7 & 0x7F;
-    if d.count_ones().is_multiple_of(2) {
-        d | 0x80
-    } else {
-        d
-    }
+    broadcast_common::parity::set_odd_parity(data7)
 }
 
 /// The C12/C13/C14 "National Option Character Subset" selector (ETSI

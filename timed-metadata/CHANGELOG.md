@@ -8,6 +8,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 - `webvtt` shared text helpers (new `webvtt::text` module, re-exported): `parse_timestamp` / `format_timestamp_with` / `hms_ms` (the `(hh:)?mm:ss<sep>ttt` grammar both directions, `.` WebVTT and `,` SRT, with the #1109 checked-overflow hardening), `unescape_payload` (inverse of `escape_payload`), `normalize_line_endings` (CRLF / lone CR / LF -> LF, borrowed when there is no CR) and `payload_lines`, plus `TimestampError`. They were split between this crate and `caption-convert` (which kept a second copy of the hour/minute/second math "in lock-step" by a comment); this is now the single owner and `format_timestamp` / `cue_block` are built on it (#1210).
 
 ### Changed
+- Internal: odd-parity encode/check comes from `broadcast_common::parity` instead of a local copy (`timed_metadata::webvtt::teletext::{encode,decode}_odd_parity` stay as thin wrappers, public API unchanged); no behaviour change (#1212).
+
+### Changed
 - Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 
 ## [0.6.1] - 2026-10-13

@@ -9,6 +9,7 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ### Changed
 - Internal: `time.rs` (the SRT/WebVTT timestamp parser, `normalize_line_endings`, `to_hms_ms`, its own `TICKS_PER_MS`) and the local `unescape_payload` are deleted in favour of `timed_metadata::webvtt::{parse_timestamp, format_timestamp_with, normalize_line_endings, payload_lines, unescape_payload}`; `Error::InvalidTimestamp` still carries the offending text (#1210).
+- Internal: odd-parity encode/check comes from `broadcast_common::parity` instead of a local copy (`timed_metadata::webvtt::teletext::{encode,decode}_odd_parity` stay as thin wrappers, public API unchanged); no behaviour change (#1212).
 
 ### Fixed
 - `write_srt` now folds a lone CR (and CRLF) inside a cue's text to LF exactly like the WebVTT writer does (it used `str::lines()`, which only knows LF/CRLF, so a lone CR was written as a literal control character inside a payload line); `write_srt_folds_a_lone_cr_like_the_webvtt_writer` fails on the old code (#1210).

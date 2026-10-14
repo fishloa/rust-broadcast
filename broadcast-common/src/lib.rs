@@ -106,6 +106,7 @@ pub mod crc32_mpeg2;
 pub mod hex;
 pub mod len;
 pub mod mux;
+pub mod parity;
 pub mod pusi;
 pub mod seq;
 pub mod stage;
