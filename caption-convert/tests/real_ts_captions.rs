@@ -63,7 +63,12 @@ fn every_real_cc_data_round_trips_byte_exact() {
 }
 
 fn convert(ts: &str, channel: Cea608Channel) -> Cea608ToWebVtt {
-    let frames = ga94_from_ts(&test_fixtures::read(ts));
+    let mut frames = ga94_from_ts(&test_fixtures::read(ts));
+    // cc_data rides in DECODE order (a B-frame's caption follows the P-frame it
+    // is displayed before; the shaka capture's PES PTS run 132006, 144018,
+    // 138012, ...). The converter wants PRESENTATION order, so sort by PTS (a
+    // stable sort keeps same-PTS frames in carriage order).
+    frames.sort_by_key(|(pts, _)| *pts);
     let end = frames.last().map_or(0, |(pts, _)| *pts) + 90_000;
     let mut conv = Cea608ToWebVtt::new(channel);
     for (pts, bytes) in &frames {

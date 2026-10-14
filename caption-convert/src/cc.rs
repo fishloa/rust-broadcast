@@ -33,6 +33,12 @@ impl Cea608ToWebVtt {
     /// Feed one access unit's raw `cc_data()` bytes (ETSI TS 101 154 Table
     /// B.9 wire framing), tagged with that access unit's raw 33-bit PTS.
     ///
+    /// Feed in **presentation (PTS) order**. `cc_data()` is carried with its
+    /// picture in *decode* order, so a stream with B-frames hands the frames
+    /// over with non-monotonic PTS; sort them by PTS first (a stable sort keeps
+    /// same-PTS frames in carriage order), otherwise cues overlap or run
+    /// backwards (observed on shaka-player's `captions-test.ts`).
+    ///
     /// # Errors
     ///
     /// [`Error::CcData`] if `cc_data_bytes` is not a valid `cc_data()`
