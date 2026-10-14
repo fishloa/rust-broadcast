@@ -876,12 +876,7 @@ mod tests {
 
     /// Add odd parity to a 7-bit value (so inputs look like real line-21 bytes).
     fn par(v: u8) -> u8 {
-        let ones = (v & 0x7F).count_ones();
-        if ones.is_multiple_of(2) {
-            v | 0x80
-        } else {
-            v & 0x7F
-        }
+        broadcast_common::parity::set_odd_parity(v)
     }
 
     /// Pop-on caption: RCL, PAC row 15 indent 0, "HI", EOC → on-screen "HI".

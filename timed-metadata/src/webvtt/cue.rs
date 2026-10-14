@@ -280,7 +280,7 @@ impl Cea708CueExtractor {
 /// #     let p4=1^p1^d1^p2^d2^p3^d3^d4;
 /// #     p1|(d1<<1)|(p2<<2)|(d2<<3)|(p3<<4)|(d3<<5)|(p4<<6)|(d4<<7)
 /// # }
-/// # fn parity(d7: u8) -> u8 { let d=d7&0x7F; if d.count_ones()%2==0 {d|0x80} else {d} }
+/// # use broadcast_common::parity::set_odd_parity as parity;
 /// let mut header = [0u8; 42];
 /// header[0] = hamming(0); // magazine field 0 -> magazine 8, row 0
 /// header[1] = hamming(0);

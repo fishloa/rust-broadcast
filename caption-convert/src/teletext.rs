@@ -101,12 +101,7 @@ mod tests {
     }
 
     fn parity(d7: u8) -> u8 {
-        let d = d7 & 0x7F;
-        if d.count_ones().is_multiple_of(2) {
-            d | 0x80
-        } else {
-            d
-        }
+        broadcast_common::parity::set_odd_parity(d7)
     }
 
     fn field(block: [u8; 42]) -> TeletextDataField {
