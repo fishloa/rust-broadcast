@@ -33,7 +33,7 @@ pub enum Error {
         "invalid fixed bits in {what}: got 0x{got:02X}, expected 0x{expected:02X} (mask 0x{mask:02X})"
     )]
     InvalidFixedBits {
-        /// Which fixed field failed (`"reserved/zero_bit"`, `"one_bit/reserved"`,
+        /// Which fixed field failed (`"one_bit/reserved"`,
         /// `"marker_bits"`).
         what: &'static str,
         /// The masked bits as received.

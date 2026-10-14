@@ -59,14 +59,8 @@ impl DiffState {
         if !changed {
             return;
         }
-        if let Some((start, prev)) = self.open.take()
-            && !prev.is_empty()
-        {
-            cues.push(Cue {
-                start: MediaTime(start),
-                end: MediaTime(ticks),
-                text: prev,
-            });
+        if let Some((start, prev)) = self.open.take() {
+            push_if_displayed(cues, start, ticks, prev);
         }
         if !text.is_empty() {
             self.open = Some((ticks, text));
@@ -75,16 +69,27 @@ impl DiffState {
 
     /// Close any still-open cue at end of stream (or a channel/service reset).
     fn finalize(&mut self, ticks: u64, cues: &mut Vec<Cue>) {
-        if let Some((start, prev)) = self.open.take()
-            && !prev.is_empty()
-        {
-            cues.push(Cue {
-                start: MediaTime(start),
-                end: MediaTime(ticks),
-                text: prev,
-            });
+        if let Some((start, prev)) = self.open.take() {
+            push_if_displayed(cues, start, ticks, prev);
         }
     }
+}
+
+/// Push `text` as a cue over `start..end` unless it was never on screen: empty
+/// text, or a zero-length interval. Real captures carry several caption
+/// updates under one access-unit PTS (the mux.js multi-channel capture has 21
+/// such cues on CC1), and a cue whose end equals its start is invisible
+/// (WebVTT requires the end time to be after the start time).
+#[cfg(any(feature = "cc-data", feature = "teletext"))]
+fn push_if_displayed(cues: &mut Vec<Cue>, start: u64, end: u64, text: String) {
+    if text.is_empty() || end <= start {
+        return;
+    }
+    cues.push(Cue {
+        start: MediaTime(start),
+        end: MediaTime(end),
+        text,
+    });
 }
 
 /// Extracts [`Cue`]s from a single CEA-608 data channel (CTA-608-E),
@@ -379,6 +384,23 @@ mod tests {
             cc_data_1: b1,
             cc_data_2: b2,
         }
+    }
+
+    /// Paint-on text that changes twice under one PTS: the intermediate text
+    /// was never on screen, so only the cue that actually has a duration is
+    /// emitted (no zero-length cue).
+    #[test]
+    fn same_pts_flicker_emits_no_zero_length_cue() {
+        let mut ex = Cea608CueExtractor::new(cc_data::decode::Cea608Channel::Cc1);
+        ex.push_frame(0, &[t608(0x14, 0x29)]); // RDC (paint-on)
+        ex.push_frame(0, &[t608(0x14, 0x70)]); // PAC row 15
+        ex.push_frame(10, &[t608(b'A', b'B')]); // "AB" shown at 10
+        ex.push_frame(10, &[t608(b'C', b'D')]); // "ABCD" at the SAME pts
+        ex.push_frame(20, &[t608(0x14, 0x2C)]); // EDM at 20
+        let cues = ex.cues();
+        assert_eq!(cues.len(), 1, "{cues:?}");
+        assert_eq!(cues[0].text, "ABCD");
+        assert!(cues[0].start.0 < cues[0].end.0);
     }
 
     /// Pop-on: RCL/PAC/chars produce no cue until EOC; EDM closes it.

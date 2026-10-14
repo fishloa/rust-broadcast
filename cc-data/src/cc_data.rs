@@ -8,11 +8,15 @@ use broadcast_common::{Parse, Serialize};
 const MAX_CC_COUNT: usize = 31;
 /// Fixed `0xFF` reserved byte after cc_count, and the trailing marker byte.
 const FF: u8 = 0xFF;
-/// Byte 0 bits 7 (`reserved`, set to 1) and 5 (`zero_bit`, set to 0) — the
-/// fixed-value bits of the cc_data header (TS 101 154 Table B.9).
-const HEADER_FIXED_MASK: u8 = 0xA0;
-/// Required value of byte 0 under [`HEADER_FIXED_MASK`]: `reserved`=1, `zero_bit`=0.
-const HEADER_FIXED_VALUE: u8 = 0x80;
+/// Byte 0 bit 7: `reserved (set to "1")` in TS 101 154 Table B.9, the
+/// `process_em_data_flag` of the ATSC A/53 / CEA-708 lineage the syntax is
+/// shared with.
+const PROCESS_EM_DATA_FLAG_BIT: u8 = 0x80;
+/// Byte 0 bit 6: `process_cc_data_flag`.
+const PROCESS_CC_DATA_FLAG_BIT: u8 = 0x40;
+/// Byte 0 bit 5: `zero_bit (set to "0")` in Table B.9, the
+/// `additional_data_flag` of the A/53 / CEA-708 lineage.
+const ADDITIONAL_DATA_FLAG_BIT: u8 = 0x20;
 /// `cc_count` — byte 0 bits `[4:0]`.
 const CC_COUNT_MASK: u8 = 0x1F;
 /// Triplet byte 0 bits `[7:3]`: `one_bit`(1) + `reserved`(4), all set to 1
@@ -98,8 +102,18 @@ pub struct CcTriplet {
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[cfg_attr(feature = "serde", derive(serde::Serialize))]
 pub struct CcData {
+    /// Byte 0 bit 7. Table B.9 calls it `reserved (set to "1")`; in the ATSC
+    /// A/53 / CEA-708 lineage the same bit is `process_em_data_flag`, and real
+    /// A/53 captures (shaka-player's `captions-test.ts`) carry `0` here.
+    /// Parsed tolerantly and preserved so the round-trip stays byte-exact;
+    /// construct with `true` to match Table B.9's own default.
+    pub process_em_data_flag: bool,
     /// `process_cc_data_flag` — when `true`, the cc_data is to be processed.
     pub process_cc_data_flag: bool,
+    /// Byte 0 bit 5. Table B.9 calls it `zero_bit (set to "0")`; in the A/53 /
+    /// CEA-708 lineage it is `additional_data_flag`. Parsed tolerantly and
+    /// preserved; construct with `false` to match Table B.9's default.
+    pub additional_data_flag: bool,
     /// The byte after `cc_count`, Table B.9's `reserved (set to "1111 1111")`.
     /// Real streams (this byte is `em_data` in the ATSC A/53 lineage this
     /// syntax is shared with) don't always hold `0xFF` here, so it is
@@ -133,16 +147,12 @@ impl<'a> Parse<'a> for CcData {
                 what: "cc_data header",
             });
         }
-        // byte0 bit7 = reserved(set to "1"), bit5 = zero_bit(set to "0").
-        if b[0] & HEADER_FIXED_MASK != HEADER_FIXED_VALUE {
-            return Err(Error::InvalidFixedBits {
-                what: "reserved/zero_bit",
-                got: b[0] & HEADER_FIXED_MASK,
-                expected: HEADER_FIXED_VALUE,
-                mask: HEADER_FIXED_MASK,
-            });
-        }
-        let process_cc_data_flag = (b[0] >> 6) & 0x01 != 0;
+        // byte0 bits 7 and 5 are reserved/zero in Table B.9 but carry
+        // `process_em_data_flag` / `additional_data_flag` in real A/53
+        // streams: accept either value and keep it (reserved-bit policy).
+        let process_em_data_flag = b[0] & PROCESS_EM_DATA_FLAG_BIT != 0;
+        let process_cc_data_flag = b[0] & PROCESS_CC_DATA_FLAG_BIT != 0;
+        let additional_data_flag = b[0] & ADDITIONAL_DATA_FLAG_BIT != 0;
         let cc_count = usize::from(b[0] & CC_COUNT_MASK);
         let reserved_byte1 = b[1];
         let total = 2 + cc_count * 3 + 1; // header + triplets + marker
@@ -183,7 +193,9 @@ impl<'a> Parse<'a> for CcData {
             });
         }
         Ok(CcData {
+            process_em_data_flag,
             process_cc_data_flag,
+            additional_data_flag,
             reserved_byte1,
             triplets,
         })
@@ -206,9 +218,13 @@ impl Serialize for CcData {
                 have: buf.len(),
             });
         }
-        // reserved=1, process_cc_data_flag, zero_bit=0, cc_count
-        let cc_count = self.triplets.len() as u8 & CC_COUNT_MASK;
-        buf[0] = HEADER_FIXED_VALUE | (u8::from(self.process_cc_data_flag) << 6) | cc_count;
+        // process_em_data_flag, process_cc_data_flag, additional_data_flag,
+        // cc_count (<= MAX_CC_COUNT, checked above).
+        let cc_count = self.triplets.len() as u8;
+        buf[0] = (u8::from(self.process_em_data_flag) * PROCESS_EM_DATA_FLAG_BIT)
+            | (u8::from(self.process_cc_data_flag) * PROCESS_CC_DATA_FLAG_BIT)
+            | (u8::from(self.additional_data_flag) * ADDITIONAL_DATA_FLAG_BIT)
+            | cc_count;
         buf[1] = self.reserved_byte1;
         let mut pos = 2;
         for t in &self.triplets {
@@ -238,7 +254,9 @@ mod tests {
 
     fn sample() -> CcData {
         CcData {
+            process_em_data_flag: true,
             process_cc_data_flag: true,
+            additional_data_flag: false,
             reserved_byte1: FF,
             triplets: alloc::vec![
                 tr(true, CcType::Dtvcc708Start, 0xC1, 0x02),
@@ -279,7 +297,9 @@ mod tests {
     #[test]
     fn empty_round_trip() {
         let cc = CcData {
+            process_em_data_flag: true,
             process_cc_data_flag: false,
+            additional_data_flag: false,
             reserved_byte1: FF,
             triplets: alloc::vec![],
         };
@@ -302,17 +322,48 @@ mod tests {
         assert_eq!(reparsed, cc);
     }
 
+    /// A real frame: the first `GA94` cc_data() of shaka-player's
+    /// `captions-test.ts` (Apache-2.0, `fixtures/captions/shaka/`). Its header
+    /// byte is `0x54`: `process_em_data_flag = 0`, `process_cc_data_flag = 1`,
+    /// `additional_data_flag = 0`, `cc_count = 20`, and its em_data byte is
+    /// `0x00`, not Table B.9's `0xFF`. A header check that insists on bit 7 = 1
+    /// rejects every frame of that capture.
+    const SHAKA_REAL_FRAME: &str = "5400fc94aefd8080ff4527fe9800fe0000fe0116fe1100fa0000fa0000fa0000fa0000fa0000fa0000fa0000fa0000fa0000fa0000fa0000fa0000fa0000ff";
+
+    fn unhex(h: &str) -> Vec<u8> {
+        (0..h.len())
+            .step_by(2)
+            .map(|i| u8::from_str_radix(&h[i..i + 2], 16).unwrap())
+            .collect()
+    }
+
     #[test]
-    fn parse_rejects_bad_header_fixed_bits() {
+    fn real_a53_header_with_clear_em_data_flag_parses_and_round_trips() {
+        let bytes = unhex(SHAKA_REAL_FRAME);
+        let cc = CcData::parse(&bytes).unwrap();
+        assert!(!cc.process_em_data_flag);
+        assert!(cc.process_cc_data_flag);
+        assert!(!cc.additional_data_flag);
+        assert_eq!(cc.reserved_byte1, 0x00);
+        assert_eq!(cc.triplets.len(), 20);
+        assert_eq!(cc.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn additional_data_flag_set_is_preserved() {
         let mut bytes = sample().try_to_bytes().unwrap();
-        bytes[0] &= !0x80; // clear the "reserved=1" bit
-        assert!(matches!(
-            CcData::parse(&bytes),
-            Err(Error::InvalidFixedBits {
-                what: "reserved/zero_bit",
-                ..
-            })
-        ));
+        bytes[0] |= 0x20; // additional_data_flag = 1 (Table B.9 "zero_bit")
+        bytes[0] &= !0x80; // process_em_data_flag = 0
+        let cc = CcData::parse(&bytes).unwrap();
+        assert!(cc.additional_data_flag);
+        assert!(!cc.process_em_data_flag);
+        assert_eq!(cc.try_to_bytes().unwrap(), bytes);
+    }
+
+    #[test]
+    fn hand_built_header_defaults_to_the_table_b9_values() {
+        let bytes = sample().try_to_bytes().unwrap();
+        assert_eq!(bytes[0] & 0xA0, 0x80);
     }
 
     #[test]
@@ -345,7 +396,9 @@ mod tests {
     #[test]
     fn serialize_rejects_over_31_triplets() {
         let cc = CcData {
+            process_em_data_flag: true,
             process_cc_data_flag: true,
+            additional_data_flag: false,
             reserved_byte1: FF,
             triplets: alloc::vec![tr(true, CcType::Ntsc608Field1, 0, 0); 32],
         };
