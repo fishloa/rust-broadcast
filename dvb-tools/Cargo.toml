@@ -16,6 +16,7 @@ name = "dvb-tools"
 path = "src/main.rs"
 
 [dependencies]
+broadcast-common = { path = "../broadcast-common", version = "9.4", default-features = false }
 dvb-si    = { path = "../dvb-si",    version = "11.1", features = ["ts", "serde", "chrono"] }
 dvb-t2mi  = { path = "../dvb-t2mi",  version = "11.1", features = ["ts"] }
 mpeg-ts   = { path = "../mpeg-ts",   version = "0.5", default-features = false, features = ["std"] }

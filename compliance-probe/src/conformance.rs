@@ -15,17 +15,9 @@
 //! `pcr_accuracy_error`) so a dashboard never implies the stricter check ran.
 
 use alloc::collections::BTreeMap;
+use broadcast_common::clock33::{PCR_HZ, pcr_forward_distance};
 use core::time::Duration;
 use mpeg_ts::pid::Pid;
-
-/// PCR clock rate — ISO/IEC 13818-1 §2.4.2.2, "27 MHz System Clock".
-const PCR_HZ: u64 = 27_000_000;
-
-/// PCR field modulus: the 33-bit `program_clock_reference_base` plus the
-/// 9-bit `program_clock_reference_extension` (ISO/IEC 13818-1 §2.4.2.2)
-/// together count `base * 300 + extension` 27 MHz ticks, wrapping at
-/// `2^33 * 300`.
-const PCR_MODULUS: u64 = broadcast_common::clock33::WRAP_33BIT * 300;
 
 /// A discontinuity guard, not a spec value: an inter-PCR gap this large
 /// (wall-clock or PCR-derived) is treated as a legitimate discontinuity
@@ -104,13 +96,10 @@ impl PcrTracker {
             return None;
         }
 
-        // Forward distance on the 2^33*300 PCR circle. `PCR_MODULUS` is not a
-        // power of two, so `u64::wrapping_sub(..) % PCR_MODULUS` is wrong
-        // whenever `pcr < last` (2^64 is not a multiple of the modulus): it
-        // produced a garbage delta on every PCR wrap or backward step.
-        let pcr_delta_ticks = (pcr_27mhz % PCR_MODULUS + PCR_MODULUS
-            - state.last_pcr_27mhz % PCR_MODULUS)
-            % PCR_MODULUS;
+        // Modular forward distance on the 2^33*300 PCR circle. NOT
+        // `wrapping_sub(..) % M`: M is not a power of two, so that form is
+        // wrong whenever the PCR wraps or steps backward.
+        let pcr_delta_ticks = pcr_forward_distance(state.last_pcr_27mhz, pcr_27mhz);
         let pcr_delta = Duration::from_secs_f64(pcr_delta_ticks as f64 / PCR_HZ as f64);
         let wall_delta = t.saturating_sub(state.last_arrival);
 
@@ -155,6 +144,7 @@ impl PcrTracker {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use broadcast_common::clock33::PCR_WRAP_27MHZ;
 
     /// A perfectly steady 27 MHz PCR advancing in lock-step with wall-clock
     /// arrival must settle to ~0 ppm drift and ~0 jitter.
@@ -194,11 +184,11 @@ mod tests {
         let pid = Pid::new(0x0100);
         let step = PCR_HZ / 10;
         // Start 5 steps before the wrap so the series crosses it.
-        let mut pcr = PCR_MODULUS - 5 * step;
+        let mut pcr = PCR_WRAP_27MHZ - 5 * step;
         let mut t = Duration::ZERO;
         let mut samples = Vec::new();
         for _ in 0..12 {
-            pcr = (pcr + step) % PCR_MODULUS;
+            pcr = (pcr + step) % PCR_WRAP_27MHZ;
             t += Duration::from_millis(100);
             samples.push(tracker.observe(pid, pcr, t));
         }

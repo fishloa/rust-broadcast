@@ -84,18 +84,14 @@ impl Escr {
     /// Full ESCR value on the 27 MHz clock: `base * 300 + extension`.
     #[must_use]
     pub fn as_27mhz(self) -> u64 {
-        self.base * 300 + self.extension as u64
+        broadcast_common::clock33::pcr_from_parts(self.base, self.extension)
     }
 
     /// Construct from an absolute 27 MHz clock value.
     #[must_use]
     pub fn from_27mhz(ticks: u64) -> Self {
-        const BASE_MASK: u64 = 0x1_FFFF_FFFF;
-        const EXT_MASK: u16 = 0x1FF;
-        Self {
-            base: (ticks / 300) & BASE_MASK,
-            extension: ((ticks % 300) as u16) & EXT_MASK,
-        }
+        let (base, extension) = broadcast_common::clock33::pcr_split(ticks);
+        Self { base, extension }
     }
 
     /// Decode from the 6-byte ESCR field.

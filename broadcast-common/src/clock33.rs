@@ -28,6 +28,10 @@
 //!   absolute timeline (PTS/DTS unrolling across a capture, including
 //!   B-frame reordering that dips slightly backward without crossing a
 //!   wrap).
+//! - [`pcr_forward_distance`] / [`pcr_signed_distance`] / [`pcr_from_parts`] /
+//!   [`pcr_split`] — the same modular arithmetic for the 27 MHz PCR clock
+//!   (`base * 300 + extension`, wrapping at `2^33 * 300`, which is *not* a power
+//!   of two, so `wrapping_sub(..) % M` is wrong across a wrap).
 //! - [`wrapping_forward_distance`] — the modular forward distance from one
 //!   already-comparable raw value to another, with no accumulator or history
 //!   at all. Used to classify a single pair of values as "in order" vs
@@ -125,6 +129,75 @@ pub fn signed_distance(from: u64, to: u64) -> i64 {
         let back = WRAP_33BIT - forward;
         // `back` is in `[1, 2^32)` here, so the negation cannot overflow.
         -(back as i64)
+    }
+}
+
+// ── 27 MHz PCR clock (ISO/IEC 13818-1 §2.4.3.5) ─────────────────────────────
+
+/// MPEG-2 Systems 90 kHz system-clock rate: the unit of PTS/DTS and of the
+/// 33-bit PCR/ESCR/SCR *base* (ISO/IEC 13818-1 §2.4.3.5 / §2.4.3.7).
+pub const PTS_HZ: u64 = 90_000;
+
+/// The 27 MHz system-clock rate: the unit of a full `PCR` (`base * 300 +
+/// extension`), ESCR and SCR value (ISO/IEC 13818-1 §2.4.2.1 / §2.4.3.5).
+pub const PCR_HZ: u64 = 27_000_000;
+
+/// `base * 300 + extension`: how many 27 MHz ticks one 90 kHz base tick spans
+/// (`PCR_HZ / PTS_HZ`), and the modulus of the 9-bit `extension`.
+pub const PCR_EXT_MODULUS: u64 = PCR_HZ / PTS_HZ;
+
+/// The wrap period of a full PCR on the 27 MHz clock: `2^33 * 300` ticks
+/// (~26.5 h). It is NOT a power of two, so a wrapped difference computed with
+/// `u64::wrapping_sub(..) % PCR_WRAP_27MHZ` is wrong whenever the PCR wraps or
+/// steps backward (2^64 is not a multiple of this modulus, so the u64 wrap
+/// contributes a bogus `2^64 mod PCR_WRAP_27MHZ` offset): use
+/// [`pcr_forward_distance`] / [`pcr_signed_distance`].
+pub const PCR_WRAP_27MHZ: u64 = WRAP_33BIT * PCR_EXT_MODULUS;
+
+/// A full 27 MHz clock value from its parts: `base * 300 + extension`
+/// (ISO/IEC 13818-1 §2.4.3.5; the same arithmetic as ESCR §2.4.3.7 and the
+/// program-stream SCR §2.5.3.4). Wrapping arithmetic: an out-of-range `base`
+/// (wider than 33 bits) yields a meaningless value rather than a panic, like
+/// every parser-fed helper in this crate.
+#[must_use]
+pub const fn pcr_from_parts(base: u64, extension: u16) -> u64 {
+    base.wrapping_mul(PCR_EXT_MODULUS)
+        .wrapping_add(extension as u64)
+}
+
+/// Split a 27 MHz clock value into `(base, extension)`: `base = ticks / 300`
+/// truncated to its 33-bit wire width, `extension = ticks % 300` (always < 300,
+/// so it fits the 9-bit field). Round-trips with [`pcr_from_parts`] for any
+/// `ticks < PCR_WRAP_27MHZ`.
+#[must_use]
+pub const fn pcr_split(ticks: u64) -> (u64, u16) {
+    (
+        (ticks / PCR_EXT_MODULUS) & (WRAP_33BIT - 1),
+        (ticks % PCR_EXT_MODULUS) as u16,
+    )
+}
+
+/// The modular forward distance from `from` to `to` on the 27 MHz PCR clock:
+/// `(to - from) mod 2^33*300`, always in `[0, PCR_WRAP_27MHZ)`. Inputs at or
+/// above the modulus are reduced first. This is the PCR analogue of
+/// [`wrapping_forward_distance`] and the only correct way to take a PCR delta
+/// across a wrap (see [`PCR_WRAP_27MHZ`] for why `wrapping_sub` is not).
+#[must_use]
+pub fn pcr_forward_distance(from: u64, to: u64) -> u64 {
+    // Both reduced operands are < M < 2^42, so `to + M - from` cannot overflow.
+    (to % PCR_WRAP_27MHZ + PCR_WRAP_27MHZ - from % PCR_WRAP_27MHZ) % PCR_WRAP_27MHZ
+}
+
+/// The shortest signed distance from `from` to `to` on the PCR circle, in
+/// `(-PCR_WRAP_27MHZ/2, PCR_WRAP_27MHZ/2]`: a forward wrap reads as a small
+/// positive step, a small backward step (also across the wrap) as negative.
+#[must_use]
+pub fn pcr_signed_distance(from: u64, to: u64) -> i64 {
+    let forward = pcr_forward_distance(from, to);
+    if forward <= PCR_WRAP_27MHZ / 2 {
+        forward as i64 // `forward <= M/2 < 2^41`: lossless
+    } else {
+        -((PCR_WRAP_27MHZ - forward) as i64) // in `[1, M/2)`: lossless
     }
 }
 
@@ -236,5 +309,55 @@ mod tests {
     #[test]
     fn signed_distance_reduces_inputs_at_or_above_the_modulus() {
         assert_eq!(signed_distance(WRAP_33BIT + 5, WRAP_33BIT + 8), 3);
+    }
+    #[test]
+    fn pcr_constants_are_the_spec_values() {
+        assert_eq!(PCR_EXT_MODULUS, 300);
+        assert_eq!(PCR_WRAP_27MHZ, (1u64 << 33) * 300);
+        assert_eq!(PCR_WRAP_27MHZ, 2_576_980_377_600);
+        assert_eq!(PCR_HZ, PTS_HZ * PCR_EXT_MODULUS);
+    }
+
+    #[test]
+    fn pcr_parts_round_trip() {
+        for ticks in [0, 1, 299, 300, 301, 27_000_000, PCR_WRAP_27MHZ - 1] {
+            let (base, ext) = pcr_split(ticks);
+            assert!(ext < 300 && base < WRAP_33BIT);
+            assert_eq!(pcr_from_parts(base, ext), ticks);
+        }
+        // An over-wide base wraps instead of panicking.
+        let _ = pcr_from_parts(u64::MAX, 299);
+    }
+
+    #[test]
+    fn pcr_forward_distance_across_the_wrap() {
+        let m = PCR_WRAP_27MHZ;
+        assert_eq!(pcr_forward_distance(m - 5, 10), 15);
+        assert_eq!(pcr_forward_distance(10, m - 5), m - 15);
+        assert_eq!(pcr_forward_distance(7, 7), 0);
+        assert_eq!(pcr_forward_distance(0, m - 1), m - 1);
+        // Inputs at or above the modulus are reduced first.
+        assert_eq!(pcr_forward_distance(m + 3, 5), 2);
+    }
+
+    /// The bug this exists to prevent: `to.wrapping_sub(from) % M` is wrong
+    /// whenever `to < from`, because 2^64 mod M != 0.
+    #[test]
+    fn pcr_forward_distance_is_not_wrapping_sub_mod_m() {
+        let m = PCR_WRAP_27MHZ;
+        let (from, to) = (m - 5, 10u64);
+        let naive = to.wrapping_sub(from) % m;
+        assert_ne!(naive, 15, "the naive form is wrong across a wrap");
+        assert_eq!(pcr_forward_distance(from, to), 15);
+    }
+
+    #[test]
+    fn pcr_signed_distance_is_the_shortest_path() {
+        let m = PCR_WRAP_27MHZ;
+        assert_eq!(pcr_signed_distance(m - 10, 5), 15);
+        assert_eq!(pcr_signed_distance(5, m - 10), -15);
+        assert_eq!(pcr_signed_distance(0, m / 2), (m / 2) as i64);
+        assert_eq!(pcr_signed_distance(0, m / 2 + 1), -((m / 2 - 1) as i64));
+        assert_eq!(pcr_signed_distance(100, 100), 0);
     }
 }

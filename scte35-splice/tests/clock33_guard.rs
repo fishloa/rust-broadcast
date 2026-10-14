@@ -1,7 +1,9 @@
 //! Tripwire guard (umbrella #1137 T9): 33-bit PTS/DTS/`pts_time` wrap
 //! arithmetic in this crate goes through `broadcast_common::clock33`
 //! (`WRAP_33BIT`, `unwrap_delta`, `wrapping_forward_distance`, `add`,
-//! `add_signed`, `signed_distance`), never a hand-rolled modulus or a raw
+//! `add_signed`, `signed_distance`) and the 27 MHz PCR clock arithmetic goes
+//! through `clock33::{PCR_HZ, PCR_WRAP_27MHZ, pcr_forward_distance,
+//! pcr_from_parts, pcr_split}`, never a hand-rolled modulus or a raw
 //! subtraction. Scans every `src/**/*.rs` outside `#[cfg(test)]` items and
 //! fails on:
 //!
@@ -35,6 +37,14 @@ const BANNED: &[(&str, &str)] = &[
     (
         "8_589_934_592",
         "hand-rolled 2^33 (use clock33::WRAP_33BIT)",
+    ),
+    (
+        "27_000_000",
+        "hand-rolled 27 MHz clock rate (use clock33::PCR_HZ)",
+    ),
+    (
+        "* 300",
+        "hand-rolled PCR base*300+ext arithmetic (use clock33::pcr_from_parts / pcr_split / PCR_WRAP_27MHZ)",
     ),
 ];
 

@@ -4,6 +4,7 @@
 
 ### Added
 - `len::fit_mask(value, mask, field)`: checked replacement for the `(value & MASK)` idiom in serializers; returns `FieldOverflow` when a set bit lies outside `mask` (#1197).
+- `clock33`: the 27 MHz PCR clock in one place - `PTS_HZ`, `PCR_HZ`, `PCR_EXT_MODULUS`, `PCR_WRAP_27MHZ` (`2^33 * 300`), `pcr_from_parts` / `pcr_split` (`base * 300 + extension`), `pcr_forward_distance` and `pcr_signed_distance` (the modular PCR delta; `wrapping_sub(..) % PCR_WRAP_27MHZ` is wrong across a wrap because the modulus is not a power of two). Replaces five hand-rolled copies in `dvb-conformance`, `media-doctor`, `compliance-probe`, `dvb-tools`, `ts-fix` and the `base * 300 + ext` arithmetic of `mpeg-ts` `Pcr`, `mpeg-pes` `Escr`, `mpeg-ps` `Scr` (#1206).
 
 ### Removed (BREAKING)
 - `Serialize::to_bytes()`, the default method that panicked when `serialize_into` failed, is removed (umbrella #1143 / T15). `Serialize::try_to_bytes() -> Result<Vec<u8>, Self::Error>` is the only allocate-and-serialize entry point; production code propagates the error, tests use `.try_to_bytes().unwrap()`. No infallible replacement is provided (no `Infallible` marker): a panic-free default cannot be offered for a trait whose implementers may fail. Guarded by `tests/no_panicking_to_bytes_guard.rs`. Inherent `to_bytes` methods on concrete types (fixed-size arrays, `Result`-returning ones) are unaffected. Major bump of `broadcast-common`; every dependent crate's `broadcast-common` caret moves with it.

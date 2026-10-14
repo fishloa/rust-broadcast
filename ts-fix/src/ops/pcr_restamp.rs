@@ -81,8 +81,8 @@ use mpeg_ts::ts::{Pcr, TS_PACKET_SIZE, TsPacket};
 use crate::ops::pcr_conformance::PcrDiscDetector;
 use crate::ops::{Op, StreamModel};
 
-/// 27 MHz PCR wrap period: 33-bit base × 300 (ISO/IEC 13818-1 §2.4.3.5).
-const PCR_27MHZ_MODULUS: u64 = (1u64 << 33) * 300;
+/// 27 MHz PCR wrap period (33-bit base × 300, ISO/IEC 13818-1 §2.4.3.5).
+use broadcast_common::clock33::{PCR_WRAP_27MHZ as PCR_27MHZ_MODULUS, pcr_forward_distance};
 
 /// PCR restamp mode.
 ///
@@ -167,7 +167,7 @@ pub(crate) struct PcrRestampOp {
 
 /// Bits carried in one 188-byte TS packet — the numerator of the
 /// ticks-per-packet rate at a given bitrate (`188 × 8 × 27_000_000 / bps`).
-const TICKS_NUM: u128 = 188 * 8 * 27_000_000;
+const TICKS_NUM: u128 = 188 * 8 * (broadcast_common::clock33::PCR_HZ as u128);
 
 impl PcrRestampOp {
     pub(crate) fn new(mode: PcrRestamp) -> Self {
@@ -285,7 +285,7 @@ impl Op for PcrRestampOp {
                 // Wrap-aware forward-distance check.  On a 33-bit PCR base wrap
                 // the raw `obs` is smaller than `last_obs_27mhz`, but the forward
                 // distance modulo the PCR modulus is a small positive step.
-                let fwd = obs.wrapping_sub(anchor.last_obs_27mhz) % PCR_27MHZ_MODULUS;
+                let fwd = pcr_forward_distance(anchor.last_obs_27mhz, obs);
                 // #562: a genuine, unflagged discontinuity (TR 101 290 §5.2.2
                 // indicator 2.3b) is a forward jump too, but it must NOT be
                 // adopted as a "sane" observation — that would carry the
@@ -317,7 +317,7 @@ impl Op for PcrRestampOp {
                     // legal 33-bit PCR wrap, since the raw `last_obs_27mhz`
                     // can be numerically smaller than `anchor_27mhz`.
                     let span_ticks =
-                        anchor.last_obs_27mhz.wrapping_sub(anchor.anchor_27mhz) % PCR_27MHZ_MODULUS;
+                        pcr_forward_distance(anchor.anchor_27mhz, anchor.last_obs_27mhz);
                     let delta = now.saturating_sub(anchor.anchor_pkt);
                     // Exact rational rate (span_ticks / span_pkt) applied to
                     // the whole `delta` in one `u128` division, rather than a

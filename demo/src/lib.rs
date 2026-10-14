@@ -648,7 +648,7 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
 
                 if let Some((anchor_val, anchor_t)) = pcr_anchor {
                     if pcr_27mhz >= anchor_val {
-                        let delta_secs = (pcr_27mhz - anchor_val) as f64 / 27_000_000.0;
+                        let delta_secs = (pcr_27mhz - anchor_val) as f64 / broadcast_common::clock33::PCR_HZ as f64;
                         let candidate = anchor_t + Duration::from_secs_f64(delta_secs);
                         if candidate > clock {
                             clock = candidate;
@@ -664,7 +664,7 @@ fn analyze_impl(bytes: &[u8]) -> AnalysisResult {
                         packet_index: idx,
                         pid,
                         pcr_27mhz,
-                        seconds: pcr_27mhz as f64 / 27_000_000.0,
+                        seconds: pcr_27mhz as f64 / broadcast_common::clock33::PCR_HZ as f64,
                     });
                 } else {
                     timing_truncated = true;

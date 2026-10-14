@@ -48,16 +48,16 @@ use crate::Report;
 use crate::report::{Finding, Location, Severity};
 use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 
+use broadcast_common::clock33::pcr_forward_distance;
 /// 27 MHz clock rate (ticks per second) — ISO/IEC 13818-1 §2.4.2.
-const CLOCK_27MHZ: u64 = 27_000_000;
+use broadcast_common::clock33::{PCR_HZ as CLOCK_27MHZ, PCR_WRAP_27MHZ as PCR_MODULUS_27MHZ};
 
 /// 27 MHz ticks in one millisecond — every PCR interval below is rendered in
 /// ms by dividing by this.
 const TICKS_27MHZ_PER_MS: u64 = CLOCK_27MHZ / 1000;
 
-/// PCR modulus on the 27 MHz clock: 2³³ × 300.
-/// ISO/IEC 13818-1 §2.4.3.5 — 33-bit base wraps modulo this value.
-const PCR_MODULUS_27MHZ: u64 = broadcast_common::clock33::WRAP_33BIT * 300;
+// `PCR_MODULUS_27MHZ` (2³³ × 300, ISO/IEC 13818-1 §2.4.3.5) is
+// `broadcast_common::clock33::PCR_WRAP_27MHZ`, imported above.
 
 /// PCR repetition error threshold: 100 ms (TR 101 290 Table 5.0b indicator
 /// 2.3a / note 2).
@@ -147,7 +147,7 @@ impl Diagnostic for PcrCheck {
             }
 
             // PCR delta (modular, handling 33-bit wrap).
-            let delta = (pcr.wrapping_add(PCR_MODULUS_27MHZ) - last_pcr) % PCR_MODULUS_27MHZ;
+            let delta = pcr_forward_distance(last_pcr, pcr);
             let delta_ms = delta / TICKS_27MHZ_PER_MS;
 
             // The two indicators are defined on the *same* quantity, with

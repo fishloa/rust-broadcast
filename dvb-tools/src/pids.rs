@@ -16,17 +16,13 @@ use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 use crate::util::PacketReader;
 
 /// PCR clock frequency on which PCR_27mhz ticks (ISO/IEC 13818-1 §2.4.3.5).
-const PCR_CLOCK_HZ: u64 = 27_000_000;
+use broadcast_common::clock33::PCR_HZ as PCR_CLOCK_HZ;
 
-/// The PCR modulus on the 27 MHz clock: the 33-bit `program_clock_reference_base`
-/// (90 kHz) wraps every `2^33` ticks (ISO/IEC 13818-1 §2.4.2.2), and each base
-/// tick spans 300 27 MHz ticks (§2.4.3.5's `base * 300 + extension`), so the
-/// combined 27 MHz value wraps every `2^33 * 300` ticks (~26.5 hours). No
-/// crate this one already depends on exports this constant (it is not the
-/// same as `broadcast_common::clock33::WRAP_33BIT`, the 90 kHz PTS/DTS
-/// modulus), so it is named here.
-const PCR_MODULUS_27MHZ: u128 = (1u128 << 33) * 300;
-/// Half the modulus — the threshold distinguishing a genuine wrap from an
+/// The PCR modulus on the 27 MHz clock (`2^33 * 300`, ISO/IEC 13818-1
+/// §2.4.3.5): `broadcast_common::clock33::PCR_WRAP_27MHZ`, widened because this
+/// module accumulates unwrapped values in `u128`/`i128`.
+const PCR_MODULUS_27MHZ: u128 = broadcast_common::clock33::PCR_WRAP_27MHZ as u128;
+/// Half the modulus - the threshold distinguishing a genuine wrap from an
 /// out-of-order/duplicate PCR (mirrors `broadcast_common::clock33`'s
 /// half-modulus convention).
 const PCR_MODULUS_27MHZ_HALF: u128 = PCR_MODULUS_27MHZ / 2;

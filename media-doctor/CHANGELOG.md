@@ -1,6 +1,9 @@
 # Changelog
 
 ## [Unreleased]
+
+### Changed
+- Internal: the 27 MHz PCR constants / modular delta / `base * 300 + extension` arithmetic now come from `broadcast_common::clock33` (`PCR_HZ`, `PCR_WRAP_27MHZ`, `pcr_forward_distance`, `pcr_from_parts`, `pcr_split`) instead of a local copy; no behaviour change (#1206).
 ### Changed
 - Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 - `CcAnomalyCheck` keeps the previous packet of each PID in a fixed 188-byte array instead of a fresh `Vec` per payload packet: a clean stream is now O(PIDs) allocations, not O(packets) (audit MD-O2, #1112; `tests/cc_anomaly_allocs.rs`).

@@ -178,12 +178,9 @@ const DEFAULT_SI_OTHER_INTERVAL_SECS: u64 = 10;
 
 // ── PCR / PES constants ─────────────────────────────────────────────────────
 
-/// PCR modulus on the 27 MHz clock: `2^33 × 300` (33-bit base × 300 ticks).
-/// ISO/IEC 13818-1 §2.4.3.5 — PCR wraps modulo this value.
-const PCR_MODULUS_27MHZ: u64 = (1u64 << 33) * 300;
-
-/// 27 MHz clock rate (ticks per second).
-const CLOCK_27MHZ: u64 = 27_000_000;
+/// PCR modulus on the 27 MHz clock (`2^33 × 300`, ISO/IEC 13818-1 §2.4.3.5)
+/// and the 27 MHz clock rate: both owned by `broadcast_common::clock33`.
+use broadcast_common::clock33::{PCR_HZ as CLOCK_27MHZ, pcr_forward_distance};
 
 /// PES start-code prefix byte 0 (ISO/IEC 13818-1 §2.4.3.6, Table 2-21).
 const PES_PREFIX_0: u8 = 0x00;
@@ -1878,8 +1875,7 @@ impl ConformanceMonitor {
 
         // 2.3b: PCR_discontinuity_indicator_error — PCR delta exceeds 100 ms
         // without a signalled discontinuity.
-        let delta =
-            (pcr_27mhz.wrapping_add(PCR_MODULUS_27MHZ) - last_pcr_27mhz) % PCR_MODULUS_27MHZ;
+        let delta = pcr_forward_distance(last_pcr_27mhz, pcr_27mhz);
         let delta_ms = delta * 1000 / CLOCK_27MHZ;
         let limit_ms = self.config.pcr_discontinuity_limit.as_millis() as u64;
         let should_emit_disc = delta_ms > limit_ms && !discontinuity;

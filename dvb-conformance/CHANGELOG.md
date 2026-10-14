@@ -3,6 +3,9 @@
 ## [Unreleased]
 
 ### Changed
+- Internal: the 27 MHz PCR constants / modular delta / `base * 300 + extension` arithmetic now come from `broadcast_common::clock33` (`PCR_HZ`, `PCR_WRAP_27MHZ`, `pcr_forward_distance`, `pcr_from_parts`, `pcr_split`) instead of a local copy; no behaviour change (#1206).
+
+### Changed
 - The per-PID continuity-counter state reuses its `last_packet` buffer instead
   of allocating a fresh `Vec` on every payload-bearing packet (~9% less time
   per packet on the 2.4 MB T2-MI fixture, release build; r11-O-CONF-1, #1096).
