@@ -34,6 +34,77 @@ pub struct SlotInfo {
     pub module_present: bool,
 }
 
+/// A failed device operation, with enough context to pinpoint it from a log
+/// line alone: **which operation** (`write`, `read`, `poll`, `ioctl
+/// CA_RESET`, ...), **which device** (the `/dev/dvb/adapterN/...` path, or
+/// the fd role for a `from_file` wrapper) and the **errno**. A bare
+/// `Invalid argument (os error 22)` from `Driver::pump` (seen on a DD CXD2099
+/// during init) names none of those, and the same errno means different
+/// things per operation: the kernel's `dvb_ca_en50221` returns `EINVAL` from
+/// `write` while the slot is not yet `RUNNING`, from `read` when the buffer is
+/// smaller than the pending frame, and from `CA_GET_SLOT_INFO` for a slot it
+/// does not have.
+///
+/// It is carried as the payload of an [`io::Error`] of the *same*
+/// [`io::ErrorKind`] as the original, so `kind()`-based handling is
+/// unchanged; the errno stays reachable through [`errno`](Self::errno) /
+/// [`DeviceOpError::errno_of`] (a wrapped error no longer answers
+/// `raw_os_error()` itself).
+#[derive(Debug)]
+pub struct DeviceOpError {
+    /// The operation that failed, e.g. `"write (17 bytes)"`.
+    pub op: String,
+    /// The device, e.g. `"/dev/dvb/adapter3/ca0"`.
+    pub device: String,
+    source: io::Error,
+}
+
+impl DeviceOpError {
+    /// Wrap `source` (an error from `op` on `device`) into an [`io::Error`] of
+    /// the same kind that displays all three.
+    #[must_use]
+    pub fn wrap(op: impl Into<String>, device: &str, source: io::Error) -> io::Error {
+        let kind = source.kind();
+        io::Error::new(
+            kind,
+            DeviceOpError {
+                op: op.into(),
+                device: device.to_owned(),
+                source,
+            },
+        )
+    }
+
+    /// The OS errno of the underlying failure, if it had one.
+    #[must_use]
+    pub fn errno(&self) -> Option<i32> {
+        self.source.raw_os_error()
+    }
+
+    /// The OS errno of `err` whether or not it is wrapped in a
+    /// [`DeviceOpError`] (a plain OS error answers for itself).
+    #[must_use]
+    pub fn errno_of(err: &io::Error) -> Option<i32> {
+        err.raw_os_error().or_else(|| {
+            err.get_ref()
+                .and_then(|inner| inner.downcast_ref::<DeviceOpError>())
+                .and_then(DeviceOpError::errno)
+        })
+    }
+}
+
+impl std::fmt::Display for DeviceOpError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}: {} failed: {}", self.device, self.op, self.source)
+    }
+}
+
+impl std::error::Error for DeviceOpError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
 /// The link-layer device the EN 50221 runtime drives.
 ///
 /// All methods mirror the operations a host performs on the CA file descriptor

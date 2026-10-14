@@ -20,7 +20,7 @@ use std::time::Duration;
 use rustix::event::{Nsecs, PollFd, PollFlags, Timespec};
 
 use crate::dataplane::{CiDataDevice, TS_PACKET_LEN};
-use crate::device::{CaDevice, SlotInfo};
+use crate::device::{CaDevice, DeviceOpError, SlotInfo};
 
 /// Poll a file descriptor for readability up to `timeout`.
 ///
@@ -136,20 +136,34 @@ const RESET_SETTLE: Duration = Duration::from_millis(3000);
 pub struct LinuxCaDevice {
     file: File,
     slot: u8,
+    /// Device path for error context (see [`DeviceOpError`]).
+    label: String,
 }
 
 impl LinuxCaDevice {
     /// Open `/dev/dvb/adapter{adapter}/ca{ca}` (slot 0).
     pub fn open(adapter: u32, ca: u32) -> io::Result<Self> {
         let path = format!("/dev/dvb/adapter{adapter}/ca{ca}");
-        let file = OpenOptions::new().read(true).write(true).open(path)?;
-        Ok(Self { file, slot: 0 })
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&path)
+            .map_err(|e| DeviceOpError::wrap("open (O_RDWR)", &path, e))?;
+        Ok(Self {
+            file,
+            slot: 0,
+            label: path,
+        })
     }
 
     /// Wrap an already-open CA device file for `slot`.
     #[must_use]
     pub fn from_file(file: File, slot: u8) -> Self {
-        Self { file, slot }
+        Self {
+            file,
+            slot,
+            label: format!("CA device (slot {slot}, from_file)"),
+        }
     }
 
     /// The `connection_id` for a TPDU = its `t_c_id`, which follows the tag +
@@ -182,7 +196,13 @@ impl CaDevice for LinuxCaDevice {
         let n = match self.file.read(&mut frame) {
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => return Ok(0),
-            Err(e) => return Err(e),
+            Err(e) => {
+                return Err(DeviceOpError::wrap(
+                    format!("read (<= {} byte frame)", frame.len()),
+                    &self.label,
+                    e,
+                ));
+            }
         };
         if n == frame.len() {
             // A `read()` reports only how many bytes it actually copied,
@@ -211,11 +231,26 @@ impl CaDevice for LinuxCaDevice {
         frame.push(self.slot);
         frame.push(Self::connection_id(buf));
         frame.extend_from_slice(buf);
-        self.file.write_all(&frame)
+        // The kernel's `dvb_ca_en50221_io_write` returns EINVAL while the slot
+        // is not in its RUNNING state (e.g. the CAM is still initialising
+        // after a CA_RESET), so name the frame in the error.
+        self.file.write_all(&frame).map_err(|e| {
+            DeviceOpError::wrap(
+                format!(
+                    "write ({} byte frame: slot {}, connection {})",
+                    frame.len(),
+                    frame[0],
+                    frame[1]
+                ),
+                &self.label,
+                e,
+            )
+        })
     }
 
     fn reset(&mut self) -> io::Result<()> {
-        ioctl::ca_reset(self.file.as_fd())?;
+        ioctl::ca_reset(self.file.as_fd())
+            .map_err(|e| DeviceOpError::wrap("ioctl CA_RESET", &self.label, e))?;
         // The module needs a moment to re-initialise before Create_T_C; the
         // driver waits that out via `reset_settle` on its own clock rather
         // than this call blocking the pump (audit r10-O-10).
@@ -246,7 +281,11 @@ impl CaDevice for LinuxCaDevice {
                     module_ready: true,
                     module_present: true,
                 }),
-                _ => Err(err),
+                _ => Err(DeviceOpError::wrap(
+                    format!("ioctl CA_GET_SLOT_INFO (slot {})", self.slot),
+                    &self.label,
+                    err,
+                )),
             };
         }
         Ok(SlotInfo {
@@ -258,19 +297,42 @@ impl CaDevice for LinuxCaDevice {
 
     fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
         poll_readable(&self.file, timeout)
+            .map_err(|e| DeviceOpError::wrap(format!("poll ({timeout:?})"), &self.label, e))
     }
+}
+
+/// The file descriptor(s) behind a [`LinuxCiDataDevice`].
+#[derive(Debug)]
+enum CiEndpoints {
+    /// One `O_RDWR` fd used for both directions.
+    Duplex(File),
+    /// Two one-direction fds on the same node: an `O_WRONLY` fd for the
+    /// scrambled TS going in and an `O_RDONLY | O_NONBLOCK` fd for the
+    /// descrambled TS coming out.
+    Split { write: File, read: File },
 }
 
 /// A [`CiDataDevice`] backed by a Linux DVB CI TS data-plane device
 /// (`/dev/dvb/adapterN/ciM`). The host writes scrambled TS and reads the
 /// descrambled TS back; I/O is in whole 188-byte packets.
+///
+/// # Duplex versus split (Digital Devices CXD2099)
+/// Most drivers accept the node opened `O_RDWR`. The Digital Devices
+/// CXD2099 `ci0` (dddvb, Ubuntu 5.15 kernel, verified on hardware) rejects
+/// `O_RDWR` with `EINVAL` and only works as two one-direction descriptors.
+/// [`open`](Self::open) therefore tries `O_RDWR` first and falls back to the
+/// split open on `EINVAL` (and only `EINVAL`); [`open_split`](Self::open_split)
+/// / [`from_split`](Self::from_split) pick it directly.
 #[derive(Debug)]
 pub struct LinuxCiDataDevice {
-    file: File,
+    io: CiEndpoints,
+    /// Device path for error context (see [`DeviceOpError`]).
+    label: String,
 }
 
 impl LinuxCiDataDevice {
-    /// Open `path` **non-blocking** (`O_NONBLOCK`) as a CI data-plane device.
+    /// Open `path` **non-blocking** (`O_NONBLOCK`) as a duplex (`O_RDWR`) CI
+    /// data-plane device.
     ///
     /// # Why non-blocking (#1066)
     /// The kernel `ts_read()` on the real device sleeps
@@ -291,14 +353,68 @@ impl LinuxCiDataDevice {
             .read(true)
             .write(true)
             .custom_flags(libc::O_NONBLOCK)
-            .open(path)?;
-        Ok(Self { file })
+            .open(path)
+            .map_err(|e| DeviceOpError::wrap("open (O_RDWR|O_NONBLOCK)", &path_label(path), e))?;
+        Ok(Self {
+            io: CiEndpoints::Duplex(file),
+            label: path_label(path),
+        })
     }
 
-    /// Open `/dev/dvb/adapter{adapter}/ci{ci}` — see `open_path`.
+    /// Open `path` as two one-direction descriptors: `O_RDONLY | O_NONBLOCK`
+    /// for reads (so an empty device returns `EWOULDBLOCK` — see
+    /// [`open_path`](Self::open_path) for why that matters) and `O_WRONLY` for
+    /// writes, left blocking exactly as the zenith host has always opened it
+    /// (verified on hardware: 150 s, 111k `feed_ts` calls, max 249 us, no
+    /// error). The read side is opened first so that on a FIFO stand-in the
+    /// write open finds a reader.
+    fn open_split_path(path: &Path) -> io::Result<Self> {
+        let label = path_label(path);
+        let read = OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(path)
+            .map_err(|e| DeviceOpError::wrap("open (O_RDONLY|O_NONBLOCK)", &label, e))?;
+        let write = OpenOptions::new()
+            .write(true)
+            .open(path)
+            .map_err(|e| DeviceOpError::wrap("open (O_WRONLY)", &label, e))?;
+        Ok(Self {
+            io: CiEndpoints::Split { write, read },
+            label,
+        })
+    }
+
+    /// `O_RDWR` first, the split open only if that fails with `EINVAL`
+    /// (`open_duplex` is a parameter so the fallback is testable without a
+    /// device that rejects `O_RDWR`).
+    fn open_with(
+        path: &Path,
+        open_duplex: impl FnOnce(&Path) -> io::Result<Self>,
+    ) -> io::Result<Self> {
+        match open_duplex(path) {
+            Ok(dev) => Ok(dev),
+            Err(e) if DeviceOpError::errno_of(&e) == Some(libc::EINVAL) => {
+                Self::open_split_path(path)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Open `/dev/dvb/adapter{adapter}/ci{ci}`: `O_RDWR | O_NONBLOCK`, and on
+    /// `EINVAL` (the Digital Devices CXD2099 `ci0` — see the type docs) the
+    /// [split open](Self::open_split). Any other error is returned as is.
     pub fn open(adapter: u32, ci: u32) -> io::Result<Self> {
         let path = format!("/dev/dvb/adapter{adapter}/ci{ci}");
-        Self::open_path(Path::new(&path))
+        Self::open_with(Path::new(&path), Self::open_path)
+    }
+
+    /// Open `/dev/dvb/adapter{adapter}/ci{ci}` as two one-direction
+    /// descriptors (write `O_WRONLY`, read `O_RDONLY | O_NONBLOCK`), for
+    /// drivers that reject `O_RDWR` (Digital Devices CXD2099).
+    pub fn open_split(adapter: u32, ci: u32) -> io::Result<Self> {
+        let path = format!("/dev/dvb/adapter{adapter}/ci{ci}");
+        Self::open_split_path(Path::new(&path))
     }
 
     /// Wrap an already-open CI data-plane device file. The caller is
@@ -307,8 +423,42 @@ impl LinuxCiDataDevice {
     /// `feed_ts` (#1066).
     #[must_use]
     pub fn from_file(file: File) -> Self {
-        Self { file }
+        Self {
+            io: CiEndpoints::Duplex(file),
+            label: "CI data device (from_file)".to_owned(),
+        }
     }
+
+    /// Wrap an already-open pair of one-direction descriptors: `write`
+    /// (`O_WRONLY`) and `read` (`O_RDONLY`). The caller is responsible for
+    /// having opened **`read` with `O_NONBLOCK`** — a blocking read fd makes
+    /// `feed_ts`'s drain loop hang (#1066) — see `open_path`.
+    #[must_use]
+    pub fn from_split(write: File, read: File) -> Self {
+        Self {
+            io: CiEndpoints::Split { write, read },
+            label: "CI data device (from_split)".to_owned(),
+        }
+    }
+
+    fn write_file(&mut self) -> &mut File {
+        match &mut self.io {
+            CiEndpoints::Duplex(f) => f,
+            CiEndpoints::Split { write, .. } => write,
+        }
+    }
+
+    fn read_file(&mut self) -> &mut File {
+        match &mut self.io {
+            CiEndpoints::Duplex(f) => f,
+            CiEndpoints::Split { read, .. } => read,
+        }
+    }
+}
+
+/// Printable device path for [`DeviceOpError`].
+fn path_label(path: &Path) -> String {
+    path.display().to_string()
 }
 
 impl CiDataDevice for LinuxCiDataDevice {
@@ -319,7 +469,10 @@ impl CiDataDevice for LinuxCiDataDevice {
                 "write not a multiple of 188 bytes",
             ));
         }
-        self.file.write_all(ts)
+        let label = self.label.clone();
+        self.write_file()
+            .write_all(ts)
+            .map_err(|e| DeviceOpError::wrap(format!("write ({} bytes)", ts.len()), &label, e))
     }
 
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
@@ -329,15 +482,25 @@ impl CiDataDevice for LinuxCiDataDevice {
                 "read buffer not a multiple of 188 bytes",
             ));
         }
-        match self.file.read(buf) {
+        let cap = buf.len();
+        match self.read_file().read(buf) {
             Ok(n) => Ok(n),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => Ok(0),
-            Err(e) => Err(e),
+            Err(e) => {
+                let label = self.label.clone();
+                Err(DeviceOpError::wrap(
+                    format!("read (<= {cap} bytes)"),
+                    &label,
+                    e,
+                ))
+            }
         }
     }
 
     fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
-        poll_readable(&self.file, timeout)
+        let label = self.label.clone();
+        poll_readable(self.read_file(), timeout)
+            .map_err(|e| DeviceOpError::wrap(format!("poll ({timeout:?})"), &label, e))
     }
 }
 
@@ -465,6 +628,193 @@ mod tests {
             .expect("read must not error");
         assert_eq!(n2, 0, "device must read 0 again once drained");
 
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A packet of recognisable bytes.
+    fn packet(fill: u8) -> [u8; TS_PACKET_LEN] {
+        let mut p = [fill; TS_PACKET_LEN];
+        p[0] = 0x47;
+        p
+    }
+
+    /// Run `f` on a thread and fail if it has not finished in `limit` - a
+    /// read that blocks forever (the #1066 hang) must fail the test, not hang
+    /// the suite. A stuck thread is unblocked through `unstick` so it can exit.
+    fn within<T: Send + 'static>(
+        limit: Duration,
+        unstick: impl FnOnce(),
+        f: impl FnOnce() -> T + Send + 'static,
+    ) -> T {
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let _ = tx.send(f());
+        });
+        match rx.recv_timeout(limit) {
+            Ok(v) => v,
+            Err(_) => {
+                unstick();
+                panic!("operation did not return within {limit:?} (blocked)");
+            }
+        }
+    }
+
+    /// CXD2099 `ci0` rejects `O_RDWR`; the device is two one-direction fds.
+    /// The FIFO is blocking-faithful: a read on an empty FIFO whose write end
+    /// is open never returns 0 (it blocks) unless the fd is `O_NONBLOCK`. A
+    /// `feed_ts`-style drain loop (`read` until `0`) over the split read side
+    /// must therefore terminate, deliver exactly what was written, and each
+    /// call must come back promptly.
+    #[test]
+    fn split_read_side_is_nonblocking_and_a_drain_loop_terminates() {
+        let path = make_fifo();
+        let mut dev = LinuxCiDataDevice::open_split_path(&path).expect("split open");
+        // Loop the FIFO back: what the write fd writes, the read fd reads.
+        dev.write(&packet(0xA1)).expect("write packet 1");
+        dev.write(&packet(0xB2)).expect("write packet 2");
+
+        let drained = within(
+            Duration::from_secs(2),
+            || {},
+            move || {
+                let mut got = Vec::new();
+                let mut buf = [0u8; TS_PACKET_LEN];
+                loop {
+                    let n = dev.read(&mut buf).expect("read");
+                    if n == 0 {
+                        break;
+                    }
+                    assert_eq!(n, TS_PACKET_LEN);
+                    got.push(buf);
+                }
+                // And once more on the now-empty device: still prompt, still 0.
+                assert_eq!(dev.read(&mut buf).expect("read"), 0);
+                got
+            },
+        );
+        assert_eq!(drained, vec![packet(0xA1), packet(0xB2)]);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// The control that proves the mock is blocking-faithful and the test
+    /// above bites: the same loopback with a read fd opened WITHOUT
+    /// `O_NONBLOCK` (what `from_split` documents as the caller's mistake)
+    /// blocks on the empty read instead of returning 0.
+    #[test]
+    fn split_with_a_blocking_read_fd_would_hang_the_drain_loop() {
+        let path = make_fifo();
+        let read = OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .expect("blocking read-only open");
+        let write = OpenOptions::new()
+            .write(true)
+            .open(&path)
+            .expect("write open");
+        // Keep a handle to unblock the stuck reader afterwards.
+        let unblock = write.try_clone().expect("clone write fd");
+        let mut dev = LinuxCiDataDevice::from_split(write, read);
+        dev.write(&packet(0xC3)).expect("write");
+
+        let (tx, rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let mut buf = [0u8; TS_PACKET_LEN];
+            let first = dev.read(&mut buf); // the written packet
+            let _ = tx.send(first);
+            let second = dev.read(&mut buf); // empty: a blocking fd sleeps here
+            let _ = tx.send(second);
+        });
+        assert_eq!(
+            rx.recv_timeout(Duration::from_secs(2)).unwrap().unwrap(),
+            TS_PACKET_LEN
+        );
+        assert!(
+            rx.recv_timeout(Duration::from_millis(400)).is_err(),
+            "a blocking read fd must NOT return on an empty FIFO - the mock is not blocking-faithful"
+        );
+        // Unblock the reader thread so the process can exit cleanly.
+        let mut unblock = unblock;
+        let _ = unblock.write_all(&packet(0xD4));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// `open` falls back to the split open when `O_RDWR` fails with `EINVAL` -
+    /// and the fallback device really works (loopback through the FIFO).
+    #[test]
+    fn open_falls_back_to_split_on_einval_only() {
+        let path = make_fifo();
+        let mut dev = LinuxCiDataDevice::open_with(&path, |_| {
+            Err(io::Error::from_raw_os_error(libc::EINVAL))
+        })
+        .expect("EINVAL on O_RDWR must fall back to the split open");
+        assert!(matches!(dev.io, CiEndpoints::Split { .. }));
+        dev.write(&packet(0xE5)).expect("write");
+        let mut buf = [0u8; TS_PACKET_LEN];
+        assert_eq!(dev.read(&mut buf).expect("read"), TS_PACKET_LEN);
+        assert_eq!(buf, packet(0xE5));
+
+        // A wrapped EINVAL (what `open_path` produces) triggers it too.
+        let wrapped = LinuxCiDataDevice::open_with(&path, |p| {
+            Err(DeviceOpError::wrap(
+                "open (O_RDWR|O_NONBLOCK)",
+                &path_label(p),
+                io::Error::from_raw_os_error(libc::EINVAL),
+            ))
+        })
+        .expect("wrapped EINVAL must fall back too");
+        assert!(matches!(wrapped.io, CiEndpoints::Split { .. }));
+
+        // Any other error is NOT papered over with a split open.
+        for errno in [libc::ENOENT, libc::EACCES, libc::EBUSY, libc::ENODEV] {
+            let err =
+                LinuxCiDataDevice::open_with(&path, |_| Err(io::Error::from_raw_os_error(errno)))
+                    .expect_err("a non-EINVAL open error must propagate");
+            assert_eq!(DeviceOpError::errno_of(&err), Some(errno));
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// When `O_RDWR` works (the common case) `open_with` keeps the duplex fd.
+    #[test]
+    fn open_keeps_the_duplex_fd_when_rdwr_works() {
+        let path = make_fifo();
+        let dev =
+            LinuxCiDataDevice::open_with(&path, LinuxCiDataDevice::open_path).expect("duplex open");
+        assert!(matches!(dev.io, CiEndpoints::Duplex(_)));
+        let _ = std::fs::remove_file(&path);
+    }
+
+    /// A failing device operation names the operation, the device and the
+    /// errno, keeps the original `ErrorKind`, and still answers the errno.
+    #[test]
+    fn device_errors_carry_operation_device_and_errno() {
+        let path = std::env::temp_dir().join(format!(
+            "dvb-ci-runtime-h1-ctx-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("system clock before UNIX_EPOCH")
+                .as_nanos()
+        ));
+        // A read-only regular file: writing to it fails (EBADF on Linux).
+        std::fs::write(&path, b"x").expect("stage file");
+        let file = OpenOptions::new()
+            .read(true)
+            .open(&path)
+            .expect("open read-only");
+        let mut dev = LinuxCaDevice::from_file(file, 2);
+        let err = dev
+            .write(&[0xA0, 0x01, 0x01])
+            .expect_err("write to a read-only fd must fail");
+        let text = err.to_string();
+        assert!(
+            text.contains("write (5 byte frame: slot 2, connection 1)"),
+            "{text}"
+        );
+        assert!(text.contains("CA device (slot 2, from_file)"), "{text}");
+        assert!(text.contains("os error"), "{text}");
+        assert_eq!(DeviceOpError::errno_of(&err), Some(libc::EBADF));
+        assert_eq!(err.kind(), io::Error::from_raw_os_error(libc::EBADF).kind());
         let _ = std::fs::remove_file(&path);
     }
 

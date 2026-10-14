@@ -98,7 +98,23 @@ pub struct Driver<D: CaDevice> {
     /// Link-layer writes the stack emitted after the reset (the `Create_T_C`),
     /// held back until `settle_until` passes.
     deferred_writes: Vec<Vec<u8>>,
+    /// Until when a post-reset write that fails `EINVAL` ("slot not RUNNING
+    /// yet") is retried instead of reported: the reset instant + the settle
+    /// window + [`SLOT_READY_GRACE`]. `None` = no retry window (no reset
+    /// settle, e.g. a mock device).
+    slot_ready_deadline: Option<Instant>,
 }
+
+/// How long past the fixed post-`CA_RESET` settle window the first write to a
+/// still-initialising slot keeps being retried. The kernel's
+/// `dvb_ca_en50221_io_write` answers `EINVAL` until the slot reaches its
+/// `RUNNING` state, and how long the CAM takes to get there after a reset
+/// varies (the 3 s settle was "validated live" yet an AlphaCrypt on a DD
+/// CXD2099 raced it on a later re-open: `pump` returned `EINVAL`, no CA PMT
+/// sent, kernel logged CAM init OK afterwards).
+const SLOT_READY_GRACE: Duration = Duration::from_secs(12);
+/// Pause between retries of a write the slot refused with `EINVAL`.
+const SLOT_RETRY: Duration = Duration::from_millis(250);
 
 impl<D: CaDevice> Driver<D> {
     /// New driver over `device`, single transport connection.
@@ -120,6 +136,7 @@ impl<D: CaDevice> Driver<D> {
             requery_pending: None,
             settle_until: None,
             deferred_writes: Vec::new(),
+            slot_ready_deadline: None,
         }
     }
 
@@ -456,9 +473,26 @@ impl<D: CaDevice> Driver<D> {
                 return Ok(false);
             }
             self.settle_until = None;
-            for w in std::mem::take(&mut self.deferred_writes) {
-                self.device.write(&w)?;
+            let mut pending = std::mem::take(&mut self.deferred_writes).into_iter();
+            while let Some(w) = pending.next() {
+                match self.device.write(&w) {
+                    Ok(()) => {}
+                    // `EINVAL` (`InvalidInput`) from the post-reset write means
+                    // the slot is not RUNNING yet, not that the frame is bad:
+                    // keep this write and the rest, and try again shortly -
+                    // until the grace window runs out, then report it.
+                    Err(e)
+                        if e.kind() == io::ErrorKind::InvalidInput
+                            && self.slot_ready_deadline.is_some_and(|d| now < d) =>
+                    {
+                        self.deferred_writes = std::iter::once(w).chain(pending).collect();
+                        self.settle_until = Some(now + SLOT_RETRY);
+                        return Ok(false);
+                    }
+                    Err(e) => return Err(e),
+                }
             }
+            self.slot_ready_deadline = None;
             // The settle period must not count against the transport's
             // reply timeout.
             elapsed = Duration::ZERO;
@@ -628,7 +662,10 @@ impl<D: CaDevice> Driver<D> {
                     // discards writes queued for the previous incarnation.
                     self.deferred_writes.clear();
                     let settle = self.device.reset_settle();
-                    self.settle_until = (!settle.is_zero()).then(|| (self.clock)() + settle);
+                    let now = (self.clock)();
+                    self.settle_until = (!settle.is_zero()).then(|| now + settle);
+                    self.slot_ready_deadline =
+                        (!settle.is_zero()).then(|| now + settle + SLOT_READY_GRACE);
                 }
                 Action::QuerySlot => {
                     let info = self.device.slot_info()?;
@@ -686,6 +723,7 @@ impl<D: CaDevice> Driver<D> {
     fn reset_module_state(&mut self) {
         self.stack = CiStack::new();
         self.settle_until = None;
+        self.slot_ready_deadline = None;
         self.deferred_writes.clear();
         self.next_timer = None;
         self.last_caids = None;
@@ -1185,6 +1223,140 @@ pub(crate) mod tests {
             .iter()
             .filter(|o| matches!(o, DeviceOp::Write(w) if w[0] == tags::CREATE_T_C))
             .count()
+    }
+
+    /// A [`SettleDevice`] whose `write` is refused with `EINVAL`
+    /// (`InvalidInput`) a set number of times, like the kernel's
+    /// `dvb_ca_en50221_io_write` while the slot is not yet RUNNING.
+    struct NotRunningDevice {
+        inner: SettleDevice,
+        refusals_left: u32,
+        refused: u32,
+    }
+
+    impl CaDevice for NotRunningDevice {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.inner.read(buf)
+        }
+        fn write(&mut self, buf: &[u8]) -> io::Result<()> {
+            if self.refusals_left > 0 {
+                self.refusals_left -= 1;
+                self.refused += 1;
+                return Err(io::Error::from(io::ErrorKind::InvalidInput));
+            }
+            self.inner.write(buf)
+        }
+        fn reset(&mut self) -> io::Result<()> {
+            self.inner.reset()
+        }
+        fn reset_settle(&self) -> Duration {
+            self.inner.reset_settle()
+        }
+        fn slot_info(&mut self) -> io::Result<SlotInfo> {
+            self.inner.slot_info()
+        }
+        fn poll(&mut self, timeout: Duration) -> io::Result<bool> {
+            self.inner.poll(timeout)
+        }
+    }
+
+    fn not_running_driver(clock: &TestClock, refusals: u32) -> Driver<NotRunningDevice> {
+        Driver::new(NotRunningDevice {
+            inner: SettleDevice {
+                inner: MockCaDevice::new([]),
+                settle: SETTLE,
+            },
+            refusals_left: refusals,
+            refused: 0,
+        })
+        .with_clock(clock.as_fn())
+    }
+
+    fn create_tc_count(d: &Driver<NotRunningDevice>) -> usize {
+        d.device()
+            .inner
+            .inner
+            .ops
+            .iter()
+            .filter(|o| matches!(o, DeviceOp::Write(w) if w[0] == tags::CREATE_T_C))
+            .count()
+    }
+
+    /// Real hardware (DD CXD2099 + AlphaCrypt, 4th re-open in ~12 min): the
+    /// first post-settle write came back `EINVAL` because the CAM had not
+    /// reached the kernel's RUNNING state yet, and `pump` returned it. It must
+    /// be retried until the slot accepts it.
+    #[test]
+    fn post_reset_einval_is_retried_until_the_slot_is_running() {
+        let clock = TestClock::new();
+        let mut d = not_running_driver(&clock, 3);
+        d.init().unwrap();
+        clock.advance(SETTLE + Duration::from_millis(100));
+        for _ in 0..10 {
+            d.pump(Duration::from_millis(10))
+                .expect("a not-yet-RUNNING slot (EINVAL) must be retried, not reported");
+            if create_tc_count(&d) == 1 {
+                break;
+            }
+            clock.advance(Duration::from_millis(300));
+        }
+        assert_eq!(d.device().refused, 3, "the three refusals were consumed");
+        assert_eq!(create_tc_count(&d), 1, "Create_T_C delivered exactly once");
+    }
+
+    /// The retry window is bounded: a slot that never comes up is reported
+    /// (with the original `InvalidInput`), not retried forever.
+    #[test]
+    fn post_reset_einval_is_reported_once_the_grace_window_has_passed() {
+        let clock = TestClock::new();
+        let mut d = not_running_driver(&clock, u32::MAX);
+        let start = clock.0.get();
+        d.init().unwrap();
+        clock.advance(SETTLE + Duration::from_millis(100));
+        let mut failure = None;
+        for _ in 0..80 {
+            match d.pump(Duration::from_millis(10)) {
+                Ok(_) => clock.advance(Duration::from_millis(300)),
+                Err(e) => {
+                    failure = Some(e);
+                    break;
+                }
+            }
+        }
+        let e = failure.expect("a slot that never runs must eventually be reported");
+        assert_eq!(e.kind(), io::ErrorKind::InvalidInput);
+        assert!(
+            clock.0.get() >= start + SETTLE + SLOT_READY_GRACE,
+            "reported before the grace window ended"
+        );
+        assert_eq!(create_tc_count(&d), 0);
+    }
+
+    /// The re-query timer armed before the handshake completes must not put
+    /// anything on the wire: with no service added there is nothing to
+    /// re-query, and no `ca_pmt` APDU (tag `9F 80 32`) is ever written however
+    /// long the pumping goes before the CAM answers.
+    #[test]
+    fn requery_armed_before_the_handshake_sends_nothing() {
+        let clock = TestClock::new();
+        let mut d = Driver::new(MockCaDevice::new([])).with_clock(clock.as_fn());
+        d.set_requery_interval(Duration::from_secs(10));
+        d.init().unwrap();
+        for _ in 0..40 {
+            clock.advance(Duration::from_secs(1));
+            d.pump(Duration::from_millis(100)).unwrap();
+        }
+        let ca_pmt_tag = [0x9F, 0x80, 0x32];
+        let ca_pmt_writes = d
+            .device()
+            .ops
+            .iter()
+            .filter(|op| matches!(op, DeviceOp::Write(w) if w.windows(3).any(|x| x == ca_pmt_tag)))
+            .count();
+        assert_eq!(
+            ca_pmt_writes, 0,
+            "re-query wrote a ca_pmt before any service"
+        );
     }
 
     /// r10-O-10 (a): a reset no longer blocks — `init` and `pump` return
