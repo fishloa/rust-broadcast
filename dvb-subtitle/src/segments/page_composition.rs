@@ -45,7 +45,7 @@ impl PageState {
             Self::Normal => 0x00,
             Self::Acquisition => 0x01,
             Self::ModeChange => 0x02,
-            Self::Reserved(v) => v & 0x03,
+            Self::Reserved(v) => v,
         }
     }
 }
@@ -216,9 +216,14 @@ impl Serialize for PageCompositionSegment {
         buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
 
         buf[6] = self.page_time_out;
-        buf[7] = (self.page_version_number << 4)
-            | (self.page_state.to_bits() << 2)
-            | (self.reserved & 0x03);
+        buf[7] = (broadcast_common::len::fit_mask(
+            self.page_version_number,
+            0x0F,
+            "page_version_number",
+        )? << 4)
+            | (broadcast_common::len::fit_mask(self.page_state.to_bits(), 0x03, "page_state")?
+                << 2)
+            | broadcast_common::len::fit_mask(self.reserved, 0x03, "reserved")?;
 
         for (i, region) in self.regions.iter().enumerate() {
             let off = HEADER_LEN + FIXED_LEN + i * REGION_ENTRY_LEN;

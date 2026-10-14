@@ -53,7 +53,7 @@ impl ObjectCodingMethod {
             Self::Pixels => 0x00,
             Self::Characters => 0x01,
             Self::ProgressivePixels => 0x02,
-            Self::Reserved(v) => v & 0x03,
+            Self::Reserved(v) => v,
         }
     }
 }
@@ -959,8 +959,16 @@ impl Serialize for ObjectDataSegment<'_> {
         buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
 
         buf[6..8].copy_from_slice(&self.object_id.to_be_bytes());
-        buf[8] = (self.object_version_number << 4)
-            | (self.object_coding_method.to_bits() << 2)
+        buf[8] = (broadcast_common::len::fit_mask(
+            self.object_version_number,
+            0x0F,
+            "object_version_number",
+        )? << 4)
+            | (broadcast_common::len::fit_mask(
+                self.object_coding_method.to_bits(),
+                0x03,
+                "object_coding_method",
+            )? << 2)
             | (u8::from(self.non_modifying_colour_flag) << 1);
 
         let mut off = HEADER_LEN + FIXED_LEN;

@@ -322,16 +322,15 @@ pub const MATRIX: &[MatrixEntry] = &[
     },
 ];
 
-/// Find the [`MatrixEntry`] for `(from, to)`. Every pair in the
-/// [`SourceFormat`] x [`TargetFormat`] cross-product has exactly one entry
-/// (`tests::matrix_is_a_complete_cross_product` pins this), so this never
-/// panics in practice.
+/// Find the [`MatrixEntry`] for `(from, to)`, or `None` if the matrix has no
+/// row for that pair. Every pair in the current [`SourceFormat`] x
+/// [`TargetFormat`] cross-product has exactly one entry
+/// (`tests::matrix_is_a_complete_cross_product` pins this), but both enums are
+/// `#[non_exhaustive]`, so a pair involving a newly added format is a
+/// reachable `None` rather than a panic.
 #[must_use]
-pub fn lookup(from: SourceFormat, to: TargetFormat) -> &'static MatrixEntry {
-    MATRIX
-        .iter()
-        .find(|e| e.from == from && e.to == to)
-        .expect("MATRIX covers the full SourceFormat x TargetFormat cross-product")
+pub fn lookup(from: SourceFormat, to: TargetFormat) -> Option<&'static MatrixEntry> {
+    MATRIX.iter().find(|e| e.from == from && e.to == to)
 }
 
 /// Check whether `(from, to)` is implemented (`Lossless` or `Lossy`).
@@ -342,7 +341,14 @@ pub fn lookup(from: SourceFormat, to: TargetFormat) -> &'static MatrixEntry {
 /// nothing: this check (or the total absence of a function for that pair)
 /// is the gate.
 pub fn check(from: SourceFormat, to: TargetFormat) -> Result<&'static MatrixEntry, Error> {
-    let entry = lookup(from, to);
+    let Some(entry) = lookup(from, to) else {
+        return Err(Error::Unsupported {
+            from,
+            to,
+            support: Support::NotImplemented,
+            reason: "no conversion-matrix entry exists for this format pair",
+        });
+    };
     match entry.support {
         Support::Lossless | Support::Lossy => Ok(entry),
         Support::Unsupported | Support::NotImplemented => Err(Error::Unsupported {
@@ -372,6 +378,7 @@ mod tests {
                     .filter(|e| e.from == from && e.to == to)
                     .count();
                 assert_eq!(matches, 1, "expected exactly one entry for {from} -> {to}");
+                assert!(lookup(from, to).is_some(), "lookup {from} -> {to}");
             }
         }
     }

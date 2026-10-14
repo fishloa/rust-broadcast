@@ -357,11 +357,18 @@ impl Serialize for SpliceInfoSection<'_> {
         buf[0] = TABLE_ID;
         // section_syntax_indicator=0, private_indicator=0, sap_type(2),
         // section_length(12).
-        buf[1] = ((self.sap_type & 0x03) << 4) | ((section_length >> 8) as u8 & 0x0F);
+        buf[1] =
+            (broadcast_common::len::fit_mask(self.sap_type, 0x03, "splice_info_section.sap_type")?
+                << 4)
+                | ((section_length >> 8) as u8 & 0x0F);
         buf[2] = (section_length & 0xFF) as u8;
         buf[3] = self.protocol_version;
         buf[4] = (u8::from(self.encrypted_packet) << 7)
-            | ((self.encryption_algorithm & 0x3F) << 1)
+            | (broadcast_common::len::fit_mask(
+                self.encryption_algorithm,
+                0x3F,
+                "splice_info_section.encryption_algorithm",
+            )? << 1)
             | ((self.pts_adjustment >> 32) as u8 & 0x01);
         buf[5] = (self.pts_adjustment >> 24) as u8;
         buf[6] = (self.pts_adjustment >> 16) as u8;

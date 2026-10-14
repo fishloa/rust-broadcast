@@ -283,7 +283,12 @@ impl Serialize for ClutDefinitionSegment {
         buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
 
         buf[6] = self.clut_id;
-        buf[7] = (self.clut_version_number << 4) | (self.reserved & 0x0F);
+        buf[7] = (broadcast_common::len::fit_mask(
+            self.clut_version_number,
+            0x0F,
+            "clut_version_number",
+        )? << 4)
+            | broadcast_common::len::fit_mask(self.reserved, 0x0F, "reserved")?;
 
         let mut off = HEADER_LEN + FIXED_LEN;
         for entry in &self.entries {

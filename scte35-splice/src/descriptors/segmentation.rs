@@ -436,7 +436,8 @@ impl Serialize for SegmentationDescriptor<'_> {
                 flags |= u8::from(dr.web_delivery_allowed) << 4;
                 flags |= u8::from(dr.no_regional_blackout) << 3;
                 flags |= u8::from(dr.archive_allowed) << 2;
-                flags |= dr.device_restrictions.bits() & 0x03;
+                // `DeviceRestrictions` is a closed 2-bit enum: `bits()` is always <= 0b11.
+                flags |= dr.device_restrictions.bits();
             }
             None => {
                 // delivery_not_restricted_flag = 1, 5 reserved bits = 1.

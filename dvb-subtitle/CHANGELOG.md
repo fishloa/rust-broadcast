@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING, #1202)
+- **BREAKING (behavioural):** serializers reject a value wider than its wire bit-field with `Error::FieldOverflow` instead of shifting/masking it into a different valid-looking segment (the #1129 class): the `*_version_number` nibbles, `reserved*` runs, `page_state` / `region_level_of_compatibility` / `region_depth` / `object_coding_method` codes, the 4/2-bit region pixel codes, the alternative-CLUT parameter fields and 8/10-bit entry values, and the disparity-signalling fractional shift / reserved flags. The `Reserved(v)` payload of those code enums is now returned verbatim by `to_bits` (so the serializer's range check can see a wide value) instead of being masked. Guarded by `tests/serialize_mask_guard.rs` (lexical) and `tests/serialize_field_width.rs` (real-capture segments, one field one step over range).
+- New `tests/hostility.rs`: real M6 data fields truncated at every length and mutated at every byte never panic.
+
 ### Changed
 - Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 

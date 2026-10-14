@@ -155,9 +155,11 @@ impl Serialize for DisplayDefinitionSegment {
         buf[4..6].copy_from_slice(&seg_len.to_be_bytes());
 
         // Fixed body byte 0: version(4b) | window_flag(1b) | reserved(3b)
-        buf[6] = (self.dds_version_number << 4)
-            | (u8::from(self.display_window_flag) << 3)
-            | (self.reserved & 0x07);
+        buf[6] =
+            (broadcast_common::len::fit_mask(self.dds_version_number, 0x0F, "dds_version_number")?
+                << 4)
+                | (u8::from(self.display_window_flag) << 3)
+                | broadcast_common::len::fit_mask(self.reserved, 0x07, "reserved")?;
         // Fixed body bytes 1-4: display_width, display_height
         buf[7..9].copy_from_slice(&self.display_width.to_be_bytes());
         buf[9..11].copy_from_slice(&self.display_height.to_be_bytes());
