@@ -25,10 +25,7 @@ fn check(name: &str, actual: &str) {
 }
 
 fn fixture(name: &str) -> String {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/dvb-mabr")
-        .join(name);
-    fs::read_to_string(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}"))
+    test_fixtures::read_to_string(&format!("dvb-mabr/{name}"))
 }
 
 #[test]

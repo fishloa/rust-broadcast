@@ -998,8 +998,7 @@ pub(crate) mod tests {
     /// Read a committed real-capture fixture from the workspace `fixtures/`
     /// directory (shared across crates, one level up from this crate root).
     fn fixture(rel: &str) -> Vec<u8> {
-        let path = format!(concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/{}"), rel);
-        std::fs::read(&path).unwrap_or_else(|e| panic!("read fixture {path}: {e}"))
+        test_fixtures::read(&format!("{rel}"))
     }
 
     /// Split `bytes` into fixed-size chunks, simulating UDP datagrams without

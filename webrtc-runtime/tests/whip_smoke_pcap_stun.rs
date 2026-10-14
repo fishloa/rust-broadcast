@@ -36,10 +36,9 @@ const AF_INET_BSD: u32 = 2;
 const UDP_PROTOCOL: u8 = 17;
 
 fn fixture_path() -> String {
-    format!(
-        "{}/../fixtures/webrtc/whip-ice-dtls-srtp-loopback.pcap",
-        env!("CARGO_MANIFEST_DIR")
-    )
+    test_fixtures::path("webrtc/whip-ice-dtls-srtp-loopback.pcap")
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Minimal classic-pcap walker: yields the UDP payload of every `DLT_NULL`

@@ -11,8 +11,7 @@ use media_doctor::{
 
 /// Path helper: fixture TS file.
 fn fixture(name: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/ts/{}", env!("CARGO_MANIFEST_DIR"), name);
-    fs::read(&path).unwrap_or_else(|e| panic!("failed to read fixture {path}: {e}"))
+    test_fixtures::read(&format!("ts/{name}"))
 }
 
 /// A clean buffer of 2 good TS packets should produce zero findings.

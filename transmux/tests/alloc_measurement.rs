@@ -67,7 +67,7 @@ fn snapshot_counters() -> (usize, usize, usize) {
 }
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264/main.ts")
+    test_fixtures::path("ts/h264/main.ts")
 }
 
 /// The real cleartext H.264 capture (same fixture `cenc_encrypt.rs`'s unit

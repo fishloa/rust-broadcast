@@ -65,6 +65,7 @@ net     = ["metrics", "dep:tokio", "dep:tokio-util", "dep:hyper", "dep:hyper-uti
 cli     = ["dep:clap", "dep:thiserror", "dep:container-probe", "std", "net"]
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 tokio = { version = "1", features = ["rt", "net", "time", "io-util", "macros"] }
 # replaces the hand-written try_wait/sleep deadline poll in the old
 # tests/support/bounded.rs; the runner now lives in the shared `test-bounded`

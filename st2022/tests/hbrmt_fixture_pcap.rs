@@ -47,10 +47,9 @@ const RTP_HEADER_LEN: usize = 12;
 const HBRMT_MEDIA_PAYLOAD_LEN: usize = 1376;
 
 fn fixture_path() -> String {
-    format!(
-        "{}/../fixtures/st2022/st2022-6-hbrmt-1080i5994-single-frame-loopback.pcap",
-        env!("CARGO_MANIFEST_DIR")
-    )
+    test_fixtures::path("st2022/st2022-6-hbrmt-1080i5994-single-frame-loopback.pcap")
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Minimal classic-pcap walker: yields the UDP payload of every

@@ -19,8 +19,7 @@
 use transmux::ts_demux::{DemuxEvent, StreamingTsDemux};
 
 fn fixture_bytes() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/h264_aac.ts");
-    std::fs::read(path).expect("h264_aac.ts fixture must exist")
+    test_fixtures::read("ts/h264_aac.ts")
 }
 
 /// Feed `data` through `demux` in `chunk_size`-byte pieces, draining and

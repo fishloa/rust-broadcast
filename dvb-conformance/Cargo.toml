@@ -26,6 +26,7 @@ std     = ["broadcast-common/std", "dvb-si/std", "mpeg-ts/std", "serde?/std"]
 serde = ["dep:serde", "dvb-si/serde"]
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 broadcast-common = { path = "../broadcast-common", version = "9.3" }
 
 [lints]

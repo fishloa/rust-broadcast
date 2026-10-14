@@ -26,11 +26,7 @@
 use atsc3::slt::Slt;
 
 fn fixture_path(name: &str) -> std::path::PathBuf {
-    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("atsc3")
-        .join(name)
+    test_fixtures::path(&format!("atsc3/{name}"))
 }
 
 fn read_fixture(name: &str) -> Vec<u8> {

@@ -28,6 +28,7 @@ serde        = { version = "1", default-features = false, optional = true, featu
 yoke         = { workspace = true, optional = true, features = ["derive"] }
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 serde_json = { workspace = true }
 dvb-si     = { path = "../dvb-si", features = ["ts"] }
 criterion  = { workspace = true, features = ["html_reports"] }

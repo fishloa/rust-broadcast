@@ -34,8 +34,7 @@ const EXPECTED_AUDIO_PIDS: [u16; 3] = [0x82, 0x83, 0x84];
 const EXPECTED_SUBTITLE_PIDS: [u16; 2] = [0x8C, 0x8E];
 
 fn fixture_bytes() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/france2.ts");
-    std::fs::read(path).expect("fixtures/ts/france2.ts must exist (issue #582 prep fixture)")
+    test_fixtures::read("ts/france2.ts")
 }
 
 // ---------------------------------------------------------------------------

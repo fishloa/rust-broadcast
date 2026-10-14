@@ -33,6 +33,7 @@ chrono        = { workspace = true, optional = true }
 serde         = { version = "1", default-features = false, features = ["derive", "alloc"], optional = true }
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 # Real/synthetic SEI-carried-caption fixture test (issue #599): demuxes a TS
 # capture into IR samples and extracts A/53 caption SEI, proving the SEI
 # carriage path converges on the same `Cea608CueExtractor`/`Cea708CueExtractor`

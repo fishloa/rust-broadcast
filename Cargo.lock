@@ -233,6 +233,7 @@ dependencies = [
  "flate2",
  "roxmltree",
  "serde",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -244,6 +245,7 @@ dependencies = [
  "rmt-flute",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -508,6 +510,7 @@ dependencies = [
  "dvb-vbi",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
 ]
@@ -728,6 +731,7 @@ dependencies = [
  "metrics-exporter-prometheus",
  "mpeg-ts",
  "scte35-splice",
+ "test-fixtures",
  "timed-metadata",
 ]
 
@@ -1100,6 +1104,7 @@ dependencies = [
  "dvb-si",
  "mpeg-ts",
  "serde",
+ "test-fixtures",
 ]
 
 [[package]]
@@ -1120,6 +1125,7 @@ version = "0.2.0"
 dependencies = [
  "broadcast-common",
  "quick-xml",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -1141,6 +1147,7 @@ dependencies = [
  "serde",
  "serde_json",
  "test-alloc",
+ "test-fixtures",
  "thiserror 2.0.21",
  "yoke 0.7.5",
 ]
@@ -1152,6 +1159,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -1198,6 +1206,7 @@ dependencies = [
  "num_enum",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
  "yoke 0.7.5",
 ]
@@ -1212,6 +1221,7 @@ dependencies = [
  "dvb-t2mi",
  "mpeg-ts",
  "serde_json",
+ "test-fixtures",
 ]
 
 [[package]]
@@ -1221,6 +1231,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -2185,6 +2196,7 @@ dependencies = [
  "ssai-runtime",
  "test-alloc",
  "test-bounded",
+ "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
  "tokio",
@@ -2304,6 +2316,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -2314,6 +2327,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -2325,6 +2339,7 @@ dependencies = [
  "mpeg-pes",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -2337,6 +2352,7 @@ dependencies = [
  "mp4-emsg",
  "serde",
  "test-alloc",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -2387,6 +2403,7 @@ dependencies = [
  "socket2",
  "srt-runtime",
  "test-bounded",
+ "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
  "tokio",
@@ -3133,6 +3150,7 @@ version = "0.3.0"
 dependencies = [
  "broadcast-common",
  "rtcp-packet",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -3173,6 +3191,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -3865,6 +3884,7 @@ version = "0.1.0"
 dependencies = [
  "broadcast-common",
  "serde",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -3876,6 +3896,7 @@ dependencies = [
  "rtp-packet",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -3980,6 +4001,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "test-fixtures"
+version = "0.1.0"
+
+[[package]]
 name = "thiserror"
 version = "1.0.69"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4072,6 +4097,7 @@ dependencies = [
  "mp4-emsg",
  "scte35-splice",
  "serde",
+ "test-fixtures",
  "thiserror 2.0.21",
  "transmux",
 ]
@@ -4351,6 +4377,7 @@ dependencies = [
  "serde_json",
  "subtle",
  "test-alloc",
+ "test-fixtures",
  "thiserror 2.0.21",
  "timed-metadata",
  "url",
@@ -4374,6 +4401,7 @@ dependencies = [
  "mpeg-pes",
  "mpeg-ts",
  "scte35-splice",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -4407,6 +4435,7 @@ dependencies = [
  "broadcast-common",
  "serde",
  "serde_json",
+ "test-fixtures",
  "thiserror 2.0.21",
 ]
 
@@ -4654,6 +4683,7 @@ dependencies = [
  "sha1 0.11.0",
  "sha2 0.11.0",
  "subtle",
+ "test-fixtures",
  "thiserror 2.0.21",
  "tokio",
  "url",

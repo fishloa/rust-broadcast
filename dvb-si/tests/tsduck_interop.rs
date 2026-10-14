@@ -9,8 +9,6 @@
 //! '1', so the `HDR_WCG_idc` (bits [1:0]) assertion catches any parser that
 //! reads it from the wrong bit position.
 
-use std::fs;
-
 use broadcast_common::Parse;
 use dvb_si::descriptors::AnyDescriptor;
 use dvb_si::descriptors::hdr_wcg_idc::HdrWcgIdc;
@@ -18,8 +16,7 @@ use dvb_si::descriptors::video_stream::FrameRateCode;
 use dvb_si::tables::pmt::PmtSection;
 
 fn fixture(name: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/dvb-si/{}", env!("CARGO_MANIFEST_DIR"), name);
-    fs::read(path).unwrap_or_else(|e| panic!("fixture {name} must be present: {e}"))
+    test_fixtures::read(&format!("dvb-si/{name}"))
 }
 
 #[test]

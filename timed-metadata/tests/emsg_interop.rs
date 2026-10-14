@@ -1,13 +1,11 @@
 //! Real SCTE-35-carrying emsg fixtures (incl. DASH-IF livesim2): extract the
 //! splice and re-wrap it, asserting byte-identical round-trip.
-use std::fs;
 
 use mp4_emsg::EmsgBox;
 use timed_metadata::convert::{EmsgConfig, emsg_to_scte35, scte35_to_emsg};
 
 fn read_fixture(name: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/shared/{}", env!("CARGO_MANIFEST_DIR"), name);
-    fs::read(path).unwrap_or_else(|e| panic!("fixture {name} must be present: {e}"))
+    test_fixtures::read(&format!("shared/{name}"))
 }
 
 fn rewrap_matches(emsg_bytes: &[u8]) {

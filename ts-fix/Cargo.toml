@@ -38,6 +38,7 @@ path = "src/bin/ts-fix.rs"
 required-features = ["cli"]
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 scte35-splice = { path = "../scte35-splice", version = "3.0", default-features = false }
 
 [package.metadata.docs.rs]

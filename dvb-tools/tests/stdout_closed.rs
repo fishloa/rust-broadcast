@@ -10,10 +10,9 @@
 use std::process::{Command, Stdio};
 
 fn fixture() -> String {
-    format!(
-        "{}/../fixtures/dvb-t2mi/colombia-capital-t2mi.ts",
-        env!("CARGO_MANIFEST_DIR")
-    )
+    test_fixtures::path("dvb-t2mi/colombia-capital-t2mi.ts")
+        .to_string_lossy()
+        .into_owned()
 }
 
 /// Spawn `dvb-tools t2mi <fixture> <args>` with stdout piped, close the read

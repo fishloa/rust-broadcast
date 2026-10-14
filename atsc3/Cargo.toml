@@ -35,5 +35,8 @@ optional         = true
 [package.metadata.docs.rs]
 all-features = true
 
+[dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
+
 [lints]
 workspace = true

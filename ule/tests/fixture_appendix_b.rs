@@ -3,16 +3,10 @@
 //! RFC's stated CRC-32 `0x7C171763`), assert the decoded fields, verify a
 //! byte-exact round-trip, and confirm the CRC matches `broadcast_common::crc32_mpeg2`.
 
-use std::fs;
-
 use ule::{Sndu, TypeField};
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/ule/appendix_b.bin"
-    );
-    fs::read(path).expect("fixture appendix_b.bin must be committed")
+    test_fixtures::read("ule/appendix_b.bin")
 }
 
 #[test]

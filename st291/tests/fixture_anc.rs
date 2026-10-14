@@ -3,13 +3,10 @@
 //! decoded fields against independently-known expected values, and verify a
 //! byte-exact round-trip.
 
-use std::fs;
-
 use st291::{AncDataPacket, AncPacket};
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/st291/anc.bin");
-    fs::read(path).expect("fixture anc.bin must be committed")
+    test_fixtures::read("st291/anc.bin")
 }
 
 #[test]

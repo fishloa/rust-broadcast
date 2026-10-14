@@ -11,16 +11,10 @@
 //! Asserts the decoded fields, a byte-exact round-trip, and that `size`
 //! recomputes to the fixture length.
 
-use std::fs;
-
 use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(
-        env!("CARGO_MANIFEST_DIR"),
-        "/../fixtures/shared/scte35_emsg_v0.bin"
-    );
-    fs::read(path).expect("fixture scte35_emsg_v0.bin must be committed")
+    test_fixtures::read("shared/scte35_emsg_v0.bin")
 }
 
 #[test]

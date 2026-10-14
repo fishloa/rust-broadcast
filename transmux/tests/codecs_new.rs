@@ -50,8 +50,7 @@ fn find_full_box<'a>(data: &'a [u8], four_cc: &[u8; 4]) -> &'a [u8] {
 }
 
 fn fixture(rel: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/{}", env!("CARGO_MANIFEST_DIR"), rel);
-    std::fs::read(&path).unwrap_or_else(|e| panic!("fixture {path} must exist: {e}"))
+    test_fixtures::read(rel)
 }
 
 fn roundtrip<T: Serialize<Error = transmux::Error>>(v: &T, oracle: &[u8]) -> Vec<u8> {

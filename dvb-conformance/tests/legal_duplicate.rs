@@ -33,11 +33,7 @@ use dvb_conformance::{ConformanceMonitor, Indicator};
 const TS_PACKET_SIZE: usize = 188;
 
 fn fixture_path(name: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("ts")
-        .join(name)
+    test_fixtures::path(&format!("ts/{name}"))
 }
 
 /// A syntactically valid, otherwise-inert TS packet: sync byte + PID

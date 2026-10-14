@@ -100,10 +100,9 @@ fn udp_packets(data: &[u8]) -> Vec<UdpPacket<'_>> {
 }
 
 fn fixture_path() -> String {
-    format!(
-        "{}/../fixtures/rist/rist-simple-loss25pct-loopback.pcap",
-        env!("CARGO_MANIFEST_DIR")
-    )
+    test_fixtures::path("rist/rist-simple-loss25pct-loopback.pcap")
+        .to_string_lossy()
+        .into_owned()
 }
 
 const RTCP_PORT: u16 = 3235;

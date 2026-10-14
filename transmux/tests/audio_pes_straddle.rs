@@ -37,10 +37,7 @@ const TS: usize = 188;
 const TAIL: usize = 100;
 
 fn fixture(rel: &str) -> Vec<u8> {
-    let p = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures")
-        .join(rel);
-    std::fs::read(&p).unwrap_or_else(|e| panic!("read fixture {}: {e}", p.display()))
+    test_fixtures::read(rel)
 }
 
 fn local_fixture(rel: &str) -> Vec<u8> {

@@ -29,10 +29,7 @@ use transmux::{DashPackager, Media, WebmDemux};
 /// crate's `CARGO_MANIFEST_DIR`). Read at runtime via `std::fs` — never
 /// `include_bytes!`.
 fn fixture_path(rel: &str) -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join(rel)
+    test_fixtures::path(rel)
 }
 
 /// One-line human summary of a track's codec configuration.

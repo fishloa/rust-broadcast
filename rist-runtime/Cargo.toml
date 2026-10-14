@@ -22,6 +22,7 @@ rtcp-packet      = { path = "../rtcp-packet",      version = "0.5", default-feat
 thiserror        = { version = "2", default-features = false }
 
 [dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
 
 [features]
 default = ["std"]

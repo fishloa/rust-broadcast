@@ -56,7 +56,7 @@ const KEY_B: [u8; 16] = [
 ];
 
 fn fixture_path() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../fixtures/ts/h264/main.ts")
+    test_fixtures::path("ts/h264/main.ts")
 }
 
 /// A real **two-track** (H.264 video + AAC audio) MPEG-2 TS capture, with

@@ -29,5 +29,8 @@ optional         = true
 all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
+[dev-dependencies]
+test-fixtures = { path = "../test-fixtures" }
+
 [lints]
 workspace = true

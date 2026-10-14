@@ -79,10 +79,7 @@ const M2TS_HEADER_LEN: usize = 4;
 const M6_DUPLICATE_CC_ANOMALIES: usize = 879;
 
 fn read_fixture(name: &str) -> Vec<u8> {
-    let path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("../fixtures/ts")
-        .join(name);
-    fs::read(&path).unwrap_or_else(|e| panic!("read fixture {}: {e}", path.display()))
+    test_fixtures::read(&format!("ts/{name}"))
 }
 
 /// A scratch file under the workspace `target/` (already gitignored).

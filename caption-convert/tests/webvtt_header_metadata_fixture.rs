@@ -14,14 +14,9 @@
 //! as valid WebVTT and converts it to the same two cues via `-f srt`.
 
 use std::fs;
-use std::path::Path;
 
 fn fixture_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("sub")
-        .join("header_meta.vtt")
+    test_fixtures::path("sub/header_meta.vtt")
 }
 
 #[test]

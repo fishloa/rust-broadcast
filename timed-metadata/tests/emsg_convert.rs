@@ -2,14 +2,12 @@
 //!
 //! Validates `emsg_to_v1`/`emsg_to_v0` against the committed real broadcast
 //! captures.
-use std::fs;
 
 use mp4_emsg::{EmsgBox, EmsgVersion, PresentationTime};
 use timed_metadata::convert::{SegmentTiming, emsg_to_v0, emsg_to_v1};
 
 fn read_fixture(name: &str) -> Vec<u8> {
-    let path = format!("{}/../fixtures/shared/{}", env!("CARGO_MANIFEST_DIR"), name);
-    fs::read(path).unwrap_or_else(|e| panic!("fixture {name} must be present: {e}"))
+    test_fixtures::read(&format!("shared/{name}"))
 }
 
 #[test]

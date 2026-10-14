@@ -29,8 +29,7 @@ const PASP_BODY_ORACLE: [u8; 8] = [
 ];
 
 fn load_fixture() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/mp4/colr_hdr.mp4");
-    std::fs::read(path).expect("fixture must exist")
+    test_fixtures::read("mp4/colr_hdr.mp4")
 }
 
 /// Find a direct child box by four-CC (shallow — only walks one level).

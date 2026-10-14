@@ -5,14 +5,11 @@
 //! RTP + payload-header framing), assert the decoded fields against
 //! independently-known expected values, and verify a byte-exact round-trip.
 
-use std::fs;
-
 use broadcast_common::Serialize;
 use st291::{AncContent, AncRtpPayload, FieldSense, RtpAncPacket};
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/st291/anc_rtp.bin");
-    fs::read(path).expect("fixture anc_rtp.bin must be committed")
+    test_fixtures::read("st291/anc_rtp.bin")
 }
 
 #[test]

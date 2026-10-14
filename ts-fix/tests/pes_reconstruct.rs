@@ -14,13 +14,7 @@ use std::{fs, path::PathBuf};
 
 /// Path to the shared H.264+AAC fixture in the workspace root.
 fn fixture_path() -> PathBuf {
-    // CARGO_MANIFEST_DIR is set by Cargo to this crate's root (ts-fix/).
-    // The fixture lives at workspace-root/fixtures/ts/h264_aac.ts.
-    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("ts")
-        .join("h264_aac.ts")
+    test_fixtures::path("ts/h264_aac.ts")
 }
 
 fn load_fixture() -> Vec<u8> {

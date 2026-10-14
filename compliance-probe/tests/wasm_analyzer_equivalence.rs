@@ -60,8 +60,7 @@ use mpeg_ts::ts::{TS_PACKET_SIZE, TsPacket};
 use std::collections::BTreeMap;
 
 fn fixture() -> Vec<u8> {
-    let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../fixtures/ts/m6-single.ts");
-    std::fs::read(path).unwrap_or_else(|e| panic!("committed fixture {path}: {e}"))
+    test_fixtures::read("ts/m6-single.ts")
 }
 
 /// Replicates `demo/src/lib.rs::analyze_impl`'s clock **exactly**: anchored on

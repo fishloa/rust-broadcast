@@ -8,14 +8,9 @@
 use caption_convert::Cea608ToWebVtt;
 use cc_data::decode::Cea608Channel;
 use std::fs;
-use std::path::Path;
 
 fn fixture_path() -> std::path::PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join("fixtures")
-        .join("cc")
-        .join("cea608_cc1_synthetic.txt")
+    test_fixtures::path("cc/cea608_cc1_synthetic.txt")
 }
 
 /// Parse the fixture into `(pts_90k, cc_data_bytes)` frames, skipping

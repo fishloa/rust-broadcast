@@ -6,10 +6,9 @@
 use std::process::Command;
 
 fn fixture() -> String {
-    format!(
-        "{}/../fixtures/dvb-t2mi/colombia-capital-t2mi.ts",
-        env!("CARGO_MANIFEST_DIR")
-    )
+    test_fixtures::path("dvb-t2mi/colombia-capital-t2mi.ts")
+        .to_string_lossy()
+        .into_owned()
 }
 
 fn run(args: &[&str]) -> (bool, String, String) {
