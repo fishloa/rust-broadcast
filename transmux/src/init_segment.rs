@@ -3447,6 +3447,29 @@ impl MediaInformationBox {
 }
 
 impl MediaInformationBox {
+    /// Install an opaque media header (`sthd` / `nmhd`, which this crate does
+    /// not model) as the **first** `minf` child, ahead of `dinf`/`stbl` —
+    /// ISO/IEC 14496-12 §6.2.3 requires the media header first, and the
+    /// default "typed first, opaque last" order would put it after `stbl`.
+    pub(crate) fn set_leading_opaque_header(&mut self, header: OpaqueBox) {
+        let mut order = ChildOrder::default();
+        order.push_opaque(header.box_type);
+        if self.vmhd.is_some() {
+            order.push(*b"vmhd");
+        }
+        if self.smhd.is_some() {
+            order.push(*b"smhd");
+        }
+        if self.dinf.is_some() {
+            order.push(*b"dinf");
+        }
+        if self.stbl.is_some() {
+            order.push(*b"stbl");
+        }
+        self.opaque.insert(0, header);
+        self.order = order;
+    }
+
     /// The container's typed children, in declaration order — the input
     /// [`ChildOrder::resolve`] maps a wire order onto.
     fn typed_children(&self) -> Vec<&dyn SerializeBox> {

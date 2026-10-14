@@ -30,6 +30,10 @@ const SKIP: &[&str] = &[
     // `name()` + `impl_spec_display!`.
     "JoinDecision",
     "JoinState",
+    // `ir::SubtitleSampleEntry` (issue #1186): a data-carrying ADT holding the
+    // whole parsed `stpp`/`wvtt` sample entry; its format label is
+    // `SubtitleFormat` (which carries `name()` + `impl_spec_display!`).
+    "SubtitleSampleEntry",
     // errors (Display comes from `thiserror`'s derive or a hand-written
     // human-readable message, not a spec-token label)
     "Error",

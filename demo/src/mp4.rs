@@ -137,7 +137,7 @@ fn codec_label(config: &CodecConfig) -> &'static str {
         CodecConfig::Dts { .. } => "DTS",
         CodecConfig::MpegAudio { .. } => "MPEG-1/2 Audio",
         CodecConfig::Vorbis { .. } => "Vorbis",
-        CodecConfig::Subtitle { format } => format.name(),
+        CodecConfig::Subtitle { format, .. } => format.name(),
         CodecConfig::Data { .. } => "opaque (unrecognised stream_type)",
         // See the matching wildcard arm in `track_kind` above.
         _ => "unrecognised (unsupported by this analyzer build)",

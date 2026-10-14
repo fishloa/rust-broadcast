@@ -49,7 +49,8 @@ use crate::init_segment::{
     sampling_rate_override,
 };
 use crate::ir::{
-    CodecConfig, FragmentTrackData, InputDegradation, Sample, SubtitleFormat, TrackSpec,
+    CodecConfig, FragmentTrackData, InputDegradation, Sample, SubtitleFormat, SubtitleSampleEntry,
+    TrackSpec,
 };
 use crate::movie_fragment::{MovieFragmentBox, SAMPLE_FLAG_IS_NON_SYNC};
 use crate::mp4esds::EsdsBox;
@@ -920,16 +921,17 @@ fn codec_config_from_entry(entry: &SampleEntryVariant) -> Result<CodecConfig> {
                 sample_size: ac4.samplesize,
             })
         }
-        // Subtitle sample entries (media plane step 2d): only the format tag
-        // is reconstructed — the TTML namespace / WebVTT header block lives
-        // in the sample entry but this crate has no field to carry it back
-        // out to yet (see `CodecConfig::Subtitle`'s doc comment). Samples
-        // stay opaque (TTML XML / WebVTT `vttc`/`vtte` boxes), never parsed.
-        SampleEntryVariant::Stpp(_) => Ok(CodecConfig::Subtitle {
+        // Subtitle sample entries (media plane step 2d): the whole entry (TTML
+        // namespace / WebVTT `vttC` header block / trailing boxes) is carried
+        // in `CodecConfig::Subtitle::sample_entry` so it re-muxes (#1186).
+        // Samples stay opaque (TTML XML / WebVTT `vttc`/`vtte` boxes), never parsed.
+        SampleEntryVariant::Stpp(s) => Ok(CodecConfig::Subtitle {
             format: SubtitleFormat::Ttml,
+            sample_entry: Some(SubtitleSampleEntry::Ttml((**s).clone())),
         }),
-        SampleEntryVariant::Wvtt(_) => Ok(CodecConfig::Subtitle {
+        SampleEntryVariant::Wvtt(w) => Ok(CodecConfig::Subtitle {
             format: SubtitleFormat::WebVtt,
+            sample_entry: Some(SubtitleSampleEntry::WebVtt((**w).clone())),
         }),
         // Genuinely unimplemented sample entry: name it so the caller learns
         // which track was rejected, rather than a generic message.
@@ -1061,8 +1063,9 @@ mod tests {
             matches!(
                 config,
                 CodecConfig::Subtitle {
-                    format: SubtitleFormat::WebVtt
-                }
+                    format: SubtitleFormat::WebVtt,
+                    sample_entry: Some(SubtitleSampleEntry::WebVtt(ref e)),
+                } if e.config.config == "WEBVTT\n"
             ),
             "wvtt must map to CodecConfig::Subtitle{{format: SubtitleFormat::WebVtt}}, got {config:?}"
         );

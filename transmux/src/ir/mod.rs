@@ -59,7 +59,7 @@ pub use audio_meta::{
     AudioLanguage, AudioMetadata, AudioRole, AudioType, EditorialClassification, MixType,
     SupplementaryAudio,
 };
-pub use codec::{CodecConfig, DataCarriage, SubtitleFormat};
+pub use codec::{CodecConfig, DataCarriage, SubtitleFormat, SubtitleSampleEntry};
 pub use event::{AbandonReason, DemuxEvent, DiscontinuityKind, EventProvenance, InputDegradation};
 pub use ids::{ProgramNumber, TrackId};
 pub use media::{Media, PcrSample, SkippedTrack};

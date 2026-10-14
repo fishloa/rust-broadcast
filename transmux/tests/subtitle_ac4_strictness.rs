@@ -83,7 +83,8 @@ fn ordering_guard_subtitle_track_present_after_demux() {
         matches!(
             subtitle.spec.config,
             CodecConfig::Subtitle {
-                format: SubtitleFormat::Ttml
+                format: SubtitleFormat::Ttml,
+                sample_entry: Some(_)
             }
         ),
         "stpp must map to SubtitleFormat::Ttml, got {:?}",
@@ -135,11 +136,18 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
         .expect("demux av_subtitle_frag.mp4 (AVC + stpp)");
     assert_eq!(media.tracks.len(), 2, "AVC video + stpp subtitle track");
 
-    // Unfiltered: CmafMux must still reject the Subtitle track by name (MUX
-    // = strict), not silently drop it or panic.
+    // Since #1186 the demuxed `stpp` track carries its sample entry, so
+    // an UNFILTERED CmafMux carries it (see `tests/subtitle_remux.rs`). A
+    // subtitle track with no sample entry is still rejected, by name.
+    let mut entryless = media.clone();
+    for t in &mut entryless.tracks {
+        if let CodecConfig::Subtitle { sample_entry, .. } = &mut t.spec.config {
+            *sample_entry = None;
+        }
+    }
     let unfiltered_err = CmafMux::default()
-        .package(&media)
-        .expect_err("CmafMux must reject an unfiltered Subtitle track");
+        .package(&entryless)
+        .expect_err("CmafMux must reject an entry-less Subtitle track");
     assert!(
         matches!(
             unfiltered_err,
@@ -147,6 +155,11 @@ fn subtitle_bearing_cmaf_repackages_once_filtered_with_is_muxable_in_bmff() {
         ),
         "must fail naming the Subtitle track specifically, got {unfiltered_err:?}"
     );
+    let filtered_entryless = entryless
+        .select_tracks_by(|t| t.spec.config.is_muxable_in_bmff())
+        .expect("the AVC track remains carriable");
+    assert_eq!(filtered_entryless.tracks.len(), 1);
+    let media = entryless;
 
     // Filtered with the new predicate: CmafMux must now succeed — this is
     // the "repackages fine" outcome B1 regressed away from.

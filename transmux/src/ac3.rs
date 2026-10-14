@@ -392,22 +392,45 @@ impl Ec3SyncframeInfo {
     /// serializer then rejects. Stops at the first bad sync word or truncated
     /// tail, like [`split_eac3_syncframes`].
     pub fn from_es_first_au(data: &[u8]) -> Vec<Self> {
+        Self::first_au(data).0
+    }
+
+    /// Like [`Self::from_es_first_au`], but `Some` only when the access unit is
+    /// **provably complete**: a following independent frame for a substreamid
+    /// already seen was parsed, i.e. the next access unit has begun (the
+    /// independent-frame-plus-dependents structure of ETSI TS 102 366 §E.1.3.1.2:
+    /// "Dependent substreams shall immediately follow the independent substream
+    /// with which they are associated", see `docs/codec/eac3-syncframe.md`).
+    /// `None` while the data may still be missing one of the
+    /// AU's dependent frames (it ends at, or before, the data's end) — a
+    /// `dec3` built then would silently drop the dependent substreams and
+    /// signal a 7.1 programme as 5.1 (issue #1186). `data` must begin at an
+    /// independent frame (a leading dependent frame is mid-access-unit).
+    pub fn from_es_first_complete_au(data: &[u8]) -> Option<Vec<Self>> {
+        let (frames, complete) = Self::first_au(data);
+        complete.then_some(frames)
+    }
+
+    /// The frames of the first access unit and whether its end was observed.
+    fn first_au(data: &[u8]) -> (Vec<Self>, bool) {
         let frames = Self::from_es_all(data);
         // An access unit ends where the next one begins: an independent frame
         // for a substreamid already seen. `strmtyp == 0x2` counts as
         // independent too (an AC-3-derived stream carries no dependent frames).
         let mut seen_independent: Vec<u8> = Vec::new();
         let mut out = Vec::new();
+        let mut complete = false;
         for f in frames {
             if f.strmtyp != EAC3_STRMTYP_DEPENDENT {
                 if seen_independent.contains(&f.substreamid) {
+                    complete = true;
                     break;
                 }
                 seen_independent.push(f.substreamid);
             }
             out.push(f);
         }
-        out
+        (out, complete)
     }
 
     /// Parse **every** syncframe in an E-AC-3 elementary stream, in order —
