@@ -648,44 +648,226 @@ impl SrtSocket {
                             reason: "Connected without a received datagram",
                         })?;
                         let peer_hs = peer_handshake(&received)?;
-                        let epoch = Instant::now();
-                        // This socket is exclusively this connection's own
-                        // (bound fresh in `connect_from`, never shared) — no
-                        // demux table needed, just a forwarder task unifying
-                        // it with the same `Driver::rx` path a
-                        // listener-accepted connection uses (issue #1029).
-                        let stats = Arc::new(Counters::default());
-                        let (rx, forwarder) = spawn_dedicated_socket_forwarder(
-                            Arc::clone(&socket),
+                        return Ok(Self::established(
+                            socket,
                             peer,
-                            Arc::clone(&stats),
+                            config.initial_seq_number,
+                            &params,
+                            peer_hs,
                             max_datagram,
-                        );
-                        return Ok(SrtSocket::spawn(ConnParams {
-                            udp: socket,
-                            peer_addr: peer,
-                            rx,
-                            stats,
-                            route_cleanup: RouteCleanup(None),
-                            forwarder_guard: TaskGuard(Some(forwarder)),
-                            life: None,
-                            read_idle: io.read_idle,
-                            write: io.write,
-                            our_initial_seq: config.initial_seq_number,
-                            peer_initial_seq: peer_hs.initial_seq_number,
-                            peer_socket_id: params.peer_socket_id,
-                            tsbpd_time_base: tsbpd_time_base_from(peer_hs.timestamp_us),
-                            tsbpd_delay_ms: u64::from(params.latency_ms),
-                            epoch,
-                            max_flow_window: params.max_flow_window_size,
-                            mtu: params.mtu,
-                            tlpkt_drop: params.flags.tlpktdrop(),
-                        }));
+                            &io,
+                        ));
                     }
                     HandshakeOutput::Rejected(reason) => return Err(Error::Rejected(reason)),
                     HandshakeOutput::TimedOut => {
                         return Err(Error::HandshakeTimedOut {
                             stage: "caller retransmit budget",
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Wire up a connected socket from a completed handshake (Caller or
+    /// Rendezvous): a dedicated-socket forwarder feeding the same
+    /// `Driver::rx` path a listener-accepted connection uses (issue #1029),
+    /// seeded from the peer's ISN and handshake timestamp (TSBPD rule 12).
+    fn established(
+        socket: Arc<UdpSocket>,
+        peer: std::net::SocketAddr,
+        our_initial_seq: u32,
+        params: &handshake_sm::NegotiatedParams,
+        peer_hs: PeerHandshake,
+        max_datagram: usize,
+        io: &IoConfig,
+    ) -> SrtSocket {
+        let epoch = Instant::now();
+        // This socket is exclusively this connection's own (bound fresh by
+        // the connect/rendezvous call, never shared) - no demux table needed.
+        let stats = Arc::new(Counters::default());
+        let (rx, forwarder) = spawn_dedicated_socket_forwarder(
+            Arc::clone(&socket),
+            peer,
+            Arc::clone(&stats),
+            max_datagram,
+        );
+        SrtSocket::spawn(ConnParams {
+            udp: socket,
+            peer_addr: peer,
+            rx,
+            stats,
+            route_cleanup: RouteCleanup(None),
+            forwarder_guard: TaskGuard(Some(forwarder)),
+            life: None,
+            read_idle: io.read_idle,
+            write: io.write,
+            our_initial_seq,
+            peer_initial_seq: peer_hs.initial_seq_number,
+            peer_socket_id: params.peer_socket_id,
+            tsbpd_time_base: tsbpd_time_base_from(peer_hs.timestamp_us),
+            tsbpd_delay_ms: u64::from(params.latency_ms),
+            epoch,
+            max_flow_window: params.max_flow_window_size,
+            mtu: params.mtu,
+            tlpkt_drop: params.flags.tlpktdrop(),
+        })
+    }
+
+    /// Establish a connection with a peer in **Rendezvous** mode
+    /// (`draft-sharabayko-srt-01` §4.3.2): both sides bind a known local port
+    /// and send to each other's address at the same time, so neither is
+    /// Caller or Listener; the cookie contest picks Initiator / Responder.
+    /// Runs the sans-IO [`crate::rendezvous::RendezvousHandshake`] over a UDP
+    /// socket bound to `local_addr` (its port must be the one the peer targets).
+    ///
+    /// # Encryption
+    /// Like [`Self::connect`], refuses a `crypto`-enabled [`HandshakeConfig`]
+    /// with [`Error::EncryptionUnsupported`] before any I/O (the Rendezvous
+    /// engine never negotiates keys either).
+    ///
+    /// # Errors
+    /// [`Error::Rejected`] carries the peer's [`RejectionReason`];
+    /// [`Error::HandshakeTimedOut`] means the peer never completed the
+    /// exchange within the handshake budget.
+    pub async fn rendezvous<A: tokio::net::ToSocketAddrs>(
+        local_addr: std::net::SocketAddr,
+        remote_addr: A,
+        config: HandshakeConfig,
+    ) -> Result<Self> {
+        Self::rendezvous_with(local_addr, remote_addr, config, IoConfig::default()).await
+    }
+
+    /// Like [`Self::rendezvous`], with explicit timeouts and datagram size.
+    pub async fn rendezvous_with<A: tokio::net::ToSocketAddrs>(
+        local_addr: std::net::SocketAddr,
+        remote_addr: A,
+        config: HandshakeConfig,
+        io: IoConfig,
+    ) -> Result<Self> {
+        refuse_crypto(&config)?;
+        let max_datagram = io.max_datagram.clamp(MIN_MAX_DATAGRAM, MAX_MAX_DATAGRAM);
+        let socket = bounded(io.connect, "bind", async {
+            UdpSocket::bind(local_addr)
+                .await
+                .map_err(|e| io_err("bind", e))
+        })
+        .await?;
+        let peer = bounded(io.connect, "resolve", resolve_one(remote_addr)).await?;
+        let socket = Arc::new(socket);
+
+        // Fresh per-connection Socket ID, ISN and cookie (a zero cookie is
+        // never drawn: it is the "no cookie yet" value on the wire).
+        let own_socket_id = random_socket_id()?;
+        let mut config = config;
+        config.initial_seq_number = random_isn()?;
+        let mut own_cookie = random_u32()?;
+        while own_cookie == 0 {
+            own_cookie = random_u32()?;
+        }
+        let mut hs =
+            crate::rendezvous::RendezvousHandshake::new(own_socket_id, own_cookie, config.clone());
+        let first = hs
+            .start()
+            .map_err(|e| handshake_err("rendezvous start", e))?;
+        send_bounded(&socket, &first, peer, io.write, "send waveahand").await?;
+
+        let tick_period = (HANDSHAKE_RETRANSMIT_PERIOD / config.retransmit_after_ticks.max(1))
+            .max(MIN_HANDSHAKE_TICK);
+        let mut ticker = tokio::time::interval_at(Instant::now() + tick_period, tick_period);
+        ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let deadline = Instant::now() + io.handshake;
+        let mut scratch = vec![0u8; max_datagram + 1];
+        let hs_oversize = AtomicU64::new(0);
+        // The newest Handshake packet the peer sent: every one carries the
+        // peer's ISN, and the freshest timestamp seeds the TSBPD time base.
+        // (A Responder promoted to Connected by a data packet, recovery
+        // rule 3, completes on a non-handshake datagram.)
+        let mut last_peer_hs: Option<PeerHandshake> = None;
+
+        loop {
+            enum Event {
+                Datagram(Bytes, std::net::SocketAddr),
+                Oversize,
+                Tick,
+                Deadline,
+            }
+            let event = tokio::select! {
+                r = recv_datagram(&socket, &mut scratch, max_datagram, &hs_oversize) => {
+                    match r.map_err(|e| io_err("recv hs", e))? {
+                        Some((bytes, src)) => Event::Datagram(bytes, src),
+                        None => Event::Oversize,
+                    }
+                }
+                _ = ticker.tick() => Event::Tick,
+                _ = tokio::time::sleep_until(deadline) => Event::Deadline,
+            };
+
+            let outputs = match event {
+                Event::Deadline => {
+                    return Err(Error::HandshakeTimedOut {
+                        stage: "rendezvous connect",
+                    });
+                }
+                Event::Oversize => continue,
+                Event::Tick => hs.tick(),
+                Event::Datagram(bytes, src) => {
+                    if src != peer {
+                        continue;
+                    }
+                    match SrtPacket::parse(&bytes) {
+                        Ok(SrtPacket::Control(ControlPacket::Handshake(hp))) => {
+                            last_peer_hs = Some(PeerHandshake {
+                                initial_seq_number: hp.initial_seq_number,
+                                timestamp_us: hp.timestamp,
+                            });
+                            match hs.feed_bytes(&bytes) {
+                                Ok(o) => o,
+                                Err(_) => continue,
+                            }
+                        }
+                        // A data packet before we are Connected: missing-
+                        // packet recovery rule 3 (a Responder stuck in
+                        // Initiated is promoted; anything else is a no-op).
+                        Ok(SrtPacket::Data(_)) => match hs.on_recovery_trigger() {
+                            Ok(o) => o,
+                            Err(_) => continue,
+                        },
+                        // Any other control packet is fed straight to the
+                        // engine, which applies the same recovery rule.
+                        Ok(SrtPacket::Control(c)) => match hs.feed(&c) {
+                            Ok(o) => o,
+                            Err(_) => continue,
+                        },
+                        Err(_) => continue,
+                    }
+                }
+            };
+
+            for outcome in outputs {
+                match outcome {
+                    HandshakeOutput::Send(bytes) => {
+                        send_bounded(&socket, &bytes, peer, io.write, "send hs").await?;
+                    }
+                    HandshakeOutput::Connected(params) => {
+                        let peer_hs = last_peer_hs.ok_or(Error::InvalidField {
+                            what: "handshake",
+                            reason: "Connected without having received a peer Handshake packet",
+                        })?;
+                        return Ok(Self::established(
+                            socket,
+                            peer,
+                            config.initial_seq_number,
+                            &params,
+                            peer_hs,
+                            max_datagram,
+                            &io,
+                        ));
+                    }
+                    HandshakeOutput::Rejected(reason) => return Err(Error::Rejected(reason)),
+                    HandshakeOutput::TimedOut => {
+                        return Err(Error::HandshakeTimedOut {
+                            stage: "rendezvous retransmit budget",
                         });
                     }
                 }

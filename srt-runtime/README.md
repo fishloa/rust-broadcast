@@ -24,7 +24,7 @@ out — no wall-clock read inside the crate):
 
 - **HSv5 Caller/Listener handshake** state machines (§4.3.1) — `caller`,
   `listener`.
-- **Rendezvous handshake** state machine (§4.3.2) — `rendezvous`.
+- **Rendezvous handshake** state machine (§4.3.2) — `rendezvous`; the tokio adapter exposes it as `io::SrtSocket::rendezvous` (interop-tested against `srt-live-transmit` in `mode=rendezvous`).
 - **ARQ reliability engine** (§4.8/§4.10) — `arq::Sender` / `arq::Receiver`:
   wrap-safe sequence arithmetic, retransmit on NAK, receiver loss list,
   ACK/ACKACK, RTT/RTTVar estimation.
