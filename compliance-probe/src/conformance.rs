@@ -19,13 +19,6 @@ use broadcast_common::clock33::{PCR_HZ, pcr_forward_distance};
 use core::time::Duration;
 use mpeg_ts::pid::Pid;
 
-/// PCR clock rate — ISO/IEC 13818-1 §2.4.2.2, "27 MHz System Clock".
-
-/// PCR field modulus: the 33-bit `program_clock_reference_base` plus the
-/// 9-bit `program_clock_reference_extension` (ISO/IEC 13818-1 §2.4.2.2)
-/// together count `base * 300 + extension` 27 MHz ticks, wrapping at
-/// `2^33 * 300`.
-
 /// A discontinuity guard, not a spec value: an inter-PCR gap this large
 /// (wall-clock or PCR-derived) is treated as a legitimate discontinuity
 /// (stream cut, encoder restart, or a caller-clock jump) rather than measured
