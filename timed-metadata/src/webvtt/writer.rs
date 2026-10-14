@@ -8,48 +8,20 @@
 use crate::event::MediaTime;
 use crate::timeline::PTS_WRAP;
 use crate::webvtt::Cue;
+use crate::webvtt::text::{
+    escape_payload, format_timestamp_with, normalize_line_endings, payload_lines,
+};
 use alloc::format;
 use alloc::string::String;
-
-/// 90 kHz ticks per millisecond (`crate::PTS_HZ` / 1000): the ratio used to
-/// render a [`MediaTime`] as a WebVTT timestamp.
-const TICKS_PER_MS: u64 = crate::PTS_HZ / 1000;
-/// Milliseconds per hour / minute / second, for timestamp field extraction.
-const MS_PER_HOUR: u64 = 3_600_000;
-const MS_PER_MIN: u64 = 60_000;
-const MS_PER_SEC: u64 = 1_000;
 
 /// Format a [`MediaTime`] as a WebVTT timestamp `hh:mm:ss.ttt` (W3C WebVTT
 /// §4.3.1). Hours are always emitted: the grammar `(hh:)?mm:ss.ttt` makes
 /// hours *optional*, not forbidden, and always including them keeps this
-/// function total and monotonic without a >=1h special case.
+/// function total and monotonic without a >=1h special case. The digit math
+/// is [`format_timestamp_with`], shared with the SRT writer.
 #[must_use]
 pub fn format_timestamp(t: MediaTime) -> String {
-    let total_ms = t.0 / TICKS_PER_MS;
-    let hours = total_ms / MS_PER_HOUR;
-    let mins = (total_ms % MS_PER_HOUR) / MS_PER_MIN;
-    let secs = (total_ms % MS_PER_MIN) / MS_PER_SEC;
-    let ms = total_ms % MS_PER_SEC;
-    format!("{hours:02}:{mins:02}:{secs:02}.{ms:03}")
-}
-
-/// Escape a cue payload line per W3C WebVTT §6.4: `&` -> `&amp;`,
-/// `<` -> `&lt;`, `>` -> `&gt;` (order is immaterial here: this is a single
-/// left-to-right character scan, not a sequence of whole-string
-/// find-and-replace passes, so an inserted `&amp;` is never re-scanned and
-/// cannot be corrupted by a later `<`/`>` substitution).
-#[must_use]
-pub fn escape_payload(text: &str) -> String {
-    let mut out = String::with_capacity(text.len());
-    for c in text.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            _ => out.push(c),
-        }
-    }
-    out
+    format_timestamp_with(t, '.')
 }
 
 /// Render one cue block: the timings line (`start --> end`) followed by the
@@ -62,13 +34,11 @@ pub fn cue_block(cue: &Cue) -> String {
         format_timestamp(cue.start),
         format_timestamp(cue.end)
     );
-    // A blank line terminates a cue block (W3C WebVTT §4.1), so an empty
-    // line inside the payload would truncate the cue and turn the rest into
-    // a bogus block: empty lines are dropped.
-    // WebVTT line terminators are CRLF, LF or a lone CR (§4.1), so normalise
-    // all three before splitting: `str::lines` does not split on a lone CR.
-    let normalized = cue.text.replace("\r\n", "\n").replace('\r', "\n");
-    for (i, line) in normalized.split('\n').filter(|l| !l.is_empty()).enumerate() {
+    // A blank line terminates a cue block (W3C WebVTT §4.1), so an empty line
+    // inside the payload would truncate the cue: `payload_lines` drops them,
+    // after `normalize_line_endings` folded CRLF / lone-CR / LF to LF.
+    let normalized = normalize_line_endings(&cue.text);
+    for (i, line) in payload_lines(&normalized).enumerate() {
         if i > 0 {
             out.push('\n');
         }

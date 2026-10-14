@@ -61,6 +61,7 @@
 mod cue;
 #[cfg(feature = "teletext")]
 pub mod teletext;
+mod text;
 mod writer;
 
 pub use cue::Cue;
@@ -68,4 +69,8 @@ pub use cue::Cue;
 pub use cue::TeletextCueExtractor;
 #[cfg(feature = "cc-data")]
 pub use cue::{Cea608CueExtractor, Cea708CueExtractor};
-pub use writer::{cue_block, escape_payload, format_timestamp, write_document, write_segment};
+pub use text::{
+    TimestampError, escape_payload, format_timestamp_with, hms_ms, normalize_line_endings,
+    parse_timestamp, payload_lines, unescape_payload,
+};
+pub use writer::{cue_block, format_timestamp, write_document, write_segment};
