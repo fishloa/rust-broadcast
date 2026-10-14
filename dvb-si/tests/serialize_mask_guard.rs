@@ -153,6 +153,35 @@ fn lhs_is_field(lhs: &str) -> bool {
         || (operand.contains('.') && !operand.contains(".len()"))
 }
 
+/// `(self.field << N)` / `(e.field.to_u8() << N)`: a bare struct field or enum
+/// code shifted into a packed byte with no range check (a `u8` shift silently
+/// drops the high bits).
+fn shifts_bare_field(ctx: &str) -> bool {
+    let b = ctx.as_bytes();
+    let mut i = 0;
+    while i + 1 < b.len() {
+        if b[i] == b'<' && b[i + 1] == b'<' && (i == 0 || b[i - 1] != b'<') {
+            let lhs = ctx[..i].trim_end();
+            let start = lhs
+                .rfind(|c: char| {
+                    !(c.is_alphanumeric() || c == '_' || c == '.' || c == '(' || c == ')')
+                })
+                .map_or(0, |p| p + 1);
+            let operand = lhs[start..].trim_start_matches('(');
+            let operand = operand.strip_suffix(".to_u8()").unwrap_or(operand);
+            if operand.starts_with("self.")
+                && operand[5..]
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '_')
+            {
+                return true;
+            }
+        }
+        i += 1;
+    }
+    false
+}
+
 fn hits_in(body: &str) -> Vec<(usize, String)> {
     let end = body.find("#[cfg(test)]").unwrap_or(body.len());
     let mut cur_fn = String::new();
@@ -212,6 +241,9 @@ fn hits_in(body: &str) -> Vec<(usize, String)> {
             }
             i += 1;
         }
+        if shifts_bare_field(&ctx) && !out.iter().any(|(l, _)| *l == n + 1) {
+            out.push((n + 1, line.to_string()));
+        }
     }
     out
 }
@@ -260,4 +292,12 @@ fn scanner_bites_on_the_bad_pattern() {
     assert!(hits_in(parse).is_empty());
     let split = "fn serialize_into(&self) {\n    let b = (lt & 0x0F) << 4;\n}\n";
     assert!(hits_in(split).is_empty());
+    let bare_shift = "fn serialize_into(&self) {\n    buf[0] = (self.version << 4) | 1;\n}\n";
+    assert_eq!(
+        hits_in(bare_shift).len(),
+        1,
+        "bare field shift must be flagged"
+    );
+    let checked_shift = "fn serialize_into(&self) {\n    buf[0] = (fit_mask(self.version, 0x0F, \"v\")? << 4) | 1;\n}\n";
+    assert!(hits_in(checked_shift).is_empty());
 }

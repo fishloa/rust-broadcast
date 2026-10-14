@@ -122,7 +122,11 @@ impl Serialize for C2BundleDeliverySystem {
             buf[p] = e.plp_id;
             buf[p + 1] = e.data_slice_id;
             buf[p + 2..p + 6].copy_from_slice(&e.c2_system_tuning_frequency.to_be_bytes());
-            buf[p + 6] = (e.c2_system_tuning_frequency_type.to_u8() << 6)
+            buf[p + 6] = (broadcast_common::len::fit_mask(
+                e.c2_system_tuning_frequency_type.to_u8(),
+                0x03,
+                "c2_system_tuning_frequency_type",
+            )? << 6)
                 | (broadcast_common::len::fit_mask(
                     e.active_ofdm_symbol_duration.to_u8(),
                     0x07,

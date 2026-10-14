@@ -432,7 +432,11 @@ impl Serialize for MosaicDescriptor {
             pos += CELL_FIXED_LEN;
             for ec in &cell.elementary_cells {
                 // reserved_future_use(2) preserved | elementary_cell_id(6).
-                buf[pos] = ((ec.reserved_future_use << ELEM_RESERVED_SHIFT) & !ELEM_CELL_ID_MASK)
+                buf[pos] = (broadcast_common::len::fit_mask(
+                    ec.reserved_future_use,
+                    !ELEM_CELL_ID_MASK >> ELEM_RESERVED_SHIFT,
+                    "reserved_future_use",
+                )? << ELEM_RESERVED_SHIFT)
                     | broadcast_common::len::fit_mask(
                         ec.elementary_cell_id,
                         ELEM_CELL_ID_MASK,
