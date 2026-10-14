@@ -88,10 +88,11 @@
 //!   *inbound* non-Handshake `ControlPacket` this way for exactly this
 //!   reason) calls it directly.
 //!
-//! Explicit non-goals, unchanged from the crate root: ARQ/loss, TSBPD
-//! delivery, congestion control, AES key-wrap/unwrap crypto, a `tokio` socket
-//! adapter, and the Version-4 legacy Rendezvous path (L2101-2105, out of
-//! scope of the draft excerpt this crate implements against).
+//! Explicit non-goals of THIS module (the sans-IO engine): ARQ/loss, TSBPD
+//! delivery, congestion control, AES key-wrap/unwrap crypto, and the Version-4
+//! legacy Rendezvous path (L2101-2105, out of
+//! scope of the draft excerpt this crate implements against). The `tokio`
+//! socket adapter drives this engine as `io::SrtSocket::rendezvous`.
 
 use alloc::vec;
 use alloc::vec::Vec;
