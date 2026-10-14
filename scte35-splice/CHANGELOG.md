@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Fixed (#1204)
+- A clear `splice_info_section` whose `splice_command_length` is the deprecated `0xFFF` "backwards compatibility" value is no longer rejected. SCTE 35 §9.6.1 says that value "shall be ignored by downstream equipment", so `parse` now derives the command's extent from its own structure (the smallest length that both parses as the command and closes the descriptor loop exactly at the CRC; an underivable layout, e.g. with alignment stuffing, is still an error, never a guess). Found with a real capture (TSDuck `test-091.ts`, `tests/real_capture.rs`). **BREAKING (additive field on a literal-constructible struct):** `ClearPayload` gains `legacy_command_length_sentinel: bool`; `serialize_into` writes `0xFFF` back when set so such a section round-trips byte-for-byte (`false` and the real length for conformant / hand-built sections).
+
+### Added (#1204)
+- `tests/real_capture.rs`: real `splice_info_section`s from the committed `fixtures/ts/scte35-*.ts` / SSAI fixture (always) and the local-only TSDuck corpus (archive-gated, skip loudly), checked against an independent Python decode of the spec syntax and re-serialized byte-exactly.
+- `tests/dvb_ta_compact_vectors.rs` + `tests/fixtures/dvb_ta/gen_compact_vectors.py`: independent-oracle byte vectors for the DVB TA compact `time_signal` / `splice_insert` (TS 103 752-1 §8.3.3); documents the open DAS-nibble-order question (`docs/dvb_ta/compact-scte35.md`).
+
 ### Changed (BREAKING, #1202)
 - **BREAKING (behavioural):** `SpliceInfoSection::serialize_into` rejects `sap_type` > 3 and `encryption_algorithm` > 63, and `AudioDescriptor::serialize_into` rejects `bit_stream_mode` > 7 / `num_channels` > 15, with `Error::FieldOverflow` instead of masking them into a different valid-looking value (the #1129 class). Guarded by `tests/serialize_mask_guard.rs` and `tests/serialize_field_width.rs`; `tests/hostility.rs` sweeps CRC-repaired mutations of real sections for panics (none found).
 

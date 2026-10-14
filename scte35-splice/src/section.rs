@@ -34,9 +34,10 @@ const CRC_LEN: usize = 4;
 pub const TIER_IGNORE: u16 = 0x0FFF;
 
 /// `splice_command_length` value (0xFFF) that §9.6.1 reserves as a
-/// backwards-compatibility sentinel meaning "length not stated"; the parser
-/// rejects it for a clear section, and an encrypted section whose real length
-/// is unknown serializes it.
+/// backwards-compatibility sentinel meaning "ignore this field": a clear
+/// section carrying it is parsed by deriving the command's extent from its own
+/// structure ([`derive_command_length`]), and an encrypted section whose real
+/// length is unknown serializes it.
 const SPLICE_COMMAND_LENGTH_IGNORE: u16 = 0x0FFF;
 
 /// The clear (decrypted) splice command and its splice descriptor loop, present
@@ -55,6 +56,14 @@ pub struct ClearPayload<'a> {
     /// sized to end exactly at the descriptor loop. `parse` captures these
     /// verbatim rather than discarding them (#1102 W2).
     pub alignment_stuffing: &'a [u8],
+    /// `true` when the wire `splice_command_length` was the deprecated
+    /// `0xFFF` "backwards compatibility" value (§9.6.1: "shall be ignored by
+    /// downstream equipment"). `parse` then derived the real command length
+    /// from the command's own structure, and `serialize_into` writes `0xFFF`
+    /// back so such a section round-trips byte-for-byte. `false` for every
+    /// section from a conformant sender and for hand-built sections (the
+    /// actual length is always written).
+    pub legacy_command_length_sentinel: bool,
 }
 
 /// splice_info_section() — §9.6, Table 5.
@@ -112,6 +121,7 @@ impl<'a> SpliceInfoSection<'a> {
                 command,
                 descriptor_loop,
                 alignment_stuffing: &[],
+                legacy_command_length_sentinel: false,
             }),
             encrypted_payload: None,
             encrypted_splice_command_length: None,
@@ -165,6 +175,35 @@ impl<'a> SpliceInfoSection<'a> {
             (None, None) => 0,
         }
     }
+}
+
+/// Find the byte length of a clear splice command whose wire
+/// `splice_command_length` was the ignored `0xFFF` sentinel (§9.6.1).
+///
+/// `payload` is `[splice_command_type][command body][descriptor_loop_length(2)]
+/// [descriptor loop][alignment_stuffing]`. The command body length is the
+/// smallest `n` such that (a) the command parses from exactly `n` bytes and
+/// (b) the `descriptor_loop_length` that follows ends the loop exactly at the
+/// end of `payload` (no alignment stuffing - an ambiguous layout is rejected
+/// rather than guessed). Truncated candidates fail (a) for every command with
+/// a fixed minimum size, so the first hit is the real length.
+fn derive_command_length(command_type: u8, payload: &[u8]) -> Result<usize> {
+    for n in 0..=payload.len().saturating_sub(3) {
+        let Some(dll_bytes) = payload.get(1 + n..1 + n + 2) else {
+            break;
+        };
+        let dll = usize::from(u16::from_be_bytes([dll_bytes[0], dll_bytes[1]]));
+        if 1 + n + 2 + dll != payload.len() {
+            continue;
+        }
+        if AnyCommand::dispatch(command_type, &payload[1..1 + n]).is_ok() {
+            return Ok(n);
+        }
+    }
+    Err(Error::InvalidValue {
+        field: "splice_info_section.splice_command_length",
+        reason: "0xFFF sentinel and the command's extent cannot be derived from its structure",
+    })
 }
 
 impl<'a> Parse<'a> for SpliceInfoSection<'a> {
@@ -257,17 +296,16 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
 
         // Clear: splice_command_type (1) is payload[0]; the command body is
         // splice_command_length bytes; then descriptor_loop_length (2) + loop.
-        let scl = splice_command_length as usize;
-        // splice_command_length may be 0xFFF ("ignore"); when so, derive the
-        // command body length from the structure by parsing greedily up to the
-        // descriptor_loop_length. We require the actual value here; reject the
-        // backwards-compat sentinel as unparseable rather than guess.
-        if splice_command_length == SPLICE_COMMAND_LENGTH_IGNORE {
-            return Err(Error::InvalidValue {
-                field: "splice_info_section.splice_command_length",
-                reason: "0xFFF backwards-compat sentinel is not supported; provide the actual length",
-            });
-        }
+        // §9.6.1: a splice_command_length of 0xFFF is the deprecated
+        // backwards-compatibility value that "shall be ignored by downstream
+        // equipment" - the receiver must find the command's extent from its
+        // own structure. Real senders (e.g. the TSDuck test corpus) emit it.
+        let legacy_command_length_sentinel = splice_command_length == SPLICE_COMMAND_LENGTH_IGNORE;
+        let scl = if legacy_command_length_sentinel {
+            derive_command_length(splice_command_type, payload)?
+        } else {
+            splice_command_length as usize
+        };
         // payload = [command_type][command_body(scl)][dll(2)][loop]
         if payload.len() < 1 + scl + 2 {
             return Err(Error::BufferTooShort {
@@ -306,6 +344,7 @@ impl<'a> Parse<'a> for SpliceInfoSection<'a> {
             command,
             descriptor_loop,
             alignment_stuffing,
+            legacy_command_length_sentinel,
         });
         Ok(section)
     }
@@ -383,11 +422,17 @@ impl Serialize for SpliceInfoSection<'_> {
                 // splice_command_length is a 12-bit field; check before
                 // narrowing so a body of 4096 bytes or more is rejected
                 // instead of wrapping (#1129).
-                let scl = broadcast_common::len::fit_bits(
+                let real_scl = broadcast_common::len::fit_bits(
                     c.command.body_len() as u64,
                     12,
                     "splice_info_section.splice_command_length",
                 )? as u16;
+                // A section parsed with the deprecated 0xFFF sentinel keeps it.
+                let scl = if c.legacy_command_length_sentinel {
+                    SPLICE_COMMAND_LENGTH_IGNORE
+                } else {
+                    real_scl
+                };
                 buf[11] = (((self.tier & 0x0F) as u8) << 4) | ((scl >> 8) as u8 & 0x0F);
                 buf[12] = (scl & 0xFF) as u8;
                 buf[13] = c.command.command_type();
@@ -555,6 +600,7 @@ mod tests {
                 }),
                 descriptor_loop: &[],
                 alignment_stuffing: &[0xFF, 0xFF, 0xFF],
+                legacy_command_length_sentinel: false,
             }),
             encrypted_payload: None,
             encrypted_splice_command_length: None,
