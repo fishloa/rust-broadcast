@@ -998,7 +998,7 @@ pub(crate) mod tests {
     /// Read a committed real-capture fixture from the workspace `fixtures/`
     /// directory (shared across crates, one level up from this crate root).
     fn fixture(rel: &str) -> Vec<u8> {
-        test_fixtures::read(&format!("{rel}"))
+        test_fixtures::read(rel)
     }
 
     /// Split `bytes` into fixed-size chunks, simulating UDP datagrams without

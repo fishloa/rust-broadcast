@@ -48,6 +48,10 @@ const LABEL_COVERAGE_EXEMPT: &[(&str, &str)] = &[
         "test-alloc",
         "no public enums in src/ (the shared counting/capping test allocators)",
     ),
+    (
+        "test-fixtures",
+        "no public enums in src/ (the shared committed-fixture path/loader helpers)",
+    ),
 ];
 
 /// Library crates exempt from `tests/non_exhaustive_coverage.rs`, with a
@@ -69,6 +73,10 @@ const NON_EXHAUSTIVE_EXEMPT: &[(&str, &str)] = &[
     (
         "test-alloc",
         "no public enums in src/ (the shared counting/capping test allocators)",
+    ),
+    (
+        "test-fixtures",
+        "no public enums in src/ (the shared committed-fixture path/loader helpers)",
     ),
 ];
 
