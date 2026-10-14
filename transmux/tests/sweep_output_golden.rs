@@ -125,7 +125,18 @@ const TS_FIXTURES: &[(&str, u64)] = &[
     ("ts/h264_aac.ts", 0x51871212618d1ded),
     // Re-captured for #1160: the real capture's three E-AC-3 tracks gain the
     // syncframes that straddled PES boundaries (4/5/1 -> 7/6/3 samples).
-    ("ts/m6-single.ts", 0x3f5fdf623443b19f),
+    // Re-blessed for #1186 (0x3f5fdf623443b19f before): ONLY the second E-AC-3
+    // track's `dec3` `bsmod` changes (2 -> 0); every sample (bytes, dts, pts,
+    // duration) and every other track is identical (diffed field by field).
+    // E-AC-3 config recovery now requires the first access unit to be
+    // provably complete (an independent frame followed by a valid next
+    // independent frame, ETSI TS 102 366 §E.1.3.1.2). This capture's first
+    // PES holds an isolated frame (`bsmod` 2) that is NOT followed by another
+    // valid syncframe at its end (the following frames sit at non-contiguous
+    // offsets), so the old code built the `dec3` from an unverified frame;
+    // the chain-verified frames of the stream, and 6 of its 7 samples, are
+    // `bsmod` 0, which is what the config now says.
+    ("ts/m6-single.ts", 0x0cb20e5f751550f5),
     // 0x322faa14c5c28795 before #1161: the capture is field-coded (PAFF), and
     // is now one sample per field pair (293 fields -> 147 samples) instead of
     // one per field. Every other fixture is unchanged.

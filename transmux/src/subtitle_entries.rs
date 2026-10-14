@@ -218,281 +218,110 @@ impl Serialize for XmlSubtitleSampleEntry {
 // WebVTT boxes — vttC, vttc, vtte, payl, sttg, iden
 // ---------------------------------------------------------------------------
 
-/// WebVTT Configuration Box (`vttC`) — ISO/IEC 14496-30 §9.2.
-///
-/// Contains the WebVTT file header block (e.g. `"WEBVTT"`), stored as a raw
-/// byte string (no NUL terminator on wire).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct WebVttConfigurationBox {
-    /// The WebVTT header block string (e.g. `"WEBVTT"`).
-    pub config: String,
-}
-
-impl WebVttConfigurationBox {
-    /// Construct a new `vttC` box.
-    pub fn new(config: impl Into<String>) -> Self {
-        Self {
-            config: config.into(),
+/// Define a WebVTT box whose body is one UTF-8 string with no terminator
+/// (`vttC`, `payl`, `sttg`, `iden`): the struct, `new`, `bare_parse`, `Parse`
+/// and the symmetric `Serialize`, identical bar the four-CC and field name.
+macro_rules! utf8_text_box {
+    (
+        $(#[$meta:meta])*
+        $name:ident, $fourcc:literal, $cc:literal, $field:ident, $field_doc:literal
+    ) => {
+        $(#[$meta])*
+        #[derive(Debug, Clone, PartialEq, Eq)]
+        #[cfg_attr(feature = "serde", derive(serde::Serialize))]
+        pub struct $name {
+            #[doc = $field_doc]
+            pub $field: String,
         }
-    }
 
-    /// Parse from full box bytes (including 8-byte header).
-    pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < BOX_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR,
-                have: bytes.len(),
-                what: "vttC",
-            });
+        impl $name {
+            #[doc = concat!("Construct a new `", $fourcc, "` box.")]
+            pub fn new($field: impl Into<String>) -> Self {
+                Self {
+                    $field: $field.into(),
+                }
+            }
+
+            /// Parse from full box bytes (including 8-byte header).
+            pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
+                if bytes.len() < BOX_HDR {
+                    return Err(Error::BufferTooShort {
+                        need: BOX_HDR,
+                        have: bytes.len(),
+                        what: $fourcc,
+                    });
+                }
+                let body = &bytes[crate::box_types::box_header_len(bytes)?..];
+                let text = core::str::from_utf8(body).map_err(|_| Error::InvalidValue {
+                    field: concat!($fourcc, " ", stringify!($field)),
+                    value: 0,
+                    reason: concat!("invalid UTF-8 in ", $fourcc, " ", stringify!($field)),
+                })?;
+                Ok(Self {
+                    $field: String::from(text),
+                })
+            }
         }
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
-        let config = core::str::from_utf8(body).map_err(|_| Error::InvalidValue {
-            field: "vttC config",
-            value: 0,
-            reason: "invalid UTF-8 in vttC config string",
-        })?;
-        Ok(Self {
-            config: String::from(config),
-        })
-    }
-}
 
-impl<'a> Parse<'a> for WebVttConfigurationBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
-        Self::bare_parse(bytes)
-    }
-}
-
-impl Serialize for WebVttConfigurationBox {
-    type Error = Error;
-
-    fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + self.config.len())
-    }
-
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
+        impl<'a> Parse<'a> for $name {
+            type Error = Error;
+            fn parse(bytes: &'a [u8]) -> Result<Self> {
+                Self::bare_parse(bytes)
+            }
         }
-        let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"vttC", need)?;
-        buf[c..c + self.config.len()].copy_from_slice(self.config.as_bytes());
-        c += self.config.len();
-        Ok(c)
-    }
-}
 
-/// WebVTT Cue Payload Box (`payl`) — ISO/IEC 14496-30 §9.4.
-///
-/// The cue text payload, stored without NUL terminator.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct CuePayloadBox {
-    /// The cue text.
-    pub cue_text: String,
-}
+        impl Serialize for $name {
+            type Error = Error;
 
-impl CuePayloadBox {
-    /// Construct a new `payl` box.
-    pub fn new(cue_text: impl Into<String>) -> Self {
-        Self {
-            cue_text: cue_text.into(),
+            fn serialized_len(&self) -> usize {
+                crate::box_types::box_len(BOX_HDR + self.$field.len())
+            }
+
+            fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
+                let need = self.serialized_len();
+                if buf.len() < need {
+                    return Err(Error::OutputBufferTooSmall {
+                        need,
+                        have: buf.len(),
+                    });
+                }
+                let mut c = 0usize;
+                c += crate::box_types::write_box_header(buf, $cc, need)?;
+                buf[c..c + self.$field.len()].copy_from_slice(self.$field.as_bytes());
+                c += self.$field.len();
+                Ok(c)
+            }
         }
-    }
-
-    /// Parse from full box bytes (including 8-byte header).
-    pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < BOX_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR,
-                have: bytes.len(),
-                what: "payl",
-            });
-        }
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
-        let s = core::str::from_utf8(body).map_err(|_| Error::InvalidValue {
-            field: "payl cue_text",
-            value: 0,
-            reason: "invalid UTF-8 in payl cue_text",
-        })?;
-        Ok(Self {
-            cue_text: String::from(s),
-        })
-    }
+    };
 }
 
-impl<'a> Parse<'a> for CuePayloadBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
-        Self::bare_parse(bytes)
-    }
+utf8_text_box! {
+    /// WebVTT Configuration Box (`vttC`) — ISO/IEC 14496-30 §9.2.
+    ///
+    /// Contains the WebVTT file header block (e.g. `"WEBVTT"`), stored as a raw
+    /// byte string (no NUL terminator on wire).
+    WebVttConfigurationBox, "vttC", b"vttC", config, "The WebVTT header block string (e.g. `\"WEBVTT\"`)."
 }
 
-impl Serialize for CuePayloadBox {
-    type Error = Error;
-
-    fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + self.cue_text.len())
-    }
-
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"payl", need)?;
-        buf[c..c + self.cue_text.len()].copy_from_slice(self.cue_text.as_bytes());
-        c += self.cue_text.len();
-        Ok(c)
-    }
+utf8_text_box! {
+    /// WebVTT Cue Payload Box (`payl`) — ISO/IEC 14496-30 §9.4.
+    ///
+    /// The cue text payload, stored without NUL terminator.
+    CuePayloadBox, "payl", b"payl", cue_text, "The cue text."
 }
 
-/// WebVTT Cue Settings Box (`sttg`) — ISO/IEC 14496-30 §9.4.
-///
-/// WebVTT cue settings string (position, alignment, etc.).
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct CueSettingsBox {
-    /// The cue settings string.
-    pub settings: String,
+utf8_text_box! {
+    /// WebVTT Cue Settings Box (`sttg`) — ISO/IEC 14496-30 §9.4.
+    ///
+    /// WebVTT cue settings string (position, alignment, etc.).
+    CueSettingsBox, "sttg", b"sttg", settings, "The cue settings string."
 }
 
-impl CueSettingsBox {
-    /// Construct a new `sttg` box.
-    pub fn new(settings: impl Into<String>) -> Self {
-        Self {
-            settings: settings.into(),
-        }
-    }
-
-    /// Parse from full box bytes (including 8-byte header).
-    pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < BOX_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR,
-                have: bytes.len(),
-                what: "sttg",
-            });
-        }
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
-        let s = core::str::from_utf8(body).map_err(|_| Error::InvalidValue {
-            field: "sttg settings",
-            value: 0,
-            reason: "invalid UTF-8 in sttg settings",
-        })?;
-        Ok(Self {
-            settings: String::from(s),
-        })
-    }
-}
-
-impl<'a> Parse<'a> for CueSettingsBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
-        Self::bare_parse(bytes)
-    }
-}
-
-impl Serialize for CueSettingsBox {
-    type Error = Error;
-
-    fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + self.settings.len())
-    }
-
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"sttg", need)?;
-        buf[c..c + self.settings.len()].copy_from_slice(self.settings.as_bytes());
-        c += self.settings.len();
-        Ok(c)
-    }
-}
-
-/// WebVTT Cue ID Box (`iden`) — ISO/IEC 14496-30 §9.4.
-///
-/// Optional cue identifier string.
-#[derive(Debug, Clone, PartialEq, Eq)]
-#[cfg_attr(feature = "serde", derive(serde::Serialize))]
-pub struct CueIdBox {
-    /// The cue identifier.
-    pub cue_id: String,
-}
-
-impl CueIdBox {
-    /// Construct a new `iden` box.
-    pub fn new(cue_id: impl Into<String>) -> Self {
-        Self {
-            cue_id: cue_id.into(),
-        }
-    }
-
-    /// Parse from full box bytes (including 8-byte header).
-    pub fn bare_parse(bytes: &[u8]) -> Result<Self> {
-        if bytes.len() < BOX_HDR {
-            return Err(Error::BufferTooShort {
-                need: BOX_HDR,
-                have: bytes.len(),
-                what: "iden",
-            });
-        }
-        let body = &bytes[crate::box_types::box_header_len(bytes)?..];
-        let s = core::str::from_utf8(body).map_err(|_| Error::InvalidValue {
-            field: "iden cue_id",
-            value: 0,
-            reason: "invalid UTF-8 in iden cue_id",
-        })?;
-        Ok(Self {
-            cue_id: String::from(s),
-        })
-    }
-}
-
-impl<'a> Parse<'a> for CueIdBox {
-    type Error = Error;
-    fn parse(bytes: &'a [u8]) -> Result<Self> {
-        Self::bare_parse(bytes)
-    }
-}
-
-impl Serialize for CueIdBox {
-    type Error = Error;
-
-    fn serialized_len(&self) -> usize {
-        crate::box_types::box_len(BOX_HDR + self.cue_id.len())
-    }
-
-    fn serialize_into(&self, buf: &mut [u8]) -> Result<usize> {
-        let need = self.serialized_len();
-        if buf.len() < need {
-            return Err(Error::OutputBufferTooSmall {
-                need,
-                have: buf.len(),
-            });
-        }
-        let mut c = 0usize;
-        c += crate::box_types::write_box_header(buf, b"iden", need)?;
-        buf[c..c + self.cue_id.len()].copy_from_slice(self.cue_id.as_bytes());
-        c += self.cue_id.len();
-        Ok(c)
-    }
+utf8_text_box! {
+    /// WebVTT Cue ID Box (`iden`) — ISO/IEC 14496-30 §9.4.
+    ///
+    /// Optional cue identifier string.
+    CueIdBox, "iden", b"iden", cue_id, "The cue identifier."
 }
 
 /// WebVTT Cue Box (`vttc`) — ISO/IEC 14496-30 §9.4.

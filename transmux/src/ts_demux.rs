@@ -3382,8 +3382,23 @@ fn advance_track(
             let Some(latest) = backlog.last() else {
                 return;
             };
-            let mut resolved =
-                finalize_probe(stream.codec, &stream.descriptors, &mut probe, &latest.data);
+            // E-AC-3 prefers the window that starts at the EARLIEST held
+            // independent frame, so the config describes the stream's first
+            // access unit (not whichever later one happens to complete inside
+            // the newest PES alone); issue #1186.
+            let eac3_window = if stream.codec == Codec::Eac3 {
+                audio_probe_window(stream.codec, &stream.probe_tail, &latest.data)
+            } else {
+                None
+            };
+            let mut resolved = match &eac3_window {
+                Some(w) => finalize_probe(stream.codec, &stream.descriptors, &mut probe, w),
+                None => None,
+            };
+            if resolved.is_none() {
+                resolved =
+                    finalize_probe(stream.codec, &stream.descriptors, &mut probe, &latest.data);
+            }
             // Audio config recovery across PES boundaries (issue #1160): a PES
             // may be shorter than a frame header, or a header may straddle two
             // of them. When the newest access unit alone does not resolve, the
@@ -3391,6 +3406,7 @@ fn advance_track(
             // tail of the earlier ones. (Tried only after the plain probe
             // fails, so a resolving stream pays nothing.)
             if resolved.is_none()
+                && stream.codec != Codec::Eac3
                 && let Some(window) =
                     audio_probe_window(stream.codec, &stream.probe_tail, &latest.data)
             {
