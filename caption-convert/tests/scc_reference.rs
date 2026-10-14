@@ -127,14 +127,6 @@ fn convert(pairs: &[SccPair]) -> Cea608ToWebVtt {
     conv
 }
 
-fn cue_alnum(conv: &Cea608ToWebVtt) -> String {
-    conv.cues()
-        .iter()
-        .flat_map(|c| c.text.chars())
-        .filter(char::is_ascii_alphanumeric)
-        .collect()
-}
-
 fn assert_text_matches(path: &str, min_compared: usize) {
     let pairs = parse_scc(&test_fixtures::read_to_string(path));
     let captions = oracle_captions(&pairs);
