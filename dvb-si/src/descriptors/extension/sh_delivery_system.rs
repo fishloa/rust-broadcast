@@ -1003,9 +1003,11 @@ impl Serialize for ShDeliverySystem {
                         "bandwidth",
                     )? << 5)
                         | (u8::from(*priority) << 4)
-                        | ((constellation_and_hierarchy.to_u8()
-                            & CONSTELLATION_HIERARCHY_VALUE_MASK)
-                            << 1)
+                        | (broadcast_common::len::fit_mask(
+                            constellation_and_hierarchy.to_u8(),
+                            CONSTELLATION_HIERARCHY_VALUE_MASK,
+                            "constellation_and_hierarchy",
+                        )? << 1)
                         | ((cr >> 3) & 0x01);
                     buf[p + 1] = ((cr & 0x07) << 5)
                         | (broadcast_common::len::fit_mask(

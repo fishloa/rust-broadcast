@@ -360,7 +360,11 @@ impl Serialize for ContentLabelingDescriptor<'_> {
         }
         // The indicator selects which optional blocks are on the wire; a
         // disagreement with the Options would misframe on re-parse (r03-W5).
-        let ind = self.content_time_base_indicator.to_u8() & 0x0F;
+        let ind = broadcast_common::len::fit_mask(
+            self.content_time_base_indicator.to_u8(),
+            0x0F,
+            "content_time_base_indicator",
+        )?;
         let want_time_base = ind == 1 || ind == 2;
         let want_content_id = ind == 2;
         let want_assoc = (3..=7).contains(&ind);

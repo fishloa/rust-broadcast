@@ -481,12 +481,12 @@ fn pack_we_pol_mis_ro(
     mis: bool,
     reserved_zero_future_use_1: u8,
     ro: RollOff,
-) -> u8 {
-    (u8::from(we) << 7)
-        | ((pol.to_u8() & 0x03) << 5)
+) -> Result<u8> {
+    Ok((u8::from(we) << 7)
+        | (broadcast_common::len::fit_mask(pol.to_u8(), 0x03, "polarization")? << 5)
         | (u8::from(mis) << 4)
         | ((reserved_zero_future_use_1 & 1) << PACKED_RZFU_1_SHIFT)
-        | (ro.to_u8() & 0x07)
+        | broadcast_common::len::fit_mask(ro.to_u8(), 0x07, "roll_off")?)
 }
 
 impl<'a> Parse<'a> for S2XSatelliteDeliverySystem<'a> {
@@ -740,7 +740,7 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
                 self.multiple_input_stream_flag,
                 self.reserved_zero_future_use_1,
                 self.roll_off,
-            ),
+            )?,
             self.reserved_zero_future_use_4,
             self.symbol_rate,
         )?;
@@ -777,7 +777,7 @@ impl Serialize for S2XSatelliteDeliverySystem<'_> {
                         bond.multiple_input_stream_flag,
                         bond.reserved_zero_future_use_1,
                         bond.roll_off,
-                    ),
+                    )?,
                     bond.reserved_zero_future_use_4,
                     bond.symbol_rate,
                 )?;
