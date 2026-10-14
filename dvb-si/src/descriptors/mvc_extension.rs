@@ -159,14 +159,17 @@ impl Serialize for MvcExtensionDescriptor {
         broadcast_common::len::fit_bits(u64::from(self.temporal_id_end), 3, "temporal_id_end")?;
         buf[HEADER_LEN + 4] = ((self.view_association_not_present as u8) << 7)
             | ((self.base_view_is_left_eyeview as u8) << 6)
-            | ((self.reserved & RESERVED_MASK) << 4)
+            | (broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")? << 4)
             | ((vmin >> 6) as u8 & 0x0F);
         buf[HEADER_LEN + 5] = (((vmin & 0x3F) << 2) as u8) | ((vmax >> 8) as u8 & 0x03);
         buf[HEADER_LEN + 6] = (vmax & 0xFF) as u8;
-        buf[HEADER_LEN + 7] = ((self.temporal_id_start & 0x07) << 5)
-            | ((self.temporal_id_end & 0x07) << 2)
-            | ((self.no_sei_nal_unit_present as u8) << 1)
-            | (self.no_prefix_nal_unit_present as u8);
+        buf[HEADER_LEN + 7] =
+            (broadcast_common::len::fit_mask(self.temporal_id_start, 0x07, "temporal_id_start")?
+                << 5)
+                | (broadcast_common::len::fit_mask(self.temporal_id_end, 0x07, "temporal_id_end")?
+                    << 2)
+                | ((self.no_sei_nal_unit_present as u8) << 1)
+                | (self.no_prefix_nal_unit_present as u8);
         Ok(len)
     }
 }

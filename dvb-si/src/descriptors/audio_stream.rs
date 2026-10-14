@@ -101,9 +101,9 @@ impl Serialize for AudioStreamDescriptor {
         buf[1] = BODY_LEN;
         buf[HEADER_LEN] = ((self.free_format_flag as u8) << 7)
             | ((self.id as u8) << 6)
-            | ((self.layer & 0x03) << 4)
+            | (broadcast_common::len::fit_mask(self.layer, 0x03, "layer")? << 4)
             | ((self.variable_rate_audio_indicator as u8) << 3)
-            | (self.reserved & TAIL_RESERVED_MASK);
+            | broadcast_common::len::fit_mask(self.reserved, TAIL_RESERVED_MASK, "reserved")?;
         Ok(len)
     }
 }

@@ -1811,6 +1811,11 @@ impl Serialize for SatSection {
         buf[1] = super::b1_of(true, self.private_indicator, self.reserved_b1)
             | ((section_length >> 8) as u8 & super::SECTION_LENGTH_HI_MASK);
         buf[2] = (section_length & 0xFF) as u8;
+        broadcast_common::len::fit_mask(
+            self.table_count,
+            (u16::from(TABLE_COUNT_HI_MASK) << 8) | 0xFF,
+            "table_count",
+        )?;
         buf[3] = (self.satellite_table_id << SATELLITE_TABLE_ID_SHIFT)
             | ((self.table_count >> 8) as u8 & TABLE_COUNT_HI_MASK);
         buf[4] = (self.table_count & 0xFF) as u8;

@@ -115,7 +115,11 @@ impl Serialize for ServiceAvailabilityDescriptor {
         }
         crate::descriptors::write_descriptor_header(buf, TAG, body_len)?;
         // reserved_future_use(7) preserved from parse (default all ones).
-        let mut flags = self.reserved_future_use & RESERVED_MASK;
+        let mut flags = broadcast_common::len::fit_mask(
+            self.reserved_future_use,
+            RESERVED_MASK,
+            "reserved_future_use",
+        )?;
         if self.availability_flag {
             flags |= AVAILABILITY_FLAG_MASK;
         }

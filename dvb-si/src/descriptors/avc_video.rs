@@ -150,12 +150,16 @@ impl Serialize for AvcVideoDescriptor {
             | ((self.constraint_set3_flag as u8) << 4)
             | ((self.constraint_set4_flag as u8) << 3)
             | ((self.constraint_set5_flag as u8) << 2)
-            | (self.avc_compatible_flags & 0x03);
+            | broadcast_common::len::fit_mask(
+                self.avc_compatible_flags,
+                0x03,
+                "avc_compatible_flags",
+            )?;
         buf[HEADER_LEN + 2] = self.level_idc;
         buf[HEADER_LEN + 3] = ((self.avc_still_present as u8) << 7)
             | ((self.avc_24_hour_picture_flag as u8) << 6)
             | ((self.frame_packing_sei_not_present_flag as u8) << 5)
-            | (self.reserved & RESERVED_MASK);
+            | broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
         Ok(len)
     }
 }

@@ -83,8 +83,8 @@ impl Serialize for VideoWindowDescriptor {
         buf[HEADER_LEN + 1] =
             ((ho & 0x3F) << 2) as u8 | ((self.vertical_offset >> 12) as u8 & 0x03);
         buf[HEADER_LEN + 2] = (self.vertical_offset >> 4) as u8;
-        buf[HEADER_LEN + 3] =
-            ((self.vertical_offset & 0x0F) << 4) as u8 | (self.window_priority & 0x0F);
+        buf[HEADER_LEN + 3] = ((self.vertical_offset & 0x0F) << 4) as u8
+            | broadcast_common::len::fit_mask(self.window_priority, 0x0F, "window_priority")?;
         Ok(len)
     }
 }

@@ -435,27 +435,59 @@ impl Serialize for ImageIcon<'_> {
             });
         }
         // byte0: descriptor_number(4) | last_descriptor_number(4)
-        buf[0] = ((self.descriptor_number & DESCRIPTOR_NUMBER_MASK) << 4)
-            | (self.last_descriptor_number & DESCRIPTOR_NUMBER_MASK);
+        buf[0] = (broadcast_common::len::fit_mask(
+            self.descriptor_number,
+            DESCRIPTOR_NUMBER_MASK,
+            "descriptor_number",
+        )? << 4)
+            | broadcast_common::len::fit_mask(
+                self.last_descriptor_number,
+                DESCRIPTOR_NUMBER_MASK,
+                "last_descriptor_number",
+            )?;
         // byte1: reserved_future_use(5) (preserved) | icon_id(3)
-        buf[1] =
-            ((self.reserved_future_use & RESERVED_5_MASK) << 3) | (self.icon_id & ICON_ID_MASK);
+        buf[1] = (broadcast_common::len::fit_mask(
+            self.reserved_future_use,
+            RESERVED_5_MASK,
+            "reserved_future_use",
+        )? << 3)
+            | broadcast_common::len::fit_mask(self.icon_id, ICON_ID_MASK, "icon_id")?;
         let mut p = 2;
         match &self.body {
             ImageIconBody::First(f) => {
                 // Packed byte: icon_transport_mode(2) | position_flag(1) | ...
                 let position_flag = u8::from(f.position.is_some());
-                let itm = f.icon_transport_mode.to_u8() & TRANSPORT_MODE_VALUE_MASK;
+                let itm = broadcast_common::len::fit_mask(
+                    f.icon_transport_mode.to_u8(),
+                    TRANSPORT_MODE_VALUE_MASK,
+                    "icon_transport_mode",
+                )?;
                 if let Some(pos) = &f.position {
                     // ... | coordinate_system(3) | reserved_future_use(2) (preserved)
                     buf[p] = (itm << 6)
                         | (position_flag << 5)
-                        | ((pos.coordinate_system & COORDINATE_SYSTEM_MASK) << 2)
-                        | (pos.reserved_future_use & RESERVED_2_MASK);
+                        | (broadcast_common::len::fit_mask(
+                            pos.coordinate_system,
+                            COORDINATE_SYSTEM_MASK,
+                            "coordinate_system",
+                        )? << 2)
+                        | broadcast_common::len::fit_mask(
+                            pos.reserved_future_use,
+                            RESERVED_2_MASK,
+                            "reserved_future_use",
+                        )?;
                     p += 1;
                     // 3 origin bytes: 12+12 bits packed
-                    let h = pos.icon_horizontal_origin & 0x0FFF;
-                    let v = pos.icon_vertical_origin & 0x0FFF;
+                    let h = broadcast_common::len::fit_mask(
+                        pos.icon_horizontal_origin,
+                        0x0FFF,
+                        "icon_horizontal_origin",
+                    )?;
+                    let v = broadcast_common::len::fit_mask(
+                        pos.icon_vertical_origin,
+                        0x0FFF,
+                        "icon_vertical_origin",
+                    )?;
                     buf[p] = (h >> 4) as u8;
                     buf[p + 1] = (((h & 0x0F) << 4) | ((v >> 8) & 0x0F)) as u8;
                     buf[p + 2] = v as u8;
@@ -464,9 +496,12 @@ impl Serialize for ImageIcon<'_> {
                     // ... | position_flag(1) | reserved_future_use(5) (preserved)
                     buf[p] = (itm << 6)
                         | (position_flag << 5)
-                        | (f.reserved_future_use
-                            .unwrap_or(IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT)
-                            & RESERVED_5_MASK);
+                        | broadcast_common::len::fit_mask(
+                            f.reserved_future_use
+                                .unwrap_or(IMAGE_ICON_RESERVED_FUTURE_USE_5_DEFAULT),
+                            RESERVED_5_MASK,
+                            "reserved_future_use",
+                        )?;
                     p += 1;
                 }
                 // icon_type_length + run

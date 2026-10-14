@@ -392,8 +392,12 @@ impl Serialize for MetadataDescriptor<'_> {
 
         // `DSM-CC_flag` is derived from the Option (never the stored
         // `dsmcc_flag`) so flag and record can never disagree (r03-W5).
-        let mut flags =
-            ((self.decoder_config_flags.to_u8() & 0x07) << 5) | (self.reserved & RESERVED_MASK);
+        let mut flags = (broadcast_common::len::fit_mask(
+            self.decoder_config_flags.to_u8(),
+            0x07,
+            "decoder_config_flags",
+        )? << 5)
+            | broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
         if self.service_identification.is_some() {
             flags |= DSMCC_FLAG_BIT;
         }

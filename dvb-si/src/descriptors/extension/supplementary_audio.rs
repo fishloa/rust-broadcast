@@ -109,7 +109,11 @@ impl Serialize for SupplementaryAudio<'_> {
         }
         // Table 153 bit 1 reserved_future_use: preserved, default 1.
         buf[0] = (u8::from(self.mix_type) << 7)
-            | ((self.editorial_classification & 0x1F) << 2)
+            | (broadcast_common::len::fit_mask(
+                self.editorial_classification,
+                0x1F,
+                "editorial_classification",
+            )? << 2)
             | ((self.reserved_future_use & 1) << 1)
             | u8::from(self.iso_639_language_code.is_some());
         let mut p = 1;

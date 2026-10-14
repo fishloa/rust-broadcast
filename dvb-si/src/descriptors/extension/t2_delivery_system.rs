@@ -615,13 +615,25 @@ impl Serialize for T2DeliverySystem {
             self.other_frequency_flag,
             self.tfs_flag,
         ) {
-            buf[p] = ((sm.to_u8() & T2_SISO_MISO_VALUE_MASK) << 6)
-                | ((bw.to_u8() & T2_BANDWIDTH_VALUE_MASK) << 2)
-                | (self.reserved_future_use & T2_RESERVED_MASK);
-            buf[p + 1] = ((gi.to_u8() & T2_GUARD_INTERVAL_VALUE_MASK) << 5)
-                | ((tm.to_u8() & T2_TRANSMISSION_MODE_VALUE_MASK) << 2)
-                | (u8::from(off) << 1)
-                | u8::from(tfs);
+            buf[p] = (broadcast_common::len::fit_mask(sm.to_u8(), T2_SISO_MISO_VALUE_MASK, "sm")?
+                << 6)
+                | (broadcast_common::len::fit_mask(bw.to_u8(), T2_BANDWIDTH_VALUE_MASK, "bw")?
+                    << 2)
+                | broadcast_common::len::fit_mask(
+                    self.reserved_future_use,
+                    T2_RESERVED_MASK,
+                    "reserved_future_use",
+                )?;
+            buf[p + 1] =
+                (broadcast_common::len::fit_mask(gi.to_u8(), T2_GUARD_INTERVAL_VALUE_MASK, "gi")?
+                    << 5)
+                    | (broadcast_common::len::fit_mask(
+                        tm.to_u8(),
+                        T2_TRANSMISSION_MODE_VALUE_MASK,
+                        "tm",
+                    )? << 2)
+                    | (u8::from(off) << 1)
+                    | u8::from(tfs);
             p += T2_FLAGS_BLOCK_LEN;
             for cell in &self.cells {
                 buf[p..p + 2].copy_from_slice(&cell.cell_id.to_be_bytes());

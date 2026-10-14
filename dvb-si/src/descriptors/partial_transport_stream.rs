@@ -140,15 +140,27 @@ impl Serialize for PartialTransportStreamDescriptor {
         let b = HEADER_LEN;
         // reserved_future_use bits re-emitted as captured (top 2 bits of each
         // high byte).
-        buf[b] = ((self.reserved_future_use_peak_rate & RESERVED_MASK) << 6)
+        buf[b] = (broadcast_common::len::fit_mask(
+            self.reserved_future_use_peak_rate,
+            RESERVED_MASK,
+            "reserved_future_use_peak_rate",
+        )? << 6)
             | ((self.peak_rate >> 16) as u8 & 0x3F);
         buf[b + 1] = (self.peak_rate >> 8) as u8;
         buf[b + 2] = self.peak_rate as u8;
-        buf[b + 3] = ((self.reserved_future_use_min_rate & RESERVED_MASK) << 6)
+        buf[b + 3] = (broadcast_common::len::fit_mask(
+            self.reserved_future_use_min_rate,
+            RESERVED_MASK,
+            "reserved_future_use_min_rate",
+        )? << 6)
             | ((self.minimum_overall_smoothing_rate >> 16) as u8 & 0x3F);
         buf[b + 4] = (self.minimum_overall_smoothing_rate >> 8) as u8;
         buf[b + 5] = self.minimum_overall_smoothing_rate as u8;
-        buf[b + 6] = ((self.reserved_future_use_buffer & RESERVED_MASK) << 6)
+        buf[b + 6] = (broadcast_common::len::fit_mask(
+            self.reserved_future_use_buffer,
+            RESERVED_MASK,
+            "reserved_future_use_buffer",
+        )? << 6)
             | ((self.maximum_overall_smoothing_buffer >> 8) as u8 & 0x3F);
         buf[b + 7] = self.maximum_overall_smoothing_buffer as u8;
         Ok(len)

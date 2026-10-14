@@ -150,7 +150,9 @@ pub(super) fn serialize_entries(
     let mut pos = HEADER_LEN;
     for e in entries {
         buf[pos..pos + LANG_LEN].copy_from_slice(&e.language_code.0);
-        buf[pos + LANG_LEN] = ((e.teletext_type.to_u8() & 0x1F) << 3) | (e.magazine_number & 0x07);
+        buf[pos + LANG_LEN] =
+            (broadcast_common::len::fit_mask(e.teletext_type.to_u8(), 0x1F, "teletext_type")? << 3)
+                | broadcast_common::len::fit_mask(e.magazine_number, 0x07, "magazine_number")?;
         buf[pos + LANG_LEN + 1] = e.page_number;
         pos += ENTRY_LEN;
     }

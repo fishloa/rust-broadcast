@@ -276,14 +276,38 @@ impl Serialize for HierarchyDescriptor {
             | ((self.no_temporal_scalability_flag as u8) << 6)
             | ((self.no_spatial_scalability_flag as u8) << 5)
             | ((self.no_quality_scalability_flag as u8) << 4)
-            | (self.hierarchy_type.to_u8() & HIERARCHY_TYPE_MASK);
-        buf[HEADER_LEN + 1] = ((self.reserved_layer_index & RESERVED_2_MASK) << 6)
-            | (self.hierarchy_layer_index & 0x3F);
+            | broadcast_common::len::fit_mask(
+                self.hierarchy_type.to_u8(),
+                HIERARCHY_TYPE_MASK,
+                "hierarchy_type",
+            )?;
+        buf[HEADER_LEN + 1] = (broadcast_common::len::fit_mask(
+            self.reserved_layer_index,
+            RESERVED_2_MASK,
+            "reserved_layer_index",
+        )? << 6)
+            | broadcast_common::len::fit_mask(
+                self.hierarchy_layer_index,
+                0x3F,
+                "hierarchy_layer_index",
+            )?;
         buf[HEADER_LEN + 2] = ((self.tref_present_flag as u8) << 7)
-            | ((self.reserved_embedded & RESERVED_1_MASK) << 6)
-            | (self.hierarchy_embedded_layer_index & 0x3F);
-        buf[HEADER_LEN + 3] =
-            ((self.reserved_channel & RESERVED_2_MASK) << 6) | (self.hierarchy_channel & 0x3F);
+            | (broadcast_common::len::fit_mask(
+                self.reserved_embedded,
+                RESERVED_1_MASK,
+                "reserved_embedded",
+            )? << 6)
+            | broadcast_common::len::fit_mask(
+                self.hierarchy_embedded_layer_index,
+                0x3F,
+                "hierarchy_embedded_layer_index",
+            )?;
+        buf[HEADER_LEN + 3] = (broadcast_common::len::fit_mask(
+            self.reserved_channel,
+            RESERVED_2_MASK,
+            "reserved_channel",
+        )? << 6)
+            | broadcast_common::len::fit_mask(self.hierarchy_channel, 0x3F, "hierarchy_channel")?;
         Ok(len)
     }
 }

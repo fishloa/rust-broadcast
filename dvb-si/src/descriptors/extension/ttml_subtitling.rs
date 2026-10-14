@@ -238,7 +238,10 @@ impl Serialize for TtmlSubtitling<'_> {
         }
         buf[..ISO_639_LEN].copy_from_slice(&self.iso_639_language_code.0);
         // byte 3: subtitle_purpose(6) | TTS_suitability(2)
-        buf[ISO_639_LEN] = ((self.subtitle_purpose & 0x3F) << 2) | (self.tts_suitability & 0x03);
+        buf[ISO_639_LEN] =
+            (broadcast_common::len::fit_mask(self.subtitle_purpose, 0x3F, "subtitle_purpose")?
+                << 2)
+                | broadcast_common::len::fit_mask(self.tts_suitability, 0x03, "tts_suitability")?;
         // byte 4: essential_font_usage_flag(1) | qualifier_present_flag(1)
         //         | reserved_zero_future_use(2) (preserved) | dvb_ttml_profile_count(4)
         let dvb_ttml_profile_count = broadcast_common::len::fit_bits(
@@ -248,7 +251,11 @@ impl Serialize for TtmlSubtitling<'_> {
         )? as u8;
         buf[ISO_639_LEN + 1] = (if self.font_ids.is_some() { 0x80 } else { 0 })
             | (if self.qualifier.is_some() { 0x40 } else { 0 })
-            | ((self.reserved_zero_future_use & RESERVED_ZERO_2_MASK) << 4)
+            | (broadcast_common::len::fit_mask(
+                self.reserved_zero_future_use,
+                RESERVED_ZERO_2_MASK,
+                "reserved_zero_future_use",
+            )? << 4)
             | dvb_ttml_profile_count;
 
         let mut pos = TTML_FIXED_LEN;
@@ -268,8 +275,12 @@ impl Serialize for TtmlSubtitling<'_> {
             buf[pos] = broadcast_common::len::fit_u8(ids.len(), "font_id_count")?;
             pos += 1;
             for id in ids {
-                buf[pos] = ((id.reserved_zero_future_use & FONT_RESERVED_MASK) << 7)
-                    | (id.font_id & FONT_ID_MASK);
+                buf[pos] = (broadcast_common::len::fit_mask(
+                    id.reserved_zero_future_use,
+                    FONT_RESERVED_MASK,
+                    "reserved_zero_future_use",
+                )? << 7)
+                    | broadcast_common::len::fit_mask(id.font_id, FONT_ID_MASK, "font_id")?;
                 pos += 1;
             }
         }

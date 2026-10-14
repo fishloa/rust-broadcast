@@ -926,8 +926,16 @@ impl Serialize for ShDeliverySystem {
                 have: buf.len(),
             });
         }
-        buf[0] = ((self.diversity_mode.to_u8() & DIVERSITY_MODE_VALUE_MASK) << 4)
-            | (self.reserved_future_use & DIVERSITY_RESERVED_MASK);
+        buf[0] = (broadcast_common::len::fit_mask(
+            self.diversity_mode.to_u8(),
+            DIVERSITY_MODE_VALUE_MASK,
+            "diversity_mode",
+        )? << 4)
+            | broadcast_common::len::fit_mask(
+                self.reserved_future_use,
+                DIVERSITY_RESERVED_MASK,
+                "reserved_future_use",
+            )?;
         let mut p = 1;
         for m in &self.modulations {
             let modulation_type_bit = matches!(m.modulation, ShModulationMode::Ofdm { .. }) as u8;
@@ -937,7 +945,11 @@ impl Serialize for ShDeliverySystem {
             buf[p] = (modulation_type_bit << 7)
                 | (interleaver_presence_bit << 6)
                 | (interleaver_type_bit << 5)
-                | (m.reserved_future_use & FLAGS_RESERVED_MASK);
+                | broadcast_common::len::fit_mask(
+                    m.reserved_future_use,
+                    FLAGS_RESERVED_MASK,
+                    "reserved_future_use",
+                )?;
             p += 1;
 
             match &m.modulation {
@@ -949,14 +961,31 @@ impl Serialize for ShDeliverySystem {
                     symbol_rate,
                     reserved_future_use,
                 } => {
-                    let cr = code_rate.to_u8();
-                    buf[p] = ((polarization.to_u8() & POLARIZATION_VALUE_MASK) << 6)
-                        | ((roll_off.to_u8() & 0x03) << 4)
-                        | ((modulation_mode.to_u8() & MODULATION_MODE_VALUE_MASK) << 2)
+                    let cr = broadcast_common::len::fit_mask(code_rate.to_u8(), 0x0F, "code_rate")?;
+                    buf[p] = (broadcast_common::len::fit_mask(
+                        polarization.to_u8(),
+                        POLARIZATION_VALUE_MASK,
+                        "polarization",
+                    )? << 6)
+                        | (broadcast_common::len::fit_mask(roll_off.to_u8(), 0x03, "roll_off")?
+                            << 4)
+                        | (broadcast_common::len::fit_mask(
+                            modulation_mode.to_u8(),
+                            MODULATION_MODE_VALUE_MASK,
+                            "modulation_mode",
+                        )? << 2)
                         | ((cr >> 2) & 0x03);
                     buf[p + 1] = ((cr & 0x03) << 6)
-                        | ((symbol_rate & SYMBOL_RATE_VALUE_MASK) << 1)
-                        | (reserved_future_use & 0x01);
+                        | (broadcast_common::len::fit_mask(
+                            *symbol_rate,
+                            SYMBOL_RATE_VALUE_MASK,
+                            "symbol_rate",
+                        )? << 1)
+                        | broadcast_common::len::fit_mask(
+                            *reserved_future_use,
+                            0x01,
+                            "reserved_future_use",
+                        )?;
                 }
                 ShModulationMode::Ofdm {
                     bandwidth,
@@ -967,16 +996,28 @@ impl Serialize for ShDeliverySystem {
                     transmission_mode,
                     common_frequency,
                 } => {
-                    let cr = code_rate.to_u8();
-                    buf[p] = ((bandwidth.to_u8() & BANDWIDTH_VALUE_MASK) << 5)
+                    let cr = broadcast_common::len::fit_mask(code_rate.to_u8(), 0x0F, "code_rate")?;
+                    buf[p] = (broadcast_common::len::fit_mask(
+                        bandwidth.to_u8(),
+                        BANDWIDTH_VALUE_MASK,
+                        "bandwidth",
+                    )? << 5)
                         | (u8::from(*priority) << 4)
                         | ((constellation_and_hierarchy.to_u8()
                             & CONSTELLATION_HIERARCHY_VALUE_MASK)
                             << 1)
                         | ((cr >> 3) & 0x01);
                     buf[p + 1] = ((cr & 0x07) << 5)
-                        | ((guard_interval.to_u8() & GUARD_TRANSMISSION_VALUE_MASK) << 3)
-                        | ((transmission_mode.to_u8() & GUARD_TRANSMISSION_VALUE_MASK) << 1)
+                        | (broadcast_common::len::fit_mask(
+                            guard_interval.to_u8(),
+                            GUARD_TRANSMISSION_VALUE_MASK,
+                            "guard_interval",
+                        )? << 3)
+                        | (broadcast_common::len::fit_mask(
+                            transmission_mode.to_u8(),
+                            GUARD_TRANSMISSION_VALUE_MASK,
+                            "transmission_mode",
+                        )? << 1)
                         | u8::from(*common_frequency);
                 }
             }
@@ -990,11 +1031,20 @@ impl Serialize for ShDeliverySystem {
                     slice_distance,
                     non_late_increments,
                 }) => {
-                    let cm = common_multiplier & 0x3F;
-                    let lt = nof_late_taps & 0x3F;
-                    let ns = nof_slices & 0x3F;
+                    let cm = broadcast_common::len::fit_mask(
+                        *common_multiplier,
+                        0x3F,
+                        "common_multiplier",
+                    )?;
+                    let lt =
+                        broadcast_common::len::fit_mask(*nof_late_taps, 0x3F, "nof_late_taps")?;
+                    let ns = broadcast_common::len::fit_mask(*nof_slices, 0x3F, "nof_slices")?;
                     let sd = slice_distance;
-                    let nli = non_late_increments & 0x3F;
+                    let nli = broadcast_common::len::fit_mask(
+                        *non_late_increments,
+                        0x3F,
+                        "non_late_increments",
+                    )?;
                     buf[p] = (cm << 2) | (lt >> 4);
                     buf[p + 1] = ((lt & 0x0F) << 4) | (ns >> 2);
                     buf[p + 2] = ((ns & 0x03) << 6) | (sd >> 2);
@@ -1005,8 +1055,16 @@ impl Serialize for ShDeliverySystem {
                     common_multiplier,
                     reserved_future_use,
                 }) => {
-                    buf[p] = ((common_multiplier & 0x3F) << 2)
-                        | (reserved_future_use & INTERLEAVER_RESERVED_MASK);
+                    buf[p] = (broadcast_common::len::fit_mask(
+                        *common_multiplier,
+                        0x3F,
+                        "common_multiplier",
+                    )? << 2)
+                        | broadcast_common::len::fit_mask(
+                            *reserved_future_use,
+                            INTERLEAVER_RESERVED_MASK,
+                            "reserved_future_use",
+                        )?;
                     p += 1;
                 }
                 None => {}

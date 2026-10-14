@@ -291,8 +291,12 @@ impl Serialize for MetadataPointerDescriptor<'_> {
         // The record flag is derived from the Option, so it can never claim
         // a record that is not written (r03-W5).
         // `reserved(5)` (Table 2-86) is re-emitted as parsed.
-        let mut flags =
-            ((self.mpeg_carriage_flags.to_u8() & 0x03) << 5) | (self.reserved & RESERVED_MASK);
+        let mut flags = (broadcast_common::len::fit_mask(
+            self.mpeg_carriage_flags.to_u8(),
+            0x03,
+            "mpeg_carriage_flags",
+        )? << 5)
+            | broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")?;
         if self.metadata_locator_record.is_some() {
             flags |= 0x80;
         }

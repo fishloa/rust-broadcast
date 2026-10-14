@@ -370,7 +370,12 @@ impl Serialize for AacDescriptor<'_> {
                 flags |= FLAG_SAOC_DE;
             }
             // reserved_zero_future_use(6): preserved from parse, 0 when constructed.
-            buf[pos] = flags | (ext.reserved_zero_future_use & RESERVED_ZERO_MASK);
+            buf[pos] = flags
+                | broadcast_common::len::fit_mask(
+                    ext.reserved_zero_future_use,
+                    RESERVED_ZERO_MASK,
+                    "reserved_zero_future_use",
+                )?;
             pos += 1;
             if let Some(t) = ext.aac_type {
                 buf[pos] = t;

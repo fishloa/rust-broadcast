@@ -205,8 +205,12 @@ impl Serialize for TvaIdDescriptor {
         for e in &self.entries {
             buf[pos..pos + 2].copy_from_slice(&e.tva_id.to_be_bytes());
             // Reserved(5): preserved from parse, default 11111.
-            buf[pos + 2] =
-                ((e.reserved & 0x1F) << 3) | (e.running_status.to_u8() & RUNNING_STATUS_MAX);
+            buf[pos + 2] = (broadcast_common::len::fit_mask(e.reserved, 0x1F, "reserved")? << 3)
+                | broadcast_common::len::fit_mask(
+                    e.running_status.to_u8(),
+                    RUNNING_STATUS_MAX,
+                    "running_status",
+                )?;
             pos += ENTRY_LEN;
         }
         Ok(len)

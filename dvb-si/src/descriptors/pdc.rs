@@ -141,8 +141,16 @@ impl Serialize for PdcDescriptor {
         }
         crate::descriptors::write_descriptor_header(buf, TAG, BODY_LEN)?;
         // reserved_future_use(4) preserved from parse (default 1111).
-        let raw = (u32::from(self.reserved_future_use & RESERVED_MASK) << RESERVED_SHIFT)
-            | (self.programme_identification_label & PIL_MASK);
+        let raw = (u32::from(broadcast_common::len::fit_mask(
+            self.reserved_future_use,
+            RESERVED_MASK,
+            "reserved_future_use",
+        )?) << RESERVED_SHIFT)
+            | broadcast_common::len::fit_mask(
+                self.programme_identification_label,
+                PIL_MASK,
+                "programme_identification_label",
+            )?;
         buf[HEADER_LEN] = (raw >> 16) as u8;
         buf[HEADER_LEN + 1] = (raw >> 8) as u8;
         buf[HEADER_LEN + 2] = raw as u8;

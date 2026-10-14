@@ -123,10 +123,22 @@ impl Serialize for C2BundleDeliverySystem {
             buf[p + 1] = e.data_slice_id;
             buf[p + 2..p + 6].copy_from_slice(&e.c2_system_tuning_frequency.to_be_bytes());
             buf[p + 6] = (e.c2_system_tuning_frequency_type.to_u8() << 6)
-                | ((e.active_ofdm_symbol_duration.to_u8() & 0x07) << 3)
-                | (e.guard_interval.to_u8() & 0x07);
+                | (broadcast_common::len::fit_mask(
+                    e.active_ofdm_symbol_duration.to_u8(),
+                    0x07,
+                    "active_ofdm_symbol_duration",
+                )? << 3)
+                | broadcast_common::len::fit_mask(
+                    e.guard_interval.to_u8(),
+                    0x07,
+                    "guard_interval",
+                )?;
             buf[p + 7] = (u8::from(e.primary_channel) << 7)
-                | (e.reserved_zero_future_use & RESERVED_ZERO_FUTURE_USE_MASK);
+                | broadcast_common::len::fit_mask(
+                    e.reserved_zero_future_use,
+                    RESERVED_ZERO_FUTURE_USE_MASK,
+                    "reserved_zero_future_use",
+                )?;
             p += C2_BUNDLE_ENTRY_LEN;
         }
         Ok(len)

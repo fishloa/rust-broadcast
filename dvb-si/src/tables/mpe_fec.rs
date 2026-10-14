@@ -257,7 +257,11 @@ impl Serialize for MpeFecSection<'_> {
         buf[4] = self.reserved_future_use_8;
         // reserved(2)=11 | reserved_for_future_use(5)=11111 | current_next_indicator(1)
         buf[5] = ((self.reserved_b5 & super::RESERVED_2) << 6)
-            | ((self.reserved_future_use_5 & RESERVED_FUTURE_USE_5) << 1)
+            | (broadcast_common::len::fit_mask(
+                self.reserved_future_use_5,
+                RESERVED_FUTURE_USE_5,
+                "reserved_future_use_5",
+            )? << 1)
             | u8::from(self.current_next_indicator);
         buf[6] = self.section_number;
         buf[7] = self.last_section_number;

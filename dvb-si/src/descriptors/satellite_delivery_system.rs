@@ -406,7 +406,7 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
             RollOff::Alpha035 => 0x00,
             RollOff::Alpha025 => 0x08,
             RollOff::Alpha020 => 0x10,
-            RollOff::Reserved(v) => (v & 0x03) << 3,
+            RollOff::Reserved(v) => broadcast_common::len::fit_mask(v, 0x03, "v")? << 3,
         };
         flags |= match self.modulation_system {
             ModulationSystem::DvbS => 0x00,
@@ -422,8 +422,16 @@ impl Serialize for SatelliteDeliverySystemDescriptor {
 
         // Symbol rate + FEC_inner: 28-bit BCD shifted left 4 bits, then OR with FEC.
         // Mask to 28 bits so an over-range value can't spill past the field.
-        let sym_freq = ((self.symbol_rate_bcd & 0x0FFF_FFFF) << 4)
-            | (u32::from(self.fec_inner.to_u8()) & 0x0F);
+        let sym_freq = (broadcast_common::len::fit_mask(
+            self.symbol_rate_bcd,
+            0x0FFF_FFFF,
+            "symbol_rate_bcd",
+        )? << 4)
+            | u32::from(broadcast_common::len::fit_mask(
+                self.fec_inner.to_u8(),
+                0x0F,
+                "fec_inner",
+            )?);
         let sym_bytes = sym_freq.to_be_bytes();
         buf[9..13].copy_from_slice(&sym_bytes);
 

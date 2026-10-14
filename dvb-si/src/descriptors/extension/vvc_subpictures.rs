@@ -179,8 +179,16 @@ impl Serialize for VvcSubpictures<'_> {
             buf[p + 1] = sp.vvc_subpicture_id;
             p += 2;
         }
-        buf[p] = ((self.reserved_zero_future_use & RESERVED_ZERO_MASK) << 3)
-            | (self.processing_mode & PROCESSING_MODE_MASK);
+        buf[p] = (broadcast_common::len::fit_mask(
+            self.reserved_zero_future_use,
+            RESERVED_ZERO_MASK,
+            "reserved_zero_future_use",
+        )? << 3)
+            | broadcast_common::len::fit_mask(
+                self.processing_mode,
+                PROCESSING_MODE_MASK,
+                "processing_mode",
+            )?;
         p += 1;
         if let Some(text) = &self.service_description {
             buf[p] = broadcast_common::len::fit_u8(text.len(), "service_description_length")?;

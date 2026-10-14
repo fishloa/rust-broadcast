@@ -398,17 +398,33 @@ impl Serialize for MosaicDescriptor {
             ENTRY_POINT_MASK
         } else {
             0
-        } | ((self.num_horizontal_cells & 0x07) << 4)
-            | ((self.reserved_future_use << GRID_RESERVED_SHIFT) & GRID_RESERVED_MASK)
-            | (self.num_vertical_cells & 0x07);
+        } | (broadcast_common::len::fit_mask(
+            self.num_horizontal_cells,
+            0x07,
+            "num_horizontal_cells",
+        )? << 4)
+            | (broadcast_common::len::fit_mask(
+                self.reserved_future_use,
+                GRID_RESERVED_MASK >> GRID_RESERVED_SHIFT,
+                "reserved_future_use",
+            )? << GRID_RESERVED_SHIFT)
+            | broadcast_common::len::fit_mask(self.num_vertical_cells, 0x07, "num_vertical_cells")?;
         let mut pos = HEADER_LEN + GRID_HEADER_LEN;
         for cell in &self.logical_cells {
+            broadcast_common::len::fit_mask(cell.reserved_future_use, 0x7F, "reserved_future_use")?;
             // byte0: logical_cell_id(6) | high 2 bits of reserved_future_use(7).
-            buf[pos] = ((cell.logical_cell_id & 0x3F) << 2)
-                | ((cell.reserved_future_use >> CELL_RESERVED_HI_SHIFT) & CELL_RESERVED_HI_MASK);
+            buf[pos] =
+                (broadcast_common::len::fit_mask(cell.logical_cell_id, 0x3F, "logical_cell_id")?
+                    << 2)
+                    | ((cell.reserved_future_use >> CELL_RESERVED_HI_SHIFT)
+                        & CELL_RESERVED_HI_MASK);
             // byte1: low 5 bits of reserved_future_use(7) | presentation_info(3).
             buf[pos + 1] = (cell.reserved_future_use << CELL_RESERVED_LO_SHIFT)
-                | (cell.presentation_info & CELL_PRESENTATION_MASK);
+                | broadcast_common::len::fit_mask(
+                    cell.presentation_info,
+                    CELL_PRESENTATION_MASK,
+                    "presentation_info",
+                )?;
             buf[pos + 2] = broadcast_common::len::fit_u8(
                 cell.elementary_cells.len(),
                 "elementary_cell_field_length",
@@ -417,7 +433,11 @@ impl Serialize for MosaicDescriptor {
             for ec in &cell.elementary_cells {
                 // reserved_future_use(2) preserved | elementary_cell_id(6).
                 buf[pos] = ((ec.reserved_future_use << ELEM_RESERVED_SHIFT) & !ELEM_CELL_ID_MASK)
-                    | (ec.elementary_cell_id & ELEM_CELL_ID_MASK);
+                    | broadcast_common::len::fit_mask(
+                        ec.elementary_cell_id,
+                        ELEM_CELL_ID_MASK,
+                        "elementary_cell_id",
+                    )?;
                 pos += 1;
             }
             buf[pos] = cell.linkage.info_byte();

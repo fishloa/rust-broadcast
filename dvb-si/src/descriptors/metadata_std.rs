@@ -69,11 +69,13 @@ fn read_u22(bytes: &[u8]) -> u32 {
 }
 
 /// Write a 22-bit value into a 3-byte slice behind its 2 reserved bits.
-fn write_u22(reserved: u8, val: u32, buf: &mut [u8]) {
+fn write_u22(reserved: u8, val: u32, buf: &mut [u8]) -> Result<()> {
     let masked = val & 0x003F_FFFF;
-    buf[0] = ((reserved & RESERVED_MASK) << 6) | ((masked >> 16) & 0x3F) as u8;
+    buf[0] = (broadcast_common::len::fit_mask(reserved, RESERVED_MASK, "reserved")? << 6)
+        | ((masked >> 16) & 0x3F) as u8;
     buf[1] = ((masked >> 8) & 0xFF) as u8;
     buf[2] = (masked & 0xFF) as u8;
+    Ok(())
 }
 
 impl<'a> Parse<'a> for MetadataStdDescriptor {
@@ -141,17 +143,17 @@ impl Serialize for MetadataStdDescriptor {
             self.reserved_input_leak_rate,
             self.metadata_input_leak_rate,
             &mut buf[HEADER_LEN..HEADER_LEN + 3],
-        );
+        )?;
         write_u22(
             self.reserved_buffer_size,
             self.metadata_buffer_size,
             &mut buf[HEADER_LEN + 3..HEADER_LEN + 6],
-        );
+        )?;
         write_u22(
             self.reserved_output_leak_rate,
             self.metadata_output_leak_rate,
             &mut buf[HEADER_LEN + 6..HEADER_LEN + 9],
-        );
+        )?;
         Ok(len)
     }
 }

@@ -373,7 +373,10 @@ impl Serialize for DownloadableFontInfoSection<'_> {
         buf[1] = self.bits.b1(true);
         super::write_section_length(buf, len - SECTION_LENGTH_PREFIX)?;
         // font_id_extension(9) | font_id(7); spec mandates extension all-zero.
-        let id_word = ((self.font_id_extension & 0x01FF) << 7) | (self.font_id as u16 & 0x7F);
+        let id_word =
+            (broadcast_common::len::fit_mask(self.font_id_extension, 0x01FF, "font_id_extension")?
+                << 7)
+                | broadcast_common::len::fit_mask(self.font_id as u16, 0x7F, "font_id")?;
         buf[3..5].copy_from_slice(&id_word.to_be_bytes());
         // reserved(2)=11, version_number(5), current_next_indicator(1).
         buf[5] = self
@@ -404,9 +407,14 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                 } => {
                     buf[pos] = FONT_INFO_TYPE_STYLE_WEIGHT;
                     // style(3) | weight(4) | reserved_zero_future_use(1).
-                    buf[pos + 1] = ((style & STYLE_MASK) << 5)
-                        | ((weight & WEIGHT_MASK) << 1)
-                        | (reserved_zero_future_use & RESERVED_ZERO_1);
+                    buf[pos + 1] = (broadcast_common::len::fit_mask(*style, STYLE_MASK, "style")?
+                        << 5)
+                        | (broadcast_common::len::fit_mask(*weight, WEIGHT_MASK, "weight")? << 1)
+                        | broadcast_common::len::fit_mask(
+                            *reserved_zero_future_use,
+                            RESERVED_ZERO_1,
+                            "reserved_zero_future_use",
+                        )?;
                     pos += 2;
                 }
                 FontInfo::FileUri {
@@ -417,9 +425,12 @@ impl Serialize for DownloadableFontInfoSection<'_> {
                     guard_u8(uri.len())?;
                     buf[pos] = FONT_INFO_TYPE_FILE_URI;
                     // reserved_zero_future_use(4) | font_file_format(4).
-                    buf[pos + 1] = ((reserved_zero_future_use & FORMAT_MASK)
-                        << RESERVED_ZERO_4_SHIFT)
-                        | (format & FORMAT_MASK);
+                    buf[pos + 1] = (broadcast_common::len::fit_mask(
+                        *reserved_zero_future_use,
+                        FORMAT_MASK,
+                        "reserved_zero_future_use",
+                    )? << RESERVED_ZERO_4_SHIFT)
+                        | broadcast_common::len::fit_mask(*format, FORMAT_MASK, "format")?;
                     buf[pos + 2] = broadcast_common::len::fit_u8(uri.len(), "uri")?;
                     let s = pos + 3;
                     buf[s..s + uri.len()].copy_from_slice(uri);

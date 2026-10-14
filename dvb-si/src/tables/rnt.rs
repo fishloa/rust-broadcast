@@ -576,7 +576,11 @@ impl Serialize for RntSection<'_> {
                     "crid_authority_descriptors_length",
                 )?;
                 buf[pos] = ((ca.reserved & super::RESERVED_2) << CRID_POLICY_RESERVED_SHIFT)
-                    | ((ca.crid_authority_policy.to_u8() & CRID_POLICY_MASK) << 4)
+                    | (broadcast_common::len::fit_mask(
+                        ca.crid_authority_policy.to_u8(),
+                        CRID_POLICY_MASK,
+                        "crid_authority_policy",
+                    )? << 4)
                     | ((adl >> 8) as u8);
                 buf[pos + 1] = adl as u8;
                 pos += CA_HEADER_LEN;

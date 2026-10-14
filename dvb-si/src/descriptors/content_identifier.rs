@@ -217,7 +217,11 @@ impl Serialize for ContentIdentifierDescriptor<'_> {
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let mut pos = HEADER_LEN;
         for entry in &self.entries {
-            let header = (entry.crid_type.to_u8() & CRID_TYPE_VALUE_MASK) << 2;
+            let header = broadcast_common::len::fit_mask(
+                entry.crid_type.to_u8(),
+                CRID_TYPE_VALUE_MASK,
+                "crid_type",
+            )? << 2;
             match &entry.location {
                 CridLocation::Inline(data) => {
                     buf[pos] = header;

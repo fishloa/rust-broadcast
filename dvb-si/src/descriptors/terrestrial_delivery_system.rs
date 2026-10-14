@@ -400,27 +400,29 @@ const FIELD3_MASK: u8 = 0b111;
 /// 2-bit fields: `constellation`, `guard_interval`, `transmission_mode`.
 const FIELD2_MASK: u8 = 0b11;
 
-fn serialize_bandwidth(bw: Bandwidth) -> u8 {
-    match bw {
+fn serialize_bandwidth(bw: Bandwidth) -> Result<u8> {
+    Ok(match bw {
         Bandwidth::Mhz8 => 0,
         Bandwidth::Mhz7 => 1,
         Bandwidth::Mhz6 => 2,
         Bandwidth::Mhz5 => 3,
-        Bandwidth::Reserved(v) => v & FIELD3_MASK,
-    }
+        Bandwidth::Reserved(v) => broadcast_common::len::fit_mask(v, FIELD3_MASK, "bandwidth")?,
+    })
 }
 
-fn serialize_constellation(c: Constellation) -> u8 {
-    match c {
+fn serialize_constellation(c: Constellation) -> Result<u8> {
+    Ok(match c {
         Constellation::Qpsk => 0,
         Constellation::Qam16 => 1,
         Constellation::Qam64 => 2,
-        Constellation::Reserved(v) => v & FIELD2_MASK,
-    }
+        Constellation::Reserved(v) => {
+            broadcast_common::len::fit_mask(v, FIELD2_MASK, "constellation")?
+        }
+    })
 }
 
-fn serialize_hierarchy(h: Hierarchy) -> u8 {
-    match h {
+fn serialize_hierarchy(h: Hierarchy) -> Result<u8> {
+    Ok(match h {
         Hierarchy::NonHierarchicalNative => 0,
         Hierarchy::Alpha1Native => 1,
         Hierarchy::Alpha2Native => 2,
@@ -429,19 +431,19 @@ fn serialize_hierarchy(h: Hierarchy) -> u8 {
         Hierarchy::Alpha1InDepth => 5,
         Hierarchy::Alpha2InDepth => 6,
         Hierarchy::Alpha4InDepth => 7,
-        Hierarchy::Reserved(v) => v & FIELD3_MASK,
-    }
+        Hierarchy::Reserved(v) => broadcast_common::len::fit_mask(v, FIELD3_MASK, "hierarchy")?,
+    })
 }
 
-fn serialize_code_rate(cr: CodeRate) -> u8 {
-    match cr {
+fn serialize_code_rate(cr: CodeRate) -> Result<u8> {
+    Ok(match cr {
         CodeRate::Rate1_2 => 0,
         CodeRate::Rate2_3 => 1,
         CodeRate::Rate3_4 => 2,
         CodeRate::Rate5_6 => 3,
         CodeRate::Rate7_8 => 4,
-        CodeRate::Reserved(v) => v & FIELD3_MASK,
-    }
+        CodeRate::Reserved(v) => broadcast_common::len::fit_mask(v, FIELD3_MASK, "code_rate")?,
+    })
 }
 
 fn serialize_guard_interval(gi: GuardInterval) -> u8 {
@@ -453,13 +455,15 @@ fn serialize_guard_interval(gi: GuardInterval) -> u8 {
     }
 }
 
-fn serialize_transmission_mode(tm: TransmissionMode) -> u8 {
-    match tm {
+fn serialize_transmission_mode(tm: TransmissionMode) -> Result<u8> {
+    Ok(match tm {
         TransmissionMode::Mode2k => 0,
         TransmissionMode::Mode8k => 1,
         TransmissionMode::Mode4k => 2,
-        TransmissionMode::Reserved(v) => v & FIELD2_MASK,
-    }
+        TransmissionMode::Reserved(v) => {
+            broadcast_common::len::fit_mask(v, FIELD2_MASK, "transmission_mode")?
+        }
+    })
 }
 
 impl<'a> Parse<'a> for TerrestrialDeliverySystemDescriptor {
@@ -538,7 +542,7 @@ impl Serialize for TerrestrialDeliverySystemDescriptor {
 
         buf[2..6].copy_from_slice(&self.centre_frequency_10hz.to_be_bytes());
 
-        let byte6 = (serialize_bandwidth(self.bandwidth) << BW_SHIFT)
+        let byte6 = (serialize_bandwidth(self.bandwidth)? << BW_SHIFT)
             | if self.priority { PRIORITY_MASK } else { 0 }
             | if !self.time_slicing_used {
                 TIME_SLICING_MASK
@@ -546,17 +550,21 @@ impl Serialize for TerrestrialDeliverySystemDescriptor {
                 0
             }
             | if !self.mpe_fec_used { MPE_FEC_MASK } else { 0 }
-            | (self.reserved_future_use_2 & RESERVED_FU_MASK);
+            | broadcast_common::len::fit_mask(
+                self.reserved_future_use_2,
+                RESERVED_FU_MASK,
+                "reserved_future_use_2",
+            )?;
         buf[6] = byte6;
 
-        let byte7 = (serialize_constellation(self.constellation) << CONSTELLATION_SHIFT)
-            | (serialize_hierarchy(self.hierarchy) << HIERARCHY_SHIFT)
-            | serialize_code_rate(self.code_rate_hp);
+        let byte7 = (serialize_constellation(self.constellation)? << CONSTELLATION_SHIFT)
+            | (serialize_hierarchy(self.hierarchy)? << HIERARCHY_SHIFT)
+            | serialize_code_rate(self.code_rate_hp)?;
         buf[7] = byte7;
 
-        let byte8 = (serialize_code_rate(self.code_rate_lp) << CODE_RATE_LP_SHIFT)
+        let byte8 = (serialize_code_rate(self.code_rate_lp)? << CODE_RATE_LP_SHIFT)
             | (serialize_guard_interval(self.guard_interval) << GUARD_INTERVAL_SHIFT)
-            | (serialize_transmission_mode(self.transmission_mode) << TRANSMISSION_MODE_SHIFT)
+            | (serialize_transmission_mode(self.transmission_mode)? << TRANSMISSION_MODE_SHIFT)
             | if self.other_frequency_flag {
                 OTHER_FREQ_FLAG_MASK
             } else {
@@ -792,50 +800,67 @@ mod tests {
     }
 
     #[test]
-    fn wide_reserved_payloads_do_not_bleed_into_neighbours() {
-        // r03-W2 representative test: every `Reserved(v)` stores a raw `u8`,
-        // but each wire field is 2–3 bits. A user-constructed wide payload
-        // (e.g. 0xFE, only reachable via `Reserved`, since `from_u8` extracts
-        // the masked field) must never corrupt the neighbouring fields on
-        // serialize.
-        let d = TerrestrialDeliverySystemDescriptor {
-            centre_frequency_10hz: 0,
-            bandwidth: Bandwidth::Reserved(0xFE),
+    fn wide_reserved_payloads_are_rejected_not_masked() {
+        // Every `Reserved(v)` stores a raw `u8`, but each wire field is 2-3
+        // bits. A user-constructed wide payload (only reachable via
+        // `Reserved`, since `from_u8` extracts the masked field) used to be
+        // masked silently (r03-W2); it is now a typed FieldOverflow (#1129
+        // class), so it can neither bleed into a neighbour nor be lost.
+        let base = TerrestrialDeliverySystemDescriptor {
             priority: false,
             time_slicing_used: true,
             mpe_fec_used: true,
-            constellation: Constellation::Reserved(0xFC),
-            hierarchy: Hierarchy::Reserved(0xFE),
-            code_rate_hp: CodeRate::Reserved(0xFE),
-            code_rate_lp: CodeRate::Reserved(0xFE),
             guard_interval: GuardInterval::G1_32,
-            transmission_mode: TransmissionMode::Reserved(0xFE),
             other_frequency_flag: false,
             ..Default::default()
         };
-        let mut buf = vec![0u8; d.serialized_len()];
-        d.serialize_into(&mut buf).unwrap();
+        let wide = [
+            TerrestrialDeliverySystemDescriptor {
+                bandwidth: Bandwidth::Reserved(0xFE),
+                ..base
+            },
+            TerrestrialDeliverySystemDescriptor {
+                constellation: Constellation::Reserved(0xFC),
+                ..base
+            },
+            TerrestrialDeliverySystemDescriptor {
+                hierarchy: Hierarchy::Reserved(0xFE),
+                ..base
+            },
+            TerrestrialDeliverySystemDescriptor {
+                code_rate_hp: CodeRate::Reserved(0xFE),
+                ..base
+            },
+            TerrestrialDeliverySystemDescriptor {
+                code_rate_lp: CodeRate::Reserved(0xFE),
+                ..base
+            },
+            TerrestrialDeliverySystemDescriptor {
+                transmission_mode: TransmissionMode::Reserved(0xFE),
+                ..base
+            },
+        ];
+        for d in &wide {
+            let mut buf = vec![0u8; d.serialized_len()];
+            assert!(
+                matches!(d.serialize_into(&mut buf), Err(Error::FieldOverflow(_))),
+                "{d:?}"
+            );
+        }
+        // In-range reserved payloads stay inside their own field.
+        let ok = TerrestrialDeliverySystemDescriptor {
+            bandwidth: Bandwidth::Reserved(0b110),
+            code_rate_hp: CodeRate::Reserved(0b110),
+            code_rate_lp: CodeRate::Reserved(0b110),
+            ..base
+        };
+        let mut buf = vec![0u8; ok.serialized_len()];
+        ok.serialize_into(&mut buf).unwrap();
         let parsed = TerrestrialDeliverySystemDescriptor::parse(&buf).unwrap();
-        // Values stay in their own field (masked, not bled): 0xFE's low 3 bits
-        // are 0b110, which the spec maps onto a *named* variant for hierarchy
-        // and transmission_mode — the point of the test is that the value
-        // never crosses its field boundary, not which variant it names.
         assert_eq!(parsed.bandwidth, Bandwidth::Reserved(0b110));
-        assert!(!parsed.priority);
-        assert!(parsed.time_slicing_used);
-        assert!(parsed.mpe_fec_used);
-        assert_eq!(parsed.constellation, Constellation::Qpsk);
-        assert_eq!(parsed.hierarchy, Hierarchy::Alpha2InDepth);
         assert_eq!(parsed.code_rate_hp, CodeRate::Reserved(0b110));
         assert_eq!(parsed.code_rate_lp, CodeRate::Reserved(0b110));
-        assert_eq!(parsed.transmission_mode, TransmissionMode::Mode4k);
-        assert!(!parsed.other_frequency_flag);
-        // And pre-fix (no masks at the shift) the same value bled across
-        // field boundaries: `(0xFE & ... ) << 3 | 0xFE` produced 0xFE in the
-        // constellation/hierarchy/code-rate byte, so a raw serialize wrote
-        // byte 7 = 0xFE; with the masks byte 7 = Qpsk<<6 | Alpha2InDepth<<3
-        // | 0b110 = 0x36.
-        assert_eq!(buf[2 + 5], 0x36);
+        assert!(parsed.time_slicing_used && parsed.mpe_fec_used);
     }
 
     /// `reserved_future_use(2)` (every value) and `reserved_future_use(32)`

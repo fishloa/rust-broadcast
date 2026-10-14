@@ -112,8 +112,9 @@ impl Serialize for MultiplexBufferUtilizationDescriptor {
         buf[HEADER_LEN] = ((self.bound_valid_flag as u8) << 7)
             | ((self.ltw_offset_lower_bound >> 8) as u8 & 0x7F);
         buf[HEADER_LEN + 1] = (self.ltw_offset_lower_bound & 0xFF) as u8;
-        buf[HEADER_LEN + 2] = ((self.reserved & RESERVED_MASK) << 7)
-            | ((self.ltw_offset_upper_bound >> 8) as u8 & 0x7F);
+        buf[HEADER_LEN + 2] =
+            (broadcast_common::len::fit_mask(self.reserved, RESERVED_MASK, "reserved")? << 7)
+                | ((self.ltw_offset_upper_bound >> 8) as u8 & 0x7F);
         buf[HEADER_LEN + 3] = (self.ltw_offset_upper_bound & 0xFF) as u8;
         Ok(len)
     }

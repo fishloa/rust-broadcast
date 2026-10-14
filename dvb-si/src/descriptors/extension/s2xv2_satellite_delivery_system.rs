@@ -41,8 +41,6 @@ const RZFU_2_MASK: u8 = 0x03;
 const RZFU_6_MASK: u8 = 0x3F;
 /// Width mask of the 7-bit region ahead of `num_channel_bonds_minus_one`.
 const RZFU_7_MASK: u8 = 0x7F;
-/// Width mask of the 4-bit region taking the `SFFI` nibble's place.
-const RZFU_4_MASK: u8 = 0x0F;
 
 /// S2Xv2 mode — ETSI EN 300 468 Table 144c.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -599,15 +597,20 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
         // Bytes 0–3: delivery_system_id.
         buf[0..4].copy_from_slice(&self.delivery_system_id.to_be_bytes());
         // Byte 4: S2Xv2_mode(4) | multiple_input_stream_flag(1) | roll_off(3).
-        buf[4] = ((self.s2xv2_mode.to_u8() & 0x0F) << 4)
+        buf[4] = (broadcast_common::len::fit_mask(self.s2xv2_mode.to_u8(), 0x0F, "s2xv2_mode")?
+            << 4)
             | (u8::from(self.multiple_input_stream_flag) << 3)
-            | (self.roll_off.to_u8() & 0x07);
+            | broadcast_common::len::fit_mask(self.roll_off.to_u8(), 0x07, "roll_off")?;
         // Byte 5: reserved(2) | NCR_reference(1) | NCR_version(1) | channel_bond(2) | polarization(2).
-        buf[5] = ((self.reserved_zero_future_use_2 & RZFU_2_MASK) << 6)
+        buf[5] = (broadcast_common::len::fit_mask(
+            self.reserved_zero_future_use_2,
+            RZFU_2_MASK,
+            "reserved_zero_future_use_2",
+        )? << 6)
             | (u8::from(self.ncr_reference) << 5)
             | (u8::from(self.ncr_version) << 4)
-            | ((self.channel_bond & 0x03) << 2)
-            | (self.polarization.to_u8() & 0x03);
+            | (broadcast_common::len::fit_mask(self.channel_bond, 0x03, "channel_bond")? << 2)
+            | broadcast_common::len::fit_mask(self.polarization.to_u8(), 0x03, "polarization")?;
         // Byte 6: scrambling_or_reserved(1) | TS_GS_S2X_mode(2) | receiver_profiles(5).
         let scram_bit: u8 = match self.scrambling_sequence_selector {
             Some(true) => 1,
@@ -616,8 +619,8 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
             None => self.reserved_zero_future_use_1 & 1,
         };
         buf[6] = (scram_bit << 7)
-            | ((self.ts_gs_s2x_mode & 0x03) << 5)
-            | (self.receiver_profiles & 0x1F);
+            | (broadcast_common::len::fit_mask(self.ts_gs_s2x_mode, 0x03, "ts_gs_s2x_mode")? << 5)
+            | broadcast_common::len::fit_mask(self.receiver_profiles, 0x1F, "receiver_profiles")?;
         // Bytes 7–9: satellite_id (24 bits): reject, never drop the top byte.
         broadcast_common::len::fit_bits(u64::from(self.satellite_id), 24, "satellite_id")?;
         buf[7] = (self.satellite_id >> 16) as u8;
@@ -640,10 +643,15 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                 .ok_or(Error::ValueOutOfRange {
                     field: "scrambling_sequence_index",
                     reason: "required when scrambling_sequence_selector is set",
-                })?
-                & 0x0003_FFFF;
-            buf[p] =
-                ((self.reserved_zero_future_use_6 & RZFU_6_MASK) << 2) | ((idx >> 16) as u8 & 0x03);
+                })?;
+            let idx =
+                broadcast_common::len::fit_mask(idx, 0x0003_FFFF, "scrambling_sequence_index")?;
+            buf[p] = (broadcast_common::len::fit_mask(
+                self.reserved_zero_future_use_6,
+                RZFU_6_MASK,
+                "reserved_zero_future_use_6",
+            )? << 2)
+                | ((idx >> 16) as u8 & 0x03);
             buf[p + 1] = (idx >> 8) as u8;
             buf[p + 2] = idx as u8;
             p += S2XV2_SCRAMBLING_LEN;
@@ -660,7 +668,12 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
             let minus_one = (self.secondary_delivery_system_ids.len() as u64).wrapping_sub(1);
             let n =
                 broadcast_common::len::fit_bits(minus_one, 1, "num_channel_bonds_minus_one")? as u8;
-            buf[p] = ((self.reserved_zero_future_use_7 & RZFU_7_MASK) << 1) | n;
+            buf[p] = (broadcast_common::len::fit_mask(
+                self.reserved_zero_future_use_7,
+                RZFU_7_MASK,
+                "reserved_zero_future_use_7",
+            )? << 1)
+                | n;
             p += 1;
             for &id in &self.secondary_delivery_system_ids {
                 buf[p..p + 4].copy_from_slice(&id.to_be_bytes());
@@ -685,7 +698,11 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
             let ref_hi = (sf.reference_scrambling_index >> 16) as u8 & 0x0F;
             buf[p + 1] = (u8::from(sf.sffi_selector) << 7)
                 | (u8::from(sf.beam_hopping_time_plan_selector) << 6)
-                | ((sf.reserved_zero_future_use_2 & RZFU_2_MASK) << 4)
+                | (broadcast_common::len::fit_mask(
+                    sf.reserved_zero_future_use_2,
+                    RZFU_2_MASK,
+                    "reserved_zero_future_use_2",
+                )? << 4)
                 | ref_hi;
             buf[p + 2] = (sf.reference_scrambling_index >> 8) as u8;
             buf[p + 3] = sf.reference_scrambling_index as u8;
@@ -695,11 +712,12 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                 sf.sffi.ok_or(Error::ValueOutOfRange {
                     field: "sffi",
                     reason: "required when sffi_selector is set",
-                })? & 0x0F
+                })?
             } else {
                 // The nibble is reserved_zero_future_use when SFFI is absent.
-                sf.reserved_zero_future_use_4 & RZFU_4_MASK
+                sf.reserved_zero_future_use_4
             };
+            let sffi_nibble = broadcast_common::len::fit_mask(sffi_nibble, 0x0F, "sffi")?;
             let psi_hi = (sf.payload_scrambling_index >> 16) as u8 & 0x0F;
             buf[p + 4] = (sffi_nibble << 4) | psi_hi;
             buf[p + 5] = (sf.payload_scrambling_index >> 8) as u8;
@@ -716,8 +734,12 @@ impl Serialize for S2Xv2SatelliteDeliverySystem<'_> {
                 buf[p..p + 4].copy_from_slice(&bh_id.to_be_bytes());
                 p += 4;
             }
-            buf[p] =
-                ((sf.superframe_pilots_wh_sequence_number & 0x1F) << 3) | (sf.postamble_pli & 0x07);
+            buf[p] = (broadcast_common::len::fit_mask(
+                sf.superframe_pilots_wh_sequence_number,
+                0x1F,
+                "superframe_pilots_wh_sequence_number",
+            )? << 3)
+                | broadcast_common::len::fit_mask(sf.postamble_pli, 0x07, "postamble_pli")?;
             p += 1;
         }
         // Reserved tail.

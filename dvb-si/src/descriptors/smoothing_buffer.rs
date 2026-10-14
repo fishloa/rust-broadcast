@@ -100,12 +100,18 @@ impl Serialize for SmoothingBufferDescriptor {
         let ss = broadcast_common::len::fit_bits(u64::from(self.sb_size), 22, "sb_size")? as u32;
         buf[0] = TAG;
         buf[1] = BODY_LEN;
-        buf[HEADER_LEN] =
-            ((self.reserved_leak_rate & RESERVED_MASK) << 6) | ((slr >> 16) & 0x3F) as u8;
+        buf[HEADER_LEN] = (broadcast_common::len::fit_mask(
+            self.reserved_leak_rate,
+            RESERVED_MASK,
+            "reserved_leak_rate",
+        )? << 6)
+            | ((slr >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 1] = ((slr >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 2] = (slr & 0xFF) as u8;
         buf[HEADER_LEN + 3] =
-            ((self.reserved_size & RESERVED_MASK) << 6) | ((ss >> 16) & 0x3F) as u8;
+            (broadcast_common::len::fit_mask(self.reserved_size, RESERVED_MASK, "reserved_size")?
+                << 6)
+                | ((ss >> 16) & 0x3F) as u8;
         buf[HEADER_LEN + 4] = ((ss >> 8) & 0xFF) as u8;
         buf[HEADER_LEN + 5] = (ss & 0xFF) as u8;
         Ok(len)

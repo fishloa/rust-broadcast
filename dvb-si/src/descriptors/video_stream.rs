@@ -282,7 +282,11 @@ impl Serialize for VideoStreamDescriptor {
         }
         crate::descriptors::write_descriptor_header(buf, TAG, len - HEADER_LEN)?;
         let b0 = ((self.multiple_frame_rate_flag as u8) << 7)
-            | ((self.frame_rate_code.to_u8() & FRAME_RATE_CODE_MASK) << 3)
+            | (broadcast_common::len::fit_mask(
+                self.frame_rate_code.to_u8(),
+                FRAME_RATE_CODE_MASK,
+                "frame_rate_code",
+            )? << 3)
             | ((self.mpeg_1_only_flag as u8) << 2)
             | ((self.constrained_parameter_flag as u8) << 1)
             | (self.still_picture_flag as u8);
@@ -297,10 +301,14 @@ impl Serialize for VideoStreamDescriptor {
                     field: "profile_and_level_indication",
                     reason: "required when mpeg_1_only_flag is false",
                 })?;
-            let chroma = self.chroma_format.ok_or(Error::ValueOutOfRange {
-                field: "chroma_format",
-                reason: "required when mpeg_1_only_flag is false",
-            })? & 0x03;
+            let chroma = broadcast_common::len::fit_mask(
+                self.chroma_format.ok_or(Error::ValueOutOfRange {
+                    field: "chroma_format",
+                    reason: "required when mpeg_1_only_flag is false",
+                })?,
+                0x03,
+                "chroma_format",
+            )?;
             let fre = self
                 .frame_rate_extension_flag
                 .ok_or(Error::ValueOutOfRange {
@@ -308,7 +316,9 @@ impl Serialize for VideoStreamDescriptor {
                     reason: "required when mpeg_1_only_flag is false",
                 })? as u8;
             buf[HEADER_LEN + 1] = pal;
-            buf[HEADER_LEN + 2] = (chroma << 6) | (fre << 5) | (self.reserved_5 & RESERVED_5_MASK);
+            buf[HEADER_LEN + 2] = (chroma << 6)
+                | (fre << 5)
+                | broadcast_common::len::fit_mask(self.reserved_5, RESERVED_5_MASK, "reserved_5")?;
         }
         let fixed = if self.mpeg_1_only_flag {
             BODY_MPEG1_LEN as usize

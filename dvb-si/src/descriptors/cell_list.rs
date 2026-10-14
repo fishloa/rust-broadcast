@@ -154,12 +154,13 @@ fn read_extents(b: &[u8]) -> (u16, u16) {
 }
 
 /// Encode a packed 24-bit extent pair into 3 bytes.
-fn write_extents(buf: &mut [u8], lat: u16, long: u16) {
-    let lat = lat & EXTENT_MASK;
-    let long = long & EXTENT_MASK;
+fn write_extents(buf: &mut [u8], lat: u16, long: u16) -> Result<()> {
+    let lat = broadcast_common::len::fit_mask(lat, EXTENT_MASK, "cell_extent_of_latitude")?;
+    let long = broadcast_common::len::fit_mask(long, EXTENT_MASK, "cell_extent_of_longitude")?;
     buf[0] = (lat >> 4) as u8;
     buf[1] = (((lat & 0x0F) << 4) | (long >> 8)) as u8;
     buf[2] = long as u8;
+    Ok(())
 }
 
 impl<'a> Parse<'a> for CellListDescriptor {
@@ -282,7 +283,7 @@ impl Serialize for CellListDescriptor {
                 &mut buf[pos + 6..pos + 9],
                 e.cell_extent_of_latitude,
                 e.cell_extent_of_longitude,
-            );
+            )?;
             buf[pos + 9] = broadcast_common::len::fit_u8(
                 e.subcells.len() * SUBCELL_LEN,
                 "subcell_info_loop_length",
@@ -296,7 +297,7 @@ impl Serialize for CellListDescriptor {
                     &mut buf[pos + 5..pos + 8],
                     sc.subcell_extent_of_latitude,
                     sc.subcell_extent_of_longitude,
-                );
+                )?;
                 pos += SUBCELL_LEN;
             }
         }
@@ -315,7 +316,7 @@ mod tests {
     #[test]
     fn extents_pack_round_trips() {
         let mut b = [0u8; 3];
-        write_extents(&mut b, 0xABC, 0xDEF);
+        write_extents(&mut b, 0xABC, 0xDEF).unwrap();
         assert_eq!(read_extents(&b), (0xABC, 0xDEF));
     }
 

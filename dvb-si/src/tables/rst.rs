@@ -180,7 +180,11 @@ impl Serialize for RstSection {
             buf[off + 4..off + 6].copy_from_slice(&e.service_id.to_be_bytes());
             buf[off + 6..off + 8].copy_from_slice(&e.event_id.to_be_bytes());
             // reserved_future_use(5)=1, running_status(3).
-            buf[off + 8] = ((e.reserved_future_use & RESERVED_FUTURE_USE_5) << RESERVED_SHIFT)
+            buf[off + 8] = (broadcast_common::len::fit_mask(
+                e.reserved_future_use,
+                RESERVED_FUTURE_USE_5,
+                "reserved_future_use",
+            )? << RESERVED_SHIFT)
                 | (e.running_status.to_u8() & super::RUNNING_STATUS_MASK);
             off += ENTRY_LEN;
         }
