@@ -192,6 +192,7 @@ use dvb_si::demux::{SectionEvent, SiDemux};
 use dvb_si::tables::eit::{EitKind, PID as EIT_PID};
 use dvb_si::tables::{AnyTableSection, RunningStatus};
 use media_plane::egress::SegmentEgress;
+use media_plane::ids::SegmentSeq;
 use media_plane::trunk::{ArchiveOverrun, SegmentCursor, SegmentCursorItem, Trunk};
 use serde::{Deserialize, Serialize};
 use tracing;
@@ -534,7 +535,7 @@ pub struct DvrRecorder {
     /// between this value and the `Trunk`'s current
     /// [`Trunk::last_closed_segment`] at re-arm time is lost to this
     /// recording.
-    last_appended_seq: Option<u32>,
+    last_appended_seq: Option<SegmentSeq>,
     /// EIT p/f section reassembler for [`Self::feed_si`] (issue #903).
     /// `Some` only when `config.dvb_service_id` is set — `None` disables
     /// EIT-aligned rolling entirely (pure time-based periods, unchanged).
@@ -591,17 +592,17 @@ pub struct DvrRecorder {
 /// blocking pool.
 ///
 /// Returns `0` if the blocking task could not run (runtime shutting down).
-pub(crate) async fn archive_seq_floor(config: &DvrConfig, route_name: &str) -> u32 {
+pub(crate) async fn archive_seq_floor(config: &DvrConfig, route_name: &str) -> SegmentSeq {
     let dir = crate::catchup::archive_dir(config, route_name);
     tokio::task::spawn_blocking(move || {
         crate::catchup::scan_archive(&dir)
             .iter()
             .map(|s| s.seq)
             .max()
-            .unwrap_or(0)
+            .unwrap_or(SegmentSeq::new(0))
     })
     .await
-    .unwrap_or(0)
+    .unwrap_or(SegmentSeq::new(0))
 }
 
 /// Reject a route name that is not a safe single directory component: one
@@ -929,7 +930,7 @@ impl DvrRecorder {
     /// persisted, or a known init to write. When this is `false`, the caller
     /// can skip the whole `spawn_blocking` round-trip (the UDP ingest path
     /// calls `advance_route` once per datagram, so this matters).
-    pub fn needs_poll(&self, latest_closed_segment: Option<u32>) -> bool {
+    pub fn needs_poll(&self, latest_closed_segment: Option<SegmentSeq>) -> bool {
         // The first poll must always run (it opens period 0 and writes the
         // init prelude).
         if self.current_file.is_none() {
@@ -1079,7 +1080,7 @@ impl DvrRecorder {
         if self.ext == ".m4s" && self.last_init.is_none() {
             tracing::debug!(
                 route = %self.route_name,
-                seq = entry.sequence_number,
+                seq = entry.sequence_number.value(),
                 "skipping segment — fMP4 init not yet available"
             );
             return Ok(());
@@ -1090,12 +1091,13 @@ impl DvrRecorder {
         // does not fit the index's `u32`.
         let seq = self
             .seq_offset
-            .checked_add(u64::from(entry.sequence_number))
+            .checked_add(u64::from(entry.sequence_number.value()))
             .and_then(|public| u32::try_from(public).ok())
             .ok_or_else(|| {
                 format!(
                     "segment {} + offset {} overflows the archive's u32 sequence range",
-                    entry.sequence_number, self.seq_offset
+                    entry.sequence_number.value(),
+                    self.seq_offset
                 )
             })?;
 
@@ -1203,7 +1205,7 @@ impl DvrRecorder {
         tracing::debug!(
             route = %self.route_name,
             period = self.period,
-            seq = entry.sequence_number,
+            seq = entry.sequence_number.value(),
             bytes = byte_len,
             offset = byte_offset,
             "appended segment"
@@ -1562,8 +1564,10 @@ impl DvrRecorder {
             ArchiveOverrunSerde::Stall => {
                 let latest = self.trunk.last_closed_segment();
                 let skipped = match (self.last_appended_seq, latest) {
-                    (Some(last), Some(newest)) => u64::from(newest.saturating_sub(last)),
-                    (None, Some(newest)) => u64::from(newest),
+                    (Some(last), Some(newest)) => {
+                        u64::from(newest.checked_distance_from(last).unwrap_or(0))
+                    }
+                    (None, Some(newest)) => u64::from(newest.value()),
                     _ => 0,
                 };
                 self.gaps += skipped;
@@ -1624,7 +1628,7 @@ impl SegmentEgress for DvrRecorder {
             SegmentCursorItem::Segment(entry) if let Err(e) = self.append_segment(entry) => {
                 tracing::error!(
                     route = %self.route_name,
-                    seq = entry.sequence_number,
+                    seq = entry.sequence_number.value(),
                     error = %e,
                     "DVR append failed"
                 );
@@ -1633,7 +1637,7 @@ impl SegmentEgress for DvrRecorder {
             SegmentCursorItem::Segment(entry) => {
                 tracing::debug!(
                     route = %self.route_name,
-                    seq = entry.sequence_number,
+                    seq = entry.sequence_number.value(),
                     bytes = entry.bytes.len(),
                     "appended segment"
                 );
@@ -1680,7 +1684,7 @@ mod tests {
     fn dummy_segment(seq: u32, byte: u8) -> SegmentEntry {
         SegmentEntry::new(
             bytes::Bytes::from(vec![byte; 16]),
-            seq,
+            SegmentSeq::new(seq),
             Duration::from_secs(2),
             broadcast_common::Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
             transmux::SegmentMeta {
@@ -1770,10 +1774,10 @@ mod tests {
         // whose by-number lookup finds the right run's bytes.
         let archived = crate::catchup::scan_archive(&dir);
         assert_eq!(
-            archived.iter().map(|s| s.seq).collect::<Vec<_>>(),
+            archived.iter().map(|s| s.seq.value()).collect::<Vec<_>>(),
             vec![1, 2, 3, 4, 5]
         );
-        let found = crate::catchup::find_archived_segment(&dir, 4).expect("seq 4");
+        let found = crate::catchup::find_archived_segment(&dir, SegmentSeq::new(4)).expect("seq 4");
         assert_eq!(found.period_num, 1);
         let bytes = crate::catchup::read_archived_bytes(
             &dir,
@@ -1812,10 +1816,14 @@ mod tests {
     async fn archive_floor_is_the_highest_archived_sequence() {
         let tmp = temp_dir();
         let cfg = dvr_config(&tmp, 10);
-        assert_eq!(archive_seq_floor(&cfg, "floor").await, 0, "no archive yet");
+        assert_eq!(
+            archive_seq_floor(&cfg, "floor").await.value(),
+            0,
+            "no archive yet"
+        );
         record_run("floor", &cfg, 0, &[(1, 1), (2, 2), (3, 3)]);
         record_run("floor", &cfg, 3, &[(1, 4), (2, 5)]);
-        assert_eq!(archive_seq_floor(&cfg, "floor").await, 5);
+        assert_eq!(archive_seq_floor(&cfg, "floor").await.value(), 5);
         cleanup_temp(&tmp);
     }
 
@@ -1948,7 +1956,7 @@ mod tests {
         writer
             .publish_segment(SegmentEntry::new(
                 bytes::Bytes::from(moof),
-                0,
+                SegmentSeq::new(0),
                 Duration::from_secs(1),
                 broadcast_common::Timestamp::from_nanos(0),
                 transmux::SegmentMeta {
@@ -2083,7 +2091,7 @@ mod tests {
         writer
             .publish_segment(SegmentEntry::new(
                 bytes::Bytes::from(vec![0xABu8; 200]),
-                1,
+                SegmentSeq::new(1),
                 Duration::from_secs(1),
                 broadcast_common::Timestamp::from_nanos(0),
                 transmux::SegmentMeta {
@@ -2145,7 +2153,7 @@ mod tests {
             writer
                 .publish_segment(SegmentEntry::new(
                     bytes::Bytes::from(vec![0xCDu8; 100]),
-                    seq,
+                    SegmentSeq::new(seq),
                     Duration::from_secs(1),
                     broadcast_common::Timestamp::from_nanos(u64::from(seq)),
                     transmux::SegmentMeta {
@@ -2282,7 +2290,7 @@ mod tests {
             writer
                 .publish_segment(SegmentEntry::new(
                     bytes::Bytes::from(vec![0xABu8; 2000]),
-                    seq,
+                    SegmentSeq::new(seq),
                     Duration::from_secs(1),
                     broadcast_common::Timestamp::from_nanos(u64::from(seq)),
                     transmux::SegmentMeta {
@@ -2337,7 +2345,7 @@ mod tests {
             writer
                 .publish_segment(SegmentEntry::new(
                     bytes::Bytes::from(vec![0xCDu8; 1000]),
-                    seq,
+                    SegmentSeq::new(seq),
                     Duration::from_secs(1),
                     broadcast_common::Timestamp::from_nanos(u64::from(seq)),
                     transmux::SegmentMeta {
@@ -2516,7 +2524,7 @@ mod tests {
     fn moof_segment_entry(seq: u32, content: &[u8]) -> SegmentEntry {
         SegmentEntry::new(
             bytes::Bytes::from(moof_mdat_segment(content)),
-            seq,
+            SegmentSeq::new(seq),
             Duration::from_secs(2),
             broadcast_common::Timestamp::from_nanos(u64::from(seq) * 2_000_000_000),
             transmux::SegmentMeta {
@@ -2724,7 +2732,7 @@ mod tests {
         let mut live_seqs = Vec::new();
         while let Some(item) = live_cursor.poll() {
             if let SegmentCursorItem::Segment(entry) = item {
-                live_seqs.push(entry.sequence_number);
+                live_seqs.push(entry.sequence_number.value());
             }
         }
 
@@ -3402,8 +3410,7 @@ mod tests {
     /// pre-fix `self.terminated = true; self.current_file.take();` (no
     /// policy check, no re-arm) makes this test's
     /// `assert!(!recorder.terminated, ...)` fail immediately (`terminated`
-    /// is `true`), and the final `assert_eq!(recorder.last_appended_seq,
-    /// Some(3), ...)` also fails — the `terminated` guard at the top of
+    /// is `true`), and the final `assert_eq!(XX    /// Some(3), ...)` also fails — the `terminated` guard at the top of
     /// `on_segment` makes every following `poll_and_persist` call a no-op,
     /// so segment 3 is never appended at all. Recompiled and re-run to
     /// confirm both failures, then reverted.
@@ -3469,7 +3476,7 @@ mod tests {
             .expect("persist seg 3 via the re-armed cursor");
         assert_eq!(
             recorder.last_appended_seq,
-            Some(3),
+            Some(SegmentSeq::new(3)),
             "the re-armed cursor must keep recording later segments"
         );
 

@@ -19,6 +19,7 @@ use broadcast_common::Timestamp;
 use hls_runtime::client::{Action, HlsClient};
 use hls_runtime::server::{BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest};
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
+use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
 
@@ -48,15 +49,15 @@ fn canned_playlist() -> String {
 
     writer.publish_part(PartEntry::new(
         vec![0x01; 16],
-        1,
-        0,
+        SegmentSeq::new(1),
+        PartIndex::new(0),
         Duration::from_millis(500),
         true,
     ));
     writer
         .publish_segment(SegmentEntry::new(
             vec![0x02; 32],
-            1,
+            SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
             SegmentMeta {
@@ -66,8 +67,8 @@ fn canned_playlist() -> String {
         .unwrap();
     writer.publish_part(PartEntry::new(
         vec![0x03; 16],
-        2,
-        0,
+        SegmentSeq::new(2),
+        PartIndex::new(0),
         Duration::from_millis(500),
         true,
     ));

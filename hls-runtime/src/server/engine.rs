@@ -70,7 +70,8 @@
 //! `Trunk`'s four rings. [`HlsOrigin::set_init`] is the (small, honest) side
 //! channel for it — not a duplicate of anything `Trunk` holds.
 
-use super::ids::{Generation, PartIndex, SegmentSeq};
+use super::ids::Generation;
+use media_plane::ids::{PartIndex, SegmentSeq};
 use std::collections::{BTreeMap, VecDeque};
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -313,7 +314,7 @@ pub enum HlsBody {
 /// Playlist, so that is all this holds.
 #[derive(Clone)]
 struct WindowSegment {
-    sequence_number: u32,
+    sequence_number: SegmentSeq,
     /// The init-segment generation this segment was cut against (see
     /// [`InitStore`]).
     init_gen: Generation,
@@ -338,7 +339,7 @@ struct WindowSegment {
 #[non_exhaustive]
 pub struct ClosedSegment {
     /// This segment's sequence number (`_HLS_msn`-addressable).
-    pub sequence_number: u32,
+    pub sequence_number: SegmentSeq,
     /// `SegmentEntry::timeline_position`, in nanoseconds — the `Trunk`'s
     /// absolute timeline, for time-based windowing across sources that
     /// share the same `Trunk` (e.g. multimux's DVR archive, whose own
@@ -369,7 +370,7 @@ impl ClosedSegment {
     /// catch-up merge tests, issue #900) without depending on this
     /// module's private `Window`.
     pub fn new(
-        sequence_number: u32,
+        sequence_number: SegmentSeq,
         start_ns: u64,
         duration_secs: f64,
         discontinuous: bool,
@@ -457,7 +458,7 @@ impl Window {
         let follows = self
             .segments
             .back()
-            .is_none_or(|last| last.sequence_number.checked_add(1) == Some(entry.sequence_number));
+            .is_none_or(|last| last.sequence_number.checked_next() == Some(entry.sequence_number));
         let mut discontinuous = entry.meta.discontinuous;
         if !follows || self.gap_pending {
             self.clear_rolling_off();
@@ -500,9 +501,9 @@ impl Window {
     /// sequence numbers (see [`Self::push`]), so the number identifies at
     /// most one entry; it is addressed by offset from the front and the
     /// entry's own number is re-checked.
-    fn bytes_of(&self, sequence_number: u32) -> Option<Bytes> {
+    fn bytes_of(&self, sequence_number: SegmentSeq) -> Option<Bytes> {
         let front = self.segments.front()?.sequence_number;
-        let index = usize::try_from(sequence_number.checked_sub(front)?).ok()?;
+        let index = usize::try_from(sequence_number.checked_distance_from(front)?).ok()?;
         let segment = self.segments.get(index)?;
         (segment.sequence_number == sequence_number).then(|| segment.bytes.clone())
     }
@@ -534,19 +535,23 @@ struct InitStore {
     /// `(first origin sequence number cut against it, generation)`, oldest
     /// first: segment `seq` belongs to the last entry whose first number is
     /// `<= seq`.
-    starts: VecDeque<(u32, Generation)>,
+    starts: VecDeque<(SegmentSeq, Generation)>,
 }
 
 impl InitStore {
     /// Record `bytes`; a new generation only if they differ from the current
     /// init. `next_seq` is the first segment not yet closed.
-    fn set(&mut self, bytes: Bytes, next_seq: u32) {
+    fn set(&mut self, bytes: Bytes, next_seq: SegmentSeq) {
         if self.current.as_ref() == Some(&bytes) {
             return;
         }
         self.generation = Generation::new(self.generation.value().saturating_add(1));
         // The very first init covers every segment ever seen.
-        let first_seq = if self.current.is_none() { 0 } else { next_seq };
+        let first_seq = if self.current.is_none() {
+            SegmentSeq::new(0)
+        } else {
+            next_seq
+        };
         self.current = Some(bytes.clone());
         self.history.push_back((self.generation, bytes));
         self.starts.push_back((first_seq, self.generation));
@@ -559,7 +564,7 @@ impl InitStore {
     }
 
     /// The generation segment `seq` was cut against (`1` before any init).
-    fn generation_for(&self, seq: u32) -> Generation {
+    fn generation_for(&self, seq: SegmentSeq) -> Generation {
         self.starts
             .iter()
             .rev()
@@ -593,12 +598,12 @@ fn segment_bandwidth_bps(len: usize, duration: Duration) -> Option<u64> {
 /// the playlist uses) or the legacy `part-{track}-{seq}.{idx}.{ext}` into
 /// `(instance, seq, idx)`; `instance` is `None` for the legacy form. `None` if it
 /// isn't a part filename in `container`'s extension or a field does not parse.
-fn parse_part(file: &str, container: Container) -> Option<(Option<u64>, u64, u32)> {
+fn parse_part(file: &str, container: Container) -> Option<(Option<u64>, u64, PartIndex)> {
     let suffix = format!(".{}", container.segment_extension());
     let rest = file.strip_prefix("part-")?.strip_suffix(suffix.as_str())?;
     let (names, idx) = rest.rsplit_once('.')?;
     let (epoch, seq) = parse_epoch_seq(names)?;
-    Some((epoch, seq, idx.parse().ok()?))
+    Some((epoch, seq, PartIndex::new(idx.parse().ok()?)))
 }
 
 /// `{track}-{seq}` or `{track}-{instance}-{seq}` -> `(instance, seq)`; `{track}` is
@@ -959,8 +964,8 @@ impl HlsOrigin {
         let next_seq = self
             .trunk
             .last_closed_segment()
-            .unwrap_or(0)
-            .saturating_add(1);
+            .unwrap_or(SegmentSeq::new(0))
+            .saturating_next();
         locked(&self.init).set(bytes, next_seq);
     }
 
@@ -1055,7 +1060,7 @@ impl HlsOrigin {
         format!(
             "seg-{track_id}-{}-{}.{ext}",
             self.instance,
-            self.public_msn(seq.value())
+            self.public_msn(seq)
         )
     }
 
@@ -1063,7 +1068,7 @@ impl HlsOrigin {
         format!(
             "part-{track_id}-{}-{}.{idx}.{ext}",
             self.instance,
-            self.public_msn(seq.value())
+            self.public_msn(seq)
         )
     }
 
@@ -1090,21 +1095,24 @@ impl HlsOrigin {
         self.public_msn(
             self.trunk
                 .last_closed_segment()
-                .unwrap_or(0)
-                .saturating_add(1),
+                .unwrap_or(SegmentSeq::new(0))
+                .saturating_next(),
         )
     }
 
     /// The Media Sequence Number shown for origin sequence number `seq`.
-    fn public_msn(&self, seq: u32) -> u64 {
+    fn public_msn(&self, seq: SegmentSeq) -> u64 {
         // `media_sequence_offset + u32::MAX` fits a `u64` (checked in `build`).
-        self.media_sequence_offset.saturating_add(u64::from(seq))
+        self.media_sequence_offset
+            .saturating_add(u64::from(seq.value()))
     }
 
     /// The origin sequence number a shown Media Sequence Number refers to, or
     /// `None` when it lies outside the `u32` range this origin numbers in.
-    fn internal_seq(&self, public: u64) -> Option<u32> {
-        u32::try_from(public.checked_sub(self.media_sequence_offset)?).ok()
+    fn internal_seq(&self, public: u64) -> Option<SegmentSeq> {
+        u32::try_from(public.checked_sub(self.media_sequence_offset)?)
+            .ok()
+            .map(SegmentSeq::new)
     }
 
     /// How many parts past the live edge a request may name (RFC 8216bis
@@ -1144,7 +1152,7 @@ impl HlsOrigin {
         let head = self
             .trunk
             .last_closed_segment()
-            .map_or(0, |n| u64::from(n).saturating_add(1));
+            .map_or(0, |n| u64::from(n.value()).saturating_add(1));
         if self.drained_through.load(Ordering::Acquire) == head {
             return;
         }
@@ -1220,9 +1228,12 @@ impl HlsOrigin {
     /// answer falls back to `last_closed_segment` itself, with an empty part
     /// list — exactly the degenerate state `MediaStore::latest_progress`
     /// also returned right after `add_segment` cleared `live_parts`.
-    fn live_edge(&self) -> (u32, Vec<PartEntry>) {
-        let last_closed = self.trunk.last_closed_segment().unwrap_or(0);
-        let candidate = last_closed.saturating_add(1);
+    fn live_edge(&self) -> (SegmentSeq, Vec<PartEntry>) {
+        let last_closed = self
+            .trunk
+            .last_closed_segment()
+            .unwrap_or(SegmentSeq::new(0));
+        let candidate = last_closed.saturating_next();
         let parts = self.trunk.parts_in_segment(candidate);
         if parts.is_empty() {
             (last_closed, Vec::new())
@@ -1240,9 +1251,9 @@ impl HlsOrigin {
     fn resident_part_specs(&self, track_id: TrackId, seq: SegmentSeq, ext: &str) -> Vec<PartSpec> {
         // Keyed by index: a stale entry reusing a number is overwritten by
         // the newer one (publish order).
-        let by_index: BTreeMap<u32, PartEntry> = self
+        let by_index: BTreeMap<PartIndex, PartEntry> = self
             .trunk
-            .parts_in_segment(seq.value())
+            .parts_in_segment(seq)
             .into_iter()
             .map(|p| (p.part_index, p))
             .collect();
@@ -1250,19 +1261,14 @@ impl HlsOrigin {
             .keys()
             .copied()
             .zip(0u32..)
-            .all(|(index, expected)| index == expected);
+            .all(|(index, expected)| index.value() == expected);
         if by_index.is_empty() || !contiguous {
             return Vec::new();
         }
         by_index
             .values()
             .map(|p| PartSpec {
-                uri: self.part_name(
-                    track_id,
-                    SegmentSeq::new(p.segment_number),
-                    PartIndex::new(p.part_index),
-                    ext,
-                ),
+                uri: self.part_name(track_id, p.segment_number, p.part_index, ext),
                 // `Duration::as_secs_f64`: finite and >= 0 (issue #1140).
                 duration: DecimalSeconds::new(p.duration.as_secs_f64())
                     .expect("Duration::as_secs_f64 is finite, >= 0"),
@@ -1317,7 +1323,7 @@ impl HlsOrigin {
             .front()
             .map(|s| self.public_msn(s.sequence_number))
             .or_else(|| has_open_parts.then(|| self.public_msn(open_seq)))
-            .unwrap_or_else(|| self.public_msn(1));
+            .unwrap_or_else(|| self.public_msn(SegmentSeq::new(1)));
         // RFC 8216bis §4.4.3.1 (MUST): every Media Segment's EXTINF duration,
         // rounded to the nearest integer, MUST be <= TARGETDURATION. The
         // segmenter cuts on the next keyframe *after* the configured target,
@@ -1345,7 +1351,7 @@ impl HlsOrigin {
         for s in window.segments.iter().rev() {
             let keep = low_latency_enabled && behind_secs <= retention_secs;
             closed_parts.push(if keep {
-                self.resident_part_specs(track_id, SegmentSeq::new(s.sequence_number), ext)
+                self.resident_part_specs(track_id, s.sequence_number, ext)
             } else {
                 Vec::new()
             });
@@ -1366,7 +1372,7 @@ impl HlsOrigin {
             .zip(closed_parts)
             .map(|(s, parts)| MediaSegment {
                 map: map_for(s.init_gen),
-                uri: self.segment_name(track_id, SegmentSeq::new(s.sequence_number), ext),
+                uri: self.segment_name(track_id, s.sequence_number, ext),
                 // `duration_secs` is always `Duration::as_secs_f64()`
                 // (issue #1140): a `std::time::Duration` can never be
                 // negative or non-finite.
@@ -1386,12 +1392,7 @@ impl HlsOrigin {
                 open_parts
                     .iter()
                     .map(|p| PartSpec {
-                        uri: self.part_name(
-                            track_id,
-                            SegmentSeq::new(p.segment_number),
-                            PartIndex::new(p.part_index),
-                            ext,
-                        ),
+                        uri: self.part_name(track_id, p.segment_number, p.part_index, ext),
                         // `p.duration` is a `std::time::Duration`: always
                         // finite and non-negative (issue #1140).
                         duration: DecimalSeconds::new(p.duration.as_secs_f64())
@@ -1411,14 +1412,9 @@ impl HlsOrigin {
                 .iter()
                 .map(|p| p.part_index)
                 .max()
-                .map(|idx| idx.saturating_add(1))
-                .unwrap_or(0);
-            self.part_name(
-                track_id,
-                SegmentSeq::new(open_seq),
-                PartIndex::new(next_idx),
-                ext,
-            )
+                .map(PartIndex::saturating_next)
+                .unwrap_or(PartIndex::new(0));
+            self.part_name(track_id, open_seq, next_idx, ext)
         });
         // `#EXT-X-MAP`: unconditional under Fmp4 (RFC 8216bis §3.1.2 MUST);
         // omitted under MpegTs by default (§3.1.1's PAT/PMT-or-MAP
@@ -1547,7 +1543,13 @@ impl HlsOrigin {
                             && u64::try_from(live_parts.len()).unwrap_or(u64::MAX)
                                 > u64::from(part))
                 }
-                None => self.public_msn(self.trunk.last_closed_segment().unwrap_or(0)) >= msn,
+                None => {
+                    self.public_msn(
+                        self.trunk
+                            .last_closed_segment()
+                            .unwrap_or(SegmentSeq::new(0)),
+                    ) >= msn
+                }
             };
             if !satisfied {
                 return EgressResponse::pending(await_policy, now, now);
@@ -1619,8 +1621,14 @@ impl HlsOrigin {
             // in the open segment or the one after it. Anything else is not
             // found at once rather than parked for the whole blocking
             // timeout.
-            let last_closed = self.trunk.last_closed_segment().unwrap_or(0);
-            if seq > last_closed.saturating_add(FUTURE_PART_SEGMENT_BOUND) {
+            let last_closed = self
+                .trunk
+                .last_closed_segment()
+                .unwrap_or(SegmentSeq::new(0));
+            if last_closed
+                .checked_add(FUTURE_PART_SEGMENT_BOUND)
+                .is_some_and(|limit| seq > limit)
+            {
                 return EgressResponse::NotFound;
             }
             // Exactly one part is ever hinted: the one after the last part
@@ -1633,7 +1641,7 @@ impl HlsOrigin {
                 .iter()
                 .map(|p| p.part_index)
                 .max()
-                .map_or(0, |last| last.saturating_add(1));
+                .map_or(PartIndex::new(0), PartIndex::saturating_next);
             if idx != next_hinted {
                 return EgressResponse::NotFound;
             }
@@ -1781,7 +1789,7 @@ mod tests {
         writer
             .publish_segment(SegmentEntry::new(
                 Bytes::from(vec![seq as u8; 8]),
-                seq,
+                SegmentSeq::new(seq),
                 Duration::from_secs_f64(duration_secs),
                 Timestamp::from_nanos(0),
                 SegmentMeta { discontinuous },
@@ -1792,8 +1800,8 @@ mod tests {
     fn part(writer: &media_plane::trunk::SegmentWriter, seg_no: u32, idx: u32, independent: bool) {
         writer.publish_part(PartEntry::new(
             Bytes::from(vec![idx as u8; 4]),
-            seg_no,
-            idx,
+            SegmentSeq::new(seg_no),
+            PartIndex::new(idx),
             Duration::from_millis(500),
             independent,
         ));
@@ -1846,8 +1854,8 @@ mod tests {
         );
 
         // Segment 1 spans [0, 4_000_000) — includes the cue's PTS.
-        writer.note_segment_start(1, MediaTime(0));
-        writer.note_segment_start(2, MediaTime(4_000_000));
+        writer.note_segment_start(SegmentSeq::new(1), MediaTime(0));
+        writer.note_segment_start(SegmentSeq::new(2), MediaTime(4_000_000));
         seg(&writer, 1, 4.0, false);
 
         let playlist = origin.render_playlist(DEFAULT_TRACK_ID).expect("render");
@@ -1900,8 +1908,8 @@ mod tests {
         let trunk_writer = trunk.writer().expect("first trunk writer");
         trunk_writer.publish_event(emsg_ev, EventAnchor::Media(MediaTime(2_000_000)));
 
-        writer.note_segment_start(1, MediaTime(0));
-        writer.note_segment_start(2, MediaTime(4_000_000));
+        writer.note_segment_start(SegmentSeq::new(1), MediaTime(0));
+        writer.note_segment_start(SegmentSeq::new(2), MediaTime(4_000_000));
         seg(&writer, 1, 4.0, false);
 
         let playlist = origin.render_playlist(DEFAULT_TRACK_ID).expect("render");
@@ -2635,7 +2643,7 @@ mod tests {
                     body: HlsBody::Resource(bytes),
                     ..
                 } => {
-                    assert_eq!(bytes, Bytes::from(vec![idx as u8; 4]));
+                    assert_eq!(bytes, Bytes::from(vec![idx.value() as u8; 4]));
                     assert_eq!(seq, 2);
                 }
                 other => panic!("expected Ready for {uri}, got {other:?}"),
@@ -2847,7 +2855,7 @@ mod tests {
                 EgressResponse::Ready {
                     body: HlsBody::Resource(bytes),
                     ..
-                } => assert_eq!(bytes, Bytes::from(vec![idx as u8; 4])),
+                } => assert_eq!(bytes, Bytes::from(vec![idx.value() as u8; 4])),
                 other => panic!("expected Ready for {uri}, got {other:?}"),
             }
         }
@@ -2921,7 +2929,7 @@ mod tests {
         writer
             .publish_segment(SegmentEntry::new(
                 Bytes::from(vec![1u8; 8]),
-                1,
+                SegmentSeq::new(1),
                 Duration::from_secs_f64(4.0),
                 Timestamp::from_nanos(0),
                 SegmentMeta {
@@ -2932,7 +2940,7 @@ mod tests {
         writer
             .publish_segment(SegmentEntry::new(
                 Bytes::from(vec![2u8; 8]),
-                2,
+                SegmentSeq::new(2),
                 Duration::from_secs_f64(4.0),
                 Timestamp::from_nanos(4_000_000_000),
                 SegmentMeta {
@@ -2943,10 +2951,10 @@ mod tests {
 
         let snapshot = origin.closed_segments();
         assert_eq!(snapshot.len(), 2);
-        assert_eq!(snapshot[0].sequence_number, 1);
+        assert_eq!(snapshot[0].sequence_number, SegmentSeq::new(1));
         assert_eq!(snapshot[0].start_ns, 0);
         assert!(!snapshot[0].discontinuous);
-        assert_eq!(snapshot[1].sequence_number, 2);
+        assert_eq!(snapshot[1].sequence_number, SegmentSeq::new(2));
         assert_eq!(snapshot[1].start_ns, 4_000_000_000);
         assert!(snapshot[1].discontinuous);
     }
@@ -2962,7 +2970,7 @@ mod tests {
             seg(&writer, seq, 4.0, false);
         }
         let snapshot = origin.closed_segments();
-        let seqs: Vec<u32> = snapshot.iter().map(|s| s.sequence_number).collect();
+        let seqs: Vec<u32> = snapshot.iter().map(|s| s.sequence_number.value()).collect();
         assert_eq!(
             seqs,
             vec![2, 3, 4, 5],
@@ -2973,7 +2981,7 @@ mod tests {
     fn window_entry(seq: u32, tag: u8, discontinuous: bool) -> SegmentEntry {
         SegmentEntry::new(
             Bytes::from(vec![tag; 4]),
-            seq,
+            SegmentSeq::new(seq),
             Duration::from_secs(4),
             Timestamp::from_nanos(0),
             SegmentMeta { discontinuous },
@@ -2983,7 +2991,7 @@ mod tests {
     fn window_seqs(w: &Window) -> Vec<(u32, bool)> {
         w.segments
             .iter()
-            .map(|s| (s.sequence_number, s.discontinuous))
+            .map(|s| (s.sequence_number.value(), s.discontinuous))
             .collect()
     }
 
@@ -3003,14 +3011,20 @@ mod tests {
         assert_eq!(window_seqs(&w), vec![(3, true)]);
         // The discontinuous 6 rolled off the front.
         assert_eq!(w.discontinuity_sequence, 1);
-        assert_eq!(w.bytes_of(3), Some(Bytes::from(vec![0xB3; 4])));
-        assert_eq!(w.bytes_of(5), None);
-        assert_eq!(w.bytes_of(6), None);
+        assert_eq!(
+            w.bytes_of(SegmentSeq::new(3)),
+            Some(Bytes::from(vec![0xB3; 4]))
+        );
+        assert_eq!(w.bytes_of(SegmentSeq::new(5)), None);
+        assert_eq!(w.bytes_of(SegmentSeq::new(6)), None);
 
         // Repeat: 3 again with different bytes replaces, never duplicates.
         w.push(window_entry(3, 0xC3, false), Generation::new(1));
         assert_eq!(window_seqs(&w), vec![(3, true)]);
-        assert_eq!(w.bytes_of(3), Some(Bytes::from(vec![0xC3; 4])));
+        assert_eq!(
+            w.bytes_of(SegmentSeq::new(3)),
+            Some(Bytes::from(vec![0xC3; 4]))
+        );
     }
 
     // Hostile edge: the largest sequence number has no successor; a repeat of
@@ -3026,7 +3040,10 @@ mod tests {
         );
         w.push(window_entry(u32::MAX, 3, false), Generation::new(1));
         assert_eq!(window_seqs(&w), vec![(u32::MAX, true)]);
-        assert_eq!(w.bytes_of(u32::MAX), Some(Bytes::from(vec![3; 4])));
+        assert_eq!(
+            w.bytes_of(SegmentSeq::new(u32::MAX)),
+            Some(Bytes::from(vec![3; 4]))
+        );
     }
 
     #[test]
@@ -3047,7 +3064,7 @@ mod tests {
         writer
             .publish_segment(SegmentEntry::new(
                 Bytes::from(vec![1u8; 8]),
-                1,
+                SegmentSeq::new(1),
                 Duration::from_nanos(10),
                 Timestamp::from_nanos(0),
                 SegmentMeta {
@@ -3090,12 +3107,21 @@ mod tests {
         for (seq, tag) in [(5u32, 0x15u8), (6, 0x16), (7, 0x17)] {
             w.push(window_entry(seq, tag, false), Generation::new(1));
         }
-        assert_eq!(w.bytes_of(5), Some(Bytes::from(vec![0x15; 4])));
-        assert_eq!(w.bytes_of(6), Some(Bytes::from(vec![0x16; 4])));
-        assert_eq!(w.bytes_of(7), Some(Bytes::from(vec![0x17; 4])));
-        assert_eq!(w.bytes_of(4), None);
-        assert_eq!(w.bytes_of(8), None);
-        assert_eq!(w.bytes_of(u32::MAX), None);
+        assert_eq!(
+            w.bytes_of(SegmentSeq::new(5)),
+            Some(Bytes::from(vec![0x15; 4]))
+        );
+        assert_eq!(
+            w.bytes_of(SegmentSeq::new(6)),
+            Some(Bytes::from(vec![0x16; 4]))
+        );
+        assert_eq!(
+            w.bytes_of(SegmentSeq::new(7)),
+            Some(Bytes::from(vec![0x17; 4]))
+        );
+        assert_eq!(w.bytes_of(SegmentSeq::new(4)), None);
+        assert_eq!(w.bytes_of(SegmentSeq::new(8)), None);
+        assert_eq!(w.bytes_of(SegmentSeq::new(u32::MAX)), None);
     }
 
     // --- r09-O4 / T6 (#1089, #1134): lock discipline ---------------------

@@ -649,8 +649,8 @@ mod tests {
         for part in seg.take_ready_parts() {
             segment_writer.publish_part(PartEntry::new(
                 part.bytes,
-                part.segment_seq,
-                part.part_index,
+                media_plane::ids::SegmentSeq::new(part.segment_seq),
+                media_plane::ids::PartIndex::new(part.part_index),
                 StdDuration::from_secs_f64(part.duration),
                 part.independent,
             ));
@@ -661,7 +661,7 @@ mod tests {
             segment_writer
                 .publish_segment(SegmentEntry::new(
                     segment.bytes,
-                    segment.segment_seq,
+                    media_plane::ids::SegmentSeq::new(segment.segment_seq),
                     StdDuration::from_secs_f64(segment.duration),
                     Timestamp::ZERO,
                     SegmentMeta {

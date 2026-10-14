@@ -296,7 +296,7 @@ fn inject_segment_events(trunk: &Trunk, file: &str, body: HlsBody) -> HlsBody {
         return body;
     };
 
-    let events = trunk.events_in_segment(seq);
+    let events = trunk.events_in_segment(media_plane::ids::SegmentSeq::new(seq));
     if events.is_empty() {
         return body;
     }
@@ -408,7 +408,10 @@ async fn stream_in_progress_segment(
     // Abuse/malformed-request bound (see `SEGMENT_ABUSE_FUTURE_BOUND`) --
     // checked before ever registering a blocking wait.
     let (in_progress_seg_seq, _) = serving.latest_progress();
-    if seq > in_progress_seg_seq.saturating_add(SEGMENT_ABUSE_FUTURE_BOUND) {
+    if in_progress_seg_seq
+        .checked_add(SEGMENT_ABUSE_FUTURE_BOUND)
+        .is_some_and(|limit| media_plane::ids::SegmentSeq::new(seq) > limit)
+    {
         return None;
     }
 
@@ -882,8 +885,8 @@ mod tests {
 
         // Segment boundaries: segment 1 spans [0, 4_000_000), segment 2 from
         // 4_000_000 on. The event at pts 0 falls inside segment 1.
-        seg_writer.note_segment_start(1, MediaTime(0));
-        seg_writer.note_segment_start(2, MediaTime(4_000_000));
+        seg_writer.note_segment_start(media_plane::ids::SegmentSeq::new(1), MediaTime(0));
+        seg_writer.note_segment_start(media_plane::ids::SegmentSeq::new(2), MediaTime(4_000_000));
         trunk
     }
 
@@ -966,8 +969,8 @@ mod tests {
         b.id = None;
         writer.publish_event(a, EventAnchor::Media(MediaTime(0)));
         writer.publish_event(b, EventAnchor::Media(MediaTime(1_000_000)));
-        seg_writer.note_segment_start(1, MediaTime(0));
-        seg_writer.note_segment_start(2, MediaTime(4_000_000));
+        seg_writer.note_segment_start(media_plane::ids::SegmentSeq::new(1), MediaTime(0));
+        seg_writer.note_segment_start(media_plane::ids::SegmentSeq::new(2), MediaTime(4_000_000));
 
         let styp: [u8; 12] = [0, 0, 0, 12, b's', b't', b'y', b'p', b'm', b's', b'd', b'h'];
         let mut seg_bytes = Vec::new();

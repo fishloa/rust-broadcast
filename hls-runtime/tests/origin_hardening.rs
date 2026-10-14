@@ -24,6 +24,7 @@ use hls_runtime::server::{
     BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsOriginBuildError, HlsRequest,
 };
 use media_plane::egress::{AwaitPolicy, CachePolicy, EgressResponse, ServedEgress};
+use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, SegmentWriter, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
 
@@ -76,7 +77,7 @@ fn publish_seg(w: &SegmentWriter, seq: u32, secs: u64, discontinuous: bool) {
 fn publish_seg_bytes(w: &SegmentWriter, seq: u32, secs: u64, discontinuous: bool, bytes: Vec<u8>) {
     w.publish_segment(SegmentEntry::new(
         Bytes::from(bytes),
-        seq,
+        SegmentSeq::new(seq),
         Duration::from_secs(secs),
         Timestamp::from_nanos(0),
         SegmentMeta { discontinuous },
@@ -87,8 +88,8 @@ fn publish_seg_bytes(w: &SegmentWriter, seq: u32, secs: u64, discontinuous: bool
 fn publish_part(w: &SegmentWriter, seg: u32, idx: u32) {
     w.publish_part(PartEntry::new(
         Bytes::from(vec![u8::try_from(idx).unwrap(); 4]),
-        seg,
-        idx,
+        SegmentSeq::new(seg),
+        PartIndex::new(idx),
         Duration::from_millis(500),
         idx == 0,
     ));

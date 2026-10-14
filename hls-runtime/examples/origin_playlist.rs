@@ -23,6 +23,7 @@ use hls_runtime::server::{
     BlockingQuery, DEFAULT_TRACK_ID, HlsBody, HlsOrigin, HlsRequest, master_playlist_m3u8,
 };
 use media_plane::egress::{AwaitPolicy, EgressResponse, ServedEgress};
+use media_plane::ids::{PartIndex, SegmentSeq};
 use media_plane::trunk::{PartEntry, SegmentEntry, Trunk, TrunkConfig};
 use transmux::SegmentMeta;
 
@@ -65,22 +66,22 @@ fn main() {
     // Segment 1 closes with two parts.
     writer.publish_part(PartEntry::new(
         vec![0x01; 16],
-        1,
-        0,
+        SegmentSeq::new(1),
+        PartIndex::new(0),
         Duration::from_millis(500),
         true,
     ));
     writer.publish_part(PartEntry::new(
         vec![0x02; 16],
-        1,
-        1,
+        SegmentSeq::new(1),
+        PartIndex::new(1),
         Duration::from_millis(500),
         false,
     ));
     writer
         .publish_segment(SegmentEntry::new(
             vec![0x03; 32],
-            1,
+            SegmentSeq::new(1),
             Duration::from_secs(1),
             Timestamp::from_nanos(0),
             SegmentMeta {
@@ -92,8 +93,8 @@ fn main() {
     // Segment 2 is still open, with only its first part landed so far.
     writer.publish_part(PartEntry::new(
         vec![0x04; 16],
-        2,
-        0,
+        SegmentSeq::new(2),
+        PartIndex::new(0),
         Duration::from_millis(500),
         true,
     ));
