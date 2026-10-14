@@ -84,7 +84,7 @@ fn cea708_long_pseudo_random_stream_never_panics() {
         let mut pkt: Vec<u8> = (0..len).map(|_| rng.next() as u8).collect();
         // Bias the header toward a plausible size_code so the service-block
         // loop is reached, not just rejected.
-        pkt[0] = (pkt[0] & 0xC0) | ((len as u8 + 1) / 2 & 0x3F);
+        pkt[0] = (pkt[0] & 0xC0) | ((len as u8).div_ceil(2) & 0x3F);
         d.push_packet(&pkt);
     }
     for svc in 0..8 {
