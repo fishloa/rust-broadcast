@@ -4,6 +4,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Changed
+- Internal: the five finishing methods shared by `Cea608ToWebVtt`, `Cea708ToWebVtt` and `TeletextToWebVtt` come from one `converter_tail!` macro instead of three copies; public API unchanged (#1218).
+
 ### Changed (BREAKING)
 - `matrix::lookup` returns `Option<&'static MatrixEntry>` instead of panicking (`.expect`) when the matrix has no row for a `(from, to)` pair; both format enums are `#[non_exhaustive]`, so a newly added format could reach the old panic. `check` maps the absent row to `Error::Unsupported { support: NotImplemented, .. }` (#1202).
 
