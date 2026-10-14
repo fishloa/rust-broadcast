@@ -478,10 +478,8 @@ fn read_pts(b: &[u8]) -> Result<u64> {
     if b[0] & 0x01 == 0 || b[2] & 0x01 == 0 || b[4] & 0x01 == 0 {
         return Err(Error::BadFixedBits("PTS marker_bit"));
     }
-    let hi = u64::from((b[0] >> 1) & 0x07); // [32:30]
-    let mid = (u64::from(b[1]) << 7) | u64::from(b[2] >> 1); // [29:15]
-    let lo = (u64::from(b[3]) << 7) | u64::from(b[4] >> 1); // [14:0]
-    Ok((hi << 30) | (mid << 15) | lo)
+    let field: &[u8; 5] = b[..5].try_into().expect("length checked above");
+    Ok(broadcast_common::clock33::unpack_marked(field).timestamp)
 }
 
 /// Encode a 33-bit PTS into the 5-byte ST 2038 PTS field (prefix `'0010'`).
@@ -495,14 +493,7 @@ fn write_pts(pts: u64) -> Result<[u8; 5]> {
             bits: 33,
         });
     }
-    let ts = pts;
-    Ok([
-        (PTS_PREFIX << 4) | ((((ts >> 30) & 0x07) as u8) << 1) | 0x01,
-        ((ts >> 22) & 0xFF) as u8,
-        ((((ts >> 15) & 0x7F) as u8) << 1) | 0x01,
-        ((ts >> 7) & 0xFF) as u8,
-        (((ts & 0x7F) as u8) << 1) | 0x01,
-    ])
+    Ok(broadcast_common::clock33::pack_marked(pts, PTS_PREFIX))
 }
 
 #[cfg(test)]

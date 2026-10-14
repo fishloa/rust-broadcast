@@ -320,13 +320,7 @@ pub fn pmt() -> Vec<u8> {
 }
 
 fn pts_bytes(marker: u8, ts: u64) -> [u8; 5] {
-    [
-        (marker << 4) | (((ts >> 30) & 0x07) as u8) << 1 | 1,
-        (ts >> 22) as u8,
-        (((ts >> 15) & 0x7F) as u8) << 1 | 1,
-        (ts >> 7) as u8,
-        ((ts & 0x7F) as u8) << 1 | 1,
-    ]
+    broadcast_common::clock33::pack_marked(ts, marker)
 }
 
 /// One PES packet (PTS only, PES_packet_length 0 = unbounded video) split into

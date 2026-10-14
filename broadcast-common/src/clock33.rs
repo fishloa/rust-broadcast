@@ -201,6 +201,65 @@ pub fn pcr_signed_distance(from: u64, to: u64) -> i64 {
     }
 }
 
+// ── 5-byte marker-bit timestamp (PTS / DTS / DTS_next_AU) ───────────────────
+
+/// All three `marker_bit`s of a 5-byte marked timestamp set to `1` (the value
+/// every PES `PTS`/`DTS` must carry, ISO/IEC 13818-1 §2.4.3.7).
+pub const MARKERS_ALL_SET: u8 = 0b111;
+
+/// A decoded 5-byte marker-bit timestamp field.
+///
+/// Wire layout (ISO/IEC 13818-1 §2.4.3.7 Table 2-21 `PTS`/`DTS`; §2.4.3.5
+/// `DTS_next_AU` uses the same shape): `prefix(4) ts[32:30](3) marker(1)
+/// ts[29:15](15) marker(1) ts[14:0](15) marker(1)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Marked {
+    /// The leading 4 bits (`0b0010` PTS-only, `0b0011` PTS-with-DTS, `0b0001`
+    /// DTS, or a seamless-splice `splice_type`).
+    pub prefix: u8,
+    /// The 33-bit timestamp.
+    pub timestamp: u64,
+    /// The three `marker_bit`s: bit 2 = byte 0 bit 0, bit 1 = byte 2 bit 0,
+    /// bit 0 = byte 4 bit 0. A conformant field is [`MARKERS_ALL_SET`].
+    pub markers: u8,
+}
+
+/// Decode a 5-byte marker-bit timestamp field. Never fails: the caller
+/// validates `prefix` and `markers` against its own spec clause and maps a
+/// mismatch into its own error type.
+#[must_use]
+pub fn unpack_marked(b: &[u8; 5]) -> Marked {
+    let hi = u64::from((b[0] >> 1) & 0x07); // [32:30]
+    let mid = (u64::from(b[1]) << 7) | u64::from(b[2] >> 1); // [29:15]
+    let lo = (u64::from(b[3]) << 7) | u64::from(b[4] >> 1); // [14:0]
+    Marked {
+        prefix: b[0] >> 4,
+        timestamp: (hi << 30) | (mid << 15) | lo,
+        markers: ((b[0] & 1) << 2) | ((b[2] & 1) << 1) | (b[4] & 1),
+    }
+}
+
+/// Encode a 5-byte marker-bit timestamp field with explicit marker bits (see
+/// [`Marked::markers`]); `timestamp` is reduced modulo 2^33 and only the low
+/// nibble of `prefix` / low 3 bits of `markers` are used (the wire widths).
+#[must_use]
+pub fn pack_marked_with(timestamp: u64, prefix: u8, markers: u8) -> [u8; 5] {
+    let ts = timestamp & (WRAP_33BIT - 1);
+    [
+        ((prefix & 0x0F) << 4) | ((((ts >> 30) & 0x07) as u8) << 1) | ((markers >> 2) & 1),
+        ((ts >> 22) & 0xFF) as u8,
+        ((((ts >> 15) & 0x7F) as u8) << 1) | ((markers >> 1) & 1),
+        ((ts >> 7) & 0xFF) as u8,
+        (((ts & 0x7F) as u8) << 1) | (markers & 1),
+    ]
+}
+
+/// Encode a conformant PTS/DTS field: every `marker_bit` set to `1`.
+#[must_use]
+pub fn pack_marked(timestamp: u64, prefix: u8) -> [u8; 5] {
+    pack_marked_with(timestamp, prefix, MARKERS_ALL_SET)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -359,5 +418,54 @@ mod tests {
         assert_eq!(pcr_signed_distance(0, m / 2), (m / 2) as i64);
         assert_eq!(pcr_signed_distance(0, m / 2 + 1), -((m / 2 - 1) as i64));
         assert_eq!(pcr_signed_distance(100, 100), 0);
+    }
+    /// A REAL 5-byte PTS field: the first PES of `fixtures/ts/m6-single.ts`
+    /// (private_stream_1, `PTS_DTS_flags = 10`). The expected value was decoded
+    /// independently by slicing the 40-bit string as
+    /// `prefix(4) ts[32:30](3) '1' ts[29:15](15) '1' ts[14:0](15) '1'`.
+    #[test]
+    fn marked_decodes_and_re_encodes_a_real_capture_pts_field() {
+        let real = [0x29, 0xFD, 0x91, 0xD2, 0x29];
+        let m = unpack_marked(&real);
+        assert_eq!(
+            m,
+            Marked {
+                prefix: 0b0010,
+                timestamp: 5_358_512_404,
+                markers: MARKERS_ALL_SET
+            }
+        );
+        assert_eq!(pack_marked(m.timestamp, m.prefix), real);
+    }
+
+    #[test]
+    fn marked_round_trips_every_boundary_and_marker_combination() {
+        for ts in [0, 1, 90_000, 0x1_2345_6789, WRAP_33BIT - 1] {
+            for prefix in [0b0001, 0b0010, 0b0011, 0x0F, 0] {
+                for markers in 0..8u8 {
+                    let b = pack_marked_with(ts, prefix, markers);
+                    let m = unpack_marked(&b);
+                    assert_eq!(
+                        (m.prefix, m.timestamp, m.markers),
+                        (prefix, ts, markers),
+                        "ts={ts:#x} prefix={prefix:#x} markers={markers:#05b}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn marked_pack_reduces_modulo_2_pow_33_and_masks_the_prefix() {
+        assert_eq!(pack_marked(WRAP_33BIT + 5, 0b0010), pack_marked(5, 0b0010));
+        // Only the low nibble of the prefix is on the wire.
+        assert_eq!(pack_marked(7, 0xF2), pack_marked(7, 0x02));
+    }
+
+    #[test]
+    fn marked_a_cleared_marker_is_visible_to_the_caller() {
+        let mut b = pack_marked(0x1234, 0b0010);
+        b[2] &= !1; // clear the middle marker bit
+        assert_eq!(unpack_marked(&b).markers, 0b101);
     }
 }

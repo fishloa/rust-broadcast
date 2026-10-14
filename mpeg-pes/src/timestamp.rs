@@ -4,7 +4,8 @@
 
 use crate::error::{Error, Result};
 
-/// 33-bit value mask.
+/// 33-bit value mask (test fixtures only; the codec masks via `clock33`).
+#[cfg(test)]
 const TS_MASK: u64 = (1 << 33) - 1;
 
 /// Presentation Time Stamp (33-bit, 90 kHz units).
@@ -87,22 +88,13 @@ pub(crate) fn read(b: &[u8], prefix: u8, what: &'static str) -> Result<u64> {
     if b[0] & 0x01 == 0 || b[2] & 0x01 == 0 || b[4] & 0x01 == 0 {
         return Err(Error::BadTimestampMarker(what));
     }
-    let hi = u64::from((b[0] >> 1) & 0x07); // [32:30]
-    let mid = (u64::from(b[1]) << 7) | u64::from(b[2] >> 1); // [29:15]
-    let lo = (u64::from(b[3]) << 7) | u64::from(b[4] >> 1); // [14:0]
-    Ok((hi << 30) | (mid << 15) | lo)
+    let field: &[u8; 5] = b[..5].try_into().expect("length checked above");
+    Ok(broadcast_common::clock33::unpack_marked(field).timestamp)
 }
 
 /// Encode a 33-bit value into a 5-byte PTS/DTS field with the given 4-bit prefix.
 pub(crate) fn write(ts: u64, prefix: u8) -> [u8; 5] {
-    let ts = ts & TS_MASK;
-    [
-        (prefix << 4) | ((((ts >> 30) & 0x07) as u8) << 1) | 0x01,
-        ((ts >> 22) & 0xFF) as u8,
-        ((((ts >> 15) & 0x7F) as u8) << 1) | 0x01,
-        ((ts >> 7) & 0xFF) as u8,
-        (((ts & 0x7F) as u8) << 1) | 0x01,
-    ]
+    broadcast_common::clock33::pack_marked(ts, prefix)
 }
 
 #[cfg(test)]
