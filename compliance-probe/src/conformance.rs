@@ -104,7 +104,13 @@ impl PcrTracker {
             return None;
         }
 
-        let pcr_delta_ticks = pcr_27mhz.wrapping_sub(state.last_pcr_27mhz) % PCR_MODULUS;
+        // Forward distance on the 2^33*300 PCR circle. `PCR_MODULUS` is not a
+        // power of two, so `u64::wrapping_sub(..) % PCR_MODULUS` is wrong
+        // whenever `pcr < last` (2^64 is not a multiple of the modulus): it
+        // produced a garbage delta on every PCR wrap or backward step.
+        let pcr_delta_ticks = (pcr_27mhz % PCR_MODULUS + PCR_MODULUS
+            - state.last_pcr_27mhz % PCR_MODULUS)
+            % PCR_MODULUS;
         let pcr_delta = Duration::from_secs_f64(pcr_delta_ticks as f64 / PCR_HZ as f64);
         let wall_delta = t.saturating_sub(state.last_arrival);
 
@@ -175,6 +181,32 @@ mod tests {
             "expected ~0 ppm jitter, got {}",
             sample.jitter_ppm
         );
+    }
+
+    /// ISO/IEC 13818-1 §2.4.2.2: the PCR is `base(33) * 300 + ext(9)`, so it
+    /// wraps at `2^33 * 300` ticks (~26.5 h). A steady PCR that crosses that
+    /// wrap must keep measuring ~0 ppm drift: the delta across the wrap is the
+    /// true 100 ms, not a modulo-of-a-u64-wrap artefact. (No committed or
+    /// archived capture is >26 h long, so this is a spec-derived vector.)
+    #[test]
+    fn steady_pcr_across_the_wrap_keeps_zero_drift() {
+        let mut tracker = PcrTracker::new();
+        let pid = Pid::new(0x0100);
+        let step = PCR_HZ / 10;
+        // Start 5 steps before the wrap so the series crosses it.
+        let mut pcr = PCR_MODULUS - 5 * step;
+        let mut t = Duration::ZERO;
+        let mut samples = Vec::new();
+        for _ in 0..12 {
+            pcr = (pcr + step) % PCR_MODULUS;
+            t += Duration::from_millis(100);
+            samples.push(tracker.observe(pid, pcr, t));
+        }
+        let last = samples.last().unwrap().expect("sample");
+        assert!(last.drift_ppm.abs() < 1.0, "drift {}", last.drift_ppm);
+        // Every post-baseline observation, including the wrapping one, is a
+        // measurable ~100 ms interval (not discarded as a discontinuity).
+        assert!(samples[1..].iter().all(|s| s.is_some()));
     }
 
     /// A PCR running measurably fast relative to wall-clock arrival (encoder
