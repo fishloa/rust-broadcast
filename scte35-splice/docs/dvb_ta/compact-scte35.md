@@ -176,3 +176,24 @@ Semantics (§8.3.3):
 |-------|-------|
 | splice_descriptor_tag | 0xF0 |
 | identifier | 0x4456425F (ASCII `"DVB_"`) |
+
+## Verification status (#1204)
+
+* **Independent oracle.** `tests/dvb_ta_compact_vectors.rs` decodes and re-encodes byte vectors produced by
+  `tests/fixtures/dvb_ta/gen_compact_vectors.py`, a plain MSB-first bit packer written only from the "No. of Bits"
+  columns of the V1.2.1 page images (pp.27-28, re-read for #1204: Table 6 widths `1,6,8,33,32,40,8,8,N*8,8,8,[32]`;
+  Table 8 widths `1,6,8,33,32,33,16,8,8,1,6,[8,8,8,4,4,(N-3)*8],[32]`). It shares no code with `compact.rs`; the crate
+  agrees on every vector (plain, encrypted, with/without DAS, non-default reserved rows, extreme values). Mutating
+  one field width in the parser makes five of the eight tests fail.
+* **No real capture.** No compact-watermark capture exists in `.test-streams/`, the committed fixtures or any corpus
+  known to us; that is the one remaining gap. The base (non-compact) SCTE 35 sections are covered by real captures in
+  `tests/real_capture.rs`.
+* **Open question - DAS body nibble order.** Table 8 (p.28) lists the inline DAS block as `... breaks_expected(8) |
+  equivalent_segmentation_type(4, uimsbf) | reserved(4, bslbf) | upid()` (type = HIGH nibble), but the stand-alone
+  `DVB_DAS_descriptor()` Table 1 (p.17, identical in V1.1.1 2020-12 and V1.2.1 2024-01) lists the same two rows in the
+  OPPOSITE name order (`reserved` then `equivalent_segmentation_type`) while its mnemonic column (`uimsbf`, `bslbf`)
+  matches Table 8's. The crate follows each table's own row order (`das_descriptor.rs`: reserved high, type low;
+  `compact.rs`: type high, reserved low), so the two forms of the same body currently disagree. This cannot be decided
+  from the spec text or a capture; do not "fix" either side without a DAS-carrying real stream. A TS 103 752-1 erratum
+  or a real DAS capture is needed.
+
