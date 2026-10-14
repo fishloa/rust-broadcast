@@ -9,7 +9,6 @@
 //! sub-code page selection).
 
 use crate::error::Error;
-use crate::webvtt::write_document;
 use alloc::string::String;
 use alloc::vec::Vec;
 use dvb_vbi::TeletextDataField;
@@ -56,34 +55,7 @@ impl TeletextToWebVtt {
         Ok(())
     }
 
-    /// Close any still-open cue at end of stream, at `end_pts_90k`.
-    pub fn finalize(&mut self, end_pts_90k: u64) {
-        self.extractor.finalize(end_pts_90k);
-    }
-
-    /// The cues extracted so far.
-    #[must_use]
-    pub fn cues(&self) -> &[Cue] {
-        self.extractor.cues()
-    }
-
-    /// Consume the converter, returning the extracted cues.
-    #[must_use]
-    pub fn into_cues(self) -> Vec<Cue> {
-        self.extractor.into_cues()
-    }
-
-    /// Consume the converter, rendering a standalone WebVTT document.
-    #[must_use]
-    pub fn into_webvtt(self) -> String {
-        write_document(&self.into_cues())
-    }
-
-    /// Consume the converter, rendering an SRT document.
-    #[must_use]
-    pub fn into_srt(self) -> String {
-        crate::srt::write_srt(&self.into_cues())
-    }
+    converter_tail!();
 }
 
 #[cfg(test)]

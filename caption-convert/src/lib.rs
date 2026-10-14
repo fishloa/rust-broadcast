@@ -104,6 +104,44 @@
 
 extern crate alloc;
 
+/// The finishing methods every converter shares (`finalize`, `cues`,
+/// `into_cues`, `into_webvtt`, `into_srt`), expanded inside an `impl` whose
+/// struct holds the cue extractor in a field named `extractor`. One copy, so
+/// the CEA-608, CEA-708 and Teletext converters cannot drift apart.
+#[cfg(any(feature = "cc-data", feature = "teletext"))]
+macro_rules! converter_tail {
+    () => {
+        /// Close any still-open cue at end of stream, at `end_pts_90k`.
+        pub fn finalize(&mut self, end_pts_90k: u64) {
+            self.extractor.finalize(end_pts_90k);
+        }
+
+        /// The cues extracted so far.
+        #[must_use]
+        pub fn cues(&self) -> &[timed_metadata::webvtt::Cue] {
+            self.extractor.cues()
+        }
+
+        /// Consume the converter, returning the extracted cues.
+        #[must_use]
+        pub fn into_cues(self) -> alloc::vec::Vec<timed_metadata::webvtt::Cue> {
+            self.extractor.into_cues()
+        }
+
+        /// Consume the converter, rendering a standalone WebVTT document.
+        #[must_use]
+        pub fn into_webvtt(self) -> alloc::string::String {
+            crate::webvtt::write_document(&self.into_cues())
+        }
+
+        /// Consume the converter, rendering an SRT document.
+        #[must_use]
+        pub fn into_srt(self) -> alloc::string::String {
+            crate::srt::write_srt(&self.into_cues())
+        }
+    };
+}
+
 pub mod error;
 pub mod matrix;
 mod srt;
