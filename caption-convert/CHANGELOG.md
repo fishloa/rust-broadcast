@@ -7,6 +7,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 ### Changed
 - Internal: the five finishing methods shared by `Cea608ToWebVtt`, `Cea708ToWebVtt` and `TeletextToWebVtt` come from one `converter_tail!` macro instead of three copies; public API unchanged (#1218).
 
+### Fixed
+- 608 -> WebVTT/SRT: captions loaded with a repeated RCL before EDM/EOC are converted instead of dropped, and same-PTS caption updates no longer yield zero-length cues (fixes in `cc-data` / `timed-metadata`, covered here by real-capture tests) (#1220).
+
 ### Changed (BREAKING)
 - `matrix::lookup` returns `Option<&'static MatrixEntry>` instead of panicking (`.expect`) when the matrix has no row for a `(from, to)` pair; both format enums are `#[non_exhaustive]`, so a newly added format could reach the old panic. `check` maps the absent row to `Error::Unsupported { support: NotImplemented, .. }` (#1202).
 

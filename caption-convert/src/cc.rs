@@ -88,7 +88,9 @@ mod tests {
 
     fn cc_data_bytes(triplets: &[CcTriplet]) -> alloc::vec::Vec<u8> {
         let cc = CcData {
+            process_em_data_flag: true,
             process_cc_data_flag: true,
+            additional_data_flag: false,
             reserved_byte1: 0xFF,
             triplets: triplets.to_vec(),
         };

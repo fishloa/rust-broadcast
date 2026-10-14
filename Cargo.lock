@@ -508,6 +508,8 @@ dependencies = [
  "broadcast-common",
  "cc-data",
  "dvb-vbi",
+ "mpeg-pes",
+ "mpeg-ts",
  "serde",
  "serde_json",
  "test-fixtures",

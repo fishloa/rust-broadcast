@@ -525,8 +525,12 @@ impl Cea608Decoder {
         let st = &mut self.channels[ch.index()];
         match code {
             MC_RCL => {
+                // RCL only selects pop-on style: it does NOT erase the
+                // non-displayed memory (that is ENM's job). Real captions
+                // re-issue RCL after loading text and before the EDM/EOC pair
+                // that pops it on (libcaption `tos.scc`, pycaption
+                // `example.scc`); clearing here discarded the whole caption.
                 st.mode = Cea608Mode::PopOn;
-                st.nondisplayed = Cea608Screen::default();
                 st.cursor_row = 0;
                 st.cursor_col = 0;
             }
@@ -889,6 +893,34 @@ mod tests {
         dec.push_pair(false, par(0x14), par(0x2F)); // EOC → flip to displayed
         assert_eq!(dec.channel_text(Cea608Channel::Cc1), "HI");
         assert_eq!(dec.mode(Cea608Channel::Cc1), Cea608Mode::PopOn);
+    }
+
+    /// RCL selects pop-on without erasing non-displayed memory: text loaded,
+    /// then RCL again, then EDM + EOC (the sequence real SCC files use) still
+    /// pops the loaded text on. Regression for a decoder that cleared the
+    /// non-displayed buffer on every RCL.
+    #[test]
+    fn rcl_does_not_erase_loaded_text() {
+        let mut dec = Cea608Decoder::new();
+        dec.push_pair(false, par(0x14), par(0x20)); // RCL
+        dec.push_pair(false, par(0x14), par(0x70)); // PAC row 15
+        dec.push_pair(false, par(b'H'), par(b'I'));
+        dec.push_pair(false, par(0x14), par(0x20)); // RCL again
+        dec.push_pair(false, par(0x14), par(0x2C)); // EDM
+        dec.push_pair(false, par(0x14), par(0x2F)); // EOC
+        assert_eq!(dec.channel_text(Cea608Channel::Cc1), "HI");
+    }
+
+    /// ENM, not RCL, is what erases non-displayed memory.
+    #[test]
+    fn enm_erases_loaded_text() {
+        let mut dec = Cea608Decoder::new();
+        dec.push_pair(false, par(0x14), par(0x20)); // RCL
+        dec.push_pair(false, par(0x14), par(0x70));
+        dec.push_pair(false, par(b'H'), par(b'I'));
+        dec.push_pair(false, par(0x14), par(0x2E)); // ENM
+        dec.push_pair(false, par(0x14), par(0x2F)); // EOC
+        assert_eq!(dec.channel_text(Cea608Channel::Cc1), "");
     }
 
     /// Control-code doubling: a repeated RCL pair acts once.

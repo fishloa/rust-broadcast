@@ -26,6 +26,8 @@ serde             = { version = "1", default-features = false, features = ["deri
 
 [dev-dependencies]
 test-fixtures = { path = "../test-fixtures" }
+mpeg-ts = { path = "../mpeg-ts" }
+mpeg-pes = { path = "../mpeg-pes" }
 serde_json = { workspace = true }
 
 [features]

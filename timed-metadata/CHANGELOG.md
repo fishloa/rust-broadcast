@@ -4,6 +4,9 @@ All notable changes to this crate. Format: [Keep a Changelog](https://keepachang
 
 ## [Unreleased]
 
+### Fixed
+- The 608/708/Teletext cue extractors no longer emit zero-length (or negative) cues. Several caption updates under one access-unit PTS (common in real captures: 21 on CC1 of the mux.js multi-channel TS) produced intermediate cues whose end equalled their start, which are never on screen (#1220).
+
 ### Added
 - `webvtt` shared text helpers (new `webvtt::text` module, re-exported): `parse_timestamp` / `format_timestamp_with` / `hms_ms` (the `(hh:)?mm:ss<sep>ttt` grammar both directions, `.` WebVTT and `,` SRT, with the #1109 checked-overflow hardening), `unescape_payload` (inverse of `escape_payload`), `normalize_line_endings` (CRLF / lone CR / LF -> LF, borrowed when there is no CR) and `payload_lines`, plus `TimestampError`. They were split between this crate and `caption-convert` (which kept a second copy of the hour/minute/second math "in lock-step" by a comment); this is now the single owner and `format_timestamp` / `cue_block` are built on it (#1210).
 

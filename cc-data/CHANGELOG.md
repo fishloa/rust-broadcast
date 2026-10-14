@@ -11,6 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed (BREAKING)
+- `CcData` gains `process_em_data_flag` (byte 0 bit 7) and `additional_data_flag` (bit 5), constructed with Table B.9's own defaults (`true` / `false`). `CcData::parse` no longer rejects a header whose bit 7 is clear or bit 5 is set: real ATSC A/53 captures (shaka-player's `captions-test.ts`, all 599 frames) carry `process_em_data_flag = 0`. The bits are preserved verbatim so the round-trip stays byte-exact. `Error::InvalidFixedBits` no longer carries `what: "reserved/zero_bit"` (#1220).
+
+### Fixed
+- `Cea608Decoder`: RCL (Resume Caption Loading) no longer erases the non-displayed memory. It only selects pop-on style; ENM erases. Real SCC files (libcaption `tos.scc`, pycaption `example.scc`) re-issue RCL after loading text and before the EDM + EOC pair, and the decoder discarded every such caption (#1220).
+
 ### Changed
 - Internal: odd-parity encode/check comes from `broadcast_common::parity` instead of a local copy (`timed_metadata::webvtt::teletext::{encode,decode}_odd_parity` stay as thin wrappers, public API unchanged); no behaviour change (#1212).
 
