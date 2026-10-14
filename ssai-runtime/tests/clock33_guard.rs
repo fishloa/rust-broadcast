@@ -36,6 +36,14 @@ const BANNED: &[(&str, &str)] = &[
         "8_589_934_592",
         "hand-rolled 2^33 (use clock33::WRAP_33BIT)",
     ),
+    (
+        "27_000_000",
+        "hand-rolled 27 MHz clock rate (use clock33::PCR_HZ)",
+    ),
+    (
+        "* 300",
+        "hand-rolled PCR base*300+ext arithmetic (use clock33::pcr_from_parts / pcr_split / PCR_WRAP_27MHZ)",
+    ),
 ];
 
 /// `(path suffix, line number, needle, reason)` — reviewed, line-pinned

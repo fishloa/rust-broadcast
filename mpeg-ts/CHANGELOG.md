@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Changed
+- Internal: the 27 MHz PCR constants / modular delta / `base * 300 + extension` arithmetic now come from `broadcast_common::clock33` (`PCR_HZ`, `PCR_WRAP_27MHZ`, `pcr_forward_distance`, `pcr_from_parts`, `pcr_split`) instead of a local copy; no behaviour change (#1206).
+
 ### Added
 - `TsResync::feed_into(&mut self, data, &mut Vec<[u8; 188]>)`: `feed` appending to a caller-owned vector; `feed` now reserves its output once from the buffered byte count (2000-packet feed: 11 -> at most 4 allocations; pinned by `tests/resync_alloc.rs`, audit r01-O4, #1074).
 

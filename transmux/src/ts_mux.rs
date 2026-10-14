@@ -1860,7 +1860,7 @@ fn packetise_pes(
 /// place the PCR `PCR_LEAD_TICKS` behind the DTS on the 27 MHz clock.
 fn pcr_for(dts90: u64) -> Pcr {
     let base = dts90.saturating_sub(PCR_LEAD_TICKS);
-    Pcr::from_27mhz(base * 300)
+    Pcr::from_27mhz(broadcast_common::clock33::pcr_from_parts(base, 0))
 }
 
 /// Write a TS packet with an adaptation field into `pkt` (initialised to

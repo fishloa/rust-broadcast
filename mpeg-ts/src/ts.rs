@@ -469,7 +469,7 @@ impl Pcr {
     /// ISO/IEC 13818-1:2007 §2.4.3.5: PCR = `PCR_base * 300 + PCR_ext`.
     #[must_use]
     pub fn as_27mhz(self) -> u64 {
-        self.base * 300 + self.extension as u64
+        broadcast_common::clock33::pcr_from_parts(self.base, self.extension)
     }
 
     /// Construct a [`Pcr`] from an absolute 27 MHz clock value.
@@ -482,14 +482,8 @@ impl Pcr {
     /// `Pcr::from_27mhz(p.as_27mhz()) == p` for any valid `Pcr`.
     #[must_use]
     pub fn from_27mhz(ticks: u64) -> Self {
-        // 33-bit base mask: (1 << 33) - 1 = 0x1_FFFF_FFFF
-        const BASE_MASK: u64 = 0x1_FFFF_FFFF;
-        // 9-bit extension mask.
-        const EXT_MASK: u16 = 0x1FF;
-        Self {
-            base: (ticks / 300) & BASE_MASK,
-            extension: ((ticks % 300) as u16) & EXT_MASK,
-        }
+        let (base, extension) = broadcast_common::clock33::pcr_split(ticks);
+        Self { base, extension }
     }
 
     /// Encode as the exact 6-byte PCR/OPCR field used in the adaptation field

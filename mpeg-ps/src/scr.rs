@@ -31,13 +31,13 @@ impl Scr {
     /// `base * 300 + extension`.
     #[must_use]
     pub const fn ticks(self) -> u64 {
-        self.base * 300 + self.extension as u64
+        broadcast_common::clock33::pcr_from_parts(self.base, self.extension)
     }
 
     /// Value in seconds.
     #[must_use]
     pub fn seconds(self) -> f64 {
-        self.ticks() as f64 / 27_000_000.0
+        self.ticks() as f64 / broadcast_common::clock33::PCR_HZ as f64
     }
 }
 

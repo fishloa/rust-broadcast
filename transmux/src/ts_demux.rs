@@ -3802,7 +3802,7 @@ pub use crate::ir::{
 /// `program_clock_reference`'s native clock rate (ISO/IEC 13818-1 §2.4.3.5) —
 /// the `clock_hz` [`DemuxEvent::ClockReference`] carries for every PCR this
 /// demuxer emits.
-const PCR_CLOCK_HZ: u32 = 27_000_000;
+const PCR_CLOCK_HZ: u32 = broadcast_common::clock33::PCR_HZ as u32;
 
 /// Per-PID continuity-counter state for [`StreamingTsDemux`] (issue #778).
 ///

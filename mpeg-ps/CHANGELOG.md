@@ -6,6 +6,9 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
+
+### Changed
+- Internal: the 27 MHz PCR constants / modular delta / `base * 300 + extension` arithmetic now come from `broadcast_common::clock33` (`PCR_HZ`, `PCR_WRAP_27MHZ`, `pcr_forward_distance`, `pcr_from_parts`, `pcr_split`) instead of a local copy; no behaviour change (#1206).
 ### Changed (breaking)
 - `SystemHeader` gains `trailing_reserved: Vec<u8>`: bytes `header_length` declares after the stream-bound loop are preserved and re-serialized (previously dropped, shrinking `header_length`) (audit r14-MPS-W8, #1119).
 

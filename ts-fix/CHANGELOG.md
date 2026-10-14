@@ -2,6 +2,9 @@
 
 ## [Unreleased]
 
+### Fixed
+- `PcrRestamp::Interpolate` stopped adopting observed PCRs after a legal 33-bit PCR wrap: the forward distance was computed as `obs.wrapping_sub(last) % (2^33 * 300)`, which is garbage whenever `obs < last` (2^64 is not a multiple of the non-power-of-two PCR modulus), so every post-wrap observation was discarded and the output was extrapolated from the pre-wrap rate forever. The constant-rate `pcr_wrap` fixture passed only by coincidence; `tests/pcr_wrap_observed_after_wrap.rs` (post-wrap rate change) fails on the old code and passes now. Both distance computations use `broadcast_common::clock33::pcr_forward_distance` (#1206).
+
 ### Changed (BREAKING)
 
 - **BREAKING (#1159):** `PidFilter::keep` takes `IntoIterator<Item = Pid>`; `reconstruct_access_units(ts, &[Pid])`, `AccessUnit::pid` and `PcrDiscontinuity::pid` are `Pid`; `AccessUnit` is now `#[non_exhaustive]` with a new `AccessUnit::new` constructor. CLI: `--keep-pids` now rejects a PID above `0x1FFF` (was silently accepted and never matched).

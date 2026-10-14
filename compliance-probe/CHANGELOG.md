@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- Internal: the 27 MHz PCR constants / modular delta / `base * 300 + extension` arithmetic now come from `broadcast_common::clock33` (`PCR_HZ`, `PCR_WRAP_27MHZ`, `pcr_forward_distance`, `pcr_from_parts`, `pcr_split`) instead of a local copy; no behaviour change (#1206).
+
 ### Fixed
 
 - PCR drift estimate: the inter-PCR delta used `u64::wrapping_sub(..) % (2^33*300)`, which is wrong whenever the PCR wraps (or steps backward) because 2^64 is not a multiple of the PCR modulus; the delta is now the true modular forward distance, so a steady PCR crossing the ~26.5 h wrap keeps ~0 ppm drift instead of being discarded as a discontinuity.
