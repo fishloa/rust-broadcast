@@ -2,6 +2,15 @@
 
 ## [Unreleased]
 
+### Changed (BREAKING, #1197)
+- **BREAKING (behavioural):** every remaining single-field `(value & MASK)` in a serializer is a checked `broadcast_common::len::fit_mask(..)?` that returns `Error::FieldOverflow` instead of silently dropping the high bits of an over-range value (the #1129 class; ~215 sites across the descriptors and tables). Hand-built values that were wider than their field (reserved runs, `Reserved(v)` enum payloads such as `Bandwidth::Reserved(0xFE)` / `FecInner::Reserved(0x3E)`, 5-bit `stream_content_ext`, ...) used to be masked and now fail; values produced by `parse` always fit. Guarded by `tests/serialize_mask_guard.rs` (lexical, reasoned allow-list) and `tests/serialize_mask_overflow.rs` (behavioural).
+- **BREAKING:** the SAT (`tables::sat`) body structs gain typed `reserved_zero_future_use*` fields for every reserved run of EN 300 468 Tables 11c/11d/11e/11g/11h (captured on parse, re-emitted verbatim, hand-built default `0`): `PositionV2Satellite`, `PositionSystem::Orbital`, `CellCenter`, `CellFragment`, `NewDeliverySystem`, `ObsolescentDeliverySystem`, `TimeAssociationBody`, `BeamhoppingPlan`, `BeamhoppingMode::{Mode0, Mode1, Mode2}`, `PositionV3Body`, `PositionV3Satellite`, `PositionV3Metadata`, `UsableTime`, `EphemerisData`, `CovarianceData`. The SAT bit writer no longer truncates: an over-range value (a count, a 9-bit `*_ext` above 0x1FF, a signed latitude out of range) is `Error::FieldOverflow`, and `first_occurence` without a `center` is `ValueOutOfRange`.
+- **BREAKING:** `StSection` gains `section_syntax_indicator` (EN 300 468 Table 11: the stuffing section's indicator "may take either the value 0b1 or 0b0"); captured on parse, re-emitted verbatim, `new()` keeps `false`.
+
+### Fixed (#1197)
+- DTS `sample_rate_code` 0b1001 (88,2 kHz): the decision is now documented with the TS 102 114 / EN 300 468 V1.20.1 evidence (`docs/reserved-bits-edition-audit.md` section 12); no behaviour change.
+- Local-archive evidence for the SSU selector (real zero reserved runs preserved) and `logical_channel` v1 (`reserved` = 1 in every real capture): `tests/local_archive_reserved_defaults.rs`.
+
 ### Changed
 - Internal: adapted to `broadcast-common`'s removal of the panicking `Serialize::to_bytes` (tests, examples and docs now use `try_to_bytes`); requires the new `broadcast-common` major (umbrella #1143).
 

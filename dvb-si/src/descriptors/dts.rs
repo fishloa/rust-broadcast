@@ -74,7 +74,15 @@ impl DtsDescriptor<'_> {
             // transposition of 88,2 kHz: the same spec's DTS-HD table (Table
             // G.7, dts-hd-descriptor.md) lists 88,2 kHz, and 0b0110/0b0111/
             // 0b1000/0b1010 are 11,025/22,05/44,1/176,4 kHz, so 0b1001 is the
-            // missing 2x44,1 step (r03-W11).
+            // missing 2x44,1 step (r03-W11). Cross-checked against the DTS
+            // core spec ETSI TS 102 114 V1.6.1 (#1197 item e): its Table 5-5
+            // (SFREQ, the field `sample_rate_code` is "equivalent to") lists
+            // 0b1001 only as "Invalid" because >48 kHz is carried by the
+            // extension streams, and its Table 8-5 (sFreqIndex 7) gives
+            // 88 200 Hz as the DTS 88,2 kHz rate; no DTS table has an
+            // 88 020 Hz rate. The code points form doubling chains
+            // (8/16/32/64/128, 11,025/22,05/44,1/88,2/176,4, 12/24/48/96/192)
+            // in which 0b1001 can only be 88,2 kHz.
             0x09 => Some(88_200),
             0x0A => Some(176_400),
             0x0B => Some(12_000),

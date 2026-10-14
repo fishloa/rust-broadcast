@@ -449,3 +449,28 @@ No amendment or corrigendum to v9 is listed (ITU listing shows v10 as the sole i
 ### 11.4 Is buying the PDF warranted?
 
 Only if dvb-si implements the MPEG-H 3D audio descriptor family (2.6.108/110/115) and must be byte-faithful to v10, or if a release claims v10 conformance. For the reserved-bit question on all other descriptors the free evidence is as strong as can be had without the text; buying clauses 2.6.108-2.6.115 + Annex T.4 only would settle the remainder.
+
+## 12. Follow-up verification (#1197, 2026-10-14)
+
+Sources: EN 300 468 **V1.20.1** (2026-09, `private/specs-md/etsi_en_300_468_v01.20.01_dvb_si.md`, one edition newer than the V1.19.1 transcription), TS 102 006 V1.4.1, TS 102 114 V1.6.1 (spec md conversions), and the LOCAL-ONLY archive `.test-streams/` (never committed; the archive-gated test is `dvb-si/tests/local_archive_reserved_defaults.rs`, which skips loudly when the archive is absent).
+
+### 12.1 SSU selector `reserved`(4) / `reserved`(2) (TS 102 006 Table 4)
+
+Re-read in the V1.4.1 spec md: Table 4 lists `reserved | 4 | bslbf` and `reserved | 2 | bslbf` with **no value column**, unlike the UNT tables of the same spec (`reserved_for_future_use`=1, `reserved`=11). The spec therefore states no value; the existing hand-built default (all ones, the DVB/H.222.0 analogy) is kept and remains **UNVERIFIED as a spec value**. Real evidence: the PMT of tsduck `test-002.ts` (pid 0x57, OUIs 0x000DF9 / 0x000DEB) carries SSU selectors whose both reserved runs are **zero**. Parse captures them and `serialize_into` re-emits them verbatim, pinned byte-exact by `ssu_selector_reserved_runs_are_preserved_from_a_real_pmt`; this is why preservation, not the default, is the load-bearing behaviour.
+
+### 12.2 `logical_channel_descriptor` v1 (tag 0x83) `reserved`(1) and NorDig v1/v2
+
+No NorDig / D-Book / EACEM text is available in `private/specs`, so the **spec values remain UNVERIFIED** (`nordig/*` rows). Real evidence for v1 (identical layout in EACEM and NorDig v1): the bit is **1** in every LCN entry of every archive capture that carries tag 0x83 (France TNT mux 59 entries; tsduck test-059/088/092/096/124/184 etc.), so `V1_RESERVED_DEFAULT = 1` is evidence-backed (`logical_channel_v1_reserved_bit_is_one_in_real_captures`). **No capture in the archive carries a NorDig v2 (tag 0x87) descriptor**, so `V2_RESERVED_DEFAULT = 0x1F` has no evidence beyond the all-ones convention and stays UNVERIFIED; parse preserves any value.
+
+### 12.3 DTS `sample_rate_code` 0b1001 (EN 300 468 Table G.2 prints "88,02 kHz")
+
+Decision: **88 200 Hz (88,2 kHz); the "88,02" is a digit transposition.** Evidence: (1) V1.20.1 still prints "88,02 kHz" (line of Table G.2), so the typo has survived into the newest edition; (2) the code points form doubling chains 0001-0101 = 8/16/32/64/128 kHz, 0110-1010 = 11,025/22,05/44,1/**?**/176,4 kHz, 1011-1111 = 12/24/48/96/192 kHz, in which the `?` between 44,1 and 176,4 can only be 88,2; (3) the DTS core spec TS 102 114 V1.6.1 Table 5-5 (SFREQ, the field the descriptor says it is "equivalent to") marks 0b1001 only "Invalid" (rates above 48 kHz ride in extension streams) and its Table 8-5 (`sFreqIndex` 7) gives **88 200** as the DTS rate; no DTS table has an 88 020 Hz rate; (4) EN 300 468's own DTS-HD table lists 88,2 kHz. The enum/label was already 88,2; a comment citing this evidence was added in `dts.rs`.
+
+### 12.4 Section-level `section_syntax_indicator`
+
+Checked every table of EN 300 468 V1.20.1 (and the EN 301 192 DSM-CC / MPE sections): the bit is **fixed** ("shall be set to 0b1" / "0b0") everywhere **except the stuffing section** (Table 11, clause 5.2.8: "This 1-bit field may take either the value 0b1 or 0b0"), plus the DSM-CC / MPE private sections that already carried the field (EN 301 192). `StSection` now captures and re-emits it (default `false`, the previous constant); no other table's indicator may legitimately vary, so they stay fixed. No capture in the archive or fixtures carries a stuffing section (scanned PID 0x14 table_id 0x72), so the test is spec-derived.
+
+### 12.5 SAT body reserved runs
+
+Every `reserved_zero_future_use` run of EN 300 468 Tables 11c, 11d, 11e, 11g and 11h (V1.20.1 unchanged versus V1.19.1) is now a typed, right-aligned field captured on parse and re-emitted verbatim (default `0`); the section-level `reserved(2)` x2 and `reserved_zero_future_use(8)` were already preserved. `BitWriter` no longer truncates silently: over-range values are `FieldOverflow` (this exposed five existing tests that used 9-bit `*_ext` values above 0x1FF).
+
