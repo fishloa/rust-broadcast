@@ -51,6 +51,32 @@ pub fn fit_bits(value: u64, bits: u32, field: &'static str) -> Result<u64, Field
     }
 }
 
+/// `value` unchanged if every set bit lies inside `mask`, else
+/// [`FieldOverflow`] (with `max` = `mask`).
+///
+/// This is the checked replacement for the `(value & MASK)` idiom in a
+/// serializer: `& MASK` silently drops over-range high bits (a 4-bit field
+/// given `0x13` is written as `3`), whereas this reports the overflow. For the
+/// usual contiguous low-bit mask (`2^n - 1`) it is exactly [`fit_bits`]; the
+/// value is returned in its own type so the packing expression around it is
+/// unchanged.
+pub fn fit_mask<T>(value: T, mask: T, field: &'static str) -> Result<T, FieldOverflow>
+where
+    T: Copy + Into<u64>,
+{
+    let v: u64 = value.into();
+    let m: u64 = mask.into();
+    if v & !m == 0 {
+        Ok(value)
+    } else {
+        Err(FieldOverflow {
+            field,
+            value: v,
+            max: m,
+        })
+    }
+}
+
 /// `value` as a `u8`, or [`FieldOverflow`] with `max` 255.
 pub fn fit_u8(value: usize, field: &'static str) -> Result<u8, FieldOverflow> {
     // `usize` is at most 64 bits on every supported target, so the widening
@@ -84,6 +110,25 @@ pub fn fit_u32(value: usize, field: &'static str) -> Result<u32, FieldOverflow> 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fit_mask_accepts_in_range_and_rejects_over_range() {
+        assert_eq!(fit_mask(0x0Fu8, 0x0F, "x"), Ok(0x0F));
+        assert_eq!(fit_mask(0u8, 0x0F, "x"), Ok(0));
+        assert_eq!(
+            fit_mask(0x13u8, 0x0F, "x"),
+            Err(FieldOverflow {
+                field: "x",
+                value: 0x13,
+                max: 0x0F
+            })
+        );
+        assert_eq!(fit_mask(0x3FFu16, 0x3FF, "lcn"), Ok(0x3FF));
+        assert!(fit_mask(0x400u16, 0x3FF, "lcn").is_err());
+        // Non-contiguous mask: every set bit must lie inside it.
+        assert!(fit_mask(0b0100u8, 0b1010, "x").is_err());
+        assert_eq!(fit_mask(0b1010u8, 0b1010, "x"), Ok(0b1010));
+    }
 
     #[test]
     fn fit_u8_boundaries() {
